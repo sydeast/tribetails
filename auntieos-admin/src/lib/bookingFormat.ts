@@ -1,7 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import type { TimeBlockDefinition } from '../api/settings';
 import { str } from './coerce';
-import { resolveTimeBlock } from './businessOperations';
+import { householdBlockFor, type HouseholdTimeSettings } from './householdVisitTime';
 import { serviceDurationMinutes, storedDurationMinutes } from './newBooking';
 
 /**
@@ -367,42 +367,56 @@ export function bookingServiceName(
   return label;
 }
 /** What {@link bookingMetaLine} reads off a row. */
-export type BookingMetaInput = BookingWhenInput & { serviceType?: string | undefined };
+export type BookingMetaInput = BookingWhenInput & {
+  serviceType?: string | undefined;
+  /** The block a household booked into, when the row carries one. */
+  timeBlockId?: string | undefined;
+};
 /**
- * THE ONE LINE UNDER A BOOKING'S NAME: "60Minute · Jul 22 · Morning block".
+ * #1863: the business's Time Blocks | Exact times mode and its blocks, and the
+ * clock the block is decided on. Null until the work-settings read lands; the
+ * row then names the clock only, never a block it cannot vouch for.
+ */
+export interface BookingRowHouseholdTime {
+  settings: HouseholdTimeSettings;
+  businessZone: string;
+}
+/**
+ * THE ONE LINE UNDER A BOOKING'S NAME: "60Minute · Jul 22 · 9:30 AM", and in
+ * Time Blocks mode "60Minute · Jul 22 · 9:30 AM · Morning block".
  *
- * Service, then the visit's date, then the window it sits in. The window is the
- * operator's own named time block when the start time falls inside an active
- * one (`lib/businessOperations.ts#resolveTimeBlock`, the port of Android's
- * `TimeBlockResolver`), and the clock time when it does not, because a visit
- * booked before the blocks existed still happens at a real hour.
- *
- * ONE FORMATTER, not three call sites agreeing. Before this the row pasted the
- * raw `serviceType` next to `bookingWhen`'s combined "Jul 22, 2:00 PM", so
- * thirteen rows showed four different spellings of two services and no row
- * named its block at all.
+ * Service, then the visit's date and clock time (the time the office booked,
+ * which is what the visit drawer says), then in Time Blocks mode the block the
+ * HOUSEHOLD is shown for it (#1863, #2034): decided by `householdBlockFor`,
+ * the mirror of the server rule, so the row and the portal always name the
+ * same block, the nearest one for a clock time in no block. In Exact times
+ * mode no block is named, because the household sees the clock.
  *
  * The fail-loud rules `bookingWhen` established are kept exactly: a stored
  * stamp that will not parse is printed VERBATIM rather than hidden, and a row
  * with nothing parseable anywhere says "Date pending" rather than inventing a
  * date. Neither case invents an empty third segment.
  */
-export function bookingMetaLine(row: BookingMetaInput, catalog: BookingCatalog): string {
+export function bookingMetaLine(
+  row: BookingMetaInput,
+  catalog: BookingCatalog,
+  household: BookingRowHouseholdTime | null = null,
+): string {
   const service = bookingServiceName(row.serviceType, catalog);
   const raw = str(row.startTime).trim() || str(row.completedAt).trim() || str(row.departedAt).trim();
   const when =
     raw !== '' ? parseFlexibleDate(raw) : row.createdAt ? row.createdAt.toDate() : null;
   if (when === null) return `${service} · ${raw !== '' ? raw : 'Date pending'}`;
-  const block = resolveTimeBlock(when.getHours() * 60 + when.getMinutes(), catalog.timeBlocks);
-  const label = (block?.label ?? '').trim();
+  const base = `${service} · ${formatLocalDate(when)} · ${formatLocalTime(when)}`;
+  if (household === null) return base;
+  const block = householdBlockFor(
+    { startMs: when.getTime(), timeBlockId: row.timeBlockId ?? null, serviceId: service },
+    household.settings,
+    household.businessZone,
+  );
+  if (block === null) return base;
   // "Morning" reads as "Morning block", the way the mock and the Android card
   // both name a window; an operator who already typed "Morning block" is not
   // given it twice.
-  const window =
-    label === ''
-      ? formatLocalTime(when)
-      : /\bblock$/i.test(label)
-        ? label
-        : `${label} block`;
-  return `${service} · ${formatLocalDate(when)} · ${window}`;
+  return `${base} · ${/\bblock$/i.test(block.label) ? block.label : `${block.label} block`}`;
 }

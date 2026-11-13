@@ -573,7 +573,12 @@ class SchedulingSettingsSaveTest {
             vm.changeBookingMode(com.tribetails.auntieos.data.model.BookingMode.TIME_BLOCK)
             advanceUntilIdle()
 
-            assertEquals(mapOf<String, Any?>("defaultBookingMode" to "TIME_BLOCK"), changes.captured)
+            // #1863: the one mode goes out with its switch in step (allowTimeBlockBooking
+            // was already on), and nothing beside it: the calendar id stays put.
+            assertEquals(
+                mapOf<String, Any?>("defaultBookingMode" to "TIME_BLOCK", "allowSpecificTimeBooking" to false),
+                changes.captured,
+            )
         }
 
     @Test

@@ -7,12 +7,17 @@ import {
   buildVisitDateData,
   formatBookingDate,
   formatBookingTime,
+  householdVisitTime,
   loadBusinessTimeZone,
+  loadHouseholdTimeContext,
   startMillisOf,
 } from '../notifications/visitDates';
 
 type BookingDoc = {
   status?: string;
+  /** #1863: the block the visit was booked into, and its catalog KinCare. */
+  timeBlockId?: string | null;
+  serviceId?: string | null;
   serviceType?: string;
   serviceName?: string;
   title?: string;
@@ -120,13 +125,23 @@ function stampValue(v: unknown): string | null {
 async function visitDateFieldsFor(
   after: BookingDoc,
   visitId: string,
+  /**
+   * #1863: true for the household's copy, whose time follows the business's
+   * Time Blocks | Exact times mode. The Auntie's assignment copy keeps the clock.
+   */
+  forHousehold: boolean,
 ): Promise<Record<string, unknown>> {
   const ms = startMillisOf(after.startTime);
   const tz = await loadBusinessTimeZone();
+  const household = forHousehold ? await loadHouseholdTimeContext() : undefined;
+  const visit =
+    ms == null ? null : { visitId, startTimeMs: ms, timeBlockId: after.timeBlockId ?? null, serviceId: after.serviceId ?? null };
   return {
-    ...buildVisitDateData(ms == null ? [] : [{ visitId, startTimeMs: ms }], tz),
+    ...buildVisitDateData(visit == null ? [] : [visit], tz, undefined, household),
     bookingDate: ms == null ? null : formatBookingDate(ms, tz),
     bookingTime: ms == null ? null : formatBookingTime(ms, tz),
+    // #1863: what the household's own copy says; see `visitTimesForStream`.
+    ...(household && visit ? { householdBookingTime: householdVisitTime(visit, household, tz) } : {}),
   };
 }
 
@@ -412,7 +427,7 @@ export const onBookingsWrite = onDocumentWritten(
     // cancelled and edited are all genuinely one-visit news.
     for (const d of assignmentDispatches(before, after, changedFieldsAll)) {
       const extra =
-        d.key === 'assignment.assigned' ? await visitDateFieldsFor(after, visitId) : {};
+        d.key === 'assignment.assigned' ? await visitDateFieldsFor(after, visitId, false) : {};
       await dispatch(d.key, { ...extra, ...d.extra, assignedAuntieUid: d.auntieUid });
     }
 
@@ -451,7 +466,7 @@ export const onBookingsWrite = onDocumentWritten(
         // Every other way a visit reaches `confirmed` -- batchUpdateBookings,
         // the Android schedule screen -- carries no stamp and still sends here.
         if (!seriesApproveStampChanged(before, after)) {
-          await dispatch('kincare.booking.confirm', await visitDateFieldsFor(after, visitId));
+          await dispatch('kincare.booking.confirm', await visitDateFieldsFor(after, visitId, true));
         }
       } else if (afterStatus === 'cancelled') {
         // #533. A DECLINED request is not a cancelled visit. Those visits were

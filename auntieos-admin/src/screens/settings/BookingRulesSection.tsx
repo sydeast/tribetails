@@ -5,7 +5,6 @@ import { Banner } from '../../components/Banner';
 import { PrimaryButton, GhostButton } from '../../components/Buttons';
 import { Toggle } from '../../components/Toggle';
 import {
-  BOOKING_MODES,
   CALENDAR_VIEWS,
   HHMM_REGEX,
   NUMBER_FIELDS,
@@ -22,6 +21,7 @@ import {
   type TimeBlockDraft,
 } from '../../lib/businessOperations';
 import { splitSettingsRefusal } from '../../lib/settingsChecks';
+import { bookingModeFields, storedHouseholdTimeMode, type HouseholdTimeMode } from '../../lib/householdVisitTime';
 import { FieldError, fieldErrorAttrs } from './sections';
 import '../SettingsEdit.css';
 import './BookingRulesSection.css';
@@ -34,18 +34,15 @@ import './BookingRulesSection.css';
  * WHAT EACH ONE ACTUALLY DOES, because "persists but changes nothing" is the
  * same defect one step along, and this panel is honest about which is which:
  *
- *  - `defaultBookingMode`   seeds the scheduling screen's mode on Android
- *                           (`EnhancedSchedulingViewModel`, via
- *                           `defaultBookingModeEnum`). Its only writer was an
- *                           orphaned view-model method with no caller.
+ *  - Time Blocks | Exact times (#1863, operator ruling 2026-11-12): the ONE
+ *                           mode. Time Blocks: Kinfolk book and see only
+ *                           blocks; Exact times: they pick and see a clock
+ *                           time. Written as `defaultBookingMode` plus the two
+ *                           allow switches, all three in step
+ *                           (`lib/householdVisitTime.ts#bookingModeFields`),
+ *                           which `saveBusinessSettings` insists on.
  *  - `defaultCalendarView`  seeds that screen's calendar view. Wired to a
  *                           consumer in this same change.
- *  - `allowTimeBlockBooking` / `allowSpecificTimeBooking`
- *                           which of the two modes may be chosen. Already
- *                           editable on Android (Service management -> Settings
- *                           -> Business Settings); this is their first home on
- *                           the web admin, and the picker above now offers only
- *                           the modes they allow.
  *  - `defaultTimeBlockDurationHours`
  *                           how long a NEW block runs when you add one below.
  *  - `travelBufferMinutes`  minutes Android's availability check keeps between
@@ -56,22 +53,33 @@ import './BookingRulesSection.css';
  *                           said; it now reads it, and an absent value still
  *                           means ON so nothing goes quiet on deploy.
  *
- * ONE SAVE for the whole panel, not per-flip: the two allow-flags and the mode
- * picker are one decision (you cannot default to a mode you have turned off),
- * and saving each flip separately would let the doc pass through the state this
- * panel refuses.
+ * ONE SAVE for the whole panel, not per-flip: the mode and the blocks are one
+ * decision (Time Blocks needs a block turned on), and saving each flip
+ * separately would let the doc pass through the state this panel refuses.
  */
 
+/** #1863: the two modes, in the operator's own words. The tooltip says what each one means for a household. */
+const TIME_MODE_OPTIONS: ReadonlyArray<{ value: HouseholdTimeMode; label: string; tooltip: string }> = [
+  {
+    value: 'TIME_BLOCK',
+    label: 'Time Blocks',
+    tooltip: 'Kinfolk pick a block and see blocks everywhere. Exact times show only on KinTale check-in and check-out.',
+  },
+  {
+    value: 'SPECIFIC_TIME',
+    label: 'Exact times',
+    tooltip: 'Kinfolk pick a specific time and see it everywhere.',
+  },
+];
 interface BookingRulesSectionProps {
   data: BusinessSettings;
   onSave: (patch: Partial<BusinessSettings>) => Promise<void>;
 }
 
 interface Draft {
-  defaultBookingMode: string;
+  /** #1863: the one mode, as stored (a pre-#1863 document reads through `storedHouseholdTimeMode`). */
+  timeMode: HouseholdTimeMode;
   defaultCalendarView: string;
-  allowTimeBlockBooking: boolean;
-  allowSpecificTimeBooking: boolean;
   defaultTimeBlockDurationHours: string;
   travelBufferMinutes: string;
   enableAutoReminder24h: boolean;
@@ -80,10 +88,8 @@ interface Draft {
 
 function seed(data: BusinessSettings): Draft {
   return {
-    defaultBookingMode: data.defaultBookingMode,
+    timeMode: storedHouseholdTimeMode(data),
     defaultCalendarView: data.defaultCalendarView,
-    allowTimeBlockBooking: data.allowTimeBlockBooking,
-    allowSpecificTimeBooking: data.allowSpecificTimeBooking,
     defaultTimeBlockDurationHours: String(data.defaultTimeBlockDurationHours),
     travelBufferMinutes: String(data.travelBufferMinutes),
     // Absent reads as ON, matching the server gate. See `enableAutoReminder24h`
@@ -99,10 +105,8 @@ function seed(data: BusinessSettings): Draft {
 
 /** The settings this panel writes, by the name each one has on the document. */
 type BookingField =
-  | 'defaultBookingMode'
+  | 'timeMode'
   | 'defaultCalendarView'
-  | 'allowTimeBlockBooking'
-  | 'allowSpecificTimeBooking'
   | 'defaultTimeBlockDurationHours'
   | 'travelBufferMinutes'
   | 'enableAutoReminder24h'
@@ -116,10 +120,8 @@ type BookingField =
 export function editedBookingFields(draft: Draft, data: BusinessSettings): ReadonlySet<BookingField> {
   const out = new Set<BookingField>();
   const base = seed(data);
-  if (draft.defaultBookingMode !== base.defaultBookingMode) out.add('defaultBookingMode');
+  if (draft.timeMode !== base.timeMode) out.add('timeMode');
   if (draft.defaultCalendarView !== base.defaultCalendarView) out.add('defaultCalendarView');
-  if (draft.allowTimeBlockBooking !== base.allowTimeBlockBooking) out.add('allowTimeBlockBooking');
-  if (draft.allowSpecificTimeBooking !== base.allowSpecificTimeBooking) out.add('allowSpecificTimeBooking');
   if (draft.enableAutoReminder24h !== base.enableAutoReminder24h) out.add('enableAutoReminder24h');
   for (const key of NUMBER_FIELD_KEYS) {
     const parsed = parseWholeNumber(draft[key], NUMBER_FIELDS[key]);
@@ -139,17 +141,6 @@ export function bookingRulesPatch(
 ): { patch: Partial<BusinessSettings> } | { error: string } {
   const has = (...fields: BookingField[]) => only === undefined || fields.some((f) => only.has(f));
   const patch: Partial<BusinessSettings> = {};
-  if (has('allowTimeBlockBooking', 'allowSpecificTimeBooking', 'defaultBookingMode')) {
-    if (!draft.allowTimeBlockBooking && !draft.allowSpecificTimeBooking) {
-      return { error: 'Leave at least one booking mode on, or nothing can be booked at all.' };
-    }
-    if (draft.defaultBookingMode === 'TIME_BLOCK' && !draft.allowTimeBlockBooking) {
-      return { error: 'Time blocks are turned off, so they cannot be the default. Pick the other mode.' };
-    }
-    if (draft.defaultBookingMode === 'SPECIFIC_TIME' && !draft.allowSpecificTimeBooking) {
-      return { error: 'Specific times are turned off, so they cannot be the default. Pick the other mode.' };
-    }
-  }
   if (has('defaultTimeBlockDurationHours')) {
     const duration = parseWholeNumber(
       draft.defaultTimeBlockDurationHours,
@@ -163,21 +154,23 @@ export function bookingRulesPatch(
     if ('error' in buffer) return { error: `Travel buffer: ${buffer.error}` };
     patch.travelBufferMinutes = buffer.value;
   }
-  if (has('timeBlocks', 'allowTimeBlockBooking')) {
+  if (has('timeBlocks', 'timeMode')) {
     const blocks = validateTimeBlocks(draft.blocks);
     if ('error' in blocks) return { error: blocks.error };
-    if (draft.allowTimeBlockBooking && blocks.value.every((b) => !b.active)) {
-      return { error: 'Time-block booking is on but no block is active, so there is nothing to book into.' };
+    if (draft.timeMode === 'TIME_BLOCK' && blocks.value.every((b) => !b.active)) {
+      return { error: TIME_BLOCKS_NEED_A_BLOCK };
     }
     if (has('timeBlocks')) patch.timeBlocks = blocks.value;
   }
-  if (has('defaultBookingMode')) patch.defaultBookingMode = draft.defaultBookingMode;
+  // #1863: the mode is always written as all three of its fields.
+  if (has('timeMode')) Object.assign(patch, bookingModeFields(draft.timeMode));
   if (has('defaultCalendarView')) patch.defaultCalendarView = draft.defaultCalendarView;
-  if (has('allowTimeBlockBooking')) patch.allowTimeBlockBooking = draft.allowTimeBlockBooking;
-  if (has('allowSpecificTimeBooking')) patch.allowSpecificTimeBooking = draft.allowSpecificTimeBooking;
   if (has('enableAutoReminder24h')) patch.enableAutoReminder24h = draft.enableAutoReminder24h;
   return { patch };
 }
+/** #1863: the same sentence `saveBusinessSettings` refuses with. */
+export const TIME_BLOCKS_NEED_A_BLOCK =
+  'Time Blocks needs at least one block turned on. Turn one on, or pick Exact times.';
 /** The two number fields of this panel, by the setting each one writes. */
 type NumberField = 'defaultTimeBlockDurationHours' | 'travelBufferMinutes';
 const NUMBER_FIELD_KEYS: readonly NumberField[] = ['defaultTimeBlockDurationHours', 'travelBufferMinutes'];
@@ -236,19 +229,6 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
   const dirty = edited.size > 0;
   const overlaps = blockOverlaps(draft.blocks);
 
-  // ISSUE #710: the default-mode picker only offers modes that are on, so
-  // there is no way to pick the mode the toggles above already forbid. The
-  // loaded default itself always stays in the list, under its real label,
-  // even when it names a mode that is currently off: it is a legal value the
-  // operator has to see and change deliberately, not an unknown one to be
-  // mislabelled "(not a known value)".
-  const bookingModeOptions = optionsIncluding(BOOKING_MODES, draft.defaultBookingMode).filter(
-    (o) =>
-      o.value === draft.defaultBookingMode ||
-      (o.value === 'SPECIFIC_TIME' && draft.allowSpecificTimeBooking) ||
-      (o.value === 'TIME_BLOCK' && draft.allowTimeBlockBooking),
-  );
-
   function edit(next: Partial<Draft>) {
     setDraft((d) => ({ ...d, ...next }));
     setServerErrors((e) => {
@@ -257,32 +237,6 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
       return kept;
     });
     setJustSaved(false);
-  }
-
-  /**
-   * ISSUE #710: turning off the mode that is currently the default used to
-   * leave `defaultBookingMode` pointed at a mode that is now off, which
-   * `bookingRulesPatch` refuses to save. The operator then had to find the
-   * "New bookings start as" picker and change it by hand before the toggle
-   * they had just flipped could be saved. Turning off a mode that is the
-   * default now carries the default to the mode that stayed on. Turning both
-   * off leaves the default as-is; the "leave one mode on" guard already
-   * blocks that save.
-   */
-  function setAllowSpecificTimeBooking(next: boolean) {
-    const patch: Partial<Draft> = { allowSpecificTimeBooking: next };
-    if (!next && draft.defaultBookingMode === 'SPECIFIC_TIME' && draft.allowTimeBlockBooking) {
-      patch.defaultBookingMode = 'TIME_BLOCK';
-    }
-    edit(patch);
-  }
-
-  function setAllowTimeBlockBooking(next: boolean) {
-    const patch: Partial<Draft> = { allowTimeBlockBooking: next };
-    if (!next && draft.defaultBookingMode === 'TIME_BLOCK' && draft.allowSpecificTimeBooking) {
-      patch.defaultBookingMode = 'SPECIFIC_TIME';
-    }
-    edit(patch);
   }
 
   /**
@@ -383,30 +337,31 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
           them. It is now three named groups: which booking modes are on,
           what a new booking defaults to, and the named windows kinfolk book
           into. */}
+      {/* #1863: ONE mode for the business. Time Blocks: Kinfolk book and see
+          only blocks, and see an exact time only on a KinTale's check-in and
+          check-out. Exact times: they pick and see a clock time. */}
       <div className="settingsEdit__subsection">
-        <span className="settingsEdit__groupHeading">Booking modes</span>
-        <ul className="settingsEdit__toggleList">
-          <li className="settingsEdit__toggleRow">
-            <span className="settingsEdit__toggleLabel">Offer specific times</span>
-            <Toggle
-              label="Toggle booking at a specific time"
-              checked={draft.allowSpecificTimeBooking}
-              disabled={busy}
-              onChange={setAllowSpecificTimeBooking}
-            />
-          </li>
-          <li className="settingsEdit__toggleRow">
-            <span className="settingsEdit__toggleLabel">Offer time blocks</span>
-            <Toggle
-              label="Toggle booking into a time block"
-              checked={draft.allowTimeBlockBooking}
-              disabled={busy}
-              onChange={setAllowTimeBlockBooking}
-            />
-          </li>
-        </ul>
+        <span className="settingsEdit__groupHeading" id="booking-time-mode-heading">
+          Kinfolk book and see
+        </span>
+        <div className="settingsEdit__toggleList" role="radiogroup" aria-labelledby="booking-time-mode-heading">
+          {TIME_MODE_OPTIONS.map((o) => (
+            <label key={o.value} className="settingsEdit__toggleRow">
+              <input
+                type="radio"
+                name="booking-time-mode"
+                value={o.value}
+                checked={draft.timeMode === o.value}
+                disabled={busy}
+                onChange={() => edit({ timeMode: o.value })}
+              />
+              <span className="settingsEdit__toggleLabel" title={o.tooltip}>
+                {o.label}
+              </span>
+            </label>
+          ))}
+        </div>
       </div>
-
       <div className="settingsEdit__subsection">
         <span className="settingsEdit__groupHeading">Defaults</span>
         <ul className="settingsEdit__toggleList">
@@ -422,24 +377,6 @@ export function BookingRulesSection({ data, onSave }: BookingRulesSectionProps) 
         </ul>
 
         <div className="settingsEdit__fields">
-          <div className="settingsEdit__fieldGroup">
-            <label className="settingsEdit__field">
-              <span className="settingsEdit__fieldLabel">New bookings start as</span>
-              <select
-                className="settingsEdit__input"
-                value={draft.defaultBookingMode}
-                disabled={busy}
-                onChange={(e) => edit({ defaultBookingMode: e.target.value })}
-              >
-                {bookingModeOptions.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
           <div className="settingsEdit__fieldGroup">
             <label className="settingsEdit__field">
               <span className="settingsEdit__fieldLabel">Calendar opens on</span>

@@ -693,11 +693,17 @@ export function KinfolkProfile({
           <UpcomingVisitsPanel kinfolkId={kinfolkId} />
           <RecentKinTalesPanel kinfolkId={kinfolkId} />
           {!isAuntie && <HouseholdInvoicesPanel kinfolkId={kinfolkId} />}
-          <AccountCreditPanel
-            kinfolkId={kinfolkId}
-            openUnappliedPayments={openUnappliedPayments}
-            unappliedPaymentId={unappliedPaymentId}
-          />
+          {/* #2208: Account credit is money, and the server refuses an Auntie
+              its history, so the panel (and its reads) is not mounted for her.
+              That includes the "Payments needing a decision" section a payment
+              notice opens; her notice offers no Open into it. */}
+          {!isAuntie && (
+            <AccountCreditPanel
+              kinfolkId={kinfolkId}
+              openUnappliedPayments={openUnappliedPayments}
+              unappliedPaymentId={unappliedPaymentId}
+            />
+          )}
         </div>
       </div>
     </div>

@@ -265,8 +265,12 @@ export function applicableNotificationActions(
   const forViewer = (route: NotificationRoute | null): NotificationRoute | null =>
     route !== null && isAuntie && isOwnerOnlyPath(route.to) ? null : route;
 
+  // #2208: the unapplied-payment notice opens the household's Account credit
+  // section, which is money and is not drawn for an Auntie. Without a
+  // household it falls back to its invoice, which `forViewer` drops anyway.
+  const isPaymentDecision = key === UNAPPLIED_PAYMENT_KEY;
   return {
-    open: forViewer(notificationOpenRoute(entry)),
+    open: isAuntie && isPaymentDecision ? null : forViewer(notificationOpenRoute(entry)),
     bookingId: isPendingBookingRequest ? targetId : '',
     quote: forViewer(quoteEligible ? notificationQuoteRoute(kinfolkId) : null),
     outcome,

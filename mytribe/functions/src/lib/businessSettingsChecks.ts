@@ -743,6 +743,51 @@ export const BUSINESS_SETTINGS_CHECKS: Readonly<Record<string, Check>> = {
   mytribePortal: checkMytribePortal,
 };
 
+/** #1863: the three fields the one Time Blocks | Exact times mode is written as. */
+export const BOOKING_MODE_FIELDS = ['defaultBookingMode', 'allowTimeBlockBooking', 'allowSpecificTimeBooking'] as const;
+export const BOOKING_MODE_SPLIT = 'Pick Time Blocks or Exact times.';
+export const BOOKING_MODE_NEEDS_BLOCK = 'Time Blocks needs at least one block turned on. Turn one on, or pick Exact times.';
+/**
+ * #1863: the cross-field rule for the one mode. Runs only when a save names one
+ * of {@link BOOKING_MODE_FIELDS} or the blocks, so a document still carrying
+ * the pre-#1863 both-on shape never blocks an unrelated save.
+ *
+ *  - A save that names the mode must leave the document with exactly one of the
+ *    two switches on and `defaultBookingMode` naming it: every editor sends
+ *    all three, and anything else would be two modes at once.
+ *  - Time Blocks must leave at least one active block, whether this save set
+ *    the mode or turned the last block off.
+ */
+export function bookingModeRefusals(changes: Record<string, unknown>, stored: Record<string, unknown>): SettingsRefusal[] {
+  const namesMode = BOOKING_MODE_FIELDS.some((f) => f in changes);
+  if (!namesMode && !('timeBlocks' in changes)) return [];
+  const raw = (f: string): unknown => (f in changes ? changes[f] : stored[f]);
+  // A field the document never stored reads as its default, the same way
+  // `storedBookingMode` and every client decoder read it (both switches on,
+  // SPECIFIC_TIME). The Android admin saves only the fields that changed, so on
+  // a document missing a field it never sends the one already at its default.
+  const merged = (f: string): unknown => {
+    const v = raw(f);
+    if (f === 'defaultBookingMode') return v === 'TIME_BLOCK' ? 'TIME_BLOCK' : v === undefined || v === null ? 'SPECIFIC_TIME' : v;
+    if (f === 'allowTimeBlockBooking' || f === 'allowSpecificTimeBooking') return typeof v === 'boolean' ? v : true;
+    return v;
+  };
+  if (namesMode) {
+    const block = merged('allowTimeBlockBooking');
+    const specific = merged('allowSpecificTimeBooking');
+    const named = merged('defaultBookingMode');
+    const consistent =
+      (block === true && specific === false && named === 'TIME_BLOCK') ||
+      (block === false && specific === true && named === 'SPECIFIC_TIME');
+    if (!consistent) return [{ field: 'defaultBookingMode', message: BOOKING_MODE_SPLIT }];
+  }
+  const blocksMode = merged('allowTimeBlockBooking') === true && merged('allowSpecificTimeBooking') === false;
+  if (!blocksMode) return [];
+  const rows = merged('timeBlocks');
+  // Only `active: false` turns a row off, as `parseTimeBlockRow` reads it.
+  const anyActive = Array.isArray(rows) && rows.some((r) => isPlainObject(r) && r['active'] !== false);
+  return anyActive ? [] : [{ field: 'timeBlocks', message: BOOKING_MODE_NEEDS_BLOCK }];
+}
 /**
  * Every refusal for one save, in the order the fields arrived. Empty means the
  * save may be written. Unknown and server-owned fields are refused by name.

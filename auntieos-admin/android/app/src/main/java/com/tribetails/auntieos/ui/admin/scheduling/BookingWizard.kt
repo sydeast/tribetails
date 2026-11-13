@@ -145,8 +145,8 @@ data class BookingWizardState(
     val billingMode: String = BILLING_MODE_NEW_INVOICE,
     /** Step 5 -> `communication.emailConfirmation`. */
     val emailConfirmation: Boolean = false,
-    /** Step 5 -> `communication.timeVisibility`. */
-    val timeVisibility: Boolean = false,
+    // #1863: no per-booking "Exact times" choice. What a household sees is the
+    // business's one Time Blocks | Exact times mode, set in Settings.
     /** Step 5 -> `notes` (omitted from the payload when blank, as on web). */
     val notes: String = "",
     /** Monotonic source of [VisitSlot.id]s, so Compose keys stay stable. */
@@ -488,7 +488,6 @@ fun bookingSubmission(
     billing = CreateMultiDateBookingRequestArgsBilling(mode = state.billingMode),
     communication = CreateMultiDateBookingRequestArgsCommunication(
         emailConfirmation = state.emailConfirmation,
-        timeVisibility = state.timeVisibility,
     ),
     overrideBusyConflict = overrideBusyConflict,
 )

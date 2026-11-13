@@ -13,6 +13,7 @@ import {
   parseFlexibleDate,
   EMPTY_BOOKING_CATALOG,
   type BookingCatalog,
+  type BookingRowHouseholdTime,
   type BookingStateInput,
   type BookingWhenInput,
 } from './bookingFormat';
@@ -280,7 +281,7 @@ describe('bookingServiceName', () => {
 });
 
 describe('bookingMetaLine', () => {
-  const row = (over: Partial<BookingWhenInput & { serviceType: string }> = {}) => ({
+  const row = (over: Partial<BookingWhenInput & { serviceType: string; timeBlockId: string }> = {}) => ({
     serviceType: 'visit_60',
     startTime: '2026-05-28T09:30:00',
     completedAt: '',
@@ -288,43 +289,73 @@ describe('bookingMetaLine', () => {
     createdAt: null,
     ...over,
   });
-
-  it('names the service, the date, and the operator\'s own time block', () => {
-    expect(bookingMetaLine(row(), CATALOG)).toBe('60Minute · May 28 · Morning block');
+  // The rows here are wall-clock strings read on this machine's clock, so the
+  // business clock is set to the same zone and the block reads the time shown.
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const blocksMode: BookingRowHouseholdTime = {
+    settings: {
+      defaultBookingMode: 'TIME_BLOCK',
+      allowTimeBlockBooking: true,
+      allowSpecificTimeBooking: false,
+      timeBlocks: CATALOG.timeBlocks,
+      startTimeServiceIds: [],
+    },
+    businessZone: zone,
+  };
+  const exactMode: BookingRowHouseholdTime = {
+    settings: { ...blocksMode.settings, defaultBookingMode: 'SPECIFIC_TIME', allowTimeBlockBooking: false, allowSpecificTimeBooking: true },
+    businessZone: zone,
+  };
+  it('Time Blocks: the service, the date, the booked clock time and the block the household sees', () => {
+    expect(bookingMetaLine(row(), CATALOG, blocksMode)).toBe('60Minute · May 28 · 9:30 AM · Morning block');
   });
-
-  it('says the clock time when the start falls outside every active block', () => {
-    // 12:00 is inside the SEASONAL window, which is switched off, so it resolves
-    // to no block at all rather than to a window nothing can be booked into.
-    expect(bookingMetaLine(row({ startTime: '2026-05-28T12:00:00' }), CATALOG)).toBe(
-      '60Minute · May 28 · 12:00 PM',
+  it('#2034: a moved visit names the block for where it now is, by the same rule as the portal', () => {
+    // 12:00 is in no ACTIVE block (Seasonal is off): one hour after Morning
+    // ends and five before Evening starts, so the household sees Morning.
+    expect(bookingMetaLine(row({ startTime: '2026-05-28T12:00:00' }), CATALOG, blocksMode)).toBe(
+      '60Minute · May 28 · 12:00 PM · Morning block',
+    );
+    expect(bookingMetaLine(row({ startTime: '2026-05-28T16:00:00', timeBlockId: 'morning' }), CATALOG, blocksMode)).toBe(
+      '60Minute · May 28 · 4:00 PM · Evening block',
     );
   });
-
+  it('a tie goes to the earlier block, as the server rules', () => {
+    // 14:00 is 3 hours after Morning ends and 3 before Evening starts.
+    expect(bookingMetaLine(row({ startTime: '2026-05-28T14:00:00' }), CATALOG, blocksMode)).toBe(
+      '60Minute · May 28 · 2:00 PM · Morning block',
+    );
+  });
+  it('Exact times: no block is named, because the household sees the clock', () => {
+    expect(bookingMetaLine(row(), CATALOG, exactMode)).toBe('60Minute · May 28 · 9:30 AM');
+  });
+  it('a start-time KinCare keeps its clock in Time Blocks mode', () => {
+    const overnight = { ...blocksMode, settings: { ...blocksMode.settings, startTimeServiceIds: ['60Minute'] } };
+    expect(bookingMetaLine(row(), CATALOG, overnight)).toBe('60Minute · May 28 · 9:30 AM');
+  });
   it('does not say "block" twice when the operator already typed it', () => {
-    expect(bookingMetaLine(row({ startTime: '2026-05-28T18:00:00' }), CATALOG)).toBe(
-      '60Minute · May 28 · Evening block',
+    expect(bookingMetaLine(row({ startTime: '2026-05-28T18:00:00' }), CATALOG, blocksMode)).toBe(
+      '60Minute · May 28 · 6:00 PM · Evening block',
     );
   });
-
+  it('before the settings read lands, the clock only and never a guessed block', () => {
+    expect(bookingMetaLine(row(), CATALOG)).toBe('60Minute · May 28 · 9:30 AM');
+  });
   it('prints an unparseable stored stamp verbatim, with no empty third segment', () => {
-    expect(bookingMetaLine(row({ startTime: 'Net 14' }), CATALOG)).toBe('60Minute · Net 14');
+    expect(bookingMetaLine(row({ startTime: 'Net 14' }), CATALOG, blocksMode)).toBe('60Minute · Net 14');
   });
-
   it('says "Date pending" rather than inventing one when the row carries no time at all', () => {
-    expect(bookingMetaLine(row({ startTime: '' }), CATALOG)).toBe('60Minute · Date pending');
+    expect(bookingMetaLine(row({ startTime: '' }), CATALOG, blocksMode)).toBe('60Minute · Date pending');
   });
-
   it('falls through startTime to completedAt to departedAt, the chain bookingWhen walks', () => {
     expect(
-      bookingMetaLine(row({ startTime: '', completedAt: '2026-05-25T09:00:00' }), CATALOG),
-    ).toBe('60Minute · May 25 · Morning block');
+      bookingMetaLine(row({ startTime: '', completedAt: '2026-05-25T09:00:00' }), CATALOG, blocksMode),
+    ).toBe('60Minute · May 25 · 9:00 AM · Morning block');
     expect(
-      bookingMetaLine(row({ startTime: '', departedAt: '2026-05-24T09:00:00' }), CATALOG),
-    ).toBe('60Minute · May 24 · Morning block');
+      bookingMetaLine(row({ startTime: '', departedAt: '2026-05-24T09:00:00' }), CATALOG, blocksMode),
+    ).toBe('60Minute · May 24 · 9:00 AM · Morning block');
   });
-
   it('degrades to the raw label and the clock time on an empty catalog, never to a blank', () => {
     expect(bookingMetaLine(row(), EMPTY_BOOKING_CATALOG)).toBe('visit_60 · May 28 · 9:30 AM');
   });
 });
+

@@ -383,9 +383,17 @@ fun BusinessSettings.withPetTagDefs(defs: List<TagDef>): BusinessSettings =
 fun BusinessSettings.withHomeSections(sections: List<PortalHomeSection>): BusinessSettings =
     this.copy(mytribePortal = encodeHomeSections(mytribePortal, sections))
 
-/** Copy [BusinessSettings] setting [defaultBookingMode] from a typed [BookingMode]. */
+/**
+ * Copy [BusinessSettings] onto the ONE Time Blocks | Exact times mode (#1863)
+ * from a typed [BookingMode]: `defaultBookingMode` and both allow switches in
+ * step, the only shape `saveBusinessSettings` accepts.
+ */
 fun BusinessSettings.withBookingMode(mode: BookingMode): BusinessSettings =
-    this.copy(defaultBookingMode = mode.name)
+    this.copy(
+        defaultBookingMode = mode.name,
+        allowTimeBlockBooking = mode == BookingMode.TIME_BLOCK,
+        allowSpecificTimeBooking = mode == BookingMode.SPECIFIC_TIME,
+    )
 
 enum class TrackingAccuracy {
     LOW,    // Battery-friendly, less precise

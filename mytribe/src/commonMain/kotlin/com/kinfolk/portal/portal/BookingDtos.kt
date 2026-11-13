@@ -60,6 +60,14 @@ data class Booking(
     val rescheduleRequestStatus: RescheduleRequestStatus? = null,
     val rescheduleRequestedStartTimeMs: Long? = null,
     val rescheduleRequestedEndTimeMs: Long? = null,
+    /**
+     * #1863: the window the household is shown for the time it ASKED for, by the
+     * server's one rule (Time Blocks mode only; null in Exact times mode and on
+     * an older server). The bounds are null exactly when the label is.
+     */
+    val rescheduleRequestedTimeBlockLabel: String? = null,
+    val rescheduleRequestedTimeBlockStartTime: String? = null,
+    val rescheduleRequestedTimeBlockEndTime: String? = null,
     val rescheduleRequestReason: String? = null,
     /** What the office said when it accepted or declined. */
     val rescheduleResponseNote: String? = null,
@@ -78,8 +86,10 @@ data class Booking(
     /** #1303: the invoice billing a completed visit, for a member with billing access, else null. */
     val invoiceId: String? = null,
     /**
-     * #1301: the named window this visit was booked into ("Midday"), or null
-     * for a by-the-clock visit. [timeBlockStartTime] / [timeBlockEndTime] are
+     * #1301 / #1863: the named window the household is SHOWN for this visit
+     * ("Midday"), decided by the server: set on every timed visit in Time
+     * Blocks mode (the nearest block for a clock time the office set), null in
+     * Exact times mode and for a by-the-clock visit. [timeBlockStartTime] / [timeBlockEndTime] are
      * the window's `HH:MM` bounds, null when the window has since been removed
      * or an older server omits them.
      */

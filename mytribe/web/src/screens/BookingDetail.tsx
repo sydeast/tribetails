@@ -35,8 +35,8 @@ import {
   speciesEmoji,
   visitTile,
   visitWhenLine,
+  rescheduleAskWhen,
   noteWrittenAt,
-  weekdayTime,
 } from '../lib/portalFormat';
 import '../styles/bookingdetail.css';
 import { SettingsBusinessFootnote, useBusinessName } from '../components/BusinessFootnote';
@@ -273,10 +273,8 @@ export function BookingDetail() {
     found.rescheduleRequestStatus !== 'pending' &&
     found.cancelRequestStatus !== 'pending' &&
     (found.status === 'requested' || found.status === 'confirmed');
-  const proposedLabel =
-    found.rescheduleRequestedStartTimeMs !== null
-      ? weekdayTime(found.rescheduleRequestedStartTimeMs)
-      : '';
+  // #1863: the asked-for time in the business's mode, a window in Time Blocks.
+  const proposedLabel = rescheduleAskWhen(found);
   const auntieLabel = auntieName(found.auntieDisplayName) ?? 'your Auntie';
   const submitReschedule = () => {
     if (proposal === null) {

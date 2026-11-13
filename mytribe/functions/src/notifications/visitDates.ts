@@ -1,6 +1,13 @@
 import { db } from '../lib/firestoreAdmin';
 import { FALLBACK_BUSINESS_TIME_ZONE } from '../lib/businessHours';
-import { businessTimeZone } from '../lib/bookingTimeBlocks';
+import {
+  CLOCK_ONLY_TIME_CONTEXT,
+  blockWindowText,
+  businessTimeZone,
+  householdBlockFor,
+  householdTimeContextFrom,
+  type HouseholdTimeContext,
+} from '../lib/bookingTimeBlocks';
 
 /**
  * ONE rule for every message that names visit dates.
@@ -75,6 +82,10 @@ export const AUNTIE_SCHEDULE_URL = 'https://auntie.tribetails.com';
 export interface EnvelopeVisit {
   visitId: string;
   startTimeMs: number;
+  /** #1863: the block the visit was booked into, when it has one. Read by {@link householdVisitTime}. */
+  timeBlockId?: string | null;
+  /** #1863: the catalog KinCare, so a #1092 start-time KinCare keeps its clock. */
+  serviceId?: string | null;
   /** Null when nobody is on the visit; absent when the caller did not read it. */
   assignedAuntieUid?: string | null;
 }
@@ -89,6 +100,12 @@ export interface RenderedVisit {
   date: string;
   /** '9:00 AM' */
   time: string;
+  /**
+   * #1863: what the HOUSEHOLD's copy says instead of `time`, set only when the
+   * emitter rendered for a household. The dispatcher swaps it in on the
+   * kinfolk stream and drops it from every other copy ({@link visitTimesForStream}).
+   */
+  householdTime?: string;
   visitId: string;
 }
 
@@ -97,7 +114,7 @@ export interface VisitDateData {
   visits: RenderedVisit[];
   visitCount: number;
   /** SMS and push name this one instead of enumerating. Null on an empty set. */
-  nextVisit: { weekday: string; date: string; time: string } | null;
+  nextVisit: { weekday: string; date: string; time: string; householdTime?: string } | null;
   /**
    * Dates the recipient was told about and that are no longer happening.
    *
@@ -218,15 +235,65 @@ export function formatRequestedDate(dateIso: unknown): string | null {
   return ms == null ? null : formatBookingDate(ms, 'UTC');
 }
 
-/** One visit, fully formatted. */
-export function renderVisit(visit: EnvelopeVisit, tz: string): RenderedVisit {
+/**
+ * #1863: the TIME a household is told for a visit. In Time Blocks mode it is a
+ * window, "Midday (11 AM to 3 PM)", decided by `householdBlockFor` (the nearest
+ * block for a clock time the office set); in Exact times mode it is the clock,
+ * "2:30 PM". The office's and an Auntie's own copies never come through here:
+ * they keep the clock.
+ */
+export function householdVisitTime(
+  visit: { startTimeMs: number; timeBlockId?: unknown; serviceId?: unknown },
+  household: HouseholdTimeContext,
+  tz: string,
+): string {
+  const block = householdBlockFor(visit, household.policy, household.timeZone);
+  return block === null ? formatBookingTime(visit.startTimeMs, tz) : blockWindowText(block);
+}
+/**
+ * One visit, fully formatted. `household` is passed by an emitter whose message
+ * reaches the household (#1863): `time` stays the clock, which is what the
+ * office's and an Auntie's copies read, and `householdTime` carries what the
+ * household's copy says instead.
+ */
+export function renderVisit(visit: EnvelopeVisit, tz: string, household?: HouseholdTimeContext): RenderedVisit {
   return {
     dateIso: formatDateIso(visit.startTimeMs, tz),
     weekday: formatWeekday(visit.startTimeMs, tz),
     date: formatDayAndMonth(visit.startTimeMs, tz),
     time: formatBookingTime(visit.startTimeMs, tz),
+    ...(household ? { householdTime: householdVisitTime(visit, household, tz) } : {}),
     visitId: visit.visitId,
   };
+}
+/** #1863: the emitter-supplied stand-in for `{{bookingTime}}` on the household's copy. */
+export const HOUSEHOLD_BOOKING_TIME = 'householdBookingTime';
+/**
+ * #1863: ONE dispatch, TWO readings of its times. An emitter that reaches the
+ * household sends the clock (`bookingTime`, `visits[].time`, `nextVisit.time`)
+ * and, beside each, what the household is told (`householdBookingTime`,
+ * `householdTime`). The dispatcher calls this per copy, where the stream is
+ * known: the household's copy reads its own times, every other copy reads the
+ * clock, and no copy keeps the stand-ins. Returns a new object; data without
+ * stand-ins comes back with the same values.
+ */
+export function visitTimesForStream(data: Record<string, unknown>, stream: string): Record<string, unknown> {
+  const household = stream === 'kinfolk';
+  const out: Record<string, unknown> = { ...data };
+  const standIn = out[HOUSEHOLD_BOOKING_TIME];
+  delete out[HOUSEHOLD_BOOKING_TIME];
+  if (household && typeof standIn === 'string' && standIn.trim() !== '') out['bookingTime'] = standIn;
+  const swap = (v: unknown): unknown => {
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return v;
+    const row = { ...(v as Record<string, unknown>) };
+    const own = row['householdTime'];
+    delete row['householdTime'];
+    if (household && typeof own === 'string' && own.trim() !== '') row['time'] = own;
+    return row;
+  };
+  if (Array.isArray(out['visits'])) out['visits'] = (out['visits'] as unknown[]).map(swap);
+  if (out['nextVisit'] !== undefined) out['nextVisit'] = swap(out['nextVisit']);
+  return out;
 }
 
 /**
@@ -249,14 +316,23 @@ export function buildVisitDateData(
    * idiom covers both audiences.
    */
   linkUrl: string = PORTAL_URL,
+  /** #1863: set on the household's copy; see {@link renderVisit}. */
+  household?: HouseholdTimeContext,
 ): VisitDateData {
   const sorted = [...visits].sort((a, b) => a.startTimeMs - b.startTimeMs);
-  const rendered = sorted.map((v) => renderVisit(v, tz));
+  const rendered = sorted.map((v) => renderVisit(v, tz, household));
   const first = rendered[0];
   return {
     visits: rendered,
     visitCount: rendered.length,
-    nextVisit: first ? { weekday: first.weekday, date: first.date, time: first.time } : null,
+    nextVisit: first
+      ? {
+          weekday: first.weekday,
+          date: first.date,
+          time: first.time,
+          ...(first.householdTime !== undefined ? { householdTime: first.householdTime } : {}),
+        }
+      : null,
     removed: [],
     removedCount: 0,
     portalUrl: linkUrl,
@@ -275,6 +351,19 @@ export async function loadBusinessTimeZone(): Promise<string> {
     // keep the default
   }
   return DEFAULT_TIME_ZONE;
+}
+/**
+ * #1863: the business's mode and blocks for a household's message. Never
+ * throws: an unreadable settings document tells the household the clock time,
+ * which is never a window the business did not keep.
+ */
+export async function loadHouseholdTimeContext(): Promise<HouseholdTimeContext> {
+  try {
+    const snap = await db().collection('business_settings').doc('business_settings').get();
+    return householdTimeContextFrom(snap.data() ?? {});
+  } catch {
+    return CLOCK_ONLY_TIME_CONTEXT;
+  }
 }
 /** Statuses that are not part of "the visits this booking covers". */
 const NOT_HAPPENING = new Set(['cancelled', 'unavailable']);
@@ -325,6 +414,8 @@ export async function loadEnvelopeVisits(
     out.push({
       visitId: doc.id,
       startTimeMs: ms,
+      timeBlockId: typeof data['timeBlockId'] === 'string' ? data['timeBlockId'] : null,
+      serviceId: typeof data['serviceId'] === 'string' ? data['serviceId'] : null,
       assignedAuntieUid: typeof auntie === 'string' && auntie ? auntie : null,
     });
   }

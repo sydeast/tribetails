@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.web.screens.settings
 import com.tribetails.auntieos.web.data.BusinessSettings
 import com.tribetails.auntieos.web.data.HomeSectionCfg
+import com.tribetails.auntieos.web.data.HouseholdVisitTime
+import com.tribetails.auntieos.web.data.TimeBlockDefinition
 import com.tribetails.auntieos.web.data.MyTribePortalConfig
 import com.tribetails.auntieos.web.data.PortalHome
 import com.tribetails.auntieos.web.data.SettingsChecks
@@ -91,14 +93,14 @@ class StoredBadValueTest {
         travelBufferMinutes = 9999,
         allowTimeBlockBooking = false,
     )
-    private fun bookingError(s: BusinessSettings, buffer: String, allowSpecific: Boolean = true): String? {
+    private fun bookingError(s: BusinessSettings, buffer: String, mode: String = HouseholdVisitTime.storedMode(s)): String? {
         val edits = bookingRulesEdits(
-            s, s.defaultBookingMode, s.defaultCalendarView, allowSpecific, s.allowTimeBlockBooking,
-            s.defaultTimeBlockDurationHours.toString(), buffer, emptyList(),
+            s, mode, s.defaultCalendarView,
+            s.defaultTimeBlockDurationHours.toString(), buffer, s.timeBlocks.map { it.toRow() },
         )
         return bookingRulesError(
-            s.defaultBookingMode, allowSpecific, s.allowTimeBlockBooking,
-            s.defaultTimeBlockDurationHours.toString(), buffer, emptyList(), s.timeZone, zoneUsable = true, only = edits,
+            mode, s.defaultTimeBlockDurationHours.toString(), buffer, s.timeBlocks.map { it.toRow() },
+            s.timeZone, zoneUsable = true, only = edits,
         )
     }
     @Test
@@ -108,7 +110,7 @@ class StoredBadValueTest {
         assertNull(bookingError(storedBuffer, buffer = "9999"))
         // The whole draft, as the banner reads it, still names it.
         assertNotNull(
-            bookingRulesError("SPECIFIC_TIME", true, false, "4", "9999", emptyList(), "", zoneUsable = true),
+            bookingRulesError("SPECIFIC_TIME", "4", "9999", emptyList(), "", zoneUsable = true),
         )
     }
     @Test
@@ -117,9 +119,19 @@ class StoredBadValueTest {
         assertNull(bookingError(storedBuffer, buffer = "45"))
     }
     @Test
-    fun `two stored booking modes both off do not block an unrelated edit, but changing a mode does`() {
-        val bothOff = BusinessSettings(allowSpecificTimeBooking = false, allowTimeBlockBooking = false)
-        assertNull(bookingError(bothOff, buffer = bothOff.travelBufferMinutes.toString(), allowSpecific = false))
+    fun `#1863 a stored Time Blocks with no block on does not block an unrelated edit, but picking the mode does`() {
+        val noBlock = BusinessSettings(
+            defaultBookingMode = "TIME_BLOCK",
+            allowTimeBlockBooking = true,
+            allowSpecificTimeBooking = false,
+            timeBlocks = listOf(TimeBlockDefinition(id = "midday", label = "Midday", startTime = "11:00", endTime = "15:00", isActive = false)),
+        )
+        assertNull(bookingError(noBlock, buffer = noBlock.travelBufferMinutes.toString()))
+        val exactNoBlock = noBlock.copy(defaultBookingMode = "SPECIFIC_TIME", allowTimeBlockBooking = false, allowSpecificTimeBooking = true)
+        assertEquals(
+            HouseholdVisitTime.TIME_BLOCKS_NEED_A_BLOCK,
+            bookingError(exactNoBlock, buffer = exactNoBlock.travelBufferMinutes.toString(), mode = "TIME_BLOCK"),
+        )
     }
     // ── Visits and tracking ─────────────────────────────────────────────────
     @Test

@@ -402,7 +402,7 @@ describe('the submission, and the one refusal an operator may override', () => {
       ready({ allKinMode: false, kinIds: ['k1'], notes: '  gate code 1234  ' }),
       '2026-08-03',
     );
-    state = { ...state, communication: { emailConfirmation: true, timeVisibility: false } };
+    state = { ...state, communication: { emailConfirmation: true } };
     expect(bookingSubmission(state, ROSTER, true)).toEqual({
       kinfolkId: 'kf1',
       kinIds: ['k1'],
@@ -410,7 +410,7 @@ describe('the submission, and the one refusal an operator may override', () => {
       pattern: 'individual',
       visits: buildVisits(state),
       billing: { mode: 'new-invoice' },
-      communication: { emailConfirmation: true, timeVisibility: false },
+      communication: { emailConfirmation: true },
       overrideBusyConflict: true,
     });
   });

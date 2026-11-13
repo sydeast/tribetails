@@ -3,6 +3,7 @@ import { arr, str } from '../lib/coerce';
 import { currentSessionSeat, type SessionSeat } from '../lib/sessionSeat';
 import { DEFAULT_TAG_COLOR, type TagDef } from '../lib/tags/model';
 import { getBusinessSettings, mergeBusinessSettings, type BusinessSettings, type TimeBlockDefinition } from './settings';
+import { startTimeServiceIdsFrom } from '../lib/householdVisitTime';
 
 /**
  * #2164: the business settings a staff member's own WORK reads (visits, the
@@ -39,6 +40,10 @@ export interface WorkSettings {
   allowTimeBlockBooking: boolean;
   allowSpecificTimeBooking: boolean;
   defaultBookingMode: string;
+  /** #1863: the KinCare names a household sees by the clock even in Time Blocks mode (#1092). */
+  startTimeServiceIds: string[];
+  /** How long a block with no stated end runs. Not sent to an Auntie; the server's own default (4) then. */
+  defaultTimeBlockDurationHours?: number;
   requireArrivalDepartureVerification: boolean;
   kinTaleRequired: boolean;
   /** The owner's Schedule snap. Not sent to an Auntie, so hers is the default (off). */
@@ -64,6 +69,10 @@ export function workSettingsFromBusinessSettings(s: Partial<BusinessSettings>): 
     allowTimeBlockBooking: s.allowTimeBlockBooking ?? true,
     allowSpecificTimeBooking: s.allowSpecificTimeBooking ?? true,
     defaultBookingMode: s.defaultBookingMode ?? '',
+    startTimeServiceIds: startTimeServiceIdsFrom(s.serviceStartTimeBooking),
+    ...(typeof s.defaultTimeBlockDurationHours === 'number'
+      ? { defaultTimeBlockDurationHours: s.defaultTimeBlockDurationHours }
+      : {}),
     requireArrivalDepartureVerification: s.requireArrivalDepartureVerification === true,
     kinTaleRequired: s.kinTaleRequired === true,
     snapRescheduleTo15Min: s.snapRescheduleTo15Min === true,
@@ -93,6 +102,7 @@ interface RawStaffWorkSettings {
   allowTimeBlockBooking?: unknown;
   allowSpecificTimeBooking?: unknown;
   defaultBookingMode?: unknown;
+  startTimeServiceIds?: unknown;
   requireArrivalDepartureVerification?: unknown;
   kinTaleRequired?: unknown;
   householdTagNames?: unknown;
@@ -128,6 +138,10 @@ export function decodeStaffWorkSettings(raw: RawStaffWorkSettings | null | undef
   return {
     ...workSettingsFromBusinessSettings(merged),
     ratesIncluded: false,
+    // #1863: sent by the server as names; a stray non-string is dropped.
+    startTimeServiceIds: arr<unknown>(r.startTimeServiceIds).filter(
+      (id): id is string => typeof id === 'string' && id.trim() !== '',
+    ),
     householdTags: tagDefsFromNames(r.householdTagNames),
     petTags: tagDefsFromNames(r.kinTagNames),
   };

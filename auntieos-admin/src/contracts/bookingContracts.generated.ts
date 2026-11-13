@@ -216,7 +216,7 @@ export interface CreateMultiDateBookingRequestArgsBilling {
  */
 export interface CreateMultiDateBookingRequestArgsCommunication {
   emailConfirmation: boolean;
-  timeVisibility: boolean;
+  timeVisibility?: boolean;
 }
 
 /**
@@ -287,6 +287,9 @@ export interface GetMyBookingsResultLiveVisit {
   rescheduleRequestStatus: 'pending' | 'accepted' | 'declined' | null;
   rescheduleRequestedStartTimeMs: number | null;
   rescheduleRequestedEndTimeMs: number | null;
+  rescheduleRequestedTimeBlockLabel: string | null;
+  rescheduleRequestedTimeBlockStartTime: string | null;
+  rescheduleRequestedTimeBlockEndTime: string | null;
   rescheduleRequestReason: string | null;
   rescheduleResponseNote: string | null;
   address: string | null;
@@ -379,7 +382,7 @@ export interface RequestBookingArgsBilling {
  */
 export interface RequestBookingArgsCommunication {
   emailConfirmation: boolean;
-  timeVisibility: boolean;
+  timeVisibility?: boolean;
 }
 
 /**
