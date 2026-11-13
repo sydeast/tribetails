@@ -471,7 +471,7 @@ internal actual suspend fun platformUpdateMediaTags(mediaId: String, taggedKinId
 internal actual suspend fun platformUpdateKinfolkFields(kinfolkId: String, changes: List<KinfolkFieldChange>): WriteResult<Unit> =
     transportResult("update failed") {
         require(kinfolkId.isNotBlank()) { "updateKinfolk requires a kinfolk id" }
-        require(changes.none { it.path.first() == "_id" || it.path.first() in KINFOLK_WRITE_EXCLUDED_KEYS }) { "updateKinfolk: a reserved key reached the write" }
+        require(changes.none { it.path.first() == "_id" || it.path.first() in KINFOLK_NEVER_WRITTEN_KEYS }) { "updateKinfolk: a reserved key reached the write" }
         if (changes.isNotEmpty()) JvmFirestoreRest.mergeFieldChanges("kinfolk", kinfolkId, changes)
         WriteResult.Ok(Unit)
     }

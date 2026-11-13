@@ -48,13 +48,19 @@ import kotlinx.coroutines.withContext
 import java.util.*
 import com.tribetails.auntieos.util.runCatchingCancellable
 
-/** See [AuntieRepository.kinfolkCreatePayload]. */
-private val KINFOLK_CREATE_EXCLUDED_FIELDS = setOf(
+/**
+ * See [AuntieRepository.kinfolkCreatePayload]. `createdAt` and `createdAtSource`
+ * (#1953) are the callable's own stamps: it drops them from what a client sends,
+ * and they are left out here too so a create never carries them at all.
+ */
+internal val KINFOLK_CREATE_EXCLUDED_FIELDS = setOf(
     "id",
     "emergencyContacts",
     "emergencyContactName",
     "emergencyContactPhone",
     "emergencyContactRelation",
+    "createdAt",
+    "createdAtSource",
 )
 
 /**

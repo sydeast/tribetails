@@ -605,14 +605,14 @@ export function Directory({
     <div className="screen">
       {/* d1 / d2: the Den entrance stagger (styles/base.css), heading then
           controls. The list itself is deliberately NOT staggered: it arrives
-          from a live Firestore stream, so its rows are already appearing on
+          from a live stream, so its rows are already appearing on
           their own schedule and a second animation on top reads as a glitch. */}
       <div className="d1">
         <DenScreenHeading
           kicker="The Den · Directory"
           title="Your"
           accentTail="kinfolk"
-          subtitle="Every household and kin on file, streamed live from Firestore."
+          subtitle="Every household and kin on file."
           trailing={
             <div className="directory__header-actions">
               <PrimaryButton

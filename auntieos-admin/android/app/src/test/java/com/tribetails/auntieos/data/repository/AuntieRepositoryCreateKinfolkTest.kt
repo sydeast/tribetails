@@ -99,6 +99,18 @@ class AuntieRepositoryCreateKinfolkTest {
         assertEquals("active", payload["status"])
     }
 
+    /** #1953: the creation stamp is the callable's to write, never the client's. */
+    @Test
+    fun `createKinfolkComplete never sends createdAt or createdAtSource`() = runBlocking {
+        answer(mapOf("kinfolkId" to "kf-new", "duplicateOf" to null))
+
+        repo().createKinfolkComplete(input.copy(createdAt = "2020-01-01T00:00:00Z", createdAtSource = "live"), null)
+
+        val payload = sentKinfolk()
+        assertFalse("createdAt is stamped by the server", payload.containsKey("createdAt"))
+        assertFalse("createdAtSource is stamped by the server", payload.containsKey("createdAtSource"))
+    }
+
     @Test
     fun `a duplicateOf answer returns the existing household, so Add continues it`() = runBlocking {
         answer(mapOf("kinfolkId" to "kf-existing", "duplicateOf" to "kf-existing"))

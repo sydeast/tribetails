@@ -230,6 +230,47 @@ describe('Directory screen, Kinfolk tab', () => {
     expect(screen.getByText('Amy Adams')).toBeInTheDocument();
   });
 
+  it('#1952 text with a digit in it does not list households by the digits in their phones', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'a', firstName: 'Jamie', phoneNumber: '(805) 555-0188' }),
+        kinfolkRow({ _id: 'b', firstName: 'Amy', lastName: 'Adams', email: 'amy@x.com', phoneNumber: '805-555-0128' }),
+      ],
+    };
+    render(<Directory />);
+    await userEvent.type(screen.getByRole('searchbox'), 'zzzz8');
+    expect(screen.queryByText('Jamie Halbrook')).toBeNull();
+    expect(screen.queryByText('Amy Adams')).toBeNull();
+    expect(screen.getByText('No matches for "zzzz8".')).toBeInTheDocument();
+    await userEvent.clear(screen.getByRole('searchbox'));
+    await userEvent.type(screen.getByRole('searchbox'), '555-0188');
+    expect(screen.getByText('Jamie Halbrook')).toBeInTheDocument();
+    expect(screen.queryByText('Amy Adams')).toBeNull();
+  });
+
+  it('#1953 Recently Created puts the household made last first, though its join date is blank', async () => {
+    kinfolkAsync = {
+      status: 'ready',
+      data: [
+        kinfolkRow({ _id: 'a', firstName: 'Amy', lastName: 'Adams', joinDate: '2026-06-01' }),
+        kinfolkRow({ _id: 'n', firstName: 'Nia', lastName: 'Nash', joinDate: '', createdAt: fakeTs('2026-11-10T15:00:00.000Z') }),
+        kinfolkRow({ _id: 'z', firstName: 'Zack', lastName: 'Young', joinDate: '' }),
+      ],
+    };
+    render(<Directory />);
+    const names = () => screen.getAllByText(/^(Amy Adams|Nia Nash|Zack Young)$/).map((el) => el.textContent);
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /sort/i }), 'Recently Created');
+    expect(names()).toEqual(['Nia Nash', 'Amy Adams', 'Zack Young']);
+  });
+
+  it('#1937 the title tooltip names what the screen holds, with no database wording', () => {
+    kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
+    const { container } = render(<Directory />);
+    expect(container.textContent).not.toMatch(/firestore|streamed/i);
+    expect(screen.getByText('Every household and kin on file.')).toBeInTheDocument();
+  });
+
   it('clicking a household card calls onSelectKinfolk with its id', async () => {
     kinfolkAsync = { status: 'ready', data: [kinfolkRow({ _id: 'kf1' })] };
     const onSelectKinfolk = vi.fn();

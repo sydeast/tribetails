@@ -456,7 +456,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.kinSection(
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun KinfolkDirectoryCard(
+internal fun KinfolkDirectoryCard(
     kf: Kinfolk,
     kin: List<Kin>,
     lastVisit: String?,
@@ -485,12 +485,12 @@ private fun KinfolkDirectoryCard(
                     gradientSeed = kf.id.ifBlank { kf.displayName },
                 )
                 Column(modifier = Modifier.weight(1f)) {
+                    // #1964: the name wraps onto a second line beside a corner
+                    // badge instead of being cut to its first words and dots.
                     Text(
                         text = name,
                         style = AuntieTheme.typography.headlineSmall,
                         color = c.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                     if (subtitle.isNotBlank()) {
                         Text(
@@ -558,7 +558,7 @@ private fun KinfolkDirectoryCard(
  * exception rule as the household card's.
  */
 @Composable
-private fun KinDirectoryCard(kin: Kin, ownerName: String, onClick: () -> Unit) {
+internal fun KinDirectoryCard(kin: Kin, ownerName: String, onClick: () -> Unit) {
     val c = AuntieTheme.colors
     val detail = listOf(
         kin.species.ifBlank { null },
@@ -582,12 +582,11 @@ private fun KinDirectoryCard(kin: Kin, ownerName: String, onClick: () -> Unit) {
                     gradientSeed = kin.id.ifBlank { kin.name },
                 )
                 Column(modifier = Modifier.weight(1f)) {
+                    // #1964: wraps like the household card's name.
                     Text(
                         text = kin.name.ifBlank { "Unnamed" },
                         style = AuntieTheme.typography.headlineSmall,
                         color = c.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                     if (detail.isNotBlank()) {
                         Text(

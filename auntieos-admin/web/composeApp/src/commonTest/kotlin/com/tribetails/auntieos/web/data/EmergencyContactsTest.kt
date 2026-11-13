@@ -56,6 +56,21 @@ class EmergencyContactsTest {
         assertTrue("serviceAddress" in body, "every other model field is still written")
     }
 
+    /**
+     * #1953: `createdAt` is the createKinfolk callable's stamp. A desktop create
+     * never sends it, and an edit whose rebuilt model lost it never blanks it.
+     */
+    @Test
+    fun noWriteCarriesTheCreationStamp() {
+        val loaded = Kinfolk(_id = "kf1", firstName = "Dana", createdAt = "2026-11-10T15:00:00Z", createdAtSource = "live")
+        val body = Json.parseToJsonElement(kinfolkWriteJson(loaded)).jsonObject
+        assertFalse("createdAt" in body, "createdAt must not be written")
+        assertFalse("createdAtSource" in body, "createdAtSource must not be written")
+
+        val rebuilt = loaded.copy(createdAt = "", createdAtSource = "", gateCode = "1234")
+        assertEquals(listOf(listOf("gateCode")), kinfolkChanges(loaded, rebuilt).map { it.path })
+    }
+
     @Test
     fun validationMirrorsTheServer() {
         val names = listOf("Dana Mercer")
