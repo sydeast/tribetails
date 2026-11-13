@@ -261,6 +261,35 @@ class DirectoryViewModelTest {
         assertEquals(listOf("joined-today", "stamped", "joined-2025"), sorted(rows))
     }
 
+    /** #2171 review: same rows and order as the web admin's and Android's test. */
+    @Test
+    fun a_day_only_join_date_starts_at_midnight_business_time_not_utc_midnight() {
+        val rows = listOf(
+            // 11:30 PM on 11 Nov in Chicago, which is already 12 Nov in UTC.
+            kinfolk("late-night", "Bea", "Brook").copy(createdAt = "2026-11-12T05:30:00Z", createdAtSource = "live"),
+            kinfolk("joined-next-day", "Amy", "Adams").copy(joinDate = "2026-11-12"),
+            // 12:30 AM on 12 Nov in Chicago.
+            kinfolk("early-morning", "Cal", "Cole").copy(createdAt = "2026-11-12T06:30:00Z", createdAtSource = "live"),
+        )
+        val expected = listOf("early-morning", "joined-next-day", "late-night")
+        assertEquals(expected, sorted(rows))
+        assertEquals(
+            expected,
+            DirectoryUiState(allKinfolk = FirestoreResult.Data(rows), sort = SortOption.RecentlyUpdated).filteredSorted.map { it._id },
+        )
+    }
+
+    /** The instant forms web `Date.parse` and Android `OffsetDateTime.parse` both accept: no seconds, and an offset. */
+    @Test
+    fun an_instant_without_seconds_or_with_an_offset_is_still_an_instant() {
+        val rows = listOf(
+            kinfolk("no-seconds", "Amy", "Adams").copy(createdAt = "2026-11-12T07:00Z"),
+            kinfolk("offset", "Bea", "Brook").copy(createdAt = "2026-11-12T00:30:00-06:00"),
+            kinfolk("utc", "Cal", "Cole").copy(createdAt = "2026-11-12T06:45:00Z"),
+        )
+        assertEquals(listOf("no-seconds", "utc", "offset"), sorted(rows))
+    }
+
     /** #2171: a migrated household sorts by the old system's creation date, never its migration date. */
     @Test
     fun recently_created_places_a_migrated_household_below_a_newer_one_and_above_an_older_one() {

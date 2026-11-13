@@ -52,12 +52,17 @@
  *                      Timestamp, the type createKinfolk writes; the clients
  *                      also read an ISO string. `canonicalInstant` refuses a
  *                      bare day, so expand a day-only source date to an instant
- *                      first or the row is marked `'import'`.
+ *                      (midnight on the business's clock, America/Chicago, the
+ *                      same reading the Directory gives a bare join date) first,
+ *                      or the row is marked `'import'`.
  *   `_migratedAt`      the ingest instant, as above.
  *   `updatedAt`        the old system's own last-change instant when it has
  *                      one, otherwise ABSENT. Never the migration time: the
  *                      Directory's "Recently Updated" reads it as the last
- *                      change.
+ *                      change. A Timestamp, or an ISO string WITH a zone (`Z`
+ *                      or an offset): all three clients refuse a zone-less
+ *                      wall-clock string and treat the household as never
+ *                      changed.
  *
  * The Directory (admin web `api/directory.ts`, Android and desktop
  * `DirectoryViewModel.kt`) orders "Recently Created" on ONE timeline:

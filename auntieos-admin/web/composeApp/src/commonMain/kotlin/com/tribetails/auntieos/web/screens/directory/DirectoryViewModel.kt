@@ -6,6 +6,7 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 import com.tribetails.auntieos.web.data.AuntieDataSource
+import com.tribetails.auntieos.web.data.DEFAULT_BUSINESS_TIME_ZONE
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.util.SortOption
@@ -20,6 +21,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
 
 /**
  * Directory Kinfolk-tab state holder.
@@ -69,15 +73,27 @@ data class DirectoryUiState(
 private val ISO_DAY = Regex("""^\d{4}-\d{2}-\d{2}$""")
 private val ISO_INSTANT = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$""")
 
-/** Epoch millis of an ISO day (UTC midnight) or ISO instant, else null. Free text is never guessed at. */
+/** An instant written to the minute ("2026-11-12T07:00Z"), which `Instant.parse` refuses and web and Android read. */
+private val ISO_INSTANT_NO_SECONDS = Regex("""^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(Z|[+-]\d{2}:\d{2})$""")
+
+/**
+ * Epoch millis of an ISO instant, or of an ISO day read as midnight on the
+ * business's clock (America/Chicago, the server's default), else null. A join
+ * date of 12 Nov must sort above a household made at 11:30 PM on 11 Nov in
+ * Chicago, which UTC midnight would not do (#2171 review). The web admin and
+ * Android read a day, and an instant with no seconds, the same way. Free text
+ * is never guessed at.
+ */
 @OptIn(ExperimentalTime::class)
 private fun isoMillis(raw: String): Long? {
     val s = raw.trim()
-    val iso = when {
-        ISO_DAY.matches(s) -> "${s}T00:00:00Z"
-        ISO_INSTANT.matches(s) -> s
-        else -> return null
+    if (ISO_DAY.matches(s)) {
+        return runCatchingCancellable {
+            LocalDate.parse(s).atStartOfDayIn(TimeZone.of(DEFAULT_BUSINESS_TIME_ZONE)).toEpochMilliseconds()
+        }.getOrNull()
     }
+    if (!ISO_INSTANT.matches(s)) return null
+    val iso = ISO_INSTANT_NO_SECONDS.matchEntire(s)?.let { "${it.groupValues[1]}:00${it.groupValues[2]}" } ?: s
     return runCatchingCancellable { Instant.parse(iso).toEpochMilliseconds() }.getOrNull()
 }
 

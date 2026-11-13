@@ -163,12 +163,20 @@ private fun sortKinfolkByDate(
 private val ISO_DAY = Regex("""^\d{4}-\d{2}-\d{2}$""")
 private val ISO_INSTANT = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$""")
 
-/** Epoch millis of an ISO day (UTC midnight) or ISO instant, else null. Free text is never guessed at. */
+/**
+ * Epoch millis of an ISO instant, or of an ISO day read as midnight on the
+ * business's clock (America/Chicago, the server's default), else null. A join
+ * date of 12 Nov must sort above a household made at 11:30 PM on 11 Nov in
+ * Chicago, which UTC midnight would not do (#2171 review). The web admin and the
+ * desktop console read a day the same way. Free text is never guessed at.
+ */
 private fun isoMillis(raw: String): Long? {
     val s = raw.trim()
     return runCatching {
         when {
-            ISO_DAY.matches(s) -> java.time.LocalDate.parse(s).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+            ISO_DAY.matches(s) -> java.time.LocalDate.parse(s)
+                .atStartOfDay(java.time.ZoneId.of(com.tribetails.auntieos.data.model.DEFAULT_BUSINESS_TIME_ZONE))
+                .toInstant().toEpochMilli()
             ISO_INSTANT.matches(s) -> java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli()
             else -> null
         }

@@ -152,6 +152,32 @@ class DirectorySortTest {
         assertEquals(listOf("joined-today", "stamped", "joined-2025"), sortKinfolkDirectory(rows, SortOption.RecentlyCreated).map { it.id })
     }
 
+    /** #2171 review: same rows and order as the web admin's and the desktop console's test. */
+    @Test
+    fun `a day-only join date starts at midnight business time, not UTC midnight`() {
+        val rows = listOf(
+            // 11:30 PM on 11 Nov in Chicago, which is already 12 Nov in UTC.
+            household("late-night", "Bea", "Brook").copy(createdAt = "2026-11-12T05:30:00Z", createdAtSource = "live"),
+            household("joined-next-day", "Amy", "Adams", joinDate = "2026-11-12"),
+            // 12:30 AM on 12 Nov in Chicago.
+            household("early-morning", "Cal", "Cole").copy(createdAt = "2026-11-12T06:30:00Z", createdAtSource = "live"),
+        )
+        val expected = listOf("early-morning", "joined-next-day", "late-night")
+        assertEquals(expected, sortKinfolkDirectory(rows, SortOption.RecentlyCreated).map { it.id })
+        assertEquals(expected, sortKinfolkDirectory(rows, SortOption.RecentlyUpdated).map { it.id })
+    }
+
+    /** Same rows and order as the web admin's and the desktop console's test. */
+    @Test
+    fun `an instant with no seconds or with an offset is still an instant`() {
+        val rows = listOf(
+            household("no-seconds", "Amy", "Adams").copy(createdAt = "2026-11-12T07:00Z"),
+            household("offset", "Bea", "Brook").copy(createdAt = "2026-11-12T00:30:00-06:00"),
+            household("utc", "Cal", "Cole").copy(createdAt = "2026-11-12T06:45:00Z"),
+        )
+        assertEquals(listOf("no-seconds", "utc", "offset"), sortKinfolkDirectory(rows, SortOption.RecentlyCreated).map { it.id })
+    }
+
     /** #2171: a migrated household sorts by the old system's creation date, never its migration date. */
     @Test
     fun `Recently Created places a migrated household below a newer one and above an older one`() {

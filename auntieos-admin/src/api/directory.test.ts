@@ -308,6 +308,29 @@ describe('Recently Created (#1953)', () => {
     ];
     expect(ids(rows)).toEqual(['dated', 'junk', 'nullstamp', 'z']);
   });
+
+  it('#2171 review: a day-only join date starts at midnight business time (America/Chicago), not UTC midnight', () => {
+    const rows = [
+      // 11:30 PM on 11 Nov in Chicago, which is already 12 Nov in UTC.
+      kinfolk({ _id: 'late-night', lastName: 'Brook', createdAt: '2026-11-12T05:30:00Z', createdAtSource: 'live' }),
+      kinfolk({ _id: 'joined-next-day', lastName: 'Adams', joinDate: '2026-11-12' }),
+      // 12:30 AM on 12 Nov in Chicago.
+      kinfolk({ _id: 'early-morning', lastName: 'Cole', createdAt: '2026-11-12T06:30:00Z', createdAtSource: 'live' }),
+    ];
+    expect(ids(rows)).toEqual(['early-morning', 'joined-next-day', 'late-night']);
+    expect(filterSortKinfolk(rows, '', 'recently_updated').map((r) => r._id)).toEqual([
+      'early-morning', 'joined-next-day', 'late-night',
+    ]);
+  });
+
+  it('an instant with no seconds or with an offset is still an instant (same rows as Android and desktop)', () => {
+    const rows = [
+      kinfolk({ _id: 'no-seconds', lastName: 'Adams', createdAt: '2026-11-12T07:00Z' }),
+      kinfolk({ _id: 'offset', lastName: 'Brook', createdAt: '2026-11-12T00:30:00-06:00' }),
+      kinfolk({ _id: 'utc', lastName: 'Cole', createdAt: '2026-11-12T06:45:00Z' }),
+    ];
+    expect(ids(rows)).toEqual(['no-seconds', 'utc', 'offset']);
+  });
 });
 
 /**

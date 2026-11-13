@@ -1,6 +1,8 @@
 import { type CollectionSpec } from '../lib/firestore';
 import { str } from '../lib/coerce';
 import { createdAtIsImportDate } from '../lib/createdAtProvenance';
+import { DEFAULT_BUSINESS_TIME_ZONE } from '../lib/businessOperations';
+import { businessWallClockToMs } from '../lib/businessZoneTime';
 import type { Timestamp } from 'firebase/firestore';
 
 /**
@@ -590,11 +592,18 @@ export function matchesTag(row: { tags?: unknown }, tag: string): boolean {
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-/** Epoch millis of an ISO day (read as UTC midnight) or ISO instant, else null. Free text is never guessed at. */
+/**
+ * Epoch millis of an ISO instant, or of an ISO day read as midnight on the
+ * business's clock (America/Chicago, the server's default), else null. A join
+ * date of 12 Nov must sort above a household made at 11:30 PM on 11 Nov in
+ * Chicago, which UTC midnight would not do (#2171 review). Android and the
+ * desktop console read a day the same way. Free text is never guessed at.
+ */
 function isoMillis(raw: string): number | null {
   const s = raw.trim();
-  if (!ISO_DAY.test(s) && !ISO_INSTANT.test(s)) return null;
-  const ms = Date.parse(ISO_DAY.test(s) ? `${s}T00:00:00Z` : s);
+  if (ISO_DAY.test(s)) return businessWallClockToMs(s, '00:00', DEFAULT_BUSINESS_TIME_ZONE);
+  if (!ISO_INSTANT.test(s)) return null;
+  const ms = Date.parse(s);
   return Number.isNaN(ms) ? null : ms;
 }
 
