@@ -53,13 +53,28 @@ function opening(name: string): string {
 }
 
 /**
+ * Why the household switch stopped this notice, as the end of the sentence
+ * (#2185). The owner's line says where to change it. An Auntie never sees
+ * Settings (ruling 2026-11-13), so her line says who can.
+ */
+function noticesOffBecause(auntie: boolean): string {
+  return auntie
+    ? 'because the owner has notices to households turned off.'
+    : 'because notices to households are off in Settings.';
+}
+
+/**
  * The sentence the card shows once the notification has settled, or `''` when
  * there is nothing to say about the household (an undo, which never notifies,
  * or a double tap that wrote nothing).
+ *
+ * @param auntie an Auntie is signed in (`useIsAuntie`); only the Settings
+ *        line changes.
  */
 export function visitNoticeOutcomeSentence(
   outcome: { notified: boolean; notifySkipped: string | null },
   household: string,
+  auntie = false,
 ): string {
   const name = opening(household);
   if (outcome.notified) return `${name} was notified.`;
@@ -70,7 +85,7 @@ export function visitNoticeOutcomeSentence(
     case 'household_has_no_portal_account':
       return `${name} was not notified, because they have no portal account.`;
     case 'household_notices_off':
-      return `${name} was not notified, because notices to households are off in Settings.`;
+      return `${name} was not notified, ${noticesOffBecause(auntie)}`;
     case 'household_prefs_suppressed':
       return `${name} was not notified, because this notice is turned off for them.`;
     case 'already_notified':
@@ -169,6 +184,7 @@ export function visitNoticeConfirmLine(
   preview: VisitNoticePreview,
   action: VisitLifecycleAction,
   household: string,
+  auntie = false,
 ): string | null {
   const name = opening(household);
   switch (preview.kind) {
@@ -184,7 +200,7 @@ export function visitNoticeConfirmLine(
         case 'household_has_no_portal_account':
           return `${name} will not be told, because they have no portal account.`;
         case 'household_notices_off':
-          return `${name} will not be told, because notices to households are off in Settings.`;
+          return `${name} will not be told, ${noticesOffBecause(auntie)}`;
         case 'session_has_no_routing_ids':
           return `${name} will not be told, because this visit is not linked to a booking.`;
         case 'session_has_no_kinfolk':
@@ -195,7 +211,7 @@ export function visitNoticeConfirmLine(
 
 /** {@link visitNoticePreview} then {@link visitNoticeConfirmLine}, for a dialog that wants the line. */
 export function visitNoticeConfirmFor(
-  input: Parameters<typeof visitNoticePreview>[0] & { household: string },
+  input: Parameters<typeof visitNoticePreview>[0] & { household: string; auntie?: boolean },
 ): string | null {
-  return visitNoticeConfirmLine(visitNoticePreview(input), input.action, input.household);
+  return visitNoticeConfirmLine(visitNoticePreview(input), input.action, input.household, input.auntie === true);
 }

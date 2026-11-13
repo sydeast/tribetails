@@ -105,3 +105,34 @@ describe('parity with mytribe/functions/src/lib/arrivalVerification.ts', () => {
     expect(client).toContain('before a visit can be marked complete. Mark it on the visit card first');
   });
 });
+
+// #2185: an Auntie never sees Settings, so her refusal keeps only the remedy
+// she can do herself. The server never says this to her: the callable gate
+// refuses her `transitionBookingStatus` before the arrival check runs.
+describe('#2185 the refusal under an Auntie sign-in', () => {
+  it('names no Settings screen and no switch to turn off', () => {
+    const line = completeRefusal(true, { arrivedAt: '', departedAt: '' }, true);
+    expect(line).toBe(
+      'This visit has no arrival and departure recorded, and the business requires both before a visit ' +
+        'can be marked complete. Mark it on the visit card first.',
+    );
+    expect(line).not.toMatch(/Settings|turn off/);
+    expect(arrivalVerificationMessage(['departure'], true)).toBe(
+      'This visit has no departure recorded, and the business requires it before a visit can be marked ' +
+        'complete. Mark it on the visit card first.',
+    );
+  });
+
+  it('the owner keeps the Settings wording, and that is the default', () => {
+    const owner =
+      'This visit has no arrival recorded, and your settings require it before a visit can be marked ' +
+      'complete. Mark it on the visit card first, or turn off "Verify arrival and departure" in Settings.';
+    expect(completeRefusal(true, { arrivedAt: '', departedAt: 'x' }, false)).toBe(owner);
+    expect(completeRefusal(true, { arrivedAt: '', departedAt: 'x' })).toBe(owner);
+  });
+
+  it('an Auntie is still let through when the rule is off or the steps are stamped', () => {
+    expect(completeRefusal(false, { arrivedAt: '', departedAt: '' }, true)).toBeNull();
+    expect(completeRefusal(true, { arrivedAt: 'a', departedAt: 'd' }, true)).toBeNull();
+  });
+});

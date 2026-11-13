@@ -36,6 +36,7 @@ import { useVisitNoticeReach } from '../lib/useVisitNoticeReach';
 import { actionNotifiesHousehold, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
 import { completeRefusal } from '../lib/completeRule';
 import { useArrivalRule } from '../lib/useArrivalRule';
+import { useIsAuntie } from '../lib/useIsAuntie';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { useCollection, useDocById } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
@@ -157,6 +158,8 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
   // Computed once per render pass, not per keystroke/tick, same rationale as
   // Invoices.tsx's todayIso: "today" doesn't change mid-session.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
+  // #2185: asked once for the board, so no card points an Auntie to Settings.
+  const auntie = useIsAuntie();
 
   // #2036: the Archive's FROM and TO are days on the BUSINESS's calendar. It
   // opens on the 30 days that end where Recent stops, so no wrapped visit sits
@@ -252,6 +255,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
   const catalog = useBookingCatalog();
 
   const cardContext: CardContext = {
+    auntie,
     todayIso,
     addressById,
     kinById,
@@ -457,6 +461,8 @@ function OwedKinTalesGroup({
 
 /** Everything a card needs beyond its own row, passed down whole rather than one prop at a time. */
 interface CardContext {
+  /** An Auntie is signed in (#2185): lines that send the owner to Settings name the owner instead. */
+  auntie: boolean;
   todayIso: string;
   addressById: Map<string, string>;
   kinById: Map<string, Kin>;
@@ -532,7 +538,7 @@ function messageOf(err: unknown): string {
  * acts.
  */
 function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) {
-  const { todayIso, addressById, kinById, catalog, onSelect, onWritten, onComposeKinTale, onViewKinTale } =
+  const { auntie, todayIso, addressById, kinById, catalog, onSelect, onWritten, onComposeKinTale, onViewKinTale } =
     ctx;
   const state = sessionState(str(entry.status));
   const info = sessionStateInfo(state);
@@ -540,7 +546,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   // The whole ENTRY, not its id: the clock writes the status straight to
   // Firestore now, and it decides legality, no-op and notification routing from
   // this row rather than reading the document back first.
-  const clock = useVisitLifecycle(entry, household, onWritten);
+  const clock = useVisitLifecycle(entry, household, onWritten, auntie);
   // #1840: the confirm's household line, from the server's answer (a member
   // login to send to, and the switch), asked when the confirm opens.
   const reach = useVisitNoticeReach(
@@ -551,7 +557,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   const noticeLine =
     clock.pending === null
       ? null
-      : visitNoticeConfirmFor({ action: clock.pending.action, session: entry, reach, household });
+      : visitNoticeConfirmFor({ action: clock.pending.action, session: entry, reach, household, auntie });
 
   // "Complete" is NOT an in-visit clock action and so does not go through the
   // hook: completing a visit is terminal and billable, so it goes through
@@ -580,7 +586,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   }, [state, settledStatus, onWritten]);
 
   function askComplete() {
-    const refusal = completeRefusal(arrivalRule, entry);
+    const refusal = completeRefusal(arrivalRule, entry, auntie);
     if (refusal !== null) {
       setCompleteError(refusal);
       return;

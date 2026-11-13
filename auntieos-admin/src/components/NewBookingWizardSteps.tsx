@@ -29,6 +29,7 @@ import {
 import { shortDayLabel } from '../lib/bookingAvailability';
 import { businessWallClock } from '../lib/businessZoneTime';
 import { useRovingTabs } from '../lib/useRovingTabs';
+import { useIsAuntie } from '../lib/useIsAuntie';
 import { Banner } from './Banner';
 import { GhostButton } from './Buttons';
 
@@ -284,6 +285,8 @@ export interface ServiceStepProps {
  */
 export function ServiceStep({ state, onChange, options, optionsError }: ServiceStepProps) {
   const [query, setQuery] = useState('');
+  // #2185: an Auntie never sees Settings, so her empty line names the owner.
+  const auntie = useIsAuntie();
   const visible = useMemo(() => {
     if (options === null) return [];
     const q = query.trim().toLowerCase();
@@ -323,8 +326,9 @@ export function ServiceStep({ state, onChange, options, optionsError }: ServiceS
             placeholder="e.g. Dog Walk"
           />
           <span className="new-booking__hint">
-            No KinCare types yet. Add them in Settings, under KinCare types, and they show up here
-            with their prices.
+            {auntie
+              ? 'No KinCare types yet. Ask the owner to add them, and they show up here.'
+              : 'No KinCare types yet. Add them in Settings, under KinCare types, and they show up here with their prices.'}
           </span>
         </div>
       ) : (
@@ -717,6 +721,8 @@ export function ReviewStep({
 }: ReviewStepProps) {
   const visits = buildVisits(state);
   const total = wizardTotal(state, options);
+  // #2185: the unpriced line's remedy names the owner for an Auntie, not Settings.
+  const auntie = useIsAuntie();
   const days = plannedDayCount(state);
   // Read off the BUILT visits, never off `state.serviceName`. Step 2 sets a
   // DEFAULT: it rewrites the template, and days already snapshotted keep the
@@ -792,8 +798,10 @@ export function ReviewStep({
           // household and then has to walk back.
           <p className="nbw__warn" role="alert">
             {total.unpriced.join(', ')} {total.unpriced.length === 1 ? 'has' : 'have'} no price on the
-            rate card, so {total.unpriced.length === 1 ? 'it is' : 'they are'} not in this total. Set{' '}
-            {total.unpriced.length === 1 ? 'it' : 'them'} in Settings, under KinCare types.
+            rate card, so {total.unpriced.length === 1 ? 'it is' : 'they are'} not in this total.{' '}
+            {auntie
+              ? `Ask the owner to set ${total.unpriced.length === 1 ? 'it' : 'them'}.`
+              : `Set ${total.unpriced.length === 1 ? 'it' : 'them'} in Settings, under KinCare types.`}
           </p>
         )}
       </section>

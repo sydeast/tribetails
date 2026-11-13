@@ -46,7 +46,17 @@ vi.mock('../lib/useBookingCatalog', () => ({
 const { previewVisitNotification } = vi.hoisted(() => ({ previewVisitNotification: vi.fn() }));
 vi.mock('../api/visitNoticePreview', () => ({ previewVisitNotification }));
 
+// #2185: who is signed in. The owner by default; an Auntie's work settings
+// come through the staff read, answered here as the server would.
+const { currentSessionSeat, call } = vi.hoisted(() => ({ currentSessionSeat: vi.fn(), call: vi.fn() }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat,
+}));
+vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fns')>()), call }));
 import { Sessions } from './Sessions';
+import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
+import { invalidateSharedLoad } from '../lib/useSharedOneShot';
 
 function at(offset: number, hour = 12): string {
   const d = new Date();
@@ -98,6 +108,8 @@ function roster(households: Kinfolk[] | null) {
 const user = userEvent.setup();
 
 beforeEach(() => {
+  currentSessionSeat.mockReset().mockResolvedValue(OWNER_SEAT);
+  call.mockReset().mockImplementation(staffOnlyCall);
   previewVisitNotification.mockReset().mockResolvedValue({ willNotify: true, reason: null });
   patchVisitLifecycle.mockReset();
   usePagedCollection.mockReset().mockReturnValue(paged([entry()]));
@@ -216,6 +228,66 @@ describe('the outcome survives the card moving to Active', () => {
     expect(
       await within(active).findByText(
         'SCHEDULED → ON_MY_WAY. Dre East was not notified, because they have no portal account.',
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
+// #2185: an Auntie never sees Settings (ruling 2026-11-13). With the switch
+// off, her confirm and her result line name the owner instead.
+describe('#2185 the switch-off lines under an Auntie sign-in', () => {
+  beforeEach(() => {
+    invalidateSharedLoad();
+    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_notices_off' });
+  });
+
+  it('the confirm names the owner, and no Settings screen', async () => {
+    const dialog = await openOmwConfirm();
+    expect(
+      await within(dialog).findByText(
+        'Dre East will not be told, because the owner has notices to households turned off.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Settings/)).toBeNull();
+  });
+
+  it('the result line names the owner, and no Settings screen', async () => {
+    patchVisitLifecycle.mockResolvedValue({
+      sessionId: 'dre1',
+      action: 'ON_MY_WAY',
+      from: 'SCHEDULED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      notification: Promise.resolve({ notified: false, notifySkipped: 'household_notices_off' }),
+    });
+    const dialog = await openOmwConfirm();
+    await within(dialog).findByText(/the owner has notices to households turned off/);
+    await user.click(within(dialog).getByRole('button', { name: /yes, mark it on the way/i }));
+    expect(
+      await screen.findByText(
+        'SCHEDULED → ON_MY_WAY. Dre East was not notified, because the owner has notices to households turned off.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/in Settings/)).toBeNull();
+  });
+
+  it('the owner still reads the Settings line', async () => {
+    currentSessionSeat.mockResolvedValue(OWNER_SEAT);
+    patchVisitLifecycle.mockResolvedValue({
+      sessionId: 'dre1',
+      action: 'ON_MY_WAY',
+      from: 'SCHEDULED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      notification: Promise.resolve({ notified: false, notifySkipped: 'household_notices_off' }),
+    });
+    const dialog = await openOmwConfirm();
+    await within(dialog).findByText('Dre East will not be told, because notices to households are off in Settings.');
+    await user.click(within(dialog).getByRole('button', { name: /yes, mark it on the way/i }));
+    expect(
+      await screen.findByText(
+        'SCHEDULED → ON_MY_WAY. Dre East was not notified, because notices to households are off in Settings.',
       ),
     ).toBeInTheDocument();
   });

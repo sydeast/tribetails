@@ -89,10 +89,15 @@ export function canineHeatRisk(heatIndex: number | null): WeatherRisk {
  * Everything else is passed through verbatim: an unrecognised failure is
  * reported, never smoothed over. Android's `WeatherWidgetBody` does the same
  * with the same two branches.
+ *
+ * `auntie` (#2185): an Auntie never sees Settings (ruling 2026-11-13), so her
+ * sentence says who sets the area instead of where.
  */
-export function weatherErrorText(message: string): string {
+export function weatherErrorText(message: string, auntie = false): string {
   if (message.includes('weather_location_not_set')) {
-    return 'Set your weather area (city, metro, or ZIP) in Settings to turn this card on.';
+    return auntie
+      ? 'The owner has not set a weather area yet, so this card is off.'
+      : 'Set your weather area (city, metro, or ZIP) in Settings to turn this card on.';
   }
   const trimmed = message.trim();
   return `Couldn't load weather: ${trimmed === '' ? 'unknown error' : trimmed}`;

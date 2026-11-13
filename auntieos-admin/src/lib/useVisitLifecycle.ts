@@ -104,11 +104,14 @@ function messageOf(err: unknown): string {
  *                  and `useDocById` is a live subscription, so the board would
  *                  otherwise keep painting the status the row was fetched with
  *                  while its buttons offered the transitions of that old state.
+ * @param auntie    an Auntie is signed in (#2185), so the result sentence names
+ *                  the owner rather than Settings. The screen asks once.
  */
 export function useVisitLifecycle(
   session: VisitLifecycleSession | null,
   household: string,
   onWritten?: () => void,
+  auntie = false,
 ): VisitLifecycleController {
   const [pending, setPending] = useState<LifecycleActionDef | null>(null);
   const sessionId = session?._id ?? null;
@@ -165,7 +168,7 @@ export function useVisitLifecycle(
       // so there is no catch: a failed push comes back as `notified: false`.
       // Written to the STORE, not to this component, which may have unmounted.
       void res.notification.then((outcome) => {
-        const said = visitNoticeOutcomeSentence(outcome, household);
+        const said = visitNoticeOutcomeSentence(outcome, household, auntie);
         settleVisitClockWrite(id, seq, { status: 'done', message: said === '' ? moved : `${moved} ${said}` });
       });
       return true;
