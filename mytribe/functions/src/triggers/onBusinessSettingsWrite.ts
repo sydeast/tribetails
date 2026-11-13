@@ -59,18 +59,29 @@ async function mirrorPublicCard(after: Record<string, unknown> | undefined): Pro
  * WHY ON EVERY WRITE WHILE OFF, not only on the on-to-off edge. The clear is
  * idempotent and, with nothing stamped, it is one empty query. Running it on
  * every save while the switch is off makes it self-healing: a run that failed
- * (this trigger has no retry), or a hand-marked completion that slipped a stamp
- * in beside the switch-off, is cleared by the next settings save instead of
+ * (this trigger has no retry), or a hand-marked completion whose own re-check
+ * of the switch failed, is cleared by the next settings save instead of
  * standing for good. The departure trigger reads the switch inside its own
  * transaction, so a visit it completes cannot interleave with the switch-off.
  *
  * Turning the switch back on clears nothing and stamps nothing: only visits
  * completed from then on are stamped.
+ *
+ * THE STORED SWITCH, NOT ONLY THE EVENT'S. Trigger events are not delivered in
+ * order, so an "off" event handled after the owner switched it back on would
+ * wipe tasks the switch now owes, and nothing re-stamps them. The clear runs
+ * only when the event AND the document as it stands both read off. A failed
+ * read clears nothing.
+ *
+ * The other `transitionBookingStatus` window (its switch read is outside a
+ * transaction) is closed there: it re-reads the switch after its write lands.
  */
 async function clearTasksWhileOff(after: Record<string, unknown> | undefined): Promise<void> {
   // Loaded here, not at file scope: see coldStartImportGraph.test.ts.
   const { clearKinTalesDue, kinTaleRequiredFrom } = await import('../lib/kinTaleRequirement.js');
   if (kinTaleRequiredFrom(after)) return;
+  const stored = (await db().doc(BUSINESS_SETTINGS_SOURCE_DOC).get()).data() as Record<string, unknown> | undefined;
+  if (kinTaleRequiredFrom(stored)) return;
   const cleared = await clearKinTalesDue(db());
   if (cleared === 0) return;
   logEvent({

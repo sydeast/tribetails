@@ -278,6 +278,29 @@ describe('KinTale required off clears the stamped tasks', () => {
     expect(mock.writes.filter((w) => w.path === 'kin_care_sessions/s1')).toHaveLength(1);
   });
 
+  it('an "off" event handled after the switch went back on clears nothing (events arrive out of order)', async () => {
+    const mock = dbWith({
+      ...card,
+      'business_settings/business_settings': { ...FULL_SETTINGS, kinTaleRequired: true },
+      'kin_care_sessions/s1': stamped(),
+    });
+    await settingsWritten({ ...FULL_SETTINGS, kinTaleRequired: true }, { ...FULL_SETTINGS, kinTaleRequired: false });
+    expect(mock.writes.filter((w) => w.path.startsWith('kin_care_sessions/'))).toEqual([]);
+  });
+
+  it('a failed read of the stored switch clears nothing, and is reported', async () => {
+    const mock = dbWith({ ...card, 'kin_care_sessions/s1': stamped() });
+    const realDoc = mock.db.doc.bind(mock.db);
+    mock.db.doc = (path: string) => {
+      if (path === 'business_settings/business_settings') throw new Error('unavailable');
+      return realDoc(path);
+    };
+    await expect(
+      settingsWritten({ ...FULL_SETTINGS, kinTaleRequired: true }, { ...FULL_SETTINGS, kinTaleRequired: false }),
+    ).rejects.toThrow('unavailable');
+    expect(mock.writes.filter((w) => w.path.startsWith('kin_care_sessions/'))).toEqual([]);
+  });
+
   it('a failed clear does not stop the public card, and is still reported', async () => {
     const mock = dbWith({ 'business_public/card': null, 'kin_care_sessions/s1': stamped() });
     const realCollection = mock.db.collection.bind(mock.db);

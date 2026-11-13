@@ -142,10 +142,58 @@ describe('transitionBookingStatus happy paths', () => {
     const ctx = seedRequired('DEPARTED', { departedAt: '2026-11-12T15:30:00Z' });
     await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));
     expect(sessionWrite(ctx)?.data).toMatchObject({ status: 'COMPLETED', kinTaleDue: true });
+    // Still on when re-read after the write: the stamp stands, written once.
+    expect(ctx.writes.filter((w) => w.path === 'kin_care_sessions/s1')).toHaveLength(1);
     expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
       expect.objectContaining({ payload: expect.objectContaining({ kinTaleDue: true }) }),
     );
   });
+
+  /**
+   * The owner flips the switch the moment the visit's write lands: the settings
+   * doc reads on until then, and `afterWrite` (a value, or a failed read) after.
+   */
+  function switchFlipsAtTheWrite(ctx: ReturnType<typeof buildDbMock>, afterWrite: boolean | Error) {
+    const realDoc = ctx.db.doc.bind(ctx.db);
+    (ctx.db as { doc: unknown }).doc = (path: string) => {
+      const ref = realDoc(path);
+      if (path !== 'business_settings/business_settings') return ref;
+      return {
+        ...ref,
+        get: async () => {
+          const written = ctx.writes.some((w) => w.path === 'kin_care_sessions/s1');
+          const a = written ? afterWrite : true;
+          if (a instanceof Error) throw a;
+          return { exists: true, data: () => ({ kinTaleRequired: a }) };
+        },
+      };
+    };
+  }
+
+  it('#2123: a switch-off landing between the read and the write still clears the stamp', async () => {
+    const ctx = seedRequired('DEPARTED', { departedAt: '2026-11-12T15:30:00Z' });
+    switchFlipsAtTheWrite(ctx, false);
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));
+    const writes = ctx.writes.filter((w) => w.path === 'kin_care_sessions/s1');
+    expect(writes[0]?.data).toMatchObject({ status: 'COMPLETED', kinTaleDue: true });
+    expect(writes.at(-1)?.data).toEqual({ kinTaleDue: false });
+    expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ kinTaleDue: false }) }),
+    );
+  });
+
+  it('#2123: a failed re-read leaves the stamp for the next clear, and the completion stands', async () => {
+    const ctx = seedRequired('DEPARTED', { departedAt: '2026-11-12T15:30:00Z' });
+    switchFlipsAtTheWrite(ctx, new Error('unavailable'));
+    await expect(transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }))).resolves.toMatchObject({
+      ok: true,
+      status: 'COMPLETED',
+    });
+    const writes = ctx.writes.filter((w) => w.path === 'kin_care_sessions/s1');
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.data).toMatchObject({ status: 'COMPLETED', kinTaleDue: true });
+  });
+
   it('#2123: COMPLETE owes nothing for a business that never saved KinTale required (absent reads off)', async () => {
     const ctx = seed('DEPARTED', { departedAt: '2026-11-12T15:30:00Z' });
     await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));

@@ -498,6 +498,31 @@ export async function transitionBookingStatusHandler(
     }
     await batch.commit();
   }
+  // #2123: the switch above was read before this write, outside any
+  // transaction. If the owner switched "KinTale required" off in between, the
+  // settings trigger's clear (`triggers/onBusinessSettingsWrite.ts`) may have
+  // run before this stamp landed and missed it. So read it again now the stamp
+  // is committed: off means clear it here; still on means any later switch-off
+  // clears after this commit and finds it. A failed read leaves the stamp to
+  // the next clear rather than guess.
+  if (kinTaleDue) {
+    const { kinTaleRequiredFrom } = await import('../lib/kinTaleRequirement.js');
+    try {
+      const settings = await db().doc('business_settings/business_settings').get();
+      if (!kinTaleRequiredFrom(settings.data() as Record<string, unknown> | undefined)) {
+        await ref.set({ kinTaleDue: false }, { merge: true });
+        kinTaleDue = false;
+      }
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'transitionBookingStatus',
+        event: 'kinTale.recheck.failed',
+        uid,
+        errorMessage: (err as Error)?.message,
+      });
+    }
+  }
 
   await writeAuditEntry({
     event: AUDIT_EVENTS.BOOKING_STATUS_TRANSITION,
