@@ -751,6 +751,8 @@ internal actual fun platformBookingNotesStream(kinfolkId: String, bookingId: Str
  * note typed on desktop never reached anyone. [bookingId] is the visit's legacy
  * id, which the server resolves to the visit within [kinfolkId].
  */
+/** What the operator reads when a save answered but its answer would not read; never a raw exception. */
+private const val NOTE_ANSWER_UNREADABLE = "The note may not have saved. Reload the visit to check."
 internal actual suspend fun platformAddBookingNote(kinfolkId: String, bookingId: String, body: String, internal: Boolean, visitId: String): WriteResult<String> {
     val payload = buildJsonObject {
         put("kinfolkId", JsonPrimitive(kinfolkId))
@@ -762,8 +764,8 @@ internal actual suspend fun platformAddBookingNote(kinfolkId: String, bookingId:
         is WriteResult.Err -> WriteResult.Err(r.message)
         is WriteResult.Ok -> runCatchingCancellable {
             val id = Json.parseToJsonElement(r.value).jsonObject["noteId"]?.jsonPrimitive?.contentOrNull
-            if (id.isNullOrBlank()) WriteResult.Err("$name: server response missing noteId") else WriteResult.Ok(id)
-        }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+            if (id.isNullOrBlank()) WriteResult.Err(NOTE_ANSWER_UNREADABLE) else WriteResult.Ok(id)
+        }.getOrElse { WriteResult.Err(NOTE_ANSWER_UNREADABLE) }
     }
 }
 // 16.5: desktop incoming-requests queue. Honours a test fixture, else a real

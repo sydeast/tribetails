@@ -78,7 +78,7 @@ class BusinessNotesCardTest {
         setThemedContent {
             KinCareDetailScreen(kinCareId = "v1", kinfolkId = "3", portalApi = PortalApi(f), onBack = {}, nowMs = { now })
         }
-        waitUntil(5_000) { onAllNodes(hasTestTag("businessNotes")).fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("businessNotes")).fetchSemanticsNodes().isNotEmpty() }
 
         onNodeWithTag("businessNotes").assertExists()
         onNodeWithText("Booked. Bring the spare key.").assertExists()
@@ -99,7 +99,7 @@ class BusinessNotesCardTest {
         setThemedContent {
             KinCareDetailScreen(kinCareId = "v1", kinfolkId = "3", portalApi = PortalApi(f), onBack = {}, nowMs = { now })
         }
-        waitUntil(5_000) { onAllNodes(hasTestTag("businessNotes")).fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("businessNotes")).fetchSemanticsNodes().isNotEmpty() }
 
         onNodeWithTag("businessNotes").assertExists()
         onNodeWithText("We are full that week.").assertExists()
@@ -112,7 +112,7 @@ class BusinessNotesCardTest {
         setThemedContent {
             KinCareDetailScreen(kinCareId = "v1", kinfolkId = "3", portalApi = PortalApi(f), onBack = {}, nowMs = { now })
         }
-        waitUntil(5_000) { onAllNodes(hasTestTag("savedNotes")).fetchSemanticsNodes().isNotEmpty() }
+        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("savedNotes")).fetchSemanticsNodes().isNotEmpty() }
         waitForIdle()
         onNodeWithTag("businessNotes").assertDoesNotExist()
     }
