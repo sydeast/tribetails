@@ -1181,6 +1181,48 @@ class FirestoreClient {
     }
 
     /**
+     * #1840: tell the household about one clock step (`on_my_way`, `arrived`,
+     * `departed`) and hand back the server's raw answer, which says whether a
+     * notice went out and, when none did, why. The server decides who the
+     * household's login is; this client holds no opinion about it.
+     *
+     * Same routing as [sendReport]: the envelope ids when both are present,
+     * else the legacy booking id. [eventAtMs] is the stamp the patch just
+     * wrote, so a retry of this tap is one notice and a re-arrival is a new one
+     * (#832).
+     */
+    suspend fun dispatchVisitClockNotice(
+        session: KinCareSession,
+        event: String,
+        eventAtMs: Long?,
+    ): WriteResult<String> {
+        val familyId = session.kinfolkId
+        if (familyId.isBlank()) return WriteResult.Err("This visit is not linked to a household.")
+        val batchId = session.kinCareBatchId?.takeIf { it.isNotBlank() }
+        val visitId = session.kinCareVisitId?.takeIf { it.isNotBlank() }
+        val legacyBookingId = session.sourceBookingId.takeIf { it.isNotBlank() }
+        val useEnvelopeIds = batchId != null && visitId != null
+        if (!useEnvelopeIds && legacyBookingId == null) {
+            return WriteResult.Err("This visit is not linked to a booking.")
+        }
+        val payload = buildJsonObject {
+            put("familyId", familyId)
+            if (useEnvelopeIds) {
+                put("batchId", batchId!!)
+                put("visitId", visitId!!)
+            } else {
+                put("bookingId", legacyBookingId!!)
+            }
+            put("event", event)
+            if (eventAtMs != null) put("eventAtMs", eventAtMs)
+        }
+        return platformInvokeCallable(
+            "dispatchVisitNotification",
+            callableJson.encodeToString(JsonObject.serializer(), payload),
+        )
+    }
+
+    /**
      * Parse the first dispatchId out of a `dispatchVisitNotification` callable
      * response (`{ ok, dispatchIds, suppressed }`). Returns "" when suppressed
      * (no channels) or on a malformed body, which the receipt row then omits
