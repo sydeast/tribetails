@@ -43,8 +43,8 @@ export interface ResolvedKinfolkAccess {
  *
  * `caller` is the request's `auth`. The staff flag alone cannot tell the owner
  * from an Auntie (`staffBypass` is true for both), so a callable an Auntie can
- * reach MUST pass it, or her looks go unrecorded. `test/auntieHouseholdLook
- * .test.ts` holds every such callable to that.
+ * reach MUST pass it, or her looks go unrecorded. `test/auntieHouseholdLook.test.ts`
+ * holds every such callable to that.
  */
 export async function resolveKinfolkAccess(
   uid: string,

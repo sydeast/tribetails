@@ -126,6 +126,15 @@ describe('resolveKinfolkAccess', () => {
     expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
   });
 
+  it('#1839: an owner-only portal callable passes no caller, and her look writes no line', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/op': null, 'kinfolk/777': { firstName: 'X' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveKinfolkAccess } = await import('../src/lib/resolveKinfolkAccess');
+    const res = await resolveKinfolkAccess('op', '777', true, 'getMyInvoices');
+    expect(res).toEqual({ kinfolkId: '777', isOperator: true });
+    expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
+  });
+
   it('#1839: the owner through the allowlist fallback (no claim) writes no line either', async () => {
     process.env.AUNTIE_OPERATOR_UIDS = 'op';
     const ctx = buildDbMock({ docs: { 'clients/op': null, 'kinfolk/777': { firstName: 'X' } } });
