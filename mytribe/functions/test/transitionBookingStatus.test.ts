@@ -128,7 +128,7 @@ describe('transitionBookingStatus happy paths', () => {
   });
 
   it('#2123: COMPLETE leaves an unsent visit owing its KinTale while KinTale required is on (absent reads on)', async () => {
-    const ctx = seed('DEPARTED');
+    const ctx = seed('DEPARTED', { departedAt: '2026-11-12T15:30:00Z' });
     await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));
     expect(sessionWrite(ctx)?.data).toMatchObject({ status: 'COMPLETED', kinTaleDue: true });
     expect(mocks.writeAuditEntryFn).toHaveBeenCalledWith(
@@ -151,6 +151,13 @@ describe('transitionBookingStatus happy paths', () => {
     await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));
     expect(sessionWrite(sent)?.data).toMatchObject({ status: 'COMPLETED' });
     expect(sessionWrite(sent)?.data).not.toHaveProperty('kinTaleDue');
+  });
+
+  it('#2123: a visit nobody departed from (marked Completed from Overdue) owes no KinTale', async () => {
+    const ctx = seed('SCHEDULED');
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));
+    expect(sessionWrite(ctx)?.data).toMatchObject({ status: 'COMPLETED' });
+    expect(sessionWrite(ctx)?.data).not.toHaveProperty('kinTaleDue');
   });
 
   it('#2123: only COMPLETE asks about the KinTale', async () => {

@@ -450,11 +450,17 @@ export async function transitionBookingStatusHandler(
   // which is what puts it on the Auntie's "KinTales to send" list until a send
   // writes `kinTaleDue: false`. Departure normally gets here first, through
   // `triggers/onKinCareSessionDeparted.ts`; this is the hand-marked path.
+  //
+  // Only a visit somebody departed from is owed one. The ruling gives the task
+  // to "the auntie" who did the visit; a visit the office marks Completed from
+  // Overdue, with nobody clocked out, has no such Auntie, and owing a KinTale
+  // for every one of those would bury the real tasks.
   let kinTaleDue = false;
   if (args.action === 'COMPLETE') {
     patch.completedAt = args.completedAt ?? new Date().toISOString();
+    const departed = typeof prev?.departedAt === 'string' && prev.departedAt.trim() !== '';
     const { isKinTaleRequired, kinTaleDueAtCompletion } = await import('../lib/kinTaleRequirement.js');
-    kinTaleDue = kinTaleDueAtCompletion(prev ?? {}, await isKinTaleRequired(db()));
+    kinTaleDue = departed && kinTaleDueAtCompletion(prev ?? {}, await isKinTaleRequired(db()));
     if (kinTaleDue) patch.kinTaleDue = true;
   }
   const reason = args.reason?.trim() ?? '';
