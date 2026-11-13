@@ -188,11 +188,23 @@ fun kinfolkChanges(loaded: Kinfolk, edited: Kinfolk): List<KinfolkFieldChange> =
  * `updatedAt` the diff already carried is replaced, so the field is named once.
  * An empty [changes] stays empty: nothing to write means no write and no stamp.
  * The time is this computer's clock (the REST merge has no server-time
- * transform); a field this console read as a Timestamp goes back as one (#857).
+ * transform), from [kinfolkUpdatedAtNow]; a field this console read as a
+ * Timestamp goes back as one (#857).
  */
 fun withKinfolkUpdatedAt(changes: List<KinfolkFieldChange>, nowIso: String): List<KinfolkFieldChange> =
     if (changes.isEmpty()) changes
     else changes.filterNot { it.path == listOf("updatedAt") } + KinfolkFieldChange(listOf("updatedAt"), JsonPrimitive(nowIso))
+
+/**
+ * Now as a UTC instant to the millisecond ("2026-11-13T18:04:05.123Z"), the
+ * stamp [withKinfolkUpdatedAt] writes. Not `nowIso()`: that is zone-less
+ * business wall-clock time, which the Directory's readers (web, Android and
+ * this console) refuse as an instant, so a desktop edit would read as never
+ * changed.
+ */
+@OptIn(kotlin.time.ExperimentalTime::class)
+fun kinfolkUpdatedAtNow(): String =
+    kotlin.time.Instant.fromEpochMilliseconds(kotlin.time.Clock.System.now().toEpochMilliseconds()).toString()
 
 private val SIMPLE_FIELD_SEGMENT = Regex("^[A-Za-z_][A-Za-z_0-9]*$")
 

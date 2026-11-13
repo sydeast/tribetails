@@ -819,14 +819,15 @@ class FirestoreClient {
     }
     /**
      * #829 review: sends ONLY the fields [edited] changed relative to [loaded]
-     * (the record the caller read), as a merge write; `formValues` per key. Ok(true)
-     * when a write was sent, Ok(false) when nothing changed and nothing was written.
+     * (the record the caller read), as a merge write; `formValues` per key, plus
+     * the #2155 `updatedAt` stamp ([withKinfolkUpdatedAt]). Ok(true) when a write
+     * was sent, Ok(false) when nothing changed and nothing (no stamp) was written.
      */
     suspend fun updateKinfolk(loaded: Kinfolk, edited: Kinfolk): WriteResult<Boolean> {
         if (edited._id.isBlank()) return WriteResult.Err("updateKinfolk requires a kinfolk id")
         val changes = kinfolkChanges(loaded, edited)
         if (changes.isEmpty()) return WriteResult.Ok(false)
-        return when (val r = platformUpdateKinfolkFields(edited._id, withKinfolkUpdatedAt(changes, com.tribetails.auntieos.web.util.nowIso()))) {
+        return when (val r = platformUpdateKinfolkFields(edited._id, withKinfolkUpdatedAt(changes, kinfolkUpdatedAtNow()))) {
             is WriteResult.Ok  -> WriteResult.Ok(true)
             is WriteResult.Err -> WriteResult.Err(r.message)
         }
@@ -910,8 +911,9 @@ class FirestoreClient {
     // (api/directoryWrite.ts:237-255). Semantics kept identical: a whole-list
     // replace of tag NAMES, so clearing the last tag genuinely empties the field.
     //
-    // TRANSPORT: React patches only `{ tags, updatedAt }`. Both desktop paths
-    // merge only `tags` (#829 review, #895), so a concurrent change to any other
+    // TRANSPORT: React patches only `{ tags, updatedAt }`. The kin path merges
+    // only `tags` and the household path `tags` plus its `updatedAt` stamp
+    // (#829 review, #895, #2155), so a concurrent change to any other
     // field survives a tag save. Fail-loud: a rejected write propagates to the
     // caller as WriteResult.Err.
     //
@@ -928,10 +930,10 @@ class FirestoreClient {
         return platformUpdateKinFields(kin._id, listOf(tagsChange(tags)))
     }
 
-    /** Replaces a household's tag NAME list. Writes `tags` whatever [kinfolk] held when it was read. */
+    /** Replaces a household's tag NAME list. Writes `tags` whatever [kinfolk] held when it was read, plus the `updatedAt` stamp (#2155). */
     suspend fun updateKinfolkTags(kinfolk: Kinfolk, tags: List<String>): WriteResult<Unit> {
         require(kinfolk._id.isNotBlank()) { "updateKinfolkTags requires a kinfolk id" }
-        return platformUpdateKinfolkFields(kinfolk._id, withKinfolkUpdatedAt(listOf(tagsChange(tags)), com.tribetails.auntieos.web.util.nowIso()))
+        return platformUpdateKinfolkFields(kinfolk._id, withKinfolkUpdatedAt(listOf(tagsChange(tags)), kinfolkUpdatedAtNow()))
     }
 
     private fun tagsChange(tags: List<String>): FieldChange =
@@ -3625,9 +3627,10 @@ data class Kinfolk(
     val updatedAt: String = "",
 
     /**
-     * #1953. When the household record was created: server time, stamped by the
-     * `createKinfolk` callable. Absent on a household from before that stamp.
-     * Read for "Recently Created" only; [KINFOLK_SERVER_STAMPED_KEYS] keeps it
+     * #1953, #2171. When the household came into existence: server time from the
+     * `createKinfolk` callable, or a migrated household's original creation date
+     * (`createdAtSource` "original"). Read by the Directory's date sorts only
+     * (Recently Updated falls back to it); [KINFOLK_SERVER_STAMPED_KEYS] keeps it
      * out of every desktop write. Timestamp or ISO string, read as ISO.
      */
     @Serializable(with = FirestoreInstantStringSerializer::class)

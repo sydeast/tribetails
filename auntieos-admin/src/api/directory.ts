@@ -85,10 +85,11 @@ export interface Kinfolk {
    */
   createdAtSource?: string | undefined;
   /**
-   * The household's last change. Stamped `serverTimestamp()` by every staff
-   * edit (`kinfolkProfileWrite.ts`, `directoryWrite.ts`, Android
-   * `updateKinfolkFields`, desktop `platformUpdateKinfolkFields`) and by the
-   * server writes to the household doc. Older docs hold an ISO string. Typed
+   * The household's last change. Stamped `serverTimestamp()` by web
+   * (`kinfolkProfileWrite.ts`, `directoryWrite.ts`), Android
+   * (`updateKinfolkFields`) and the server writes to the household doc; the
+   * desktop console stamps its own clock as a UTC instant
+   * (`withKinfolkUpdatedAt`). Older docs hold an ISO string. Typed
    * `unknown` and read through {@link kinfolkUpdatedMillis} only (#2155).
    */
   updatedAt?: unknown;

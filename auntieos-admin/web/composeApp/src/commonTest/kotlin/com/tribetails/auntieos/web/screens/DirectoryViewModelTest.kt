@@ -317,6 +317,27 @@ class DirectoryViewModelTest {
         )
     }
 
+    /**
+     * #2155: the stamp a desktop edit actually writes must read back as an
+     * instant, or the edited household sorts as never changed. (The desktop's
+     * `nowIso()` is zone-less and would not.)
+     */
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    @Test
+    fun the_desktop_edit_stamp_reads_back_as_the_last_change() {
+        val stamp = com.tribetails.auntieos.web.data.kinfolkUpdatedAtNow()
+        val at = com.tribetails.auntieos.web.screens.directory.kinfolkUpdatedMillis(Kinfolk(_id = "k", updatedAt = stamp))
+        assertTrue(at != null, "stamp $stamp did not read as an instant")
+        val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        assertTrue(now - at in 0..60_000, "stamp $stamp is not now")
+        val edited = kinfolk("edited", "Zed", "Young").copy(createdAt = "2020-01-01T00:00:00Z", updatedAt = stamp)
+        val newer = kinfolk("created-today", "Amy", "Adams").copy(createdAt = "2026-11-01T00:00:00Z")
+        assertEquals(
+            listOf("edited", "created-today"),
+            DirectoryUiState(allKinfolk = FirestoreResult.Data(listOf(newer, edited)), sort = SortOption.RecentlyUpdated).filteredSorted.map { it._id },
+        )
+    }
+
     /** The REST decoder hands a Timestamp over as `{seconds,nanoseconds}` or an ISO string; both read. */
     @Test
     fun createdAt_decodes_from_a_timestamp_object() {
