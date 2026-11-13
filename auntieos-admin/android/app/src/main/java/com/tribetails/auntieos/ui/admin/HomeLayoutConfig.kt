@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.model.PortalHomeSection
+import com.tribetails.auntieos.data.model.isDefaultHomeLayout
 
 /**
  * ISSUE #397 M10: pure, Compose-free helpers for the operator-editable
@@ -74,18 +75,16 @@ fun List<PortalHomeSection>.replacedAt(index: Int, value: PortalHomeSection): Li
 }
 
 /**
- * ISSUE #397 M10 FOLLOW-UP: the one-way-door guard, mirroring
- * `homeLayoutModeLabel` / `RESET_HOME_SECTIONS` in the React admin
- * (`auntieos-admin/src/lib/settingsFormat.ts`).
+ * "Default layout" or "Custom layout", mirroring `homeLayoutModeLabel` in the
+ * React admin (`auntieos-admin/src/lib/settingsFormat.ts`). The operator must
+ * be able to tell these apart by looking.
  *
- * "Default layout" (an empty [sections], the portal's own implicit default)
- * or "Custom layout" (an explicit array is saved, however close its contents
- * are to canonical). The operator must be able to tell these apart by
- * looking, not by inferring it from whether every toggle happens to read on.
+ * #1987: Default means the layout is EQUAL to the default
+ * ([isDefaultHomeLayout]: every section on, default order, no limits), not
+ * merely that nothing is stored. A Limit typed and put back is Default again.
  */
 fun homeLayoutModeLabel(sections: List<PortalHomeSection>): String =
-    if (sections.isEmpty()) "Default layout" else "Custom layout"
-
+    if (isDefaultHomeLayout(sections)) "Default layout" else "Custom layout"
 /**
  * The value "Reset to default layout" writes: the empty list the portal (on
  * both clients) reads as "no config at all" -- canonical order, every

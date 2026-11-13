@@ -352,8 +352,12 @@ data class BusinessSettings(
     /** The pet tag vocabulary, malformed rows dropped. Never throws. */
     fun petTagDefs(): List<TagDef> = decodeTagDefs(petTags)
 
-    /** The kinfolk portal Home layout, malformed/missing rows dropped. Never throws. */
-    fun homeSections(): List<PortalHomeSection> = decodeHomeSections(mytribePortal)
+    /**
+     * The kinfolk portal Home layout, malformed/missing rows dropped. Never throws.
+     * #1987: a stored layout equal to the default reads as the default (the
+     * empty list), so it shows as "Default layout" and is not a change to save.
+     */
+    fun homeSections(): List<PortalHomeSection> = normalizeHomeSections(decodeHomeSections(mytribePortal))
 }
 
 /** Copy [BusinessSettings] replacing the household tag vocabulary. */
