@@ -11,6 +11,7 @@ const { getNotificationMatrix, getMyNotificationPrefs } = vi.hoisted(() => ({
 vi.mock('../api/myNotifications', async (orig) => ({
   ...(await orig<typeof import('../api/myNotifications')>()),
   getNotificationMatrix,
+  getMyNotificationMatrix: getNotificationMatrix,
   getMyNotificationPrefs,
 }));
 

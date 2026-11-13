@@ -97,6 +97,7 @@ getMyKinTaleMedia
 getMyKinTales
 getMyNotificationPrefs
 getMyPaymentMethod
+getMyStaffNotificationOptions
 getMyTribeProfile
 getMyVisits
 getNotificationCatalog
@@ -104,6 +105,7 @@ getRecordingAudio
 getServiceCatalog
 getShareLink
 getSharedKinTalePage
+getStaffWorkSettings
 getTemplateChannels
 getVetClinics
 giveAccountCredit

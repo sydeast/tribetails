@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
-import { getBusinessSettings } from '../api/settings';
 import { EMPTY_BOOKING_CATALOG, type BookingCatalog } from './bookingFormat';
-import { sharedLoad } from './useSharedOneShot';
+import { loadSharedWorkSettings, WORK_SETTINGS_KEY } from './useWorkSettings';
 
-/** The `sharedLoad` key every caller of {@link useBookingCatalog} joins. */
-export const BOOKING_CATALOG_KEY = 'bookingCatalog';
+/**
+ * The `sharedLoad` key prefix every caller of {@link useBookingCatalog} joins.
+ * #2164: the full key also names the signed-in session (`lib/sessionSeat.ts`).
+ */
+export const BOOKING_CATALOG_KEY = WORK_SETTINGS_KEY;
 
 /**
  * The operator's KinCare catalog, for a screen that only needs it to NAME a
- * visit's service (#1592: KinTales rows printed `visit_60`). A read of
- * `business_settings` through `getBusinessSettings`, the same read Bookings
- * and Schedule use for their own copies.
+ * visit's service (#1592: KinTales rows printed `visit_60`). The shared work
+ * settings read (`lib/useWorkSettings.ts`): the owner's own `business_settings`
+ * read, or for an Auntie the narrow staff read, which names KinCares and never
+ * carries a rate (#2164).
  *
  * SHARED, NOT PER CARD. Home mounts the Overdue, Safebox and Today's pack
  * cards at once and each names its service, so a per-hook read was three
@@ -28,7 +31,7 @@ export function useBookingCatalog(): BookingCatalog {
   const [catalog, setCatalog] = useState<BookingCatalog>(EMPTY_BOOKING_CATALOG);
   useEffect(() => {
     let live = true;
-    sharedLoad(BOOKING_CATALOG_KEY, getBusinessSettings)
+    loadSharedWorkSettings()
       .then((settings) => {
         if (!live) return;
         setCatalog({

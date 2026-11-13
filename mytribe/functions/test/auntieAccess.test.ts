@@ -204,6 +204,26 @@ describe('#944 wrapAdminCallable enforces the table', () => {
     }
   });
 
+  /**
+   * #2164 / #2182: her work and her own notification choices go through two
+   * narrow reads. The owner's Business Settings and Settings > Notifications
+   * callables stay refused.
+   */
+  it('admits an Auntie to the two narrow settings reads, and refuses her the owner settings callables', async () => {
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    for (const name of ['getStaffWorkSettings', 'getMyStaffNotificationOptions']) {
+      const wrapped = wrapAdminCallable(name, async () => ({ ok: true }));
+      await expect(wrapped({ auth: auntieAuth } as never)).resolves.toMatchObject({ ok: true });
+    }
+    for (const name of [
+      'getBusinessNotificationOverrides', 'saveBusinessNotificationOverride', 'deleteBusinessNotificationOverride',
+      'saveBusinessSettings',
+    ]) {
+      const wrapped = wrapAdminCallable(name, async () => ({ ok: true }));
+      await expect(wrapped({ auth: auntieAuth } as never)).rejects.toMatchObject({ code: 'permission-denied' });
+    }
+  });
+
   it('still refuses a caller with neither role, and an unauthenticated one', async () => {
     const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
     const wrapped = wrapAdminCallable('listStaff', async () => ({ ok: true }));
