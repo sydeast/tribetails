@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import type { Kin } from '../api/directory';
 import type { KinfolkProfile as Profile } from '../api/kinfolkProfile';
 import { listUnappliedPayments } from '../api/unappliedPayments';
+import { getAccountCreditHistory } from '../api/accountCredit';
 
 const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }));
 vi.mock('../api/kinfolkProfile', async (orig) => ({
@@ -882,6 +883,45 @@ describe('KinfolkProfile: the mock', () => {
       getKinfolkProfile.mockResolvedValue(profile());
       render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
       expect(await screen.findByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+    });
+  }
+
+  // #2208: Account credit is money, and the server refuses an Auntie its
+  // history, so the panel is not mounted for her and neither of its reads (the
+  // history and the "Payments needing a decision" list) is started. That holds
+  // when she arrives the way the payment notice used to send her, too.
+  it('draws no Account credit card for an Auntie and starts none of its reads', async () => {
+    useRouteContext.mockReturnValue({ access: { status: 'caretaker' } });
+    vi.mocked(getAccountCreditHistory).mockClear();
+    vi.mocked(listUnappliedPayments).mockClear();
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(
+      <KinfolkProfile
+        kinfolkId="k1"
+        kinfolkName="Jamie"
+        kin={[]}
+        onBack={vi.fn()}
+        openUnappliedPayments
+        unappliedPaymentId="evt_1"
+      />,
+    );
+    expect(await screen.findByRole('heading', { name: 'Recent KinTales' })).toBeInTheDocument();
+    await act(async () => {});
+    expect(screen.queryByRole('heading', { name: 'Account credit' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Payments needing a decision' })).toBeNull();
+    expect(vi.mocked(getAccountCreditHistory)).not.toHaveBeenCalled();
+    expect(vi.mocked(listUnappliedPayments)).not.toHaveBeenCalled();
+  });
+
+  for (const access of [{ status: 'admin' }, { status: 'testAdmin', testTribeId: 'tribe-sandbox' }, null]) {
+    const who = access === null ? 'the offline session' : access.status === 'admin' ? 'the owner' : 'the test admin';
+    it(`keeps the Account credit card and its read for ${who}`, async () => {
+      useRouteContext.mockReturnValue({ access });
+      vi.mocked(getAccountCreditHistory).mockClear();
+      getKinfolkProfile.mockResolvedValue(profile());
+      render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+      expect(await screen.findByRole('heading', { name: 'Account credit' })).toBeInTheDocument();
+      await waitFor(() => expect(vi.mocked(getAccountCreditHistory)).toHaveBeenCalledWith('k1'));
     });
   }
 
