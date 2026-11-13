@@ -205,7 +205,10 @@ private fun InvoiceDetailBody(
     val linesPanel = invoiceDetailLinesPanelOf(invoice)
     // #1238: what this invoice may be offered, from the same stored stamp as
     // the badge. Overdue and part paid do not change it.
-    val actions = invoiceActionsFor(badge.state)
+    // #2168: an archived invoice is read-only until restored, so it offers no
+    // send, no Edit and no Link sessions; Restore is the way back.
+    val archived = invoiceIsArchived(invoice)
+    val actions = invoiceActionsOffered(badge.state, archived)
 
     // Sessions for this kinfolk (for the link editor + linked-session rows).
     // P0-FLICKER: remember keyed on kinfolkId so a re-render keeps the same Flow.
@@ -272,6 +275,28 @@ private fun InvoiceDetailBody(
         toastMsg = msg; toastIsError = isError; toastVisible = true
     }
 
+    // #2168: Restore. A restore that could not take every visit back says which
+    // in a warning that stays until dismissed, as on web and Android; a plain
+    // restore is a toast.
+    var askRestore    by remember(invoice._id) { mutableStateOf(false) }
+    var restoring     by remember(invoice._id) { mutableStateOf(false) }
+    var restoreNotice by remember(invoice._id) { mutableStateOf<String?>(null) }
+    fun restoreNow() {
+        if (restoring) return
+        askRestore = false
+        restoring = true
+        scope.launch {
+            when (val r = client.unarchiveInvoice(invoice._id)) {
+                is WriteResult.Err -> showToast("Couldn't restore: ${r.message}", true)
+                is WriteResult.Ok  -> {
+                    val sentence = invoiceRestoredText(r.value)
+                    if (r.value.isBlank()) showToast(sentence, false) else restoreNotice = sentence
+                }
+            }
+            restoring = false
+        }
+    }
+
     // #1197: the server's refusal, shown inside the Link Sessions dialog, which
     // stays open with the operator's picks intact so they can correct and retry.
     var linkSessionsError by remember(invoice._id) { mutableStateOf<String?>(null) }
@@ -309,7 +334,7 @@ private fun InvoiceDetailBody(
     var invoiceEdit       by remember(invoice._id) { mutableStateOf<InvoiceEditDraft?>(null) }
     var invoiceEditError  by remember(invoice._id) { mutableStateOf<String?>(null) }
     var savingInvoiceEdit by remember(invoice._id) { mutableStateOf(false) }
-    val canEditInvoice = invoiceEditScopeOf(invoice) != InvoiceEditScope.NONE
+    val canEditInvoice = invoiceEditScopeOf(invoice) != InvoiceEditScope.NONE && !archived
     fun saveInvoiceEdit() {
         val draft = invoiceEdit ?: return
         if (savingInvoiceEdit) return
@@ -427,6 +452,32 @@ private fun InvoiceDetailBody(
             kind      = if (toastIsError) ToastKind.Error else ToastKind.Success,
             onDismiss = { toastVisible = false },
         )
+
+        restoreNotice?.let { notice ->
+            AuntieBanner(
+                tone      = AuntieBannerTone.Warning,
+                title     = "Done, but not all of it",
+                onDismiss = { restoreNotice = null },
+            ) {
+                Text(notice, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+            }
+        }
+        if (archived) {
+            AuntieBanner(tone = AuntieBannerTone.Info, title = "Archived") {
+                Text(ARCHIVED_INVOICE_TEXT, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+            }
+        }
+        AuntieDialog(
+            visible   = askRestore,
+            title     = "Restore this invoice?",
+            onDismiss = { askRestore = false },
+            footer    = {
+                GhostButton(label = "Cancel", onClick = { askRestore = false })
+                PrimaryButton(label = "Restore invoice", onClick = { restoreNow() })
+            },
+        ) {
+            Text(RESTORE_CONFIRM_TEXT, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+        }
 
         // ── Header status badge (accent-tinted full-width bar) ─────────────────
         Row(
@@ -589,6 +640,13 @@ private fun InvoiceDetailBody(
                 enabled = !pdfLoading,
                 leading = { Icon(Lucide.FileText, contentDescription = null, modifier = Modifier.size(14.dp)) },
             )
+            // #2168: the way back from read-only. The console has no Archive
+            // of its own; an invoice archived on web or Android is restored here.
+            if (archived) GhostButton(
+                label   = if (restoring) "Restoring..." else "Restore",
+                onClick = { if (!restoring) askRestore = true },
+                enabled = !restoring,
+            )
         }
 
         // ── Billing panel ────────────────────────────────────────────────────
@@ -715,6 +773,7 @@ private fun InvoiceDetailBody(
             linkedSessions  = linkedSessions,
             sessionsState   = sessionsState,
             onOpenEdit      = { pendingIds = invoice.sessionIds.toSet(); linkSessionsError = null; editMode = true },
+            canLink         = !archived,
         )
 
         // How-to-pay (#1200): the methods the household is offered on this invoice,
@@ -1153,6 +1212,8 @@ private fun LinkedSessionsSection(
     linkedSessions: List<KinCareSession>,
     sessionsState: FirestoreResult<List<KinCareSession>>,
     onOpenEdit: () -> Unit,
+    /** #2168: false on an archived invoice, which links nothing until restored. */
+    canLink: Boolean = true,
 ) {
     val c = AuntieTheme.colors
     val attributionLabel = when (invoice.attribution) {
@@ -1171,7 +1232,7 @@ private fun LinkedSessionsSection(
                 if (attributionLabel != null) {
                     AuntieChip(label = attributionLabel, tone = AuntieChipTone.Orange)
                 }
-                AuntieIconButton(
+                if (canLink) AuntieIconButton(
                     icon               = Lucide.Pencil,
                     contentDescription = "Edit linked sessions",
                     onClick            = onOpenEdit,
@@ -1205,7 +1266,7 @@ private fun LinkedSessionsSection(
 
             linkedSessions.isEmpty() -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 EmptyHint("No linked sessions yet.")
-                GhostButton(
+                if (canLink) GhostButton(
                     label   = "Link sessions",
                     onClick = onOpenEdit,
                     leading = { Icon(Lucide.Link, contentDescription = null, modifier = Modifier.size(14.dp)) },
@@ -1277,3 +1338,16 @@ private fun DetailRow(
         showDivider = true,
     )
 }
+
+/** #2168: the Archived notice, in the same words as web. */
+internal const val ARCHIVED_INVOICE_TEXT =
+    "This invoice is out of the working list and out of the outstanding and billed totals. It " +
+        "has not been deleted or cancelled, and the household can still see it and still pay it."
+
+/** #2168: the Restore confirm, in the same words as web. */
+internal const val RESTORE_CONFIRM_TEXT =
+    "This puts the invoice back into the working list and back into the outstanding and billed totals. Continue?"
+
+/** #2168: what a restore says, in the same words as web and Android, with the server's notice appended. */
+internal fun invoiceRestoredText(notice: String): String =
+    if (notice.isBlank()) "Invoice restored to the working list." else "Invoice restored to the working list. $notice"

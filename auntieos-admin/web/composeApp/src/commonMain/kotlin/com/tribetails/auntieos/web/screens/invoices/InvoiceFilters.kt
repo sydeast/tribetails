@@ -193,6 +193,16 @@ fun invoiceActionsFor(state: InvoiceState?): List<InvoiceAction> = when (state) 
 }
 
 /**
+ * #2168: what an invoice is offered once archiving is counted in, the same rule
+ * as web's and Android's `invoiceActionsOffered`. An archived invoice is
+ * read-only until restored (the server refuses to send, edit or link one), so
+ * REVIEW_AND_SEND is dropped; the collection actions stay as the state gives
+ * them, since archiving does not stop a household paying.
+ */
+fun invoiceActionsOffered(state: InvoiceState?, archived: Boolean): List<InvoiceAction> =
+    invoiceActionsFor(state).let { if (archived) it - InvoiceAction.REVIEW_AND_SEND else it }
+
+/**
  * #1238: the Payments panel's line when nothing is recorded. It points at
  * Record payment only when the button is there, as Android's does.
  */
