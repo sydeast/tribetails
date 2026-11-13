@@ -17,6 +17,8 @@ import { draftFrom, draftFrame, draftProblems, frameChanges, type EmailFrameDraf
 import { useEmailFramePreview } from '../../lib/useEmailFramePreview';
 import { useSlowWait } from '../../lib/slowWait';
 import { lastSavedLabel } from '../../lib/settingsFormat';
+import { actorLabel } from '../../lib/actorLabel';
+import { useStaffRoster } from '../../lib/useStaffRoster';
 import { AsyncRegion } from '../../components/AsyncRegion';
 import { LoadingRow } from '../../components/LoadingRow';
 import { DenPanel } from '../../components/DenScreenKit';
@@ -125,7 +127,12 @@ export function EmailFrameEditor({ loaded, onSaved }: EditorProps) {
   const hasProblems = Object.keys(problems).length > 0;
   const changes = useMemo(() => frameChanges(draft, loaded.stored), [draft, loaded.stored]);
   const dirty = Object.keys(changes).length > 0;
+  // #1989: nothing stored is the default frame, whatever stamp came with it.
+  // The server decides what counts as stored (a value equal to its default
+  // does not) and sends no stamp for the default frame.
   const storedAnything = Object.keys(loaded.stored).length > 0;
+  // #1962: the stamp is a uid; the line names the person.
+  const staff = useStaffRoster();
 
   const previewFrame = useMemo(() => (hasProblems ? null : draftFrame(draft)), [draft, hasProblems]);
   const preview = useEmailFramePreview(previewFrame);
@@ -193,7 +200,11 @@ export function EmailFrameEditor({ loaded, onSaved }: EditorProps) {
     <DenPanel
       title="Email frame"
       subtitle="The colors, header, logo and footer every email is sent in. Changes reach the next email sent."
-      detail={loaded.updatedAt ? lastSavedLabel(loaded.updatedAt, loaded.updatedBy ?? '') : 'Using the default frame'}
+      detail={
+        storedAnything && loaded.updatedAt
+          ? lastSavedLabel(loaded.updatedAt, actorLabel(loaded.updatedBy, staff))
+          : 'Using the default frame'
+      }
     >
       {error ? (
         <Banner tone="error" title="Save failed" className="settingsEdit__sectionBanner">

@@ -345,9 +345,14 @@ export function logoStateLabel(logoUrl: string, logoRemovedAt: string): string {
   return `Logo removed ${formatWhen(when)}`;
 }
 
-export function lastSavedLabel(updatedAt: string, updatedBy: string): string {
+/**
+ * `savedBy` is the person's NAME, already resolved from the stored stamp by
+ * `actorLabel` (#1962). The stamp itself is a uid, or a sign-in email on older
+ * records, and is never passed here. Blank drops the "by" clause.
+ */
+export function lastSavedLabel(updatedAt: string, savedBy: string): string {
   const when = isoToFsTime(updatedAt);
   if (!when) return 'Never saved yet';
-  const who = updatedBy.trim();
+  const who = savedBy.trim();
   return who === '' ? `Last saved ${formatWhen(when)}` : `Last saved ${formatWhen(when)} by ${who}`;
 }
