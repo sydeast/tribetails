@@ -127,3 +127,47 @@ describe('toPlainTextPreview', () => {
     expect(toPlainTextPreview('hi there', 200)).toBe('hi there');
   });
 });
+
+describe('a less-than sign that does not open a tag is kept as typed (#1873)', () => {
+  it('happy: keeps the words after a stray < next to a real tag', () => {
+    expect(sanitizeRichText('I think 5 < 6 and 7 > 3 and <b>bold</b>')).toBe('I think 5 < 6 and 7 > 3 and <b>bold</b>');
+    expect(sanitizeRichText('<p>under 5 < 6 and more words</p>')).toBe('<p>under 5 < 6 and more words</p>');
+  });
+
+  it('keeps a < glued to a letter or digit with no closing >', () => {
+    expect(sanitizeRichText('a <b and more words')).toBe('a <b and more words');
+    expect(sanitizeRichText('x <y and z')).toBe('x <y and z');
+    expect(sanitizeRichText('1<2 and a<3 love <3')).toBe('1<2 and a<3 love <3');
+  });
+
+  it('a word-like span that is not a clean tag is text, with the words after it', () => {
+    expect(sanitizeRichText('<p>a <b and more words</p>')).toBe('<p>a <b and more words</p>');
+    expect(sanitizeRichText('if a<b and c>d then go')).toBe('if a<b and c>d then go');
+  });
+
+  it('keeps emoji, ampersands and line breaks around the sign', () => {
+    expect(sanitizeRichText('Bella \u{1F436} & Max < 3\nsecond line')).toBe('Bella \u{1F436} & Max < 3\nsecond line');
+  });
+
+  it('negative: real tags are still kept and tags that are not allowed are still stripped', () => {
+    expect(sanitizeRichText('<p>Hi <b>there</b></p>')).toBe('<p>Hi <b>there</b></p>');
+    expect(sanitizeRichText('hello <script>alert(1)</script> world')).toBe('hello  world');
+    expect(sanitizeRichText('<img src=x onerror="evil()">caption')).toBe('caption');
+    expect(sanitizeRichText('<a href="javascript:alert(1)">click</a>')).toBe('<a>click</a>');
+  });
+
+  it('error: a stray < never lets a real element or handler through', () => {
+    // A `<` that is not a whole tag is kept as inert text (clients draw the
+    // stored body as text from a fixed tag list); a whole tag is still cut.
+    expect(sanitizeRichText('<p>x <img src=x onerror=alert(1)></p>')).toBe('<p>x </p>');
+    expect(sanitizeRichText('<svg onload="alert(1)"></svg>after')).toBe('after');
+    expect(sanitizeRichText('<b onclick="evil()">hi</b>')).toBe('<b>hi</b>');
+  });
+
+  it('sanitizePlainText and the preview keep the text after a stray <', () => {
+    expect(sanitizePlainText('a <b and more words')).toBe('a <b and more words');
+    expect(sanitizePlainText('<p>5 < 6 and 7 > 3</p>')).toBe('5 < 6 and 7 > 3');
+    expect(toPlainTextPreview('<p>I think 5 < 6 and more <b>bold</b></p>', 200)).toBe('I think 5 < 6 and more bold');
+    expect(sanitizePlainText('<script>alert(1)</script>Mallory')).toBe('Mallory');
+  });
+});

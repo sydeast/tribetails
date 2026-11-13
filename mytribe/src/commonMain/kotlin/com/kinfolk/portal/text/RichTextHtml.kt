@@ -97,64 +97,58 @@ private fun parseRichTextHtml(html: String): List<RtNode> {
     return root
 }
 
+private val TAG_AT = Regex("""^<(/?)([A-Za-z][A-Za-z0-9]*)([^<>]*)>""")
+private val QUOTED_ATTRS = Regex("""^(?:\s+[A-Za-z_:][-A-Za-z0-9_:.]*\s*=\s*(?:"[^"]*"|'[^']*'))*$""")
+private val ALLOWED_TAGS = setOf("b", "strong", "i", "em", "u", "p", "br", "ul", "ol", "li", "blockquote", "a")
+
+private class ReadTag(val end: Int, val token: RtToken)
+
+/**
+ * Reads the tag that starts at [openIdx], or returns null when that '<' is just
+ * a less-than sign. A tag is '<' or '</', one of the allowed tag names, and a
+ * closing '>' with no other '<' or '>' in between. The server never stores any
+ * other element and keeps no attribute except a quoted one on `a`, so anything
+ * else (`5 < 6`, `a <b and more words`, `<script>`) is text and is drawn exactly
+ * as typed. Treating every '<' as a tag start and cutting to the next '>' is
+ * what dropped words from a message (#1873). Same rule as the admin web parser.
+ */
+private fun readTag(html: String, openIdx: Int): ReadTag? {
+    val m = TAG_AT.find(html.substring(openIdx, minOf(html.length, openIdx + 4096))) ?: return null
+    val closing = m.groupValues[1] == "/"
+    val name = m.groupValues[2].lowercase()
+    val rest = m.groupValues[3]
+    if (name !in ALLOWED_TAGS) return null
+    val end = openIdx + m.value.length - 1
+    if (closing) return if (rest.isBlank()) ReadTag(end, RtToken.Close(name)) else null
+    val trimmedRest = rest.trimEnd()
+    val selfClosing = trimmedRest.endsWith("/")
+    val attrs = if (selfClosing) trimmedRest.dropLast(1) else rest
+    if (selfClosing && name != "br") return null
+    if (attrs.isNotBlank() && !(name == "a" && QUOTED_ATTRS.matches(attrs.trimEnd()))) return null
+    if (name == "br") return ReadTag(end, RtToken.Void("br"))
+    return ReadTag(end, RtToken.Open(name, if (name == "a") extractHref(attrs) else null))
+}
+
 private fun tokenize(html: String): List<RtToken> {
     val tokens = mutableListOf<RtToken>()
+    var textStart = 0
     var i = 0
     val n = html.length
     while (i < n) {
         if (html[i] == '<') {
-            val end = findTagEnd(html, i)
-            if (end == -1) {
-                tokens.add(RtToken.TextChunk(html.substring(i)))
-                break
+            val tag = readTag(html, i)
+            if (tag != null) {
+                if (i > textStart) tokens.add(RtToken.TextChunk(html.substring(textStart, i)))
+                tokens.add(tag.token)
+                i = tag.end + 1
+                textStart = i
+                continue
             }
-            val inner = html.substring(i + 1, end)
-            tokens.add(parseTagToken(inner))
-            i = end + 1
-        } else {
-            val next = html.indexOf('<', i)
-            val textEnd = if (next == -1) n else next
-            tokens.add(RtToken.TextChunk(html.substring(i, textEnd)))
-            i = textEnd
-        }
-    }
-    return tokens
-}
-
-/** Finds the index of the '>' that closes the tag starting at [openIdx], skipping quoted attribute values. */
-private fun findTagEnd(html: String, openIdx: Int): Int {
-    var i = openIdx + 1
-    var quote: Char? = null
-    while (i < html.length) {
-        val c = html[i]
-        if (quote != null) {
-            if (c == quote) quote = null
-        } else if (c == '"' || c == '\'') {
-            quote = c
-        } else if (c == '>') {
-            return i
         }
         i++
     }
-    return -1
-}
-
-private fun parseTagToken(inner: String): RtToken {
-    val trimmed = inner.trim()
-    if (trimmed.startsWith("/")) {
-        return RtToken.Close(trimmed.substring(1).trim().lowercase())
-    }
-    val selfClosing = trimmed.endsWith("/")
-    val body = if (selfClosing) trimmed.dropLast(1).trim() else trimmed
-    val nameEnd = body.indexOfFirst { it.isWhitespace() }
-    val name = (if (nameEnd == -1) body else body.substring(0, nameEnd)).lowercase()
-    return if (name in VOID_TAGS || selfClosing) {
-        RtToken.Void(name)
-    } else if (name == "a") {
-        RtToken.Open(name, extractHref(body))
-    } else {
-        RtToken.Open(name, null)
-    }
+    if (textStart < n) tokens.add(RtToken.TextChunk(html.substring(textStart)))
+    return tokens
 }
 
 private val HREF_DOUBLE_QUOTED = Regex("""href\s*=\s*"([^"]*)"""")
@@ -332,4 +326,14 @@ private fun trimSurroundingNewlines(text: AnnotatedString): AnnotatedString {
     var end = text.length
     while (end > start && text[end - 1] == '\n') end--
     return if (start == 0 && end == text.length) text else text.subSequence(start, end)
+}
+
+/** True when the body carries a real tag (see [readTag]); a lone `<` or `5 < 6` is text. */
+public fun hasRichTextMarkup(body: String): Boolean {
+    var i = body.indexOf('<')
+    while (i != -1) {
+        if (readTag(body, i) != null) return true
+        i = body.indexOf('<', i + 1)
+    }
+    return false
 }

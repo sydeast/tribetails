@@ -16,11 +16,18 @@ describe('parseRichText', () => {
       '<ul><li>a</li><li>b</li></ul><blockquote>q</blockquote>x<br></br>y',
     );
   });
-  it('drops script content and unwraps unknown tags', () => {
-    expect(flat(parseRichText('a<script>alert(1)</script>b<img src=x onerror=alert(1)>c<div>d</div>'))).toBe('abcd');
+  it('shows a tag that is not in the allowed subset as the text typed, never as an element', () => {
+    expect(flat(parseRichText('a<script>alert(1)</script>b<img src=x onerror=alert(1)>c<div>d</div>'))).toBe(
+      'a<script>alert(1)</script>b<img src=x onerror=alert(1)>c<div>d</div>',
+    );
   });
-  it('drops every attribute but href', () => {
-    expect(flat(parseRichText('<p onclick="x()" style="color:red">hi</p>'))).toBe('<p>hi</p>');
+  it('a tag carrying attributes other than quoted ones on a link is text', () => {
+    expect(flat(parseRichText('<p onclick="x()">hi</p>'))).toBe('<p onclick="x()">hi');
+  });
+  it('drops every attribute but href on a link', () => {
+    expect(flat(parseRichText('<a href="https://example.com" onclick="x()" target="_blank">hi</a>'))).toBe(
+      '<a href=https://example.com>hi</a>',
+    );
   });
   it('keeps http, https and mailto links only', () => {
     expect(flat(parseRichText('<a href="https://example.com/a?b=1&amp;c=2">x</a>'))).toBe(
@@ -40,7 +47,25 @@ describe('parseRichText', () => {
     expect(flat(parseRichText('<p>one<p>two'))).toBe('<p>one<p>two</p></p>');
     expect(flat(parseRichText('text <b unterminated'))).toBe('text <b unterminated');
   });
+  it('keeps every word around a stray less-than sign that sits beside real tags (#1873)', () => {
+    expect(flat(parseRichText('<p>I think 5 < 6 and 7 > 3 and <b>bold</b></p>'))).toBe(
+      '<p>I think 5 < 6 and 7 > 3 and <b>bold</b></p>',
+    );
+    expect(flat(parseRichText('<p>a <b and more words</p>'))).toBe('<p>a <b and more words</p>');
+    expect(flat(parseRichText('<p>x <y and z</p><p>if a<b and c>d then go</p>'))).toBe(
+      '<p>x <y and z</p><p>if a<b and c>d then go</p>',
+    );
+  });
+  it('keeps emoji, ampersands and line breaks around the sign', () => {
+    expect(flat(parseRichText('<p>Bella \u{1F436} &amp; Max < 3\nnext</p>'))).toBe('<p>Bella \u{1F436} & Max < 3\nnext</p>');
+  });
+  it('a sign at the very end or alone is text', () => {
+    expect(flat(parseRichText('<p>ends with <</p>'))).toBe('<p>ends with <</p>');
+    expect(flat(parseRichText('<'))).toBe('<');
+  });
   it('hasMarkup is false for plain text with a stray angle bracket', () => {
+    expect(hasMarkup('a <b and more words</p')).toBe(false);
+    expect(hasMarkup('<script>alert(1)</script>')).toBe(false);
     expect(hasMarkup('2 < 3 and 5 > 4')).toBe(false);
     expect(hasMarkup('<p>x</p>')).toBe(true);
   });

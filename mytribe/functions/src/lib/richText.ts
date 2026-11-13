@@ -35,6 +35,49 @@ function decodeEntities(html: string): string {
 }
 
 /**
+ * A `<` that is not the start of a whole tag is just a less-than sign.
+ * sanitize-html's parser would otherwise take `<b and more words` (or `x <y`)
+ * as an unterminated tag and drop it and everything after it, so the typed
+ * text is lost before it is ever stored. This rewrites such a `<` as `&lt;`
+ * so the parser keeps it as text (and decodeEntities hands the `<` back).
+ *
+ * A `<` stays as it is only when it opens a complete tag: `<` + `/`? + a
+ * letter, then no `<` or `>` up to a closing `>`. For one of the allowed
+ * formatting tags the shape must also be exactly what the editor writes
+ * (attributes only as `name=value` pairs, a self-closing slash only on
+ * `br`), so a sentence such as `a <b and more words>` is not read as a tag.
+ * Every other complete tag is left for sanitize-html to strip, as before.
+ */
+const ALLOWED_TAG_SET: ReadonlySet<string> = new Set(ALLOWED_TAGS);
+const COMPLETE_TAG = /^<(\/?)([A-Za-z][A-Za-z0-9]*)([^<>]*)>/;
+const NAMED_ATTRS = /^(?:\s+[A-Za-z_:][-A-Za-z0-9_:.]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>=`]+))*\s*$/;
+
+function startsWholeTag(text: string, at: number): boolean {
+  const m = COMPLETE_TAG.exec(text.slice(at, at + 4096));
+  if (!m) return false;
+  const closing = m[1] === '/';
+  const name = (m[2] ?? '').toLowerCase();
+  const rest = m[3] ?? '';
+  if (!ALLOWED_TAG_SET.has(name)) return true;
+  if (closing) return rest.trim() === '';
+  const selfClosed = rest.trimEnd().endsWith('/');
+  const attrs = selfClosed ? rest.trimEnd().slice(0, -1) : rest;
+  if (selfClosed && name !== 'br') return false;
+  if (attrs.trim() === '') return true;
+  return NAMED_ATTRS.test(attrs);
+}
+
+export function escapeStrayLessThan(text: string): string {
+  if (!text.includes('<')) return text;
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charAt(i);
+    out += c === '<' && !startsWholeTag(text, i) ? '&lt;' : c;
+  }
+  return out;
+}
+
+/**
  * Sanitizes a free-text field before it's persisted somewhere another user
  * will render it (messages, KinTale comments, booking notes). Today's
  * clients render this as plain text, so this is a no-op for ordinary
@@ -44,7 +87,7 @@ function decodeEntities(html: string): string {
  * dropped entirely).
  */
 export function sanitizeRichText(body: string): string {
-  const sanitized = sanitizeHtml(body, {
+  const sanitized = sanitizeHtml(escapeStrayLessThan(body), {
     allowedTags: ALLOWED_TAGS,
     allowedAttributes: ALLOWED_ATTRIBUTES,
     allowedSchemes: ['http', 'https', 'mailto'],
@@ -61,7 +104,7 @@ export function sanitizeRichText(body: string): string {
  * link anywhere it's shown.
  */
 export function sanitizePlainText(text: string): string {
-  const sanitized = sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} });
+  const sanitized = sanitizeHtml(escapeStrayLessThan(text), { allowedTags: [], allowedAttributes: {} });
   return decodeEntities(sanitized).trim();
 }
 

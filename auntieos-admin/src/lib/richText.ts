@@ -5,11 +5,10 @@
  *
  * The output is a plain node tree, never an HTML string. The screen turns the
  * tree into React elements from a fixed tag list, so nothing a message carries
- * can become a live element, attribute or handler: unknown tags are unwrapped
- * (their text stays), script-like tags are dropped with their content, every
- * attribute but `href` is dropped, and an `href` outside the three schemes is
- * dropped. This is the second gate behind the server sanitizer, and it holds
- * on its own for a body stored before the sanitizer existed.
+ * can become a live element, attribute or handler: every attribute but `href`
+ * is dropped and an `href` outside the three schemes is dropped. Only the twelve tags above are read as tags: any other `<` is text
+ * and is drawn as typed (a `<` is a tag only when it opens a whole allowed
+ * tag; see `readTag`). This is the second gate behind the server sanitizer.
  */
 
 export type RichTag = 'b' | 'strong' | 'i' | 'em' | 'u' | 'p' | 'br' | 'ul' | 'ol' | 'li' | 'blockquote' | 'a';
@@ -28,10 +27,6 @@ export type RichNode = RichText | RichElement;
 
 const ALLOWED_TAGS: ReadonlySet<string> = new Set([
   'b', 'strong', 'i', 'em', 'u', 'p', 'br', 'ul', 'ol', 'li', 'blockquote', 'a',
-]);
-/** Elements whose entire content is dropped, not unwrapped. */
-const DROP_CONTENT_TAGS: ReadonlySet<string> = new Set([
-  'script', 'style', 'iframe', 'object', 'embed', 'noscript', 'template',
 ]);
 
 const ALLOWED_HREF = /^(https?:\/\/|mailto:)/i;
@@ -53,20 +48,33 @@ type Token =
   | { t: 'void'; tag: string }
   | { t: 'text'; raw: string };
 
-/** Index of the `>` closing the tag that opens at `openIdx`, skipping quoted attribute values. */
-function findTagEnd(html: string, openIdx: number): number {
-  let quote: string | null = null;
-  for (let i = openIdx + 1; i < html.length; i++) {
-    const c = html[i];
-    if (quote !== null) {
-      if (c === quote) quote = null;
-    } else if (c === '"' || c === "'") {
-      quote = c;
-    } else if (c === '>') {
-      return i;
-    }
-  }
-  return -1;
+const QUOTED_ATTRS = /^(?:\s+[A-Za-z_:][-A-Za-z0-9_:.]*\s*=\s*(?:"[^"]*"|'[^']*'))*$/;
+const TAG_AT = /^<(\/?)([A-Za-z][A-Za-z0-9]*)([^<>]*)>/;
+
+/**
+ * Reads the tag that starts at `openIdx`, or returns null when that `<` is
+ * just a less-than sign. A tag is `<` or `</`, one of the allowed tag names,
+ * and a closing `>` with no other `<` or `>` in between. The server never
+ * stores any other element and never keeps an attribute except a quoted one
+ * on `a`, so anything else (`5 < 6`, `a <b and more words`, `<script>`) is
+ * text and is drawn exactly as typed. Reading a `<` as the start of a tag
+ * and cutting to the next `>` is what dropped words from a message (#1873).
+ */
+function readTag(html: string, openIdx: number): { end: number; token: Token } | null {
+  const m = TAG_AT.exec(html.slice(openIdx, openIdx + 4096));
+  if (!m) return null;
+  const closing = m[1] === '/';
+  const name = (m[2] ?? '').toLowerCase();
+  const rest = m[3] ?? '';
+  if (!ALLOWED_TAGS.has(name)) return null;
+  const end = openIdx + m[0].length - 1;
+  if (closing) return rest.trim() === '' ? { end, token: { t: 'close', tag: name } } : null;
+  const selfClosing = rest.trimEnd().endsWith('/');
+  const attrs = selfClosing ? rest.trimEnd().slice(0, -1) : rest;
+  if (selfClosing && name !== 'br') return null;
+  if (attrs.trim() !== '' && !(name === 'a' && QUOTED_ATTRS.test(attrs.trimEnd()))) return null;
+  if (name === 'br') return { end, token: { t: 'void', tag: 'br' } };
+  return { end, token: { t: 'open', tag: name, href: name === 'a' ? extractHref(attrs) : undefined } };
 }
 
 function extractHref(tagBody: string): string | undefined {
@@ -76,59 +84,41 @@ function extractHref(tagBody: string): string | undefined {
   return ALLOWED_HREF.test(href) ? href : undefined;
 }
 
-function parseTag(inner: string): Token {
-  const trimmed = inner.trim();
-  if (trimmed.startsWith('/')) return { t: 'close', tag: trimmed.slice(1).trim().toLowerCase() };
-  const selfClosing = trimmed.endsWith('/');
-  const body = selfClosing ? trimmed.slice(0, -1).trim() : trimmed;
-  const m = /^[^\s/]+/.exec(body);
-  const name = (m ? m[0] : '').toLowerCase();
-  if (name === 'br' || selfClosing) return { t: 'void', tag: name };
-  return { t: 'open', tag: name, href: name === 'a' ? extractHref(body) : undefined };
-}
-
 function tokenize(html: string): Token[] {
   const tokens: Token[] = [];
+  let textStart = 0;
   let i = 0;
   while (i < html.length) {
     if (html.charAt(i) === '<') {
-      const end = findTagEnd(html, i);
-      if (end === -1) {
-        tokens.push({ t: 'text', raw: html.slice(i) });
-        break;
+      const tag = readTag(html, i);
+      if (tag) {
+        if (i > textStart) tokens.push({ t: 'text', raw: html.slice(textStart, i) });
+        tokens.push(tag.token);
+        i = tag.end + 1;
+        textStart = i;
+        continue;
       }
-      const inner = html.slice(i + 1, end);
-      // A comment or declaration carries nothing to show.
-      if (!inner.startsWith('!') && !inner.startsWith('?')) tokens.push(parseTag(inner));
-      i = end + 1;
-    } else {
-      const next = html.indexOf('<', i);
-      const stop = next === -1 ? html.length : next;
-      tokens.push({ t: 'text', raw: html.slice(i, stop) });
-      i = stop;
     }
+    i++;
   }
+  if (textStart < html.length) tokens.push({ t: 'text', raw: html.slice(textStart) });
   return tokens;
 }
 
-/** True when the body carries at least one tag. A plain-text reply has none and keeps its own line breaks. */
+/** True when the body carries at least one real tag. A plain-text reply has none and keeps its own line breaks. */
 export function hasMarkup(body: string): boolean {
-  return /<\/?[a-zA-Z][^>]*>/.test(body);
+  for (let i = body.indexOf('<'); i !== -1; i = body.indexOf('<', i + 1)) {
+    if (readTag(body, i)) return true;
+  }
+  return false;
 }
 
 export function parseRichText(html: string): RichNode[] {
   const root: RichNode[] = [];
   const stack: { tag: string; children: RichNode[] }[] = [];
-  let dropDepth = 0;
-  let dropTag = '';
   const current = (): RichNode[] => (stack[stack.length - 1]?.children ?? root);
 
   for (const tok of tokenize(html)) {
-    if (dropDepth > 0) {
-      if (tok.t === 'open' && tok.tag === dropTag) dropDepth++;
-      else if (tok.t === 'close' && tok.tag === dropTag) dropDepth--;
-      continue;
-    }
     switch (tok.t) {
       case 'text': {
         const text = decodeEntities(tok.raw);
@@ -139,22 +129,11 @@ export function parseRichText(html: string): RichNode[] {
         if (tok.tag === 'br') current().push({ kind: 'el', tag: 'br', children: [] });
         break;
       case 'open': {
-        if (DROP_CONTENT_TAGS.has(tok.tag)) {
-          dropDepth = 1;
-          dropTag = tok.tag;
-          break;
-        }
-        const parent = current();
-        if (ALLOWED_TAGS.has(tok.tag)) {
-          const children: RichNode[] = [];
-          const el: RichElement = { kind: 'el', tag: tok.tag as RichTag, children };
-          if (tok.tag === 'a' && tok.href) el.href = tok.href;
-          parent.push(el);
-          stack.push({ tag: tok.tag, children });
-        } else {
-          // Unknown tag: unwrap. Its text lands in the parent's list.
-          stack.push({ tag: tok.tag, children: parent });
-        }
+        const children: RichNode[] = [];
+        const el: RichElement = { kind: 'el', tag: tok.tag as RichTag, children };
+        if (tok.tag === 'a' && tok.href) el.href = tok.href;
+        current().push(el);
+        stack.push({ tag: tok.tag, children });
         break;
       }
       case 'close': {

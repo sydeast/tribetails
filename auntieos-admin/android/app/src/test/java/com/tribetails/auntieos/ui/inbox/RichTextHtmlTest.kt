@@ -17,9 +17,9 @@ class RichTextHtmlTest {
         assertFalse(hasRichTextMarkup("see you at 5"))
         assertTrue(hasRichTextMarkup("<p>x</p>"))
     }
-    @Test fun scriptContentIsDroppedAndUnknownTagsUnwrapped() {
+    @Test fun aTagOutsideTheAllowedSubsetIsShownAsTypedText() {
         val r = richTextToAnnotatedString("a<script>alert(1)</script>b<img src=x onerror=alert(1)>c<div>d</div>")
-        assertEquals("abcd", r.text)
+        assertEquals("a<script>alert(1)</script>b<img src=x onerror=alert(1)>c<div>d</div>", r.text)
     }
     @Test fun listRendersAsBullets() {
         val r = richTextToAnnotatedString("<ul><li>one</li><li>two</li></ul>")
@@ -42,5 +42,30 @@ class RichTextHtmlTest {
     }
     @Test fun unterminatedTagDoesNotCrash() {
         assertEquals("text <b unterminated", richTextToAnnotatedString("text <b unterminated").text)
+    }
+    @Test fun lessThanBesideRealTagsKeepsEveryWord() {
+        assertEquals(
+            "I think 5 < 6 and 7 > 3 and bold",
+            richTextToAnnotatedString("<p>I think 5 < 6 and 7 > 3 and <b>bold</b></p>").text,
+        )
+        assertEquals("a <b and more words", richTextToAnnotatedString("<p>a <b and more words</p>").text)
+        assertEquals("x <y and z\nif a<b and c>d then go", richTextToAnnotatedString("<p>x <y and z</p><p>if a<b and c>d then go</p>").text)
+    }
+    @Test fun emojiAmpersandAndLineBreakAroundTheSignAreKept() {
+        assertEquals("Bella \uD83D\uDC36 & Max < 3\nnext", richTextToAnnotatedString("<p>Bella \uD83D\uDC36 &amp; Max < 3\nnext</p>").text)
+    }
+    @Test fun aSignAloneOrAtTheEndIsText() {
+        assertEquals("<", richTextToAnnotatedString("<").text)
+        assertEquals("ends with <", richTextToAnnotatedString("<p>ends with <</p>").text)
+        assertFalse(hasRichTextMarkup("a <b and more words</p"))
+        assertFalse(hasRichTextMarkup("<script>alert(1)</script>"))
+    }
+    @Test fun scriptLikeMessageIsShownAsTextWithNoStyleOrLink() {
+        val r = richTextToAnnotatedString("""<p><img src=x onerror="alert(1)"><script>alert(1)</script><a href="javascript:alert(1)" onclick="x()">l</a></p>""")
+        assertEquals("""<img src=x onerror="alert(1)"><script>alert(1)</script>l""", r.text)
+        assertEquals(0, r.getLinkAnnotations(0, r.length).size)
+    }
+    @Test fun tagWithAttributesOtherThanQuotedOnesOnALinkIsText() {
+        assertEquals("""<p onclick="x()">hi""", richTextToAnnotatedString("""<p onclick="x()">hi</p>""").text)
     }
 }
