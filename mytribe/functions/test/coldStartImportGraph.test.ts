@@ -230,7 +230,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * spends account credit, by an amount the admin enters). Everything it imports
  * was already here.
  *
- * 448 since #1901 (on top of #1872's 447): `lib/invoiceSessionLinks.ts`, the
+ * 448 since #1935 (on top of #1872's 447): `admin/templateChannels.ts` is a new
+ * FUNCTIONS entry (the read and the save of a template's text-message and push
+ * wording, which no client may touch directly). Its rules,
+ * `lib/templateChannelWording.ts`, load with `await import()` inside the
+ * handler, so the entry is the only module it adds.
+ *
+ * 449 since #1901 (on top of #1935's 448): `lib/invoiceSessionLinks.ts`, the
  * one place that sets and clears a visit's billed link, which
  * `admin/createInvoice.ts`, `admin/updateInvoice.ts` and
  * `admin/linkInvoiceSessions.ts` (entries already in this graph) share inside
@@ -238,7 +244,7 @@ const ALLOWED_EAGER_PACKAGES = [
  * firebase-admin, firebase-functions and `lib/sessionInvoicing.ts`, all
  * already resident.
  */
-const MAX_OWN_EAGER_MODULES = 448;
+const MAX_OWN_EAGER_MODULES = 449;
 
 interface Edge {
   spec: string;

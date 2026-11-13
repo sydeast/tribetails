@@ -3778,12 +3778,12 @@ private fun TimeOffPanel(
                 color = c.textDim,
             )
             Column {
-                US_HOLIDAYS.forEachIndexed { idx, pair ->
+                US_OBSERVED_HOLIDAYS.forEachIndexed { idx, pair ->
                     val (id, name) = pair
                     val checked = id in observedHolidays
                     AuntieSettingRow(
                         title = name,
-                        showDivider = idx < US_HOLIDAYS.lastIndex,
+                        showDivider = idx < US_OBSERVED_HOLIDAYS.lastIndex,
                         trailing = {
                             AuntieToggle(
                                 checked = checked,
@@ -3801,21 +3801,23 @@ private fun TimeOffPanel(
                 style = AuntieTheme.typography.labelSmall,
                 color = c.textDim,
             )
-            companyHolidays.forEachIndexed { idx, entry ->
-                // Stored as "YYYY-MM-DD|Name". limit=2 keeps a pipe in the name intact.
-                val parts = entry.split("|", limit = 2)
+            // Next closure first (#1979). A yearly entry has no stored year,
+            // so it sorts by its next date and reads as its rule
+            // ("Every year, July 4"), never the stored tag. The stored list
+            // keeps its order; Remove uses each row's stored index.
+            companyHolidayRows(companyHolidays, todayIso).forEach { row ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(dims.space2),
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text(parts.getOrElse(1) { "Holiday" }, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
-                        Text(parts.getOrElse(0) { "" }, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        Text(row.closure.name.ifBlank { "Holiday" }, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                        Text(describeClosureRecurrence(row.closure), style = AuntieTheme.typography.bodySmall, color = c.textDim)
                     }
                     GhostButton(
                         label   = "Remove",
-                        onClick = { onCompanyHolidays(companyHolidays.filterIndexed { i, _ -> i != idx }) },
+                        onClick = { onCompanyHolidays(companyHolidays.filterIndexed { i, _ -> i != row.index }) },
                     )
                 }
             }
@@ -4101,20 +4103,6 @@ internal fun ProfileAvatar(
         }
     }
 }
-
-private val US_HOLIDAYS = listOf(
-    "new_years"      to "New Year's Day",
-    "mlk"            to "Martin Luther King Jr. Day",
-    "presidents"     to "Presidents' Day",
-    "memorial"       to "Memorial Day",
-    "juneteenth"     to "Juneteenth",
-    "independence"   to "Independence Day",
-    "labor"          to "Labor Day",
-    "columbus"       to "Columbus Day",
-    "veterans"       to "Veterans Day",
-    "thanksgiving"   to "Thanksgiving",
-    "christmas"      to "Christmas Day",
-)
 
 private class FirestoreClientSettingsDataSource(
     private val client: FirestoreClient,

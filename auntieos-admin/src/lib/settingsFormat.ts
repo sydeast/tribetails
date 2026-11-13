@@ -2,6 +2,7 @@ import type { Timestamp } from 'firebase/firestore';
 import { formatWhen, type FsTime } from './time';
 import { str } from './coerce';
 import type { HomeSectionCfg, PortalHome } from '../api/settings';
+import { US_HOLIDAY_PRESETS, nextClosureOccurrence, parseClosureEntry, type ClosureEntry } from './closureRecurrence';
 
 /**
  * Pure Settings-overview formatting, kept out of the screen so the mapping
@@ -97,23 +98,35 @@ export function serviceRateRows(rates: Record<string, string>): ServiceRateRow[]
 // ── Holidays / time off ─────────────────────────────────────────────────────
 
 /**
- * The eleven US holidays the Time Off panel offers, id -> display name.
- * Ported verbatim from `SettingsScreen.kt`'s private `US_HOLIDAYS` list so the
- * overview's labels match the editor's exactly.
+ * The observed-holiday switch ids, each paired with the one-click preset in
+ * `US_HOLIDAY_PRESETS` (`./closureRecurrence.ts`) that names it. The switch
+ * label is read off the preset, so a holiday has one name on the whole Time
+ * off panel (#1947). The ids are the stored `observedUsHolidays` keys and stay
+ * as they are: only `columbus` differs from its preset id.
  */
-export const US_HOLIDAYS: ReadonlyArray<readonly [string, string]> = [
-  ['new_years', "New Year's Day"],
-  ['mlk', 'Martin Luther King Jr. Day'],
-  ['presidents', "Presidents' Day"],
-  ['memorial', 'Memorial Day'],
-  ['juneteenth', 'Juneteenth'],
-  ['independence', 'Independence Day'],
-  ['labor', 'Labor Day'],
-  ['columbus', 'Columbus Day'],
-  ['veterans', 'Veterans Day'],
-  ['thanksgiving', 'Thanksgiving'],
-  ['christmas', 'Christmas Day'],
+const OBSERVED_HOLIDAY_PRESET_IDS: ReadonlyArray<readonly [string, string]> = [
+  ['new_years', 'new_years'],
+  ['mlk', 'mlk'],
+  ['presidents', 'presidents'],
+  ['memorial', 'memorial'],
+  ['juneteenth', 'juneteenth'],
+  ['independence', 'independence'],
+  ['labor', 'labor'],
+  ['columbus', 'indigenous_columbus'],
+  ['veterans', 'veterans'],
+  ['thanksgiving', 'thanksgiving'],
+  ['christmas', 'christmas'],
 ];
+
+/**
+ * The eleven US holidays the Time Off panel offers, id -> display name, in
+ * calendar order. Names come from the preset catalog (see above). The Android
+ * `US_OBSERVED_HOLIDAYS` (`TimeOffHolidays.kt`) and the desktop console's
+ * copy (`screens/settings/ClosureRecurrence.kt`) are built the same way.
+ */
+export const US_HOLIDAYS: ReadonlyArray<readonly [string, string]> = OBSERVED_HOLIDAY_PRESET_IDS.map(
+  ([id, presetId]) => [id, US_HOLIDAY_PRESETS.find((p) => p.id === presetId)?.name ?? humanizeId(id)] as const,
+);
 
 /** Title-cases a snake_case id, e.g. `some_id` -> `Some Id`. Fallback label for an id outside the known list. */
 export function humanizeId(id: string): string {
@@ -156,9 +169,42 @@ export function parseDatedEntry(raw: string): DatedEntry {
   return { date: entry.slice(0, sep), label: entry.slice(sep + 1) };
 }
 
-/** Company holidays, oldest first; entries with no parseable date sort last. */
-export function companyHolidayRows(entries: string[]): DatedEntry[] {
-  return sortByDate(entries.map(parseDatedEntry));
+/** One company holiday row as the Time off list shows it. */
+export interface CompanyHolidayRow {
+  /** The stored wire string, unchanged. */
+  entry: string;
+  /** Its position in the stored `companyHolidays` array, so Remove takes out this entry and no other. */
+  index: number;
+  closure: ClosureEntry;
+  /** The next date it falls on, today or later; `null` for a one-time date that has passed or a row that cannot be read. */
+  next: string | null;
+}
+
+/**
+ * Company holidays in the order the Time off list shows them (#1979): the
+ * next closure first, by the date each row next falls on (a yearly row has
+ * no stored year, so its date is its next occurrence from `todayIso`). After
+ * the upcoming rows come one-time closures that have passed, oldest first,
+ * then any row that cannot be read. Same date: by name, then stored position.
+ * Display only: the stored array keeps its order, and each row carries its
+ * stored `index`.
+ */
+export function companyHolidayRows(entries: string[], todayIso: string): CompanyHolidayRow[] {
+  const rows = entries.map((entry, index) => {
+    const closure = parseClosureEntry(entry);
+    return { entry, index, closure, next: nextClosureOccurrence(closure, todayIso) };
+  });
+  const group = (r: CompanyHolidayRow) => (r.next !== null ? 0 : r.closure.date !== '' ? 1 : 2);
+  const sortDate = (r: CompanyHolidayRow) => r.next ?? r.closure.date;
+  return rows.sort((a, b) => {
+    const byGroup = group(a) - group(b);
+    if (byGroup !== 0) return byGroup;
+    const da = sortDate(a);
+    const db = sortDate(b);
+    if (da !== db) return da < db ? -1 : 1;
+    if (a.closure.name !== b.closure.name) return a.closure.name < b.closure.name ? -1 : 1;
+    return a.index - b.index;
+  });
 }
 
 /** Special (modified) hours entries, oldest first. Same shape/sort as company holidays. */

@@ -166,6 +166,52 @@ the stale "~26":
     handler, not a file-scope import: it is this callable's only caller and
     pulls in `dom-serializer`, which `coldStartImportGraph.test.ts` would
     otherwise charge to every deployed function's cold start.
+- `getTemplateChannels`, `saveTemplateChannels` (#1935, net-new, owner-only:
+  admin-gated and NOT in `AUNTIE_ALLOWED_CALLABLES`). The only way a client
+  reads or writes `smsTemplates` / `pushTemplates`; `firestore.rules` keeps
+  both closed.
+  - `getTemplateChannels` req `{ templateId: string }`
+  - `saveTemplateChannels` req
+    `{ templateId: string; sms?: { text: string }; push?: { title: string; body: string } }`,
+    at least one of `sms` / `push`. Clients send only the channel that changed.
+  - Both respond
+    `{ templateId; notificationLabel: string | null; fields: string[];`
+    `sms: { supported: boolean; set: boolean; text: string; maxLength: number };`
+    `push: { supported: boolean; set: boolean; title: string; body: string; titleMaxLength: number; bodyMaxLength: number } }`.
+  - `supported` is true only when a catalog row's EMAIL template is
+    `templateId` and that row really sends the channel (`allowedChannels` and
+    `templates.sms` / `templates.push`, not an `external` row). The catalog
+    opens all three channels on every row at load, so that is every catalog
+    notification except the `external` ones. A template that is not a
+    catalog row's own email but is the target of exactly one active
+    Template Routing override (`notificationTemplateBindings`, read through
+    `readTemplateBindings`) answers for that override's notification. The
+    documents read and written are the ids the senders read off that row, so
+    an edit changes what is sent. A template no notification sends
+    (operator-made with no override or with two or more, invites, recovery)
+    comes back `supported: false` on both, and a save to an
+    unsupported channel is `failed-precondition`. `set: false` with
+    `supported: true` is "not set, can be added"; a save creates the document.
+  - `fields` is `TEMPLATE_FIELDS[key]`, the same list `getNotificationMatrix`
+    returns as `mergeFields` for the email editor.
+  - Limits: text 1600 characters (Twilio's body cap), push title 100 and body
+    500 (inside FCM's 4096-byte message). Returned on every response so no
+    client hardcodes them.
+  - A refused save is `invalid-argument` with
+    `details = { reason: 'template-wording-refused'; fieldErrors: { smsText?; pushTitle?; pushBody? } }`,
+    one operator sentence per field: empty, over the limit, three curly
+    brackets, markup that would throw at send, or a `{{field}}` the
+    notification does not fill. A field the stored copy already uses stays
+    usable. `not-found` when `templateId` is neither a catalog email template
+    nor an `emailTemplates` document.
+  - The write is `set(merge: true)` of `text`, or `title` and `body`, trimmed,
+    plus `updatedAt` / `updatedBy`. `dataRoute` on a push document is never
+    touched. These are the fields `importPlanner` compares, so an edit reads
+    as differing on the next import and is skipped unless that template is in
+    `overwriteIds`. A save that changes nothing writes nothing.
+  - Audited as `ADMIN_TEMPLATE_WORDING_UPDATED` with
+    `{ templateId; channels: ('sms' | 'push')[]; added: ('sms' | 'push')[] }`
+    (never the wording), described in words with the notification's label.
 - `getEmailFrame`, `saveEmailFrame`, `previewEmailFrame` (#957, net-new,
   owner-only: admin-gated and NOT in `AUNTIE_ALLOWED_CALLABLES`). Spec:
   `docs/superpowers/specs/2026-09-28-email-frame-editor-design.md`. The frame

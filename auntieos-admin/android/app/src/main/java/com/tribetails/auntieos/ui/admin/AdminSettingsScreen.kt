@@ -2528,20 +2528,6 @@ private fun DeviceProbeCard(row: IntegrationHealth) {
 // Time off
 // ─────────────────────────────────────────────────────────────────────────────
 
-private val US_HOLIDAYS = listOf(
-    "new_years" to "New Year's Day",
-    "mlk" to "Martin Luther King Jr. Day",
-    "presidents" to "Presidents' Day",
-    "memorial" to "Memorial Day",
-    "juneteenth" to "Juneteenth",
-    "independence" to "Independence Day",
-    "labor" to "Labor Day",
-    "columbus" to "Columbus Day",
-    "veterans" to "Veterans Day",
-    "thanksgiving" to "Thanksgiving",
-    "christmas" to "Christmas Day",
-)
-
 /** Full month names for the closure-recurrence pickers below (index 0 = January). */
 private val CLOSURE_MONTH_NAMES = listOf(
     "January", "February", "March", "April", "May", "June",
@@ -2633,10 +2619,10 @@ private fun TimeOffPanel(
             SettingsSavingCue(saving)
             AuntieFieldLabel(text = "US Holidays Observed")
             Column {
-                US_HOLIDAYS.forEachIndexed { idx, (id, name) ->
+                US_OBSERVED_HOLIDAYS.forEachIndexed { idx, (id, name) ->
                     AuntieSettingRow(
                         title = name,
-                        showDivider = idx < US_HOLIDAYS.lastIndex,
+                        showDivider = idx < US_OBSERVED_HOLIDAYS.lastIndex,
                         trailing = {
                             AuntieToggle(
                                 checked = id in observed,
@@ -2658,8 +2644,10 @@ private fun TimeOffPanel(
                 color = c.textDim,
             )
 
-            settings.companyHolidays.forEachIndexed { idx, entry ->
-                val parsed = parseClosureEntry(entry)
+            // Shown next closure first (#1979); the stored list keeps its
+            // order and Remove uses each row's stored index.
+            companyHolidayRows(settings.companyHolidays, todayIso).forEach { row ->
+                val parsed = row.closure
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -2675,7 +2663,7 @@ private fun TimeOffPanel(
                         onClick = {
                             onSettingsChange(
                                 settings.copy(
-                                    companyHolidays = settings.companyHolidays.filterIndexed { i, _ -> i != idx }
+                                    companyHolidays = settings.companyHolidays.filterIndexed { i, _ -> i != row.index }
                                 )
                             )
                         },
