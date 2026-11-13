@@ -582,3 +582,30 @@
   font-size: var(--type-body-sm-size);
   color: var(--color-text-dim);
 }
+
+/* #1897: where the panel sits on the page.
+   Dialog's `variant="sheet"` pins the panel to the viewport's top-right corner,
+   which is exactly where the shell topbar keeps "Sign out" (and, on a phone, the
+   nav toggle on the other side of the same row). The panel's close X therefore
+   sat over Sign out: once the panel unmounted, the pointer rested on a control
+   that ends the session, and a double click on the X landed its second click
+   there. The panel now starts BELOW the topbar row, so the X never shares a
+   hit area with it. The scrim still covers the row (a press on it is a backdrop
+   press and closes the panel, it never reaches Sign out).
+   `:has(.new-booking)` scopes this to this wizard: the shared sheet shell and the
+   booking detail sheet are left as they were. 5rem is the topbar's height plus
+   the page padding above it (shell.css: 1.5rem + the 2.75rem account chip). */
+.dialog__backdrop--sheet:has(.new-booking) {
+  padding-top: 5rem;
+}
+.dialog--sheet:has(.new-booking) {
+  border-top: 1px solid var(--color-border);
+  border-top-left-radius: var(--radius-panel);
+}
+/* The phone shell's topbar row is the 2.5rem nav toggle under a 1rem page
+   padding, and the sheet is full bleed there, so it needs the inset most. */
+@media (max-width: 40rem) {
+  .dialog__backdrop--sheet:has(.new-booking) {
+    padding-top: 4.25rem;
+  }
+}
