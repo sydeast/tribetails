@@ -236,7 +236,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * `lib/templateChannelWording.ts`, load with `await import()` inside the
  * handler, so the entry is the only module it adds.
  *
- * 449 since #1901 (on top of #1935's 448): `lib/invoiceSessionLinks.ts`, the
+ * 449 since #2123 (on top of #1935's 448): `triggers/onKinCareSessionDeparted.ts`,
+ * the trigger that completes a visit at departure. A new entry in the FUNCTIONS
+ * table, so it is in the union by construction. Its words and the "KinTale
+ * required" reader are loaded inside the handler; its file-scope imports
+ * (`arrivalVerification`, `geo`, `writeAuditEntry`, `wrapTrigger`) are already
+ * resident through `transitionBookingStatus` and the other triggers.
+ *
+ * 450 since #1901 (on top of #2123's 449): `lib/invoiceSessionLinks.ts`, the
  * one place that sets and clears a visit's billed link, which
  * `admin/createInvoice.ts`, `admin/updateInvoice.ts` and
  * `admin/linkInvoiceSessions.ts` (entries already in this graph) share inside
@@ -244,7 +251,7 @@ const ALLOWED_EAGER_PACKAGES = [
  * firebase-admin, firebase-functions and `lib/sessionInvoicing.ts`, all
  * already resident.
  */
-const MAX_OWN_EAGER_MODULES = 449;
+const MAX_OWN_EAGER_MODULES = 450;
 
 interface Edge {
   spec: string;

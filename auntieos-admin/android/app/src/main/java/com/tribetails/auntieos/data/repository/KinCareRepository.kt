@@ -835,12 +835,14 @@ class KinCareRepository(
                 "updatedAt" to timestamp
             )
         )
-        // Bump session sentReportCount and flag autoCompleteEligible
+        // Bump session sentReportCount and flag autoCompleteEligible (still read by
+        // installed builds). #2123: the send also settles the "Send the KinTale" task.
         batch.update(
             firestore.collection("kin_care_sessions").document(sessionId),
             mapOf(
                 "sentReportCount" to com.google.firebase.firestore.FieldValue.increment(1),
                 "autoCompleteEligible" to true,
+                "kinTaleDue" to false,
                 "updatedAt" to timestamp
             )
         )

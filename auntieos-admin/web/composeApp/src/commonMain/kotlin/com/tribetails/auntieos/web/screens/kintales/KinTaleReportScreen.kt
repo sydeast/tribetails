@@ -40,8 +40,7 @@ import com.composables.icons.lucide.Send
 import com.composables.icons.lucide.Share2
 import com.composables.icons.lucide.X
 import com.tribetails.auntieos.web.config.LocalFeatureFlags
-import com.tribetails.auntieos.web.data.VisitCompletionAfterSend
-import com.tribetails.auntieos.web.data.kinTaleSentMessage
+import com.tribetails.auntieos.web.data.KINTALE_SENT_MESSAGE
 import com.tribetails.auntieos.web.data.AuntieDataSource
 import com.tribetails.auntieos.web.data.DefaultKinTaleTemplate
 import com.tribetails.auntieos.web.data.FirestoreClient
@@ -360,17 +359,14 @@ private fun SentReportView(
     Column(verticalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.fillMaxWidth()) {
 
         // Confirm the auntie's own just-completed send (the screen no longer pops).
-        // #1799: it also says whether the visit was marked Completed, and when
-        // the server refused, why, in a banner that stays until the screen closes.
+        // #2123: about the KinTale only. The visit was Completed at departure.
         if (vm.justSent) {
-            val completion = vm.visitCompletion
-            val refused = completion is VisitCompletionAfterSend.NotCompleted
             AuntieBanner(
-                tone = if (refused) AuntieBannerTone.Warning else AuntieBannerTone.Success,
-                icon = if (refused) Lucide.CircleAlert else Lucide.CircleCheckBig,
+                tone = AuntieBannerTone.Success,
+                icon = Lucide.CircleCheckBig,
                 body = {
                     Text(
-                        justSentBannerText(completion),
+                        justSentBannerText(),
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textPrimary,
                     )
@@ -1107,11 +1103,5 @@ internal fun deleteDraftConfirmText(recipient: String): String =
         "This KinTale for $recipient has not been sent. Deleting it cannot be undone."
     }
 
-/**
- * #1799: the sent banner on this screen. Null means the send went through and
- * no completion was asked for (the old sentence).
- */
-internal fun justSentBannerText(completion: VisitCompletionAfterSend?): String = when (completion) {
-    null -> "This KinTale has been sent."
-    else -> kinTaleSentMessage(completion)
-}
+/** #2123: the sent banner on this screen, about the KinTale alone. */
+internal fun justSentBannerText(): String = KINTALE_SENT_MESSAGE

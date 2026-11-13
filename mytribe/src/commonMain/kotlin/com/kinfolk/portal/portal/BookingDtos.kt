@@ -112,7 +112,7 @@ data class BookingNotes(
     val notes: List<BookingNote>,
 )
 /** True once the visit is over (completed or cancelled): nobody is left to read a note. */
-fun Booking.isFinished(): Boolean = status == BookingStatus.Completed || status == BookingStatus.Cancelled
+fun Booking.isFinished(): Boolean = stage().let { it == VisitStage.Completed || it == VisitStage.Cancelled }
 
 /**
  * The three answers a reschedule ask can be waiting on. Anything else the

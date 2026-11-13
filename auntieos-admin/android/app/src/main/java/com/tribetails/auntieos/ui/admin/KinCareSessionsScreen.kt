@@ -1,6 +1,10 @@
 package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.domain.completeRefusal
+import com.tribetails.auntieos.domain.KIN_TALES_TO_SEND_LABEL
+import com.tribetails.auntieos.domain.SEND_THE_KINTALE_LABEL
+import com.tribetails.auntieos.domain.offersSendKinTale
+import com.tribetails.auntieos.domain.splitKinTalesToSend
 import com.tribetails.auntieos.domain.INCOMPLETE_ADDRESS_HINT
 import com.tribetails.auntieos.domain.addressLooksIncomplete
 import android.content.Context
@@ -143,6 +147,10 @@ private enum class Phase(val label: String) {
     Active("Active"),
     // issue #702: a SCHEDULED visit whose slot already passed gets its own
     // phase, between Active and Upcoming, rather than being dropped outright.
+    // #2123: Completed visits whose KinTale is still owed, while "KinTale
+    // required" is on. Never filled by [phaseFor]: the board fills it from
+    // `splitKinTalesToSend`, over every loaded visit rather than the window.
+    KinTalesToSend(KIN_TALES_TO_SEND_LABEL),
     Overdue("Overdue"),
     Upcoming("Upcoming"),
     CompletedToday("Recent"),
@@ -155,6 +163,7 @@ private enum class Phase(val label: String) {
  */
 private fun phaseEmptyLine(phase: Phase): String = when (phase) {
     Phase.Active -> "No visit is in flight."
+    Phase.KinTalesToSend -> "No KinTale is waiting to be sent."
     Phase.Overdue -> "No scheduled visit has slipped past its slot."
     Phase.Upcoming -> "Nothing booked in the next $UPCOMING_WINDOW_DAYS days."
     Phase.CompletedToday -> "Nothing wrapped today or yesterday."
@@ -217,7 +226,14 @@ fun KinCareSessionsScreen(
     val zone = remember(storedZone) { businessZone(storedZone) }
     val todayDate = businessToday(zone)
     val today = todayDate.toString()
-    val visible = sessions.filter { isVisibleOnAuntieTime(it, today, zone) }
+    // #2123: a visit Completed with its KinTale still owed is the Auntie's task
+    // until the KinTale is sent, however long ago it was. It is read off every
+    // session this screen loads (not only the day-of window), listed in its own
+    // group, and kept out of Recent so no visit shows twice. Read from the
+    // server's `kinTaleDue` stamp alone, never the settings document (which an
+    // Auntie cannot read): switching the setting off clears the stamps.
+    val kinTaleSplit = splitKinTalesToSend(sessions)
+    val visible = kinTaleSplit.rest.filter { isVisibleOnAuntieTime(it, today, zone) }
 
     // #2036: the Archive. Older history had no list on this app, so a visit
     // wrapped ten days ago could not be reached from here. `null` in a box
@@ -447,7 +463,15 @@ fun KinCareSessionsScreen(
                             // longer swaps the four groups for one empty state.
                             Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
                                 Phase.entries.forEach { phase ->
-                                    val items = grouped[phase].orEmpty()
+                                    // #2123: owed KinTales sit right under what is in
+                                    // flight, and only while something is owed.
+                                    val groupSessions = if (phase == Phase.KinTalesToSend) {
+                                        if (kinTaleSplit.toSend.isEmpty()) return@forEach
+                                        kinTaleSplit.toSend
+                                    } else {
+                                        grouped[phase].orEmpty()
+                                    }
+                                    val items = groupSessions
                                     PhaseGroup(
                                         label = phase.label,
                                         count = items.size,
@@ -996,12 +1020,18 @@ private fun ActionRow(
                     modifier = Modifier.fillMaxWidth(),
                     leading = { Icon(Lucide.Undo2, contentDescription = null, modifier = Modifier.size(14.dp)) },
                 )
-                GhostButton(
-                    label = "Journal",
-                    onClick = onWriteKinTale,
-                    modifier = Modifier.fillMaxWidth(),
-                    leading = { Icon(Lucide.BookOpen, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                )
+                if (offersSendKinTale(session)) {
+                    // #2123: Departed is the moment the visit is Completed; the
+                    // write-up is what is left, so it leads.
+                    SendTheKinTaleButton(onWriteKinTale)
+                } else {
+                    GhostButton(
+                        label = "Journal",
+                        onClick = onWriteKinTale,
+                        modifier = Modifier.fillMaxWidth(),
+                        leading = { Icon(Lucide.BookOpen, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    )
+                }
                 PrimaryButton(
                     label = "Complete",
                     onClick = {
@@ -1017,6 +1047,12 @@ private fun ActionRow(
                     modifier = Modifier.fillMaxWidth(),
                     leading = { Icon(Lucide.StickyNote, contentDescription = null, modifier = Modifier.size(14.dp)) },
                 )
+            }
+            // #2123: a visit is Completed at departure, so the KinTale is written
+            // from the Completed card. Offered whether or not the setting requires
+            // it; with it on, the card also sits in "KinTales to send".
+            "COMPLETED" -> {
+                if (offersSendKinTale(session)) SendTheKinTaleButton(onWriteKinTale)
             }
         }
     }
@@ -1265,3 +1301,14 @@ private fun phaseFor(s: KinCareSession, today: String, zone: ZoneId): Phase = wh
  * stays the Composable.
  */
 
+
+/** #2123: opens the KinTale composer for this visit. Same words on every board. */
+@Composable
+private fun SendTheKinTaleButton(onWriteKinTale: () -> Unit) {
+    PrimaryButton(
+        label = SEND_THE_KINTALE_LABEL,
+        onClick = onWriteKinTale,
+        modifier = Modifier.fillMaxWidth(),
+        leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(16.dp)) },
+    )
+}

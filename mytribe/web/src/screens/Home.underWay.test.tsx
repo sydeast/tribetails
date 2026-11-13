@@ -122,19 +122,21 @@ describe('Home, a visit under way', () => {
     expect(await upNextRow('IN PROGRESS')).toHaveAttribute('data-params', JSON.stringify({ visitId: 'v1' }));
   });
 
-  it('Departed: no card, and Up next still lists the visit as DEPARTED', async () => {
+  // #2123: a visit is Completed at departure. These are answers from before
+  // the change, still pairing `active` with `ended`: they read Completed.
+  it('#2123 Departed, from an older answer: no card, and the visit reads COMPLETED, never DEPARTED', async () => {
     renderWith(visit('active', 'ended'), false);
 
-    expect(await upNextRow('DEPARTED')).toHaveAttribute('data-params', JSON.stringify({ visitId: 'v1' }));
+    expect(await upNextRow('COMPLETED')).toHaveAttribute('data-params', JSON.stringify({ visitId: 'v1' }));
+    expect(screen.queryByText('DEPARTED')).toBeNull();
     expect(screen.queryByTestId('live-visit')).toBeNull();
     expect(screen.queryByText('LIVE NOW')).toBeNull();
     expect(screen.queryByText('IN PROGRESS')).toBeNull();
-    expect(screen.queryByText('Nothing on the calendar yet.')).toBeNull();
   });
 
-  it('Departed: an answer that still names the visit as live does not bring the card back', async () => {
+  it('#2123 Departed: an answer that still names the visit as live does not bring the card back', async () => {
     renderWith(visit('active', 'ended'), true);
-    await upNextRow('DEPARTED');
+    await upNextRow('COMPLETED');
     expect(screen.queryByTestId('live-visit')).toBeNull();
   });
 

@@ -7,6 +7,9 @@ import { buildDbMock } from './_helpers/mockDb';
  * visit. On my way, Arrived and Departed are written to the SESSION only, so
  * each case below leaves the household's `kinCares` copy on `confirmed`, the
  * way production data looks, and moves the session.
+ *
+ * #2123 (operator ruling 2026-11-12): once the Auntie has departed the visit
+ * is Completed for the household. There is no Departed stage on the wire.
  */
 
 const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
@@ -99,12 +102,26 @@ describe('getMyBookings: a visit past its start, at every status of its life', (
     expect(res.liveVisit).toMatchObject({ id: 'v1', status: 'active', visitProgress: 'active', kinNames: ['Biscuit'] });
   });
 
-  it('Departed: still on Upcoming as active + ended, and the live card clears', async () => {
+  it('#2123 Departed: completed on Past Visits at once, off Upcoming, and the live card clears', async () => {
     const res = await read(oneVisitDb('DEPARTED'));
-    expect(res.upcoming.map((b) => b.id)).toEqual(['v1']);
-    expect(res.upcoming[0]).toMatchObject({ status: 'active', visitProgress: 'ended' });
+    expect(res.upcoming).toEqual([]);
     expect(res.liveVisit).toBeNull();
-    expect(res.recent).toEqual([]);
+    expect(res.recent.map((b) => b.id)).toEqual(['v1']);
+    expect(res.recent[0]).toMatchObject({ status: 'completed', visitProgress: 'ended' });
+  });
+
+  it('#2123 Departed with no KinTale sent: still completed, the household waits on nothing', async () => {
+    // The session carries no reportIds and no sentReportCount, the state a
+    // visit is in the minute the Auntie leaves.
+    const res = await read(oneVisitDb('DEPARTED'));
+    expect(findById(res, 'v1')).toMatchObject({ status: 'completed' });
+    expect(res.envelopes[0].kinCares[0]).toMatchObject({ status: 'completed', visitProgress: 'ended' });
+  });
+
+  it('#2123 Departed does not reopen a visit the office cancelled', async () => {
+    const res = await read(oneVisitDb('DEPARTED', { visitStatus: 'cancelled' }));
+    expect(res.recent[0]).toMatchObject({ id: 'v1', status: 'cancelled' });
+    expect(res.upcoming).toEqual([]);
   });
 
   it('Completed on the session before the household copy caught up: completed, on Past Visits', async () => {
@@ -137,7 +154,7 @@ describe('getMyBookings: a visit past its start, at every status of its life', (
     ['SCHEDULED', 'confirmed', null],
     ['ON_MY_WAY', 'enRoute', 'enRoute'],
     ['ARRIVED', 'active', 'active'],
-    ['DEPARTED', 'active', 'ended'],
+    ['DEPARTED', 'completed', 'ended'],
     ['COMPLETED', 'completed', 'ended'],
   ])('by id, session %s: the visit is found, and its envelope copy agrees', async (sessionStatus, status, visitProgress) => {
     const res = await read(oneVisitDb(sessionStatus));
@@ -148,7 +165,7 @@ describe('getMyBookings: a visit past its start, at every status of its life', (
   });
 
   it('a visit under way stays listed however long ago it started', async () => {
-    const res = await read(oneVisitDb('DEPARTED', { startedAgoMs: 30 * HOUR }));
+    const res = await read(oneVisitDb('ARRIVED', { startedAgoMs: 30 * HOUR }));
     expect(res.upcoming.map((b) => b.id)).toEqual(['v1']);
   });
 
@@ -232,7 +249,7 @@ describe('getMyBookings: joining a visit to its session', () => {
     expect(res.upcoming.map((b) => b.id)).toEqual(['v-otw', 'v-here', 'v-next']);
   });
 
-  it('a visit with no booking record: Departed keeps it listed, with the Kin it was scheduled for', async () => {
+  it('#2123 a visit with no booking record: Departed is finished, like Completed, so it leaves Upcoming', async () => {
     const startMs = Date.now() - 40 * 60_000;
     const ctx = buildDbMock({
       docs: { 'clients/u1': { kinfolkIds: ['3'] } },
@@ -251,13 +268,7 @@ describe('getMyBookings: joining a visit to its session', () => {
       },
     });
     const res = await read(ctx);
-    expect(res.upcoming).toHaveLength(1);
-    expect(res.upcoming[0]).toMatchObject({
-      id: 'sess-adhoc',
-      status: 'active',
-      visitProgress: 'ended',
-      kinNames: ['Biscuit'],
-    });
+    expect(res.upcoming).toEqual([]);
     expect(res.liveVisit).toBeNull();
   });
 

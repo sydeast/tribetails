@@ -247,6 +247,7 @@ describe('visitsTrackingPatch (pure)', () => {
     trackingAccuracy: 'HIGH',
     enablePhotoLocationTagging: true,
     requireArrivalDepartureVerification: true,
+    kinTaleRequired: true,
     arrivalRadiusMeters: '150',
     allowClientLocationSharing: true,
     saveRoutesForDays: '90',
@@ -356,6 +357,46 @@ describe('VisitsTrackingSection', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     // #1783: the switch the operator did not touch is not in the save at all.
     expect(onSave.mock.calls[0]?.[0]).toEqual({ allowClientLocationSharing: false });
+  });
+
+  /** #2123: "KinTale required". Absent reads OFF (ruling 2026-11-13, "Start it off"), the server's reading. */
+  it('shows KinTale required OFF for a document with no such key, and saves turning it on alone', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={mergeBusinessSettings({ businessName: 'Tribe Tails' })} onSave={onSave} />);
+    const toggle = screen.getByRole('switch', { name: 'Toggle KinTale required' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('KinTale required')).toBeInTheDocument();
+    await user.click(toggle);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave.mock.calls[0]?.[0]).toEqual({ kinTaleRequired: true });
+  });
+
+  it('turns KinTale required off from a stored on', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={mergeBusinessSettings({ kinTaleRequired: true })} onSave={onSave} />);
+    const toggle = screen.getByRole('switch', { name: 'Toggle KinTale required' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await user.click(toggle);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave.mock.calls[0]?.[0]).toEqual({ kinTaleRequired: false });
+  });
+
+  it('turns KinTale required back on from a stored off', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={mergeBusinessSettings({ kinTaleRequired: false })} onSave={onSave} />);
+    const toggle = screen.getByRole('switch', { name: 'Toggle KinTale required' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await user.click(toggle);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave.mock.calls[0]?.[0]).toEqual({ kinTaleRequired: true });
+  });
+
+  it('a save of another field leaves KinTale required out of the save', async () => {
+    const user = userEvent.setup();
+    render(<VisitsTrackingSection data={mergeBusinessSettings({ kinTaleRequired: false })} onSave={onSave} />);
+    await user.click(screen.getByRole('switch', { name: 'Toggle photo location tagging' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave.mock.calls[0]?.[0]).not.toHaveProperty('kinTaleRequired');
   });
 
   /** #582: the threshold under the arrival switch, editable on this surface too. */

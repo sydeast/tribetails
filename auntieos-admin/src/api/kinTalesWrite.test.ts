@@ -12,8 +12,7 @@ const { addDoc, setDoc, doc, getDoc, collection, writeBatch, arrayUnion, increme
 }));
 vi.mock('firebase/firestore', () => ({ addDoc, setDoc, doc, getDoc, collection, writeBatch, arrayUnion, increment }));
 vi.mock('../lib/firebase', () => ({ db: {} }));
-// #1793: the completion after a send goes through the callable, mocked at the
-// API seam so the rule that decides whether to call it stays real.
+// #2123: mocked only so a test can prove a send never calls it.
 const { transitionBookingStatus } = vi.hoisted(() => ({ transitionBookingStatus: vi.fn() }));
 vi.mock('./bookingsWrite', () => ({ transitionBookingStatus }));
 
@@ -21,7 +20,6 @@ const { getAuthState } = vi.hoisted(() => ({ getAuthState: vi.fn() }));
 vi.mock('../lib/auth', () => ({ getAuthState }));
 
 import {
-  completeVisitAfterKinTale,
   saveKinTaleDraft,
   sendKinTale,
   hasKinTaleContent,
@@ -205,6 +203,8 @@ describe('sendKinTale', () => {
         reportIds: { __op: 'arrayUnion', v: 'r1' },
         sentReportCount: { __op: 'increment', n: 1 },
         autoCompleteEligible: true,
+        // #2123: the visit leaves the Auntie's "KinTales to send" list.
+        kinTaleDue: false,
       }),
     );
     expect(commit).toHaveBeenCalledOnce();
@@ -286,54 +286,16 @@ describe('templateId and fieldResponses reach the document', () => {
 });
 
 /**
- * #1793: the web half of Android's Home sweep. A DEPARTED visit flagged by the
- * send is completed through `transitionBookingStatus`; nothing else is, and
- * nothing here throws, because the tale has already gone home.
+ * #2123: a send never completes a visit any more (departure does, on the
+ * server), so nothing here reads the session back or calls the callable.
  */
-describe('completeVisitAfterKinTale', () => {
-  function sessionDoc(data: Record<string, unknown> | undefined) {
-    getDoc.mockResolvedValue({ data: () => data });
-  }
-  it('completes a DEPARTED visit the send flagged, reading the session fresh', async () => {
-    sessionDoc({ status: 'DEPARTED', autoCompleteEligible: true });
-    transitionBookingStatus.mockResolvedValue({ ok: true, changed: true });
-    expect(await completeVisitAfterKinTale('s1')).toEqual({ kind: 'completed' });
-    expect(doc).toHaveBeenCalledWith({}, 'kin_care_sessions', 's1');
-    expect(transitionBookingStatus).toHaveBeenCalledOnce();
-    expect(transitionBookingStatus).toHaveBeenCalledWith({
-      sessionId: 's1',
-      action: 'COMPLETE',
-      completedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/),
-    });
-  });
-  it('leaves an ARRIVED visit open, though the server would accept COMPLETE from it', async () => {
-    sessionDoc({ status: 'ARRIVED', autoCompleteEligible: true });
-    expect(await completeVisitAfterKinTale('s1')).toEqual({ kind: 'left_open', status: 'ARRIVED' });
-    expect(transitionBookingStatus).not.toHaveBeenCalled();
-  });
-  it('leaves a DEPARTED visit open when the fresh read carries no flag', async () => {
-    sessionDoc({ status: 'DEPARTED' });
-    expect(await completeVisitAfterKinTale('s1')).toEqual({ kind: 'left_open', status: 'DEPARTED' });
-    expect(transitionBookingStatus).not.toHaveBeenCalled();
-  });
-  it('leaves an already COMPLETED visit alone, and a missing one', async () => {
-    sessionDoc({ status: 'COMPLETED', autoCompleteEligible: true });
-    expect(await completeVisitAfterKinTale('s1')).toEqual({ kind: 'left_open', status: 'COMPLETED' });
-    sessionDoc(undefined);
-    expect(await completeVisitAfterKinTale('s1')).toEqual({ kind: 'left_open', status: '' });
-    expect(transitionBookingStatus).not.toHaveBeenCalled();
-  });
-  it('returns the server refusal in words rather than throwing', async () => {
-    sessionDoc({ status: 'DEPARTED', autoCompleteEligible: true });
-    transitionBookingStatus.mockRejectedValue(new Error('The arrival was recorded 900 m from the household.'));
-    expect(await completeVisitAfterKinTale('s1')).toEqual({
-      kind: 'not_completed',
-      message: 'The arrival was recorded 900 m from the household.',
-    });
-  });
-  it('returns a failed read as not completed, never as a throw', async () => {
-    getDoc.mockRejectedValue(new Error('unavailable'));
-    expect(await completeVisitAfterKinTale('s1')).toEqual({ kind: 'not_completed', message: 'unavailable' });
+describe('a send does not decide completion', () => {
+  it('reads nothing back and asks the server for nothing after the commit', async () => {
+    const update = vi.fn();
+    const commit = vi.fn().mockResolvedValue(undefined);
+    writeBatch.mockReturnValue({ update, commit });
+    await sendKinTale({ reportId: 'r1', sessionId: 's1' });
+    expect(getDoc).not.toHaveBeenCalled();
     expect(transitionBookingStatus).not.toHaveBeenCalled();
   });
 });

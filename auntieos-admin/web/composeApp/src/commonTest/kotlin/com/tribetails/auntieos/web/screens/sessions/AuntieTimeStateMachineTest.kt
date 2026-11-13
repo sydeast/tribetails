@@ -206,7 +206,7 @@ class AuntieTimeStateMachineTest {
         assertTrue(msgs.none { it.isBlank() })
         assertEquals(msgs.size, msgs.toSet().size, "toast copy must be distinguishable")
         assertEquals("Arrived. GPS started.", kinCareSuccessMessage(AuntieTimeAction.Arrived))
-        assertEquals("Departed. GPS saved.", kinCareSuccessMessage(AuntieTimeAction.Departed))
+        assertEquals("Departed. GPS saved. The visit is marked Completed.", kinCareSuccessMessage(AuntieTimeAction.Departed))
     }
 
     // ── 2. GPS side effects fired after a successful patch ────────────────────

@@ -54,7 +54,7 @@ describe('useMyBookings', () => {
       .mockResolvedValueOnce(answer('confirmed', null))
       .mockResolvedValueOnce(answer('enRoute', 'enRoute'))
       .mockResolvedValueOnce(answer('active', 'active'))
-      .mockResolvedValueOnce(answer('active', 'ended'))
+      // #2123: the server sends a departed visit as completed.
       .mockResolvedValueOnce(answer('completed', 'ended'));
 
     const { result } = renderHook(() => useMyBookings('fam1'), { wrapper });
@@ -63,20 +63,30 @@ describe('useMyBookings', () => {
     expect(visitStageOf(result.current.data!.upcoming[0]!)).toBe('confirmed');
 
     const seen: string[] = [];
-    for (let i = 0; i < 3; i += 1) {
+    for (let i = 0; i < 2; i += 1) {
       await turn();
       seen.push(visitStageOf(result.current.data!.upcoming[0]!));
     }
-    expect(seen).toEqual(['enRoute', 'active', 'departed']);
+    expect(seen).toEqual(['enRoute', 'active']);
 
     await turn();
     expect(result.current.data!.upcoming).toEqual([]);
     expect(result.current.data!.recent[0]!.status).toBe('completed');
-    expect(mocks.getMyBookings).toHaveBeenCalledTimes(5);
+    expect(mocks.getMyBookings).toHaveBeenCalledTimes(4);
 
     // Nothing is due any more, so the reading stops.
     await tick(BOOKINGS_POLL_MS * 4);
-    expect(mocks.getMyBookings).toHaveBeenCalledTimes(5);
+    expect(mocks.getMyBookings).toHaveBeenCalledTimes(4);
+  });
+
+  it('#2123: an older answer still listing a departed visit as upcoming reads Completed and stops reading', async () => {
+    const departed = { id: 'v1', status: 'active', visitProgress: 'ended', startTimeMs: Date.now() + 3 * 3600_000, kinNames: [] };
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [departed], recent: [], envelopes: [] });
+    const { result } = renderHook(() => useMyBookings('fam1'), { wrapper });
+    await tick(0);
+    expect(visitStageOf(result.current.data!.upcoming[0]!)).toBe('completed');
+    await tick(BOOKINGS_POLL_MS * 4);
+    expect(mocks.getMyBookings).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the last answer on screen while the next one is fetched', async () => {

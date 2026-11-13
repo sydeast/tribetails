@@ -123,6 +123,35 @@ describe('rules: kin_care_sessions terminal status is callable-only', () => {
     await assertSucceeds(fs.doc(SESSION).set({ gpsSummary: { distance: 1 } }, { merge: true }));
   });
 
+  // #2123: the server completes a visit on departure, so a stale client must
+  // not be able to undo its way back out of COMPLETED.
+  it('a COMPLETED session cannot be moved back to SCHEDULED by direct write (a stale Undo arrival)', async () => {
+    await seedSession({ status: 'COMPLETED', completedAt: '2026-08-01T10:00:00Z', arrivedAt: '2026-08-01T09:00:00Z' });
+    const env = await getEnv();
+    await assertFails(
+      env.authenticatedContext('auntie1', AUNTIE).firestore().doc(SESSION)
+        .set({ status: 'SCHEDULED', arrivedAt: '', departedAt: '' }, { merge: true }),
+    );
+  });
+
+  it('a CANCELLED session cannot be reopened by direct write', async () => {
+    await seedSession({ status: 'CANCELLED' });
+    const env = await getEnv();
+    await assertFails(
+      env.authenticatedContext('auntie1', AUNTIE).firestore().doc(SESSION)
+        .set({ status: 'ON_MY_WAY' }, { merge: true }),
+    );
+  });
+
+  it('a DEPARTED session can still be undone back to SCHEDULED before the server completes it', async () => {
+    await seedSession({ status: 'DEPARTED', arrivedAt: '2026-08-01T09:00:00Z', departedAt: '2026-08-01T09:30:00Z' });
+    const env = await getEnv();
+    await assertSucceeds(
+      env.authenticatedContext('auntie1', AUNTIE).firestore().doc(SESSION)
+        .set({ status: 'SCHEDULED', arrivedAt: '', departedAt: '' }, { merge: true }),
+    );
+  });
+
   it('a session that is ALREADY terminal can still take a non-status patch', async () => {
     await seedSession({ status: 'COMPLETED', completedAt: '2026-08-01T10:00:00Z' });
     const env = await getEnv();

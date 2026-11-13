@@ -183,12 +183,11 @@ class HomeViewModelTest {
         assertNull(vm.uiState.value.actionError)
     }
 
-    // ── ISSUE #1793: the load sweep, the rule web now follows too ──
-    // DEPARTED and autoCompleteEligible completes; nothing else does. The web's
-    // `lib/sessionLifecycle.ts#completesAfterKinTale` is a transcription of this.
-
+    // ── ISSUE #2123: the load sweep completes every DEPARTED visit ──
+    // Operator ruling 2026-11-12: a visit is Completed at departure, and a KinTale
+    // never decides that. The #1793 rule (DEPARTED and autoCompleteEligible) is gone.
     @Test
-    fun `load completes a DEPARTED visit whose KinTale was sent (1793)`() = runTest(testDispatcher) {
+    fun `load completes a DEPARTED visit whose KinTale was sent (2123)`() = runTest(testDispatcher) {
         val departed = TestFixtures.session1.copy(
             status = com.tribetails.auntieos.data.model.VisitStatus.DEPARTED.name,
             autoCompleteEligible = true,
@@ -200,10 +199,8 @@ class HomeViewModelTest {
             Result.success(listOf(departed)),
             Result.success(listOf(completed)),
         )
-
         val vm = buildViewModel()
         advanceUntilIdle()
-
         coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete(departed.id) }
         val state = vm.uiState.value
         assertFalse(state.isOffline)
@@ -213,39 +210,96 @@ class HomeViewModelTest {
             state.todayVisits.single().session.status,
         )
     }
-
     @Test
-    fun `load leaves an ARRIVED visit open though its KinTale was sent (1793)`() = runTest(testDispatcher) {
+    fun `load completes a DEPARTED visit with no KinTale sent (2123)`() = runTest(testDispatcher) {
+        val departed = TestFixtures.session1.copy(
+            status = com.tribetails.auntieos.data.model.VisitStatus.DEPARTED.name,
+            autoCompleteEligible = false,
+            sentReportCount = 0,
+        )
+        val completed = departed.copy(status = com.tribetails.auntieos.data.model.VisitStatus.COMPLETED.name)
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returnsMany listOf(
+            Result.success(listOf(departed)),
+            Result.success(listOf(completed)),
+        )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete(departed.id) }
+        assertNull(vm.uiState.value.actionError)
+        assertTrue(vm.uiState.value.autoCompleteRefusals.isEmpty())
+    }
+    // #2123: the server trigger completes at departure; the sweep waits it out.
+    private val sweepNowMs = java.time.Instant.parse("2026-11-12T18:00:00Z").toEpochMilli()
+    private fun departedAgo(minutes: Long?) = TestFixtures.session1.copy(
+        status = com.tribetails.auntieos.data.model.VisitStatus.DEPARTED.name,
+        departedAt = minutes?.let { java.time.Instant.ofEpochMilli(sweepNowMs - it * 60_000L).toString() } ?: "",
+    )
+    private fun sweepWith(session: com.tribetails.auntieos.data.model.KinCareSession): HomeViewModel {
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete(any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(session))
+        return HomeViewModel(
+            repo = mockRepo,
+            invoiceRepo = mockInvoiceRepo,
+            kinCareRepo = mockKinCareRepo,
+            notifier = mockNotifier,
+            arrivalFixes = FakeArrivalFixes(),
+            nowMs = { sweepNowMs },
+        )
+    }
+    @Test
+    fun `a visit departed 1 minute ago is left to the server (2123)`() = runTest(testDispatcher) {
+        val vm = sweepWith(departedAgo(1))
+        advanceUntilIdle()
+        coVerify(exactly = 0) { mockKinCareRepo.markSessionComplete(any()) }
+        assertTrue(vm.uiState.value.autoCompleteRefusals.isEmpty())
+    }
+    @Test
+    fun `a visit departed 10 minutes ago is swept (2123)`() = runTest(testDispatcher) {
+        sweepWith(departedAgo(10))
+        advanceUntilIdle()
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete(TestFixtures.session1.id) }
+    }
+    @Test
+    fun `a visit with no departure time is swept at once (2123)`() = runTest(testDispatcher) {
+        sweepWith(departedAgo(null))
+        advanceUntilIdle()
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete(TestFixtures.session1.id) }
+    }
+    @Test
+    fun `an unreadable departure time is swept at once (2123)`() = runTest(testDispatcher) {
+        sweepWith(departedAgo(null).copy(departedAt = "yesterday"))
+        advanceUntilIdle()
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete(TestFixtures.session1.id) }
+    }
+    @Test
+    fun `load leaves an ARRIVED visit open though its KinTale was sent (2123)`() = runTest(testDispatcher) {
         val arrived = TestFixtures.session1.copy(
             status = com.tribetails.auntieos.data.model.VisitStatus.ARRIVED.name,
             autoCompleteEligible = true,
         )
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
         coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(arrived))
-
         val vm = buildViewModel()
         advanceUntilIdle()
-
         coVerify(exactly = 0) { mockKinCareRepo.markSessionComplete(any()) }
         assertEquals(1, vm.uiState.value.todayVisits.size)
     }
-
     @Test
-    fun `load leaves a DEPARTED visit open until a KinTale is sent (1793)`() = runTest(testDispatcher) {
-        val departed = TestFixtures.session1.copy(
-            status = com.tribetails.auntieos.data.model.VisitStatus.DEPARTED.name,
-            autoCompleteEligible = false,
+    fun `load never sends a COMPLETED visit again (2123)`() = runTest(testDispatcher) {
+        val completed = TestFixtures.session1.copy(
+            status = com.tribetails.auntieos.data.model.VisitStatus.COMPLETED.name,
+            autoCompleteEligible = true,
         )
         coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
-        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(departed))
-
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(completed))
         val vm = buildViewModel()
         advanceUntilIdle()
-
         coVerify(exactly = 0) { mockKinCareRepo.markSessionComplete(any()) }
         assertNull(vm.uiState.value.actionError)
     }
-
     @Test
     fun `todayVisits are hydrated with kinfolk cards`() = runTest(testDispatcher) {
         coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returns Result.success(listOf(TestFixtures.session1))
@@ -1074,11 +1128,12 @@ class HomeViewModelTest {
     }
 
     // ---- #1798: one refused auto-complete must not fail the Home load ----
+    // #2123: no KinTale flag, so every case below is a plain departure.
     private fun departedEligible(id: String = "ses1", arrivedAt: String = "2026-06-02T10:00:00Z") =
         TestFixtures.session1.copy(
             id = id,
             status = com.tribetails.auntieos.data.model.VisitStatus.DEPARTED.name,
-            autoCompleteEligible = true,
+            autoCompleteEligible = false,
             arrivedAt = arrivedAt,
         )
     @Test
@@ -1135,6 +1190,21 @@ class HomeViewModelTest {
         advanceUntilIdle()
         coVerify(exactly = 2) { mockKinCareRepo.markSessionComplete("ses1") }
         assertFalse(vm.uiState.value.isOffline)
+    }
+    @Test
+    fun `sending a KinTale does not retry a refused visit, since it cannot change the answer (2123)`() = runTest(testDispatcher) {
+        coEvery { mockKinCareRepo.getKinCareSessionsForDay(any(), any()) } returnsMany listOf(
+            Result.success(listOf(departedEligible())),
+            Result.success(listOf(departedEligible().copy(sentReportCount = 1, autoCompleteEligible = true))),
+        )
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockKinCareRepo.markSessionComplete("ses1") } returns Result.failure(RuntimeException("refused"))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.load()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { mockKinCareRepo.markSessionComplete("ses1") }
+        assertEquals(listOf("ses1"), vm.uiState.value.autoCompleteRefusals.map { it.sessionId })
     }
     @Test
     fun `a successful auto-complete still completes and reloads with no refusal (1798)`() = runTest(testDispatcher) {
