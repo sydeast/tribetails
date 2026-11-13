@@ -955,7 +955,13 @@ data class KinCareSession(
     // KinTales (visit reports) tracking
     var reportIds: List<String> = emptyList(),
     var sentReportCount: Int = 0,         // bumps when a KinTale is sent to kinfolk
-    var autoCompleteEligible: Boolean = false, // set true when departed AND >=1 sent
+    // Still written by every send batch, for installed builds that read it. Since
+    // #2123 nothing here does: a visit is Completed at departure, KinTale or not.
+    var autoCompleteEligible: Boolean = false,
+    // #2123: the server stamps true when it completes a visit with "KinTale
+    // required" on and no KinTale sent; every send batch writes false. Read by
+    // `domain/KinTaleTask.kt#kinTaleOwed` for the "KinTales to send" group.
+    var kinTaleDue: Boolean = false,
 
     // createdAt/updatedAt hold EITHER a Firestore server Timestamp (MyTribe
     // callables write FieldValue.serverTimestamp()) OR an ISO-8601 String

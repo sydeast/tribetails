@@ -277,6 +277,11 @@ class AdminDataViewModel(
     // #1608: "Verify arrival and departure", read raw (absent is off). Null until read.
     private val _arrivalRule = MutableStateFlow<Boolean?>(null)
     val arrivalRule: StateFlow<Boolean?> = _arrivalRule.asStateFlow()
+    // #2123: "KinTale required" (absent is ON), off the same settings read as
+    // [timeBlocks]. Null until read and after a failed read: Auntie Time then
+    // shows no "KinTales to send" group rather than guess.
+    private val _kinTaleRequired = MutableStateFlow<Boolean?>(null)
+    val kinTaleRequired: StateFlow<Boolean?> = _kinTaleRequired.asStateFlow()
 
     // KinTale (visit recap report) Management
     private val _kinCareReports = MutableStateFlow<List<KinCareReport>>(emptyList())
@@ -576,6 +581,7 @@ class AdminDataViewModel(
                 repository.getBusinessSettings().onSuccess {
                     _timeBlocks.value = it.timeBlocks
                     _householdNoticesLive.value = it.householdNotificationsLive
+                    _kinTaleRequired.value = it.kinTaleRequired
                     // #2036: the zone Auntie Time counts its days in.
                     _businessTimeZone.value = it.timeZone
                 }
