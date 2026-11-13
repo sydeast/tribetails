@@ -174,21 +174,16 @@ export async function readSessionLinks(
   if (elsewhere.length > 0) {
     // Still before any write. The other invoice is read only to name it by its
     // number in the message the clients show verbatim; a missing or
-    // number-less invoice falls back to its id.
-    const otherIds = Array.from(new Set(elsewhere.map((e) => e.invoiceId)));
-    const otherSnaps = await Promise.all(otherIds.map((id) => tx.get(firestore.collection('invoices').doc(id))));
-    const numberOf = new Map<string, string>();
-    otherSnaps.forEach((snap, i) => {
-      const n = snap.exists ? (snap.data() as { invoiceNumber?: unknown } | undefined)?.invoiceNumber : undefined;
-      numberOf.set(otherIds[i], typeof n === 'string' && n.trim() !== '' ? n.trim() : otherIds[i]);
-    });
+    // number-less invoice is "another invoice" and its number is '', never
+    // its id, which does not go on screen.
+    const numberOf = await otherInvoiceNumbers(tx, firestore, elsewhere.map((e) => e.invoiceId));
     const conflicts = elsewhere.map((e) => ({
       sessionId: e.sessionId,
       invoiceId: e.invoiceId,
-      invoiceNumber: numberOf.get(e.invoiceId) ?? e.invoiceId,
+      invoiceNumber: numberOf.get(e.invoiceId) ?? '',
     }));
     const named = elsewhere
-      .map((e) => `${visitWords(e.data)} is on invoice ${numberOf.get(e.invoiceId) ?? e.invoiceId}`)
+      .map((e) => `${visitWords(e.data)} is on ${invoiceWordsFor(numberOf.get(e.invoiceId) ?? '')}`)
       .join('; ');
     throw new HttpsError(
       'failed-precondition',
@@ -328,21 +323,19 @@ export async function readSessionReclaim(
     claim.push(sid);
   });
 
-  const others = Array.from(new Set(lost.filter((l) => l.reason === 'on_other_invoice').map((l) => l.invoiceNumber)));
-  const otherSnaps = await Promise.all(others.map((id) => tx.get(firestore.collection('invoices').doc(id))));
-  const numberOf = new Map<string, string>();
-  otherSnaps.forEach((snap, i) => {
-    const n = snap.exists ? (snap.data() as { invoiceNumber?: unknown } | undefined)?.invoiceNumber : undefined;
-    // No number: '' rather than the id, which never goes on screen.
-    numberOf.set(others[i], typeof n === 'string' && n.trim() !== '' ? n.trim() : '');
-  });
+  // No number: '' rather than the id, which never goes on screen.
+  const numberOf = await otherInvoiceNumbers(
+    tx,
+    firestore,
+    lost.filter((l) => l.reason === 'on_other_invoice').map((l) => l.invoiceNumber),
+  );
   for (const l of lost) if (l.reason === 'on_other_invoice') l.invoiceNumber = numberOf.get(l.invoiceNumber) ?? '';
 
   let notice = '';
   if (lost.length > 0) {
     const parts = lost.map((l) =>
       l.reason === 'on_other_invoice'
-        ? `${visitWords(l.data)} is now on ${l.invoiceNumber === '' ? 'another invoice' : `invoice ${l.invoiceNumber}`}`
+        ? `${visitWords(l.data)} is now on ${invoiceWordsFor(l.invoiceNumber)}`
         : l.reason === 'cancelled'
           ? `${visitWords(l.data)} was cancelled`
           : 'one visit no longer has a record',
@@ -366,4 +359,116 @@ export async function readSessionReclaim(
     lost: lost.map(({ sessionId, reason, invoiceNumber }) => ({ sessionId, reason, invoiceNumber })),
     notice,
   };
+}
+
+/**
+ * The numbers of the invoices that bill some visit now, read inside `tx`.
+ * Keyed by invoice id; '' for an invoice that has no number or no record,
+ * never the id, which does not go on screen.
+ */
+async function otherInvoiceNumbers(
+  tx: Transaction,
+  firestore: Firestore,
+  invoiceIds: readonly string[],
+): Promise<Map<string, string>> {
+  const ids = Array.from(new Set(invoiceIds));
+  const snaps = await Promise.all(ids.map((id) => tx.get(firestore.collection('invoices').doc(id))));
+  const numberOf = new Map<string, string>();
+  snaps.forEach((snap, i) => {
+    const n = snap.exists ? (snap.data() as { invoiceNumber?: unknown } | undefined)?.invoiceNumber : undefined;
+    numberOf.set(ids[i], typeof n === 'string' && n.trim() !== '' ? n.trim() : '');
+  });
+  return numberOf;
+}
+
+/** "invoice 1042", or "another invoice" when it has no number. */
+function invoiceWordsFor(invoiceNumber: string): string {
+  return invoiceNumber === '' ? 'another invoice' : `invoice ${invoiceNumber}`;
+}
+
+// ── #2168 review: a draft is sent only when every visit its lines bill is its own ──
+
+/** `details.code` when a draft's lines bill a visit it cannot bill. */
+export const DRAFT_VISITS_NOT_BILLABLE_CODE = 'draft_visits_not_billable';
+
+/** A visit a draft's line bills that the draft cannot send, and why. Same reasons as a restore's. */
+export type UnbillableVisit = ReclaimLoss;
+
+/**
+ * The READ half of sending a draft (`reviewAndSendDraftInvoice`). Every visit a
+ * line of the draft bills must be the draft's own when it goes out:
+ *
+ *   - one another invoice now bills (`on_other_invoice`): a restore leaves a
+ *     visit billed while the draft was archived where it is, but its line stays
+ *     on the draft, and sending would bill that work twice;
+ *   - one that was cancelled (`cancelled`): work that did not happen;
+ *   - one with no record (`not_found`).
+ *
+ * Any of those refuses the send (`failed-precondition`,
+ * `draft_visits_not_billable`) before anything is written, naming each visit by
+ * its day and the other invoice by its number. A line's visit whose back-link
+ * is blank (a draft made before #1901) is claimed for the draft, which is the
+ * link its line already implies; one that names the draft needs nothing. A
+ * visit linked with no line is attribution and is not judged here. Pass the
+ * plan to `stageSessionLinks`.
+ */
+export async function readSendClaims(
+  tx: Transaction,
+  firestore: Firestore,
+  invoiceId: string,
+  lines: unknown,
+): Promise<SessionLinkPlan> {
+  const ids = boundSessionIds(lines);
+  const snaps = await Promise.all(ids.map((id) => tx.get(firestore.collection('kin_care_sessions').doc(id))));
+  const claim: string[] = [];
+  const lost: Array<UnbillableVisit & { data: Record<string, unknown> | undefined }> = [];
+
+  snaps.forEach((snap, i) => {
+    const sid = ids[i];
+    if (!snap.exists) {
+      lost.push({ sessionId: sid, reason: 'not_found', invoiceNumber: '', data: undefined });
+      return;
+    }
+    const data = (snap.data() ?? {}) as Record<string, unknown>;
+    const owner = isSessionClaimed(data['invoiceId']) ? String(data['invoiceId']).trim() : '';
+    if (owner !== '' && owner !== invoiceId) {
+      lost.push({ sessionId: sid, reason: 'on_other_invoice', invoiceNumber: owner, data });
+      return;
+    }
+    if (isSessionCancelled(data['status'])) {
+      lost.push({ sessionId: sid, reason: 'cancelled', invoiceNumber: '', data });
+      return;
+    }
+    if (owner === '') claim.push(sid);
+  });
+
+  if (lost.length > 0) {
+    const numberOf = await otherInvoiceNumbers(
+      tx,
+      firestore,
+      lost.filter((l) => l.reason === 'on_other_invoice').map((l) => l.invoiceNumber),
+    );
+    for (const l of lost) if (l.reason === 'on_other_invoice') l.invoiceNumber = numberOf.get(l.invoiceNumber) ?? '';
+    const parts = lost
+      .filter((l) => l.reason !== 'not_found')
+      .map((l) =>
+        l.reason === 'on_other_invoice'
+          ? `${visitWords(l.data)} is billed on ${invoiceWordsFor(l.invoiceNumber)}`
+          : `${visitWords(l.data)} was cancelled`,
+      );
+    const gone = lost.filter((l) => l.reason === 'not_found').length;
+    if (gone === 1) parts.push('one visit no longer has a record');
+    if (gone > 1) parts.push(`${gone} visits no longer have a record`);
+    throw new HttpsError(
+      'failed-precondition',
+      `This draft cannot be sent: ${parts.join('; ')}. ` +
+        `Remove ${lost.length === 1 ? 'its line' : 'those lines'} in Edit, then send the draft.`,
+      {
+        code: DRAFT_VISITS_NOT_BILLABLE_CODE,
+        visits: lost.map(({ sessionId, reason, invoiceNumber }) => ({ sessionId, reason, invoiceNumber })),
+      },
+    );
+  }
+
+  return { invoiceId, claim, release: [] };
 }

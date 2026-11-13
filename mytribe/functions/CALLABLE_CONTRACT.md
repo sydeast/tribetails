@@ -483,8 +483,9 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   `invoiceId` = the new invoice (`_attribution: 'manual'`, ISO
   `_attributionAt`). A visit with no record (`session_not_found`), a cancelled
   one (`session_cancelled`) or one another invoice bills
-  (`session_on_other_invoice`, naming that invoice's number) is refused before
-  anything is written, and before a number is drawn. A replay writes no visit.
+  (`session_on_other_invoice`, naming that invoice's number, or "another
+  invoice" with `invoiceNumber: ''` when it has none, never its id) is refused
+  before anything is written, and before a number is drawn. A replay writes no visit.
   Rules shared with `linkInvoiceSessions` and `updateInvoice`
   (`lib/invoiceSessionLinks.ts`).
 - `lineItems` IS ADDITIVE. Omit it and the behaviour is unchanged: the caller's
@@ -660,6 +661,10 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   "the set is the lines": a visit linked with no line of its own is left
   alone. Structured terms resolve from the set the edit leaves. Audit payload
   carries `sessionsLinked` / `sessionsUnlinked`.
+- #2168: AN ARCHIVED INVOICE IS READ-ONLY. Any edit of one, in any state, is
+  `failed-precondition` / `invoice_archived` ("This invoice is archived.
+  Restore it before sending or changing it."), decided on the transaction's
+  read, nothing written. `unarchiveInvoice` is the way back.
 - **There is no `total` or `amountDue` in the request, and `patch` is `.strict()`.**
   The server recomputes every money field from the stored line items and the
   recorded payments and IGNORES anything else. A client that tries to assert what
@@ -821,9 +826,13 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - The claim and release rules are shared with `createInvoice` and
   `updateInvoice` (`lib/invoiceSessionLinks.ts`): a claim on a visit with no
   record (`session_not_found`), a cancelled one (`session_cancelled`) or one
-  another invoice bills (`session_on_other_invoice`) is refused; a release
-  leaves a back-link naming another invoice alone (#1259), and a release of a
-  visit whose record is gone just drops it from the set.
+  another invoice bills (`session_on_other_invoice`, `details.conflicts[]`
+  with that invoice's number, `''` when it has none, never its id) is refused;
+  a release leaves a back-link naming another invoice alone (#1259), and a
+  release of a visit whose record is gone just drops it from the set.
+- #2168: an archived invoice links and unlinks nothing:
+  `failed-precondition` / `invoice_archived`, the same refusal as
+  `updateInvoice`.
 - Errors: `not-found` for an unknown invoice; `failed-precondition` with the
   codes above. Atomic: nothing written.
 - Audit `BILLING_INVOICE_SESSIONS_LINKED` with the full added/removed delta.
@@ -966,11 +975,39 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   every visit read in it: a visit the draft names (`releasedSessionIds`,
   `sessionIds`, its lines) that is unclaimed or still names it is claimed again
   and becomes the draft's `sessionIds`; one another invoice has billed since
-  (`on_other_invoice`, with that invoice's number), one cancelled since, or one
-  with no record is left where it is and listed in `notReclaimed`. `notice` says
-  those in plain words, by day, never by id, for every client to show ('' when
-  every visit came back). Never refused for this. Any other state touches no
-  visit.
+  (`on_other_invoice`, with that invoice's number, or `''` when it has none,
+  never its id), one cancelled since, or one with no record is left where it
+  is and listed in `notReclaimed`. `notice` says those in plain words, by
+  their America/Chicago day, and names a number-less invoice "another
+  invoice", for every client to show ('' when every visit came back). Never
+  refused for this. Any other state touches no visit. A line left on the draft
+  for such a visit keeps the draft from being sent (`reviewAndSendDraftInvoice`,
+  `draft_visits_not_billable`) until Edit removes it.
+- Until it is restored, an archived invoice is read-only: `updateInvoice`,
+  `linkInvoiceSessions` and `reviewAndSendDraftInvoice` (and `postInvoiceEvent`,
+  which delegates to it) refuse it with `invoice_archived`.
+
+### reviewAndSendDraftInvoice
+- req `{ invoiceId: string /* 1..200 */ }`
+- res `{ ok: true, invoiceId: string, appOnly?: boolean /* #1511 */ }`
+- Sends a draft: `invoice.new` to the household's billing member, then the
+  status flips to `open` with the state stamp and the pay-method snapshot.
+  The dispatch comes first and is not swallowed, so a failed send leaves a
+  draft.
+- Refusals, all `failed-precondition` unless noted, every one before the
+  household is told and with nothing written: `not-found` for an unknown
+  invoice; `invoice_archived` (#2168); not a draft; missing total, household
+  or number; and (#2168 review) `draft_visits_not_billable` when a line bills
+  a visit another invoice now bills, a cancelled visit or one with no record.
+  That message names each visit by its America/Chicago day and the other
+  invoice by its number ("another invoice" when it has none), and
+  `details.visits[]` carries `{ sessionId, reason: 'on_other_invoice'|'cancelled'|'not_found', invoiceNumber }`.
+  A visit linked with no line is attribution and is not judged.
+- Checked twice: in a transaction before the dispatch, and again in the
+  transaction that flips the status, so an archive or a claim landing in
+  between is refused rather than overwritten. The first transaction also
+  claims a line's visit whose back-link is blank (a draft made before #1901)
+  and adds it to `sessionIds`.
 
 ### retryInvoiceCheckoutClose (#1113)
 - req `{ invoiceId: string /* 1..200 */ }`

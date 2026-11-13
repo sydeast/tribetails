@@ -17,6 +17,7 @@ import {
 } from '../lib/invoiceEditPolicy';
 import { paidCentsFromPayments, invoiceTotalCentsOf, type PaymentAmount } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
+import { refuseIfArchived } from '../lib/invoiceArchive';
 import {
   boundSessionIds,
   linkedWithoutLine,
@@ -200,6 +201,9 @@ export async function linkInvoiceSessionsHandler(
     if (!testOwnsDoc(actor.testMode, data.kinfolkId ?? '')) {
       throw new HttpsError('permission-denied', 'This invoice is outside your test sandbox.');
     }
+    // #2168: an archived invoice is read-only until it is restored, so no
+    // visit is linked to or unlinked from it here.
+    refuseIfArchived(data);
 
     const current = storedSessionIds(data);
     const currentSet = new Set(current);

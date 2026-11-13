@@ -60,7 +60,7 @@ export const Result = z
         .object({
           sessionId: z.string(),
           reason: z.enum(['on_other_invoice', 'cancelled', 'not_found']),
-          /** The invoice that bills it now, by number; '' for the other reasons. */
+          /** The invoice that bills it now, by number; '' when it has none (never its id) and for the other reasons. */
           invoiceNumber: z.string(),
         })
         .strict(),

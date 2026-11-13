@@ -33,6 +33,7 @@ import {
   type PaymentAmount,
 } from '../lib/invoiceMath';
 import { invoiceNumberTaken } from '../lib/invoiceNumber';
+import { refuseIfArchived } from '../lib/invoiceArchive';
 import {
   boundSessionIds,
   readSessionLinks,
@@ -244,6 +245,9 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
   const snap = await tx.get(ref);
   if (!snap.exists) throw new HttpsError('not-found', `Invoice '${invoiceId}' not found.`);
   const data = snap.data() as InvoiceDoc;
+  // #2168: an archived invoice is read-only until it is restored. Decided on
+  // what this transaction read, so an archive committing first re-runs here.
+  refuseIfArchived(data);
 
   // The payments SUBCOLLECTION, not the `amountDue` scalar. Before 2026-07-25
   // markInvoicePaid zeroed that scalar even for a partial payment, so on any
