@@ -191,7 +191,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * (an entry already in this graph) reads a visit's On the way / Arrived /
  * Departed and its list by. Its one import is a type, erased at build.
  *
- * 442 since #1820 (on top of #1830's 439): three helpers behind two entries
+ * 440 since #1987 (on top of #1830's 439): `lib/homeLayout.ts`, the one test for "this portal Home
+ * layout is the default", which `admin/saveBusinessSettings.ts` (stores such a
+ * layout as the empty list) and `portal/getMyHome.ts` (answers with the empty
+ * list for a document stored earlier) share. Both are entries already in this
+ * graph. It has no import of its own, and it cannot sit behind the lazy
+ * `businessSettingsChecks.ts` because `getMyHome` needs it on every call.
+ *
+ * 443 since #1820 (on top of #1987's 440): three helpers behind two entries
  * already in this graph. `lib/auditActor.ts` (who the caller is, for an
  * Activity Log line) and `lib/activityPayload.ts` (the allow-list for a
  * line's facts) load with `admin/logActivity.ts`; `lib/staffRoles.ts` (owner
@@ -200,7 +207,7 @@ const ALLOWED_EAGER_PACKAGES = [
  * `operatorAllowlist`, `firestoreAdmin`, `logger`), so they add no package
  * to a cold start.
  */
-const MAX_OWN_EAGER_MODULES = 442;
+const MAX_OWN_EAGER_MODULES = 443;
 
 interface Edge {
   spec: string;

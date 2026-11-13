@@ -90,7 +90,8 @@ internal fun MyTribePanel(
 
     // Edit state seeded from the loaded doc; re-seeds when the stream re-emits (after
     // a save the new doc flows back and clears the dirty pip).
-    val loaded = settingsData?.mytribePortal ?: MyTribePortalConfig()
+    // #1987: a stored Home layout equal to the default is read as the default.
+    val loaded = (settingsData?.mytribePortal ?: MyTribePortalConfig()).let { it.copy(home = normalizedPortalHome(it.home)) }
     var portal by remember(settingsData) { mutableStateOf(loaded) }
 
     var uploading by remember { mutableStateOf(false) }
@@ -152,7 +153,8 @@ internal fun MyTribePanel(
             home = portal.home,
             limitText = limitText,
             onLimitText = { id, text -> limitText = limitText + (id to text) },
-            onChange = { portal = portal.copy(home = it) },
+            // #1987: an edit that lands back on the default IS the default again.
+            onChange = { portal = portal.copy(home = normalizedPortalHome(it)) },
         )
 
         // ── Message Auntie chat ──
@@ -413,6 +415,28 @@ private fun homeSectionLabel(id: String): String = when (id) {
     else -> id
 }
 
+/**
+ * #1987: is this layout the default? True for the empty list (how the default
+ * is stored) and for the four default rows written out in full: each once, in
+ * the default order, each on, each with no limit. The same exact rule as the
+ * server (`mytribe/functions/src/lib/homeLayout.ts`), the React admin and admin
+ * Android: a list with any other row is never called the default, because
+ * collapsing it would throw away a row the operator can see.
+ */
+internal fun isDefaultHomeLayout(sections: List<HomeSectionCfg>): Boolean {
+    if (sections.isEmpty()) return true
+    if (sections.size != DEFAULT_HOME_SECTIONS.size) return false
+    return sections.withIndex().all { (i, row) -> row.id == DEFAULT_HOME_SECTIONS[i] && row.enabled && row.limit == 0 }
+}
+/**
+ * The layout as this panel holds and saves it: the empty list when it is equal
+ * to the default, otherwise untouched. This editor writes every row as soon as
+ * one value is touched, so without this a Limit typed and put back left four
+ * default-looking rows behind as an unsaved "change" that, once saved, every
+ * reader took for a custom layout.
+ */
+internal fun normalizedPortalHome(home: PortalHome): PortalHome =
+    if (home.sections.isNotEmpty() && isDefaultHomeLayout(home.sections)) home.copy(sections = emptyList()) else home
 /** Sections that support a per-section item limit (count). */
 private val LIMITED_SECTIONS = setOf("upNext", "tales")
 
