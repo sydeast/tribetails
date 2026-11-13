@@ -12,7 +12,7 @@ import {
   appendMessage,
   readThread,
   markMessagesRead,
-  MAX_MESSAGE_BODY,
+  MAX_MESSAGE_HTML,
   CONVERSATIONS_COLLECTION,
   type ThreadMessage,
 } from '../lib/conversations';
@@ -107,7 +107,7 @@ export const getConversationThread = onCall(
 
 const ReplyArgs = z.object({
   kinfolkId: z.string().min(1).max(200),
-  body: z.string().min(1).max(MAX_MESSAGE_BODY),
+  body: z.string().min(1).max(MAX_MESSAGE_HTML),
 });
 
 export async function replyToConversationHandler(

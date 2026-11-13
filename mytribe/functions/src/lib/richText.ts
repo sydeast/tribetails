@@ -35,6 +35,51 @@ function decodeEntities(html: string): string {
 }
 
 /**
+ * A `<` that is not the start of a whole tag is just a less-than sign.
+ * sanitize-html's parser would otherwise take `<b and more words` (or `x <y`)
+ * as an unterminated tag and drop it and everything after it, so the typed
+ * text is lost before it is ever stored. This rewrites such a `<` as `&lt;`
+ * so the parser keeps it as text (and decodeEntities hands the `<` back).
+ *
+ * A `<` stays as it is only when it opens a complete tag: `<` + `/`? + a
+ * letter, then no `<` or `>` up to a closing `>`. For one of the allowed
+ * formatting tags the shape must also be exactly what the editor writes
+ * (attributes only as `name=value` pairs, a self-closing slash only on
+ * `br`), so a sentence such as `a <b and more words>` is not read as a tag.
+ * Every other complete tag is left for sanitize-html to strip, as before,
+ * unless `otherTagsAreText` is set: a message body (sanitizeMessageBody) keeps
+ * `<script>`, `<pawsome@hanasamku.com>` or `<side gate>` as the text typed.
+ */
+const ALLOWED_TAG_SET: ReadonlySet<string> = new Set(ALLOWED_TAGS);
+const COMPLETE_TAG = /^<(\/?)([A-Za-z][A-Za-z0-9]*)([^<>]*)>/;
+const NAMED_ATTRS = /^(?:\s+[A-Za-z_:][-A-Za-z0-9_:.]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>=`]+))*\s*$/;
+
+function startsWholeTag(text: string, at: number, otherTagsAreText: boolean): boolean {
+  const m = COMPLETE_TAG.exec(text.slice(at, at + 4096));
+  if (!m) return false;
+  const closing = m[1] === '/';
+  const name = (m[2] ?? '').toLowerCase();
+  const rest = m[3] ?? '';
+  if (!ALLOWED_TAG_SET.has(name)) return !otherTagsAreText;
+  if (closing) return rest.trim() === '';
+  const selfClosed = rest.trimEnd().endsWith('/');
+  const attrs = selfClosed ? rest.trimEnd().slice(0, -1) : rest;
+  if (selfClosed && name !== 'br') return false;
+  if (attrs.trim() === '') return true;
+  return NAMED_ATTRS.test(attrs);
+}
+
+export function escapeStrayLessThan(text: string, otherTagsAreText = false): string {
+  if (!text.includes('<')) return text;
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charAt(i);
+    out += c === '<' && !startsWholeTag(text, i, otherTagsAreText) ? '&lt;' : c;
+  }
+  return out;
+}
+
+/**
  * Sanitizes a free-text field before it's persisted somewhere another user
  * will render it (messages, KinTale comments, booking notes). Today's
  * clients render this as plain text, so this is a no-op for ordinary
@@ -44,14 +89,68 @@ function decodeEntities(html: string): string {
  * dropped entirely).
  */
 export function sanitizeRichText(body: string): string {
-  const sanitized = sanitizeHtml(body, {
-    allowedTags: ALLOWED_TAGS,
-    allowedAttributes: ALLOWED_ATTRIBUTES,
-    allowedSchemes: ['http', 'https', 'mailto'],
-    allowProtocolRelative: false,
-    disallowedTagsMode: 'discard',
-  });
+  return sanitizeRich(escapeStrayLessThan(body));
+}
+const RICH_OPTIONS: sanitizeHtml.IOptions = {
+  allowedTags: ALLOWED_TAGS,
+  allowedAttributes: ALLOWED_ATTRIBUTES,
+  allowedSchemes: ['http', 'https', 'mailto'],
+  allowProtocolRelative: false,
+  disallowedTagsMode: 'discard',
+};
+function sanitizeRich(escaped: string): string {
+  return decodeEntities(sanitizeHtml(escaped, RICH_OPTIONS)).trim();
+}
+
+/**
+ * Sanitizes a conversation message body (#1873) into the form it is stored
+ * in: HTML that is safe to insert as HTML. Same formatting subset and
+ * attribute rules as sanitizeRichText, but every `<` that does not open one of
+ * the twelve formatting tags is a character someone typed and is kept as text,
+ * never stripped with the words after it.
+ *
+ * The stored string is sanitize-html's own output, not decoded: every `<`,
+ * `>` and `&` in the text is an entity (`&lt;`, `&gt;`, `&amp;`), and every
+ * kept attribute value has its quotes and signs as entities. So a renderer
+ * that inserts the body as HTML shows typed `<script>` as those characters,
+ * and the clients that draw it from a fixed tag list decode the text once.
+ *
+ * The input is HTML. The portal editor sends HTML already; the plain-text
+ * senders (admin web, admin Android, desktop console, MyTribe Android) escape
+ * `&`, `<` and `>` first (plainTextToMessageBody on each client), so a typed
+ * `&lt;` is kept as typed. A body from an older plain-text client still works:
+ * its stray `<` is kept as text, and only a typed entity reads as its sign.
+ *
+ * Running it again over its own output gives the same string (sanitize-html
+ * decodes on read and escapes on write), which the two write passes (the
+ * callable, then appendMessage) rely on. A typed `<b>x</b>` from the editor is
+ * real bold; from a plain-text sender it arrives escaped and stays text.
+ */
+export function sanitizeMessageBody(body: string): string {
+  return sanitizeHtml(escapeStrayLessThan(body, true), RICH_OPTIONS).trim();
+}
+/**
+ * Plain typed text as a message body: `&`, `<` and `>` as entities, so every
+ * character is kept as typed. The same rule as each plain-text client's
+ * plainTextToMessageBody.
+ */
+export function plainTextToMessageBody(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+/**
+ * Plain text of a stored message body, with the same rule: every word typed
+ * stays. Entities are decoded exactly once, so this is the text as typed, for
+ * plain-text uses (list preview, SMS, push, the email's text part). An HTML
+ * use escapes it again (Handlebars does, in the email's HTML part).
+ */
+export function messagePlainText(body: string): string {
+  const sanitized = sanitizeHtml(escapeStrayLessThan(body, true), { allowedTags: [], allowedAttributes: {} });
   return decodeEntities(sanitized).trim();
+}
+/** messagePlainText, cut to maxLength, for the messages list and the new-message notice. */
+export function messagePreview(body: string, maxLength: number): string {
+  const plain = messagePlainText(body);
+  return plain.length <= maxLength ? plain : plain.slice(0, maxLength);
 }
 
 /**
@@ -61,7 +160,7 @@ export function sanitizeRichText(body: string): string {
  * link anywhere it's shown.
  */
 export function sanitizePlainText(text: string): string {
-  const sanitized = sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} });
+  const sanitized = sanitizeHtml(escapeStrayLessThan(text), { allowedTags: [], allowedAttributes: {} });
   return decodeEntities(sanitized).trim();
 }
 
