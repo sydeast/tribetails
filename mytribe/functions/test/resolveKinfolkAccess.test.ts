@@ -171,11 +171,33 @@ describe('resolveKinfolkAccess', () => {
       actorUid: 'aunt',
       targetUid: '777',
       familyId: '777',
-      description: 'Jane Rivers looked at the members of Kinfolk Dre East',
+      description: 'Jane Rivers looked at Kinfolk Dre East',
       payload: { function: 'listMembers', kinfolkId: '777', admin: false, staffRole: 'auntie' },
+      docId: expect.stringMatching(/^household_look_aunt_777_\d+$/),
     });
     const line = String(mocks.writeAuditEntry.mock.calls[0]?.[0]?.description);
     expect(line).not.toMatch(/OPERATOR|CROSSTENANT|uid=|target=|777/);
+  });
+
+  it('#1839: the window key is the same for every read in one ten-minute window, and moves on after it', async () => {
+    const { householdLookDocId, HOUSEHOLD_LOOK_WINDOW_MS } = await import('../src/lib/resolveKinfolkAccess');
+    expect(HOUSEHOLD_LOOK_WINDOW_MS).toBe(10 * 60 * 1000);
+    const start = Date.UTC(2026, 10, 13, 15, 0, 0);
+    const key = householdLookDocId('aunt', '777', start);
+    expect(householdLookDocId('aunt', '777', start + HOUSEHOLD_LOOK_WINDOW_MS - 1)).toBe(key);
+    expect(householdLookDocId('aunt', '777', start + HOUSEHOLD_LOOK_WINDOW_MS)).not.toBe(key);
+    // Another household, or another Auntie, is another look.
+    expect(householdLookDocId('aunt', '778', start)).not.toBe(key);
+    expect(householdLookDocId('aunt2', '777', start)).not.toBe(key);
+  });
+
+  it('#1839: a read that lost the race for the window line is quiet, not a failed write', async () => {
+    mocks.writeAuditEntry.mockRejectedValue(Object.assign(new Error('ALREADY_EXISTS'), { code: 6 }));
+    const ctx = buildDbMock({ docs: { 'clients/aunt': null, 'kinfolk/777': { firstName: 'Dre' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { resolveKinfolkAccess } = await import('../src/lib/resolveKinfolkAccess');
+    await resolveKinfolkAccess('aunt', '777', true, 'listMembers', AUNTIE);
+    expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain('audit.write.failed');
   });
 
   it('#1839: an Auntie on a tribe she was assigned (her own kinfolkIds) is still logged', async () => {
@@ -187,7 +209,7 @@ describe('resolveKinfolkAccess', () => {
     await resolveKinfolkAccess('aunt', '777', true, 'listEmergencyContacts', AUNTIE);
     expect(mocks.writeAuditEntry).toHaveBeenCalledTimes(1);
     expect(mocks.writeAuditEntry.mock.calls[0]?.[0]?.description).toBe(
-      'Jane Rivers looked at the emergency contacts of Kinfolk Dre East',
+      'Jane Rivers looked at Kinfolk Dre East',
     );
   });
 
@@ -201,7 +223,7 @@ describe('resolveKinfolkAccess', () => {
     expect(res).toEqual({ kinfolkId: '42', isOperator: true });
     expect(mocks.writeAuditEntry.mock.calls[0]?.[0]).toMatchObject({
       targetUid: '42',
-      description: 'Jane Rivers looked at KinTale photos of Kinfolk Mo Lane',
+      description: 'Jane Rivers looked at Kinfolk Mo Lane',
     });
   });
 
@@ -214,7 +236,7 @@ describe('resolveKinfolkAccess', () => {
     const { resolveKinfolkAccess } = await import('../src/lib/resolveKinfolkAccess');
     await resolveKinfolkAccess('aunt', '777', true, 'listMembers', AUNTIE);
     expect(mocks.writeAuditEntry.mock.calls[0]?.[0]?.description).toBe(
-      'An Auntie looked at the members of a Kinfolk household',
+      'An Auntie looked at a Kinfolk household',
     );
   });
 
@@ -225,7 +247,7 @@ describe('resolveKinfolkAccess', () => {
     const { resolveKinfolkAccess } = await import('../src/lib/resolveKinfolkAccess');
     await resolveKinfolkAccess('aunt', '777', true, 'saveSecondaryKinfolk', AUNTIE);
     expect(mocks.writeAuditEntry.mock.calls[0]?.[0]?.description).toBe(
-      'An Auntie saved a secondary Kinfolk for Kinfolk East',
+      'An Auntie looked at Kinfolk East',
     );
   });
 

@@ -122,7 +122,7 @@ describe('activityDescriptionWords: a look at a household (#1839)', () => {
     expect(activityDescriptionWords('OPERATOR_CROSSTENANT_ACCESS')).toBe('Opened a household');
   });
   it("the server's new sentence for an Auntie reads as itself", () => {
-    const words = 'Jane Rivers looked at the members of Kinfolk Dre East';
+    const words = 'Jane Rivers looked at Kinfolk Dre East';
     expect(activityDescriptionWords(words)).toBe(words);
   });
 });

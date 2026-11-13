@@ -95,13 +95,47 @@ export async function resolveKinfolkAccess(
 }
 
 /**
- * One Activity Log line for an Auntie's look at a household (#1839): her name
+ * #1839, lead decision: ONE line per look, not one per read. Opening a
+ * household's profile fires several of these reads at once (the members, the
+ * secondary Kinfolk, the emergency contacts), and the walk's complaint was four
+ * lines for one look. So an Auntie's looks at one household share one line per
+ * window of this length.
+ *
+ * Ten minutes: every read one screen open makes lands within seconds, and an
+ * Auntie moving between a household's tabs or reopening its profile on the same
+ * visit to the screen is still the same look. A return after that is a new look
+ * and gets its own line, so the log still shows each separate time she came
+ * back. The windows are fixed (they start on the clock's ten-minute marks), so
+ * a look that straddles a mark can write two lines; that is the price of a key
+ * every concurrent read computes the same way without reading anything first.
+ */
+export const HOUSEHOLD_LOOK_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * The fixed `activity_log` document id for one Auntie's look at one household
+ * in one window. Every read in the window computes the same id, and
+ * `writeAuditEntry`'s `docId` writes it at most once, inside its transaction
+ * and with `create` as the backstop, so concurrent reads on one screen open
+ * cannot write two lines.
+ */
+export function householdLookDocId(uid: string, kinfolkId: string, nowMs: number): string {
+  return `household_look_${uid}_${kinfolkId}_${Math.floor(nowMs / HOUSEHOLD_LOOK_WINDOW_MS)}`;
+}
+
+/** Firestore's "already exists" (gRPC status 6): another read in the window wrote the line first. */
+function isAlreadyExists(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === 6 || code === 'already-exists' || code === 'ALREADY_EXISTS';
+}
+
+/**
+ * The Activity Log line for an Auntie's look at a household (#1839): her name
  * and the household's in the sentence, the household as the entry's target, and
  * the same `admin` / `staffRole` stamp `lib/auditActor.ts` puts on her other
- * lines so every client prints "Auntie". Best-effort: a name that will not read
- * falls back to plain words, and a line that will not write never blocks the
- * look. The words and the name readers load here, inside her branch, so they
- * stay out of every portal callable's cold start.
+ * lines so every client prints "Auntie". One per window (above). Best-effort: a
+ * name that will not read falls back to plain words, and a line that will not
+ * write never blocks the look. The words and the name readers load here, inside
+ * her branch, so they stay out of every portal callable's cold start.
  */
 async function recordAuntieLook(
   uid: string,
@@ -109,6 +143,8 @@ async function recordAuntieLook(
   kinfolk: Record<string, unknown> | undefined,
   functionName: string,
 ): Promise<void> {
+  // Taken before any await, so reads that arrive together share a window.
+  const docId = householdLookDocId(uid, kinfolkId, Date.now());
   try {
     const [{ auntieHouseholdLookWords }, { resolveStaffIdentities }] = await Promise.all([
       import('./activityWords.js'),
@@ -128,10 +164,17 @@ async function recordAuntieLook(
       actorUid: uid,
       targetUid: kinfolkId,
       familyId: kinfolkId,
-      description: auntieHouseholdLookWords(name, functionName, household),
+      // One line stands for every read in the window, so the sentence names
+      // the household, not the one read that happened to land first. The
+      // payload keeps that first read as evidence.
+      description: auntieHouseholdLookWords(name, household),
       payload: { function: functionName, kinfolkId, admin: false, staffRole: STAFF_ROLE_AUNTIE },
+      docId,
     });
   } catch (err) {
+    // A read that lost the race to write the window's line is the design
+    // working, not a failure.
+    if (isAlreadyExists(err)) return;
     logEvent({
       severity: 'warn',
       function: functionName,

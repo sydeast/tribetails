@@ -133,7 +133,7 @@ class ActivityChainRenderTest {
         val look = ActivityLogEntry(
             id = "e4",
             actionType = "OPERATOR_CROSSTENANT_ACCESS",
-            description = "Jane Rivers looked at the members of Kinfolk Dre East",
+            description = "Jane Rivers looked at Kinfolk Dre East",
             status = "SUCCESS",
             timestamp = "2026-05-27T09:41:00Z",
             seq = 10L,
@@ -144,7 +144,7 @@ class ActivityChainRenderTest {
         }
         composeRule.setContent { AuntieOSTheme { ActivityRow(entry = look, onClick = {}) } }
         composeRule.onNodeWithText("Household opened").assertIsDisplayed()
-        composeRule.onNodeWithText("Jane Rivers looked at the members of Kinfolk Dre East").assertIsDisplayed()
+        composeRule.onNodeWithText("Jane Rivers looked at Kinfolk Dre East").assertIsDisplayed()
         composeRule.onAllNodesWithText("OPERATOR_CROSSTENANT_ACCESS").assertCountEquals(0)
         composeRule.onAllNodesWithText("Operator crosstenant access").assertCountEquals(0)
         composeRule.onAllNodesWithText("Xk29fLq0aBcD3eFgH1jK", substring = true).assertCountEquals(0)

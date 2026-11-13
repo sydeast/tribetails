@@ -600,7 +600,7 @@ describe('ActivityLog household looks (#1839)', () => {
   const AUNTIE_LOOK = entry({
     _id: 'look-new',
     actionType: 'OPERATOR_CROSSTENANT_ACCESS',
-    description: 'Jane Rivers looked at the members of Kinfolk Dre East',
+    description: 'Jane Rivers looked at Kinfolk Dre East',
     actorId: 'aunt-uid',
     actorRole: 'AUNTIE',
     targetId: 'Xk29fLq0aBcD3eFgH1jK',
@@ -627,7 +627,7 @@ describe('ActivityLog household looks (#1839)', () => {
     const row = rowOf(/Household opened/);
     expect(within(row).getByText('Household opened')).toHaveClass('activity__title');
     expect(row.querySelector('.activity__code')).toBeNull();
-    expect(within(row).getByText('Jane Rivers looked at the members of Kinfolk Dre East')).toHaveClass('activity__ctx');
+    expect(within(row).getByText('Jane Rivers looked at Kinfolk Dre East')).toHaveClass('activity__ctx');
     expect(row.textContent).not.toMatch(/OPERATOR|CROSSTENANT|crosstenant|Xk29fLq0aBcD3eFgH1jK|uid=|target=/);
     const tile = row.querySelector('.icon-tile');
     expect(tile).toHaveAttribute('data-tone', 'neutral');

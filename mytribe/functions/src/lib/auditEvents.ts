@@ -471,7 +471,8 @@ export const AUDIT_EVENTS = {
   // #1839, operator ruling 2026-11-12 (reverses O-6 for the owner only): an
   // AUNTIE's look at a household. resolveKinfolkAccess is the one writer; it
   // writes the line, with her name and the household's in the description,
-  // whenever she resolves a household, her assigned tribes included. The
+  // when she resolves a household (her assigned tribes included), at most once
+  // per household per ten-minute window, so one screen open is one line. The
   // owner's own looks write nothing on any path. Rows stored before the ruling
   // carry the owner's looks too, under the same key; the admin clients show
   // every row of this kind as "Household opened" in plain words.

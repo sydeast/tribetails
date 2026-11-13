@@ -287,28 +287,17 @@ export function quoteRevisedWords(invoiceNumber: unknown): string {
     : `Declined quote ${n} revised and sent again`;
 }
 /**
- * #1839: what an Auntie opened on a household, by the callable that opened it.
- * The owner's own looks write no line at all (operator ruling 2026-11-12); an
- * Auntie's still do, in these words. A callable not named here reads "opened".
+ * #1839: an Auntie's look at a household, `Jane Rivers looked at Kinfolk Dre
+ * East`. The owner's own looks write no line at all (operator ruling
+ * 2026-11-12). One line stands for every read in a short window (one screen
+ * open fires several), so it names the household and not which part of it she
+ * read. "An Auntie" when she has no name on record (an email is never used as a
+ * name), "a Kinfolk household" when the household has none.
  */
-const HOUSEHOLD_LOOK_WORDS: Record<string, string> = {
-  listMembers: 'looked at the members of',
-  listEmergencyContacts: 'looked at the emergency contacts of',
-  saveEmergencyContacts: 'changed the emergency contacts of',
-  getMyKinTaleMedia: 'looked at KinTale photos of',
-  listSecondaryKinfolk: 'looked at the secondary Kinfolk of',
-  saveSecondaryKinfolk: 'saved a secondary Kinfolk for',
-};
-/**
- * `Jane looked at the members of Kinfolk Dre East`. "An Auntie" when she has no
- * name on record (an email is never used as a name), "a Kinfolk household" when
- * the household has none.
- */
-export function auntieHouseholdLookWords(auntieName: unknown, functionName: string, householdName: unknown): string {
+export function auntieHouseholdLookWords(auntieName: unknown, householdName: unknown): string {
   const raw = typeof auntieName === 'string' ? auntieName.trim() : '';
   const who = raw === '' || raw.includes('@') ? 'An Auntie' : raw;
   const name = typeof householdName === 'string' ? householdName.trim() : '';
   const household = name === '' ? 'a Kinfolk household' : `Kinfolk ${name}`;
-  const what = HOUSEHOLD_LOOK_WORDS[functionName] ?? 'opened';
-  return `${who} ${what} ${household}`;
+  return `${who} looked at ${household}`;
 }

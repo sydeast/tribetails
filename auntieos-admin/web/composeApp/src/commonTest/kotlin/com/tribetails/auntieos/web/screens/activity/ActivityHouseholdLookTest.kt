@@ -29,7 +29,7 @@ class ActivityHouseholdLookTest {
         targetId = household,
     )
 
-    private val auntieLook = look("Jane Rivers looked at the members of Kinfolk Dre East", "aunt-uid")
+    private val auntieLook = look("Jane Rivers looked at Kinfolk Dre East", "aunt-uid")
     private val storedLook = look("OPERATOR_CROSSTENANT_ACCESS uid=owner-uid target=$household", "owner-uid")
 
     @Test
@@ -44,7 +44,7 @@ class ActivityHouseholdLookTest {
 
     @Test
     fun anAuntiesLookReadsAsTheServersWordsWithNoIdAndNoSecondName() {
-        assertEquals("Jane Rivers looked at the members of Kinfolk Dre East", rowContext(auntieLook, names))
+        assertEquals("Jane Rivers looked at Kinfolk Dre East", rowContext(auntieLook, names))
     }
 
     @Test

@@ -189,7 +189,8 @@ staff-membership list.** Concretely:
   — it is not optional.
   **Amended 2026-11-12 (#1839):** the operator ruled to stop logging the
   owner's own looks. Only an Auntie's look at a household writes this line now,
-  in plain words with her name; the owner's reads write nothing.
+  in plain words with her name, once per household per ten-minute window (one
+  line per look, not per read); the owner's reads write nothing.
 - **Also in scope, because it is a one-line falsehood:** the doc comment at
   `resolveKinfolkAccess.ts:24-26` claims writes don't get operator override, but
   `sendKinfolkMessage.ts:115,235,274` and `requestBookingCancellation.ts:51` are

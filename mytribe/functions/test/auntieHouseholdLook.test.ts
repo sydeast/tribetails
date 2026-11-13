@@ -71,37 +71,37 @@ const PATHS: ReadonlyArray<{ name: string; load: () => Promise<Handler>; data: R
     name: 'listMembers',
     load: async () => (await import('../src/portal/listMembers')).listMembersHandler as Handler,
     data: { kinfolkId: 'fam1' },
-    words: 'Jane Rivers looked at the members of Kinfolk Dre East',
+    words: 'Jane Rivers looked at Kinfolk Dre East',
   },
   {
     name: 'listEmergencyContacts',
     load: async () => (await import('../src/portal/emergencyContacts')).listEmergencyContactsHandler as Handler,
     data: { kinfolkId: 'fam1' },
-    words: 'Jane Rivers looked at the emergency contacts of Kinfolk Dre East',
+    words: 'Jane Rivers looked at Kinfolk Dre East',
   },
   {
     name: 'saveEmergencyContacts',
     load: async () => (await import('../src/portal/emergencyContacts')).saveEmergencyContactsHandler as Handler,
     data: { kinfolkId: 'fam1', contacts: [{ name: 'Rae Park', phone: '+1 805 555 0199' }] },
-    words: 'Jane Rivers changed the emergency contacts of Kinfolk Dre East',
+    words: 'Jane Rivers looked at Kinfolk Dre East',
   },
   {
     name: 'getMyKinTaleMedia',
     load: async () => (await import('../src/portal/getMyKinTaleMedia')).getMyKinTaleMediaHandler as Handler,
     data: { kinfolkId: 'fam1', taleId: 'tale1' },
-    words: 'Jane Rivers looked at KinTale photos of Kinfolk Dre East',
+    words: 'Jane Rivers looked at Kinfolk Dre East',
   },
   {
     name: 'listSecondaryKinfolk',
     load: async () => (await import('../src/portal/secondaryKinfolk')).listSecondaryKinfolkHandler as Handler,
     data: { kinfolkId: 'fam1' },
-    words: 'Jane Rivers looked at the secondary Kinfolk of Kinfolk Dre East',
+    words: 'Jane Rivers looked at Kinfolk Dre East',
   },
   {
     name: 'saveSecondaryKinfolk',
     load: async () => (await import('../src/portal/secondaryKinfolk')).saveSecondaryKinfolkHandler as Handler,
     data: { kinfolkId: 'fam1', name: 'Lee Park', phone: '+1 805 555 0123' },
-    words: 'Jane Rivers saved a secondary Kinfolk for Kinfolk Dre East',
+    words: 'Jane Rivers looked at Kinfolk Dre East',
   },
 ];
 
