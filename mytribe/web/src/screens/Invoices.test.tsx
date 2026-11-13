@@ -225,11 +225,45 @@ describe('Invoices: the balance hero says which number can be spent (#1294)', ()
       </QueryClientProvider>,
     );
   }
+  // #1872: after the admin applies $25.00 of a $120.00 balance to a $100.00
+  // invoice, the server returns one payload. The balance, the part-paid line,
+  // the pay button and the open total must all read from it and agree.
+  it('agrees with itself after an admin applies credit to an open invoice', async () => {
+    await renderWith({
+      open: [{ ...OPEN_INVOICE, total: 100, amountDue: 75, paidCents: 2500, partiallyPaid: true }],
+      paid: [],
+      credits: [],
+      accountBalanceCents: 9500,
+    });
+    expect(await screen.findByText('ACCOUNT BALANCE')).toBeInTheDocument();
+    // $120.00 less the $25.00 applied.
+    expect(screen.getByText('$95.00')).toBeInTheDocument();
+    // The invoice says what was paid, and asks only for what is left.
+    expect(screen.getByText('$25.00 of $100.00 paid')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Pay now/ })).toBeInTheDocument();
+    expect(screen.getAllByText('$75.00').length).toBeGreaterThan(0);
+    expect(screen.queryByText('$100.00')).toBeNull();
+  });
+
+  it('shows the invoice as paid and the rest of the balance once credit covers it', async () => {
+    await renderWith({
+      open: [],
+      paid: [{ ...OPEN_INVOICE, total: 100, amountDue: 0, paidCents: 10000, isPaid: true, status: 'paid' }],
+      credits: [],
+      accountBalanceCents: 2000,
+    });
+    expect(await screen.findByText('ACCOUNT BALANCE')).toBeInTheDocument();
+    expect(screen.getByText('$20.00')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Pay now/ })).toBeNull();
+  });
+
   it('drops the AUTO APPLIED chip and labels an unsaved credit as waiting', async () => {
     await renderWith({ open: [], paid: [], credits: [CREDIT_INVOICE], accountBalanceCents: 1500 });
     expect(await screen.findByText('ACCOUNT BALANCE')).toBeInTheDocument();
     expect(screen.queryByText(/AUTO APPLIED/i)).toBeNull();
-    expect(screen.getByText('What you can spend. It comes off your next invoice.')).toBeInTheDocument();
+    expect(screen.getByText('What you can spend. Your Auntie applies it to an invoice for you.')).toBeInTheDocument();
+    // #1872: credit is never spent automatically, so nothing here may say it is.
+    expect(screen.queryByText(/next invoice|automatically/i)).toBeNull();
     expect(screen.getByText('Credits to save')).toBeInTheDocument();
     expect(screen.getByText(/Save it to your account balance to spend it\./)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Save to Account Balance/ })).toBeInTheDocument();

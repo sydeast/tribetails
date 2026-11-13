@@ -81,6 +81,16 @@ fun mintGiveCreditIdempotencyKey(
 ): String = mintMoneyKey("crd", nowMs, random)
 
 /**
+ * #1872: the id of the `invoices/{id}/payments/{key}` row `applyAccountCredit`
+ * will create. Minted once per submission: kept across a failed attempt so the
+ * retry lands on the same payment, fresh when the amount changes.
+ */
+fun mintApplyCreditIdempotencyKey(
+    nowMs: Long = System.currentTimeMillis(),
+    random: Random = Random.Default,
+): String = mintMoneyKey("acr", nowMs, random)
+
+/**
  * #1003: the key for one decision on an unapplied card payment
  * (`resolveUnappliedPayment`). Minted once per submission: kept across a failed
  * attempt so the retry lands on the same decision, fresh when any input changes.

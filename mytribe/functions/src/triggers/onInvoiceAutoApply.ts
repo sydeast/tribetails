@@ -1,12 +1,26 @@
 import { onDocumentWritten, FirestoreEvent, Change, DocumentSnapshot } from 'firebase-functions/v2/firestore';
 
-import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
-import { drawAccountCredit } from '../lib/accountCredit';
 import { collectableForAutoApply } from '../lib/invoiceCollectable';
 
 /**
+ * DISABLED (#1872, operator ruling 2026-11-11). ACCOUNT CREDIT IS NEVER SPENT
+ * AUTOMATICALLY: not on send, not on quote acceptance, not by any trigger.
+ * Credit goes onto an invoice only as an amount the admin enters
+ * (`admin/applyAccountCredit.ts`).
+ *
+ * This trigger used to draw the household's credit the moment an invoice
+ * became collectable, which paid invoices from credit within seconds of Review
+ * and send and again when a household accepted a quote. It now moves no money.
+ * It still deploys, on purpose: a release does not delete a function that left
+ * the source, so removing the export would leave the old drawing copy running
+ * in prod. The handler keeps its transition check and writes one log line, so
+ * the logs show where the old behaviour would have fired.
+ *
+ * Everything below this paragraph describes the design as it was, and is kept
+ * with the code (payment code is never deleted).
+ *
  * The half of "Will automatically apply any Unapplied amount to FUTURE
  * invoices" that runs by itself.
  *
@@ -100,33 +114,14 @@ export async function onInvoiceAutoApplyHandler(event: InvoicesWriteEvent): Prom
   if (collectableForAutoApply(before)) return;
   if (!collectableForAutoApply(after)) return;
 
-  const invoiceId = event.params.invoiceId;
-  try {
-    const result = await drawAccountCredit(db(), {
-      invoiceId,
-      actorUid: AUTO_APPLY_ACTOR_UID,
-    });
-    if (result.skipped !== null) {
-      logEvent({
-        severity: 'info',
-        function: 'onInvoiceAutoApply',
-        event: 'payment.autoapply.skipped',
-        extra: { invoiceId, reason: result.skipped },
-      });
-    }
-  } catch (err) {
-    // FAIL LOUD, DO NOT THROW. A rethrow makes Firestore retry the trigger, and
-    // retrying a money write whose first attempt may have committed is worse
-    // than the credit sitting unspent until the operator runs the callable.
-    logEvent({
-      severity: 'error',
-      function: 'onInvoiceAutoApply',
-      event: 'payment.autoapply.failed',
-      extra: { invoiceId, err: (err as Error)?.message },
-    });
-  }
+  // #1872: NO DRAW. The transition is logged and nothing is written.
+  logEvent({
+    severity: 'info',
+    function: 'onInvoiceAutoApply',
+    event: 'payment.autoapply.disabled',
+    extra: { invoiceId: event.params.invoiceId },
+  });
 }
-
 export const onInvoiceAutoApply = onDocumentWritten(
   {
     document: 'invoices/{invoiceId}',

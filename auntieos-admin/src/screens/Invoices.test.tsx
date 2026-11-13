@@ -96,6 +96,20 @@ const {
   setSessionDoNotInvoice: vi.fn(),
   previewInvoiceNotice: vi.fn(),
 }));
+// #1872: an open invoice reads the household's account credit for its Apply
+// credit box. Never left to reach the network. Refused here the way the server
+// refuses someone who may not see money, so the box stays hidden and these
+// tests see the detail exactly as before; InvoiceDetailApplyCredit.test.tsx and
+// InvoiceApplyCredit.test.tsx cover the box itself.
+vi.mock('../api/accountCredit', async () => {
+  const { FirebaseError } = await import('firebase/app');
+  return {
+    getAccountCreditHistory: () =>
+      Promise.reject(new FirebaseError('functions/permission-denied', 'Not shown in this file.')),
+    applyAccountCredit: () => Promise.reject(new Error('applyAccountCredit is not expected in this file.')),
+    giveAccountCredit: () => Promise.reject(new Error('giveAccountCredit is not expected in this file.')),
+  };
+});
 vi.mock('../api/invoicesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/invoicesWrite')>()),
   createInvoice,

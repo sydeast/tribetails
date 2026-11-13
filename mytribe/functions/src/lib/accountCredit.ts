@@ -1,6 +1,13 @@
 /**
  * ACCOUNT CREDIT: money a household has paid that is not against any bill yet,
- * and the auto-apply that spends it on the next one.
+ * and the draw that spends an amount of it on one invoice.
+ *
+ * #1872, OPERATOR RULING 2026-11-11: CREDIT IS NEVER SPENT AUTOMATICALLY. Not on
+ * send, not on quote acceptance, not by any trigger. It goes onto an invoice
+ * only as an amount the admin enters (`admin/applyAccountCredit.ts`). The
+ * sections below describe the earlier auto-apply design where they say "by
+ * itself"; `triggers/onInvoiceAutoApply.ts` and `admin/runAutoApply.ts` are
+ * still in the tree and no longer draw.
  *
  * ── WHERE THE CREDIT LIVES, AND WHY NOT SOMEWHERE NEW ─────────────────────
  *
@@ -59,6 +66,7 @@
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
+import { HttpsError } from 'firebase-functions/v2/https';
 
 import type { StagedWriter } from './moneyIdempotency';
 
@@ -88,7 +96,9 @@ import {
   PAYMENT_APPLIED_SKIPPED_FIELD,
   paymentAppliedOwner,
 } from './paymentAppliedOwner';
-import { writeAuditEntry } from './writeAuditEntry';
+import { auditHashableDoc, readAuditChain, stageAuditEntry, writeAuditEntry } from './writeAuditEntry';
+import { isArchived } from './invoiceArchive';
+import { assertSameCaller } from './sendIdempotency';
 import { AUDIT_EVENTS } from './auditEvents';
 import { stageDrawEvent } from './creditLedger';
 // #1005: money notices go to a member with billing access, not the last-synced account.
@@ -190,23 +200,60 @@ export function invoiceAcceptsCredit(
   return settlement.amountDueCents > 0;
 }
 
-/** What one auto-apply pass did. Every `skipped` value is a normal outcome. */
-export interface AutoApplyResult {
+/**
+ * Why a draw was refused. One code per case, so each client can put its own
+ * plain words beside the amount field (#1872).
+ */
+export type CreditDrawRefusal =
+  | 'invoice_missing'
+  | 'no_household'
+  | 'invoice_draft'
+  | 'invoice_quote'
+  | 'invoice_archived'
+  | 'invoice_paid'
+  | 'invoice_not_collectable'
+  | 'amount_invalid'
+  | 'over_credit'
+  | 'over_balance';
+
+/** What one draw did. `refused` is null when the credit moved (or had already moved). */
+export interface CreditDrawResult {
   invoiceId: string;
-  skipped:
-    | null
-    | 'invoice_missing'
-    | 'invoice_not_collectable'
-    | 'no_household'
-    | 'no_credit';
+  refused: CreditDrawRefusal | null;
+
+  /** True when this key had already drawn and the stored answer is returned. */
+  replayed: boolean;
+
+  /** The payment row the draw wrote, which is the caller's key. `''` when refused. */
+  paymentId: string;
   /** Credit moved onto the invoice. */
   appliedCents: number;
-  /** The household's remaining balance afterwards. */
+  /** The household's remaining balance afterwards (or as found, when refused). */
   accountBalanceCents: number;
-  /** The invoice's balance afterwards. */
+  /** The invoice's balance afterwards (or as found, when refused). */
   amountDueCents: number;
+  invoiceNumber: string | null;
+  kinfolkId: string;
 }
 
+/** Why this invoice cannot take credit, or null when it can. */
+export function creditInvoiceRefusal(
+  doc: InvoiceDoc,
+  existingPayments: readonly PaymentAmount[],
+): CreditDrawRefusal | null {
+  const status = typeof doc.status === 'string' ? doc.status.trim().toLowerCase() : '';
+  if (status === 'draft') return 'invoice_draft';
+  if (status === 'quote') return 'invoice_quote';
+  if (refusedLifecycle(doc) !== null) return 'invoice_not_collectable';
+
+  // An archived invoice is one the admin has stopped working. `markInvoicePaid`
+  // does not look at `archivedAt`; a credit draw does, because the admin types
+  // this amount against one invoice she is looking at, and an archived one is
+  // not on her screen as owed.
+  if (isArchived(doc as Record<string, unknown>)) return 'invoice_archived';
+  if (!invoiceAcceptsCredit(doc, existingPayments)) return 'invoice_paid';
+  return null;
+}
 /**
  * The balance a draw leaves behind, and the LAST GUARD in front of the write.
  *
@@ -233,7 +280,7 @@ export function balanceAfterDraw(heldCents: number, drawCents: number): number {
 }
 
 /**
- * ONE PASS over one invoice: draw the household's credit down onto it.
+ * ONE DRAW onto one invoice: the amount the admin entered, and nothing else.
  *
  * The invoice, its subcollection row and the family balance move together in a
  * single transaction or not at all. A half-commit would spend a household's
@@ -246,10 +293,8 @@ export function balanceAfterDraw(heldCents: number, drawCents: number): number {
  * not conditioned on the balance still being what it was when it was read: the
  * three reads, the plan and the commit were four separate round trips, and two
  * passes could sit inside one another's window, both read the same held credit
- * and both spend it. There are two callers — `admin/runAutoApply.ts` on demand
- * and `triggers/onInvoiceAutoApply.ts` by itself — so that overlap needs no
- * retry and no replay to happen; it is one operator pressing a button while the
- * trigger for the same invoice is in flight.
+ * and both spend it. That overlap needs no retry and no replay to happen; it is
+ * two admins applying credit for one household at the same moment.
  *
  * Everything now reads inside `runTransaction`, so the balance that decides the
  * draw and the write that applies it share one snapshot. The serialisation
@@ -258,93 +303,145 @@ export function balanceAfterDraw(heldCents: number, drawCents: number): number {
  * first has already moved — it re-runs and re-plans against what the first
  * actually committed.
  *
- * ── WHAT THE SECOND PASS OF A RACE DOES ───────────────────────────────────
+ * ── THE AMOUNT IS THE ADMIN'S, AND ONLY THE ADMIN'S (#1872) ───────────────
  *
- * It re-plans, and the plan is what decides. This is not a coin toss between
- * "draw the rest" and "draw nothing": `planCreditDraw` takes the SMALLER of
- * what is owed and what is held, so after any successful draw either the
- * invoice owes nothing or the household holds nothing.
+ * Operator ruling 2026-11-11: account credit is never spent automatically, not
+ * on send, not on quote acceptance, not by any trigger. This function used to
+ * draw the smaller of what was owed and what was held, for a trigger that had
+ * no amount to give it. It now draws EXACTLY `amountCents`, the figure the
+ * admin typed, or refuses with a reason: more than the household holds
+ * (`over_credit`), more than the invoice owes (`over_balance`), not a whole
+ * number of cents above zero (`amount_invalid`), or an invoice that cannot take
+ * it (`creditInvoiceRefusal`). It never rounds a request down to what fits.
  *
- *   same invoice      the second pass draws ZERO, always. It finds the first
- *                     pass's payment row and the decremented balance, and one
- *                     of the two is exhausted, so it reports
- *                     `invoice_not_collectable` or `no_credit`. That is what
- *                     makes a duplicate trigger delivery, a double click and a
- *                     retried pass all harmless.
- *   another invoice   the second pass draws WHAT IS LEFT, which is the correct
- *                     answer and the whole meaning of "future invoices",
- *                     plural. Two bills racing over one balance now share it
- *                     instead of each spending all of it.
+ * ── A SECOND TAP DRAWS NOTHING, AND THE KEY IS WHY ────────────────────────
  *
- * So a concurrent pair behaves exactly like the same pair run one after the
- * other. Ordering decides which invoice gets the credit, never how much credit
- * exists — and the balance can no longer go negative, because the decrement is
- * an absolute figure `balanceAfterDraw` refuses to make negative.
+ * The old "smaller of the two" plan made a repeat harmless by arithmetic: after
+ * one draw either the invoice or the balance was exhausted. An exact amount has
+ * no such property ($5 of $50 onto a $100 bill can be drawn again and again),
+ * so the caller's `paymentId` is the guard. It is the id of the payment row,
+ * and the row is the first thing the transaction reads: a key that already
+ * drew is answered from its own row BEFORE any refusal runs, so a retry after a
+ * pay-off reports the success it was, not "already paid". The same key from
+ * another admin is refused (`assertSameCaller`).
+ *
+ * ── ONE TRANSACTION, FIVE DOCUMENTS ───────────────────────────────────────
+ *
+ * The payment row, the invoice, the family balance, the `draw` event in the
+ * household's credit history and the Activity Log entry commit together or not
+ * at all. The Activity Log entry is sealed onto the hash chain inside this
+ * transaction (`readAuditChain` / `stageAuditEntry`), at a fixed id made from
+ * the key.
  */
 export async function drawAccountCredit(
   firestore: Firestore,
-  input: { invoiceId: string; actorUid: string },
-): Promise<AutoApplyResult> {
-  const nothing = (
-    skipped: NonNullable<AutoApplyResult['skipped']>,
-    over: Partial<AutoApplyResult> = {},
-  ): AutoApplyResult => ({
+  input: {
+    invoiceId: string;
+    actorUid: string;
+
+    /** The amount the admin entered, in whole cents. */
+    amountCents: number;
+
+    /** The caller's idempotency key. It becomes the payment row's id. */
+    paymentId: string;
+    testMode?: boolean;
+  },
+): Promise<CreditDrawResult> {
+  const refusedWith = (
+    refused: CreditDrawRefusal,
+    over: Partial<CreditDrawResult> = {},
+  ): CreditDrawResult => ({
     invoiceId: input.invoiceId,
-    skipped,
+    refused,
+    replayed: false,
+    paymentId: '',
     appliedCents: 0,
     accountBalanceCents: 0,
     amountDueCents: 0,
+    invoiceNumber: null,
+    kinfolkId: '',
     ...over,
   });
-
   const invRef = firestore.collection('invoices').doc(input.invoiceId);
+  const paymentRef = invRef.collection('payments').doc(input.paymentId);
+  const auditDocId = `account_credit_applied_${input.paymentId}`;
 
+  // Outside the callback, so a retried attempt hashes the same timestamp.
+  const auditTimestampIso = new Date().toISOString();
+  // Loaded here, not at module scope: `activityWords` stays out of the
+  // entrypoint's eager import graph, as every other caller keeps it.
+  const { accountCreditAppliedWords } = await import('./activityWords.js');
   /** The committed outcome, plus what only the transaction knew, to log with. */
   const pass = await firestore.runTransaction(async (tx) => {
     // ALL READS BEFORE WRITES, the same order `redeemCredit` keeps: Firestore
     // refuses a read after a write on the same transaction.
     const invSnap = await tx.get(invRef);
-    if (!invSnap.exists) return { result: nothing('invoice_missing'), applied: null };
+    if (!invSnap.exists) return { result: refusedWith('invoice_missing'), applied: null };
     const doc = (invSnap.data() ?? {}) as InvoiceDoc;
-
+    const invoiceNumber = typeof doc.invoiceNumber === 'string' ? doc.invoiceNumber : null;
     const kinfolkId = typeof doc.kinfolkId === 'string' ? doc.kinfolkId : '';
-    if (kinfolkId === '') return { result: nothing('no_household'), applied: null };
-
-    const paymentsSnap = await tx.get(invRef.collection('payments'));
-    const existingPayments = paymentsSnap.docs.map((d) => d.data() as PaymentAmount);
-    if (!invoiceAcceptsCredit(doc, existingPayments)) {
-      return { result: nothing('invoice_not_collectable'), applied: null };
-    }
-
-    const before = settleInvoice(invoiceTotalCentsOf(doc), paidCentsFromPayments(existingPayments));
-
-    const famRef = firestore.collection('families').doc(kinfolkId);
-    const famSnap = await tx.get(famRef);
-    const heldCents = readAccountBalanceCents((famSnap.data() ?? {})[ACCOUNT_BALANCE_FIELD]);
-
-    const drawCents = planCreditDraw({
-      amountDueCents: before.amountDueCents,
-      accountBalanceCents: heldCents,
-    });
-    if (drawCents === 0) {
+    // THE REPLAY, before every guard. This key already drew: answer from its row.
+    const priorSnap = await tx.get(paymentRef);
+    if (priorSnap.exists) {
+      const stored = (priorSnap.data() ?? {}) as Record<string, unknown>;
+      assertSameCaller(stored, input.actorUid, 'recordedBy');
+      const cents = (k: string): number =>
+        typeof stored[k] === 'number' && Number.isFinite(stored[k]) ? Math.round(stored[k] as number) : 0;
       return {
-        result: nothing('no_credit', {
-          accountBalanceCents: heldCents,
-          amountDueCents: before.amountDueCents,
-        }),
+        result: {
+          invoiceId: input.invoiceId,
+          refused: null,
+          replayed: true,
+          paymentId: paymentRef.id,
+          appliedCents: cents('amountCents'),
+          accountBalanceCents: cents('accountBalanceAfterCents'),
+          amountDueCents: cents('amountDueAfterCents'),
+          invoiceNumber,
+          kinfolkId,
+        } satisfies CreditDrawResult,
         applied: null,
       };
     }
 
+    if (kinfolkId === '') return { result: refusedWith('no_household', { invoiceNumber }), applied: null };
+    const paymentsSnap = await tx.get(invRef.collection('payments'));
+    const existingPayments = paymentsSnap.docs.map((d) => d.data() as PaymentAmount);
+    const famRef = firestore.collection('families').doc(kinfolkId);
+    const famSnap = await tx.get(famRef);
+    const chain = await readAuditChain(firestore, tx, auditDocId);
+    // THE KEY NAMES ONE SUBMISSION AGAINST ONE INVOICE. Its Activity Log id is
+    // global, so an entry already there with no payment row on THIS invoice
+    // means the key already drew on another one. Drawing again would move the
+    // money with its Activity Log line skipped (that id is taken) and the
+    // household's credit history entry overwritten, so it is refused.
+    if (chain.existingId !== null) {
+      throw new HttpsError(
+        'already-exists',
+        'This request was already used on another invoice. Enter the amount again.',
+        { reason: 'key_used' },
+      );
+    }
+    const heldCents = readAccountBalanceCents((famSnap.data() ?? {})[ACCOUNT_BALANCE_FIELD]);
+    const before = settleInvoice(invoiceTotalCentsOf(doc), paidCentsFromPayments(existingPayments));
+    const found = { invoiceNumber, kinfolkId, accountBalanceCents: heldCents, amountDueCents: before.amountDueCents };
+    const invoiceRefusal = creditInvoiceRefusal(doc, existingPayments);
+    if (invoiceRefusal !== null) return { result: refusedWith(invoiceRefusal, found), applied: null };
+    const drawCents = input.amountCents;
+    if (!Number.isInteger(drawCents) || drawCents <= 0) {
+      return { result: refusedWith('amount_invalid', found), applied: null };
+    }
+    // The household's credit is checked first: "you do not have that much" is
+    // the more useful thing to hear when both limits are passed.
+    if (drawCents > heldCents) return { result: refusedWith('over_credit', found), applied: null };
+    if (drawCents > before.amountDueCents) return { result: refusedWith('over_balance', found), applied: null };
     // Throws rather than writes if this would ever be negative, which aborts
     // the whole transaction: no payment row, no invoice update, no decrement.
     const remainingCents = balanceAfterDraw(heldCents, drawCents);
-
     const after = settleInvoice(before.totalCents, before.paidCents + drawCents);
     const settling = after.state === 'settled' || after.state === 'overpaid';
-
-    const paymentRef = invRef.collection('payments').doc();
-    tx.set(paymentRef, {
+    // `create`, never `set`: two attempts that race past the replay read cannot
+    // both land a row at this key.
+    tx.create(paymentRef, {
       amount: centsToDollars(drawCents),
       amountCents: drawCents,
       method: ACCOUNT_CREDIT_METHOD,
@@ -354,9 +451,12 @@ export async function drawAccountCredit(
       // The row says where the money came from. An operator asking "why is this
       // bill already part paid" gets an answer from the row itself.
       fromAccountCredit: true,
+      // What a replay of this key answers with.
+      accountBalanceAfterCents: remainingCents,
+      amountDueAfterCents: after.amountDueCents,
+      idempotencyKey: input.paymentId,
       createdAt: FieldValue.serverTimestamp(),
     });
-
     // The ABSOLUTE remainder, not `increment(-drawCents)`. Inside the
     // transaction the read that produced it is the read this write is
     // conditioned on, which is exactly what `creditAccount` cannot say about
@@ -369,7 +469,6 @@ export async function drawAccountCredit(
       },
       { merge: true },
     );
-
     // Q6: the draw's event in the household's credit history, in this same
     // transaction. It is how "date applied" is known for a given credit, and it
     // records the balance before and after so the history can tell which part
@@ -378,14 +477,47 @@ export async function drawAccountCredit(
       kinfolkId,
       paymentId: paymentRef.id,
       invoiceId: input.invoiceId,
-      invoiceNumber: typeof doc.invoiceNumber === 'string' ? doc.invoiceNumber : null,
+      invoiceNumber,
       amountCents: drawCents,
       heldBeforeCents: heldCents,
       heldAfterCents: remainingCents,
       actorUid: input.actorUid,
       atMs: Date.now(),
     });
-
+    // The Activity Log line, sealed onto the chain in this same transaction.
+    stageAuditEntry(
+      firestore,
+      tx,
+      auditHashableDoc(
+        {
+          status: 'SUCCESS',
+          event: AUDIT_EVENTS.BILLING_ACCOUNT_CREDIT_APPLIED,
+          severity: 'info',
+          actorRole: 'AUNTIE',
+          actorUid: input.actorUid,
+          targetUid: input.invoiceId,
+          targetCollection: 'invoices',
+          familyId: kinfolkId,
+          description: accountCreditAppliedWords(drawCents, invoiceNumber),
+          payload: {
+            kinfolkId,
+            invoiceId: input.invoiceId,
+            invoiceNumber,
+            paymentId: paymentRef.id,
+            amountCents: drawCents,
+            balanceBeforeCents: heldCents,
+            balanceAfterCents: remainingCents,
+            amountDueBeforeCents: before.amountDueCents,
+            amountDueAfterCents: after.amountDueCents,
+            testMode: input.testMode === true,
+            idempotencyKey: input.paymentId,
+          },
+        },
+        auditTimestampIso,
+      ),
+      chain,
+      auditDocId,
+    );
     const invoiceUpdate = {
       status: settling ? 'paid' : 'open',
       paymentStatus: settling ? 'PAID' : 'PARTIAL',
@@ -406,7 +538,7 @@ export async function drawAccountCredit(
             [PAYMENT_APPLIED_OWNER_FIELD]: paymentAppliedOwner('accountCredit', paymentRef.id),
             // #884 second review: pending until the notice is delivered, in the
             // same commit as the payment, so a crash anywhere after this point
-            // leaves a record a redelivered pass or the scheduled sweep can finish.
+            // leaves a record a replayed call or the scheduled sweep can finish.
             [PAYMENT_APPLIED_PENDING_FIELD]: paymentAppliedOwner('accountCredit', paymentRef.id),
             [PAYMENT_APPLIED_PENDING_AT_FIELD]: Date.now(),
           }
@@ -420,15 +552,18 @@ export async function drawAccountCredit(
       { ...invoiceUpdate, ...invoiceStateStampOf({ ...doc, ...invoiceUpdate }, after.paidCents) },
       { merge: true },
     );
-
     return {
       result: {
         invoiceId: input.invoiceId,
-        skipped: null,
+        refused: null,
+        replayed: false,
+        paymentId: paymentRef.id,
         appliedCents: drawCents,
         accountBalanceCents: remainingCents,
         amountDueCents: after.amountDueCents,
-      } satisfies AutoApplyResult,
+        invoiceNumber,
+        kinfolkId,
+      } satisfies CreditDrawResult,
       applied: {
         kinfolkId,
         state: after.state,
@@ -441,7 +576,6 @@ export async function drawAccountCredit(
       },
     };
   });
-
   // AFTER the commit, never inside it. A transaction callback re-runs on
   // contention, and a log line written from an attempt that was discarded would
   // report money that never moved — which is the failure mode this whole change
@@ -450,7 +584,7 @@ export async function drawAccountCredit(
     logEvent({
       severity: 'info',
       function: 'accountCredit',
-      event: 'payment.autoapply.applied',
+      event: 'payment.credit.applied',
       uid: input.actorUid,
       extra: {
         invoiceId: input.invoiceId,
@@ -462,7 +596,6 @@ export async function drawAccountCredit(
       },
     });
   }
-
   // #884 review: THE DRAW SENDS ITS OWN PAYMENT NOTICE, after the commit and
   // only when this draw paid the bill off (a partial draw tells nobody, as
   // before). Its own write stamped `accountCredit:<paymentId>` as the owner, so
@@ -478,18 +611,15 @@ export async function drawAccountCredit(
       amountDueCents: pass.result.amountDueCents,
     });
   }
-
-  // #884 second review: A REDELIVERED PASS FINISHES WHAT THE FIRST ONE COULD NOT.
-  // The trigger redelivery or a second press of Run auto-apply finds the bill
-  // already paid and draws nothing, and this is the moment it can send a notice
-  // the first pass committed but never delivered.
-  if (pass.result.skipped === 'invoice_not_collectable') {
+  // #884 second review: A REPLAYED CALL FINISHES WHAT THE FIRST ONE COULD NOT.
+  // A second press with the same key finds its own row and draws nothing, and
+  // this is the moment it can send a notice the first call committed but never
+  // delivered.
+  if (pass.result.replayed) {
     await resendPendingCreditNotice(firestore, input.invoiceId);
   }
-
   return pass.result;
 }
-
 /**
  * How long the dispatcher ledger remembers one credit payment notice. Every
  * sender of it (the pass, a redelivered pass, the sweep) uses the same identity,

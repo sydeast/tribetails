@@ -15,6 +15,9 @@ import com.tribetails.auntieos.data.contracts.GenerateInvoicePdfArgs
 import com.tribetails.auntieos.data.contracts.GenerateReceiptArgs
 import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryArgs
 import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResult
+import com.tribetails.auntieos.data.contracts.ApplyAccountCreditArgs
+import com.tribetails.auntieos.data.contracts.ApplyAccountCreditResult
+import com.tribetails.auntieos.data.contracts.decodeApplyAccountCreditResult
 import com.tribetails.auntieos.data.contracts.GiveAccountCreditArgs
 import com.tribetails.auntieos.data.contracts.GiveAccountCreditResult
 import com.tribetails.auntieos.data.contracts.decodeGetAccountCreditHistoryResult
@@ -859,6 +862,33 @@ class InvoiceRepository(
         if (!result.ok) error("giveAccountCredit: not ok")
         result
     }.onFailure { AuntieLog.e("Failed to give account credit", it) }
+
+    /**
+     * #1872 (operator ruling 2026-11-11): apply an amount of the household's
+     * account credit to ONE open invoice. The only way credit reaches an
+     * invoice; nothing spends it automatically. The server derives the
+     * household from the invoice and checks the amount against the credit held
+     * and the balance owed. [idempotencyKey] is REQUIRED and becomes the
+     * payment row's id, so a retry of the same submission applies nothing more
+     * (mint it with [mintApplyCreditIdempotencyKey], once per submission).
+     */
+    suspend fun applyAccountCredit(
+        invoiceId: String,
+        amountCents: Long,
+        idempotencyKey: String,
+    ): Result<ApplyAccountCreditResult> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("applyAccountCredit")
+            .call(ApplyAccountCreditArgs(invoiceId, amountCents, idempotencyKey).toPayload())
+            .awaitCallable().data as? Map<String, Any?>
+            ?: error("applyAccountCredit: non-map payload")
+        val result = decodeApplyAccountCreditResult(raw)
+        if (!result.ok) error("applyAccountCredit: not ok")
+        result.paymentId.ifBlank { error("applyAccountCredit: missing paymentId") }
+        result
+    }.onFailure { AuntieLog.e("Failed to apply account credit", it) }
+
     /** Q6: a household's credit, each credit's dates and reason, and every use of credit. */
     suspend fun getAccountCreditHistory(kinfolkId: String): Result<GetAccountCreditHistoryResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
