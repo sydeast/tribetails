@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import { serviceLabelOf, visitTitleOf } from '../lib/serviceLabel';
 import { Link, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -83,6 +84,8 @@ export function BookingDetail() {
   const [rescheduleProblem, setRescheduleProblem] = useState<string | null>(null);
 
   const found = findBookingById(bookings.data, visitId);
+  // #2007: the tab names the visit the way its heading does, once loaded.
+  useRecordTitle(visitTitleOf(found));
   // #1283: what this household already told its Auntie about the visit. The
   // server returns the household's own notes only.
   const notesQueryKey = ['bookingNotes', kinfolkId, found?.batchId ?? null, found?.id ?? null] as const;

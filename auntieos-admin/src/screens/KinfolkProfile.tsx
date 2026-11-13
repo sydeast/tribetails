@@ -9,6 +9,7 @@ import { directionsHref } from '../lib/directions';
 import { profileJoinDate } from '../lib/joinDate';
 import { tenureLabel } from '../lib/kinfolkProfileFeeds';
 import { useHistoryBack } from '../lib/useHistoryBack';
+import { useRecordTitle } from '../lib/pageTitle';
 import { DenPanel, DenScreenHeading, EmptyHint, StatusPill } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -287,6 +288,10 @@ export function KinfolkProfile({
       live = false;
     };
   }, [kinKey]);
+
+  // #2007: the tab names the household. The name the hero shows, never the
+  // id it falls back to; the edit and household sub-views keep it too.
+  useRecordTitle(profile.status === 'ready' ? kinfolkDisplayName(profile.data) : kinfolkName || null);
 
   // #689. Above the sub-view returns because a hook cannot sit behind one.
   const back = useHistoryBack({ fallbackLabel: 'Directory', onFallback: onBack });

@@ -4,6 +4,7 @@ import {
   createRoute,
   createRouter,
   lazyRouteComponent,
+  notFound,
   redirect,
 } from '@tanstack/react-router';
 import { waitForAuthReady } from './lib/auth';
@@ -16,10 +17,12 @@ import {
   subscribeSessionHealth,
 } from './lib/sessionHealth';
 import { enterReadOnlySession, leaveReadOnlySession } from './lib/readOnlySession';
-import { NOTIFICATION_GATE_REDIRECT } from './lib/nav';
+import { NOTIFICATION_GATE_REDIRECT, navTitle } from './lib/nav';
+import { NOT_FOUND_TITLE, useRouteTitle } from './lib/pageTitle';
 import { AppShell } from './components/AppShell';
 import { RoutePending } from './components/RoutePending';
 import { RouteError } from './components/RouteError';
+import { AdminNotFound, SignedOutNotFound } from './components/NotFound';
 import { QueuedWritesBanner } from './components/QueuedWritesBanner';
 // Every admin screen below is code-split via lazyRouteComponent (each resolves
 // to its own chunk at build time) instead of being imported here. The single
@@ -78,6 +81,9 @@ function optionalIdSearch<K extends string>(keys: readonly K[]) {
  * geometry lives in styles/base.css.
  */
 function RootLayout() {
+  // #2007: the browser tab names the screen. One writer for the whole app; see
+  // lib/pageTitle.ts.
+  useRouteTitle();
   return (
     <>
       <span className="orb a" aria-hidden="true" />
@@ -109,6 +115,7 @@ const indexRoute = createRoute({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/signin',
+  staticData: { title: 'Sign in' },
   // #1384: `redirect` is the location the guard turned the operator away from.
   validateSearch: signInSearch,
   component: SignIn,
@@ -150,11 +157,23 @@ const signInRoute = createRoute({
  * is set), but a direct `onSnapshot` started on this pass would be unscoped,
  * and the sandbox banner is absent until a gate pass succeeds.
  */
-async function requireAdmin({ location }: { location: Parameters<typeof signInSearchFor>[0] }) {
+async function requireAdmin(ctx: { location: Parameters<typeof signInSearchFor>[0] }) {
+  const { location } = ctx;
+  // #1845 reads the router's `matches` too, off the same object but kept out of
+  // the declared parameter: declaring it makes TypeScript resolve the router's
+  // own match type while inferring the route tree, a cycle (TS7022).
+  const matches: unknown = (ctx as { matches?: unknown }).matches;
   // #1384: every /signin bounce below carries where the operator was going.
   const toSignIn = () => redirect({ to: '/signin', search: signInSearchFor(location) });
   const state = await waitForAuthReady();
-  if (state.status !== 'signedIn') throw toSignIn();
+  if (state.status !== 'signedIn') {
+    // #1845: an address no screen owns is not a screen to sign in for. The
+    // visitor gets the root's not-found card, with a way to sign in on it,
+    // rather than a sign-in that lands on nothing. Only the signed-out exit:
+    // a denied or expired session still goes to /signin, below.
+    if (isNotFoundMatch(matches)) throw notFound();
+    throw toSignIn();
+  }
   let access: AdminAccess;
   try {
     access = await resolveAccess(state.user);
@@ -186,36 +205,42 @@ const adminRoute = createRoute({
 const homeRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'home',
+  staticData: { title: navTitle('home') },
   component: lazyRouteComponent(() => import('./screens/Home'), 'Home'),
 });
 
 const featureFlagsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'feature-flags',
+  staticData: { title: navTitle('featureFlags') },
   component: lazyRouteComponent(() => import('./screens/FeatureFlags'), 'FeatureFlags'),
 });
 
 const activityRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'activity',
+  staticData: { title: navTitle('activity') },
   component: lazyRouteComponent(() => import('./screens/ActivityLog'), 'ActivityLog'),
 });
 
 const notificationsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'notifications',
+  staticData: { title: navTitle('notifications') },
   component: lazyRouteComponent(() => import('./routes/NotificationsView'), 'NotificationsView'),
 });
 
 const formSchemasRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'form-schemas',
+  staticData: { title: navTitle('formSchemas') },
   component: lazyRouteComponent(() => import('./routes/FormSchemasView'), 'FormSchemasView'),
 });
 
 const invoicesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'invoices',
+  staticData: { title: navTitle('invoices') },
   validateSearch: optionalIdSearch(['invoiceId', 'composeQuoteForKinfolkId'] as const),
   component: lazyRouteComponent(() => import('./routes/InvoicesView'), 'InvoicesView'),
 });
@@ -223,6 +248,7 @@ const invoicesRoute = createRoute({
 const directoryRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory',
+  staticData: { title: navTitle('directory') },
   // `tab=kin` opens the Kin tab; `inCare=1` narrows it to the pets Home's "Kin
   // in care" card counts (#1601).
   validateSearch: optionalIdSearch(['tab', 'inCare'] as const),
@@ -236,6 +262,7 @@ const directoryRoute = createRoute({
 const invitesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'invites',
+  staticData: { title: navTitle('invites') },
   component: lazyRouteComponent(() => import('./screens/Invites'), 'Invites'),
 });
 
@@ -245,12 +272,14 @@ const invitesRoute = createRoute({
 const inviteDetailRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'invites/$inviteId',
+  staticData: { title: navTitle('invites') },
   component: lazyRouteComponent(() => import('./routes/InviteDetailView'), 'InviteDetailView'),
 });
 
 const directoryProfileRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'directory/$kinfolkId',
+  staticData: { title: navTitle('directory') },
   // #1003: the `invoice.payment.unapplied` notice lands here with
   // `?section=unapplied-payments&paymentId=...`, which opens the Account credit
   // panel's "Payments needing a decision" list and that payment's dialog.
@@ -265,6 +294,7 @@ const directoryProfileRoute = createRoute({
 const householdMembersRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'household-members/$kinfolkId',
+  staticData: { title: navTitle('householdMembers') },
   component: lazyRouteComponent(
     () => import('./routes/HouseholdMembersView'),
     'HouseholdMembersView',
@@ -274,6 +304,7 @@ const householdMembersRoute = createRoute({
 const bookingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'bookings',
+  staticData: { title: navTitle('bookings') },
   // `kinRemoval=<request id>` is where a "Kinfolk asked to remove a Kin" notice
   // opens: the removal queue on this screen, already unfolded (#1912).
   validateSearch: optionalIdSearch(['bookingId', 'kinRemoval'] as const),
@@ -283,6 +314,7 @@ const bookingsRoute = createRoute({
 const sessionsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'sessions',
+  staticData: { title: navTitle('sessions') },
   // `sessionId` is where an invoice line bound to a visit used to route (#408):
   // a bound line's money is corrected on the visit itself, so the invoice, the
   // composer and the ledger all offer the way here. Since #753 the visit has a
@@ -313,12 +345,14 @@ const sessionsRoute = createRoute({
 const sessionDetailRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'sessions/$sessionId',
+  staticData: { title: navTitle('sessions') },
   component: lazyRouteComponent(() => import('./routes/SessionDetailView'), 'SessionDetailView'),
 });
 
 const kinTalesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'kintales',
+  staticData: { title: navTitle('kintales') },
   // `range` is the list's date window (7d / 30d / 90d / all). Home's "KinTales
   // to review" card and its pending rows send `all`, because the drafts Home
   // counts are not limited to the last week (#1601).
@@ -335,12 +369,14 @@ const kinTalesRoute = createRoute({
 const galleryRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'gallery',
+  staticData: { title: navTitle('gallery') },
   component: lazyRouteComponent(() => import('./screens/Gallery'), 'Gallery'),
 });
 
 const templatesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'templates',
+  staticData: { title: navTitle('templates') },
   // `template` is the open editor (#1594): a template id, or `new`. Absent is the bank.
   validateSearch: optionalIdSearch(['template'] as const),
   component: lazyRouteComponent(() => import('./routes/TemplatesView'), 'TemplatesView'),
@@ -355,18 +391,21 @@ const templatesRoute = createRoute({
 const kinTaleTemplatesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'kintale-templates',
+  staticData: { title: navTitle('kinTaleTemplates') },
   component: lazyRouteComponent(() => import('./screens/KinTaleTemplates'), 'KinTaleTemplates'),
 });
 
 const tribalIntelRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'tribal-intel',
+  staticData: { title: navTitle('trainingDocs') },
   component: lazyRouteComponent(() => import('./screens/TribalIntel'), 'TribalIntel'),
 });
 
 const coveragePackagesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'packages',
+  staticData: { title: navTitle('coveragePackages') },
   component: lazyRouteComponent(
     () => import('./screens/CoveragePackageBuilder'),
     'CoveragePackageBuilder',
@@ -376,18 +415,21 @@ const coveragePackagesRoute = createRoute({
 const scheduleRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'schedule',
+  staticData: { title: navTitle('schedule') },
   component: lazyRouteComponent(() => import('./screens/Schedule'), 'Schedule'),
 });
 
 const inboxRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'inbox',
+  staticData: { title: navTitle('inbox') },
   component: lazyRouteComponent(() => import('./screens/Inbox'), 'Inbox'),
 });
 
 const settingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'settings',
+  staticData: { title: navTitle('settings') },
   // `section` seeds which panel opens first (`?section=notifications`). The
   // only caller today is the `/notification-gate` redirect below (#718); a
   // plain visit to `/settings` carries none and opens Settings' own default.
@@ -398,6 +440,7 @@ const settingsRoute = createRoute({
 const communicateRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'communicate',
+  staticData: { title: navTitle('communicate') },
   // `draftId` opens one stored `generated_drafts` doc in Personalize for
   // review, send or delete (#1563). It is where KinTales > Drafts and Home's
   // "KinTales pending" rows land; without it every stored draft was stranded.
@@ -409,6 +452,7 @@ const communicateRoute = createRoute({
 const marketingBlastsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'marketing-blasts',
+  staticData: { title: navTitle('marketingBlasts') },
   component: lazyRouteComponent(() => import('./screens/MarketingBlasts'), 'MarketingBlasts'),
 });
 
@@ -419,12 +463,14 @@ const marketingBlastsRoute = createRoute({
 const accountRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'account',
+  staticData: { title: navTitle('accountSettings') },
   component: lazyRouteComponent(() => import('./screens/Account'), 'AccountRouteView'),
 });
 
 const myNotificationsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'my-notifications',
+  staticData: { title: navTitle('myNotifications') },
   component: lazyRouteComponent(
     () => import('./screens/MyNotificationsEdit'),
     'MyNotificationsEdit',
@@ -446,19 +492,43 @@ const notificationGateRoute = createRoute({
 const vetClinicsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'vet-clinics',
+  staticData: { title: navTitle('vetClinics') },
   component: lazyRouteComponent(() => import('./screens/VetClinics'), 'VetClinics'),
 });
 
 const mediaRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'media/$type/$id',
+  staticData: { title: navTitle('mediaGallery') },
   component: lazyRouteComponent(() => import('./routes/MediaView'), 'MediaView'),
+});
+
+/**
+ * Every address no screen owns (#1845), signed in. A catch-all under the admin
+ * layout rather than only a router default, because the default renders at the
+ * root, outside the shell: the operator would lose the rail, which is the way
+ * to every screen. Ranked below every real path, so it shadows none of them;
+ * `/invoices/garbage` lands here too. Signed out, `requireAdmin` sends this one
+ * route to the root's not-found card instead of to sign-in.
+ */
+const ADMIN_NOT_FOUND_ROUTE_ID = '/admin/$';
+function isNotFoundMatch(matches: unknown): boolean {
+  return (
+    Array.isArray(matches) &&
+    matches.some((m: unknown) => (m as { routeId?: unknown } | null)?.routeId === ADMIN_NOT_FOUND_ROUTE_ID)
+  );
+}
+const adminNotFoundRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: '$',
+  staticData: { title: NOT_FOUND_TITLE },
+  component: AdminNotFound,
 });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, inviteDetailRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, inviteDetailRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute, adminNotFoundRoute]),
 ]);
 
 export const router = createRouter({
@@ -480,6 +550,10 @@ export const router = createRouter({
   // network, propagated past the router to `main.tsx`'s Sentry boundary and
   // the operator got a crash page. See RouteError.tsx.
   defaultErrorComponent: RouteError,
+  // #1845: and what it renders for an address nothing owns when the admin
+  // layout is not in play (signed out; see `adminNotFoundRoute`). Without one
+  // the library painted a bare "Not Found" in the corner of an empty page.
+  defaultNotFoundComponent: SignedOutNotFound,
 });
 
 /**

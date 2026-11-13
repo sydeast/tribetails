@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import {
   invoiceCheckoutClosure,
   invoiceDispute,
@@ -1574,6 +1575,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const handleDialogClose = useCallback(() => {
     if (!busy) onClose();
   }, [busy, onClose]);
+
+  // #2007: the tab names the open invoice by its number, over the list's
+  // "Invoices". An invoice with no number leaves the tab on the screen name.
+  const tabNumber = invoice.invoiceNumber.trim();
+  useRecordTitle(tabNumber === '' ? null : `Invoice #${tabNumber}`);
 
   return (
     <Dialog

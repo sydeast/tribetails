@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import { Link, linkOptions } from '@tanstack/react-router';
 import {
   PERMISSION_META,
@@ -165,6 +166,9 @@ export function InviteDetail({ inviteId }: { inviteId: string }) {
   useEffect(() => load(), [load]);
 
   const title = state.status === 'ready' ? state.data.invitedEmail : 'Invite';
+  // #2007: the tab names the household the invite is for. Never the invited
+  // email: an address is not a name, and the tab is read over a shoulder.
+  useRecordTitle(state.status === 'ready' ? state.data.householdName : null);
 
   return (
     <section className="invite-detail">

@@ -1,0 +1,23 @@
+/* The not-found card (#1845). Layout comes from the screens it borrows from:
+   RouteError.css's centred stage inside the shell, signin.css's stage for a
+   visitor who is signed out. This file only stacks the heading over its one
+   button and centres both. */
+
+.notfound__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  text-align: center;
+}
+
+/* The shell's card heading: the sign-in card's 24px display step, so both
+   cases read as the same screen. */
+.notfound__title {
+  margin: 0;
+  font-family: var(--type-display-md-family);
+  font-size: 24px;
+  font-weight: 440;
+  letter-spacing: var(--type-display-md-tracking);
+  color: var(--color-text-primary);
+}
