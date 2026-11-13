@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import {
   saveTemplate,
   deleteTemplate,
@@ -175,6 +176,8 @@ function MailGlyph() {
 export function TemplateEditor({ template, categories, onClose, onSaved, onDeleted }: TemplateEditorProps) {
   const { showToast } = useToast();
   const isCreate = template === null;
+  // #2007: the tab names the template being edited.
+  useRecordTitle(template === null ? 'New template' : template.title);
   const [fields, setFields] = useState<TemplateFormFields>(() =>
     template ? templateToFormFields(template) : blankFormFields(),
   );

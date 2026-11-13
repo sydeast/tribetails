@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import { Link, linkOptions } from '@tanstack/react-router';
 import { getKin, type KinDetail } from '../api/kinView';
 import { getKin411, type Kin411 } from '../api/recipientContext';
@@ -134,6 +135,8 @@ function checklistLines(checklist: string): string[] {
  */
 export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinViewProps) {
   const [kin, setKin] = useState<Async<KinDetail>>({ status: 'loading' });
+  // #2007: the tab names the Kin, never the id the heading falls back to.
+  useRecordTitle(kinName || null);
   // The pet's 411, read alongside the doc rather than joined into it: a 411 that
   // fails to load must say so on its own panel while the rest of the page
   // stands, and `null` is the ordinary case for a pet nobody has written up.

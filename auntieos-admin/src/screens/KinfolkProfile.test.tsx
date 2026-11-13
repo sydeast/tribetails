@@ -171,6 +171,14 @@ describe('mergeKinfolkProfile (pure)', () => {
 });
 
 describe('KinfolkProfile', () => {
+  it('#2007: names the household in the browser tab, never its id', async () => {
+    getKinfolkProfile.mockResolvedValue(profile());
+    document.title = '';
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie Halbrook" kin={[]} onBack={vi.fn()} />);
+    expect(document.title).toBe('Jamie Halbrook · AuntieOS');
+    await screen.findByText('512-555-1000');
+    expect(document.title).not.toContain('k1');
+  });
   /** #1602: Fix Backlog 4.8/4.9 and punchlist K2 ordered both rows off the profile. */
   it('#1602: shows neither Preferred contact nor Best time to reach, even when stored', async () => {
     getKinfolkProfile.mockResolvedValue(

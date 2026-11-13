@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import {
   getFormSchema,
   saveFormSchema,
@@ -326,6 +327,8 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
 
   const [id, setId] = useState(creating ? '' : (schemaId ?? '').trim());
   const [name, setName] = useState('');
+  // #2007: the tab names the schema being edited, once its name is loaded.
+  useRecordTitle(creating ? 'New form schema' : name);
   const [description, setDescription] = useState('');
   const [appliesTo, setAppliesTo] = useState('NONE');
   const [version, setVersion] = useState(0);

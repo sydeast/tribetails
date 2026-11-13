@@ -112,6 +112,12 @@ function panelTitles(container: HTMLElement): (string | null)[] {
 }
 
 describe('SessionDetail', () => {
+  it('#2007: names the visit in the browser tab by its Kin, never its id', () => {
+    document.title = '';
+    render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    expect(document.title).toBe('Biscuit & Gravy · AuntieOS');
+    expect(document.title).not.toContain('sess1');
+  });
   it('#1744: the title names the KinCare, never the stored key', () => {
     render(<SessionDetail entry={entry({ serviceType: 'visit_45' })} onBack={vi.fn()} />);
     expect(screen.getByRole('heading', { name: 'Biscuit & Gravy · Long walk' })).toBeInTheDocument();

@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import { linkOptions } from '@tanstack/react-router';
 import { useCollection } from '../lib/firestore';
 import { useAdminAccess } from '../lib/access';
@@ -173,6 +174,8 @@ export function KinTaleTemplates() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<EditorTarget | null>(null);
+  // #2007: the tab names the template while its editor is open.
+  useRecordTitle(editing === null ? null : editing.isNew ? 'New template' : editing.seed.name);
   const [banner, setBanner] = useState<ScreenBanner | null>(null);
   const [bank, setBank] = useState<readonly ChecklistBankItem[]>([]);
   const [serviceCatalog, setServiceCatalog] = useState<Async<ServiceOption[]>>({ status: 'loading' });

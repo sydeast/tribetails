@@ -233,6 +233,16 @@ export function screenTitle(location: string): string | null {
 }
 
 /**
+ * The rail's name for a destination, for the browser tab (#2007), so the tab
+ * and the rail never disagree. Every destination has a NAV entry; the empty
+ * fallback only keeps the type honest, and an empty part is dropped from the
+ * tab rather than shown.
+ */
+export function navTitle(dest: Destination): string {
+  return TITLE_BY_DEST.get(dest) ?? '';
+}
+
+/**
  * A screen's breadcrumb kicker, "<rail section> · <rail title>" (#1598). The
  * section comes from the rail entry, so a screen filed under Care Ops never
  * reads "The Den" in its heading while the sidebar says Care Ops.

@@ -334,6 +334,14 @@ function expectExactActions(expected: readonly string[]) {
 }
 
 describe('InvoiceDetail', () => {
+  it('#2007: names the open invoice in the browser tab by its number, never its id', () => {
+    document.title = '';
+    const view = render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(document.title).toBe('Invoice #1042 · AuntieOS');
+    expect(document.title).not.toContain('inv1');
+    view.unmount();
+    expect(document.title).toBe('AuntieOS');
+  });
   it('renders the household, invoice number, chip, and money facts', () => {
     // total and amountDue deliberately differ so the two $ facts aren't the
     // same text twice, each assertion below is scoped to its own <dd>.

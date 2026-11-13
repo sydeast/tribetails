@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { archiveKin, canDeleteKin, deleteKin, getMyKin, requestKinRemoval, updateKin } from '../api/portal';
@@ -66,6 +67,8 @@ export function KinEdit() {
 
   const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
   const found = kin.data?.kin.find((k) => k.id === kinId) ?? null;
+  // #2007: the tab names the Kin being edited, once it has loaded.
+  useRecordTitle(found?.name);
 
   // The seeded dog / cat bank behind the Breed dropdown. Its failure is NOT the
   // screen's failure: breed is free text either way, so a bank that will not

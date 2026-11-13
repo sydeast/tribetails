@@ -5,6 +5,7 @@ import { kinForHouseholdQuery, type Kin, type Kinfolk } from '../api/directory';
 import { getBusinessSettings } from '../api/settings';
 import { bookingServiceName } from '../lib/bookingFormat';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
+import { useRecordTitle } from '../lib/pageTitle';
 import { serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
 import { useCollection, useDocById } from '../lib/firestore';
 import { updateKinCareSession } from '../api/sessionsWrite';
@@ -261,6 +262,8 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   const serviceNameNow = serviceTypeNow.trim() === '' ? '' : bookingServiceName(serviceTypeNow, namingCatalog);
   const sessionLabel =
     entry === null ? 'KinCare session' : kinLabel !== '' ? kinLabel : household;
+  // #2007: the tab names the visit by its Kin (or its household), once loaded.
+  useRecordTitle(entry === null ? null : sessionLabel);
   const heroTitle =
     entry === null
       ? 'KinCare session'

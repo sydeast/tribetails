@@ -47,6 +47,16 @@ function renderScreen() {
     </QueryClientProvider>,
   );
 }
+describe('KinDetail browser tab (#2007)', () => {
+  it('names the Kin once it has loaded, never the id from the address', async () => {
+    document.title = '';
+    mocks.getMyKin.mockResolvedValue({ kin: [kin()] });
+    renderScreen();
+    await screen.findByText('Spayed / neutered');
+    expect(document.title).toBe('Buddy · MyTribe');
+    expect(document.title).not.toContain('k1');
+  });
+});
 describe('KinDetail shared facts (#1310)', () => {
   it('shows sex, weight, markings, fixed flag and vet', async () => {
     mocks.getMyKin.mockResolvedValue({
