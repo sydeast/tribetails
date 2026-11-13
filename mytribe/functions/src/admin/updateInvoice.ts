@@ -38,6 +38,7 @@ import {
   boundSessionIds,
   quoteHoldsNoVisits,
   readSessionLinks,
+  readSessionsHeldBy,
   stageSessionLinks,
   storedReleasedSessionIds,
   storedSessionIds,
@@ -324,7 +325,13 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
       // #2156: A DECLINED QUOTE HOLDS NO VISITS. Declining let them go, so an
       // Edit of it writes no back-link: a hold taken here would have nothing
       // to release it. It records which visits its lines now name, which is
-      // what sending it back out takes back (`resendQuote`).
+      // what sending it back out takes back (`resendQuote`). A dropped line's
+      // visit whose back-link still names this quote (one linked before
+      // declines let go of visits) is let go here, or nothing could free it.
+      if (dropped.length > 0) {
+        const held = await readSessionsHeldBy(tx, db(), invoiceId, dropped);
+        if (held.release.length > 0) linkPlan = held;
+      }
       const released = storedReleasedSessionIds(data);
       const nextReleased = [
         ...released.filter((id) => !dropped.includes(id)),

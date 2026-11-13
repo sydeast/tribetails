@@ -153,7 +153,8 @@ export type Finding =
   | { kind: 'missing_session'; sessionId: string; invoiceId: string }
   | { kind: 'cancelled_session'; sessionId: string; invoiceId: string }
   | { kind: 'held_by_quote_or_cancelled'; sessionId: string; invoiceId: string; state: string }
-  | { kind: 'held_by_archived_draft'; sessionId: string; invoiceId: string };
+  | { kind: 'held_by_archived_draft'; sessionId: string; invoiceId: string }
+  | { kind: 'held_by_declined_quote'; sessionId: string; invoiceId: string };
 
 export interface Plan {
   /** Visits to mark as billed by `invoiceId`. */
@@ -211,10 +212,17 @@ export function buildPlanFromRows(invoices: Row[], sessions: Row[]): Plan {
     // none until it is sent back out, so it is no claimant either.
     const list = all.filter((c) => !(c.state === 'draft' && c.archived) && !c.declined);
     if (list.length === 0) {
-      // Only a declined quote names it: nothing to report, its decline let go.
-      if (all.every((c) => c.declined)) continue;
       const visit = sessionById.get(sid);
       const backlink = visit && isSessionClaimed(visit['invoiceId']) ? String(visit['invoiceId']).trim() : '';
+      // A back-link that still names a declined quote: linked before declines
+      // let go of visits, so nothing released it. Reported, never changed.
+      const heldByDeclined = all.find((c) => c.declined && c.invoiceId === backlink);
+      if (visit !== undefined && heldByDeclined !== undefined) {
+        plan.findings.push({ kind: 'held_by_declined_quote', sessionId: sid, invoiceId: heldByDeclined.invoiceId });
+        continue;
+      }
+      // Only a declined quote names it: nothing to report, its decline let go.
+      if (all.every((c) => c.declined)) continue;
       const named = all.find((c) => !c.declined)!.invoiceId;
       if (visit !== undefined && (backlink === '' || backlink === named)) {
         plan.findings.push({ kind: 'held_by_archived_draft', sessionId: sid, invoiceId: named });
@@ -288,6 +296,7 @@ const FINDING_WORDS: Record<Finding['kind'], string> = {
   cancelled_session: 'invoice bills a cancelled visit',
   held_by_quote_or_cancelled: 'held by a quote or a cancelled invoice',
   held_by_archived_draft: 'named only by an archived draft, left for the operator',
+  held_by_declined_quote: 'still held by a declined quote; remove its line in Edit or unlink it in Link visits',
 };
 
 export function reportLines(plan: Plan, applied: boolean): string[] {

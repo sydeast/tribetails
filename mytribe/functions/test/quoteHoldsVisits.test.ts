@@ -312,9 +312,14 @@ describe('#2156 a Kinfolk decline puts the visits back on the list', () => {
   });
 
   it('MyTribe still lists what a declined quote with no lines was for', () => {
-    expect(sessionIdsFrom({ sessionIds: [], releasedSessionIds: ['s1', 's2'] })).toEqual(['s1', 's2']);
-    expect(sessionIdsFrom({ sessionIds: ['s3'], releasedSessionIds: ['s1'] })).toEqual(['s3']);
+    const declined = { status: 'quote', quoteDecision: 'denied' };
+    expect(sessionIdsFrom({ ...declined, sessionIds: [], releasedSessionIds: ['s1', 's2'] })).toEqual(['s1', 's2']);
+    expect(sessionIdsFrom({ ...declined, sessionIds: ['s3'], releasedSessionIds: ['s1'] })).toEqual(['s3']);
     expect(sessionIdsFrom({})).toEqual([]);
+  });
+
+  it('an archived draft does not show the visits archiving let go of as its own', () => {
+    expect(sessionIdsFrom({ status: 'draft', archivedAt: '__TS__', sessionIds: [], releasedSessionIds: ['s1'] })).toEqual([]);
   });
 });
 
@@ -406,6 +411,39 @@ describe('#2156 Edit of a quote moves holds with its lines', () => {
     });
     expect(ctx.writes.length).toBe(before);
   });
+
+  // A visit linked to a quote before declines let go of visits (Link visits,
+  // or a line added in Edit) still names a quote that was declined before
+  // this shipped. Edit and Link visits are the office's two ways to free it.
+  const declinedBeforeHolds = () =>
+    world({
+      'invoices/q1': {
+        kinfolkId: 'fam1', invoiceNumber: '1060', status: 'quote', invoiceStatus: 'quote', quoteDecision: 'denied',
+        total: 90, amountDue: 90, sessionIds: ['s1', 's2'], lineItems: [line('s1')],
+      },
+      'kin_care_sessions/s1': visit({ invoiceId: 'q1' }),
+      'kin_care_sessions/s2': visit({ invoiceId: 'q1' }),
+    });
+
+  it('Edit of a declined quote that drops a line lets go of a visit still linked to it', async () => {
+    const ctx = declinedBeforeHolds();
+    await updateInvoiceHandler(admin({ invoiceId: 'q1', patch: { lineItems: [line('s3')] } }));
+    const s1 = await docOf(ctx, 'kin_care_sessions/s1');
+    expect(s1['invoiceId']).toBe('');
+    expect(isSessionBillable(s1)).toBe(true);
+    // The added line takes no hold: the quote is still declined.
+    expect((await docOf(ctx, 'kin_care_sessions/s3'))['invoiceId']).toBeUndefined();
+  });
+
+  it('Link visits on a declined quote can still unlink a visit linked to it, but links nothing', async () => {
+    const ctx = declinedBeforeHolds();
+    await linkInvoiceSessionsHandler(admin({ invoiceId: 'q1', sessionIds: ['s1'] }));
+    expect(isSessionBillable(await docOf(ctx, 'kin_care_sessions/s2'))).toBe(true);
+    expect((await docOf(ctx, 'invoices/q1'))['sessionIds']).toEqual(['s1']);
+    await expect(linkInvoiceSessionsHandler(admin({ invoiceId: 'q1', sessionIds: ['s1', 's3'] }))).rejects.toMatchObject({
+      details: { code: 'quote_declined_holds_no_visits' },
+    });
+  });
 });
 
 // ── resend ──────────────────────────────────────────────────────────────────
@@ -443,6 +481,33 @@ describe('#2156 sending a declined quote back out takes its visits back', () => 
     });
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect((await docOf(ctx, `invoices/${quoteId}`))['quoteDecision']).toBe('denied');
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(otherId);
+  });
+
+  it('a New invoice that takes a visit while the household is being told keeps it, and the accept is refused', async () => {
+    // The pre-flight is a plain read and the notice goes out before the
+    // reopening transaction, so a New invoice landing in between wins the
+    // visit. Nothing is billed twice: the reopen leaves it with that invoice
+    // and the household's accept is refused.
+    const ctx = world();
+    const quoteId = await makeQuote(ctx, ['s1']);
+    await denyQuoteHandler(kinfolk({ invoiceId: quoteId }));
+    let otherId = '';
+    mocks.enqueue.mockImplementationOnce(async () => {
+      otherId = (await createInvoiceHandler(admin(composerDraft(['s1'])))).invoiceId;
+      return ['n1'];
+    });
+
+    await resendQuoteHandler(admin({ invoiceId: quoteId }));
+
+    expect(otherId).not.toBe('');
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(otherId);
+    const q = await docOf(ctx, `invoices/${quoteId}`);
+    expect(q['quoteDecision']).toBeUndefined();
+    expect(q['sessionIds']).toEqual([]);
+    await expect(acceptQuoteHandler(kinfolk({ invoiceId: quoteId }))).rejects.toMatchObject({
+      details: { code: 'quote_visits_billed_elsewhere' },
+    });
     expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(otherId);
   });
 });

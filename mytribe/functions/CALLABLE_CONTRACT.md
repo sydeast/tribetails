@@ -682,8 +682,8 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   alone. Structured terms resolve from the set the edit leaves. Audit payload
   carries `sessionsLinked` / `sessionsUnlinked`.
 - #2156: a quote waiting for an answer follows the rule above (it holds its
-  visits). A DECLINED quote holds none, so an edit of its lines writes no
-  back-link and records the visits its lines now name in `releasedSessionIds`,
+  visits). A DECLINED quote holds none, so an edit of its lines takes no
+  hold (a dropped line's visit still linked to it is let go) and records the visits its lines now name in `releasedSessionIds`,
   which `resendQuote` takes back.
 - #2168: AN ARCHIVED INVOICE IS READ-ONLY. Any edit of one, in any state, is
   `failed-precondition` / `invoice_archived` ("This invoice is archived.
@@ -860,7 +860,9 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - #2156: a DECLINED quote holds no visits until it is sent back out, so it
   links nothing either: `failed-precondition` /
   `quote_declined_holds_no_visits`, "This quote was declined, so it holds no
-  visits for now. Send it back out first, then link visits to it."
+  visits for now. Send it back out first, then link visits to it." A call
+  that only unlinks is still allowed, so a visit linked to it before declines
+  let go of visits can be freed.
 - Errors: `not-found` for an unknown invoice; `failed-precondition` with the
   codes above. Atomic: nothing written.
 - Audit `BILLING_INVOICE_SESSIONS_LINKED` with the full added/removed delta.

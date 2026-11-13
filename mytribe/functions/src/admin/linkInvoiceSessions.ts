@@ -205,21 +205,23 @@ export async function linkInvoiceSessionsHandler(
     // #2168: an archived invoice is read-only until it is restored, so no
     // visit is linked to or unlinked from it here.
     refuseIfArchived(data);
+    const current = storedSessionIds(data);
+    const currentSet = new Set(current);
+    const newSet = new Set(newIds);
+    const added = newIds.filter((id) => !currentSet.has(id));
+    const removed = current.filter((id) => !newSet.has(id));
+
     // #2156: a declined quote holds no visits until it is sent back out, so a
-    // link set here would be a hold with nothing to release it.
-    if (quoteHoldsNoVisits(data)) {
+    // link set here would be a hold with nothing to release it. Unlinking is
+    // still allowed: a visit linked to it before declines let go of visits
+    // has no other way back to the not-yet-invoiced list.
+    if (added.length > 0 && quoteHoldsNoVisits(data)) {
       throw new HttpsError(
         'failed-precondition',
         'This quote was declined, so it holds no visits for now. Send it back out first, then link visits to it.',
         { code: 'quote_declined_holds_no_visits' },
       );
     }
-
-    const current = storedSessionIds(data);
-    const currentSet = new Set(current);
-    const newSet = new Set(newIds);
-    const added = newIds.filter((id) => !currentSet.has(id));
-    const removed = current.filter((id) => !newSet.has(id));
 
     const paymentsSnap = await tx.get(invRef.collection('payments'));
     const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
