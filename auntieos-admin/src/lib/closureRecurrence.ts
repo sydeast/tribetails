@@ -7,8 +7,7 @@ import { z } from 'zod';
  * and `auntieos-admin` are separate npm projects in this monorepo with no
  * shared workspace package (verified: neither `package.json` declares
  * `workspaces`, and this repo's own convention for cross-platform logic is
- * documented duplication -- see `US_HOLIDAYS` in `./settingsFormat.ts`, "Ported
- * verbatim from SettingsScreen.kt"). Any change to the recurrence rules,
+ * documented duplication). Any change to the recurrence rules,
  * wire grammar, or leap-day policy has to land in BOTH copies.
  *
  * Recurrence for a `business_settings.companyHolidays` closure entry.
@@ -437,8 +436,12 @@ export interface ClosurePreset {
  * Ids are independent of `US_HOLIDAYS` in `./settingsFormat.ts` (the older
  * observed/not-observed checklist, a boolean per holiday with no date
  * anywhere in its storage). That list and this one serve different fields --
- * `observedUsHolidays` vs. a dated `companyHolidays` entry -- so sharing ids
- * across them is not required and this module does not import that one.
+ * `observedUsHolidays` vs. a dated `companyHolidays` entry -- so the ids
+ * differ (`columbus` there, `indigenous_columbus` here). The NAMES do not:
+ * that checklist reads each label from this catalog (#1947), so a holiday has
+ * one name on its switch and its chip. A name here is also written into every
+ * `companyHolidays` entry its chip adds, and the chip's "already added" check
+ * matches that exact string, so renaming one here orphans stored rows.
  */
 export const US_HOLIDAY_PRESETS: readonly ClosurePreset[] = [
   { id: 'new_years', name: "New Year's Day", recurrence: 'yearly-fixed', month: 1, day: 1 },
