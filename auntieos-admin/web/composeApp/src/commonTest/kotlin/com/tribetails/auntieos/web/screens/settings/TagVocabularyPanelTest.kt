@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.screens.settings
 
 import androidx.compose.ui.graphics.Color
 import com.tribetails.auntieos.web.data.TAG_PALETTE
+import com.tribetails.auntieos.web.data.TagChange
 import com.tribetails.auntieos.web.data.TagColor
 import com.tribetails.auntieos.web.data.TagDef
 import com.tribetails.auntieos.web.theme.DarkAuntieColors
@@ -115,6 +116,43 @@ class TagVocabularyPanelTest {
                 household = listOf(vip), pet = emptyList(),
             ),
         )
+    }
+
+    // ── #2205: Save sends named changes, never the lists ──────────────────────
+
+    @Test fun `Save sends an add per new name and a style per recolour, across both lists`() {
+        val changes = tagVocabularySaveChanges(
+            baseHousehold = listOf(vip), basePet = listOf(reactive),
+            household = listOf(vip.copy(icon = ""), TagDef(name = "Slow pay")),
+            pet = listOf(reactive),
+        )
+        assertEquals(
+            listOf(
+                TagChange(TagChange.STYLE, "household", "VIP", vip.color, ""),
+                TagChange(TagChange.ADD, "household", "Slow pay", TagDef().color, ""),
+            ),
+            changes,
+        )
+    }
+
+    @Test fun `a row only the baseline has is not sent, since deleting is removeBusinessTag`() {
+        assertEquals(
+            emptyList(),
+            tagVocabularySaveChanges(listOf(vip), listOf(reactive), household = emptyList(), pet = listOf(reactive)),
+        )
+    }
+
+    @Test fun `the delete copy states the cascade, for households and for Kin`() {
+        assertTrue(TAG_REMOVE_HEADS_UP.startsWith("Removing a tag deletes it everywhere."))
+        assertEquals(
+            "This takes \"VIP\" off the household tag list and off every household carrying it. " +
+                "It happens right away, without waiting for Save, and it cannot be undone.",
+            tagRemoveConfirmBody("household", "VIP"),
+        )
+        assertTrue(tagRemoveConfirmBody("pet", "Reactive").contains("off every Kin carrying it"))
+        assertEquals("\"VIP\" is gone. No households were carrying it.", tagRemovedSummary("household", "VIP", 0))
+        assertEquals("\"VIP\" is gone. It came off 1 household.", tagRemovedSummary("household", "VIP", 1))
+        assertEquals("\"Shy\" is gone. It came off 3 Kin.", tagRemovedSummary("pet", "Shy", 3))
     }
 
     @Test fun `a css-only difference counts as a real change`() {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { getBusinessSettings } from '../api/settings';
-import { saveBusinessSettings, removeBusinessTag } from '../api/settingsWrite';
+import { changeBusinessTags, removeBusinessTag } from '../api/settingsWrite';
 import {
   TAG_PALETTE,
   DEFAULT_TAG_COLOR,
@@ -8,6 +8,7 @@ import {
   addTag,
   editTag,
   removeTag,
+  tagListChanges,
   type TagColor,
   type TagDef,
   type TagScope,
@@ -26,9 +27,10 @@ import './TagsEditor.css';
  * The Business-settings Tags panel: manage the two tag vocabularies (household
  * and pet) that label kinfolk + kin. Reached in place from `Settings.tsx` via
  * the same panel-swap the notification gate uses. Loads the single
- * `business_settings` doc one-shot (like the other Settings sections), edits the two
- * `TagDef[]` lists locally, and saves both at once through `saveBusinessSettings`
- * (a `setDoc` merge; no callable). Fail-loud on both load and save.
+ * `business_settings` doc one-shot (like the other Settings sections) and edits the two
+ * `TagDef[]` lists locally. Save sends the adds and recolours through
+ * `changeBusinessTags` (#2205), one named tag at a time against the stored lists,
+ * never the lists themselves. Fail-loud on both load and save.
  *
  * Add / edit-color-and-icon / remove only: renaming a tag in place would orphan
  * every assignment referencing the old name (the name is the key), so v1 has no
@@ -345,13 +347,34 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
     }
   }
 
+  /**
+   * #2205: Save sends what changed, one named tag at a time (each new name, and
+   * each colour or emoji change), never the lists themselves. The server applies
+   * them to the lists as stored, so a tag added on another device since this
+   * screen loaded is kept and a deleted one is not brought back. A recolour of a
+   * tag deleted elsewhere is refused with "the tag list changed, reload".
+   *
+   * On success both lists, and the baseline, become what the server now holds,
+   * which brings in any tag added elsewhere.
+   */
   async function handleSave() {
-    if (!dirty || busy) return;
+    if (!dirty || busy || baseline === null) return;
+    const changes = [
+      ...tagListChanges('household', baseline.household, household),
+      ...tagListChanges('pet', baseline.pet, pet),
+    ];
+    if (changes.length === 0) {
+      setHousehold(baseline.household);
+      setPet(baseline.pet);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await saveBusinessSettings({ householdTags: household, petTags: pet });
-      setLoaded({ status: 'ready', data: { household, pet } });
+      const after = await changeBusinessTags(changes);
+      setHousehold(after.householdTags);
+      setPet(after.petTags);
+      setLoaded({ status: 'ready', data: { household: after.householdTags, pet: after.petTags } });
       setJustSaved(true);
     } catch (err) {
       setError(`Couldn't save tags: ${err instanceof Error ? err.message : 'Save failed'}`);
@@ -375,7 +398,21 @@ export function TagsEditor({ onBack }: TagsEditorProps) {
       ) : null}
 
       {error !== null && (
-        <Banner tone="error" title="Save failed" onDismiss={() => setError(null)}>
+        <Banner
+          tone="error"
+          title="Save failed"
+          onDismiss={() => setError(null)}
+          trailing={
+            <GhostButton
+              label="Reload tags"
+              onClick={() => {
+                setError(null);
+                load();
+              }}
+              disabled={busy}
+            />
+          }
+        >
           {error}
         </Banner>
       )}

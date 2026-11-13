@@ -142,16 +142,16 @@ class AuntieRepositorySaveBusinessSettingsTest {
     }
 
     @Test
-    fun `a tag vocabulary is a list of name, color and icon maps`() {
+    fun `a tag vocabulary never goes out with a settings save (#2205)`() {
+        // Tags change one named tag at a time through `changeBusinessTags`; a
+        // whole list sent here replaced the stored one and the server refuses it.
         val loaded = BusinessSettings()
         val edited = loaded.withHouseholdTagDefs(
             listOf(TagDef(name = "VIP", color = TagColor(token = "gold", css = "#c9a227"), icon = "star")),
         )
         val wire = businessSettingsWireChanges(businessSettingsFieldChanges(loaded, edited))
-        assertEquals(
-            listOf(mapOf("name" to "VIP", "color" to mapOf("token" to "gold", "css" to "#c9a227"), "icon" to "star")),
-            wire["householdTags"],
-        )
+        assertFalse(wire.containsKey("householdTags"))
+        assertTrue(wire.isEmpty())
     }
 
     @Test

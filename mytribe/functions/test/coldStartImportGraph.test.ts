@@ -262,8 +262,12 @@ const ALLOWED_EAGER_PACKAGES = [
  * Auntie's narrow settings reads. Their file-scope imports (the booking-policy
  * resolver, the notification catalog and prefs, the callable wrapper) are
  * already resident, so each entry is the only module it adds.
+ *
+ * 454 since #2205 (on top of #2164 / #2182's 453): `admin/changeBusinessTags.ts`
+ * is a new FUNCTIONS entry (adding and recolouring one named tag at a time).
+ * Everything it imports was already here.
  */
-const MAX_OWN_EAGER_MODULES = 453;
+const MAX_OWN_EAGER_MODULES = 454;
 
 interface Edge {
   spec: string;
