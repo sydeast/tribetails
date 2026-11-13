@@ -62,6 +62,8 @@ import { reviewAndSendDraftInvoiceHandler } from '../src/admin/reviewAndSendDraf
 import { postInvoiceEventHandler } from '../src/admin/postInvoiceEvent';
 import { convertQuoteToInvoiceHandler, withdrawQuoteHandler, quoteActionRefusal } from '../src/admin/quoteActions';
 import { archiveInvoiceHandler } from '../src/admin/archiveInvoice';
+import { linkInvoiceSessionsHandler } from '../src/admin/linkInvoiceSessions';
+import { updateInvoiceHandler } from '../src/admin/updateInvoice';
 import { unarchiveInvoiceHandler } from '../src/admin/unarchiveInvoice';
 import { acceptQuoteHandler, denyQuoteHandler } from '../src/portal/quoteDecision';
 import { getMyInvoicesHandler } from '../src/portal/getMyInvoices';
@@ -403,6 +405,31 @@ describe('#2088 withdrawing a quote releases its visits like a decline', () => {
     });
   });
 
+  it('a withdrawn quote takes no visit back: Link visits is refused, and Edit is closed', async () => {
+    const ctx = world();
+    const quoteId = await sentQuote(['s1']);
+    await withdrawQuoteHandler(admin({ invoiceId: quoteId }));
+    const before = ctx.writes.length;
+    await expect(
+      linkInvoiceSessionsHandler(admin({ invoiceId: quoteId, sessionIds: ['s1'] })),
+    ).rejects.toMatchObject({ details: { code: 'quote_withdrawn_holds_no_visits' } });
+    await expect(
+      updateInvoiceHandler(admin({ invoiceId: quoteId, patch: { lineItems: [line('s1'), line('s2')] } })),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes.length).toBe(before);
+    expect(isSessionBillable(await docOf(ctx, 'kin_care_sessions/s1'))).toBe(true);
+  });
+  it('a declined quote withdrawn loses its answer, so no client offers Revise and resend beside CANCELLED', async () => {
+    const ctx = world();
+    const quoteId = await sentQuote(['s1']);
+    await denyQuoteHandler(kinfolk({ invoiceId: quoteId }));
+    await withdrawQuoteHandler(admin({ invoiceId: quoteId }));
+    const q = await docOf(ctx, `invoices/${quoteId}`);
+    expect(q['status']).toBe('cancelled');
+    expect(q['quoteDecision']).toBeUndefined();
+    const audit = (writeAuditEntry as any).mock.calls.find((c: any[]) => c[0].event === 'BILLING_QUOTE_WITHDRAWN');
+    expect(audit?.[0].payload.clearedDecision).toBe('denied');
+  });
   it('a quote saved unsent is withdrawn the same way', async () => {
     const ctx = world();
     const quoteId = await unsentQuote(['s1']);

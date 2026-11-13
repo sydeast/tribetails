@@ -528,8 +528,13 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // #1609: BILLED MEANS SENT. A draft has gone to nobody and a quote is an
   // estimate the household has not agreed to, so neither is money billed; the
   // walk's Billed total counted an unsent draft. Both still list below.
-  const billedRows = useMemo(() => inScope.filter((r) => !isUnbilledState(r.state)), [inScope]);
-  const unbilledCount = inScope.length - billedRows.length;
+  // #2088: a withdrawn quote is cancelled, and a cancelled invoice is not money
+  // billed either. It is not "unsent", so it is not in the count below.
+  const billedRows = useMemo(
+    () => inScope.filter((r) => !isUnbilledState(r.state) && r.state !== 'cancelled'),
+    [inScope],
+  );
+  const unbilledCount = useMemo(() => inScope.filter((r) => isUnbilledState(r.state)).length, [inScope]);
   const billedTotal = asyncScalar(rows, () => billedRows.reduce((sum, r) => sum + r.entry.total, 0));
   const overdueCount = asyncScalar(rows, () => overdueRows.length);
   // #1570: open invoices whose due date names no day. Each could be overdue
@@ -870,7 +875,9 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
             // is a draft and sends nothing (#1513): `invoice.new` goes out from
             // reviewAndSendDraftInvoice, so `appOnly` is never set for a draft.
             setCreatedNotice(
-              sent.quote && sent.appOnly ? `Quote created and sent in the app only. ${APP_ONLY_NOTE}` : null,
+              // #2087: saved as a draft, but the send failed: the server's sentence.
+              sent.notSent ??
+                (sent.quote && sent.appOnly ? `Quote created and sent in the app only. ${APP_ONLY_NOTE}` : null),
             );
           }}
           onClose={() => setCreating(null)}

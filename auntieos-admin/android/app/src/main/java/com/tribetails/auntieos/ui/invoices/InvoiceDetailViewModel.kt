@@ -1164,7 +1164,7 @@ class InvoiceDetailViewModel(
                         changingQuote = false,
                         quotePrompt = null,
                         toastMessage = (if (action == "convert") "Couldn't turn it into an invoice: " else "Couldn't withdraw it: ") +
-                            (err.message ?: "the server did not say why."),
+                            (err.message ?: "no reason was given."),
                         toastVisible = true,
                         toastIsError = true,
                     )

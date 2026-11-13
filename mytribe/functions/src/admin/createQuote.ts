@@ -377,6 +377,8 @@ async function sendSaved(uid: string, invoiceId: string): Promise<z.infer<typeof
     });
   } catch (err) {
     const code = (err as { details?: { code?: unknown } })?.details?.code;
+    // Another attempt of this same submission sent it first: the press is done.
+    if (code === 'quote_already_sent') return validateResponse('createQuote', Result, { ok: true, invoiceId });
     // It went out and could not be put back: that sentence is already the
     // truth, and saying "saved as a draft" over it would not be.
     if (code === 'quote_sent_not_announced') throw err;

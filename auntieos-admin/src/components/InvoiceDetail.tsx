@@ -698,7 +698,7 @@ export const QUOTE_ACTION_COPY = {
   withdraw: {
     label: 'Withdraw quote',
     confirm:
-      'This withdraws the quote. The household no longer sees it, and the visits it holds go back on the not yet invoiced list. It is kept, marked cancelled, and is not deleted. Continue?',
+      'This withdraws the quote. The household no longer sees it, and the visits it holds go back on the not yet invoiced list. It is kept as cancelled, not deleted. Continue?',
     busy: 'Withdrawing…',
   },
 } as const;

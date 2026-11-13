@@ -50,7 +50,7 @@ const val CONVERT_QUOTE_CONFIRM_COPY: String =
 /** The confirm before a quote is withdrawn (#2088). */
 const val WITHDRAW_QUOTE_CONFIRM_COPY: String =
     "This withdraws the quote. The household no longer sees it, and the visits it holds go back on the " +
-        "not yet invoiced list. It is kept, marked cancelled, and is not deleted."
+        "not yet invoiced list. It is kept as cancelled, not deleted."
 
 /** The toast once a quote is a draft invoice. */
 const val QUOTE_CONVERTED_MESSAGE: String =

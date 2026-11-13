@@ -1617,6 +1617,8 @@ describe('#1609 invoices list', () => {
         entry({ _id: 'o', invoiceNumber: '1018', total: 40 }),
         entry({ _id: 'd', invoiceNumber: '1020', status: 'draft', total: 25 }),
         entry({ _id: 'q', invoiceNumber: '1021', status: 'quote', total: 90 }),
+        // #2088: a withdrawn quote is cancelled: not billed, and not "unsent".
+        entry({ _id: 'w', invoiceNumber: '1022', status: 'cancelled', total: 70 }),
       ]),
     );
     render(<Invoices />);

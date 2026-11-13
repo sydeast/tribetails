@@ -252,11 +252,14 @@ export async function withdrawQuoteHandler(
       status: 'cancelled',
       invoiceStatus: 'cancelled',
       [QUOTE_DRAFT_FIELD]: FieldValue.delete(),
+      // A declined quote's answer goes too: nothing about a withdrawn quote is
+      // waiting on the household or the office. The audit entry keeps it.
+      ...Object.fromEntries(ANSWER_FIELDS.map((k) => [k, FieldValue.delete()])),
       quoteWithdrawnAt: FieldValue.serverTimestamp(),
       quoteWithdrawnBy: uid,
       updatedAt: FieldValue.serverTimestamp(),
     };
-    const stamp = invoiceStateStampOf({ ...data, ...update }, 0);
+    const stamp = invoiceStateStampOf({ ...data, ...update, quoteDecision: null }, 0);
     tx.set(ref, { ...update, ...stamp }, { merge: true });
     stageSessionLinks(tx, firestore, visits.plan, new Date().toISOString());
     return {
@@ -264,6 +267,7 @@ export async function withdrawQuoteHandler(
       kinfolkId: typeof data['kinfolkId'] === 'string' ? (data['kinfolkId'] as string) : undefined,
       invoiceNumber: data['invoiceNumber'],
       wasSent: isSentQuote(data),
+      decision: quoteDecisionOf(data['quoteDecision']),
       released: visits.plan.release,
     };
   });
@@ -280,7 +284,12 @@ export async function withdrawQuoteHandler(
       targetCollection: 'invoices',
       familyId: outcome.kinfolkId,
       description: words.quoteSentence(outcome.invoiceNumber, 'withdrawn'),
-      payload: { invoiceId: args.invoiceId, wasSent: outcome.wasSent, sessionsReleased: outcome.released },
+      payload: {
+        invoiceId: args.invoiceId,
+        wasSent: outcome.wasSent,
+        clearedDecision: outcome.decision,
+        sessionsReleased: outcome.released,
+      },
     },
     'withdrawQuote',
     uid,

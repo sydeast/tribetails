@@ -982,5 +982,6 @@ internal fun invoiceNumberLabel(number: String): String =
 internal fun invoiceBilledTotal(invoices: List<Invoice>): Double =
     invoices.filter {
         val state = invoiceStateOrNull(it)
-        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE
+        // #2088: a withdrawn quote is CANCELLED, and a cancelled invoice is not money billed either.
+        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE && state != InvoiceState.CANCELLED
     }.sumOf { it.total }

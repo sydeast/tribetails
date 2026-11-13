@@ -517,7 +517,7 @@ describe('InvoiceCreate quotes', () => {
     expect(createInvoice).not.toHaveBeenCalled();
   });
 
-  it('#2087: a quote saved whose send failed says so plainly, never "Could not create"', async () => {
+  it('#2087: a quote saved whose send failed closes onto the saved draft and hands the sentence on, never "Could not create"', async () => {
     createQuote.mockRejectedValue(
       Object.assign(
         new Error(
@@ -526,12 +526,20 @@ describe('InvoiceCreate quotes', () => {
         { details: { code: 'quote_saved_not_sent', invoiceId: 'q1' } },
       ),
     );
-    render(<InvoiceCreate mode="quote" onClose={vi.fn()} />);
+    const onClose = vi.fn();
+    const onCreated = vi.fn();
+    render(<InvoiceCreate mode="quote" onClose={onClose} onCreated={onCreated} />);
     await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
     await screen.findByRole('checkbox');
     await userEvent.click(screen.getByRole('switch', { name: /send to kinfolk now/i }));
     await userEvent.click(screen.getByRole('button', { name: /create quote for 1 visit/i }));
-    expect(await screen.findByText(/^The quote was saved as a draft, but it could not be sent/)).toBeInTheDocument();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(onCreated).toHaveBeenCalledWith('q1', {
+      quote: true,
+      appOnly: false,
+      notSent:
+        'The quote was saved as a draft, but it could not be sent to the household. Open it and press Send quote to try again.',
+    });
     expect(screen.queryByText(/Could not create the quote/)).toBeNull();
   });
 

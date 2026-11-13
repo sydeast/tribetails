@@ -145,7 +145,8 @@ internal fun invoiceListSubtitle(
 internal fun invoiceBilledTotal(invoices: List<Invoice>): Double =
     invoices.filter {
         val state = invoiceStateOrNull(it)
-        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE
+        // #2088: a withdrawn quote is CANCELLED, and a cancelled invoice is not money billed either.
+        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE && state != InvoiceState.CANCELLED
     }.sumOf { it.total }
 /**
  * Den filter tabs. The same seven tabs, labels and order as the admin web

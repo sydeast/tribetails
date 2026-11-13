@@ -579,9 +579,19 @@ export async function readSendClaims(
 //     (`convertQuoteToInvoice`) keeps them, and takes back a declined one's
 //     by the resend rule (`readQuoteReopen`, `convert` words).
 
-/** A declined quote: it holds no visits until it is sent back out. */
+/** #2088: a quote the office withdrew. It is cancelled, and holds no visits for good. */
+export function quoteWithdrawn(data: Record<string, unknown>): boolean {
+  const raw = data['status'] ?? data['invoiceStatus'];
+  const status = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return status === 'cancelled' && data['quoteWithdrawnAt'] !== undefined && data['quoteWithdrawnAt'] !== null;
+}
+
+/**
+ * A quote that holds no visits: a declined one, until it is sent back out, and
+ * (#2088) a withdrawn one, which let go of them like a decline.
+ */
 export function quoteHoldsNoVisits(data: Record<string, unknown>): boolean {
-  return quoteDecisionOf(data['quoteDecision']) === 'denied';
+  return quoteDecisionOf(data['quoteDecision']) === 'denied' || quoteWithdrawn(data);
 }
 
 /** The stored `releasedSessionIds`, tolerant of legacy docs. */

@@ -41,7 +41,7 @@ const val CONVERT_QUOTE_CONFIRM_TEXT: String =
 
 const val WITHDRAW_QUOTE_CONFIRM_TEXT: String =
     "This withdraws the quote. The household no longer sees it, and the visits it holds go back on the " +
-        "not yet invoiced list. It is kept, marked cancelled, and is not deleted."
+        "not yet invoiced list. It is kept as cancelled, not deleted."
 
 const val QUOTE_CONVERTED_TEXT: String =
     "Quote turned into a draft invoice. Send it with Review and send when it is ready."
