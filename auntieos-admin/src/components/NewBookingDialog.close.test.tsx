@@ -40,6 +40,8 @@ afterAll(() => {
 
 const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'NewBookingDialog.css'), 'utf8');
 
+const shell = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../styles/shell.css'), 'utf8');
+
 beforeEach(() => {
   createMultiDateBookingRequest.mockReset();
   getBusinessSettings.mockReset().mockResolvedValue({ serviceRates: {}, businessHours: {}, timeZone: '' });
@@ -54,11 +56,11 @@ beforeEach(() => {
   });
 });
 
-/** The body of the first rule whose selector contains `needle`. */
+/** The body of the first rule whose selector is exactly `needle`. */
 function ruleBody(source: string, needle: string): string | null {
   const re = /([^{}]+)\{([^{}]*)\}/g;
-  for (const m of source.matchAll(re)) {
-    if (m[1]!.includes(needle)) return m[2]!;
+  for (const m of source.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(re)) {
+    if (m[1]!.trim() === needle) return m[2]!;
   }
   return null;
 }
@@ -77,11 +79,19 @@ describe('#1897 New booking panel clears the shell topbar', () => {
     expect(body).toMatch(/padding-top:\s*[^;]*(rem|var\()/);
   });
 
-  it('keeps the inset at phone width, where the sheet is otherwise full bleed', () => {
-    const phone = css.match(/@media \(max-width: 40rem\) \{([\s\S]*?)\n\}/);
-    expect(phone).not.toBeNull();
-    expect(phone![1]).toContain('.dialog__backdrop--sheet:has(.new-booking)');
-    expect(phone![1]).toMatch(/padding-top:/);
+  it('takes the inset from the shell topbar token, not a number of its own', () => {
+    const body = ruleBody(css, '.dialog__backdrop--sheet:has(.new-booking)');
+    expect(body).toMatch(/padding-top:\s*var\(--shell-topbar-clear/);
+    expect(css).not.toMatch(/@media[^{]*\{[^}]*:has\(\.new-booking\)[^}]*padding-top:\s*[\d.]+rem/);
+  });
+
+  it('shell.css defines the token from the topbar row it lays out, and shrinks it on a phone', () => {
+    const main = ruleBody(shell, '.shell__main');
+    expect(main).toMatch(/--shell-topbar-clear:\s*calc\(var\(--shell-pad-y\)\s*\+\s*var\(--shell-topbar-h\)/);
+    expect(main).toMatch(/padding:\s*var\(--shell-pad-y\)/);
+    expect(ruleBody(shell, '.shell__topbar')).toMatch(/min-height:\s*var\(--shell-topbar-h\)/);
+    const phone = shell.match(/@media \(max-width: 720px\) \{([\s\S]*)$/);
+    expect(phone![1]).toMatch(/\.shell__main \{\s*--shell-pad-y:\s*var\(--space-4\)/);
   });
 
   it('squares the top corners it now floats under the topbar', () => {

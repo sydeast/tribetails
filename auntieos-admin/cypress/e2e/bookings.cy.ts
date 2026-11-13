@@ -273,4 +273,82 @@ describe('bookings', () => {
       .and('have.attr', 'aria-pressed', 'true');
     cy.get(`input[aria-label*="${SEEDED_BOOKINGS.scheduled.kinfolkName}"]`).should('be.visible');
   });
+
+  // #1897: the New booking panel is a right-edge sheet; its close X used to sit at
+  // the viewport's top-right corner, exactly over the topbar's Sign out. jsdom has
+  // no layout, so this is the real-browser check: the X's box must not touch Sign
+  // out's, at desktop and at phone width. The visit-requests callables are stubbed
+  // (empty) as in the other tests here.
+  [
+    { name: 'desktop', width: 1280, height: 800 },
+    { name: 'phone', width: 390, height: 800 },
+  ].forEach(({ name, width, height }) => {
+    it(`#1897 the New booking close X does not overlap Sign out at ${name} width`, () => {
+      cy.viewport(width, height);
+      stubVisitRequestCallables();
+      openBookings();
+
+      cy.contains('button', 'Sign out').should('be.visible');
+      cy.contains('button', 'New booking').click();
+      cy.get('[role="dialog"]').should('be.visible');
+
+      cy.contains('button', 'Sign out').then(($out) => {
+        const out = $out[0]!.getBoundingClientRect();
+        cy.get('[role="dialog"] .dialog__close').then(($x) => {
+          const x = $x[0]!.getBoundingClientRect();
+          const apart = x.top >= out.bottom || x.bottom <= out.top || x.left >= out.right || x.right <= out.left;
+          expect(apart, `close X ${JSON.stringify(x)} vs Sign out ${JSON.stringify(out)}`).to.equal(true);
+        });
+      });
+
+      // A press on the scrim over the topbar closes the sheet and never reaches Sign out.
+      cy.get('.dialog__backdrop--sheet').click('topLeft');
+      cy.get('[role="dialog"]').should('not.exist');
+      cy.contains('button', 'Sign out').should('be.visible');
+      cy.get('.dialog__backdrop').should('not.exist');
+    });
+  });
+
+  // #1897: the New booking panel is a right-hand sheet pinned to the window's
+  // top right corner, which is where the shell topbar keeps "Sign out". Its close
+  // X sat exactly over it, so a double click on the X pressed Sign out. This
+  // measures the real boxes in a real browser (a stylesheet-text test cannot see
+  // the cascade), at desktop width and at a phone's.
+  for (const [label, width, height] of [
+    ['desktop', 1280, 800],
+    ['phone', 390, 844],
+  ] as const) {
+    it(`#1897 the New booking close X does not sit over Sign out at ${label} width`, () => {
+      cy.viewport(width, height);
+      openBookings();
+
+      cy.contains('.shell__topbar button', 'Sign out')
+        .should('be.visible')
+        .then(($signOut) => {
+          const signOut = $signOut.get(0).getBoundingClientRect();
+          cy.contains('button', 'New booking').click();
+          cy.get('[role="dialog"][aria-modal="true"]').should('be.visible');
+          cy.get('[role="dialog"] button[aria-label="Close"]')
+            .should('be.visible')
+            .then(($close) => {
+              const close = $close.get(0).getBoundingClientRect();
+              const overlaps =
+                close.left < signOut.right &&
+                close.right > signOut.left &&
+                close.top < signOut.bottom &&
+                close.bottom > signOut.top;
+              expect(overlaps, 'the close X does not overlap Sign out').to.equal(false);
+              expect(close.top, 'the X is below the topbar row').to.be.at.least(signOut.bottom);
+              expect(close.left, 'the X is inside the window').to.be.at.least(0);
+              expect(close.right, 'the X is inside the window').to.be.at.most(width);
+              expect(close.bottom, 'the X is inside the window').to.be.at.most(height);
+            });
+          // The panel's own bottom edge stays inside the window, so its footer
+          // buttons are reachable after the inset.
+          cy.get('[role="dialog"]').then(($panel) => {
+            expect($panel.get(0).getBoundingClientRect().bottom).to.be.at.most(height);
+          });
+        });
+    });
+  }
 });

@@ -165,8 +165,18 @@
   color: var(--color-text-dim);
 }
 
+/* #1897: the topbar row's footprint, as tokens, so a right-edge sheet that must
+   start below it (NewBookingDialog.css) reads the SAME numbers this file lays
+   the row out with instead of guessing them. `--shell-topbar-h` is the account
+   chip's own height (2rem monogram + 0.3rem padding either side), set here as the
+   row's floor so it cannot be shorter than the token says. `--shell-topbar-clear`
+   is page padding + row + a little air. Custom properties inherit, and every
+   screen (and so every dialog it opens) renders inside `.shell__main`. */
 .shell__main {
-  padding: 1.5rem 2rem;
+  --shell-pad-y: 1.5rem;
+  --shell-topbar-h: 2.6rem;
+  --shell-topbar-clear: calc(var(--shell-pad-y) + var(--shell-topbar-h) + 0.9rem);
+  padding: var(--shell-pad-y) 2rem;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
@@ -177,6 +187,7 @@
 }
 
 .shell__topbar {
+  min-height: var(--shell-topbar-h);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -352,6 +363,7 @@
   }
   /* 2rem of side padding on a 360px screen is 18 percent of the viewport. */
   .shell__main {
+    --shell-pad-y: var(--space-4);
     padding: var(--space-4);
   }
   /* Three controls on one line at 360px. The chip is the only one that can

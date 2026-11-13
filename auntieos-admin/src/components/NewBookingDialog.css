@@ -593,19 +593,15 @@
    hit area with it. The scrim still covers the row (a press on it is a backdrop
    press and closes the panel, it never reaches Sign out).
    `:has(.new-booking)` scopes this to this wizard: the shared sheet shell and the
-   booking detail sheet are left as they were. 5rem is the topbar's height plus
-   the page padding above it (shell.css: 1.5rem + the 2.75rem account chip). */
+   booking detail sheet are left as they were. The offset is shell.css's own
+   `--shell-topbar-clear` (page padding + topbar row + air, 5rem on desktop and
+   4.25rem at the shell's 720px phone breakpoint, where the page padding
+   shrinks), so it follows the topbar rather than estimating it. The fallback is
+   the desktop value, for a render outside the shell. */
 .dialog__backdrop--sheet:has(.new-booking) {
-  padding-top: 5rem;
+  padding-top: var(--shell-topbar-clear, 5rem);
 }
 .dialog--sheet:has(.new-booking) {
   border-top: 1px solid var(--color-border);
   border-top-left-radius: var(--radius-panel);
-}
-/* The phone shell's topbar row is the 2.5rem nav toggle under a 1rem page
-   padding, and the sheet is full bleed there, so it needs the inset most. */
-@media (max-width: 40rem) {
-  .dialog__backdrop--sheet:has(.new-booking) {
-    padding-top: 4.25rem;
-  }
 }
