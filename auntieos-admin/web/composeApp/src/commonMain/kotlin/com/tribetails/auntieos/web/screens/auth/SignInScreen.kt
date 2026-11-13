@@ -130,8 +130,9 @@ fun SignInScreen(
     LaunchedEffect(email, password) { platformSetSignInAutofillValues(email, password) }
 
     fun submit() {
-        // Enter and the keyboard's Done key bypass the disabled button: one sign-in at a time.
-        //GUARD
+        // Enter and the keyboard's Done key bypass the disabled button: one sign-in at a time,
+        // and none while a password reset is running.
+        if (loading || resetting) return
         val missing = signInFieldErrors(email, password)
         fieldErrors = missing
         if (missing.any) {
@@ -167,7 +168,7 @@ fun SignInScreen(
     // A refusal carries its own sentence (the per-IP limit, a malformed address,
     // the network); it is never about whether the account exists.
     fun resetPassword() {
-        if (resetting) return
+        if (loading || resetting) return
         val needsEmail = resetEmailFieldError(email)
         fieldErrors = SignInFieldErrors(email = needsEmail)
         if (needsEmail != null) {
@@ -310,7 +311,7 @@ fun SignInScreen(
                 GhostButton(
                     label   = if (resetting) "Sending…" else "Forgot password?",
                     onClick = ::resetPassword,
-                    enabled = !resetting,
+                    enabled = !loading && !resetting,
                 )
             }
             } }  // close card Column + Box
