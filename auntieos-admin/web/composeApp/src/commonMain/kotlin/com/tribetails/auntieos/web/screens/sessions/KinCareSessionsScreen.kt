@@ -64,7 +64,7 @@ import com.tribetails.auntieos.web.data.GpsTracker
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinCareSession
-import com.tribetails.auntieos.web.data.resolveTimeBlock
+import com.tribetails.auntieos.web.data.HouseholdVisitTime
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.createGpsTracker
 import com.tribetails.auntieos.web.screens.KinAvatar
@@ -72,6 +72,7 @@ import com.tribetails.auntieos.web.screens.kinAvatarsForSession
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.screens.booking.NewBookingMath
+import com.tribetails.auntieos.web.screens.bookingServiceName
 import com.tribetails.auntieos.web.screens.schedule.scheduleClockOf
 import com.tribetails.auntieos.web.ui.components.AuntieDatePickerDialog
 import kotlin.time.Clock
@@ -177,7 +178,6 @@ internal fun AuntieTimeListScreen(
     }
     // §A.8: Business-Settings time blocks drive the "Evening block" descriptor on cards.
     val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
-    val timeBlocks = remember(settingsState) { (settingsState as? FirestoreResult.Data)?.value?.timeBlocks.orEmpty() }
     // #2036: "today", and every day a visit is filed under, is the BUSINESS's
     // calendar day (`business_settings.timeZone`), never the UTC date.
     val storedZone = (settingsState as? FirestoreResult.Data)?.value?.timeZone
@@ -195,9 +195,16 @@ internal fun AuntieTimeListScreen(
     val arrivalRule by produceState<Boolean?>(initialValue = null) {
         value = (client.arrivalRuleRequired() as? WriteResult.Ok)?.value
     }
-    // Resolve a session's start time onto its block label.
+    // #1863 / #2034: the block the household sees for the visit, by the shared
+    // rule on the business clock: none in Exact times mode, the nearest block
+    // in Time Blocks mode.
+    val householdTime = remember(settingsState) {
+        (settingsState as? FirestoreResult.Data)?.value?.let { HouseholdVisitTime.settingsOf(it) to it.serviceRates }
+    }
     val timeBlockLabelFor: (KinCareSession) -> String? = { s ->
-        resolveTimeBlock(s.startTime, timeBlocks)?.label
+        householdTime?.let { (settings, rates) ->
+            HouseholdVisitTime.cardBlockLabel(s.startTime, bookingServiceName(s.serviceType, rates), settings, zone)
+        }
     }
 
     var toast        by remember { mutableStateOf("") }

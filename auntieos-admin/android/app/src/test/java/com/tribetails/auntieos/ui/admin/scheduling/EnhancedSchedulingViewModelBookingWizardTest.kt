@@ -101,7 +101,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
             .withServiceName("Dog Walking")
             .toggleDate(monday)
             .toggleDate(monday.plusDays(1))
-            .copy(emailConfirmation = true, timeVisibility = true, notes = "Gate code 1234"),
+            .copy(emailConfirmation = true, notes = "Gate code 1234"),
         roster,
     )
 
@@ -146,7 +146,6 @@ class EnhancedSchedulingViewModelBookingWizardTest {
                 billing = CreateMultiDateBookingRequestArgsBilling("new-invoice"),
                 communication = CreateMultiDateBookingRequestArgsCommunication(
                     emailConfirmation = true,
-                    timeVisibility = true,
                 ),
                 overrideBusyConflict = false,
                 idempotencyKey = any(),
@@ -414,7 +413,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
                 .toggleKin("kin-a")
                 .withServiceName("Dog Walking")
                 .toggleDate(monday)
-                .copy(emailConfirmation = true, timeVisibility = true, notes = "Gate code 5678"),
+                .copy(emailConfirmation = true, notes = "Gate code 5678"),
             roster,
         ))
         advanceUntilIdle()

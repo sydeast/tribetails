@@ -105,6 +105,9 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     rescheduleRequestStatus: null,
     rescheduleRequestedStartTimeMs: null,
     rescheduleRequestedEndTimeMs: null,
+    rescheduleRequestedTimeBlockLabel: null,
+    rescheduleRequestedTimeBlockStartTime: null,
+    rescheduleRequestedTimeBlockEndTime: null,
     rescheduleRequestReason: null,
     rescheduleResponseNote: null,
     address: null,
@@ -672,6 +675,30 @@ describe('BookingDetail: reschedule request', () => {
     const banner = await screen.findByTestId('reschedule-pending');
     expect(banner.textContent).toMatch(/new time requested/i);
     expect(screen.queryByRole('button', { name: /reschedule visit/i })).toBeNull();
+  });
+  it('#1863: in Time Blocks mode the asked-for time reads as its window, never a clock', async () => {
+    const pending = booking({
+      rescheduleRequestStatus: 'pending',
+      rescheduleRequestedStartTimeMs: new Date(2026, 8, 1, 16, 0).getTime(),
+      rescheduleRequestedTimeBlockLabel: 'Evening',
+      rescheduleRequestedTimeBlockStartTime: '16:00',
+      rescheduleRequestedTimeBlockEndTime: '19:00',
+    });
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [pending] }));
+    renderScreen();
+    const banner = await screen.findByTestId('reschedule-pending');
+    expect(banner.textContent).toContain('New time requested for Tue, Evening (4 PM to 7 PM).');
+    expect(banner.textContent).not.toMatch(/4:00 PM/);
+  });
+  it('#1863: in Exact times mode the asked-for time reads as the clock', async () => {
+    const pending = booking({
+      rescheduleRequestStatus: 'pending',
+      rescheduleRequestedStartTimeMs: new Date(2026, 8, 1, 16, 0).getTime(),
+    });
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [pending] }));
+    renderScreen();
+    const banner = await screen.findByTestId('reschedule-pending');
+    expect(banner.textContent).toContain('New time requested for Tue, 4:00 PM.');
   });
   it('#1299: offers no cancellation while a new time is waiting, and says when it will', async () => {
     mocks.getMyBookings.mockResolvedValue(

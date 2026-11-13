@@ -92,7 +92,7 @@ const HandlerArgs = z.object({
   visits: z.array(VisitArgs).min(1).max(60),
   billing: z.object({ mode: z.enum(['new-invoice']) }).optional(),
   communication: z
-    .object({ emailConfirmation: z.boolean(), timeVisibility: z.boolean() })
+    .object({ emailConfirmation: z.boolean(), timeVisibility: z.boolean().optional() })
     .optional(),
   /**
    * Additive, optional. The admin booking picker (`NewBookingDialog.tsx` /
@@ -149,7 +149,7 @@ export const Args = z
     visits: z.array(ExportedVisitArgs).min(1).max(60),
     billing: z.object({ mode: z.enum(['new-invoice']) }).optional(),
     communication: z
-      .object({ emailConfirmation: z.boolean(), timeVisibility: z.boolean() })
+      .object({ emailConfirmation: z.boolean(), timeVisibility: z.boolean().optional() })
       .optional(),
     overrideBusyConflict: z.boolean().optional(),
   })
@@ -271,7 +271,9 @@ export async function createMultiDateBookingRequestHandler(
     visits: normalized,
     assignee: await resolveDefaultAssignee(),
     billing: args.billing ?? null,
-    ...(args.communication ? { communication: args.communication } : {}),
+    // #1863: `timeVisibility` is accepted from an older app and never stored;
+    // what a household sees is the business's Time Blocks | Exact times mode.
+    ...(args.communication ? { communication: { emailConfirmation: args.communication.emailConfirmation } } : {}),
   });
 
   if (deduped) {

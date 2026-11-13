@@ -115,12 +115,17 @@ export function readStartTimeServiceIds(settings: unknown): string[] {
 
 /** Why `resolveBookingPolicy` had to override what the operator stored. Logged, never shown. */
 export type BookingPolicyDegrade =
-  /** `allowTimeBlockBooking` was on but no row survived {@link parseTimeBlockRow}. */
+  /** Time Blocks mode was set but no row survived {@link parseTimeBlockRow}. */
   | 'no-usable-blocks'
   /** Both switches were off, which no screen can render. */
   | 'no-mode-allowed'
   /** `defaultBookingMode` named a mode this business does not allow. */
-  | 'default-mode-unavailable';
+  | 'default-mode-unavailable'
+  /**
+   * #1863: both switches were on, the shape every business had before the one
+   * Time Blocks | Exact times mode. The mode is then `defaultBookingMode`.
+   */
+  | 'both-modes-stored';
 
 export interface ResolvedBookingPolicy {
   policy: BookingPolicy;
@@ -287,34 +292,60 @@ function boolOr(raw: unknown, fallback: boolean): boolean {
 }
 
 /**
+ * #1863: THE ONE BUSINESS MODE, Time Blocks or Exact times, as the operator
+ * STORED it (before {@link resolveBookingPolicy} checks there is a block to
+ * offer). Operator ruling 2026-11-12: "Exact Times v Time Blocks start in the
+ * Business Settings."
+ *
+ * The mode is written as three fields every client already reads, kept in step
+ * by every Settings editor and by `saveBusinessSettings`:
+ *   Time Blocks  = { defaultBookingMode: 'TIME_BLOCK',    allowTimeBlockBooking: true,  allowSpecificTimeBooking: false }
+ *   Exact times  = { defaultBookingMode: 'SPECIFIC_TIME', allowTimeBlockBooking: false, allowSpecificTimeBooking: true }
+ *
+ * A document written before the one mode can hold any combination, and the
+ * starting mode is read from what the operator stored, never chosen for her:
+ *   - exactly one switch on: that switch's mode;
+ *   - both on (the stored default, `true`/`true`) or both off: the mode
+ *     `defaultBookingMode` names, which is what a booking opened on. Its own
+ *     default is SPECIFIC_TIME, so an untouched business starts on Exact
+ *     times, which is what its households were shown for any visit the office
+ *     booked (the per-booking "Exact times" box was saved and never read).
+ */
+export function storedBookingMode(settings: unknown): { mode: BookingMode; degrades: BookingPolicyDegrade[] } {
+  const data = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>;
+  const allowBlock = boolOr(data['allowTimeBlockBooking'], true);
+  const allowSpecific = boolOr(data['allowSpecificTimeBooking'], true);
+  const named: BookingMode = data['defaultBookingMode'] === 'TIME_BLOCK' ? 'TIME_BLOCK' : 'SPECIFIC_TIME';
+  if (allowBlock && !allowSpecific) {
+    return { mode: 'TIME_BLOCK', degrades: named === 'TIME_BLOCK' ? [] : ['default-mode-unavailable'] };
+  }
+  if (!allowBlock && allowSpecific) {
+    return { mode: 'SPECIFIC_TIME', degrades: named === 'SPECIFIC_TIME' ? [] : ['default-mode-unavailable'] };
+  }
+  return { mode: named, degrades: [allowBlock ? 'both-modes-stored' : 'no-mode-allowed'] };
+}
+
+/**
  * THE ONE DECODER. Turns the raw `business_settings` document into a policy
  * that is internally consistent by construction, plus the list of overrides it
  * had to apply to get there.
  *
- * The three switches (`allowTimeBlockBooking`, `allowSpecificTimeBooking`,
- * `defaultBookingMode`) have shipped on the doc for months and are read by
- * NOTHING — no server code, no portal code. This function is the first reader,
- * so the degrade rules are decisions, not precedent, and they are stated here
- * rather than spread across two callables and two clients:
+ * #1863: the business has ONE mode ({@link storedBookingMode}), so exactly one
+ * of `allowTimeBlockBooking` / `allowSpecificTimeBooking` is served on and
+ * `defaultBookingMode` always names it. A household picks only blocks or only
+ * clock times, never a mix.
  *
- *  1. BLOCK BOOKING ON, NO USABLE BLOCK -> block booking is served OFF. An
- *     operator who has not configured a window, or whose only rows are
- *     unreadable, must not produce a picker with nothing in it. This is the
- *     "degrade to something honest rather than an empty picker" rule, taken
- *     once, on the server, so neither client has to have an opinion.
- *  2. NEITHER MODE ALLOWED -> specific-time booking is served ON. Two false
- *     booleans is a misconfiguration, not an instruction: there is no
- *     "bookings are closed" setting on this document, and the closest real one
- *     (`companyHolidays`) is a different field with a different callable. Fail
- *     safe means the household can still ask; it does not mean the wizard
- *     shows a dead screen. Specific-time is the mode that needs no
- *     configuration at all, which is why it is the one we fall back to.
- *  3. DEFAULT MODE UNAVAILABLE -> the default becomes whichever mode survived
- *     rules 1 and 2. A wizard cannot open on a mode it may not use.
+ *  1. TIME BLOCKS, NO USABLE BLOCK -> served as Exact times. An operator who
+ *     has not configured a window, or whose only rows are unreadable, must not
+ *     produce a picker with nothing in it, and the visit-time rule below has
+ *     no block to name. Taken once, on the server, so no client needs an
+ *     opinion.
+ *  2. The #1092 start-time KinCares (`startTimeServiceIds`) are still booked
+ *     by the clock in Time Blocks mode; that is a per-KinCare setting of its
+ *     own, for visits no block can hold.
  */
 export function resolveBookingPolicy(settings: unknown): ResolvedBookingPolicy {
   const data = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>;
-  const degrades: BookingPolicyDegrade[] = [];
 
   const blockMinutes = defaultBlockMinutes(data['defaultTimeBlockDurationHours']);
   const rawRows = Array.isArray(data['timeBlocks']) ? (data['timeBlocks'] as unknown[]) : [];
@@ -323,39 +354,138 @@ export function resolveBookingPolicy(settings: unknown): ResolvedBookingPolicy {
     .filter((b): b is BookableTimeBlock => b !== null)
     .sort((a, b) => (a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : a.id.localeCompare(b.id)));
 
-  let allowTimeBlockBooking = boolOr(data['allowTimeBlockBooking'], true);
-  let allowSpecificTimeBooking = boolOr(data['allowSpecificTimeBooking'], true);
-
-  if (allowTimeBlockBooking && timeBlocks.length === 0) {
-    allowTimeBlockBooking = false;
+  const stored = storedBookingMode(data);
+  const degrades: BookingPolicyDegrade[] = [...stored.degrades];
+  let mode = stored.mode;
+  if (mode === 'TIME_BLOCK' && timeBlocks.length === 0) {
+    mode = 'SPECIFIC_TIME';
     degrades.push('no-usable-blocks');
-  }
-  if (!allowTimeBlockBooking && !allowSpecificTimeBooking) {
-    allowSpecificTimeBooking = true;
-    degrades.push('no-mode-allowed');
-  }
-
-  const storedMode = data['defaultBookingMode'];
-  let defaultBookingMode: BookingMode = storedMode === 'TIME_BLOCK' ? 'TIME_BLOCK' : 'SPECIFIC_TIME';
-  const modeAllowed =
-    defaultBookingMode === 'TIME_BLOCK' ? allowTimeBlockBooking : allowSpecificTimeBooking;
-  if (!modeAllowed) {
-    defaultBookingMode = allowTimeBlockBooking ? 'TIME_BLOCK' : 'SPECIFIC_TIME';
-    degrades.push('default-mode-unavailable');
   }
 
   return {
     policy: {
-      allowTimeBlockBooking,
-      allowSpecificTimeBooking,
-      defaultBookingMode,
+      allowTimeBlockBooking: mode === 'TIME_BLOCK',
+      allowSpecificTimeBooking: mode === 'SPECIFIC_TIME',
+      defaultBookingMode: mode,
       // Empty iff block booking is off, so a client never has to reconcile the
       // two: an allowed mode always has something to offer.
-      timeBlocks: allowTimeBlockBooking ? timeBlocks : [],
+      timeBlocks: mode === 'TIME_BLOCK' ? timeBlocks : [],
       startTimeServiceIds: readStartTimeServiceIds(data),
     },
     degrades,
   };
+}
+
+/**
+ * #1863 / #2034: WHICH BLOCK A HOUSEHOLD IS SHOWN FOR A VISIT, the one rule.
+ *
+ * Operator rulings: in Time Blocks mode "kinfolk will only see Time Blocks: in
+ * bookings, on schedules, etc."; the office may still book any clock time, and
+ * for a start that sits in no block the household sees "The nearest block"
+ * (2026-11-13). In Exact times mode the household sees the clock, so this
+ * returns null.
+ *
+ * Null also when the visit has no start yet (an Overnight waiting on its time),
+ * and for a #1092 start-time KinCare, which the operator set to be booked and
+ * shown by the clock.
+ *
+ * The block is decided from the visit's CURRENT start, never from the label it
+ * was booked with, so a visit the office moves (#2034) is shown where it now
+ * is. Read on the business's own wall clock:
+ *   1. The block the visit was booked into, when its start is still inside it.
+ *   2. Otherwise the first active block (in start order) containing the start,
+ *      start-inclusive and end-exclusive, the same containment the booking
+ *      check uses.
+ *   3. Otherwise the NEAREST block on the same business day: the distance from
+ *      the start to the closer edge of the window (a 3:30 PM start is 30
+ *      minutes from a window that ends at 3 PM and 30 from one that starts at
+ *      4 PM). No wrap past midnight: the visit's day is its day.
+ *   TIE RULE: two blocks at the same distance -> the EARLIER block (the one
+ *   that starts first). Deterministic, and it names the window the visit
+ *   follows rather than one it would arrive before.
+ */
+export function householdBlockFor(
+  visit: { startTimeMs: number | null | undefined; timeBlockId?: unknown; serviceId?: unknown },
+  policy: Pick<BookingPolicy, 'allowTimeBlockBooking' | 'timeBlocks' | 'startTimeServiceIds'>,
+  timeZone: string,
+): BookableTimeBlock | null {
+  if (!policy.allowTimeBlockBooking || policy.timeBlocks.length === 0) return null;
+  const startMs = visit.startTimeMs;
+  if (typeof startMs !== 'number' || !Number.isFinite(startMs)) return null;
+  if (typeof visit.serviceId === 'string' && policy.startTimeServiceIds.includes(visit.serviceId)) return null;
+  const local = zonedNow(startMs, timeZone) ?? zonedNow(startMs, FALLBACK_BUSINESS_TIME_ZONE);
+  const minutes = local === null ? null : parseHHmm(local.timeHHmm);
+  if (minutes === null) return null;
+  const storedId = typeof visit.timeBlockId === 'string' ? visit.timeBlockId.trim() : '';
+  return nearestBlockForMinutes(minutes, storedId, policy.timeBlocks);
+}
+
+/**
+ * #1863: what {@link householdBlockFor} needs about the business: its mode and
+ * blocks (as {@link resolveBookingPolicy} serves them) and its zone. Built once
+ * per reply or per message from one settings read.
+ */
+export interface HouseholdTimeContext {
+  policy: Pick<BookingPolicy, 'allowTimeBlockBooking' | 'timeBlocks' | 'startTimeServiceIds'>;
+  timeZone: string;
+}
+/** No settings could be read: every visit is shown by the clock, as an Exact times business would be. */
+export const CLOCK_ONLY_TIME_CONTEXT: HouseholdTimeContext = {
+  policy: { allowTimeBlockBooking: false, timeBlocks: [], startTimeServiceIds: [] },
+  timeZone: FALLBACK_BUSINESS_TIME_ZONE,
+};
+/** The context off a settings document already in hand. */
+export function householdTimeContextFrom(settings: unknown): HouseholdTimeContext {
+  return { policy: resolveBookingPolicy(settings).policy, timeZone: businessTimeZone(settings) };
+}
+/** {@link householdBlockFor} on a business-local minute of the day. Exported for the shared case table. */
+export function nearestBlockForMinutes(
+  minutes: number,
+  storedBlockId: string,
+  blocks: readonly BookableTimeBlock[],
+): BookableTimeBlock | null {
+  const bounded = blocks
+    .map((block) => ({ block, start: parseHHmm(block.startTime), end: parseDayBoundaryHHmm(block.endTime) }))
+    .filter((b): b is { block: BookableTimeBlock; start: number; end: number } => b.start !== null && b.end !== null && b.end > b.start)
+    .sort((a, b) => a.start - b.start || a.block.id.localeCompare(b.block.id));
+  if (bounded.length === 0) return null;
+  const inside = (b: { start: number; end: number }) => minutes >= b.start && minutes < b.end;
+  const booked = storedBlockId === '' ? undefined : bounded.find((b) => b.block.id === storedBlockId);
+  if (booked && inside(booked)) return booked.block;
+  const containing = bounded.find(inside);
+  if (containing) return containing.block;
+  let best = bounded[0]!;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const b of bounded) {
+    const distance = minutes < b.start ? b.start - minutes : minutes - b.end;
+    // Strictly closer only: on a tie the earlier block, already in hand, stays.
+    if (distance < bestDistance) {
+      best = b;
+      bestDistance = distance;
+    }
+  }
+  return best.block;
+}
+
+/** '11 AM', '8:30 AM', '12 PM'. The household's 12-hour clock for a block edge. */
+export function formatBlockClock(hhmm: string): string {
+  const m = HHMM_RE.exec(hhmm.trim());
+  if (!m) return hhmm;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (hour > 24 || minute > 59 || (hour === 24 && minute !== 0)) return hhmm;
+  const h12 = hour % 12 || 12;
+  const ampm = hour % 24 >= 12 ? 'PM' : 'AM';
+  return minute === 0 ? `${h12} ${ampm}` : `${h12}:${String(minute).padStart(2, '0')} ${ampm}`;
+}
+
+/**
+ * 'Midday (11 AM to 3 PM)': a block as a household reads it, a window and
+ * never one clock time. The same spelling both portal clients use
+ * (`timeBlockLabel` in mytribe/web and mytribe/src).
+ */
+export function blockWindowText(block: Pick<BookableTimeBlock, 'label' | 'startTime' | 'endTime'>): string {
+  return `${block.label} (${formatBlockClock(block.startTime)} to ${formatBlockClock(block.endTime)})`;
 }
 
 /** The block with this id, or null. Ids are compared trimmed, never case-folded. */

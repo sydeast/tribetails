@@ -2042,6 +2042,10 @@ class PortalApi(
         rescheduleRequestStatus = decodeRescheduleStatus(o["rescheduleRequestStatus"]?.jsonPrimitive?.contentOrNull),
         rescheduleRequestedStartTimeMs = o["rescheduleRequestedStartTimeMs"]?.jsonPrimitive?.longOrNull,
         rescheduleRequestedEndTimeMs = o["rescheduleRequestedEndTimeMs"]?.jsonPrimitive?.longOrNull,
+        // #1863: absent on an older server, which reads as the asked-for clock time.
+        rescheduleRequestedTimeBlockLabel = o["rescheduleRequestedTimeBlockLabel"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        rescheduleRequestedTimeBlockStartTime = o["rescheduleRequestedTimeBlockStartTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+        rescheduleRequestedTimeBlockEndTime = o["rescheduleRequestedTimeBlockEndTime"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
         rescheduleRequestReason = o["rescheduleRequestReason"]?.jsonPrimitive?.contentOrNull,
         rescheduleResponseNote = o["rescheduleResponseNote"]?.jsonPrimitive?.contentOrNull,
         // #1098: absent on an older server, which reads as a timed visit.

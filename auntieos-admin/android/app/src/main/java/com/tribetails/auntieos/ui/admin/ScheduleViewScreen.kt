@@ -53,7 +53,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tribetails.auntieos.data.admin.Event
 import com.tribetails.auntieos.data.admin.EventType
 import com.tribetails.auntieos.data.model.*
-import com.tribetails.auntieos.domain.resolveTimeBlock
+import com.tribetails.auntieos.domain.householdBlockLabel
+import com.tribetails.auntieos.domain.householdTimeSettings
 import com.tribetails.auntieos.ui.admin.scheduling.*
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -200,8 +201,12 @@ private fun ScheduleViewScreenContent(
     val serviceCatalog = remember(state.businessSettings.serviceRates, state.businessSettings.serviceDurations) {
         ServiceCatalog(state.businessSettings.serviceRates, state.businessSettings.serviceDurations)
     }
+    // #1863 / #2034: the block the HOUSEHOLD sees for the booking, by the
+    // shared rule on the business clock: the nearest block in Time Blocks
+    // mode, none in Exact times mode.
+    val householdTime = remember(state.businessSettings) { state.businessSettings.householdTimeSettings() }
     val timeBlockLabelFor: (EnhancedBooking) -> String? = { b ->
-        resolveTimeBlock(b.startDateTime, timeBlocks)?.label
+        householdBlockLabel(b.startDateTime, null, serviceCatalog.nameOf(b.baseServiceTitle), householdTime, bizZone)
     }
 
     var selectedServiceFilter by remember { mutableStateOf("All Services") }

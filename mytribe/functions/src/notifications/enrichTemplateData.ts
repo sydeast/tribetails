@@ -1,7 +1,7 @@
 import { db } from '../lib/firestoreAdmin';
 import { businessTokens, loadBusinessName } from '../lib/businessName';
 import { logEvent } from '../lib/logger';
-import { businessTimeZone } from '../lib/bookingTimeBlocks';
+import { businessTimeZone, householdTimeContextFrom } from '../lib/bookingTimeBlocks';
 import { isInactiveKinStatus } from '../lib/kinStatus';
 import { formatUsd } from '../lib/invoiceMath';
 import { serviceDisplayName, serviceNameCatalogFrom } from '../lib/serviceDisplayName';
@@ -12,6 +12,7 @@ import {
   formatBookingTime,
   formatDateIso,
   formatRequestedDate,
+  householdVisitTime,
   requestedDateNoonUtcMs,
 } from './visitDates';
 import type { Audience } from './types';
@@ -259,6 +260,12 @@ export async function enrichTemplateData(
    * names are ignored, same as they are in TEMPLATE_FIELDS.
    */
   extraFields: readonly string[] = [],
+  /**
+   * #1863: this copy is addressed to the household's stream. Only the card
+   * detail knows the stream per copy (`buildNotificationDetail`); without it a
+   * kinfolk-audience key is the household's and any other key is the office's.
+   */
+  householdCopy = false,
 ): Promise<Record<string, unknown>> {
   const ctx: Record<string, unknown> = { ...data };
   // RECIPIENT IS THE ACTOR (#1039). An emitter that names who acted passes
@@ -658,7 +665,30 @@ export async function enrichTemplateData(
     if (ms != null) {
       const tz = await loadTimeZone();
       if (want.has('bookingDate')) fill('bookingDate', formatDate(ms, tz));
-      if (want.has('bookingTime')) fill('bookingTime', formatTime(ms, tz));
+      if (want.has('bookingTime')) {
+        // #1863: a household's copy names the time the portal shows it, a
+        // window in Time Blocks mode ("Midday (11 AM to 3 PM)") and the clock
+        // in Exact times mode. The office's own copies keep the clock. On a key
+        // that reaches both sides, the caller says which copy this is.
+        if (audience !== 'kinfolk' && !householdCopy) {
+          fill('bookingTime', formatTime(ms, tz));
+        } else {
+          const b = await loadBooking();
+          const household = householdTimeContextFrom((await loadSettings()) ?? {});
+          fill(
+            'bookingTime',
+            householdVisitTime(
+              {
+                startTimeMs: ms,
+                timeBlockId: str(data.timeBlockId) || str(b?.timeBlockId),
+                serviceId: str(data.serviceId) || str(b?.serviceId),
+              },
+              household,
+              tz,
+            ),
+          );
+        }
+      }
     } else {
       // #1098: a night awaiting its start time (an Overnight the operator has
       // not timed yet) has no instant to format. It still has its night, and

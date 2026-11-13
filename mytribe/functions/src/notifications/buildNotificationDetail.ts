@@ -138,7 +138,7 @@ export async function buildNotificationDetail(
   const staffSide = stream !== 'kinfolk';
   let ctx: Record<string, unknown>;
   try {
-    ctx = await enrichTemplateData(key, recipientUid, data, cardDetailFieldsFor(stream));
+    ctx = await enrichTemplateData(key, recipientUid, data, cardDetailFieldsFor(stream), stream === 'kinfolk');
   } catch (err) {
     // enrichTemplateData documents itself as never-throwing, but it is a large
     // surface over live Firestore reads and this is the one caller that must

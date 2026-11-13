@@ -183,17 +183,25 @@ describe('#1281 reschedule and cancellation asks hand back the visit as stored',
  * portal's cache, so a block-booked visit must carry its window's hours there
  * too, or it reads as a bare label until the refetch lands.
  */
-describe('#1301 read-back carries a block visit\'s window', () => {
-  it('readVisitDto and readEnvelopeDto return the label with the current hours', async () => {
+describe('#1301 / #1863 read-back carries the time the household is shown', () => {
+  /** 2030-11-19 11:00 CST, the first minute of Midday. */
+  const MIDDAY_START = Date.UTC(2030, 10, 19, 17, 0);
+  const TIME_BLOCKS = {
+    allowTimeBlockBooking: true,
+    allowSpecificTimeBooking: false,
+    defaultBookingMode: 'TIME_BLOCK',
+    timeZone: 'America/Chicago',
+  };
+  it('readVisitDto and readEnvelopeDto return the block with its current hours', async () => {
     const { readVisitDto, readEnvelopeDto } = await import('../src/lib/portalBookingDto');
     const blockVisit = {
       status: 'requested', batchId: 'b1', timeBlockId: 'midday', timeBlockLabel: 'Midday',
-      startTime: Timestamp.fromMillis(Date.now() + DAY),
+      startTime: Timestamp.fromMillis(MIDDAY_START),
     };
     const ctx = buildDbMock({
       docs: {
         'business_settings/business_settings': {
-          allowTimeBlockBooking: true,
+          ...TIME_BLOCKS,
           timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00' }],
         },
         'families/kf1/bookings/b1': { envelopeStatus: 'requested', pattern: 'individual' },
@@ -206,19 +214,19 @@ describe('#1301 read-back carries a block visit\'s window', () => {
     const env = await readEnvelopeDto(ctx.db as any, 'kf1', 'b1');
     expect(env?.kinCares[0]).toMatchObject({ timeBlockLabel: 'Midday', timeBlockStartTime: '11:00', timeBlockEndTime: '15:00' });
   });
-  it('keeps the stored label with no hours when the window has been removed', async () => {
+  it('with every window removed the business is served as Exact times, so the clock shows', async () => {
     const { readVisitDto } = await import('../src/lib/portalBookingDto');
     const ctx = buildDbMock({
       docs: {
-        'business_settings/business_settings': { allowTimeBlockBooking: true, timeBlocks: [] },
+        'business_settings/business_settings': { ...TIME_BLOCKS, timeBlocks: [] },
         'families/kf1/bookings/b1/kinCares/v1': {
           status: 'requested', batchId: 'b1', timeBlockId: 'brunch', timeBlockLabel: 'Brunch',
-          startTime: Timestamp.fromMillis(Date.now() + DAY),
+          startTime: Timestamp.fromMillis(MIDDAY_START),
         },
       },
     });
     const visit = await readVisitDto(ctx.db as any, 'kf1', 'b1', 'v1');
-    expect(visit).toMatchObject({ timeBlockLabel: 'Brunch', timeBlockStartTime: null, timeBlockEndTime: null });
+    expect(visit).toMatchObject({ timeBlockLabel: null, timeBlockStartTime: null, timeBlockEndTime: null });
   });
 });
 /** #1297 meets #1281: a written visit's read-back names its service the way the list does. */

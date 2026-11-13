@@ -86,12 +86,13 @@ class BookingRepositoryCreateMultiDateTest {
             kinfolkId = "kf1",
             visits = listOf(NewBookingVisit(startTimeMs = 1000L, serviceName = "Dog Walking")),
             billing = CreateMultiDateBookingRequestArgsBilling(mode = "new-invoice"),
-            communication = CreateMultiDateBookingRequestArgsCommunication(emailConfirmation = true, timeVisibility = false),
+            communication = CreateMultiDateBookingRequestArgsCommunication(emailConfirmation = true),
         )
 
         assertEquals(mapOf("mode" to "new-invoice"), payload.captured["billing"])
         assertEquals(
-            mapOf("emailConfirmation" to true, "timeVisibility" to false),
+            // #1863: the retired "Exact times" choice is never sent.
+            mapOf("emailConfirmation" to true),
             payload.captured["communication"],
         )
     }

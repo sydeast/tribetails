@@ -62,7 +62,7 @@ import com.tribetails.auntieos.web.screens.schedule.NO_KINCARE_TYPES_MESSAGE
 import com.tribetails.auntieos.web.screens.schedule.rateCardServiceTypes
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
-import com.tribetails.auntieos.web.data.resolveTimeBlock
+import com.tribetails.auntieos.web.data.HouseholdVisitTime
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -256,15 +256,22 @@ private fun BookingListScreen(
     val settingsState by remember(client) {
         client?.businessSettingsStream() ?: emptyLoadingFlow()
     }.collectAsState(initial = FirestoreResult.Loading)
-    val timeBlocks = remember(settingsState) {
-        (settingsState as? FirestoreResult.Data)?.value?.timeBlocks.orEmpty()
-    }
     // #1592: the KinCare catalog each card names its service against.
     val kinCareRates = remember(settingsState) {
         (settingsState as? FirestoreResult.Data)?.value?.serviceRates.orEmpty()
     }
+    // #1863 / #2034: the block the household sees for the visit, by the shared
+    // rule on the business clock: none in Exact times mode, the nearest block
+    // in Time Blocks mode.
+    val householdTime = remember(settingsState) {
+        (settingsState as? FirestoreResult.Data)?.value?.let {
+            HouseholdVisitTime.settingsOf(it) to NewBookingMath.businessTimeZone(it.timeZone)
+        }
+    }
     val timeBlockLabelFor: (KinCareSession) -> String? = { b ->
-        resolveTimeBlock(b.startTime, timeBlocks)?.label
+        householdTime?.let { (settings, zone) ->
+            HouseholdVisitTime.cardBlockLabel(b.startTime, bookingServiceName(b.serviceType, kinCareRates), settings, zone)
+        }
     }
 
     // 16.5: incoming MyTribe booking-envelope requests, grouped into series. The
