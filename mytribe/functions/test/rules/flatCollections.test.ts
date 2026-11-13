@@ -280,8 +280,7 @@ describe('rules: flat top-level collections', () => {
   //
   // #1820: and no client creates a line at all. Every client logs through the
   // `logActivity` callable, which seals the line into the chain and works out
-  // the role on the server. A direct create skipped both, so any staff account
-  // could file a line under any role, actor or event it liked.
+  // the role on the server.
 
   it('activity_log: operator can read, but never create, update or delete', async () => {
     const env = await getEnv();
@@ -296,7 +295,7 @@ describe('rules: flat top-level collections', () => {
     await assertFails(fs.doc('activity_log/a1').delete());
   });
 
-  it('activity_log (#1820): a caretaker can neither read nor create a line, forged role or not', async () => {
+  it('activity_log (#1820): a caretaker can neither read nor create a line', async () => {
     const env = await getEnv();
     await env.withSecurityRulesDisabled(async (ctx) => {
       await ctx.firestore().doc('activity_log/a1').set({ action: 'SEEDED', at: new Date() });

@@ -1307,10 +1307,8 @@ service cloud.firestore {
  //
  // #1820: NO CLIENT CREATES A LINE. Every admin client (web, Android, desktop)
  // logs through the `logActivity` callable, which seals the line into the hash
- // chain and works out the actor and role on the server. The old direct-create
- // grant let any staff account, an Auntie included, file an unchained line
- // under any role, actor, event or payload it liked, which is the forgery
- // #1820 closes on the callable.
+ // chain and works out the actor and role on the server, so that callable is
+ // the one way in.
     match /activity_log/{id} {
       allow read: if isOwner();
       allow create, update, delete: if false;
