@@ -10,7 +10,9 @@
    ============================================================ */
 
 /* horizontal step indicator */
-.stepper { display: flex; align-items: flex-start; gap: 0; margin-bottom: 28px; overflow-x: auto; padding-bottom: 4px; }
+.stepper { display: flex; align-items: flex-start; gap: 0; margin-bottom: 28px; overflow-x: auto; padding-bottom: 4px;
+  /* #1918: scrollIntoView lands the row at the top of the viewport, under the sticky nav. */
+  scroll-margin-top: calc(var(--nav-h) + 12px); }
 .step { display: flex; align-items: flex-start; gap: 0; flex: 1; min-width: 0; }
 .step .dot { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; width: max-content; min-width: 96px; }
 .step .num { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-family: var(--mono);
@@ -150,6 +152,11 @@
 @media (max-width: 880px) {
   .svc-grid { grid-template-columns: 1fr; }
   .step .lbl { display: none; }
-  .step { flex: 0 0 auto; }
+  /* #1933: five steps share the row instead of each claiming 96px, so nothing
+     runs off a phone screen and no scrollbar is drawn. */
+  .stepper { overflow-x: visible; }
+  .step { flex: 1 1 0; }
+  .step .dot { min-width: 0; width: auto; }
+  .step .ln { min-width: 6px; }
   .mp-day { font-size: 12px; }
 }
