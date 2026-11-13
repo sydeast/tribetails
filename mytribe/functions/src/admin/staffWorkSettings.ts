@@ -29,7 +29,6 @@ import { BUSINESS_SETTINGS_SOURCE_DOC } from '../lib/businessPublicCard';
  *   defaultBookingMode              booking path
  *   requireArrivalDepartureVerification   the arrival rule
  *   kinTaleRequired                 the "KinTale required" switch
- *   snapRescheduleTo15Min           how a drag on the Schedule snaps
  *
  * and NOTHING else. Every field is copied by name below, so a field added to
  * the settings document later cannot reach an Auntie by spread. Adding one here
@@ -73,7 +72,6 @@ export interface StaffWorkSettings {
   defaultBookingMode: BookingMode;
   requireArrivalDepartureVerification: boolean;
   kinTaleRequired: boolean;
-  snapRescheduleTo15Min: boolean;
 }
 
 function isPlainMap(raw: unknown): raw is Record<string, unknown> {
@@ -126,7 +124,6 @@ export function buildStaffWorkSettings(settings: Record<string, unknown> | undef
     // entry adds no module to every cold start (test/coldStartImportGraph).
     requireArrivalDepartureVerification: data['requireArrivalDepartureVerification'] === true,
     kinTaleRequired: data['kinTaleRequired'] === true,
-    snapRescheduleTo15Min: data['snapRescheduleTo15Min'] === true,
   };
 }
 

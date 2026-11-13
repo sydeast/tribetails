@@ -50,7 +50,6 @@ const EXPECTED_KEYS = [
   'kinTaleRequired',
   'requireArrivalDepartureVerification',
   'services',
-  'snapRescheduleTo15Min',
   'timeBlocks',
   'timeZone',
 ];
@@ -90,7 +89,7 @@ describe('#2164 buildStaffWorkSettings', () => {
     expect(out.defaultBookingMode).toBe('TIME_BLOCK');
     expect(out.requireArrivalDepartureVerification).toBe(true);
     expect(out.kinTaleRequired).toBe(true);
-    expect(out.snapRescheduleTo15Min).toBe(true);
+    expect('snapRescheduleTo15Min' in out).toBe(false);
   });
 
   it('reads an empty or missing document as the server defaults, never as on', () => {
@@ -101,7 +100,6 @@ describe('#2164 buildStaffWorkSettings', () => {
       expect(out.timeBlocks).toBeNull();
       expect(out.requireArrivalDepartureVerification).toBe(false);
       expect(out.kinTaleRequired).toBe(false);
-      expect(out.snapRescheduleTo15Min).toBe(false);
       expect(out.allowSpecificTimeBooking).toBe(true);
       expect(out.defaultBookingMode).toBe('SPECIFIC_TIME');
     }
@@ -111,13 +109,11 @@ describe('#2164 buildStaffWorkSettings', () => {
     const out = buildStaffWorkSettings({
       requireArrivalDepartureVerification: 'true',
       kinTaleRequired: 1,
-      snapRescheduleTo15Min: 'yes',
       timeZone: 'Not/AZone',
       serviceRates: ['a', 'b'],
     });
     expect(out.requireArrivalDepartureVerification).toBe(false);
     expect(out.kinTaleRequired).toBe(false);
-    expect(out.snapRescheduleTo15Min).toBe(false);
     expect(out.timeZone).toBe('America/Chicago');
     expect(out.services).toEqual([]);
   });

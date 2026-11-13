@@ -1244,10 +1244,14 @@ describe('#2164 Bookings under an Auntie sign-in', () => {
   beforeEach(() => currentSessionSeat.mockResolvedValue(AUNTIE_SEAT));
 
   it('names each booking from her own read and never reads the settings document', async () => {
-    useCollection.mockReturnValue({ status: 'ready', data: [entry({ serviceType: 'Drop-in' })] });
+    // `visit_45` is an id, not a name: only her catalog (Long walk runs 45
+    // minutes) can turn it into the KinCare's name.
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ serviceType: 'visit_45' })] });
     render(<Bookings />);
     expect(screen.getByText(WORK_SETTINGS_LOADING)).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText(WORK_SETTINGS_LOADING)).not.toBeInTheDocument());
+    const row = (await screen.findByText(/Long walk/)).closest('.bookings__row') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(screen.queryByText(WORK_SETTINGS_LOADING)).not.toBeInTheDocument();
     expect(call).toHaveBeenCalledWith('getStaffWorkSettings', {});
     expect(getBusinessSettings).not.toHaveBeenCalled();
   });

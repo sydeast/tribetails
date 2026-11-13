@@ -35,6 +35,12 @@ describe('#2164 currentSessionSeat', () => {
     await expect(currentSessionSeat()).resolves.toEqual({ uid: 'o1', caretaker: false });
   });
 
+  it('a token that cannot be read takes the direct read the owner always made', async () => {
+    authRef.currentUser = { uid: 'o1' };
+    getIdTokenResult.mockRejectedValue(new Error('auth/network-request-failed'));
+    await expect(currentSessionSeat()).resolves.toEqual({ uid: 'o1', caretaker: false });
+  });
+
   it('with nobody signed in, reads no token at all', async () => {
     await expect(currentSessionSeat()).resolves.toEqual({ uid: '', caretaker: false });
     expect(getIdTokenResult).not.toHaveBeenCalled();

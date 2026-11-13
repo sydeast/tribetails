@@ -22,7 +22,6 @@ export const STAFF_WORK_REPLY = {
   defaultBookingMode: 'SPECIFIC_TIME',
   requireArrivalDepartureVerification: true,
   kinTaleRequired: false,
-  snapRescheduleTo15Min: false,
 };
 
 /** A `call` stand-in that answers only the staff read, as the app's real stub refuses everything else. */

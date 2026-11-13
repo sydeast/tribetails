@@ -36,7 +36,6 @@ const STAFF_REPLY = {
   defaultBookingMode: 'TIME_BLOCK',
   requireArrivalDepartureVerification: true,
   kinTaleRequired: true,
-  snapRescheduleTo15Min: true,
 };
 
 beforeEach(() => {
@@ -74,7 +73,7 @@ describe('#2164 getWorkSettings', () => {
     expect(s.defaultBookingMode).toBe('TIME_BLOCK');
     expect(s.requireArrivalDepartureVerification).toBe(true);
     expect(s.kinTaleRequired).toBe(true);
-    expect(s.snapRescheduleTo15Min).toBe(true);
+    expect(s.snapRescheduleTo15Min).toBe(false);
   });
 
   it("an Auntie's failed read throws, for the screen to say so", async () => {

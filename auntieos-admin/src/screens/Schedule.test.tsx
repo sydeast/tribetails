@@ -1664,12 +1664,19 @@ describe('#2164 Schedule under an Auntie sign-in', () => {
   });
 
   it('waits visibly, then reads the KinCare list and the clock from her own read', async () => {
+    const user = userEvent.setup();
     render(<Schedule />);
     expect(screen.getByText(WORK_SETTINGS_LOADING)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText(WORK_SETTINGS_LOADING)).not.toBeInTheDocument());
     expect(call).toHaveBeenCalledWith('getStaffWorkSettings', {});
     expect(getBusinessSettings).not.toHaveBeenCalled();
     expect(screen.queryByText(WORK_SETTINGS_FAILED)).not.toBeInTheDocument();
+    // New visit offers her KinCare list by name, with no price beside it.
+    await user.click(screen.getByRole('button', { name: 'New visit' }));
+    const service = screen.getByLabelText('Service');
+    const offered = within(service).getAllByRole('option').map((o) => o.textContent);
+    expect(offered).toEqual(expect.arrayContaining(['Long walk', 'Drop-in']));
+    expect(offered.some((t) => (t ?? '').includes('$'))).toBe(false);
   });
 
   it('says plainly when her read fails, which clock the times are on, and offers a retry', async () => {

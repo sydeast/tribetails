@@ -40,6 +40,7 @@ export interface WorkSettings {
   defaultBookingMode: string;
   requireArrivalDepartureVerification: boolean;
   kinTaleRequired: boolean;
+  /** The owner's Schedule snap. Not sent to an Auntie, so hers is the default (off). */
   snapRescheduleTo15Min: boolean;
 }
 
@@ -70,7 +71,6 @@ interface RawStaffWorkSettings {
   defaultBookingMode?: unknown;
   requireArrivalDepartureVerification?: unknown;
   kinTaleRequired?: unknown;
-  snapRescheduleTo15Min?: unknown;
 }
 
 /**
@@ -98,7 +98,6 @@ export function decodeStaffWorkSettings(raw: RawStaffWorkSettings | null | undef
     defaultBookingMode: r.defaultBookingMode,
     requireArrivalDepartureVerification: r.requireArrivalDepartureVerification,
     kinTaleRequired: r.kinTaleRequired,
-    snapRescheduleTo15Min: r.snapRescheduleTo15Min === true,
   });
   return { ...workSettingsFromBusinessSettings(merged), ratesIncluded: false };
 }

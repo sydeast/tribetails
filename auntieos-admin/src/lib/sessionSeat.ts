@@ -25,8 +25,16 @@ export interface SessionSeat {
 export async function currentSessionSeat(): Promise<SessionSeat> {
   const user = auth.currentUser;
   if (!user) return { uid: '', caretaker: false };
-  const token = await getIdTokenResult(user);
-  return { uid: user.uid, caretaker: caretakerFromClaim(token.claims.staffRole) };
+  try {
+    const token = await getIdTokenResult(user);
+    return { uid: user.uid, caretaker: caretakerFromClaim(token.claims.staffRole) };
+  } catch {
+    // No token to read (the #812 offline session, a refresh outage): take the
+    // direct read the owner always made, so the owner's screens work exactly as
+    // they did. An Auntie on that path is refused by the rules and her screen
+    // says so; nothing here widens what she can read.
+    return { uid: user.uid, caretaker: false };
+  }
 }
 
 /**
