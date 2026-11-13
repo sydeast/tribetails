@@ -831,7 +831,28 @@ class FirestoreClient {
             is WriteResult.Err -> WriteResult.Err(r.message)
         }
     }
-    suspend fun archiveKinfolk(id: String):  WriteResult<Unit>   = platformArchiveKinfolk(id)
+    /**
+     * #2161: Archive (`archived = true`) or restore a Kinfolk household through
+     * the owner-only `setKinfolkArchived` callable, the one path admin web and
+     * Android use too. The server writes `status` and the archive fields and the
+     * ARCHIVE_KINFOLK / RESTORE_KINFOLK Activity Log line, so this client writes
+     * no line of its own. The rules refuse a direct change to those fields. A
+     * refusal comes back as [KINFOLK_ARCHIVE_OWNER_ONLY].
+     */
+    suspend fun setKinfolkArchived(id: String, archived: Boolean, reason: String = ""): WriteResult<Unit> {
+        if (id.isBlank()) return WriteResult.Err("setKinfolkArchived requires a kinfolk id")
+        val payload = buildJsonObject {
+            put("kinfolkId", JsonPrimitive(id.trim()))
+            put("archived", JsonPrimitive(archived))
+            if (archived) put("reason", JsonPrimitive(reason.trim()))
+        }
+        return when (val r = platformInvokeCallable("setKinfolkArchived", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(kinfolkArchiveRefusalText(r.message))
+            is WriteResult.Ok  -> WriteResult.Ok(Unit)
+        }
+    }
+    suspend fun archiveKinfolk(id: String):  WriteResult<Unit>   = setKinfolkArchived(id, archived = true)
+    suspend fun restoreKinfolk(id: String):  WriteResult<Unit>   = setKinfolkArchived(id, archived = false)
     suspend fun createKin(k: Kin):           WriteResult<String> =
         platformCreateKin(k.copy(kinfolkId = enforceWriteKinfolkId(testMode, k.kinfolkId)))
     /**
@@ -2855,7 +2876,6 @@ internal expect fun platformKin411Stream(kinId: String):      Flow<FirestoreResu
 data class KinfolkCreated(val kinfolkId: String, val duplicateOf: String?)
 /** #829 review: merge-writes exactly [changes] (sets and deletes, by field path); an empty list writes nothing. */
 internal expect suspend fun platformUpdateKinfolkFields(kinfolkId: String, changes: List<KinfolkFieldChange>): WriteResult<Unit>
-internal expect suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit>
 internal expect suspend fun platformCreateKin(k: Kin):          WriteResult<String>
 /** #895: merge-writes exactly [changes] on kin/[kinId] (sets and deletes, by field path); an empty list writes nothing. */
 internal expect suspend fun platformUpdateKinFields(kinId: String, changes: List<FieldChange>): WriteResult<Unit>

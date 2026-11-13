@@ -59,6 +59,10 @@ vi.mock('../api/emergencyContacts', async (orig) => ({
   saveEmergencyContacts,
 }));
 
+// #2161: Archive / Restore of a household is owner-only, like the server callable.
+const access = vi.hoisted(() => ({ current: { status: 'admin' } as { status: string } | null }));
+vi.mock('../lib/access', () => ({ useAdminAccess: () => access.current }));
+
 import { KinfolkEdit } from './KinfolkEdit';
 import type { VetClinic } from '../api/vetClinics';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';
@@ -117,6 +121,7 @@ function fieldByLabel(label: string): HTMLInputElement | HTMLTextAreaElement {
 }
 
 beforeEach(() => {
+  access.current = { status: 'admin' };
   getKinfolkProfile.mockReset();
   updateKinfolkProfile.mockReset();
   archiveKinfolk.mockReset();
@@ -570,6 +575,65 @@ describe('KinfolkEdit: archive', () => {
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^archive$/i }));
     expect(await screen.findByText(/Could not archive:.*permission-denied/i)).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('a refused restore shows the plain owner-only sentence', async () => {
+    unarchiveKinfolk.mockRejectedValue(new Error('Only the owner can archive or restore a Kinfolk household.'));
+    const { onDone } = mount({ status: 'archived' });
+    await screen.findByLabelText('First name');
+    await userEvent.click(screen.getByRole('button', { name: /restore/i }));
+    expect(
+      await screen.findByText('Could not restore: Only the owner can archive or restore a Kinfolk household.'),
+    ).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+});
+
+// #2161, operator ruling 2026-11-13: an Auntie never archives or restores a
+// Kinfolk household, so her sign-in is not offered either control.
+describe('KinfolkEdit: archive is owner-only (#2161)', () => {
+  it('an Auntie sees no Archive on an active household', async () => {
+    access.current = { status: 'caretaker' };
+    mount();
+    await screen.findByLabelText('First name');
+    expect(screen.queryByRole('button', { name: /^archive$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /restore/i })).not.toBeInTheDocument();
+    // The rest of the form is still hers: Save is there and the status picker too.
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('radio').length).toBeGreaterThan(0);
+    expect(archiveKinfolk).not.toHaveBeenCalled();
+  });
+
+  it('an Auntie sees no Restore on an archived household, and is told who can', async () => {
+    access.current = { status: 'caretaker' };
+    mount({ status: 'archived' });
+    await screen.findByLabelText('First name');
+    expect(screen.queryByRole('button', { name: /restore/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^archive$/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Jamie Halbrook is hidden from active lists. Only the owner can restore the household.')).toBeInTheDocument();
+    expect(screen.getByText('Status is held at archived. Only the owner can restore the household.')).toBeInTheDocument();
+    expect(screen.queryByText(/Restore them to bring the household back/)).not.toBeInTheDocument();
+    expect(unarchiveKinfolk).not.toHaveBeenCalled();
+  });
+
+  it('a sandbox test admin is not offered Archive either', async () => {
+    access.current = { status: 'testAdmin' };
+    mount();
+    await screen.findByLabelText('First name');
+    expect(screen.queryByRole('button', { name: /^archive$/i })).not.toBeInTheDocument();
+  });
+
+  it('nothing is offered while access is still resolving', async () => {
+    access.current = null;
+    mount();
+    await screen.findByLabelText('First name');
+    expect(screen.queryByRole('button', { name: /^archive$/i })).not.toBeInTheDocument();
+  });
+
+  it('the owner is offered Archive on an active household', async () => {
+    mount();
+    await screen.findByLabelText('First name');
+    expect(screen.getByRole('button', { name: /^archive$/i })).toBeInTheDocument();
   });
 });
 

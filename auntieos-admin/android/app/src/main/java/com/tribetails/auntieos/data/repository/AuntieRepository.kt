@@ -320,6 +320,18 @@ class AuntieRepository(
         RevokedSessionGuard.shared.react(it)
     }
 
+    /**
+     * #2161: is this sign-in the owner? The `admin` claim, and NOT the Auntie
+     * role, the same subtraction the rules (`isOwner()`) and the server gate
+     * make. Used to keep owner-only controls (Archive / Restore of a household)
+     * off a screen the server would refuse them on.
+     */
+    suspend fun isCurrentUserOwner(): Result<Boolean> = runCatching {
+        authGate.ensureAuthenticated()
+        val claims = auth.currentUser?.getIdToken(false)?.await()?.claims.orEmpty()
+        com.tribetails.auntieos.ui.directory.isOwnerFromClaims(claims)
+    }.onFailure { logFailureUnlessSignedOut("Failed to read the owner claim", it) }
+
     /** Defense-in-depth: forces an ID-token refresh and throws if the admin
      *  claim is missing. Use before any destructive admin action so that
      *  client-side state can't be tampered to bypass Firestore rules. */
@@ -557,20 +569,23 @@ class AuntieRepository(
         Unit
     }.onFailure { AuntieLog.e("Failed to delete kinfolk $kinfolkId", it) }
 
-    // Archive: reversible state flip (matches web ArchiveBlock semantics).
-    // Sets status="archived" + archivedAt timestamp + archivedReason. Document
-    // remains in Firestore; lists must filter status="archived" to hide it.
-    suspend fun archiveKinfolk(kinfolkId: String, reason: String, archivedBy: String = "admin"): Result<Unit> = runCatchingCancellable {
-        AuntieLog.i("Archiving kinfolk: $kinfolkId (reason: $reason)")
+    /**
+     * Archive: reversible (matches web ArchiveBlock semantics). The document
+     * stays in Firestore; lists filter status="archived" to hide it.
+     *
+     * #2161: through the owner-only `setKinfolkArchived` callable, never a
+     * direct write. The server sets status, archivedAt, archivedReason and
+     * archivedBy (the caller's uid), and writes the ARCHIVE_KINFOLK Activity Log
+     * line, so the client writes none of its own. The rules refuse a direct
+     * change to those fields.
+     */
+    suspend fun archiveKinfolk(kinfolkId: String, reason: String): Result<Unit> = runCatchingCancellable {
+        AuntieLog.i("Archiving kinfolk: $kinfolkId")
         authGate.ensureAuthenticated()
-        firestore.collection("kinfolk").document(kinfolkId).update(
-            mapOf(
-                "status"         to "archived",
-                "archivedAt"     to getCurrentTimestamp(),
-                "archivedReason" to reason,
-                "archivedBy"     to archivedBy,
-            )
-        ).await()
+        require(kinfolkId.isNotBlank()) { "archiveKinfolk needs a kinfolk document id" }
+        functions.getHttpsCallable("setKinfolkArchived")
+            .call(mapOf("kinfolkId" to kinfolkId.trim(), "archived" to true, "reason" to reason.trim()))
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to archive kinfolk $kinfolkId", it) }
 
@@ -635,17 +650,18 @@ class AuntieRepository(
         decodeEmergencyContacts(raw)
     }.onFailure { AuntieLog.e("AuntieRepository.saveEmergencyContacts failed", it) }
 
+    /**
+     * Restore an archived household: back to active, the three archive fields
+     * cleared. #2161: through the same owner-only callable, which writes the
+     * RESTORE_KINFOLK Activity Log line.
+     */
     suspend fun unarchiveKinfolk(kinfolkId: String): Result<Unit> = runCatchingCancellable {
         AuntieLog.i("Unarchiving kinfolk: $kinfolkId")
         authGate.ensureAuthenticated()
-        firestore.collection("kinfolk").document(kinfolkId).update(
-            mapOf(
-                "status"         to "active",
-                "archivedAt"     to "",
-                "archivedReason" to "",
-                "archivedBy"     to "",
-            )
-        ).await()
+        require(kinfolkId.isNotBlank()) { "unarchiveKinfolk needs a kinfolk document id" }
+        functions.getHttpsCallable("setKinfolkArchived")
+            .call(mapOf("kinfolkId" to kinfolkId.trim(), "archived" to false))
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to unarchive kinfolk $kinfolkId", it) }
 

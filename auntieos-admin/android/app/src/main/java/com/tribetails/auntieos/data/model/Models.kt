@@ -307,8 +307,9 @@ data class Kinfolk(
     // expires naturally when [effectiveUntil] passes; reconcile may also clear it.
     var contactOverride: ContactOverride? = null,
 
-    // Archive metadata. Set when status="archived" via AuntieRepository.archiveKinfolk;
-    // cleared on unarchive. Mirrors web KinfolkEditScreen ArchiveBlock semantics.
+    // Archive metadata. Set when status="archived" by the owner-only
+    // `setKinfolkArchived` callable (#2161); cleared on restore. Never written
+    // by this client.
     var archivedAt: String = "",
     var archivedReason: String = "",
     var archivedBy: String = "",

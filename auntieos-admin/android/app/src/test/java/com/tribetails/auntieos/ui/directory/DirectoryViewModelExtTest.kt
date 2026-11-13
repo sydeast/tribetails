@@ -147,7 +147,7 @@ class DirectoryViewModelExtTest {
 
     @Test
     fun `archiveKinfolk sets error when repository fails`() = runTest(testDispatcher) {
-        coEvery { mockRepo.archiveKinfolk(any(), any(), any()) } returns Result.failure(RuntimeException("Delete failed"))
+        coEvery { mockRepo.archiveKinfolk(any(), any()) } returns Result.failure(RuntimeException("Delete failed"))
 
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -163,7 +163,7 @@ class DirectoryViewModelExtTest {
 
     @Test
     fun `archiveKinfolk sets isDeleted on success`() = runTest(testDispatcher) {
-        coEvery { mockRepo.archiveKinfolk(any(), any(), any()) } returns Result.success(Unit)
+        coEvery { mockRepo.archiveKinfolk(any(), any()) } returns Result.success(Unit)
 
         val vm = buildViewModel()
         advanceUntilIdle()

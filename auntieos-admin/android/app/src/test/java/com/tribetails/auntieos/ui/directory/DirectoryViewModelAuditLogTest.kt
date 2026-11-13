@@ -72,8 +72,13 @@ class DirectoryViewModelAuditLogTest {
         assertTrue(viewModel.addKinfolkState.value.isSuccess)
     }
 
+    /**
+     * #2161: the owner-only `setKinfolkArchived` callable writes the
+     * ARCHIVE_KINFOLK line on the server, once for every client. The client
+     * writes none of its own, or an archive would leave two lines.
+     */
     @Test
-    fun `archiveKinfolk fires ARCHIVE_KINFOLK audit entry with reason in description`() =
+    fun `archiveKinfolk goes through the repository and writes no client audit entry`() =
         runTest(testDispatcher) {
             coEvery { repository.getKinfolk() } returns Result.success(
                 listOf(Kinfolk(id = "kf-arch", firstName = "T", lastName = "U"))
@@ -81,22 +86,19 @@ class DirectoryViewModelAuditLogTest {
             viewModel = DirectoryViewModel(repository, invoiceRepository, kinCareRepository)
             viewModel.loadKinfolkForEdit("kf-arch")
             advanceUntilIdle()
-            coEvery { repository.archiveKinfolk(any(), any(), any()) } returns Result.success(Unit)
+            coEvery { repository.archiveKinfolk(any(), any()) } returns Result.success(Unit)
 
             viewModel.archiveKinfolk("moved away")
             advanceUntilIdle()
 
-            coVerify(exactly = 1) {
-                repository.logActivity(match<ActivityLogEntry> {
-                    it.actionType == "ARCHIVE_KINFOLK" &&
-                    it.targetId == "kf-arch" &&
-                    it.description.contains("moved away")
-                })
+            coVerify(exactly = 1) { repository.archiveKinfolk("kf-arch", "moved away") }
+            coVerify(exactly = 0) {
+                repository.logActivity(match<ActivityLogEntry> { it.actionType == "ARCHIVE_KINFOLK" })
             }
         }
 
     @Test
-    fun `unarchiveKinfolk fires the declared RESTORE_KINFOLK audit entry`() = runTest(testDispatcher) {
+    fun `unarchiveKinfolk goes through the repository and writes no client audit entry`() = runTest(testDispatcher) {
         coEvery { repository.getKinfolk() } returns Result.success(
             listOf(Kinfolk(id = "kf-un", firstName = "T", lastName = "U", status = "archived"))
         )
@@ -108,16 +110,13 @@ class DirectoryViewModelAuditLogTest {
         viewModel.unarchiveKinfolk()
         advanceUntilIdle()
 
-        coVerify(exactly = 1) {
+        coVerify(exactly = 1) { repository.unarchiveKinfolk("kf-un") }
+        coVerify(exactly = 0) {
             repository.logActivity(match<ActivityLogEntry> {
-                it.actionType == "RESTORE_KINFOLK" && it.targetId == "kf-un" &&
-                    it.targetCollection == "kinfolk"
+                it.actionType == "RESTORE_KINFOLK" || it.actionType == "UNARCHIVE_KINFOLK"
             })
         }
-        // #1820: the old spelling is not the declared key, and no chip filed it.
-        coVerify(exactly = 0) {
-            repository.logActivity(match<ActivityLogEntry> { it.actionType == "UNARCHIVE_KINFOLK" })
-        }
+        // The server's line still files under Admin on the Activity Log.
         assertEquals(
             com.tribetails.auntieos.ui.admin.ActivityCategory.Admin,
             com.tribetails.auntieos.ui.admin.activityCategoryOf("RESTORE_KINFOLK"),

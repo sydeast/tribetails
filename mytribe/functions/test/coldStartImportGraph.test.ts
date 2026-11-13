@@ -242,8 +242,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * required" reader are loaded inside the handler; its file-scope imports
  * (`arrivalVerification`, `geo`, `writeAuditEntry`, `wrapTrigger`) are already
  * resident through `transitionBookingStatus` and the other triggers.
+ *
+ * 450 since #2161 (on top of #2123's 449): `admin/kinfolkArchive.ts` is a new
+ * FUNCTIONS entry (the owner-only Archive / Restore of a Kinfolk household,
+ * with its Activity Log line). Its words, `lib/activityWords.ts`, load with
+ * `await import()` inside the handler, so the entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 449;
+const MAX_OWN_EAGER_MODULES = 450;
 
 interface Edge {
   spec: string;

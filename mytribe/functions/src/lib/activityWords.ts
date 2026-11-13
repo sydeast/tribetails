@@ -239,6 +239,16 @@ export function kinArchivedWords(archived: boolean, kinName: unknown): string {
   return `${archived ? 'Archived' : 'Restored'} ${name === '' ? 'a kin' : `kin ${name}`}`;
 }
 
+/**
+ * #2161. `Archived Kinfolk Dre East (reason: moved away)`, `Restored Kinfolk
+ * Dre East`, or "a Kinfolk household" when the name is unknown.
+ */
+export function kinfolkArchivedWords(archived: boolean, name: unknown, reason: unknown = ''): string {
+  const who = typeof name === 'string' && name.trim() !== '' ? `Kinfolk ${name.trim()}` : 'a Kinfolk household';
+  const why = archived && typeof reason === 'string' && reason.trim() !== '' ? ` (reason: ${reason.trim()})` : '';
+  return `${archived ? 'Archived' : 'Restored'} ${who}${why}`;
+}
+
 /** The AI title batch. The batch id is in the payload. */
 export function aiTitlesAppliedWords(applied: number, skipped: number, errored: number): string {
   return `Applied AI KinTale titles (${applied} applied, ${skipped} skipped, ${errored} errored)`;
