@@ -1610,7 +1610,7 @@ class DirectoryViewModel(
                     // and the Activity Log files under Admin. This line used to
                     // say UNARCHIVE_KINFOLK, which no chip claimed.
                     actionType       = "RESTORE_KINFOLK",
-                    description      = "Restored kinfolk",
+                    description      = "Restored Kinfolk",
                     targetId         = kinfolkId,
                     targetCollection = "kinfolk",
                 )
