@@ -29,7 +29,7 @@ export async function getMyKinTaleMediaHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const args = Args.parse(req.data);
 
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, householdStaffFlag(req.auth, 'getMyKinTaleMedia'), 'getMyKinTaleMedia');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, householdStaffFlag(req.auth, 'getMyKinTaleMedia'), 'getMyKinTaleMedia', req.auth);
 
   const taleSnap = await db().doc(`kin_care_reports/${args.taleId}`).get();
   if (!taleSnap.exists) throw new HttpsError('not-found', 'KinTale not found.');

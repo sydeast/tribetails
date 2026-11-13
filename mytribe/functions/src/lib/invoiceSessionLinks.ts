@@ -309,6 +309,8 @@ export async function readSessionReclaim(
   invoiceId: string,
   candidates: readonly string[],
   lines: unknown,
+  /** #2195: what is being restored, for the notice's words. A quote's line is removed in Edit, not before a send. */
+  kind: 'draft' | 'quote' = 'draft',
 ): Promise<SessionReclaim> {
   const ids = Array.from(new Set(candidates));
   const snaps = await Promise.all(ids.map((id) => tx.get(firestore.collection('kin_care_sessions').doc(id))));
@@ -351,15 +353,16 @@ export async function readSessionReclaim(
     const bound = new Set(boundSessionIds(lines));
     const onLines = lost.filter((l) => bound.has(l.sessionId)).length;
     const one = lost.length === 1;
+    const after = kind === 'quote' ? '' : ' before sending the draft';
     notice =
       `${one ? '1 visit' : `${lost.length} visits`} could not be taken back: ${parts.join('; ')}.` +
       (onLines === 0
         ? ''
         : onLines === 1
           ? one
-            ? ' Its line is still on this draft, so remove it in Edit before sending the draft.'
-            : ' The line for one of them is still on this draft, so remove it in Edit before sending the draft.'
-          : ' Their lines are still on this draft, so remove them in Edit before sending the draft.');
+            ? ` Its line is still on this ${kind}, so remove it in Edit${after}.`
+            : ` The line for one of them is still on this ${kind}, so remove it in Edit${after}.`
+          : ` Their lines are still on this ${kind}, so remove them in Edit${after}.`);
   }
 
   return {
@@ -525,13 +528,15 @@ export async function readSendClaims(
   firestore: Firestore,
   invoiceId: string,
   lines: unknown,
+  /** #2087: a quote saved unsent is sent by the same path, and named as a quote. */
+  kind: 'draft' | 'quote' = 'draft',
 ): Promise<SessionLinkPlan> {
   const { claim, lost, parts } = await judgeLineVisits(txGet(tx), firestore, invoiceId, lines);
   if (lost.length > 0) {
     throw new HttpsError(
       'failed-precondition',
-      `This draft cannot be sent: ${parts.join('; ')}. ` +
-        `Remove ${lost.length === 1 ? 'its line' : 'those lines'} in Edit, then send the draft.`,
+      `This ${kind} cannot be sent: ${parts.join('; ')}. ` +
+        `Remove ${lost.length === 1 ? 'its line' : 'those lines'} in Edit, then send the ${kind}.`,
       { code: DRAFT_VISITS_NOT_BILLABLE_CODE, visits: lost },
     );
   }
@@ -563,15 +568,30 @@ export async function readSendClaims(
 //     free visits, and is refused only when another invoice now bills a visit
 //     one of its lines is for, which would bill that work twice
 //     (`readAcceptClaims`).
-//   - Archiving a quote moves no visit. The Kinfolk can still answer an
-//     archived quote in MyTribe (archiving only takes it off the office's
-//     working list), so its visits stay held for that answer; letting them go
-//     would invite a second invoice to bill work the household can still
-//     accept.
+//   - #2195 (lead ruling 2026-11-13): archiving a quote works like archiving
+//     a draft. MyTribe stops showing it and it cannot be answered, so every
+//     visit it holds goes back on the un-invoiced list (`readDeclineRelease`,
+//     in `archiveInvoice`'s transaction), and restoring it takes back only the
+//     ones still free (`readSessionReclaim`, with quote words). A declined
+//     quote holds none, so archiving or restoring it moves no visit.
+//   - #2088: withdrawing a quote (`withdrawQuote`) lets go of its visits like
+//     a decline (`readDeclineRelease`). Turning it into an invoice
+//     (`convertQuoteToInvoice`) keeps them, and takes back a declined one's
+//     by the resend rule (`readQuoteReopen`, `convert` words).
 
-/** A declined quote: it holds no visits until it is sent back out. */
+/** #2088: a quote the office withdrew. It is cancelled, and holds no visits for good. */
+export function quoteWithdrawn(data: Record<string, unknown>): boolean {
+  const raw = data['status'] ?? data['invoiceStatus'];
+  const status = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return status === 'cancelled' && data['quoteWithdrawnAt'] !== undefined && data['quoteWithdrawnAt'] !== null;
+}
+
+/**
+ * A quote that holds no visits: a declined one, until it is sent back out, and
+ * (#2088) a withdrawn one, which let go of them like a decline.
+ */
 export function quoteHoldsNoVisits(data: Record<string, unknown>): boolean {
-  return quoteDecisionOf(data['quoteDecision']) === 'denied';
+  return quoteDecisionOf(data['quoteDecision']) === 'denied' || quoteWithdrawn(data);
 }
 
 /** The stored `releasedSessionIds`, tolerant of legacy docs. */
@@ -588,7 +608,8 @@ export interface QuoteVisitChange {
 }
 
 /**
- * The READ half of a Kinfolk declining a quote (`denyQuote`): every visit the
+ * The READ half of a Kinfolk declining a quote (`denyQuote`), and since #2088
+ * and #2195 of the office withdrawing or archiving one: every visit the
  * quote holds goes back on the un-invoiced list. Only a visit whose back-link
  * names THIS quote is let go; one another invoice bills is that invoice's. Its
  * `sessionIds` empties and the set is kept in `releasedSessionIds`, which a
@@ -680,13 +701,20 @@ export async function readQuoteReopen(
   firestore: Firestore,
   invoiceId: string,
   data: Record<string, unknown>,
+  /**
+   * #2088: turning a quote into an invoice holds its visits by the same rule,
+   * since the invoice it becomes bills them. Only the words differ.
+   */
+  action: 'resend' | 'convert' = 'resend',
 ): Promise<QuoteVisitChange> {
   const { lost, parts } = await judgeLineVisits(txGet(tx), firestore, invoiceId, data['lineItems']);
   if (lost.length > 0) {
+    const lines = lost.length === 1 ? 'its line' : 'those lines';
     throw new HttpsError(
       'failed-precondition',
-      `This quote cannot be sent back out: ${parts.join('; ')}. ` +
-        `Remove ${lost.length === 1 ? 'its line' : 'those lines'} in Edit, then send it again.`,
+      action === 'convert'
+        ? `This quote cannot be turned into an invoice: ${parts.join('; ')}. Remove ${lines} in Edit, then try again.`
+        : `This quote cannot be sent back out: ${parts.join('; ')}. Remove ${lines} in Edit, then send it again.`,
       { code: QUOTE_VISITS_NOT_BILLABLE_CODE, visits: lost },
     );
   }

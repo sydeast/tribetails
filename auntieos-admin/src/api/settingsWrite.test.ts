@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
-import { saveBusinessSettings, removeBusinessTag } from './settingsWrite';
+import { saveBusinessSettings, removeBusinessTag, changeBusinessTags } from './settingsWrite';
 import { settingsRefusalsOf } from '../lib/settingsChecks';
 
 beforeEach(() => {
@@ -79,5 +79,31 @@ describe('removeBusinessTag', () => {
     call.mockResolvedValue({ ok: true, scope: 'household', name: 'VIP', recordsTouched: 2, vocabRemoved: true });
     await removeBusinessTag('household', 'VIP');
     expect(call).toHaveBeenCalledWith('removeBusinessTag', { scope: 'household', name: 'VIP' });
+  });
+});
+
+// #2205: adds and recolours go to the server one named tag at a time.
+describe('changeBusinessTags', () => {
+  const teal = { token: 'teal', css: 'var(--color-accent)' };
+
+  it('sends the named changes as `changes` and answers with both stored lists, decoded', async () => {
+    call.mockResolvedValue({
+      ok: true,
+      householdTags: [{ name: 'VIP', color: teal, icon: '' }, { name: 'broken' }],
+      petTags: [],
+      updatedAt: 'x',
+      updatedBy: 'y',
+    });
+    const changes = [{ action: 'add' as const, scope: 'household' as const, name: 'VIP', color: teal, icon: '' }];
+    const after = await changeBusinessTags(changes);
+    expect(call).toHaveBeenCalledWith('changeBusinessTags', { changes });
+    expect(after).toEqual({ householdTags: [{ name: 'VIP', color: teal, icon: '' }], petTags: [] });
+  });
+
+  it('passes a refusal through with the server sentence', async () => {
+    call.mockRejectedValue(new Error('A "VIP" tag already exists.'));
+    await expect(
+      changeBusinessTags([{ action: 'add', scope: 'pet', name: 'vip', color: teal, icon: '' }]),
+    ).rejects.toThrow('A "VIP" tag already exists.');
   });
 });

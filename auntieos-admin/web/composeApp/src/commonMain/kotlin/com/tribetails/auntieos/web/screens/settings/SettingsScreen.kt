@@ -135,6 +135,9 @@ import com.tribetails.auntieos.web.data.addTag
 import com.tribetails.auntieos.web.data.editTag
 import com.tribetails.auntieos.web.data.normalizeTagName
 import com.tribetails.auntieos.web.data.removeTag
+import com.tribetails.auntieos.web.data.TagChange
+import com.tribetails.auntieos.web.data.TagListsAfterChange
+import com.tribetails.auntieos.web.data.tagListChanges
 import com.tribetails.auntieos.web.theme.AccentChoice
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.theme.AuntieThemePreset
@@ -751,7 +754,7 @@ private fun SectionPanel(
         )
         SettingsSection.Tags -> TagVocabularyPanel(
             settingsData = settingsData, settingsLoaded = settingsLoaded,
-            vm = vm, scope = scope, saveError = uiState.saveError,
+            client = client, vm = vm, scope = scope,
         )
         SettingsSection.VetClinics -> VetClinicsPanel(vm = vm)
         SettingsSection.Appearance -> AppearancePanel(
@@ -2091,8 +2094,14 @@ private fun KinCareTypesPanel(
 //
 // Add / recolor / re-emoji / remove only. Renaming would orphan every assignment
 // pointing at the old name (the name IS the key), so v1 has no rename: remove
-// then add. Removing a tag drops the vocabulary row but leaves the assignments,
-// which then resolve to neutral chips instead of vanishing.
+// then add.
+//
+// #2205: Save sends what changed as named changes (each new name, each colour or
+// emoji change) through `changeBusinessTags`, never the lists. The server applies
+// them to the lists as stored, so a tag added on another device is kept and one
+// deleted there is not brought back. Remove is the #713 cascade, the same as the
+// React editor: it confirms, then `removeBusinessTag` takes the tag off the list
+// AND off every household or Kin carrying it, right away, without waiting for Save.
 
 /**
  * The accessible name of a palette swatch. An unrecognized token labels itself
@@ -2131,33 +2140,91 @@ internal fun tagVocabularyDirty(
     pet: List<TagDef>,
 ): Boolean = household != baseHousehold || pet != basePet
 
+/** What Save sends: the adds and recolours across both lists, never the lists. Pure; tested. */
+internal fun tagVocabularySaveChanges(
+    baseHousehold: List<TagDef>,
+    basePet: List<TagDef>,
+    household: List<TagDef>,
+    pet: List<TagDef>,
+): List<TagChange> =
+    tagListChanges("household", baseHousehold, household) + tagListChanges("pet", basePet, pet)
+
+/** The heads-up over the editor: a delete is the #713 cascade. The React editor's words. */
+internal const val TAG_REMOVE_HEADS_UP: String =
+    "Removing a tag deletes it everywhere. It comes off the list here and off every household or Kin " +
+        "carrying it, as soon as you confirm. Adding the same name back later starts it with nobody on it."
+
+/** The confirm prompt before a delete runs. Pure; tested. */
+internal fun tagRemoveConfirmBody(scopeWire: String, name: String): String =
+    if (scopeWire == "household") {
+        "This takes \"$name\" off the household tag list and off every household carrying it. " +
+            "It happens right away, without waiting for Save, and it cannot be undone."
+    } else {
+        "This takes \"$name\" off the Kin tag list and off every Kin carrying it. " +
+            "It happens right away, without waiting for Save, and it cannot be undone."
+    }
+
+/** What a delete did, by the server's count. Pure; tested. */
+internal fun tagRemovedSummary(scopeWire: String, name: String, recordsTouched: Int): String {
+    val one = if (scopeWire == "household") "household" else "Kin"
+    val many = if (scopeWire == "household") "households" else "Kin"
+    return when (recordsTouched) {
+        0 -> "\"$name\" is gone. No $many were carrying it."
+        1 -> "\"$name\" is gone. It came off 1 $one."
+        else -> "\"$name\" is gone. It came off $recordsTouched $many."
+    }
+}
+
 @Composable
 private fun TagVocabularyPanel(
     settingsData: BusinessSettings?,
     settingsLoaded: Boolean,
+    client: FirestoreClient,
     vm: SettingsViewModel,
     scope: kotlinx.coroutines.CoroutineScope,
-    saveError: String?,
 ) {
     val c = AuntieTheme.colors
+    // What the server holds, as last answered by a save or a delete here, until the
+    // live read catches up (then re-seeded from it).
+    var stored by remember(settingsData) {
+        mutableStateOf(TagListsAfterChange(settingsData?.householdTags ?: emptyList(), settingsData?.petTags ?: emptyList()))
+    }
     // Seeded from the loaded doc and re-seeded whenever it changes, the same
     // convention KinCareTypesPanel uses.
     var household by remember(settingsData) { mutableStateOf(settingsData?.householdTags ?: emptyList()) }
     var pet by remember(settingsData) { mutableStateOf(settingsData?.petTags ?: emptyList()) }
     var saving by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    // The tag Remove was pressed on (scope wire, name), held until the operator confirms.
+    var pendingRemove by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var removing by remember { mutableStateOf(false) }
+    var removeError by remember { mutableStateOf<String?>(null) }
+    var removedMessage by remember { mutableStateOf<String?>(null) }
 
     val dirty = settingsLoaded && settingsData != null &&
-        tagVocabularyDirty(settingsData.householdTags, settingsData.petTags, household, pet)
+        tagVocabularyDirty(stored.household, stored.pet, household, pet)
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         AuntieBanner(tone = AuntieBannerTone.Info, dashed = true, pillLabel = "Heads up") {
-            Text(
-                "Taking a tag off this list only stops it being suggested. Households and pets " +
-                    "already carrying it keep it, shown plainly, until you re-add it or take " +
-                    "it off each one.",
-                style = AuntieTheme.typography.bodySmall,
-                color = c.textDim,
-            )
+            Text(TAG_REMOVE_HEADS_UP, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
+
+        removeError?.let { msg ->
+            AuntieBanner(tone = AuntieBannerTone.Error, title = "Remove failed", onDismiss = { removeError = null }) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    Text(
+                        "The tag is still on the list, so you can try again.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                }
+            }
+        }
+        removedMessage?.let { msg ->
+            AuntieBanner(tone = AuntieBannerTone.Success, title = "Tag removed", onDismiss = { removedMessage = null }) {
+                Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
         }
 
         if (!settingsLoaded) {
@@ -2171,44 +2238,112 @@ private fun TagVocabularyPanel(
                 scopeNoun = "household",
                 tags = household,
                 onChange = { household = it },
-                enabled = !saving,
+                onRequestRemove = { name -> pendingRemove = "household" to name },
+                enabled = !saving && !removing,
             )
             TagVocabSection(
-                title = "Pet tags",
-                subtitle = "Label a pet (a kin), e.g. Reactive or On meds.",
-                scopeNoun = "pet",
+                title = "Kin tags",
+                subtitle = "Label a Kin, e.g. Reactive or On meds.",
+                scopeNoun = "Kin",
                 tags = pet,
                 onChange = { pet = it },
-                enabled = !saving,
+                onRequestRemove = { name -> pendingRemove = "pet" to name },
+                enabled = !saving && !removing,
             )
 
             saveError?.let { msg ->
-                AuntieBanner(tone = AuntieBannerTone.Error, title = "Save failed") {
-                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                AuntieBanner(tone = AuntieBannerTone.Error, title = "Save failed", onDismiss = { saveError = null }) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        GhostButton(
+                            label = "Reload tags",
+                            enabled = !saving,
+                            onClick = {
+                                saveError = null
+                                vm.retrySettings()
+                            },
+                        )
+                    }
                 }
             }
 
             AuntieSaveBar(
                 dirty = dirty,
-                saveEnabled = dirty && !saving && settingsData != null,
+                saveEnabled = dirty && !saving && !removing && settingsData != null,
                 onCancel = {
-                    household = settingsData?.householdTags ?: emptyList()
-                    pet = settingsData?.petTags ?: emptyList()
+                    household = stored.household
+                    pet = stored.pet
                 },
                 onSave = {
-                    settingsData?.let { b ->
+                    val changes = tagVocabularySaveChanges(stored.household, stored.pet, household, pet)
+                    if (changes.isEmpty()) {
+                        household = stored.household
+                        pet = stored.pet
+                    } else {
                         saving = true
+                        saveError = null
                         scope.launch {
-                            // Both lists go in one write, matching the React Tags editor.
-                            // (A profile panel promoting a single tag sends one key only.)
-                            vm.saveSettings(b.copy(householdTags = household, petTags = pet))
+                            when (val r = client.changeBusinessTags(changes)) {
+                                is WriteResult.Ok -> {
+                                    // The lists as the server now holds them, tags
+                                    // added elsewhere included.
+                                    stored = r.value
+                                    household = r.value.household
+                                    pet = r.value.pet
+                                }
+                                is WriteResult.Err -> saveError = "Couldn't save tags: ${r.message}"
+                            }
                             saving = false
                         }
                     }
                 },
-                dirtyLabel = "Unsaved tags",
+                dirtyLabel = if (saving) "Saving…" else "Unsaved tags",
                 savedLabel = "Tags saved",
             )
+        }
+    }
+
+    val target = pendingRemove
+    AuntieDialog(
+        visible = target != null,
+        title = "Remove \"${target?.second ?: ""}\"?",
+        onDismiss = { if (!removing) pendingRemove = null },
+        maxWidth = 480.dp,
+        footer = {
+            GhostButton(label = "Cancel", enabled = !removing, onClick = { pendingRemove = null })
+            PrimaryButton(
+                label = if (removing) "Removing…" else "Remove everywhere",
+                enabled = !removing,
+                onClick = {
+                    val (scopeWire, name) = target ?: return@PrimaryButton
+                    removing = true
+                    removeError = null
+                    removedMessage = null
+                    scope.launch {
+                        when (val r = client.removeBusinessTag(scopeWire, name)) {
+                            is WriteResult.Ok -> {
+                                // Gone from the list on screen AND from the baseline, so
+                                // Save is never armed with a change already made.
+                                stored = if (scopeWire == "household") {
+                                    stored.copy(household = removeTag(stored.household, name))
+                                } else {
+                                    stored.copy(pet = removeTag(stored.pet, name))
+                                }
+                                if (scopeWire == "household") household = removeTag(household, name)
+                                else pet = removeTag(pet, name)
+                                removedMessage = tagRemovedSummary(scopeWire, name, r.value)
+                            }
+                            is WriteResult.Err -> removeError = "Couldn't remove \"$name\": ${r.message}"
+                        }
+                        removing = false
+                        pendingRemove = null
+                    }
+                },
+            )
+        },
+    ) {
+        target?.let { (scopeWire, name) ->
+            Text(tagRemoveConfirmBody(scopeWire, name), style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
     }
 }
@@ -2222,6 +2357,9 @@ private fun TagVocabSection(
     scopeNoun: String,
     tags: List<TagDef>,
     onChange: (List<TagDef>) -> Unit,
+    // #713: Remove asks the panel to run the server-side delete; it never hands
+    // back a shortened list.
+    onRequestRemove: (String) -> Unit,
     enabled: Boolean,
 ) {
     val c = AuntieTheme.colors
@@ -2255,7 +2393,7 @@ private fun TagVocabSection(
                             GhostButton(
                                 label = "Remove",
                                 enabled = enabled,
-                                onClick = { onChange(removeTag(tags, t.name)) },
+                                onClick = { onRequestRemove(t.name) },
                             )
                         }
                         // editTag never touches the name: a rename would orphan the

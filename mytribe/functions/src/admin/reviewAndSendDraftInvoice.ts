@@ -24,6 +24,7 @@ import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 import { isArchived, refuseIfArchived } from '../lib/invoiceArchive';
 import { readSendClaims, stageSessionLinks, storedSessionIds } from '../lib/invoiceSessionLinks';
+import { QUOTE_DRAFT_FIELD, isQuoteDraft, quoteDecisionOf } from '../lib/quoteDecision';
 
 /**
  * Dedicated draft-review-and-send callable, replacing the AuntieOS admin's
@@ -70,6 +71,20 @@ import { readSendClaims, stageSessionLinks, storedSessionIds } from '../lib/invo
  * a cancelled one or one with no record refuses the send, named by its day.
  * The same transaction claims any line's visit whose back-link is still blank
  * (a draft made before #1901), which takes it off the un-invoiced list.
+ *
+ * #2087: A QUOTE SAVED UNSENT IS SENT HERE TOO, AND GOES OUT AS A QUOTE. A
+ * quote made with "Send to kinfolk now" off is a draft carrying the quote mark
+ * (`lib/quoteDecision.ts#isQuoteDraft`), hidden from the household. Sending it
+ * moves it to `quote`, never to `open`: it is a proposal the household
+ * accepts or declines, not a bill. Every installed admin client already sends
+ * a draft through this callable (directly, or through `postInvoiceEvent`), so
+ * an older client pressing its draft send on a quote sends the quote rather
+ * than billing work nobody agreed to. `createQuote` with the switch on saves
+ * the draft and sends it through this same core (`sendDraft`), so a quote has
+ * one way out to the household, with one put-back when the notice fails. The
+ * notice carries `isQuote` and its own identity (`quote:<id>:send`), so a
+ * retry that the household already heard about is a `duplicate`, and a quote
+ * later turned into an invoice is announced again when that invoice is sent.
  */
 export const Args = z.object({
   invoiceId: z.string().min(1).max(200),
@@ -128,19 +143,29 @@ function sendableDraft(snap: DocumentSnapshot, invoiceId: string): InvoiceDoc {
   refuseIfArchived(data);
 
   if (normalizedStatus(data) !== 'draft') {
+    // #2087: a quote that has gone out is not a draft any more; say so in its
+    // own words rather than calling it an invoice.
+    if (normalizedStatus(data) === 'quote') {
+      throw new HttpsError('failed-precondition', 'This quote has already been sent to the household.', {
+        code: 'quote_already_sent',
+      });
+    }
     throw new HttpsError('failed-precondition', 'Invoice is not a draft; nothing to send.');
   }
 
+  const quote = isQuoteDraft(data);
   const missing: string[] = [];
-  if (typeof data.total !== 'number' || !(data.total > 0)) missing.push('total');
+  // A quote may be for nothing yet (a $0 quote is a real proposal, and
+  // createQuote has always allowed one); a bill for nothing is refused.
+  if (!quote && (typeof data.total !== 'number' || !(data.total > 0))) missing.push('total');
   if (typeof data.kinfolkId !== 'string' || data.kinfolkId.length === 0) missing.push('household');
   if (typeof data.invoiceNumber !== 'string' || data.invoiceNumber.trim().length === 0) {
-    missing.push('invoice number');
+    missing.push(quote ? 'quote number' : 'invoice number');
   }
   if (missing.length > 0) {
     throw new HttpsError(
       'failed-precondition',
-      `Draft invoice is missing: ${missing.join(', ')}. Complete it before sending.`,
+      `${quote ? 'This quote' : 'Draft invoice'} is missing: ${missing.join(', ')}. Complete it before sending.`,
     );
   }
   return data;
@@ -177,6 +202,7 @@ async function putBackToDraft(
   prior: Record<string, unknown>,
   invoiceId: string,
   cause: unknown,
+  quote: boolean,
 ): Promise<void> {
   let restored = false;
   try {
@@ -184,10 +210,15 @@ async function putBackToDraft(
       const snap = await tx.get(ref);
       const paymentsSnap = await tx.get(ref.collection('payments'));
       const now = (snap.exists ? snap.data() : undefined) as Record<string, unknown> | undefined;
+      // #2087: a quote is put back only while nobody has answered it, nor
+      // withdrawn, turned or archived it since: still the quote this send made.
       const untouched =
         now !== undefined &&
-        normalizedStatus(now as InvoiceDoc) === 'open' &&
-        now['sentBy'] === uid &&
+        (quote
+          ? normalizedStatus(now as InvoiceDoc) === 'quote' &&
+            now['quoteSentBy'] === uid &&
+            quoteDecisionOf(now['quoteDecision']) === null
+          : normalizedStatus(now as InvoiceDoc) === 'open' && now['sentBy'] === uid) &&
         !isArchived(now) &&
         paymentsSnap.docs.length === 0;
       if (!untouched) return false;
@@ -219,11 +250,17 @@ async function putBackToDraft(
     errorMessage: (cause as Error)?.message,
   });
   if (!restored) {
-    throw new HttpsError(
-      'internal',
-      'The invoice was sent, but the household could not be told about it. Use Send reminder to tell them.',
-      { code: 'invoice_sent_not_announced' },
-    );
+    throw quote
+      ? new HttpsError(
+          'internal',
+          'The quote was sent and the household can see it in MyTribe, but they could not be told about it. Let them know it is there.',
+          { code: 'quote_sent_not_announced' },
+        )
+      : new HttpsError(
+          'internal',
+          'The invoice was sent, but the household could not be told about it. Use Send reminder to tell them.',
+          { code: 'invoice_sent_not_announced' },
+        );
   }
 }
 
@@ -246,6 +283,17 @@ export async function reviewAndSendDraftInvoiceHandler(
     throw err;
   }
 
+  return sendDraft(uid, args.invoiceId);
+}
+
+/**
+ * The send itself, after sign-in and arguments are checked. Exported for
+ * `createQuote`, which sends a quote it has just saved through this same core
+ * (#2087), so the two cannot disagree about the order, the refusals or the
+ * put-back.
+ */
+export async function sendDraft(uid: string, invoiceId: string): Promise<z.infer<typeof Result>> {
+  const args = { invoiceId };
   const ref = db().collection('invoices').doc(args.invoiceId);
 
   // THIS is the moment a draft becomes a bill, so this is where the payment
@@ -263,22 +311,37 @@ export async function reviewAndSendDraftInvoiceHandler(
   // before it dispatches. The notice goes out only once the invoice is open,
   // so a household is never told about an invoice it cannot open (drafts are
   // hidden from Kinfolk).
-  const { data, prior } = await db().runTransaction(async (tx) => {
+  const { data, prior, quote } = await db().runTransaction(async (tx) => {
     const draft = sendableDraft(await tx.get(ref), args.invoiceId);
-    const plan = await readSendClaims(tx, db(), args.invoiceId, draft['lineItems']);
+    // #2087: read off the draft THIS transaction read, so a quote turned into
+    // an invoice a moment ago goes out as the invoice it now is.
+    const quote = isQuoteDraft(draft);
+    const plan = await readSendClaims(tx, db(), args.invoiceId, draft['lineItems'], quote ? 'quote' : 'draft');
     // The state stamp (ADR-0002), in the same write as the flip. The standing is
     // read from the payments SUBCOLLECTION; on a real draft it is empty (a draft
     // cannot take a payment, markInvoicePaid refuses it), but reading it keeps
     // the rule uniform rather than asserted per call site.
     const paymentsSnap = await tx.get(ref.collection('payments'));
     const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
-    const update = {
-      status: 'open',
-      invoiceStatus: 'open',
-      sentAt: FieldValue.serverTimestamp(),
-      sentBy: uid,
-      updatedAt: FieldValue.serverTimestamp(),
-    };
+    // A quote becomes a QUOTE (a proposal waiting for an answer), never `open`,
+    // and loses the draft mark; `quoteSentBy` is what a failed notice's
+    // put-back checks, as `sentBy` is for an invoice.
+    const update: Record<string, unknown> = quote
+      ? {
+          status: 'quote',
+          invoiceStatus: 'quote',
+          [QUOTE_DRAFT_FIELD]: FieldValue.delete(),
+          quoteSentAt: FieldValue.serverTimestamp(),
+          quoteSentBy: uid,
+          updatedAt: FieldValue.serverTimestamp(),
+        }
+      : {
+          status: 'open',
+          invoiceStatus: 'open',
+          sentAt: FieldValue.serverTimestamp(),
+          sentBy: uid,
+          updatedAt: FieldValue.serverTimestamp(),
+        };
     const flip: Record<string, unknown> = {
       ...update,
       ...invoiceStateStampOf({ ...draft, ...update }, paidCents),
@@ -294,7 +357,7 @@ export async function reviewAndSendDraftInvoiceHandler(
         .filter((k) => k !== 'updatedAt')
         .map((k) => [k, before[k]]),
     ) as Record<string, unknown>;
-    return { data: draft, prior };
+    return { data: draft, prior, quote };
   });
 
   const familyId = data.kinfolkId as string;
@@ -302,18 +365,31 @@ export async function reviewAndSendDraftInvoiceHandler(
   let dispatched: Awaited<ReturnType<typeof enqueueNotificationDetailed>>;
   try {
     recipientUid = await resolveBillingRecipientUid(familyId);
-    dispatched = await enqueueNotificationDetailed({
-      key: 'invoice.new',
-      recipientUid: recipientUid ?? '',
-      data: { kinfolkId: familyId, invoiceId: args.invoiceId },
-      targetType: 'invoice',
-      targetId: args.invoiceId,
-    });
+    dispatched = await enqueueNotificationDetailed(
+      quote
+        ? {
+            // No quote.issued key exists; invoice.new is the catalog's
+            // "New invoice/quote issued." row, and `isQuote` says which.
+            key: 'invoice.new',
+            recipientUid: recipientUid ?? '',
+            data: { kinfolkId: familyId, invoiceId: args.invoiceId, isQuote: true },
+            targetType: 'invoice',
+            targetId: args.invoiceId,
+            dedupeKey: `quote:${args.invoiceId}:send`,
+          }
+        : {
+            key: 'invoice.new',
+            recipientUid: recipientUid ?? '',
+            data: { kinfolkId: familyId, invoiceId: args.invoiceId },
+            targetType: 'invoice',
+            targetId: args.invoiceId,
+          },
+    );
   } catch (err) {
     // Fail loud, as before: the callable surfaces the error and the invoice is
     // a DRAFT again, so the admin sees the send did NOT happen and a retry
     // starts clean.
-    await putBackToDraft(ref, uid, prior, args.invoiceId, err);
+    await putBackToDraft(ref, uid, prior, args.invoiceId, err, quote);
     throw err;
   }
   // #1511: read for the household alone. `invoice.new` also writes an office
@@ -322,16 +398,19 @@ export async function reviewAndSendDraftInvoiceHandler(
   // delivery to describe, and the answer omits it.
   const appOnly = householdAppOnly(dispatched, recipientUid);
 
+  const words = await import('../lib/activityWords.js');
   await writeAuditEntry({
     status: 'SUCCESS',
-    event: AUDIT_EVENTS.BILLING_DRAFT_INVOICE_SENT,
+    event: quote ? AUDIT_EVENTS.BILLING_QUOTE_SENT : AUDIT_EVENTS.BILLING_DRAFT_INVOICE_SENT,
     severity: 'info',
     actorRole: 'AUNTIE',
     actorUid: uid,
     targetUid: args.invoiceId,
     targetCollection: 'invoices',
     familyId,
-    description: `Draft ${(await import('../lib/activityWords.js')).invoiceWords(data.invoiceNumber).replace(/^an /, '')} reviewed and sent`,
+    description: quote
+      ? words.quoteSentence(data.invoiceNumber, 'sent to the household')
+      : `Draft ${words.invoiceWords(data.invoiceNumber).replace(/^an /, '')} reviewed and sent`,
     payload: { invoiceId: args.invoiceId, kinfolkId: familyId, recipientUid: recipientUid ?? null },
   }).catch((err) => {
     logEvent({
@@ -346,7 +425,7 @@ export async function reviewAndSendDraftInvoiceHandler(
   logEvent({
     severity: 'info',
     function: 'reviewAndSendDraftInvoice',
-    event: 'admin.invoice.draft.sent',
+    event: quote ? 'admin.quote.sent' : 'admin.invoice.draft.sent',
     uid,
     extra: { invoiceId: args.invoiceId, kinfolkId: familyId },
   });

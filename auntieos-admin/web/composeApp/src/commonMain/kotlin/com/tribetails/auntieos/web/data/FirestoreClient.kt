@@ -1600,6 +1600,33 @@ class FirestoreClient {
      * restored draft could not take back ('' when every visit came back, or from
      * a server too old to send one). A refusal is returned verbatim.
      */
+    /**
+     * #2088: the quote becomes a DRAFT INVOICE that keeps its number, lines and
+     * visits; the household hears about the bill when it is sent. Fail-loud:
+     * the server's refusal (accepted, archived, not a quote, a line's visit
+     * billed elsewhere, named by its day) is the message.
+     */
+    suspend fun convertQuoteToInvoice(invoiceId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
+        return when (val r = platformInvokeCallable("convertQuoteToInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
+
+    /**
+     * #2088: the quote is withdrawn (cancelled), the household no longer sees
+     * it, and its visits go back on the not-yet-invoiced list. Answers how many
+     * visits went back.
+     */
+    suspend fun withdrawQuote(invoiceId: String): WriteResult<Int> {
+        val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
+        return when (val r = platformInvokeCallable("withdrawQuote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(decodeReleasedCount(r.value))
+        }
+    }
+
     suspend fun unarchiveInvoice(invoiceId: String): WriteResult<String> {
         val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
         return when (val r = platformInvokeCallable("unarchiveInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
@@ -1904,24 +1931,52 @@ class FirestoreClient {
     suspend fun arrivalRuleRequired(): WriteResult<Boolean> = platformArrivalRuleRequired()
     suspend fun saveBusinessSettings(settings: BusinessSettings): WriteResult<Unit> = platformSaveBusinessSettings(settings)
 
-    // ---- Tag vocabulary writes ----
-    // React sends one key at a time from a profile panel (`{ householdTags }` OR
-    // `{ petTags }`) and both at once from the Tags settings editor. This tree's save
-    // seam takes the whole settings model and merges, so the two helpers below take
-    // the settings you LOADED and swap a single vocabulary, leaving the other list and
-    // every unrelated setting untouched.
+    // ---- Tag vocabulary writes (#2204, #2205) ----
+    // Tags change one named tag at a time, never as a list. A whole list sent
+    // through `saveBusinessSettings` replaced the stored one, so a screen left
+    // open lost a tag added elsewhere and brought a deleted one back. The server
+    // now refuses a changed list there; these two callables are the way in.
 
-    /** Persists the household tag vocabulary (the one that labels `kinfolk` docs). */
-    suspend fun saveHouseholdTagVocabulary(
-        settings: BusinessSettings,
-        vocab: List<TagDef>,
-    ): WriteResult<Unit> = saveBusinessSettings(settings.copy(householdTags = vocab))
+    /**
+     * Adds and recolours tags (`changeBusinessTags`): each change is applied to
+     * the list AS STORED inside one transaction, all or none. A refusal is the
+     * server's plain sentence ("A "VIP" tag already exists.", or "The tag list
+     * changed since this screen opened ... Reload and try again."). Answers with
+     * both lists as stored after the write.
+     */
+    suspend fun changeBusinessTags(changes: List<TagChange>): WriteResult<TagListsAfterChange> {
+        if (changes.isEmpty()) return WriteResult.Err("Nothing to save.")
+        val payload = changeBusinessTagsPayloadOf(changes)
+        return when (val r = platformInvokeCallable(CHANGE_BUSINESS_TAGS_CALLABLE, payload)) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> decodeTagListsAfterChange(r.value)
+                ?.let { WriteResult.Ok(it) }
+                // The write may have landed: say so in plain words, never the function name.
+                ?: WriteResult.Err(TAG_LISTS_NOT_RETURNED)
+        }
+    }
 
-    /** Persists the pet tag vocabulary (the one that labels `kin` docs). */
-    suspend fun savePetTagVocabulary(
-        settings: BusinessSettings,
-        vocab: List<TagDef>,
-    ): WriteResult<Unit> = saveBusinessSettings(settings.copy(petTags = vocab))
+    /** Adds ONE name typed on a profile, default-coloured and with no emoji. */
+    suspend fun addTagToVocabulary(scope: String, name: String): WriteResult<TagListsAfterChange> =
+        changeBusinessTags(
+            listOf(TagChange(TagChange.ADD, scope, normalizeTagName(name), DEFAULT_TAG_COLOR, "")),
+        )
+
+    /**
+     * #713 on this console: deletes ONE tag everywhere (`removeBusinessTag`),
+     * off the list and off every household (scope "household") or Kin ("pet")
+     * carrying it. Answers with how many records it came off.
+     */
+    suspend fun removeBusinessTag(scope: String, name: String): WriteResult<Int> {
+        val payload = buildJsonObject {
+            put("scope", JsonPrimitive(scope))
+            put("name", JsonPrimitive(name))
+        }
+        return when (val r = platformInvokeCallable(REMOVE_BUSINESS_TAG_CALLABLE, callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(decodeRecordsTouched(r.value))
+        }
+    }
 
     // ---- Booking writes ----
     fun bookingRequestsStream(): Flow<FirestoreResult<List<KinCareSession>>> {
@@ -4163,6 +4218,19 @@ data class Invoice(
     // stored (a timestamp in whatever shape the bridge delivers); present and
     // not null means archived, the server's own rule. Nothing here writes it.
     val archivedAt: JsonElement? = null,
+    /**
+     * #2087: true on a quote saved with "Send to kinfolk now" off: a draft only
+     * the office sees, which goes out as a quote when it is sent. Written by
+     * the server only. Read through `screens.invoices.isQuoteDraft`.
+     */
+    val quoteDraft: Boolean? = null,
+    /**
+     * #2195: the household's answer to a quote ('accepted' or 'denied'), read
+     * only so the Archived and Restore words do not promise a declined quote an
+     * answer. Raw, so an odd stored value cannot fail the whole decode. Read
+     * through `screens.invoices.quoteDeclined`.
+     */
+    val quoteDecision: JsonElement? = null,
 )
 
 /**
@@ -5197,6 +5265,44 @@ internal fun publishGeneratedDraftPayloadOf(draftId: String, bodyCopy: String, t
         put("bodyCopy", JsonPrimitive(bodyCopy))
         if (title.isNotBlank()) put("title", JsonPrimitive(title.trim()))
     }
+/**
+ * #2205: what the screen says when `changeBusinessTags` answered without its
+ * lists. The change may well have saved, so the sentence sends the owner to
+ * look again rather than to try again (a retried add would read as a duplicate).
+ */
+internal const val TAG_LISTS_NOT_RETURNED: String =
+    "The tags may have saved, but the updated list did not come back. Reopen this screen to check."
+
+/** #2205: the two tag callables this console calls by name. */
+internal const val CHANGE_BUSINESS_TAGS_CALLABLE = "changeBusinessTags"
+internal const val REMOVE_BUSINESS_TAG_CALLABLE = "removeBusinessTag"
+
+private val tagChangeJson = Json { encodeDefaults = true }
+
+/** The `changeBusinessTags` request body: `{ changes: [...] }`, every field named. */
+internal fun changeBusinessTagsPayloadOf(changes: List<TagChange>): String =
+    tagChangeJson.encodeToString(
+        JsonObject.serializer(),
+        buildJsonObject {
+            put("changes", tagChangeJson.encodeToJsonElement(ListSerializer(TagChange.serializer()), changes))
+        },
+    )
+
+/** Both lists off a `changeBusinessTags` answer, through the tolerant read decode. Null when there are none. */
+internal fun decodeTagListsAfterChange(raw: String): TagListsAfterChange? = runCatching {
+    val obj = Json.parseToJsonElement(raw).jsonObject
+    if (!obj.containsKey("householdTags") && !obj.containsKey("petTags")) return@runCatching null
+    val decode = { key: String ->
+        obj[key]?.let { Json.decodeFromJsonElement(TolerantTagDefListSerializer, it) } ?: emptyList()
+    }
+    TagListsAfterChange(household = decode("householdTags"), pet = decode("petTags"))
+}.getOrNull()
+
+/** `recordsTouched` off a `removeBusinessTag` answer; 0 when absent. */
+internal fun decodeRecordsTouched(raw: String): Int =
+    runCatching { Json.parseToJsonElement(raw).jsonObject["recordsTouched"]?.jsonPrimitive?.intOrNull }
+        .getOrNull() ?: 0
+
 /** #1563: the report id out of a `publishGeneratedDraft` reply, or null. Pure; tested. */
 internal fun decodePublishedReportId(raw: String): String? =
     runCatching {
@@ -5220,6 +5326,10 @@ fun orderVisitReports(reports: List<KinCareReport>, sessionId: String): List<Kin
     return sent + rest
 }
 
+/** #2088: how many visits a `withdrawQuote` answer put back on the list; 0 when the body does not parse. */
+internal fun decodeReleasedCount(body: String): Int = runCatching {
+    (Json.parseToJsonElement(body).jsonObject["releasedSessionIds"] as? kotlinx.serialization.json.JsonArray)?.size ?: 0
+}.getOrDefault(0)
 /**
  * #2168: the `notice` of an `unarchiveInvoice` answer. '' when it is absent,
  * not a string, or the body does not parse: the restore itself happened, and

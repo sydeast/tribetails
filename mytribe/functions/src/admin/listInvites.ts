@@ -3,8 +3,6 @@ import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
-import { writeAuditEntry } from '../lib/writeAuditEntry';
-import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import type { InviteStatus, MemberPermissions, MemberRole } from '../lib/schema';
@@ -45,9 +43,9 @@ import type { InviteStatus, MemberPermissions, MemberRole } from '../lib/schema'
  * not redeem: `acceptInvite` additionally requires the caller's VERIFIED token
  * email to equal `invitedEmail`.
  *
- * Read-only: this callable writes no invite or member state. It does write one
- * cross-tenant access audit entry, mirroring `resolveKinfolkAccess`'s hardening
- * for staff reaching into a household they do not belong to.
+ * Read-only: this callable writes no invite or member state and no Activity
+ * Log line. Only the owner reaches it, and operator ruling 2026-11-12 (#1839)
+ * stopped logging the owner's own looks.
  */
 const Args = z.object({
   familyId: z.string().min(1).max(200),
@@ -235,28 +233,8 @@ export async function listInvitesHandler(
     snap.docs.map((d) => mapInviteDoc(d.id, (d.data() ?? {}) as Record<string, unknown>, nowMs)),
   );
 
-  // Staff reading a household's invite roster is cross-tenant by definition (an
-  // operator has no member doc for any family), so it is audited the same way
-  // resolveKinfolkAccess audits an operator read. Best-effort: a failed audit
-  // must not make a successful read look like a failed one.
-  await writeAuditEntry({
-    status: 'SUCCESS',
-    event: AUDIT_EVENTS.OPERATOR_CROSSTENANT_ACCESS,
-    severity: 'info',
-    actorRole: 'AUNTIE',
-    actorUid: uid,
-    targetUid: args.familyId,
-    familyId: args.familyId,
-    payload: { function: 'listInvites', kinfolkId: args.familyId, count: invites.length },
-  }).catch((err) => {
-    logEvent({
-      severity: 'warn',
-      function: 'listInvites',
-      event: 'audit.write.failed',
-      uid,
-      errorMessage: (err as Error)?.message,
-    });
-  });
+  // #1839: no Activity Log line. Only the owner reaches this callable, and
+  // operator ruling 2026-11-12 stopped logging her own looks.
 
   // Count only. The invite ids are bearer tokens (see the file header) and do
   // not belong in structured logs.

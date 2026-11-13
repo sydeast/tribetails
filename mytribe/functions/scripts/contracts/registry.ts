@@ -35,6 +35,12 @@ import { Args as CreateQuoteArgs, Result as CreateQuoteResult } from '../../src/
 // The office's answer to a decline (issue #448): revise the quote and send it
 // back out, which clears the household's answer so they can give a new one.
 import { Args as ResendQuoteArgs, Result as ResendQuoteResult } from '../../src/admin/resendQuote';
+import {
+  ConvertQuoteToInvoiceArgs,
+  ConvertQuoteToInvoiceResult,
+  WithdrawQuoteArgs,
+  WithdrawQuoteResult,
+} from '../../src/admin/quoteActions';
 import { Args as GenerateInvoicePdfArgs, Result as GenerateInvoicePdfResult } from '../../src/admin/generateInvoicePdf';
 import { Args as GenerateReceiptArgs, Result as GenerateReceiptResult } from '../../src/admin/generateReceipt';
 import { Args as GetInvoiceLedgerArgs, Result as GetInvoiceLedgerResult } from '../../src/admin/getInvoiceLedger';
@@ -185,6 +191,9 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'listUnappliedPayments', args: ListUnappliedPaymentsArgs, result: ListUnappliedPaymentsResult },
     { name: 'resolveUnappliedPayment', args: ResolveUnappliedPaymentArgs, result: ResolveUnappliedPaymentResult },
     { name: 'resendQuote', args: ResendQuoteArgs, result: ResendQuoteResult },
+    // #2088: the office turns a quote into a draft invoice, or withdraws it.
+    { name: 'convertQuoteToInvoice', args: ConvertQuoteToInvoiceArgs, result: ConvertQuoteToInvoiceResult },
+    { name: 'withdrawQuote', args: WithdrawQuoteArgs, result: WithdrawQuoteResult },
     { name: 'reviewAndSendDraftInvoice', args: ReviewAndSendDraftInvoiceArgs, result: ReviewAndSendDraftInvoiceResult },
     { name: 'previewInvoiceNotice', args: PreviewInvoiceNoticeArgs, result: PreviewInvoiceNoticeResult },
     { name: 'sendInvoiceReminder', args: SendInvoiceReminderArgs, result: SendInvoiceReminderResult },

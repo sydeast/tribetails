@@ -152,3 +152,32 @@ export function editTag(
       : t,
   );
 }
+
+/**
+ * #2205: one named change to a tag list, the unit `changeBusinessTags` takes.
+ * No client sends a whole list: the server applies each change to the list as
+ * stored, so a tag added on another device is never lost and a deleted one
+ * never comes back. Deleting is `removeBusinessTag`, not a change here.
+ */
+export type TagChange =
+  | { action: 'add'; scope: TagScope; name: string; color: TagColor; icon: string }
+  | { action: 'style'; scope: TagScope; name: string; color: TagColor; icon: string };
+/**
+ * The changes that turn [baseline] (the list as this screen loaded it) into
+ * [draft] (the list on screen): an `add` for each name the baseline lacks, a
+ * `style` for each name whose colour or emoji differs. A name only the
+ * baseline has is left alone (deleting goes through `removeBusinessTag`), and
+ * order is not sent: the server appends, the way `addTag` does.
+ */
+export function tagListChanges(scope: TagScope, baseline: TagDef[], draft: TagDef[]): TagChange[] {
+  const out: TagChange[] = [];
+  for (const t of draft) {
+    const was = baseline.find((b) => sameName(b.name, t.name));
+    if (was === undefined) {
+      out.push({ action: 'add', scope, name: t.name, color: t.color, icon: t.icon });
+    } else if (was.color.token !== t.color.token || was.color.css !== t.color.css || was.icon !== t.icon) {
+      out.push({ action: 'style', scope, name: t.name, color: t.color, icon: t.icon });
+    }
+  }
+  return out;
+}

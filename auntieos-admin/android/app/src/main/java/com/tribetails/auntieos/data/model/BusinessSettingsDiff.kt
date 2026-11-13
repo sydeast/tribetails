@@ -178,26 +178,12 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     ),
     // --- Weather area ---
     "weatherLocation" to SettingsDiffField({ it.weatherLocation }),
-    // --- Tag vocabularies ---
-    // COMPARED DECODED, WRITTEN RAW, the same split `Kinfolk.tags` needed in
-    // `DirectoryFieldChanges.kt`. A doc that has never had a vocabulary holds no
-    // key at all and reads as null, while the Tags panel re-encodes BOTH scopes
-    // on every save and so offers `[]` for the one it did not touch. Comparing
-    // the raw values would call that a change and write an empty array over
-    // "never configured"; comparing the decoded vocabulary calls it what it is.
-    // The written value stays the raw encoded list so `TagColor.css` round-trips
-    // to React unchanged.
-    "householdTags" to SettingsDiffField(
-        write = { it.householdTags },
-        compare = { it.householdTagDefs() },
-    ),
-    "petTags" to SettingsDiffField(
-        write = { it.petTags },
-        compare = { it.petTagDefs() },
-    ),
+    // --- Tag vocabularies: not here (#2205) ---
+    // `householdTags` / `petTags` are in [BUSINESS_SETTINGS_SAVED_ELSEWHERE]:
+    // they change one named tag at a time through `changeBusinessTags` and
+    // `removeBusinessTag`, never as a list through this save.
     // --- MyTribe portal Home layout (issue #397 M10) ---
-    // Same split as the tag vocabularies just above, and for the same reason:
-    // this client only edits `home.sections` (`withHomeSections`), never
+    // COMPARED DECODED, WRITTEN RAW: this client only edits `home.sections` (`withHomeSections`), never
     // `logoUrl`/`themeId`/`banner`/`chat`, so comparing the RAW `mytribePortal`
     // value would call re-encoding an untouched layout a change (or comparing
     // a stray unmodelled sibling key an edit here never touched). Comparing the
@@ -234,6 +220,17 @@ internal fun portalHomeSlice(raw: Any?): Any? {
  * on this model at all; see the file header.
  */
 internal val BUSINESS_SETTINGS_SERVER_OWNED = setOf("id", "updatedAt", "updatedBy", "closedDayHours")
+
+/**
+ * #2205: fields on the model that this save never writes, because they change
+ * through a callable of their own.
+ *
+ * - `householdTags` / `petTags`  one named tag at a time: `changeBusinessTags`
+ *   adds and recolours, `removeBusinessTag` deletes. A whole list sent here
+ *   replaced the stored one, so a screen left open lost tags added elsewhere and
+ *   brought deleted ones back; the server now refuses a changed list.
+ */
+internal val BUSINESS_SETTINGS_SAVED_ELSEWHERE = setOf("householdTags", "petTags")
 
 /**
  * #1593: [changes] as the `saveBusinessSettings` callable can carry it.

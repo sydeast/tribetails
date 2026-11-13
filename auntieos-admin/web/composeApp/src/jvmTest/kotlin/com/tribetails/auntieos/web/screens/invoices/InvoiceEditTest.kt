@@ -211,7 +211,9 @@ class InvoiceEditTest {
         val open = itemized().copy(status = "open", total = 40.0)
         val draft = itemized().copy(status = "draft", total = 25.0)
         val quote = itemized().copy(status = "quote", total = 90.0)
-        assertEquals(40.0, invoiceBilledTotal(listOf(open, draft, quote)))
+        // #2088: a withdrawn quote is cancelled, and not billed either.
+        val withdrawn = itemized().copy(status = "cancelled", total = 70.0)
+        assertEquals(40.0, invoiceBilledTotal(listOf(open, draft, quote, withdrawn)))
     }
     @Test
     fun aMissingNumberReadsAsWordsNotNone() {

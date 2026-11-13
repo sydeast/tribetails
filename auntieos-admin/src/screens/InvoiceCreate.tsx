@@ -38,6 +38,11 @@ export type InvoiceCreateMode = 'invoice' | 'quote';
 export interface CreatedSend {
   quote: boolean;
   appOnly: boolean;
+  /**
+   * #2087: the quote was saved (a draft only the office sees) but its send
+   * failed. The server's sentence, which says so and how to send it.
+   */
+  notSent?: string;
 }
 
 interface InvoiceCreateProps {
@@ -503,7 +508,21 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
       onClose();
     } catch (caught) {
       setSubmitting(false);
-      setSubmitError(`Could not create the ${isQuote ? 'quote' : 'invoice'}: ${caught instanceof Error ? caught.message : 'Create failed'}`);
+      // #2087: the quote WAS saved (as a draft only the office sees) and only
+      // the send failed. The composer closes onto that draft, so a changed
+      // line cannot ride a retry of the old submission, and the server's
+      // sentence (which says so, and to press Send quote) is shown as a
+      // warning on the list. "Could not create" would contradict it.
+      const details = (caught as { details?: { code?: unknown; invoiceId?: unknown } } | null)?.details;
+      if (details?.code === 'quote_saved_not_sent' && typeof details.invoiceId === 'string' && caught instanceof Error) {
+        submissionKey.current = null;
+        onCreated?.(details.invoiceId, { quote: true, appOnly: false, notSent: caught.message });
+        onClose();
+        return;
+      }
+      setSubmitError(
+        `Could not create the ${isQuote ? 'quote' : 'invoice'}: ${caught instanceof Error ? caught.message : 'Create failed'}`,
+      );
     }
   }
 

@@ -25,6 +25,7 @@ bulkArchiveNotifications
 bulkMarkNotificationsRead
 bulkUnarchiveNotifications
 cancelMarketingBlast
+changeBusinessTags
 checkBusinessAdmins
 claimInviteSignup
 cleanupExpiredShareLinks
@@ -32,6 +33,7 @@ clearMessageSuppression
 confirmBrandAssetUpload
 confirmKinPhotoUpload
 confirmSecureReset
+convertQuoteToInvoice
 convertTemplateToVisual
 createBillingSetupSession
 createBlockedTimeSlot
@@ -323,3 +325,4 @@ upsertSupply
 verifyActivityLogChain
 verifyVisitArrival
 videoGpsStripSweep
+withdrawQuote

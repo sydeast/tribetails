@@ -684,7 +684,11 @@ fun AdminSettingsScreen(
                         SettingsSection.Tags -> TagVocabularyPanel(
                             settings = uiState.businessSettings,
                             isLoading = uiState.isLoading,
-                            onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                            saveBusy = uiState.tagSaveBusy,
+                            saveError = uiState.tagSaveError,
+                            saved = uiState.tagSaved,
+                            onSaveTags = { household, pet -> viewModel.saveTagChanges(household, pet) },
+                            onReloadTags = { viewModel.reloadTagLists() },
                             removeBusy = uiState.tagRemoveBusy,
                             removeMessage = uiState.tagRemoveMessage,
                             removeError = uiState.tagRemoveError,
@@ -3222,10 +3226,11 @@ private fun TagVocabSection(
 }
 
 /**
- * The Den's Tags vocabulary editor: both vocabularies, edited locally and saved
- * together. React's editor sends `{ householdTags, petTags }` in one write, so
- * this does the same through a single [BusinessSettings] save; the two lists are
- * only written independently from a profile's inline promotion, not here.
+ * The Den's Tags vocabulary editor: both vocabularies, edited locally. Save
+ * sends what changed as named changes (each new name, each colour or emoji
+ * change) through `changeBusinessTags` (#2205), the same as the React editor,
+ * never the lists: the server applies them to the lists as stored, so a tag
+ * added elsewhere is kept and a deleted one is not brought back.
  *
  * REMOVE IS THE ONE EDIT THAT DOES NOT WAIT FOR SAVE (#713). It used to filter
  * the local list like the others, which left every household and pet still
@@ -3238,7 +3243,11 @@ private fun TagVocabSection(
 private fun TagVocabularyPanel(
     settings: BusinessSettings,
     isLoading: Boolean,
-    onSettingsChange: (BusinessSettings) -> Unit,
+    saveBusy: Boolean,
+    saveError: String?,
+    saved: Boolean,
+    onSaveTags: (List<TagDef>, List<TagDef>) -> Unit,
+    onReloadTags: () -> Unit,
     removeBusy: Boolean,
     removeMessage: String?,
     removeError: String?,
@@ -3291,12 +3300,21 @@ private fun TagVocabularyPanel(
             }
         }
 
+        saveError?.let { msg ->
+            AuntieBanner(tone = AuntieBannerTone.Error, title = "Save failed") {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    GhostButton(label = "Reload tags", enabled = !saveBusy, onClick = onReloadTags)
+                }
+            }
+        }
+
         TagVocabSection(
             title = "Household tags",
             subtitle = "Label a household (a kinfolk), e.g. VIP or Slow pay. Used by broadcasts and KinTale rules.",
             scopeNoun = "household",
             tags = household,
-            enabled = !isLoading && !removeBusy,
+            enabled = !isLoading && !removeBusy && !saveBusy,
             onChange = { household = it },
             onRequestRemove = { pendingRemove = TagScope.HOUSEHOLD to it },
         )
@@ -3306,25 +3324,20 @@ private fun TagVocabularyPanel(
             subtitle = "Label a pet (a kin), e.g. Reactive or On meds.",
             scopeNoun = "pet",
             tags = pet,
-            enabled = !isLoading && !removeBusy,
+            enabled = !isLoading && !removeBusy && !saveBusy,
             onChange = { pet = it },
             onRequestRemove = { pendingRemove = TagScope.PET to it },
         )
 
         PrimaryButton(
-            label = "Save tags",
-            enabled = dirty && !isLoading && !removeBusy,
-            onClick = {
-                onSettingsChange(
-                    settingsWithTagVocab(
-                        settingsWithTagVocab(settings, TagScope.HOUSEHOLD, household),
-                        TagScope.PET,
-                        pet,
-                    )
-                )
-            },
+            label = if (saveBusy) "Saving…" else "Save tags",
+            enabled = dirty && !isLoading && !removeBusy && !saveBusy,
+            onClick = { onSaveTags(household, pet) },
             modifier = Modifier.fillMaxWidth(),
         )
+        if (saved && !dirty) {
+            Text("Saved", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
     }
 
     pendingRemove?.let { (scope, name) ->

@@ -35,9 +35,16 @@ import kotlin.coroutines.cancellation.CancellationException
  * came off when it never did.
  *
  * A typed name not yet in the vocabulary can be promoted to it inline ("add to
- * your tags"): that both assigns the name and appends a default-colored [TagDef]
+ * your tags"): that both assigns the name and adds a default-colored [TagDef]
  * to the right vocabulary list, so it becomes a reusable suggestion
  * (recolorable later in the Tags settings panel).
+ *
+ * #2204 / #2205: the promotion sends the ONE name (`changeBusinessTags`), which
+ * the server adds to the list as stored, never this panel's copy of the list.
+ * It is offered only once the list has loaded and only to the owner: before the
+ * load, and after a failed one, the field cannot tell a new name from one
+ * already on the list. A loading line shows while the list loads; after a failed
+ * load the warning stays and typed tags still save on the profile.
  *
  * Loading and persisting are passed in rather than reached for, so the panel
  * carries no Firebase dependency and the profile screen keeps ownership of its
@@ -96,6 +103,20 @@ fun tagSaveOutcome(
         TagSaveOutcome(tags = previous, error = tagSaveErrorMessage(error))
     }
 
+/** Where the vocabulary read stands. "add to your tags" waits for [READY]. */
+enum class TagVocabLoad { LOADING, READY, FAILED }
+
+/** The line shown while the suggestions load. The same words as the React panel. */
+const val TAG_SUGGESTIONS_LOADING = "Loading tag suggestions…"
+
+/**
+ * #2204: offer "add to your tags" only once the list has loaded and only to the
+ * owner. [isOwner] null means the check has not answered yet, which is a no.
+ * Pure; tested.
+ */
+fun vocabAddOffered(load: TagVocabLoad, isOwner: Boolean?): Boolean =
+    load == TagVocabLoad.READY && isOwner == true
+
 /** Where an optimistic vocabulary promotion leaves the panel. */
 data class TagVocabOutcome(val vocab: List<TagDef>, val error: String?)
 
@@ -134,8 +155,11 @@ fun promoteTagToVocab(vocab: List<TagDef>, name: String): List<TagDef>? = try {
  * @param onSaveTags   Persists the next name list to the profile doc
  *                     (`kinfolk/{id}.tags` or `kin/{id}.tags`). Throws on failure.
  * @param loadVocab    Reads the scope's vocabulary from `business_settings`.
- * @param onSaveVocab  Persists a grown vocabulary back to `business_settings`.
- *                     Write only this scope's field, never the whole doc.
+ * @param loadIsOwner  Whether this sign-in is the owner, the only one who may
+ *                     add to the business's tag list.
+ * @param onAddVocab   Adds ONE name to the stored list (`changeBusinessTags`) and
+ *                     answers with this scope's list as stored after the add.
+ *                     Throws on failure.
  */
 @Composable
 fun ProfileTagsSection(
@@ -143,7 +167,8 @@ fun ProfileTagsSection(
     initialTags: List<String>,
     onSaveTags: suspend (List<String>) -> Unit,
     loadVocab: suspend () -> List<TagDef>,
-    onSaveVocab: suspend (List<TagDef>) -> Unit,
+    loadIsOwner: suspend () -> Boolean,
+    onAddVocab: suspend (String) -> List<TagDef>,
     modifier: Modifier = Modifier,
 ) {
     val c = AuntieTheme.colors
@@ -152,20 +177,36 @@ fun ProfileTagsSection(
 
     var tags by remember { mutableStateOf(initialTags) }
     var vocab by remember { mutableStateOf(emptyList<TagDef>()) }
+    var vocabLoad by remember { mutableStateOf(TagVocabLoad.LOADING) }
+    var isOwner by remember { mutableStateOf<Boolean?>(null) }
     var vocabError by remember { mutableStateOf<String?>(null) }
     var saveError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
 
     LaunchedEffect(scope) {
+        vocabLoad = TagVocabLoad.LOADING
         try {
             vocab = loadVocab()
             vocabError = null
+            vocabLoad = TagVocabLoad.READY
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
             // The field stays usable without suggestions, but the operator is
             // told the autocomplete is not showing everything it should.
             vocabError = tagVocabLoadErrorMessage(failure)
+            vocabLoad = TagVocabLoad.FAILED
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        isOwner = try {
+            loadIsOwner()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            // Unknown is a no: the add is a Business Settings edit.
+            false
         }
     }
 
@@ -191,19 +232,25 @@ fun ProfileTagsSection(
     }
 
     fun handleCreateVocab(name: String) {
+        // Belt and braces: the field is not handed this handler unless the list
+        // has loaded and the owner is signed in (see [vocabAddOffered]).
+        if (!vocabAddOffered(vocabLoad, isOwner)) return
         val next = promoteTagToVocab(vocab, name) ?: return
         val previous = vocab
         vocab = next
         savingScope.launch {
+            var stored: List<TagDef> = next
             val failure = try {
-                onSaveVocab(next)
+                stored = onAddVocab(next.last().name)
                 null
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failed: Throwable) {
                 failed
             }
-            val outcome = tagVocabOutcome(previous = previous, attempted = next, error = failure)
+            // Success shows the list as the server now holds it, tags added
+            // elsewhere included; failure reverts and says why.
+            val outcome = tagVocabOutcome(previous = previous, attempted = stored, error = failure)
             vocab = outcome.vocab
             if (outcome.error != null) saveError = outcome.error
         }
@@ -211,6 +258,10 @@ fun ProfileTagsSection(
 
     DenPanel(title = "Tags", subtitle = copy.subtitle, modifier = modifier) {
         Column(Modifier.fillMaxWidth()) {
+            if (vocabLoad == TagVocabLoad.LOADING) {
+                Text(TAG_SUGGESTIONS_LOADING, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                Spacer(Modifier.height(12.dp))
+            }
             vocabError?.let { message ->
                 AuntieBanner(
                     tone = AuntieBannerTone.Warning,
@@ -234,7 +285,7 @@ fun ProfileTagsSection(
                 value = tags,
                 vocab = vocab,
                 onChange = { handleChange(it) },
-                onCreateVocab = { handleCreateVocab(it) },
+                onCreateVocab = if (vocabAddOffered(vocabLoad, isOwner)) { name -> handleCreateVocab(name) } else null,
                 enabled = !saving,
                 inputLabel = copy.inputLabel,
             )

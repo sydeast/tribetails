@@ -196,3 +196,50 @@ fun suggestTags(input: String, vocab: List<TagDef>, already: List<String>): List
     val contains = pool.filter { !nameKey(it.name).startsWith(query) && nameKey(it.name).contains(query) }
     return starts + contains
 }
+
+// ----- Named changes (#2204, #2205) -----
+
+/**
+ * One named change to a tag list, the unit the `changeBusinessTags` callable
+ * takes. No client sends a whole list: the server applies each change to the
+ * list AS STORED, so a tag added on another device is never lost and a deleted
+ * one never comes back. Deleting is `removeBusinessTag`, not a change here.
+ *
+ * [action] is [ADD] (a new name) or [STYLE] (the colour and emoji of a name
+ * already on the list); [scope] is the wire value, "household" or "pet".
+ * Serialised field for field into the callable payload. Mirrors `TagChange` in
+ * the React admin's `lib/tags/model.ts`.
+ */
+@Serializable
+data class TagChange(
+    val action: String,
+    val scope: String,
+    val name: String,
+    val color: TagColor,
+    val icon: String,
+) {
+    companion object {
+        const val ADD = "add"
+        const val STYLE = "style"
+    }
+}
+
+/**
+ * The changes that turn [baseline] (the list as the screen loaded it) into
+ * [draft] (the list on screen): an add for each name the baseline lacks, a style
+ * for each name whose colour or emoji differs. A name only the baseline has is
+ * left alone (deleting goes through `removeBusinessTag`), and order is not sent.
+ * Pure; the same rule as `tagListChanges` in the React admin.
+ */
+fun tagListChanges(scope: String, baseline: List<TagDef>, draft: List<TagDef>): List<TagChange> =
+    draft.mapNotNull { t ->
+        val was = baseline.firstOrNull { sameName(it.name, t.name) }
+        when {
+            was == null -> TagChange(TagChange.ADD, scope, t.name, t.color, t.icon)
+            was.color != t.color || was.icon != t.icon -> TagChange(TagChange.STYLE, scope, t.name, t.color, t.icon)
+            else -> null
+        }
+    }
+
+/** Both tag lists as the server stored them after a `changeBusinessTags` write. */
+data class TagListsAfterChange(val household: List<TagDef>, val pet: List<TagDef>)

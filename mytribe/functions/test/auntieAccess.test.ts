@@ -97,6 +97,8 @@ describe('#944 the allowlist is a real list of real callables', () => {
       'listUnappliedPayments', 'resolveUnappliedPayment',
       // #1113: retrying the close of a paid invoice's open payment links.
       'retryInvoiceCheckoutClose',
+      // #2088: turning a quote into an invoice, and withdrawing one.
+      'convertQuoteToInvoice', 'withdrawQuote',
     ];
     const leaked = money.filter((n) => AUNTIE_ALLOWED_CALLABLES.has(n));
     expect(leaked).toEqual([]);

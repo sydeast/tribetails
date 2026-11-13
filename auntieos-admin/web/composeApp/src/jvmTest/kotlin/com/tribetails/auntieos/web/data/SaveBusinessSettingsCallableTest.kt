@@ -204,11 +204,22 @@ class SaveBusinessSettingsCallableTest {
         )
     }
 
+    /**
+     * #2205: a tag list never rides along with a settings save. A whole list here
+     * replaced the stored one, and the server now refuses a changed list; tags
+     * change one named tag at a time through `changeBusinessTags`.
+     */
     @Test
-    fun tagsGoAsAListOfObjectsWithAName() {
+    fun aTagListNeverGoesOutWithASettingsSave() {
+        read(loaded.copy(householdTags = listOf(TagDef(name = "Stale")))); answerOk()
+        save(loaded.copy(householdTags = listOf(TagDef(name = "VIP")), petTags = listOf(TagDef(name = "Shy")), weatherLocation = "Round Rock, TX"))
+        assertEquals(setOf("weatherLocation"), lastChanges().keys)
+    }
+
+    @Test
+    fun aTagOnlyEditMakesNoSettingsCall() {
         read(); answerOk()
-        save(loaded.copy(householdTags = listOf(TagDef(name = "VIP"))))
-        val tag = lastChanges().getValue("householdTags").jsonArray.single().jsonObject
-        assertEquals(JsonPrimitive("VIP"), tag["name"])
+        assertEquals(WriteResult.Ok(Unit), save(loaded.copy(householdTags = listOf(TagDef(name = "VIP")))))
+        assertTrue(saveCalls().isEmpty())
     }
 }

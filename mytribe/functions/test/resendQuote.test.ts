@@ -65,8 +65,8 @@ function declinedQuote(over: Record<string, unknown> = {}): Record<string, unkno
     quoteDecidedByName: 'Sam',
     total: 240,
     amountDue: 240,
-    // Far in the future: the expiry guard is exercised on its own below, and
-    // every other case here would otherwise depend on today's date.
+    // Far in the future, from when quotes expired (#2088 ended that); kept so
+    // the fixture is a quote with an ordinary due date.
     dueDate: '2999-12-31',
     ...over,
   };
@@ -339,22 +339,24 @@ describe('resendQuote refusals', () => {
     expect(err.details).toMatchObject({ code: 'quote_not_a_quote' });
   });
 
-  it('REFUSES AN EXPIRED QUOTE rather than sending out one that can only be declined', async () => {
-    // The dead end this guard exists for: `quoteDecisionRefusal` refuses to
-    // ACCEPT a quote past its due date but still allows a decline, so resending
-    // an expired one unchanged hands the household a screen whose only working
-    // button says no.
+  it('#2088 sends a declined quote back out whatever its due date: a quote does not expire', async () => {
     const ctx = ctxFor(declinedQuote({ dueDate: '2020-01-01' }));
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await resendQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(res).toMatchObject({ ok: true, status: 'quote' });
+  });
+
+  it('#2195 refuses an archived quote, which is read-only until it is restored, and writes nothing', async () => {
+    const ctx = ctxFor(declinedQuote({ archivedAt: '__TS__' }));
     mocks.dbFn.mockReturnValue(ctx.db);
 
     const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
 
-    expect(err.details).toMatchObject({ code: 'quote_expired' });
-    expect(err.message).toContain('2020-01-01');
-    // And it names the fix, which is an ordinary edit: a declined quote is
-    // fully editable, so a new due date is one save away.
-    expect(err.message).toContain('new due date');
+    expect(err).toMatchObject({ code: 'failed-precondition', details: { code: 'invoice_archived' } });
     expect(quoteWrite(ctx)).toBeUndefined();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
   it('refuses a quote with no household to send it to', async () => {
@@ -424,23 +426,21 @@ describe('resendQuote refusals', () => {
 });
 
 describe('resendQuoteRefusal (pure)', () => {
-  it('never guesses at expiry when the business day could not be resolved', () => {
-    const doc = { status: 'quote', quoteDecision: 'denied', dueDate: '2020-01-01' };
-    expect(resendQuoteRefusal(doc, '')).toBeNull();
-    expect(resendQuoteRefusal(doc, '2026-08-19')!.code).toBe('quote_expired');
+  it('#2088 has no date check: a declined quote past its due date passes', () => {
+    expect(resendQuoteRefusal({ status: 'quote', quoteDecision: 'denied', dueDate: '2020-01-01' })).toBeNull();
   });
 
-  it('treats the due date as the last GOOD day, not the first expired one', () => {
-    const doc = { status: 'quote', quoteDecision: 'denied', dueDate: '2026-08-19' };
-    expect(resendQuoteRefusal(doc, '2026-08-19')).toBeNull();
-    expect(resendQuoteRefusal(doc, '2026-08-20')!.code).toBe('quote_expired');
+  it('#2195 refuses an archived quote before anything else', () => {
+    expect(resendQuoteRefusal({ status: 'quote', quoteDecision: 'denied', archivedAt: '__TS__' })!.code).toBe(
+      'invoice_archived',
+    );
   });
 
   it('names the acceptance before the status, because an accepted quote is not a quote any more', () => {
     // status 'open' would otherwise answer "this is an invoice, not a quote",
     // which is true and tells the operator nothing about why.
     const doc = { status: 'open', quoteDecision: 'accepted' };
-    expect(resendQuoteRefusal(doc, '')!.code).toBe('quote_accepted_locked');
+    expect(resendQuoteRefusal(doc)!.code).toBe('quote_accepted_locked');
   });
 });
 

@@ -19,7 +19,8 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { InvoiceStateSchema, OkSchema } from '../lib/invoiceResponseSchema';
-import { businessTodayIso, quoteDecisionOf, quoteHasExpired } from '../lib/quoteDecision';
+import { quoteDecisionOf } from '../lib/quoteDecision';
+import { INVOICE_ARCHIVED_CODE, isArchived } from '../lib/invoiceArchive';
 import { readQuoteReopen, readSessionsHeldBy, stageSessionLinks, visitsNamedBy } from '../lib/invoiceSessionLinks';
 
 /**
@@ -61,12 +62,10 @@ import { readQuoteReopen, readSessionsHeldBy, stageSessionLinks, visitsNamedBy }
  * is the callable whose whole job that is. Refusing both by name, rather than
  * quietly succeeding, is what keeps this endpoint one action.
  *
- * AN EXPIRED QUOTE IS REFUSED, and this is the trap the guard exists for: a
- * quote whose `dueDate` has passed can still be DECLINED but can never be
- * ACCEPTED (`quoteDecisionRefusal`'s `quote_expired` branch), so resending one
- * unchanged would hand the household a screen whose only working button is the
- * one that says no. The refusal names the fix — give it a new due date first,
- * which is an ordinary edit because a declined quote is fully editable.
+ * #2088 (operator ruling 2026-11-12): A QUOTE DOES NOT EXPIRE, so a declined
+ * quote whose due date has passed is sent back out like any other. #2195: an
+ * ARCHIVED quote is refused, as every write to an archived invoice is
+ * (`refuseIfArchived`): the household cannot see it, so it is restored first.
  *
  * ORDER (#2156 review, the order `reviewAndSendDraftInvoice.ts` took in the
  * #2168 review): the checks, the claim on the quote's visits and the reopen are
@@ -114,7 +113,7 @@ export type ResendQuoteCode =
   | 'quote_not_a_quote'
   | 'quote_accepted_locked'
   | 'quote_not_declined'
-  | 'quote_expired';
+  | 'invoice_archived';
 
 interface ResendRefusal {
   code: ResendQuoteCode;
@@ -125,19 +124,19 @@ interface ResendRefusal {
  * Why a quote cannot be sent back out, or null when it can.
  *
  * PURE and separately tested, same call as `quoteDecisionRefusal`: every branch
- * is a sentence an operator reads, and the expiry arithmetic is the kind that
- * is wrong by a day if nobody pins it down.
- *
- * `todayIso` is the business's own local day, or '' when the zone could not be
- * resolved — in which case the expiry check is SKIPPED rather than guessed,
- * because refusing a resend over an unreadable settings doc would be the worst
- * of the outcomes.
+ * is a sentence an operator reads.
  */
-export function resendQuoteRefusal(
-  doc: Record<string, unknown>,
-  todayIso: string,
-): ResendRefusal | null {
+export function resendQuoteRefusal(doc: Record<string, unknown>): ResendRefusal | null {
   const decision = quoteDecisionOf(doc['quoteDecision']);
+
+  // #2195: an archived invoice is read-only until it is restored, the same
+  // sentence and code every other write gives (`refuseIfArchived`).
+  if (isArchived(doc)) {
+    return {
+      code: INVOICE_ARCHIVED_CODE,
+      message: 'This invoice is archived. Restore it before sending or changing it.',
+    };
+  }
 
   // Checked BEFORE the status, because an accepted quote no longer reads as a
   // quote at all (`acceptQuote` re-stamps it to 'open'), and "this is an
@@ -164,12 +163,6 @@ export function resendQuoteRefusal(
       code: 'quote_not_declined',
       message:
         'This quote is still waiting for an answer, so there is nothing to revive. Send a reminder if the household needs a nudge.',
-    };
-  }
-  if (quoteHasExpired(doc['dueDate'], todayIso)) {
-    return {
-      code: 'quote_expired',
-      message: `This quote was only good through ${String(doc['dueDate'])}, so the household could decline it again but never accept it. Give it a new due date, then send it back out.`,
     };
   }
   return null;
@@ -314,17 +307,11 @@ export async function resendQuoteHandler(
     throw new HttpsError('failed-precondition', 'This quote is not linked to a household, so there is nobody to send it to.');
   }
 
-  // The business's own calendar day, read only when there is a due date to
-  // measure against, exactly as the decision callables do.
-  const todayIso =
-    typeof data['dueDate'] === 'string' && data['dueDate'].trim() !== ''
-      ? await businessTodayIso(firestore, Date.now())
-      : '';
 
   // The pre-flight refusal, so an obviously wrong resend costs no notification.
   // The transaction below re-checks it against the committed doc; this one is
   // the courtesy, that one is the guard.
-  const preflight = resendQuoteRefusal(data, todayIso);
+  const preflight = resendQuoteRefusal(data);
   if (preflight) {
     // #832: a client retry of a resend that COMPLETED. The quote is already
     // reopened, so it reads as "still waiting for an answer", and refusing with
@@ -359,7 +346,7 @@ export async function resendQuoteHandler(
   // the reopen followed, so a New invoice that took one of the quote's visits
   // in between left the household told about a quote that reopened holding
   // nothing and whose Accept was then refused. Every refusal (not declined,
-  // accepted, expired, a line's visit billed elsewhere, cancelled or gone) is
+  // accepted, archived, a line's visit billed elsewhere, cancelled or gone) is
   // decided on what this transaction read, before it writes anything and
   // before any notification. A New invoice save or a second resend racing this
   // one is refereed by Firestore: whichever commits second re-runs and sees
@@ -373,7 +360,7 @@ export async function resendQuoteHandler(
     // inside the transaction that clears it, so a resend racing an acceptance
     // (or a second resend) re-reads the committed answer and fails instead of
     // reopening a quote somebody has just agreed to.
-    const refusal = resendQuoteRefusal(txData, todayIso);
+    const refusal = resendQuoteRefusal(txData);
     if (refusal) throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
     // #2156: declining let the quote's visits go back on the un-invoiced list,
     // and sending it back out takes them back, or refuses when a line's visit

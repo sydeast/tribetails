@@ -173,63 +173,30 @@ class BusinessSettingsDiffTest {
         assertEquals(mapOf<String, Any?>("trackingAccuracy" to "LOW"), changes)
     }
 
-    // ── Tag vocabularies: compared decoded, written raw ───────────────────────
+    // ── Tag vocabularies: never written by this save (#2205) ──────────────────
 
     private val vocab = listOf(
         TagDef(name = "VIP", color = TagColor(token = "accent", css = "var(--color-accent)"), icon = "*"),
     )
 
     /**
-     * A doc that has never held a vocabulary decodes to null. The Tags panel
-     * re-encodes BOTH scopes on every save, so it offers `[]` for the scope the
-     * operator did not touch. That is not a change, and writing it would put an
-     * empty array over "never configured".
+     * A tag list sent whole replaced the stored one, so a screen left open lost
+     * tags added elsewhere and brought deleted ones back. Tags change one named
+     * tag at a time through `changeBusinessTags` / `removeBusinessTag`, so a
+     * settings save never names either list, however the copies differ.
      */
     @Test
-    fun `re-encoding an absent vocabulary is not a change`() {
-        val edited = loaded.withPetTagDefs(emptyList())   // petTags: null -> []
-        assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(loaded, edited))
+    fun `a tag list never goes out with a settings save, however it differs`() {
+        val stale = loaded.withHouseholdTagDefs(vocab).withPetTagDefs(vocab)
+        val edited = loaded.withHouseholdTagDefs(emptyList()).copy(businessName = "Changed")
+        assertEquals(setOf("businessName"), businessSettingsFieldChanges(stale, edited).keys)
+        assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(loaded, loaded.withHouseholdTagDefs(vocab)))
     }
 
     @Test
-    fun `a real vocabulary edit writes the raw encoded rows`() {
-        val edited = loaded.withHouseholdTagDefs(vocab)
-        val changes = businessSettingsFieldChanges(loaded, edited)
-        assertEquals(setOf("householdTags"), changes.keys)
-        assertEquals(encodeTagDefs(vocab), changes["householdTags"])
-    }
-
-    /**
-     * Editing ONE vocabulary must leave the other alone, which is the whole point
-     * on a profile's inline tag promotion: it grows the household bank and must
-     * not touch the pet bank the React admin may have just edited.
-     */
-    @Test
-    fun `editing the household vocabulary leaves the pet vocabulary out of the write`() {
-        val stored = loaded.withPetTagDefs(vocab)
-        val edited = stored.withHouseholdTagDefs(vocab)
-        assertEquals(setOf("householdTags"), businessSettingsFieldChanges(stored, edited).keys)
-    }
-
-    /**
-     * A legacy row carrying a key the model does not model survives, because the
-     * comparison runs on the decoded vocabulary: re-encoding it is not a change,
-     * so nothing is written and the stored row keeps its extra key.
-     */
-    @Test
-    fun `re-encoding a legacy row with an unmodelled key writes nothing`() {
-        val legacy = loaded.copy(
-            householdTags = listOf(
-                mapOf(
-                    "name" to "VIP",
-                    "color" to mapOf("token" to "accent", "css" to "var(--color-accent)"),
-                    "icon" to "*",
-                    "legacyOrder" to 3L,
-                )
-            )
-        )
-        val edited = legacy.withHouseholdTagDefs(legacy.householdTagDefs())
-        assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(legacy, edited))
+    fun `the tag lists are named as saved elsewhere, not forgotten`() {
+        assertEquals(setOf("householdTags", "petTags"), BUSINESS_SETTINGS_SAVED_ELSEWHERE)
+        assertTrue(BUSINESS_SETTINGS_DIFF_FIELDS.keys.intersect(BUSINESS_SETTINGS_SAVED_ELSEWHERE).isEmpty())
     }
 
     // ── MyTribe portal Home layout (issue #397 M10): compared decoded, written raw ──
@@ -485,6 +452,7 @@ class BusinessSettingsDiffTest {
             .filter { !Modifier.isStatic(it.modifiers) }
             .map { it.name }
             .filterNot { it in BUSINESS_SETTINGS_SERVER_OWNED }
+            .filterNot { it in BUSINESS_SETTINGS_SAVED_ELSEWHERE }
             .toSet()
 
         assertEquals(

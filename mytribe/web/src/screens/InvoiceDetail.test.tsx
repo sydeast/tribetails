@@ -479,11 +479,11 @@ describe('InvoiceDetail: answering a quote', () => {
     acceptQuote.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv-open-1', status: 'open' });
     denyQuote.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv-open-1', status: 'quote' });
   });
-  it('offers both answers on an unanswered quote, and names the date it is good through', async () => {
+  it('offers both answers on an unanswered quote, and names no "good through" date (#2088: quotes do not expire)', async () => {
     await renderWith(QUOTE);
     expect(await screen.findByRole('button', { name: 'Accept quote' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Decline' })).toBeInTheDocument();
-    expect(screen.getByText(/good through/)).toBeInTheDocument();
+    expect(screen.queryByText(/good through/)).toBeNull();
     // Still not a bill: no Pay button until it is accepted.
     expect(screen.queryByRole('button', { name: /Pay/ })).toBeNull();
   });
@@ -507,16 +507,24 @@ describe('InvoiceDetail: answering a quote', () => {
     release({ ok: true, invoiceId: 'inv-open-1', status: 'open' });
   });
   it("surfaces the SERVER'S refusal rather than a generic one", async () => {
-    // The expiry rule lives on the server, which is the side that knows the
-    // office's own calendar day. The screen prints what it says.
+    // #2195: the office archived the quote while this screen was open. The
+    // rule lives on the server; the screen prints what it says.
     acceptQuote.mockRejectedValue(
-      new Error('This quote was only good through 2026-08-01, so it can no longer be accepted.'),
+      new Error('This quote is not open for an answer right now. Ask your Auntie about it.'),
     );
     await renderWith(QUOTE);
     await userEvent.click(await screen.findByRole('button', { name: 'Accept quote' }));
     await waitFor(() =>
-      expect(screen.getByText(/only good through 2026-08-01/)).toBeInTheDocument(),
+      expect(screen.getByText('This quote is not open for an answer right now. Ask your Auntie about it.')).toBeInTheDocument(),
     );
+  });
+  it('#2088: a decline refused because the office withdrew the quote shows the server sentence', async () => {
+    denyQuote.mockRejectedValue(
+      new Error('Your Auntie withdrew this quote, so there is nothing to answer. Ask your Auntie if you still want the work.'),
+    );
+    await renderWith(QUOTE);
+    await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
+    await waitFor(() => expect(screen.getByText(/^Your Auntie withdrew this quote/)).toBeInTheDocument());
   });
   it('#2156: an accept refused because the work was billed elsewhere shows the server sentence', async () => {
     acceptQuote.mockRejectedValue(
