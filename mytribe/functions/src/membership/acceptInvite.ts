@@ -11,6 +11,7 @@ import { requireBaseUrl } from '../lib/requireBaseUrl';
 import { logEvent } from '../lib/logger';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { syncKinfolkClaim } from '../lib/kinfolkClaim';
+import { activeMemberRecord } from '../lib/householdMember';
 import type { InviteRequestDoc } from '../lib/schema';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
@@ -215,17 +216,22 @@ export async function acceptInviteHandler(req: CallableRequest<unknown>): Promis
     if (personRef !== null && personSnap?.exists) {
       tx.update(personRef, { access: 'ACTIVE', memberUid: req.auth!.uid, updatedAt: FieldValue.serverTimestamp() });
     }
-    tx.set(memberRef, {
-      uid: req.auth!.uid,
-      displayName: tokenEmail,
-      role: invite.proposedRole,
-      secondaryLabel: invite.secondaryLabel ?? null,
-      permissions: invite.proposedPermissions,
-      status: 'ACTIVE',
-      invitedAt: invite.createdAt,
-      joinedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    // #2096: the one member-record shape, shared with every other path that
+    // attaches a login to a household (lib/householdMember.ts).
+    tx.set(
+      memberRef,
+      activeMemberRecord(
+        {
+          uid: req.auth!.uid,
+          displayName: tokenEmail,
+          role: invite.proposedRole,
+          secondaryLabel: invite.secondaryLabel ?? null,
+          permissions: invite.proposedPermissions,
+          invitedAt: invite.createdAt,
+        },
+        FieldValue.serverTimestamp(),
+      ),
+    );
     tx.set(
       clientRef,
       { kinfolkIds: FieldValue.arrayUnion(invite.tribeId), updatedAt: FieldValue.serverTimestamp() },

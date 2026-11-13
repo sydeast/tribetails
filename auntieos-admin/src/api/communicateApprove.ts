@@ -1,7 +1,7 @@
 import { doc } from 'firebase/firestore';
 import { updateDoc } from '../lib/firestoreWrite';
 import { db, auth } from '../lib/firebase';
-import { call } from '../lib/fns';
+import { logActivity } from './activityLog';
 import { ACTIVITY_WORDS } from '../lib/activityWords';
 
 /**
@@ -92,7 +92,7 @@ export async function approveGeneratedDraft(args: ApproveDraftArgs): Promise<App
   // land outside it as an unchained row.
   let auditWarning: string | null = null;
   try {
-    await call('logActivity', {
+    await logActivity({
       actionType: 'DRAFT_APPROVED',
       // #1747: words for the Activity Log; the draft is the entry's target.
       description: ACTIVITY_WORDS.draftApproved,
@@ -102,6 +102,8 @@ export async function approveGeneratedDraft(args: ApproveDraftArgs): Promise<App
       ...(args.kinfolkId !== null && args.kinfolkId !== ''
         ? { familyId: args.kinfolkId }
         : {}),
+      // #1820: the facts behind the sentence.
+      payload: { draftId },
     });
   } catch (err) {
     auditWarning = err instanceof Error ? err.message : 'The audit entry could not be written.';

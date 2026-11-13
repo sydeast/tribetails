@@ -57,6 +57,7 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // A KinTale itself is a direct client write governed by firestore.rules, not
   // a callable. These are the callables its lifecycle reaches for.
   'dispatchVisitNotification', // Android + desktop announce a send through this
+  'previewVisitNotification', // the clock confirm asks who would be told (#1840)
   'createShareLink', // share a tale with someone outside the household
   'addKinTaleComment', // comments are write-closed in rules; this is the only path
   'getKinTaleComments',
@@ -143,6 +144,15 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'archiveNotification',
   'bulkMarkNotificationsRead',
   'listStaff', // the Assigned Auntie picker renders from this
+  // #1820: the Activity Log line for her own taps (On my way, Arrived,
+  // Departed, a sent KinTale). Writing a line, never reading the log: reading
+  // is audit oversight (rule 4) and stays with the owner. This is the path
+  // the admin clients log through, and it was refusing her, so her taps left
+  // no line. The server works out and records that she is the Auntie
+  // (lib/auditActor.ts), and the callable refuses her any line it does not list
+  // for her (`AUNTIE_LOGGABLE_EVENTS` in admin/logActivity.ts): never money,
+  // sign-in, permissions, settings or anything destructive.
+  'logActivity',
 ]);
 
 /**

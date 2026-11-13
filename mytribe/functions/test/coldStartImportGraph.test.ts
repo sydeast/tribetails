@@ -210,13 +210,28 @@ const ALLOWED_EAGER_PACKAGES = [
  * `triggers/onFamilyKinWrite.ts` (four entries already in this graph) all ask
  * it, so it is resident by construction; every module it imports is too.
  *
- * 443 since #1935 (on top of #1912's 442): `admin/templateChannels.ts` is a new
+ * 445 since #1820 (on top of #1912's 442): three helpers behind two entries
+ * already in this graph. `lib/auditActor.ts` (who the caller is, for an
+ * Activity Log line) and `lib/activityPayload.ts` (the allow-list for a
+ * line's facts) load with `admin/logActivity.ts`; `lib/staffRoles.ts` (owner
+ * or Auntie, per staff uid) loads with `admin/listStaff.ts`. Their imports
+ * are zod and modules already resident (`staffGate`, `auntieAccess`,
+ * `operatorAllowlist`, `firestoreAdmin`, `logger`), so they add no package
+ * to a cold start.
+ *
+ * 446 since #2096 (on top of #1820's 445): `lib/householdMember.ts`, the one
+ * household member-record shape and link decision, which
+ * `membership/acceptInvite.ts` and `admin/setKinfolkClaim.ts` (entries already
+ * in this graph) write through. Its runtime import is `lib/schema.ts`, already
+ * here; the rest are types.
+ *
+ * 447 since #1935 (on top of #2096's 446): `admin/templateChannels.ts` is a new
  * FUNCTIONS entry (the read and the save of a template's text-message and push
  * wording, which no client may touch directly). Its rules,
  * `lib/templateChannelWording.ts`, load with `await import()` inside the
  * handler, so the entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 443;
+const MAX_OWN_EAGER_MODULES = 447;
 
 interface Edge {
   spec: string;

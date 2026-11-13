@@ -89,3 +89,81 @@ export type VerifyResult =
 export async function verifyActivityLogChain(): Promise<VerifyResult> {
   return call<Record<string, never>, VerifyResult>('verifyActivityLogChain', {});
 }
+
+/**
+ * The facts a line may carry (#1820). Mirrors the server allow-list in
+ * `mytribe/functions/src/lib/activityPayload.ts`; a key that is not on that
+ * list is refused there. Never a secret, money, an address, a phone number, an
+ * email or the text of a note.
+ */
+export interface ActivityPayload {
+  visitId?: string;
+  sessionId?: string;
+  bookingId?: string;
+  batchId?: string;
+  kinfolkId?: string;
+  kinId?: string;
+  kinIds?: string[];
+  reportId?: string;
+  draftId?: string;
+  templateId?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  at?: string;
+  reason?: string;
+  kinName?: string;
+  kinfolkName?: string;
+  secondaryKinfolkName?: string;
+  templateName?: string;
+  title?: string;
+  section?: string;
+  category?: string;
+  changedFields?: string[];
+  tags?: string[];
+  addedTags?: string[];
+  removedTags?: string[];
+  count?: number;
+  archived?: boolean;
+  delivered?: boolean;
+  channel?: string;
+}
+
+/** What a screen says about a line it wants written. */
+export interface LogActivityArgs {
+  /** The stored key, SCREAMING_SNAKE_CASE. */
+  actionType: string;
+  /** The sentence the Activity Log row shows. */
+  description: string;
+  status?: 'SUCCESS' | 'FAILURE' | 'PENDING';
+  targetId?: string;
+  targetCollection?: string;
+  /** The household the line is about, when there is one (#1747). */
+  familyId?: string;
+  payload?: ActivityPayload;
+}
+
+/**
+ * Write one Activity Log line through the `logActivity` callable, which seals
+ * it into the hash chain.
+ *
+ * NO ROLE AND NO ACTOR ARE SENT (#1820). The server works out who the caller is
+ * from the sign-in itself, so there is nothing here for a screen to get wrong.
+ *
+ * Rejects when the callable does. Each caller decides what a lost line costs:
+ * the field tap swallows it, Approve reports it as a warning.
+ */
+export async function logActivity(args: LogActivityArgs): Promise<void> {
+  const payload = { ...(args.payload ?? {}), source: 'web' as const };
+  await call('logActivity', {
+    actionType: args.actionType,
+    description: args.description,
+    status: args.status ?? 'SUCCESS',
+    ...(args.targetId !== undefined && args.targetId !== '' ? { targetId: args.targetId } : {}),
+    ...(args.targetCollection !== undefined && args.targetCollection !== ''
+      ? { targetCollection: args.targetCollection }
+      : {}),
+    ...(args.familyId !== undefined && args.familyId !== '' ? { familyId: args.familyId } : {}),
+    payload,
+  });
+}

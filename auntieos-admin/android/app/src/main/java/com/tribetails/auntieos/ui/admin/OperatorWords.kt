@@ -54,6 +54,49 @@ fun actorRoleLabel(role: String): String = when (val key = role.trim().uppercase
     else -> humanizeKey(key)
 }
 
+/** The owner, in the word the admin web header uses for that account. */
+const val OWNER_ROLE_LABEL = "Operator"
+/** A caretaker, in the word the admin web header uses for that account. */
+const val AUNTIE_ROLE_LABEL = "Auntie"
+
+/**
+ * The role an entry's actor held (#1820): "Operator" for the owner, "Auntie"
+ * for a caretaker. Mirrors `actorRoleFor` in the admin web's
+ * `lib/activityDetail.ts`; change the two together.
+ *
+ * The stored role cannot say that on its own. The server files the owner and a
+ * caretaker under one value, and until #1820 every line a client asked for was
+ * stored as PRIMARY, so the owner's clock taps read "Primary kinfolk". Three
+ * sources, in order:
+ *
+ *   1. What the server stamped on the entry when it wrote it (`payload.admin`,
+ *      `payload.staffRole`), on a staff entry. The role held at the time wins.
+ *   2. The staff roster ([roles], uid -> "owner" | "auntie"), whatever role is
+ *      stored. This corrects the entries already stored with the wrong role.
+ *   3. The stored role, through [actorRoleLabel].
+ *
+ * A System entry is never relabelled, and an actor the roster does not hold
+ * keeps the stored role. Display only: the entry is sealed and never rewritten.
+ */
+fun actorRoleFor(
+    storedRole: String,
+    actorId: String,
+    payload: Map<String, Any?> = emptyMap(),
+    roles: Map<String, String> = emptyMap(),
+): String {
+    val stored = storedRole.trim().uppercase()
+    if (stored == "SYSTEM") return actorRoleLabel(stored)
+    if (stored == "AUNTIE") {
+        if (payload["staffRole"] == "auntie") return AUNTIE_ROLE_LABEL
+        if (payload["admin"] == true) return OWNER_ROLE_LABEL
+    }
+    return when (roles[actorId.trim()]) {
+        "owner" -> OWNER_ROLE_LABEL
+        "auntie" -> AUNTIE_ROLE_LABEL
+        else -> actorRoleLabel(stored)
+    }
+}
+
 private val APPLIES_TO_LABELS = mapOf(
     "NONE" to "Nothing yet",
     "KINFOLK" to "Kinfolk profiles",

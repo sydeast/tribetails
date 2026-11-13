@@ -273,6 +273,7 @@ first.
 | `backfill:operator-warning-override` | #877 | `npm --prefix mytribe/functions run backfill:operator-warning-override` |
 | `backfill:emergency-contacts` | #829 | Rehearse on the emulator first; see its section |
 | `backfill:invoice-amount-due` | #902 | `npm --prefix mytribe/functions run backfill:invoice-amount-due -- --project auntieos-ttpc` |
+| `backfill:household-members` | #2096 | `npm --prefix mytribe/functions run backfill:household-members -- --project auntieos-ttpc --allow-prod` (writes only with `--apply` added). Then re-link the test logins: `qa:enable-sandbox-login` and `seed:demo-kinfolk -- --link-uid=<test login uid>`; see its section |
 | `repair:duplicate-vet-clinic-id` | #901 | `npm --prefix mytribe/functions run repair:duplicate-vet-clinic-id -- --project auntieos-ttpc --allow-prod` (the repair writes only with `--apply`) |
 
 ### 4. Read-only reports
