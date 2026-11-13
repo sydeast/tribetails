@@ -11,7 +11,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryMock }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
-vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
+const sentry = vi.hoisted(() => ({ captureFunctionError: vi.fn() }));
+vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: sentry.captureFunctionError }));
 vi.mock('../src/lib/sessionRevocation', () => import('./_helpers/mockSessionRevocation'));
 
 import {
@@ -203,7 +204,7 @@ describe('#2162 no admin client sends a server-only kind', () => {
     expect(android.calls).toBeGreaterThanOrEqual(35);
     expect(desktop.calls).toBeGreaterThanOrEqual(10);
     for (const k of ['DRAFT_APPROVED', 'VISIT_ARRIVED', 'VISIT_UNDO_ARRIVAL']) expect(web.kinds).toContain(k);
-    for (const k of ['RECORD_PAYMENT', 'VISIT_COMPLETED', 'RESTORE_KINFOLK', 'AUTH_PASSWORD_CHANGED']) {
+    for (const k of ['RECORD_PAYMENT', 'VISIT_COMPLETED', 'SESSION_OFFICE_NOTE_ADDED', 'AUTH_PASSWORD_CHANGED']) {
       expect(android.kinds).toContain(k);
     }
     for (const k of ['GPS_START', 'APPROVE_BOOKING', 'UPDATE_SETTINGS', 'AUTH_EMAIL_CHANGE_REQUESTED']) {
@@ -264,9 +265,16 @@ describe('#2162 logActivity refuses the server-only kinds from every sign-in', (
     await expect(
       wrapped(req({ actionType: 'NOTIFICATION_DISPATCHED' }, 'owner-1', OWNER)),
     ).rejects.toMatchObject({ code: 'permission-denied', message: SERVER_ONLY_EVENT_REFUSAL });
-    expect(mocks.writeAuditEntryMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'NOTIFICATION_DISPATCHED' }),
-    );
+    // What the gate does with any refused call, and all it does: one warn-level
+    // failure line naming the function and the code, and no Sentry event.
+    expect(mocks.writeAuditEntryMock).toHaveBeenCalledOnce();
+    expect(mocks.writeAuditEntryMock.mock.calls[0][0]).toMatchObject({
+      event: 'ERROR_FUNCTION_FAILURE',
+      status: 'FAILURE',
+      severity: 'warn',
+      payload: expect.objectContaining({ function: 'logActivity', code: 'permission-denied' }),
+    });
+    expect(sentry.captureFunctionError).not.toHaveBeenCalled();
   });
 
   it('the sentence is plain: no key, no function name, no em dash', () => {
