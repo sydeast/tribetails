@@ -115,7 +115,7 @@ class KinfolkCardRenderTest {
             firstName = "Mae Lynn",
             lastName = "Ashworth-Delgado",
             phoneNumber = "8055550100",
-            email = "mae@example.com",
+            email = "pawsome@hanasamku.com",
             status = "prospect",
         )
         val kin = listOf(Kin(_id = "k1", name = "Biscuit"), Kin(_id = "k2", name = "Marmalade"))

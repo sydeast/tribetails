@@ -235,7 +235,7 @@ describe('Directory screen, Kinfolk tab', () => {
       status: 'ready',
       data: [
         kinfolkRow({ _id: 'a', firstName: 'Jamie', phoneNumber: '(805) 555-0188' }),
-        kinfolkRow({ _id: 'b', firstName: 'Amy', lastName: 'Adams', email: 'amy@x.com', phoneNumber: '805-555-0128' }),
+        kinfolkRow({ _id: 'b', firstName: 'Amy', lastName: 'Adams', email: 'pawsome@hanasamku.com', phoneNumber: '805-555-0128' }),
       ],
     };
     render(<Directory />);

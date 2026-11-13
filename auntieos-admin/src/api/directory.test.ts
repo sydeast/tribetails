@@ -114,17 +114,17 @@ describe('matchesKinfolk', () => {
  * only when the text reads as a phone number.
  */
 describe('matchesKinfolk phone search (#1952)', () => {
-  const kf = kinfolk({ firstName: 'Tess', lastName: 'Quill', email: 'tq@example.com', phoneNumber: '(805) 555-0188' });
+  const kf = kinfolk({ firstName: 'Tess', lastName: 'Quill', email: 'catch@hanasamku.com', phoneNumber: '(805) 555-0188' });
 
   it('text with letters and a digit never matches on the phone', () => {
     expect(matchesKinfolk(kf, 'zzzz8')).toBe(false);
     expect(matchesKinfolk(kf, 'Tes1')).toBe(false);
-    expect(matchesKinfolk(kf, 'tq1@')).toBe(false);
+    expect(matchesKinfolk(kf, 'catch1@')).toBe(false);
   });
 
   it('a name or email fragment holding a digit still matches on the name or email', () => {
-    const digitEmail = kinfolk({ email: 'dre1@example.com', phoneNumber: '(805) 555-0100' });
-    expect(matchesKinfolk(digitEmail, 'dre1')).toBe(true);
+    const digitEmail = kinfolk({ email: 'e2e-admin@tribetails.com', phoneNumber: '(805) 555-0100' });
+    expect(matchesKinfolk(digitEmail, 'e2e')).toBe(true);
     expect(matchesKinfolk(kinfolk({ firstName: 'Unit 4', lastName: 'Hall', phoneNumber: '' }), 'unit 4')).toBe(true);
   });
 

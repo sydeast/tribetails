@@ -144,7 +144,7 @@ class DirectorySortTest {
 
     // ── Search (#1952) ──────────────────────────────────────────────────────
 
-    private val tess = Kinfolk(id = "t", firstName = "Tess", lastName = "Quill", email = "tq@example.com", phoneNumber = "(805) 555-0188")
+    private val tess = Kinfolk(id = "t", firstName = "Tess", lastName = "Quill", email = "catch@hanasamku.com", phoneNumber = "(805) 555-0188")
 
     /** #1952: text holding a digit used to list households by that digit alone (web, desktop). */
     @Test
@@ -153,7 +153,7 @@ class DirectorySortTest {
         assertEquals(false, matchesKinfolkSearch(tess, "Tes1"))
         assertEquals(false, matchesKinfolkSearch(tess, "8"))
         assertEquals(false, matchesKinfolkSearch(tess, "88"))
-        assertEquals(true, matchesKinfolkSearch(Kinfolk(email = "dre1@example.com"), "dre1"))
+        assertEquals(true, matchesKinfolkSearch(Kinfolk(email = "e2e-admin@tribetails.com"), "e2e"))
         assertEquals(true, matchesKinfolkSearch(tess, "quill"))
         assertEquals(true, matchesKinfolkSearch(tess, "  "))
     }

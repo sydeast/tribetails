@@ -193,7 +193,7 @@ class DirectoryViewModelTest {
     private fun ids(query: String, rows: List<Kinfolk>): List<String> =
         DirectoryUiState(allKinfolk = FirestoreResult.Data(rows), query = query).filteredSorted.map { it._id }
 
-    private val tess = kinfolk("t", "Tess", "Quill", phone = "(805) 555-0188", email = "tq@example.com")
+    private val tess = kinfolk("t", "Tess", "Quill", phone = "(805) 555-0188", email = "catch@hanasamku.com")
 
     @Test
     fun text_with_a_digit_never_matches_on_the_phone() {
@@ -201,7 +201,7 @@ class DirectoryViewModelTest {
         assertEquals(emptyList(), ids("Tes1", listOf(tess)))
         assertEquals(emptyList(), ids("8", listOf(tess)))
         assertEquals(emptyList(), ids("88", listOf(tess)))
-        assertEquals(listOf("d"), ids("dre1", listOf(tess, kinfolk("d", "Dre", email = "dre1@example.com"))))
+        assertEquals(listOf("r"), ids("e2e", listOf(tess, kinfolk("r", "Rue", email = "e2e-admin@tribetails.com"))))
     }
 
     @Test
