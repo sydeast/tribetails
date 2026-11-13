@@ -8,6 +8,7 @@ import {
   invoiceDayOrNull,
   isUnreadableDueDate,
   invoiceActionsFor,
+  invoiceActionsOffered,
   invoiceDaysOverdue,
   invoicePartialPayment,
   isoDatePrefixOrNull,
@@ -214,6 +215,17 @@ describe('localDateIso', () => {
 
   it('zero-pads month and day', () => {
     expect(localDateIso(new Date(2026, 0, 5, 10, 0, 0))).toBe('2026-01-05');
+  });
+});
+describe('invoiceActionsOffered (#2168)', () => {
+  it('an archived draft is offered no Review and send', () => {
+    expect(invoiceActionsOffered('draft', true)).toEqual([]);
+    expect(invoiceActionsOffered('draft', false)).toEqual(['reviewSend']);
+  });
+  it('archiving leaves the collection actions as the state gives them', () => {
+    for (const s of INVOICE_STATES) {
+      expect(invoiceActionsOffered(s, true)).toEqual(invoiceActionsFor(s).filter((a) => a !== 'reviewSend'));
+    }
   });
 });
 describe('invoiceActionsFor', () => {

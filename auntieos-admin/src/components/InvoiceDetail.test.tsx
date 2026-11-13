@@ -1278,6 +1278,45 @@ describe('InvoiceDetail archive and restore', () => {
     await waitFor(() => expect(unarchiveInvoice).toHaveBeenCalledWith('inv1'));
   });
 
+  // #2168 review: an archived invoice is read-only until restored, and the
+  // server refuses a send, an edit and a link on it, so none is offered.
+  it('#2168: an archived draft offers Restore, and no Review and send, Edit or Link visits', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'draft', editScope: 'all', archivedAt: fakeTs('2026-07-20T00:00:00Z') })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^restore$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /review and send/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /link visits/i })).toBeNull();
+  });
+  it('#2168: the same draft, not archived, offers all three (the control)', () => {
+    render(<InvoiceDetail invoice={entry({ status: 'draft', editScope: 'all' })} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /review and send/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /link visits/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^archive$/i })).toBeInTheDocument();
+  });
+  it('#2168: a list row armed on Review and send does not open the send confirm on an archived draft', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'draft', editScope: 'all', archivedAt: fakeTs('2026-07-20T00:00:00Z') })}
+        initialAction="reviewSend"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /review and send/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /^restore$/i })).toBeInTheDocument();
+  });
+  it('#2168: an archived sent invoice offers no Edit or Link visits either', () => {
+    render(<InvoiceDetail invoice={entry({ archivedAt: fakeTs('2026-07-20T00:00:00Z') })} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /link visits/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /^restore$/i })).toBeInTheDocument();
+  });
+
   it('#2168: archiving a draft says its visits are back on the un-invoiced list', async () => {
     archiveInvoice.mockResolvedValueOnce({ releasedSessionIds: ['s1', 's2'] });
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
