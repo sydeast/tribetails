@@ -222,12 +222,33 @@ export interface SessionEntry {
   reportIds?: string[] | undefined;
   /**
    * #1793: set true by the same send batch that appends to `reportIds`, on
-   * every client. A DEPARTED visit carrying it is ready to be marked Completed
-   * (`lib/sessionLifecycle.ts#completesAfterKinTale`), the rule Android's Home
-   * sweep and Complete button have always read.
+   * every client. Since #2123 nothing on web reads it: a visit is Completed at
+   * departure, on the server. Still written for installed Android builds.
    */
   autoCompleteEligible?: boolean | undefined;
+  /** How many KinTales have been sent for this visit. Every send batch bumps it. */
+  sentReportCount?: number | undefined;
+  /**
+   * #2123: true when the visit was completed with "KinTale required" on and no
+   * KinTale sent (written by the server at completion), back to false on the
+   * send. Read through `lib/kinTaleTask.ts#kinTaleOwed`.
+   */
+  kinTaleDue?: boolean | undefined;
 }
+
+/**
+ * #2123: the visits the server left owing a KinTale, at any age. The board's
+ * window holds only a few days, and the Auntie keeps this task until the
+ * KinTale is sent. `lib/kinTaleTask.ts#splitOwedKinTales` drops any that have
+ * been sent since. Index: `kinTaleDue` + `startTime` desc
+ * (`mytribe/firestore.indexes.json`).
+ */
+export const KINTALES_DUE_QUERY: CollectionSpec = {
+  path: 'kin_care_sessions',
+  order: ['startTime', 'desc'],
+  max: 100,
+  filters: [['kinTaleDue', '==', true]],
+};
 
 /**
  * The bounded, server-ordered `kin_care_sessions` listener. Ordered by

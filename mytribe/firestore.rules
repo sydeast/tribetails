@@ -463,6 +463,8 @@ service cloud.firestore {
              && bsBool('enableGPSTrackingForAllVisits')
              && bsBool('enablePhotoLocationTagging')
              && bsBool('requireArrivalDepartureVerification')
+ // #2123: the "KinTale required" switch. `saveBusinessSettings` checks it too.
+             && bsBool('kinTaleRequired')
              && bsBool('autoStartTrackingOnVisitStart')
              && bsBool('allowClientLocationSharing')
  // Phase 1's pre-launch household send gate. The server reads it as `=== true`
@@ -800,9 +802,17 @@ service cloud.firestore {
       function terminalBookingStatus(s) {
         return s == 'COMPLETED' || s == 'CANCELLED' || s == 'CANCELED' || s == 'REJECTED';
       }
+ // #2123: nor OUT of one. The server now completes a visit on the write that
+ // departs it (`triggers/onKinCareSessionDeparted.ts`), so a client holding a
+ // stale Departed row (an Undo arrival from a card that has not refreshed, or
+ // one replayed from an offline queue) would otherwise put a Completed visit
+ // back to Scheduled, leaving `completedAt` set and the household's copy on
+ // completed. Only the callables, which bypass these rules, move a terminal
+ // visit.
       function bookingTerminalFieldsUntouched() {
         return (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
-                || !terminalBookingStatus(request.resource.data.status))
+                || (!terminalBookingStatus(request.resource.data.status)
+                    && !terminalBookingStatus(resource.data.get('status', ''))))
                && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['completedAt']);
       }
 

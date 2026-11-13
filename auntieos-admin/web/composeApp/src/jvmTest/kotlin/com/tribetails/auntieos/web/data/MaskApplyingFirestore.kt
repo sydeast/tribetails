@@ -25,6 +25,8 @@ class MaskApplyingFirestore {
 
     /** One entry per PATCH: the decoded mask, or null for a whole-document PATCH. */
     val masks = mutableListOf<List<String>?>()
+    /** #2123: one entry per POST (a `:commit` or `:runQuery`): the path after the database and the raw body. Answered `{}`. */
+    val posts = mutableListOf<Pair<String, String>>()
 
     fun start() {
         server.createContext("/") { ex ->
@@ -41,6 +43,10 @@ class MaskApplyingFirestore {
                     synchronized(masks) { masks += mask }
                     docs[rel] = if (mask == null) sent else applyMask(docs[rel] ?: JsonObject(emptyMap()), sent, mask)
                     200 to docJson(rel, docs.getValue(rel)).toString()
+                }
+                "POST" -> {
+                    synchronized(posts) { posts += ex.requestURI.rawPath.substringAfter("/databases/(default)/") to body }
+                    200 to "{}"
                 }
                 else -> 405 to "{}"
             }

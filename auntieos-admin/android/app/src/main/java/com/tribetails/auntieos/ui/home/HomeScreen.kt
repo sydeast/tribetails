@@ -1097,7 +1097,8 @@ private fun TodayVisitCardView(
             LifecycleButton(
                 label = "Complete",
                 icon = Lucide.CircleCheckBig,
-                enabled = !actionPending && status == VisitStatus.DEPARTED && session.autoCompleteEligible,
+                // #2123: Completed at departure, never waiting on a KinTale.
+                enabled = !actionPending && status == VisitStatus.DEPARTED,
                 onClick = onComplete
             )
 

@@ -198,6 +198,12 @@ data class BusinessSettings(
     // functions/src/lib/arrivalVerification.ts). A default of true showed the
     // switch on while Complete went through.
     var requireArrivalDepartureVerification: Boolean = false,
+    // #2123: "KinTale required". ABSENT MEANS OFF (operator ruling
+    // 2026-11-13, "Start it off"), the server's reading (`=== true` in
+    // functions/src/lib/kinTaleRequirement.ts). When on, a visit completed
+    // with no KinTale sent becomes a "Send the KinTale" task on Auntie Time
+    // until it is sent. It never blocks completion.
+    var kinTaleRequired: Boolean = false,
     // ISSUE #582: how close to the household counts as arrived, in metres. The
     // threshold under the switch above, not a second switch — there is no "off"
     // value here, that is what the switch is for. 150 m matches

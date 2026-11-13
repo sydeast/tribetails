@@ -141,21 +141,38 @@ describe('Schedule, a visit under way', () => {
     expect(within(screen.getByRole('tab', { name: /Upcoming/ })).getByText('1')).toBeInTheDocument();
   });
 
-  it('Departed: the card is gone, and the visit stays on Upcoming as DEPARTED and still opens', async () => {
+  it('#2123 Departed: the server sends it completed, so the card is gone and it is a Past Visit', async () => {
+    const done = visit('completed', 'ended');
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: [], recent: [done], envelopes: [] });
+    mocks.getMyVisits.mockResolvedValue({ visits: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <Schedule />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('No upcoming bookings')).toBeInTheDocument();
+    expect(within(screen.getByRole('tab', { name: /Past Visits/ })).getByText('1')).toBeInTheDocument();
+    expect(screen.queryByTestId('live-visit')).toBeNull();
+    expect(screen.queryByText('DEPARTED')).toBeNull();
+  });
+
+  it('#2123 Departed, from an older answer: the card is gone, the row reads COMPLETED and still opens', async () => {
     renderWith(visit('active', 'ended'), false);
 
-    const row = await screen.findByText('DEPARTED');
+    const row = await screen.findByText('COMPLETED');
     expect(row.closest('a')).toHaveAttribute('data-params', JSON.stringify({ visitId: 'v1' }));
+    expect(screen.queryByText('DEPARTED')).toBeNull();
     expect(screen.queryByTestId('live-visit')).toBeNull();
     expect(screen.queryByText('VISIT IN PROGRESS')).toBeNull();
     expect(screen.queryByText(/AT YOUR PLACE/)).toBeNull();
     expect(screen.queryByText('IN PROGRESS')).toBeNull();
-    expect(within(screen.getByRole('tab', { name: /Upcoming/ })).getByText('1')).toBeInTheDocument();
   });
 
-  it('Departed: an answer that still names the visit as live does not bring the card back', async () => {
+  it('#2123 Departed: an answer that still names the visit as live does not bring the card back', async () => {
     renderWith(visit('active', 'ended'), true);
-    await screen.findByText('DEPARTED');
+    await screen.findByText('COMPLETED');
     expect(screen.queryByTestId('live-visit')).toBeNull();
   });
 

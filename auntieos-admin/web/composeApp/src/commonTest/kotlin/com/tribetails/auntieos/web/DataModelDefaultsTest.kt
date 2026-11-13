@@ -219,6 +219,9 @@ class DataModelDefaultsTest {
         // #1620: absent is OFF, the server's reading (`=== true` in arrivalVerification.ts).
         // A default of true showed the switch ON while Complete went through.
         assertFalse(s.requireArrivalDepartureVerification)
+        // #2123: "KinTale required" reads OFF when the document has no key
+        // (ruling 2026-11-13), the server's and every client's reading.
+        assertFalse(s.kinTaleRequired)
         // #582. Must equal ARRIVAL_RADIUS_DEFAULT_METERS on the server, which is
         // what a settings document with no key falls back to. If the two drift,
         // a save from this console silently changes the rule for everyone.
@@ -267,6 +270,7 @@ class DataModelDefaultsTest {
             enableGPSTrackingForAllVisits = false,
             enablePhotoLocationTagging = false,
             requireArrivalDepartureVerification = false,
+            kinTaleRequired = true,
             arrivalRadiusMeters = 400,
             autoStartTrackingOnVisitStart = false,
             trackingAccuracy = "LOW",

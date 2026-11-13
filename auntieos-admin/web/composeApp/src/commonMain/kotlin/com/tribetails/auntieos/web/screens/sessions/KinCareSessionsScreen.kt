@@ -56,7 +56,8 @@ import com.tribetails.auntieos.web.data.Breadcrumb
 import com.tribetails.auntieos.web.data.FirestoreAuntieDataSource
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
-import com.tribetails.auntieos.web.data.completesAfterKinTale
+import com.tribetails.auntieos.web.data.kinTaleOwed
+import com.tribetails.auntieos.web.data.kinTaleSent
 import com.tribetails.auntieos.web.data.GpsPoint
 import com.tribetails.auntieos.web.data.GpsSummary
 import com.tribetails.auntieos.web.data.GpsTracker
@@ -141,11 +142,19 @@ fun KinCareSessionsScreen(
     }
 }
 
-private enum class Phase(val label: String, val tone: AuntieStatusTone) {
-    Active        ("Active",   AuntieStatusTone.Teal),
-    Overdue       ("Overdue",  AuntieStatusTone.Warning),
-    Upcoming      ("Upcoming", AuntieStatusTone.Orange),
-    CompletedToday("Recent",   AuntieStatusTone.Muted),
+/**
+ * The board's groups, in the order they are drawn.
+ *
+ * #2123: "KinTales to send" holds every completed visit the Auntie still owes a
+ * KinTale ([kinTaleOwed], the server's stamp, no settings read), however old, until it
+ * is sent. It sits right after Active: it is her work, not history.
+ */
+internal enum class AuntieTimePhase(val label: String, val tone: AuntieStatusTone) {
+    Active        ("Active",           AuntieStatusTone.Teal),
+    KinTalesToSend("KinTales to send", AuntieStatusTone.Teal),
+    Overdue       ("Overdue",          AuntieStatusTone.Warning),
+    Upcoming      ("Upcoming",         AuntieStatusTone.Orange),
+    CompletedToday("Recent",           AuntieStatusTone.Muted),
 }
 
 @OptIn(ExperimentalTime::class)
@@ -362,7 +371,8 @@ internal fun AuntieTimeListScreen(
                 //   Recent:   completed/cancelled today or yesterday only
                 // NOTE (audit): DRAFT/PENDING bookings are intentionally excluded;
                 // a booking surfaces here only once it is approved to SCHEDULED.
-                val visible = s.value.filter { session -> isVisibleOnAuntieTime(session, today, zone) }
+                //   KinTales to send (#2123): a completed visit whose KinTale is owed, any date
+                val grouped = auntieTimeBoard(s.value, today, zone)
 
                 // One writer for both lists, so an Archive card does exactly what
                 // the same card does on the board.
@@ -435,18 +445,17 @@ internal fun AuntieTimeListScreen(
                             )
                         }
                     }
-                } else if (visible.isEmpty()) {
+                } else if (grouped.isEmpty()) {
                     EmptyState()
                 } else {
-                    val grouped = visible
-                        .sortedBy { it.startTime }   // earliest first inside each phase
-                        .groupBy { phaseFor(it, today, zone) }
-
                     // Real stat row, computed from the same stream (no extra fetch):
                     // in-flight count, today's scheduled run, and today's wraps.
-                    val activeCount   = grouped[Phase.Active].orEmpty().size
-                    val upcomingToday = grouped[Phase.Upcoming].orEmpty().count { businessDayOf(it.startTime, zone) == today }
-                    val recentDone    = grouped[Phase.CompletedToday].orEmpty()
+                    val activeCount   = grouped[AuntieTimePhase.Active].orEmpty().size
+                    val upcomingToday = grouped[AuntieTimePhase.Upcoming].orEmpty().count { businessDayOf(it.startTime, zone) == today }
+                    // #2123: a visit wrapped today whose KinTale is owed is filed
+                    // under KinTales to send, and it still wrapped today.
+                    val recentDone    = (grouped[AuntieTimePhase.CompletedToday].orEmpty() +
+                        grouped[AuntieTimePhase.KinTalesToSend].orEmpty())
                         .count { it.status.uppercase() == "COMPLETED" && businessDayOf(it.completedAt, zone) == today }
 
                     StatRow(activeCount = activeCount, upcomingToday = upcomingToday, recentDone = recentDone)
@@ -466,7 +475,7 @@ internal fun AuntieTimeListScreen(
                     }
 
                     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                        Phase.entries.forEach { phase ->
+                        AuntieTimePhase.entries.forEach { phase ->
                             val items = grouped[phase].orEmpty()
                             if (items.isNotEmpty()) {
                                 PhaseGroup(
@@ -790,9 +799,11 @@ private fun ActionRow(
                 onClick = { fire(AuntieTimeAction.Arrived) },
                 modifier = Modifier.weight(1f),
             )
+            // #2123: Complete completes the visit. It used to open the composer,
+            // when sending the KinTale was what completed a visit.
             GhostButton(
                 label   = "Complete",
-                onClick = onWriteKinTale,
+                onClick = { markCompleted(session, arrivalRule, onRefused, onWrite) },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -806,9 +817,11 @@ private fun ActionRow(
                 onClick = { fire(AuntieTimeAction.Arrived) },
                 modifier = Modifier.weight(1f),
             )
+            // #2123: Complete completes the visit. It used to open the composer,
+            // when sending the KinTale was what completed a visit.
             GhostButton(
                 label   = "Complete",
-                onClick = onWriteKinTale,
+                onClick = { markCompleted(session, arrivalRule, onRefused, onWrite) },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -830,45 +843,57 @@ private fun ActionRow(
             )
         }
 
-        // #1799: once its KinTale is sent (DEPARTED and autoCompleteEligible,
-        // Android's rule), the card offers Complete and View KinTale, as
-        // Android's Home card and admin web's Auntie Time card (#1793) do.
-        "DEPARTED" -> if (departedCardActions(session) == DepartedCardActions.CompleteAndView) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                PrimaryButton(
-                    label   = "Complete",
-                    onClick = { markCompleted(session, arrivalRule, onRefused, onWrite) },
-                    modifier = Modifier.weight(1f),
-                    leading = { Icon(Lucide.CircleCheckBig, contentDescription = null, modifier = Modifier.size(13.dp)) },
-                )
-                GhostButton(
-                    label   = "View KinTale",
-                    onClick = onViewKinTale,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        } else {
+        // #2123: the server marks a visit Completed as soon as it is DEPARTED,
+        // so this card is on screen only for that moment, or while the
+        // operator's arrival rule holds it back. Complete is the manual path
+        // (and says why it was refused); the KinTale button no longer decides
+        // anything about the visit.
+        "DEPARTED" -> Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             PrimaryButton(
-                label   = "Complete KinTale",
-                onClick = onWriteKinTale,
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(13.dp)) },
+                label   = "Complete",
+                onClick = { markCompleted(session, arrivalRule, onRefused, onWrite) },
+                modifier = Modifier.weight(1f),
+                leading = { Icon(Lucide.CircleCheckBig, contentDescription = null, modifier = Modifier.size(13.dp)) },
             )
+            KinTaleButton(session, onWriteKinTale, onViewKinTale, Modifier.weight(1f))
         }
 
-        // COMPLETED: offer a read-only jump into the sent KinTale (mockup "View KinTale").
-        // #1804: opens the sent tale (Report route), never a blank composer.
-        "COMPLETED" -> GhostButton(
-            label   = "View KinTale",
-            onClick = onViewKinTale,
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-        )
+        // COMPLETED: "Send the KinTale" until one is sent, then the sent tale
+        // (#1804: the Report route, never a blank composer).
+        "COMPLETED" -> KinTaleButton(session, onWriteKinTale, onViewKinTale, Modifier.fillMaxWidth().padding(top = 4.dp))
 
         // CANCELLED: no action buttons.
         else -> Unit
+    }
+}
+
+/**
+ * #2123: the KinTale button on a DEPARTED or COMPLETED card ([kinTaleCardAction]).
+ * "Send the KinTale" opens the composer; "View KinTale" opens the sent tale.
+ */
+@Composable
+private fun KinTaleButton(
+    session: KinCareSession,
+    onWriteKinTale: () -> Unit,
+    onViewKinTale: () -> Unit,
+    modifier: Modifier,
+) {
+    when (kinTaleCardAction(session)) {
+        KinTaleCardAction.Send -> PrimaryButton(
+            label   = "Send the KinTale",
+            onClick = onWriteKinTale,
+            modifier = modifier,
+            leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(13.dp)) },
+        )
+        KinTaleCardAction.View -> GhostButton(
+            label   = "View KinTale",
+            onClick = onViewKinTale,
+            modifier = modifier,
+        )
+        KinTaleCardAction.None -> Unit
     }
 }
 
@@ -1077,22 +1102,28 @@ internal fun kinCareWrite(
     else                           -> KinCareWrite.Patch(kinCarePatch(session, action, now))
 }
 
-/** #1799: what a DEPARTED card offers. */
-internal enum class DepartedCardActions {
-    /** No KinTale sent yet: "Complete KinTale" opens the composer. */
-    WriteKinTale,
+/** #2123: the KinTale button a card carries. */
+internal enum class KinTaleCardAction {
+    /** DEPARTED or COMPLETED with no KinTale sent: "Send the KinTale", required or not. */
+    Send,
 
-    /** Its KinTale is sent: "Complete" and "View KinTale". */
-    CompleteAndView,
+    /** DEPARTED or COMPLETED with its KinTale sent and a report to open: "View KinTale". */
+    View,
+
+    /** Not yet departed, called off, or sent with no report id to open: no KinTale button. */
+    None,
 }
 
-/**
- * #1799: a DEPARTED card whose KinTale has been sent offers Complete and View
- * KinTale, on the same rule the send completes on ([completesAfterKinTale]).
- * Any other DEPARTED card keeps "Complete KinTale".
- */
-internal fun departedCardActions(session: KinCareSession): DepartedCardActions =
-    if (completesAfterKinTale(session)) DepartedCardActions.CompleteAndView else DepartedCardActions.WriteKinTale
+/** #2123: which KinTale button [session]'s card carries. */
+internal fun kinTaleCardAction(session: KinCareSession): KinTaleCardAction =
+    when (session.status.trim().uppercase()) {
+        "DEPARTED", "COMPLETED" -> when {
+            !kinTaleSent(session)                        -> KinTaleCardAction.Send
+            session.reportIds.any { it.isNotBlank() }    -> KinTaleCardAction.View
+            else                                         -> KinTaleCardAction.None
+        }
+        else                    -> KinTaleCardAction.None
+    }
 
 /**
  * Mark Completed, from the kebab or a departed card's Complete.
@@ -1120,7 +1151,8 @@ internal fun markCompleted(
 internal fun kinCareSuccessMessage(action: AuntieTimeAction): String = when (action) {
     AuntieTimeAction.OnMyWay       -> "On the way."
     AuntieTimeAction.Arrived       -> "Arrived. GPS started."
-    AuntieTimeAction.Departed      -> "Departed. GPS saved."
+    // #2123: the server marks the visit Completed the moment it is DEPARTED.
+    AuntieTimeAction.Departed      -> "Departed. GPS saved. The visit is marked Completed."
     AuntieTimeAction.UndoArrived   -> "Undid arrival."
     AuntieTimeAction.MarkCompleted -> "Marked Completed."
     AuntieTimeAction.Cancel        -> "Cancelled."
@@ -1240,11 +1272,29 @@ private fun statusGlyph(status: String) = when (status.uppercase()) {
     else                  -> Lucide.CalendarClock
 }
 
-private fun phaseFor(s: KinCareSession, today: String, zone: TimeZone): Phase = when (s.status.uppercase()) {
-    "ON_MY_WAY", "ARRIVED", "DEPARTED" -> Phase.Active
-    "SCHEDULED"                        -> if (isOverdueScheduled(s, today, zone)) Phase.Overdue else Phase.Upcoming
-    else                               -> Phase.CompletedToday
+private fun phaseFor(s: KinCareSession, today: String, zone: TimeZone): AuntieTimePhase = when {
+    kinTaleOwed(s)                                                  -> AuntieTimePhase.KinTalesToSend
+    s.status.uppercase() in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> AuntieTimePhase.Active
+    s.status.uppercase() == "SCHEDULED"                             ->
+        if (isOverdueScheduled(s, today, zone)) AuntieTimePhase.Overdue else AuntieTimePhase.Upcoming
+    else                                                            -> AuntieTimePhase.CompletedToday
 }
+
+/**
+ * The board: every session on the day-of window ([isVisibleOnAuntieTime]) plus,
+ * #2123, every visit whose KinTale is owed ([kinTaleOwed]) whatever its date,
+ * filed by phase, earliest first inside each. An owed visit is in
+ * [AuntieTimePhase.KinTalesToSend] and nowhere else. Empty phases are absent.
+ */
+internal fun auntieTimeBoard(
+    sessions: List<KinCareSession>,
+    today: String,
+    zone: TimeZone,
+): Map<AuntieTimePhase, List<KinCareSession>> =
+    sessions
+        .filter { isVisibleOnAuntieTime(it, today, zone) || kinTaleOwed(it) }
+        .sortedBy { it.startTime }
+        .groupBy { phaseFor(it, today, zone) }
 
 /** #2036: the card's day and clock are the business's, not the stored instant's UTC characters. */
 internal fun sessionWindow(s: KinCareSession, zone: TimeZone): String {

@@ -40,7 +40,7 @@ export function KinTalesView() {
   //   `?kinTaleId=` opens one report in DETAIL, the destination of a kintale
   //     notification's "Open".
   //   `?sessionId=` opens the COMPOSER scaffolded from that visit, which is
-  //     where Auntie Time's "Complete KinTale" button routes (#703). That visit
+  //     where Auntie Time's "Send the KinTale" button routes (#703, #2123). That visit
   //     is departed and the write-up is the next thing owed on it, so landing
   //     the operator on the list to hunt for it would be the wrong screen.
   // Closing either one drops the param, so the list does not bounce back off a

@@ -131,7 +131,16 @@ const STAGES = [
   { name: 'confirmed, past its start', v: visit('confirmed', null), chip: 'CONFIRMED', tile: 'Confirmed', done: ['Requested'], now: ['Confirmed'] },
   { name: 'On the way', v: visit('enRoute', 'enRoute'), chip: 'EN ROUTE', tile: 'En route', done: ['Requested', 'Confirmed'], now: ['En route'] },
   { name: 'Arrived', v: visit('active', 'active'), chip: 'IN PROGRESS', tile: 'In progress', done: ['Requested', 'Confirmed', 'En route'], now: ['In progress'] },
-  { name: 'Departed', v: visit('active', 'ended'), chip: 'DEPARTED', tile: 'Departed', done: ['Requested', 'Confirmed', 'En route', 'In progress'], now: ['Completed'] },
+  // #2123: a visit is Completed at departure. The server sends it as
+  // completed; an older answer's `active` + `ended` pair reads the same.
+  {
+    name: 'Departed, from an older answer',
+    v: visit('active', 'ended'),
+    chip: 'COMPLETED',
+    tile: 'Completed',
+    done: ['Requested', 'Confirmed', 'En route', 'In progress', 'Completed'],
+    now: [],
+  },
   {
     name: 'Completed',
     v: visit('completed', 'ended'),
@@ -172,11 +181,29 @@ describe('BookingDetail: a visit notice opens the visit at every status', () => 
   });
 
   it('a visit under way cannot be cancelled or moved from here', async () => {
-    mocks.getMyBookings.mockResolvedValue(answerFor(visit('active', 'ended')));
+    mocks.getMyBookings.mockResolvedValue(answerFor(visit('active', 'active')));
     renderScreen();
     await screen.findByRole('heading', { level: 1 });
     expect(screen.queryByText(/Request cancellation/)).toBeNull();
     expect(screen.queryByText(/Reschedule visit/)).toBeNull();
+  });
+
+  it('#2123: a departed visit, even from an older answer, is finished: After the visit shows and nothing can be asked', async () => {
+    mocks.getMyBookings.mockResolvedValue(answerFor(visit('active', 'ended')));
+    renderScreen();
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.getByTestId('after-visit')).toBeInTheDocument();
+    expect(screen.queryByText(/Request cancellation/)).toBeNull();
+    expect(screen.queryByText(/Reschedule visit/)).toBeNull();
+    expect(screen.queryByText('DEPARTED')).toBeNull();
+  });
+
+  it('#2123: a completed visit with no KinTale yet still reads Completed', async () => {
+    mocks.getMyBookings.mockResolvedValue(answerFor(visit('completed', 'ended', { kinTaleId: null })));
+    const { container } = renderScreen();
+    await screen.findByRole('heading', { level: 1 });
+    expect(container.querySelector('.chip.lg')).toHaveTextContent('COMPLETED');
+    expect(statusTile()).toHaveTextContent('Completed');
   });
 
   it('another household\'s visit: the server never sends it, so the page says it could not be found', async () => {
@@ -207,21 +234,29 @@ describe('BookingDetail: a visit notice opens the visit at every status', () => 
 });
 
 describe('BookingDetail: the open page follows the visit (#1823)', () => {
-  it('moves from CONFIRMED to EN ROUTE, IN PROGRESS, DEPARTED and COMPLETED with no reload', async () => {
+  it('#2123: moves from CONFIRMED to EN ROUTE, IN PROGRESS and COMPLETED with no reload, and never reads DEPARTED', async () => {
     vi.useFakeTimers();
-    for (const stage of STAGES.slice(1)) mocks.getMyBookings.mockResolvedValueOnce(answerFor(stage.v));
+    for (const v of [
+      visit('confirmed', null),
+      visit('enRoute', 'enRoute'),
+      visit('active', 'active'),
+      // The Auntie departs: the server answers completed, KinTale or not.
+      visit('completed', 'ended'),
+    ]) {
+      mocks.getMyBookings.mockResolvedValueOnce(answerFor(v));
+    }
     const { container } = renderScreen();
     const settle = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 
     await settle(0);
     const seen = [container.querySelector('.chip.lg')!.textContent];
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 3; i += 1) {
       await settle(BOOKINGS_POLL_MS);
       // The fetched answer reaches the page a tick after the cache takes it.
       await settle(1);
       seen.push(container.querySelector('.chip.lg')!.textContent);
     }
-    expect(seen).toEqual(['CONFIRMED', 'EN ROUTE', 'IN PROGRESS', 'DEPARTED', 'COMPLETED']);
+    expect(seen).toEqual(['CONFIRMED', 'EN ROUTE', 'IN PROGRESS', 'COMPLETED']);
     expect(statusTile()).toHaveTextContent('Completed');
     expect(timeline(container).done).toHaveLength(5);
     // The page was never replaced by a loading line or an error on the way.

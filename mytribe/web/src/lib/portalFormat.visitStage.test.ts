@@ -20,6 +20,10 @@ import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contr
  * #1830 / #1832 / #1823: one reading of where a visit stands, at every status
  * of its life, feeding the list chip, the detail chip, the timeline, the
  * status tile's glyph and the live card.
+ *
+ * #2123 (operator ruling 2026-11-12): a visit is Completed at departure. The
+ * server sends a departed visit as completed; an older answer that still
+ * pairs `active` with `ended` reads Completed too. There is no Departed stage.
  */
 
 type Visit = GetMyBookingsResultLiveVisit;
@@ -52,7 +56,8 @@ const WIRE: { stage: VisitStage; status: Visit['status']; visitProgress: Visit['
   { stage: 'confirmed', status: 'confirmed', visitProgress: null },
   { stage: 'enRoute', status: 'enRoute', visitProgress: 'enRoute' },
   { stage: 'active', status: 'active', visitProgress: 'active' },
-  { stage: 'departed', status: 'active', visitProgress: 'ended' },
+  // #2123: a departed visit in an answer cached before the change.
+  { stage: 'completed', status: 'active', visitProgress: 'ended' },
   { stage: 'completed', status: 'completed', visitProgress: 'ended' },
   { stage: 'cancelled', status: 'cancelled', visitProgress: null },
 ];
@@ -66,8 +71,8 @@ describe('visitStageOf', () => {
     expect(visitStageOf({ status: 'active', visitProgress: null })).toBe('active');
   });
 
-  it('under way is on the way, arrived or departed', () => {
-    expect(WIRE.filter(isUnderWay).map((w) => w.stage)).toEqual(['enRoute', 'active', 'departed']);
+  it('under way is on the way or arrived; a departed visit is finished', () => {
+    expect(WIRE.filter(isUnderWay).map((w) => w.stage)).toEqual(['enRoute', 'active']);
   });
 });
 
@@ -77,7 +82,6 @@ describe('what each stage shows', () => {
     ['confirmed', 'CONFIRMED', 'confirmed', 'warm', 1],
     ['enRoute', 'EN ROUTE', 'inprogress', 'warm', 2],
     ['active', 'IN PROGRESS', 'inprogress', 'warm', 3],
-    ['departed', 'DEPARTED', 'completed', 'done', 4],
     ['completed', 'COMPLETED', 'completed', 'done', 4],
     ['cancelled', 'CANCELLED', 'cancelled', 'done', null],
   ] as const)('%s: %s chip, timeline step %s', (stage, label, detailTone, listTone, index) => {
@@ -92,8 +96,6 @@ describe('what each stage shows', () => {
     ['confirmed', [true, false, false, false, false]],
     ['enRoute', [true, true, false, false, false]],
     ['active', [true, true, true, false, false]],
-    // Departed: In progress is behind it, Completed is still to come.
-    ['departed', [true, true, true, true, false]],
     ['completed', [true, true, true, true, true]],
     ['cancelled', [false, false, false, false, false]],
   ] as const)('%s ticks the right timeline steps', (stage, ticks) => {
@@ -102,7 +104,18 @@ describe('what each stage shows', () => {
 
   it('only a requested or cancelled visit loses the check beside Status', () => {
     const checked = WIRE.map((w) => w.stage).filter((s) => bookingStatusIcon(s) === '✅');
-    expect(checked).toEqual(['confirmed', 'enRoute', 'active', 'departed', 'completed']);
+    expect(checked).toEqual(['confirmed', 'enRoute', 'active', 'completed', 'completed']);
+  });
+  it('#2123: a departed visit shows COMPLETED everywhere, with every step ticked', () => {
+    const stage = visitStageOf({ status: 'active', visitProgress: 'ended' });
+    expect(bookingStatusChip(stage)).toEqual({ label: 'COMPLETED', tone: 'completed' });
+    expect(bookingChip(stage)).toEqual({ label: 'COMPLETED', tone: 'done' });
+    expect(bookingTimelineIndex(stage)).toBe(4);
+    expect(BOOKING_TIMELINE_STEPS.map((_, i) => isTimelineStepDone(stage, i))).toEqual([true, true, true, true, true]);
+    expect(bookingStatusIcon(stage)).toBe('✅');
+  });
+  it('no stage reads DEPARTED', () => {
+    expect(WIRE.map((w) => bookingStatusChip(w.stage).label)).not.toContain('DEPARTED');
   });
 });
 
@@ -173,6 +186,9 @@ describe('bookingsPollMs', () => {
     expect(bookingsPollMs(result({ upcoming: [visit({ startTimeMs: NOW - 20 * MIN })] }), NOW)).toBe(BOOKINGS_POLL_MS);
   });
 
+  it('#2123: does not read again for a departed visit, even one an older answer still lists as upcoming', () => {
+    expect(bookingsPollMs(result({ upcoming: [visit({ status: 'active', visitProgress: 'ended', startTimeMs: NOW + 2 * 60 * MIN })] }), NOW)).toBe(false);
+  });
   it('does not read again for a request, a finished visit, an empty schedule or no answer', () => {
     expect(bookingsPollMs(result({ upcoming: [visit({ status: 'requested', startTimeMs: NOW + MIN })] }), NOW)).toBe(false);
     expect(bookingsPollMs(result({ recent: [visit({ status: 'completed', startTimeMs: NOW - MIN })] }), NOW)).toBe(false);

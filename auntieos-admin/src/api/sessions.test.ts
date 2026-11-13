@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  KINTALES_DUE_QUERY,
   SESSIONS_QUERY,
   SESSIONS_PAGE_SIZE,
   sessionsWindowQuery,
@@ -142,5 +143,14 @@ describe('sessionsWindowPageQuery: the day-of window, paged', () => {
     // are not the same control wearing different clothes.
     const [, , upper] = sessionsWindowPageQuery('2026-07-16').filters?.[1] ?? [];
     expect(String(upper) > '2026-07-16').toBe(true);
+  });
+});
+
+describe('KINTALES_DUE_QUERY (#2123)', () => {
+  it('reads the visits left owing a KinTale, at any age, bounded and ordered', () => {
+    expect(KINTALES_DUE_QUERY.path).toBe('kin_care_sessions');
+    expect(KINTALES_DUE_QUERY.filters).toEqual([['kinTaleDue', '==', true]]);
+    expect(KINTALES_DUE_QUERY.order).toEqual(['startTime', 'desc']);
+    expect(KINTALES_DUE_QUERY.max).toBe(100);
   });
 });

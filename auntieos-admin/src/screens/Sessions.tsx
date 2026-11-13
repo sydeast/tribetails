@@ -1,6 +1,7 @@
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  KINTALES_DUE_QUERY,
   overdueBeforeWindowQuery,
   sessionsArchivePageQuery,
   sessionsWindowPageQuery,
@@ -23,7 +24,8 @@ import {
   type SessionPhase,
   type SessionState,
 } from '../lib/sessionFormat';
-import { cardLifecycleActionsFor, completesAfterKinTale, lifecycleNowIso } from '../lib/sessionLifecycle';
+import { cardLifecycleActionsFor, lifecycleNowIso } from '../lib/sessionLifecycle';
+import { kinTaleSent, splitOwedKinTales } from '../lib/kinTaleTask';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { archiveDefaultRange, archiveFetchBounds, archiveRows, groupArchiveByBusinessDay } from '../lib/sessionArchive';
 import { businessTodayIso } from '../lib/businessZoneTime';
@@ -33,7 +35,7 @@ import { actionNotifiesHousehold, visitNoticeConfirmFor, visitRoutingSkip } from
 import { completeRefusal } from '../lib/completeRule';
 import { useArrivalRule } from '../lib/useArrivalRule';
 import { usePagedCollection } from '../lib/usePagedCollection';
-import { useCollection } from '../lib/firestore';
+import { useCollection, useDocById } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
 import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
@@ -80,15 +82,16 @@ interface SessionsProps {
    */
   onSelect: (sessionId: string) => void;
   /**
-   * Open the KinTale composer on this visit ("Complete KinTale" on a departed
-   * card). Supplied by `routes/SessionsView.tsx`, which owns the navigation.
+   * Open the KinTale composer on this visit ("Send the KinTale" on a departed
+   * or completed card with no KinTale sent, #2123). Supplied by
+   * `routes/SessionsView.tsx`, which owns the navigation.
    * ABSENT means the button is not rendered at all, rather than rendered as a
    * control that does nothing (the `ControlShell` dead-control rule).
    */
   onComposeKinTale?: (sessionId: string) => void;
   /**
-   * Open one SENT KinTale ("View KinTale" on a completed card, and on a departed
-   * one whose tale is sent, #1793). Same absent-means-hidden rule.
+   * Open one SENT KinTale ("View KinTale" on a departed or completed card whose
+   * KinTale is sent). Same absent-means-hidden rule.
    */
   onViewKinTale?: (kinTaleId: string) => void;
 }
@@ -197,6 +200,19 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
       return [...data, ...olderOverdue.data.filter((r) => !seen.has(r._id))];
     },
     [olderOverdue],
+  );
+  // #2123: "KinTales to send". The visits the server left owing a KinTale
+  // (completed with "KinTale required" on and nothing sent), at any age, live:
+  // the task stays until the KinTale is sent. Read from the `kinTaleDue` stamp
+  // alone, never from the settings document, which an Auntie cannot read: the
+  // server clears every stamp when the switch goes off. The group shows while
+  // something is owed (or the read failed); an owed visit is listed here and
+  // not again in Recent.
+  const kinTalesDue = useCollection<SessionEntry>(KINTALES_DUE_QUERY);
+  const boardGroups = useCallback(
+    (data: SessionEntry[]) =>
+      splitOwedKinTales(withOlderOverdue(data), kinTalesDue.status === 'ready' ? kinTalesDue.data : []),
+    [withOlderOverdue, kinTalesDue],
   );
 
   /**
@@ -315,7 +331,18 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
                     stagger would clamp them inside the group instead of centring
                     them on the viewport. */}
                 <ul className="sessions__phases">
-                  {groupSessionsByPhase(withOlderOverdue(data), todayIso).map((p) => (
+                  {(boardGroups(data).owed.length > 0 || kinTalesDue.status === 'error') && (
+                    <OwedKinTalesGroup
+                      rows={boardGroups(data).owed}
+                      ctx={cardContext}
+                      readError={
+                        kinTalesDue.status === 'error'
+                          ? { message: kinTalesDue.message, retry: kinTalesDue.retry }
+                          : null
+                      }
+                    />
+                  )}
+                  {groupSessionsByPhase([...boardGroups(data).rest], todayIso).map((p) => (
                     <li key={p.phase} className={`sessions__phase sessions__phase--${p.phase}`}>
                       <h3 className="sessions__phase-header">
                         {p.label}
@@ -375,6 +402,48 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
         )}
       </AsyncRegion>
     </div>
+  );
+}
+
+/**
+ * #2123: the Auntie's required "Send the KinTale" tasks, one card per visit,
+ * newest first. Each card is the ordinary completed card, whose "Send the
+ * KinTale" opens the composer; the visit leaves this group when the send lands.
+ */
+function OwedKinTalesGroup({
+  rows,
+  ctx,
+  readError,
+}: {
+  rows: readonly SessionEntry[];
+  ctx: CardContext;
+  /** The older-visits read failed: the group holds only the board's own rows, and says so. */
+  readError: { message: string; retry?: (() => void) | undefined } | null;
+}) {
+  return (
+    <li className="sessions__phase sessions__phase--kintales">
+      <h3 className="sessions__phase-header">
+        KinTales to send
+        <span className="sessions__phase-count">{rows.length}</span>
+      </h3>
+      {readError !== null && (
+        <ErrorHint>
+          Couldn&rsquo;t load older KinTales to send. {readError.message}
+          {readError.retry && (
+            <button type="button" className="async-retry" onClick={readError.retry}>
+              Retry
+            </button>
+          )}
+        </ErrorHint>
+      )}
+      {rows.length > 0 && (
+        <ul className="sessions__cards">
+          {rows.map((entry) => (
+            <SessionCard key={entry._id} entry={entry} ctx={ctx} />
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
 
@@ -490,6 +559,18 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   // answer is already known to be no, and then making the operator wait for it.
   const arrivalRule = useArrivalRule();
 
+  // #2123: the server completes a visit on the write that departs it
+  // (`functions/src/triggers/onKinCareSessionDeparted.ts`). The board's read is
+  // one-shot, so a DEPARTED card watches its own document and re-reads the
+  // board once it has moved on. A visit the arrival rule holds stays Departed,
+  // and this read simply stays open on it.
+  const departedLive = useDocById<SessionEntry>('kin_care_sessions', state === 'departed' ? entry._id : null);
+  const settledStatus =
+    departedLive.status === 'ready' && departedLive.data !== null ? str(departedLive.data.status) : '';
+  useEffect(() => {
+    if (state === 'departed' && settledStatus !== '' && sessionState(settledStatus) !== 'departed') onWritten();
+  }, [state, settledStatus, onWritten]);
+
   function askComplete() {
     const refusal = completeRefusal(arrivalRule, entry);
     if (refusal !== null) {
@@ -561,15 +642,19 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   // COMPLETE from all four pre-terminal states (`bookingTransitions.ts`), so
   // this is the mock narrowing an allowed set, never a guess at what will work.
   //
-  // #1793: a DEPARTED card whose KinTale has been sent offers Complete too, on
-  // Android's rule (`completesAfterKinTale`). Before this a visit finished on
-  // web stayed in Active, because the write-up was its last button. Once the
-  // tale is sent, the card shows View KinTale in place of Complete KinTale.
-  const readyToComplete = completesAfterKinTale(entry);
-  const offersComplete = state === 'scheduled' || state === 'onMyWay' || readyToComplete;
-  const offersCompose = state === 'departed' && !readyToComplete && onComposeKinTale !== undefined;
-  const offersView =
-    (state === 'completed' || readyToComplete) && firstReportId !== undefined && onViewKinTale !== undefined;
+  // #2123 (operator ruling 2026-11-12): a visit is Completed at departure and a
+  // KinTale never decides it. A DEPARTED card is a visit the server has not
+  // completed yet (a moment after the tap, or held by the arrival rule), so it
+  // keeps Complete, which re-asks `transitionBookingStatus` and shows the
+  // reason. "Send the KinTale" is on every departed or completed card with no
+  // KinTale sent (`sentReportCount`, never `reportIds`: Android lists a draft's
+  // id there), whether or not "KinTale required" is on; once one is sent the
+  // card offers View KinTale instead.
+  const sent = kinTaleSent(entry);
+  const visited = state === 'departed' || state === 'completed';
+  const offersComplete = state === 'scheduled' || state === 'onMyWay' || state === 'departed';
+  const offersCompose = visited && !sent && onComposeKinTale !== undefined;
+  const offersView = visited && sent && firstReportId !== undefined && onViewKinTale !== undefined;
   const hasActions = clockActions.length > 0 || offersComplete || offersCompose || offersView;
 
   return (
@@ -670,7 +755,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
               Buttons has no tone prop and this is its only caller. */}
           {offersCompose && onComposeKinTale !== undefined && (
             <PrimaryButton
-              label="Complete KinTale"
+              label="Send the KinTale"
               leading={<span>✈</span>}
               className="sessions__btn--teal"
               onClick={() => onComposeKinTale(entry._id)}

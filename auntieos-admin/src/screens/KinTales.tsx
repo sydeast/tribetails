@@ -371,7 +371,7 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
           // The mock's one head control. There is no "New KinTale" here: a
           // KinTale is only ever started from a Kin Care (operator ruling
           // 2026-09-10, #676: "KinTales can only be created from KinCares"),
-          // which is Auntie Time's "Complete KinTale" (#703). The mock never
+          // which is Auntie Time's "Send the KinTale" (#703, #2123). The mock never
           // drew one either.
           trailing={
             canEditTemplates ? (

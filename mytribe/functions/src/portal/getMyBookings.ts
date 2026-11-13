@@ -171,7 +171,7 @@ export async function getMyBookingsHandler(
   // here so nothing double-shows.
   //
   // A SCHEDULED visit whose start is more than a day past is stale, not upcoming;
-  // a visit that is under way (ON_MY_WAY / ARRIVED / DEPARTED) shows regardless
+  // a visit that is under way (ON_MY_WAY / ARRIVED) shows regardless
   // of clock so the kinfolk can follow a visit that started late.
   const staleFloorMs = nowMs - LATE_VISIT_WINDOW_MS;
   for (const d of sessionSnap.docs) {
@@ -276,9 +276,9 @@ function envelopeSortMs(e: EnvelopeDto): number {
  * not surfaced as upcoming (completed visits already reach the UI via
  * getMyVisits for GPS replay).
  *
- * #1832: DEPARTED used to be null too, so the visit left the household's
- * schedule the moment the Auntie clocked out and stayed gone until its
- * KinTale was sent. It is still the household's visit until then.
+ * #1832 kept a DEPARTED visit listed until its KinTale was sent. #2123
+ * (operator ruling 2026-11-12) made departure the end of the visit, so
+ * DEPARTED is finished here exactly as COMPLETED is.
  */
 function mapSessionStatus(raw: string | null): Pick<BookingDto, 'status' | 'visitProgress'> | null {
   if ((raw ?? '').trim().toUpperCase() === 'SCHEDULED') return { status: 'confirmed', visitProgress: null };
