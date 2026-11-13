@@ -99,7 +99,9 @@ internal val KINFOLK_DIFF_FIELDS: Map<String, (Kinfolk) -> Any> = linkedMapOf(
  *
  * - `id`             the document id (`@DocumentId`, never serialised anyway)
  * - `updatedAt`      stamped at write time by the repository, never round-tripped
- * - `uid`            the MyTribe portal auth linkage, `admin/setKinfolkClaim.ts`
+ * - `createdAt` / `createdAtSource`
+ *                    stamped once by the `createKinfolk` callable (#1953)
+ * - `uid`          the MyTribe portal auth linkage, `admin/setKinfolkClaim.ts`
  * - `contactOverride` the comms reconcile pipeline's time-boxed channel override
  * - `archivedAt` / `archivedReason` / `archivedBy`
  *                    the archive audit trail, `AuntieRepository.archiveKinfolk`
@@ -107,7 +109,7 @@ internal val KINFOLK_DIFF_FIELDS: Map<String, (Kinfolk) -> Any> = linkedMapOf(
  *                    written only by the `saveEmergencyContacts` callable (#829)
  */
 internal val KINFOLK_SERVER_OWNED = setOf(
-    "id", "updatedAt", "uid", "contactOverride",
+    "id", "updatedAt", "createdAt", "createdAtSource", "uid", "contactOverride",
     "archivedAt", "archivedReason", "archivedBy",
     "emergencyContacts",
     "emergencyContactName",

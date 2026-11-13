@@ -300,8 +300,8 @@ export function KinTales({ onSelect, initialRange = DEFAULT_DATE_RANGE, onRangeC
   // count to state and inventing one is the whole failure class this app refuses.
   const scopeNote =
     loaded === null
-      ? `Search covers household and title, within ${windowLabel}.`
-      : `Searching the ${String(loaded)} KinTale${plural} loaded from ${windowLabel}, by household and title.` +
+      ? `Search covers household and headline, within ${windowLabel}.`
+      : `Searching the ${String(loaded)} KinTale${plural} loaded from ${windowLabel}, by household and headline.` +
         (hasMore ? ' Load more to reach further back.' : '');
 
   // THE RESULT-COUNT CHIP (the mock's third SUGGESTION, approved 2026-08-09).
@@ -559,9 +559,14 @@ interface KinTaleRowProps {
 /**
  * The mock's `.row`: a 36px status tile in the bucket's tone, then the
  * household in Fraunces, the "service · when" line under it, then the mono
- * pips, and the status pill at the right edge. No headline line: the mock's
- * row carries none and neither does Android's, so the tale's title is read on
- * the detail screen rather than guessed from a clamp here.
+ * pips, and the status pill at the right edge.
+ *
+ * #2059 (operator ruling 2026-11-13): the tale's headline closes the text
+ * column as one lighter line, so two tales for the same household and KinCare
+ * can be told apart and a search hit on the headline shows why it matched. It
+ * takes the mock's `.submeta` face and colour (the mock draws no headline, so
+ * nothing new is invented), truncates to one line, and carries the full text
+ * as its tooltip. A tale with no headline draws no line at all.
  */
 function KinTaleRow({ entry, bucket, catalog, onSelect }: KinTaleRowProps) {
   const state = kinTaleState(entry.status ?? '');
@@ -601,6 +606,8 @@ function KinTaleRow({ entry, bucket, catalog, onSelect }: KinTaleRowProps) {
   // is the same defect one field along. Blank for every row whose date can be
   // taken at face value.
   const provenanceNote = createdAtProvenanceNote(entry.createdAtSource);
+  // #2059: blank or whitespace-only is "no headline", and draws no line.
+  const headline = (entry.title ?? '').trim();
 
   const body = (
     <>
@@ -640,6 +647,11 @@ function KinTaleRow({ entry, bucket, catalog, onSelect }: KinTaleRowProps) {
             <span className="kintales__row-pip kintales__row-pip--provenance">{provenanceNote}</span>
           ) : null}
         </span>
+        {headline !== '' ? (
+          <span className="kintales__row-headline" title={headline}>
+            {headline}
+          </span>
+        ) : null}
       </span>
       <StatusPill label={info.chipLabel} tone={bucket.tone} size="compact" />
     </>

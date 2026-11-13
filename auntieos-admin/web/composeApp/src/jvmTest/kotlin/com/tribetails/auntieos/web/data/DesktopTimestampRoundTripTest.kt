@@ -126,6 +126,26 @@ class DesktopTimestampRoundTripTest {
     }
 
     /**
+     * #1953: the createKinfolk callable stamps `createdAt` as a Timestamp. Read
+     * over REST it reaches the model as its ISO string, at microsecond precision,
+     * and Recently Created reads it as the household's creation date.
+     */
+    @Test
+    fun aKinfolkCreatedAtTimestampReadsAsItsCreationDate() = runBlocking {
+        seed("kinfolk/kf1", buildJsonObject {
+            put("firstName", str("Tess"))
+            put("createdAt", ts("2026-11-10T15:00:00.123456Z"))
+            put("createdAtSource", str("live"))
+        })
+        val kf = JvmFirestoreRest.getDoc<Kinfolk>("kinfolk", "kf1")!!
+        assertEquals("2026-11-10T15:00:00.123456Z", kf.createdAt)
+        assertEquals("live", kf.createdAtSource)
+        val at = com.tribetails.auntieos.web.screens.directory.kinfolkCreatedAt(kf)
+        assertEquals(com.tribetails.auntieos.web.screens.directory.CreatedTier.Created, at.tier)
+        assertEquals(java.time.Instant.parse("2026-11-10T15:00:00.123Z").toEpochMilli(), at.millis)
+    }
+
+    /**
      * The discriminator: the web admin and functions store several time fields
      * as ISO strings on purpose (inbox `repliedAt`, template `updatedAt`,
      * booking `startTime`). A field that ARRIVED as a string stays a string, even

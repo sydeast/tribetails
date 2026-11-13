@@ -3590,6 +3590,17 @@ data class Kinfolk(
     @Serializable(with = FirestoreInstantStringSerializer::class)
     val updatedAt: String = "",
 
+    /**
+     * #1953. When the household record was created: server time, stamped by the
+     * `createKinfolk` callable. Absent on a household from before that stamp.
+     * Read for "Recently Created" only; [KINFOLK_SERVER_STAMPED_KEYS] keeps it
+     * out of every desktop write. Timestamp or ISO string, read as ISO.
+     */
+    @Serializable(with = FirestoreInstantStringSerializer::class)
+    val createdAt: String = "",
+    /** Where [createdAt] came from: blank or `live`, `original`, or `import` (an import date, not a creation date). */
+    val createdAtSource: String = "",
+
     // Contact & Identity
     val secondaryPhone: String = "",
     val secondaryEmail: String = "",
