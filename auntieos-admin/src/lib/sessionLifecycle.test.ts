@@ -4,7 +4,6 @@ import {
   readableVisitNotes,
   savedVisitFieldsMessage,
   cardLifecycleActionsFor,
-  completesAfterKinTale,
   lifecycleActionsFor,
   lifecycleNowIso,
 } from './sessionLifecycle';
@@ -114,12 +113,14 @@ describe('the confirm copy', () => {
 
   // Undoing is the operator correcting their own record. Nothing is sent, and
   // the copy has to say so, or the operator will not use it when they should.
-  // #1793 completes a departed visit when its KinTale is sent, so the clock-out
-  // confirm says that instead of "not Completed until you mark it so".
-  it('the clock-out confirm says sending the KinTale completes the visit', () => {
+  // #2123: departure IS completion (operator ruling 2026-11-12), so the
+  // clock-out confirm says so and never ties it to the KinTale.
+  it('the clock-out confirm says the visit is marked Completed, with no KinTale condition', () => {
     const out = lifecycleActionsFor('arrived').find((a) => a.action === 'DEPARTED')!;
-    expect(out.confirmBody('The Whitfields')).toMatch(/sending the kintale marks the visit completed/i);
-    expect(out.confirmBody('The Whitfields')).not.toMatch(/not completed until/i);
+    expect(out.confirmBody('The Whitfields')).toBe(
+      'The departure time is stamped now and the visit is marked Completed.',
+    );
+    expect(out.confirmBody('The Whitfields')).not.toMatch(/kintale/i);
   });
 
   it('says plainly that an undo notifies nobody', () => {
@@ -196,27 +197,5 @@ describe("#1592: visit notes and saves read in the operator's words", () => {
     expect(savedVisitFieldsMessage(['serviceDurationMinutes'])).toBe('Saved: visit length.');
     expect(savedVisitFieldsMessage(['serviceType', 'kinIds'])).toBe('Saved: service, kin on this visit.');
     expect(savedVisitFieldsMessage(['somethingNew'])).toBe('Saved.');
-  });
-});
-
-/**
- * #1793: Android's rule, `status == DEPARTED && autoCompleteEligible`, read by
- * `HomeViewModel.kt`'s sweep and `HomeScreen.kt`'s Complete button.
- */
-describe('completesAfterKinTale', () => {
-  it('is true only for a DEPARTED visit the send flagged', () => {
-    expect(completesAfterKinTale({ status: 'DEPARTED', autoCompleteEligible: true })).toBe(true);
-    // The stored status is read the way `sessionState` reads it.
-    expect(completesAfterKinTale({ status: ' departed ', autoCompleteEligible: true })).toBe(true);
-  });
-  it('is false for a DEPARTED visit with no sent tale', () => {
-    expect(completesAfterKinTale({ status: 'DEPARTED' })).toBe(false);
-    expect(completesAfterKinTale({ status: 'DEPARTED', autoCompleteEligible: false })).toBe(false);
-  });
-  it('is false in every other state, flag or not', () => {
-    for (const status of ['SCHEDULED', 'ON_MY_WAY', 'ARRIVED', 'COMPLETED', 'CANCELLED', 'SOMETHING_NEW', '']) {
-      expect(completesAfterKinTale({ status, autoCompleteEligible: true })).toBe(false);
-    }
-    expect(completesAfterKinTale({ autoCompleteEligible: true })).toBe(false);
   });
 });

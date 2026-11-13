@@ -23,6 +23,7 @@ import com.composables.icons.lucide.CalendarClock
 import com.composables.icons.lucide.Clock
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MapPin
+import com.composables.icons.lucide.Send
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.DEFAULT_BUSINESS_TIME_ZONE
 import com.tribetails.auntieos.data.model.TimeBlockDefinition
@@ -859,6 +860,8 @@ internal fun VisitRecordsPanel(
     var photoTagging by remember(settings) { mutableStateOf(settings.enablePhotoLocationTagging) }
     var arrivalCheck by remember(settings) { mutableStateOf(settings.requireArrivalDepartureVerification) }
     var arrivalRadius by remember(settings) { mutableStateOf(settings.arrivalRadiusMeters.toString()) }
+    // #2123: "KinTale required" (absent is off, see BusinessSettings.kinTaleRequired).
+    var kinTaleRequired by remember(settings) { mutableStateOf(settings.kinTaleRequired) }
     var clientSharing by remember(settings) { mutableStateOf(settings.allowClientLocationSharing) }
     var routeDays by remember(settings) { mutableStateOf(settings.saveRoutesForDays.toString()) }
     var etaOptions by remember(settings) { mutableStateOf(formatOptionList(settings.etaMinuteOptions)) }
@@ -945,6 +948,16 @@ internal fun VisitRecordsPanel(
                 color = c.textDim,
             )
             AuntieSettingRow(
+                title = KIN_TALE_REQUIRED_TITLE,
+                description = KIN_TALE_REQUIRED_DESCRIPTION,
+                leadingIcon = Lucide.Send,
+                iconTone = AuntieStatusTone.Teal,
+                showDivider = true,
+                trailing = {
+                    AuntieToggle(checked = kinTaleRequired, onCheckedChange = { kinTaleRequired = it })
+                },
+            )
+            AuntieSettingRow(
                 title = "Let kinfolk see visit locations",
                 description = "Off withholds route coordinates from the portal and the live map.",
                 leadingIcon = Lucide.MapPin,
@@ -981,6 +994,7 @@ internal fun VisitRecordsPanel(
                         settings.copy(
                             enablePhotoLocationTagging = photoTagging,
                             requireArrivalDepartureVerification = arrivalCheck,
+                            kinTaleRequired = kinTaleRequired,
                             arrivalRadiusMeters =
                                 parseWholeNumber(arrivalRadius, 10, 5000) ?: settings.arrivalRadiusMeters,
                             allowClientLocationSharing = clientSharing,
@@ -1004,3 +1018,8 @@ internal fun VisitRecordsPanel(
 /** Replace one row of a list, leaving the rest untouched. */
 private fun List<TimeBlockRow>.replaceAt(index: Int, edit: (TimeBlockRow) -> TimeBlockRow): List<TimeBlockRow> =
     mapIndexed { i, row -> if (i == index) edit(row) else row }
+
+/** #2123: the KinTale task switch's row, in the operator's words. */
+internal const val KIN_TALE_REQUIRED_TITLE = "KinTale required"
+internal const val KIN_TALE_REQUIRED_DESCRIPTION =
+    "Auntie Time lists the visit under KinTales to send until its KinTale is sent. The visit is still Completed when the Auntie leaves."

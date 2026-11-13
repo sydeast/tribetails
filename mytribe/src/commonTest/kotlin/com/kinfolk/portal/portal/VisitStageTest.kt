@@ -20,6 +20,10 @@ import kotlin.test.assertTrue
  * of its life, the lookup a visit notice lands on, and the rule for keeping an
  * open screen current. The web portal's `portalFormat.visitStage.test.ts` pins
  * the same answers.
+ *
+ * #2123 (operator ruling 2026-11-12): a visit is Completed at departure. The
+ * server sends a departed visit as completed, and an older answer that still
+ * pairs `active` with `ended` reads Completed. There is no Departed stage.
  */
 class VisitStageTest {
     private fun booking(
@@ -51,7 +55,8 @@ class VisitStageTest {
         Triple(VisitStage.Confirmed, BookingStatus.Confirmed, null),
         Triple(VisitStage.EnRoute, BookingStatus.EnRoute, VisitProgress.EnRoute),
         Triple(VisitStage.Active, BookingStatus.Active, VisitProgress.Active),
-        Triple(VisitStage.Departed, BookingStatus.Active, VisitProgress.Ended),
+        // #2123: a departed visit in an answer from before the change.
+        Triple(VisitStage.Completed, BookingStatus.Active, VisitProgress.Ended),
         Triple(VisitStage.Completed, BookingStatus.Completed, VisitProgress.Ended),
         Triple(VisitStage.Cancelled, BookingStatus.Cancelled, null),
     )
@@ -96,15 +101,24 @@ class VisitStageTest {
     @Test
     fun `every stage has one word, the same as the web portal`() {
         assertEquals(
-            listOf("REQUESTED", "CONFIRMED", "EN ROUTE", "IN PROGRESS", "DEPARTED", "COMPLETED", "CANCELLED"),
+            listOf("REQUESTED", "CONFIRMED", "EN ROUTE", "IN PROGRESS", "COMPLETED", "CANCELLED"),
             VisitStage.entries.map { it.label() },
         )
     }
 
     @Test
-    fun `under way is on the way, arrived or departed`() {
+    fun `under way is on the way or arrived, and a departed visit is finished`() {
         val underWay = wire.filter { (_, status, progress) -> booking(status = status, progress = progress).isUnderWay() }
-        assertEquals(listOf(VisitStage.EnRoute, VisitStage.Active, VisitStage.Departed), underWay.map { it.first })
+        assertEquals(listOf(VisitStage.EnRoute, VisitStage.Active), underWay.map { it.first })
+        val departed = booking(status = BookingStatus.Active, progress = VisitProgress.Ended)
+        assertTrue(departed.isFinished())
+        assertEquals("COMPLETED", departed.stage().label())
+    }
+
+    @Test
+    fun `an arrived visit is not finished`() {
+        assertFalse(booking(status = BookingStatus.Active, progress = VisitProgress.Active).isFinished())
+        assertFalse(booking(status = BookingStatus.EnRoute, progress = VisitProgress.EnRoute).isFinished())
     }
 
     // -- the live card --
@@ -187,6 +201,11 @@ class VisitStageTest {
     fun `nothing is followed for a request, a finished visit, an empty schedule or no answer`() {
         assertFalse(result(upcoming = listOf(booking(status = BookingStatus.Requested, startTimeMs = now + min))).isBeingFollowed(now))
         assertFalse(result(recent = listOf(booking(status = BookingStatus.Completed, startTimeMs = now - min))).isBeingFollowed(now))
+        // #2123: an older answer that still lists a departed visit as upcoming is not followed.
+        assertFalse(
+            result(upcoming = listOf(booking(status = BookingStatus.Active, progress = VisitProgress.Ended, startTimeMs = now + 2 * 60 * min)))
+                .isBeingFollowed(now),
+        )
         assertFalse(result().isBeingFollowed(now))
         assertFalse((null as BookingsResult?).isBeingFollowed(now))
     }
@@ -208,13 +227,15 @@ class VisitStageTest {
         val cases = listOf(
             Triple("enRoute", "enRoute", VisitStage.EnRoute),
             Triple("active", "active", VisitStage.Active),
-            Triple("active", "ended", VisitStage.Departed),
+            // #2123: what an older server sent for a departed visit, and what this one sends.
+            Triple("active", "ended", VisitStage.Completed),
+            Triple("completed", "ended", VisitStage.Completed),
         )
         cases.forEach { (status, progress, stage) ->
             val fake = FakeFunctionsClient()
             val v = visitJson("v1", status, progress)
             fake.stub("getMyBookings", buildJsonObject {
-                put("liveVisit", if (stage == VisitStage.Departed) JsonNull else v)
+                put("liveVisit", if (stage == VisitStage.Completed) JsonNull else v)
                 put("upcoming", buildJsonArray { add(v) })
                 put("recent", buildJsonArray {})
                 put("envelopes", buildJsonArray {
@@ -229,7 +250,7 @@ class VisitStageTest {
             assertEquals(stage, res.envelopes.single().kinCares.single().stage(), "$status + $progress, envelope")
             assertEquals(stage, res.findBooking("v1")?.stage())
             assertEquals(listOf("Biscuit"), res.findBooking("v1")?.kinNames)
-            assertEquals(stage != VisitStage.Departed, res.liveVisitOrNull() != null)
+            assertEquals(stage != VisitStage.Completed, res.liveVisitOrNull() != null)
         }
     }
 }

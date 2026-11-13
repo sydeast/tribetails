@@ -27,12 +27,15 @@ vi.mock('../api/kinTaleReportDraftDelete', async (orig) => ({
   deleteKinTaleReportDraft,
 }));
 
-const { saveKinTaleDraft, sendKinTale, completeVisitAfterKinTale } = vi.hoisted(() => ({
+const { saveKinTaleDraft, sendKinTale, transitionBookingStatus } = vi.hoisted(() => ({
   saveKinTaleDraft: vi.fn(),
   sendKinTale: vi.fn(),
-  // #1793: the completion after a send. Its own rule and read are tested in
-  // `api/kinTalesWrite.test.ts`; here it is what the screen does with each answer.
-  completeVisitAfterKinTale: vi.fn(),
+  // #2123: mocked only so a test can prove a send never completes the visit.
+  transitionBookingStatus: vi.fn(),
+}));
+vi.mock('../api/bookingsWrite', async (orig) => ({
+  ...(await orig<typeof import('../api/bookingsWrite')>()),
+  transitionBookingStatus,
 }));
 const { generateDraft } = vi.hoisted(() => ({ generateDraft: vi.fn() }));
 vi.mock('../api/communicateGenerate', async (orig) => ({
@@ -43,7 +46,6 @@ vi.mock('../api/kinTalesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/kinTalesWrite')>()),
   saveKinTaleDraft,
   sendKinTale,
-  completeVisitAfterKinTale,
 }));
 
 /**
@@ -96,7 +98,6 @@ import {
   isKinTaleEligibleSession,
   kinTaleSendLabel,
   scaffoldKinTaleDraft,
-  sentButNotCompletedNotice,
   draftFromKinTaleEntry,
   pickableSessions,
 } from './KinTaleCompose';
@@ -165,7 +166,7 @@ beforeEach(() => {
   useCollection.mockReset();
   saveKinTaleDraft.mockReset();
   sendKinTale.mockReset();
-  completeVisitAfterKinTale.mockReset().mockResolvedValue({ kind: 'left_open', status: 'DEPARTED' });
+  transitionBookingStatus.mockReset();
   // A pet with no medication notes and no species quirks: every conditional
   // item in the built-in template is withheld from it unless a test says
   // otherwise, so a suite that never mentions the checklist sees a stable one.
@@ -614,23 +615,10 @@ describe('KinTaleCompose: Send, gated behind a confirm dialog', () => {
 });
 
 /**
- * #1793: on Android a DEPARTED visit with a sent tale is completed by the Home
- * sweep. On web nothing read the flag, so the walk's visit stayed DEPARTED.
+ * #2123 (operator ruling 2026-11-12): a visit is Completed at departure, and a
+ * KinTale never decides it. The #1793 completion after a send is gone.
  */
-describe('sentButNotCompletedNotice (pure, #1793)', () => {
-  it('gives the reason its own sentence, whatever shape it arrives in', () => {
-    expect(sentButNotCompletedNotice('unavailable')).toBe(
-      'KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed. unavailable. You can mark it Completed from Auntie Time.',
-    );
-    expect(sentButNotCompletedNotice('Too far from the household.')).toBe(
-      'KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed. Too far from the household. You can mark it Completed from Auntie Time.',
-    );
-    expect(sentButNotCompletedNotice('  ')).toBe(
-      'KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed. You can mark it Completed from Auntie Time.',
-    );
-  });
-});
-describe('KinTaleCompose: #1793, the visit is completed after the send', () => {
+describe('KinTaleCompose: #2123, a send does not complete the visit', () => {
   async function sendIt(onClose = vi.fn()) {
     mockStreams({ reports: { status: 'ready', data: [report({ title: 'Hi' })] } });
     saveKinTaleDraft.mockResolvedValue('tale1');
@@ -640,65 +628,25 @@ describe('KinTaleCompose: #1793, the visit is completed after the send', () => {
     await user.click(screen.getByRole('button', { name: /^send kintale$/i }));
     return onClose;
   }
-  it('asks for the completion only after the send has committed, for the same visit', async () => {
-    let sent = false;
-    sendKinTale.mockImplementation(() => {
-      sent = true;
-      return Promise.resolve(undefined);
-    });
-    completeVisitAfterKinTale.mockImplementation(() => {
-      expect(sent).toBe(true);
-      return Promise.resolve({ kind: 'completed' });
-    });
-    mockStreams({ reports: { status: 'ready', data: [report({ title: 'Hi' })] } });
-    saveKinTaleDraft.mockResolvedValue('tale1');
-    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
-    await user.click(await screen.findByRole('button', { name: /send to the whitfields/i }));
-    await user.click(screen.getByRole('button', { name: /^send kintale$/i }));
-    await waitFor(() => expect(completeVisitAfterKinTale).toHaveBeenCalledWith('sess1'));
-  });
-  it('says the visit is Completed, and closes, when it was', async () => {
-    completeVisitAfterKinTale.mockResolvedValue({ kind: 'completed' });
-    const onClose = await sendIt();
-    expect(
-      await screen.findByText('KinTale sent and the visit is marked Completed. Kinfolk will hear from you soon.'),
-    ).toBeInTheDocument();
-    expect(onClose).toHaveBeenCalledOnce();
-  });
-  it('says only that it was sent, and closes, when the visit was left open', async () => {
-    completeVisitAfterKinTale.mockResolvedValue({ kind: 'left_open', status: 'ARRIVED' });
+  it('says the KinTale was sent, closes, and asks the server for nothing about the visit', async () => {
     const onClose = await sendIt();
     expect(await screen.findByText('KinTale sent. Kinfolk will hear from you soon.')).toBeInTheDocument();
     expect(onClose).toHaveBeenCalledOnce();
-  });
-  it('a refused completion reads as sent, never as "Couldn\'t send", and the tale cannot be sent again', async () => {
-    completeVisitAfterKinTale.mockResolvedValue({
-      kind: 'not_completed',
-      message: 'The arrival was recorded 900 m from the household.',
-    });
-    const onClose = await sendIt();
-    expect(
-      await screen.findByText(
-        'KinTale sent. Kinfolk will hear from you soon. The visit could not be marked Completed. The arrival was recorded 900 m from the household. You can mark it Completed from Auntie Time.',
-      ),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/couldn't send/i)).toBeNull();
-    expect(screen.queryByRole('button', { name: /send to the whitfields/i })).toBeNull();
-    expect(screen.getByText('Sent')).toBeInTheDocument();
     expect(sendKinTale).toHaveBeenCalledOnce();
-    expect(onClose).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: /^close$/i }));
-    expect(onClose).toHaveBeenCalledOnce();
+    expect(transitionBookingStatus).not.toHaveBeenCalled();
+    expect(screen.queryByText(/marked Completed/i)).toBeNull();
   });
-  it('a failed send never asks for the completion', async () => {
+  it('a failed send says so and stays open, and still never touches the visit', async () => {
     mockStreams({ reports: { status: 'ready', data: [report({ title: 'Hi' })] } });
     saveKinTaleDraft.mockResolvedValue('tale1');
     sendKinTale.mockRejectedValue(new Error('unavailable'));
-    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    const onClose = vi.fn();
+    render(<KinTaleCompose kinTaleId="tale1" onClose={onClose} />);
     await user.click(await screen.findByRole('button', { name: /send to the whitfields/i }));
     await user.click(screen.getByRole('button', { name: /^send kintale$/i }));
     expect(await screen.findByText(/couldn't send: unavailable/i)).toBeInTheDocument();
-    expect(completeVisitAfterKinTale).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(transitionBookingStatus).not.toHaveBeenCalled();
   });
 });
 describe('KinTaleCompose: Close', () => {

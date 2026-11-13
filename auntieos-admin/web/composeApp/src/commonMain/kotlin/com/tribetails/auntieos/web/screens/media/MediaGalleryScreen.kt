@@ -486,7 +486,6 @@ private class FirestoreClientMediaDataSource(
     override fun reportForSessionStream(sessionId: String) = client.reportForSessionStream(sessionId)
     override suspend fun saveReport(loaded: KinCareReport, edited: KinCareReport) = client.saveReport(loaded, edited)
     override suspend fun sendReport(report: com.tribetails.auntieos.web.data.KinCareReport, session: com.tribetails.auntieos.web.data.KinCareSession) = client.sendReport(report, session)
-    override suspend fun completeVisitAfterKinTale(sessionId: String) = client.completeVisitAfterKinTale(sessionId)
     override fun trainingDocsStream() = client.trainingDocsStream()
     override fun bookingNotesStream(kinfolkId: String, bookingId: String) =
         client.bookingNotesStream(kinfolkId, bookingId, internal = false)

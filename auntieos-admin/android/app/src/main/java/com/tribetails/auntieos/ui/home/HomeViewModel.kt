@@ -132,9 +132,32 @@ data class AutoCompleteRefusal(
 ) {
     val message: String get() = "Could not mark $householdName Completed: $reason"
 }
-/** The parts of a visit and the rule that decide the server's answer. */
+/**
+ * The parts of a visit and the rule that decide the server's answer. #2123: a
+ * sent KinTale is no longer one of them, so sending one does not retry a refusal.
+ */
 internal fun autoCompleteFingerprint(session: KinCareSession, arrivalRule: Boolean?): String =
-    listOf(session.arrivedAt, session.departedAt, session.sentReportCount, arrivalRule).joinToString("|")
+    listOf(session.arrivedAt, session.departedAt, arrivalRule).joinToString("|")
+/**
+ * #2123: how long after departure the Home sweep leaves a DEPARTED visit to the
+ * server. The server trigger completes a visit at departure, normally within
+ * seconds; the sweep is the fallback for visits it could not complete. Sweeping
+ * a fresh departure would race it, and on an Auntie login (no
+ * `transitionBookingStatus` access) show a refusal for every departure.
+ */
+internal const val DEPARTURE_SWEEP_GRACE_MS: Long = 5 * 60_000L
+/**
+ * Does the Home sweep try to complete this DEPARTED visit now? Only once its
+ * departure is [DEPARTURE_SWEEP_GRACE_MS] old. A blank or unreadable
+ * `departedAt` gives the trigger nothing to wait on, so it is swept at once.
+ */
+internal fun sweepsDeparted(session: KinCareSession, nowMs: Long): Boolean {
+    if (session.status != VisitStatus.DEPARTED.name) return false
+    val departedMs = session.departedAt?.trim()?.takeIf { it.isNotEmpty() }
+        ?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+        ?: return true
+    return nowMs - departedMs >= DEPARTURE_SWEEP_GRACE_MS
+}
 private fun householdNameFor(session: KinCareSession, kinfolk: Kinfolk?): String =
     session.kinfolkName.ifBlank { kinfolk?.lastName.orEmpty() }.ifBlank { "this visit" }
 
@@ -152,6 +175,8 @@ class HomeViewModel(
     // provider that returns null rather than a special case in the ViewModel.
     private val arrivalFixes: ArrivalFixProvider =
         FusedArrivalFixProvider(AuntieOSApp.instance.applicationContext),
+    // #2123: the sweep's clock, injected so the departure grace is testable.
+    private val nowMs: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -390,9 +415,15 @@ class HomeViewModel(
 
                 var cards = hydrateCards(sessions)
 
+                // #2123: a visit is Completed at departure, KinTale or not. The
+                // server completes it the moment DEPARTED lands; this sweep is the
+                // catch for a visit it could not complete, and waits out
+                // [DEPARTURE_SWEEP_GRACE_MS] so it never races the server.
+                // `autoCompleteEligible` (#1793) is no longer read.
+                val sweepNow = nowMs()
                 val eligibleForAutoComplete = cards
                     .map { it.session }
-                    .filter { it.status == VisitStatus.DEPARTED.name && it.autoCompleteEligible }
+                    .filter { sweepsDeparted(it, sweepNow) }
 
                 // #1798: each visit is completed on its own. A refusal (for example an
                 // arrival outside the radius) is recorded and shown, never thrown, so one

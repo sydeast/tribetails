@@ -349,6 +349,41 @@ describe('rules: #944 an Auntie writing a KinTale, and the feed downstream', () 
   });
 
   /**
+   * #2123: "KinTales to send" is the Auntie's task list, read from the visit's
+   * `kinTaleDue` stamp with no settings read (she cannot read
+   * `business_settings`). This is the admin web board's query, word for word
+   * (`api/sessions.ts#KINTALES_DUE_QUERY`).
+   */
+  it("reads the visits stamped as owing a KinTale, the board's own query", async () => {
+    const env = await getEnv();
+    await seed('kin_care_sessions/s1', {
+      kinfolkId: 'k1', status: 'COMPLETED', kinTaleDue: true, startTime: '2026-11-12T15:00:00Z',
+    });
+    await seed('kin_care_sessions/s2', { kinfolkId: 'k1', status: 'COMPLETED', kinTaleDue: false });
+    const db = asAuntie(env).firestore();
+    await assertSucceeds(
+      db.collection('kin_care_sessions').where('kinTaleDue', '==', true).orderBy('startTime', 'desc').limit(100).get(),
+    );
+  });
+
+  /** #2123: the send that ends the task lands on a visit the server already completed. */
+  it('lands the send batch on a Completed visit owing its KinTale, clearing the stamp', async () => {
+    const env = await getEnv();
+    await seed('kin_care_sessions/s1', {
+      kinfolkId: 'k1', status: 'COMPLETED', completedAt: '2026-11-12T15:30:00Z',
+      kinTaleDue: true, reportIds: [], sentReportCount: 0,
+    });
+    await seed('kin_care_reports/r1', { kinfolkId: 'k1', sessionId: 's1', status: 'DRAFT' });
+    const db = asAuntie(env).firestore();
+    const batch = db.batch();
+    batch.update(db.doc('kin_care_reports/r1'), { status: 'SENT', sentVia: 'catalog' });
+    batch.update(db.doc('kin_care_sessions/s1'), {
+      reportIds: ['r1'], sentReportCount: 1, autoCompleteEligible: true, kinTaleDue: false,
+    });
+    await assertSucceeds(batch.commit());
+  });
+
+  /**
    * The downstream feed itself is not tested here and cannot be: onKinTaleCreate
    * seeds reconcileStatus and the nightly Python reconcile writes the three
    * banks, both on the Admin SDK, which does not evaluate rules at all. What

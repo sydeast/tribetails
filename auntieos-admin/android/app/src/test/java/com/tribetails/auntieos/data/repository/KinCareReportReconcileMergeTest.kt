@@ -341,6 +341,8 @@ class KinCareReportReconcileMergeTest {
         assertEquals("SENT", batch.patched[0]["status"])
         assertTrue("the session side must ride the same commit", batch.patched[1].containsKey("sentReportCount"))
         assertEquals(true, batch.patched[1]["autoCompleteEligible"])
+        // #2123: the send settles the "Send the KinTale" task in the same commit.
+        assertEquals(false, batch.patched[1]["kinTaleDue"])
         // Nothing was written outside the batch on the way there.
         assertEquals(0, looseUpdates.size)
     }

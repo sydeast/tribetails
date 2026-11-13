@@ -13,7 +13,6 @@ import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.KinTaleComment
 import com.tribetails.auntieos.web.data.MediaFile
-import com.tribetails.auntieos.web.data.VisitCompletionAfterSend
 import com.tribetails.auntieos.web.data.WriteResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -76,16 +75,6 @@ class KinTaleReportViewModel(
      * auntie actually sees the sent KinTale (audit bug: send used to call onBack()).
      */
     var justSent: Boolean by mutableStateOf(false)
-        private set
-
-    /**
-     * #1799: what happened to the visit after this screen's own send: marked
-     * Completed, left open (not DEPARTED, or not flagged), or refused with the
-     * server's reason. Null until a send has gone through. Kept apart from
-     * [error] on purpose: a refused completion is not a failed send, and
-     * "Send failed" would invite a second send.
-     */
-    var visitCompletion: VisitCompletionAfterSend? by mutableStateOf(null)
         private set
 
     var error: String? by mutableStateOf(null)
@@ -215,10 +204,8 @@ class KinTaleReportViewModel(
             }
             when (val result = dataSource.sendReport(report.copy(_id = reportId), session)) {
                 is WriteResult.Ok -> {
-                    // #1799: the tale has gone home. A DEPARTED visit is now
-                    // marked Completed, on Android's rule, while the button
-                    // still reads Sending. It never throws.
-                    visitCompletion = dataSource.completeVisitAfterKinTale(session._id)
+                    // #2123: the tale has gone home, and that is all a send does.
+                    // The visit was marked Completed when the Auntie departed.
                     isSending = false
                     // Stop overriding the body with the local draft; the live stream
                     // now carries the canonical sent report (status -> SENT, sentAt,

@@ -27,8 +27,12 @@ vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
  * `kin_care_sessions/{id}` subscription lives in `routes/SessionDetailView.tsx`
  * and is driven from `routes/SessionDetailView.test.tsx`.
  */
-const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
-vi.mock('../lib/firestore', () => ({ useCollection }));
+const { useCollection, useDocById } = vi.hoisted(() => ({
+  useCollection: vi.fn(),
+  // #2123: a DEPARTED card watches its own document until the server completes it.
+  useDocById: vi.fn<(path: string, id: string | null | undefined) => unknown>(() => ({ status: 'loading' })),
+}));
+vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 /**
  * The writes, and the split between them is the whole point of this block.
  * `patchVisitLifecycle` is the card's own clock (through
@@ -149,14 +153,22 @@ function paged(
  * hand the kin roster to the address lookup and vice versa, which is exactly the
  * confusion the card must never make.
  */
-function directory(households: Kinfolk[] = [], kin: Kin[] = [], olderOverdue: SessionEntry[] = []) {
+function directory(
+  households: Kinfolk[] = [],
+  kin: Kin[] = [],
+  olderOverdue: SessionEntry[] = [],
+  kinTalesDue: SessionEntry[] = [],
+) {
   useCollection.mockImplementation((spec: CollectionSpec) =>
     spec.path === 'kin'
       ? { status: 'ready', data: kin }
-      : // #1607: the overdue visits from before the board's window.
-        spec.path === 'kin_care_sessions'
-        ? { status: 'ready', data: olderOverdue }
-        : { status: 'ready', data: households },
+      : // #2123: the visits the server left owing a KinTale.
+        spec.path === 'kin_care_sessions' && spec.filters?.[0]?.[0] === 'kinTaleDue'
+        ? { status: 'ready', data: kinTalesDue }
+        : // #1607: the overdue visits from before the board's window.
+          spec.path === 'kin_care_sessions'
+          ? { status: 'ready', data: olderOverdue }
+          : { status: 'ready', data: households },
   );
 }
 
@@ -221,6 +233,7 @@ function renderBoard(props: Partial<Parameters<typeof Sessions>[0]> = {}) {
 beforeEach(() => {
   onSelect.mockReset();
   useCollection.mockReset();
+  useDocById.mockReset().mockReturnValue({ status: 'loading' });
   directory();
   loadMore.mockReset();
   reload.mockReset();
@@ -469,12 +482,12 @@ describe('Auntie Time: one fully populated action card', () => {
     expect(addr.closest('button')).toBeNull();
   });
 
-  it('paints "Complete KinTale" teal, the mock\'s one button that is not orange or ghost', () => {
+  it('paints "Send the KinTale" teal, the mock\'s one button that is not orange or ghost', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ _id: 'gone', kinfolkName: 'Clocked Out', status: 'DEPARTED', startTime: at(0, 8) })]),
     );
     renderBoard({ onComposeKinTale: vi.fn() });
-    const button = screen.getByRole('button', { name: 'Complete KinTale' });
+    const button = screen.getByRole('button', { name: 'Send the KinTale' });
     expect(button.classList.contains('sessions__btn--teal')).toBe(true);
     expect(button.classList.contains('auntie-btn--primary')).toBe(true);
   });
@@ -735,13 +748,13 @@ describe('Auntie Time: the card runs the visit', () => {
     expect(patchVisitLifecycle).not.toHaveBeenCalled();
   });
 
-  it('offers "Complete KinTale" on a departed card and routes it to the composer', async () => {
+  it('offers "Send the KinTale" on a departed card and routes it to the composer', async () => {
     const onComposeKinTale = vi.fn();
     usePagedCollection.mockReturnValue(
       paged([entry({ _id: 'sess-dep', status: 'DEPARTED', startTime: at(0, 8) })]),
     );
     renderBoard({ onComposeKinTale });
-    await user.click(screen.getByRole('button', { name: 'Complete KinTale' }));
+    await user.click(screen.getByRole('button', { name: 'Send the KinTale' }));
     expect(onComposeKinTale).toHaveBeenCalledWith('sess-dep');
   });
 
@@ -755,6 +768,7 @@ describe('Auntie Time: the card runs the visit', () => {
           startTime: at(0, 8),
           completedAt: at(0, 9),
           reportIds: ['rep-9'],
+          sentReportCount: 1,
         }),
       ]),
     );
@@ -779,64 +793,190 @@ describe('Auntie Time: the card runs the visit', () => {
     expect(screen.queryByRole('button', { name: 'View KinTale' })).toBeNull();
   });
 
-  // #1793: the walk's visit. Departed, tale sent, and no way to complete it.
-  describe('#1793: a departed card whose KinTale has been sent', () => {
-    const sentDeparted = {
-      _id: 'sess-sent',
+  // #2123 (operator ruling 2026-11-12): a visit is Completed at departure, and a
+  // KinTale never decides it. Replaces #1793's "Complete once the tale is sent".
+  describe('#2123: departure completes, the KinTale is its own step', () => {
+    const departed = {
+      _id: 'sess-dep',
       status: 'DEPARTED',
       startTime: at(0, 8),
       arrivedAt: at(0, 8, 2),
       departedAt: at(0, 8, 47),
-      reportIds: ['rep-1'],
-      autoCompleteEligible: true,
     } satisfies Partial<SessionEntry>;
 
-    it('offers Complete, and completes through transitionBookingStatus', async () => {
-      usePagedCollection.mockReturnValue(paged([entry(sentDeparted)]));
+    it('a departed card with no KinTale offers Complete and Send the KinTale', async () => {
+      usePagedCollection.mockReturnValue(paged([entry(departed)]));
       renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale: vi.fn() });
+      expect(screen.getByRole('button', { name: 'Send the KinTale' })).toBeInTheDocument();
       await act(/^Complete$/, /yes, mark it completed/i);
       expect(transitionBookingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ sessionId: 'sess-sent', action: 'COMPLETE' }),
+        expect.objectContaining({ sessionId: 'sess-dep', action: 'COMPLETE' }),
       );
-      expect(patchVisitLifecycle).not.toHaveBeenCalled();
       expect(reload).toHaveBeenCalled();
     });
 
-    it('shows View KinTale in place of Complete KinTale', async () => {
-      const onViewKinTale = vi.fn();
-      usePagedCollection.mockReturnValue(paged([entry(sentDeparted)]));
-      renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale });
-      expect(screen.queryByRole('button', { name: 'Complete KinTale' })).toBeNull();
-      await user.click(screen.getByRole('button', { name: 'View KinTale' }));
-      expect(onViewKinTale).toHaveBeenCalledWith('rep-1');
+    it('a refused Complete on a departed card shows the reason and keeps the card', async () => {
+      transitionBookingStatus.mockRejectedValue(new Error('The arrival was recorded 900 m from the household.'));
+      usePagedCollection.mockReturnValue(paged([entry(departed)]));
+      renderBoard({ onComposeKinTale: vi.fn() });
+      await act(/^Complete$/, /yes, mark it completed/i);
+      expect(
+        await screen.findByText(/couldn.t complete this visit\. The arrival was recorded 900 m from the household\./i),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Send the KinTale' })).toBeInTheDocument();
     });
 
-    it('a departed card with no sent tale still offers only Complete KinTale', () => {
-      usePagedCollection.mockReturnValue(
-        paged([entry({ _id: 'sess-dep', status: 'DEPARTED', startTime: at(0, 8), reportIds: [] })]),
+    it('a departed card re-reads the board once the server has completed the visit', () => {
+      useDocById.mockImplementation((_path: string, id: string | null | undefined) =>
+        id === 'sess-dep' ? { status: 'ready', data: { ...entry(departed), status: 'COMPLETED' } } : { status: 'loading' },
       );
-      renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale: vi.fn() });
-      expect(screen.getByRole('button', { name: 'Complete KinTale' })).toBeInTheDocument();
+      usePagedCollection.mockReturnValue(paged([entry(departed)]));
+      renderBoard({ onComposeKinTale: vi.fn() });
+      expect(useDocById).toHaveBeenCalledWith('kin_care_sessions', 'sess-dep');
+      expect(reload).toHaveBeenCalled();
+    });
+
+    it('a departed card the server has not moved yet does not re-read', () => {
+      useDocById.mockReturnValue({ status: 'ready', data: entry(departed) });
+      usePagedCollection.mockReturnValue(paged([entry(departed)]));
+      renderBoard({ onComposeKinTale: vi.fn() });
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('only a departed card watches its document', () => {
+      usePagedCollection.mockReturnValue(paged([entry({ _id: 'sched', status: 'SCHEDULED', startTime: at(1) })]));
+      renderBoard();
+      expect(useDocById.mock.calls.every(([, id]) => id === null)).toBe(true);
+    });
+
+    it('a completed card with no KinTale sent offers Send the KinTale, required or not', async () => {
+      const onComposeKinTale = vi.fn();
+      usePagedCollection.mockReturnValue(
+        paged([entry({ ...departed, status: 'COMPLETED', completedAt: at(0, 9) })]),
+      );
+      renderBoard({ onComposeKinTale, onViewKinTale: vi.fn() });
+      await user.click(screen.getByRole('button', { name: 'Send the KinTale' }));
+      expect(onComposeKinTale).toHaveBeenCalledWith('sess-dep');
       expect(screen.queryByRole('button', { name: /^Complete$/ })).toBeNull();
       expect(screen.queryByRole('button', { name: 'View KinTale' })).toBeNull();
     });
 
-    it('an arrived card the tale was sent from offers no Complete until she departs', () => {
+    it('a draft listed on reportIds is not a sent KinTale', () => {
       usePagedCollection.mockReturnValue(
-        paged([entry({ ...sentDeparted, status: 'ARRIVED', departedAt: '' })]),
+        paged([entry({ ...departed, status: 'COMPLETED', completedAt: at(0, 9), reportIds: ['draft-1'] })]),
+      );
+      renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale: vi.fn() });
+      expect(screen.getByRole('button', { name: 'Send the KinTale' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'View KinTale' })).toBeNull();
+    });
+
+    it('once sent, a departed or completed card offers View KinTale instead', async () => {
+      const onViewKinTale = vi.fn();
+      usePagedCollection.mockReturnValue(
+        paged([entry({ ...departed, reportIds: ['rep-1'], sentReportCount: 1 })]),
+      );
+      renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale });
+      expect(screen.queryByRole('button', { name: 'Send the KinTale' })).toBeNull();
+      await user.click(screen.getByRole('button', { name: 'View KinTale' }));
+      expect(onViewKinTale).toHaveBeenCalledWith('rep-1');
+    });
+
+    it('an arrived card offers no Complete until she departs, KinTale or not', () => {
+      usePagedCollection.mockReturnValue(
+        paged([entry({ ...departed, status: 'ARRIVED', departedAt: '', sentReportCount: 1, reportIds: ['rep-1'] })]),
       );
       renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale: vi.fn() });
       expect(screen.queryByRole('button', { name: /^Complete$/ })).toBeNull();
       expect(screen.getByRole('button', { name: /^Departed$/ })).toBeInTheDocument();
     });
 
-    it('the completed card it becomes shows View KinTale and no Complete', () => {
+    it('the clock-out confirm says the visit is marked Completed', async () => {
       usePagedCollection.mockReturnValue(
-        paged([entry({ ...sentDeparted, status: 'COMPLETED', completedAt: at(0, 9) })]),
+        paged([entry({ ...departed, status: 'ARRIVED', departedAt: '' })]),
       );
+      renderBoard();
+      await user.click(screen.getByRole('button', { name: /^Departed$/ }));
+      expect(
+        screen.getByText('The departure time is stamped now and the visit is marked Completed.', { exact: false }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  // #2123: the Auntie's task, until the KinTale is sent. Read from the server's
+  // `kinTaleDue` stamp alone: nothing here mocks or reads the settings document,
+  // which an Auntie cannot read, so every case below is what she sees too.
+  describe('#2123: KinTales to send', () => {
+    const owed = (id: string, extra: Partial<SessionEntry> = {}) =>
+      entry({
+        _id: id,
+        kinfolkName: `Household ${id}`,
+        status: 'COMPLETED',
+        startTime: at(0, 8),
+        completedAt: at(0, 9),
+        kinTaleDue: true,
+        ...extra,
+      });
+
+    it('a stamped visit is listed under KinTales to send and not again in Recent', () => {
+      usePagedCollection.mockReturnValue(paged([owed('o1'), entry({ _id: 'done', status: 'COMPLETED', startTime: at(0, 7), completedAt: at(0, 7, 30), sentReportCount: 1, reportIds: ['r'] })]));
       renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale: vi.fn() });
-      expect(screen.getByRole('button', { name: 'View KinTale' })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /^Complete$/ })).toBeNull();
+      expect(phaseHeadings()[0]).toBe('KinTales to send');
+      expect(phaseCount('KinTales to send')).toBe('1');
+      expect(phaseCount('Recent')).toBe('1');
+      expect(screen.getAllByText('Household o1')).toHaveLength(1);
+    });
+
+    it('reaches owed visits older than the board, and opens the composer from the task', async () => {
+      directory([], [], [], [owed('old', { startTime: at(-20, 8), completedAt: at(-20, 9) })]);
+      const onComposeKinTale = vi.fn();
+      usePagedCollection.mockReturnValue(paged([]));
+      renderBoard({ onComposeKinTale });
+      expect(phaseCount('KinTales to send')).toBe('1');
+      const group = screen.getByRole('heading', { level: 3, name: /^KinTales to send/ }).closest('li') as HTMLElement;
+      await user.click(within(group).getByRole('button', { name: 'Send the KinTale' }));
+      expect(onComposeKinTale).toHaveBeenCalledWith('old');
+    });
+
+    it('a sent KinTale leaves the list even before the server flag is cleared, and an empty list is not shown', () => {
+      directory([], [], [], [owed('sent', { sentReportCount: 1, reportIds: ['r1'] })]);
+      usePagedCollection.mockReturnValue(paged([]));
+      renderBoard();
+      expect(phaseHeadings()).not.toContain('KinTales to send');
+    });
+
+    it('a failed read of older owed visits says so, keeps the board rows and offers a retry', async () => {
+      const retry = vi.fn();
+      useCollection.mockImplementation((spec: CollectionSpec) =>
+        spec.path === 'kin_care_sessions' && spec.filters?.[0]?.[0] === 'kinTaleDue'
+          ? { status: 'error', message: 'permission-denied', retry }
+          : { status: 'ready', data: [] },
+      );
+      usePagedCollection.mockReturnValue(paged([owed('o1')]));
+      renderBoard({ onComposeKinTale: vi.fn() });
+      expect(screen.getByText(/couldn.t load older kintales to send\. permission-denied/i)).toBeInTheDocument();
+      expect(phaseCount('KinTales to send')).toBe('1');
+      await user.click(screen.getByRole('button', { name: 'Retry' }));
+      expect(retry).toHaveBeenCalledOnce();
+    });
+
+    it('a completed visit with no stamp (the switch off clears them) is no task: it stays in Recent with its button', () => {
+      usePagedCollection.mockReturnValue(paged([owed('o1', { kinTaleDue: false })]));
+      renderBoard({ onComposeKinTale: vi.fn() });
+      expect(phaseHeadings()).not.toContain('KinTales to send');
+      expect(phaseCount('Recent')).toBe('1');
+      expect(screen.getByRole('button', { name: 'Send the KinTale' })).toBeInTheDocument();
+    });
+
+    it('a failed read with nothing owed on the board still shows the group, with the error', () => {
+      useCollection.mockImplementation((spec: CollectionSpec) =>
+        spec.path === 'kin_care_sessions' && spec.filters?.[0]?.[0] === 'kinTaleDue'
+          ? { status: 'error', message: 'unavailable' }
+          : { status: 'ready', data: [] },
+      );
+      usePagedCollection.mockReturnValue(paged([]));
+      renderBoard();
+      expect(phaseCount('KinTales to send')).toBe('0');
+      expect(screen.getByText(/couldn.t load older kintales to send\. unavailable/i)).toBeInTheDocument();
     });
   });
 
