@@ -242,6 +242,50 @@ class NewInvoiceDialogFlowTest {
         onNodeWithText("Create invoice").assertIsNotEnabled()
         assertNull(confirmed)
     }
+    /** #2089: after a re-read, Create bills exactly the ticked visits, not every visit listed. */
+    @Test
+    fun afterAReReadCreateBillsOnlyTheTickedVisits() = runDesktopComposeUiTest {
+        val drop = UninvoicedSession("s3", "kf1", "Long walk", 45.0, "2026-10-12T09:00:00.000Z", 3000L)
+        var reads = 0
+        var confirmed: NewInvoiceRequest? = null
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                NewInvoiceDialogContent(
+                    visible = true,
+                    picks = picks,
+                    todayIso = "2026-10-20",
+                    onDismiss = {},
+                    onConfirm = { confirmed = it },
+                    loadUninvoiced = { _, _, _ ->
+                        reads += 1
+                        WriteResult.Ok(
+                            if (reads == 1) {
+                                result(listOf(walk, sit), listOf(UninvoicedExcluded("s3", "kf1", "Long walk", drop.startTime, "")))
+                            } else {
+                                result(listOf(walk, sit, drop))
+                            },
+                        )
+                    },
+                    setDoNotInvoice = { ids, flag, _ -> WriteResult.Ok(DoNotInvoiceResult(true, flag, ids, emptyList())) },
+                    initialKinfolkId = "kf1",
+                )
+            }
+        }
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodesWithText("Create invoice for 2 visits", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        onNodeWithText("Select none").performClick()
+        waitForIdle()
+        onNodeWithText("Put it back").performClick()
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodesWithText("Create invoice for 1 visit", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        onNodeWithText("Create invoice for 1 visit").assertIsEnabled().performClick()
+        waitForIdle()
+        val r = assertNotNull(confirmed, "create did not hand over a request")
+        assertEquals(listOf("s3"), r.lineItems!!.map { it.sessionId })
+        assertEquals(30.0, r.invoice.total)
+    }
     @Test
     fun aHouseholdWithNoWorkGetsABlankDraftWithATypedTotal() = runDesktopComposeUiTest {
         var confirmed: NewInvoiceRequest? = null

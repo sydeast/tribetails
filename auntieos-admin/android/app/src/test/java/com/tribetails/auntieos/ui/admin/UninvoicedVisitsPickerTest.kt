@@ -331,4 +331,39 @@ class UninvoicedVisitsPickerTest {
         assertEquals(setOf("v2", "v3", "v9"), selected())
         assertEquals(1, rule.onAllNodesWithText("3 of 4 un-invoiced visits selected for Jamie Halbrook.").fetchSemanticsNodes().size)
     }
+    @Test
+    fun `#2089 a change of household starts fresh, so coming back ticks every visit again`() {
+        val household = mutableStateOf("kf1")
+        val selectedNow = mutableStateOf<Set<String>>(emptySet())
+        rule.setContent {
+            AuntieOSTheme {
+                UninvoicedVisitsPicker(
+                    kinfolkId = household.value,
+                    householdLabel = "Jamie Halbrook",
+                    todayIso = "2026-08-19",
+                    selected = selectedNow.value,
+                    onSelectedChange = { selectedNow.value = it },
+                    prices = emptyMap(),
+                    onPriceChange = { _, _ -> },
+                    onSessionsLoaded = {},
+                    onWriteBlankInvoice = {},
+                    onOpenVisit = {},
+                    load = { id, _, _ ->
+                        Result.success(if (id == "kf1") result(three) else result(listOf(session("w1", 2500L))))
+                    },
+                    setDoNotInvoice = { _, _, _ -> error("not called in this test") },
+                )
+            }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithText("Select none").performClick()
+        rule.waitForIdle()
+        assertEquals(emptySet<String>(), selectedNow.value)
+        household.value = "kf2"
+        rule.waitForIdle()
+        assertEquals(setOf("w1"), selectedNow.value)
+        household.value = "kf1"
+        rule.waitForIdle()
+        assertEquals(setOf("v1", "v2", "v3"), selectedNow.value)
+    }
 }
