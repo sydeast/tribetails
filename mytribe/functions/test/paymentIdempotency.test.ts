@@ -42,6 +42,7 @@ vi.mock('firebase-admin/firestore', async () => {
       // The mock cannot apply a real increment, so it records the INTENT.
       // Counting these is how "the balance moved once" is asserted below.
       increment: (n: number) => ({ __increment: n }),
+      delete: () => undefined,
     },
   };
 });
@@ -345,7 +346,9 @@ describe('#825 createInvoice / createQuote: one key, one invoice, one number', (
       req(invoiceArgs({ idempotencyKey: QUOT_A, sendToKinfolk: true })),
     );
 
-    expect(ctx.writes.filter((w) => w.path.startsWith('invoices/')).map((w) => w.path)).toEqual([
+    // #2087: one document (saved as a draft, then flipped to a quote by its
+    // send, so two writes to the one path), one number, one notice.
+    expect([...new Set(ctx.writes.filter((w) => w.path.startsWith('invoices/')).map((w) => w.path))]).toEqual([
       `invoices/${QUOT_A}`,
     ]);
     expect(counterBumps(ctx)).toHaveLength(1);

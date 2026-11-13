@@ -201,6 +201,12 @@ export function invoiceSentence(invoiceNumber: unknown, rest: string): string {
   return `${capitalised(invoiceWords(invoiceNumber))} ${rest}`;
 }
 
+/** `Quote 1026 sent to the household`, or `A quote ...` when it has no number. Never its id. */
+export function quoteSentence(invoiceNumber: unknown, rest: string): string {
+  const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
+  return `${n === '' ? 'A quote' : `Quote ${n}`} ${rest}`;
+}
+
 /** `updateKinCareSession`'s field names as the operator reads them. */
 const SESSION_FIELD_WORDS: Record<string, string> = {
   serviceType: 'service',

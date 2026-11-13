@@ -72,6 +72,18 @@ export const AUDIT_EVENTS = {
    * no to it.
    */
   BILLING_QUOTE_RESENT: 'BILLING_QUOTE_RESENT',
+  /**
+   * #2087: a quote saved with "Send to kinfolk now" off (a draft only the
+   * office sees) was sent to the household, who can answer it from then on.
+   */
+  BILLING_QUOTE_SENT: 'BILLING_QUOTE_SENT',
+  /**
+   * #2088: the office turned a quote into a draft invoice. The household hears
+   * about the invoice when the office sends it.
+   */
+  BILLING_QUOTE_CONVERTED: 'BILLING_QUOTE_CONVERTED',
+  /** #2088: the office withdrew a quote. It is cancelled and its visits went back on the list. */
+  BILLING_QUOTE_WITHDRAWN: 'BILLING_QUOTE_WITHDRAWN',
   BILLING_INVOICE_PAID: 'BILLING_INVOICE_PAID',
   BILLING_INVOICE_FAILED: 'BILLING_INVOICE_FAILED',
   // #884: an account credit payment notification was retried
@@ -648,9 +660,12 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.BILLING_PAYMENT_RECORDED,
   AUDIT_EVENTS.BILLING_PAYMENT_UNAPPLIED,
   AUDIT_EVENTS.BILLING_QUOTE_ACCEPTED,
+  AUDIT_EVENTS.BILLING_QUOTE_CONVERTED,
   AUDIT_EVENTS.BILLING_QUOTE_CREATED,
   AUDIT_EVENTS.BILLING_QUOTE_DENIED,
   AUDIT_EVENTS.BILLING_QUOTE_RESENT,
+  AUDIT_EVENTS.BILLING_QUOTE_SENT,
+  AUDIT_EVENTS.BILLING_QUOTE_WITHDRAWN,
   AUDIT_EVENTS.BILLING_RECEIPT_ISSUED,
   AUDIT_EVENTS.BILLING_REMINDER_SENT,
   AUDIT_EVENTS.BILLING_SESSION_DO_NOT_INVOICE_CLEARED,

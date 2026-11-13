@@ -692,7 +692,10 @@ describe('#2168 archiving a draft lets go of its visits; restoring takes back on
     expect((await docOf(ctx, 'kin_care_sessions/s2'))['invoiceId']).toBe('invOther');
   });
 
-  it('#2156: archiving a quote moves no visit; the Kinfolk can still answer it, and a decline lets them go', async () => {
+  it('#2195: archiving a quote waiting for an answer lets go of its visits, as a draft does', async () => {
+    // Superseded #2156's "archiving a quote moves no visit": the lead ruling of
+    // 2026-11-13 hides an archived quote from the Kinfolk, so nothing can
+    // answer it and its visits go back on the list.
     const ctx = buildDbMock({
       docs: {
         'invoices/q1': { kinfolkId: 'fam1', invoiceNumber: '1011', status: 'quote', total: 45, amountDue: 45, sessionIds: ['s1'], lineItems: [line('s1')] },
@@ -702,8 +705,9 @@ describe('#2168 archiving a draft lets go of its visits; restoring takes back on
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await archiveInvoiceHandler(req({ invoiceId: 'q1' }));
-    expect(res.releasedSessionIds).toEqual([]);
-    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe('q1');
+    expect(res.releasedSessionIds).toEqual(['s1']);
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe('');
+    expect((await docOf(ctx, 'invoices/q1'))['releasedSessionIds']).toEqual(['s1']);
   });
 
   it('a draft archived before #2168, still holding its visit, keeps it when restored', async () => {

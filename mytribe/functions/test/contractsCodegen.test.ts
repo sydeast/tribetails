@@ -292,8 +292,10 @@ describe('the committed Contracts module', () => {
     // (2026-09-27): giveAccountCredit and getAccountCreditHistory. 30 since
     // #1003: listUnappliedPayments and resolveUnappliedPayment.
     // #1113: retryInvoiceCheckoutClose. 32 since #1609: previewInvoiceNotice.
-    // 33 since #1872: applyAccountCredit.
-    expect(model.callables).toHaveLength(33);
+    // 33 since #1872: applyAccountCredit. 35 since #2088: convertQuoteToInvoice
+    // and withdrawQuote, the office turning a quote into an invoice or
+    // withdrawing it.
+    expect(model.callables).toHaveLength(35);
     // getMyInvoices is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

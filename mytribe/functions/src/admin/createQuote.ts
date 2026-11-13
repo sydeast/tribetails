@@ -5,10 +5,6 @@ import { db } from '../lib/firestoreAdmin';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-// #1005: money notices go to a member with billing access, not the last-synced account.
-import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
-import { enqueueNotificationDetailed } from '../notifications/dispatcher';
-import { householdAppOnly } from '../notifications/appOnly';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import {
@@ -28,12 +24,22 @@ import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCr
 import { invoiceNumberTaken, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
 import { QuoteIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { boundSessionIds, readSessionLinks, stageSessionLinks } from '../lib/invoiceSessionLinks';
+import { QUOTE_DRAFT_FIELD, isQuoteDraft } from '../lib/quoteDecision';
+import { sendDraft } from './reviewAndSendDraftInvoice';
 
 /**
  * A quote is NOT a separate model: it is an invoice in QUOTE status. This
- * callable mirrors createInvoice's args + validation exactly, but forces the
- * doc into QUOTE status and (optionally) dispatches an issued-quote notification
- * to the kinfolk.
+ * callable mirrors createInvoice's args + validation exactly, but saves the
+ * doc as a quote and (optionally) sends it to the kinfolk.
+ *
+ * #2087 (operator ruling 2026-11-13): A QUOTE SAVED WITH "SEND TO KINFOLK NOW"
+ * OFF IS A DRAFT ONLY THE OFFICE SEES. It is written as a draft carrying the
+ * quote mark (`lib/quoteDecision.ts#QUOTE_DRAFT_FIELD`): MyTribe does not
+ * list, count or open it and it cannot be accepted. It becomes a Quote, the
+ * status described below, when the office sends it (`reviewAndSendDraftInvoice`).
+ * With the switch on, this callable saves it the same way and then sends it
+ * through that same core, so a quote has one way out to the household. The
+ * paragraph below describes the quote once it has been sent.
  *
  * Status is written on BOTH fields the system reads:
  *   - `status`        = 'quote'  (the AuntieOS admin composer/list field.
@@ -156,6 +162,10 @@ export async function createQuoteHandler(
         event: 'admin.quote.created.replay',
         extra: { invoiceId: args.idempotencyKey, invoiceNumber: stored['invoiceNumber'] },
       });
+      // #2087: the retry of a submission whose save landed and whose send did
+      // not (the notice failed and the quote was put back to a draft). The
+      // press meant "send it", so the retry finishes that, once.
+      if (args.sendToKinfolk && isQuoteDraft(stored)) return sendSaved(uid, args.idempotencyKey);
       return validateResponse('createQuote', Result, { ok: true, invoiceId: args.idempotencyKey });
     }
   }
@@ -238,13 +248,16 @@ export async function createQuoteHandler(
     discount: args.discount,
     total: args.total,
     amountDue: args.amountDue,
-    // A quote is an invoice in QUOTE status. Stamp both the admin-side `status`
-    // and the portal-canonical `invoiceStatus` so neither side mis-buckets it.
-    // The state stamp below canonicalizes `status` to the classifier's
-    // lowercase 'quote'; asserting it here as well keeps this endpoint's whole
-    // point, ignoring the caller's status arg, visible in one place.
-    status: 'quote',
-    invoiceStatus: 'quote',
+    // #2087 (operator ruling 2026-11-13): A QUOTE IS SAVED AS A DRAFT ONLY THE
+    // OFFICE SEES, with the quote mark, and becomes a Quote when it is sent.
+    // Both spellings say 'draft' so neither side mis-buckets it, and the mark
+    // is what makes the send turn it into a quote rather than a bill. With
+    // "Send to kinfolk now" on, the send runs straight after the save, through
+    // the one send path every draft takes (`sendDraft`). The caller's status
+    // arg is still ignored on purpose.
+    status: 'draft',
+    invoiceStatus: 'draft',
+    [QUOTE_DRAFT_FIELD]: true,
     sessionIds,
     kinfolkId: args.familyId,
     _id: ref.id,
@@ -317,6 +330,7 @@ export async function createQuoteHandler(
       event: 'admin.quote.created.replay',
       extra: { invoiceId: ref.id, raced: true },
     });
+    // The other attempt of this submission saved it and is sending it, or did.
     return validateResponse('createQuote', Result, { ok: true, invoiceId: ref.id });
   }
   const invoiceNumber = written;
@@ -338,38 +352,49 @@ export async function createQuoteHandler(
     },
   });
 
-  // #1511: whether the household's copy reached them in the app only. Left
-  // undefined, and so omitted from the answer, unless this call wrote one.
-  let appOnly: boolean | undefined;
-  if (args.sendToKinfolk) {
-    const recipientUid = await resolveBillingRecipientUid(args.familyId);
-    try {
-      const dispatched = await enqueueNotificationDetailed({
-        // No quote.issued key exists; invoice.new is the catalog's
-        // "New invoice/quote issued." key (audience: both).
-        key: 'invoice.new',
-        recipientUid: recipientUid ?? '',
-        data: { kinfolkId: args.familyId, invoiceId: ref.id, isQuote: true },
-        targetType: 'invoice',
-        targetId: ref.id,
-      });
-      // Per recipient: the office copy's channels are not the household's.
-      appOnly = householdAppOnly(dispatched, recipientUid);
-    } catch (err) {
-      logEvent({
-        severity: 'warn',
-        function: 'createQuote',
-        event: 'notification.dispatch.failed',
-        extra: { familyId: args.familyId, invoiceId: ref.id, key: 'invoice.new', err: (err as Error)?.message },
-      });
-    }
-  }
+  if (args.sendToKinfolk) return sendSaved(uid, ref.id);
+  return validateResponse('createQuote', Result, { ok: true, invoiceId: ref.id });
+}
 
-  return validateResponse('createQuote', Result, {
-    ok: true,
-    invoiceId: ref.id,
-    ...(appOnly === undefined ? {} : { appOnly }),
-  });
+/**
+ * #2087: sends a quote this call (or the first attempt of this submission)
+ * saved, through `sendDraft`: the check, the flip to `quote` and the claim in
+ * one transaction, the household's notice only after it commits, and the
+ * quote put back to the draft it was when that notice fails. The save is not
+ * undone by a failed send, so the refusal says the quote is there, as a draft,
+ * and how to send it.
+ *
+ * #1511: `appOnly` is the send's answer, present when the household's copy was
+ * written.
+ */
+async function sendSaved(uid: string, invoiceId: string): Promise<z.infer<typeof Result>> {
+  try {
+    const sent = await sendDraft(uid, invoiceId);
+    return validateResponse('createQuote', Result, {
+      ok: true,
+      invoiceId,
+      ...(sent.appOnly === undefined ? {} : { appOnly: sent.appOnly }),
+    });
+  } catch (err) {
+    const code = (err as { details?: { code?: unknown } })?.details?.code;
+    // It went out and could not be put back: that sentence is already the
+    // truth, and saying "saved as a draft" over it would not be.
+    if (code === 'quote_sent_not_announced') throw err;
+    logEvent({
+      severity: 'warn',
+      function: 'createQuote',
+      event: 'admin.quote.saved.not-sent',
+      uid,
+      extra: { invoiceId },
+      errorMessage: (err as Error)?.message,
+    });
+    const reason = err instanceof HttpsError ? ` ${err.message}` : '';
+    throw new HttpsError(
+      'failed-precondition',
+      `The quote was saved as a draft, but it could not be sent to the household.${reason} Open it and press Send quote to try again.`,
+      { code: 'quote_saved_not_sent', invoiceId },
+    );
+  }
 }
 
 export const createQuote = onCall(

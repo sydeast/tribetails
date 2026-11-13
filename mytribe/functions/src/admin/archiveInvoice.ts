@@ -12,7 +12,14 @@ import { invoiceStateOf } from '../lib/invoiceEditPolicy';
 import { isArchived, amountStillOwed, formatOwed, type ArchivableInvoice } from '../lib/invoiceArchive';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
-import { readSessionsHeldBy, stageSessionLinks, storedSessionIds, visitsNamedBy } from '../lib/invoiceSessionLinks';
+import {
+  quoteHoldsNoVisits,
+  readDeclineRelease,
+  readSessionsHeldBy,
+  stageSessionLinks,
+  storedSessionIds,
+  visitsNamedBy,
+} from '../lib/invoiceSessionLinks';
 
 /**
  * Archives one invoice: hides it from the operator's default list view and from
@@ -20,7 +27,8 @@ import { readSessionsHeldBy, stageSessionLinks, storedSessionIds, visitsNamedBy 
  *
  * Archiving is NOT deletion and NOT cancellation. The invoice keeps every field
  * it had; `archivedAt` only says the operator has stopped working it. The
- * kinfolk portal is unaffected.
+ * kinfolk portal is unaffected, except that an archived quote is not shown
+ * there at all (#2195, below).
  *
  * THE PRECONDITION, and why it is not merely advisory: archiving an invoice that
  * a household still owes money on removes it from the very total that would
@@ -37,11 +45,16 @@ import { readSessionsHeldBy, stageSessionLinks, storedSessionIds, visitsNamedBy 
  * which `unarchiveInvoice` takes back from. Its lines are left as they were.
  * Any other invoice keeps its visits: it was sent, so it billed them.
  *
- * #2156: A QUOTE KEEPS ITS VISITS TOO. It holds them from the day it is made,
- * and archiving does not take it away from the Kinfolk: MyTribe still lists an
- * archived quote and they can still accept it. Letting its visits go would put
- * work the household can still agree to back on the un-invoiced list for a
- * second invoice to bill. A decline is what lets them go (`denyQuote`).
+ * #2195 (lead ruling 2026-11-13): ARCHIVING A QUOTE WORKS LIKE ARCHIVING A
+ * DRAFT. MyTribe stops showing it (`lib/quoteDecision.ts#hiddenFromHousehold`)
+ * and it cannot be accepted or declined (`quoteDecisionRefusal`), so in the same
+ * transaction as the archive stamp every visit it holds goes back on the
+ * un-invoiced list (`readDeclineRelease`, the decline's own release, which adds
+ * to `releasedSessionIds` rather than replacing it). A declined quote holds
+ * none and moves none. `unarchiveInvoice` takes back only the ones still free.
+ * An accepted quote is an open invoice and is archived by the rules for one.
+ * A withdrawn quote (`cancelled`) was never claimed from anyone, so it is
+ * exempt from the money check like a draft or a quote.
  */
 // Exported so the callable-contract drift guard can freeze this request shape.
 export const Args = z.object({
@@ -61,7 +74,7 @@ export const Result = z
     ok: OkSchema,
     /** Echoed back so a caller batching several calls can pair up the answers. */
     invoiceId: z.string().min(1),
-    /** #2168: the visits archiving a draft put back on the un-invoiced list. Empty for any other invoice. */
+    /** #2168 / #2195: the visits archiving a draft or a quote put back on the un-invoiced list. Empty for any other invoice. */
     releasedSessionIds: z.array(z.string()),
   })
   .strict();
@@ -102,7 +115,7 @@ export async function archiveInvoiceHandler(
 
     const state = invoiceStateOf(data);
     const owed = amountStillOwed(data);
-    const exempt = state === 'draft' || state === 'quote';
+    const exempt = state === 'draft' || state === 'quote' || state === 'cancelled';
 
     if (!exempt && owed > 0 && !forced) {
       throw new HttpsError(
@@ -130,6 +143,12 @@ export async function archiveInvoiceHandler(
       tx.set(ref, update, { merge: true });
       if (plan !== null) stageSessionLinks(tx, db(), plan, new Date().toISOString());
       released = plan?.release ?? [];
+    } else if (state === 'quote' && !quoteHoldsNoVisits(data)) {
+      // #2195: a quote waiting for an answer lets go of its visits like a draft.
+      const visits = await readDeclineRelease(tx, db(), args.invoiceId, data);
+      tx.set(ref, { ...update, ...visits.fields }, { merge: true });
+      stageSessionLinks(tx, db(), visits.plan, new Date().toISOString());
+      released = visits.plan.release;
     } else {
       tx.set(ref, update, { merge: true });
     }

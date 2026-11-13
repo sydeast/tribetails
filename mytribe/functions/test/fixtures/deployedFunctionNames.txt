@@ -32,6 +32,7 @@ clearMessageSuppression
 confirmBrandAssetUpload
 confirmKinPhotoUpload
 confirmSecureReset
+convertQuoteToInvoice
 convertTemplateToVisual
 createBillingSetupSession
 createBlockedTimeSlot
@@ -323,3 +324,4 @@ upsertSupply
 verifyActivityLogChain
 verifyVisitArrival
 videoGpsStripSweep
+withdrawQuote

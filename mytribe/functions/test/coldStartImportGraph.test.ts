@@ -262,8 +262,18 @@ const ALLOWED_EAGER_PACKAGES = [
  * Auntie's narrow settings reads. Their file-scope imports (the booking-policy
  * resolver, the notification catalog and prefs, the callable wrapper) are
  * already resident, so each entry is the only module it adds.
+ *
+ * 454 since #2088 (on top of #2164 / #2182's 453): `admin/quoteActions.ts` is a
+ * new FUNCTIONS entry, one module carrying both new callables
+ * (`convertQuoteToInvoice` and `withdrawQuote`, the office turning a quote into
+ * a draft invoice or withdrawing it), the same way `portal/quoteDecision.ts`
+ * carries accept and decline. Sending a quote saved unsent reuses
+ * `reviewAndSendDraftInvoice` rather than adding a third entry. Its file-scope
+ * imports (the session-link helper, the state stamp, the archive guard,
+ * `lib/quoteDecision.ts`) are already resident, and its words load with
+ * `await import()` inside the handlers.
  */
-const MAX_OWN_EAGER_MODULES = 453;
+const MAX_OWN_EAGER_MODULES = 454;
 
 interface Edge {
   spec: string;

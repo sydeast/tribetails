@@ -396,6 +396,10 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // The decline is a step in a conversation, not a dead end; this is the step
   // that answers it.
   resendQuote: () => require('./admin/resendQuote'),
+  // #2088: once a quote exists the office can turn it into a draft invoice or
+  // withdraw it. One module, two callables, like acceptQuote / denyQuote.
+  convertQuoteToInvoice: () => require('./admin/quoteActions'),
+  withdrawQuote: () => require('./admin/quoteActions'),
   sendInvoiceReminder: () => require('./admin/sendInvoiceReminder'),
   generateReceipt: () => require('./admin/generateReceipt'),
   markInvoicePaid: () => require('./admin/markInvoicePaid'),
