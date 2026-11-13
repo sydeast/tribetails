@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { db } from './firestoreAdmin';
-import { sanitizeRichText, toPlainTextPreview } from './richText';
+import { sanitizeMessageBody, messagePlainText } from './richText';
 
 /**
  * Stage 2 step 7 (Inbox conversations / Message Auntie 16.4). Two-way threads
@@ -35,7 +35,7 @@ export type SenderRole = 'kinfolk' | 'auntie';
 
 /** Single-line preview for the thread list. Pure. Strips any markup, collapses whitespace + truncates. */
 export function previewOf(body: string): string {
-  const oneLine = toPlainTextPreview(body, Number.MAX_SAFE_INTEGER).replace(/\s+/g, ' ').trim();
+  const oneLine = messagePlainText(body).replace(/\s+/g, ' ').trim();
   return oneLine.length <= PREVIEW_MAX ? oneLine : `${oneLine.slice(0, PREVIEW_MAX - 1)}…`;
 }
 
@@ -60,7 +60,7 @@ export async function appendMessage(args: AppendMessageArgs): Promise<string> {
   // Re-cap post-sanitize: the allowed tag subset can grow a body past the
   // raw-input MAX_MESSAGE_BODY check the callables already ran (rare, but a
   // sanitizer's job is to never trust its own output length either).
-  const body = sanitizeRichText(args.body).slice(0, MAX_MESSAGE_BODY);
+  const body = sanitizeMessageBody(args.body).slice(0, MAX_MESSAGE_BODY);
   const now = Date.now();
   const convRef = db().collection(CONVERSATIONS_COLLECTION).doc(kinfolkId);
   const msgRef = convRef.collection(MESSAGES_SUBCOLLECTION).doc();

@@ -11,7 +11,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
-import { sanitizeRichText, toPlainTextPreview } from '../lib/richText';
+import { sanitizeMessageBody, messagePlainText, messagePreview } from '../lib/richText';
 import {
   appendMessage,
   readThread,
@@ -116,8 +116,9 @@ export async function sendKinfolkMessageHandler(
   const { kinfolkId, isOperator } = await resolveKinfolkAccess(uid, args.kinfolkId, householdStaffFlag(req.auth, 'sendKinfolkMessage'), 'sendKinfolkMessage');
   const member = await requireKinfolkPerm(uid, kinfolkId, 'messaging_direct', householdStaffFlag(req.auth, 'sendKinfolkMessage'), 'sendKinfolkMessage');
 
-  const body = sanitizeRichText(args.body);
-  if (body.length === 0) {
+  const body = sanitizeMessageBody(args.body);
+  // A body of empty formatting only (`<p><br></p>`) has no words to send.
+  if (messagePlainText(body).length === 0) {
     throw new HttpsError('invalid-argument', 'message_body_empty');
   }
 
@@ -189,7 +190,7 @@ export async function sendKinfolkMessageHandler(
         kinfolkId,
         kinfolkName,
         messageId,
-        preview: toPlainTextPreview(body, 200),
+        preview: messagePreview(body, 200),
       },
       actorUid: uid,
     });

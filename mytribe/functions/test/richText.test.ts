@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeRichText, sanitizePlainText, toPlainTextPreview } from '../src/lib/richText';
+import {
+  sanitizeRichText,
+  sanitizePlainText,
+  toPlainTextPreview,
+  sanitizeMessageBody,
+  messagePlainText,
+  messagePreview,
+} from '../src/lib/richText';
 
 describe('sanitizeRichText', () => {
   it('passes plain text through unchanged', () => {
@@ -169,5 +176,70 @@ describe('a less-than sign that does not open a tag is kept as typed (#1873)', (
     expect(sanitizePlainText('<p>5 < 6 and 7 > 3</p>')).toBe('5 < 6 and 7 > 3');
     expect(toPlainTextPreview('<p>I think 5 < 6 and more <b>bold</b></p>', 200)).toBe('I think 5 < 6 and more bold');
     expect(sanitizePlainText('<script>alert(1)</script>Mallory')).toBe('Mallory');
+  });
+});
+
+describe('sanitizeMessageBody: a message keeps every word, as typed (#1873)', () => {
+  // The admin web, admin Android, desktop console and MyTribe Android send a
+  // message as typed plain text. Any `<` that does not open one of the twelve
+  // formatting tags is a character the person typed, so it is kept as text
+  // (escaped while parsing, never stripped).
+  it('happy: keeps a word between angle brackets in a plain-text message', () => {
+    expect(sanitizeMessageBody('write to Pawsome <pawsome@hanasamku.com> today')).toBe(
+      'write to Pawsome <pawsome@hanasamku.com> today',
+    );
+    expect(sanitizeMessageBody('if a<x and c>d then go')).toBe('if a<x and c>d then go');
+    expect(sanitizeMessageBody('the gate code is <1234> ok')).toBe('the gate code is <1234> ok');
+  });
+
+  it('happy: keeps formatting the editor wrote', () => {
+    expect(sanitizeMessageBody('<p>Hi <strong>there</strong> <em>friend</em><br>next</p>')).toBe(
+      '<p>Hi <strong>there</strong> <em>friend</em><br />next</p>',
+    );
+    expect(
+      sanitizeMessageBody('<p><a target="_blank" rel="noopener noreferrer nofollow" href="https://example.com">site</a></p>'),
+    ).toBe('<p><a href="https://example.com">site</a></p>');
+    expect(sanitizeMessageBody('<ul><li><p>one</p></li></ul>')).toBe('<ul><li><p>one</p></li></ul>');
+  });
+
+  it('negative: text that looks like a tag outside the twelve is shown as typed, not stripped', () => {
+    expect(sanitizeMessageBody('I use <script>alert(1)</script> tags')).toBe('I use <script>alert(1)</script> tags');
+    expect(sanitizeMessageBody('<div onclick="evil()">hello</div>')).toBe('<div onclick="evil()">hello</div>');
+    expect(sanitizeMessageBody('<img src=x onerror="evil()">caption')).toBe('<img src=x onerror="evil()">caption');
+    expect(sanitizeMessageBody('<!-- note --> after')).toBe('<!-- note --> after');
+  });
+
+  it('negative: an allowed tag still loses every attribute but a safe href', () => {
+    expect(sanitizeMessageBody('<b onclick="evil()">hi</b>')).toBe('<b>hi</b>');
+    expect(sanitizeMessageBody('<a href="javascript:alert(1)">click</a>')).toBe('<a>click</a>');
+    expect(sanitizeMessageBody('<a href="//evil.example/x">click</a>')).toBe('<a>click</a>');
+  });
+
+  it('error: the two write passes (callable, then appendMessage) give the same text as one', () => {
+    // The portal editor sends typed signs as entities. The first pass decodes
+    // them; the second pass must not then read the decoded text as a tag.
+    const inputs = [
+      '<p>x &lt;y and z&gt; w</p>',
+      '<p>&lt;script&gt;alert(1)&lt;/script&gt; typed</p>',
+      '<p>5 &lt; 6 and <strong>bold</strong> &amp; more</p>',
+      'write to Pawsome <pawsome@hanasamku.com> today',
+    ];
+    for (const input of inputs) {
+      const once = sanitizeMessageBody(input);
+      expect(sanitizeMessageBody(once)).toBe(once);
+    }
+    expect(sanitizeMessageBody(sanitizeMessageBody('<p>x &lt;y and z&gt; w</p>'))).toBe('<p>x <y and z> w</p>');
+    expect(sanitizeMessageBody(sanitizeMessageBody('<p>&lt;script&gt;alert(1)&lt;/script&gt; typed</p>'))).toBe(
+      '<p><script>alert(1)</script> typed</p>',
+    );
+  });
+
+  it('messagePlainText and messagePreview keep the same words, with no tags', () => {
+    expect(messagePlainText('<p>I use <script> tags and <b>bold</b></p>')).toBe('I use <script> tags and bold');
+    expect(messagePlainText('write to Pawsome <pawsome@hanasamku.com> today')).toBe(
+      'write to Pawsome <pawsome@hanasamku.com> today',
+    );
+    expect(messagePreview('<p>x <y and z> w</p>', 6)).toBe('x <y a');
+    expect(messagePlainText('<p><br></p>')).toBe('');
   });
 });

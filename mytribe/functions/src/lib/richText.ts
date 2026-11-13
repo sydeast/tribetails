@@ -46,19 +46,21 @@ function decodeEntities(html: string): string {
  * formatting tags the shape must also be exactly what the editor writes
  * (attributes only as `name=value` pairs, a self-closing slash only on
  * `br`), so a sentence such as `a <b and more words>` is not read as a tag.
- * Every other complete tag is left for sanitize-html to strip, as before.
+ * Every other complete tag is left for sanitize-html to strip, as before,
+ * unless `otherTagsAreText` is set: a message body (sanitizeMessageBody) keeps
+ * `<script>`, `<pawsome@hanasamku.com>` or `<side gate>` as the text typed.
  */
 const ALLOWED_TAG_SET: ReadonlySet<string> = new Set(ALLOWED_TAGS);
 const COMPLETE_TAG = /^<(\/?)([A-Za-z][A-Za-z0-9]*)([^<>]*)>/;
 const NAMED_ATTRS = /^(?:\s+[A-Za-z_:][-A-Za-z0-9_:.]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>=`]+))*\s*$/;
 
-function startsWholeTag(text: string, at: number): boolean {
+function startsWholeTag(text: string, at: number, otherTagsAreText: boolean): boolean {
   const m = COMPLETE_TAG.exec(text.slice(at, at + 4096));
   if (!m) return false;
   const closing = m[1] === '/';
   const name = (m[2] ?? '').toLowerCase();
   const rest = m[3] ?? '';
-  if (!ALLOWED_TAG_SET.has(name)) return true;
+  if (!ALLOWED_TAG_SET.has(name)) return !otherTagsAreText;
   if (closing) return rest.trim() === '';
   const selfClosed = rest.trimEnd().endsWith('/');
   const attrs = selfClosed ? rest.trimEnd().slice(0, -1) : rest;
@@ -67,12 +69,12 @@ function startsWholeTag(text: string, at: number): boolean {
   return NAMED_ATTRS.test(attrs);
 }
 
-export function escapeStrayLessThan(text: string): string {
+export function escapeStrayLessThan(text: string, otherTagsAreText = false): string {
   if (!text.includes('<')) return text;
   let out = '';
   for (let i = 0; i < text.length; i++) {
     const c = text.charAt(i);
-    out += c === '<' && !startsWholeTag(text, i) ? '&lt;' : c;
+    out += c === '<' && !startsWholeTag(text, i, otherTagsAreText) ? '&lt;' : c;
   }
   return out;
 }
@@ -87,7 +89,10 @@ export function escapeStrayLessThan(text: string): string {
  * dropped entirely).
  */
 export function sanitizeRichText(body: string): string {
-  const sanitized = sanitizeHtml(escapeStrayLessThan(body), {
+  return sanitizeRich(escapeStrayLessThan(body));
+}
+function sanitizeRich(escaped: string): string {
+  const sanitized = sanitizeHtml(escaped, {
     allowedTags: ALLOWED_TAGS,
     allowedAttributes: ALLOWED_ATTRIBUTES,
     allowedSchemes: ['http', 'https', 'mailto'],
@@ -95,6 +100,32 @@ export function sanitizeRichText(body: string): string {
     disallowedTagsMode: 'discard',
   });
   return decodeEntities(sanitized).trim();
+}
+/**
+ * Sanitizes a conversation message body (#1873). Same formatting subset and
+ * attribute rules as sanitizeRichText, but every `<` that does not open one of
+ * the twelve formatting tags is a character someone typed and is kept as text,
+ * never stripped with the words after it. The admin web, admin Android,
+ * desktop console and MyTribe Android all send plain text, and the portal
+ * editor sends typed signs as entities that the first of the two write passes
+ * (the callable, then appendMessage) decodes, so stripping "tags" here would
+ * drop words. Every client draws the stored body from a fixed tag list, so a
+ * kept `<script>` is only ever shown as those characters.
+ *
+ * Idempotent on its own output, which the two write passes rely on.
+ */
+export function sanitizeMessageBody(body: string): string {
+  return sanitizeRich(escapeStrayLessThan(body, true));
+}
+/** Plain text of a stored message body, with the same rule: every word typed stays. */
+export function messagePlainText(body: string): string {
+  const sanitized = sanitizeHtml(escapeStrayLessThan(body, true), { allowedTags: [], allowedAttributes: {} });
+  return decodeEntities(sanitized).trim();
+}
+/** messagePlainText, cut to maxLength, for the messages list and the new-message notice. */
+export function messagePreview(body: string, maxLength: number): string {
+  const plain = messagePlainText(body);
+  return plain.length <= maxLength ? plain : plain.slice(0, maxLength);
 }
 
 /**

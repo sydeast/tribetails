@@ -227,3 +227,22 @@ describe('sendPartsFor', () => {
     expect(sendPartsFor({ subject: 's', body: '' })).toEqual({ subjectTemplate: 's', bodyTemplate: '' });
   });
 });
+describe('message.received quotes a message with a less-than sign whole (#1873)', () => {
+  // The preview is the stored message's plain text, so it can carry a typed
+  // `<`. The html part must escape it (never strip it or start a tag); the
+  // text part must carry it as typed.
+  const seed = SEED_CORPUS.find((s) => s.key === 'message.received')!;
+  const doc = { subject: seed.emailSubject, format: 'visual' as const, headline: seed.emailHeadline, content: seed.emailContent };
+  const preview = 'I think 5 < 6 and <script>alert(1)</script> four more words';
+  it('escapes the sign in the html part and keeps every word', () => {
+    const out = renderEmailParts({ ...sendPartsFor(doc), data: { kinfolkName: 'Jane <Doe>', preview } });
+    expect(out.html).toContain('I think 5 &lt; 6 and &lt;script&gt;alert(1)&lt;/script&gt; four more words');
+    expect(out.html).not.toContain('<script>');
+    expect(out.html).toContain('Jane &lt;Doe&gt;');
+  });
+  it('keeps the sign as typed in the text part and the subject', () => {
+    const out = renderEmailParts({ ...sendPartsFor(doc), data: { kinfolkName: 'Jane <Doe>', preview } });
+    expect(out.text).toContain(preview);
+    expect(out.subject).toBe('New message from Jane <Doe>');
+  });
+});
