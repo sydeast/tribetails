@@ -273,6 +273,7 @@ setBusinessAdmins
 setFeatureFlags
 setGoogleCalendarTargets
 setKinArchived
+setKinfolkArchived
 setKinfolkClaim
 setKinfolkOverrides
 setMediaProfilePhoto

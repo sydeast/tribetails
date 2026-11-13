@@ -477,8 +477,8 @@ internal actual suspend fun platformUpdateKinfolkFields(kinfolkId: String, chang
         if (changes.isNotEmpty()) JvmFirestoreRest.mergeFieldChanges("kinfolk", kinfolkId, changes)
         WriteResult.Ok(Unit)
     }
-internal actual suspend fun platformArchiveKinfolk(id: String): WriteResult<Unit> =
-    transportWrite("archive failed") { JvmFirestoreRest.patchFields("kinfolk", id, mapOf("status" to JsonPrimitive("archived"))) }
+// #2161: no direct Kinfolk archive write. Archive / Restore go through the
+// owner-only `setKinfolkArchived` callable (FirestoreClient.setKinfolkArchived).
 internal actual suspend fun platformCreateKin(k: Kin): WriteResult<String> =
     transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin", jsonOut.encodeToString(k))) }
 // #895: a MERGE write, not setDoc. setDoc replaced the whole pet document, which

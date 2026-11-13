@@ -86,9 +86,11 @@ class DesktopErrorPathTest {
         NetworkGuard.onBlocked = { captured += it }
         assertEquals(WriteResult.Err("Not signed in"), platformDeleteKinTaleTemplate("t1"))
         assertEquals(RestWrite("DELETE", "kintale_templates", "t1"), JvmFirestoreFixtures.lastWrite)
-        assertEquals(WriteResult.Err("Not signed in"), platformArchiveKinfolk("kf1"))
-        assertEquals(RestWrite("PATCH", "kinfolk", "kf1", setOf("status")), JvmFirestoreFixtures.lastWrite)
         assertEquals(WriteResult.Err("Not signed in"), platformMarkKinTaleReportSent("r1", "s1", "email", "d1", "2026-09-14T00:00:00Z"))
+        // #2161: a household archive is the setKinfolkArchived callable now, not a
+        // REST patch, and is signed-out the same way: no token, no request.
+        assertEquals(WriteResult.Err("Not signed in"), FirestoreClient().archiveKinfolk("kf1"))
+        assertEquals(WriteResult.Err("Not signed in"), FirestoreClient().restoreKinfolk("kf1"))
         // #998: vet_clinics archive is a callable, not a Boolean REST write, but it's
         // signed-out the same way: no token, no request.
         assertEquals(WriteResult.Err("Not signed in"), FirestoreClient().archiveVetClinic("v1", true))

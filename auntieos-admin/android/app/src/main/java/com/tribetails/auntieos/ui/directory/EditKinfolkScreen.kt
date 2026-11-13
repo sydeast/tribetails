@@ -84,6 +84,13 @@ fun EditKinfolkScreen(
     // missing, because an empty list and "no tags defined yet" look identical.
     val tagRepository = remember { AuntieOSApp.instance.repository }
     val tagScope = rememberCoroutineScope()
+
+    // #2161, operator ruling 2026-11-13: only the owner archives or restores a
+    // household. Read from the sign-in's own claims; null while that runs, so
+    // neither control flashes on. The server refuses anyone else regardless.
+    var isOwner by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(Unit) { isOwner = tagRepository.isCurrentUserOwner().getOrDefault(false) }
+    val archiveControl = kinfolkArchiveControlFor(isOwner, state.status)
     var householdVocab by remember { mutableStateOf(emptyList<TagDef>()) }
     var vocabError by remember { mutableStateOf<String?>(null) }
 
@@ -153,14 +160,16 @@ fun EditKinfolkScreen(
         title = "Edit Kinfolk",
         onBack = onBack,
         actions = {
-            if (isArchived) {
-                AuntieIconBtn(onClick = { viewModel.unarchiveKinfolk() }) {
-                    Icon(Lucide.ArchiveRestore, contentDescription = "Unarchive", tint = AuntieTheme.colors.kinfolkOrange)
-                }
-            } else {
-                AuntieIconBtn(onClick = { showArchiveDialog = true }) {
-                    Icon(Lucide.Archive, contentDescription = "Archive", tint = AuntieTheme.colors.warning)
-                }
+            when (archiveControl) {
+                KinfolkArchiveControl.RESTORE ->
+                    AuntieIconBtn(onClick = { viewModel.unarchiveKinfolk() }) {
+                        Icon(Lucide.ArchiveRestore, contentDescription = "Unarchive", tint = AuntieTheme.colors.kinfolkOrange)
+                    }
+                KinfolkArchiveControl.ARCHIVE ->
+                    AuntieIconBtn(onClick = { showArchiveDialog = true }) {
+                        Icon(Lucide.Archive, contentDescription = "Archive", tint = AuntieTheme.colors.warning)
+                    }
+                KinfolkArchiveControl.NONE -> Unit
             }
         },
         imePaddingEnabled = true,
@@ -306,17 +315,29 @@ fun EditKinfolkScreen(
                                 style = AuntieTheme.typography.labelSmall,
                                 color = AuntieTheme.colors.textDim,
                             )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                listOf("active", "prospect", "inactive", "archived").forEach { option ->
-                                    AuntieChip(
-                                        selected = state.status.equals(option, ignoreCase = true),
-                                        onClick  = { viewModel.updateEditStatus(option) },
-                                        label    = option.replaceFirstChar { it.uppercaseChar() },
-                                        modifier = Modifier.weight(1f),
-                                    )
+                            // #2161: `archived` is not a chip. Archive and Restore
+                            // are the owner's own controls (top right), and while a
+                            // household is archived its status is held, as on web.
+                            if (isArchived) {
+                                Text(
+                                    if (isOwner == true) "Status is held at archived. Restore the household to set it again."
+                                    else "Status is held at archived. Only the owner can restore the household.",
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                            } else {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    KINFOLK_PICKABLE_STATUSES.forEach { option ->
+                                        AuntieChip(
+                                            selected = state.status.equals(option, ignoreCase = true),
+                                            onClick  = { viewModel.updateEditStatus(option) },
+                                            label    = option.replaceFirstChar { it.uppercaseChar() },
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -630,7 +651,7 @@ fun EditKinfolkScreen(
     }
 
     // Archive Confirmation Dialog (reversible - matches web ArchiveBlock semantics)
-    if (showArchiveDialog) {
+    if (showArchiveDialog && archiveControl == KinfolkArchiveControl.ARCHIVE) {
         AuntieModal(
             onDismissRequest = { showArchiveDialog = false; archiveReason = "" },
             title = "Archive Kinfolk",

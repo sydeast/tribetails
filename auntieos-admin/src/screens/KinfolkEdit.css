@@ -134,6 +134,8 @@
 .kfedit__actions-right {
   display: flex;
   gap: var(--space-2);
+  /* #2161: stays on the right when Archive / Restore is not offered. */
+  margin-left: auto;
 }
 
 /* ── load skeleton ───────────────────────────────────────────────────────── */

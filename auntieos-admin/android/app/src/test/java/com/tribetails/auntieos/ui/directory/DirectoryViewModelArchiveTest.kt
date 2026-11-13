@@ -68,13 +68,13 @@ class DirectoryViewModelArchiveTest {
         runTest(testDispatcher) {
             seedEditState()
             advanceUntilIdle()
-            coEvery { repository.archiveKinfolk(any(), any(), any()) } returns Result.success(Unit)
+            coEvery { repository.archiveKinfolk(any(), any()) } returns Result.success(Unit)
 
             viewModel.archiveKinfolk("moved away")
             advanceUntilIdle()
 
             coVerify(exactly = 1) {
-                repository.archiveKinfolk(any(), "moved away", any())
+                repository.archiveKinfolk(any(), "moved away")
             }
             coVerify(exactly = 0) { repository.deleteKinfolk(any()) }
             assertTrue(viewModel.editKinfolkState.value.isDeleted)
@@ -84,7 +84,7 @@ class DirectoryViewModelArchiveTest {
     fun `archiveKinfolk surfaces repo failure`() = runTest(testDispatcher) {
         seedEditState()
         advanceUntilIdle()
-        coEvery { repository.archiveKinfolk(any(), any(), any()) } returns
+        coEvery { repository.archiveKinfolk(any(), any()) } returns
             Result.failure(RuntimeException("denied"))
 
         viewModel.archiveKinfolk("test")

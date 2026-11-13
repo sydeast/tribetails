@@ -532,6 +532,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   resolveKinRemovalRequest: () => require('./admin/kinRemovalRequests'),
   // #1492: the admin's Kin Archive / Restore, writing both copies of the Kin.
   setKinArchived: () => require('./admin/kinArchive'),
+  // #2161: Archive / Restore of a Kinfolk household, owner-only, with its
+  // Activity Log line. The rules refuse a direct client change to those fields.
+  setKinfolkArchived: () => require('./admin/kinfolkArchive'),
   listPendingBookingRequests: () => require('./admin/pendingBookingRequests'),
   // A3: the four operator status transitions on a flat kin_care_sessions row.
   // Sits beside rescheduleBooking because it owns the other half of the writes to

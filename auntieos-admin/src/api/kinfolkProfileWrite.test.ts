@@ -9,14 +9,15 @@ const { doc, updateDoc, setDoc, serverTimestamp } = vi.hoisted(() => ({
 vi.mock('firebase/firestore', () => ({ doc, updateDoc, setDoc, serverTimestamp }));
 vi.mock('../lib/firebase', () => ({ db: {} }));
 
-const { getAuthState } = vi.hoisted(() => ({ getAuthState: vi.fn() }));
-vi.mock('../lib/auth', () => ({ getAuthState }));
+const { call } = vi.hoisted(() => ({ call: vi.fn() }));
+vi.mock('../lib/fns', () => ({ call }));
 
 import {
   changedKinfolkEditFields,
   updateKinfolkProfile,
   archiveKinfolk,
   unarchiveKinfolk,
+  KINFOLK_ARCHIVE_OWNER_ONLY,
   KINFOLK_EDIT_FIELDS,
   type KinfolkEditPatch,
 } from './kinfolkProfileWrite';
@@ -46,10 +47,9 @@ beforeEach(() => {
   updateDoc.mockReset();
   setDoc.mockReset();
   serverTimestamp.mockReset();
-  getAuthState.mockReset();
+  call.mockReset();
   doc.mockImplementation((_db: unknown, path: string, id: string) => `doc-ref:${path}/${id}`);
   serverTimestamp.mockReturnValue('server-timestamp-sentinel');
-  getAuthState.mockReturnValue({ status: 'signedOut' });
 });
 
 /** The payload handed to the single updateDoc call. */
@@ -205,48 +205,57 @@ describe('changedKinfolkEditFields', () => {
   });
 });
 
-describe('archiveKinfolk', () => {
-  it('writes the four archive fields plus updatedAt, and touches nothing else', async () => {
-    getAuthState.mockReturnValue({ status: 'signedIn', user: { uid: 'admin-uid-1' } });
-    await archiveKinfolk('kf1', '  moved away  ');
-    const fields = writtenFields();
-    expect(fields['status']).toBe('archived');
-    expect(fields['archivedReason']).toBe('moved away');
-    expect(fields['archivedBy']).toBe('admin-uid-1');
-    expect(typeof fields['archivedAt']).toBe('string');
-    expect(Object.keys(fields).sort()).toEqual(
-      ['archivedAt', 'archivedBy', 'archivedReason', 'status', 'updatedAt'].sort(),
-    );
+// #2161: archive and restore go through the owner-only `setKinfolkArchived`
+// callable, which writes the fields and the Activity Log line. No direct write.
+describe('archiveKinfolk (#2161)', () => {
+  it('archives through setKinfolkArchived with the trimmed reason, never a direct write', async () => {
+    const result = { ok: true, archived: true, status: 'archived', changed: true };
+    call.mockResolvedValue(result);
+    await expect(archiveKinfolk(' kf1 ', '  moved away  ')).resolves.toEqual(result);
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith('setKinfolkArchived', { kinfolkId: 'kf1', archived: true, reason: 'moved away' });
+    expect(updateDoc).not.toHaveBeenCalled();
+    expect(setDoc).not.toHaveBeenCalled();
   });
 
-  it('falls back to the Kotlin default archivedBy when nobody is signed in', async () => {
-    await archiveKinfolk('kf1', 'paused');
-    expect(writtenFields()['archivedBy']).toBe('admin');
-  });
-
-  it('accepts a blank reason, since the source labels it optional', async () => {
+  it('sends a blank reason, since the dialog labels it optional', async () => {
+    call.mockResolvedValue({ ok: true, archived: true, status: 'archived', changed: true });
     await archiveKinfolk('kf1', '');
-    expect(writtenFields()['archivedReason']).toBe('');
+    expect(call).toHaveBeenCalledWith('setKinfolkArchived', { kinfolkId: 'kf1', archived: true, reason: '' });
+  });
+
+  it('a refusal reads as the owner-only sentence', async () => {
+    call.mockRejectedValue(Object.assign(new Error('Admin claim required.'), { code: 'functions/permission-denied' }));
+    await expect(archiveKinfolk('kf1', 'x')).rejects.toThrow(KINFOLK_ARCHIVE_OWNER_ONLY);
+  });
+
+  it('any other failure propagates unchanged', async () => {
+    call.mockRejectedValue(Object.assign(new Error('The server could not be reached.'), { code: 'functions/unavailable' }));
+    await expect(archiveKinfolk('kf1', 'x')).rejects.toThrow('The server could not be reached.');
   });
 
   it('fails loud on a blank id', async () => {
     await expect(archiveKinfolk('', 'why')).rejects.toThrow(/requires a kinfolk id/);
-    expect(updateDoc).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
   });
 });
 
-describe('unarchiveKinfolk', () => {
-  it('restores to active and clears the archive trio', async () => {
-    await unarchiveKinfolk('kf1');
-    const fields = writtenFields();
-    expect(fields['status']).toBe('active');
-    expect(fields['archivedAt']).toBe('');
-    expect(fields['archivedReason']).toBe('');
-    expect(fields['archivedBy']).toBe('');
+describe('unarchiveKinfolk (#2161)', () => {
+  it('restores through the same callable, with no reason', async () => {
+    const result = { ok: true, archived: false, status: 'active', changed: true };
+    call.mockResolvedValue(result);
+    await expect(unarchiveKinfolk('kf1')).resolves.toEqual(result);
+    expect(call).toHaveBeenCalledWith('setKinfolkArchived', { kinfolkId: 'kf1', archived: false });
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('a refusal reads as the owner-only sentence', async () => {
+    call.mockRejectedValue(Object.assign(new Error('Admin claim required.'), { code: 'permission-denied' }));
+    await expect(unarchiveKinfolk('kf1')).rejects.toThrow(KINFOLK_ARCHIVE_OWNER_ONLY);
   });
 
   it('fails loud on a blank id', async () => {
     await expect(unarchiveKinfolk('   ')).rejects.toThrow(/requires a kinfolk id/);
-    expect(updateDoc).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
   });
 });

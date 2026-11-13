@@ -575,6 +575,33 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
     }
 
+ // #2161, operator ruling 2026-11-13: only the owner archives or restores a
+ // household, and every archive and restore writes its Activity Log line. The
+ // owner-only `setKinfolkArchived` callable (Admin SDK, rules bypassed) is the
+ // one writer of both, so the line cannot be skipped. No client changes the
+ // three archive fields, or moves `status` into or out of `archived`, by a
+ // direct write. Moves between active, prospect and inactive stay open to
+ // staff, and so does any other edit to an archived household.
+ //
+ // `.get(key, '')` because a household created before the archive fields
+ // existed has no such keys, and reading a missing key is an error that denies.
+    function kinfolkArchiveKeys() {
+      return ['archivedAt', 'archivedReason', 'archivedBy'];
+    }
+
+    // Any spelling of archived counts: the admin clients read the status
+    // without regard to case or surrounding spaces.
+    function isArchivedStatus(v) {
+      return v is string && v.trim().lower() == 'archived';
+    }
+
+    function kinfolkArchiveUntouched() {
+      let before = resource.data.get('status', '');
+      let after = request.resource.data.get('status', '');
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(kinfolkArchiveKeys())
+          && (before == after || (!isArchivedStatus(before) && !isArchivedStatus(after)));
+    }
+
  // READ IS STAFF-ONLY, and the asymmetry with WRITE below is deliberate.
  // `kinfolk/{id}` carries `internalNotes`, the field the admin UI labels
  // "Anything that doesn't belong on the dossier yet" and renders to staff as an
@@ -626,7 +653,8 @@ service cloud.firestore {
       // named in the spec, and the fix for it is a projecting read path, not a
       // rule that cannot be written.
       // #1584: every branch holds a changed `joinDate` to 2025 through today.
-      allow update: if joinDateOkOnUpdate() && (
+      // #2161: and no branch archives or restores; `setKinfolkArchived` does.
+      allow update: if joinDateOkOnUpdate() && kinfolkArchiveUntouched() && (
                        ((isOwner() || (isTestAdmin() && kinfolkId == testScope()))
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(emergencyContactKeys()))
                     || (isCaretaker()

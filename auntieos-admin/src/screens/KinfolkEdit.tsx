@@ -39,6 +39,7 @@ import { ProfileTagsSection } from '../components/ProfileTagsSection';
 import { EmergencyContactsEditor } from '../components/EmergencyContactsEditor';
 import { NoEmergencyContactFlag } from '../components/NoEmergencyContactFlag';
 import { useToast } from '../components/Toast';
+import { useAdminAccess } from '../lib/access';
 import './KinfolkEdit.css';
 
 /**
@@ -335,6 +336,12 @@ export function KinfolkEdit({
   // itself, which is what retries. See `contactRetryPending`'s own comment.
   const householdFieldsLocked = busy || contactRetryPending;
   const isArchived = form?.status === KINFOLK_ARCHIVED_STATUS;
+  // #2161, operator ruling 2026-11-13: only the owner archives or restores a
+  // household. The server refuses everyone else (`setKinfolkArchived` and the
+  // rules); this keeps the controls off an Auntie's screen. Null while access
+  // resolves, so nothing flashes on and off.
+  const access = useAdminAccess();
+  const canArchive = access?.status === 'admin';
 
   // What the stored join date was, when it is not what the picker is showing.
   // Held until the operator changes the field, then it has been answered and the
@@ -534,7 +541,9 @@ export function KinfolkEdit({
 
               {isArchived && (
                 <Banner tone="warning" title="This Kinfolk is archived" pillLabel="ARCHIVED">
-                  {displayName} is hidden from active lists. Restore them to bring the household back.
+                  {canArchive
+                    ? `${displayName} is hidden from active lists. Restore them to bring the household back.`
+                    : `${displayName} is hidden from active lists. Only the owner can restore the household.`}
                 </Banner>
               )}
 
@@ -565,7 +574,9 @@ export function KinfolkEdit({
                 <fieldset className="kfedit__grid" disabled={householdFieldsLocked}>
                   {isArchived ? (
                     <p className="kfedit__hint kfedit__field--wide">
-                      Status is held at archived. Restore the household to set it again.
+                      {canArchive
+                        ? 'Status is held at archived. Restore the household to set it again.'
+                        : 'Status is held at archived. Only the owner can restore the household.'}
                     </p>
                   ) : (
                     <div className="kfedit__field kfedit__field--wide">
@@ -707,15 +718,16 @@ export function KinfolkEdit({
                   true. The vet is now chosen on Household Data, against the
                   shared catalog, and this screen neither reads nor writes it. */}
               <div className="kfedit__actions">
-                {isArchived ? (
-                  <GhostButton
-                    label={archiving ? 'Restoring…' : 'Restore'}
-                    onClick={() => void handleUnarchive()}
-                    disabled={leaveHeld}
-                  />
-                ) : (
-                  <GhostButton label="Archive" onClick={() => setAskArchive(true)} disabled={leaveHeld} />
-                )}
+                {canArchive &&
+                  (isArchived ? (
+                    <GhostButton
+                      label={archiving ? 'Restoring…' : 'Restore'}
+                      onClick={() => void handleUnarchive()}
+                      disabled={leaveHeld}
+                    />
+                  ) : (
+                    <GhostButton label="Archive" onClick={() => setAskArchive(true)} disabled={leaveHeld} />
+                  ))}
                 <div className="kfedit__actions-right">
                   {dirty && (
                     <span className="kfedit__hint" role="status" data-testid="kfedit-unsaved">
@@ -748,7 +760,7 @@ export function KinfolkEdit({
         }
       </AsyncRegion>
 
-      {askArchive && (
+      {askArchive && canArchive && (
         <Dialog
           title="Archive this Kinfolk"
           onClose={() => {

@@ -80,7 +80,7 @@ class DirectoryViewModelSaveConfirmationTest {
         coEvery { repo.setKinArchived(any(), any()) } answers { Result.success(if (secondArg<Boolean>()) "archived" else "active") }
         coEvery { repo.getKinByIds(any()) } returns Result.success(mapOf(storedKin.id to storedKin))
         coEvery { repo.getKinfolkById(any()) } returns Result.success(storedKinfolk)
-        coEvery { repo.archiveKinfolk(any(), any(), any()) } returns Result.success(Unit)
+        coEvery { repo.archiveKinfolk(any(), any()) } returns Result.success(Unit)
         coEvery { repo.unarchiveKinfolk(any()) } returns Result.success(Unit)
         coEvery { repo.createKinfolkComplete(any(), any()) } returns
             Result.success(KinfolkCreated(Kinfolk(id = "new-kf", firstName = "Pat", lastName = "Nguyen"), null))

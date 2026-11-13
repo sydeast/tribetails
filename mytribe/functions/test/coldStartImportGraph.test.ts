@@ -235,8 +235,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * wording, which no client may touch directly). Its rules,
  * `lib/templateChannelWording.ts`, load with `await import()` inside the
  * handler, so the entry is the only module it adds.
+ *
+ * 449 since #2161 (on top of #1935's 448): `admin/kinfolkArchive.ts` is a new
+ * FUNCTIONS entry (the owner-only Archive / Restore of a Kinfolk household,
+ * with its Activity Log line). Its words, `lib/activityWords.ts`, load with
+ * `await import()` inside the handler, so the entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 448;
+const MAX_OWN_EAGER_MODULES = 449;
 
 interface Edge {
   spec: string;
