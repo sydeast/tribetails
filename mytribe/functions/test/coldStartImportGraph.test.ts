@@ -218,8 +218,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * are zod and modules already resident (`staffGate`, `auntieAccess`,
  * `operatorAllowlist`, `firestoreAdmin`, `logger`), so they add no package
  * to a cold start.
+ *
+ * 446 since #2096 (on top of #1820's 445): `lib/householdMember.ts`, the one
+ * household member-record shape and link decision, which
+ * `membership/acceptInvite.ts` and `admin/setKinfolkClaim.ts` (entries already
+ * in this graph) write through. Its runtime import is `lib/schema.ts`, already
+ * here; the rest are types.
  */
-const MAX_OWN_EAGER_MODULES = 445;
+const MAX_OWN_EAGER_MODULES = 446;
 
 interface Edge {
   spec: string;

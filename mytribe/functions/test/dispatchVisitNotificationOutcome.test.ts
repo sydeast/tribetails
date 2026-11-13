@@ -42,6 +42,8 @@ function seed(docs: Record<string, Record<string, unknown> | null>) {
       [VISIT_PATH]: { serviceType: 'Dog Walk', scheduledAtMs: NOW, kinfolkId: 'fam1' },
       'staff/uid_auntie': { displayName: 'TiTi' },
       'clients/uid_kinfolk': { displayName: 'Dre' },
+      // #1840: a login is a household's only when it is an ACTIVE member.
+      'families/fam1/members/uid_kinfolk': { role: 'PRIMARY', status: 'ACTIVE' },
       ...docs,
     },
   });

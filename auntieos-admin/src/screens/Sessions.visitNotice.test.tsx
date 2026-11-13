@@ -41,10 +41,9 @@ vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule: () => null }));
 vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: {}, serviceDurations: {}, timeBlocks: [] }),
 }));
-const { useHouseholdNoticesLive } = vi.hoisted(() => ({
-  useHouseholdNoticesLive: vi.fn<() => boolean | null>(() => true),
-}));
-vi.mock('../lib/useHouseholdNoticesLive', () => ({ useHouseholdNoticesLive }));
+// #1840: the server's answer to "can a notice reach this household?".
+const { previewVisitNotification } = vi.hoisted(() => ({ previewVisitNotification: vi.fn() }));
+vi.mock('../api/visitNoticePreview', () => ({ previewVisitNotification }));
 
 import { Sessions } from './Sessions';
 
@@ -98,7 +97,7 @@ function roster(households: Kinfolk[] | null) {
 const user = userEvent.setup();
 
 beforeEach(() => {
-  useHouseholdNoticesLive.mockReset().mockReturnValue(true);
+  previewVisitNotification.mockReset().mockResolvedValue({ willNotify: true, reason: null });
   patchVisitLifecycle.mockReset();
   usePagedCollection.mockReset().mockReturnValue(paged([entry()]));
   roster([{ _id: 'kfDre', firstName: 'Dre', lastName: 'East', uid: 'uidDre' }]);
@@ -110,47 +109,75 @@ async function openOmwConfirm() {
   return screen.getByRole('dialog');
 }
 
-describe('the clock confirm promises a notice only when one can be sent', () => {
-  it('promises it when the switch is on and the household has a portal account', async () => {
+describe('the clock confirm promises a notice only when the server says one can be sent', () => {
+  it('promises it when the household has a portal sign-in and the switch is on', async () => {
     const dialog = await openOmwConfirm();
-    expect(within(dialog).getByText('Dre East will be told their Auntie is on the way.')).toBeInTheDocument();
+    expect(
+      await within(dialog).findByText('Dre East will be told their Auntie is on the way.'),
+    ).toBeInTheDocument();
+    expect(previewVisitNotification).toHaveBeenCalledWith('kfDre');
   });
 
   it('says the switch is off in Settings, and promises nothing', async () => {
-    useHouseholdNoticesLive.mockReturnValue(false);
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_notices_off' });
     const dialog = await openOmwConfirm();
     expect(
-      within(dialog).getByText('Dre East will not be told, because notices to households are off in Settings.'),
+      await within(dialog).findByText('Dre East will not be told, because notices to households are off in Settings.'),
     ).toBeInTheDocument();
     expect(within(dialog).queryByText(/will be told/)).toBeNull();
   });
 
-  it('names the missing portal account first, even with the switch also off (the Nov 10 case)', async () => {
-    useHouseholdNoticesLive.mockReturnValue(false);
-    roster([{ _id: 'kfDre', firstName: 'Dre', lastName: 'East', uid: '' }]);
+  it('says a household with no portal sign-in will not be told', async () => {
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_has_no_portal_account' });
     const dialog = await openOmwConfirm();
     expect(
-      within(dialog).getByText('Dre East will not be told, because they have no portal account.'),
+      await within(dialog).findByText('Dre East will not be told, because they have no portal account.'),
     ).toBeInTheDocument();
   });
 
-  it('treats a household missing from a loaded roster as having no account', async () => {
-    roster([]);
+  it("#1840: a login stored on the household record is not the answer; the server's is", async () => {
+    // The Nov 10 walk: the roster row carries a uid (the Admin's own login),
+    // and nobody has claimed the household.
+    roster([{ _id: 'kfDre', firstName: 'Dre', lastName: 'East', uid: 'uidAdmin' }]);
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_has_no_portal_account' });
     const dialog = await openOmwConfirm();
-    expect(within(dialog).getByText(/no portal account/)).toBeInTheDocument();
+    expect(
+      await within(dialog).findByText('Dre East will not be told, because they have no portal account.'),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/will be told/)).toBeNull();
   });
 
-  it('says nothing about the household while the switch has not loaded', async () => {
-    useHouseholdNoticesLive.mockReturnValue(null);
+  it('says it is checking while the answer is on its way, and promises nothing', async () => {
+    let answer: (v: { willNotify: boolean; reason: string | null }) => void = () => {};
+    previewVisitNotification.mockReturnValue(new Promise((r) => (answer = r)));
     const dialog = await openOmwConfirm();
     expect(within(dialog).getByText('The visit moves to On the way.')).toBeInTheDocument();
-    expect(within(dialog).queryByText(/told/)).toBeNull();
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Checking whether Dre East will be told.');
+    expect(within(dialog).queryByText(/will be told their/)).toBeNull();
+
+    await reactAct(async () => {
+      answer({ willNotify: true, reason: null });
+    });
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Dre East will be told their Auntie is on the way.');
   });
 
-  it('says nothing about the household while the roster has not loaded', async () => {
-    roster(null);
+  it('says nothing about the household when the server cannot be asked', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    previewVisitNotification.mockRejectedValue(new Error('functions/not-found'));
     const dialog = await openOmwConfirm();
+    await reactAct(async () => {
+      await Promise.resolve();
+    });
+    expect(within(dialog).getByText('The visit moves to On the way.')).toBeInTheDocument();
     expect(within(dialog).queryByText(/told/)).toBeNull();
+    warn.mockRestore();
+  });
+
+  it('does not ask the server about a visit that cannot be routed to a household', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({ kinCareBatchId: '', kinCareVisitId: '' })]));
+    const dialog = await openOmwConfirm();
+    expect(within(dialog).getByText(/not linked to a booking/)).toBeInTheDocument();
+    expect(previewVisitNotification).not.toHaveBeenCalled();
   });
 });
 

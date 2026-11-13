@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { buildDbMock } from './_helpers/mockDb';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
-vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), authFn: vi.fn() }));
+vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: mocks.authFn, getAdmin: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 
 import { resolveBillingRecipientUid } from '../src/lib/resolveBillingRecipientUid';
@@ -33,7 +33,21 @@ function seed(backwriteUid: string | null, rows: Record<string, Record<string, u
   );
 }
 
-beforeEach(() => mocks.dbFn.mockReset());
+beforeEach(() => {
+  mocks.dbFn.mockReset();
+  mocks.authFn.mockReset();
+});
+
+/** A legacy primary's extra records: its own client record lists the household, and its token. */
+function seedLegacy(uid: string, claims: Record<string, unknown>, extra: Record<string, Record<string, unknown>> = {}) {
+  mocks.dbFn.mockReturnValue(
+    buildDbMock({
+      docs: { 'kinfolk/fam1': { uid }, [`clients/${uid}`]: { kinfolkIds: ['fam1'] }, ...extra },
+      queryDocs: { 'families/fam1/members': [] },
+    }).db,
+  );
+  mocks.authFn.mockReturnValue({ getUser: vi.fn(() => Promise.resolve({ customClaims: claims })) });
+}
 
 describe('resolveBillingRecipientUid', () => {
   it('the PRIMARY as the synced account gets it', async () => {
@@ -66,9 +80,27 @@ describe('resolveBillingRecipientUid', () => {
     expect(await resolveBillingRecipientUid('fam1')).toBe('pk1');
   });
 
-  it('a legacy household with no member docs keeps its one account', async () => {
-    seed('legacy1', {});
+  it('#1840: a stored login with no member docs in the household gets no money notice', async () => {
+    // This used to return the stored login as "the household's one account".
+    // An unclaimed household whose record carries a staff login has exactly
+    // this shape, and its invoices went to the staff login.
+    seed('uid_admin', {});
+    expect(await resolveBillingRecipientUid('fam1')).toBeNull();
+  });
+
+  it('#2096: a legacy primary (linked before the member model, not staff) keeps its money notices until the backfill', async () => {
+    seedLegacy('legacy1', { role: 'kinfolk', kinfolkId: 'fam1' });
     expect(await resolveBillingRecipientUid('fam1')).toBe('legacy1');
+  });
+
+  it('#2096 NEGATIVE: the same shape with an admin claim gets no money notice', async () => {
+    seedLegacy('uid_admin', { admin: true });
+    expect(await resolveBillingRecipientUid('fam1')).toBeNull();
+  });
+
+  it('#2096 NEGATIVE: the same shape with a staff record gets no money notice', async () => {
+    seedLegacy('auntie1', { role: 'kinfolk' }, { 'staff/auntie1': { role: 'auntie' } });
+    expect(await resolveBillingRecipientUid('fam1')).toBeNull();
   });
 
   it('no synced account: the PRIMARY', async () => {

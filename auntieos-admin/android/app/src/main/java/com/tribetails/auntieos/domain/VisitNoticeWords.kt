@@ -13,6 +13,11 @@ import com.tribetails.auntieos.notifications.VisitNotifier
  * "kinfolk notified" anyway. Web carries the same sentences in
  * `auntieos-admin/src/lib/visitNotice.ts`; keep the two word for word.
  *
+ * #1840: THE CONFIRM ASKS THE SERVER ([VisitNotifier.preview]). It used to
+ * predict from `kinfolk.uid` on the roster, a field any client record listing
+ * the household can stamp: on an unclaimed household it held the Admin's own
+ * login, so the confirm promised a notice and the notice went to the Admin.
+ *
  * ONE ORDER, SHARED WITH THE SERVER AND WEB: no portal account is named before
  * the switch, because turning the switch on would not reach that household
  * either. The server checks in the same order
@@ -79,20 +84,34 @@ private fun toldWhat(event: VisitNotifier.Event): String? = when (event) {
     VisitNotifier.Event.REPORT_SENT -> null
 }
 
+/** #1840: what the server said about reaching a household, as the confirm holds it. */
+sealed interface VisitNoticeReach {
+    /** The server is being asked. The confirm says so. */
+    data object Checking : VisitNoticeReach
+
+    /** The call failed, or the answer was unusable. The confirm says nothing. */
+    data object Unknown : VisitNoticeReach
+
+    data class Ready(val willNotify: Boolean, val reason: String?) : VisitNoticeReach
+}
+
+/** The [VisitNotifier.preview] result as a [VisitNoticeReach]. A failed call is [VisitNoticeReach.Unknown]. */
+fun visitNoticeReachOf(result: Result<VisitNotifier.PreviewResult>): VisitNoticeReach =
+    result.fold(
+        onSuccess = { VisitNoticeReach.Ready(it.willNotify, it.reason) },
+        onFailure = { VisitNoticeReach.Unknown },
+    )
+
 /**
  * The confirm's line about the household, future tense, or null when it should
- * say nothing (the switch or the household record has not loaded).
+ * say nothing (an event that tells nobody, or no usable answer).
  *
- * @param hasPortalAccount whether the household's `kinfolk.uid` is set, which is
- *   what the server routes to. Null while the record has not loaded.
- * @param noticesLive `business_settings.householdNotificationsLive`, null while
- *   the settings read has not landed or failed.
+ * The row's own routing first, then the server's answer in [reach].
  */
 fun visitNoticeConfirmLine(
     event: VisitNotifier.Event,
     session: KinCareSession,
-    hasPortalAccount: Boolean?,
-    noticesLive: Boolean?,
+    reach: VisitNoticeReach,
     household: String,
 ): String? {
     val what = toldWhat(event) ?: return null
@@ -101,9 +120,18 @@ fun visitNoticeConfirmLine(
         "session_has_no_kinfolk" -> return "No household will be told, because this visit is not linked to one."
         "session_has_no_routing_ids" -> return "$name will not be told, because this visit is not linked to a booking."
     }
-    if (hasPortalAccount == false) return "$name will not be told, because they have no portal account."
-    if (hasPortalAccount == null) return null
-    if (noticesLive == false) return "$name will not be told, because notices to households are off in Settings."
-    if (noticesLive == null) return null
-    return "$name will be told $what."
+    return when (reach) {
+        VisitNoticeReach.Checking ->
+            if (household.isBlank()) "Checking who will be told." else "Checking whether $household will be told."
+        VisitNoticeReach.Unknown -> null
+        is VisitNoticeReach.Ready -> when {
+            reach.willNotify -> "$name will be told $what."
+            reach.reason == "household_has_no_portal_account" ->
+                "$name will not be told, because they have no portal account."
+            reach.reason == "household_notices_off" ->
+                "$name will not be told, because notices to households are off in Settings."
+            // A reason this build has no words for. It promises nothing.
+            else -> null
+        }
+    }
 }

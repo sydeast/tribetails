@@ -100,50 +100,70 @@ class VisitNoticeWordsTest {
         assertEquals("session_has_no_kinfolk", visitRoutingSkip(KinCareSession(id = "s")))
     }
 
-    private fun confirm(hasAccount: Boolean?, live: Boolean?, event: VisitNotifier.Event = VisitNotifier.Event.ON_MY_WAY) =
-        visitNoticeConfirmLine(event, routed, hasAccount, live, "Dre East")
+    private val told = VisitNoticeReach.Ready(willNotify = true, reason = null)
+    private fun not(reason: String?) = VisitNoticeReach.Ready(willNotify = false, reason = reason)
+
+    private fun confirm(reach: VisitNoticeReach, event: VisitNotifier.Event = VisitNotifier.Event.ON_MY_WAY) =
+        visitNoticeConfirmLine(event, routed, reach, "Dre East")
 
     @Test
-    fun `the confirm promises a notice only with an account and the switch on`() {
-        assertEquals("Dre East will be told their Auntie is on the way.", confirm(true, true))
+    fun `the confirm promises a notice when the server says one can go out`() {
+        assertEquals("Dre East will be told their Auntie is on the way.", confirm(told))
+        assertEquals("Dre East will be told their Auntie has arrived.", confirm(told, VisitNotifier.Event.ARRIVED))
+        assertEquals("Dre East will be told the visit has finished.", confirm(told, VisitNotifier.Event.DEPARTED))
+    }
+
+    @Test
+    fun `a household with no portal sign-in will not be told, the Nov 10 case`() {
         assertEquals(
-            "Dre East will be told their Auntie has arrived.",
-            confirm(true, true, VisitNotifier.Event.ARRIVED),
-        )
-        assertEquals(
-            "Dre East will be told the visit has finished.",
-            confirm(true, true, VisitNotifier.Event.DEPARTED),
+            "Dre East will not be told, because they have no portal account.",
+            confirm(not("household_has_no_portal_account")),
         )
     }
 
     @Test
-    fun `no portal account is named before the switch, the Nov 10 case`() {
-        assertEquals("Dre East will not be told, because they have no portal account.", confirm(false, false))
-    }
-
-    @Test
-    fun `the switch is named for a household that has an account`() {
+    fun `the switch is named when the server names it`() {
         assertEquals(
             "Dre East will not be told, because notices to households are off in Settings.",
-            confirm(true, false),
+            confirm(not("household_notices_off")),
         )
     }
 
     @Test
-    fun `the confirm says nothing about the household while either input loads`() {
-        assertNull(confirm(null, true))
-        assertNull(confirm(true, null))
-        assertNull(confirm(null, false))
+    fun `the confirm says it is checking while the server is asked, and promises nothing`() {
+        assertEquals("Checking whether Dre East will be told.", confirm(VisitNoticeReach.Checking))
+        assertEquals(
+            "Checking who will be told.",
+            visitNoticeConfirmLine(VisitNotifier.Event.ON_MY_WAY, routed, VisitNoticeReach.Checking, ""),
+        )
+    }
+
+    @Test
+    fun `the confirm says nothing about the household without a usable answer`() {
+        assertNull(confirm(VisitNoticeReach.Unknown))
+        assertNull(confirm(not("a_reason_from_a_newer_server")))
+        assertNull(confirm(not(null)))
+        assertNull(confirm(told, VisitNotifier.Event.REPORT_SENT))
+    }
+
+    @Test
+    fun `the server answer becomes a reach, and a failed call is unknown`() {
+        assertEquals(
+            VisitNoticeReach.Ready(false, "household_has_no_portal_account"),
+            visitNoticeReachOf(Result.success(VisitNotifier.PreviewResult(false, "household_has_no_portal_account"))),
+        )
+        assertEquals(VisitNoticeReach.Ready(true, null), visitNoticeReachOf(Result.success(VisitNotifier.PreviewResult(true))))
+        assertEquals(VisitNoticeReach.Unknown, visitNoticeReachOf(Result.failure(RuntimeException("NOT_FOUND"))))
     }
 
     @Test
     fun `a row with nothing to route to is named before anything else`() {
         assertEquals(
             "Dre East will not be told, because this visit is not linked to a booking.",
-            visitNoticeConfirmLine(VisitNotifier.Event.ARRIVED, KinCareSession(id = "s", kinfolkId = "kf1"), true, true, "Dre East"),
+            visitNoticeConfirmLine(VisitNotifier.Event.ARRIVED, KinCareSession(id = "s", kinfolkId = "kf1"), told, "Dre East"),
         )
         assertTrue(
-            visitNoticeConfirmLine(VisitNotifier.Event.ARRIVED, KinCareSession(id = "s"), true, true, "Dre East")!!
+            visitNoticeConfirmLine(VisitNotifier.Event.ARRIVED, KinCareSession(id = "s"), VisitNoticeReach.Checking, "Dre East")!!
                 .startsWith("No household will be told"),
         )
     }
