@@ -10,6 +10,13 @@ vi.mock('../api/settings', async (orig) => ({
   getBusinessSettings: () => getBusinessSettings(),
 }));
 
+// #1962: the shared staff roster (`listStaff`), stubbed so no test dials it.
+// Null is "not read yet".
+const staffRoster = vi.hoisted(() => ({
+  current: null as { uid: string; displayName: string | null; email: string | null }[] | null,
+}));
+vi.mock('../lib/useStaffRoster', () => ({ useStaffRoster: () => staffRoster.current }));
+
 const saveBusinessSettings = vi.fn();
 vi.mock('../api/settingsWrite', () => ({ saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch) }));
 
@@ -305,9 +312,8 @@ describe('Settings — section nav shell', () => {
 // `ui-ideas/auntieos-settings-2026-05-27.html` on the navy ground.
 describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
   it('heads the screen with the mock kicker and title, the last save as the detail line', async () => {
-    getBusinessSettings.mockResolvedValue(
-      withOverrides({ updatedAt: '2026-07-31T12:00:00.000Z', updatedBy: 'auntie@example.com' }),
-    );
+    staffRoster.current = [{ uid: 'owner-1', displayName: 'Syd East', email: null }];
+    getBusinessSettings.mockResolvedValue(withOverrides({ updatedAt: '2026-07-31T12:00:00.000Z', updatedBy: 'owner-1' }));
     render(<Settings />);
     await screen.findByLabelText('Business name');
 
@@ -318,8 +324,67 @@ describe('Settings: the mock hero, nav panel and Scheduling rows', () => {
     // The stamp is a VALUE, so it sits on the heading's detail line, never as
     // a stray paragraph between the band and the columns.
     const detail = document.querySelector('.den-heading-detail');
-    expect(detail).toHaveTextContent(/^Last saved .* by auntie@example\.com$/);
+    expect(detail).toHaveTextContent(/^Last saved .* by Syd East$/);
     expect(document.querySelector('.settings__updated')).toBeNull();
+  });
+
+  // #1962: after a tag was removed the line ended in a 28-character user id,
+  // and before that in the sign-in email. Neither is a name.
+  describe('who the last-saved line names (#1962)', () => {
+    const UID = 'nppJNdMNYJfUigibGKUQj3n4obt2';
+    const ROSTER = [{ uid: UID, displayName: 'Syd East', email: 'e2e-admin@tribetails.com' }];
+
+    async function detailFor(updatedBy: string, roster: typeof staffRoster.current): Promise<string> {
+      staffRoster.current = roster;
+      getBusinessSettings.mockResolvedValue(withOverrides({ updatedAt: '2026-11-11T18:47:00.000Z', updatedBy }));
+      render(<Settings />);
+      await screen.findByLabelText('Business name');
+      return document.querySelector('.den-heading-detail')?.textContent ?? '';
+    }
+
+    it('shows the name for a uid stamp already stored', async () => {
+      const detail = await detailFor(UID, ROSTER);
+      expect(detail).toMatch(/^Last saved .* by Syd East$/);
+      expect(detail).not.toContain(UID);
+    });
+
+    it('shows the name for an older sign-in email stamp, never the email', async () => {
+      const detail = await detailFor('e2e-admin@tribetails.com', ROSTER);
+      expect(detail).toMatch(/^Last saved .* by Syd East$/);
+      expect(detail).not.toContain('@');
+    });
+
+    it('says "an Admin" for a uid nobody on the roster answers to', async () => {
+      const detail = await detailFor('gone-uid-0000000000000000000', ROSTER);
+      expect(detail).toMatch(/^Last saved .* by an Admin$/);
+      expect(detail).not.toContain('gone-uid');
+    });
+
+    it('says "an Admin" when the roster only knows the person by an email', async () => {
+      const detail = await detailFor(UID, [{ uid: UID, displayName: 'e2e-admin@tribetails.com', email: null }]);
+      expect(detail).toMatch(/^Last saved .* by an Admin$/);
+    });
+
+    it('prints no stamp while the roster is still being read', async () => {
+      const detail = await detailFor(UID, null);
+      expect(detail).toMatch(/^Last saved \S+ \S+$/);
+      expect(detail).not.toContain(UID);
+      expect(detail).not.toContain(' by ');
+    });
+
+    it('names the saver from the uid a save answers with', async () => {
+      staffRoster.current = ROSTER;
+      getBusinessSettings.mockResolvedValue(withOverrides({ updatedAt: '', updatedBy: '' }));
+      saveBusinessSettings.mockResolvedValue({ updatedAt: '2026-11-11T18:47:00.000Z', updatedBy: UID });
+      const user = userEvent.setup();
+      render(<Settings />);
+      const name = await screen.findByLabelText('Business name');
+      expect(document.querySelector('.den-heading-detail')).toHaveTextContent('Never saved yet');
+      await user.type(name, 'Tribe Tails');
+      await user.click(within(panelOwning(name)).getByRole('button', { name: /save/i }));
+      await screen.findByText(/^Last saved .* by Syd East$/);
+      expect(document.querySelector('.den-heading-detail')?.textContent).not.toContain(UID);
+    });
   });
 
   it('draws the nav as its own panel: one glyph per tab, the label the whole accessible name', async () => {
@@ -1079,6 +1144,96 @@ describe('Settings — MyTribe portal Home layout editor', () => {
     await userEvent.click(within(panel).getByRole('button', { name: /cancel/i }));
     expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
     expect(within(panel).getByRole('switch', { name: 'Show Up next on Home' })).toBeChecked();
+  });
+});
+// #1987 (walk 2026-11-10): typing one Limit and putting it back left the chip
+// on "Custom layout" and the Kinfolk Home in one stacked column, with Reset
+// the only way out. A layout equal to the default is the default: the chip
+// says so, there is nothing to save, and a save that lands on it sends `[]`.
+describe('Settings: a Home layout equal to the default is the default (#1987)', () => {
+  const DEFAULT_ROWS = ['liveVisit', 'upNext', 'tales', 'quickStart'].map((id) => ({ id, enabled: true, limit: 0 }));
+  const LIMIT_ONLY = DEFAULT_ROWS.map((r) => (r.id === 'upNext' ? { ...r, limit: 2 } : r));
+  const withHome = (sections: Array<{ id: string; enabled: boolean; limit: number }>) =>
+    withOverrides({ mytribePortal: { ...DEFAULT_BUSINESS_SETTINGS.mytribePortal, home: { sections } } });
+  async function openPortal(settings = DEFAULT_BUSINESS_SETTINGS) {
+    getBusinessSettings.mockResolvedValue(settings);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    return openSection('MyTribe portal');
+  }
+  const limitOf = (panel: HTMLElement, label: string) =>
+    within(within(panel).getByText(label).closest('li') as HTMLElement).getByLabelText('Limit');
+  async function typeLimit(panel: HTMLElement, label: string, text: string) {
+    const input = limitOf(panel, label);
+    await userEvent.clear(input);
+    await userEvent.type(input, text);
+  }
+  const sentSections = () =>
+    (saveBusinessSettings.mock.calls[0]?.[0] as { mytribePortal: { home: { sections: unknown } } }).mytribePortal.home
+      .sections;
+  it('a limit-only change saves the order untouched with just that limit', async () => {
+    const panel = await openPortal();
+    await typeLimit(panel, 'Up next', '2');
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(sentSections()).toEqual(LIMIT_ONLY);
+  });
+  it('typing a limit and putting 0 back is the default again, with nothing to save', async () => {
+    const panel = await openPortal();
+    await typeLimit(panel, 'Up next', '2');
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    await typeLimit(panel, 'Up next', '0');
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    expect(within(panel).queryByText('Custom layout')).not.toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Reset to default layout' })).toBeDisabled();
+    const save = within(panel).getByRole('button', { name: /^save$/i });
+    expect(save).toBeDisabled();
+    await userEvent.click(save);
+    expect(saveBusinessSettings).not.toHaveBeenCalled();
+  });
+  it('a saved limit put back to 0 reads Default and saves the empty list, not four rows', async () => {
+    const panel = await openPortal(withHome(LIMIT_ONLY));
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    await typeLimit(panel, 'Up next', '0');
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(sentSections()).toEqual([]);
+  });
+  it('a switch turned off and back on, and a section moved and moved back, are the default again', async () => {
+    const panel = await openPortal();
+    const quick = within(panel).getByRole('switch', { name: 'Show Quick start on Home' });
+    await userEvent.click(quick);
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    await userEvent.click(quick);
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Move Live visit down' }));
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Move Live visit up' }));
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+  });
+  it('a stored layout equal to the default opens as Default, with nothing to reset or save', async () => {
+    const panel = await openPortal(withHome(DEFAULT_ROWS));
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    expect(within(panel).queryByText('Custom layout')).not.toBeInTheDocument();
+    expect(within(panel).getByText('Default layout (no custom sections configured)')).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Reset to default layout' })).toBeDisabled();
+    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+  });
+  it('a real custom order still reads Custom and is saved in that order with its limit', async () => {
+    const custom = [
+      { id: 'quickStart', enabled: true, limit: 0 },
+      { id: 'liveVisit', enabled: true, limit: 0 },
+      { id: 'upNext', enabled: true, limit: 0 },
+      { id: 'tales', enabled: true, limit: 0 },
+    ];
+    const panel = await openPortal(withHome(custom));
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    expect(within(panel).getAllByRole('listitem')[0]).toHaveTextContent('Quick start');
+    await typeLimit(panel, 'Up next', '3');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(sentSections()).toEqual(custom.map((r) => (r.id === 'upNext' ? { ...r, limit: 3 } : r)));
   });
 });
 describe('Settings: Integrations is a report, and its Google row opens Calendar in place', () => {

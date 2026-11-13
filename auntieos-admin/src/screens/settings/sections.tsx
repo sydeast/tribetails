@@ -20,6 +20,8 @@ import { Toggle } from '../../components/Toggle';
 import {
   effectiveHomeSections,
   homeLayoutModeLabel,
+  isDefaultHomeLayout,
+  normalizeHomeSections,
   homeSectionLabel,
   moveHomeSectionDown,
   moveHomeSectionUp,
@@ -1048,7 +1050,8 @@ export function MyTribePortalSection({ data, onSave, onServerChanged, decode }: 
           limitText={limitText}
           limitErrors={limitErrors}
           onLimitText={editLimitText}
-          onChange={(home) => edit({ ...portal, home })}
+          // #1987: an edit that lands back on the default IS the default again.
+          onChange={(home) => edit({ ...portal, home: { sections: normalizeHomeSections(home.sections) } })}
           onReset={() => {
             setLimitText({});
             edit({ ...portal, home: { sections: [...RESET_HOME_SECTIONS] } });
@@ -1103,21 +1106,24 @@ function homeRowKey(row: HomeSectionCfg, index: number): string {
  * disabled, so it stays reachable. `effectiveHomeSections` is read-only here:
  * it never becomes the value written back, only what each row shows.
  *
- * ONE-WAY-DOOR GUARD. A real edit (toggle/limit/reorder) writes the WHOLE
- * materialized row list back through `onChange`, converting the implicit
- * default into an explicit array the moment an operator touches anything —
- * never merely by opening the panel, so opening and pressing Save with
- * nothing touched stays a no-op for `dirty` (see `MyTribePortalSection`, which
- * compares `JSON.stringify(portal)` against the loaded value untouched: `home`
- * is only ever replaced by an `onChange` call, and none of the row handlers
- * below fire on render). "Reset to default layout" is the way back out of
- * that explicit state: it writes `RESET_HOME_SECTIONS` (`[]`), the same empty
- * array the portal reads as "no config at all", not a full canonical list that
- * merely looks the same today.
+ * A real edit (toggle/limit/reorder) writes the WHOLE materialized row list
+ * back through `onChange`, never merely by opening the panel, so opening and
+ * pressing Save with nothing touched stays a no-op for `dirty` (see
+ * `MyTribePortalSection`, which compares `JSON.stringify(portal)` against the
+ * loaded value untouched: `home` is only ever replaced by an `onChange` call,
+ * and none of the row handlers below fire on render).
+ *
+ * #1987: THE WAY BACK IS THE VALUES THEMSELVES. `MyTribePortalSection` passes
+ * every edit through `normalizeHomeSections`, so a row list equal to the
+ * default (every section on, catalogue order, no limits) is held as `[]`
+ * again. Typing a Limit and then putting 0 back is the same state as never
+ * having typed: the chip reads Default and there is nothing to save. "Reset
+ * to default layout" is the one-press way to the same place: it writes
+ * `RESET_HOME_SECTIONS` (`[]`).
  */
 function HomeLayoutEditor({ home, busy, limitText, limitErrors, onLimitText, onChange, onReset }: HomeLayoutEditorProps) {
   const rows = effectiveHomeSections(home.sections);
-  const isDefault = home.sections.length === 0;
+  const isDefault = isDefaultHomeLayout(home.sections);
 
   function updateRow(index: number, patch: Partial<HomeSectionCfg>) {
     onChange({ sections: rows.map((r, i) => (i === index ? { ...r, ...patch } : r)) });
