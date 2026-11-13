@@ -1143,6 +1143,11 @@ describe('Bookings bulk reschedule', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'));
+    // #1863 gave TEST_SETTINGS the runner's own zone, which on a UTC runner
+    // moves the business off Chicago. This block needs the business on its
+    // default zone and the device somewhere else, so it serves no timeZone.
+    const { timeZone: _runnerZone, ...noZone } = TEST_SETTINGS;
+    getBusinessSettings.mockResolvedValue(noZone);
   });
   afterEach(() => {
     vi.useRealTimers();

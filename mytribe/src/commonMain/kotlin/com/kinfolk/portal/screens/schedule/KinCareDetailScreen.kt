@@ -424,7 +424,7 @@ private fun KinCareDetailBody(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                 Text(com.kinfolk.portal.util.visitTitle(kinCare.title, kinCare.serviceLabel) ?: "Booking", style = type.heritageTitle)
-                Text(bookingWhenLabel(kinCare).ifEmpty { "TBD" }, style = type.sansLabel)
+                Text(bookingWhenLabel(kinCare, withDate = true).ifEmpty { "TBD" }, style = type.sansLabel)
                 ReviewRow("KinCare Duration", kinCare.serviceLabel ?: "TBD")
                 ReviewRow("Auntie", kinCare.auntieDisplayName ?: "Pending")
                 ReviewRow(

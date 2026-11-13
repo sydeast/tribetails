@@ -76,4 +76,12 @@ class BlockVisitDisplayTest {
         // picked, "Sat, 2:06 AM", as the web row and the mocks print it.
         assertEquals("Sat, 2:06 AM", bookingWhenLabel(visit(null, null, null), chicago))
     }
+    @Test
+    fun `a line with no date badge beside it carries the month and day, and the year when it is not this one`() = runTest {
+        val block = visit("Midday", "11:00", "15:00")
+        assertEquals("Sat, Aug 8, Midday (11 AM to 3 PM)", bookingWhenLabel(block, chicago, withDate = true, nowMillis = now))
+        assertEquals("Sat, Aug 8, 2:06 AM", bookingWhenLabel(visit(null, null, null), chicago, withDate = true, nowMillis = now))
+        val aYearLater = now + 2 * 86_400_000L + 365L * 86_400_000L
+        assertEquals("Sat, Aug 8, 2026, 2:06 AM", bookingWhenLabel(visit(null, null, null), chicago, withDate = true, nowMillis = aYearLater))
+    }
 }

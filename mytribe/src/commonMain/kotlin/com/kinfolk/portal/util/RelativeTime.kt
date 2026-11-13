@@ -167,9 +167,16 @@ fun Booking.requestedNight(): LocalDate? =
  * AM" by the clock (Exact times mode), "Mon, Midday (11 AM to 3 PM)" when the
  * server names a window (Time Blocks mode, #1863), or for a night still
  * waiting on its start (#1098) "Fri night · Start time set by your Auntie".
+ * With [withDate], the month and day follow the weekday ("Mon, Nov 16, 8:00
+ * AM"), and the year too when it is not this one.
  * Mirrors `visitWhenLine` in mytribe/web/src/lib/portalFormat.ts.
  */
-fun bookingWhenLabel(b: Booking, timeZone: TimeZone = TimeZone.currentSystemDefault()): String {
+fun bookingWhenLabel(
+    b: Booking,
+    timeZone: TimeZone = TimeZone.currentSystemDefault(),
+    withDate: Boolean = false,
+    nowMillis: Long = Clock.System.now().toEpochMilliseconds(),
+): String {
     if (!b.startTimePending) {
         // #1301 / #1863: a block visit is shown as its window and its weekday,
         // "Tue, Midday (11 AM to 3 PM)", the same as the web row. Never the
@@ -177,10 +184,19 @@ fun bookingWhenLabel(b: Booking, timeZone: TimeZone = TimeZone.currentSystemDefa
         // which is the clock a household in Time Blocks mode must not see.
         // Exact times mode: "Mon, 8:00 AM", the clock the household picked, as
         // the web row and the mocks print it.
-        val block = bookingBlockText(b) ?: return weekdayTime(b.startTimeMs, timeZone)
-        val ms = b.startTimeMs ?: return block
-        val weekday = WEEKDAY_ABBREV[Instant.fromEpochMilliseconds(ms).toLocalDateTime(timeZone).dayOfWeek.ordinal]
-        return "$weekday, $block"
+        // `withDate` is for a place with no date badge beside the line (Home,
+        // a booking's visit list, the visit header): "Sat, Nov 21, 8:00 AM".
+        val ms = b.startTimeMs ?: return bookingBlockText(b) ?: ""
+        val local = Instant.fromEpochMilliseconds(ms).toLocalDateTime(timeZone)
+        val day = if (withDate) {
+            val nowYear = Instant.fromEpochMilliseconds(nowMillis).toLocalDateTime(timeZone).year
+            val monthDay = "${MONTH_ABBREV[local.month.ordinal]} ${local.day}"
+            "${WEEKDAY_ABBREV[local.dayOfWeek.ordinal]}, " + if (local.year == nowYear) monthDay else "$monthDay, ${local.year}"
+        } else {
+            WEEKDAY_ABBREV[local.dayOfWeek.ordinal]
+        }
+        val block = bookingBlockText(b) ?: return "$day, ${weekdayTime(ms, timeZone).substringAfter(", ")}"
+        return "$day, $block"
     }
     val night = b.requestedNight() ?: return AUNTIE_SETS_START_TIME
     return "${NightWeekdays[night.dayOfWeek.ordinal]} night · $AUNTIE_SETS_START_TIME"
