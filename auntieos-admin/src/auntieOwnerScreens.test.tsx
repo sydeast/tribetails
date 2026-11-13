@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
+import { NAV, isOwnerOnlyPath } from './lib/nav';
 
 /**
  * #2163, operator ruling 2026-11-13: "auntie user level cannot see templates
@@ -357,4 +358,30 @@ describe('#2200 / #2201 the owner and the test admin keep all four', () => {
     expect(window.location.pathname).toBe('/invoices');
     for (const s of MONEY_SCREENS) expect(railLink(s.rail)).not.toBeNull();
   });
+});
+
+/**
+ * #2209 review: `lib/nav.ts#ownerOnly` decides the rail and every in-app link
+ * (`isOwnerOnlyPath`), while the router guard is a `beforeLoad` written on each
+ * route. This pins the two together from the nav side: an entry marked
+ * owner-only whose route has no `refuseAuntie` fails here, so the rail can
+ * never hide a screen her address still opens.
+ */
+describe('#2200 / #2201 every owner-only nav entry is guarded in the router', () => {
+  const ownerOnly = NAV.filter((e) => e.ownerOnly);
+
+  it('covers the six owner screens and agrees with isOwnerOnlyPath', () => {
+    expect(ownerOnly.map((e) => e.slug).sort()).toEqual(
+      ['activity', 'invoices', 'marketing-blasts', 'packages', 'settings', 'templates'],
+    );
+    for (const e of NAV) expect(isOwnerOnlyPath(`/${e.slug}`)).toBe(e.ownerOnly === true);
+  });
+
+  for (const e of ownerOnly) {
+    it(`sends an Auntie from /${e.slug} to Home`, async () => {
+      await boot(`/${e.slug}`, AUNTIE_CLAIMS);
+      await waitFor(() => expect(window.location.pathname).toBe('/home'));
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    });
+  }
 });
