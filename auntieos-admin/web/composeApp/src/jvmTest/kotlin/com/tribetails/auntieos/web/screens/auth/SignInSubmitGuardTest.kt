@@ -36,7 +36,7 @@ class SignInSubmitGuardTest {
     fun aSecondDoneWhileSigningInMakesNoSecondRequest() = runDesktopComposeUiTest {
         var signIns = 0
         val gate = CompletableDeferred<SignInResult>()
-        val auth = AuthClient(signInImpl = { _, _ -> signIns++; gate.await() })
+        val auth = AuthClient(failedLoginReporter = {}, signInImpl = { _, _ -> signIns++; gate.await() })
         setContent { AuntieAppTheme(themeMode = ThemeMode.DARK) { SignInScreen(auth = auth, onSignedIn = {}) } }
 
         onAllNodes(hasSetTextAction())[0].performTextInput("e2e-admin@tribetails.com")
@@ -62,6 +62,7 @@ class SignInSubmitGuardTest {
         var resets = 0
         val resetGate = CompletableDeferred<PasswordResetResult>()
         val auth = AuthClient(
+            failedLoginReporter = {},
             signInImpl = { _, _ -> signIns++; SignInResult.Failure("auth/wrong-password") },
             passwordResetImpl = { resets++; resetGate.await() },
         )
@@ -88,7 +89,7 @@ class SignInSubmitGuardTest {
     @Test
     fun emptyFieldsOnDoneMakeNoRequest() = runDesktopComposeUiTest {
         var signIns = 0
-        val auth = AuthClient(signInImpl = { _, _ -> signIns++; SignInResult.Failure("auth/wrong-password") })
+        val auth = AuthClient(failedLoginReporter = {}, signInImpl = { _, _ -> signIns++; SignInResult.Failure("auth/wrong-password") })
         setContent { AuntieAppTheme(themeMode = ThemeMode.DARK) { SignInScreen(auth = auth, onSignedIn = {}) } }
         onAllNodes(hasSetTextAction())[1].performImeAction()
         waitForIdle()
@@ -102,7 +103,7 @@ class SignInSubmitGuardTest {
         // down and the screen's own Enter handler on key up. Only one may sign in.
         var signIns = 0
         val gate = CompletableDeferred<SignInResult>()
-        val auth = AuthClient(signInImpl = { _, _ -> signIns++; gate.await() })
+        val auth = AuthClient(failedLoginReporter = {}, signInImpl = { _, _ -> signIns++; gate.await() })
         setContent { AuntieAppTheme(themeMode = ThemeMode.DARK) { SignInScreen(auth = auth, onSignedIn = {}) } }
         onAllNodes(hasSetTextAction())[0].performTextInput("e2e-admin@tribetails.com")
         onAllNodes(hasSetTextAction())[1].performTextInput("right-password")
@@ -121,6 +122,7 @@ class SignInSubmitGuardTest {
         var resets = 0
         val gate = CompletableDeferred<SignInResult>()
         val auth = AuthClient(
+            failedLoginReporter = {},
             signInImpl = { _, _ -> gate.await() },
             passwordResetImpl = { resets++; PasswordResetResult.Sent },
         )
