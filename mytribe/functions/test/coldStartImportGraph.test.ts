@@ -204,13 +204,19 @@ const ALLOWED_EAGER_PACKAGES = [
  * `saveEmailFrame`, all entries already in this graph), so they can no longer
  * disagree about what `updatedBy` holds. One function with no import of its own.
  *
- * 442 since #2096 (on top of #1962's 441): `lib/householdMember.ts`, the one
+ * 442 since #1912 (on top of #1962's 441): `lib/kinLink.ts`, the one place
+ * that says which admin record is a household Kin's own. `portal/kinWrites.ts`,
+ * `admin/kinArchive.ts`, `admin/kinRemovalRequests.ts` and
+ * `triggers/onFamilyKinWrite.ts` (four entries already in this graph) all ask
+ * it, so it is resident by construction; every module it imports is too.
+ *
+ * 443 since #2096 (on top of #1912's 442): `lib/householdMember.ts`, the one
  * household member-record shape and link decision, which
  * `membership/acceptInvite.ts` and `admin/setKinfolkClaim.ts` (entries already
  * in this graph) write through. Its runtime import is `lib/schema.ts`, already
  * here; the rest are types.
  */
-const MAX_OWN_EAGER_MODULES = 442;
+const MAX_OWN_EAGER_MODULES = 443;
 
 interface Edge {
   spec: string;
