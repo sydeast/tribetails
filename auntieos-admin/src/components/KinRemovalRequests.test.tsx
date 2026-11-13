@@ -217,6 +217,42 @@ describe('KinRemovalRequestsSection, the queue on Bookings (#1408)', () => {
   });
 });
 
+describe('KinRemovalRequestsSection opened from the notice (#1912)', () => {
+  it('arrives unfolded with the named request marked and its Archive and Decline ready', async () => {
+    mocks.listKinRemovalRequests.mockResolvedValue({
+      requests: [pending({ id: 'fam2_k9', kinName: 'Pip' }), pending()],
+    });
+    render(<KinRemovalRequestsSection focusRequestId="fam1_k1" />);
+    const queue = await screen.findByTestId('kin-removal-queue');
+    const rows = within(queue).getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    const marked = rows.filter((r) => r.getAttribute('aria-current') === 'true');
+    expect(marked).toHaveLength(1);
+    expect(within(marked[0]!).getByText('Biscuit')).toBeTruthy();
+    expect(within(marked[0]!).getByRole('button', { name: 'Archive' })).toBeTruthy();
+    expect(within(marked[0]!).getByRole('button', { name: 'Decline' })).toBeTruthy();
+    expect(screen.queryByText('That request has already been answered.')).toBeNull();
+  });
+  it('a request that is no longer waiting says so in one line, with the rest of the queue under it', async () => {
+    mocks.listKinRemovalRequests.mockResolvedValue({ requests: [pending({ id: 'fam2_k9', kinName: 'Pip' })] });
+    render(<KinRemovalRequestsSection focusRequestId="fam1_k1" />);
+    expect(await screen.findByText('That request has already been answered.')).toBeTruthy();
+    expect(within(screen.getByTestId('kin-removal-queue')).getByText('Pip')).toBeTruthy();
+  });
+  it('says the same when nothing at all is waiting', async () => {
+    mocks.listKinRemovalRequests.mockResolvedValue({ requests: [] });
+    render(<KinRemovalRequestsSection focusRequestId="fam1_k1" />);
+    expect(await screen.findByText('That request has already been answered.')).toBeTruthy();
+    expect(screen.queryByTestId('kin-removal-queue')).toBeNull();
+  });
+  it('a failed read on arrival is an error with Retry, never "already answered"', async () => {
+    mocks.listKinRemovalRequests.mockRejectedValue(new Error('offline'));
+    render(<KinRemovalRequestsSection focusRequestId="fam1_k1" />);
+    expect(await screen.findByText("Couldn't load Kin removal requests")).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(screen.queryByText('That request has already been answered.')).toBeNull();
+  });
+});
 describe('resolvedMessage', () => {
   it('reports a notice that did not go out', () => {
     expect(resolvedMessage(resolved('archive', false))).toBe(

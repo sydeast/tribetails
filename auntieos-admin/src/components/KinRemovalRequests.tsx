@@ -163,13 +163,20 @@ function RemovalRequestBanner({
   );
 }
 
-/** The queue on Bookings. Says so while it loads; renders nothing when empty. */
-export function KinRemovalRequestsSection() {
+/**
+ * The queue on Bookings. Says so while it loads; renders nothing when empty.
+ *
+ * `focusRequestId` is the request a "Kinfolk asked to remove a Kin" notice
+ * opened this screen for (#1912). The queue arrives unfolded with that row
+ * marked, and when the request was answered before the Admin got here it says
+ * so in one line instead of showing nothing about it.
+ */
+export function KinRemovalRequestsSection({ focusRequestId }: { focusRequestId?: string } = {}) {
   const { load, reload } = useRemovalRequests();
   const access = useAdminAccess();
   const isOwner = access?.status === 'admin';
   const [answered, setAnswered] = useState<ReadonlySet<string>>(new Set());
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(focusRequestId !== undefined);
   const [sheet, setSheet] = useState<{ request: KinRemovalRequestDto; decision: KinRemovalDecision } | null>(null);
 
   if (load.status === 'loading') {
@@ -183,10 +190,18 @@ export function KinRemovalRequestsSection() {
     );
   }
   const rows = load.requests.filter((r) => !answered.has(r.id));
-  if (rows.length === 0) return null;
+  // Answered before arrival, not by the tap just made here (the toast covers that).
+  const answeredNote =
+    focusRequestId !== undefined && !load.requests.some((r) => r.id === focusRequestId) ? (
+      <Banner tone="info" title="Kin removal request">
+        That request has already been answered.
+      </Banner>
+    ) : null;
+  if (rows.length === 0) return answeredNote;
 
   return (
     <section className="visit-requests" data-testid="kin-removal-queue">
+      {answeredNote}
       <Banner
         tone="warning"
         title="Kin removal requests"
@@ -204,7 +219,11 @@ export function KinRemovalRequestsSection() {
       {open && (
         <ul className="visit-requests__list">
           {rows.map((r) => (
-            <li key={r.id} className="visit-requests__row">
+            <li
+              key={r.id}
+              className="visit-requests__row"
+              {...(r.id === focusRequestId ? { 'aria-current': 'true' as const } : {})}
+            >
               <div className="visit-requests__row-meta">
                 <span className="visit-requests__row-kind">Remove Kin</span>
                 <span className="visit-requests__row-title">{kinLabel(r)}</span>
