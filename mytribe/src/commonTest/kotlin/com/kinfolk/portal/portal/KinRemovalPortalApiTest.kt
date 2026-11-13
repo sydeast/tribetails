@@ -94,6 +94,15 @@ class KinRemovalPortalApiTest {
         assertEquals(KinRemovalOption.Request(declined = null), kinRemovalOption(KinRemovalOptions(false, pending.copy(status = "archived"))))
     }
 
+    // #1912: a Kin that shared its name with an archived Kin was told it had
+    // history, and a removal request was sent for it. The server now answers
+    // that it has nothing on file while that request is still waiting.
+    @Test
+    fun `nothing on file with a request still waiting offers delete, as the web does`() {
+        val waiting = KinRemovalRequest("fam1_k1", "pending", "Added by mistake", nov2, null, null)
+        assertEquals(KinRemovalOption.Delete, kinRemovalOption(KinRemovalOptions(canDelete = true, request = waiting)))
+    }
+
     @Test
     fun `dates read like the web`() {
         assertEquals("Nov 2, 2026", removalDateLabel(nov2, TimeZone.UTC))
