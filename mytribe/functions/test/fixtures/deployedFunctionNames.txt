@@ -9,6 +9,7 @@ addSecondaryContact
 adjustSupply
 aiBackfillTaleTitles
 aiBatchPollCron
+applyAccountCredit
 approveTribePinChange
 archiveInvoice
 archiveKin
@@ -205,6 +206,7 @@ previewEmailTemplate
 previewInvoiceNotice
 previewMarketingBlastAudience
 previewMarketingBlastCopy
+previewVisitNotification
 provisionBusinessAdmins
 provisionTribe
 publishGeneratedDraft

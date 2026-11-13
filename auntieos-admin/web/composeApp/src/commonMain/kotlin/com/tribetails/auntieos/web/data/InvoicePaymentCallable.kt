@@ -155,7 +155,7 @@ fun recordPaymentOutcomeMessage(outcome: RecordPaymentOutcome, confirmationReque
         " The office copy of the payment notice did not go out, because the admin roster could not be read. The household copy is not affected."
     } else ""
     val credit = if (outcome.creditedToAccountCents > 0) {
-        " ${centsUsd(outcome.creditedToAccountCents)} has been added to the household's account balance for their next invoice."
+        " ${centsUsd(outcome.creditedToAccountCents)} has been added to the household's account credit. It stays there until you apply an amount to an invoice."
     } else ""
     return head + household + office + credit
 }

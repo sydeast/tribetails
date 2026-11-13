@@ -4,6 +4,7 @@ import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.domain.VisitNoticeReach
 import com.tribetails.auntieos.domain.VisitNotifyOutcome
 import com.tribetails.auntieos.notifications.VisitNotifier
 import io.mockk.coEvery
@@ -148,6 +149,73 @@ class AuntieTimeClockNoticeTest {
         vm.loadKinCareSessions()
         advanceUntilIdle()
         assertEquals(false, vm.householdNoticesLive.value)
+    }
+
+    // ── #1840: the confirm asks the server, never the roster ────────────────
+
+    private fun AdminDataViewModel.asked(s: KinCareSession = session): MutableList<VisitNoticeReach> {
+        val answers = mutableListOf<VisitNoticeReach>()
+        previewVisitNotice(s) { answers += it }
+        return answers
+    }
+
+    @Test
+    fun `the confirm is told a claimed household will be notified`() = runTest(testDispatcher) {
+        coEvery { notifier.preview("kfDre") } returns Result.success(VisitNotifier.PreviewResult(true))
+        val answers = vm().asked()
+        advanceUntilIdle()
+
+        assertEquals(listOf<VisitNoticeReach>(VisitNoticeReach.Ready(true, null)), answers)
+    }
+
+    @Test
+    fun `the confirm is told an unclaimed household has no portal sign-in`() = runTest(testDispatcher) {
+        coEvery { notifier.preview("kfDre") } returns
+            Result.success(VisitNotifier.PreviewResult(false, "household_has_no_portal_account"))
+        val answers = vm().asked()
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf<VisitNoticeReach>(VisitNoticeReach.Ready(false, "household_has_no_portal_account")),
+            answers,
+        )
+    }
+
+    @Test
+    fun `the confirm is told household notices are switched off`() = runTest(testDispatcher) {
+        coEvery { notifier.preview("kfDre") } returns
+            Result.success(VisitNotifier.PreviewResult(false, "household_notices_off"))
+        val answers = vm().asked()
+        advanceUntilIdle()
+
+        assertEquals(listOf<VisitNoticeReach>(VisitNoticeReach.Ready(false, "household_notices_off")), answers)
+    }
+
+    @Test
+    fun `a preview that cannot be made is unknown, never a guess`() = runTest(testDispatcher) {
+        coEvery { notifier.preview(any()) } returns Result.failure(RuntimeException("NOT_FOUND"))
+        val answers = vm().asked()
+        advanceUntilIdle()
+
+        assertEquals(listOf<VisitNoticeReach>(VisitNoticeReach.Unknown), answers)
+    }
+
+    @Test
+    fun `a preview that throws is unknown too`() = runTest(testDispatcher) {
+        coEvery { notifier.preview(any()) } throws IllegalStateException("offline")
+        val answers = vm().asked()
+        advanceUntilIdle()
+
+        assertEquals(listOf<VisitNoticeReach>(VisitNoticeReach.Unknown), answers)
+    }
+
+    @Test
+    fun `a visit that cannot be routed to a household is not asked about`() = runTest(testDispatcher) {
+        val answers = vm().asked(session.copy(kinCareBatchId = null, kinCareVisitId = null))
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { notifier.preview(any()) }
+        assertEquals(emptyList<VisitNoticeReach>(), answers)
     }
 
     private companion object {

@@ -94,7 +94,7 @@ class AccountSettingsScreenTest {
         // #1469: web draws the household role name as the card title under the label.
         onNodeWithText("Secondary Kinfolk").assertExists()
         onNodeWithText("Billing Details").assertExists()
-        onNodeWithText("Sign Out").assertExists()
+        onNodeWithText("Sign out").assertExists()
         onNodeWithText("n@x.com").assertExists()
     }
 
@@ -186,7 +186,7 @@ class AccountSettingsScreenTest {
         waitForIdle()
         // Tapping the button opens the confirm dialog; nothing fires yet.
         // (The button sits at the bottom of a tall scrollable settings form.)
-        onNodeWithText("Sign Out").performScrollTo().performClick()
+        onNodeWithText("Sign out").performScrollTo().performClick()
         waitForIdle()
         onNodeWithText("Sign out of MyTribe?").assertExists()
         assertFalse(signedOut, "Sign out must wait for confirmation")
@@ -195,13 +195,12 @@ class AccountSettingsScreenTest {
         waitForIdle()
         onNodeWithText("Sign out of MyTribe?").assertDoesNotExist()
         assertFalse(signedOut)
-        // Confirming actually signs out. With the dialog open there are two
-        // "Sign Out" nodes (page button + dialog confirm); the dialog's root
-        // is last in traversal order.
-        onNodeWithText("Sign Out").performClick()
+        // Confirming actually signs out. The dialog's confirm reads
+        // "Yes, sign out" (#1931), so it is told apart from the page button.
+        onNodeWithText("Sign out").performClick()
         waitForIdle()
-        val signOutNodes = onAllNodesWithText("Sign Out")
-        signOutNodes[signOutNodes.fetchSemanticsNodes().size - 1].performClick()
+        onNodeWithText("Sign Out").assertDoesNotExist()
+        onNodeWithText("Yes, sign out").performClick()
         waitForIdle()
         assertTrue(signedOut, "Confirming the dialog fires onSignOut")
     }
@@ -252,7 +251,7 @@ class AccountSettingsScreenTest {
         onNodeWithText("Backup Email").assertExists()
         // Typed-save tail (Billing + Sign Out) still renders below the schema form.
         onNodeWithText("Billing Details").assertExists()
-        onNodeWithText("Sign Out").assertExists()
+        onNodeWithText("Sign out").assertExists()
     }
 
     /** #1504: opening Account wakes saveMyAccount once, after the account loads, and typing never fires it again. */

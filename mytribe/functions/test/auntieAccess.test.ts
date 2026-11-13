@@ -91,6 +91,8 @@ describe('#944 the allowlist is a real list of real callables', () => {
       'acceptQuote', 'denyQuote', 'requestBooking',
       // Q6: giving account credit, and reading its history.
       'giveAccountCredit', 'getAccountCreditHistory',
+      // #1872: applying account credit to an invoice.
+      'applyAccountCredit',
       // #1003: the admin's decision about an unapplied card payment.
       'listUnappliedPayments', 'resolveUnappliedPayment',
       // #1113: retrying the close of a paid invoice's open payment links.

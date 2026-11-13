@@ -318,22 +318,31 @@ export function purgeSessionCaches(uid: string | null): void {
  * reload, and re-enabling would flash a live button onto an unloading page.
  * Only a failure hands the button back.
  */
-export function useSignOut(): { signOut: () => void; signingOut: boolean } {
+export function useSignOut(): { signOut: () => void; signingOut: boolean; error: string | null } {
   const [signingOut, setSigningOut] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
 
   const run = useCallback(() => {
     if (inFlight.current) return;
     inFlight.current = true;
+    setError(null);
     setSigningOut(true);
     void signOut().catch(() => {
       inFlight.current = false;
       setSigningOut(false);
+      // #1849: a failed sign-out used to just hand the button back, so the
+      // person could not tell it had not worked. One plain sentence for every
+      // cause (offline, a refused call); the raw error stays out of the UI.
+      setError(SIGN_OUT_FAILED);
     });
   }, []);
 
-  return { signOut: run, signingOut };
+  return { signOut: run, signingOut, error };
 }
+
+/** What the person reads when sign-out did not happen. */
+export const SIGN_OUT_FAILED = "We couldn't sign you out. You are still signed in. Check your connection and try again.";
 
 // ---------------------------------------------------------------------------
 // Auth state store (onAuthStateChanged -> useSyncExternalStore)

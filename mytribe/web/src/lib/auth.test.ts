@@ -125,6 +125,64 @@ describe('useSignOut', () => {
 
     await waitFor(() => expect(result.current.signingOut).toBe(false));
   });
+
+  it('is idle with no error before the button is pressed', async () => {
+    const { useSignOut } = await import('./auth');
+    const { result } = renderHook(() => useSignOut());
+    expect(result.current.error).toBeNull();
+  });
+
+  it('tells the person, in plain words, when sign-out fails and that they are still signed in (#1849)', async () => {
+    vi.mocked(unregisterForPush).mockResolvedValue(undefined);
+    vi.mocked(firebaseSignOut).mockRejectedValueOnce(new Error('auth/internal-error: raw detail'));
+
+    const { useSignOut } = await import('./auth');
+    const { result } = renderHook(() => useSignOut());
+    await act(async () => {
+      result.current.signOut();
+    });
+
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.error).toMatch(/still signed in/i);
+    expect(result.current.error).not.toMatch(/auth\/|raw detail/);
+  });
+
+  it('gives the same plain message on a network failure', async () => {
+    vi.mocked(unregisterForPush).mockResolvedValue(undefined);
+    vi.mocked(firebaseSignOut).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const { useSignOut } = await import('./auth');
+    const { result } = renderHook(() => useSignOut());
+    await act(async () => {
+      result.current.signOut();
+    });
+
+    await waitFor(() => expect(result.current.error).toMatch(/still signed in/i));
+    expect(result.current.error).not.toMatch(/Failed to fetch/);
+    expect(result.current.signingOut).toBe(false);
+  });
+
+  it('clears the error on the next attempt and stays busy while it runs', async () => {
+    vi.mocked(unregisterForPush).mockResolvedValue(undefined);
+    vi.mocked(firebaseSignOut).mockRejectedValueOnce(new Error('network down'));
+
+    const { useSignOut } = await import('./auth');
+    const { result } = renderHook(() => useSignOut());
+    await act(async () => {
+      result.current.signOut();
+    });
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+
+    const d = deferred();
+    vi.mocked(unregisterForPush).mockReturnValue(d.promise);
+    act(() => result.current.signOut());
+    expect(result.current.error).toBeNull();
+    expect(result.current.signingOut).toBe(true);
+    await act(async () => {
+      d.resolve();
+      await d.promise;
+    });
+  });
 });
 /**
  * #539 — the ordering half of "clicking the signout does not honor logout".

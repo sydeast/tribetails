@@ -271,7 +271,7 @@ export function Messages() {
     },
   });
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   function handleSend() {
     if (!editor || !editorState || editorState.isEmpty || sendMutation.isPending) return;
@@ -393,6 +393,7 @@ export function Messages() {
                 onRetry={() => void threadQuery.refetch()}
                 retrying={threadQuery.isRefetching}
                 onSignOut={signOut} signingOut={signingOut}
+                signOutError={signOutError}
               />
             ) : noThreadYet ? (
               <div className="msgs-empty">

@@ -1181,6 +1181,48 @@ class FirestoreClient {
     }
 
     /**
+     * #1840: tell the household about one clock step (`on_my_way`, `arrived`,
+     * `departed`) and hand back the server's raw answer, which says whether a
+     * notice went out and, when none did, why. The server decides who the
+     * household's login is; this client holds no opinion about it.
+     *
+     * Same routing as [sendReport]: the envelope ids when both are present,
+     * else the legacy booking id. [eventAtMs] is the stamp the patch just
+     * wrote, so a retry of this tap is one notice and a re-arrival is a new one
+     * (#832).
+     */
+    suspend fun dispatchVisitClockNotice(
+        session: KinCareSession,
+        event: String,
+        eventAtMs: Long?,
+    ): WriteResult<String> {
+        val familyId = session.kinfolkId
+        if (familyId.isBlank()) return WriteResult.Err("This visit is not linked to a household.")
+        val batchId = session.kinCareBatchId?.takeIf { it.isNotBlank() }
+        val visitId = session.kinCareVisitId?.takeIf { it.isNotBlank() }
+        val legacyBookingId = session.sourceBookingId.takeIf { it.isNotBlank() }
+        val useEnvelopeIds = batchId != null && visitId != null
+        if (!useEnvelopeIds && legacyBookingId == null) {
+            return WriteResult.Err("This visit is not linked to a booking.")
+        }
+        val payload = buildJsonObject {
+            put("familyId", familyId)
+            if (useEnvelopeIds) {
+                put("batchId", batchId!!)
+                put("visitId", visitId!!)
+            } else {
+                put("bookingId", legacyBookingId!!)
+            }
+            put("event", event)
+            if (eventAtMs != null) put("eventAtMs", eventAtMs)
+        }
+        return platformInvokeCallable(
+            "dispatchVisitNotification",
+            callableJson.encodeToString(JsonObject.serializer(), payload),
+        )
+    }
+
+    /**
      * Parse the first dispatchId out of a `dispatchVisitNotification` callable
      * response (`{ ok, dispatchIds, suppressed }`). Returns "" when suppressed
      * (no channels) or on a malformed body, which the receipt row then omits
@@ -1390,6 +1432,31 @@ class FirestoreClient {
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
+
+    /**
+     * #1872: applies an amount of the household's account credit to one open
+     * invoice through the `applyAccountCredit` callable, the only path that
+     * spends credit (operator ruling 2026-11-11: never automatically). The
+     * server writes the payment, both balances, the credit history entry and
+     * the Activity Log line in one transaction; [idempotencyKey] makes a retry
+     * of the same submission land on the first. A refusal comes back as
+     * [WriteResult.Err] with the server's message verbatim.
+     *
+     * The request names the invoice only. A sandbox test admin is held to their
+     * own test tribe by the server, which reads the household off the invoice.
+     */
+    suspend fun applyAccountCredit(
+        entry: ApplyCreditEntry,
+        idempotencyKey: String,
+    ): WriteResult<ApplyCreditOutcome> {
+        val payload = applyAccountCreditPayload(entry, idempotencyKey)
+        return when (val r = platformInvokeCallable("applyAccountCredit", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeApplyCreditOutcome(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     /** Q6: the household's credit history, through `getAccountCreditHistory`. */
     suspend fun getAccountCreditHistory(kinfolkId: String): WriteResult<AccountCreditHistory> {
         val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(kinfolkId)) }
@@ -4059,6 +4126,10 @@ data class Invoice(
      * Absent on every legacy invoice.
      */
     val totalCents: JsonElement? = null,
+    // #1872: read only, to keep Apply credit off an archived invoice. Kept as
+    // stored (a timestamp in whatever shape the bridge delivers); present and
+    // not null means archived, the server's own rule. Nothing here writes it.
+    val archivedAt: JsonElement? = null,
 )
 
 /**

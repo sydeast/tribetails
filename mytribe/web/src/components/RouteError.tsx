@@ -33,7 +33,7 @@ import { LaunchOffline } from '../screens/LaunchOffline';
 export function RouteError({ error, reset }: ErrorComponentProps) {
   const online = typeof navigator === 'undefined' ? true : navigator.onLine;
   const router = useRouter();
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
   /**
    * `reset` on its own cannot retry a guard, and that is read off the library
    * rather than assumed: it is `CatchBoundary`'s `setState({ error: null })`,
@@ -49,5 +49,5 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
     void router.invalidate();
   }
   if (error instanceof OfflineAccessError || !online) return <LaunchOffline />;
-  return <LaunchError onRetry={retry} onSignOut={signOut} signingOut={signingOut} />;
+  return <LaunchError onRetry={retry} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
 }

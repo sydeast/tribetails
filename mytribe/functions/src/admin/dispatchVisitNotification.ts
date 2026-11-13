@@ -10,6 +10,7 @@ import {
   type EnqueueOutcome,
 } from '../notifications/dispatcher';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
+import { loadHouseholdSendGate } from '../notifications/householdSendGate';
 import { logEvent } from '../lib/logger';
 import { resolveKinCareRef } from '../lib/resolveKinCareRef';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -134,23 +135,22 @@ export function visitNoticeReasonFor(
 }
 
 /**
- * Who in the household receives the notice (#1794, #1802): the portal login on
- * `kinfolk/{id}.uid`, and nothing else.
+ * Who in the household receives the notice (#1794, #1802, #1840): a login
+ * that is an ACTIVE member of the household, as `resolveKinfolkUid` confirms
+ * it (the login on `kinfolk/{id}.uid` when it is a member, the household's
+ * ACTIVE PRIMARY when it is not, nobody when the household has no such
+ * member). Every other household notification resolves through the same
+ * function. The family envelope is keyed by the same id as the kinfolk doc.
  *
- * THIS USED TO BE `families/{id}.primaryUid`, which no sign-up path fills:
- * every `families` writer (`familyProvision`, `inviteKinfolkToPortal`,
- * `provisionTribe`, `mintInvite`) writes `''`, and only the foundation-v1
- * migration copied a real uid in. The household's login is recorded on
- * `kinfolk/{id}.uid` by the `onClientsWrite` backwrite, and that is what every
- * other household notification resolves through (`resolveKinfolkUid`). The
- * family envelope is keyed by the same id as the kinfolk doc.
+ * #1805 routed on `kinfolk.uid` alone. That field is a backwrite any client
+ * record listing the household can stamp, and on an unclaimed demo household
+ * it held the Admin's own login, so the Admin was sent the household's notice
+ * and the card said the household had been told (#1840).
  *
- * NOT `primaryUid` AS A FALLBACK, deliberately. `revokeKinfolkClaim` unlinks a
- * login by blanking `kinfolk.uid` and never touches `primaryUid`, so a fallback
- * would keep sending to a revoked login. And `kinfolk.uid` is the only account
- * field either admin client holds, so it is what their confirm text predicts
- * from; routing on anything else would let a confirm say "no portal account"
- * over a notice that went out anyway.
+ * NOT `families/{id}.primaryUid`, which no sign-up path fills, and NOT as a
+ * fallback either: `revokeKinfolkClaim` unlinks a login by blanking
+ * `kinfolk.uid` and never touches `primaryUid`, so a fallback would keep
+ * sending to a revoked login.
  */
 async function householdRecipientUid(familyId: string): Promise<string | null> {
   return resolveKinfolkUid(familyId);
@@ -279,6 +279,53 @@ export async function dispatchVisitNotificationCore(
 
   return { ok: true, dispatchIds, suppressed: dispatchIds.length === 0, reason };
 }
+
+/** Why a confirm may not promise the household a notice, or null when it may. */
+export type VisitNoticePreviewReason = Extract<
+  VisitNoticeReason,
+  'household_has_no_portal_account' | 'household_notices_off'
+>;
+
+export interface PreviewVisitNotificationOutcome {
+  ok: true;
+  /** True when a visit notice for this household would be handed to the dispatcher and pass the switch. */
+  willNotify: boolean;
+  reason: VisitNoticePreviewReason | null;
+}
+
+const PreviewArgs = z.object({ familyId: z.string().trim().min(1) });
+
+/**
+ * #1840: what a clock confirm may say about the household BEFORE the tap,
+ * answered by the server with the same two checks the dispatch makes, in the
+ * same order (`VISIT_NOTICE_REASONS`): is there a member login to send to, and
+ * is the household-notices switch on.
+ *
+ * The admin clients used to predict this from `kinfolk.uid` on the record they
+ * already held. That is the field #1840 found holding the Admin's own login on
+ * a household nobody had claimed, and no client can check membership itself.
+ *
+ * Read-only. It does not predict a notice the household turned off for
+ * themselves or a repeat of a step already sent; the result line, which is the
+ * dispatch's own answer, names those.
+ */
+export async function previewVisitNotificationHandler(
+  req: CallableRequest<unknown>,
+): Promise<PreviewVisitNotificationOutcome> {
+  const { familyId } = PreviewArgs.parse(req.data);
+  const recipientUid = await householdRecipientUid(familyId);
+  if (!recipientUid) {
+    return { ok: true, willNotify: false, reason: 'household_has_no_portal_account' };
+  }
+  const gate = await loadHouseholdSendGate(db());
+  if (!gate.live) return { ok: true, willNotify: false, reason: 'household_notices_off' };
+  return { ok: true, willNotify: true, reason: null };
+}
+
+export const previewVisitNotification = onCall(
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  wrapAdminCallable('previewVisitNotification', previewVisitNotificationHandler),
+);
 
 export async function dispatchVisitNotificationHandler(
   req: CallableRequest<unknown>,

@@ -73,6 +73,46 @@ class InvoiceRepositoryAccountCreditCallTest {
     }
 
     @Test
+    fun `applyAccountCredit sends the invoice, integer cents and the key, and decodes the server figures`() = runBlocking {
+        val (functions, payload) = wire(
+            "applyAccountCredit",
+            mapOf(
+                "ok" to true,
+                "invoiceId" to "inv1",
+                "paymentId" to "acr_1790000000000_abc123",
+                "appliedCents" to 2500,
+                "amountDueCents" to 7500,
+                "accountBalanceCents" to 9500,
+                "replayed" to false,
+            ),
+        )
+
+        val res = repoWith(functions)
+            .applyAccountCredit("inv1", 2500L, "acr_1790000000000_abc123")
+            .getOrThrow()
+
+        assertEquals(
+            mapOf(
+                "invoiceId" to "inv1",
+                "amountCents" to 2500L,
+                "idempotencyKey" to "acr_1790000000000_abc123",
+            ),
+            payload.captured,
+        )
+        assertEquals(2500L, res.appliedCents)
+        assertEquals(7500L, res.amountDueCents)
+        assertEquals(9500L, res.accountBalanceCents)
+        assertEquals("acr_1790000000000_abc123", res.paymentId)
+        assertFalse(res.replayed)
+    }
+
+    @Test
+    fun `applyAccountCredit fails rather than reporting credit the server did not confirm`() = runBlocking {
+        val (functions, _) = wire("applyAccountCredit", mapOf("invoiceId" to "inv1"))
+        assertTrue(repoWith(functions).applyAccountCredit("inv1", 1L, "acr_1790000000000_a").isFailure)
+    }
+
+    @Test
     fun `getAccountCreditHistory names the household and decodes credits and uses`() = runBlocking {
         val (functions, payload) = wire(
             "getAccountCreditHistory",

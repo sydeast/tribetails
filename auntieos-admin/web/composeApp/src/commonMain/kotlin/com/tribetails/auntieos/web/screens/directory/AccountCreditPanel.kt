@@ -187,6 +187,15 @@ internal fun AccountCreditLoading() {
 }
 
 /**
+ * #1872 (operator ruling 2026-11-11): account credit is never spent
+ * automatically. The Give credit dialog used to say the household "can spend"
+ * it "on future invoices"; it goes onto an invoice only when the admin applies
+ * an amount there.
+ */
+internal const val GIVE_CREDIT_HINT: String =
+    "Adds account credit to the household. It goes onto an invoice only when you apply an amount there."
+
+/**
  * The Give credit dialog: amount and reason, then a Review step with the
  * confirmation sentence. Not dismissable while the call is in flight.
  */
@@ -210,7 +219,7 @@ internal fun GiveCreditDialog(
         visible = visible,
         title = "Give credit",
         onDismiss = { if (!submitting) onDismiss() },
-        hint = "Adds account credit the household can spend on future invoices.",
+        hint = GIVE_CREDIT_HINT,
         maxWidth = 460.dp,
         footer = {
             if (pending == null) {

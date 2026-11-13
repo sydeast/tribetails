@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pets
@@ -40,6 +42,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -103,13 +107,17 @@ fun SignInScreen(
         if (state is AuthState.SignedIn) onSignedIn()
     }
 
+    // Enter can arrive as a hardware key AND as the keyboard's action key in the same
+    // frame, before `inFlight` recomposes; a plain holder closes that window.
+    val submitting = remember { booleanArrayOf(false) }
     fun submit() {
-        if (inFlight) return
+        if (inFlight || submitting[0]) return
         if (email.isBlank() || password.isBlank()) {
             error = ErrorEnvelope.message("Email and password are required.")
             return
         }
         inFlight = true
+        submitting[0] = true
         error = null
         scope.launch {
             try { repo.signInWithEmailPassword(email, password) }
@@ -122,7 +130,7 @@ fun SignInScreen(
             catch (t: Throwable) {
                 error = if (repo.isCredentialFailure(t)) ErrorEnvelope.message(WRONG_CREDENTIALS_MESSAGE) else ErrorEnvelope.opaque(t)
             }
-            finally { inFlight = false }
+            finally { inFlight = false; submitting[0] = false }
         }
     }
 
@@ -197,6 +205,8 @@ fun SignInScreen(
                         value = email,
                         onValueChange = { email = it },
                         label = "Email Address",
+                        // The keyboard's Next key moves on to Password (default focus move).
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
                     )
                     val passwordKeyModifier = Modifier.onPreviewKeyEvent { e ->
                         if (e.type == KeyEventType.KeyUp && e.key == Key.Enter) {
@@ -213,6 +223,7 @@ fun SignInScreen(
                         onToggleVisible = { passwordVisible = !passwordVisible },
                         showToggle = true,
                         modifier = passwordKeyModifier,
+                        onGo = { submit() },
                     )
                     // Forgot-password link — subdued, inline, not a pill CTA.
                     Text(
@@ -335,6 +346,8 @@ private fun PasswordField(
     onToggleVisible: () -> Unit,
     showToggle: Boolean = true,
     modifier: Modifier = Modifier,
+    /** The keyboard's Go key: signs in, the same as the button. */
+    onGo: () -> Unit = {},
 ) {
     val revealed = visible && showToggle
     val c = KinfolkTheme.colors
@@ -360,6 +373,8 @@ private fun PasswordField(
                 cursorBrush = SolidColor(c.primary),
                 textStyle = type.sansBody.copy(color = c.navy),
                 interactionSource = source,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { onGo() }),
                 visualTransformation = if (revealed) VisualTransformation.None else PasswordVisualTransformation(),
                 modifier = Modifier.weight(1f),
             )

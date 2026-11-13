@@ -77,6 +77,9 @@ fun mintQuoteIdempotencyKey(random: Random = Random.Default): String = moneyKey(
 /** Q6: `giveAccountCredit` -> `families/{id}/creditLedger/{key}`. */
 fun mintGiveCreditIdempotencyKey(random: Random = Random.Default): String = moneyKey("crd", random)
 
+/** #1872: `applyAccountCredit` -> `invoices/{id}/payments/{key}`. */
+fun mintApplyCreditIdempotencyKey(random: Random = Random.Default): String = moneyKey("acr", random)
+
 /**
  * #1003: `resolveUnappliedPayment`. The server's shape is
  * `upd_<epochMillis>_<suffix [a-z0-9]{1,16}>`, the same builder as `crd_`.

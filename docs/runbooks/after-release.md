@@ -167,6 +167,37 @@ write, run `npm run test:scripts:emulator` and read the pass count.**
 | `backfill:operator-warning-override` | #877 | An operator who turned off or locked the failed-login warning, or one of its channels, on the Business tab saved that on `auth.failedLogin.attempts`. That key is household-only now, so the setting stopped applying to operators. This copies it to `security.failedLogin.attempts.operator`, only where that key has no setting yet. |
 | `backfill:emergency-contacts` | #829 | Copies the flat `emergencyContact*` fields, and for a household with none the old `families` customFields copy, into `emergencyContacts[0]` - the array the callable and every client now read. |
 | `backfill:invoice-amount-due` | #902 | Migrated invoices carry a `total` and no `amountDue` at all. Every reader derives the balance now (one rule, `functions/src/lib/amountDueRule.ts`), so nothing is broken without this; the backfill writes the figure down so a stored balance is what the ledger sums and what a query can filter on. It writes `amountDue`, `amountDueCents` and the ADR-0002 state stamp, and **nothing else: no `updatedAt` and no server timestamp, so these records keep the original system's dates**. It refuses any invoice whose write would tell a household about a payment made long ago, and lists those for you. |
+| `backfill:household-members` | #2096 (after #1840) | Since #1840 a household notice goes only to a login that is an ACTIVE member of the household. Accepting an invite always wrote that member record; the old admin "link login" did not. The release keeps sending to such a login (it is treated as the household's primary, as the portal already treats it, and each send logs `notification.household.recipient.legacy_primary`) until this writes the record. It writes the same ACTIVE PRIMARY record an invite acceptance writes, only for a login whose own client record lists the household, and never for a staff login, a removed member, or a household that already has a PRIMARY. Prints household ids and reasons, never a login, email or name. |
+
+For `backfill:household-members` (#2096):
+
+1. `npm run test:scripts:emulator`, and read the pass count.
+2. `npm --prefix mytribe/functions run backfill:household-members -- --project auntieos-ttpc --allow-prod`
+   DRY RUN. Needs `GOOGLE_APPLICATION_CREDENTIALS`. The first line names the
+   project and `PRODUCTION`. Read the counts, the "Would write for these
+   households" list, and the "Left alone" list with its reason per household.
+3. `npm --prefix mytribe/functions run backfill:household-members -- --project auntieos-ttpc --allow-prod --apply`
+   Writes only with both flags. Each record is created, never overwritten.
+4. Re-run step 2. It reports 0 to write. The households that logged
+   `notification.household.recipient.legacy_primary` stop logging it.
+5. For each household on the "Left alone" list, open it in Directory, Members
+   and invites. `staff_login` is a staff account stored as the household's
+   login (the #1840 shape): it gets no notices, which is correct; invite the
+   real household. `household_has_primary` and `member_record_not_active`
+   already route to the right person or to nobody on purpose.
+
+The test logins, after the same release (#2096). They were linked without a
+member record. Each script is a dry run first, refuses a staff login, and
+re-running it only adds the missing record:
+
+- The sandbox household: `npm --prefix mytribe/functions run qa:enable-sandbox-login`,
+  read the plan, then `npm --prefix mytribe/functions run qa:enable-sandbox-login -- --apply --allow-production`.
+  It also sets a new temporary password on the sandbox login and prints only
+  the path of the file holding it.
+- The demo household: `npm --prefix mytribe/functions run seed:demo-kinfolk -- --link-uid=<test login uid>`,
+  read the plan, then the same with `--allow-prod`. Use a test login that is
+  not a staff account: the Admin's own login is refused, which is the #1840
+  fix. It also re-applies the demo data (merge, same ids).
 
 For `backfill:operator-warning-override`:
 

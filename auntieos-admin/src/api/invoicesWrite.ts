@@ -304,6 +304,12 @@ export async function recordPayment(
   });
 }
 /**
+ * DISABLED ON THE SERVER (#1872, operator ruling 2026-11-11). Account credit is
+ * applied only as an amount the admin enters (`api/accountCredit.ts`,
+ * `applyAccountCredit`). The server refuses every call to this one, and no
+ * screen calls it. Kept, with its description as it was, because payment code
+ * is never deleted.
+ *
  * runAutoApply (admin): spends a household's account credit on ONE named
  * invoice, now.
  *

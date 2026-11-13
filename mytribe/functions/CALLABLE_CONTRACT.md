@@ -816,8 +816,9 @@ handler until ADR-0001 codegen replaces the hand-mirror).
     twice.
   - `creditToAccountCents` (#988) puts exactly the amount the admin entered into
     `families/{kinfolkId}.accountBalanceCents`, the EXISTING credit ledger
-    `redeemCredit` fills and the portal already renders, not a new one, and
-    `onInvoiceAutoApply` spends it on the next collectable invoice. Operator
+    `redeemCredit` fills and the portal already renders, not a new one. It
+    stays there until the admin applies an amount to an invoice
+    (`applyAccountCredit`, #1872); nothing spends it automatically. Operator
     ruling 2026-09-27: an overpayment is all tip, and credit happens only when
     the admin enters an amount. `autoApply` is still accepted and stored, and
     moves no money: `true` with no amount (an install from before #988) credits
@@ -831,6 +832,15 @@ handler until ADR-0001 codegen replaces the hand-mirror).
     (`failed-precondition`) BEFORE writing anything.
 - req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
 - res `{ ok: true, invoiceId: string, skipped: ''|'invoice_missing'|'invoice_not_collectable'|'no_household'|'no_credit', appliedCents: number, amountDueCents: number, accountBalanceCents: number }`
+- **DISABLED (#1872, operator ruling 2026-11-11).** Account credit is never
+  spent automatically, and this callable took no amount and spent everything.
+  Every call from a caller the gate admits is now refused with
+  `failed-precondition`, `details.reason: 'auto_apply_disabled'`, and writes
+  nothing. `triggers/onInvoiceAutoApply.ts` no longer draws either: it logs
+  `payment.autoapply.disabled` on the transition it used to draw on. Both still
+  deploy, so a release overwrites the old copies. Credit is applied through
+  `applyAccountCredit` below. The request and response shapes are unchanged;
+  the rest of this entry describes the design as it was.
 - Spends a household's ACCOUNT CREDIT on one named invoice, now. The on-demand
   half of *"will automatically apply any Unapplied amount to future invoices"*;
   `triggers/onInvoiceAutoApply.ts` runs the same pass by itself when an invoice
@@ -1080,6 +1090,42 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   refused rather than silently restarting the page loop).
 - Mirrors: `InvoiceRepository.listPayments` on Android. No React mirror: no web
   surface renders this list. Types come from the generated contracts module.
+
+### applyAccountCredit
+- req `{ invoiceId: string /* 1..200 */, amountCents: number /* int 1..1000000000 */, idempotencyKey: string /* acr_<millis>_<suffix>, REQUIRED */ }` (`.strict()`)
+- res `{ ok: true, invoiceId: string, paymentId: string /* = idempotencyKey */, appliedCents: number, amountDueCents: number, accountBalanceCents: number, replayed: boolean }`
+- #1872, operator ruling 2026-11-11: account credit is never spent
+  automatically, not on send, not on quote acceptance, not by any trigger. This
+  is the ONLY path that moves credit onto an invoice, by an amount the admin
+  enters against one open invoice.
+- Draws EXACTLY `amountCents` or refuses. It never trims a request to what fits.
+- One transaction (`lib/accountCredit.ts#drawAccountCredit`) writes the payment
+  row `invoices/{id}/payments/{idempotencyKey}` (method `account credit`), the
+  invoice's settlement (paid when the balance reaches zero), the absolute
+  remainder on `families/{kinfolkId}.accountBalanceCents`, the `draw` event at
+  `families/{kinfolkId}/creditLedger/draw_{idempotencyKey}`, and the
+  `BILLING_ACCOUNT_CREDIT_APPLIED` Activity Log entry at docId
+  `account_credit_applied_<key>`, sealed onto the hash chain in that same
+  transaction. A pay-off sends the household `invoice.payment.applied` after
+  the commit, as any payment does; a part payment tells nobody.
+- Idempotent on the key: a stored key is answered from its payment row with
+  `replayed: true` BEFORE any refusal runs, and draws nothing. The same key
+  from another admin is `already-exists`.
+- Refusals carry plain words in `message` (written to be shown beside the amount
+  field) and a code in `details.reason`, with `details.accountBalanceCents` and
+  `details.amountDueCents` as found: `over_credit` (more than the household
+  holds), `over_balance` (more than the invoice owes), `invoice_draft`,
+  `invoice_quote`, `invoice_paid`, `invoice_archived`,
+  `invoice_not_collectable` (cancelled, or a credit note), `no_household`. All
+  `failed-precondition`. Zero, a negative amount and a fraction of a cent are
+  `invalid-argument` with `details.reason: 'amount_invalid'`.
+- GATE: `refuseAuntie` first, then `resolveInvoiceWriteActor` (owner unscoped;
+  a sandbox test admin only inside their own test tribe). Kinfolk are refused.
+- Errors: `permission-denied`, `unauthenticated`, `invalid-argument`,
+  `not-found` (no invoice), `failed-precondition`, `already-exists`.
+- Mirrors: `api/accountCredit.ts#applyAccountCredit` (React admin),
+  `InvoiceRepository.applyAccountCredit` (Android admin),
+  `FirestoreClient.applyAccountCredit` (desktop console).
 
 ### giveAccountCredit
 - req `{ kinfolkId: string /* 1..200 */, amountCents: number /* int 1..500000 */, reason: string /* trimmed, 1..1000 */, idempotencyKey: string /* crd_<millis>_<suffix>, REQUIRED */ }` (`.strict()`)

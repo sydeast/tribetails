@@ -85,7 +85,7 @@ export function Home() {
   // loading cue rather than greeting a name that is about to change.
   const identity = usePortalIdentity();
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   if (home.isError) {
     return (
@@ -93,6 +93,7 @@ export function Home() {
         onRetry={() => void home.refetch()}
         retrying={home.isRefetching}
         onSignOut={signOut} signingOut={signingOut}
+        signOutError={signOutError}
       />
     );
   }
