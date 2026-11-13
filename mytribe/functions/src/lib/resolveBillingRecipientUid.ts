@@ -25,14 +25,19 @@ import { resolveKinfolkUid } from './resolveKinfolkUid';
  *   no backwrite uid                                       -> the ACTIVE PRIMARY,
  *     or null
  *
- * #1840: THE THIRD ROW'S "uid itself" NO LONGER HAPPENS. A backwrite uid with
- * no member doc, in a household with no PRIMARY member, is the exact shape of
- * an unclaimed household whose record carries a staff login, and this arm sent
- * that household's amounts to the staff login. `resolveKinfolkUid` now returns
- * a login only when it is an ACTIVE member of this household (the ACTIVE
- * PRIMARY in its place when the backwrite is not one, else null), so the uid
- * this function starts from always has a member doc and the `?? uid` below is
- * not reached with a stranger. The code is left as it was.
+ * #1840: THE THIRD ROW'S "uid itself" NOW HAPPENS ONLY FOR A LEGACY PRIMARY.
+ * A backwrite uid with no member doc, in a household with no PRIMARY member,
+ * is also the shape of an unclaimed household whose record carries a staff
+ * login, and this arm sent that household's amounts to the staff login.
+ * `resolveKinfolkUid` now returns a login only when it is an ACTIVE member of
+ * this household (the ACTIVE PRIMARY in its place when the backwrite is not
+ * one, else null), with one exception (#2096): a legacy primary, a login
+ * linked before the member model that is not staff and whose own client
+ * record lists the household. That is the only uid with no member doc that
+ * reaches the `?? uid` below, and it gets the money notices, as the rules'
+ * `kinfolkBillingAccess` already lets it see the bills, until
+ * `backfillHouseholdMembers` writes its PRIMARY record. A staff login never
+ * reaches it. The code is left as it was.
  *
  * Null means "no household recipient", which every caller already handles as a
  * household with no portal account: the office copy still goes out.
