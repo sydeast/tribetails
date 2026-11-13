@@ -12,6 +12,7 @@ import { bookingServiceName, bookingState, bookingStateInfo, bookingWhen, type B
 import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { completeRefusal } from '../lib/completeRule';
 import { useArrivalRule } from '../lib/useArrivalRule';
+import { useIsAuntie } from '../lib/useIsAuntie';
 import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
 import { overridableScheduleRefusal, overrideHint } from '../api/scheduleWrite';
@@ -471,6 +472,8 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   );
   // #1608: Mark Completed checks the operator's arrival rule before it asks.
   const arrivalRule = useArrivalRule();
+  // #2185: an Auntie's refusal names no Settings screen.
+  const auntie = useIsAuntie();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // #1145: the override an Approve refusal offers, or null. Cleared once taken,
@@ -482,7 +485,7 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   /** Pose [action]'s question, unless the arrival rule already answers it (#1608). */
   function ask(action: ActionDef) {
     setRetry(null);
-    const refusal = action.kind === 'complete' ? completeRefusal(arrivalRule, entry) : null;
+    const refusal = action.kind === 'complete' ? completeRefusal(arrivalRule, entry, auntie) : null;
     setError(refusal);
     if (refusal === null) setConfirming(action);
   }

@@ -1082,3 +1082,61 @@ describe('#2164 SessionDetail under an Auntie sign-in', () => {
     expect(call).not.toHaveBeenCalledWith('getStaffWorkSettings', expect.anything());
   });
 });
+
+// #2185: an Auntie never sees Settings (ruling 2026-11-13). With the
+// household switch off, her confirm and result line name the owner instead.
+describe('#2185 SessionDetail notice lines under an Auntie sign-in', () => {
+  beforeEach(() => {
+    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_notices_off' });
+  });
+
+  async function openClockIn() {
+    render(
+      <SessionDetail
+        entry={entry({ status: 'ON_MY_WAY', kinCareBatchId: 'b1', kinCareVisitId: 'v1' })}
+        onBack={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^clock in$/i }));
+    return screen.getByRole('dialog');
+  }
+
+  it('the confirm names the owner, and no Settings screen', async () => {
+    const dialog = await openClockIn();
+    expect(
+      await within(dialog).findByText(
+        'The Whitfields will not be told, because the owner has notices to households turned off.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Settings/)).toBeNull();
+  });
+
+  it('the result line names the owner, and no Settings screen', async () => {
+    patchVisitLifecycle.mockResolvedValue(clockOk({ notified: false, notifySkipped: 'household_notices_off' }));
+    const dialog = await openClockIn();
+    await within(dialog).findByText(/the owner has notices to households turned off/);
+    await userEvent.click(within(dialog).getByRole('button', { name: /yes, clock in/i }));
+    expect(
+      await screen.findByText(
+        'ON_MY_WAY → ARRIVED. The Whitfields was not notified, because the owner has notices to households turned off.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/in Settings/)).toBeNull();
+  });
+
+  it('the owner still reads the Settings result line', async () => {
+    currentSessionSeat.mockResolvedValue(OWNER_SEAT);
+    patchVisitLifecycle.mockResolvedValue(clockOk({ notified: false, notifySkipped: 'household_notices_off' }));
+    const dialog = await openClockIn();
+    await within(dialog).findByText(
+      'The Whitfields will not be told, because notices to households are off in Settings.',
+    );
+    await userEvent.click(within(dialog).getByRole('button', { name: /yes, clock in/i }));
+    expect(
+      await screen.findByText(
+        'ON_MY_WAY → ARRIVED. The Whitfields was not notified, because notices to households are off in Settings.',
+      ),
+    ).toBeInTheDocument();
+  });
+});

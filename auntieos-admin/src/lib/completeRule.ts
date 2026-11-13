@@ -50,9 +50,22 @@ export function missingVisitSteps(session: VisitStamps): Array<'arrival' | 'depa
   return missing;
 }
 
-/** The server's refusal, word for word, so both places read the same. */
-export function arrivalVerificationMessage(missing: readonly string[]): string {
+/**
+ * The server's refusal, word for word, so both places read the same.
+ *
+ * `auntie` (#2185): an Auntie never sees Settings (ruling 2026-11-13), so her
+ * sentence keeps only the remedy she can do herself. The server has no Auntie
+ * copy because it never says this to her: `transitionBookingStatus` is not on
+ * her callable list, so the gate refuses her before the arrival check runs.
+ */
+export function arrivalVerificationMessage(missing: readonly string[], auntie = false): string {
   const steps = missing.length === 2 ? 'arrival and departure' : missing[0];
+  if (auntie) {
+    return (
+      `This visit has no ${steps} recorded, and the business requires ${missing.length === 2 ? 'both' : 'it'} ` +
+      'before a visit can be marked complete. Mark it on the visit card first.'
+    );
+  }
   return (
     `This visit has no ${steps} recorded, and your settings require ${missing.length === 2 ? 'both' : 'it'} ` +
     'before a visit can be marked complete. Mark it on the visit card first, or turn off ' +
@@ -67,8 +80,8 @@ export function arrivalVerificationMessage(missing: readonly string[]): string {
  * the client does not guess, it lets the server decide, which is what happened
  * before this check existed.
  */
-export function completeRefusal(required: boolean | null, session: VisitStamps): string | null {
+export function completeRefusal(required: boolean | null, session: VisitStamps, auntie = false): string | null {
   if (required !== true) return null;
   const missing = missingVisitSteps(session);
-  return missing.length === 0 ? null : arrivalVerificationMessage(missing);
+  return missing.length === 0 ? null : arrivalVerificationMessage(missing, auntie);
 }

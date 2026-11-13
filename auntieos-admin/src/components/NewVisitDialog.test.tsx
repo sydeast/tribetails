@@ -9,6 +9,12 @@ vi.mock('../api/scheduleWrite', async () => {
   return { ...actual, createKinCareSession };
 });
 
+// #2185: who is signed in, for the one line that would name Settings.
+const { seat } = vi.hoisted(() => ({ seat: { caretaker: false } }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat: async () => ({ uid: 'u1', caretaker: seat.caretaker }),
+}));
 import { NewVisitDialog } from './NewVisitDialog';
 
 // #1574: the fixtures here are fixed 2026 dates, and a visit is never moved
@@ -97,6 +103,27 @@ describe('NewVisitDialog', () => {
   it('says so out loud when nothing is configured, rather than offering a made-up list', () => {
     open({ serviceRates: {} });
     expect(screen.getByText(/No KinCare types are configured yet/)).toBeInTheDocument();
+  });
+
+  it('#2185: the owner is sent to Settings, word for word', () => {
+    seat.caretaker = false;
+    open({ serviceRates: {} });
+    expect(
+      screen.getByText('No KinCare types are configured yet. Add them in Settings, so the visit can be priced.'),
+    ).toBeInTheDocument();
+  });
+
+  it('#2185: an Auntie is told to ask the owner, and no Settings screen is named', async () => {
+    seat.caretaker = true;
+    try {
+      open({ serviceRates: {} });
+      expect(
+        await screen.findByText('No KinCare types are set up yet. Ask the owner to add them.'),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Settings/)).toBeNull();
+    } finally {
+      seat.caretaker = false;
+    }
   });
 
   it('prefills the duration from the picked service, and sends the canonical name', async () => {
