@@ -207,6 +207,18 @@ export async function linkInvoiceSessionsHandler(
     const added = newIds.filter((id) => !currentSet.has(id));
     const removed = current.filter((id) => !newSet.has(id));
 
+    const paymentsSnap = await tx.get(invRef.collection('payments'));
+    const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
+    const state = invoiceStateOf(data);
+    const scope = invoiceEditScope(
+      state,
+      paymentStandingOf(invoiceTotalCentsOf(data), paidCents),
+      // Re-stamped, never refused: linking sessions is attribution, not an edit
+      // of what the household was asked for, so an accepted quote's lock is
+      // carried forward here rather than blocking the link.
+      quoteAcceptanceOf(data),
+    );
+
     // #2091: A VISIT A LINE STILL BILLS CANNOT BE UNLINKED HERE. Unlinking it
     // would put it back on the un-invoiced list while this invoice still
     // charges for it, so the next New invoice bills it a second time. The line
@@ -222,9 +234,17 @@ export async function linkInvoiceSessionsHandler(
         const d = typeof line?.['description'] === 'string' ? (line['description'] as string).trim() : '';
         return d === '' ? 'a visit' : `"${d}"`;
       });
+      // Only point at Edit when Edit can remove the line: on a paid, cancelled
+      // or accepted invoice the lines are locked, and saying "remove it in
+      // Edit" would send the operator to a refusal.
+      const one = stillBilled.length === 1;
+      const route =
+        scope === 'all'
+          ? ' Remove the line in Edit, and the visit is unlinked with it.'
+          : " This invoice's lines are locked, so the line cannot be removed.";
       throw new HttpsError(
         'failed-precondition',
-        `${words.join(', ')} ${stillBilled.length === 1 ? 'is' : 'are'} billed on a line of this invoice, so ${stillBilled.length === 1 ? 'it stays' : 'they stay'} linked. Remove the line in Edit, and the visit is unlinked with it.`,
+        `${words.join(', ')} ${one ? 'is' : 'are'} billed on a line of this invoice, so ${one ? 'it stays' : 'they stay'} linked.${route}`,
         { code: 'session_billed_on_line', sessionIds: stillBilled },
       );
     }
@@ -244,18 +264,6 @@ export async function linkInvoiceSessionsHandler(
         }
       },
     });
-    const paymentsSnap = await tx.get(invRef.collection('payments'));
-    const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
-    const state = invoiceStateOf(data);
-    const scope = invoiceEditScope(
-      state,
-      paymentStandingOf(invoiceTotalCentsOf(data), paidCents),
-      // Re-stamped, never refused: linking sessions is attribution, not an edit
-      // of what the household was asked for, so an accepted quote's lock is
-      // carried forward here rather than blocking the link.
-      quoteAcceptanceOf(data),
-    );
-
     tx.set(
       invRef,
       {

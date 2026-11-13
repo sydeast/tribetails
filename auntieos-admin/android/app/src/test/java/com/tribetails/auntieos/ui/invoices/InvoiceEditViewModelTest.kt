@@ -116,6 +116,21 @@ class InvoiceEditViewModelTest {
     }
 
     @Test
+    fun `#1970 after removing a visit's line, the reloaded invoice shows the visit unlinked`() = runTest {
+        val before = invoice("all").copy(sessionIds = listOf("ses1", "ses2"))
+        val after = before.copy(sessionIds = listOf("ses1"))
+        coEvery { invoiceRepository.getInvoiceById("inv1") } returnsMany listOf(Result.success(before), Result.success(after))
+        viewModel.loadInvoice("inv1")
+        advanceUntilIdle()
+        coEvery { invoiceRepository.updateInvoice("inv1", any()) } returns Result.success(ok)
+        viewModel.openInvoiceEdit()
+        viewModel.updateInvoiceEdit(viewModel.uiState.value.invoiceEdit!!.copy(dueDate = "2026-10-30"))
+        viewModel.saveInvoiceEdit()
+        advanceUntilIdle()
+        // The server unlinked the visit with its line; the screen reads the stored set.
+        assertEquals(listOf("ses1"), viewModel.uiState.value.invoice?.sessionIds)
+    }
+    @Test
     fun `a refusal stays in the form verbatim, with what was typed`() = runTest {
         load(invoice("all"))
         coEvery { invoiceRepository.updateInvoice(any(), any()) } returns

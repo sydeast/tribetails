@@ -360,6 +360,7 @@ private fun InvoiceDetailBody(
         invoiceId     = invoice._id,
         storedIds     = invoice.sessionIds,
         billedIds     = linkPickerBilledIds(invoice.lineItems),
+        linesEditable = invoiceEditScopeOf(invoice) == InvoiceEditScope.ALL,
         onToggle      = { sid ->
             // #1254: a visit another invoice bills cannot be ticked.
             // #2091: a visit a line bills cannot be unticked.
@@ -1042,13 +1043,19 @@ internal fun linkPickerChipLabel(
     catalog: com.tribetails.auntieos.web.screens.ServiceCatalog,
     /** #2091: a line on this invoice bills it, so it stays linked. */
     billedHere: Boolean = false,
+    /** False when the invoice's lines are locked, so Edit cannot remove the line. */
+    linesEditable: Boolean = true,
 ): String {
     val service = if (serviceType.isBlank()) "Session" else catalog.nameOf(serviceType)
     return "$service · $dateLabel" +
         (if (elsewhere) " · on another invoice" else "") +
         (if (cancelled) " · cancelled, not billable" else "") +
-        (if (billedHere) " · billed on a line of this invoice, remove the line in Edit to unlink it" else "")
+        (if (billedHere) linkPickerBilledHereNote(linesEditable) else "")
 }
+/** #2091: why a billed visit's chip is locked. Edit is named only when Edit can remove the line. Same words as web and Android. */
+internal fun linkPickerBilledHereNote(linesEditable: Boolean): String =
+    if (linesEditable) " · billed on a line of this invoice, remove the line in Edit to unlink it"
+    else " · billed on a line of this invoice, and its lines are locked"
 
 @Composable
 private fun LinkSessionsDialog(
@@ -1060,6 +1067,7 @@ private fun LinkSessionsDialog(
     invoiceId: String,
     storedIds: List<String>,
     billedIds: Set<String>,
+    linesEditable: Boolean,
     onToggle: (String) -> Unit,
     onCancel: () -> Unit,
     onSave: () -> Unit,
@@ -1122,6 +1130,7 @@ private fun LinkSessionsDialog(
                             val chipLabel = linkPickerChipLabel(
                                 session.serviceType, dateLabel, elsewhere, cancelled, com.tribetails.auntieos.web.screens.LocalServiceCatalog.current,
                                 billedHere,
+                                linesEditable,
                             )
                             AuntieChip(
                                 label    = chipLabel,

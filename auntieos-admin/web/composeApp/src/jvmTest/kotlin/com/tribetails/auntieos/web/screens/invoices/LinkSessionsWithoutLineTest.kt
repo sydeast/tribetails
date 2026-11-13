@@ -73,6 +73,11 @@ class LinkSessionsWithoutLineTest {
     fun theChipSaysWhyABilledVisitStaysLinked() {
         val label = linkPickerChipLabel("Walk", "2026-06-02", elsewhere = false, cancelled = false, catalog = ServiceCatalog(), billedHere = true)
         assertTrue(label.endsWith(" · billed on a line of this invoice, remove the line in Edit to unlink it"))
+        val locked = linkPickerChipLabel(
+            "Walk", "2026-06-02", elsewhere = false, cancelled = false, catalog = ServiceCatalog(), billedHere = true, linesEditable = false,
+        )
+        assertTrue(locked.endsWith(" · billed on a line of this invoice, and its lines are locked"))
+        assertTrue("Edit" !in locked)
     }
 
     @Test

@@ -210,6 +210,9 @@ fun InvoiceDetailScreen(
             invoiceId   = uiState.invoice?.id.orEmpty(),
             storedIds   = uiState.invoice?.sessionIds.orEmpty(),
             billedIds   = uiState.invoice?.let { linkPickerBilledIds(it) }.orEmpty(),
+            linesEditable = uiState.invoice?.let {
+                com.tribetails.auntieos.domain.invoiceEditScopeOf(it) == com.tribetails.auntieos.domain.InvoiceEditScope.ALL
+            } ?: true,
             error       = uiState.linkError,
             onToggle    = { viewModel.toggleSessionInPending(it) },
             onSave      = { viewModel.saveLinks() },
@@ -1958,13 +1961,19 @@ internal fun linkPickerChipLabel(
     catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog,
     /** #2091: a line on this invoice bills it, so it stays linked. */
     billedHere: Boolean = false,
+    /** False when the invoice's lines are locked, so Edit cannot remove the line. */
+    linesEditable: Boolean = true,
 ): String {
     val service = if (session.serviceType.isBlank()) "Session" else catalog.nameOf(session.serviceType)
     return "$service · $dateLabel" +
         (if (elsewhere) " · on another invoice" else "") +
         (if (cancelled) " · cancelled, not billable" else "") +
-        (if (billedHere) " · billed on a line of this invoice, remove the line in Edit to unlink it" else "")
+        (if (billedHere) linkPickerBilledHereNote(linesEditable) else "")
 }
+/** #2091: why a billed visit's chip is locked. Edit is named only when Edit can remove the line. Same words as web and desktop. */
+internal fun linkPickerBilledHereNote(linesEditable: Boolean): String =
+    if (linesEditable) " · billed on a line of this invoice, remove the line in Edit to unlink it"
+    else " · billed on a line of this invoice, and its lines are locked"
 
 @Composable
 private fun LinkSessionsDialog(
@@ -1973,6 +1982,7 @@ private fun LinkSessionsDialog(
     invoiceId: String,
     storedIds: List<String>,
     billedIds: Set<String>,
+    linesEditable: Boolean,
     error: String?,
     onToggle: (String) -> Unit,
     onSave: () -> Unit,
@@ -2039,7 +2049,7 @@ private fun LinkSessionsDialog(
                     val cancelled = linkPickerCancelled(session, storedIds)
                     // #2091: a line on this invoice bills it; Edit is where it leaves.
                     val billedHere = session.id in billedIds && session.id in storedIds
-                    val chipLabel = linkPickerChipLabel(session, dateLabel, elsewhere, cancelled, catalog, billedHere)
+                    val chipLabel = linkPickerChipLabel(session, dateLabel, elsewhere, cancelled, catalog, billedHere, linesEditable)
                     AuntieChip(
                         label    = chipLabel,
                         selected = session.id in selectedIds,

@@ -502,5 +502,9 @@ class InvoiceSessionLinkViewModelTest {
         val catalog = com.tribetails.auntieos.ui.admin.ServiceCatalog()
         val label = linkPickerChipLabel(session1, "2026-05-01", elsewhere = false, cancelled = false, catalog = catalog, billedHere = true)
         assertTrue(label.endsWith(" · billed on a line of this invoice, remove the line in Edit to unlink it"))
+        // A locked invoice's lines cannot be removed in Edit, so Edit is not named.
+        val locked = linkPickerChipLabel(session1, "2026-05-01", elsewhere = false, cancelled = false, catalog = catalog, billedHere = true, linesEditable = false)
+        assertTrue(locked.endsWith(" · billed on a line of this invoice, and its lines are locked"))
+        assertFalse(locked.contains("Edit"))
     }
 }

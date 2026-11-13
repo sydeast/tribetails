@@ -1963,6 +1963,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             linkedIds={invoice.sessionIds}
             // #2091: a visit a line bills stays linked; Edit is where its line goes.
             billedIds={(invoice.lineItems ?? []).flatMap((l) => (l.sessionId ? [l.sessionId] : []))}
+            linesEditable={moneyEditable}
             // Held in the overlay's own busy flag, so the overlay cannot be
             // closed while the save is in flight.
             onBusyChange={setBusy}

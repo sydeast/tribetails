@@ -53,6 +53,8 @@ export interface InvoiceLinkVisitsEditorProps {
   linkedIds: readonly string[];
   /** #2091: the visits a line on this invoice bills. They stay linked here. */
   billedIds?: readonly string[];
+  /** False when this invoice's lines are locked (paid, cancelled, accepted), so Edit cannot remove one. */
+  linesEditable?: boolean;
   onCancel: () => void;
   onSaved: (result: LinkInvoiceSessionsResult) => void;
   /** Told when a save starts and ends, so the host can refuse to close mid-save. */
@@ -83,6 +85,12 @@ export function linkVisitsSavedText(
         : ` The ${String(unpriced)} linked visits no longer show as un-invoiced, and their prices were not added to this invoice.`;
   return `Visits saved: ${parts.join(', ')}.${priceNote}`;
 }
+/** #2091: why a billed visit's tick is locked. Edit is named only when Edit can remove the line. */
+export function billedHereNote(linesEditable: boolean): string {
+  return linesEditable
+    ? ' · billed on a line of this invoice, remove the line in Edit to unlink it'
+    : ' · billed on a line of this invoice, and its lines are locked';
+}
 /** #2091: the warning shown while a newly ticked visit is waiting to be saved. Same words on every client. */
 export const LINK_ADDS_NO_PRICE_TITLE = 'Linking does not change the total';
 export const LINK_ADDS_NO_PRICE_TEXT =
@@ -104,6 +112,7 @@ export function InvoiceLinkVisitsEditor({
   kinfolkId,
   linkedIds,
   billedIds = [],
+  linesEditable = true,
   onCancel,
   onSaved,
   onBusyChange,
@@ -175,6 +184,7 @@ export function InvoiceLinkVisitsEditor({
           kinfolkId={kinfolkId}
           initial={initial}
           billed={billed}
+          linesEditable={linesEditable}
           pending={pending}
           disabled={saving}
           onToggle={toggle}
@@ -185,7 +195,7 @@ export function InvoiceLinkVisitsEditor({
             This invoice names no household, so the household's visits cannot be listed. Visits
             already linked are below and can be unlinked.
           </p>
-          <UnlistedLinked ids={initial} billed={billed} pending={pending} disabled={saving} onToggle={toggle} />
+          <UnlistedLinked ids={initial} billed={billed} linesEditable={linesEditable} pending={pending} disabled={saving} onToggle={toggle} />
         </>
       )}
 
@@ -219,10 +229,17 @@ function HouseholdVisits({
   kinfolkId,
   initial,
   billed,
+  linesEditable,
   pending,
   disabled,
   onToggle,
-}: RowsProps & { invoiceId: string; kinfolkId: string; initial: readonly string[]; billed: ReadonlySet<string> }) {
+}: RowsProps & {
+  invoiceId: string;
+  kinfolkId: string;
+  initial: readonly string[];
+  billed: ReadonlySet<string>;
+  linesEditable: boolean;
+}) {
   const visits = useCollection<SessionEntry>(sessionsForKinfolkQuery(kinfolkId));
   // #1744: each row names the KinCare, never the stored `visit_60`.
   const catalog = useBookingCatalog();
@@ -251,13 +268,14 @@ function HouseholdVisits({
                     // cannot be newly ticked (linkInvoiceSessions refuses it).
                     cancelled={!initial.includes(s._id) && sessionState(s.status ?? '') === 'cancelled'}
                     billedHere={billed.has(s._id) && initial.includes(s._id)}
+                    linesEditable={linesEditable}
                     disabled={disabled}
                     onToggle={onToggle}
                   />
                 ))}
               </ul>
             )}
-            <UnlistedLinked ids={unlisted} billed={billed} pending={pending} disabled={disabled} onToggle={onToggle} />
+            <UnlistedLinked ids={unlisted} billed={billed} linesEditable={linesEditable} pending={pending} disabled={disabled} onToggle={onToggle} />
           </>
         );
       }}
@@ -272,6 +290,7 @@ function VisitRow({
   elsewhere,
   cancelled,
   billedHere,
+  linesEditable,
   disabled,
   onToggle,
 }: {
@@ -282,6 +301,7 @@ function VisitRow({
   cancelled: boolean;
   /** #2091: a line on this invoice bills it, so it stays linked. */
   billedHere: boolean;
+  linesEditable: boolean;
   disabled: boolean;
   onToggle: (id: string) => void;
 }) {
@@ -305,7 +325,7 @@ function VisitRow({
             {day} · {status}
             {elsewhere ? ' · on another invoice' : ''}
             {cancelled ? ' · cancelled, not billable' : ''}
-            {billedHere ? ' · billed on a line of this invoice, remove the line in Edit to unlink it' : ''}
+            {billedHere ? billedHereNote(linesEditable) : ''}
           </span>
         </span>
       </label>
@@ -317,10 +337,11 @@ function VisitRow({
 function UnlistedLinked({
   ids,
   billed,
+  linesEditable,
   pending,
   disabled,
   onToggle,
-}: RowsProps & { ids: readonly string[]; billed: ReadonlySet<string> }) {
+}: RowsProps & { ids: readonly string[]; billed: ReadonlySet<string>; linesEditable: boolean }) {
   if (ids.length === 0) return null;
   return (
     <ul className="link-visits__list" aria-label="Linked visits not in the household list">
@@ -338,7 +359,7 @@ function UnlistedLinked({
               <span className="link-visits__row-service">Visit {id}</span>
               <span className="link-visits__row-meta">
                 linked, not in this household's visit list
-                {billed.has(id) ? ' · billed on a line of this invoice, remove the line in Edit to unlink it' : ''}
+                {billed.has(id) ? billedHereNote(linesEditable) : ''}
               </span>
             </span>
           </label>

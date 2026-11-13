@@ -1030,6 +1030,32 @@ describe('InvoiceDetail editing', () => {
     await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
     expect(updateInvoice).toHaveBeenCalledWith('inv1', { termsCode: 'net_30' });
   });
+  it('#1970: removing a visit line sends the lines without it, then re-reads Linked visits', async () => {
+    const user = userEvent.setup();
+    render(
+      <InvoiceDetail
+        invoice={entry({
+          amountDue: 90,
+          total: 90,
+          sessionIds: ['s1', 's2'],
+          lineItems: [
+            { description: 'Walk one', qty: 1, unitCents: 4500, sessionId: 's1' },
+            { description: 'Walk two', qty: 1, unitCents: 4500, sessionId: 's2' },
+          ],
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole('button', { name: /^edit$/i }));
+    await user.click(screen.getByRole('button', { name: 'Remove line 2' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
+    const patch = updateInvoice.mock.calls[0]![1] as { lineItems: Array<{ sessionId?: string }> };
+    expect(patch.lineItems.map((l) => l.sessionId)).toEqual(['s1']);
+    // The server unlinks s2 with its line; the panel reads the ledger again.
+    await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(2));
+  });
   it('refuses an empty patch instead of writing an audit entry for nothing', async () => {
     render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));

@@ -451,6 +451,27 @@ describe('#2091 linkInvoiceSessions says what linking did not do', () => {
     expect(ctx.writes).toEqual([]);
   });
 
+  it('on a paid invoice the refusal does not send the operator to Edit, whose lines are locked', async () => {
+    const docs: Record<string, Record<string, unknown>> = {
+      'invoices/inv1': {
+        ...manualLineDraft,
+        status: 'paid',
+        amountDue: 0,
+        total: 45,
+        totalCents: 4500,
+        lineItems: [line('s1', 4500, '30 Minute Quick Check')],
+        sessionIds: ['s1'],
+      },
+      'kin_care_sessions/s1': visit({ invoiceId: 'inv1' }),
+    };
+    const ctx = buildDbMock({ docs, queryDocs: { 'invoices/inv1/payments': [{ id: 'p1', data: { amountCents: 4500 } }] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const err = await linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: [] })).catch((e: unknown) => e);
+    expect((err as Error).message).toBe(
+      '"30 Minute Quick Check" is billed on a line of this invoice, so it stays linked. This invoice\'s lines are locked, so the line cannot be removed.',
+    );
+    expect(ctx.writes).toEqual([]);
+  });
   it('a linked visit whose record is gone can be unlinked, so the warning about it can be cleared', async () => {
     const ctx = seedLink({ ...manualLineDraft, sessionIds: ['gone'] }, {});
     mocks.dbFn.mockReturnValue(ctx.db);

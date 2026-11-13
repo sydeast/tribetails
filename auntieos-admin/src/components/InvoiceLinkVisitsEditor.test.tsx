@@ -320,6 +320,23 @@ describe('#2091 linking says it does not add a price', () => {
     // A linked visit with no line is still free to unlink.
     expect(box('s2').disabled).toBe(false);
   });
+  it('on a locked invoice the billed visit does not point to Edit', () => {
+    useCollection.mockReturnValue(ready([visit('s1', { invoiceId: 'inv1' })]));
+    render(
+      <InvoiceLinkVisitsEditor
+        invoiceId="inv1"
+        kinfolkId="kf1"
+        linkedIds={['s1']}
+        billedIds={['s1']}
+        linesEditable={false}
+        onCancel={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(box('s1').disabled).toBe(true);
+    expect(screen.getByText(/billed on a line of this invoice, and its lines are locked/)).toBeInTheDocument();
+    expect(screen.queryByText(/remove the line in Edit/)).toBeNull();
+  });
   it('the save sends the full set and reports the server answer, price note included', async () => {
     useCollection.mockReturnValue(ready([visit('s2')]));
     const onSaved = vi.fn();
