@@ -42,14 +42,14 @@ data class DirectoryUiState(
                 val rows = r.value.filter { it.matches(query) }
                 // 03-directory item 3: order by surname (last name), not first.
                 val surname = { kf: Kinfolk -> kinfolkSurnameSortKey(kf.firstName, kf.lastName, kf.displayName) }
-                if (sort == SortOption.RecentlyCreated) {
-                    sortRecentlyCreated(rows, surname)
-                } else {
-                    rows.sortedByOption(
+                when (sort) {
+                    SortOption.RecentlyCreated -> sortKinfolkByDate(rows, surname, ::kinfolkCreatedMillis)
+                    SortOption.RecentlyUpdated -> sortKinfolkByDate(rows, surname, ::kinfolkUpdatedMillis)
+                    else -> rows.sortedByOption(
                         option = sort,
                         name = surname,
                         createdAt = { "" },
-                        updatedAt = { it.joinDate },
+                        updatedAt = { "" },
                     )
                 }
             }
@@ -64,12 +64,7 @@ data class DirectoryUiState(
     val error: String? get() = (allKinfolk as? FirestoreResult.Error)?.message
 }
 
-// ── Recently Created (#1953) ────────────────────────────────────────────────
-
-/** Which date places a household under Recently Created; declared in rank order, highest first. */
-internal enum class CreatedTier { Created, Joined, None }
-
-internal data class KinfolkCreatedAt(val tier: CreatedTier, val millis: Long)
+// ── Recently Created / Recently Updated (#1953, #2171, #2155) ───────────────
 
 private val ISO_DAY = Regex("""^\d{4}-\d{2}-\d{2}$""")
 private val ISO_INSTANT = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$""")
@@ -87,30 +82,46 @@ private fun isoMillis(raw: String): Long? {
 }
 
 /**
- * #1953, the same rule as the web admin's `kinfolkCreatedMillis` and Android's
- * `kinfolkCreatedAt`. Highest tier first:
- *  - Created: the record's own `createdAt`, stamped by the createKinfolk
- *    callable, so every stamped household is newer than every unstamped one. A
- *    `createdAtSource` of "import" is only the import date and is skipped.
- *  - Joined: a household from before that stamp is placed by its join date,
- *    when that reads as a date.
- *  - None: no readable date. Sorts last, A to Z; never given a made-up date.
- * The Firestore document create time is never used: after a data reload it is
- * the import date.
+ * The date that places a household under Recently Created, in epoch millis, or
+ * null when it has none (#1953, #2171). The same rule as the web admin's and
+ * Android's `kinfolkCreatedMillis`. ONE timeline, whichever of these the
+ * household has first:
+ *  1. `createdAt`: the auntieOS creation stamp (`createdAtSource` "live" or
+ *     blank) or, for a migrated household, the old system's own creation date
+ *     ("original"). "import" means the original was lost and the value is only
+ *     the day of the import, so it is skipped.
+ *  2. The join date, when it reads as a date.
+ *  3. Nothing: null. Sorts last, A to Z; never given a made-up date.
+ * The Firestore document create time is never used: after the data reload it
+ * is the import date.
  */
-internal fun kinfolkCreatedAt(kf: Kinfolk): KinfolkCreatedAt {
+internal fun kinfolkCreatedMillis(kf: Kinfolk): Long? {
     if (kf.createdAtSource.trim() != "import") {
-        isoMillis(kf.createdAt)?.let { return KinfolkCreatedAt(CreatedTier.Created, it) }
+        isoMillis(kf.createdAt)?.let { return it }
     }
-    isoMillis(kf.joinDate)?.let { return KinfolkCreatedAt(CreatedTier.Joined, it) }
-    return KinfolkCreatedAt(CreatedTier.None, 0L)
+    return isoMillis(kf.joinDate)
 }
 
-private fun sortRecentlyCreated(rows: List<Kinfolk>, surname: (Kinfolk) -> String): List<Kinfolk> =
-    rows.map { Triple(it, kinfolkCreatedAt(it), surname(it)) }
+/**
+ * The date that places a household under Recently Updated, in epoch millis, or
+ * null (#2155): its last change, `updatedAt`, compared as an instant. This sort
+ * used to read `joinDate`, so an edit never moved a household. A household
+ * never changed since it was made was last changed when it was made, so with
+ * no readable `updatedAt` it falls back to [kinfolkCreatedMillis].
+ */
+internal fun kinfolkUpdatedMillis(kf: Kinfolk): Long? =
+    isoMillis(kf.updatedAt) ?: kinfolkCreatedMillis(kf)
+
+/** Newest first; equal dates A to Z by surname; households with no date last, A to Z. */
+private fun sortKinfolkByDate(
+    rows: List<Kinfolk>,
+    surname: (Kinfolk) -> String,
+    dateOf: (Kinfolk) -> Long?,
+): List<Kinfolk> =
+    rows.map { Triple(it, dateOf(it), surname(it)) }
         .sortedWith(
-            compareBy<Triple<Kinfolk, KinfolkCreatedAt, String>> { it.second.tier.ordinal }
-                .thenByDescending { it.second.millis }
+            compareBy<Triple<Kinfolk, Long?, String>> { it.second == null }
+                .thenByDescending { it.second ?: 0L }
                 .thenBy { it.third },
         )
         .map { it.first }

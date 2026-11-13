@@ -826,7 +826,7 @@ class FirestoreClient {
         if (edited._id.isBlank()) return WriteResult.Err("updateKinfolk requires a kinfolk id")
         val changes = kinfolkChanges(loaded, edited)
         if (changes.isEmpty()) return WriteResult.Ok(false)
-        return when (val r = platformUpdateKinfolkFields(edited._id, changes)) {
+        return when (val r = platformUpdateKinfolkFields(edited._id, withKinfolkUpdatedAt(changes, com.tribetails.auntieos.web.util.nowIso()))) {
             is WriteResult.Ok  -> WriteResult.Ok(true)
             is WriteResult.Err -> WriteResult.Err(r.message)
         }
@@ -931,7 +931,7 @@ class FirestoreClient {
     /** Replaces a household's tag NAME list. Writes `tags` whatever [kinfolk] held when it was read. */
     suspend fun updateKinfolkTags(kinfolk: Kinfolk, tags: List<String>): WriteResult<Unit> {
         require(kinfolk._id.isNotBlank()) { "updateKinfolkTags requires a kinfolk id" }
-        return platformUpdateKinfolkFields(kinfolk._id, listOf(tagsChange(tags)))
+        return platformUpdateKinfolkFields(kinfolk._id, withKinfolkUpdatedAt(listOf(tagsChange(tags)), com.tribetails.auntieos.web.util.nowIso()))
     }
 
     private fun tagsChange(tags: List<String>): FieldChange =
@@ -3616,10 +3616,10 @@ data class Kinfolk(
     val tags: List<String> = emptyList(),
 
     /**
-     * Round-trip-only, same rule as [tags]: updateKinfolk re-writes the whole
-     * document, so a field missing here is destroyed on save. Live on 8 of 12
-     * kinfolk, stored as a String (unlike `kin.updatedAt`, which is a Timestamp)
-     * so the serializer accepts either spelling.
+     * The household's last change. Live on 8 of 12 kinfolk, stored as a String
+     * (unlike `kin.updatedAt`, which is a Timestamp) so the serializer accepts
+     * either spelling. Read by "Recently Updated" (#2155); every desktop
+     * kinfolk update stamps it through [withKinfolkUpdatedAt].
      */
     @Serializable(with = FirestoreInstantStringSerializer::class)
     val updatedAt: String = "",

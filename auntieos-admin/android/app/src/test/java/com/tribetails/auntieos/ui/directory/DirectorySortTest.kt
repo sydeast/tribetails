@@ -106,13 +106,12 @@ class DirectorySortTest {
     /**
      * #1953: Add Kinfolk writes `joinDate` blank, so two households made minutes
      * ago sorted near the bottom. `createdAt`, stamped by the createKinfolk
-     * callable, is the creation date; every stamped household is newer than
-     * every unstamped one.
+     * callable, is the creation date.
      */
     @Test
     fun `Recently Created puts households made minutes ago first, newest first, though their join date is blank`() {
         val rows = listOf(
-            household("old", "Amy", "Adams", joinDate = "2026-11-12"),
+            household("old", "Amy", "Adams", joinDate = "2026-06-01"),
             household("first", "Bea", "Brook").copy(createdAt = ts("2026-11-10T15:00:00Z")),
             household("none", "Cal", "Cole"),
             household("second", "Dee", "Dale").copy(createdAt = ts("2026-11-10T15:04:00Z")),
@@ -140,6 +139,72 @@ class DirectorySortTest {
             household("dated", "Mo", "Mills", joinDate = "2025-05-05"),
         )
         assertEquals(listOf("dated", "junk", "z"), sortKinfolkDirectory(rows, SortOption.RecentlyCreated).map { it.id })
+    }
+
+    /** #2171: a join date sits on the same timeline as a creation stamp, not below every stamped one. */
+    @Test
+    fun `Recently Created puts a join date on the same timeline as a creation stamp`() {
+        val rows = listOf(
+            household("joined-today", "Amy", "Adams", joinDate = "2026-11-12"),
+            household("stamped", "Bea", "Brook").copy(createdAt = ts("2026-10-01T12:00:00Z")),
+            household("joined-2025", "Cal", "Cole", joinDate = "2025-03-04T10:00:00.000Z"),
+        )
+        assertEquals(listOf("joined-today", "stamped", "joined-2025"), sortKinfolkDirectory(rows, SortOption.RecentlyCreated).map { it.id })
+    }
+
+    /** #2171: a migrated household sorts by the old system's creation date, never its migration date. */
+    @Test
+    fun `Recently Created places a migrated household below a newer one and above an older one`() {
+        val rows = listOf(
+            household("older", "Amy", "Adams").copy(createdAt = "2021-08-15T10:30:00Z", createdAtSource = "original"),
+            household("migrated", "Bea", "Brook", joinDate = "2025-06-01")
+                .copy(createdAt = "2024-03-02T09:00:00.000Z", createdAtSource = "original"),
+            household("auntieos", "Cal", "Cole").copy(createdAt = ts("2026-11-10T15:04:00Z"), createdAtSource = "live"),
+            household("joined-older", "Dee", "Dale", joinDate = "2022-04-01"),
+        )
+        assertEquals(listOf("auntieos", "migrated", "joined-older", "older"), sortKinfolkDirectory(rows, SortOption.RecentlyCreated).map { it.id })
+    }
+
+    /**
+     * #2171 / #2155: the shared date-sort fixture. Same ids, instants and
+     * expected orders as admin web `directory.test.ts` and desktop
+     * `DirectoryViewModelTest`, so the three clients are held to one order.
+     */
+    private val sharedFixture: List<Kinfolk> = listOf(
+        household("auntie-new", "Bea", "Brook").copy(createdAt = ts("2026-11-10T15:04:00Z"), createdAtSource = "live"),
+        household("migrated-mid", "Cal", "Cole", joinDate = "2025-06-01", updatedAt = "2026-11-12T08:00:00Z")
+            .copy(createdAt = "2024-03-02T09:00:00.000Z", createdAtSource = "original"),
+        household("migrated-old", "Eve", "Earl", updatedAt = "2026-11-11T20:00:00Z")
+            .copy(createdAt = "2021-08-15T10:30:00Z", createdAtSource = "original"),
+        household("joined-only", "Amy", "Adams", joinDate = "2022-04-01").copy(updatedAt = ts("2026-11-11T20:00:00.500Z")),
+        household("imported-unknown", "Fay", "Ford", joinDate = "2020-02-02")
+            .copy(createdAt = ts("2026-11-11T00:00:00Z"), createdAtSource = "import"),
+        household("tie-grant", "Gus", "Grant").copy(createdAt = "2026-09-01T00:00:00.000Z"),
+        household("tie-hill", "Hal", "Hill").copy(createdAt = "2026-09-01T00:00:00Z"),
+        household("no-date", "Zed", "Young"),
+        household("no-date-junk", "Ann", "Abbot", joinDate = "07/24/2026", updatedAt = "yesterday").copy(createdAt = "sometime"),
+    )
+
+    @Test
+    fun `shared fixture - Recently Created is one timeline, undated last A to Z`() {
+        assertEquals(
+            listOf(
+                "auntie-new", "tie-grant", "tie-hill", "migrated-mid", "joined-only", "migrated-old", "imported-unknown",
+                "no-date-junk", "no-date",
+            ),
+            sortKinfolkDirectory(sharedFixture, SortOption.RecentlyCreated).map { it.id },
+        )
+    }
+
+    @Test
+    fun `shared fixture - Recently Updated follows the last change and falls back to the creation date`() {
+        assertEquals(
+            listOf(
+                "migrated-mid", "joined-only", "migrated-old", "auntie-new", "tie-grant", "tie-hill", "imported-unknown",
+                "no-date-junk", "no-date",
+            ),
+            sortKinfolkDirectory(sharedFixture, SortOption.RecentlyUpdated).map { it.id },
+        )
     }
 
     // ── Search (#1952) ──────────────────────────────────────────────────────

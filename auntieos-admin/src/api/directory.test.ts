@@ -231,8 +231,12 @@ describe('filterSortKinfolk', () => {
   it('sorts alpha_desc by surname', () => {
     expect(filterSortKinfolk(rows, '', 'alpha_desc').map((r) => r._id)).toEqual(['a', 'b']);
   });
-  it('sorts recently_updated by joinDate', () => {
-    expect(filterSortKinfolk(rows, '', 'recently_updated').map((r) => r._id)).toEqual(['b', 'a']);
+  it('sorts recently_updated by the last change, not by joinDate (#2155)', () => {
+    const edited = [
+      kinfolk({ _id: 'a', firstName: 'Zack', lastName: 'Young', joinDate: '2026-01-01', updatedAt: fakeTs('2026-11-12T08:00:00.000Z') }),
+      kinfolk({ _id: 'b', firstName: 'Amy', lastName: 'Adams', joinDate: '2026-06-01', updatedAt: fakeTs('2026-07-01T00:00:00.000Z') }),
+    ];
+    expect(filterSortKinfolk(edited, '', 'recently_updated').map((r) => r._id)).toEqual(['a', 'b']);
   });
   it('filters by the query before sorting', () => {
     expect(filterSortKinfolk(rows, 'amy', 'alpha_asc').map((r) => r._id)).toEqual(['b']);
@@ -257,22 +261,33 @@ describe('Recently Created (#1953)', () => {
     expect(ids(rows)).toEqual(['second', 'first', 'old', 'none']);
   });
 
-  it('a household from before the creation stamp is placed by its join date, below every stamped one', () => {
+  it('#2171: a join date sits on the same timeline as a creation stamp, not below every stamped one', () => {
     const rows = [
       kinfolk({ _id: 'joined-today', lastName: 'Adams', joinDate: '2026-11-12' }),
       kinfolk({ _id: 'stamped', lastName: 'Brook', createdAt: fakeTs('2026-10-01T12:00:00.000Z') }),
       kinfolk({ _id: 'joined-2025', lastName: 'Cole', joinDate: '2025-03-04T10:00:00.000Z' }),
     ];
-    expect(ids(rows)).toEqual(['stamped', 'joined-today', 'joined-2025']);
+    expect(ids(rows)).toEqual(['joined-today', 'stamped', 'joined-2025']);
   });
 
-  it('never orders by an import date: a createdAt marked import counts as no creation date', () => {
+  it('never orders by an import date: a createdAt marked import falls back to the join date', () => {
     const rows = [
       kinfolk({ _id: 'imported', lastName: 'Adams', createdAt: fakeTs('2026-11-11T00:00:00.000Z'), createdAtSource: 'import', joinDate: '2025-02-01' }),
       kinfolk({ _id: 'live', lastName: 'Brook', createdAt: fakeTs('2026-09-01T00:00:00.000Z'), createdAtSource: 'live' }),
       kinfolk({ _id: 'original', lastName: 'Cole', createdAt: '2025-01-15T09:00:00Z', createdAtSource: 'original' }),
     ];
-    expect(ids(rows)).toEqual(['live', 'original', 'imported']);
+    expect(ids(rows)).toEqual(['live', 'imported', 'original']);
+  });
+
+  it('#2171: a migrated household sorts by the old system creation date, below a newer household and above an older one', () => {
+    const rows = [
+      kinfolk({ _id: 'older', lastName: 'Adams', createdAt: '2021-08-15T10:30:00Z', createdAtSource: 'original' }),
+      kinfolk({ _id: 'migrated', lastName: 'Brook', createdAt: '2024-03-02T09:00:00.000Z', createdAtSource: 'original', joinDate: '2025-06-01' }),
+      kinfolk({ _id: 'auntieos', lastName: 'Cole', createdAt: fakeTs('2026-11-10T15:04:00.000Z'), createdAtSource: 'live' }),
+      kinfolk({ _id: 'joined-older', lastName: 'Dale', joinDate: '2022-04-01' }),
+    ];
+    // The migrated row's own join date (2025-06-01) is not read: it has an original creation date.
+    expect(ids(rows)).toEqual(['auntieos', 'migrated', 'joined-older', 'older']);
   });
 
   it('reads createdAt as a Timestamp, a {seconds} object or an ISO string, and compares instants, not text', () => {
@@ -292,6 +307,43 @@ describe('Recently Created (#1953)', () => {
       kinfolk({ _id: 'nullstamp', firstName: 'Bo', lastName: 'Brook', createdAt: null }),
     ];
     expect(ids(rows)).toEqual(['dated', 'junk', 'nullstamp', 'z']);
+  });
+});
+
+/**
+ * #2171 / #2155: ONE fixture, the same ids, instants and expected orders as
+ * Android `DirectorySortTest` and desktop `DirectoryViewModelTest`
+ * ("shared date-sort fixture"), so the three clients are held to one order.
+ * Timestamps are Firestore Timestamps here; the other clients carry the same
+ * instants in their own stored shapes.
+ */
+describe('shared date-sort fixture (#2171, #2155)', () => {
+  const fixture: Kinfolk[] = [
+    kinfolk({ _id: 'auntie-new', firstName: 'Bea', lastName: 'Brook', createdAt: fakeTs('2026-11-10T15:04:00.000Z'), createdAtSource: 'live' }),
+    kinfolk({ _id: 'migrated-mid', firstName: 'Cal', lastName: 'Cole', createdAt: '2024-03-02T09:00:00.000Z', createdAtSource: 'original', joinDate: '2025-06-01', updatedAt: '2026-11-12T08:00:00Z' }),
+    kinfolk({ _id: 'migrated-old', firstName: 'Eve', lastName: 'Earl', createdAt: '2021-08-15T10:30:00Z', createdAtSource: 'original', updatedAt: '2026-11-11T20:00:00Z' }),
+    kinfolk({ _id: 'joined-only', firstName: 'Amy', lastName: 'Adams', joinDate: '2022-04-01', updatedAt: fakeTs('2026-11-11T20:00:00.500Z') }),
+    kinfolk({ _id: 'imported-unknown', firstName: 'Fay', lastName: 'Ford', createdAt: fakeTs('2026-11-11T00:00:00.000Z'), createdAtSource: 'import', joinDate: '2020-02-02' }),
+    kinfolk({ _id: 'tie-grant', firstName: 'Gus', lastName: 'Grant', createdAt: '2026-09-01T00:00:00.000Z' }),
+    kinfolk({ _id: 'tie-hill', firstName: 'Hal', lastName: 'Hill', createdAt: '2026-09-01T00:00:00Z' }),
+    kinfolk({ _id: 'no-date', firstName: 'Zed', lastName: 'Young' }),
+    kinfolk({ _id: 'no-date-junk', firstName: 'Ann', lastName: 'Abbot', joinDate: '07/24/2026', createdAt: 'sometime', updatedAt: 'yesterday' }),
+  ];
+  const order = (sort: 'recently_created' | 'recently_updated') =>
+    filterSortKinfolk(fixture, '', sort).map((r) => r._id);
+
+  it('Recently Created is one timeline: auntieOS stamp, else the old system date, else the join date; undated last A to Z', () => {
+    expect(order('recently_created')).toEqual([
+      'auntie-new', 'tie-grant', 'tie-hill', 'migrated-mid', 'joined-only', 'migrated-old', 'imported-unknown',
+      'no-date-junk', 'no-date',
+    ]);
+  });
+
+  it('Recently Updated follows the last change, compares instants not text, and falls back to the creation date', () => {
+    expect(order('recently_updated')).toEqual([
+      'migrated-mid', 'joined-only', 'migrated-old', 'auntie-new', 'tie-grant', 'tie-hill', 'imported-unknown',
+      'no-date-junk', 'no-date',
+    ]);
   });
 });
 
