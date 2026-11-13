@@ -1193,6 +1193,15 @@ describe('Invoices row quick action', () => {
       within(rowOf('1042')).getByRole('button', { name: 'Review and send' }),
     ).toBeInTheDocument();
   });
+  it('#2087: a quote saved unsent is marked QUOTE beside DRAFT and offers Send quote', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'draft', editScope: 'all', quoteDraft: true })]));
+    render(<Invoices />);
+    const row = rowOf('1042');
+    expect(within(row).getByText('DRAFT')).toBeInTheDocument();
+    expect(within(row).getByText('QUOTE')).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Send quote' })).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Review and send' })).toBeNull();
+  });
   it('#2168: offers no Review and send on an ARCHIVED draft, which is read-only until restored', async () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ status: 'draft', editScope: 'all', archivedAt: fakeTs('2026-07-16T10:00:00Z') })]),
@@ -1608,6 +1617,8 @@ describe('#1609 invoices list', () => {
         entry({ _id: 'o', invoiceNumber: '1018', total: 40 }),
         entry({ _id: 'd', invoiceNumber: '1020', status: 'draft', total: 25 }),
         entry({ _id: 'q', invoiceNumber: '1021', status: 'quote', total: 90 }),
+        // #2088: a withdrawn quote is cancelled: not billed, and not "unsent".
+        entry({ _id: 'w', invoiceNumber: '1022', status: 'cancelled', total: 70 }),
       ]),
     );
     render(<Invoices />);

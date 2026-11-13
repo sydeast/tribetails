@@ -3,8 +3,6 @@ import { z, ZodError } from 'zod';
 import { auth, db } from '../lib/firestoreAdmin';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
-import { writeAuditEntry } from '../lib/writeAuditEntry';
-import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { logEvent } from '../lib/logger';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { mapInviteDoc, toIsoOrNull } from './listInvites';
@@ -37,7 +35,7 @@ import { householdNameFor, type AdminInviteDTO } from './listAllInvites';
  *
  * SECURITY. The id is the claim-link bearer token (see `listInvites.ts`). It
  * is the argument here because the email link carries it, and it reaches
- * neither `logEvent` nor the audit payload.
+ * `logEvent`.
  */
 const Args = z.object({
   inviteId: z.string().trim().min(1).max(200),
@@ -136,24 +134,8 @@ export async function getInviteHandler(req: CallableRequest<unknown>): Promise<G
     source: typeof data['source'] === 'string' && data['source'] !== '' ? (data['source'] as string) : null,
   };
 
-  // Cross-tenant by definition, same as listAllInvites. Best-effort.
-  await writeAuditEntry({
-    status: 'SUCCESS',
-    event: AUDIT_EVENTS.OPERATOR_CROSSTENANT_ACCESS,
-    severity: 'info',
-    actorRole: 'AUNTIE',
-    actorUid: uid,
-    familyId: row.tribeId === '' ? undefined : row.tribeId,
-    payload: { function: 'getInvite' },
-  }).catch((err) => {
-    logEvent({
-      severity: 'warn',
-      function: 'getInvite',
-      event: 'audit.write.failed',
-      uid,
-      errorMessage: (err as Error)?.message,
-    });
-  });
+  // #1839: no Activity Log line. Only the owner reaches this callable, and
+  // operator ruling 2026-11-12 stopped logging her own looks.
 
   // No invite id here: it is the claim token.
   logEvent({

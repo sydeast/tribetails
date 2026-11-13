@@ -263,21 +263,15 @@ describe('listRecoveryCandidatesHandler', () => {
     ]);
   });
 
-  it('audits the cross-tenant read with counts and no addresses', async () => {
+  it("#1839: writes no Activity Log line for the owner's look", async () => {
     const { listRecoveryCandidatesHandler } = await import('../src/admin/listRecoveryCandidates');
     await listRecoveryCandidatesHandler({
       data: { familyId: 'f1', oldUid: 'old-1' },
-      auth: { uid: 'u-admin' },
+      auth: { uid: 'u-admin', token: { admin: true } },
     } as any);
-    expect(auditMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'OPERATOR_CROSSTENANT_ACCESS',
-        familyId: 'f1',
-        payload: expect.objectContaining({ function: 'listRecoveryCandidates', count: 1 }),
-      }),
+    expect(auditMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'OPERATOR_CROSSTENANT_ACCESS' }),
     );
-    const entry = auditMock.mock.calls[0]?.[0] as { payload: Record<string, unknown> };
-    expect(JSON.stringify(entry.payload)).not.toContain('@');
   });
 
   it('answers an empty list rather than failing when no member qualifies', async () => {

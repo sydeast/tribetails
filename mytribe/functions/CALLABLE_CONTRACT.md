@@ -575,12 +575,15 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   withdrew a bill, which is a different fact, and it would also drop the row out
   of every `getMyInvoices` bucket, off the household's screen as the immediate
   result of their own tap.
-- Refusals, all `failed-precondition` with a `details.code`:
+- Refusals, all `failed-precondition` with a `details.code` unless noted:
   `quote_not_a_quote` (the doc is not in QUOTE status),
-  `quote_already_decided` (a decision is terminal; a revision is a NEW quote via
-  `createQuote`), `quote_expired` (accept only, when the quote's `dueDate` has
-  passed in the business's own time zone: a quote is good THROUGH its due day,
-  and an undated quote never expires). Declining an expired quote is allowed.
+  `quote_already_decided` (a decision is terminal; the office sends a declined
+  quote back out with `resendQuote`), `quote_archived` (#2195: the office
+  archived it; it cannot be answered until restored), `quote_withdrawn` (#2088:
+  the office withdrew it, `withdrawQuote`), and `quote_not_found`, raised as
+  `not-found` (#2087: a quote saved unsent, or one turned into an invoice not
+  sent yet, is answered exactly as a quote that does not exist). A quote does
+  not expire (#2088, operator ruling 2026-11-12): there is no date refusal.
 - #2156: THE VISITS MOVE WITH THE ANSWER, in the same transaction. DENY puts
   every visit the quote holds back on the un-invoiced list (back-link `''`,
   `'manual_unlink'`; a visit another invoice bills is left alone), empties
@@ -1482,9 +1485,8 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   render or offer to copy the claim URL**. Possession of the id alone still does
   not redeem: `acceptInvite` additionally requires the caller's VERIFIED token
   email to equal `invitedEmail`.
-- Read only apart from one best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry,
-  mirroring `resolveKinfolkAccess`: staff reaching into a household they have no
-  member doc for is cross-tenant by definition.
+- Read only, and no Activity Log line (#1839, operator ruling 2026-11-12: the
+  owner's own looks are not logged, and only the owner reaches this callable).
 - **`requiresAuntieAck` is gone from this response** (2026-08-01). It was set true
   only when an invite carried `billing_full`, and NOTHING ever performed the
   acknowledgement or read the flag as a gate: `acceptInvite` applied
@@ -1528,9 +1530,8 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
 - **`inviteId` is a bearer token**, exactly as under `listInvites`. It reaches
   neither `logEvent` nor the audit payload here (counts only), and no client may
   render or offer to copy the claim URL.
-- Read only apart from one best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry.
-  That entry carries NO `familyId`: the read spans every household, and naming
-  one of them would misreport its scope.
+- Read only, and no Activity Log line (#1839, operator ruling 2026-11-12: the
+  owner's own looks are not logged, and only the owner reaches this callable).
 - Mirrors: `auntieos-admin/src/api/members.ts#listAllInvites` +
   `src/screens/Invites.tsx`; Android `MembersRepository.listAllInvites` +
   `ui/members/InvitesScreen.kt`. The three move together.
@@ -1559,9 +1560,9 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   account Auth cannot read keeps its uid with null name and email.
 - `acceptedAt` is stamped by `acceptInvite` from #1339 on. Invites accepted
   before that have only `acceptedUid` and read `acceptedAt: null`.
-- One best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry with the household's
-  `familyId`. The invite id (the claim token) reaches neither the audit payload
-  nor `logEvent`.
+- Read only, and no Activity Log line (#1839, operator ruling 2026-11-12: the
+  owner's own looks are not logged, and only the owner reaches this callable).
+- The invite id (the claim token) never reaches `logEvent`.
 - Mirrors: `auntieos-admin/src/api/members.ts#getInvite` +
   `src/screens/InviteDetail.tsx`; Android `MembersRepository.getInvite` +
   `ui/members/InviteDetailScreen.kt`. The desktop console has no invites list.
@@ -1586,10 +1587,8 @@ id, so `familyId` and `kinfolkId` are the same value on every call below.
   row must not make a household unrecoverable.
 - An empty array is a real answer, not an error. It means nobody on the
   household can safely be handed it yet.
-- Read only apart from one best-effort `OPERATOR_CROSSTENANT_ACCESS` audit entry,
-  the same one `listInvites` writes for its household-scoped read. Counts only,
-  no addresses. This answers more than the roster does (which addresses Auth
-  considers verified), so it is audited rather than treated as free.
+- Read only, and no Activity Log line (#1839, operator ruling 2026-11-12: the
+  owner's own looks are not logged, and only the owner reaches this callable).
 - Mirrors: `auntieos-admin/src/api/members.ts#listRecoveryCandidates` +
   the recovery dialog in `src/screens/HouseholdMembers.tsx`. No Android mirror
   yet; Android has no recovery surface to mirror it into.

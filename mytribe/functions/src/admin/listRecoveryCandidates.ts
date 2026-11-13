@@ -2,8 +2,6 @@ import { onCall, CallableRequest } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { logEvent } from '../lib/logger';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
-import { writeAuditEntry } from '../lib/writeAuditEntry';
-import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { listRecoveryCandidates as resolveCandidates } from '../lib/recoveryCandidates';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import type { MemberRole, MemberStatus } from '../lib/schema';
@@ -41,11 +39,9 @@ interface ListRecoveryCandidatesResult {
  * dialog would eventually offer a choice that fails on submit, which is worse
  * than the text box it replaced.
  *
- * Sends no mail and changes no household state. It does write one audit entry:
- * staff reading a household is cross-tenant by definition (an operator holds no
- * member doc anywhere), and this read answers more than the roster does, namely
- * which addresses Firebase Auth considers verified. `listInvites` audits its own
- * household-scoped read the same way, so this follows it.
+ * Sends no mail, changes no household state and writes no Activity Log line.
+ * Only the owner reaches it, and operator ruling 2026-11-12 (#1839) stopped
+ * logging the owner's own looks; it used to write a cross-tenant access line.
  */
 export async function listRecoveryCandidatesHandler(
   req: CallableRequest<unknown>,
@@ -54,31 +50,8 @@ export async function listRecoveryCandidatesHandler(
   const args = Args.parse(req.data);
   const candidates = await resolveCandidates(args.familyId, { excludeUid: args.oldUid });
 
-  // Best-effort, exactly as in listInvites: a failed audit write must not make a
-  // successful read look like a failed one. Counts only, no addresses: the
-  // entry says who looked at which household, which is the reviewable fact.
-  await writeAuditEntry({
-    status: 'SUCCESS',
-    event: AUDIT_EVENTS.OPERATOR_CROSSTENANT_ACCESS,
-    severity: 'info',
-    actorRole: 'AUNTIE',
-    actorUid: uid,
-    targetUid: args.oldUid,
-    familyId: args.familyId,
-    payload: {
-      function: 'listRecoveryCandidates',
-      kinfolkId: args.familyId,
-      count: candidates.length,
-    },
-  }).catch((err) => {
-    logEvent({
-      severity: 'warn',
-      function: 'listRecoveryCandidates',
-      event: 'audit.write.failed',
-      uid,
-      errorMessage: (err as Error)?.message,
-    });
-  });
+  // #1839: no Activity Log line. Only the owner reaches this callable, and
+  // operator ruling 2026-11-12 stopped logging her own looks.
 
   logEvent({
     severity: 'info',

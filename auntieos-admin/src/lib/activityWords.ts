@@ -23,6 +23,8 @@ export const ACTIVITY_WORDS = {
   draftApproved: 'Approved an Auntie AI draft',
   kinTaleDraftSent: 'Sent a KinTale draft',
   kinTaleDraftDeleted: 'Deleted a KinTale draft',
+  /** #1839: a look at a household stored before the server wrote it in words. */
+  householdOpened: 'Opened a household',
 } as const;
 
 /** The stored shapes, in full: the path, any ids after it, the household in brackets. */
@@ -209,6 +211,10 @@ const ID_SHAPES: readonly (readonly [RegExp, (m: RegExpExecArray) => string])[] 
     /^Payment notification for invoice \S+ was not delivered after (\d+) retries$/,
     (m) => `A payment notification was not delivered after ${m[1]} retries`,
   ],
+  // #1839: a look at a household stored before the server wrote it in words
+  // ("OPERATOR_CROSSTENANT_ACCESS uid=<id> target=<id>"). Same words as
+  // Android and the desktop console.
+  [/^OPERATOR_CROSSTENANT_ACCESS(?: uid=\S+)?(?: target=\S+)?$/, () => ACTIVITY_WORDS.householdOpened],
 ];
 
 /** A stored description as the operator reads it. Text with no id or path passes through. */

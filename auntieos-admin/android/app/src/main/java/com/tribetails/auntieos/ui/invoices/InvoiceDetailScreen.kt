@@ -174,23 +174,34 @@ fun InvoiceDetailScreen(
     }
     // #1609: the confirm before a household send names the person and the channel.
     uiState.sendConfirm?.let { action ->
+        // #2087: a quote saved unsent goes out through the draft send, as a quote.
+        val quoteSend = action != "reminder" &&
+            uiState.invoice?.let { com.tribetails.auntieos.domain.isQuoteDraft(it) } == true
         AuntieDialog(
             visible   = true,
-            title     = if (action == "reminder") "Send a payment reminder?" else "Send this draft?",
+            title     = when {
+                action == "reminder" -> "Send a payment reminder?"
+                quoteSend -> "Send this quote?"
+                else -> "Send this draft?"
+            },
             onDismiss = { viewModel.dismissSendConfirm() },
             footer = {
                 GhostButton(label = "Cancel", onClick = { viewModel.dismissSendConfirm() })
                 PrimaryButton(
-                    label   = if (action == "reminder") "Send reminder" else "Review and send",
+                    label   = when {
+                        action == "reminder" -> "Send reminder"
+                        quoteSend -> "Send quote"
+                        else -> "Review and send"
+                    },
                     onClick = { viewModel.confirmSend() },
                 )
             },
         ) {
             Text(
-                text = if (action == "reminder") {
-                    "This sends a real payment-reminder notification to the household."
-                } else {
-                    REVIEW_AND_SEND_CONFIRM_COPY
+                text = when {
+                    action == "reminder" -> "This sends a real payment-reminder notification to the household."
+                    quoteSend -> com.tribetails.auntieos.domain.SEND_QUOTE_CONFIRM_COPY
+                    else -> REVIEW_AND_SEND_CONFIRM_COPY
                 },
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
@@ -351,6 +362,8 @@ fun InvoiceDetailScreen(
                         onSendReminder    = { viewModel.askSend("reminder") },
                         onSendDraft       = { viewModel.askSend("reviewSend") },
                         onResendQuote     = { viewModel.resendQuote() },
+                        changingQuote     = uiState.changingQuote,
+                        onQuoteAction     = { viewModel.promptQuoteAction(it) },
                         onDownloadPdf     = { viewModel.downloadPdf() },
                         onArchive         = { viewModel.promptArchive() },
                         onRetryCheckout   = { viewModel.retryCheckoutClose() },
@@ -384,6 +397,33 @@ fun InvoiceDetailScreen(
         }
     }
 
+    // ── #2088: turn the quote into an invoice, or withdraw it ───────────────────
+    uiState.quotePrompt?.let { action ->
+        AuntieDialog(
+            visible   = true,
+            title     = if (action == "convert") "Turn this quote into an invoice?" else "Withdraw this quote?",
+            onDismiss = { viewModel.dismissQuotePrompt() },
+            footer = {
+                GhostButton(label = "Cancel", onClick = { viewModel.dismissQuotePrompt() }, enabled = !uiState.changingQuote)
+                PrimaryButton(
+                    label   = if (action == "convert") "Turn into invoice" else "Withdraw quote",
+                    onClick = { viewModel.confirmQuoteAction() },
+                    loading = uiState.changingQuote,
+                    enabled = !uiState.changingQuote,
+                )
+            },
+        ) {
+            Text(
+                text  = if (action == "convert") {
+                    com.tribetails.auntieos.domain.CONVERT_QUOTE_CONFIRM_COPY
+                } else {
+                    com.tribetails.auntieos.domain.WITHDRAW_QUOTE_CONFIRM_COPY
+                },
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textDim,
+            )
+        }
+    }
     // ── Archive / restore confirm ────────────────────────────────────────────────
     // Confirmed before anything is sent, and the copy says what archiving does
     // NOT do. That matters more than usual here: "archive" reads like "delete"
@@ -391,9 +431,20 @@ fun InvoiceDetailScreen(
     // household, which is the opposite of what the word suggests.
     uiState.invoice?.let { inv ->
         val restoring = com.tribetails.auntieos.domain.invoiceIsArchived(inv)
+        // #2195: a quote is archived like a draft: the household stops seeing it.
+        val quote = if (restoring) {
+            com.tribetails.auntieos.domain.quoteIsChangeableOnRestore(inv)
+        } else {
+            com.tribetails.auntieos.domain.quoteIsChangeable(inv)
+        }
         AuntieDialog(
             visible   = uiState.archivePrompt,
-            title     = if (restoring) "Restore this invoice?" else "Archive this invoice?",
+            title     = when {
+                quote && restoring -> "Restore this quote?"
+                quote -> "Archive this quote?"
+                restoring -> "Restore this invoice?"
+                else -> "Archive this invoice?"
+            },
             onDismiss = { viewModel.dismissArchivePrompt() },
             footer = {
                 GhostButton(label = "Cancel", onClick = { viewModel.dismissArchivePrompt() })
@@ -409,7 +460,13 @@ fun InvoiceDetailScreen(
             },
         ) {
             Text(
-                text = if (restoring) {
+                text = if (quote) {
+                    if (restoring) {
+                        com.tribetails.auntieos.domain.restoreQuoteConfirmCopy(inv)
+                    } else {
+                        com.tribetails.auntieos.domain.ARCHIVE_QUOTE_CONFIRM_COPY
+                    }
+                } else if (restoring) {
                     "This puts the invoice back into the working list and back into the revenue and " +
                         "outstanding totals."
                 } else {
@@ -469,6 +526,8 @@ private fun invoiceDetailBody(
     onSendReminder: () -> Unit,
     onSendDraft: () -> Unit,
     onResendQuote: () -> Unit,
+    changingQuote: Boolean,
+    onQuoteAction: (String) -> Unit,
     onDownloadPdf: () -> Unit,
     onArchive: () -> Unit,
     onRetryCheckout: () -> Unit,
@@ -651,6 +710,21 @@ private fun invoiceDetailBody(
                     },
                 )
             }
+            // #2088: once a quote exists the office can turn it into an invoice
+            // or withdraw it, while the household has not accepted it and it is
+            // not archived. The server refuses the rest by name either way.
+            if (com.tribetails.auntieos.domain.quoteIsChangeable(invoice)) {
+                GhostButton(
+                    label   = "Turn into invoice",
+                    onClick = { onQuoteAction("convert") },
+                    enabled = !changingQuote,
+                )
+                GhostButton(
+                    label   = "Withdraw quote",
+                    onClick = { onQuoteAction("withdraw") },
+                    enabled = !changingQuote,
+                )
+            }
             // Archive is deliberately NOT part of `actions`. That matrix answers
             // "what can be done about the money", and archiving is orthogonal to
             // it: an invoice in any state can be taken out of the working list.
@@ -677,9 +751,14 @@ private fun invoiceDetailBody(
                 dismissible = true,
             ) {
                 Text(
-                    text = "This invoice is out of the working list and out of the revenue and outstanding " +
-                        "totals. It has not been deleted or cancelled, and the household can still see it " +
-                        "and still pay it.",
+                    text = if (com.tribetails.auntieos.domain.quoteIsChangeableOnRestore(invoice)) {
+                        // #2195: an archived quote is the office's alone.
+                        com.tribetails.auntieos.domain.archivedQuoteBannerCopy(invoice)
+                    } else {
+                        "This invoice is out of the working list and out of the revenue and outstanding " +
+                            "totals. It has not been deleted or cancelled, and the household can still see it " +
+                            "and still pay it."
+                    },
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )
@@ -691,14 +770,17 @@ private fun invoiceDetailBody(
     // reviewAndSendDraftInvoice callable. Fail-loud if the draft is incomplete:
     // the action stays present and the VM surfaces the server's precondition.
     if (InvoiceAction.REVIEW_AND_SEND in actions) {
+        // #2087: a quote saved unsent is a draft the household cannot see; its
+        // send makes it a Quote they can answer.
+        val quoteDraft = com.tribetails.auntieos.domain.isQuoteDraft(invoice)
         item {
             AuntieBanner(
                 tone      = AuntieBannerTone.Warning,
-                pillLabel = "DRAFT",
+                pillLabel = if (quoteDraft) "DRAFT QUOTE" else "DRAFT",
                 icon      = Lucide.Clock,
                 trailing  = {
                     PrimaryButton(
-                        label   = "Review and send",
+                        label   = if (quoteDraft) "Send quote" else "Review and send",
                         onClick = onSendDraft,
                         loading = sendingDraft,
                         enabled = !sendingDraft,
@@ -706,7 +788,11 @@ private fun invoiceDetailBody(
                 },
                 body = {
                     Text(
-                        "This invoice is still a draft. Review it, then send it to notify the client.",
+                        if (quoteDraft) {
+                            "This quote is saved but not sent, so the household cannot see it. Send it when it is ready."
+                        } else {
+                            "This invoice is still a draft. Review it, then send it to notify the client."
+                        },
                         style = AuntieTheme.typography.bodySmall,
                         color = AuntieTheme.colors.textDim,
                     )

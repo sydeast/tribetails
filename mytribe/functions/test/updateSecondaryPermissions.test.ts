@@ -102,20 +102,15 @@ describe('updateSecondaryPermissionsHandler', () => {
     expect(docUpdate).toHaveBeenCalledOnce();
   });
 
-  it('STAFF GATE: audit-logs the operator write as cross-tenant access (matches resolveKinfolkAccess) and labels PERM_GRANTED as AUNTIE, not PRIMARY', async () => {
+  it('STAFF GATE: #1839 the owner writes no separate access line; PERM_GRANTED records the change, labelled AUNTIE, not PRIMARY', async () => {
     memberGet.mockResolvedValueOnce({ exists: true, data: () => ({ role: 'SECONDARY', status: 'ACTIVE', permissions: {} }) });
     const { updateSecondaryPermissionsHandler } = await import('../src/membership/updateSecondaryPermissions');
     await updateSecondaryPermissionsHandler({
       auth: { uid: 'op-uid', token: { admin: true } },
       data: { familyId: 'f1', targetUid: 'u-sec', permissions: { kin_edit: true } },
     } as any);
-    expect(auditMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'OPERATOR_CROSSTENANT_ACCESS',
-        actorRole: 'AUNTIE',
-        actorUid: 'op-uid',
-        targetUid: 'f1',
-      }),
+    expect(auditMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'OPERATOR_CROSSTENANT_ACCESS' }),
     );
     expect(auditMock).toHaveBeenCalledWith(
       expect.objectContaining({

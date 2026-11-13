@@ -8,7 +8,6 @@ import { isOwner, refuseAuntie } from '../lib/staffGate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { logEvent } from '../lib/logger';
 import type { ActorRole } from '../lib/schema';
 
 // RULING (household secondary permissions): "Primary kinfolk is allowed to set
@@ -63,25 +62,9 @@ export async function updateSecondaryPermissionsHandler(req: CallableRequest<unk
   }
   await db().doc(`families/${args.familyId}/members/${args.targetUid}`).update(updates);
 
-  if (isOperator) {
-    // Matches resolveKinfolkAccess's read-side pattern: an operator has no
-    // "own" household to compare against, so every staff write here is
-    // audit-logged as cross-tenant access.
-    await writeAuditEntry({
-      status: 'SUCCESS',
-      event: AUDIT_EVENTS.OPERATOR_CROSSTENANT_ACCESS,
-      severity: 'info',
-      actorRole: 'AUNTIE',
-      actorUid: uid,
-      targetUid: args.familyId,
-      payload: { function: 'updateSecondaryPermissions', kinfolkId: args.familyId },
-    }).catch((err) => {
-      logEvent({
-        severity: 'warn', function: 'updateSecondaryPermissions', event: 'audit.write.failed',
-        uid, errorMessage: (err as Error)?.message,
-      });
-    });
-  }
+  // #1839: the owner's change writes no separate access line. Operator ruling
+  // 2026-11-12 stopped logging the owner's own looks, and the change itself is
+  // recorded by the PERM_* lines below.
 
   const actorRole: ActorRole = isOperator ? 'AUNTIE' : 'PRIMARY';
   for (const [perm, val] of Object.entries(args.permissions)) {

@@ -28,7 +28,7 @@ vi.mock('../src/notifications/dispatcher', () => ({
 }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
-  return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
+  return { ...actual, FieldValue: { serverTimestamp: () => '__TS__', delete: () => undefined } };
 });
 
 import { createQuoteHandler } from '../src/admin/createQuote';
@@ -153,29 +153,28 @@ describe('createQuote zod validation', () => {
 });
 
 describe('createQuote handler effects', () => {
-  it('forces quote status on both status fields regardless of caller status arg', async () => {
+  // #2087 (operator ruling 2026-11-13): with "Send to kinfolk now" off the quote
+  // is a Draft only the office sees. It becomes a Quote when it is sent.
+  it('#2087 saves a quote made with the switch off as a draft carrying the quote mark, whatever status the caller sent', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
     await createQuoteHandler(req(validPayload));
     const write = ctx.writes.find((w) => w.path.startsWith('invoices/'));
     expect(write).toBeTruthy();
-    // Lowercase since the state stamp (2026-07-28): the stored value is the
-    // classifier's canonical vocabulary. The admin chip still reads 'QUOTE',
-    // because it derives from the classifier, which lowercases before matching.
-    expect(write!.data.status).toBe('quote');
-    expect(write!.data.invoiceStatus).toBe('quote');
+    expect(write!.data.status).toBe('draft');
+    expect(write!.data.invoiceStatus).toBe('draft');
+    expect(write!.data.quoteDraft).toBe(true);
     expect(write!.data.kinfolkId).toBe('fam1');
     expect(write!.data.createdAt).toBe('__TS__');
   });
 
-  it('persists the state stamp in the same write: a quote is fully editable', async () => {
+  it('persists the state stamp in the same write: a draft, fully editable', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
     await createQuoteHandler(req(validPayload));
     const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
     // What the classifier says about the doc as written is what the doc stores.
-    expect(invoiceStateStampOf(write.data, 0)).toEqual({ status: 'quote', editScope: 'all' });
-    expect(write.data.status).toBe('quote');
+    expect(invoiceStateStampOf(write.data, 0)).toEqual({ status: 'draft', editScope: 'all' });
     expect(write.data.editScope).toBe('all');
   });
 
@@ -197,36 +196,78 @@ describe('createQuote handler effects', () => {
     expect(res).not.toHaveProperty('appOnly');
   });
 
-  it('dispatches invoice.new with invoice target ref when sendToKinfolk is true', async () => {
-    const ctx = buildDbMock({});
+  it('#2087 with the switch on: saved, then sent as a quote, and the household told once, after the quote is one', async () => {
+    const ctx = buildDbMock({ writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);
+    let statusWhenTold: unknown;
+    mocks.enqueue.mockImplementation(async (args: { targetId: string }) => {
+      statusWhenTold = (await ctx.db.doc(`invoices/${args.targetId}`).get()).data()?.status;
+      return ['n1'];
+    });
     const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
     expect(mocks.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         key: 'invoice.new',
         recipientUid: 'kin-uid-1',
         targetType: 'invoice',
         targetId: res.invoiceId,
+        data: expect.objectContaining({ isQuote: true }),
+        dedupeKey: `quote:${res.invoiceId}:send`,
       }),
     );
+    // The notice went out only once the quote had committed as a quote.
+    expect(statusWhenTold).toBe('quote');
+    const doc = (await ctx.db.doc(`invoices/${res.invoiceId}`).get()).data()!;
+    expect(doc.status).toBe('quote');
+    expect(doc.invoiceStatus).toBe('quote');
+    expect(doc.quoteDraft).toBeUndefined();
+    expect(doc.quoteSentBy).toBe('admin1');
+    expect(writeAuditEntry).toHaveBeenCalledWith(expect.objectContaining({ event: 'BILLING_QUOTE_SENT' }));
     // #1511: a channel carried the household's copy.
     expect(res.appOnly).toBe(false);
   });
 
-  it('still returns ok when notification dispatch fails (swallowed + logged)', async () => {
-    const ctx = buildDbMock({});
+  it('#2087 a failed notice is not swallowed: the quote goes back to the hidden draft it was, and the admin is told how to send it', async () => {
+    const ctx = buildDbMock({ writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);
     mocks.enqueue.mockRejectedValueOnce(new Error('boom'));
-    const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
-    expect(res.ok).toBe(true);
-    // #1511: no record was written, so the answer makes no claim about one.
-    expect(res).not.toHaveProperty('appOnly');
+    const err = await createQuoteHandler(
+      req({ ...validPayload, sendToKinfolk: true, idempotencyKey: 'quot_1700000002087_a' }),
+    ).catch((e) => e);
+    expect(err).toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'quote_saved_not_sent', invoiceId: 'quot_1700000002087_a' },
+    });
+    expect(err.message).toMatch(/saved as a draft, but it could not be sent/);
+    const doc = (await ctx.db.doc('invoices/quot_1700000002087_a').get()).data()!;
+    expect(doc.status).toBe('draft');
+    expect(doc.invoiceStatus).toBe('draft');
+    expect(doc.quoteDraft).toBe(true);
+    expect(doc.quoteSentBy).toBeUndefined();
+  });
+
+  it('#2087 the retry of that same submission sends it, once, and makes no second quote', async () => {
+    const ctx = buildDbMock({ writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockRejectedValueOnce(new Error('boom'));
+    const args = { ...validPayload, sendToKinfolk: true, idempotencyKey: 'quot_1700000002087_b' };
+    await createQuoteHandler(req(args)).catch(() => undefined);
+    const res = await createQuoteHandler(req(args));
+    expect(res).toMatchObject({ ok: true, invoiceId: 'quot_1700000002087_b' });
+    expect((await ctx.db.doc('invoices/quot_1700000002087_b').get()).data()!.status).toBe('quote');
+    // One failed attempt, one that reached the household.
+    expect(mocks.enqueue).toHaveBeenCalledTimes(2);
+    expect(new Set(ctx.writes.filter((w) => w.path.startsWith('invoices/')).map((w) => w.path)).size).toBe(1);
+    // A third press of the same submission sends nothing more.
+    await createQuoteHandler(req(args));
+    expect(mocks.enqueue).toHaveBeenCalledTimes(2);
   });
 
   // ── #1511: the quote that reached the household in the app only ────────────
   it('#1511 every channel off for the household: appOnly true', async () => {
     mocks.appOnlyUids.mockReturnValue(['kin-uid-1']);
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
     expect(res.ok).toBe(true);
@@ -235,7 +276,7 @@ describe('createQuote handler effects', () => {
 
   it('#1511 the office copy having no channels is not the household copy having none', async () => {
     mocks.appOnlyUids.mockReturnValue(['office-uid']);
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
     expect(res.appOnly).toBe(false);
@@ -244,7 +285,7 @@ describe('createQuote handler effects', () => {
   it('#1511 no portal account: the office copy alone was written, so appOnly is omitted', async () => {
     mocks.resolveUid.mockResolvedValue(null);
     mocks.appOnlyUids.mockReturnValue(['office-uid']);
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
     expect(res.ok).toBe(true);
@@ -253,7 +294,7 @@ describe('createQuote handler effects', () => {
 
   it('#1511 a household copy the dispatcher held back has no delivery to describe', async () => {
     mocks.suppressed.mockReturnValue([{ recipientUid: 'kin-uid-1', reason: 'prefs' }]);
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await createQuoteHandler(req({ ...validPayload, sendToKinfolk: true }));
     expect(res).not.toHaveProperty('appOnly');
@@ -305,15 +346,16 @@ describe('createQuote line items', () => {
     expect(write.data.invoiceDiscountCents).toBe(0);
   });
 
-  it('still forces quote status even when line items are present', async () => {
+  it('still saves a quote draft even when line items are present', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
     await createQuoteHandler(
       req({ ...validPayload, total: 150, amountDue: 150, lineItems: twoLines }),
     );
     const write = ctx.writes.find((w) => w.path.startsWith('invoices/'))!;
-    expect(write.data.status).toBe('quote');
-    expect(write.data.invoiceStatus).toBe('quote');
+    expect(write.data.status).toBe('draft');
+    expect(write.data.invoiceStatus).toBe('draft');
+    expect(write.data.quoteDraft).toBe(true);
   });
 
   it('applies an invoice-level discount to the total but not the subtotal', async () => {

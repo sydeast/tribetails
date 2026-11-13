@@ -142,6 +142,16 @@ export interface InvoiceEntry {
   /** When they answered. Absent alongside the field above, never a zero. */
   quoteDecidedAt?: Timestamp;
   /**
+   * #2087: true on a quote saved with "Send to kinfolk now" off. It is a draft
+   * only the office sees (`status` 'draft'), and sending it makes it a Quote.
+   * Read through `isQuoteDraft`.
+   */
+  quoteDraft?: boolean;
+  /** #2088: set when the office turned a quote into a draft invoice. */
+  quoteConvertedAt?: Timestamp;
+  /** #2088: set when the office withdrew a quote (it is `cancelled` from then on). */
+  quoteWithdrawnAt?: Timestamp;
+  /**
    * When the household was last reminded about this invoice (ms epoch), written
    * by `sendInvoiceReminder` and by the daily reminder cron. Absent when no
    * reminder was ever sent; `null` when a failed send released its claim. Read
@@ -396,6 +406,30 @@ export function invoiceQuoteDecision(
 ): 'accepted' | 'denied' | null {
   const raw: unknown = row.quoteDecision;
   return raw === 'accepted' || raw === 'denied' ? raw : null;
+}
+
+/**
+ * #2087: a quote saved unsent, a draft only the office sees. Its stamped state
+ * is `draft`; the mark is what makes its send a quote rather than a bill.
+ */
+export function isQuoteDraft(row: Pick<InvoiceEntry, 'quoteDraft'> & { status?: unknown }): boolean {
+  const raw: unknown = row.quoteDraft;
+  const status = typeof row.status === 'string' ? row.status.trim().toLowerCase() : '';
+  return raw === true && status === 'draft';
+}
+
+/**
+ * #2088: whether the office can still change this quote (send it, turn it into
+ * an invoice, withdraw it): a quote saved unsent, or a sent one the household
+ * has not accepted. An accepted quote is an invoice, and an archived one is
+ * read-only until it is restored.
+ */
+export function quoteIsChangeable(row: InvoiceEntry): boolean {
+  if (isArchivedInvoice(row)) return false;
+  if (invoiceQuoteDecision(row) === 'accepted') return false;
+  if (isQuoteDraft(row)) return true;
+  const status = typeof row.status === 'string' ? row.status.trim().toLowerCase() : '';
+  return status === 'quote';
 }
 /** The two values the funds lane writes. Anything else is not a funds state. */
 export const INVOICE_DISPUTE_FUNDS_STATES = ['withdrawn', 'reinstated'] as const;
