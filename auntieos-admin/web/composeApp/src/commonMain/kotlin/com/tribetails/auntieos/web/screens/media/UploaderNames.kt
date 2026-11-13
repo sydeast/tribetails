@@ -18,6 +18,23 @@ import com.tribetails.auntieos.web.data.uploaderNamesFrom
  * names the person whenever either source has a name or email. A failed read
  * leaves the map empty and the caption as it was: the gallery never waits on it.
  */
+/**
+ * #1820: the staff roster itself, read once from listStaff, for a screen that
+ * needs more than names (the Activity Log also needs who is the owner and who
+ * an Auntie). A failed read leaves it empty.
+ */
+@Composable
+internal fun rememberStaffRoster(client: FirestoreClient = remember { FirestoreClient() }): List<com.tribetails.auntieos.web.data.StaffMember> {
+    var staff by remember { mutableStateOf<List<com.tribetails.auntieos.web.data.StaffMember>>(emptyList()) }
+    LaunchedEffect(client) {
+        when (val r = client.listStaff()) {
+            is WriteResult.Ok -> staff = r.value
+            is WriteResult.Err -> Unit
+        }
+    }
+    return staff
+}
+
 @Composable
 internal fun rememberUploaderNames(client: FirestoreClient = remember { FirestoreClient() }): Map<String, String> {
     var names by remember { mutableStateOf<Map<String, String>>(emptyMap()) }

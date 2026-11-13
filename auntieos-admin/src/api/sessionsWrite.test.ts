@@ -160,9 +160,13 @@ describe('the audit and the household push run AFTER the write, and cannot fail 
       status: 'SUCCESS',
       targetId: 's1',
       targetCollection: 'kin_care_sessions',
+      // #1820: the opened line used to read "written with no payload".
+      payload: { visitId: 's1', action: 'DEPARTED', from: 'ARRIVED', to: 'DEPARTED', source: 'web' },
     });
-    const sent = call.mock.calls.find((c: unknown[]) => c[0] === 'logActivity')![1] as { description: string };
-    expect(sent.description).not.toContain('s1');
+    const sent = call.mock.calls.find((c: unknown[]) => c[0] === 'logActivity')![1] as Record<string, unknown>;
+    expect(String(sent['description'])).not.toContain('s1');
+    // #1820: who did it is the server's answer. The client names no role and no actor.
+    expect(Object.keys(sent).filter((k) => /role|actor/i.test(k))).toEqual([]);
   });
 
   it('routes the push on the envelope pair, preferring it over a legacy bookingId', async () => {

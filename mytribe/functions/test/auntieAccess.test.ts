@@ -126,6 +126,19 @@ describe('#944 wrapAdminCallable enforces the table', () => {
     await expect(wrapped({ auth: ownerAuth } as never)).resolves.toMatchObject({ ok: true });
   });
 
+  /**
+   * #1820. An Auntie's clock taps went through `logActivity`, which refused
+   * her, so they left no Activity Log line at all. She may now WRITE a line
+   * for what she did. Reading the log is oversight and stays with the owner.
+   */
+  it('#1820: admits an Auntie to write an Activity Log line, and to nothing that reads or checks the log', async () => {
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    const write = wrapAdminCallable('logActivity', async () => ({ ok: true }));
+    await expect(write({ auth: auntieAuth } as never)).resolves.toMatchObject({ ok: true });
+    const verify = wrapAdminCallable('verifyActivityLogChain', async () => ({ ok: true }));
+    await expect(verify({ auth: auntieAuth } as never)).rejects.toMatchObject({ code: 'permission-denied' });
+  });
+
   it('REFUSES an Auntie a money callable', async () => {
     const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
     for (const name of ['markInvoicePaid', 'createInvoice', 'updateInvoice', 'logExpense', 'generateReceipt']) {

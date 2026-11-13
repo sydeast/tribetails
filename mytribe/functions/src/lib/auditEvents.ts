@@ -524,6 +524,103 @@ export const AUDIT_EVENTS = {
   // portals included. The payload carries the household, the error code and the
   // refusal message with any phone-shaped digits masked; never a name or phone.
   EMERGENCY_CONTACT_SAVE_REFUSED: 'EMERGENCY_CONTACT_SAVE_REFUSED',
+
+  // ── Declared ahead of their writers (#1820) ──────────────────────────────
+  // The Activity Log lane lands as a chain of PRs that each add lines for
+  // actions that leave none today. Their keys are declared here in one go, with
+  // a title each in AUDIT_EVENT_TITLES below, so those PRs do not all edit this
+  // object. A key with no writer yet is harmless: nothing emits it.
+
+  // A notification marked unread again. It was written as NOTIFICATION_VIEWED,
+  // which reads as the opposite of what happened.
+  NOTIFICATION_MARKED_UNREAD: 'NOTIFICATION_MARKED_UNREAD',
+  // A payment that leaves a balance. It was written as BILLING_INVOICE_PAID.
+  BILLING_PAYMENT_PARTIAL: 'BILLING_PAYMENT_PARTIAL',
+  // A notice that was held back (notices off, no portal account, already sent,
+  // turned off by the household). It was written as NOTIFICATION_DISPATCHED.
+  NOTIFICATION_NOT_SENT: 'NOTIFICATION_NOT_SENT',
+
+  // Kinfolk and Kin records. CREATE_KINFOLK, ARCHIVE_KIN and RESTORE_KIN above
+  // already exist; these are the edits that left no line.
+  UPDATE_KINFOLK: 'UPDATE_KINFOLK',
+  UPDATE_KINFOLK_TAGS: 'UPDATE_KINFOLK_TAGS',
+  ARCHIVE_KINFOLK: 'ARCHIVE_KINFOLK',
+  RESTORE_KINFOLK: 'RESTORE_KINFOLK',
+  CREATE_KIN: 'CREATE_KIN',
+  UPDATE_KIN: 'UPDATE_KIN',
+  UPDATE_KIN_TAGS: 'UPDATE_KIN_TAGS',
+  SECONDARY_KINFOLK_SAVED: 'SECONDARY_KINFOLK_SAVED',
+  SECONDARY_KINFOLK_REMOVED: 'SECONDARY_KINFOLK_REMOVED',
+  HOUSEHOLD_DATA_SAVED: 'HOUSEHOLD_DATA_SAVED',
+
+  // A KinTale sent from the visit composer, and KinTale template upkeep.
+  CONTENT_KINTALE_SENT: 'CONTENT_KINTALE_SENT',
+  KINTALE_TEMPLATE_CREATED: 'KINTALE_TEMPLATE_CREATED',
+  KINTALE_TEMPLATE_SAVED: 'KINTALE_TEMPLATE_SAVED',
+  KINTALE_TEMPLATE_ARCHIVED: 'KINTALE_TEMPLATE_ARCHIVED',
+  KINTALE_TEMPLATE_RESTORED: 'KINTALE_TEMPLATE_RESTORED',
+  KINTALE_TEMPLATE_DELETED: 'KINTALE_TEMPLATE_DELETED',
+
+  // Email and message templates.
+  TEMPLATE_CREATED: 'TEMPLATE_CREATED',
+  TEMPLATE_SAVED: 'TEMPLATE_SAVED',
+  TEMPLATE_DELETED: 'TEMPLATE_DELETED',
+  TEMPLATE_ASSIGNED: 'TEMPLATE_ASSIGNED',
+  TEMPLATE_UNASSIGNED: 'TEMPLATE_UNASSIGNED',
+  TEMPLATE_CONVERTED: 'TEMPLATE_CONVERTED',
+
+  // The in-visit clock. The admin clients have written these four through
+  // `logActivity` since the tap moved to a direct write; declared so a server
+  // writer can use the same keys and old and new lines read alike.
+  VISIT_ON_MY_WAY: 'VISIT_ON_MY_WAY',
+  VISIT_ARRIVED: 'VISIT_ARRIVED',
+  VISIT_DEPARTED: 'VISIT_DEPARTED',
+  VISIT_UNDO_ARRIVAL: 'VISIT_UNDO_ARRIVAL',
 } as const;
 
 export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];
+
+/**
+ * The title a line carries on the Activity Log, in the operator's words, for
+ * the keys declared ahead of their writers (#1820). Brand words keep their
+ * casing: Kin, Kinfolk, KinTale.
+ *
+ * Only those keys are here. The older keys still take their title from the key
+ * itself on each client; giving them plain titles is a later change in this
+ * lane and belongs to it.
+ */
+export const AUDIT_EVENT_TITLES = {
+  NOTIFICATION_MARKED_UNREAD: 'Notification marked unread',
+  BILLING_PAYMENT_PARTIAL: 'Part payment recorded',
+  NOTIFICATION_NOT_SENT: 'Notification not sent',
+
+  UPDATE_KINFOLK: 'Kinfolk updated',
+  UPDATE_KINFOLK_TAGS: 'Kinfolk tags changed',
+  ARCHIVE_KINFOLK: 'Kinfolk archived',
+  RESTORE_KINFOLK: 'Kinfolk restored',
+  CREATE_KIN: 'Kin added',
+  UPDATE_KIN: 'Kin updated',
+  UPDATE_KIN_TAGS: 'Kin tags changed',
+  SECONDARY_KINFOLK_SAVED: 'Secondary Kinfolk saved',
+  SECONDARY_KINFOLK_REMOVED: 'Secondary Kinfolk removed',
+  HOUSEHOLD_DATA_SAVED: 'Household details saved',
+
+  CONTENT_KINTALE_SENT: 'KinTale sent',
+  KINTALE_TEMPLATE_CREATED: 'KinTale template created',
+  KINTALE_TEMPLATE_SAVED: 'KinTale template saved',
+  KINTALE_TEMPLATE_ARCHIVED: 'KinTale template archived',
+  KINTALE_TEMPLATE_RESTORED: 'KinTale template restored',
+  KINTALE_TEMPLATE_DELETED: 'KinTale template deleted',
+
+  TEMPLATE_CREATED: 'Template created',
+  TEMPLATE_SAVED: 'Template saved',
+  TEMPLATE_DELETED: 'Template deleted',
+  TEMPLATE_ASSIGNED: 'Template assigned',
+  TEMPLATE_UNASSIGNED: 'Template unassigned',
+  TEMPLATE_CONVERTED: 'Template converted to visual',
+
+  VISIT_ON_MY_WAY: 'Visit: on my way',
+  VISIT_ARRIVED: 'Visit: arrived',
+  VISIT_DEPARTED: 'Visit: departed',
+  VISIT_UNDO_ARRIVAL: 'Visit: arrival undone',
+} as const satisfies Partial<Record<AuditEvent, string>>;
