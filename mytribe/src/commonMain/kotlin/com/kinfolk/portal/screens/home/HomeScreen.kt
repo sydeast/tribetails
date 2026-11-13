@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
@@ -72,7 +73,9 @@ import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.bookingWhenLabel
 import com.kinfolk.portal.util.formatUsd
-import com.kinfolk.portal.util.relativeTime
+import com.kinfolk.portal.util.KIN_TALE_HEADLINE_HOME_CHARS
+import com.kinfolk.portal.util.kinTaleByline
+import com.kinfolk.portal.util.kinTaleHeadline
 import kotlinx.coroutines.delay
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -499,6 +502,9 @@ private fun TalesSection(
     }
 }
 
+/** Test tag on a Recent KinTales row's headline line (#2166). */
+internal const val HOME_TALE_HEADLINE_TAG = "homeTaleHeadline"
+
 @Composable
 private fun TaleRow(tale: KinTale, onOpen: () -> Unit) {
     val type = LocalKinfolkTypography.current
@@ -509,6 +515,15 @@ private fun TaleRow(tale: KinTale, onOpen: () -> Unit) {
             .clickable(role = Role.Button, onClickLabel = "Open this KinTale", onClick = onOpen)
             .padding(vertical = KinfolkSpacing.xs),
     ) {
+        // #2166: the headline leads, as on web Home (`t.title || t.body.slice(0, 60)`).
+        // None to show (no title, blank body) means no line, not an empty one.
+        kinTaleHeadline(tale.title, tale.body, KIN_TALE_HEADLINE_HOME_CHARS)?.let { headline ->
+            Text(
+                text = headline,
+                style = type.sansBody.copy(fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.testTag(HOME_TALE_HEADLINE_TAG),
+            )
+        }
         Text(
             text = tale.body.ifBlank { "A new tale from your Auntie" },
             style = type.sansBody,
@@ -516,18 +531,7 @@ private fun TaleRow(tale: KinTale, onOpen: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.height(KinfolkSpacing.xs))
-        val meta = buildString {
-            append("FROM ")
-            append((auntieName(tale.authorDisplayName) ?: "YOUR AUNTIE").uppercase())
-            tale.sentAtMs?.let {
-                append(" · ")
-                append(relativeTime(it).uppercase())
-            } ?: tale.sentAtText?.trim()?.takeIf { it.isNotEmpty() }?.let {
-                append(" · ")
-                append(it)
-            }
-        }
-        Text(meta, style = type.sansMeta)
+        Text(kinTaleByline(tale.authorDisplayName, tale.sentAtMs, tale.sentAtText), style = type.sansMeta)
     }
 }
 

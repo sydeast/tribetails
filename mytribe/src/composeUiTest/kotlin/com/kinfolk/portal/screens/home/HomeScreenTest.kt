@@ -5,10 +5,13 @@ package com.kinfolk.portal.screens.home
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isHeading
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -169,6 +172,7 @@ class HomeScreenTest {
             put("tales", buildJsonArray {
                 add(buildJsonObject {
                     put("id", "t1")
+                    put("title", "Ball day")
                     put("body", "Buddy chased the ball all afternoon.")
                     put("authorDisplayName", "Auntie Avery")
                     put("mediaIds", buildJsonArray {})
@@ -280,6 +284,7 @@ class HomeScreenTest {
             put("tales", buildJsonArray {
                 add(buildJsonObject {
                     put("id", "t-a")
+                    put("title", "Fetch")
                     put("body", "Buddy chased the ball.")
                     put("authorDisplayName", "Maya")
                     put("mediaIds", buildJsonArray {})
@@ -287,6 +292,7 @@ class HomeScreenTest {
                 })
                 add(buildJsonObject {
                     put("id", "t-b")
+                    put("title", "Nap time")
                     put("body", "Buddy napped all afternoon.")
                     put("authorDisplayName", "Maya")
                     put("mediaIds", buildJsonArray {})
@@ -302,5 +308,56 @@ class HomeScreenTest {
         onNodeWithText("Buddy napped all afternoon.").performClick()
         waitForIdle()
         kotlin.test.assertEquals(listOf("t-b"), opened)
+    }
+
+    // #2166: a Recent KinTales row leads with the headline, as web Home does
+    // (`t.title || t.body.slice(0, 60)`), and draws no line when there is none.
+    @Test
+    fun recentKinTaleRow_showsTheHeadlineOrTheBodyOpening() = runComposeUiTest {
+        val longBody =
+            "Miso ate every bite of dinner, then claimed the windowsill for the whole afternoon and watched the birds."
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyBookings", buildJsonObject {
+            put("liveVisit", kotlinx.serialization.json.JsonNull)
+            put("upcoming", buildJsonArray {})
+            put("recent", buildJsonArray {})
+        })
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "titled")
+                    put("title", "Miso claimed the windowsill")
+                    put("body", "Dinner went well.")
+                    put("authorDisplayName", "Maya")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                })
+                add(buildJsonObject {
+                    put("id", "old")
+                    put("body", longBody)
+                    put("authorDisplayName", "Maya")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                })
+                add(buildJsonObject {
+                    put("id", "blank")
+                    put("title", "")
+                    put("body", "")
+                    put("authorDisplayName", "Maya")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                })
+            })
+        })
+        setThemedContent { HomeScreen("The Foster", "demo-1", PortalApi(fake)) }
+        waitForIdle()
+        // The row is one clickable, which merges its lines; the tag lives in the unmerged tree.
+        val headlines = onAllNodesWithTag(HOME_TALE_HEADLINE_TAG, useUnmergedTree = true)
+        headlines.assertCountEquals(2)
+        headlines[0].assertTextEquals("Miso claimed the windowsill")
+        headlines[1].assertTextEquals(longBody.take(60).trim())
+        // The blank tale keeps its placeholder body line, with no headline over it.
+        onNodeWithText("A new tale from your Auntie").assertExists()
     }
 }
