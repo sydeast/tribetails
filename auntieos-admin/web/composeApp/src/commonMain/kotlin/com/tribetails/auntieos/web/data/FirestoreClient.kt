@@ -2782,8 +2782,10 @@ sealed class WriteResult<out T> {
     /**
      * [code] is the callable's machine `details.code` when the server sent one (#1145), so a caller can tell a
      * refusal the operator may go past from one they may not. Null for every other failure.
+     * [details] is the refusal's whole `details` object as JSON text (#1935), for a callable that says
+     * which field it refused (`fieldErrors`). Null when the server sent none.
      */
-    data class Err(val message: String, val code: String? = null) : WriteResult<Nothing>()
+    data class Err(val message: String, val code: String? = null, val details: String? = null) : WriteResult<Nothing>()
 }
 /** A schedule refusal an operator may knowingly approve over (#1145). A closed day is not one. */
 enum class ScheduleOverride { VISIT, BUSY }

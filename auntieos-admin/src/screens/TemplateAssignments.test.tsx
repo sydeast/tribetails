@@ -251,7 +251,10 @@ describe('TemplateAssignments routing table', () => {
     expect(
       await screen.findByText(/an override changes the EMAIL template only/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/SMS and push read the template ids frozen in the catalog/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/the text message and push notification keep their own wording, which you change in the template editor/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/template ids frozen in the catalog/i)).toBeNull();
     expect(screen.getByText(/audience is written to the binding and no sender reads it/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/audience \(stored, unused\)/i)).toBeInTheDocument();
   });

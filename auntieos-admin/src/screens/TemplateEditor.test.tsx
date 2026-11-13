@@ -818,15 +818,18 @@ describe('TemplateEditor: the email creation mock (#755)', () => {
     const names = Array.from(trailing!.querySelectorAll('button')).map((b) => b.textContent?.trim());
     expect(names).toEqual(['Cancel', 'Delete', 'Save template']);
   });
-  it('states the channel with a kit pill and nothing else on the strip', () => {
+  it('#1935: the strip is a working switch between the three channels, opening on Email', () => {
     render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} />);
     const strip = document.querySelector('.template-editor__strip');
     expect(strip).not.toBeNull();
-    const pill = strip!.querySelector('.den-statuspill');
-    expect(pill).toHaveTextContent('Channel · Email');
-    expect(pill).toHaveAttribute('data-tone', 'teal');
-    // No dead Push/SMS switch and no binding toggle: nothing else interactive.
-    expect(strip!.querySelectorAll('button, input')).toHaveLength(0);
+    const tabs = within(strip as HTMLElement).getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual(['Email', 'Text message', 'Push notification']);
+    expect(tabs.map((t) => t.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+    // No binding toggle: the three tabs are the only controls on it. The tabs'
+    // own behaviour is pinned in TemplateEditor.channels.test.tsx.
+    expect(strip!.querySelectorAll('button, input')).toHaveLength(3);
+    // Outside the email form's fieldset, so a read-only email cannot lock it.
+    expect(strip!.closest('fieldset')).toBeNull();
   });
   it('offers one merge-field chip per token the pipeline fills, and drops it at the caret', async () => {
     render(<TemplateEditor template={tpl({ body: 'Hello , see you then.' })} onClose={vi.fn()} onSaved={vi.fn()} />);
