@@ -25,6 +25,7 @@ import { LaunchError } from './screens/LaunchError';
 import { SessionNotice } from './components/SessionNotice';
 import { RouteError } from './components/RouteError';
 import { NotFound } from './screens/NotFound';
+import { useRouteTitle } from './lib/pageTitle';
 
 /**
  * Shared chrome: the two drifting orbs behind every screen, and the session
@@ -38,6 +39,9 @@ import { NotFound } from './screens/NotFound';
  * session is healthy, so signed-out screens are untouched.
  */
 function RootLayout() {
+  // #2007: the browser tab names the screen. One writer for the whole portal;
+  // see lib/pageTitle.ts.
+  useRouteTitle();
   return (
     <>
       <span className="orb a" aria-hidden="true" />
@@ -62,6 +66,7 @@ const indexRoute = createRoute({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/signin',
+  staticData: { title: 'Sign in' },
   // #1384: `redirect` is the location the guard turned the household away from.
   validateSearch: signInSearch,
   component: SignIn,
@@ -70,6 +75,7 @@ const signInRoute = createRoute({
 const claimRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/claim',
+  staticData: { title: 'Join your Tribe' },
   component: lazyRouteComponent(() => import('./screens/ClaimInvite'), 'ClaimInvite'),
 });
 
@@ -85,6 +91,9 @@ const claimIdRoute = createRoute({
 const secureResetRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/account/secure-reset',
+  // Every kind of Firebase email link lands here; the screen names the kind
+  // once it has read the link (`emailLinkTabTitle`).
+  staticData: { title: 'Email link' },
   component: lazyRouteComponent(() => import('./screens/SecureReset'), 'SecureReset'),
 });
 
@@ -96,12 +105,14 @@ const secureResetRoute = createRoute({
 const emailActionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/account/action',
+  staticData: { title: 'Email link' },
   component: lazyRouteComponent(() => import('./screens/SecureReset'), 'SecureReset'),
 });
 
 const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/home',
+  staticData: { title: 'Home' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/Home'), 'Home'),
 });
@@ -200,6 +211,7 @@ async function requireOperatorForPick(ctx: GuardContext) {
 const pickRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/pick',
+  staticData: { title: 'Choose a Tribe' },
   beforeLoad: requireOperatorForPick,
   component: lazyRouteComponent(() => import('./screens/TribePicker'), 'TribePicker'),
 });
@@ -234,6 +246,7 @@ function AccountError() {
 const errorRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/error',
+  staticData: { title: 'Trouble loading your Tribe' },
   beforeLoad: requireSignedIn,
   component: AccountError,
 });
@@ -241,6 +254,7 @@ const errorRoute = createRoute({
 const noTribesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/no-tribes',
+  staticData: { title: 'Welcome' },
   beforeLoad: requireSignedIn,
   component: lazyRouteComponent(() => import('./screens/NoTribes'), 'NoTribes'),
 });
@@ -258,6 +272,7 @@ export function scheduleSearch(search: Record<string, unknown>): { tab?: 'past' 
 const scheduleRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/schedule',
+  staticData: { title: 'Schedule' },
   validateSearch: scheduleSearch,
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/Schedule'), 'Schedule'),
@@ -272,6 +287,7 @@ const scheduleRoute = createRoute({
 const bookingDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/schedule/$visitId',
+  staticData: { title: 'Schedule' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/BookingDetail'), 'BookingDetail'),
 });
@@ -296,6 +312,7 @@ export function bookingWizardSearch(search: Record<string, unknown>): { weekly: 
 const bookingWizardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/schedule/book',
+  staticData: { title: 'New booking' },
   beforeLoad: requireActiveTribe,
   validateSearch: bookingWizardSearch,
   // BookingWizardRoute (the search-aware wrapper) lives in screens/BookingWizard.tsx
@@ -306,6 +323,7 @@ const bookingWizardRoute = createRoute({
 const messagesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/messages',
+  staticData: { title: 'Messages' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/Messages'), 'Messages'),
 });
@@ -313,6 +331,7 @@ const messagesRoute = createRoute({
 const kinRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kin',
+  staticData: { title: 'Kin' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/Kin'), 'Kin'),
 });
@@ -326,6 +345,7 @@ const kinRoute = createRoute({
 const kinNewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kin/new',
+  staticData: { title: 'Add Kin' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/KinAdd'), 'KinAdd'),
 });
@@ -333,6 +353,7 @@ const kinNewRoute = createRoute({
 const kinDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kin/$kinId',
+  staticData: { title: 'Kin' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/KinDetail'), 'KinDetail'),
 });
@@ -351,6 +372,7 @@ export function kinEditSearch(search: Record<string, unknown>): { photo?: 'faile
 const kinEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kin/$kinId/edit',
+  staticData: { title: 'Edit Kin' },
   beforeLoad: requireActiveTribe,
   validateSearch: kinEditSearch,
   component: lazyRouteComponent(() => import('./screens/KinEdit'), 'KinEdit'),
@@ -368,6 +390,7 @@ export function kinTalesSearch(search: Record<string, unknown>): { tale?: string
 const kinTalesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/kintales',
+  staticData: { title: 'KinTales' },
   validateSearch: kinTalesSearch,
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/KinTales'), 'KinTalesRoute'),
@@ -376,6 +399,7 @@ const kinTalesRoute = createRoute({
 const invoicesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/invoices',
+  staticData: { title: 'Invoices' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/Invoices'), 'Invoices'),
 });
@@ -383,6 +407,7 @@ const invoicesRoute = createRoute({
 const invoiceDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/invoices/$invoiceId',
+  staticData: { title: 'Invoice' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/InvoiceDetail'), 'InvoiceDetail'),
 });
@@ -390,6 +415,7 @@ const invoiceDetailRoute = createRoute({
 const tribeHubRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/tribe',
+  staticData: { title: 'Tribe' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/TribeHub'), 'TribeHub'),
 });
@@ -397,6 +423,7 @@ const tribeHubRoute = createRoute({
 const galleryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/gallery',
+  staticData: { title: 'Gallery' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/Gallery'), 'Gallery'),
 });
@@ -404,6 +431,7 @@ const galleryRoute = createRoute({
 const tribeEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/tribe/edit',
+  staticData: { title: 'Tribe profile' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/TribeProfile'), 'TribeProfile'),
 });
@@ -411,6 +439,7 @@ const tribeEditRoute = createRoute({
 const accountRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/account',
+  staticData: { title: 'Account settings' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/Account'), 'Account'),
 });
@@ -418,6 +447,7 @@ const accountRoute = createRoute({
 const notificationSettingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/account/notifications',
+  staticData: { title: 'Notification settings' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/NotificationSettings'), 'NotificationSettings'),
 });
@@ -430,6 +460,7 @@ const notificationSettingsRoute = createRoute({
 const notificationsListRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/notifications',
+  staticData: { title: 'Notifications' },
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/NotificationsList'), 'NotificationsList'),
 });
@@ -442,6 +473,7 @@ const notificationsListRoute = createRoute({
 const aboutRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/about',
+  staticData: { title: 'About' },
   beforeLoad: requireSignedIn,
   component: lazyRouteComponent(() => import('./screens/About'), 'About'),
 });

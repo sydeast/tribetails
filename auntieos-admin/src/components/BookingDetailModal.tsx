@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import { type ScheduleSessionEntry } from '../api/schedule';
 import {
   type BookingNoteEntry,
@@ -159,6 +160,8 @@ export function BookingDetailModal({
 
   const startTime = str(entry.startTime);
   const household = sessionHousehold(str(entry.kinfolkName));
+  // #2007: the tab names whose visit is open.
+  useRecordTitle(str(entry.kinfolkName).trim() === '' ? null : household);
   const stateInfo = sessionStateInfo(sessionState(str(entry.status)));
   const durationMinutes = visitDurationMinutes(entry);
   const locked = notesLocked(startTime, nowMs(), businessZone);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import {
   PERMISSION_META,
   formatInviteDate,
@@ -194,6 +195,8 @@ export function HouseholdMembers({ kinfolkId, kinfolkName, kinfolkEmail = '', on
   // #689. Named after the household rather than "household" so the fallback
   // wording still points at something the operator can picture.
   const back = useHistoryBack({ fallbackLabel: householdName, onFallback: onBack });
+  // #2007: the tab names the household when it has a name on file.
+  useRecordTitle(kinfolkName);
 
   const [members, setMembers] = useState<Async<HouseholdMember[]>>({ status: 'loading' });
   const [invites, setInvites] = useState<Async<HouseholdInvite[]>>({ status: 'loading' });

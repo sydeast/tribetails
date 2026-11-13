@@ -540,6 +540,20 @@ describe('HouseholdMembers ERROR', () => {
   });
 });
 
+describe('HouseholdMembers browser tab (#2007)', () => {
+  it('names the household, and leaves the tab on the screen name when none is on file', async () => {
+    api.listHouseholdMembers.mockResolvedValue([]);
+    api.listHouseholdInvites.mockResolvedValue([]);
+    document.title = '';
+    const view = render(<HouseholdMembers kinfolkId="fam1" kinfolkName="the Walls" onBack={() => {}} />);
+    expect(document.title).toBe('the Walls · AuntieOS');
+    view.unmount();
+    render(<HouseholdMembers kinfolkId="fam1" onBack={() => {}} />);
+    expect(document.title).toBe('AuntieOS');
+    expect(document.title).not.toContain('fam1');
+  });
+});
+
 describe('HouseholdMembers UNAUTHORIZED and unreadable', () => {
   it('says the member list could not be loaded, and does not claim the household is empty', async () => {
     api.listHouseholdMembers.mockRejectedValue(new Error('permission-denied: Admin claim required.'));
