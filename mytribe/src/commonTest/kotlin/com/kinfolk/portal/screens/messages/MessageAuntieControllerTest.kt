@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -78,6 +79,17 @@ class MessageAuntieControllerTest {
         assertTrue(!c.sending)
     }
 
+    @Test
+    fun send_escapesTypedSignsSoTheyAreKeptAsTyped() = runTest {
+        val fake = FakeFunctionsClient()
+        emptyThread(fake)
+        fake.stub("sendKinfolkMessage", buildJsonObject { put("messageId", "m_new") })
+        val c = MessageAuntieController("3", PortalApi(fake), this)
+        c.send("a < b, the <side gate> & &lt;") {}
+        advanceUntilIdle()
+        val sent = fake.calls.first { it.first == "sendKinfolkMessage" }.second?.get("body")?.jsonPrimitive?.content
+        assertEquals("a &lt; b, the &lt;side gate&gt; &amp; &amp;lt;", sent)
+    }
     @Test
     fun send_blankIsNoOp() = runTest {
         val fake = FakeFunctionsClient()

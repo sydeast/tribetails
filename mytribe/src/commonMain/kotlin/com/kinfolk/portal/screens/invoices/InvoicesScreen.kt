@@ -196,7 +196,7 @@ private fun AccountBalanceHero(balanceCents: Long) {
                 style = type.heritageDisplay.copy(color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Normal),
             )
             Text(
-                "What you can spend. It comes off your next invoice.",
+                "What you can spend. Your Auntie applies it to an invoice for you.",
                 style = type.sansBody.copy(color = Color.White.copy(alpha = 0.92f)),
             )
         }

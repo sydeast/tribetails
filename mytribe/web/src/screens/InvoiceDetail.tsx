@@ -570,7 +570,7 @@ export function InvoiceDetail() {
                 <div className="ckick">Available Credit</div>
                 <div className="camt">{formatCentsUsd(inv.creditAmountCents ?? 0)}</div>
                 <div className="cnote">
-                  This credit goes to your account balance and comes off your next invoice.
+                  This credit goes to your account balance. Your Auntie applies it to an invoice for you.
                 </div>
 
                 <button type="button" className="btn credit-btn" onClick={() => redeem.mutate()} disabled={redeem.isPending}>

@@ -1,5 +1,7 @@
 import { call } from '../lib/fns';
 import type {
+  ApplyAccountCreditArgs,
+  ApplyAccountCreditResult,
   GetAccountCreditHistoryArgs,
   GetAccountCreditHistoryResult,
   GiveAccountCreditArgs,
@@ -18,6 +20,22 @@ import type {
  */
 export async function giveAccountCredit(input: GiveAccountCreditArgs): Promise<GiveAccountCreditResult> {
   return call<GiveAccountCreditArgs, GiveAccountCreditResult>('giveAccountCredit', input, {
+    idempotent: true,
+  });
+}
+
+/**
+ * #1872 (operator ruling 2026-11-11): applies an amount of the household's
+ * account credit to one open invoice. The only way credit reaches an invoice;
+ * nothing spends it automatically. Server side:
+ * `mytribe/functions/src/admin/applyAccountCredit.ts`.
+ *
+ * Always carries its key (the server requires one and uses it as the payment
+ * row's id), so it is safe to retry: a second attempt with the same key answers
+ * the first and applies nothing more.
+ */
+export async function applyAccountCredit(input: ApplyAccountCreditArgs): Promise<ApplyAccountCreditResult> {
+  return call<ApplyAccountCreditArgs, ApplyAccountCreditResult>('applyAccountCredit', input, {
     idempotent: true,
   });
 }

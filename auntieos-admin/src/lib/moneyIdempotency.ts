@@ -61,6 +61,15 @@ export function mintGiveCreditIdempotencyKey(): string {
 }
 
 /**
+ * #1872: the key for one `applyAccountCredit` submission. The server requires
+ * it and uses it as the payment row's id, so a second press lands on the same
+ * payment instead of applying the amount twice.
+ */
+export function mintApplyCreditIdempotencyKey(): string {
+  return mintKey('acr');
+}
+
+/**
  * #1003: the key for one `resolveUnappliedPayment` decision. The server uses it
  * to answer a retry with the first decision instead of crediting or applying
  * the same card payment twice. Kept across a failed attempt, minted fresh when

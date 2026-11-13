@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { contentToText, frameHtml, isVisualTemplate, sendPartsFor } from '../src/lib/emailFrame';
 import { renderEmailParts } from '../src/lib/email';
 import { SEED_CORPUS } from '../src/notifications/seedCorpus.generated';
+import { messagePreview } from '../src/lib/richText';
 
 describe('frameHtml', () => {
   it('puts headline and content inside the shared frame', () => {
@@ -225,5 +226,35 @@ describe('sendPartsFor', () => {
 
   it('an old-format document with an empty body still sends as today', () => {
     expect(sendPartsFor({ subject: 's', body: '' })).toEqual({ subjectTemplate: 's', bodyTemplate: '' });
+  });
+});
+describe('message.received quotes a message with a less-than sign whole (#1873)', () => {
+  // The preview is the stored message's plain text, so it can carry a typed
+  // `<`. The html part must escape it (never strip it or start a tag); the
+  // text part must carry it as typed.
+  const seed = SEED_CORPUS.find((s) => s.key === 'message.received')!;
+  const doc = { subject: seed.emailSubject, format: 'visual' as const, headline: seed.emailHeadline, content: seed.emailContent };
+  const preview = 'I think 5 < 6 and <script>alert(1)</script> four more words';
+  it('escapes the sign in the html part and keeps every word', () => {
+    const out = renderEmailParts({ ...sendPartsFor(doc), data: { kinfolkName: 'Jane <Doe>', preview } });
+    expect(out.html).toContain('I think 5 &lt; 6 and &lt;script&gt;alert(1)&lt;/script&gt; four more words');
+    expect(out.html).not.toContain('<script>');
+    expect(out.html).toContain('Jane &lt;Doe&gt;');
+  });
+  it('keeps the sign as typed in the text part and the subject', () => {
+    const out = renderEmailParts({ ...sendPartsFor(doc), data: { kinfolkName: 'Jane <Doe>', preview } });
+    expect(out.text).toContain(preview);
+    expect(out.subject).toBe('New message from Jane <Doe>');
+  });
+  it('a preview made from a stored body is decoded once: the reader sees the signs as typed', () => {
+    // Stored: typed `<` as `&lt;`, typed `&lt;` as `&amp;lt;`. The preview is
+    // plain text; the html part escapes it once more, never twice.
+    const previewText = messagePreview('<p>5 &lt; 6 and the entity &amp;lt; and &lt;side gate&gt;</p>', 200);
+    expect(previewText).toBe('5 < 6 and the entity &lt; and <side gate>');
+    const out = renderEmailParts({ ...sendPartsFor(doc), data: { kinfolkName: 'Jane', preview: previewText } });
+    expect(out.html).toContain('5 &lt; 6 and the entity &amp;lt; and &lt;side gate&gt;');
+    expect(out.html).not.toContain('&amp;amp;');
+    expect(out.html).not.toContain('&amp;lt; 6');
+    expect(out.text).toContain('5 < 6 and the entity &lt; and <side gate>');
   });
 });

@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import com.tribetails.auntieos.data.repository.TemplateRepository
+import com.tribetails.auntieos.data.repository.decodeTemplateChannels
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -43,6 +44,8 @@ class TemplateBankMarkdownRotationTest {
 
     private fun repo(): TemplateRepository {
         val r = mockk<TemplateRepository>()
+        // #1935: the editor reads the text and push wording; none is sent here.
+        coEvery { r.getTemplateChannels(any()) } returns Result.success(decodeTemplateChannels(emptyMap()))
         coEvery { r.listTemplates() } returns Result.success(listOf(plain))
         // Empty on purpose: a non-empty category list draws its own suggestion
         // chips, which would echo "Billing" a second time and make the text

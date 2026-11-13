@@ -9,6 +9,7 @@ addSecondaryContact
 adjustSupply
 aiBackfillTaleTitles
 aiBatchPollCron
+applyAccountCredit
 approveTribePinChange
 archiveInvoice
 archiveKin
@@ -103,6 +104,7 @@ getRecordingAudio
 getServiceCatalog
 getShareLink
 getSharedKinTalePage
+getTemplateChannels
 getVetClinics
 giveAccountCredit
 googleOAuthCallback
@@ -257,6 +259,7 @@ saveMyAdminNotificationPrefs
 saveMyNotificationPrefs
 saveSecondaryKinfolk
 saveTemplate
+saveTemplateChannels
 saveTribeProfile
 scheduleDigestCron
 scheduleMarketingBlast

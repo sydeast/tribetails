@@ -246,6 +246,41 @@ describe('Messages thread', () => {
     expect(text.indexOf('First')).toBeLessThan(text.indexOf('Hello'));
   });
 
+  it('shows a message with a less-than sign whole, as typed (#1873)', async () => {
+    mocks.getMyConversation.mockResolvedValue(
+      conversationResult([
+        message({ id: 'm1', senderRole: 'kinfolk', body: '<p>I think 5 < 6 and 7 > 3 and <b>bold</b> \u{1F436} end</p>', createdAtMs: 1 }),
+        message({ id: 'm2', senderRole: 'kinfolk', body: '<p>a <b and more words</p>', createdAtMs: 2 }),
+      ]),
+    );
+    renderScreen();
+    await screen.findByText('bold');
+    const text = screen.getByTestId('msgs-thread').textContent ?? '';
+    expect(text).toContain('I think 5 < 6 and 7 > 3 and bold \u{1F436} end');
+    expect(text).toContain('a <b and more words');
+  });
+
+  it('draws a script-like message as text and runs nothing (#1873)', async () => {
+    mocks.getMyConversation.mockResolvedValue(
+      conversationResult([
+        message({
+          id: 'm1',
+          senderRole: 'kinfolk',
+          body: '<p><img src=x onerror="window.__pwn=1"><script>window.__pwn=1</script></p>',
+          createdAtMs: 1,
+        }),
+      ]),
+    );
+    renderScreen();
+    await screen.findByText('window.__pwn=1', { exact: false });
+    const thread = screen.getByTestId('msgs-thread');
+    expect(thread.querySelector('img')).toBeNull();
+    expect(thread.querySelector('script')).toBeNull();
+    expect(thread.querySelector('[onerror]')).toBeNull();
+    expect(thread.textContent).toContain('<script>window.__pwn=1</script>');
+    expect((window as unknown as { __pwn?: number }).__pwn).toBeUndefined();
+  });
+
   it('shows an empty state when the thread has no messages', async () => {
     mocks.getMyConversation.mockResolvedValue(conversationResult([]));
     renderScreen();

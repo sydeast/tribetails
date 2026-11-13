@@ -52,6 +52,7 @@ import { Args as RepairInvoicePaymentsArgs, Result as RepairInvoicePaymentsResul
 import { Args as RunAutoApplyArgs, Result as RunAutoApplyResult } from '../../src/admin/runAutoApply';
 // Q6 (operator ruling 2026-09-27): the owner gives a household credit, and the
 // household's billing people and the owner read its history.
+import { Args as ApplyAccountCreditArgs, Result as ApplyAccountCreditResult } from '../../src/admin/applyAccountCredit';
 import { Args as GiveAccountCreditArgs, Result as GiveAccountCreditResult } from '../../src/admin/giveAccountCredit';
 import {
   Args as ListUnappliedPaymentsArgs,
@@ -177,6 +178,8 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'repairInvoicePayments', args: RepairInvoicePaymentsArgs, result: RepairInvoicePaymentsResult },
     { name: 'runAutoApply', args: RunAutoApplyArgs, result: RunAutoApplyResult },
     { name: 'giveAccountCredit', args: GiveAccountCreditArgs, result: GiveAccountCreditResult },
+    // #1872: the admin applies an entered amount of account credit to one invoice.
+    { name: 'applyAccountCredit', args: ApplyAccountCreditArgs, result: ApplyAccountCreditResult },
     { name: 'getAccountCreditHistory', args: GetAccountCreditHistoryArgs, result: GetAccountCreditHistoryResult },
     // #1003: the admin's decision about an unapplied card payment.
     { name: 'listUnappliedPayments', args: ListUnappliedPaymentsArgs, result: ListUnappliedPaymentsResult },

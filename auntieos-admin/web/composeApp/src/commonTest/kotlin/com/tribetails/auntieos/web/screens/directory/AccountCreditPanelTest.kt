@@ -62,6 +62,20 @@ class AccountCreditPanelTest {
     }
 
     @Test
+    fun theGiveCreditHintPromisesNoAutomaticSpend() {
+        // #1872: credit goes onto an invoice only when the admin applies an amount.
+        assertEquals(
+            "Adds account credit to the household. It goes onto an invoice only when you apply an amount there.",
+            GIVE_CREDIT_HINT,
+        )
+        val lower = GIVE_CREDIT_HINT.lowercase()
+        assertFalse("automatic" in lower)
+        assertFalse("future invoice" in lower)
+        assertFalse("next invoice" in lower)
+        assertFalse("household can spend" in lower)
+    }
+
+    @Test
     fun theConfirmationShowsTheBalanceBeforeAndAfter() {
         assertEquals("Give \$25.00 credit? Balance goes from \$12.00 to \$37.00.", giveCreditConfirmText(2500, 1200))
         assertEquals("Credit given. Balance is now \$37.00.", giveCreditSuccessText(3700))

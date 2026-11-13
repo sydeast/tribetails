@@ -408,6 +408,7 @@ fun TemplateBankBody(
     viewing?.let { current ->
         TemplateViewOverlay(
             template = current,
+            templateService = templateService,
             onDismiss = { viewing = null },
             onEdit = {
                 viewing = null
@@ -421,6 +422,7 @@ fun TemplateBankBody(
         TemplateEditorOverlay(
             template = current,
             creating = creating,
+            templateService = templateService,
             categories = categories,
             // Operator-supplied keys already taken (create mode collision guard).
             existingKeys = templates.map { it.templateId },
@@ -585,6 +587,7 @@ private fun TemplateCard(
 @Composable
 private fun TemplateViewOverlay(
     template: TemplateService.EmailTemplate,
+    templateService: TemplateService,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
 ) {
@@ -606,6 +609,7 @@ private fun TemplateViewOverlay(
             )
         },
     ) {
+        TemplateChannelTitle(CHANNEL_EMAIL, Modifier.padding(bottom = 12.dp))
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -652,6 +656,13 @@ private fun TemplateViewOverlay(
                 )
             }
         }
+        // #1935: what this template says by text message and by push, read only here.
+        TemplateChannelWording(
+            templateId = template.templateId.takeIf { it.isNotBlank() },
+            service = templateService,
+            modifier = Modifier.padding(top = 20.dp),
+            editable = false,
+        )
     }
 }
 
@@ -713,6 +724,7 @@ private fun MergeFieldChips(onInsert: (String) -> Unit) {
 private fun TemplateEditorOverlay(
     template: TemplateService.EmailTemplate,
     creating: Boolean,
+    templateService: TemplateService,
     categories: List<String>,
     existingKeys: List<String>,
     onDismiss: () -> Unit,
@@ -785,6 +797,7 @@ private fun TemplateEditorOverlay(
             }
         }
 
+        TemplateChannelTitle(CHANNEL_EMAIL, Modifier.padding(bottom = 12.dp))
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -943,6 +956,13 @@ private fun TemplateEditorOverlay(
                 }
             }
         }
+        // #1935: the other two channels. Saved on their own, in every edit mode;
+        // a template that is not saved yet has neither.
+        TemplateChannelWording(
+            templateId = template.templateId.takeIf { !creating && it.isNotBlank() },
+            service = templateService,
+            modifier = Modifier.padding(top = 20.dp),
+        )
     }
 }
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { BusinessSettings } from '../../api/settings';
-import { US_HOLIDAYS, parseDatedEntry } from '../../lib/settingsFormat';
+import { US_HOLIDAYS, companyHolidayRows, parseDatedEntry } from '../../lib/settingsFormat';
 import {
   US_HOLIDAY_PRESETS,
   parseClosureEntry,
@@ -28,9 +28,10 @@ import './TimeOffEditor.css';
  * in (see `Settings.tsx`'s header). Edits three doc fields as one saveable
  * unit, exactly the grouping the wasm `TimeOffPanel` uses (`SettingsScreen.kt`):
  *   - `observedUsHolidays: string[]` -- ids from the fixed `US_HOLIDAYS` catalog
- *     (`lib/settingsFormat.ts`, ported verbatim from the wasm panel's private
- *     list so the checklist here shows the SAME eleven holidays, in the SAME
- *     order, as the read-only overview's `observedHolidayLabels`).
+ *     (`lib/settingsFormat.ts`, whose names come from the one-click presets
+ *     below so a holiday reads the same on its switch and its chip, #1947;
+ *     the checklist shows the SAME eleven holidays, in the SAME order, as the
+ *     read-only overview's `observedHolidayLabels`).
  *   - `companyHolidays: string[]` -- closure entries, decoded/encoded through
  *     `lib/closureRecurrence.ts` (`parseClosureEntry` / `formatClosureEntry`).
  *     PER THE 2026-07-31 OPERATOR RULING, an entry is no longer always a bare
@@ -57,7 +58,9 @@ import './TimeOffEditor.css';
  * re-checked: the server passes a stored entry through unchanged too.
  * Both lists are append/remove-by-index locally, same as the wasm panel's
  * local `companyHolidays`/`specialHours` state, and only reach Firestore on
- * this panel's own Save.
+ * this panel's own Save. The company holiday list is SHOWN next closure first
+ * (`companyHolidayRows`, #1979) while the stored array keeps its order; each
+ * row's Remove uses its stored index.
  *
  * One combined Save/Cancel bar for the whole panel, matching the wasm
  * `TimeOffPanel`'s single "Save Time Off Settings" button, which bundles the
@@ -424,18 +427,15 @@ export function TimeOffEditor({ data, onSave }: TimeOffEditorProps) {
           <p className="settingsEdit__hint">No company holidays added yet.</p>
         ) : (
           <ul className="timeOff__datedList">
-            {companyHolidays.map((entry, i) => {
-              const parsed = parseClosureEntry(entry);
-              return (
-                <li key={`${entry}-${i}`} className="timeOff__datedRow">
-                  <span className="timeOff__datedText">
-                    <span className="timeOff__datedName">{parsed.name || 'Holiday'}</span>
-                    <span className="timeOff__datedDate">{describeClosureRecurrence(parsed)}</span>
-                  </span>
-                  <GhostButton label="Remove" onClick={() => removeCompanyHoliday(i)} disabled={busy} />
-                </li>
-              );
-            })}
+            {companyHolidayRows(companyHolidays, businessToday).map(({ entry, index, closure }) => (
+              <li key={`${entry}-${index}`} className="timeOff__datedRow">
+                <span className="timeOff__datedText">
+                  <span className="timeOff__datedName">{closure.name || 'Holiday'}</span>
+                  <span className="timeOff__datedDate">{describeClosureRecurrence(closure)}</span>
+                </span>
+                <GhostButton label="Remove" onClick={() => removeCompanyHoliday(index)} disabled={busy} />
+              </li>
+            ))}
           </ul>
         )}
 

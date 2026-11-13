@@ -154,7 +154,7 @@ class RecordPaymentMarkPaidAmountTest {
         assertFalse(state.recordingPayment)
         assertEquals(
             "Payment recorded. The invoice is paid in full. \$62.50 has been added to the " +
-                "household's account credit, which goes onto their next invoice automatically.",
+                "household's account credit. It stays there until you apply an amount to an invoice.",
             state.toastMessage,
         )
     }
@@ -201,8 +201,8 @@ class RecordPaymentMarkPaidAmountTest {
         assertEquals("", recordPaymentCreditNote(null))
         assertEquals("", recordPaymentCreditNote(0L))
         assertEquals(
-            " \$0.01 has been added to the household's account credit, " +
-                "which goes onto their next invoice automatically.",
+            " \$0.01 has been added to the household's account credit. " +
+                "It stays there until you apply an amount to an invoice.",
             recordPaymentCreditNote(1L),
         )
     }

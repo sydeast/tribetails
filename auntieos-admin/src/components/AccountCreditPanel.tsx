@@ -91,7 +91,7 @@ export function AccountCreditPanel({
   return (
     <DenPanel
       title="Account credit"
-      subtitle="Credit the household can spend on future invoices. Auto-apply uses it on the next bill."
+      subtitle="Credit the household holds. It goes onto an invoice only when you apply an amount on that invoice."
       {...(balanceCents !== null ? { detail: `${formatCentsUsd(balanceCents)} on account` } : {})}
       trailing={
         <GhostButton

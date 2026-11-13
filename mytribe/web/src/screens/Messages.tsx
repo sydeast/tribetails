@@ -29,6 +29,7 @@ import { viewOfQuery } from '../lib/queryState';
 import { businessTime, dayKey, dayLabel } from '../lib/messageDays';
 import '../styles/messages.css';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
+import { RichText } from '../components/RichText';
 
 /**
  * Message Auntie: two-way household conversation with the auntie. Ported
@@ -544,14 +545,12 @@ function MessageBubble(props: { message: ThreadMessageDto }) {
           <time>{businessTime(message.createdAtMs)}</time>
         </div>
         {/*
-          Trust boundary: message.body is sanitizeRichText'd server-side on
-          every write path into this field (functions/src/lib/richText.ts),
-          allowlisting only b/strong, i/em, u, p, br, ul, ol, li, blockquote,
-          a[href]. Rendering it as HTML here is the intended behavior for
-          THIS field only — no other field in this screen (or introduced by
-          this build) uses dangerouslySetInnerHTML.
+          message.body is sanitizeRichText'd server-side (b/strong, i/em, u, p,
+          br, ul, ol, li, blockquote, a[href]). It is drawn from a node tree
+          of those tags only, never injected as HTML, so a less-than sign or
+          text that looks like a tag shows as typed and nothing typed can run.
         */}
-        <div className="msgs-body" dangerouslySetInnerHTML={{ __html: message.body }} />
+        <RichText className="msgs-body" body={message.body} />
         {mine && <div className="msgs-receipt">{message.readAt !== null ? 'Seen' : 'Sent'}</div>}
       </div>
     </div>

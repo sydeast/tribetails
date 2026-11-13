@@ -1647,6 +1647,52 @@ internal fun decodeGiveAccountCreditResult(raw: Map<String, Any?>?): GiveAccount
         replayed = raw?.get("replayed") as? Boolean ?: false,
     )
 
+// ---------- applyAccountCredit ----------
+
+/** Request payload for the `applyAccountCredit` callable. */
+data class ApplyAccountCreditArgs(
+    val invoiceId: String,
+    val amountCents: Long,
+    val idempotencyKey: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+        put("amountCents", amountCents)
+        put("idempotencyKey", idempotencyKey)
+    }
+}
+
+/** Response from the `applyAccountCredit` callable. */
+data class ApplyAccountCreditResult(
+    val ok: Boolean,
+    val invoiceId: String,
+    val paymentId: String,
+    val appliedCents: Long,
+    val amountDueCents: Long,
+    val accountBalanceCents: Long,
+    val replayed: Boolean,
+)
+
+/**
+ * Fail-soft decode of `ApplyAccountCreditResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeApplyAccountCreditResult(raw: Map<String, Any?>?): ApplyAccountCreditResult =
+    ApplyAccountCreditResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        paymentId = (raw?.get("paymentId") as? String).orEmpty(),
+        appliedCents = (raw?.get("appliedCents") as? Number)?.toLong() ?: 0L,
+        amountDueCents = (raw?.get("amountDueCents") as? Number)?.toLong() ?: 0L,
+        accountBalanceCents = (raw?.get("accountBalanceCents") as? Number)?.toLong() ?: 0L,
+        replayed = raw?.get("replayed") as? Boolean ?: false,
+    )
+
 // ---------- getAccountCreditHistory ----------
 
 /** Request payload for the `getAccountCreditHistory` callable. */

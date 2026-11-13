@@ -17,9 +17,9 @@ import androidx.compose.ui.graphics.Color
  * [AnnotatedString]. Same walker as the portal's `RichTextHtml.kt`, and the
  * same rendering as the admin web's `lib/richText.ts`.
  *
- * Nothing here evaluates markup: unknown tags are unwrapped (their text stays),
- * script-like tags are dropped with their content, every attribute but `href`
- * is ignored, and an `href` outside the three schemes is dropped. The server
+ * Nothing here evaluates markup: only the allowed tags are read as tags (any
+ * other `<` is text, drawn as typed), every attribute but `href` is ignored,
+ * and an `href` outside the three schemes is dropped. The server
  * sanitizer is the first gate; this is the second.
  */
 public fun richTextToAnnotatedString(html: String, linkColor: Color = Color.Unspecified): AnnotatedString {
@@ -48,8 +48,6 @@ private sealed class RtToken {
     data class TextChunk(val raw: String) : RtToken()
 }
 
-/** Tags whose whole content is dropped rather than unwrapped. */
-private val DROP_CONTENT_TAGS = setOf("script", "style", "iframe", "object", "embed", "noscript", "template")
 /** Tags with no children/closing tag in this subset. */
 private val VOID_TAGS = setOf("br")
 
@@ -60,22 +58,7 @@ private fun parseRichTextHtml(html: String): List<RtNode> {
 
     fun currentChildren(): MutableList<RtNode> = stack.lastOrNull()?.second ?: root
 
-    var dropTag: String? = null
-    var dropDepth = 0
     for (token in tokens) {
-        if (dropTag != null) {
-            if (token is RtToken.Open && token.tag == dropTag) dropDepth++
-            else if (token is RtToken.Close && token.tag == dropTag) {
-                dropDepth--
-                if (dropDepth == 0) dropTag = null
-            }
-            continue
-        }
-        if (token is RtToken.Open && token.tag in DROP_CONTENT_TAGS) {
-            dropTag = token.tag
-            dropDepth = 1
-            continue
-        }
         when (token) {
             is RtToken.TextChunk -> {
                 val decoded = decodeHtmlEntities(token.raw)
@@ -108,64 +91,58 @@ private fun parseRichTextHtml(html: String): List<RtNode> {
     return root
 }
 
+private val TAG_AT = Regex("""^<(/?)([A-Za-z][A-Za-z0-9]*)([^<>]*)>""")
+private val QUOTED_ATTRS = Regex("""^(?:\s+[A-Za-z_:][-A-Za-z0-9_:.]*\s*=\s*(?:"[^"]*"|'[^']*'))*$""")
+private val ALLOWED_TAGS = setOf("b", "strong", "i", "em", "u", "p", "br", "ul", "ol", "li", "blockquote", "a")
+
+private class ReadTag(val end: Int, val token: RtToken)
+
+/**
+ * Reads the tag that starts at [openIdx], or returns null when that '<' is just
+ * a less-than sign. A tag is '<' or '</', one of the allowed tag names, and a
+ * closing '>' with no other '<' or '>' in between. The server never stores any
+ * other element and keeps no attribute except a quoted one on `a`, so anything
+ * else (`5 < 6`, `a <b and more words`, `<script>`) is text and is drawn exactly
+ * as typed. Treating every '<' as a tag start and cutting to the next '>' is
+ * what dropped words from a message (#1873). Same rule as the admin web parser.
+ */
+private fun readTag(html: String, openIdx: Int): ReadTag? {
+    val m = TAG_AT.find(html.substring(openIdx, minOf(html.length, openIdx + 4096))) ?: return null
+    val closing = m.groupValues[1] == "/"
+    val name = m.groupValues[2].lowercase()
+    val rest = m.groupValues[3]
+    if (name !in ALLOWED_TAGS) return null
+    val end = openIdx + m.value.length - 1
+    if (closing) return if (rest.isBlank()) ReadTag(end, RtToken.Close(name)) else null
+    val trimmedRest = rest.trimEnd()
+    val selfClosing = trimmedRest.endsWith("/")
+    val attrs = if (selfClosing) trimmedRest.dropLast(1) else rest
+    if (selfClosing && name != "br") return null
+    if (attrs.isNotBlank() && !(name == "a" && QUOTED_ATTRS.matches(attrs.trimEnd()))) return null
+    if (name == "br") return ReadTag(end, RtToken.Void("br"))
+    return ReadTag(end, RtToken.Open(name, if (name == "a") extractHref(attrs) else null))
+}
+
 private fun tokenize(html: String): List<RtToken> {
     val tokens = mutableListOf<RtToken>()
+    var textStart = 0
     var i = 0
     val n = html.length
     while (i < n) {
         if (html[i] == '<') {
-            val end = findTagEnd(html, i)
-            if (end == -1) {
-                tokens.add(RtToken.TextChunk(html.substring(i)))
-                break
+            val tag = readTag(html, i)
+            if (tag != null) {
+                if (i > textStart) tokens.add(RtToken.TextChunk(html.substring(textStart, i)))
+                tokens.add(tag.token)
+                i = tag.end + 1
+                textStart = i
+                continue
             }
-            val inner = html.substring(i + 1, end)
-            if (!inner.startsWith("!") && !inner.startsWith("?")) tokens.add(parseTagToken(inner))
-            i = end + 1
-        } else {
-            val next = html.indexOf('<', i)
-            val textEnd = if (next == -1) n else next
-            tokens.add(RtToken.TextChunk(html.substring(i, textEnd)))
-            i = textEnd
-        }
-    }
-    return tokens
-}
-
-/** Finds the index of the '>' that closes the tag starting at [openIdx], skipping quoted attribute values. */
-private fun findTagEnd(html: String, openIdx: Int): Int {
-    var i = openIdx + 1
-    var quote: Char? = null
-    while (i < html.length) {
-        val c = html[i]
-        if (quote != null) {
-            if (c == quote) quote = null
-        } else if (c == '"' || c == '\'') {
-            quote = c
-        } else if (c == '>') {
-            return i
         }
         i++
     }
-    return -1
-}
-
-private fun parseTagToken(inner: String): RtToken {
-    val trimmed = inner.trim()
-    if (trimmed.startsWith("/")) {
-        return RtToken.Close(trimmed.substring(1).trim().lowercase())
-    }
-    val selfClosing = trimmed.endsWith("/")
-    val body = if (selfClosing) trimmed.dropLast(1).trim() else trimmed
-    val nameEnd = body.indexOfFirst { it.isWhitespace() }
-    val name = (if (nameEnd == -1) body else body.substring(0, nameEnd)).lowercase()
-    return if (name in VOID_TAGS || selfClosing) {
-        RtToken.Void(name)
-    } else if (name == "a") {
-        RtToken.Open(name, extractHref(body))
-    } else {
-        RtToken.Open(name, null)
-    }
+    if (textStart < n) tokens.add(RtToken.TextChunk(html.substring(textStart)))
+    return tokens
 }
 
 private val HREF_DOUBLE_QUOTED = Regex("""href\s*=\s*"([^"]*)"""")
@@ -343,8 +320,27 @@ private fun trimSurroundingNewlines(text: AnnotatedString): AnnotatedString {
     return if (start == 0 && end == text.length) text else text.subSequence(start, end)
 }
 
-private val MARKUP_TAG = Regex("""</?[a-zA-Z][^>]*>""")
-/** True when the body carries a tag. A plain-text reply has none and is shown as typed. */
-public fun hasRichTextMarkup(body: String): Boolean = MARKUP_TAG.containsMatchIn(body)
+/** True when the body carries a real tag. A plain-text reply has none and is shown as typed. */
+public fun hasRichTextMarkup(body: String): Boolean {
+    var i = body.indexOf('<')
+    while (i != -1) {
+        if (readTag(body, i) != null) return true
+        i = body.indexOf('<', i + 1)
+    }
+    return false
+}
 /** The text of a stored message body with every tag removed, for tests and previews. */
 public fun richTextPlain(body: String): String = richTextToAnnotatedString(body).text
+
+/**
+ * The text of a tag-less stored body, as typed: the server stores every typed
+ * `&`, `<` and `>` as an entity, decoded here exactly once.
+ */
+public fun messageBodyText(body: String): String = decodeHtmlEntities(body)
+/**
+ * Plain typed text as a message body for the server: `&`, `<` and `>` as
+ * entities, so a typed `&lt;` or `<side gate>` is stored and shown as typed.
+ * Same rule as the server's `plainTextToMessageBody` (functions/src/lib/richText.ts).
+ */
+public fun plainTextToMessageBody(text: String): String =
+    text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

@@ -149,7 +149,7 @@ class InboxViewModel(private val repository: AuntieRepository) : ViewModel() {
         _isReplying.value = true
         _conversationError.value = null
         viewModelScope.launch {
-            repository.replyToConversation(id, body.trim())
+            repository.replyToConversation(id, plainTextToMessageBody(body.trim()))
                 .onSuccess {
                     _isReplying.value = false
                     _actionResult.tryEmit("Reply sent")

@@ -19,6 +19,7 @@ import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { RichText } from '../components/RichText';
+import { plainTextToMessageBody } from '../lib/richText';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import './ConversationThread.css';
 
@@ -101,7 +102,7 @@ export function ConversationThread({ kinfolkId, kinfolkName, onBack }: Conversat
     setSending(true);
     setSendError(null);
     try {
-      await replyToConversation(kinfolkId, body);
+      await replyToConversation(kinfolkId, plainTextToMessageBody(body));
       setSending(false);
       setDraft('');
       load(); // reload so the new message (and cleared unread) reflect the server truth

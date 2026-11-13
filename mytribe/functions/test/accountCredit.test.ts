@@ -28,7 +28,7 @@ import {
 beforeEach(() => mocks.dbFn.mockReset());
 
 /**
- * ACCOUNT CREDIT, and the auto-apply that spends it.
+ * ACCOUNT CREDIT, and the draw that spends an entered amount of it.
  *
  * The credit ledger is `families/{id}.accountBalanceCents`, which already
  * existed: `redeemCredit` filled it, `getMyInvoices` shipped it, the portal
@@ -141,161 +141,263 @@ function writeAt(ctx: ReturnType<typeof seed>, prefix: string) {
   return ctx.writes.find((w) => w.path.startsWith(prefix));
 }
 
-describe('drawAccountCredit: the pass that finally spends the balance', () => {
-  it('puts the credit on the bill, decrements the balance, and settles the invoice', async () => {
+const KEY = 'acr_1790000000000_abc123';
+
+/** One draw of an entered amount, with the fields every call needs. */
+function draw(ctx: ReturnType<typeof seed>, amountCents: number, over: Record<string, unknown> = {}) {
+  return drawAccountCredit(ctx.db as any, {
+    invoiceId: 'inv1',
+    actorUid: 'admin1',
+    amountCents,
+    paymentId: KEY,
+    ...over,
+  });
+}
+
+describe('drawAccountCredit: the amount the admin entered, exactly (#1872)', () => {
+  it('puts that amount on the bill, takes it off the balance, and leaves the invoice open', async () => {
     const ctx = seed({ invoice: { kinfolkId: 'fam1', status: 'open', total: 100 } });
     mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await draw(ctx, 2500);
+    expect(res.refused).toBeNull();
+    expect(res.replayed).toBe(false);
+    expect(res.appliedCents).toBe(2500);
 
-    const res = await drawAccountCredit(ctx.db as any, { invoiceId: 'inv1', actorUid: 'admin1' });
+    // $100 owed, $25 applied; $120 held, $95 left. It did NOT take the $100 it could have.
+    expect(res.amountDueCents).toBe(7500);
+    expect(res.accountBalanceCents).toBe(9500);
 
-    expect(res.skipped).toBeNull();
-    expect(res.appliedCents).toBe(10000);
-    expect(res.amountDueCents).toBe(0);
-    // $120 held, $100 spent, $20 left for the invoice after this one.
-    expect(res.accountBalanceCents).toBe(2000);
-
-    // THE MONEY AUTHORITY gets a row, so the balance is derived from payments
-    // and not from a scalar somebody set.
-    const sub = writeAt(ctx, 'invoices/inv1/payments/');
+    // THE MONEY AUTHORITY gets a row at the caller's key.
+    const sub = ctx.writes.find((w) => w.path === `invoices/inv1/payments/${KEY}`);
     expect(sub?.data).toMatchObject({
-      amountCents: 10000,
-      amount: 100,
+      amountCents: 2500,
+      amount: 25,
       method: ACCOUNT_CREDIT_METHOD,
       recordedBy: 'admin1',
       fromAccountCredit: true,
+      accountBalanceAfterCents: 9500,
+      amountDueAfterCents: 7500,
     });
-
     // The family balance is written as an ABSOLUTE remainder, derived from the
-    // balance read inside the SAME transaction (#830). It used to be an
-    // increment, and an increment cannot be bounded: two passes in flight
-    // together each planned a draw from the same held credit and each applied
-    // it, leaving the household in debt. The race itself lives in
-    // `test/accountCreditRace.test.ts`.
+    // balance read inside the SAME transaction (#830).
     const fam = writeAt(ctx, 'families/fam1');
-    expect(fam?.data[ACCOUNT_BALANCE_FIELD]).toBe(2000);
-
+    expect(fam?.data[ACCOUNT_BALANCE_FIELD]).toBe(9500);
     const inv = ctx.writes.find((w) => w.path === 'invoices/inv1');
-    expect(inv?.data).toMatchObject({ status: 'paid', paymentStatus: 'PAID', amountDueCents: 0 });
+    expect(inv?.data).toMatchObject({ status: 'open', paymentStatus: 'PARTIAL', amountDueCents: 7500 });
   });
-
-  it('leaves the invoice OPEN and part paid when the credit does not cover it', () => {
+  it('pays the invoice off when the amount entered is the whole balance due', async () => {
+    const ctx = seed({ invoice: { kinfolkId: 'fam1', status: 'open', total: 100 } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await draw(ctx, 10000);
+    expect(res.appliedCents).toBe(10000);
+    expect(res.amountDueCents).toBe(0);
+    expect(res.accountBalanceCents).toBe(2000);
+    const inv = ctx.writes.find((w) => w.path === 'invoices/inv1');
+    expect(inv?.data).toMatchObject({ status: 'paid', paymentStatus: 'PAID', overpaidCents: 0 });
+  });
+  it('may take the household balance to exactly zero', async () => {
     const ctx = seed({ family: { accountBalanceCents: 5000 } });
     mocks.dbFn.mockReturnValue(ctx.db);
-
-    return drawAccountCredit(ctx.db as any, { invoiceId: 'inv1', actorUid: 'admin1' }).then((res) => {
-      expect(res.appliedCents).toBe(5000);
-      expect(res.amountDueCents).toBe(7750);
-      expect(res.accountBalanceCents).toBe(0);
-      const inv = ctx.writes.find((w) => w.path === 'invoices/inv1');
-      expect(inv?.data).toMatchObject({ status: 'open', paymentStatus: 'PARTIAL' });
-    });
+    const res = await draw(ctx, 5000);
+    expect(res.accountBalanceCents).toBe(0);
+    expect(res.amountDueCents).toBe(7750);
   });
-
-  it('never overdraws: a balance bigger than the bill leaves the rest on account', async () => {
-    const ctx = seed({
-      invoice: { kinfolkId: 'fam1', status: 'open', total: 20 },
-      family: { accountBalanceCents: 12000 },
-    });
-    mocks.dbFn.mockReturnValue(ctx.db);
-
-    const res = await drawAccountCredit(ctx.db as any, { invoiceId: 'inv1', actorUid: 'a' });
-    expect(res.appliedCents).toBe(2000);
-    expect(res.accountBalanceCents).toBe(10000);
-    const inv = ctx.writes.find((w) => w.path === 'invoices/inv1');
-    // Settled, NOT overpaid: auto-apply must not manufacture an excess the
-    // operator then has to unpick.
-    expect(inv?.data).toMatchObject({ status: 'paid', overpaidCents: 0 });
-  });
-
   it('Q6: records the draw in the credit history, in the same transaction, with the balance before and after', async () => {
     const ctx = seed({
       invoice: { kinfolkId: 'fam1', status: 'open', total: 20, invoiceNumber: 'INV-1042' },
       family: { accountBalanceCents: 12000 },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
-
-    await drawAccountCredit(ctx.db as any, { invoiceId: 'inv1', actorUid: 'admin1' });
-
-    const sub = writeAt(ctx, 'invoices/inv1/payments/');
-    const paymentId = sub!.path.split('/').pop();
-    const event = ctx.writes.find((w) => w.path === `families/fam1/creditLedger/draw_${paymentId}`);
+    await draw(ctx, 2000);
+    const event = ctx.writes.find((w) => w.path === `families/fam1/creditLedger/draw_${KEY}`);
     expect(event?.data).toMatchObject({
       kind: 'draw',
       amountCents: 2000,
       invoiceId: 'inv1',
       invoiceNumber: 'INV-1042',
-      paymentId,
+      paymentId: KEY,
       heldBeforeCents: 12000,
       heldAfterCents: 10000,
       actorUid: 'admin1',
     });
     expect(typeof event?.data['atMs']).toBe('number');
-    // Staged between the balance write and the invoice write, both of which
-    // are the draw transaction's own.
-    const paths = ctx.writes.map((w) => w.path);
-    const at = paths.indexOf(`families/fam1/creditLedger/draw_${paymentId}`);
-    expect(paths[at - 1]).toBe('families/fam1');
-    expect(paths[at + 1]).toBe('invoices/inv1');
+  });
+  it('writes the Activity Log line in the same transaction, sealed onto the chain', async () => {
+    const ctx = seed({
+      invoice: { kinfolkId: 'fam1', status: 'open', total: 100, invoiceNumber: '1026' },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await draw(ctx, 2500);
+
+    // Every write of the draw went through the ONE transaction.
+    expect((ctx.db as any).runTransaction).toHaveBeenCalledTimes(1);
+    const entry = ctx.writes.find((w) => w.path === `activity_log/account_credit_applied_${KEY}`);
+    expect(entry?.data).toMatchObject({
+      actionType: 'BILLING_ACCOUNT_CREDIT_APPLIED',
+      description: 'Applied $25.00 account credit to invoice 1026',
+      status: 'SUCCESS',
+      actorId: 'admin1',
+      targetId: 'inv1',
+      targetCollection: 'invoices',
+      familyId: 'fam1',
+      seq: 1,
+    });
+    expect(entry?.data['payload']).toMatchObject({
+      amountCents: 2500,
+      balanceBeforeCents: 12000,
+      balanceAfterCents: 9500,
+      amountDueBeforeCents: 10000,
+      amountDueAfterCents: 7500,
+    });
+    expect(String(entry?.data['entryHash'])).toMatch(/^[0-9a-f]{64}$/);
+    const head = ctx.writes.find((w) => w.path === 'activity_log_chain_head/current');
+    expect(head?.data).toMatchObject({ seq: 1, lastEntryId: `account_credit_applied_${KEY}` });
+  });
+});
+describe('drawAccountCredit: every refusal names its reason and writes nothing', () => {
+  async function refusal(s: Seed, amountCents = 1000) {
+    const ctx = seed(s);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await draw(ctx, amountCents);
+    expect(ctx.writes).toHaveLength(0);
+    expect(res.appliedCents).toBe(0);
+    return res;
+  }
+
+  it('more than the household holds', async () => {
+    const res = await refusal({ family: { accountBalanceCents: 500 } }, 501);
+    expect(res.refused).toBe('over_credit');
+    expect(res.accountBalanceCents).toBe(500);
+  });
+  it('a household with no credit at all, and one with no family document', async () => {
+    expect((await refusal({ family: { accountBalanceCents: 0 } })).refused).toBe('over_credit');
+    expect((await refusal({ family: null })).refused).toBe('over_credit');
+  });
+  it('an ALREADY negative stored balance is no credit', async () => {
+    expect((await refusal({ family: { accountBalanceCents: -500 } })).refused).toBe('over_credit');
   });
 
-  it('Q6: a pass that draws nothing writes no history event', async () => {
-    const ctx = seed({ family: { accountBalanceCents: 0 } });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    await drawAccountCredit(ctx.db as any, { invoiceId: 'inv1', actorUid: 'a' });
-    expect(ctx.writes.some((w) => w.path.includes('/creditLedger/'))).toBe(false);
+  it('more than the invoice still owes, with a part payment counted', async () => {
+    // $127.50 total, $100 already paid: $27.50 left.
+    const res = await refusal({ subPayments: [{ id: 'p1', data: { amountCents: 10000 } }] }, 2751);
+    expect(res.refused).toBe('over_balance');
+    expect(res.amountDueCents).toBe(2750);
+  });
+
+  it('never trims a request down to what fits', async () => {
+    // The old pass would have drawn $127.50 of the $200 asked. Now: refused.
+    const res = await refusal({ family: { accountBalanceCents: 50000 } }, 20000);
+    expect(res.refused).toBe('over_balance');
+  });
+
+  it('zero, a negative amount and a fraction of a cent', async () => {
+    expect((await refusal({}, 0)).refused).toBe('amount_invalid');
+    expect((await refusal({}, -500)).refused).toBe('amount_invalid');
+    expect((await refusal({}, 10.5)).refused).toBe('amount_invalid');
+    expect((await refusal({}, Number.NaN)).refused).toBe('amount_invalid');
+  });
+
+  it('a draft', async () => {
+    expect((await refusal({ invoice: { kinfolkId: 'fam1', status: 'draft', total: 40 } })).refused).toBe(
+      'invoice_draft',
+    );
+  });
+
+  it('a quote', async () => {
+    expect((await refusal({ invoice: { kinfolkId: 'fam1', status: 'quote', total: 40 } })).refused).toBe(
+      'invoice_quote',
+    );
+  });
+
+  it('a paid invoice, by its payments or by its label', async () => {
+    expect((await refusal({ subPayments: [{ id: 'p1', data: { amountCents: 12750 } }] })).refused).toBe(
+      'invoice_paid',
+    );
+    expect((await refusal({ invoice: { kinfolkId: 'fam1', status: 'paid', total: 40 } })).refused).toBe(
+      'invoice_paid',
+    );
+  });
+
+  it('an archived invoice, even one still owed', async () => {
+    const res = await refusal({
+      invoice: { kinfolkId: 'fam1', status: 'open', total: 40, archivedAt: '__TS__' },
+    });
+    expect(res.refused).toBe('invoice_archived');
+  });
+  it('a cancelled invoice and a credit note', async () => {
+    for (const status of ['cancelled', 'credit']) {
+      const res = await refusal({ invoice: { kinfolkId: 'fam1', status, total: 40 } });
+      expect(res.refused, status).toBe('invoice_not_collectable');
+    }
+  });
+  it('a missing invoice, and an invoice with no household', async () => {
+    expect((await refusal({ invoice: null })).refused).toBe('invoice_missing');
+    expect((await refusal({ invoice: { status: 'open', total: 40 } })).refused).toBe('no_household');
   });
 });
 
-describe('drawAccountCredit: every way it correctly does nothing', () => {
-  async function skipReason(s: Seed) {
-    const ctx = seed(s);
-    mocks.dbFn.mockReturnValue(ctx.db);
-    const res = await drawAccountCredit(ctx.db as any, { invoiceId: 'inv1', actorUid: 'a' });
-    return { res, ctx };
+describe('drawAccountCredit: the key is the double-tap guard', () => {
+  function live(over: Record<string, Record<string, unknown> | null> = {}) {
+    return buildDbMock({
+      docs: {
+        'invoices/inv1': { kinfolkId: 'fam1', status: 'open', total: 100 },
+        'families/fam1': { accountBalanceCents: 12000 },
+        ...over,
+      },
+      queryDocs: { 'invoices/inv1/payments': [] },
+      writeThrough: true,
+    });
   }
 
-  it('reports a missing invoice rather than throwing at a trigger', async () => {
-    const { res, ctx } = await skipReason({ invoice: null });
-    expect(res.skipped).toBe('invoice_missing');
-    expect(ctx.writes).toHaveLength(0);
-  });
-
-  it('reports an invoice with no household', async () => {
-    const { res, ctx } = await skipReason({ invoice: { status: 'open', total: 40 } });
-    expect(res.skipped).toBe('no_household');
-    expect(ctx.writes).toHaveLength(0);
-  });
-
-  it('reports a draft as not collectable, and writes nothing', async () => {
-    const { res, ctx } = await skipReason({
-      invoice: { kinfolkId: 'fam1', status: 'draft', total: 40 },
+  it('a second call with the same key draws nothing and returns the first answer', async () => {
+    const ctx = live();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const first = await draw(ctx as any, 2500);
+    const writesAfterFirst = ctx.writes.length;
+    const second = await draw(ctx as any, 2500);
+    expect(first.replayed).toBe(false);
+    expect(second).toMatchObject({
+      refused: null,
+      replayed: true,
+      paymentId: KEY,
+      appliedCents: 2500,
+      accountBalanceCents: 9500,
+      amountDueCents: 7500,
     });
-    expect(res.skipped).toBe('invoice_not_collectable');
-    expect(ctx.writes).toHaveLength(0);
+    expect(ctx.writes).toHaveLength(writesAfterFirst);
+  });
+  it('a retry after a PAY-OFF reports the success, not "already paid"', async () => {
+    const ctx = live({
+      // The stored row and the paid invoice, as the first call left them.
+      'invoices/inv1': { kinfolkId: 'fam1', status: 'paid', total: 100, paidCents: 10000, amountDueCents: 0 },
+      [`invoices/inv1/payments/${KEY}`]: {
+        amountCents: 10000,
+        recordedBy: 'admin1',
+        fromAccountCredit: true,
+        accountBalanceAfterCents: 2000,
+        amountDueAfterCents: 0,
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await draw(ctx as any, 10000);
+    expect(res).toMatchObject({ refused: null, replayed: true, appliedCents: 10000, accountBalanceCents: 2000 });
   });
 
-  it('reports an already-settled invoice as not collectable', async () => {
-    const { res, ctx } = await skipReason({ subPayments: [{ id: 'p1', data: { amountCents: 12750 } }] });
-    expect(res.skipped).toBe('invoice_not_collectable');
-    expect(ctx.writes).toHaveLength(0);
+  it('refuses the same key from another admin', async () => {
+    const ctx = live({
+      [`invoices/inv1/payments/${KEY}`]: { amountCents: 2500, recordedBy: 'someone-else', fromAccountCredit: true },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(draw(ctx as any, 2500)).rejects.toMatchObject({ code: 'already-exists' });
   });
 
-  it('reports no credit when the household holds none, and writes nothing', async () => {
-    const { res, ctx } = await skipReason({ family: { accountBalanceCents: 0 } });
-    expect(res.skipped).toBe('no_credit');
-    expect(res.amountDueCents).toBe(12750);
-    expect(ctx.writes).toHaveLength(0);
-  });
-
-  it('reports no credit when the family doc does not exist at all', async () => {
-    const { res } = await skipReason({ family: null });
-    expect(res.skipped).toBe('no_credit');
-  });
-
-  it('is IDEMPOTENT: a second pass over a drained balance finds nothing', async () => {
-    // The whole reason `runAutoApply` is safe to press twice.
-    const { res } = await skipReason({ family: { accountBalanceCents: 0 } });
-    expect(res.skipped).toBe('no_credit');
-    expect(res.appliedCents).toBe(0);
+  it('a NEW key is a new draw: the admin applying a second amount on purpose', async () => {
+    const ctx = live();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await draw(ctx as any, 2500);
+    const res = await draw(ctx as any, 1000, { paymentId: 'acr_1790000000001_def456' });
+    expect(res.replayed).toBe(false);
+    expect(res.appliedCents).toBe(1000);
+    expect(res.accountBalanceCents).toBe(8500);
   });
 });

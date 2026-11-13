@@ -321,7 +321,130 @@ class TemplateRepository(
             ?: error("importSeedTemplates: non-map payload")
         decodeImportReport(raw)
     }.onFailure { AuntieLog.e("TemplateRepository.importSeedTemplates failed", it) }
+    /**
+     * #1935: what a template says by text message and by push, and whether its
+     * notification sends either at all. The server decides which stored
+     * wording belongs to [templateId]; this app never reads it directly.
+     */
+    suspend fun getTemplateChannels(templateId: String): Result<TemplateChannels> = runCatchingCancellable {
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("getTemplateChannels").call(mapOf("templateId" to templateId))
+            .awaitCallable().data as? Map<String, Any?>
+            ?: error("getTemplateChannels: non-map payload")
+        decodeTemplateChannels(raw)
+    }.onFailure { AuntieLog.e("TemplateRepository.getTemplateChannels failed", it) }
+    /**
+     * #1935: saves the text message, the push notification, or both. A null
+     * argument leaves that channel out of the call, so a refusal on one never
+     * blocks a save of the other. A refused save carries one sentence per
+     * field; read them with [wordingFieldErrorsOf].
+     */
+    suspend fun saveTemplateChannels(
+        templateId: String,
+        smsText: String? = null,
+        push: PushWording? = null,
+    ): Result<TemplateChannels> = runCatchingCancellable {
+        val payload = saveTemplateChannelsPayload(templateId, smsText, push)
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("saveTemplateChannels").call(payload).awaitCallable().data as? Map<String, Any?>
+            ?: error("saveTemplateChannels: non-map payload")
+        decodeTemplateChannels(raw)
+    }.onFailure { AuntieLog.e("TemplateRepository.saveTemplateChannels failed", it) }
 }
+/** #1935: a push notification's two pieces of wording. */
+data class PushWording(val title: String, val body: String)
+/** #1935: the text message half of [TemplateChannels]. */
+data class SmsChannel(
+    /** True when the notification really sends a text message. */
+    val supported: Boolean,
+    /** True when wording is stored. False with [supported] means it can be added. */
+    val set: Boolean,
+    val text: String,
+    val maxLength: Int,
+)
+/** #1935: the push half of [TemplateChannels]. */
+data class PushChannel(
+    val supported: Boolean,
+    val set: Boolean,
+    val title: String,
+    val body: String,
+    val titleMaxLength: Int,
+    val bodyMaxLength: Int,
+)
+/** #1935: what `getTemplateChannels` and `saveTemplateChannels` answer with. */
+data class TemplateChannels(
+    /** The notification that sends this template, in words, or null when none does. */
+    val notificationLabel: String?,
+    /** The `{{field}}` names the notification fills in. */
+    val fields: List<String>,
+    val sms: SmsChannel,
+    val push: PushChannel,
+)
+/** The fields a wording save can be refused on, as the server names them. */
+const val WORDING_FIELD_SMS_TEXT = "smsText"
+const val WORDING_FIELD_PUSH_TITLE = "pushTitle"
+const val WORDING_FIELD_PUSH_BODY = "pushBody"
+private const val WORDING_REFUSAL = "template-wording-refused"
+/**
+ * Pure: the callable's payload as a [TemplateChannels]. A channel the payload
+ * leaves out reads as not sent, which shows "Not set" with no way to add it:
+ * the safe reading of an answer this app cannot understand.
+ */
+internal fun decodeTemplateChannels(raw: Map<String, Any?>): TemplateChannels {
+    val sms = raw["sms"] as? Map<*, *>
+    val push = raw["push"] as? Map<*, *>
+    fun Map<*, *>?.int(key: String): Int = (this?.get(key) as? Number)?.toInt() ?: 0
+    fun Map<*, *>?.str(key: String): String = this?.get(key) as? String ?: ""
+    fun Map<*, *>?.flag(key: String): Boolean = this?.get(key) as? Boolean ?: false
+    return TemplateChannels(
+        notificationLabel = (raw["notificationLabel"] as? String)?.takeIf { it.isNotBlank() },
+        fields = (raw["fields"] as? List<*>).orEmpty().mapNotNull { it as? String },
+        sms = SmsChannel(
+            supported = sms.flag("supported"),
+            set = sms.flag("set"),
+            text = sms.str("text"),
+            maxLength = sms.int("maxLength"),
+        ),
+        push = PushChannel(
+            supported = push.flag("supported"),
+            set = push.flag("set"),
+            title = push.str("title"),
+            body = push.str("body"),
+            titleMaxLength = push.int("titleMaxLength"),
+            bodyMaxLength = push.int("bodyMaxLength"),
+        ),
+    )
+}
+/** Pure: only the channel being saved goes on the wire. */
+internal fun saveTemplateChannelsPayload(
+    templateId: String,
+    smsText: String?,
+    push: PushWording?,
+): Map<String, Any> = buildMap {
+    put("templateId", templateId)
+    smsText?.let { put("sms", mapOf("text" to it)) }
+    push?.let { put("push", mapOf("title" to it.title, "body" to it.body)) }
+}
+/**
+ * Pure: the per-field sentences out of a refused save's `details`, keyed by
+ * [WORDING_FIELD_SMS_TEXT] and friends. Empty for any other shape, so the
+ * screen never has to read the error's prose to find the field.
+ */
+internal fun wordingFieldErrorsFromDetails(details: Any?): Map<String, String> {
+    val map = details as? Map<*, *> ?: return emptyMap()
+    if (map["reason"] != WORDING_REFUSAL) return emptyMap()
+    val errors = map["fieldErrors"] as? Map<*, *> ?: return emptyMap()
+    return buildMap {
+        for ((k, v) in errors) {
+            val key = k as? String ?: continue
+            val message = (v as? String)?.takeIf { it.isNotBlank() } ?: continue
+            put(key, message)
+        }
+    }
+}
+/** The per-field sentences a failed wording save carries, or empty. */
+fun wordingFieldErrorsOf(t: Throwable?): Map<String, String> =
+    wordingFieldErrorsFromDetails((t as? com.google.firebase.functions.FirebaseFunctionsException)?.details)
 /**
  * Pure: turns the callable's payload into an [TemplateRepository.ImportReport].
  *

@@ -322,7 +322,7 @@ private fun CreditRedeemPanel(
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
             Text("Redeem Credit", style = type.heritageTitle)
             Text(
-                "Account Balance applies to your next invoice automatically.",
+                "Your Auntie applies your Account Balance to an invoice for you.",
                 style = type.sansBody,
             )
             Button(
