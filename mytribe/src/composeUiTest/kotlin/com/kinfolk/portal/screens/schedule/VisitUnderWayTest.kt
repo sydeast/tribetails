@@ -12,7 +12,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
 import com.kinfolk.portal.firebase.FakeFirestoreClient
 import com.kinfolk.portal.firebase.FakeFunctionsClient
-import com.kinfolk.portal.portal.BOOKINGS_POLL_MS
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
 import kotlinx.serialization.json.JsonNull
@@ -33,6 +32,13 @@ import kotlin.test.assertTrue
  * `Schedule.underWay.test.tsx` and `BookingDetail.underWay.test.tsx`.
  */
 class VisitUnderWayTest {
+    // #2122: the screens re-read at a short turn here. A Compose UI test draws
+    // every 16 ms frame of the time it moves through, so following a visit at
+    // the app's real 30 seconds a turn drew about 13,000 frames and ran past
+    // runTest's one minute limit on a busy runner. The real interval is held
+    // by FollowBookingsTest, which draws nothing.
+    private companion object { const val TEST_POLL_MS = 2_000L }
+
     // The real clock: Schedule decides what is due against it.
     private val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
 
@@ -83,6 +89,7 @@ class VisitUnderWayTest {
             ScheduleScreen(
                 "The Foster", "3", PortalApi(fake), FakeFirestoreClient(),
                 onOpenKinCare = { visitId, _ -> opened += visitId },
+                pollMs = TEST_POLL_MS,
             )
         }
         waitForIdle()
@@ -157,16 +164,16 @@ class VisitUnderWayTest {
         onNodeWithText("CONFIRMED").assertIsDisplayed()
         onNodeWithTag(LIVE_VISIT_TAG).assertDoesNotExist()
 
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS + 100)
+        mainClock.advanceTimeBy(TEST_POLL_MS + 100)
         waitForIdle()
         onNodeWithText("EN ROUTE").assertIsDisplayed()
         onNode(onCard("Auntie Maya is on the way")).assertIsDisplayed()
 
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS)
+        mainClock.advanceTimeBy(TEST_POLL_MS)
         waitForIdle()
         onNode(onCard("Auntie Maya is at your place")).assertIsDisplayed()
 
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS)
+        mainClock.advanceTimeBy(TEST_POLL_MS)
         waitForIdle()
         onNodeWithTag(LIVE_VISIT_TAG).assertDoesNotExist()
         onNodeWithText("DEPARTED").assertIsDisplayed()
@@ -180,7 +187,7 @@ class VisitUnderWayTest {
         onNodeWithText("EN ROUTE").assertIsDisplayed()
 
         fake.stubError("getMyBookings", IllegalStateException("unavailable"))
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS + 100)
+        mainClock.advanceTimeBy(TEST_POLL_MS + 100)
         waitForIdle()
         assertTrue(bookingsReads(fake) >= 2, "the re-read should have been tried")
         onNodeWithText("EN ROUTE").assertIsDisplayed()
@@ -197,7 +204,7 @@ class VisitUnderWayTest {
         })
         fake.stub("getMyVisits", buildJsonObject { put("visits", buildJsonArray {}) })
         showSchedule(fake)
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS * 4)
+        mainClock.advanceTimeBy(TEST_POLL_MS * 4)
         waitForIdle()
         assertEquals(1, bookingsReads(fake))
     }
@@ -243,6 +250,7 @@ class VisitUnderWayTest {
                 portalApi = PortalApi(fake),
                 onBack = {},
                 nowMs = { now },
+                pollMs = TEST_POLL_MS,
             )
         }
         waitForIdle()
@@ -306,7 +314,7 @@ class VisitUnderWayTest {
 
         val seen = mutableListOf<String>()
         listOf("En route", "In progress", "Departed", "Completed").forEachIndexed { i, word ->
-            mainClock.advanceTimeBy(BOOKINGS_POLL_MS + if (i == 0) 100 else 0)
+            mainClock.advanceTimeBy(TEST_POLL_MS + if (i == 0) 100 else 0)
             waitForIdle()
             onNodeWithText(word).assertIsDisplayed()
             seen += word
@@ -315,7 +323,7 @@ class VisitUnderWayTest {
 
         // Finished: nothing is due, so the reading stops.
         val reads = bookingsReads(fake)
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS * 3)
+        mainClock.advanceTimeBy(TEST_POLL_MS * 3)
         waitForIdle()
         assertEquals(reads, bookingsReads(fake))
     }
@@ -327,7 +335,7 @@ class VisitUnderWayTest {
         onNodeWithText("In progress").assertIsDisplayed()
 
         fake.stubError("getMyBookings", IllegalStateException("unavailable"))
-        mainClock.advanceTimeBy(BOOKINGS_POLL_MS + 100)
+        mainClock.advanceTimeBy(TEST_POLL_MS + 100)
         waitForIdle()
         onNodeWithText("In progress").assertIsDisplayed()
         onNodeWithText("Booking not found.").assertDoesNotExist()
