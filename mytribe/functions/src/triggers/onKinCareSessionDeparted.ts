@@ -98,13 +98,10 @@ export async function completeDepartedSession(
   // Loaded here, not at file scope, as `transitionBookingStatus` loads them:
   // see coldStartImportGraph.test.ts.
   const [
-    { isKinTaleRequired, kinTaleDueAtCompletion },
+    { kinTaleDueAtCompletion, kinTaleRequiredFrom },
     { visitMissingStepsWords, visitOutsideRadiusWords, visitTransitionWords },
   ] = await Promise.all([import('../lib/kinTaleRequirement.js'), import('../lib/activityWords.js')]);
-  const [arrival, kinTaleRequired] = await Promise.all([
-    readArrivalSettings(firestore),
-    isKinTaleRequired(firestore),
-  ]);
+  const arrival = await readArrivalSettings(firestore);
   const sessionRef = firestore.doc(`kin_care_sessions/${sessionId}`);
 
   let mirrored: 'completed' | null = null;
@@ -115,6 +112,12 @@ export async function completeDepartedSession(
     const session = (snap.exists ? snap.data() : undefined) as SessionData | undefined;
     const status = statusOf(session);
     if (session === undefined || status !== 'DEPARTED') return { kind: 'skipped', status };
+    // #2123: "KinTale required" is read INSIDE the transaction, so the owner
+    // switching it off cannot interleave with this completion: either this
+    // commits first and the switch-off clears its stamp
+    // (`triggers/onBusinessSettingsWrite.ts`), or it reads the switch as off.
+    const settingsSnap = await tx.get(firestore.doc('business_settings/business_settings'));
+    const kinTaleRequired = kinTaleRequiredFrom(settingsSnap.data() as Record<string, unknown> | undefined);
 
     if (arrival.required) {
       const missing = missingVisitSteps(session);

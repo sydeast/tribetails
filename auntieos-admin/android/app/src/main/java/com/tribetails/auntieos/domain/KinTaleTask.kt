@@ -13,21 +13,17 @@ import com.tribetails.auntieos.data.model.KinCareSession
  * on and no KinTale has been sent, stamps `kinTaleDue: true` on the session at
  * that moment. Every client's send batch writes `kinTaleDue: false`
  * ([com.tribetails.auntieos.data.repository.KinCareRepository.markReportSent]).
- * So a visit completed before the setting was turned on never becomes a task,
- * and turning the setting off hides every task without rewriting a visit.
+ * So a visit completed before the setting was turned on never becomes a task.
+ *
+ * THE STAMP IS THE AUTHORITY, AND NOTHING HERE READS THE SETTING. The task is
+ * the Auntie's, and an Auntie cannot read `business_settings` (owner-only in
+ * the rules). So the board lists "KinTales to send" from the stamp alone, for
+ * any sign-in, and the server clears every stamp still standing when the owner
+ * turns the setting off (`functions/src/triggers/onBusinessSettingsWrite.ts`).
  *
  * The web admin's Auntie Time board and the desktop console carry the same
  * rule. Change them together.
  */
-
-/**
- * Is "KinTale required" on, for this raw settings value? The model reads the
- * same way ([com.tribetails.auntieos.data.model.BusinessSettings.kinTaleRequired]
- * defaults to false, and `toObject` fills an absent key from it). ABSENT MEANS
- * OFF (operator ruling 2026-11-13, "Start it off"): only an explicit `true`
- * turns it on, as on the server.
- */
-fun kinTaleRequiredSetting(raw: Any?): Boolean = raw == true
 
 /**
  * Has a KinTale for this visit gone to the household? `sentReportCount` alone:
@@ -39,12 +35,11 @@ fun kinTaleRequiredSetting(raw: Any?): Boolean = raw == true
 fun kinTaleSent(session: KinCareSession): Boolean = session.sentReportCount > 0
 
 /**
- * Does the Auntie owe this visit's KinTale? Setting on, the visit Completed, the
- * server marked it due at completion, and nothing sent since.
+ * Does the Auntie owe this visit's KinTale? The visit Completed, the server
+ * stamped it due at completion, and nothing sent since.
  */
-fun kinTaleOwed(session: KinCareSession, required: Boolean): Boolean =
-    required &&
-        session.status.trim().uppercase() == "COMPLETED" &&
+fun kinTaleOwed(session: KinCareSession): Boolean =
+    session.status.trim().uppercase() == "COMPLETED" &&
         session.kinTaleDue &&
         !kinTaleSent(session)
 
@@ -64,13 +59,12 @@ data class KinTaleSplit(
 )
 
 /**
- * Splits the board's visits. [required] is null until the setting is read (or
- * when the read failed): the board then shows no group, rather than guess.
- * The group reads oldest first: the longest-owed KinTale is the one to send next.
+ * Splits the board's visits: every stamped visit this screen loads (Auntie Time
+ * loads the whole collection, so an owed visit of any age is here). The group
+ * reads oldest first: the longest-owed KinTale is the one to send next.
  */
-fun splitKinTalesToSend(sessions: List<KinCareSession>, required: Boolean?): KinTaleSplit {
-    if (required != true) return KinTaleSplit(emptyList(), sessions)
-    val (toSend, rest) = sessions.partition { kinTaleOwed(it, required = true) }
+fun splitKinTalesToSend(sessions: List<KinCareSession>): KinTaleSplit {
+    val (toSend, rest) = sessions.partition { kinTaleOwed(it) }
     return KinTaleSplit(toSend.sortedBy { it.startTime }, rest)
 }
 

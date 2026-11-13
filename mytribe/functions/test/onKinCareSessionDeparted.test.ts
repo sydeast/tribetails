@@ -135,6 +135,15 @@ describe('a visit is Completed at departure', () => {
     expect(await completeDepartedSession('s1')).toEqual({ kind: 'completed', kinTaleDue: true });
     expect(sessionWrite(ctx)?.data).toMatchObject({ status: 'COMPLETED', kinTaleDue: true });
   });
+  it('reads KinTale required inside the transaction, so a switch-off cannot interleave', async () => {
+    const ctx = seed({ settings: ON });
+    const tx = { get: vi.fn((ref: { path: string; get: () => Promise<unknown> }) => ref.get()), set: vi.fn() };
+    (ctx.db as { runTransaction: unknown }).runTransaction = vi.fn(async (fn: (t: unknown) => unknown) => fn(tx));
+    expect(await completeDepartedSession('s1')).toEqual({ kind: 'completed', kinTaleDue: true });
+    const read = tx.get.mock.calls.map((c) => c[0].path);
+    expect(read).toContain(SETTINGS);
+  });
+
   it('a business that never saved KinTale required (absent reads off) owes nothing', async () => {
     for (const settings of [undefined, { businessName: 'Tribe' }]) {
       const ctx = seed({ settings });

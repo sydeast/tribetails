@@ -53,6 +53,8 @@ object JvmFirestoreFixtures {
     var trainingDocs: List<TrainingDocument>? = null
     var dynamicFields: List<DynamicField>? = null
     var businessSettings: BusinessSettings? = null
+    /** #2123: the settings read refused with this message, as the rules refuse an Auntie. */
+    var businessSettingsError: String? = null
     /** #1608: the raw `requireArrivalDepartureVerification` value; null reads as an absent key. */
     var arrivalRuleRaw: Boolean? = null
     var callableResponses: Map<String, String> = emptyMap()
@@ -119,7 +121,7 @@ object JvmFirestoreFixtures {
         generatedDrafts = null; bookingRequests = null; sessionsForKinfolk = null
         provideUserProfile = false; userProfile = null
         voicemails = null; calls = null; sms = null; emails = null
-        activity = null; trainingDocs = null; dynamicFields = null; businessSettings = null
+        activity = null; trainingDocs = null; dynamicFields = null; businessSettings = null; businessSettingsError = null
         callableResponses = emptyMap(); callableErrors = emptyMap(); callableErrorCodes = emptyMap(); callableErrorDetails = emptyMap(); broadcastRows = null; incomingKinCares = null
         arrivalRuleRaw = null
         kinCareAssignments = emptyMap()
@@ -382,7 +384,8 @@ internal fun businessZoneId(): java.time.ZoneId = java.time.ZoneId.of(
 internal actual fun platformBusinessSettingsStream(): Flow<FirestoreResult<BusinessSettings>> =
     // A test's fixture IS the last read, so a save from a rendered panel diffs
     // against it the way the live app diffs against the last poll.
-    JvmFirestoreFixtures.businessSettings?.let { lastLoadedBusinessSettings = it; flowOf(FirestoreResult.Data(it)) }
+    JvmFirestoreFixtures.businessSettingsError?.let { flowOf(FirestoreResult.Error(it)) }
+        ?: JvmFirestoreFixtures.businessSettings?.let { lastLoadedBusinessSettings = it; flowOf(FirestoreResult.Data(it)) }
         ?: JvmFirestoreRest.pollingScalar {
             val loaded = JvmFirestoreRest.getDoc<BusinessSettings>("business_settings", BUSINESS_SETTINGS_DOC_ID)
                 ?: BusinessSettings()

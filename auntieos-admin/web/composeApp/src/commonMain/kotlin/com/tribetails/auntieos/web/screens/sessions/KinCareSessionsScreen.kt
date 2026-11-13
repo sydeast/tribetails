@@ -146,7 +146,7 @@ fun KinCareSessionsScreen(
  * The board's groups, in the order they are drawn.
  *
  * #2123: "KinTales to send" holds every completed visit the Auntie still owes a
- * KinTale while "KinTale required" is on ([kinTaleOwed]), however old, until it
+ * KinTale ([kinTaleOwed], the server's stamp, no settings read), however old, until it
  * is sent. It sits right after Active: it is her work, not history.
  */
 internal enum class AuntieTimePhase(val label: String, val tone: AuntieStatusTone) {
@@ -178,10 +178,6 @@ internal fun AuntieTimeListScreen(
     // §A.8: Business-Settings time blocks drive the "Evening block" descriptor on cards.
     val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val timeBlocks = remember(settingsState) { (settingsState as? FirestoreResult.Data)?.value?.timeBlocks.orEmpty() }
-    // #2123: "KinTale required", absent OFF (ruling 2026-11-13). Until the
-    // settings read lands it is taken as off too: no "KinTales to send" group is
-    // shown on a guess.
-    val kinTaleRequired = (settingsState as? FirestoreResult.Data)?.value?.kinTaleRequired == true
     // #2036: "today", and every day a visit is filed under, is the BUSINESS's
     // calendar day (`business_settings.timeZone`), never the UTC date.
     val storedZone = (settingsState as? FirestoreResult.Data)?.value?.timeZone
@@ -376,7 +372,7 @@ internal fun AuntieTimeListScreen(
                 // NOTE (audit): DRAFT/PENDING bookings are intentionally excluded;
                 // a booking surfaces here only once it is approved to SCHEDULED.
                 //   KinTales to send (#2123): a completed visit whose KinTale is owed, any date
-                val grouped = auntieTimeBoard(s.value, today, zone, kinTaleRequired)
+                val grouped = auntieTimeBoard(s.value, today, zone)
 
                 // One writer for both lists, so an Archive card does exactly what
                 // the same card does on the board.
@@ -1276,8 +1272,8 @@ private fun statusGlyph(status: String) = when (status.uppercase()) {
     else                  -> Lucide.CalendarClock
 }
 
-private fun phaseFor(s: KinCareSession, today: String, zone: TimeZone, kinTaleRequired: Boolean): AuntieTimePhase = when {
-    kinTaleOwed(s, kinTaleRequired)                                 -> AuntieTimePhase.KinTalesToSend
+private fun phaseFor(s: KinCareSession, today: String, zone: TimeZone): AuntieTimePhase = when {
+    kinTaleOwed(s)                                                  -> AuntieTimePhase.KinTalesToSend
     s.status.uppercase() in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> AuntieTimePhase.Active
     s.status.uppercase() == "SCHEDULED"                             ->
         if (isOverdueScheduled(s, today, zone)) AuntieTimePhase.Overdue else AuntieTimePhase.Upcoming
@@ -1294,12 +1290,11 @@ internal fun auntieTimeBoard(
     sessions: List<KinCareSession>,
     today: String,
     zone: TimeZone,
-    kinTaleRequired: Boolean,
 ): Map<AuntieTimePhase, List<KinCareSession>> =
     sessions
-        .filter { isVisibleOnAuntieTime(it, today, zone) || kinTaleOwed(it, kinTaleRequired) }
+        .filter { isVisibleOnAuntieTime(it, today, zone) || kinTaleOwed(it) }
         .sortedBy { it.startTime }
-        .groupBy { phaseFor(it, today, zone, kinTaleRequired) }
+        .groupBy { phaseFor(it, today, zone) }
 
 /** #2036: the card's day and clock are the business's, not the stored instant's UTC characters. */
 internal fun sessionWindow(s: KinCareSession, zone: TimeZone): String {

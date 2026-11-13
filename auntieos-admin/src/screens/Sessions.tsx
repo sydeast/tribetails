@@ -25,7 +25,7 @@ import {
   type SessionState,
 } from '../lib/sessionFormat';
 import { cardLifecycleActionsFor, lifecycleNowIso } from '../lib/sessionLifecycle';
-import { kinTaleSent, splitOwedKinTales, useKinTaleRequired } from '../lib/kinTaleTask';
+import { kinTaleSent, splitOwedKinTales } from '../lib/kinTaleTask';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { archiveDefaultRange, archiveFetchBounds, archiveRows, groupArchiveByBusinessDay } from '../lib/sessionArchive';
 import { businessTodayIso } from '../lib/businessZoneTime';
@@ -203,18 +203,16 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
   );
   // #2123: "KinTales to send". The visits the server left owing a KinTale
   // (completed with "KinTale required" on and nothing sent), at any age, live:
-  // the task stays until the KinTale is sent. Shown only once the switch is
-  // known to be on; an owed visit is listed here and not again in Recent.
-  const kinTaleRequired = useKinTaleRequired();
+  // the task stays until the KinTale is sent. Read from the `kinTaleDue` stamp
+  // alone, never from the settings document, which an Auntie cannot read: the
+  // server clears every stamp when the switch goes off. The group shows while
+  // something is owed (or the read failed); an owed visit is listed here and
+  // not again in Recent.
   const kinTalesDue = useCollection<SessionEntry>(KINTALES_DUE_QUERY);
   const boardGroups = useCallback(
     (data: SessionEntry[]) =>
-      splitOwedKinTales(
-        withOlderOverdue(data),
-        kinTalesDue.status === 'ready' ? kinTalesDue.data : [],
-        kinTaleRequired === true,
-      ),
-    [withOlderOverdue, kinTalesDue, kinTaleRequired],
+      splitOwedKinTales(withOlderOverdue(data), kinTalesDue.status === 'ready' ? kinTalesDue.data : []),
+    [withOlderOverdue, kinTalesDue],
   );
 
   /**
@@ -333,7 +331,7 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
                     stagger would clamp them inside the group instead of centring
                     them on the viewport. */}
                 <ul className="sessions__phases">
-                  {kinTaleRequired === true && (
+                  {(boardGroups(data).owed.length > 0 || kinTalesDue.status === 'error') && (
                     <OwedKinTalesGroup
                       rows={boardGroups(data).owed}
                       ctx={cardContext}
@@ -438,9 +436,7 @@ function OwedKinTalesGroup({
           )}
         </ErrorHint>
       )}
-      {rows.length === 0 && readError === null ? (
-        <p className="sessions__phase-empty">No KinTale is waiting to be sent.</p>
-      ) : (
+      {rows.length > 0 && (
         <ul className="sessions__cards">
           {rows.map((entry) => (
             <SessionCard key={entry._id} entry={entry} ctx={ctx} />

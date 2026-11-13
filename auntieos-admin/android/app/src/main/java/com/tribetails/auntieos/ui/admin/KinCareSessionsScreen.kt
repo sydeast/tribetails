@@ -191,8 +191,6 @@ fun KinCareSessionsScreen(
     val timeBlocks by viewModel.timeBlocks.collectAsState()
     // #1608: the operator's arrival rule, so Complete can answer before it is sent.
     val arrivalRule by viewModel.arrivalRule.collectAsState()
-    // #2123: "KinTale required". Null until read; the board then shows no task group.
-    val kinTaleRequired by viewModel.kinTaleRequired.collectAsState()
     val timeBlockLabelFor: (com.tribetails.auntieos.data.model.KinCareSession) -> String? = { s ->
         com.tribetails.auntieos.domain.resolveTimeBlock(s.startTime, timeBlocks)?.label
     }
@@ -231,8 +229,10 @@ fun KinCareSessionsScreen(
     // #2123: a visit Completed with its KinTale still owed is the Auntie's task
     // until the KinTale is sent, however long ago it was. It is read off every
     // session this screen loads (not only the day-of window), listed in its own
-    // group, and kept out of Recent so no visit shows twice.
-    val kinTaleSplit = splitKinTalesToSend(sessions, kinTaleRequired)
+    // group, and kept out of Recent so no visit shows twice. Read from the
+    // server's `kinTaleDue` stamp alone, never the settings document (which an
+    // Auntie cannot read): switching the setting off clears the stamps.
+    val kinTaleSplit = splitKinTalesToSend(sessions)
     val visible = kinTaleSplit.rest.filter { isVisibleOnAuntieTime(it, today, zone) }
 
     // #2036: the Archive. Older history had no list on this app, so a visit
@@ -464,9 +464,9 @@ fun KinCareSessionsScreen(
                             Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
                                 Phase.entries.forEach { phase ->
                                     // #2123: owed KinTales sit right under what is in
-                                    // flight, and only while the setting is on.
+                                    // flight, and only while something is owed.
                                     val groupSessions = if (phase == Phase.KinTalesToSend) {
-                                        if (kinTaleRequired != true) return@forEach
+                                        if (kinTaleSplit.toSend.isEmpty()) return@forEach
                                         kinTaleSplit.toSend
                                     } else {
                                         grouped[phase].orEmpty()

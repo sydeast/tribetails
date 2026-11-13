@@ -24,10 +24,6 @@ vi.mock('../lib/usePagedCollection', () => ({ usePagedCollection }));
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 // #2123: a DEPARTED card watches its own document; nothing here reaches DEPARTED.
 vi.mock('../lib/firestore', () => ({ useCollection, useDocById: () => ({ status: 'loading' }) }));
-vi.mock('../lib/kinTaleTask', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../lib/kinTaleTask')>()),
-  useKinTaleRequired: () => false,
-}));
 const { patchVisitLifecycle } = vi.hoisted(() => ({ patchVisitLifecycle: vi.fn() }));
 vi.mock('../api/sessionsWrite', () => ({ patchVisitLifecycle, updateKinCareSession: vi.fn() }));
 vi.mock('../api/bookingsWrite', () => ({ transitionBookingStatus: vi.fn() }));

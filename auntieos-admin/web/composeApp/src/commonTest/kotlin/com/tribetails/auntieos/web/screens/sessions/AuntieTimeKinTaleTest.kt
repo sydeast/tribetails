@@ -80,7 +80,7 @@ class AuntieTimeKinTaleTest {
     @Test
     fun anOwedVisitIsInKinTalesToSendAndNotAlsoInRecent() {
         val owed = visit(status = "COMPLETED", due = true)
-        val board = auntieTimeBoard(listOf(owed), today, zone, kinTaleRequired = true)
+        val board = auntieTimeBoard(listOf(owed), today, zone)
         assertEquals(listOf(owed), board[AuntieTimePhase.KinTalesToSend])
         assertNull(board[AuntieTimePhase.CompletedToday])
     }
@@ -88,26 +88,27 @@ class AuntieTimeKinTaleTest {
     @Test
     fun anOwedVisitOlderThanRecentStillShowsUntilItsKinTaleIsSent() {
         val old = visit(status = "COMPLETED", startTime = "2026-10-01T15:00:00Z", due = true)
-        val board = auntieTimeBoard(listOf(old), today, zone, kinTaleRequired = true)
+        val board = auntieTimeBoard(listOf(old), today, zone)
         assertEquals(listOf(old), board[AuntieTimePhase.KinTalesToSend])
         // The same visit once its KinTale is sent is history and leaves the board.
         val sent = old.copy(sentReportCount = 1, reportIds = listOf("r1"))
-        assertTrue(auntieTimeBoard(listOf(sent), today, zone, kinTaleRequired = true).isEmpty())
+        assertTrue(auntieTimeBoard(listOf(sent), today, zone).isEmpty())
     }
 
     @Test
-    fun withTheSettingOffNoGroupAppearsAndTheVisitIsRecentAsBefore() {
-        val owed = visit(status = "COMPLETED", due = true)
-        val old = visit(id = "s2", status = "COMPLETED", startTime = "2026-10-01T15:00:00Z", due = true)
-        val board = auntieTimeBoard(listOf(owed, old), today, zone, kinTaleRequired = false)
+    fun withNothingStampedNoGroupAppearsAndTheVisitIsRecentAsBefore() {
+        // Switching the setting off clears every stamp on the server.
+        val done = visit(status = "COMPLETED", due = false)
+        val old = visit(id = "s2", status = "COMPLETED", startTime = "2026-10-01T15:00:00Z", due = false)
+        val board = auntieTimeBoard(listOf(done, old), today, zone)
         assertNull(board[AuntieTimePhase.KinTalesToSend])
-        assertEquals(listOf(owed), board[AuntieTimePhase.CompletedToday])
+        assertEquals(listOf(done), board[AuntieTimePhase.CompletedToday])
     }
 
     @Test
     fun aCompletedVisitTheServerNeverMarkedDueIsRecentNotATask() {
         val done = visit(status = "COMPLETED")
-        val board = auntieTimeBoard(listOf(done), today, zone, kinTaleRequired = true)
+        val board = auntieTimeBoard(listOf(done), today, zone)
         assertNull(board[AuntieTimePhase.KinTalesToSend])
         assertEquals(listOf(done), board[AuntieTimePhase.CompletedToday])
     }
@@ -115,7 +116,7 @@ class AuntieTimeKinTaleTest {
     @Test
     fun aDepartedVisitStaysActiveWhileTheServerCompletesIt() {
         val departed = visit(status = "DEPARTED", due = true)
-        val board = auntieTimeBoard(listOf(departed), today, zone, kinTaleRequired = true)
+        val board = auntieTimeBoard(listOf(departed), today, zone)
         assertEquals(listOf(departed), board[AuntieTimePhase.Active])
         assertNull(board[AuntieTimePhase.KinTalesToSend])
     }

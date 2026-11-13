@@ -33,13 +33,6 @@ const { useCollection, useDocById } = vi.hoisted(() => ({
   useDocById: vi.fn<(path: string, id: string | null | undefined) => unknown>(() => ({ status: 'loading' })),
 }));
 vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
-// #2123: "KinTale required", read raw off the settings document. The rule
-// itself stays real; only the read is stubbed.
-const { useKinTaleRequired } = vi.hoisted(() => ({ useKinTaleRequired: vi.fn<() => boolean | null>(() => false) }));
-vi.mock('../lib/kinTaleTask', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../lib/kinTaleTask')>()),
-  useKinTaleRequired,
-}));
 /**
  * The writes, and the split between them is the whole point of this block.
  * `patchVisitLifecycle` is the card's own clock (through
@@ -241,7 +234,6 @@ beforeEach(() => {
   onSelect.mockReset();
   useCollection.mockReset();
   useDocById.mockReset().mockReturnValue({ status: 'loading' });
-  useKinTaleRequired.mockReset().mockReturnValue(false);
   directory();
   loadMore.mockReset();
   reload.mockReset();
@@ -910,7 +902,9 @@ describe('Auntie Time: the card runs the visit', () => {
     });
   });
 
-  // #2123: "KinTale required" on. The Auntie's task, until the KinTale is sent.
+  // #2123: the Auntie's task, until the KinTale is sent. Read from the server's
+  // `kinTaleDue` stamp alone: nothing here mocks or reads the settings document,
+  // which an Auntie cannot read, so every case below is what she sees too.
   describe('#2123: KinTales to send', () => {
     const owed = (id: string, extra: Partial<SessionEntry> = {}) =>
       entry({
@@ -923,8 +917,7 @@ describe('Auntie Time: the card runs the visit', () => {
         ...extra,
       });
 
-    it('with the switch on, an owed visit is listed under KinTales to send and not again in Recent', () => {
-      useKinTaleRequired.mockReturnValue(true);
+    it('a stamped visit is listed under KinTales to send and not again in Recent', () => {
       usePagedCollection.mockReturnValue(paged([owed('o1'), entry({ _id: 'done', status: 'COMPLETED', startTime: at(0, 7), completedAt: at(0, 7, 30), sentReportCount: 1, reportIds: ['r'] })]));
       renderBoard({ onComposeKinTale: vi.fn(), onViewKinTale: vi.fn() });
       expect(phaseHeadings()[0]).toBe('KinTales to send');
@@ -934,7 +927,6 @@ describe('Auntie Time: the card runs the visit', () => {
     });
 
     it('reaches owed visits older than the board, and opens the composer from the task', async () => {
-      useKinTaleRequired.mockReturnValue(true);
       directory([], [], [], [owed('old', { startTime: at(-20, 8), completedAt: at(-20, 9) })]);
       const onComposeKinTale = vi.fn();
       usePagedCollection.mockReturnValue(paged([]));
@@ -945,17 +937,14 @@ describe('Auntie Time: the card runs the visit', () => {
       expect(onComposeKinTale).toHaveBeenCalledWith('old');
     });
 
-    it('a sent KinTale leaves the list even before the server flag is cleared', () => {
-      useKinTaleRequired.mockReturnValue(true);
+    it('a sent KinTale leaves the list even before the server flag is cleared, and an empty list is not shown', () => {
       directory([], [], [], [owed('sent', { sentReportCount: 1, reportIds: ['r1'] })]);
       usePagedCollection.mockReturnValue(paged([]));
       renderBoard();
-      expect(phaseCount('KinTales to send')).toBe('0');
-      expect(screen.getByText('No KinTale is waiting to be sent.')).toBeInTheDocument();
+      expect(phaseHeadings()).not.toContain('KinTales to send');
     });
 
     it('a failed read of older owed visits says so, keeps the board rows and offers a retry', async () => {
-      useKinTaleRequired.mockReturnValue(true);
       const retry = vi.fn();
       useCollection.mockImplementation((spec: CollectionSpec) =>
         spec.path === 'kin_care_sessions' && spec.filters?.[0]?.[0] === 'kinTaleDue'
@@ -966,25 +955,28 @@ describe('Auntie Time: the card runs the visit', () => {
       renderBoard({ onComposeKinTale: vi.fn() });
       expect(screen.getByText(/couldn.t load older kintales to send\. permission-denied/i)).toBeInTheDocument();
       expect(phaseCount('KinTales to send')).toBe('1');
-      expect(screen.queryByText('No KinTale is waiting to be sent.')).toBeNull();
       await user.click(screen.getByRole('button', { name: 'Retry' }));
       expect(retry).toHaveBeenCalledOnce();
     });
 
-    it('with the switch off there is no group, and the visit stays in Recent with its button', () => {
-      useKinTaleRequired.mockReturnValue(false);
-      usePagedCollection.mockReturnValue(paged([owed('o1')]));
+    it('a completed visit with no stamp (the switch off clears them) is no task: it stays in Recent with its button', () => {
+      usePagedCollection.mockReturnValue(paged([owed('o1', { kinTaleDue: false })]));
       renderBoard({ onComposeKinTale: vi.fn() });
       expect(phaseHeadings()).not.toContain('KinTales to send');
       expect(phaseCount('Recent')).toBe('1');
       expect(screen.getByRole('button', { name: 'Send the KinTale' })).toBeInTheDocument();
     });
 
-    it('while the switch is still loading, or could not be read, there is no group', () => {
-      useKinTaleRequired.mockReturnValue(null);
-      usePagedCollection.mockReturnValue(paged([owed('o1')]));
+    it('a failed read with nothing owed on the board still shows the group, with the error', () => {
+      useCollection.mockImplementation((spec: CollectionSpec) =>
+        spec.path === 'kin_care_sessions' && spec.filters?.[0]?.[0] === 'kinTaleDue'
+          ? { status: 'error', message: 'unavailable' }
+          : { status: 'ready', data: [] },
+      );
+      usePagedCollection.mockReturnValue(paged([]));
       renderBoard();
-      expect(phaseHeadings()).not.toContain('KinTales to send');
+      expect(phaseCount('KinTales to send')).toBe('0');
+      expect(screen.getByText(/couldn.t load older kintales to send\. unavailable/i)).toBeInTheDocument();
     });
   });
 

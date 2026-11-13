@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 import {
   KIN_TALE_REQUIRED_DEFAULT,
+  clearKinTalesDue,
   isKinTaleRequired,
   kinTaleDueAtCompletion,
   kinTaleRequiredFrom,
@@ -79,5 +80,41 @@ describe('kinTaleDueAtCompletion', () => {
   it('never due with the switch off, or once a KinTale is out', () => {
     expect(kinTaleDueAtCompletion({}, false)).toBe(false);
     expect(kinTaleDueAtCompletion({ sentReportCount: 1 }, true)).toBe(false);
+  });
+});
+
+describe('clearKinTalesDue', () => {
+  function sessions(stamped: number, unstamped: number) {
+    const docs: Record<string, Record<string, unknown>> = {};
+    for (let i = 0; i < stamped; i++) docs[`kin_care_sessions/due${i}`] = { status: 'COMPLETED', kinTaleDue: true };
+    for (let i = 0; i < unstamped; i++) docs[`kin_care_sessions/done${i}`] = { status: 'COMPLETED', kinTaleDue: false };
+    return buildDbMock({ docs, writeThrough: true });
+  }
+
+  it('clears every stamp, page by page, and touches nothing else', async () => {
+    const mock = sessions(5, 2);
+    expect(await clearKinTalesDue(mock.db, 2)).toBe(5);
+    const paths = mock.writes.map((w) => w.path).sort();
+    expect(paths).toEqual([0, 1, 2, 3, 4].map((i) => `kin_care_sessions/due${i}`));
+    for (const w of mock.writes) expect(w.data).toEqual({ kinTaleDue: false });
+  });
+
+  it('a page exactly full is followed by one more look, which finds nothing', async () => {
+    const mock = sessions(4, 0);
+    expect(await clearKinTalesDue(mock.db, 2)).toBe(4);
+    expect(mock.writes).toHaveLength(4);
+  });
+
+  it('with nothing stamped it writes nothing', async () => {
+    const mock = sessions(0, 3);
+    expect(await clearKinTalesDue(mock.db)).toBe(0);
+    expect(mock.writes).toEqual([]);
+  });
+
+  it('run again, it finds nothing left', async () => {
+    const mock = sessions(3, 0);
+    await clearKinTalesDue(mock.db);
+    expect(await clearKinTalesDue(mock.db)).toBe(0);
+    expect(mock.writes).toHaveLength(3);
   });
 });

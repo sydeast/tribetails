@@ -1,9 +1,3 @@
-import { useEffect, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from './firebase';
-import { BUSINESS_SETTINGS_DOC_ID } from '../api/settings';
-import { sharedLoad } from './useSharedOneShot';
-
 /**
  * #2123 (operator ruling 2026-11-12): "if kintales are required, then kinfolk
  * still see Completed and the kintale becomes a required task for the auntie to
@@ -13,19 +7,18 @@ import { sharedLoad } from './useSharedOneShot';
  * server (`functions/src/triggers/onKinCareSessionDeparted.ts`). When "KinTale
  * required" is on and nothing has been sent, that completion writes
  * `kinTaleDue: true`, and every send writes it back to false beside
- * `sentReportCount` (`api/kinTalesWrite.ts#sendKinTale`). This file is the
- * board's reading of those fields: the same rule as
- * `functions/src/lib/kinTaleRequirement.ts`, Android's `domain/KinTaleTask.kt`
- * and the desktop console's copy. Change them together.
+ * `sentReportCount` (`api/kinTalesWrite.ts#sendKinTale`).
+ *
+ * THE STAMP IS THE AUTHORITY, AND THIS FILE READS NO SETTINGS. The task is the
+ * Auntie's, and an Auntie cannot read `business_settings` (owner-only in the
+ * rules). So the board lists "KinTales to send" from the stamp alone, for any
+ * sign-in, and the server keeps the stamps honest: turning the switch off
+ * clears every one still standing (`functions/src/triggers/onBusinessSettingsWrite.ts`).
+ *
+ * The same rule as `functions/src/lib/kinTaleRequirement.ts`, Android's
+ * `domain/KinTaleTask.kt` and the desktop console's `data/KinTaleOwed.kt`.
+ * Change them together.
  */
-
-/** What a settings document with no `kinTaleRequired` means: off (operator ruling 2026-11-13, "Start it off"). */
-export const KIN_TALE_REQUIRED_DEFAULT = false;
-
-/** The switch off the raw settings document. Only an explicit `true` is on. */
-export function kinTaleRequiredFrom(raw: Record<string, unknown> | undefined): boolean {
-  return raw?.['kinTaleRequired'] === true ? true : KIN_TALE_REQUIRED_DEFAULT;
-}
 
 /** The session fields the task reads. */
 export interface KinTaleTaskFields {
@@ -44,12 +37,11 @@ export function kinTaleSent(session: KinTaleTaskFields): boolean {
 }
 
 /**
- * Does the Auntie still owe this visit's KinTale? A sent one wins over a flag
- * that has not been cleared yet, so the card leaves the list the moment the
- * send lands.
+ * Does the Auntie still owe this visit's KinTale? Completed, stamped by the
+ * server, and nothing sent. A sent one wins over a stamp that has not been
+ * cleared yet, so the card leaves the list the moment the send lands.
  */
-export function kinTaleOwed(session: KinTaleTaskFields, required: boolean): boolean {
-  if (!required) return false;
+export function kinTaleOwed(session: KinTaleTaskFields): boolean {
   const status = typeof session.status === 'string' ? session.status.trim().toUpperCase() : '';
   return status === 'COMPLETED' && session.kinTaleDue === true && !kinTaleSent(session);
 }
@@ -57,52 +49,18 @@ export function kinTaleOwed(session: KinTaleTaskFields, required: boolean): bool
 /**
  * The board's rows split into "KinTales to send" and everything else. `due` is
  * the `kinTaleDue == true` read, which reaches visits older than the board's
- * window; a visit in both appears once, in `owed`. With the switch off the
- * board is returned untouched.
+ * window; a visit in both appears once, in `owed`.
  */
 export function splitOwedKinTales<T extends KinTaleTaskFields & { _id: string }>(
   board: readonly T[],
   due: readonly T[],
-  required: boolean,
 ): { owed: T[]; rest: readonly T[] } {
-  if (!required) return { owed: [], rest: board };
   const owedIds = new Set<string>();
   const owed: T[] = [];
   for (const row of [...board, ...due]) {
-    if (owedIds.has(row._id) || !kinTaleOwed(row, required)) continue;
+    if (owedIds.has(row._id) || !kinTaleOwed(row)) continue;
     owedIds.add(row._id);
     owed.push(row);
   }
-  return { owed, rest: board.filter((r) => !owedIds.has(r._id)) };
-}
-
-/** Held for a minute, one read for every card on a board, as `useArrivalRule` does. */
-export const KIN_TALE_REQUIRED_TTL_MS = 60 * 1000;
-
-export async function loadKinTaleRequired(): Promise<boolean> {
-  const snap = await getDoc(doc(db, 'business_settings', BUSINESS_SETTINGS_DOC_ID));
-  return kinTaleRequiredFrom(snap.exists() ? (snap.data() as Record<string, unknown>) : undefined);
-}
-
-/**
- * The switch, or null while it loads or when it could not be read. The board
- * shows no "KinTales to send" group until it knows: a guess either way would
- * either hide a task or invent one.
- */
-export function useKinTaleRequired(): boolean | null {
-  const [required, setRequired] = useState<boolean | null>(null);
-  useEffect(() => {
-    let live = true;
-    sharedLoad('business_settings.kinTaleRequired', loadKinTaleRequired, KIN_TALE_REQUIRED_TTL_MS)
-      .then((v) => {
-        if (live) setRequired(v);
-      })
-      .catch(() => {
-        if (live) setRequired(null);
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
-  return required;
+  return { owed, rest: owedIds.size === 0 ? board : board.filter((r) => !owedIds.has(r._id)) };
 }

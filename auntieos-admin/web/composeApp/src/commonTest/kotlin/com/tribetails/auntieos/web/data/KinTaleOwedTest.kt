@@ -49,36 +49,31 @@ class KinTaleOwedTest {
 
     @Test
     fun aCompletedVisitTheServerMarkedDueIsOwedWhileTheSettingIsOn() {
-        assertTrue(kinTaleOwed(completed(), kinTaleRequired = true))
+        assertTrue(kinTaleOwed(completed()))
         // The stored status is read the way every other status check here reads it.
-        assertTrue(kinTaleOwed(completed(status = " completed "), kinTaleRequired = true))
-    }
-
-    @Test
-    fun nothingIsOwedWhileTheSettingIsOff() {
-        assertFalse(kinTaleOwed(completed(), kinTaleRequired = false))
+        assertTrue(kinTaleOwed(completed(status = " completed ")))
     }
 
     @Test
     fun aVisitTheServerNeverMarkedDueIsNotOwed() {
         // A visit completed before the setting, or while it was off, carries no stamp.
-        assertFalse(kinTaleOwed(completed(due = false), kinTaleRequired = true))
+        assertFalse(kinTaleOwed(completed(due = false)))
     }
 
     @Test
     fun aSentKinTaleEndsTheTaskEvenBeforeTheStampIsCleared() {
-        assertFalse(kinTaleOwed(completed(sentReportCount = 1), kinTaleRequired = true))
+        assertFalse(kinTaleOwed(completed(sentReportCount = 1)))
     }
 
     @Test
     fun aSavedDraftDoesNotEndTheTask() {
-        assertTrue(kinTaleOwed(completed(reportIds = listOf("draft-1")), kinTaleRequired = true))
+        assertTrue(kinTaleOwed(completed(reportIds = listOf("draft-1"))))
     }
 
     @Test
     fun onlyACompletedVisitCarriesTheTask() {
         for (status in listOf("DEPARTED", "ARRIVED", "SCHEDULED", "CANCELLED", "")) {
-            assertFalse(kinTaleOwed(completed(status = status), kinTaleRequired = true), status)
+            assertFalse(kinTaleOwed(completed(status = status)), status)
         }
     }
 

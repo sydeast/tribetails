@@ -225,3 +225,67 @@ describe('onBusinessSettingsWrite', () => {
     expect(JSON.stringify(mirrored)).not.toContain('555-0142');
   });
 });
+
+/**
+ * #2123: every admin client lists "KinTales to send" from the visit's
+ * `kinTaleDue` stamp alone (an Auntie cannot read the settings document), so
+ * the switch going off has to clear the stamps on the server.
+ */
+describe('KinTale required off clears the stamped tasks', () => {
+  const stamped = (extra: Record<string, unknown> = {}) => ({ status: 'COMPLETED', kinTaleDue: true, ...extra });
+  const card = { 'business_public/card': buildBusinessPublicCard(FULL_SETTINGS) as never };
+
+  it('switching it off clears every visit still owed, and only the stamp', async () => {
+    const mock = dbWith({
+      ...card,
+      'kin_care_sessions/s1': stamped({ notes: 'gate code' }),
+      'kin_care_sessions/s2': stamped(),
+      'kin_care_sessions/s3': { status: 'COMPLETED', kinTaleDue: false },
+    });
+    await settingsWritten({ ...FULL_SETTINGS, kinTaleRequired: true }, { ...FULL_SETTINGS, kinTaleRequired: false });
+    const sessionWrites = mock.writes.filter((w) => w.path.startsWith('kin_care_sessions/'));
+    expect(sessionWrites.map((w) => w.path).sort()).toEqual(['kin_care_sessions/s1', 'kin_care_sessions/s2']);
+    for (const w of sessionWrites) expect(w.data).toEqual({ kinTaleDue: false });
+    expect(mocks.logEvent.mock.calls.map((c) => c[0]).find((e) => e.event === 'kinTale.tasks.cleared')).toMatchObject({
+      extra: { cleared: 2 },
+    });
+  });
+
+  it('a settings document with no switch at all is off, and clears too', async () => {
+    const mock = dbWith({ ...card, 'kin_care_sessions/s1': stamped() });
+    await settingsWritten(FULL_SETTINGS, { ...FULL_SETTINGS, businessPhone: '555-0199' });
+    expect(mock.writes.filter((w) => w.path === 'kin_care_sessions/s1')).toEqual([
+      expect.objectContaining({ data: { kinTaleDue: false } }),
+    ]);
+  });
+
+  it('with the switch on nothing is cleared, and turning it on re-stamps nothing', async () => {
+    const mock = dbWith({
+      ...card,
+      'kin_care_sessions/s1': stamped(),
+      'kin_care_sessions/s2': { status: 'COMPLETED', kinTaleDue: false },
+      'kin_care_sessions/s3': { status: 'COMPLETED' },
+    });
+    await settingsWritten({ ...FULL_SETTINGS, kinTaleRequired: false }, { ...FULL_SETTINGS, kinTaleRequired: true });
+    expect(mock.writes.filter((w) => w.path.startsWith('kin_care_sessions/'))).toEqual([]);
+  });
+
+  it('a second run finds nothing left to clear', async () => {
+    const mock = dbWith({ ...card, 'kin_care_sessions/s1': stamped() });
+    const off = { ...FULL_SETTINGS, kinTaleRequired: false };
+    await settingsWritten({ ...FULL_SETTINGS, kinTaleRequired: true }, off);
+    await settingsWritten(off, off);
+    expect(mock.writes.filter((w) => w.path === 'kin_care_sessions/s1')).toHaveLength(1);
+  });
+
+  it('a failed clear does not stop the public card, and is still reported', async () => {
+    const mock = dbWith({ 'business_public/card': null, 'kin_care_sessions/s1': stamped() });
+    const realCollection = mock.db.collection.bind(mock.db);
+    mock.db.collection = (path: string) => {
+      if (path === 'kin_care_sessions') throw new Error('unavailable');
+      return realCollection(path);
+    };
+    await expect(settingsWritten(undefined, { ...FULL_SETTINGS, kinTaleRequired: false })).rejects.toThrow('unavailable');
+    expect(mock.writes.find((w) => w.path === 'business_public/card')).toBeDefined();
+  });
+});

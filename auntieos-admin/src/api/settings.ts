@@ -443,7 +443,7 @@ export interface BusinessSettings {
   /**
    * #2123: "KinTale required". Never blocks completion; with it on, a visit
    * completed with no KinTale sent stays on the Auntie's "KinTales to send"
-   * list until one is. Absent reads OFF (`lib/kinTaleTask.ts`).
+   * list until one is. Absent reads OFF, as on the server.
    */
   kinTaleRequired: boolean;
   /**
@@ -881,8 +881,8 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
       (r.enablePhotoLocationTagging as boolean) ?? d.enablePhotoLocationTagging,
     // #1620: only a stored `true` is on, the server's reading.
     requireArrivalDepartureVerification: r.requireArrivalDepartureVerification === true,
-    // #2123: only a stored `true` is on, the server's reading (and
-    // `lib/kinTaleTask.ts#kinTaleRequiredFrom`, which the board reads raw).
+    // #2123: only a stored `true` is on, the server's reading
+    // (`kinTaleRequiredFrom` in functions/src/lib/kinTaleRequirement.ts).
     kinTaleRequired: r.kinTaleRequired === true,
     arrivalRadiusMeters: (r.arrivalRadiusMeters as number) ?? d.arrivalRadiusMeters,
     autoStartTrackingOnVisitStart:
