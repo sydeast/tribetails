@@ -184,6 +184,7 @@ onInvoicePaidExpireCheckouts
 onInvoicesWrite
 onKinCareRollup
 onKinCareSessionCalendarSync
+onKinCareSessionDeparted
 onKinTaleCommentCreate
 onKinTaleCreate
 onKinTaleUpdate

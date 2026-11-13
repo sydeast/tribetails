@@ -224,8 +224,15 @@ const ALLOWED_EAGER_PACKAGES = [
  * `membership/acceptInvite.ts` and `admin/setKinfolkClaim.ts` (entries already
  * in this graph) write through. Its runtime import is `lib/schema.ts`, already
  * here; the rest are types.
+ *
+ * 447 since #2123 (on top of #2096's 446): `triggers/onKinCareSessionDeparted.ts`,
+ * the trigger that completes a visit at departure. A new entry in the FUNCTIONS
+ * table, so it is in the union by construction. Its words and the "KinTale
+ * required" reader are loaded inside the handler; its file-scope imports
+ * (`arrivalVerification`, `geo`, `writeAuditEntry`, `wrapTrigger`) are already
+ * resident through `transitionBookingStatus` and the other triggers.
  */
-const MAX_OWN_EAGER_MODULES = 446;
+const MAX_OWN_EAGER_MODULES = 447;
 
 interface Edge {
   spec: string;

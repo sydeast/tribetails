@@ -249,6 +249,9 @@ export async function transitionBookingStatusHandler(
         kinIds?: unknown;
         kinfolkNotes?: unknown;
         sourceBookingId?: unknown;
+        // #2123: whether a KinTale has gone out, for "KinTale required".
+        sentReportCount?: unknown;
+        reportIds?: unknown;
       }
     | undefined;
   const decision = evaluateTransition({ currentStatus: prev?.status, action: args.action });
@@ -443,8 +446,17 @@ export async function transitionBookingStatusHandler(
     updatedAt: FieldValue.serverTimestamp(),
     updatedBy: uid,
   };
+  // #2123: completing never waits on a KinTale. With "KinTale required" on
+  // (absent reads on), a visit completed with nothing sent is left owing one,
+  // which is what puts it on the Auntie's "KinTales to send" list until a send
+  // writes `kinTaleDue: false`. Departure normally gets here first, through
+  // `triggers/onKinCareSessionDeparted.ts`; this is the hand-marked path.
+  let kinTaleDue = false;
   if (args.action === 'COMPLETE') {
     patch.completedAt = args.completedAt ?? new Date().toISOString();
+    const { isKinTaleRequired, kinTaleDueAtCompletion } = await import('../lib/kinTaleRequirement.js');
+    kinTaleDue = kinTaleDueAtCompletion(prev ?? {}, await isKinTaleRequired(db()));
+    if (kinTaleDue) patch.kinTaleDue = true;
   }
   const reason = args.reason?.trim() ?? '';
   const notesAppended = reason !== '' && (args.action === 'CANCEL' || args.action === 'REJECT');
@@ -513,6 +525,8 @@ export async function transitionBookingStatusHandler(
       // "which completions were actually verified" is answerable after the
       // fact. `not_checked` means the operator has the rule switched off.
       arrivalLocationVerdict,
+      // #2123: whether this completion left a KinTale owed.
+      ...(args.action === 'COMPLETE' ? { kinTaleDue } : {}),
     },
   }).catch((err) => {
     logEvent({

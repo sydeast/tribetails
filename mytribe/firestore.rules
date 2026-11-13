@@ -463,6 +463,8 @@ service cloud.firestore {
              && bsBool('enableGPSTrackingForAllVisits')
              && bsBool('enablePhotoLocationTagging')
              && bsBool('requireArrivalDepartureVerification')
+ // #2123: the "KinTale required" switch. `saveBusinessSettings` checks it too.
+             && bsBool('kinTaleRequired')
              && bsBool('autoStartTrackingOnVisitStart')
              && bsBool('allowClientLocationSharing')
  // Phase 1's pre-launch household send gate. The server reads it as `=== true`
