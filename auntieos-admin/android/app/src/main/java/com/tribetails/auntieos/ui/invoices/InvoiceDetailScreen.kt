@@ -209,6 +209,7 @@ fun InvoiceDetailScreen(
             selectedIds = uiState.pendingSessionIds,
             invoiceId   = uiState.invoice?.id.orEmpty(),
             storedIds   = uiState.invoice?.sessionIds.orEmpty(),
+            billedIds   = uiState.invoice?.let { linkPickerBilledIds(it) }.orEmpty(),
             error       = uiState.linkError,
             onToggle    = { viewModel.toggleSessionInPending(it) },
             onSave      = { viewModel.saveLinks() },
@@ -1955,11 +1956,14 @@ internal fun linkPickerChipLabel(
     elsewhere: Boolean,
     cancelled: Boolean,
     catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog,
+    /** #2091: a line on this invoice bills it, so it stays linked. */
+    billedHere: Boolean = false,
 ): String {
     val service = if (session.serviceType.isBlank()) "Session" else catalog.nameOf(session.serviceType)
     return "$service · $dateLabel" +
         (if (elsewhere) " · on another invoice" else "") +
-        (if (cancelled) " · cancelled, not billable" else "")
+        (if (cancelled) " · cancelled, not billable" else "") +
+        (if (billedHere) " · billed on a line of this invoice, remove the line in Edit to unlink it" else "")
 }
 
 @Composable
@@ -1968,6 +1972,7 @@ private fun LinkSessionsDialog(
     selectedIds: Set<String>,
     invoiceId: String,
     storedIds: List<String>,
+    billedIds: Set<String>,
     error: String?,
     onToggle: (String) -> Unit,
     onSave: () -> Unit,
@@ -1995,6 +2000,22 @@ private fun LinkSessionsDialog(
                 modifier = Modifier.padding(bottom = 8.dp),
             )
         }
+        // #2091: the moment a new visit is ticked, say that linking adds no price.
+        if (selectedIds.any { it !in storedIds }) {
+            AuntieBanner(
+                tone     = AuntieBannerTone.Warning,
+                title    = LINK_ADDS_NO_PRICE_TITLE,
+                icon     = Lucide.CircleAlert,
+                modifier = Modifier.padding(bottom = 8.dp),
+                body     = {
+                    Text(
+                        LINK_ADDS_NO_PRICE_TEXT,
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                },
+            )
+        }
         if (available.isEmpty()) {
             Text(
                 text  = "No sessions found for this kinfolk.",
@@ -2016,12 +2037,14 @@ private fun LinkSessionsDialog(
                     val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
                     // #1609: a cancelled visit is not billable.
                     val cancelled = linkPickerCancelled(session, storedIds)
-                    val chipLabel = linkPickerChipLabel(session, dateLabel, elsewhere, cancelled, catalog)
+                    // #2091: a line on this invoice bills it; Edit is where it leaves.
+                    val billedHere = session.id in billedIds && session.id in storedIds
+                    val chipLabel = linkPickerChipLabel(session, dateLabel, elsewhere, cancelled, catalog, billedHere)
                     AuntieChip(
                         label    = chipLabel,
                         selected = session.id in selectedIds,
                         onClick  = { onToggle(session.id) },
-                        enabled  = !elsewhere && !cancelled && !saveLoading,
+                        enabled  = !elsewhere && !cancelled && !billedHere && !saveLoading,
                     )
                 }
             }

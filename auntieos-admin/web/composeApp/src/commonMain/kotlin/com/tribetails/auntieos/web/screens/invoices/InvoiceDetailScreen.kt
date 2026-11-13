@@ -54,6 +54,9 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.lastReminderLabel
+import com.tribetails.auntieos.web.data.LINK_ADDS_NO_PRICE_TEXT
+import com.tribetails.auntieos.web.data.LINK_ADDS_NO_PRICE_TITLE
+import com.tribetails.auntieos.web.data.linkPickerBilledIds
 import com.tribetails.auntieos.web.data.linkPickerCancelled
 import com.tribetails.auntieos.web.data.linkPickerOnOtherInvoice
 import com.tribetails.auntieos.web.data.toggleLinkPick
@@ -356,10 +359,14 @@ private fun InvoiceDetailBody(
         error         = linkSessionsError,
         invoiceId     = invoice._id,
         storedIds     = invoice.sessionIds,
+        billedIds     = linkPickerBilledIds(invoice.lineItems),
         onToggle      = { sid ->
             // #1254: a visit another invoice bills cannot be ticked.
+            // #2091: a visit a line bills cannot be unticked.
             if (!saveLoading) {
-                pendingIds = toggleLinkPick(pendingIds, sid, allSessions, invoice._id, invoice.sessionIds)
+                pendingIds = toggleLinkPick(
+                    pendingIds, sid, allSessions, invoice._id, invoice.sessionIds, linkPickerBilledIds(invoice.lineItems),
+                )
             }
         },
         // Not while the call is in flight: its answer has to land somewhere.
@@ -1033,11 +1040,14 @@ internal fun linkPickerChipLabel(
     elsewhere: Boolean,
     cancelled: Boolean,
     catalog: com.tribetails.auntieos.web.screens.ServiceCatalog,
+    /** #2091: a line on this invoice bills it, so it stays linked. */
+    billedHere: Boolean = false,
 ): String {
     val service = if (serviceType.isBlank()) "Session" else catalog.nameOf(serviceType)
     return "$service · $dateLabel" +
         (if (elsewhere) " · on another invoice" else "") +
-        (if (cancelled) " · cancelled, not billable" else "")
+        (if (cancelled) " · cancelled, not billable" else "") +
+        (if (billedHere) " · billed on a line of this invoice, remove the line in Edit to unlink it" else "")
 }
 
 @Composable
@@ -1049,6 +1059,7 @@ private fun LinkSessionsDialog(
     error: String?,
     invoiceId: String,
     storedIds: List<String>,
+    billedIds: Set<String>,
     onToggle: (String) -> Unit,
     onCancel: () -> Unit,
     onSave: () -> Unit,
@@ -1069,6 +1080,12 @@ private fun LinkSessionsDialog(
         if (error != null) {
             AuntieBanner(tone = AuntieBannerTone.Error, title = "Can't save") {
                 Text(error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+        }
+        // #2091: the moment a new visit is ticked, say that linking adds no price.
+        if (pendingIds.any { it !in storedIds }) {
+            AuntieBanner(tone = AuntieBannerTone.Warning, title = LINK_ADDS_NO_PRICE_TITLE) {
+                Text(LINK_ADDS_NO_PRICE_TEXT, style = AuntieTheme.typography.bodySmall, color = c.textDim)
             }
         }
         when (val s = sessionsState) {
@@ -1100,15 +1117,18 @@ private fun LinkSessionsDialog(
                             val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
                             // #1609: a cancelled visit is not billable.
                             val cancelled = linkPickerCancelled(session, storedIds)
+                            // #2091: a line on this invoice bills it; Edit is where it leaves.
+                            val billedHere = session._id in billedIds && session._id in storedIds
                             val chipLabel = linkPickerChipLabel(
                                 session.serviceType, dateLabel, elsewhere, cancelled, com.tribetails.auntieos.web.screens.LocalServiceCatalog.current,
+                                billedHere,
                             )
                             AuntieChip(
                                 label    = chipLabel,
                                 selected = session._id in pendingIds,
                                 tone     = AuntieChipTone.Orange,
                                 onClick  = { onToggle(session._id) },
-                                enabled  = !elsewhere && !cancelled && !saveLoading,
+                                enabled  = !elsewhere && !cancelled && !billedHere && !saveLoading,
                             )
                         }
                     }
