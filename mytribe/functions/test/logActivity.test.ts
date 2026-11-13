@@ -16,6 +16,7 @@ vi.mock('../src/lib/sessionRevocation', () => import('./_helpers/mockSessionRevo
 import { AUNTIE_LOGGABLE_EVENTS, logActivityHandler } from '../src/admin/logActivity';
 import { wrapAdminCallable } from '../src/lib/wrapAdminCallable';
 import { ACTIVITY_PAYLOAD_MAX_CHARS } from '../src/lib/activityPayload';
+import { SERVER_ONLY_AUDIT_EVENTS } from '../src/lib/auditEvents';
 const writeAuditEntryMock = mocks.writeAuditEntryMock;
 
 const OWNER = { admin: true };
@@ -112,10 +113,10 @@ describe('logActivityHandler', () => {
   });
 
   it('uses caller uid as actor when description omitted (default description = actionType)', async () => {
-    await logActivityHandler(req({ actionType: 'AUTH_LOGIN_SUCCESS' }));
+    await logActivityHandler(req({ actionType: 'AUTH_PASSWORD_CHANGED' }));
     const args = writeAuditEntryMock.mock.calls[0][0];
     expect(args.actorUid).toBe('admin-1');
-    expect(args.description).toBe('AUTH_LOGIN_SUCCESS');
+    expect(args.description).toBe('AUTH_PASSWORD_CHANGED');
   });
 
   it('captures supplied actorId in description when it diverges from caller uid', async () => {
@@ -303,7 +304,9 @@ describe('#1820 what an Auntie may write a line about', () => {
     expect(writeAuditEntryMock).not.toHaveBeenCalled();
   });
 
-  it.each(notHers)('still writes %s for the owner', async (actionType) => {
+  // #2162: the ones the server writes itself are refused from the owner too;
+  // `test/serverOnlyAuditEvents.test.ts` covers them.
+  it.each(notHers.filter((k) => !SERVER_ONLY_AUDIT_EVENTS.has(k)))('still writes %s for the owner', async (actionType) => {
     await logActivityHandler(req({ actionType }, 'owner-1', OWNER));
     expect(written().event).toBe(actionType);
   });

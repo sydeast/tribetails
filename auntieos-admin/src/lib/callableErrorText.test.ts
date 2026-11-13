@@ -37,6 +37,12 @@ describe('plainCallableMessage', () => {
     );
   });
 
+  // #2162: the Activity Log refuses a line the system writes itself with this
+  // sentence (mytribe/functions/src/lib/auditEvents.ts SERVER_ONLY_EVENT_REFUSAL).
+  it('keeps the Activity Log refusal of a system-only line as the server wrote it', () => {
+    const refusal = 'This activity is recorded by the system on its own, so it cannot be added from the app.';
+    expect(plainCallableMessage('functions/permission-denied', `${refusal} [403]`)).toBe(refusal);
+  });
   it('keeps the machine tokens screens match on', () => {
     expect(plainCallableMessage('functions/failed-precondition', 'no_recipients [400]')).toBe('no_recipients');
     expect(plainCallableMessage('functions/failed-precondition', 'recipient_opted_out')).toBe('recipient_opted_out');
