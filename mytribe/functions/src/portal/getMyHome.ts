@@ -11,6 +11,7 @@ import { FULL_CPU } from '../lib/runtimeOptions';
 import { payMethodSettingsFrom, resolveHomePayMethods, type PayMethod } from '../lib/paymentMethods';
 import { openBalanceCentsOf } from './getMyInvoices';
 import { countUnreadNotifications } from '../lib/recipientNotifications';
+import { isDefaultHomeLayout } from '../lib/homeLayout';
 
 interface GetMyHomeRequest {
   kinfolkId?: string;
@@ -229,13 +230,18 @@ export async function getMyHomeHandler(
     ? (mt['home'] as Record<string, unknown>)
     : {});
   const rawSections = Array.isArray(rawHome['sections']) ? (rawHome['sections'] as unknown[]) : [];
-  const home: PortalHomeSection[] = rawSections
-    .filter((s): s is Record<string, unknown> => typeof s === 'object' && s !== null)
-    .map((s) => ({
-      id: str(s['id'], ''),
-      enabled: bool(s['enabled'], true),
-      limit: int(s['limit'], 0),
-    }));
+  // #1987: a stored layout equal to the default goes out as the default (the
+  // empty list). The save stores it that way now; this covers a document
+  // written before it did, for portal builds that still read any list as custom.
+  const home: PortalHomeSection[] = isDefaultHomeLayout(rawSections)
+    ? []
+    : rawSections
+        .filter((s): s is Record<string, unknown> => typeof s === 'object' && s !== null)
+        .map((s) => ({
+          id: str(s['id'], ''),
+          enabled: bool(s['enabled'], true),
+          limit: int(s['limit'], 0),
+        }));
 
   const rawChat = (typeof mt['chat'] === 'object' && mt['chat'] !== null
     ? (mt['chat'] as Record<string, unknown>)

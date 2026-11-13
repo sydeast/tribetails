@@ -180,7 +180,7 @@ function sortByDate(rows: DatedEntry[]): DatedEntry[] {
 /** "3 of 5 sections shown": how many configured Home sections are enabled. */
 export function portalHomeSummary(home: PortalHome): string {
   const total = home.sections.length;
-  if (total === 0) return 'Default layout (no custom sections configured)';
+  if (isDefaultHomeLayout(home.sections)) return 'Default layout (no custom sections configured)';
   const enabled = home.sections.filter((s) => s.enabled).length;
   return `${enabled} of ${total} sections shown`;
 }
@@ -207,15 +207,50 @@ export function homeSectionLabel(id: string | undefined): string {
 }
 
 /**
- * "Default layout" (an empty `sections` array, the portal's own implicit
- * default) or "Custom layout" (an explicit array is saved, however close its
- * contents are to canonical). This is the one-way-door guard: the operator
- * must be able to tell these two states apart by looking, not by inferring it
- * from whether every toggle happens to read "on". See `RESET_HOME_SECTIONS`
- * and the Reset control in `HomeLayoutEditor`.
+ * #1987: is this layout the default? True for the empty list (how the default
+ * is stored) and for the four catalogue rows written out in full: each once,
+ * in catalogue order, each on, each with no limit. A layout equal to the
+ * default IS the default, however it came to be stored.
+ *
+ * Before this the test was "is the list empty", and the editor writes every
+ * row as soon as one value is touched. So typing a Limit of 2 and then putting
+ * 0 back left four default-looking rows that read "Custom layout" here and
+ * turned the portal's Home into one stacked column, with Reset the only way
+ * out.
+ *
+ * Deliberately exact, and the same rule as the server's
+ * (`mytribe/functions/src/lib/homeLayout.ts`) and admin Android's
+ * (`HomeLayoutConfig.kt`): a list with any other row (an unknown or legacy id,
+ * a repeat, an id-less row) is never called the default, because collapsing it
+ * would throw away a row the operator can see. A row with no `enabled` is on
+ * and a row with no `limit` has none, the defaults the portal reads with.
+ */
+export function isDefaultHomeLayout(sections: readonly HomeSectionCfg[]): boolean {
+  if (sections.length === 0) return true;
+  if (sections.length !== HOME_SECTION_CATALOG.length) return false;
+  return sections.every(
+    (row, i) =>
+      row.id === HOME_SECTION_CATALOG[i]!.id && (row.enabled ?? true) === true && (row.limit ?? 0) === 0,
+  );
+}
+/**
+ * The layout as it should be held and saved: the empty list when it is equal
+ * to the default, otherwise the rows untouched. Used where settings are decoded
+ * (a document stored before the server collapsed these) and on every edit, so
+ * putting each value back is the same state as never having touched it: the
+ * chip reads Default again and there is nothing left to save.
+ */
+export function normalizeHomeSections<T extends HomeSectionCfg>(sections: readonly T[]): T[] {
+  return isDefaultHomeLayout(sections) ? [] : [...sections];
+}
+/**
+ * "Default layout" or "Custom layout". The operator must be able to tell these
+ * two states apart by looking. #1987: Default means the layout is equal to the
+ * default (`isDefaultHomeLayout`), not merely that nothing is stored. See
+ * `RESET_HOME_SECTIONS` and the Reset control in `HomeLayoutEditor`.
  */
 export function homeLayoutModeLabel(home: PortalHome): string {
-  return home.sections.length === 0 ? 'Default layout' : 'Custom layout';
+  return isDefaultHomeLayout(home.sections) ? 'Default layout' : 'Custom layout';
 }
 /**
  * The value "Reset to default layout" writes: the empty array the portal (on
@@ -310,9 +345,14 @@ export function logoStateLabel(logoUrl: string, logoRemovedAt: string): string {
   return `Logo removed ${formatWhen(when)}`;
 }
 
-export function lastSavedLabel(updatedAt: string, updatedBy: string): string {
+/**
+ * `savedBy` is the person's NAME, already resolved from the stored stamp by
+ * `actorLabel` (#1962). The stamp itself is a uid, or a sign-in email on older
+ * records, and is never passed here. Blank drops the "by" clause.
+ */
+export function lastSavedLabel(updatedAt: string, savedBy: string): string {
   const when = isoToFsTime(updatedAt);
   if (!when) return 'Never saved yet';
-  const who = updatedBy.trim();
+  const who = savedBy.trim();
   return who === '' ? `Last saved ${formatWhen(when)}` : `Last saved ${formatWhen(when)} by ${who}`;
 }

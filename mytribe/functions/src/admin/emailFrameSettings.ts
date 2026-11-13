@@ -10,6 +10,7 @@ import { assertCloudinaryUrlInFolder } from '../lib/cloudinary';
 import { sendPartsFor } from '../lib/emailFrame';
 import { renderEmailParts } from '../lib/email';
 import { loadEmailFooterFacts, readStoredEmailFrame } from '../lib/emailFrameStore';
+import { savedByStamp } from '../lib/savedByStamp';
 import {
   DEFAULT_EMAIL_FRAME,
   EMAIL_FRAME_DOC_PATH,
@@ -17,6 +18,7 @@ import {
   EMAIL_FRAME_FIELD_SCHEMAS,
   EMAIL_FRAME_LOGO_FOLDER,
   resolveEmailFrame,
+  withoutDefaults,
   type EmailFrame,
   type EmailFrameField,
   type StoredEmailFrame,
@@ -33,11 +35,13 @@ import {
  */
 
 export interface EmailFrameState {
-  /** Only the fields the operator set. Shown as values. */
+  /** Only the fields the operator set to something other than the default. Shown as values. */
   stored: StoredEmailFrame;
   /** Every field's default. Shown as placeholders, never saved (D-DEFAULT-IS-HINT). */
   defaults: EmailFrame;
+  /** Null whenever `stored` is empty: the default frame carries no stamp (#1989). */
   updatedAt: string | null;
+  /** The saver's uid (`savedByStamp`). The screens show the person's name. */
   updatedBy: string | null;
 }
 
@@ -127,7 +131,8 @@ export async function saveEmailFrameHandler(req: CallableRequest<unknown>): Prom
       continue;
     }
     const parsed = parseField(key, value);
-    if (parsed === '') {
+    // #1989: a value equal to the default is the default, however it was typed.
+    if (parsed === '' || parsed === DEFAULT_EMAIL_FRAME[key]) {
       resets.push(key);
       continue;
     }
@@ -141,13 +146,18 @@ export async function saveEmailFrameHandler(req: CallableRequest<unknown>): Prom
   // the current document, so an older client that does not know a field never
   // wipes it.
   const current = resetAll ? {} : (await readStoredEmailFrame('saveEmailFrame')).stored;
-  const next: StoredEmailFrame = { ...current, ...sets };
-  for (const key of resets) delete next[key];
+  const merged: StoredEmailFrame = { ...current, ...sets };
+  for (const key of resets) delete merged[key];
+  const next = withoutDefaults(merged);
 
-  const updatedAt = new Date().toISOString();
-  await db()
-    .doc(EMAIL_FRAME_DOC_PATH)
-    .set({ ...next, updatedAt, updatedBy: uid });
+  // #1989: a frame with nothing left is the default frame, so no document is
+  // kept for it and no stamp is reported. Every reader already takes a missing
+  // document as the default. Who reset it, and when, is in the audit entry.
+  const isDefault = Object.keys(next).length === 0;
+  const stamp = isDefault ? { updatedAt: null, updatedBy: null } : savedByStamp(uid);
+  const ref = db().doc(EMAIL_FRAME_DOC_PATH);
+  if (isDefault) await ref.delete();
+  else await ref.set({ ...next, ...stamp });
 
   const auditFields: Record<string, string | null> = {};
   for (const [key, value] of Object.entries(sets)) auditFields[key] = value;
@@ -170,7 +180,7 @@ export async function saveEmailFrameHandler(req: CallableRequest<unknown>): Prom
     extra: { fields: Object.keys(auditFields) },
   });
 
-  return { stored: next, defaults: { ...DEFAULT_EMAIL_FRAME }, updatedAt, updatedBy: uid };
+  return { stored: next, defaults: { ...DEFAULT_EMAIL_FRAME }, ...stamp };
 }
 
 /**

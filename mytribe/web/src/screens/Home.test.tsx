@@ -316,6 +316,99 @@ describe('Home, Recent KinTales date line for a migrated row (#1775)', () => {
     expect(await screen.findByText(/FROM AUNTIE MAYA · sometime in the spring/)).toBeInTheDocument();
   });
 });
+/**
+ * #1987: a Limit caps rows and never reshapes the page.
+ *
+ * jsdom lays nothing out, so the columns are read off their carrier: the
+ * `.cols` grid with the `.aside` (Quick start) first in the document. base.css
+ * turns that one markup into two columns on a wide screen and into a single
+ * column led by Quick start at phone width, so desktop and phone are the same
+ * assertion here.
+ */
+describe('Home layout follows the order, never a Limit (#1987)', () => {
+  const row = (id: string, enabled = true, limit = 0) => ({ id, enabled, limit });
+  const DEFAULT_ROWS = ['liveVisit', 'upNext', 'tales', 'quickStart'].map((id) => row(id));
+  const visit = (id: string, title: string) => ({
+    ...pendingOvernight(),
+    id,
+    title,
+    startTimePending: false,
+    requestedDate: null,
+    startTimeMs: new Date(2030, 5, 2, 8, 0).getTime(),
+  });
+  const VISITS = [visit('v-a', 'Morning walk'), visit('v-b', 'Midday walk'), visit('v-c', 'Evening walk')];
+  async function renderWith(home: Array<{ id: string; enabled: boolean; limit: number }>) {
+    mocks.getMyHome.mockResolvedValue({ displayName: 'Wren', businessName: 'Tribe Tails Pet Care', portal: { home } });
+    mocks.getMyAccount.mockResolvedValue({ displayName: 'Casey QA', email: 'casey.qa@example.com', impersonated: false });
+    mocks.getMyBookings.mockResolvedValue({ liveVisit: null, upcoming: VISITS, recent: [] });
+    mocks.getMyKinTales.mockResolvedValue({ tales: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('Morning walk');
+    return view.container;
+  }
+  /** The two-column page: Quick start in the aside, first in the document, Up next and KinTales in the main stack. */
+  function expectColumns(container: HTMLElement) {
+    const cols = container.querySelector('.cols');
+    expect(cols).not.toBeNull();
+    expect(cols).toHaveAttribute('data-home-layout', 'columns');
+    expect(container.querySelector('[data-home-layout="stacked"]')).toBeNull();
+    const [aside, main] = Array.from(cols!.children);
+    expect(aside).toHaveClass('stack', 'aside');
+    expect(aside).toHaveTextContent('Quick start');
+    expect(main).toHaveClass('stack');
+    expect(main).toHaveTextContent('Up next');
+  }
+  it('no saved layout: two columns, every upcoming visit listed', async () => {
+    const container = await renderWith([]);
+    expectColumns(container);
+    expect(screen.getByText('Evening walk')).toBeInTheDocument();
+  });
+  it('only the Up next Limit set to 2: two rows, and the page keeps its two columns', async () => {
+    const container = await renderWith(DEFAULT_ROWS.map((r) => (r.id === 'upNext' ? { ...r, limit: 2 } : r)));
+    expectColumns(container);
+    expect(screen.getByText('Midday walk')).toBeInTheDocument();
+    expect(screen.queryByText('Evening walk')).toBeNull();
+    expect(screen.getByText(/Recent KinTales/)).toBeInTheDocument();
+  });
+  it('a stored layout equal to the default draws exactly the default page', async () => {
+    const container = await renderWith(DEFAULT_ROWS);
+    expectColumns(container);
+    expect(screen.getByText('Evening walk')).toBeInTheDocument();
+  });
+  it('a card switched off in the standard order leaves the columns and drops only that card', async () => {
+    const container = await renderWith(DEFAULT_ROWS.map((r) => (r.id === 'tales' ? { ...r, enabled: false } : r)));
+    expectColumns(container);
+    expect(screen.queryByText(/Recent KinTales/)).toBeNull();
+  });
+  it('a real custom order is still honoured: one column, in that order, the cards sharing one stack', async () => {
+    const container = await renderWith([row('tales'), row('upNext', true, 1), row('quickStart'), row('liveVisit')]);
+    expect(container.querySelector('.cols')).toBeNull();
+    const stacked = container.querySelector('[data-home-layout="stacked"]');
+    expect(stacked).not.toBeNull();
+    // One `.stack` holds all three cards, which is what puts the gap between
+    // them. Each used to get a stack of its own and touch the card above.
+    const stacks = stacked!.querySelectorAll('.stack');
+    expect(stacks).toHaveLength(1);
+    const headings = Array.from(stacks[0]!.children).map((el) => el.textContent ?? '');
+    expect(headings).toHaveLength(3);
+    expect(headings[0]).toMatch(/^Recent KinTales/);
+    expect(headings[1]).toMatch(/^Up next/);
+    expect(headings[2]).toMatch(/^Quick start/);
+    // Its own limit still applies.
+    expect(screen.queryByText('Midday walk')).toBeNull();
+  });
+  it('Quick start switched off has nothing to sit beside, so the rest is one column', async () => {
+    const container = await renderWith(DEFAULT_ROWS.map((r) => (r.id === 'quickStart' ? { ...r, enabled: false } : r)));
+    expect(container.querySelector('.cols')).toBeNull();
+    expect(screen.queryByText('Quick start')).toBeNull();
+    expect(screen.getByText(/^Up next/)).toBeInTheDocument();
+  });
+});
 describe('Home, rows open the booking and headings open the lists (#1461)', () => {
   const visitA = {
     ...pendingOvernight(),

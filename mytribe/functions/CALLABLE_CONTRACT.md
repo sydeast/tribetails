@@ -179,12 +179,17 @@ the stale "~26":
   client.
   - `getEmailFrame`: req `{}`; res `{ stored: Partial<Frame>; defaults: Frame;
     updatedAt: string | null; updatedBy: string | null }`. `stored` holds only
-    the fields the operator set; `defaults` holds every field and is shown as
-    placeholders, never saved.
+    the fields the operator set to something other than the default; `defaults`
+    holds every field and is shown as placeholders, never saved. `updatedBy` is
+    the saver's uid (`lib/savedByStamp.ts`); the screens show the staff member's
+    name. Both stamps are `null` whenever `stored` is empty: the default frame
+    carries no stamp (#1989).
   - `saveEmailFrame`: req `{ changes?: Record<field, string | null>;
     resetAll?: true }` (exactly one of the two). A value sets the field; `null`
     or a blank string resets it to its default; a field left out is untouched.
-    `resetAll` removes every frame field. Res: the same shape as
+    `resetAll` removes every frame field. A value equal to the field's default
+    is a reset (#1989), and when nothing is left the document is deleted and
+    the answer carries no stamp. Res: the same shape as
     `getEmailFrame`. `invalid-argument` (with `details.field` when one field
     is at fault) on any bad value, unknown field or empty save, and nothing is
     written. `failed-precondition` for a logo when `CLOUDINARY_CLOUD_NAME` is
@@ -1968,7 +1973,11 @@ closure so the operator can act on them manually.
 
 ### saveBusinessSettings (owner-only: admin-gated, NOT in `AUNTIE_ALLOWED_CALLABLES`)
 - req `{ changes: Record<field, unknown> }` (at least one field)
-- res `{ updatedAt: string (ISO), updatedBy: string (token email, else uid) }`
+- res `{ updatedAt: string (ISO), updatedBy: string (the caller's uid) }`. Since
+  #1962 every writer of this document stamps through `lib/savedByStamp.ts`
+  (`removeBusinessTag` and `confirmBrandAssetUpload` too). Stamps written
+  before that hold the sign-in email. The screens resolve either to the staff
+  member's name and never print the stamp.
 - Added 2026-11-09 (#1593). **The only write path to
   `business_settings/business_settings`.** The rules deny that document's write
   to every client; before this the three admin clients wrote it directly and
@@ -1987,6 +1996,11 @@ closure so the operator can act on them manually.
 - Write: `set(..., { mergeFields })`. Nested maps merge key by key; the rate card
   (`serviceRates`, `serviceDurations`, `serviceStartTimeBooking`) replaces whole
   so a removed type goes; arrays replace; `null` is stored as `null`.
+- #1987: a `mytribePortal.home.sections` equal to the default (exactly
+  `liveVisit`, `upNext`, `tales`, `quickStart` in that order, each on, each
+  limit 0) is stored as `[]`, which is how the default is stored
+  (`lib/homeLayout.ts`). Any other list is stored as sent. `getMyHome` answers
+  `portal.home: []` for a document that still holds the four default rows.
 - Audited `BUSINESS_SETTINGS_UPDATED` with `{ fields: string[] }` (names only).
 - Mirrors: `auntieos-admin/src/api/settingsWrite.ts`, Android
   `AuntieRepository.updateBusinessSettingsFields`, desktop
