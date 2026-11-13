@@ -402,6 +402,7 @@ export interface LinkInvoiceSessionsResult {
   sessionIds: string[];
   added: string[];
   removed: string[];
+  linkedWithoutLine: string[];
   status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
   editScope: 'all' | 'metadataOnly' | 'none';
 }

@@ -790,6 +790,7 @@ data class LinkInvoiceSessionsResult(
     val sessionIds: List<String>,
     val added: List<String>,
     val removed: List<String>,
+    val linkedWithoutLine: List<String>,
     /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
     val status: String,
     /** One of `all`, `metadataOnly`, `none`. `""` when the payload omits it. */
@@ -808,6 +809,7 @@ internal fun decodeLinkInvoiceSessionsResult(raw: Map<String, Any?>?): LinkInvoi
         sessionIds = (raw?.get("sessionIds") as? List<*>).orEmpty().mapNotNull { it as? String },
         added = (raw?.get("added") as? List<*>).orEmpty().mapNotNull { it as? String },
         removed = (raw?.get("removed") as? List<*>).orEmpty().mapNotNull { it as? String },
+        linkedWithoutLine = (raw?.get("linkedWithoutLine") as? List<*>).orEmpty().mapNotNull { it as? String },
         status = (raw?.get("status") as? String).orEmpty(),
         editScope = (raw?.get("editScope") as? String).orEmpty(),
     )

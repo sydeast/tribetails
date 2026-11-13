@@ -1045,7 +1045,9 @@ const FROZEN_RESPONSE_SHAPES: Record<
   // server-derived link delta, and the kinfolkId a sandbox row was stamped with.
   linkInvoiceSessions: {
     load: () => import('../src/admin/linkInvoiceSessions'),
-    signature: ['added[]', 'editScope', 'invoiceId', 'ok', 'removed[]', 'sessionIds[]', 'status'],
+    // #2091: `linkedWithoutLine`, the linked visits no line bills, so every
+    // client can say at the moment of linking that the price was not added.
+    signature: ['added[]', 'editScope', 'invoiceId', 'linkedWithoutLine[]', 'ok', 'removed[]', 'sessionIds[]', 'status'],
   },
   // Grown 2026-08-04. The three figures a caller CANNOT compute are the reason:
   // what the applications actually did to each invoice, what is left unapplied,

@@ -431,6 +431,16 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - The SERVER mints the doc id; the composer does not invent one. Stamps
   `kinfolkId` from `familyId` (this is why the portal can see the invoice at all),
   plus `_id`, `createdAt`, `updatedAt`.
+- #1901: EVERY VISIT IT BILLS IS MARKED AS BILLED BY IT, in the same
+  transaction: the stored `sessionIds` is the request's ids plus any visit a
+  line is bound to (blanks and repeats collapse), and each visit gets
+  `invoiceId` = the new invoice (`_attribution: 'manual'`, ISO
+  `_attributionAt`). A visit with no record (`session_not_found`), a cancelled
+  one (`session_cancelled`) or one another invoice bills
+  (`session_on_other_invoice`, naming that invoice's number) is refused before
+  anything is written, and before a number is drawn. A replay writes no visit.
+  Rules shared with `linkInvoiceSessions` and `updateInvoice`
+  (`lib/invoiceSessionLinks.ts`).
 - `lineItems` IS ADDITIVE. Omit it and the behaviour is unchanged: the caller's
   `total` / `amountDue` are stored verbatim and NO cents field is written at all.
   That absence is load-bearing rather than cosmetic. `updateInvoice` reads the
@@ -596,6 +606,14 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   The W3-1 response schema DESCRIBES this rather than correcting it, because
   three clients are deployed against it. Clamping the wire, or adding
   `overpaidCents` to it, is a shape change and belongs to its own PR.
+- #1970: A VISIT'S LINE AND ITS LINK MOVE TOGETHER. When `patch.lineItems`
+  drops a line bound to a visit, that visit leaves the invoice's `sessionIds`
+  and its own `invoiceId` is cleared (`''`, `'manual_unlink'`) in the same
+  transaction, unless its back-link names another invoice (#1259). A line
+  newly bound to a visit claims it by the `createInvoice` rules. A delta, not
+  "the set is the lines": a visit linked with no line of its own is left
+  alone. Structured terms resolve from the set the edit leaves. Audit payload
+  carries `sessionsLinked` / `sessionsUnlinked`.
 - **There is no `total` or `amountDue` in the request, and `patch` is `.strict()`.**
   The server recomputes every money field from the stored line items and the
   recorded payments and IGNORES anything else. A client that tries to assert what
@@ -639,7 +657,8 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   is the computed one), so it does not count as touching money and stays
   editable on a settled invoice. Still deliberately absent from the patch:
   `status` (the classifier owns it, ADR-0002), `sessionIds`/`_attribution`
-  (`linkInvoiceSessions` owns the link), `archivedAt`/`archivedBy`
+  (not settable: since #1970 the set follows the visit-bound lines, see
+  below, and `linkInvoiceSessions` owns links with no line), `archivedAt`/`archivedBy`
   (`archiveInvoice`/`unarchiveInvoice`), and `kinfolkId` (re-homing an invoice
   to another household is not an edit).
 
@@ -713,7 +732,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### linkInvoiceSessions
 - req `{ invoiceId: string /* 1..200 */, sessionIds: string[] /* each 1..200, max 200; duplicates collapsed */ }`
-- res `{ ok: true, invoiceId: string, sessionIds: string[], added: string[], removed: string[], status: string /* classifier state */, editScope: 'all'|'metadataOnly'|'none' }`
+- res `{ ok: true, invoiceId: string, sessionIds: string[], added: string[], removed: string[], linkedWithoutLine: string[] /* #2091: linked visits no line on this invoice bills */, status: string /* classifier state */, editScope: 'all'|'metadataOnly'|'none' }`
 - W2-1 (ADR-0002): replaces android's two direct writes,
   `AuntieRepository.updateInvoiceSessionIds` (invoice side) and the per-session
   `updateSessionInvoiceId` loop. ONE TRANSACTION owns both directions: the
@@ -745,9 +764,22 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   written. There is deliberately NO invoice/session kinfolk-equality check on
   the staff path: legacy rows carry blank kinfolkIds and android performs no
   such check today.
-- Errors: `not-found` for an unknown invoice; `failed-precondition` /
-  `session_not_found` (with `details.missing`) when any named session does not
-  exist. Atomic: nothing written.
+- #2091: linking moves NO money. A linked visit leaves the un-invoiced list
+  without its price being added (the callable runs on paid, cancelled and
+  typed-total invoices, and an unpriceable visit has no line to add), so the
+  response names every linked visit with no line on this invoice
+  (`linkedWithoutLine`) and every client says so at the moment of linking.
+  The other direction is strict: a visit a line on this invoice bills cannot
+  be unlinked here (`session_billed_on_line`, `details.sessionIds`); removing
+  the line in `updateInvoice` unlinks it (#1970).
+- The claim and release rules are shared with `createInvoice` and
+  `updateInvoice` (`lib/invoiceSessionLinks.ts`): a claim on a visit with no
+  record (`session_not_found`), a cancelled one (`session_cancelled`) or one
+  another invoice bills (`session_on_other_invoice`) is refused; a release
+  leaves a back-link naming another invoice alone (#1259), and a release of a
+  visit whose record is gone just drops it from the set.
+- Errors: `not-found` for an unknown invoice; `failed-precondition` with the
+  codes above. Atomic: nothing written.
 - Audit `BILLING_INVOICE_SESSIONS_LINKED` with the full added/removed delta.
 
 ### recordPayment

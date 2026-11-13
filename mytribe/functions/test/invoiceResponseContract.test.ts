@@ -263,11 +263,11 @@ const CASES: Array<{
     accepts: [
       [
         'a link with a delta',
-        { ok: true, invoiceId: 'inv1', sessionIds: ['s1', 's2'], added: ['s2'], removed: [], status: 'open', editScope: 'all' },
+        { ok: true, invoiceId: 'inv1', sessionIds: ['s1', 's2'], added: ['s2'], removed: [], linkedWithoutLine: ['s2'], status: 'open', editScope: 'all' },
       ],
       [
         'the full unlink, which is an empty set and not a no-op',
-        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: ['s1'], status: 'paid', editScope: 'none' },
+        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: ['s1'], linkedWithoutLine: [], status: 'paid', editScope: 'none' },
       ],
     ],
     refuses: [
@@ -276,19 +276,25 @@ const CASES: Array<{
       // the classifier this ADR-0002 work deleted.
       [
         "a raw stored spelling ('QUOTE') instead of the classified state",
-        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], status: 'QUOTE', editScope: 'all' },
+        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], linkedWithoutLine: [], status: 'QUOTE', editScope: 'all' },
       ],
       [
         'a ninth invoice state',
-        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], status: 'refunded', editScope: 'all' },
+        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], linkedWithoutLine: [], status: 'refunded', editScope: 'all' },
       ],
       [
         'a fourth editScope',
-        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], status: 'open', editScope: 'readOnly' },
+        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], linkedWithoutLine: [], status: 'open', editScope: 'readOnly' },
+      ],
+      [
+        // #2091: a client told nothing about which visits carry no line would
+        // be back to guessing, so the field is required, never optional.
+        'no linkedWithoutLine, which every answer carries',
+        { ok: true, invoiceId: 'inv1', sessionIds: ['s1'], added: ['s1'], removed: [], status: 'open', editScope: 'all' },
       ],
       [
         'a null status, which linking always stamps',
-        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], status: null, editScope: 'all' },
+        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], linkedWithoutLine: [], status: null, editScope: 'all' },
       ],
     ],
   },

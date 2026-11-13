@@ -214,7 +214,7 @@ describe('linkInvoiceSessions atomicity', () => {
       },
     });
     expect((err as Error).message).toBe(
-      'Already billed on another invoice: visit s1 is on invoice INV-7. Unlink it there first.',
+      'Already billed on another invoice: a visit with no date is on invoice INV-7. Unlink it there first.',
     );
     // Neither the invoice, nor s2 (which was fine), nor s1, nor invA changed.
     expect(ctx.writes).toEqual([]);
@@ -244,7 +244,7 @@ describe('linkInvoiceSessions atomicity', () => {
       linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: ['s1'] })),
     ).rejects.toMatchObject({
       code: 'failed-precondition',
-      message: 'Already billed on another invoice: visit s1 is on invoice gone. Unlink it there first.',
+      message: 'Already billed on another invoice: a visit with no date is on invoice gone. Unlink it there first.',
       details: {
         code: 'session_on_other_invoice',
         conflicts: [{ sessionId: 's1', invoiceId: 'gone', invoiceNumber: 'gone' }],

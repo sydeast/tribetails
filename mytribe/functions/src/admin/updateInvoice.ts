@@ -33,6 +33,13 @@ import {
   type PaymentAmount,
 } from '../lib/invoiceMath';
 import { invoiceNumberTaken } from '../lib/invoiceNumber';
+import {
+  boundSessionIds,
+  readSessionLinks,
+  stageSessionLinks,
+  storedSessionIds,
+  type SessionLinkPlan,
+} from '../lib/invoiceSessionLinks';
 
 /**
  * Edits an invoice: its descriptive fields, its line items, or both.
@@ -99,7 +106,9 @@ export const Args = z.object({
       // `discount` is the LEGACY FREE-TEXT field ("10%"), display-only and
       // never arithmetic; `invoiceDiscountCents` is the computed one.
       // Deliberately still absent: `status` (the classifier owns it, ADR-0002),
-      // `sessionIds`/`_attribution` (linkInvoiceSessions owns the link),
+      // `sessionIds`/`_attribution` (not settable here: since #1970 the set
+      // follows the visit-bound lines below, and linkInvoiceSessions owns
+      // links that carry no line),
       // `archivedAt`/`archivedBy` (archiveInvoice/unarchiveInvoice), and
       // `kinfolkId` (re-homing an invoice to another household is not an edit).
       kinfolkName: z.string().max(200).optional(),
@@ -287,6 +296,33 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
     }
   }
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+  // #1970: A VISIT'S LINE AND ITS LINK MOVE TOGETHER. `lineItems` is replaced
+  // wholesale, so the visits this patch stops billing are the ones whose line
+  // it dropped, and they are unlinked on BOTH sides in this same write: out of
+  // this invoice's `sessionIds`, and their own back-link cleared (unless it
+  // names another invoice, #1259, which still bills it). Before this, removing
+  // a visit's line left the invoice claiming work it no longer billed, and the
+  // visit never came back to New invoice. A line newly bound to a visit is
+  // claimed by the same rules New invoice uses. A DELTA, never "the set is the
+  // lines": a visit linked by hand with no line of its own (Link visits, a
+  // typed-total invoice) is not this patch's to drop.
+  const currentSessionIds = storedSessionIds(data);
+  let nextSessionIds = currentSessionIds;
+  let linkPlan: SessionLinkPlan | null = null;
+  if (patch.lineItems !== undefined) {
+    const before = boundSessionIds(storedLineItems(data) ?? []);
+    const after = boundSessionIds(patch.lineItems);
+    const dropped = before.filter((id) => !after.includes(id));
+    const gained = after.filter((id) => !before.includes(id));
+    if (dropped.length > 0 || gained.length > 0) {
+      linkPlan = await readSessionLinks(tx, db(), { invoiceId, claim: gained, release: dropped });
+      nextSessionIds = [
+        ...currentSessionIds.filter((id) => !dropped.includes(id)),
+        ...gained.filter((id) => !currentSessionIds.includes(id)),
+      ];
+      update['sessionIds'] = nextSessionIds;
+    }
+  }
   if (patch.invoiceNumber !== undefined) update['invoiceNumber'] = patch.invoiceNumber;
   if (patch.date !== undefined) update['date'] = patch.date;
   if (patch.dueDate !== undefined) update['dueDate'] = patch.dueDate;
@@ -302,15 +338,12 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
     if (patch.termsCode === undefined) update['termsCode'] = '';
   }
   // STRUCTURED TERMS DECIDE THE DUE DATE, here as at creation. Resolved from
-  // the visits the invoice ALREADY links (`sessionIds` on the doc, which this
-  // patch cannot change: linkInvoiceSessions owns that link) and from the date
-  // this same patch is setting, so correcting the date and the terms in one
-  // edit lands one consistent due date rather than two half-applied ones.
+  // the visits the invoice links AS THIS EDIT LEAVES IT (#1970: a removed
+  // visit line unlinks its visit above) and from the date this same patch is
+  // setting, so correcting the date and the terms in one edit lands one
+  // consistent due date rather than two half-applied ones.
   if (patch.termsCode !== undefined) {
-    const sessionIds = Array.isArray(data.sessionIds)
-      ? (data.sessionIds as unknown[]).filter((v): v is string => typeof v === 'string')
-      : [];
-    const serviceDates = await serviceDaysForSessions(db(), sessionIds);
+    const serviceDates = await serviceDaysForSessions(db(), nextSessionIds);
     const outcome = resolveStructuredTerms({
       termsCode: patch.termsCode,
       date: patch.date ?? (typeof data.date === 'string' ? data.date : ''),
@@ -420,7 +453,8 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
     update[PAYMENT_APPLIED_OWNER_FIELD] = paymentAppliedOwner('updateInvoice', randomUUID());
   }
   tx.set(ref, update, { merge: true });
-  return { data, lines, totals, stamp, stateBefore, settledByEdit };
+  if (linkPlan !== null) stageSessionLinks(tx, db(), linkPlan, new Date().toISOString());
+  return { data, lines, totals, stamp, stateBefore, settledByEdit, linkPlan };
 }
 
 /**
@@ -435,7 +469,7 @@ async function finishEdit(
   patch: EditPatch,
   edit: Awaited<ReturnType<typeof planEdit>>,
 ): Promise<z.infer<typeof Result>> {
-  const { data, lines, totals, stamp, stateBefore, settledByEdit } = edit;
+  const { data, lines, totals, stamp, stateBefore, settledByEdit, linkPlan } = edit;
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -456,6 +490,9 @@ async function finishEdit(
       stateBefore,
       stateAfter: stamp.status,
       settledByEdit,
+      // #1970: the visits this edit marked as billed, and released, with their lines.
+      sessionsLinked: linkPlan?.claim ?? [],
+      sessionsUnlinked: linkPlan?.release ?? [],
     },
   }).catch((err) => {
     logEvent({
