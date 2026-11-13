@@ -506,7 +506,7 @@ export function InvoiceDetail() {
                 <p className="note">
                   Nothing has been billed yet. Accept it and it becomes an invoice you can pay.
                   Decline it and your Auntie will know you have passed on it.
-                  {inv.dueDate ? ` This quote is good through ${longDateLabel(inv.dueDate)}.` : ''}
+                  {/* #2088: a quote has no expiry, so no "good through" date. */}
                 </p>
                 <div className="doc-actions">
                   <button

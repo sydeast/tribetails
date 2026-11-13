@@ -291,8 +291,9 @@ fun InvoicesScreen(
                     is WriteResult.Err -> actionError = r.message
                     is WriteResult.Ok -> {
                         actionError = null
-                        // #1511: honest about where the invoice went.
-                        val message = invoiceSentMessage(r.value.appOnly)
+                        // #1511: honest about where the invoice went. #2087: a quote
+                        // saved unsent went out as a quote.
+                        val message = if (isQuoteDraft(invoice)) quoteSentMessage(r.value.appOnly) else invoiceSentMessage(r.value.appOnly)
                         actionNotice = message
                         appOnlyNotice = if (r.value.appOnly) message else null
                     }
@@ -426,6 +427,7 @@ fun InvoicesScreen(
                                     client = client,
                                     invoiceId = id,
                                     send = send,
+                                    quote = s.value.firstOrNull { it._id == id }?.let(::isQuoteDraft) == true,
                                     onConfirm = {
                                         rowSendConfirm = null
                                         if (send == HouseholdSend.REMINDER) {
@@ -882,6 +884,10 @@ internal fun InvoiceRow(
             AuntieStatusPill(label = statusLabel, tone = statusTone, mono = true)
             // #2168: the console lists archived invoices with the rest, so the
             // row says which ones are, as web and Android do.
+            // #2087: BESIDE the Draft pill: it really is a draft, which goes out as a quote.
+            if (isQuoteDraft(invoice)) {
+                AuntieStatusPill(label = "Quote", tone = AuntieStatusTone.Purple, mono = true)
+            }
             if (invoiceIsArchived(invoice)) {
                 AuntieStatusPill(label = "Archived", tone = AuntieStatusTone.Neutral, mono = true)
             }
@@ -890,6 +896,7 @@ internal fun InvoiceRow(
                 onReceipt = { onReceipt(invoice._id) },
                 onSendReminder = { onSendReminder(invoice._id) },
                 onReviewSend = { onReviewSend(invoice) },
+                quoteDraft = isQuoteDraft(invoice),
                 reminding = reminding,
             )
         }
@@ -914,11 +921,14 @@ private fun RowAction(
     onSendReminder: () -> Unit,
     onReviewSend: () -> Unit,
     reminding: Boolean = false,
+    /** #2087: a quote saved unsent, whose send makes it a Quote. */
+    quoteDraft: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     val flags = LocalFeatureFlags.current
     when (action) {
-        InvoiceAction.REVIEW_AND_SEND -> PrimaryButton(label = "Review & send", onClick = onReviewSend)
+        InvoiceAction.REVIEW_AND_SEND ->
+            PrimaryButton(label = if (quoteDraft) "Send quote" else "Review & send", onClick = onReviewSend)
         InvoiceAction.SEND_REMINDER -> PrimaryButton(
             label = if (reminding) "Sending..." else "Send reminder",
             onClick = { if (!reminding) onSendReminder() },
@@ -972,5 +982,6 @@ internal fun invoiceNumberLabel(number: String): String =
 internal fun invoiceBilledTotal(invoices: List<Invoice>): Double =
     invoices.filter {
         val state = invoiceStateOrNull(it)
-        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE
+        // #2088: a withdrawn quote is CANCELLED, and a cancelled invoice is not money billed either.
+        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE && state != InvoiceState.CANCELLED
     }.sumOf { it.total }

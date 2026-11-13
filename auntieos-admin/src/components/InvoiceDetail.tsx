@@ -10,6 +10,8 @@ import {
   invoiceQuoteDecision,
   invoiceStamp,
   isArchivedInvoice,
+  isQuoteDraft,
+  quoteIsChangeable,
   type InvoiceDispute,
   type InvoiceEntry,
 } from '../api/invoices';
@@ -40,6 +42,8 @@ import {
   unarchiveInvoice,
   retryInvoiceCheckoutClose,
   previewInvoiceNotice,
+  convertQuoteToInvoice,
+  withdrawQuote,
 } from '../api/invoicesWrite';
 import type {
   GetInvoiceLedgerResult,
@@ -651,8 +655,14 @@ interface EditDraft {
  * go of its visits, and the message says they are back on the un-invoiced list.
  * Same words as Android.
  */
-export function archiveNoticeText(force: boolean, released: number): string {
-  const base = force ? 'Invoice archived, and the balance written off the outstanding total.' : 'Invoice archived.';
+export function archiveNoticeText(force: boolean, released: number, kind: 'invoice' | 'quote' = 'invoice'): string {
+  // #2195: a quote is archived like a draft, and named as what it is.
+  const base =
+    kind === 'quote'
+      ? 'Quote archived. The household no longer sees it.'
+      : force
+        ? 'Invoice archived, and the balance written off the outstanding total.'
+        : 'Invoice archived.';
   if (released === 0) return base;
   return released === 1
     ? `${base} Its visit is back on the un-invoiced list.`
@@ -662,6 +672,78 @@ export function archiveNoticeText(force: boolean, released: number): string {
 /** The confirmation once an invoice is restored, with the server's #2168 sentence when a visit could not come back. */
 export function restoreNoticeText(notice: string): string {
   return notice === '' ? 'Invoice restored to the working list.' : `Invoice restored to the working list. ${notice}`;
+}
+
+/**
+ * #2087: the draft send, for a quote saved unsent. Same callable, same confirm
+ * step and same notice preview; the words say it goes out as a quote.
+ */
+export const SEND_QUOTE_ACTION = {
+  label: 'Send quote',
+  confirmCopy:
+    'This sends the quote to the household, who can then accept or decline it. It is not a bill until they accept. Continue?',
+  confirmLabel: 'Send quote',
+  busyLabel: 'Sending…',
+  successMessage: 'Quote sent. The household can accept or decline it now.',
+} as const;
+
+/** #2088: what turning a quote into an invoice, or withdrawing it, says before and after. */
+export const QUOTE_ACTION_COPY = {
+  convert: {
+    label: 'Turn into invoice',
+    confirm:
+      'This turns the quote into a draft invoice. It keeps its number, its lines and its visits, and any answer from the household is cleared. The household sees nothing until you send the invoice with Review and send. Continue?',
+    busy: 'Working…',
+  },
+  withdraw: {
+    label: 'Withdraw quote',
+    confirm:
+      'This withdraws the quote. The household no longer sees it, and the visits it holds go back on the not yet invoiced list. It is kept as cancelled, not deleted. Continue?',
+    busy: 'Withdrawing…',
+  },
+} as const;
+
+/**
+ * #2195: the Restore confirm for an archived quote, or null when it is not one.
+ * Only a SENT quote nobody has answered goes back in front of the household to
+ * be answered. A quote saved unsent comes back as the hidden draft it was, and
+ * a declined one comes back declined, holding no visits.
+ */
+export function quoteRestoreConfirmText(invoice: InvoiceEntry): string | null {
+  const { archivedAt: _archived, ...live } = invoice;
+  if (!quoteIsChangeable(live)) return null;
+  if (isQuoteDraft(live)) {
+    return 'This puts the quote back into the working list as a draft. The household still cannot see it until you send it. It takes back the visits no other invoice has billed since. Continue?';
+  }
+  if (invoiceQuoteDecision(live) === 'denied') {
+    return 'This puts the quote back into the working list. The household sees it again, as declined. Continue?';
+  }
+  return 'This puts the quote back into the working list, and back in front of the household, who can answer it again. It takes back the visits no other invoice has billed since. Continue?';
+}
+
+/**
+ * #2195: the Archived banner on a quote, or null when it is not one. An
+ * archived quote is the office's alone, so the invoice banner's "the household
+ * can still see it and still pay it" would be false. Same words as Android and
+ * the desktop console.
+ */
+export function archivedQuoteBannerText(invoice: InvoiceEntry): string | null {
+  const { archivedAt: _archived, ...live } = invoice;
+  if (!quoteIsChangeable(live)) return null;
+  if (isQuoteDraft(live)) {
+    return 'This quote is out of the working list. It was never sent, so the household cannot see it, and the visits it held are back on the not yet invoiced list.';
+  }
+  if (invoiceQuoteDecision(live) === 'denied') {
+    return 'This quote is out of the working list. The household cannot see it until it is restored.';
+  }
+  return 'This quote is out of the working list. The household cannot see it or answer it until it is restored, and the visits it held are back on the not yet invoiced list.';
+}
+/** The confirmation once a quote is withdrawn, naming how many visits went back on the list. */
+export function withdrawNoticeText(released: number): string {
+  if (released === 0) return 'Quote withdrawn. The household no longer sees it.';
+  return released === 1
+    ? 'Quote withdrawn. The household no longer sees it, and its visit is back on the not yet invoiced list.'
+    : `Quote withdrawn. The household no longer sees it, and its ${String(released)} visits are back on the not yet invoiced list.`;
 }
 
 /** Which way the archive confirm is pointing, and whether money is at stake. */
@@ -828,6 +910,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
    * apart, so it cannot be derived from `invoiceActionsFor`.
    */
   const [resendPrompt, setResendPrompt] = useState(false);
+  /** #2088: the confirm for turning a quote into an invoice, or withdrawing it. */
+  const [quotePrompt, setQuotePrompt] = useState<'convert' | 'withdraw' | null>(null);
 
   // THE LEDGER: what was paid against this invoice, and which visits it bills.
   //
@@ -880,7 +964,15 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // is not offered, nor armed from the list row.
   const archived = isArchivedInvoice(invoice);
   const allowed = state === null ? [] : invoiceActionsOffered(state, archived);
-  const available = ACTIONS.filter((a) => allowed.includes(a.key));
+  // #2087: a quote saved unsent is a draft whose send makes it a Quote, so its
+  // draft send is named for what it does.
+  const quoteDraft = isQuoteDraft(invoice);
+  const asOffered = (a: ActionMeta): ActionMeta =>
+    quoteDraft && a.key === 'reviewSend' ? { ...a, ...SEND_QUOTE_ACTION } : a;
+  const available = ACTIONS.filter((a) => allowed.includes(a.key)).map(asOffered);
+  // #2088: send it, turn it into an invoice, or withdraw it, while it is still
+  // a quote the household has not accepted and it is not archived.
+  const changeableQuote = quoteIsChangeable(invoice);
 
   // `allowed.includes` is the guard on an ARMED action (see `initialAction`).
   // The list derives its row button from this same function, but the live
@@ -889,8 +981,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // offered for an invoice the server will refuse to remind about. A stale arm
   // silently falls back to the plain action list, which is what the operator
   // would have seen had they clicked the row instead.
-  const meta =
+  const pendingMeta =
     pending && allowed.includes(pending) ? ACTIONS.find((a) => a.key === pending) : undefined;
+  const meta = pendingMeta === undefined ? undefined : asOffered(pendingMeta);
 
   // #1609: the confirm for a household send names who it reaches and how,
   // from the same recipient, prefs and gate the send itself uses.
@@ -1168,7 +1261,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       } else {
         const { releasedSessionIds } = await archiveInvoice(invoice._id, force);
         setNoticeIncomplete(false);
-        setNotice(archiveNoticeText(force, releasedSessionIds.length));
+        setNotice(archiveNoticeText(force, releasedSessionIds.length, changeableQuote ? 'quote' : 'invoice'));
       }
       setBusy(false);
       setArchivePrompt(null);
@@ -1259,6 +1352,35 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       );
     }
   }
+  /** #2088: turn the quote into a draft invoice, or withdraw it. Refusals are shown verbatim. */
+  async function confirmQuoteAction() {
+    if (quotePrompt === null || busy) return;
+    const action = quotePrompt;
+    setBusy(true);
+    setActionError(null);
+    try {
+      if (action === 'convert') {
+        await convertQuoteToInvoice(invoice._id);
+        setNotice('Quote turned into a draft invoice. Send it with Review and send when it is ready.');
+      } else {
+        const { releasedSessionIds } = await withdrawQuote(invoice._id);
+        setNotice(withdrawNoticeText(releasedSessionIds.length));
+      }
+      setNoticeIncomplete(false);
+      setBusy(false);
+      setQuotePrompt(null);
+      reloadLedger();
+    } catch (caught) {
+      setBusy(false);
+      setQuotePrompt(null);
+      setActionError(
+        `${action === 'convert' ? 'Could not turn it into an invoice' : 'Could not withdraw it'}: ${
+          caught instanceof Error ? caught.message : 'Action failed'
+        }`,
+      );
+    }
+  }
+
   async function confirmResend() {
     if (busy) return;
     setBusy(true);
@@ -1351,7 +1473,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // nothing was emailed or texted, so "Draft sent." alone would read as
         // an email that does not exist.
         if (sent.appOnly) {
-          outcome = `Draft sent in the app only. ${APP_ONLY_NOTE}`;
+          outcome = quoteDraft
+            ? `Quote sent in the app only. ${APP_ONLY_NOTE} The household can accept or decline it now.`
+            : `Draft sent in the app only. ${APP_ONLY_NOTE}`;
           incomplete = true;
         }
       } else if (meta.key === 'markPaid') {
@@ -1721,8 +1845,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
 
         {archived && !notice && (
           <Banner tone="info" title="Archived" dismissible>
-            This invoice is out of the working list and out of the outstanding and billed totals. It
-            has not been deleted or cancelled, and the household can still see it and still pay it.
+            {archivedQuoteBannerText(invoice) ??
+              'This invoice is out of the working list and out of the outstanding and billed totals. It has not been deleted or cancelled, and the household can still see it and still pay it.'}
           </Banner>
         )}
 
@@ -2002,6 +2126,19 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               reloadLedger();
             }}
           />
+        ) : quotePrompt !== null ? (
+          <div className="invoice-detail__confirm">
+            <p className="invoice-detail__confirm-copy">{QUOTE_ACTION_COPY[quotePrompt].confirm}</p>
+            <div className="invoice-detail__confirm-actions">
+              <GhostButton label="Cancel" onClick={() => !busy && setQuotePrompt(null)} disabled={busy} />
+              <PrimaryButton
+                label={busy ? QUOTE_ACTION_COPY[quotePrompt].busy : QUOTE_ACTION_COPY[quotePrompt].label}
+                onClick={() => void confirmQuoteAction()}
+                disabled={busy}
+                busy={busy}
+              />
+            </div>
+          </div>
         ) : resendPrompt ? (
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">
@@ -2027,8 +2164,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">
               {archivePrompt.direction === 'restore'
-                ? 'This puts the invoice back into the working list and back into the outstanding and billed totals. Continue?'
-                : 'This takes the invoice out of the working list and out of the outstanding and billed totals. It does NOT delete it, cancel it, or forgive what is owed, and the household can still see it and still pay it. Continue?'}
+                ? (quoteRestoreConfirmText(invoice) ??
+                  'This puts the invoice back into the working list and back into the outstanding and billed totals. Continue?')
+                : changeableQuote
+                  ? 'This takes the quote out of the working list. The household no longer sees it and cannot answer it, and the visits it holds go back on the not yet invoiced list. It is not deleted, and Restore brings it back. Continue?'
+                  : 'This takes the invoice out of the working list and out of the outstanding and billed totals. It does NOT delete it, cancel it, or forgive what is owed, and the household can still see it and still pay it. Continue?'}
             </p>
             {archivePrompt.forceOffered && (
               <p className="invoice-detail__confirm-copy">
@@ -2225,7 +2365,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           </div>
         ) : (
           <div className="invoice-detail__actions">
-            {available.length === 0 ? (
+            {available.length === 0 && changeableQuote ? null : available.length === 0 ? (
               <p className="invoice-detail__no-actions">
                 {state === null
                   ? // The deliberate fail-soft for a doc with no recognizable
@@ -2261,6 +2401,15 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                 two by name and the refusal is shown verbatim above. */}
             {quoteDecision === 'denied' && (
               <GhostButton label="Revise and resend" onClick={() => setResendPrompt(true)} />
+            )}
+            {/* #2088: once a quote exists the office can turn it into an
+                invoice or withdraw it. The server refuses an accepted or an
+                archived quote by name either way. */}
+            {changeableQuote && (
+              <GhostButton label={QUOTE_ACTION_COPY.convert.label} onClick={() => setQuotePrompt('convert')} />
+            )}
+            {changeableQuote && (
+              <GhostButton label={QUOTE_ACTION_COPY.withdraw.label} onClick={() => setQuotePrompt('withdraw')} />
             )}
             {/* Archive is deliberately NOT part of the state-driven action
                 matrix. That matrix answers "what can be done about the money",

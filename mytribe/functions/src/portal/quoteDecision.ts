@@ -17,12 +17,8 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { readAcceptClaims, readDeclineRelease, stageSessionLinks } from '../lib/invoiceSessionLinks';
-import {
-  businessTodayIso,
-  quoteDecisionOf,
-  quoteHasExpired,
-  type QuoteDecision,
-} from '../lib/quoteDecision';
+import { isArchived } from '../lib/invoiceArchive';
+import { isQuoteDraft, quoteDecisionOf, type QuoteDecision } from '../lib/quoteDecision';
 
 /**
  * THE TWO ENDS OF A QUOTE'S LIFE. `admin/createQuote.ts` mints one; these two
@@ -118,29 +114,55 @@ export const DenyQuoteResult = decisionResult();
 type DecisionResultShape = z.infer<ReturnType<typeof decisionResult>>;
 
 /** Refusal codes clients branch on. The message is what a person reads. */
-export type QuoteDecisionCode = 'quote_not_a_quote' | 'quote_already_decided' | 'quote_expired';
+export type QuoteDecisionCode =
+  | 'quote_not_a_quote'
+  | 'quote_already_decided'
+  | 'quote_not_found'
+  | 'quote_withdrawn'
+  | 'quote_archived';
+
+/** The words for a quote the household may not see (#2087), the same as for one that does not exist. */
+export const QUOTE_NOT_FOUND_MESSAGE = 'Quote not found.';
 
 /**
  * Why a quote cannot be decided, or null when it can.
  *
  * PURE, and separately tested: every branch here is a sentence a household
- * reads on their own screen, and the arithmetic behind the expiry one is the
- * kind that is wrong by a day if nobody pins it down.
+ * reads on their own screen, and an older installed app shows it as it comes.
  *
- * `todayIso` is the business's own local day (see `lib/quoteDecision.ts`), or
- * '' when the zone could not be resolved — in which case the expiry check is
- * SKIPPED rather than guessed. Refusing a household's acceptance because our
- * own settings doc was unreadable would be the worst of the three outcomes.
+ * In this order, because each earlier one is the truer sentence:
+ *
+ *   - #2087: a quote saved unsent (or turned into an invoice not sent yet) is
+ *     the office's alone, and is answered exactly as a quote that does not
+ *     exist (`quote_not_found`, which the caller raises as `not-found`), so a
+ *     guessed id learns nothing;
+ *   - #2195: an archived quote cannot be answered until it is restored;
+ *   - #2088: a withdrawn quote is cancelled, with nothing left to answer;
+ *   - an answered quote keeps its answer; anything else is not a quote.
+ *
+ * #2088 (operator ruling 2026-11-12): a quote does not expire, so there is no
+ * date check here any more.
  */
-export function quoteDecisionRefusal(
-  doc: Record<string, unknown>,
-  decision: QuoteDecision,
-  todayIso: string,
-): { code: QuoteDecisionCode; message: string } | null {
+export function quoteDecisionRefusal(doc: Record<string, unknown>): { code: QuoteDecisionCode; message: string } | null {
   const rawStatus = doc['status'] ?? doc['invoiceStatus'];
   const status = typeof rawStatus === 'string' ? rawStatus.trim().toLowerCase() : '';
   const existing = quoteDecisionOf(doc['quoteDecision']);
 
+  if (isQuoteDraft(doc) || (status === 'draft' && doc['quoteConvertedAt'] != null)) {
+    return { code: 'quote_not_found', message: QUOTE_NOT_FOUND_MESSAGE };
+  }
+  if (isArchived(doc) && (status === 'quote' || status === 'draft')) {
+    return {
+      code: 'quote_archived',
+      message: 'This quote is not open for an answer right now. Ask your Auntie about it.',
+    };
+  }
+  if (status === 'cancelled' && doc['quoteWithdrawnAt'] != null) {
+    return {
+      code: 'quote_withdrawn',
+      message: 'Your Auntie withdrew this quote, so there is nothing to answer. Ask your Auntie if you still want the work.',
+    };
+  }
   if (existing !== null) {
     return {
       code: 'quote_already_decided',
@@ -156,17 +178,14 @@ export function quoteDecisionRefusal(
       message: 'This is an invoice, not a quote, so there is nothing here to accept or decline.',
     };
   }
-  // Declining an expired quote is still an honest answer, and refusing it would
-  // leave the household with a screen they cannot clear. Only ACCEPTING an
-  // expired quote is refused, because accepting is what turns it into a bill at
-  // a price nobody stands behind any more.
-  if (decision === 'accepted' && quoteHasExpired(doc['dueDate'], todayIso)) {
-    return {
-      code: 'quote_expired',
-      message: `This quote was only good through ${String(doc['dueDate'])}, so it can no longer be accepted. Ask your Auntie for an up-to-date one.`,
-    };
-  }
   return null;
+}
+
+/** The refusal as the callable raises it: a hidden quote is `not-found`, the rest `failed-precondition`. */
+function refusalError(refusal: { code: QuoteDecisionCode; message: string }): HttpsError {
+  return new HttpsError(refusal.code === 'quote_not_found' ? 'not-found' : 'failed-precondition', refusal.message, {
+    code: refusal.code,
+  });
 }
 
 interface DecisionOutcome {
@@ -210,7 +229,7 @@ async function decideQuote(
 
   const invoiceRef = firestore.collection('invoices').doc(args.invoiceId);
   const invoiceSnap = await invoiceRef.get();
-  if (!invoiceSnap.exists) throw new HttpsError('not-found', 'Quote not found.');
+  if (!invoiceSnap.exists) throw new HttpsError('not-found', QUOTE_NOT_FOUND_MESSAGE);
   const inv = invoiceSnap.data() as Record<string, unknown>;
 
   const invKinfolkId = typeof inv['kinfolkId'] === 'string' ? (inv['kinfolkId'] as string) : null;
@@ -218,6 +237,10 @@ async function decideQuote(
   if (!allowed.includes(invKinfolkId)) {
     throw new HttpsError('permission-denied', 'This quote belongs to another household.');
   }
+  // #2087: a quote the household may not see is answered as a missing one
+  // before anything else is read about the caller.
+  const hidden = quoteDecisionRefusal(inv);
+  if (hidden?.code === 'quote_not_found') throw refusalError(hidden);
   // Same gate the money paths use. D-2026-09-28-BILLING-ACCESS-PAYS: answering
   // a quote commits the household to a bill, so it takes billing access: the
   // PRIMARY, or a SECONDARY the PRIMARY granted `billing_full`.
@@ -242,22 +265,18 @@ async function decideQuote(
   // accepted the quote", not "Sam Alicia Rivera-Torres accepted the quote".
   const actorFirstName = actorDisplayName ? actorDisplayName.split(/\s+/)[0] : null;
 
-  // Read the business's own calendar day ONLY when the quote carries a due date
-  // to be measured against, so an undated quote costs no extra read.
-  const todayIso =
-    decision === 'accepted' && typeof inv['dueDate'] === 'string' && inv['dueDate'].trim() !== ''
-      ? await businessTodayIso(firestore, Date.now())
-      : '';
-
   const outcome = await firestore.runTransaction(async (tx): Promise<DecisionOutcome> => {
     const snap = await tx.get(invoiceRef);
-    if (!snap.exists) throw new HttpsError('not-found', 'Quote not found.');
+    if (!snap.exists) throw new HttpsError('not-found', QUOTE_NOT_FOUND_MESSAGE);
     const txInv = snap.data() as Record<string, unknown>;
 
     // ATOMIC guard: re-read inside the transaction, written inside the same
     // transaction, so a concurrent second decision re-reads this one and fails.
-    const refusal = quoteDecisionRefusal(txInv, decision, todayIso);
-    if (refusal) throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
+    // #2088 / #2195: the same holds for the office. A withdraw, an archive or a
+    // turn into an invoice racing this answer either commits first, and this
+    // re-run reads it and refuses, or commits second and re-reads the answer.
+    const refusal = quoteDecisionRefusal(txInv);
+    if (refusal) throw refusalError(refusal);
 
     // #2156: THE VISITS MOVE WITH THE ANSWER, in this same transaction and
     // read before the write. A quote holds its visits from the day it is made:

@@ -22,6 +22,7 @@
  */
 import type { Firestore } from 'firebase-admin/firestore';
 import { pickHouseholdAddress } from './householdLocation';
+import { hiddenFromHousehold } from './quoteDecision';
 export interface VisitExtras {
   /** The household's address, or null when none is on file. */
   address: string | null;
@@ -92,12 +93,22 @@ async function readKinTales(firestore: Firestore, kinfolkId: string): Promise<Ma
   }
   return out;
 }
+/** `cancelled` in either status spelling: withdrawn, and shown to no household. */
+function isCancelled(data: Record<string, unknown>): boolean {
+  const raw = data['status'] ?? data['invoiceStatus'];
+  return typeof raw === 'string' && raw.trim().toLowerCase() === 'cancelled';
+}
 async function readInvoices(firestore: Firestore, kinfolkId: string): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   try {
     const snap = await firestore.collection('invoices').where('kinfolkId', '==', kinfolkId).get();
     for (const d of snap.docs) {
-      for (const sid of invoiceSessionIds(d.data() as Record<string, unknown>)) {
+      const data = d.data() as Record<string, unknown>;
+      // #2087 / #2088 / #2195: a visit held by a quote the household may not
+      // see, or by a withdrawn (cancelled) one, links to no invoice: MyTribe
+      // would open it as "not found".
+      if (hiddenFromHousehold(data) || isCancelled(data)) continue;
+      for (const sid of invoiceSessionIds(data)) {
         if (!out.has(sid)) out.set(sid, d.id);
       }
     }

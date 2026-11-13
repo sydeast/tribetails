@@ -575,12 +575,15 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   withdrew a bill, which is a different fact, and it would also drop the row out
   of every `getMyInvoices` bucket, off the household's screen as the immediate
   result of their own tap.
-- Refusals, all `failed-precondition` with a `details.code`:
+- Refusals, all `failed-precondition` with a `details.code` unless noted:
   `quote_not_a_quote` (the doc is not in QUOTE status),
-  `quote_already_decided` (a decision is terminal; a revision is a NEW quote via
-  `createQuote`), `quote_expired` (accept only, when the quote's `dueDate` has
-  passed in the business's own time zone: a quote is good THROUGH its due day,
-  and an undated quote never expires). Declining an expired quote is allowed.
+  `quote_already_decided` (a decision is terminal; the office sends a declined
+  quote back out with `resendQuote`), `quote_archived` (#2195: the office
+  archived it; it cannot be answered until restored), `quote_withdrawn` (#2088:
+  the office withdrew it, `withdrawQuote`), and `quote_not_found`, raised as
+  `not-found` (#2087: a quote saved unsent, or one turned into an invoice not
+  sent yet, is answered exactly as a quote that does not exist). A quote does
+  not expire (#2088, operator ruling 2026-11-12): there is no date refusal.
 - #2156: THE VISITS MOVE WITH THE ANSWER, in the same transaction. DENY puts
   every visit the quote holds back on the un-invoiced list (back-link `''`,
   `'manual_unlink'`; a visit another invoice bills is left alone), empties

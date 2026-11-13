@@ -10,7 +10,7 @@ import { refuseAuntie } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib/invoiceEditPolicy';
 import { validateResponse } from '../lib/callableResponse';
-import { quoteDecisionOf } from '../lib/quoteDecision';
+import { hiddenFromHousehold, quoteDecisionOf } from '../lib/quoteDecision';
 import { amountDueCentsOf } from '../lib/amountDueRule';
 import { centsToDollars } from '../lib/invoiceMath';
 import { payMethodSettingsFrom, resolvePayMethods, settingsForInvoice } from '../lib/paymentMethods';
@@ -401,7 +401,12 @@ export async function getMyInvoicesHandler(
   const boundLinesByInvoice = new Map<string, StoredLineItem[]>();
   const unstampedIds: string[] = [];
 
-  const all: InvoiceDto[] = invoiceSnap.docs.map((d) => {
+  // #2087 / #2195: a quote saved unsent, a quote turned into an invoice not
+  // sent yet, and an archived quote are the office's alone. Left out here,
+  // before anything else, so they are not listed, not counted in any bucket
+  // or total, and not openable (both portals open an invoice from this list).
+  const visible = invoiceSnap.docs.filter((d) => !hiddenFromHousehold(d.data() as Record<string, unknown>));
+  const all: InvoiceDto[] = visible.map((d) => {
     const data = d.data() as Record<string, unknown>;
     // THE INVOICE'S OWN LINES WIN. Until 2026-07-25 this callable ignored the
     // stored `lineItems` entirely and rebuilt a list from `sessionIds`, so an

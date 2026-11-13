@@ -12,7 +12,13 @@ import { isArchived, type ArchivableInvoice } from '../lib/invoiceArchive';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 import { invoiceStateOf } from '../lib/invoiceEditPolicy';
-import { readSessionReclaim, stageSessionLinks, visitsNamedBy, type ReclaimLoss } from '../lib/invoiceSessionLinks';
+import {
+  quoteHoldsNoVisits,
+  readSessionReclaim,
+  stageSessionLinks,
+  visitsNamedBy,
+  type ReclaimLoss,
+} from '../lib/invoiceSessionLinks';
 
 /**
  * Restores an archived invoice to the operator's working list.
@@ -33,8 +39,10 @@ import { readSessionReclaim, stageSessionLinks, visitsNamedBy, type ReclaimLoss 
  * still free. A visit another invoice has billed since, one cancelled since,
  * or one with no record stays where it is, and the answer says which in plain
  * words (`notice`), so the operator can remove its line before sending the
- * draft. Taking it back would bill the same work twice. Any other invoice
- * never let go of its visits, so restoring it touches none.
+ * draft. Taking it back would bill the same work twice. #2195: a quote waiting
+ * for an answer is restored the same way, and is back in front of the
+ * household once restored. Any other invoice never let go of its visits, so
+ * restoring it touches none.
  */
 // Exported so the callable-contract drift guard can freeze this request shape.
 export const Args = z.object({
@@ -108,13 +116,20 @@ export async function unarchiveInvoiceHandler(
       archivedBy: null,
       updatedAt: FieldValue.serverTimestamp(),
     };
-    if (invoiceStateOf(data) !== 'draft') {
+    // #2195: a quote waiting for an answer let go of its visits when it was
+    // archived, like a draft, and takes back the free ones the same way. A
+    // declined quote holds none, so it takes none back.
+    const state = invoiceStateOf(data);
+    const reclaims = state === 'draft' || (state === 'quote' && !quoteHoldsNoVisits(data));
+    if (!reclaims) {
       tx.set(ref, update, { merge: true });
       return { data, reclaimed: [] as string[], notReclaimed: [] as ReclaimLoss[], notice: '' };
     }
     const named = visitsNamedBy(data);
     const reclaim =
-      named.length > 0 ? await readSessionReclaim(tx, db(), args.invoiceId, named, data['lineItems']) : null;
+      named.length > 0
+        ? await readSessionReclaim(tx, db(), args.invoiceId, named, data['lineItems'], state === 'quote' ? 'quote' : 'draft')
+        : null;
     if (reclaim !== null) {
       update['sessionIds'] = reclaim.plan.claim;
       update['releasedSessionIds'] = [];
