@@ -94,7 +94,7 @@ export async function listMembersHandler(
 
   const args = Args.parse(req.data);
   // #944: allowlisted - the household roster is household information.
-  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, staffBypass(req.auth, 'listMembers'), 'listMembers');
+  const { kinfolkId } = await resolveKinfolkAccess(uid, args.kinfolkId, staffBypass(req.auth, 'listMembers'), 'listMembers', req.auth);
 
   // Primary-only (operator bypasses; legacy no-member-doc family falls back to
   // allow, consistent with requireKinfolkPrimary). A secondary is denied here.

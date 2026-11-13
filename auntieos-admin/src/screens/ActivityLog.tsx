@@ -18,11 +18,13 @@ import {
   activityDayLabel,
   activityDetailRows,
   activityIsFailure,
+  activityIsHouseholdLook,
   activityMatchesCategory,
   activityMatchesQuery,
   activityMatchesStatus,
   activityPayloadRows,
-  humanizeAction,
+  activityShowsCode,
+  activityTitle,
   activityWhen,
   type ActivityCategory,
   type ActivityStatusFilter,
@@ -484,6 +486,9 @@ const CATEGORY_TILE: Record<Exclude<ActivityCategory, 'all'>, { glyph: string; t
 
 function rowTile(entry: ActivityLogEntry): { glyph: string; tone: IconTileTone } {
   if (activityIsFailure(entry)) return { glyph: '⚠', tone: 'error' };
+  // #1839: a look at a household is routine. It files under Admin for the
+  // filter, but never wears that chip's red flag.
+  if (activityIsHouseholdLook(entry)) return { glyph: '◉', tone: 'neutral' };
   const category = activityCategoryOf(entry);
   return category === null ? { glyph: '·', tone: 'neutral' } : CATEGORY_TILE[category];
 }
@@ -492,10 +497,23 @@ function rowTile(entry: ActivityLogEntry): { glyph: string; tone: IconTileTone }
 function rowContext(entry: ActivityLogEntry, names: ReadonlyMap<string, string>): string {
   const parts: string[] = [];
   // #1747: a stored path reads as words; the entry itself is never rewritten.
-  const description = activityDescriptionWords(str(entry.description));
+  const raw = str(entry.description);
+  const description = activityDescriptionWords(raw);
   if (description !== '') parts.push(description);
+  const look = activityIsHouseholdLook(entry);
+  // #1839: a look the server wrote in words already names the Auntie and the
+  // household, so the row adds neither her name again nor the household's id.
+  // A look stored as the bare key names nobody, so it keeps the actor's name.
+  const namedInWords = look && description !== '' && description === raw.trim();
   // #1592: the actor's name, not their uid, once `listStaff` has answered.
   const actor = str(entry.actorId).trim();
+  if (look) {
+    // #1839: a look names a person or nobody. The roster's label falls back to
+    // a sign-in email and then the uid, and neither belongs on this row.
+    const who = namedInWords || actor === '' ? '' : (names.get(actor) ?? '').trim();
+    if (who !== '' && !who.includes('@')) parts.push(who);
+    return parts.join(' · ');
+  }
   if (actor !== '') parts.push(names.get(actor) ?? actor);
   const targetId = str(entry.targetId).trim();
   const targetCollection = str(entry.targetCollection).trim();
@@ -559,8 +577,10 @@ function ActivityRow({
         <IconTile icon={tile.glyph} size={26} tone={tile.tone} className="activity__ico" />
         <span className="activity__meta">
           <span>
-            <b className="activity__title">{humanizeAction(str(entry.actionType))}</b>
-            {entry.actionType ? <code className="activity__code">{entry.actionType}</code> : null}
+            <b className="activity__title">{activityTitle(str(entry.actionType))}</b>
+            {activityShowsCode(str(entry.actionType)) ? (
+              <code className="activity__code">{entry.actionType}</code>
+            ) : null}
           </span>
           {context !== '' ? <small className="activity__ctx">{context}</small> : null}
         </span>

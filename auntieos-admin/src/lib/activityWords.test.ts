@@ -113,3 +113,16 @@ describe('activityDescriptionWords reads stored ids as words (#1752)', () => {
     }
   });
 });
+describe('activityDescriptionWords: a look at a household (#1839)', () => {
+  it('reads the stored bare key, with or without ids, as words', () => {
+    expect(activityDescriptionWords('OPERATOR_CROSSTENANT_ACCESS uid=u_owner1 target=Xk29fLq0aBcD3eFgH1jK')).toBe(
+      'Opened a household',
+    );
+    expect(activityDescriptionWords('OPERATOR_CROSSTENANT_ACCESS uid=u_owner1')).toBe('Opened a household');
+    expect(activityDescriptionWords('OPERATOR_CROSSTENANT_ACCESS')).toBe('Opened a household');
+  });
+  it("the server's new sentence for an Auntie reads as itself", () => {
+    const words = 'Jane Rivers looked at Kinfolk Dre East';
+    expect(activityDescriptionWords(words)).toBe(words);
+  });
+});

@@ -185,7 +185,7 @@ async function gate(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const isStaff = householdStaffFlag(req.auth, fn);
-  const { kinfolkId } = await resolveKinfolkAccess(uid, kinfolkIdArg, isStaff, fn);
+  const { kinfolkId } = await resolveKinfolkAccess(uid, kinfolkIdArg, isStaff, fn, req.auth);
   await requireKinfolkPrimary(uid, kinfolkId, isStaff, fn);
   return { uid, kinfolkId };
 }
