@@ -196,8 +196,9 @@ function adminsRef() {
  *   - SEND: every resolver of business recipients skips a uid whose account is
  *     positively an Auntie or a household, so a list written before this rule
  *     cannot reach her. Lenient on purpose: a uid with no claims, no login, or
- *     an account that could not be read is kept, because dropping the owner
- *     over a lookup blip is the outage this module exists to prevent.
+ *     an account that could not be read is kept unless its staff record says
+ *     Auntie, because dropping the owner over a lookup blip is the outage this
+ *     module exists to prevent.
  *
  * Precedence matches `staffRoles.ts`: the Auntie role first (a double-claimed
  * account included, as `isOwnerClaim` and the rules' `isOwner()` treat it),
@@ -305,16 +306,22 @@ export async function assertOwnerAccounts(uids: readonly string[], reason: strin
  * (`uids[0]` is the implicit assignee elsewhere). Reads only. A skip is logged
  * at `warn`, so a stale list shows up in the logs rather than staying silent.
  *
- * When the sign-in accounts cannot be read, the `staff/{uid}` record's
- * `staffRole` answers instead, the same fallback `staffRoles.ts` uses. When
- * that read fails as well, every uid is kept.
+ * When the claims do not settle it (the sign-in accounts could not be read,
+ * or a login has neither claim, or none at all), the `staff/{uid}` record's
+ * `staffRole` answers, as it does in `staffRoles.ts`. Claims can be wiped while
+ * the staff record stays: deleting a `clients/{uid}` doc clears every claim on
+ * that login (`onClientsWrite`). An owner or household the claims already
+ * name is never looked up. When that read fails, every uid is kept.
  */
 export async function businessNoticeUids(uids: readonly string[], context: string): Promise<string[]> {
   const list = dedupe(uids);
   if (list.length === 0) return [];
   const accounts = await readRosterAccounts(list, context);
 
-  const unchecked = list.filter((uid) => accounts.get(uid) === 'unchecked');
+  const unchecked = list.filter((uid) => {
+    const account = accounts.get(uid);
+    return account === 'unchecked' || account === 'other';
+  });
   if (unchecked.length > 0) {
     try {
       const firestore = db();

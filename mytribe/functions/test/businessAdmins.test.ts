@@ -808,6 +808,41 @@ describe('#2223 sending: an Auntie or household already on the list gets no busi
     expect(loggedEvents('businessAdmins.roster.skipped')).toHaveLength(0);
   });
 
+  /**
+   * Review of #2223: claims can be wiped while the staff record stays. Deleting
+   * a `clients/{uid}` doc clears every claim on that login (`onClientsWrite`),
+   * and `grant-staff-role.mjs --role none` swallows a failed staff-record
+   * delete. The staff record is evidence, as it is in `staffRoles.ts`.
+   */
+  it('skips an Auntie whose claims were wiped or whose login is gone while her staff record remains', async () => {
+    mocks.claims = { wiped: {}, gone: null, bare: {} };
+    const ctx = buildDbMock({
+      docs: {
+        [DOC]: { uids: ['op1', 'wiped', 'gone', 'bare'] },
+        'staff/wiped': { staffRole: 'auntie' },
+        'staff/gone': { staffRole: 'auntie' },
+        'staff/bare': { displayName: 'Bare' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).resolves.toEqual(['op1', 'bare']);
+    expect(loggedEvents('businessAdmins.roster.skipped')[0]?.extra).toMatchObject({
+      skipped: [
+        { uid: 'wiped', account: 'auntie' },
+        { uid: 'gone', account: 'auntie' },
+      ],
+    });
+  });
+
+  it('an owner whose claims answer is never looked up in the staff records', async () => {
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1'] }, 'staff/op1': { staffRole: 'auntie' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).resolves.toEqual(['op1']);
+    expect(ctx.db.getAll).not.toHaveBeenCalled();
+  });
+
   it('when the sign-in accounts cannot be read, the staff record still identifies an Auntie', async () => {
     mocks.getUsers.mockRejectedValue(new Error('auth unavailable'));
     const ctx = buildDbMock({
