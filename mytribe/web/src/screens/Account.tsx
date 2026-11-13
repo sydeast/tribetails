@@ -287,7 +287,7 @@ export function Account() {
   const { signOut, signingOut, error: signOutError } = useSignOut();
 
   if (account.isError) {
-    return <LaunchError onRetry={() => void account.refetch()} retrying={account.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
+    return <LaunchError onRetry={() => void account.refetch()} retrying={account.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
   }
 
   // Paused, `isLoading` is false and `account.data` is undefined, so this gate

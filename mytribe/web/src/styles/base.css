@@ -224,6 +224,7 @@ h3.title { font-family: var(--serif); font-size: 20px; font-weight: 400; display
 .session-notice .hd b { font-size: 16px; }
 .session-notice .hd p { font-size: 14px; color: var(--navy-muted); margin-top: 3px; line-height: 1.5; }
 .session-notice .btn { margin-top: 14px; }
+.session-notice .session-notice__err { margin-top: 10px; font-size: 14px; line-height: 1.5; color: var(--coral); }
 
 /* reduced-motion fallback: freeze orbs + entrance animation */
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }

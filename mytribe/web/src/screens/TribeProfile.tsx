@@ -209,10 +209,10 @@ export function TribeProfile() {
   useWarmOnOpen('saveTribeProfile', profileOpen);
   useWarmOnOpen('saveHomeAccess', profileOpen);
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   if (profile.isError) {
-    return <LaunchError onRetry={() => void profile.refetch()} retrying={profile.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
+    return <LaunchError onRetry={() => void profile.refetch()} retrying={profile.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
   }
 
   // The form below is built from `profile.data`. Paused, `profile.isLoading`

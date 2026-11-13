@@ -227,4 +227,21 @@ describe('AvatarMenu panel and sign-out (#1849, #1931)', () => {
     await userEvent.click(again);
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
+
+  it('stays open through the press, the wait and the failure, so the message is seen (#2140)', async () => {
+    const onSignOut = vi.fn();
+    const props = { initial: 'J', onSignOut, billingAccess: false, isOperator: false };
+    const { rerender } = render(<AvatarMenu {...props} signingOut={false} signOutError={null} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('menu')).toBeTruthy();
+
+    rerender(<AvatarMenu {...props} signingOut={true} signOutError={null} />);
+    expect(screen.getByRole('menuitem', { name: /Signing out/ })).toBeDisabled();
+
+    rerender(<AvatarMenu {...props} signingOut={false} signOutError="We couldn't sign you out. You are still signed in." />);
+    expect(within(screen.getByRole('menu')).getByRole('alert')).toHaveTextContent('still signed in');
+    expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeEnabled();
+  });
 });

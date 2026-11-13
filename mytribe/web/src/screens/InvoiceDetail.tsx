@@ -197,12 +197,12 @@ export function InvoiceDetail() {
   const quoteError = errorLine(decideQuote, "Couldn't send your answer. Try again.");
   const redeemError = errorLine(redeem, "Couldn't redeem this credit. Try again.");
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   // #1005: refused billing access is not a failure to report. Back to Home.
   if (invoices.isError && isPermissionDenied(invoices.error)) return <LeaveBilling />;
   if (invoices.isError) {
-    return <LaunchError onRetry={() => void invoices.refetch()} retrying={invoices.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
+    return <LaunchError onRetry={() => void invoices.refetch()} retrying={invoices.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
   }
 
   // Paused, this fell through to the "invoice not found" card, about a bill
