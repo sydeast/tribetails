@@ -99,6 +99,7 @@ vi.mock('./widgets/SuppliesTrackerWidget', () => ({
 
 import { Home } from './Home';
 import { DASH_KEYS, DEFAULT_DASHBOARD } from '../lib/dashboardLayout';
+import { accessFromClaims } from '../lib/access';
 
 /** The widget keys currently on the board, in rendered order. */
 function boardOrder(): string[] {
@@ -689,6 +690,43 @@ describe('Home for an Auntie (#2208)', () => {
     getDashboardLayout.mockResolvedValue(stored([w('cashFlow'), w('supplies')]));
     render(<Home />);
     await waitFor(() => expect(boardOrder()).toEqual(DEFAULT_DASHBOARD.map((x) => x.key)));
+  });
+  it('keeps them off her board when a save reconciles to a list that names them', async () => {
+    useRouteContext.mockReturnValue(AUNTIE);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('cashFlow'), w('careFlags')]));
+    saveDashboardLayout.mockResolvedValue([w('careFlags'), w('safebox'), w('supplies'), w('expirations')]);
+    render(<Home />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move Key & code safebox down' }));
+    await waitFor(() => expect(saveDashboardLayout).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(boardOrder()).toEqual(['careFlags', 'safebox']);
+    for (const key of OWNER_CARDS) expect(screen.queryByText(BODY_MARKER[key] ?? '')).toBeNull();
+  });
+  it('keeps them off her board when a failed save puts the stored layout back', async () => {
+    useRouteContext.mockReturnValue(AUNTIE);
+    getDashboardLayout.mockResolvedValue(
+      stored([w('safebox'), w('cashFlow'), w('careFlags'), w('expenseLog')]),
+    );
+    saveDashboardLayout.mockRejectedValue(new Error('permission-denied'));
+    render(<Home />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move Key & code safebox down' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/back the way it was/i);
+    expect(boardOrder()).toEqual(['safebox', 'careFlags']);
+    for (const key of OWNER_CARDS) expect(screen.queryByText(BODY_MARKER[key] ?? '')).toBeNull();
+  });
+  it('gives an account carrying both the owner and the Auntie claim the Auntie board', async () => {
+    useRouteContext.mockReturnValue({
+      access: accessFromClaims({ admin: true, staffRole: 'auntie' }),
+    });
+    getDashboardLayout.mockResolvedValue(stored([w('stats', 'wide'), ...OWNER_CARDS.map((k) => w(k))]));
+    render(<Home />);
+    await waitFor(() => expect(boardOrder()).toEqual(['stats']));
+    fireEvent.click(screen.getByRole('button', { name: 'Customize' }));
+    for (const label of OWNER_CARD_LABELS) {
+      expect(screen.queryByRole('button', { name: `Add ${label} to Home` })).toBeNull();
+    }
   });
   for (const access of [{ status: 'admin' }, { status: 'testAdmin', testTribeId: 'tribe-sandbox' }, null]) {
     const who = access === null ? 'the offline session' : access.status === 'admin' ? 'the owner' : 'the test admin';
