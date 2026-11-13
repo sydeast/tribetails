@@ -361,14 +361,14 @@ export function SignIn() {
                 {fieldErrors.password ?? ''}
               </p>
             </div>
-            {/* ControlShell renders type="button", not a submit button, so the
-                pointer path calls doSignIn directly; Enter-in-field goes through
-                the form's onSubmit. */}
+            {/* The form's one submit button: a click and Enter in a field both
+                reach onSubmit (#1846). A type="button" here left the form with
+                no submit button, so the browser never submitted on Enter. */}
             <PrimaryButton
+              type="submit"
               label={busy ? 'Signing in...' : 'Jump back in!'}
               busy={busy}
               disabled={resetting}
-              onClick={() => void doSignIn()}
               className="signin__submit"
             />
             <div className="signin__ghostrow">
