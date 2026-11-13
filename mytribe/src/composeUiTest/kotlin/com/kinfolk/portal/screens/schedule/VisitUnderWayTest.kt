@@ -34,9 +34,10 @@ import kotlin.test.assertTrue
 class VisitUnderWayTest {
     // #2122: the screens re-read at a short turn here. A Compose UI test draws
     // every 16 ms frame of the time it moves through, so following a visit at
-    // the app's real 30 seconds a turn drew about 13,000 frames and ran past
-    // runTest's one minute limit on a busy runner. The real interval is held
-    // by FollowBookingsTest, which draws nothing.
+    // the app's real 30 seconds a turn drew about 13,000 frames: 12 seconds on
+    // a developer Mac, and past runTest's one minute limit on a busy CI
+    // runner. At 2 seconds a turn the same test takes about 1 second. The
+    // real interval is held by FollowBookingsTest, which draws nothing.
     private companion object { const val TEST_POLL_MS = 2_000L }
 
     // The real clock: Schedule decides what is due against it.
