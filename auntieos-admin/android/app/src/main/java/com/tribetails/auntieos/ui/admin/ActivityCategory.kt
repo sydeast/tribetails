@@ -21,7 +21,11 @@ private val ADMIN_PREFIXES = arrayOf(
     "ARCHIVE_KIN", "RESTORE_KIN", "KIN_REMOVAL", "CREATE_TRAINING", "UPDATE_TRAINING", "DELETE_TRAINING",
     "SUPPL", "EXPIRATION_", "INTEGRATION_", "AUDIENCE_SEGMENT", "EXTERNAL_SUPPRESSION", "OPERATOR_",
     "RETENTION_", "ERROR_", "PROFILE_", "HOME_ACCESS", "EMERGENCY_CONTACT",
+    // #1820: Kinfolk and Kin record edits, and email and message templates.
+    "UPDATE_KINFOLK", "UPDATE_KIN_TAGS", "SECONDARY_KINFOLK", "HOUSEHOLD_DATA", "TEMPLATE_",
 )
+/** Exact, never a prefix: CREATE_KINCARE_SESSION and UPDATE_KINCARE_SESSION are Bookings. */
+private val ADMIN_EXACT = setOf("CREATE_KIN", "UPDATE_KIN")
 /** The one category an action belongs to, or null when nothing claims it (it still shows under All). First match wins; money goes first. */
 internal fun activityCategoryOf(actionType: String): ActivityCategory? {
     val a = actionType.uppercase()
@@ -30,7 +34,7 @@ internal fun activityCategoryOf(actionType: String): ActivityCategory? {
         a.startsWithAny("AUTH", "SECRETS_") || a.containsAny("LOGIN", "LOGOUT") -> ActivityCategory.Auth
         a.containsAny("NOTIFICATION", "NOTIF") ||
             a.startsWithAny("CONVERSATION", "EXTERNAL_MESSAGE", "BROADCAST", "MARKETING_BLAST") -> ActivityCategory.Notifications
-        a.startsWithAny(*ADMIN_PREFIXES) || a.contains("TRIAGE") -> ActivityCategory.Admin
+        a.startsWithAny(*ADMIN_PREFIXES) || a in ADMIN_EXACT || a.contains("TRIAGE") -> ActivityCategory.Admin
         a.startsWithAny("CONTENT_", "MEDIA_") || a.containsAny("KINTALE", "TALE_", "DRAFT", "REPORT") -> ActivityCategory.KinTales
         a.containsAny("BOOKING", "KINCARE", "SESSION", "VISIT", "RESCHEDULE", "BLOCKED_TIME_SLOT", "CANCEL_REQUEST") -> ActivityCategory.Bookings
         else -> null

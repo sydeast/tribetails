@@ -2,6 +2,7 @@ import { doc } from 'firebase/firestore';
 import { updateDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
 import { call } from '../lib/fns';
+import { logActivity } from './activityLog';
 import { visitTransitionWords } from '../lib/activityWords';
 import {
   auditActionTypeFor,
@@ -282,12 +283,14 @@ async function fireLifecycleAudit(args: {
   to: string;
 }): Promise<void> {
   try {
-    await call('logActivity', {
+    await logActivity({
       actionType: auditActionTypeFor(args.action),
       description: visitTransitionWords(args.action, args.from, args.to),
       status: 'SUCCESS',
       targetId: args.sessionId,
       targetCollection: SESSIONS_COLLECTION,
+      // #1820: the facts behind the sentence, so the opened line is not empty.
+      payload: { visitId: args.sessionId, action: args.action, from: args.from, to: args.to },
     });
   } catch (err) {
     console.warn('[visitLifecycle] audit entry failed', err);

@@ -165,8 +165,23 @@
   color: var(--color-text-dim);
 }
 
+/* #1897: the topbar row's footprint, as tokens, so a dialog that must start
+   below it (Dialog.css: the right-edge sheet, and the phone-width wizard) reads
+   the numbers this file lays the row out with instead of guessing them.
+   The tallest thing in the row is the account chip: its monogram plus the
+   chip's padding above and below, both set from these same tokens further
+   down. Sign out (40px) and the phone nav toggle (2.5rem) are shorter.
+   `--shell-topbar-h` is also the row's min-height, so the row can never be
+   shorter than the token says. `--shell-topbar-clear` is page padding + row +
+   one spacing step of air. Custom properties inherit, and every screen (and so
+   every dialog it opens, none are portalled) renders inside `.shell__main`. */
 .shell__main {
-  padding: 1.5rem 2rem;
+  --shell-pad-y: 1.5rem;
+  --shell-chip-monogram: 2rem;
+  --shell-chip-pad-y: 0.3rem;
+  --shell-topbar-h: calc(var(--shell-chip-monogram) + 2 * var(--shell-chip-pad-y));
+  --shell-topbar-clear: calc(var(--shell-pad-y) + var(--shell-topbar-h) + var(--space-3));
+  padding: var(--shell-pad-y) 2rem;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
@@ -177,6 +192,7 @@
 }
 
 .shell__topbar {
+  min-height: var(--shell-topbar-h);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -188,7 +204,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.6rem;
-  padding: 0.3rem 0.7rem 0.3rem 0.3rem;
+  padding: var(--shell-chip-pad-y) 0.7rem var(--shell-chip-pad-y) 0.3rem;
   border-radius: var(--radius-pill);
   text-decoration: none;
   color: inherit;
@@ -208,8 +224,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  width: var(--shell-chip-monogram);
+  height: var(--shell-chip-monogram);
   border-radius: 50%;
   background: var(--gradient-teal-purple);
   color: var(--tt-brand-cream);
@@ -352,6 +368,7 @@
   }
   /* 2rem of side padding on a 360px screen is 18 percent of the viewport. */
   .shell__main {
+    --shell-pad-y: var(--space-4);
     padding: var(--space-4);
   }
   /* Three controls on one line at 360px. The chip is the only one that can

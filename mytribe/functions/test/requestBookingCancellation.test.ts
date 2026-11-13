@@ -180,7 +180,8 @@ describe('listStaffHandler', () => {
     const { listStaffHandler } = await import('../src/admin/listStaff');
     const res = await listStaffHandler({ data: {}, auth: { uid: 'a' } } as any);
     expect(res.staff.map((s) => s.displayName)).toEqual(['Amy', 'Zoe']);
-    expect(res.staff[1]).toEqual({ uid: 'u2', displayName: 'Zoe', email: 'z@t.com' });
+    // #1820: Auth is unreachable here and the record names no role, so none is guessed.
+    expect(res.staff[1]).toEqual({ uid: 'u2', displayName: 'Zoe', email: 'z@t.com', role: null });
     // u1 has no email and Auth is unreachable in this suite: the gap stays a gap.
     expect(res.staff[0]).toMatchObject({ uid: 'u1', email: null });
   });
