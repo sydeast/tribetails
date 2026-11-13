@@ -63,9 +63,12 @@ export async function appendMessage(args: AppendMessageArgs): Promise<string> {
   // sanitizer's job is to never trust its own output length either).
   const body = sanitizeMessageBody(args.body).slice(0, MAX_MESSAGE_BODY);
   // Nothing readable left (blank, empty formatting, or a body that never
-  // settles): refuse before anything is written.
+  // settles): refuse before anything is written. sendKinfolkMessage refuses the
+  // same body first with its own code, so in practice this is the Auntie reply
+  // path, where the admin web, admin Android and desktop console show the
+  // message as written: it is screen copy, not a code.
   if (messagePlainText(body).length === 0) {
-    throw new HttpsError('invalid-argument', 'message_body_empty');
+    throw new HttpsError('invalid-argument', 'This reply has no words to send.');
   }
   const now = Date.now();
   const convRef = db().collection(CONVERSATIONS_COLLECTION).doc(kinfolkId);

@@ -357,12 +357,12 @@ describe('replyToConversation (admin)', () => {
   });
 
   it('refuses a reply with no words (spaces or empty formatting) and writes nothing', async () => {
-    for (const body of ['   ', '<p><br></p>']) {
+    for (const body of ['   ', '<p><br></p>', `&${'amp;'.repeat(12)}lt;b&gt;`]) {
       const ctx = buildDbMock({ docs: { 'conversations/kf1': { kinfolkName: 'Jane Doe', messageCount: 2 } } });
       mocks.dbFn.mockReturnValue(ctx.db);
       await expect(replyToConversationHandler(req({ kinfolkId: 'kf1', body }))).rejects.toMatchObject({
         code: 'invalid-argument',
-        message: 'message_body_empty',
+        message: 'This reply has no words to send.',
       });
       expect(ctx.writes.filter((w) => w.path.startsWith('conversations/'))).toEqual([]);
     }
