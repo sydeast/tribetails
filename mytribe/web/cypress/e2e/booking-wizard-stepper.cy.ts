@@ -1,5 +1,4 @@
 import type { GetBookingPolicyResult, GetServiceCatalogResult } from '../../src/api/bookingApi';
-import type { GetMyKinResult, KinDto } from '../../src/api/types';
 import { ACCESS, HOME, SET_ACTIVE_TRIBE } from '../fixtures/access';
 import { stubCallables } from '../support/callables';
 
@@ -11,34 +10,9 @@ import { stubCallables } from '../support/callables';
  * only be known by measuring the real page. The callables are stubbed
  * (`support/callables.ts`), typed against the app's own interfaces.
  *
- * The lists are long on purpose (eight Kin, nine KinCares) so the page really
+ * The lists are long on purpose (eight seeded Kin, nine stubbed KinCares) so the page really
  * scrolls: on a short step the old bug is invisible.
  */
-
-function kin(i: number): KinDto {
-  return {
-    id: `k${i}`,
-    name: `Buddy ${i}`,
-    species: 'dog',
-    breed: 'Mixed',
-    ageYears: 3,
-    photoUrl: null,
-    status: 'active',
-    feedingInstructions: null,
-    walkingInstructions: null,
-    medications: null,
-    allergies: null,
-    emergencyNotes: null,
-    sitterNotes: null,
-    sex: null,
-    weight: null,
-    colorMarkings: null,
-    spayedNeutered: false,
-    vetInfo: null,
-  };
-}
-
-const KIN: GetMyKinResult = { kin: [1, 2, 3, 4, 5, 6, 7, 8].map(kin) };
 
 const CATALOG: GetServiceCatalogResult = {
   pricesVisible: true,
@@ -69,7 +43,6 @@ function openWizard() {
     getMyAccess: ACCESS,
     getMyHome: HOME,
     setActiveTribe: SET_ACTIVE_TRIBE,
-    getMyKin: KIN,
     getServiceCatalog: CATALOG,
     getBookingPolicy: POLICY,
     getBusinessClosures: { closures: [] },
@@ -77,6 +50,7 @@ function openWizard() {
   });
   cy.visit('/schedule/book');
   cy.contains('h3.title', 'Select Kin', { timeout: 30_000 }).should('be.visible');
+  cy.contains('Buddy 8', { timeout: 30_000 }).should('exist');
 }
 
 /**
@@ -104,7 +78,7 @@ function assertStepperClear(width: number, step: number) {
 }
 
 function next() {
-  cy.contains('button', 'Next').scrollIntoView().click();
+  cy.contains('button', 'Next').should('not.be.disabled').scrollIntoView().click();
 }
 
 for (const [label, width, height] of [
