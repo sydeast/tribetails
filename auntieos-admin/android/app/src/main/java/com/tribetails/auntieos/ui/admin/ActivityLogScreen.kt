@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.data.repository.StaffMember
 import com.tribetails.auntieos.data.repository.staffNamesByUid
+import com.tribetails.auntieos.data.repository.staffRolesByUid
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -113,10 +115,14 @@ private fun ActivityFilter.matches(actionType: String): Boolean {
 fun ActivityLogScreen(
     viewModel: AdminDataViewModel = viewModel(),
     onBack: () -> Unit,
-    /** #1592: uid -> name from `listStaff` (#1564's fallback). A failed read is an empty map. */
-    loadStaffNames: suspend () -> Map<String, String> = {
+    /**
+     * The staff roster from `listStaff`, read once. #1592 takes each actor's
+     * name from it (#1564's fallback) and #1820 takes whether they are the
+     * owner or an Auntie. A failed read is an empty list.
+     */
+    loadStaff: suspend () -> List<StaffMember> = {
         runCatching { com.tribetails.auntieos.AuntieOSApp.instance.kinCareRepository.listStaff() }
-            .getOrNull()?.getOrNull()?.let(::staffNamesByUid).orEmpty()
+            .getOrNull()?.getOrNull().orEmpty()
     },
 ) {
     val entries   by viewModel.activityLog.collectAsState()
@@ -125,8 +131,10 @@ fun ActivityLogScreen(
     val zoneId by viewModel.businessTimeZone.collectAsState()
     val zone = remember(zoneId) { businessZone(zoneId) }
     val chainVerify by viewModel.chainVerify.collectAsState()
-    var staffNames by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    LaunchedEffect(Unit) { staffNames = loadStaffNames() }
+    var staff by remember { mutableStateOf<List<StaffMember>>(emptyList()) }
+    LaunchedEffect(Unit) { staff = loadStaff() }
+    val staffNames = remember(staff) { staffNamesByUid(staff) }
+    val staffRoles = remember(staff) { staffRolesByUid(staff) }
 
     // Verify on arrival as well as on demand: the mock's badge reads "Chain
     // verified" the moment the screen opens, and web has verified on mount
@@ -143,7 +151,7 @@ fun ActivityLogScreen(
     var selectedEntry by remember { mutableStateOf<ActivityLogEntry?>(null) }
 
     selectedEntry?.let { entry ->
-        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null }, names = staffNames)
+        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null }, names = staffNames, roles = staffRoles)
     }
 
     AuntieScreenScaffold(title = "Activity Log", onBack = onBack) {
@@ -467,6 +475,7 @@ private fun ActivityDetailModal(
     zone: ZoneId,
     onDismiss: () -> Unit,
     names: Map<String, String> = emptyMap(),
+    roles: Map<String, String> = emptyMap(),
 ) {
     val payload = activityPayloadRows(entry)
     val chain = activityChainRows(entry)
@@ -476,7 +485,7 @@ private fun ActivityDetailModal(
         confirmButton = { GhostButton(label = "Close", onClick = onDismiss) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            activityDetailRows(entry, zone, names).forEach { (label, value) -> DetailKv(label, value) }
+            activityDetailRows(entry, zone, names, roles).forEach { (label, value) -> DetailKv(label, value) }
 
             DetailSectionHeading("What happened")
             if (payload.isEmpty()) {
@@ -563,6 +572,8 @@ internal fun activityDetailRows(
     zone: ZoneId = businessZone(null),
     /** uid -> name (`listStaff`), #1592. A uid it does not know shows as it is. */
     names: Map<String, String> = emptyMap(),
+    /** uid -> "owner" | "auntie" (`listStaff`), #1820. See [actorRoleFor]. */
+    roles: Map<String, String> = emptyMap(),
 ): List<Pair<String, String>> {
     val rows = mutableListOf<Pair<String, String>>()
     fun add(label: String, value: String) {
@@ -580,7 +591,7 @@ internal fun activityDetailRows(
     val actorName = names[entry.actorId.trim()]
     add("Actor", actorName ?: entry.actorId)
     if (actorName != null) add("Actor id", entry.actorId)
-    add("Actor role", actorRoleLabel(entry.actorRole))
+    add("Actor role", actorRoleFor(entry.actorRole, entry.actorId, entry.payload, roles))
     add("Household", entry.familyId)
     // #1747: a stored path reads as words; the entry itself is never rewritten.
     add("Detail", activityDescriptionWords(entry.description))

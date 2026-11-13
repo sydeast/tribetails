@@ -78,6 +78,29 @@ describe('PrimaryButton', () => {
   });
 });
 
+describe('PrimaryButton type (#1846)', () => {
+  it('defaults to type=button so it never submits a form by accident', () => {
+    render(<PrimaryButton label="Go" onClick={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Go' })).toHaveAttribute('type', 'button');
+  });
+
+  it('type=submit renders a live submit button without an onClick, and Enter submits the form', async () => {
+    const onSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+    render(
+      <form onSubmit={onSubmit}>
+        <input aria-label="a" />
+        <input aria-label="b" />
+        <PrimaryButton type="submit" label="Go" />
+      </form>,
+    );
+    const btn = screen.getByRole('button', { name: 'Go' });
+    expect(btn).toHaveAttribute('type', 'submit');
+    expect(btn).not.toHaveClass('auntie-is-static');
+    await userEvent.type(screen.getByLabelText('a'), 'x{Enter}');
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('GhostButton', () => {
   it('renders its label', () => {
     render(<GhostButton label="Not now" onClick={vi.fn()} />);

@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -129,6 +130,9 @@ fun SignInScreen(
     LaunchedEffect(email, password) { platformSetSignInAutofillValues(email, password) }
 
     fun submit() {
+        // Enter and the keyboard's Done key bypass the disabled button: one sign-in at a time,
+        // and none while a password reset is running.
+        if (loading || resetting) return
         val missing = signInFieldErrors(email, password)
         fieldErrors = missing
         if (missing.any) {
@@ -164,7 +168,7 @@ fun SignInScreen(
     // A refusal carries its own sentence (the per-IP limit, a malformed address,
     // the network); it is never about whether the account exists.
     fun resetPassword() {
-        if (resetting) return
+        if (loading || resetting) return
         val needsEmail = resetEmailFieldError(email)
         fieldErrors = SignInFieldErrors(email = needsEmail)
         if (needsEmail != null) {
@@ -274,6 +278,7 @@ fun SignInScreen(
                 placeholder   = "••••••••",
                 isError       = fieldErrors.password != null,
                 imeAction     = ImeAction.Done,
+                keyboardActions = KeyboardActions(onDone = { submit() }),
                 fieldFocusRequester = passwordFocus,
                 modifier      = Modifier.onPreviewKeyEvent { e ->
                     if (e.type == KeyEventType.KeyUp && e.key == Key.Enter) {
@@ -306,7 +311,7 @@ fun SignInScreen(
                 GhostButton(
                     label   = if (resetting) "Sending…" else "Forgot password?",
                     onClick = ::resetPassword,
-                    enabled = !resetting,
+                    enabled = !loading && !resetting,
                 )
             }
             } }  // close card Column + Box

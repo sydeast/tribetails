@@ -17,8 +17,14 @@ vi.mock('../api/activityLog', async (orig) => ({
   verifyActivityLogChain,
 }));
 // #1592: the shared staff-name read (`listStaff`), stubbed so no test dials it.
-const { staffNames } = vi.hoisted(() => ({ staffNames: { current: new Map<string, string>() as ReadonlyMap<string, string> } }));
-vi.mock('../lib/useStaffNames', () => ({ useStaffNames: () => staffNames.current }));
+const { staffNames, staffRoles } = vi.hoisted(() => ({
+  staffNames: { current: new Map<string, string>() as ReadonlyMap<string, string> },
+  staffRoles: { current: new Map<string, 'owner' | 'auntie'>() as ReadonlyMap<string, 'owner' | 'auntie'> },
+}));
+vi.mock('../lib/useStaffNames', () => ({
+  useStaffNames: () => staffNames.current,
+  useStaffRoles: () => staffRoles.current,
+}));
 
 import { ActivityLog } from './ActivityLog';
 import { businessTodayIso } from '../lib/businessZoneTime';
@@ -38,6 +44,7 @@ beforeEach(() => {
   verifyActivityLogChain.mockReset().mockResolvedValue(OK);
   getBusinessSettings.mockReset().mockResolvedValue({ timeZone: '' });
   staffNames.current = new Map();
+  staffRoles.current = new Map();
 });
 
 describe('ActivityLog actor names (#1592)', () => {
@@ -521,5 +528,51 @@ describe('ActivityLog against its mock', () => {
     render(<ActivityLog />);
     await userEvent.type(screen.getByRole('searchbox'), 'zzzz');
     expect(screen.getByText(/no entries match this filter/i)).toHaveClass('den-hint');
+  });
+});
+
+/**
+ * #1820. The owner's own clock taps opened to ACTOR ROLE "Primary kinfolk",
+ * while the lines the server wrote for the same account in the same minute
+ * read "Staff" and the page header read "Operator".
+ */
+describe('ActivityLog actor role (#1820)', () => {
+  async function openedRole(e: ActivityLogEntry): Promise<string | null> {
+    useCollection.mockReturnValue({ status: 'ready', data: [e] });
+    render(<ActivityLog />);
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(e.actionType ?? '') }));
+    const label = screen.getByText('Actor role');
+    return label.parentElement?.textContent?.replace('Actor role', '').trim() ?? null;
+  }
+
+  it('a tap line already stored as a household role reads Operator for the owner', async () => {
+    staffRoles.current = new Map([['u1', 'owner']]);
+    expect(await openedRole(entry({ actionType: 'VISIT_ARRIVED', actorRole: 'PRIMARY' }))).toBe('Operator');
+    expect(screen.queryByText('Primary kinfolk')).toBeNull();
+  });
+
+  it('the server line for the same account reads Operator too, not Staff', async () => {
+    staffRoles.current = new Map([['u1', 'owner']]);
+    expect(await openedRole(entry({ actionType: 'NOTIFICATION_DISPATCHED', actorRole: 'AUNTIE' }))).toBe('Operator');
+  });
+
+  it('an Auntie reads Auntie', async () => {
+    staffRoles.current = new Map([['u1', 'auntie']]);
+    expect(await openedRole(entry({ actionType: 'VISIT_ARRIVED', actorRole: 'PRIMARY' }))).toBe('Auntie');
+  });
+
+  it('a Kinfolk keeps the household role', async () => {
+    staffRoles.current = new Map([['owner-uid', 'owner']]);
+    expect(await openedRole(entry({ actionType: 'AUTH_LOGIN_SUCCESS', actorId: 'kf-uid', actorRole: 'PRIMARY' }))).toBe(
+      'Primary kinfolk',
+    );
+  });
+
+  it('a new line says who wrote it without the roster', async () => {
+    expect(
+      await openedRole(
+        entry({ actionType: 'VISIT_ARRIVED', actorRole: 'AUNTIE', payload: { admin: true, staffRole: null, visitId: 's1' } }),
+      ),
+    ).toBe('Operator');
   });
 });

@@ -62,6 +62,16 @@
   align-items: stretch;
   justify-content: flex-end;
   padding: 0;
+  /* #1897: start below the shell topbar row. Pinned to the viewport's top-right
+     corner, the sheet's close X sat exactly over the topbar's "Sign out", so
+     after the sheet closed the pointer rested on a control that ends the
+     session and a double click on the X pressed it. Every sheet (New booking,
+     Visit detail, thread actions) shares this shape, so the inset lives here.
+     The scrim still covers the row: a press there is a backdrop press and
+     closes the sheet, it never reaches Sign out. `--shell-topbar-clear` is set
+     on `.shell__main` (shell.css), where every screen and so every dialog
+     renders; outside the shell there is no topbar to clear, hence 0px. */
+  padding-top: var(--shell-topbar-clear, 0px);
 }
 .dialog--sheet {
   width: min(100%, 30rem);
@@ -93,8 +103,11 @@
 }
 /* On a phone it is the screen, not a card floating on one. */
 @media (max-width: 40rem) {
+  /* Full-bleed below the shell topbar row, not over it: at the top of the
+     screen the wizard's close X landed on the topbar's "Sign out" (#1897, the
+     same overlap as the sheet above). */
   .dialog__backdrop:has(.dialog--wizard) {
-    padding: 0;
+    padding: var(--shell-topbar-clear, 0px) 0 0;
   }
   .dialog--wizard {
     height: 100%;

@@ -1606,8 +1606,11 @@ class DirectoryViewModel(
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
                     scope            = viewModelScope,
                     repository       = repository,
-                    actionType       = "UNARCHIVE_KINFOLK",
-                    description      = "Unarchived kinfolk",
+                    // #1820: the key the server declares (AUDIT_EVENTS.RESTORE_KINFOLK)
+                    // and the Activity Log files under Admin. This line used to
+                    // say UNARCHIVE_KINFOLK, which no chip claimed.
+                    actionType       = "RESTORE_KINFOLK",
+                    description      = "Restored Kinfolk",
                     targetId         = kinfolkId,
                     targetCollection = "kinfolk",
                 )

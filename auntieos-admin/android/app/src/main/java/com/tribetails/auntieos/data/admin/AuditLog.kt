@@ -23,9 +23,16 @@ object AuditLog {
         targetCollection: String = "",
         status: String = "SUCCESS",
         actorIdOverride: String = "",
+        /**
+         * #1820: the facts behind the sentence (visit id, from, to, a name, the
+         * changed field names). Only the keys the server lists are accepted
+         * (`mytribe/functions/src/lib/activityPayload.ts`); never a secret,
+         * money, an address, a phone number, an email or the text of a note.
+         */
+        payload: Map<String, Any?> = emptyMap(),
     ) {
         val entry = buildEntry(
-            actionType, description, status, targetId, targetCollection, actorIdOverride,
+            actionType, description, status, targetId, targetCollection, actorIdOverride, payload,
         )
         scope.launch {
             runCatching { repository.logActivity(entry) }
@@ -51,9 +58,11 @@ object AuditLog {
         targetCollection: String = "",
         status: String = "SUCCESS",
         actorIdOverride: String = "",
+        /** #1820: see [fire]. */
+        payload: Map<String, Any?> = emptyMap(),
     ) {
         val entry = buildEntry(
-            actionType, description, status, targetId, targetCollection, actorIdOverride,
+            actionType, description, status, targetId, targetCollection, actorIdOverride, payload,
         )
         repository.logActivity(entry)
     }
@@ -65,6 +74,7 @@ object AuditLog {
         targetId: String,
         targetCollection: String,
         actorIdOverride: String,
+        payload: Map<String, Any?>,
     ): ActivityLogEntry = ActivityLogEntry(
         actionType       = actionType,
         description      = description,
@@ -72,5 +82,6 @@ object AuditLog {
         targetId         = targetId,
         targetCollection = targetCollection,
         actorId          = actorIdOverride,
+        payload          = payload,
     )
 }

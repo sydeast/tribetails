@@ -42,6 +42,8 @@ interface ShellProps {
    */
   pressed?: boolean | undefined;
   style?: CSSProperties | undefined;
+  /** `submit` makes the control the form's default button, so Enter in a field fires it. */
+  type?: 'button' | 'submit' | undefined;
   children: ReactNode;
 }
 
@@ -55,17 +57,19 @@ function ControlShell({
   staticRole,
   pressed,
   style,
+  type = 'button',
   children,
 }: ShellProps) {
   const cls = classes(
     base,
-    !onClick && 'auntie-is-static',
+    !onClick && type !== 'submit' && 'auntie-is-static',
     disabled && 'auntie-is-disabled',
     pressed === true && 'auntie-is-on',
     className,
   );
 
-  if (!onClick) {
+  // A submit control has no onClick: the form's onSubmit is the one path.
+  if (!onClick && type !== 'submit') {
     return (
       <span className={cls} role={staticRole} aria-label={ariaLabel} style={style}>
         {children}
@@ -75,7 +79,7 @@ function ControlShell({
 
   return (
     <button
-      type="button"
+      type={type}
       className={cls}
       onClick={onClick}
       // Genuinely disabled, not grey. A styled-only button still fires, still
@@ -100,6 +104,8 @@ export interface PrimaryButtonProps {
   busy?: boolean;
   leading?: ReactNode;
   className?: string;
+  /** `submit` for the default button of a form; it then takes no onClick. */
+  type?: 'button' | 'submit';
 }
 
 export function PrimaryButton({
@@ -109,10 +115,12 @@ export function PrimaryButton({
   busy = false,
   leading,
   className,
+  type,
 }: PrimaryButtonProps) {
   return (
     <ControlShell
       base="auntie-btn auntie-btn--primary"
+      type={type}
       onClick={onClick}
       disabled={disabled}
       busy={busy}

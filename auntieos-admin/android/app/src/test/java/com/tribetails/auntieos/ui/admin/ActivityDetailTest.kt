@@ -140,6 +140,23 @@ class ActivityDetailTest {
     }
 
     /**
+     * #1820: the opened row reads the role from the roster, so the owner's tap
+     * lines that were stored as a household role no longer read "Primary kinfolk".
+     */
+    @Test
+    fun detailNamesTheOwnerAndAnAuntieFromTheRoster() {
+        val roster = mapOf("owner-uid" to "owner", "auntie-uid" to "auntie")
+        fun role(stored: String, actor: String, payload: Map<String, Any?> = emptyMap()) =
+            activityDetailRows(entry(actorRole = stored, payload = payload).apply { actorId = actor }, roles = roster)
+                .first { it.first == "Actor role" }.second
+        assertEquals("Operator", role("PRIMARY", "owner-uid"))
+        assertEquals("Operator", role("AUNTIE", "owner-uid"))
+        assertEquals("Auntie", role("PRIMARY", "auntie-uid"))
+        assertEquals("Primary kinfolk", role("PRIMARY", "kf-uid"))
+        assertEquals("Operator", role("AUNTIE", "gone", mapOf("admin" to true, "staffRole" to null)))
+    }
+
+    /**
      * A recorded null is a decision the writer made; blanking it hides that, so it
      * stays on the list, as the word "none" rather than the literal "null" (#1592).
      */

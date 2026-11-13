@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -54,6 +56,9 @@ fun KinField(
     fieldTestTag: String? = null,
     /** Masks the text, for a passcode. [VisualTransformation.None] (the default) shows it as typed. */
     visualTransformation: VisualTransformation = VisualTransformation.None,
+    /** Soft-keyboard action key (Next, Go...). The defaults leave every existing caller unchanged. */
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
 ) {
     val c = KinfolkTheme.colors
     val type = KinfolkTheme.typography
@@ -108,6 +113,8 @@ fun KinField(
             enabled           = enabled,
             singleLine        = singleLine,
             visualTransformation = visualTransformation,
+            keyboardOptions   = keyboardOptions,
+            keyboardActions   = keyboardActions,
             cursorBrush       = SolidColor(primary),
             textStyle         = type.sansBody.copy(color = navyColor),
             interactionSource = source,
