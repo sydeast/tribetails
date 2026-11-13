@@ -49,9 +49,11 @@ import kotlinx.coroutines.withContext
  * ProfileTagsSectionTest asserts both halves on every one of them.
  *
  * A typed name not yet in the vocabulary can be promoted to it inline: that
- * assigns the name AND appends a default-colored [TagDef] to the right
+ * assigns the name AND adds a default-colored [TagDef] to the right
  * vocabulary, so it becomes a reusable suggestion (recolorable later in the Tags
  * settings panel). The two writes are independent, and so are their failures.
+ * #2205: the promotion sends the one name (`changeBusinessTags`), never this
+ * panel's list, and is offered only once the list has loaded (#2204).
  *
  * The state machine is pure and lives below; the composable is the thin shell
  * that runs the two writes and feeds their results back in.
@@ -68,6 +70,9 @@ enum class TagScope(val wire: String) {
     /** Pet tags, stored on `kin` docs and drawn from `petTags`. */
     PET("pet"),
 }
+
+/** The line shown while the suggestions load. The same words as the React panel. */
+const val TAG_SUGGESTIONS_LOADING: String = "Loading tag suggestions…"
 
 /** Panel subtitle for a scope. */
 fun tagScopeSubtitle(scope: TagScope): String = when (scope) {
@@ -176,8 +181,19 @@ fun ProfileTagsState.beginPromoteVocab(name: String): ProfileTagsState {
     return copy(vocab = next, revertVocab = vocab)
 }
 
-/** The vocabulary write landed. Keep the new suggestion, drop the snapshot. */
-fun ProfileTagsState.promoteVocabSucceeded(): ProfileTagsState = copy(revertVocab = null)
+/**
+ * The vocabulary write landed. Drop the snapshot, and, when the server answered
+ * with its list ([stored], #2205), show that: it carries any tag added elsewhere.
+ */
+fun ProfileTagsState.promoteVocabSucceeded(stored: List<TagDef>? = null): ProfileTagsState =
+    copy(vocab = stored ?: vocab, revertVocab = null)
+
+/**
+ * #2204: "add to your tags" is offered only once the list has loaded. Before
+ * then (and after a failed read) the field cannot tell a new name from one
+ * already on the list. Pure; tested.
+ */
+fun vocabAddOffered(settingsState: FirestoreResult<*>): Boolean = settingsState is FirestoreResult.Data
 
 /**
  * The vocabulary write failed. Restore the previous vocabulary AND say so. The
@@ -287,23 +303,22 @@ fun ProfileTagsSection(
         if (promoted.revertVocab == null) return
         state = promoted
 
-        val settings = loadedSettings()
-        if (settings == null) {
-            // Fail loud rather than write a vocabulary on top of settings we never
-            // read: this save seam sends the whole document, so that would wipe
-            // every other business setting.
+        if (loadedSettings() == null) {
+            // The field is not handed this handler before the list loads (#2204);
+            // a late call still says so rather than guessing.
             state = state.promoteVocabFailed("your settings are still loading")
             return
         }
 
-        val nextVocab = promoted.vocab
+        // #2205: the one name goes to the server, which adds it to the list as
+        // stored. This panel's copy of the list is never sent.
+        val added = promoted.vocab.last().name
         coroutineScope.launch {
-            val result = when (scope) {
-                TagScope.HOUSEHOLD -> client.saveHouseholdTagVocabulary(settings, nextVocab)
-                TagScope.PET -> client.savePetTagVocabulary(settings, nextVocab)
-            }
+            val result = client.addTagToVocabulary(scope.wire, added)
             state = when (result) {
-                is WriteResult.Ok -> state.promoteVocabSucceeded()
+                is WriteResult.Ok -> state.promoteVocabSucceeded(
+                    if (scope == TagScope.HOUSEHOLD) result.value.household else result.value.pet,
+                )
                 is WriteResult.Err -> state.promoteVocabFailed(result.message)
             }
         }
@@ -314,6 +329,14 @@ fun ProfileTagsSection(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(dims.space3),
         ) {
+            if (settingsState is FirestoreResult.Loading) {
+                Text(
+                    TAG_SUGGESTIONS_LOADING,
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
             state.vocabError?.let { warning ->
                 AuntieBanner(tone = AuntieBannerTone.Warning, title = "Tag suggestions unavailable") {
                     Text(warning, style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -342,7 +365,7 @@ fun ProfileTagsSection(
                 value = state.tags,
                 vocab = state.vocab,
                 onChange = { saveTags(it) },
-                onCreateVocab = { promoteVocab(it) },
+                onCreateVocab = if (vocabAddOffered(settingsState)) { name -> promoteVocab(name) } else null,
                 enabled = !state.saving,
                 inputLabel = tagScopeInputLabel(scope),
                 modifier = Modifier.fillMaxWidth(),

@@ -2186,6 +2186,8 @@ closure so the operator can act on them manually.
   `where('tags','array-contains',name)` and `FieldValue.arrayRemove` both match
   exactly and would leave "vip" behind, which reads as the delete not working.
   Writes are whole-list replaces chunked at 400 per batch.
+- #2205: the vocabulary row is dropped inside a transaction (read and write
+  together), so a tag added by `changeBusinessTags` between the two is kept.
 - Idempotent. A name already off the list is not an error (that is exactly what a
   half-finished earlier run leaves behind): the strip runs anyway and
   `vocabRemoved` reports `false`.
@@ -2195,6 +2197,31 @@ closure so the operator can act on them manually.
 - Mirrors: `auntieos-admin/src/api/settingsWrite.ts`, Android
   `AuntieRepository.removeBusinessTag`. Frozen in `test/callableContract.test.ts`.
 
+### changeBusinessTags (owner-only: admin-gated, NOT in `AUNTIE_ALLOWED_CALLABLES`)
+- req `{ changes: [{ action: 'add' | 'style', scope: 'household' | 'pet',
+  name: string (trimmed, 1..40), color: { token, css }, icon: string (<=16) }]
+  (1..400) }`
+- res `{ ok: true, householdTags: unknown[], petTags: unknown[], updatedAt, updatedBy }`:
+  both lists as stored after the write, which the screen repaints from.
+- Added 2026-11-13 (#2204, #2205). **Tags change one named tag at a time.**
+  Every client used to send the whole list through `saveBusinessSettings`, so a
+  screen left open lost a tag added elsewhere and brought a deleted one back,
+  and an Android add before the list loaded sent a list of one over the lot.
+- `add` appends a new name; a name already on the list (case-insensitive over
+  normalized names) is refused. `style` sets the colour and emoji of a name
+  already on the list, keeping the stored row's name and any other field; a name
+  no longer there is refused and never re-created. No rename: the name is the
+  key assignments use. Delete stays `removeBusinessTag`.
+- Applied in order inside ONE transaction against the stored lists: all or
+  none. The 200-tag cap is checked inside it. Only a touched list is written.
+- Refusal: `failed-precondition`, `message` = a plain sentence,
+  `details = { code: 'tag_exists' | 'tag_missing' | 'too_many_tags', scope, name }`.
+  A malformed request is `invalid-argument`.
+- Audited `BUSINESS_TAGS_CHANGED` (server-only kind), payload
+  `{ changes: [{ action, scope, name }] }`.
+- Mirrors: `auntieos-admin/src/api/settingsWrite.ts`, Android
+  `AuntieRepository.changeBusinessTags`, desktop `FirestoreClient.changeBusinessTags`.
+  Frozen in `test/callableContract.test.ts`.
 ### saveBusinessSettings (owner-only: admin-gated, NOT in `AUNTIE_ALLOWED_CALLABLES`)
 - req `{ changes: Record<field, unknown> }` (at least one field)
 - res `{ updatedAt: string (ISO), updatedBy: string (the caller's uid) }`. Since
@@ -2217,6 +2244,11 @@ closure so the operator can act on them manually.
 - Refusal: `invalid-argument`, `message` = the first refusal's sentence,
   `details = { code: 'settings_refused', field, refusals: [{ field, message }] }`.
   Nothing is written.
+- #2205: `householdTags` / `petTags` are never written here. A list that differs
+  from the stored one is refused ("Tags now save one at a time. Reload the page
+  or update the app, then try again."), which is what holds for installed old
+  builds; a list equal to the stored one is left out of the write. Current
+  clients use `changeBusinessTags` and `removeBusinessTag`.
 - Write: `set(..., { mergeFields })`. Nested maps merge key by key; the rate card
   (`serviceRates`, `serviceDurations`, `serviceStartTimeBooking`) replaces whole
   so a removed type goes; arrays replace; `null` is stored as `null`.

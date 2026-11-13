@@ -60,6 +60,16 @@ internal val BUSINESS_SETTINGS_SERVER_OWNED: Set<String> = setOf(
 )
 
 /**
+ * #2205: fields this save never sends, because they change through a callable
+ * of their own: the two tag lists, one named tag at a time through
+ * `changeBusinessTags` and `removeBusinessTag`. A whole list sent here replaced
+ * the stored one, and the server now refuses a changed list. Left out here so a
+ * stale tag list in this console's baseline can never ride along with an
+ * unrelated panel's save and get it refused.
+ */
+internal val BUSINESS_SETTINGS_SAVED_ELSEWHERE: Set<String> = setOf("householdTags", "petTags")
+
+/**
  * #1593: the map fields the server REPLACES whole (`WHOLE_MAP_SETTINGS_FIELDS`
  * in `businessSettingsChecks.ts`), so a removed KinCare type is removed. Every
  * other map field is merged key by key on the server.
@@ -87,6 +97,7 @@ internal fun businessSettingsChangedFields(
     val changes = LinkedHashMap<String, JsonElement>()
     for ((key, value) in after) {
         if (key in BUSINESS_SETTINGS_SERVER_OWNED) continue
+        if (key in BUSINESS_SETTINGS_SAVED_ELSEWHERE) continue
         if (before[key] != value) changes[key] = value
     }
     return changes

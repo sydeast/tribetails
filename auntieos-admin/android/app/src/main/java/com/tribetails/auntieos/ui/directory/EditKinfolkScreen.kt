@@ -93,15 +93,19 @@ fun EditKinfolkScreen(
     val archiveControl = kinfolkArchiveControlFor(isOwner, state.status)
     var householdVocab by remember { mutableStateOf(emptyList<TagDef>()) }
     var vocabError by remember { mutableStateOf<String?>(null) }
+    // #2204: "add to your tags" waits for the list, and is the owner's only.
+    var vocabLoad by remember { mutableStateOf(TagVocabLoad.LOADING) }
 
     LaunchedEffect(Unit) {
         try {
             householdVocab = loadTagVocab(tagRepository, TagScope.HOUSEHOLD)
             vocabError = null
+            vocabLoad = TagVocabLoad.READY
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
             vocabError = tagVocabLoadErrorMessage(failure)
+            vocabLoad = TagVocabLoad.FAILED
         }
     }
 
@@ -110,19 +114,22 @@ fun EditKinfolkScreen(
     // assignment itself is handled by the field's own onChange); a failed WRITE
     // reverts the list and surfaces the reason.
     fun promoteHouseholdTag(name: String) {
+        if (!vocabAddOffered(vocabLoad, isOwner)) return
         val next = promoteTagToVocab(householdVocab, name) ?: return
         val previous = householdVocab
         householdVocab = next
         tagScope.launch {
+            // #2205: the one name goes to the server, never this screen's list.
+            var stored: List<TagDef> = next
             val failure = try {
-                saveTagVocab(tagRepository, TagScope.HOUSEHOLD, next)
+                stored = addTagToVocab(tagRepository, TagScope.HOUSEHOLD, next.last().name)
                 null
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failed: Throwable) {
                 failed
             }
-            val outcome = tagVocabOutcome(previous = previous, attempted = next, error = failure)
+            val outcome = tagVocabOutcome(previous = previous, attempted = stored, error = failure)
             householdVocab = outcome.vocab
             vocabError = outcome.error ?: vocabError
         }
@@ -288,11 +295,22 @@ fun EditKinfolkScreen(
                             // The form still holds a CSV string, so the field reads
                             // and writes through the bridge helpers below.
                             AuntieFieldLabel(text = "HOUSEHOLD TAGS")
+                            if (vocabLoad == TagVocabLoad.LOADING) {
+                                Text(
+                                    TAG_SUGGESTIONS_LOADING,
+                                    style = AuntieTheme.typography.bodySmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                            }
                             TagAssignField(
                                 value = editTagsFromField(state.tags),
                                 vocab = householdVocab,
                                 onChange = { next -> viewModel.updateEditTags(editTagsToField(next)) },
-                                onCreateVocab = { name -> promoteHouseholdTag(name) },
+                                onCreateVocab = if (vocabAddOffered(vocabLoad, isOwner)) {
+                                    { name -> promoteHouseholdTag(name) }
+                                } else {
+                                    null
+                                },
                                 inputLabel = "Add a household tag",
                                 modifier = Modifier.fillMaxWidth(),
                             )

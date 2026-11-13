@@ -2,16 +2,44 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TAG_PALETTE, DEFAULT_TAG_COLOR, type TagDef } from '../lib/tags/model';
+import { TAG_PALETTE, DEFAULT_TAG_COLOR, type TagChange, type TagDef } from '../lib/tags/model';
 
 const getBusinessSettings = vi.fn();
 vi.mock('../api/settings', () => ({ getBusinessSettings: () => getBusinessSettings() }));
 const saveBusinessSettings = vi.fn();
+const changeBusinessTags = vi.fn();
 const removeBusinessTag = vi.fn();
 vi.mock('../api/settingsWrite', () => ({
   saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch),
+  changeBusinessTags: (changes: unknown) => changeBusinessTags(changes),
   removeBusinessTag: (scope: unknown, name: unknown) => removeBusinessTag(scope, name),
 }));
+
+/**
+ * #2205: the lists as the SERVER holds them, which a test can move on from what
+ * the editor loaded (another device adding or deleting a tag). The fake applies
+ * each change the way `changeBusinessTags` does and answers with both lists.
+ */
+let server: { householdTags: TagDef[]; petTags: TagDef[] };
+function serverApplies(changes: TagChange[]) {
+  for (const c of changes) {
+    const key = c.scope === 'household' ? 'householdTags' : 'petTags';
+    const list = server[key];
+    const at = list.findIndex((t) => t.name.toLowerCase() === c.name.toLowerCase());
+    if (c.action === 'add') {
+      if (at >= 0) return Promise.reject(new Error(`A "${list[at]!.name}" tag already exists.`));
+      server[key] = [...list, { name: c.name, color: c.color, icon: c.icon }];
+    } else {
+      if (at < 0) {
+        return Promise.reject(
+          new Error(`The tag list changed since this screen opened: "${c.name}" is no longer on it. Reload and try again.`),
+        );
+      }
+      server[key] = list.map((t, i) => (i === at ? { ...t, color: c.color, icon: c.icon } : t));
+    }
+  }
+  return Promise.resolve({ householdTags: server.householdTags, petTags: server.petTags });
+}
 
 import { TagsEditor } from './TagsEditor';
 
@@ -35,6 +63,9 @@ beforeEach(() => {
   getBusinessSettings.mockReset();
   saveBusinessSettings.mockReset();
   saveBusinessSettings.mockResolvedValue({ updatedAt: 'now', updatedBy: 'auntie' });
+  server = { householdTags: [], petTags: [] };
+  changeBusinessTags.mockReset();
+  changeBusinessTags.mockImplementation((changes: TagChange[]) => serverApplies(changes));
   removeBusinessTag.mockReset();
   removeBusinessTag.mockImplementation((scope: string, name: string) =>
     Promise.resolve({ ok: true, scope, name, recordsTouched: 0, vocabRemoved: true }),
@@ -48,7 +79,7 @@ describe('TagsEditor', () => {
     expect(await screen.findByText(/couldn't read tags.*permission-denied/i)).toBeInTheDocument();
   });
 
-  it('adds a household tag and saves both lists (default color, no emoji)', async () => {
+  it('adds a household tag: Save sends that one name (default color, no emoji), never a list', async () => {
     getBusinessSettings.mockResolvedValue(settings([], []));
     render(<TagsEditor onBack={vi.fn()} />);
     const panel = await householdPanel();
@@ -56,13 +87,16 @@ describe('TagsEditor', () => {
     await userEvent.click(within(panel).getByRole('button', { name: /add tag/i }));
     await userEvent.click(screen.getByRole('button', { name: /save tags/i }));
 
-    await waitFor(() => expect(saveBusinessSettings).toHaveBeenCalledTimes(1));
-    const payload = saveBusinessSettings.mock.calls[0]![0];
-    expect(payload.householdTags).toEqual([{ name: 'VIP', color: DEFAULT_TAG_COLOR, icon: '' }]);
-    expect(payload.petTags).toEqual([]);
+    await waitFor(() => expect(changeBusinessTags).toHaveBeenCalledTimes(1));
+    expect(changeBusinessTags.mock.calls[0]![0]).toEqual([
+      { action: 'add', scope: 'household', name: 'VIP', color: DEFAULT_TAG_COLOR, icon: '' },
+    ]);
+    expect(saveBusinessSettings).not.toHaveBeenCalled();
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
   });
 
-  it('keeps the two lists independent: adding a household tag leaves petTags untouched', async () => {
+  it('keeps the two lists independent: adding a household tag sends nothing for the Kin list', async () => {
+    server = { householdTags: [], petTags: [{ name: 'Reactive', color: coral, icon: '' }] };
     getBusinessSettings.mockResolvedValue(settings([], [{ name: 'Reactive', color: coral, icon: '' }]));
     render(<TagsEditor onBack={vi.fn()} />);
     const panel = await householdPanel();
@@ -70,10 +104,65 @@ describe('TagsEditor', () => {
     await userEvent.click(within(panel).getByRole('button', { name: /add tag/i }));
     await userEvent.click(screen.getByRole('button', { name: /save tags/i }));
 
-    await waitFor(() => expect(saveBusinessSettings).toHaveBeenCalledTimes(1));
-    const payload = saveBusinessSettings.mock.calls[0]![0];
-    expect(payload.householdTags.map((t: TagDef) => t.name)).toEqual(['VIP']);
-    expect(payload.petTags).toEqual([{ name: 'Reactive', color: coral, icon: '' }]);
+    await waitFor(() => expect(changeBusinessTags).toHaveBeenCalledTimes(1));
+    const changes = changeBusinessTags.mock.calls[0]![0] as TagChange[];
+    expect(changes.map((c) => [c.scope, c.name])).toEqual([['household', 'VIP']]);
+  });
+
+  // #2205: a screen left open never undoes tag changes made elsewhere.
+
+  it('#2205: a tag added elsewhere after this screen loaded is kept, and shows once saved', async () => {
+    getBusinessSettings.mockResolvedValue(settings([{ name: 'VIP', color: orange, icon: '' }], []));
+    // Another device adds "Slow pay" after the editor read the list.
+    server = {
+      householdTags: [{ name: 'VIP', color: orange, icon: '' }, { name: 'Slow pay', color: coral, icon: '' }],
+      petTags: [],
+    };
+    render(<TagsEditor onBack={vi.fn()} />);
+    const panel = await householdPanel();
+    expect(within(panel).queryByText('Slow pay')).toBeNull();
+    await userEvent.type(within(panel).getByLabelText('New household tag name'), 'Gate code');
+    await userEvent.click(within(panel).getByRole('button', { name: /add tag/i }));
+    await userEvent.click(screen.getByRole('button', { name: /save tags/i }));
+
+    await waitFor(() => expect(changeBusinessTags).toHaveBeenCalledTimes(1));
+    expect(server.householdTags.map((t) => t.name)).toEqual(['VIP', 'Slow pay', 'Gate code']);
+    expect(await within(await householdPanel()).findByText('Slow pay')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save tags/i })).toBeDisabled();
+  });
+
+  it('#2205: a tag deleted elsewhere does not come back when this screen saves', async () => {
+    getBusinessSettings.mockResolvedValue(
+      settings([{ name: 'VIP', color: orange, icon: '' }, { name: 'Slow pay', color: coral, icon: '' }], []),
+    );
+    // Another device deletes "Slow pay" after the editor read the list.
+    server = { householdTags: [{ name: 'VIP', color: orange, icon: '' }], petTags: [] };
+    render(<TagsEditor onBack={vi.fn()} />);
+    const panel = await householdPanel();
+    await userEvent.type(within(panel).getByLabelText('New household tag name'), 'Gate code');
+    await userEvent.click(within(panel).getByRole('button', { name: /add tag/i }));
+    await userEvent.click(screen.getByRole('button', { name: /save tags/i }));
+
+    await waitFor(() => expect(changeBusinessTags).toHaveBeenCalledTimes(1));
+    expect(server.householdTags.map((t) => t.name)).toEqual(['VIP', 'Gate code']);
+    await waitFor(() => expect(within(panel).queryByText('Slow pay')).toBeNull());
+  });
+
+  it('#2205: recolouring a tag deleted elsewhere is refused in plain words, with a way to reload', async () => {
+    getBusinessSettings.mockResolvedValue(settings([{ name: 'VIP', color: DEFAULT_TAG_COLOR, icon: '' }], []));
+    server = { householdTags: [], petTags: [] };
+    render(<TagsEditor onBack={vi.fn()} />);
+    const panel = await householdPanel();
+    const row = within(panel).getByText('VIP').closest('.tagsEditor__row') as HTMLElement;
+    await userEvent.click(within(row).getByRole('button', { name: /orange/i }));
+    await userEvent.click(screen.getByRole('button', { name: /save tags/i }));
+
+    expect(await screen.findByText(/the tag list changed since this screen opened/i)).toBeInTheDocument();
+    expect(server.householdTags).toEqual([]);
+    getBusinessSettings.mockResolvedValue(settings([], []));
+    await userEvent.click(screen.getByRole('button', { name: 'Reload tags' }));
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/no household tags yet/i)).toBeInTheDocument();
   });
 
   // ── Remove is a cascade now (#713) ──────────────────────────────────────
@@ -171,6 +260,7 @@ describe('TagsEditor', () => {
   });
 
   it('edits an existing tag color in place (name unchanged)', async () => {
+    server = { householdTags: [{ name: 'VIP', color: DEFAULT_TAG_COLOR, icon: '' }], petTags: [] };
     getBusinessSettings.mockResolvedValue(settings([{ name: 'VIP', color: DEFAULT_TAG_COLOR, icon: '' }], []));
     render(<TagsEditor onBack={vi.fn()} />);
     const panel = await householdPanel();
@@ -178,9 +268,9 @@ describe('TagsEditor', () => {
     await userEvent.click(within(row).getByRole('button', { name: /orange/i }));
     await userEvent.click(screen.getByRole('button', { name: /save tags/i }));
 
-    await waitFor(() => expect(saveBusinessSettings).toHaveBeenCalledTimes(1));
-    expect(saveBusinessSettings.mock.calls[0]![0].householdTags).toEqual([
-      { name: 'VIP', color: orange, icon: '' },
+    await waitFor(() => expect(changeBusinessTags).toHaveBeenCalledTimes(1));
+    expect(changeBusinessTags.mock.calls[0]![0]).toEqual([
+      { action: 'style', scope: 'household', name: 'VIP', color: orange, icon: '' },
     ]);
   });
 
@@ -195,7 +285,7 @@ describe('TagsEditor', () => {
 
   it('surfaces a save failure fail-loud and does not clear the edit', async () => {
     getBusinessSettings.mockResolvedValue(settings([], []));
-    saveBusinessSettings.mockRejectedValue(new Error('permission-denied'));
+    changeBusinessTags.mockRejectedValue(new Error('permission-denied'));
     render(<TagsEditor onBack={vi.fn()} />);
     const panel = await householdPanel();
     await userEvent.type(within(panel).getByLabelText('New household tag name'), 'VIP');

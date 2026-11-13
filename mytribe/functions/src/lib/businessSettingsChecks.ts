@@ -526,22 +526,42 @@ const checkPaymentOptions: Check = (v) => {
   return null;
 };
 
-const checkTags: Check = (v) => {
-  if (!Array.isArray(v)) return 'The tags did not arrive as a list. Reload and try again.';
-  if (v.length > MAX_TAGS) return `That is more than ${MAX_TAGS} tags.`;
-  const seen = new Set<string>();
-  for (const t of v) {
-    if (!isPlainObject(t) || typeof t['name'] !== 'string')
-      return 'The tags did not arrive as a list. Reload and try again.';
-    const name = t['name'].trim();
-    if (name === '') return 'A tag name is required.';
-    if (name.length > MAX_TAG_NAME_LENGTH)
-      return `A tag name must be ${MAX_TAG_NAME_LENGTH} characters or fewer.`;
-    if (seen.has(name.toLowerCase())) return `A "${name}" tag already exists.`;
-    seen.add(name.toLowerCase());
+/**
+ * #2205: what an installed old build reads when it sends a whole tag list.
+ * Current clients never send one: they add and recolour one tag at a time
+ * through `changeBusinessTags` and delete through `removeBusinessTag`.
+ */
+export const TAGS_SAVE_ONE_AT_A_TIME =
+  'Tags now save one at a time. Reload the page or update the app, then try again.';
+
+/** Key order never makes two lists differ. */
+function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`;
+  if (isPlainObject(v)) {
+    const keys = Object.keys(v).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(v[k])}`).join(',')}}`;
   }
-  return null;
-};
+  return JSON.stringify(v) ?? 'null';
+}
+
+/** True when [sent] is the tag list as stored (a missing list reads as empty). */
+export function tagListUnchanged(sent: unknown, stored: unknown): boolean {
+  return canonicalJson(sent) === canonicalJson(Array.isArray(stored) ? stored : []);
+}
+
+/**
+ * #2205: a whole tag list is accepted only when it is the list as stored, which
+ * an editor echoing the document back may send; `saveBusinessSettings` then
+ * leaves it out of the write. Any other list is refused, because the server
+ * cannot tell a stale list from a deliberate one: a name missing from it may
+ * have been added on another device, and a name only it has may have been
+ * deleted there. Replacing the stored list with it is how tags were lost and
+ * deleted tags came back.
+ */
+const checkTagsUnchanged =
+  (field: 'householdTags' | 'petTags'): Check =>
+  (v, ctx) =>
+    tagListUnchanged(v, ctx.stored[field]) ? null : TAGS_SAVE_ONE_AT_A_TIME;
 
 export const LOGO_NOT_IN_LIBRARY = 'The logo must be an image uploaded to the business library.';
 /**
@@ -737,8 +757,8 @@ export const BUSINESS_SETTINGS_CHECKS: Readonly<Record<string, Check>> = {
   // Calendar sync
   calendarSyncId: checkCalendarSyncId,
   // Tags
-  householdTags: checkTags,
-  petTags: checkTags,
+  householdTags: checkTagsUnchanged('householdTags'),
+  petTags: checkTagsUnchanged('petTags'),
   // MyTribe portal
   mytribePortal: checkMytribePortal,
 };

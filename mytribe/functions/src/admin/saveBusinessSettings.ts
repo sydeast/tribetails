@@ -35,6 +35,11 @@ import type { SettingsRefusal } from '../lib/businessSettingsChecks';
  *  - The KinCare rate card (`WHOLE_MAP_SETTINGS_FIELDS`) replaces what is stored,
  *    so a removed type is removed.
  *  - Arrays replace. `null` is a value (it is how a send hour is cleared).
+ *  - #2205: except the two tag lists, which this save never writes. A changed
+ *    `householdTags` / `petTags` is refused, so an installed old build that
+ *    still sends its whole list cannot lose a tag added elsewhere or bring a
+ *    deleted one back; `changeBusinessTags` and `removeBusinessTag` change
+ *    them one named tag at a time.
  *  - #1987: a portal Home layout equal to the default is stored as the empty
  *    list, which is what "default" has always been (`lib/homeLayout.ts`).
  *  - #1978: a save that closes a day keeps the hours it had in `closedDayHours`,
@@ -59,6 +64,12 @@ export interface SaveBusinessSettingsResult {
 }
 
 export const SETTINGS_REFUSED_CODE = 'settings_refused';
+
+/**
+ * #2205: the two tag lists. This save never writes them: a changed list is
+ * refused (`checkTagsUnchanged`) and an unchanged one is left out of the write.
+ */
+const TAG_LIST_FIELDS: ReadonlySet<string> = new Set(['householdTags', 'petTags']);
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -156,12 +167,28 @@ export async function saveBusinessSettingsHandler(
     });
   }
 
+  // #2205: a tag list that passed the checks is the list as stored (an editor
+  // echoing the document back). It is left out of the write: tags change one
+  // at a time through `changeBusinessTags`, never by a list replace from here.
+  const writable = Object.fromEntries(
+    Object.entries(changes).filter(([field]) => !TAG_LIST_FIELDS.has(field)),
+  );
+  const writtenFields = Object.keys(writable);
+  if (writtenFields.length === 0) {
+    // Nothing changes, so nothing is written and the stamp does not move.
+    const fresh = savedByStamp(uid);
+    return {
+      updatedAt: typeof stored['updatedAt'] === 'string' ? stored['updatedAt'] : fresh.updatedAt,
+      updatedBy: typeof stored['updatedBy'] === 'string' ? stored['updatedBy'] : fresh.updatedBy,
+    };
+  }
+
   // #1962: the uid, not the sign-in email. The screens name the person from it.
   const { updatedAt, updatedBy } = savedByStamp(uid);
   // #1987: a Home layout equal to the default is stored as the default (the
   // empty list), so it reads as "Default" on every client and the portal keeps
   // its standard page. After the checks, so a bad row is still refused by name.
-  const toStore = withDefaultHomeLayoutCollapsed(changes);
+  const toStore = withDefaultHomeLayoutCollapsed(writable);
   // #1978: the hours each day closed by this save had, kept beside the weekly
   // hours so reopening the day gives them back. Each day is its own merge path.
   const kept = checks.closedDayHoursChanges(changes['businessHours'], stored);
@@ -191,14 +218,14 @@ export async function saveBusinessSettingsHandler(
     actorUid: uid,
     targetCollection: 'business_settings',
     description: 'Business settings saved',
-    payload: { fields },
+    payload: { fields: writtenFields },
   });
   logEvent({
     severity: 'info',
     function: 'saveBusinessSettings',
     event: 'admin.business_settings.saved',
     uid,
-    extra: { fields },
+    extra: { fields: writtenFields },
   });
   return { updatedAt, updatedBy };
 }

@@ -279,6 +279,10 @@ export const AUDIT_EVENTS = {
   // held the tag is gone the moment the batch commits. The payload carries the
   // record ids so the trail can answer that.
   BUSINESS_TAG_REMOVED: 'BUSINESS_TAG_REMOVED',
+  // #2205: tags added to, or recoloured on, a business_settings tag list
+  // through changeBusinessTags, one named tag at a time. Payload lists each
+  // change as { action, scope, name }.
+  BUSINESS_TAGS_CHANGED: 'BUSINESS_TAGS_CHANGED',
   // #1593: Settings saved through saveBusinessSettings. Payload names the
   // top-level fields the save changed, never their values.
   BUSINESS_SETTINGS_UPDATED: 'BUSINESS_SETTINGS_UPDATED',
@@ -750,6 +754,7 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.BRANDING_ASSET_UPDATED,
   AUDIT_EVENTS.BUSINESS_SETTINGS_UPDATED,
   AUDIT_EVENTS.BUSINESS_TAG_REMOVED,
+  AUDIT_EVENTS.BUSINESS_TAGS_CHANGED,
   AUDIT_EVENTS.EMAIL_FRAME_UPDATED,
   AUDIT_EVENTS.THEME_BRAND_TOKENS_UPDATED,
   AUDIT_EVENTS.THEME_KINFOLK_OVERRIDES_UPDATED,

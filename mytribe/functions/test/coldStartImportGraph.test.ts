@@ -263,8 +263,12 @@ const ALLOWED_EAGER_PACKAGES = [
  * resolver, the notification catalog and prefs, the callable wrapper) are
  * already resident, so each entry is the only module it adds.
  *
- * 454 since #2088 (on top of #2164 / #2182's 453): `admin/quoteActions.ts` is a
- * new FUNCTIONS entry, one module carrying both new callables
+ * 454 since #2205 (on top of #2164 / #2182's 453): `admin/changeBusinessTags.ts`
+ * is a new FUNCTIONS entry (adding and recolouring one named tag at a time).
+ * Everything it imports was already here.
+ *
+ * 455 since #2088 (on top of #2205's 454): `admin/quoteActions.ts` is a new
+ * FUNCTIONS entry, one module carrying both new callables
  * (`convertQuoteToInvoice` and `withdrawQuote`, the office turning a quote into
  * a draft invoice or withdrawing it), the same way `portal/quoteDecision.ts`
  * carries accept and decline. Sending a quote saved unsent reuses
@@ -273,7 +277,7 @@ const ALLOWED_EAGER_PACKAGES = [
  * `lib/quoteDecision.ts`) are already resident, and its words load with
  * `await import()` inside the handlers.
  */
-const MAX_OWN_EAGER_MODULES = 454;
+const MAX_OWN_EAGER_MODULES = 455;
 
 interface Edge {
   spec: string;

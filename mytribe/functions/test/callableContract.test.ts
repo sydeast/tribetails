@@ -43,6 +43,7 @@ import { Args as ArchiveVetClinicArgs } from '../src/admin/archiveVetClinic';
 // not fail loudly, it strips the WRONG collection, so the shape is frozen from
 // birth.
 import { Args as RemoveBusinessTagArgs } from '../src/admin/removeBusinessTag';
+import { Args as ChangeBusinessTagsArgs } from '../src/admin/changeBusinessTags';
 import { Args as SaveBusinessSettingsArgs } from '../src/admin/saveBusinessSettings';
 // #886: the failed-login report, sent unauthenticated by every sign-in client.
 import { RecordFailedLoginArgs } from '../src/auth/loginSecurity';
@@ -341,6 +342,9 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // cascade rewrites `kinfolk` or `kin`. A client that stopped sending it would
   // otherwise fall to a default and clear the wrong half of the directory.
   removeBusinessTag: { schema: RemoveBusinessTagArgs, keys: ['name', 'scope'] },
+  // #2205: three clients build this envelope by hand. One key, and it must stay
+  // a list of named changes: a whole tag list here is exactly what lost tags.
+  changeBusinessTags: { schema: ChangeBusinessTagsArgs, keys: ['changes'] },
   // #1593: three clients build this envelope by hand. One key; the fields ride
   // inside it and are checked one by one in lib/businessSettingsChecks.ts.
   saveBusinessSettings: { schema: SaveBusinessSettingsArgs, keys: ['changes'] },

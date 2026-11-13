@@ -619,6 +619,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   setMediaProfilePhoto: () => require('./admin/setMediaProfilePhoto'),
   saveMediaTags: () => require('./admin/saveMediaTags'),
   removeBusinessTag: () => require('./admin/removeBusinessTag'),
+  // #2205: adds and recolours one named tag at a time against the stored list,
+  // so no client can lose or bring back a tag by sending a stale list.
+  changeBusinessTags: () => require('./admin/changeBusinessTags'),
   // #1593: the one Settings save. The rules deny business_settings/business_settings
   // to every client, so this is the only way the three admin clients write it.
   saveBusinessSettings: () => require('./admin/saveBusinessSettings'),

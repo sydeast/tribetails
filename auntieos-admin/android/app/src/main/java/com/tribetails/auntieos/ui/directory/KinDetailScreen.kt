@@ -240,7 +240,8 @@ fun KinDetailScreen(
                                 // TAGS ONLY, one field. See KinDetailViewModel.saveTags.
                                 onSaveTags = { next -> viewModel.saveTags(kin.id, kin.kinfolkId, next) },
                                 loadVocab = { loadTagVocab(repository, TagScope.PET) },
-                                onSaveVocab = { defs -> saveTagVocab(repository, TagScope.PET, defs) },
+                                loadIsOwner = { canAddToTagVocab(repository) },
+                                onAddVocab = { name -> addTagToVocab(repository, TagScope.PET, name) },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
