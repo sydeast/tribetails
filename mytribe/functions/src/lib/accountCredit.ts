@@ -66,6 +66,7 @@
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
+import { HttpsError } from 'firebase-functions/v2/https';
 
 import type { StagedWriter } from './moneyIdempotency';
 
@@ -408,6 +409,18 @@ export async function drawAccountCredit(
     const famRef = firestore.collection('families').doc(kinfolkId);
     const famSnap = await tx.get(famRef);
     const chain = await readAuditChain(firestore, tx, auditDocId);
+    // THE KEY NAMES ONE SUBMISSION AGAINST ONE INVOICE. Its Activity Log id is
+    // global, so an entry already there with no payment row on THIS invoice
+    // means the key already drew on another one. Drawing again would move the
+    // money with its Activity Log line skipped (that id is taken) and the
+    // household's credit history entry overwritten, so it is refused.
+    if (chain.existingId !== null) {
+      throw new HttpsError(
+        'already-exists',
+        'This request was already used on another invoice. Enter the amount again.',
+        { reason: 'key_used' },
+      );
+    }
     const heldCents = readAccountBalanceCents((famSnap.data() ?? {})[ACCOUNT_BALANCE_FIELD]);
     const before = settleInvoice(invoiceTotalCentsOf(doc), paidCentsFromPayments(existingPayments));
     const found = { invoiceNumber, kinfolkId, accountBalanceCents: heldCents, amountDueCents: before.amountDueCents };

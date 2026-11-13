@@ -189,6 +189,30 @@ describe('applyAccountCredit: a double tap applies once', () => {
     await expect(applyAccountCreditHandler(req(ok))).rejects.toMatchObject({ code: 'already-exists' });
   });
 
+  it('a replay with a changed amount answers the first submission and draws nothing more', async () => {
+    const ctx = seed();
+    const first = await applyAccountCreditHandler(req(ok));
+    const writes = ctx.writes.length;
+    const second = await applyAccountCreditHandler(req({ ...ok, amountCents: 4000 }));
+    expect(second).toEqual({ ...first, replayed: true });
+    expect(ctx.writes).toHaveLength(writes);
+  });
+
+  it('refuses a key already spent on ANOTHER invoice, and moves nothing', async () => {
+    // The key names one submission against one invoice. Reused on a second
+    // invoice it would draw again with the Activity Log line skipped (that id
+    // is taken) and the household's credit history entry overwritten.
+    const ctx = seed({
+      extra: { 'invoices/inv2': { kinfolkId: 'fam1', status: 'open', total: 100, invoiceNumber: '1027' } },
+    });
+    await applyAccountCreditHandler(req(ok));
+    const writes = ctx.writes.length;
+    await expect(applyAccountCreditHandler(req({ ...ok, invoiceId: 'inv2' }))).rejects.toMatchObject({
+      code: 'already-exists',
+    });
+    expect(ctx.writes).toHaveLength(writes);
+  });
+
   it('requires the key, in its own shape', async () => {
     seed();
     expect(APPLY_CREDIT_IDEMPOTENCY_KEY_RE.test(KEY)).toBe(true);
@@ -286,6 +310,13 @@ describe('applyAccountCredit: what it refuses, in words for the field', () => {
   it('a cancelled invoice', async () => {
     const err = await refused({ invoice: { kinfolkId: 'fam1', status: 'cancelled', total: 100 } });
     expect(err.details).toMatchObject({ reason: 'invoice_not_collectable' });
+  });
+
+  it('an invoice with no household on it', async () => {
+    const err = await refused({ invoice: { status: 'open', total: 100 } });
+    expect(err.code).toBe('failed-precondition');
+    expect(err.message).toBe('This invoice has no household on it.');
+    expect(err.details).toMatchObject({ reason: 'no_household' });
   });
 
   it('an invoice that does not exist', async () => {

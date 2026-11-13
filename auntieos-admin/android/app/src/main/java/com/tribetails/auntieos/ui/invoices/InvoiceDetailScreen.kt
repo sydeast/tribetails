@@ -1896,6 +1896,15 @@ internal fun recordPaymentSplitCopy(split: PaymentSplit?, feeCents: Long?): Stri
     }
 }
 /**
+ * #1872: what Review and send does, and only that. It sends the draft and marks
+ * the invoice open. It takes no payment and spends no account credit, so it
+ * says nothing about either.
+ */
+internal const val REVIEW_AND_SEND_CONFIRM_COPY: String =
+    "This sends the draft to the household and marks the invoice open. A draft missing its " +
+        "total, household, or invoice number is rejected rather than sent."
+
+/**
  * The Unapplied Balance line, in words.
  *
  * #988: no longer shown; [recordPaymentSplitCopy] replaced it. Kept, not deleted
@@ -1910,15 +1919,6 @@ internal fun recordPaymentSplitCopy(split: PaymentSplit?, feeCents: Long?): Stri
  *   positive          money over, and what happens to it depends on the
  *                     auto-apply switch, so the copy follows the switch
  */
-/**
- * #1872: what Review and send does, and only that. It sends the draft and marks
- * the invoice open. It takes no payment and spends no account credit, so it
- * says nothing about either.
- */
-internal const val REVIEW_AND_SEND_CONFIRM_COPY: String =
-    "This sends the draft to the household and marks the invoice open. A draft missing its " +
-        "total, household, or invoice number is rejected rather than sent."
-
 internal fun recordPaymentBalanceCopy(unappliedCents: Long?, autoApply: Boolean): String = when {
     unappliedCents == null ->
         "Unapplied balance: not yet, one of the amounts above cannot be read."
