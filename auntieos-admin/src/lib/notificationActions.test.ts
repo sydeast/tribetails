@@ -306,3 +306,46 @@ describe('requestOutcomeLabel (#1647)', () => {
     ).toBeNull();
   });
 });
+
+/**
+ * #2200 / #2201: Invoices is the owner's screen, and its address sends an
+ * Auntie Home. A notice row must not offer her an Open or Create quote that
+ * only does that, so both drop for her. Her own routes (a booking, a KinTale,
+ * a household) stay, and so does Approve / Deny, which the "Needs a decision"
+ * count is derived from.
+ */
+describe('applicableNotificationActions for an Auntie (#2200 / #2201)', () => {
+  const request = entry({
+    key: 'kincare.requested',
+    targetType: 'booking',
+    targetId: 'req_1',
+    data: { kinfolkId: 'kf1' },
+  });
+
+  it('gives her no Open on an invoice notice, and keeps it for everyone else', () => {
+    const e = entry({ key: 'invoice.paid', targetType: 'invoice', targetId: 'inv_1' });
+    expect(applicableNotificationActions(e, { isAuntie: true }).open).toBeNull();
+    expect(applicableNotificationActions(e).open).toEqual({ to: '/invoices', search: { invoiceId: 'inv_1' } });
+    expect(applicableNotificationActions(e, { isAuntie: false }).open).not.toBeNull();
+  });
+
+  it('gives her no Create quote on a fresh request, and keeps her Approve / Deny and Open', () => {
+    const forHer = applicableNotificationActions(request, { isAuntie: true });
+    expect(forHer.quote).toBeNull();
+    expect(forHer.bookingId).toBe('req_1');
+    expect(forHer.open).toEqual({ to: '/bookings', search: { bookingId: 'vis_req_1' } });
+    expect(applicableNotificationActions(request).quote).toEqual({
+      to: '/invoices',
+      search: { composeQuoteForKinfolkId: 'kf1' },
+    });
+  });
+
+  it('keeps her Open on a KinTale and a household notice', () => {
+    for (const [targetType, targetId] of [
+      ['kintale', 'kt_1'],
+      ['kinfolk', 'kf_1'],
+    ] as const) {
+      expect(applicableNotificationActions(entry({ targetType, targetId }), { isAuntie: true }).open).not.toBeNull();
+    }
+  });
+});

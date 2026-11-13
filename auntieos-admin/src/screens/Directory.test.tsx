@@ -25,6 +25,8 @@ const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
 const routerHistory = vi.hoisted(() => ({ canGoBack: vi.fn(() => false), back: vi.fn() }));
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigate,
+  // #2200: KinfolkProfile reads the access the admin layout resolved; the owner.
+  useRouteContext: () => ({ access: { status: 'admin' } }),
   // KinfolkProfile's Back reads `history.canGoBack()` (#689). Cold arrival by
   // default, which is what the profile assertions below expect to see named.
   useRouter: () => ({ history: routerHistory }),

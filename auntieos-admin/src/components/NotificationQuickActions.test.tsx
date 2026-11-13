@@ -290,3 +290,23 @@ describe('NotificationQuickActions, the archive direction', () => {
     expect(screen.getByRole('button', { name: 'Open' })).toBeInTheDocument();
   });
 });
+
+describe('NotificationQuickActions for an Auntie (#2200 / #2201)', () => {
+  it('draws no Open on an invoice notice for her, and draws it for the owner', () => {
+    const e = entry({ key: 'invoice.paid', targetType: 'invoice', targetId: 'inv_1' });
+    const { rerender } = render(<NotificationQuickActions entry={e} read={false} {...handlers()} isAuntie />);
+    expect(screen.queryByRole('button', { name: 'Open' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Mark read' })).toBeInTheDocument();
+    rerender(<NotificationQuickActions entry={e} read={false} {...handlers()} />);
+    expect(screen.getByRole('button', { name: 'Open' })).toBeInTheDocument();
+  });
+
+  it('draws no Create quote for her on a fresh request, and keeps Approve', () => {
+    const e = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } });
+    const { rerender } = render(<NotificationQuickActions entry={e} read={false} {...handlers()} isAuntie />);
+    expect(screen.queryByRole('button', { name: 'Create quote' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    rerender(<NotificationQuickActions entry={e} read={false} {...handlers()} />);
+    expect(screen.getByRole('button', { name: 'Create quote' })).toBeInTheDocument();
+  });
+});

@@ -77,6 +77,12 @@ export interface NotificationsProps {
    * `onSelectKinfolk` already uses.
    */
   onNavigate?: (route: NotificationRoute) => void;
+  /**
+   * #2200 / #2201: the signed-in account is an Auntie. Supplied by the route
+   * adapter from the access the admin layout resolved; her rows then offer no
+   * Open or Create quote into Invoices, which would only send her Home.
+   */
+  isAuntie?: boolean;
 }
 
 /**
@@ -161,7 +167,7 @@ export interface NotificationsProps {
  * archived" re-describes the strip instead of leaving it describing a different
  * list than the one on screen.
  */
-export function Notifications({ onNavigate }: NotificationsProps = {}) {
+export function Notifications({ onNavigate, isAuntie = false }: NotificationsProps = {}) {
   // #1837: only the signed-in staff member's own notices. Never a household's.
   const auth = useAuth();
   const ownUid = auth.status === 'signedIn' ? auth.user.uid : '';
@@ -573,6 +579,7 @@ export function Notifications({ onNavigate }: NotificationsProps = {}) {
                                 bookingAction(entry, bookingId, action)
                               }
                               {...(onNavigate ? { onNavigate } : {})}
+                              isAuntie={isAuntie}
                             />
                           ))}
                         </ul>
@@ -658,6 +665,7 @@ interface NotificationRowProps {
   onRestore: () => void;
   onNavigate?: (route: NotificationRoute) => void;
   onBookingAction: (bookingId: string, action: BatchBookingAction) => void;
+  isAuntie: boolean;
 }
 
 function NotificationRow({
@@ -671,6 +679,7 @@ function NotificationRow({
   onRestore,
   onNavigate,
   onBookingAction,
+  isAuntie,
 }: NotificationRowProps) {
   const read = isRead(entry);
   // Visible only under the "Included" / "Only archived" facet, where the row
@@ -796,6 +805,7 @@ function NotificationRow({
           onRestore={onRestore}
           onNavigate={(route) => onNavigate?.(route)}
           onBookingAction={onBookingAction}
+          isAuntie={isAuntie}
         />
       </div>
       <div className="notif-row__side">

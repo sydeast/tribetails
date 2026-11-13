@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
+import { NAV, isOwnerOnlyPath } from './lib/nav';
 
 /**
  * #2163, operator ruling 2026-11-13: "auntie user level cannot see templates
@@ -70,6 +71,15 @@ vi.mock('./routes/SettingsView', () => ({ SettingsView: () => <div>SETTINGS SCRE
 vi.mock('./routes/TemplatesView', () => ({ TemplatesView: () => <div>TEMPLATES SCREEN</div> }));
 vi.mock('./screens/KinTaleTemplates', () => ({
   KinTaleTemplates: () => <div>KINTALE TEMPLATES SCREEN</div>,
+}));
+// #2200 / #2201: the four money, marketing and audit screens.
+vi.mock('./screens/ActivityLog', () => ({ ActivityLog: () => <div>ACTIVITY LOG SCREEN</div> }));
+vi.mock('./routes/InvoicesView', () => ({ InvoicesView: () => <div>INVOICES SCREEN</div> }));
+vi.mock('./screens/CoveragePackageBuilder', () => ({
+  CoveragePackageBuilder: () => <div>PACKAGES SCREEN</div>,
+}));
+vi.mock('./screens/MarketingBlasts', () => ({
+  MarketingBlasts: () => <div>MARKETING BLASTS SCREEN</div>,
 }));
 
 const USER = { uid: 'uid-staff', email: 'e2e-admin@tribetails.com', displayName: 'Auntie' };
@@ -248,4 +258,130 @@ describe('#2163 the owner and the test admin are unchanged', () => {
     expect(new URLSearchParams(window.location.search).get('section')).toBe('notifications');
     expect(await screen.findByText('SETTINGS SCREEN')).toBeInTheDocument();
   });
+});
+
+/**
+ * #2200 / #2201, lead ruling 2026-11-13: an Auntie never sees money, and
+ * marketing and audit oversight are the owner's. Activity Log, Marketing
+ * blasts, Packages and Invoices come off her rail the way Settings and
+ * Templates did, and every address for them sends her Home. None of the four
+ * has a retired slug (lib/nav.ts `BY_SLUG` holds none), so the addresses are
+ * the live paths and the deep-link query strings Invoices takes.
+ */
+const MONEY_SCREENS = [
+  { rail: 'Activity Log', path: '/activity', sentinel: 'ACTIVITY LOG SCREEN' },
+  { rail: 'Marketing blasts', path: '/marketing-blasts', sentinel: 'MARKETING BLASTS SCREEN' },
+  { rail: 'Packages', path: '/packages', sentinel: 'PACKAGES SCREEN' },
+  { rail: 'Invoices', path: '/invoices', sentinel: 'INVOICES SCREEN' },
+] as const;
+
+const MONEY_ADDRESSES = [
+  '/activity',
+  '/marketing-blasts',
+  '/packages',
+  '/invoices',
+  '/invoices?invoiceId=inv-1',
+  '/invoices?composeQuoteForKinfolkId=kf-1',
+];
+
+function noMoneyScreen(): void {
+  for (const s of MONEY_SCREENS) expect(screen.queryByText(s.sentinel)).toBeNull();
+}
+
+describe('#2200 / #2201 an Auntie never reaches Activity Log, Marketing blasts, Packages or Invoices', () => {
+  it('shows her none of the four rail entries, and keeps her work screens', async () => {
+    await boot('/home', AUNTIE_CLAIMS);
+    expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    for (const s of MONEY_SCREENS) expect(railLink(s.rail)).toBeNull();
+    for (const name of ['Directory', 'KinTales', 'Schedule', 'Bookings', 'Auntie Time', 'Communicate', 'Inbox', 'Notifications']) {
+      expect(railLink(name)).not.toBeNull();
+    }
+  });
+
+  for (const path of MONEY_ADDRESSES) {
+    it(`sends her from ${path} to Home`, async () => {
+      await boot(path, AUNTIE_CLAIMS);
+      await waitFor(() => expect(window.location.pathname).toBe('/home'));
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+      noMoneyScreen();
+    });
+  }
+
+  it('treats a double-claimed account as the Auntie', async () => {
+    await boot('/invoices', DOUBLE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    noMoneyScreen();
+    for (const s of MONEY_SCREENS) expect(railLink(s.rail)).toBeNull();
+  });
+});
+
+describe('#2200 / #2201 the owner and the test admin keep all four', () => {
+  for (const claims of [OWNER_CLAIMS, TEST_ADMIN_CLAIMS]) {
+    const who = claims === OWNER_CLAIMS ? 'owner' : 'test admin';
+
+    it(`shows the ${who} all four rail entries`, async () => {
+      await boot('/home', claims);
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+      for (const s of MONEY_SCREENS) expect(railLink(s.rail)).not.toBeNull();
+    });
+
+    for (const s of MONEY_SCREENS) {
+      it(`opens ${s.rail} for the ${who}`, async () => {
+        await boot(s.path, claims);
+        expect(await screen.findByText(s.sentinel)).toBeInTheDocument();
+        expect(window.location.pathname).toBe(s.path);
+      });
+    }
+  }
+
+  it('keeps the invoice deep link for the owner', async () => {
+    await boot('/invoices?invoiceId=inv-1', OWNER_CLAIMS);
+    expect(await screen.findByText('INVOICES SCREEN')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/invoices');
+    expect(new URLSearchParams(window.location.search).get('invoiceId')).toBe('inv-1');
+  });
+
+  it('keeps all four for the offline session whose claims were not read', async () => {
+    const offline = Object.assign(new Error('Failed to fetch'), { code: 'auth/network-request-failed' });
+    currentUser = USER;
+    window.history.replaceState(null, '', '/invoices');
+    const { router } = await importRouterTrackingListeners();
+    getIdTokenResult.mockRejectedValue(offline);
+    lastRouter = router;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(/Signed in, but out of touch/i)).toBeInTheDocument();
+    expect(await screen.findByText('INVOICES SCREEN')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/invoices');
+    for (const s of MONEY_SCREENS) expect(railLink(s.rail)).not.toBeNull();
+  });
+});
+
+/**
+ * #2209 review: `lib/nav.ts#ownerOnly` decides the rail and every in-app link
+ * (`isOwnerOnlyPath`), while the router guard is a `beforeLoad` written on each
+ * route. This pins the two together from the nav side: an entry marked
+ * owner-only whose route has no `refuseAuntie` fails here, so the rail can
+ * never hide a screen her address still opens.
+ */
+describe('#2200 / #2201 every owner-only nav entry is guarded in the router', () => {
+  const ownerOnly = NAV.filter((e) => e.ownerOnly);
+
+  it('covers the six owner screens and agrees with isOwnerOnlyPath', () => {
+    expect(ownerOnly.map((e) => e.slug).sort()).toEqual(
+      ['activity', 'invoices', 'marketing-blasts', 'packages', 'settings', 'templates'],
+    );
+    for (const e of NAV) expect(isOwnerOnlyPath(`/${e.slug}`)).toBe(e.ownerOnly === true);
+  });
+
+  for (const e of ownerOnly) {
+    it(`sends an Auntie from /${e.slug} to Home`, async () => {
+      await boot(`/${e.slug}`, AUNTIE_CLAIMS);
+      await waitFor(() => expect(window.location.pathname).toBe('/home'));
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    });
+  }
 });
