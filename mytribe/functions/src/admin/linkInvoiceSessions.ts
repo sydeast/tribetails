@@ -21,6 +21,7 @@ import { refuseIfArchived } from '../lib/invoiceArchive';
 import {
   boundSessionIds,
   linkedWithoutLine,
+  quoteHoldsNoVisits,
   readSessionLinks,
   stageSessionLinks,
 } from '../lib/invoiceSessionLinks';
@@ -204,6 +205,15 @@ export async function linkInvoiceSessionsHandler(
     // #2168: an archived invoice is read-only until it is restored, so no
     // visit is linked to or unlinked from it here.
     refuseIfArchived(data);
+    // #2156: a declined quote holds no visits until it is sent back out, so a
+    // link set here would be a hold with nothing to release it.
+    if (quoteHoldsNoVisits(data)) {
+      throw new HttpsError(
+        'failed-precondition',
+        'This quote was declined, so it holds no visits for now. Send it back out first, then link visits to it.',
+        { code: 'quote_declined_holds_no_visits' },
+      );
+    }
 
     const current = storedSessionIds(data);
     const currentSet = new Set(current);

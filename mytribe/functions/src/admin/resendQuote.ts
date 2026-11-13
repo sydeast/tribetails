@@ -20,6 +20,7 @@ import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { InvoiceStateSchema, OkSchema } from '../lib/invoiceResponseSchema';
 import { businessTodayIso, quoteDecisionOf, quoteHasExpired } from '../lib/quoteDecision';
+import { readQuoteReopen, refuseQuoteResendOverVisits, stageSessionLinks } from '../lib/invoiceSessionLinks';
 
 /**
  * SENDS A DECLINED QUOTE BACK OUT, revised (issue #448).
@@ -254,6 +255,13 @@ export async function resendQuoteHandler(
     throw new HttpsError('failed-precondition', preflight.message, { code: preflight.code });
   }
 
+  // #2156: declining let this quote's visits go back on the un-invoiced list,
+  // and sending it back out takes them back. A line whose visit another
+  // invoice has billed since (or that was cancelled) is refused HERE, before
+  // the household is told, because accepting the quote would bill that work
+  // twice. The free ones are claimed in the transaction below.
+  await refuseQuoteResendOverVisits(firestore, args.invoiceId, data['lineItems']);
+
   const invoiceNumber = typeof data['invoiceNumber'] === 'string' ? (data['invoiceNumber'] as string) : '';
   const recipientUid = await resolveBillingRecipientUid(kinfolkId);
 
@@ -357,7 +365,7 @@ export async function resendQuoteHandler(
   // office copy, and the office's email is not the household's.
   const appOnly = alreadyReachedHousehold ? false : reachedAppOnly(dispatched, recipientUid);
 
-  const status = await firestore.runTransaction(async (tx) => {
+  const { status, sessionsLinked } = await firestore.runTransaction(async (tx) => {
     const txSnap = await tx.get(ref);
     if (!txSnap.exists) throw new HttpsError('not-found', `Quote '${args.invoiceId}' not found.`);
     const txData = txSnap.data() as Record<string, unknown>;
@@ -368,8 +376,11 @@ export async function resendQuoteHandler(
     // reopening a quote somebody has just agreed to.
     const refusal = resendQuoteRefusal(txData, todayIso);
     if (refusal) throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
+    // #2156: the visits come back with the quote (see the pre-flight above).
+    const visits = await readQuoteReopen(tx, firestore, args.invoiceId, txData);
 
     const update: Record<string, unknown> = {
+      ...visits.fields,
       quoteDecision: FieldValue.delete(),
       quoteDecidedAt: FieldValue.delete(),
       quoteDecidedByUid: FieldValue.delete(),
@@ -397,7 +408,8 @@ export async function resendQuoteHandler(
     // construction — a quote cannot have been paid.
     const stamp = invoiceStateStampOf({ ...txData, ...update, quoteDecision: null }, 0);
     tx.set(ref, { ...update, ...stamp }, { merge: true });
-    return stamp.status;
+    stageSessionLinks(tx, firestore, visits.plan, new Date().toISOString());
+    return { status: stamp.status, sessionsLinked: visits.plan.claim };
   });
 
   await writeAuditEntry({
@@ -415,6 +427,8 @@ export async function resendQuoteHandler(
       invoiceNumber,
       kinfolkId,
       recipientUid: recipientUid ?? null,
+      // #2156: the visits the quote took back from the un-invoiced list.
+      sessionsLinked,
     },
   }).catch((err) => {
     logEvent({

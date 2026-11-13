@@ -661,9 +661,16 @@ function editScopeFrom(raw: unknown): InvoiceEditScope | null {
 /** Max sessions resolved per invoice; anything past the cap is dropped. */
 export const MAX_LINE_ITEM_SESSIONS = 50;
 
-/** Extracts a capped, string-only `sessionIds` list from a flat invoice doc. */
+/**
+ * Extracts a capped, string-only `sessionIds` list from a flat invoice doc.
+ *
+ * #2156: a declined quote holds no visits, so its `sessionIds` is empty and the
+ * visits it was for are kept in `releasedSessionIds`. Those are still what the
+ * quote was for, so a quote with no lines of its own still shows them.
+ */
 export function sessionIdsFrom(data: Record<string, unknown>): string[] {
-  const raw = data['sessionIds'];
+  const stored = data['sessionIds'];
+  const raw = Array.isArray(stored) && stored.length > 0 ? stored : data['releasedSessionIds'];
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((v): v is string => typeof v === 'string' && v.length > 0)

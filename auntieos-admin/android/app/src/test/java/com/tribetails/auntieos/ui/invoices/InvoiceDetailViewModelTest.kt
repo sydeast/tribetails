@@ -195,6 +195,25 @@ class InvoiceDetailViewModelTest {
         assertFalse(state.toastIsError)
     }
 
+    @Test
+    fun `#2156 resendQuote refused because a visit was billed since shows the server's sentence, in red`() = runTest {
+        val quote = Invoice(id = "q2156", invoiceNumber = "Q-2156", kinfolkName = "The Whitfields", total = 45.0, amountDue = 45.0, status = "quote", quoteDecision = "denied")
+        coEvery { invoiceRepository.getInvoiceById("q2156") } returns Result.success(quote)
+        coEvery { invoiceRepository.readInvoiceSendMarks("q2156") } returns null
+        viewModel.loadInvoice("q2156")
+        advanceUntilIdle()
+
+        val refusal = "This quote cannot be sent back out: the visit on 2026-06-02 is billed on invoice 1041. Remove its line in Edit, then send it again."
+        coEvery { invoiceRepository.resendQuote("q2156") } returns Result.failure(IllegalStateException(refusal))
+        viewModel.resendQuote()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.resendingQuote)
+        assertEquals(refusal, state.toastMessage)
+        assertTrue(state.toastIsError)
+    }
+
     // ── #1511: the receipt and the draft send ────────────────────────────────
     @Test
     fun `generateReceipt that reached the household in the app only says so, not green`() = runTest {

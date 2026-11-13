@@ -540,8 +540,16 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   `createInvoice`: omit them and the caller's `total` / `amountDue` are stored
   verbatim; supply them and the server owns the money, refusing a disagreement
   rather than silently dropping the lines. Fixed issue #118.
-- Audit `BILLING_QUOTE_CREATED`, payload carrying `itemized`, `lineCount`, and
-  `sendToKinfolk`.
+- #2156: A QUOTE HOLDS ITS VISITS FROM THE START (operator ruling
+  2026-11-13). Exactly as `createInvoice` (#1901), in the same transaction: the
+  stored `sessionIds` is the request's ids plus any visit a line is bound to,
+  each visit gets `invoiceId` = the quote, so it leaves the un-invoiced list at
+  once, and the same refusals apply (`session_not_found`, `session_cancelled`,
+  `session_on_other_invoice`). A refusal over a visit a QUOTE holds reads
+  "Already on another quote or invoice: the visit on <day> is on quote <n>.
+  Remove it there first." A decline (`denyQuote`) lets the visits go.
+- Audit `BILLING_QUOTE_CREATED`, payload carrying `itemized`, `lineCount`,
+  `sendToKinfolk` and `sessionsLinked`.
 
 ### acceptQuote / denyQuote
 - req `{ invoiceId: string, kinfolkId?: string }` (both)
@@ -573,7 +581,19 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   `createQuote`), `quote_expired` (accept only, when the quote's `dueDate` has
   passed in the business's own time zone: a quote is good THROUGH its due day,
   and an undated quote never expires). Declining an expired quote is allowed.
-- Audit `BILLING_QUOTE_ACCEPTED` / `BILLING_QUOTE_DENIED`, actorRole `PRIMARY`.
+- #2156: THE VISITS MOVE WITH THE ANSWER, in the same transaction. DENY puts
+  every visit the quote holds back on the un-invoiced list (back-link `''`,
+  `'manual_unlink'`; a visit another invoice bills is left alone), empties
+  `sessionIds` and keeps the set in `releasedSessionIds`. ACCEPT keeps them:
+  the quote is now the invoice that bills them. A quote that does not hold a
+  visit yet (made before #2156) claims the free ones on accept, and an accept
+  is refused with `quote_visits_billed_elsewhere` ("This quote can no longer
+  be accepted, because some of the work on it has been billed on another
+  invoice since it was sent. Ask your Auntie for an up-to-date quote.") when
+  another invoice bills a visit one of its lines is for. Nothing is written on
+  a refusal.
+- Audit `BILLING_QUOTE_ACCEPTED` / `BILLING_QUOTE_DENIED`, actorRole `PRIMARY`,
+  payload carrying `sessionsLinked` / `sessionsReleased`.
   The notification is best-effort: a dispatch failure is logged and swallowed,
   so a notification outage cannot undo a decision that was already recorded.
 
@@ -661,6 +681,10 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   "the set is the lines": a visit linked with no line of its own is left
   alone. Structured terms resolve from the set the edit leaves. Audit payload
   carries `sessionsLinked` / `sessionsUnlinked`.
+- #2156: a quote waiting for an answer follows the rule above (it holds its
+  visits). A DECLINED quote holds none, so an edit of its lines writes no
+  back-link and records the visits its lines now name in `releasedSessionIds`,
+  which `resendQuote` takes back.
 - #2168: AN ARCHIVED INVOICE IS READ-ONLY. Any edit of one, in any state, is
   `failed-precondition` / `invoice_archived` ("This invoice is archived.
   Restore it before sending or changing it."), decided on the transaction's
@@ -833,6 +857,10 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - #2168: an archived invoice links and unlinks nothing:
   `failed-precondition` / `invoice_archived`, the same refusal as
   `updateInvoice`.
+- #2156: a DECLINED quote holds no visits until it is sent back out, so it
+  links nothing either: `failed-precondition` /
+  `quote_declined_holds_no_visits`, "This quote was declined, so it holds no
+  visits for now. Send it back out first, then link visits to it."
 - Errors: `not-found` for an unknown invoice; `failed-precondition` with the
   codes above. Atomic: nothing written.
 - Audit `BILLING_INVOICE_SESSIONS_LINKED` with the full added/removed delta.
@@ -965,6 +993,9 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   kept in `releasedSessionIds`. Lines are untouched. `releasedSessionIds` in the
   response names the visits let go. Any other state (sent, paid, quote) keeps
   its visits and answers `[]`.
+- #2156: a quote keeps its visits on purpose. MyTribe still lists an archived
+  quote and the Kinfolk can still accept it, so its visits stay held for that
+  answer; a decline is what lets them go.
 
 ### unarchiveInvoice
 - req `{ invoiceId: string /* 1..200 */ }`

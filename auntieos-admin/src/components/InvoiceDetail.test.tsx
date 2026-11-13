@@ -3185,6 +3185,18 @@ describe('InvoiceDetail and a quote the household has answered (issue #448)', ()
     await user.click(screen.getByRole('button', { name: 'Send quote again' }));
     expect(await screen.findByText(/Give it a new due date/)).toBeInTheDocument();
   });
+  it('#2156: a resend refused because a visit was billed since says which visit and what to do', async () => {
+    const user = userEvent.setup();
+    resendQuote.mockRejectedValue(
+      new Error('This quote cannot be sent back out: the visit on 2026-06-02 is billed on invoice 1041. Remove its line in Edit, then send it again.'),
+    );
+    render(<InvoiceDetail invoice={declinedQuote()} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Revise and resend' }));
+    await user.click(screen.getByRole('button', { name: 'Send quote again' }));
+    expect(
+      await screen.findByText(/Could not send: This quote cannot be sent back out: the visit on 2026-06-02 is billed on invoice 1041\./),
+    ).toBeInTheDocument();
+  });
 });
 
 /**

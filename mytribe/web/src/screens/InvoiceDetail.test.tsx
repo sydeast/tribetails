@@ -518,6 +518,18 @@ describe('InvoiceDetail: answering a quote', () => {
       expect(screen.getByText(/only good through 2026-08-01/)).toBeInTheDocument(),
     );
   });
+  it('#2156: an accept refused because the work was billed elsewhere shows the server sentence', async () => {
+    acceptQuote.mockRejectedValue(
+      new Error(
+        'This quote can no longer be accepted, because some of the work on it has been billed on another invoice since it was sent. Ask your Auntie for an up-to-date quote.',
+      ),
+    );
+    await renderWith(QUOTE);
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept quote' }));
+    await waitFor(() =>
+      expect(screen.getByText(/billed on another invoice since it was sent\. Ask your Auntie/)).toBeInTheDocument(),
+    );
+  });
   it('a declined quote shows the decision and no buttons at all', async () => {
     await renderWith({
       ...QUOTE,
