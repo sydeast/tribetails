@@ -218,6 +218,30 @@ describe('#2163 the owner and the test admin are unchanged', () => {
     });
   }
 
+  // The #812 offline entry: the token read failed on the network, so the
+  // claims were not read and `access` is null. The guard must not treat that
+  // as an Auntie, or an owner on a bad network loses Settings and Templates.
+  it('keeps Settings and Templates for the offline session whose claims were not read', async () => {
+    const offline = Object.assign(new Error('Failed to fetch'), { code: 'auth/network-request-failed' });
+    currentUser = USER;
+    window.history.replaceState(null, '', '/settings');
+    const { router } = await importRouterTrackingListeners();
+    getIdTokenResult.mockRejectedValue(offline);
+    lastRouter = router;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    // Proof this is the null-access path and not a stale owner token: the
+    // shell's degraded banner shows only when the claims were not read.
+    expect(await screen.findByText(/Signed in, but out of touch/i)).toBeInTheDocument();
+    expect(await screen.findByText('SETTINGS SCREEN')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/settings');
+    expect(railLink('Settings')).not.toBeNull();
+    expect(railLink('Templates')).not.toBeNull();
+  });
+
   it('still sends the owner from the old notification-gate address to Settings > Notifications', async () => {
     await boot('/notification-gate', OWNER_CLAIMS);
     await waitFor(() => expect(window.location.pathname).toBe('/settings'));

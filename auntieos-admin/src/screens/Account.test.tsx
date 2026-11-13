@@ -589,6 +589,18 @@ describe('Account for an Auntie (#2163)', () => {
     expect(screen.queryByText('Sole admin')).toBeNull();
   });
 
+  // The #812 offline entry (`access` null) is not the Auntie: claims unread,
+  // so the owner on a bad network keeps the panel and the Settings crumb.
+  it('keeps the business profile panel and the Settings crumb when access is null', async () => {
+    useRouteContext.mockReturnValue({ access: null });
+    render(<Account />);
+    const band = (await heroName()).closest('header') as HTMLElement;
+    const crumbs = within(band).getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(crumbs).getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+    expect(await screen.findByText('Business profile')).toBeInTheDocument();
+    expect(listBusinessAdmins).toHaveBeenCalled();
+  });
+
   it('still saves her own profile', async () => {
     const user = userEvent.setup();
     render(<Account />);
