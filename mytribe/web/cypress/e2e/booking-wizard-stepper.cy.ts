@@ -86,7 +86,7 @@ function openWizard() {
  */
 function assertStepperClear(width: number, step: number) {
   cy.get('.stepper').should(($stepper) => {
-    const nav = document.querySelector('.nav')!.getBoundingClientRect();
+    const nav = $stepper[0]!.ownerDocument.querySelector('.nav')!.getBoundingClientRect();
     const row = $stepper[0]!.getBoundingClientRect();
     expect(row.top, `step ${step}: stepper top vs nav bottom`).to.be.at.least(nav.bottom - 0.5);
   });
