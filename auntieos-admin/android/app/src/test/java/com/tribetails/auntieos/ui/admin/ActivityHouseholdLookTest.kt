@@ -57,6 +57,14 @@ class ActivityHouseholdLookTest {
     }
 
     @Test
+    fun aStoredLookNeverNamesThePersonByEmailOrUid() {
+        // The roster labels a staff member with no name by her sign-in email.
+        assertEquals("Opened a household", rowContext(storedLook, mapOf("owner-uid" to "e2e-admin@tribetails.com")))
+        // Before the roster answers, the row would otherwise print the uid.
+        assertEquals("Opened a household", rowContext(storedLook, emptyMap()))
+    }
+
+    @Test
     fun aLookIsNeverRedUnlessItFailed() {
         assertEquals(AuntieStatusTone.Neutral, rowTone("OPERATOR_CROSSTENANT_ACCESS", "SUCCESS"))
         assertEquals(AuntieStatusTone.Error, rowTone("OPERATOR_CROSSTENANT_ACCESS", "FAILURE"))

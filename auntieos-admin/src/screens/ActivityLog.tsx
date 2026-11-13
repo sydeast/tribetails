@@ -507,8 +507,14 @@ function rowContext(entry: ActivityLogEntry, names: ReadonlyMap<string, string>)
   const namedInWords = look && description !== '' && description === raw.trim();
   // #1592: the actor's name, not their uid, once `listStaff` has answered.
   const actor = str(entry.actorId).trim();
-  if (actor !== '' && !namedInWords) parts.push(names.get(actor) ?? actor);
-  if (look) return parts.join(' · ');
+  if (look) {
+    // #1839: a look names a person or nobody. The roster's label falls back to
+    // a sign-in email and then the uid, and neither belongs on this row.
+    const who = namedInWords || actor === '' ? '' : (names.get(actor) ?? '').trim();
+    if (who !== '' && !who.includes('@')) parts.push(who);
+    return parts.join(' · ');
+  }
+  if (actor !== '') parts.push(names.get(actor) ?? actor);
   const targetId = str(entry.targetId).trim();
   const targetCollection = str(entry.targetCollection).trim();
   if (targetId !== '' && targetCollection !== '') parts.push(`${targetCollection}/${targetId}`);

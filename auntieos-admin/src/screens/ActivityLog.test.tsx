@@ -645,6 +645,23 @@ describe('ActivityLog household looks (#1839)', () => {
     expect(row.querySelector('.icon-tile')).toHaveAttribute('data-tone', 'neutral');
   });
 
+  it('a stored look never names the person by a sign-in email or a uid', () => {
+    // The roster labels a staff member with no name by her sign-in email.
+    staffNames.current = new Map([['owner-uid', 'e2e-admin@tribetails.com']]);
+    useCollection.mockReturnValue({ status: 'ready', data: [STORED_LOOK] });
+    const { unmount } = render(<ActivityLog />);
+    let row = rowOf(/Household opened/);
+    expect(row.querySelector('.activity__ctx')).toHaveTextContent(/^Opened a household$/);
+    expect(row.textContent).not.toContain('@');
+    unmount();
+    // Before the roster answers, the row would otherwise print the uid.
+    staffNames.current = new Map();
+    render(<ActivityLog />);
+    row = rowOf(/Household opened/);
+    expect(row.querySelector('.activity__ctx')).toHaveTextContent(/^Opened a household$/);
+    expect(row.textContent).not.toContain('owner-uid');
+  });
+
   it('a stored look is shown, not hidden, and the stored entry is not rewritten', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [AUNTIE_LOOK, STORED_LOOK] });
     render(<ActivityLog />);

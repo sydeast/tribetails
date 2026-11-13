@@ -826,8 +826,14 @@ internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = em
         // household's id. A look stored as the bare key keeps the actor's name.
         val namedInWords = look && words.isNotBlank() && words == entry.description.trim()
         // #1592: the actor's name, not their uid, once `listStaff` has answered.
-        if (entry.actorId.isNotBlank() && !namedInWords) add(names[entry.actorId.trim()] ?: entry.actorId)
-        if (look) return@buildList
+        if (look) {
+            // #1839: a look names a person or nobody. The roster's label falls
+            // back to a sign-in email and the row to the uid; neither belongs here.
+            val who = if (namedInWords || entry.actorId.isBlank()) "" else names[entry.actorId.trim()].orEmpty().trim()
+            if (who.isNotEmpty() && '@' !in who) add(who)
+            return@buildList
+        }
+        if (entry.actorId.isNotBlank()) add(names[entry.actorId.trim()] ?: entry.actorId)
         val target = when {
             entry.targetCollection.isNotBlank() && entry.targetId.isNotBlank() ->
                 "${entry.targetCollection}/${entry.targetId}"
