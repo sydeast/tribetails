@@ -484,31 +484,99 @@ describe('#2156 sending a declined quote back out takes its visits back', () => 
     expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(otherId);
   });
 
-  it('a New invoice that takes a visit while the household is being told keeps it, and the accept is refused', async () => {
-    // The pre-flight is a plain read and the notice goes out before the
-    // reopening transaction, so a New invoice landing in between wins the
-    // visit. Nothing is billed twice: the reopen leaves it with that invoice
-    // and the household's accept is refused.
+  /** The household's resend notices, in the order they were asked for. */
+  const resendNotices = () =>
+    mocks.enqueue.mock.calls
+      .map((c) => c[0] as { key: string; data?: { resent?: boolean }; dedupeKey?: string })
+      .filter((a) => a.key === 'invoice.new' && a.data?.resent === true);
+
+  it('the household is told only after the quote holds its visits again', async () => {
     const ctx = world();
     const quoteId = await makeQuote(ctx, ['s1']);
     await denyQuoteHandler(kinfolk({ invoiceId: quoteId }));
-    let otherId = '';
+    let atNotice: Record<string, unknown> = {};
     mocks.enqueue.mockImplementationOnce(async () => {
-      otherId = (await createInvoiceHandler(admin(composerDraft(['s1'])))).invoiceId;
+      atNotice = await docOf(ctx, 'kin_care_sessions/s1');
       return ['n1'];
     });
 
     await resendQuoteHandler(admin({ invoiceId: quoteId }));
 
-    expect(otherId).not.toBe('');
-    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(otherId);
+    // When the notice went out, the visit was already the quote's.
+    expect(atNotice['invoiceId']).toBe(quoteId);
+    expect(resendNotices()).toHaveLength(1);
+  });
+
+  it('a New invoice and a resend reaching for the same visit at once: one wins, and the household hears only if the quote did', async () => {
+    const ctx = world();
+    const quoteId = await makeQuote(ctx, ['s1']);
+    await denyQuoteHandler(kinfolk({ invoiceId: quoteId }));
+    mocks.enqueue.mockClear();
+    serializeTransactions(ctx);
+
+    const [resend, inv] = await Promise.allSettled([
+      resendQuoteHandler(admin({ invoiceId: quoteId })),
+      createInvoiceHandler(admin({ ...composerDraft(['s1']), idempotencyKey: 'inv_1700000002156_x' })),
+    ]);
+    const owner = (await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId'];
     const q = await docOf(ctx, `invoices/${quoteId}`);
-    expect(q['quoteDecision']).toBeUndefined();
+    expect([resend.status, inv.status].sort()).toEqual(['fulfilled', 'rejected']);
+    if (resend.status === 'fulfilled') {
+      expect(owner).toBe(quoteId);
+      expect(q['sessionIds']).toEqual(['s1']);
+      expect((inv as PromiseRejectedResult).reason).toMatchObject({ details: { code: 'session_on_other_invoice' } });
+      expect(resendNotices()).toHaveLength(1);
+    } else {
+      expect(owner).toBe('inv_1700000002156_x');
+      expect(resend.reason).toMatchObject({ details: { code: 'quote_visits_not_billable' } });
+      expect(q['quoteDecision']).toBe('denied');
+      expect(resendNotices()).toHaveLength(0);
+    }
+  });
+
+  it('a failed notice puts the quote back to declined and lets the visits it took go', async () => {
+    const ctx = world();
+    const quoteId = await makeQuote(ctx, ['s1', 's2']);
+    await denyQuoteHandler(kinfolk({ invoiceId: quoteId }));
+    const declined = await docOf(ctx, `invoices/${quoteId}`);
+    mocks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
+
+    await expect(resendQuoteHandler(admin({ invoiceId: quoteId }))).rejects.toThrow('dispatcher down');
+
+    const q = await docOf(ctx, `invoices/${quoteId}`);
+    expect(q['quoteDecision']).toBe('denied');
     expect(q['sessionIds']).toEqual([]);
-    await expect(acceptQuoteHandler(kinfolk({ invoiceId: quoteId }))).rejects.toMatchObject({
-      details: { code: 'quote_visits_billed_elsewhere' },
-    });
-    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(otherId);
+    expect(q['releasedSessionIds']).toEqual(declined['releasedSessionIds']);
+    expect('quoteResendCount' in q).toBe(false);
+    for (const sid of ['s1', 's2']) {
+      const v = await docOf(ctx, `kin_care_sessions/${sid}`);
+      expect(v['invoiceId']).toBe('');
+      expect(isSessionBillable(v)).toBe(true);
+    }
+    // Back on the list, so New invoice can take one straight away.
+    await createInvoiceHandler(admin(composerDraft(['s1'])));
+  });
+
+  it('a retry after a failed notice sends one notice, under the same resend number, and holds the visits', async () => {
+    const ctx = world();
+    const quoteId = await makeQuote(ctx, ['s1']);
+    await denyQuoteHandler(kinfolk({ invoiceId: quoteId }));
+    mocks.enqueue.mockClear();
+    mocks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
+
+    await expect(resendQuoteHandler(admin({ invoiceId: quoteId }))).rejects.toThrow('dispatcher down');
+    const res = await resendQuoteHandler(admin({ invoiceId: quoteId }));
+
+    expect(res.status).toBe('quote');
+    const asked = resendNotices();
+    expect(asked).toHaveLength(2);
+    // The same identity both times: a notice the failed attempt did deliver
+    // is a duplicate on the retry, not a second message.
+    expect(asked.map((a) => a.dedupeKey)).toEqual([`quote:${quoteId}:resend:1`, `quote:${quoteId}:resend:1`]);
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(quoteId);
+    const q = await docOf(ctx, `invoices/${quoteId}`);
+    expect(q['quoteResendCount']).toBe(1);
+    expect(q['sessionIds']).toEqual(['s1']);
   });
 });
 

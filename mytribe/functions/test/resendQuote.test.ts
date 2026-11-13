@@ -73,7 +73,10 @@ function declinedQuote(over: Record<string, unknown> = {}): Record<string, unkno
 }
 
 function ctxFor(invoice: Record<string, unknown> | null, over: Record<string, unknown> = {}) {
+  // Write-through (#2156 review): a resend now reopens the quote first and puts
+  // it back when the notice fails, so a test reads the doc as it ends up.
   return buildDbMock({
+    writeThrough: true,
     docs: {
       'business_settings/business_settings': { timeZone: 'America/Chicago' },
       ...(invoice ? { 'invoices/q1': invoice } : {}),
@@ -94,6 +97,14 @@ function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unkn
 
 function quoteWrite(ctx: ReturnType<typeof buildDbMock>): Record<string, unknown> | undefined {
   return ctx.writes.find((w) => w.path === 'invoices/q1')?.data;
+}
+
+/** The quote as the call left it: after a failed notice, declined again exactly as it was. */
+async function expectStillDeclined(ctx: ReturnType<typeof buildDbMock>, before: Record<string, unknown>) {
+  const now = ((await ctx.db.doc('invoices/q1').get()).data() ?? {}) as Record<string, unknown>;
+  expect(now.quoteDecision).toBe('denied');
+  expect(now.quoteResendCount).toBe(before.quoteResendCount);
+  expect(now.quoteResentAt).toBe(before.quoteResentAt);
 }
 
 describe('resendQuote happy path', () => {
@@ -133,7 +144,7 @@ describe('resendQuote happy path', () => {
     expect(data.quoteResentAt).toBe('__TS__');
     // The decline is gone off the doc, so the count is the only thing left
     // saying this quote has been round before.
-    expect(data.quoteResendCount).toEqual({ __increment: 1 });
+    expect(data.quoteResendCount).toBe(1);
   });
 
   it('TELLS THE HOUSEHOLD, on the same catalog key that issued the quote', async () => {
@@ -182,7 +193,7 @@ describe('resendQuote happy path', () => {
     const data = quoteWrite(ctx)!;
     expect(data).toBeDefined();
     expect(data.quoteDecision).toBe('__DELETE__');
-    expect(data.quoteResendCount).toEqual({ __increment: 1 });
+    expect(data.quoteResendCount).toBe(1);
   });
 
   it('#1507: when the household has every channel off, the answer says the quote reached them in the app only', async () => {
@@ -231,7 +242,7 @@ describe('resendQuote happy path', () => {
     const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
 
     expect(err.details).toMatchObject({ code: 'quote_resend_unreachable' });
-    expect(quoteWrite(ctx)).toBeUndefined();
+    await expectStillDeclined(ctx, declinedQuote());
   });
 
   it('#832: FAILS LOUD when the household copy was suppressed by prefs, even though the office copy went', async () => {
@@ -246,7 +257,7 @@ describe('resendQuote happy path', () => {
 
     expect(err.code).toBe('failed-precondition');
     expect(err.details).toMatchObject({ code: 'quote_resend_suppressed' });
-    expect(quoteWrite(ctx)).toBeUndefined();
+    await expectStillDeclined(ctx, declinedQuote());
   });
 
   it('writes a BILLING_QUOTE_RESENT audit entry, the only lasting record of the decline', async () => {
@@ -372,15 +383,43 @@ describe('resendQuote refusals', () => {
   });
 
   it('LEAVES THE QUOTE DECLINED when the notification could not be sent', async () => {
-    // Fail loud, and before the write. A resend that reopened the quote while
-    // reaching nobody would look like it worked, and the retry would then
-    // refuse as "not declined" because the first attempt cleared the answer.
+    // Fail loud. The reopen commits first (#2156 review) and a failed notice
+    // puts the quote back, so the error still means "not sent" and the retry
+    // finds a declined quote to resend rather than refusing as "not declined".
+    const before = declinedQuote({ quoteResendCount: 2, quoteResentAt: '__OLD_RESENT__' });
+    const ctx = ctxFor(before);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockRejectedValue(new Error('dispatcher down'));
+
+    await expect(resendQuoteHandler(req({ invoiceId: 'q1' }))).rejects.toThrow('dispatcher down');
+    await expectStillDeclined(ctx, before);
+  });
+
+  it('a first resend whose notice failed carries no resend stamp afterwards', async () => {
     const ctx = ctxFor(declinedQuote());
     mocks.dbFn.mockReturnValue(ctx.db);
     mocks.enqueue.mockRejectedValue(new Error('dispatcher down'));
 
     await expect(resendQuoteHandler(req({ invoiceId: 'q1' }))).rejects.toThrow('dispatcher down');
-    expect(quoteWrite(ctx)).toBeUndefined();
+    const now = ((await ctx.db.doc('invoices/q1').get()).data() ?? {}) as Record<string, unknown>;
+    expect(now.quoteDecision).toBe('denied');
+    expect('quoteResentAt' in now).toBe(false);
+    expect('quoteResendCount' in now).toBe(false);
+  });
+
+  it('says the quote went out unannounced when the household answered before it could be put back', async () => {
+    const ctx = ctxFor(declinedQuote());
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockImplementation(async () => {
+      // Something lands on the reopened quote while the notice is failing.
+      await ctx.db.doc('invoices/q1').set({ quoteDecision: 'accepted', status: 'open' }, { merge: true });
+      throw new Error('dispatcher down');
+    });
+
+    const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
+    expect(err.code).toBe('internal');
+    expect(err.details).toMatchObject({ code: 'quote_resent_not_announced' });
+    expect(err.message).toBe('The quote was sent back out, but the household could not be told about it. Use Send reminder to tell them.');
   });
 });
 

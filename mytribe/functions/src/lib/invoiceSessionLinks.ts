@@ -377,9 +377,6 @@ function txGet(tx: Transaction): DocGet {
   return (ref) => tx.get(ref);
 }
 
-/** A plain read, for a check made before a transaction (a pre-flight). */
-const plainGet: DocGet = (ref) => ref.get();
-
 /** What a refusal says about the invoice that holds a visit now. */
 interface OtherInvoice {
   /** Its number, or '' when it has none or no record; never its id, which does not go on screen. */
@@ -557,9 +554,10 @@ export async function readSendClaims(
 //   - A declined quote holds nothing (`quoteHoldsNoVisits`). An Edit of it
 //     records which visits its lines now name in `releasedSessionIds` and
 //     writes no back-link; Link visits refuses it.
-//   - `resendQuote` takes them back: refused before the household is told
-//     when a line's visit is now billed elsewhere (`refuseQuoteResendOverVisits`),
-//     claimed inside its transaction (`readQuoteReopen`).
+//   - `resendQuote` takes them back in the one transaction that checks,
+//     claims and reopens (`readQuoteReopen`), refusing when a line's visit is
+//     now billed elsewhere; the household is told only after it commits, and a
+//     failed notice puts the quote back to declined and lets the visits go.
 //   - `acceptQuote` keeps them: the quote becomes the invoice that bills them.
 //     A quote made before this rule holds nothing, so accepting one claims its
 //     free visits, and is refused only when another invoice now bills a visit
@@ -622,28 +620,6 @@ export async function readDeclineRelease(
 export const QUOTE_VISITS_NOT_BILLABLE_CODE = 'quote_visits_not_billable';
 
 /**
- * The PRE-FLIGHT of sending a declined quote back out (`resendQuote`). It runs
- * before the household is notified, which is why it is a plain read and not
- * part of the reopening transaction: a quote whose line is for a visit another
- * invoice now bills, or a cancelled one, is refused before anyone is told
- * about it, in the words a draft send uses.
- */
-export async function refuseQuoteResendOverVisits(
-  firestore: Firestore,
-  invoiceId: string,
-  lines: unknown,
-): Promise<void> {
-  const { lost, parts } = await judgeLineVisits(plainGet, firestore, invoiceId, lines);
-  if (lost.length === 0) return;
-  throw new HttpsError(
-    'failed-precondition',
-    `This quote cannot be sent back out: ${parts.join('; ')}. ` +
-      `Remove ${lost.length === 1 ? 'its line' : 'those lines'} in Edit, then send it again.`,
-    { code: QUOTE_VISITS_NOT_BILLABLE_CODE, visits: lost },
-  );
-}
-
-/**
  * The visits a quote names that it can hold, read inside `tx`: the ones that
  * already name it, and the free ones (blank back-link, a record, not
  * cancelled), which are to be claimed. `elsewhere` is the ones another
@@ -691,11 +667,13 @@ function holdFields(data: Record<string, unknown>, held: string[]): Record<strin
 
 /**
  * The READ half of sending a declined quote back out (`resendQuote`), inside
- * its reopening transaction: takes back every visit the quote names that is
- * still free. It never refuses: the household has been told by then, and the
- * pre-flight refused the case that matters. A visit billed elsewhere in the
- * moment between the two stays there, and accepting the quote is then refused
- * for it (`readAcceptClaims`).
+ * the ONE transaction that checks, claims and reopens, before the household is
+ * told. Every visit a line of the quote is for must be free or already the
+ * quote's: one another invoice now bills, a cancelled one, or one with no
+ * record refuses the resend (`quote_visits_not_billable`), with nothing
+ * written, in the words a draft send uses. A New invoice save racing it for
+ * the same visit is refereed by Firestore: whichever commits second re-runs
+ * and sees the other's claim. The visits it can hold are then taken back.
  */
 export async function readQuoteReopen(
   tx: Transaction,
@@ -703,6 +681,15 @@ export async function readQuoteReopen(
   invoiceId: string,
   data: Record<string, unknown>,
 ): Promise<QuoteVisitChange> {
+  const { lost, parts } = await judgeLineVisits(txGet(tx), firestore, invoiceId, data['lineItems']);
+  if (lost.length > 0) {
+    throw new HttpsError(
+      'failed-precondition',
+      `This quote cannot be sent back out: ${parts.join('; ')}. ` +
+        `Remove ${lost.length === 1 ? 'its line' : 'those lines'} in Edit, then send it again.`,
+      { code: QUOTE_VISITS_NOT_BILLABLE_CODE, visits: lost },
+    );
+  }
   const { held, claim } = await readHoldable(tx, firestore, invoiceId, visitsNamedBy(data));
   return { plan: { invoiceId, claim, release: [] }, fields: holdFields(data, held) };
 }
