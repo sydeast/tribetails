@@ -379,6 +379,82 @@ class BusinessSettingsDiffTest {
         assertEquals(false, toggled.enabled)
     }
 
+    // ── #1987: a layout equal to the default is the default ─────────────────────
+    //
+    // The 2026-11-10 walk saved one Limit and put it back. The four rows left
+    // behind (every section on, default order, no limits) read as "Custom"
+    // and stacked the portal's Home into one column. These follow the panel's
+    // own steps through `normalizeHomeSections` + `withHomeSections` +
+    // `businessSettingsFieldChanges`, the layer that decides what is written.
+    private val defaultHomeRows = DEFAULT_HOME_SECTION_IDS.map { PortalHomeSection(it, true, 0) }
+    private val limitOnlyHomeRows = defaultHomeRows.map { if (it.id == "upNext") it.copy(limit = 2) else it }
+    private fun sentSections(changes: Map<String, Any?>): Any? =
+        ((changes["mytribePortal"] as Map<*, *>)["home"] as Map<*, *>)["sections"]
+    @Test
+    fun `a limit-only change writes the default order with just that limit`() {
+        val edited = loaded.withHomeSections(normalizeHomeSections(limitOnlyHomeRows))
+        val changes = businessSettingsFieldChanges(loaded, edited)
+        assertEquals(setOf("mytribePortal"), changes.keys)
+        assertEquals(
+            limitOnlyHomeRows.map { mapOf("id" to it.id, "enabled" to it.enabled, "limit" to it.limit) },
+            sentSections(changes),
+        )
+    }
+    @Test
+    fun `a Limit typed and put back from the default is not a change`() {
+        val edited = loaded.withHomeSections(normalizeHomeSections(defaultHomeRows))
+        assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(loaded, edited))
+    }
+    @Test
+    fun `a saved limit put back to 0 writes the empty list, not four rows`() {
+        val stored = loaded.withHomeSections(limitOnlyHomeRows)
+        val edited = stored.withHomeSections(normalizeHomeSections(defaultHomeRows))
+        val changes = businessSettingsFieldChanges(stored, edited)
+        assertEquals(setOf("mytribePortal"), changes.keys)
+        assertEquals(emptyList<Any>(), sentSections(changes))
+    }
+    @Test
+    fun `a stored layout equal to the default reads as the default and is nothing to save`() {
+        val stored = loaded.withHomeSections(defaultHomeRows)
+        assertEquals(emptyList<PortalHomeSection>(), stored.homeSections())
+        val edited = stored.withHomeSections(stored.homeSections())
+        assertEquals(emptyMap<String, Any?>(), businessSettingsFieldChanges(stored, edited))
+    }
+    @Test
+    fun `a real custom order is read back and written in that order`() {
+        val custom = listOf(
+            PortalHomeSection("quickStart", true, 0),
+            PortalHomeSection("liveVisit", true, 0),
+            PortalHomeSection("upNext", true, 3),
+            PortalHomeSection("tales", true, 0),
+        )
+        val edited = loaded.withHomeSections(normalizeHomeSections(custom))
+        assertEquals(custom, edited.homeSections())
+        assertEquals(
+            custom.map { mapOf("id" to it.id, "enabled" to it.enabled, "limit" to it.limit) },
+            sentSections(businessSettingsFieldChanges(loaded, edited)),
+        )
+    }
+    /** The builder check: putting a Limit back keeps the portal keys this client has no control for. */
+    @Test
+    fun `collapsing to the default keeps the sibling portal keys in the model and out of the write`() {
+        val stored = loaded.copy(
+            mytribePortal = mapOf(
+                "themeId" to "neon",
+                "banner" to mapOf("enabled" to true, "message" to "Closed for the holiday"),
+                "chat" to mapOf("enabled" to false),
+                "home" to mapOf(
+                    "sections" to limitOnlyHomeRows.map { mapOf("id" to it.id, "enabled" to it.enabled, "limit" to it.limit) },
+                ),
+            )
+        )
+        val edited = stored.withHomeSections(normalizeHomeSections(defaultHomeRows))
+        val portal = edited.mytribePortal as Map<*, *>
+        assertEquals("neon", portal["themeId"])
+        assertEquals(mapOf("enabled" to true, "message" to "Closed for the holiday"), portal["banner"])
+        assertEquals(mapOf("enabled" to false), portal["chat"])
+        assertEquals(mapOf("home" to mapOf("sections" to emptyList<Any>())), businessSettingsFieldChanges(stored, edited)["mytribePortal"])
+    }
     // ── Drift guard ──────────────────────────────────────────────────────────
 
     /**

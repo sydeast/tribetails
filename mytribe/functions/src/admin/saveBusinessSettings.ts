@@ -9,6 +9,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { logEvent } from '../lib/logger';
 import { savedByStamp } from '../lib/savedByStamp';
 import { BUSINESS_SETTINGS_DOC, FALLBACK_BUSINESS_TIME_ZONE, zonedNow } from '../lib/businessHours';
+import { withDefaultHomeLayoutCollapsed } from '../lib/homeLayout';
 import type { SettingsRefusal } from '../lib/businessSettingsChecks';
 
 /**
@@ -34,6 +35,8 @@ import type { SettingsRefusal } from '../lib/businessSettingsChecks';
  *  - The KinCare rate card (`WHOLE_MAP_SETTINGS_FIELDS`) replaces what is stored,
  *    so a removed type is removed.
  *  - Arrays replace. `null` is a value (it is how a send hour is cleared).
+ *  - #1987: a portal Home layout equal to the default is stored as the empty
+ *    list, which is what "default" has always been (`lib/homeLayout.ts`).
  *  - #1978: a save that closes a day keeps the hours it had in `closedDayHours`,
  *    and one that opens a day drops them (`closedDayHoursChanges`). The server
  *    derives it from what is stored; no client sends it.
@@ -152,6 +155,10 @@ export async function saveBusinessSettingsHandler(
 
   // #1962: the uid, not the sign-in email. The screens name the person from it.
   const { updatedAt, updatedBy } = savedByStamp(uid);
+  // #1987: a Home layout equal to the default is stored as the default (the
+  // empty list), so it reads as "Default" on every client and the portal keeps
+  // its standard page. After the checks, so a bad row is still refused by name.
+  const toStore = withDefaultHomeLayoutCollapsed(changes);
   // #1978: the hours each day closed by this save had, kept beside the weekly
   // hours so reopening the day gives them back. Each day is its own merge path.
   const kept = checks.closedDayHoursChanges(changes['businessHours'], stored);
@@ -159,14 +166,14 @@ export async function saveBusinessSettingsHandler(
   const closedDayHours: Record<string, unknown> = {};
   for (const day of keptDays) closedDayHours[day] = kept[day] ?? FieldValue.delete();
   const body = {
-    ...changes,
+    ...toStore,
     ...(keptDays.length > 0 ? { closedDayHours } : {}),
     updatedAt,
     updatedBy,
   };
   await ref.set(body, {
     mergeFields: [
-      ...mergeFieldPaths(changes, checks.WHOLE_MAP_SETTINGS_FIELDS),
+      ...mergeFieldPaths(toStore, checks.WHOLE_MAP_SETTINGS_FIELDS),
       ...keptDays.map((day) => new FieldPath('closedDayHours', day)),
       new FieldPath('updatedAt'),
       new FieldPath('updatedBy'),
