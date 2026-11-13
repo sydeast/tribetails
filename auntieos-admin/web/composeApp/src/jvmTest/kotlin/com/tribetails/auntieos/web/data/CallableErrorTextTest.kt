@@ -45,6 +45,14 @@ class CallableErrorTextTest {
         assertEquals(CALLABLE_FALLBACK_TEXT, reply.message)
     }
 
+    /** #2162: the Activity Log's refusal of a line the system writes itself (functions `SERVER_ONLY_EVENT_REFUSAL`). */
+    @Test
+    fun theActivityLogRefusalOfASystemOnlyLineIsShownAsWritten() {
+        val sentence = "This activity is recorded by the system on its own, so it cannot be added from the app."
+        val reply = refusedReply("logActivity", "PERMISSION_DENIED", sentence, null, 403, log = { error("nothing to log") })
+        assertEquals(sentence, reply.message)
+        assertEquals("PERMISSION_DENIED", reply.status)
+    }
     @Test
     fun anOperatorWordedRefusalIsPassedThroughUnlogged() {
         val reply = refusedReply(

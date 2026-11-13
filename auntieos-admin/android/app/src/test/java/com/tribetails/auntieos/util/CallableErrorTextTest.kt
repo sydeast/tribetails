@@ -43,6 +43,14 @@ class CallableErrorTextTest {
         assertEquals("no_recipients", plainCallableMessage("FAILED_PRECONDITION", "no_recipients"))
     }
 
+    /** #2162: the Activity Log's refusal of a line the system writes itself (functions `SERVER_ONLY_EVENT_REFUSAL`). */
+    @Test
+    fun theActivityLogRefusalOfASystemOnlyLineIsShownAsWritten() {
+        val sentence = "This activity is recorded by the system on its own, so it cannot be added from the app."
+        assertEquals(sentence, plainCallableMessage("PERMISSION_DENIED", sentence))
+        val refused = refusal(sentence, FirebaseFunctionsException.Code.PERMISSION_DENIED, null)
+        assertSame(refused, operatorCopyOf(refused) { error("no note expected") })
+    }
     @Test
     fun theRethrownRefusalKeepsCodeDetailsAndTheRawCause() {
         val details = mapOf("validationErrors" to listOf(mapOf("path" to "lineItems.0.unitPrice")))
