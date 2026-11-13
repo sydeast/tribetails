@@ -116,6 +116,14 @@ sealed class Screen(val route: String, val label: String, val icon: ImageVector)
     object KinfolkProfile : Screen("kinfolk_profile/{id}", "Profile", Lucide.Users) {
         fun createRoute(id: String) = "kinfolk_profile/$id"
     }
+    /**
+     * #1912: where a "Kinfolk asked to remove a Kin" notice opens. The waiting
+     * removal requests with Archive and Decline, the same queue the schedule
+     * shows, on a screen of its own so the notice has somewhere to land.
+     */
+    object KinRemovalRequests : Screen("kin_removal_requests/{requestId}", "Kin removal requests", Lucide.Users) {
+        fun createRoute(requestId: String) = "kin_removal_requests/$requestId"
+    }
     object AddKinfolk : Screen("add_kinfolk", "Add Kinfolk", Lucide.Users)
     object EditKinfolk : Screen("edit_kinfolk/{id}", "Edit Kinfolk", Lucide.Users) {
         fun createRoute(id: String) = "edit_kinfolk/$id"
@@ -354,6 +362,10 @@ internal fun notificationTargetRoute(targetType: String, targetId: String): Stri
 internal fun notificationOpenRoute(entry: com.tribetails.auntieos.data.admin.NotificationEntry): String? {
     val notice = unappliedPaymentNotice(entry)
     if (notice != null) return Screen.KinfolkProfile.createRoute(notice.kinfolkId)
+    // #1912: a removal request is answered on the requests screen, not on the
+    // household profile its target names.
+    val removalRequestId = kinRemovalNoticeRequestId(entry)
+    if (removalRequestId != null) return Screen.KinRemovalRequests.createRoute(removalRequestId)
     return notificationTargetRoute(entry.targetType, entry.targetId)
 }
 
@@ -1084,6 +1096,14 @@ private fun AuthenticatedNavHost(
                                 navController.navigate(route) { launchSingleTop = true }
                             }
                         },
+                    )
+                }
+            }
+            composable(Screen.KinRemovalRequests.route) { backStack ->
+                AdminGate(repository = app.repository, onDenied = { navController.popBackStack() }) {
+                    com.tribetails.auntieos.ui.directory.KinRemovalRequestsScreen(
+                        focusRequestId = backStack.arguments?.getString("requestId").orEmpty(),
+                        onBack = { navController.popBackStack() },
                     )
                 }
             }
