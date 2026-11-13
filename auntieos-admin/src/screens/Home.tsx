@@ -8,6 +8,8 @@ import { isAuntieAccess } from '../lib/access';
 import { getDashboardLayout, saveDashboardLayout } from '../api/dashboardLayout';
 import {
   DEFAULT_DASHBOARD,
+  dashboardForViewer,
+  dashKeyVisibleTo,
   hiddenKeys,
   hideWidget,
   moveWidgetDown,
@@ -187,7 +189,8 @@ export function Home() {
   const auth = useAuth();
   const uid = auth.status === 'signedIn' ? auth.user.uid : '';
   // #2200 / #2201: an Auntie never sees money, and Invoices sends her Home, so
-  // the stat row gets no way into it (and draws no revenue tile) for her. Read
+  // the stat row gets no way into it (and draws no revenue tile) for her; #2208
+  // keeps the owner's cards off her board below. Read
   // off the access the admin layout already resolved, so it is known on the
   // first paint and the invoices read is never opened.
   const { access } = useRouteContext({ from: '/admin' });
@@ -274,9 +277,15 @@ export function Home() {
   // the board is the standard one rather than the operator's, so drawing it is
   // disclosed rather than guessed. Only the not-yet-known case holds the board.
   const stillLoading = layout === null && loadError === null;
-  const shown = layout ?? webResolved(DEFAULT_DASHBOARD, false);
+  // #2208: an Auntie is never shown the owner's cards (Cash Flow, Expense
+  // quick-log, Supplies, Expirations), on the board or under Hidden cards, so
+  // none of their reads is started. Filtered here, where the board is derived,
+  // so the default board, a save's reconcile and a failed save's revert all
+  // pass through it. The owner, the test admin and the #812 offline session
+  // (access null) are not the Auntie and see every card.
+  const shown = dashboardForViewer(layout ?? webResolved(DEFAULT_DASHBOARD, false), isAuntie);
   const canCustomize = layout !== null;
-  const hidden = hiddenKeys(shown);
+  const hidden = hiddenKeys(shown).filter((k) => dashKeyVisibleTo(k, isAuntie));
 
   const move = (index: number, direction: 'up' | 'down'): void => {
     const widget = shown[index];

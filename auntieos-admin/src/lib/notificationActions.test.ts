@@ -349,3 +349,47 @@ describe('applicableNotificationActions for an Auntie (#2200 / #2201)', () => {
     }
   });
 });
+/**
+ * #2208: the "Payment needing a decision" notice (`invoice.payment.unapplied`)
+ * opens the household's Account credit section, which is money and is not
+ * drawn for an Auntie. Her row offers no Open at all, with or without a
+ * household on the notice; the owner keeps the profile deep link.
+ */
+describe('applicableNotificationActions: the payment decision notice for an Auntie (#2208)', () => {
+  const withHousehold = entry({
+    key: 'invoice.payment.unapplied',
+    targetType: 'invoice',
+    targetId: 'inv_9',
+    data: { kinfolkId: 'kf1', stripeEventId: 'evt_1' },
+  });
+  const withoutHousehold = entry({ key: 'invoice.payment.unapplied', targetType: 'invoice', targetId: 'inv_9' });
+  const onHousehold = entry({ key: 'invoice.payment.unapplied', targetType: 'kinfolk', targetId: 'kf1' });
+  it('gives her no Open, whichever way the notice names its household', () => {
+    for (const e of [withHousehold, withoutHousehold, onHousehold]) {
+      expect(applicableNotificationActions(e, { isAuntie: true }).open).toBeNull();
+    }
+  });
+  it('keeps the owner on the Account credit section of the household', () => {
+    expect(applicableNotificationActions(withHousehold).open).toEqual({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'kf1' },
+      search: { section: 'unapplied-payments', paymentId: 'evt_1' },
+    });
+    expect(applicableNotificationActions(onHousehold, { isAuntie: false }).open).toEqual({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'kf1' },
+      search: { section: 'unapplied-payments' },
+    });
+    expect(applicableNotificationActions(withoutHousehold).open).toEqual({
+      to: '/invoices',
+      search: { invoiceId: 'inv_9' },
+    });
+  });
+  it('still opens her own household notices', () => {
+    const e = entry({ key: 'kinfolk.updated', targetType: 'kinfolk', targetId: 'kf1' });
+    expect(applicableNotificationActions(e, { isAuntie: true }).open).toEqual({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'kf1' },
+    });
+  });
+});
