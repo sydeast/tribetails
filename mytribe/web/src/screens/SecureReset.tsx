@@ -7,7 +7,28 @@ import { isRateLimitedError } from '../lib/authErrors';
 import { businessLabel } from '../lib/businessLabel';
 import { useBusinessPublicCard } from '../lib/businessPublicCard';
 import { parseEmailActionLink, type EmailActionLink } from '../lib/emailAction';
+import { useScreenTitle } from '../lib/pageTitle';
 import { BusinessFootnote } from '../components/BusinessFootnote';
+
+/**
+ * #2007: the tab names what this link does. Both routes that render this page
+ * take every kind of link (Identity Toolkit sends them all to one URL), so the
+ * route's own title cannot know; the screen names itself from the link.
+ */
+export function emailLinkTabTitle(link: EmailActionLink | null): string {
+  switch (link?.mode) {
+    case 'resetPassword':
+      return 'Set a new password';
+    case 'verifyEmail':
+      return 'Confirm your email';
+    case 'verifyAndChangeEmail':
+      return 'Confirm your new sign-in email';
+    case 'recoverEmail':
+      return 'Restore your sign-in email';
+    default:
+      return 'Email link';
+  }
+}
 
 /**
  * The project's Firebase email action handler (#892).
@@ -28,6 +49,7 @@ import { BusinessFootnote } from '../components/BusinessFootnote';
  */
 export function SecureReset() {
   const link = useMemo(() => parseEmailActionLink(window.location.search, window.location.origin), []);
+  useScreenTitle(emailLinkTabTitle(link));
   /**
    * #1321: the business name from the public card, cached copy first. Pre-auth,
    * like the sign-in screen, so it is the only source this page can have. ''

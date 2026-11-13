@@ -100,4 +100,65 @@ class KinfolkCardRenderTest {
         // Footer order, no overlaps.
         assertTrue(phone.right <= email.left && email.right <= visit.left && visit.right <= status.left, "footer elements overlap")
     }
+
+    /**
+     * #1964: on web a 17-character, three-word name beside a status chip was cut
+     * to its first words and three dots. Here the chip beside the name is "New",
+     * and at the 290dp minimum a 17-character name still fits one line, so this
+     * uses a longer three-word name that cannot: it wraps whole onto a second
+     * line, and the flag, the chips and the footer still fit the card.
+     */
+    @Test
+    fun aLongNameBesideTheNewPillWrapsWholeAndTheCardStillFits() = runDesktopComposeUiTest {
+        val kf = Kinfolk(
+            _id = "kf2",
+            firstName = "Mae Lynn",
+            lastName = "Ashworth-Delgado",
+            phoneNumber = "8055550100",
+            email = "pawsome@hanasamku.com",
+            status = "prospect",
+        )
+        val kin = listOf(Kin(_id = "k1", name = "Biscuit"), Kin(_id = "k2", name = "Marmalade"))
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                Box(Modifier.width(290.dp).height(196.dp).testTag("card")) {
+                    KinfolkCard(kf = kf, kin = kin, lastVisit = "2026-09-01", isNew = true, onClick = {})
+                }
+            }
+        }
+        waitForIdle()
+
+        val out = File(System.getProperty("java.io.tmpdir"), "kinfolk-card-290-long-name.png")
+        ImageIO.write(onRoot().captureToImage().toAwtImage(), "png", out)
+
+        val nameNode = onNodeWithText("Mae Lynn Ashworth-Delgado", useUnmergedTree = true).fetchSemanticsNode()
+        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        nameNode.config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action?.invoke(layouts)
+        val layout = layouts.single()
+        println("KinfolkCardRenderTest long name: lines=${layout.lineCount} PNG: ${out.absolutePath}")
+        for (line in 0 until layout.lineCount) {
+            assertTrue(!layout.isLineEllipsized(line), "line $line of the name is cut short (PNG: ${out.absolutePath})")
+        }
+        assertTrue(layout.lineCount == 2, "the name should take two lines here, took ${layout.lineCount} (PNG: ${out.absolutePath})")
+
+        fun text(t: String) =
+            onNodeWithText(t, ignoreCase = true, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val card = onNodeWithTag("card").fetchSemanticsNode().boundsInRoot
+        val inner = Rect(card.left + 18f, card.top + 18f, card.right - 18f, card.bottom - 18f)
+        val name = nameNode.boundsInRoot
+        val pill = text("New")
+        val flag = text(NO_EMERGENCY_CONTACT)
+        val chip = text("Biscuit")
+        val phone = onNodeWithContentDescription("Open profile to call", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val status = text("prospect")
+        for ((r, what) in listOf(name to "the name", pill to "the New pill", flag to "the flag", chip to "the first kin chip", phone to "the phone button", status to "the status pill")) {
+            assertTrue(
+                r.width > 0f && r.left >= inner.left - 0.5f && r.right <= inner.right + 0.5f && r.top >= inner.top - 0.5f && r.bottom <= inner.bottom + 0.5f,
+                "$what $r is outside the card's content area $inner (PNG: ${out.absolutePath})",
+            )
+        }
+        assertTrue(name.right <= pill.left, "the New pill $pill sits on the name $name")
+        assertTrue(flag.bottom <= chip.top, "the flag $flag is not above the kin chips $chip")
+        assertTrue(phone.top - chip.top >= 28f, "the kin chip row is squeezed: chip=$chip footer=$phone (PNG: ${out.absolutePath})")
+    }
 }

@@ -1,4 +1,5 @@
 import { Link, useParams } from '@tanstack/react-router';
+import { useRecordTitle } from '../lib/pageTitle';
 import { useQuery } from '@tanstack/react-query';
 import { getMyKin } from '../api/portal';
 import { useSignOut } from '../lib/auth';
@@ -33,6 +34,9 @@ export function KinDetail() {
   const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
 
   const { signOut, signingOut, error: signOutError } = useSignOut();
+  // #2007: the tab names the Kin once it has loaded, never the id in the URL.
+  // Above the early returns below, because a hook cannot sit behind one.
+  useRecordTitle(kin.data?.kin.find((k) => k.id === kinId)?.name);
 
   if (kin.isError) {
     return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;

@@ -228,6 +228,16 @@ data class Kinfolk(
     // reason as Kin.updatedAt, even though kinfolk currently stores it as a
     // String and kin stores it as a Timestamp; read via updatedAtIso().
     var updatedAt: Any? = null,
+    // #1953. When the household record was created: server time, stamped by the
+    // `createKinfolk` callable (the only staff create path, #909). Absent on a
+    // household from before that stamp. READ-ONLY here: left out of the create
+    // payload (KINFOLK_CREATE_EXCLUDED_FIELDS) and never diffed
+    // (KINFOLK_SERVER_OWNED). Held raw like updatedAt; read via createdAtIso().
+    var createdAt: Any? = null,
+    // Where createdAt came from (mytribe/scripts/createdAtProvenance.ts): blank
+    // or "live" is this system, "original" a source system's own date, "import"
+    // means createdAt is only the import date and is not a creation date.
+    var createdAtSource: String = "",
     // Household tag assignments: a flat list of tag NAMES resolved against
     // BusinessSettings.householdTagDefs() at render time. Held raw (Class A
     // pattern, same as KinCareSession.createdAt) because the field is absent on
@@ -1008,6 +1018,9 @@ fun Kin.updatedAtIso(): String = firestoreInstantToIso(updatedAt)
 
 /** ISO-8601 view of [Kinfolk.updatedAt] (String on live kinfolk, but Timestamp-tolerant). */
 fun Kinfolk.updatedAtIso(): String = firestoreInstantToIso(updatedAt)
+
+/** ISO-8601 view of [Kinfolk.createdAt] (Timestamp from the createKinfolk callable, String-tolerant). */
+fun Kinfolk.createdAtIso(): String = firestoreInstantToIso(createdAt)
 
 /** ISO-8601 view of [VetClinic.createdAt] (Timestamp when portal-submitted, String when admin-created). */
 fun VetClinic.createdAtIso(): String = firestoreInstantToIso(createdAt)

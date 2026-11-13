@@ -36,8 +36,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.composables.icons.lucide.Archive
@@ -222,7 +226,7 @@ fun KinTaleLogsScreen(
                     AuntieSearchField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = "Search KinTales by Kinfolk or body...",
+                        placeholder = "Search KinTales by Kinfolk, headline or body...",
                         leadingIcon = Lucide.Search,
                         onClear = { searchQuery = "" },
                         modifier = Modifier.fillMaxWidth(),
@@ -679,7 +683,7 @@ private fun BucketGroup(
  * Always tappable: it opens the draft in Communicate.
  */
 @Composable
-private fun GeneratedDraftRow(draft: Draft, onOpenDraft: (draftId: String) -> Unit) {
+internal fun GeneratedDraftRow(draft: Draft, onOpenDraft: (draftId: String) -> Unit) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val name = draft.kinfolkName.orEmpty()
@@ -711,6 +715,7 @@ private fun GeneratedDraftRow(draft: Draft, onOpenDraft: (draftId: String) -> Un
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
+            kinTaleRowHeadline(draft.generatedTitle)?.let { KinTaleRowHeadline(it) }
         }
         // #1598: "Draft" everywhere, never the stored `pending` / `generated`.
         AuntieStatusPill(label = "Draft", tone = AuntieStatusTone.Neutral, compact = true)
@@ -727,7 +732,7 @@ private fun GeneratedDraftRow(draft: Draft, onOpenDraft: (draftId: String) -> Un
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ReportRow(
+internal fun ReportRow(
     report: KinCareReport,
     onOpenReport: (sessionId: String) -> Unit = {},
     serviceRates: Map<String, String> = emptyMap(),
@@ -778,6 +783,7 @@ private fun ReportRow(
                 color = if (unnamed) c.textDim else c.textPrimary,
             )
             SubMetaColumn(report, serviceRates)
+            kinTaleRowHeadline(report.title)?.let { KinTaleRowHeadline(it) }
         }
 
         // The mock's `.pill`: the compact capsule at the row's right edge.
@@ -789,6 +795,33 @@ private fun ReportRow(
     }
 }
 
+/** Test tag on a KinTale row's headline line (#2059). */
+internal const val KIN_TALE_ROW_HEADLINE_TAG = "kintale-row-headline"
+/**
+ * #2059: the headline a KinTale row shows, or null when it has none. Blank and
+ * whitespace-only both mean none, so the row draws no empty line. Pure; tested.
+ */
+internal fun kinTaleRowHeadline(title: String?): String? = title?.trim()?.takeIf { it.isNotEmpty() }
+/**
+ * #2059 (operator ruling 2026-11-13): the tale's headline as the last, lighter
+ * line of a Drafts or Sent row, so two tales for one household and KinCare can
+ * be told apart. The mock draws no headline, so it takes the submeta's face and
+ * dim colour. One line with an ellipsis; the full text is the content
+ * description, so TalkBack reads all of it.
+ */
+@Composable
+internal fun KinTaleRowHeadline(text: String) {
+    Text(
+        text = text,
+        style = AuntieTheme.typography.bodySmall,
+        color = AuntieTheme.colors.textDim,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .testTag(KIN_TALE_ROW_HEADLINE_TAG)
+            .semantics { contentDescription = text },
+    )
+}
 /**
  * The text under the Kinfolk name: serviceType · visit timestamp, then the meta
  * pips (media count, send channel).
@@ -1029,19 +1062,21 @@ internal fun draftSubmeta(d: Draft, currentYear: Int = java.time.LocalDate.now()
     val whenText = if (d.createdOn.isBlank()) "Date TBD" else kinTaleShortDateTime(d.createdOn, currentYear)
     return "$type · $whenText"
 }
-/** #1563: the list search over a draft (household, type, copy). Pure; tested. */
+/** #1563: the list search over a draft (household, headline, type, copy). Pure; tested. */
 internal fun matchesDraftSearch(d: Draft, query: String): Boolean {
     val q = query.lowercase().trim()
     if (q.isBlank()) return true
     return d.kinfolkName.orEmpty().lowercase().contains(q) ||
+        d.generatedTitle.lowercase().contains(q) ||
         d.communicationType.replace('_', ' ').lowercase().contains(q) ||
         d.generatedCopy.lowercase().contains(q)
 }
-/** List-level search predicate (Kinfolk name, service, body). */
+/** List-level search predicate (Kinfolk name, headline, service, body). */
 internal fun matchesSearch(r: KinCareReport, query: String): Boolean {
     val q = query.lowercase().trim()
     if (q.isBlank()) return true
     return r.kinfolkName.lowercase().contains(q) ||
+        r.title.lowercase().contains(q) ||
         r.serviceType.orEmpty().lowercase().contains(q) ||
         r.bodyCopy.lowercase().contains(q)
 }

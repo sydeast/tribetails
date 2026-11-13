@@ -39,6 +39,7 @@ import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.util.joinDateForEdit
 import com.tribetails.auntieos.util.joinDateRangeError
 import com.tribetails.auntieos.util.SortOption
+import com.tribetails.auntieos.data.model.createdAtIso
 import com.tribetails.auntieos.data.model.updatedAtIso
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -129,9 +130,9 @@ internal val KIN_SORT_OPTIONS: List<SortOption> =
 
 /**
  * The Kinfolk tab's order. A to Z is by surname with a first-name tiebreak
- * (03-directory item 3, parity with web); Z to A is that reversed; the two
- * recency sorts read `joinDate` and `updatedAt`, the same two fields the web
- * admin's `filterSortKinfolk` reads, newest first. Pure; tested.
+ * (03-directory item 3, parity with web); Z to A is that reversed; Recently
+ * Created follows [kinfolkCreatedAt] (#1953) and Recently Updated reads
+ * `updatedAt`, newest first. Pure; tested.
  */
 internal fun sortKinfolkDirectory(rows: List<Kinfolk>, sort: SortOption): List<Kinfolk> {
     val surname = { kf: Kinfolk ->
@@ -140,9 +141,87 @@ internal fun sortKinfolkDirectory(rows: List<Kinfolk>, sort: SortOption): List<K
     return when (sort) {
         SortOption.AlphaAsc -> rows.sortedBy(surname)
         SortOption.AlphaDesc -> rows.sortedByDescending(surname)
-        SortOption.RecentlyCreated -> rows.sortedByDescending { it.joinDate }
+        SortOption.RecentlyCreated -> rows
+            .map { kf -> Triple(kf, kinfolkCreatedAt(kf), surname(kf)) }
+            .sortedWith(
+                compareBy<Triple<Kinfolk, KinfolkCreatedAt, String>> { it.second.tier.ordinal }
+                    .thenByDescending { it.second.millis }
+                    .thenBy { it.third },
+            )
+            .map { it.first }
         SortOption.RecentlyUpdated -> rows.sortedByDescending { it.updatedAtIso() }
     }
+}
+
+/** Which date places a household under Recently Created; declared in rank order, highest first. */
+internal enum class CreatedTier { Created, Joined, None }
+
+internal data class KinfolkCreatedAt(val tier: CreatedTier, val millis: Long)
+
+private val ISO_DAY = Regex("""^\d{4}-\d{2}-\d{2}$""")
+private val ISO_INSTANT = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$""")
+
+/** Epoch millis of an ISO day (UTC midnight) or ISO instant, else null. Free text is never guessed at. */
+private fun isoMillis(raw: String): Long? {
+    val s = raw.trim()
+    return runCatching {
+        when {
+            ISO_DAY.matches(s) -> java.time.LocalDate.parse(s).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+            ISO_INSTANT.matches(s) -> java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli()
+            else -> null
+        }
+    }.getOrNull()
+}
+
+/**
+ * #1953, the same rule as the web admin's `kinfolkCreatedMillis`. Highest tier
+ * first:
+ *  - Created: the record's own `createdAt`, stamped by the createKinfolk
+ *    callable, so every stamped household is newer than every unstamped one. A
+ *    `createdAtSource` of "import" is only the import date and is skipped.
+ *  - Joined: a household from before that stamp is placed by its join date,
+ *    when that reads as a date.
+ *  - None: no readable date. Sorts last, A to Z; never given a made-up date.
+ * The Firestore document create time is never used: after a data reload it is
+ * the import date.
+ */
+internal fun kinfolkCreatedAt(kf: Kinfolk): KinfolkCreatedAt {
+    if (kf.createdAtSource.trim() != "import") {
+        isoMillis(kf.createdAtIso())?.let { return KinfolkCreatedAt(CreatedTier.Created, it) }
+    }
+    isoMillis(kf.joinDate)?.let { return KinfolkCreatedAt(CreatedTier.Joined, it) }
+    return KinfolkCreatedAt(CreatedTier.None, 0L)
+}
+
+// ── Search (#1952) ──────────────────────────────────────────────────────────
+
+/** The fewest digits a search must hold before it is compared with phones. Three covers an area code. */
+internal const val MIN_PHONE_SEARCH_DIGITS = 3
+
+/** Only digits and the marks people type in a phone number: space ( ) + - . */
+private val PHONE_SHAPED = Regex("""^[\d\s()+.\-]+$""")
+
+private fun digitsOnly(s: String): String = s.filter { it.isDigit() }
+
+/** A US number with its leading country code 1 reads as the ten digits after it. */
+private fun withoutCountryCode(digits: String): String =
+    if (digits.length == 11 && digits.startsWith('1')) digits.drop(1) else digits
+
+/**
+ * The Kinfolk tab's search, the same rule as the web admin's `matchesKinfolk`
+ * (#1952): name or email substring, or, when the text reads as a phone number
+ * (digits and phone marks only, at least [MIN_PHONE_SEARCH_DIGITS] digits), a
+ * digits-to-digits phone match. Text with a letter in it is never compared with
+ * phones, and a typed "805-555-0188" finds a stored "(805) 555-0188". Pure; tested.
+ */
+internal fun matchesKinfolkSearch(kf: Kinfolk, query: String): Boolean {
+    val q = query.trim()
+    if (q.isEmpty()) return true
+    if (kf.displayName.contains(q, ignoreCase = true) || kf.email.contains(q, ignoreCase = true)) return true
+    if (!PHONE_SHAPED.matches(q)) return false
+    val digits = withoutCountryCode(digitsOnly(q))
+    if (digits.length < MIN_PHONE_SEARCH_DIGITS) return false
+    return withoutCountryCode(digitsOnly(kf.phoneNumber)).contains(digits)
 }
 
 data class DirectoryUiState(
@@ -782,10 +861,7 @@ class DirectoryViewModel(
                 filter == "All"                              -> !kf.status.equals("archived", ignoreCase = true)
                 else                                         -> kf.status.equals(filter, ignoreCase = true)
             }
-            val matchesSearch = state.searchQuery.isBlank() ||
-                                kf.displayName.contains(state.searchQuery, ignoreCase = true) ||
-                                kf.phoneNumber.contains(state.searchQuery, ignoreCase = true) ||
-                                kf.email.contains(state.searchQuery, ignoreCase = true)
+            val matchesSearch = matchesKinfolkSearch(kf, state.searchQuery)
             // #713: the tag filter sits beside status and search, not instead of
             // either, so "Active households tagged VIP" is one list.
             matchesStatus && matchesSearch && matchesDirectoryTag(kf.tagNames(), state.tagFilter)

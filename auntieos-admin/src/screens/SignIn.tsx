@@ -73,7 +73,7 @@ function authMessage(err: unknown): string {
  * installed on the web side and one glyph is not worth a dependency. The
  * Android screen draws the same glyph from the Lucide library it already has.
  */
-function PawMark() {
+export function PawMark() {
   return (
     <svg
       viewBox="0 0 24 24"

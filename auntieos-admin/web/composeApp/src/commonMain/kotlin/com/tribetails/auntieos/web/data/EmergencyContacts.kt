@@ -127,17 +127,29 @@ val KINFOLK_WRITE_EXCLUDED_KEYS: Set<String> = setOf(
     "emergencyContactRelation",
 )
 
+/**
+ * #1953. The creation stamp the `createKinfolk` callable writes once, with server
+ * time. Read for "Recently Created", never written by this client: not in a
+ * create body (the callable would drop it anyway) and never in an update mask,
+ * so an edit form that rebuilds the model from its fields cannot blank it. The
+ * same pair as Android's `KINFOLK_SERVER_OWNED`.
+ */
+val KINFOLK_SERVER_STAMPED_KEYS: Set<String> = setOf("createdAt", "createdAtSource")
+
+/** Every key a desktop kinfolk write leaves out. */
+internal val KINFOLK_NEVER_WRITTEN_KEYS: Set<String> = KINFOLK_WRITE_EXCLUDED_KEYS + KINFOLK_SERVER_STAMPED_KEYS
+
 /** Same configuration as `jsonOut` in FirestoreInterop.jvm.kt, so the body is unchanged apart from the removed keys. */
 private val writeJson = Json { encodeDefaults = true; ignoreUnknownKeys = true; isLenient = true }
 
 /**
  * The body a desktop kinfolk CREATE sends: the model minus
- * [KINFOLK_WRITE_EXCLUDED_KEYS], so a new household never writes an Emergency
- * Contact key. Updates send [kinfolkChanges] instead.
+ * [KINFOLK_NEVER_WRITTEN_KEYS], so a new household never writes an Emergency
+ * Contact key or a creation stamp. Updates send [kinfolkChanges] instead.
  */
 fun kinfolkWriteJson(k: Kinfolk): String {
     val obj = writeJson.encodeToJsonElement(Kinfolk.serializer(), k).jsonObject
-    return JsonObject(obj.filterKeys { it !in KINFOLK_WRITE_EXCLUDED_KEYS }).toString()
+    return JsonObject(obj.filterKeys { it !in KINFOLK_NEVER_WRITTEN_KEYS }).toString()
 }
 
 /**
@@ -158,13 +170,14 @@ data class KinfolkFieldChange(val path: List<String>, val value: kotlinx.seriali
  * `formValues.<key>`, a removed key is a delete at that path. Editing one custom
  * field therefore cannot overwrite another admin's change to a different key.
  *
- * Never includes `_id` or an Emergency Contact key. Empty means nothing to write.
- * Android does the same through `DirectoryFieldChanges` (DirectoryViewModel.kt:1187).
+ * Never includes `_id`, an Emergency Contact key or the creation stamp. Empty
+ * means nothing to write. Android does the same through `DirectoryFieldChanges`
+ * (DirectoryViewModel.kt:1187).
  */
 fun kinfolkChanges(loaded: Kinfolk, edited: Kinfolk): List<KinfolkFieldChange> = fieldChanges(
     writeJson.encodeToJsonElement(Kinfolk.serializer(), loaded).jsonObject,
     writeJson.encodeToJsonElement(Kinfolk.serializer(), edited).jsonObject,
-    excluded = KINFOLK_WRITE_EXCLUDED_KEYS,
+    excluded = KINFOLK_NEVER_WRITTEN_KEYS,
 )
 
 private val SIMPLE_FIELD_SEGMENT = Regex("^[A-Za-z_][A-Za-z_0-9]*$")

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRecordTitle } from '../lib/pageTitle';
 import { KINTALES_QUERY, type KinTaleEntry } from '../api/kinTales';
 import { KIN_QUERY, type Kin } from '../api/directory';
 import { KINTALE_TEMPLATES_QUERY, decodeKinTaleTemplate, templateForDraft } from '../api/kinTaleTemplates';
@@ -517,6 +518,8 @@ function KinTaleDetailBody({ entry, kin, templateRows, onEdit, onDeleted, onClos
     kinfolkName: entry.kinfolkName ?? '',
   });
   const tone = kinTaleStateTone(state);
+  // #2007: the tab names the KinTale by the headline its cover shows.
+  useRecordTitle(headline);
 
   // The rail's kin list, the same resolution the mood pills use: an id that
   // does not resolve renders as the id, never as a fabricated name.

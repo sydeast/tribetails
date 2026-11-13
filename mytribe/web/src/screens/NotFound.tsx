@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { useAuth } from '../lib/auth';
+import { NOT_FOUND_TITLE, useScreenTitle } from '../lib/pageTitle';
 import { PortalNav } from '../components/PortalNav';
 /**
  * What the router renders for a path no route owns (#1293).
@@ -19,6 +20,9 @@ import { PortalNav } from '../components/PortalNav';
  */
 export function NotFound() {
   const auth = useAuth();
+  // #2007: rendered at the root for an address nothing owns, so no route
+  // title reaches the tab; the screen names itself.
+  useScreenTitle(NOT_FOUND_TITLE);
   const signedIn = auth.status === 'signedIn';
   return (
     <>
