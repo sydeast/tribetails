@@ -29,8 +29,10 @@ import {
 } from '../lib/activityDetail';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import { businessTodayIso } from '../lib/businessZoneTime';
-import { getBusinessSettings } from '../api/settings';
+import { type WorkSettings } from '../api/workSettings';
+import { useWorkSettingsRead } from '../lib/useWorkSettings';
 import { useRovingTabs } from '../lib/useRovingTabs';
+import { Banner } from '../components/Banner';
 import { DenScreenHeading, DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { GhostButton } from '../components/Buttons';
@@ -51,6 +53,33 @@ function anomalyDetail(a: VerifyAnomaly): string {
     case 'head_mismatch':
       return `Chain-head mismatch: sealed head at seq ${a.headSeq}, observed seq ${a.observedSeq}.`;
   }
+}
+
+/** #2192: the words on the business clock's wait and failure, exported so tests spell them once. */
+export const BUSINESS_CLOCK_LOADING = 'Loading the business clock…';
+export const BUSINESS_CLOCK_FAILED = "Couldn't load the business clock";
+
+/**
+ * #2192: what the log says while the business clock loads and if it could not
+ * be read. Nothing once it is in. The log draws either way; the failure line
+ * says which clock its days are counted on until the read works.
+ */
+function BusinessClockNotice({ state }: { state: Async<WorkSettings> }) {
+  if (state.status === 'ready') return null;
+  if (state.status === 'loading') {
+    return <LoadingRow label={BUSINESS_CLOCK_LOADING} className="den-hint activity__clock" />;
+  }
+  const retry = state.retry;
+  return (
+    <Banner
+      tone="error"
+      title={BUSINESS_CLOCK_FAILED}
+      className="activity__clock"
+      {...(retry ? { trailing: <GhostButton label="Try again" onClick={retry} /> } : {})}
+    >
+      Until it loads, days are counted on Central time.
+    </Banner>
+  );
 }
 
 /** Groups by the BUSINESS day (#1585): a 9:34 pm Chicago event stamped 02:34Z belongs to the day before. */
@@ -153,22 +182,16 @@ export function ActivityLog() {
   useEffect(() => {
     void verify();
   }, []);
-  // The business's zone (#1585): America/Chicago until the settings read lands or if it fails.
-  const [zone, setZone] = useState<string>(DEFAULT_BUSINESS_TIME_ZONE);
-  useEffect(() => {
-    let live = true;
-    Promise.resolve()
-      .then(() => getBusinessSettings())
-      .then((settings) => {
-        if (live) setZone(resolveBusinessTimeZone(settings.timeZone));
-      })
-      .catch(() => {
-        // The default zone is the fallback; a failed read must not blank a log that reads fine without it.
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
+  // The business's zone (#1585): America/Chicago until the read lands or if it
+  // fails. #2192: through the work-settings read, so an Auntie, who cannot read
+  // `business_settings`, gets it from the narrow staff read and the owner keeps
+  // her direct one. A failed read must not blank a log that reads fine without
+  // it, so the log still draws and the notice says which clock it is on.
+  const workSettings = useWorkSettingsRead();
+  const zone =
+    workSettings.status === 'ready'
+      ? resolveBusinessTimeZone(workSettings.data.timeZone)
+      : DEFAULT_BUSINESS_TIME_ZONE;
 
   const today = businessTodayIso(zone);
 
@@ -181,6 +204,8 @@ export function ActivityLog() {
         subtitle="A tamper-evident audit trail, newest first and capped at 200 by chain sequence. Legacy pre-chain entries are not listed. Open an entry for the full record. Re-verify walks the SHA-256 chain server-side and reports the verdict."
         trailing={<ChainBadge chain={chain} onVerify={() => void verify()} />}
       />
+
+      <BusinessClockNotice state={workSettings} />
 
       <AsyncRegion
         state={entries}

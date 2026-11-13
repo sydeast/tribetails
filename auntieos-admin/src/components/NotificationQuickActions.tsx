@@ -56,6 +56,11 @@ export interface NotificationQuickActionsProps {
   /** Handed a route from the pure table; the router performs the navigation. */
   onNavigate: (route: NotificationRoute) => void;
   onBookingAction: (bookingId: string, action: BatchBookingAction) => void;
+  /**
+   * #2200 / #2201: the signed-in account is an Auntie, so no Open or Create
+   * quote into an owner-only screen is drawn. Absent means the owner.
+   */
+  isAuntie?: boolean;
 }
 
 export function NotificationQuickActions({
@@ -68,8 +73,9 @@ export function NotificationQuickActions({
   onRestore,
   onNavigate,
   onBookingAction,
+  isAuntie = false,
 }: NotificationQuickActionsProps) {
-  const actions = applicableNotificationActions(entry);
+  const actions = applicableNotificationActions(entry, { isAuntie });
   const bookingPending = pending.has('booking');
   const readPending = pending.has('read');
   const archivePending = pending.has('archive');

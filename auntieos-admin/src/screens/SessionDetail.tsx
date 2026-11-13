@@ -15,6 +15,7 @@ import { VisitInternalNotes } from '../components/VisitInternalNotes';
 import { resolveBusinessTimeZone } from '../lib/businessOperations';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { useVisitNoticeReach } from '../lib/useVisitNoticeReach';
+import { useIsAuntie } from '../lib/useIsAuntie';
 import { actionNotifiesHousehold, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
 import { useVisitTracking } from '../lib/visitTracking';
 import {
@@ -293,7 +294,10 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   // `useDocById` subscription, so the document repaints itself -- and now that
   // the clock writes to Firestore directly, that live listener repaints the row
   // the instant the local write lands, ahead of the server ack.
-  const clock = useVisitLifecycle(entry, household);
+  // #2185: an Auntie's notice lines name the owner, never Settings. Asked here,
+  // above the clock, because the `caretaker` read below is declared later.
+  const auntie = useIsAuntie();
+  const clock = useVisitLifecycle(entry, household, undefined, auntie);
   // #1840: the confirm promises the household a notice only when the server
   // says one can go out (a member login to send to, and the switch on). It
   // used to read `kinfolk.uid` off the household record, which on an unclaimed
@@ -309,7 +313,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   const noticeLine =
     clock.pending === null || entry === null
       ? null
-      : visitNoticeConfirmFor({ action: clock.pending.action, session: entry, reach, household });
+      : visitNoticeConfirmFor({ action: clock.pending.action, session: entry, reach, household, auntie });
   // Whether THIS browser is writing the route (#772). Drives the live line
   // under the clock and the Route panel's empty sentence while ARRIVED.
   const tracking = useVisitTracking(sessionId);

@@ -10,8 +10,18 @@ const { useCollection, verifyActivityLogChain, getBusinessSettings } = vi.hoiste
   verifyActivityLogChain: vi.fn(),
   getBusinessSettings: vi.fn(),
 }));
-vi.mock('../api/settings', () => ({ getBusinessSettings }));
+vi.mock('../api/settings', async (orig) => ({
+  ...(await orig<typeof import('../api/settings')>()),
+  getBusinessSettings,
+}));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+// #2192: who is signed in, and the transport an Auntie's staff read goes over.
+const { currentSessionSeat, call } = vi.hoisted(() => ({ currentSessionSeat: vi.fn(), call: vi.fn() }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat,
+}));
+vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fns')>()), call }));
 vi.mock('../api/activityLog', async (orig) => ({
   ...(await orig<typeof import('../api/activityLog')>()),
   verifyActivityLogChain,
@@ -26,8 +36,9 @@ vi.mock('../lib/useStaffNames', () => ({
   useStaffRoles: () => staffRoles.current,
 }));
 
-import { ActivityLog } from './ActivityLog';
+import { ActivityLog, BUSINESS_CLOCK_FAILED, BUSINESS_CLOCK_LOADING } from './ActivityLog';
 import { businessTodayIso } from '../lib/businessZoneTime';
+import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
 
 function entry(over: Partial<ActivityLogEntry>): ActivityLogEntry {
   return {
@@ -43,6 +54,8 @@ beforeEach(() => {
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] } satisfies Async<ActivityLogEntry[]>);
   verifyActivityLogChain.mockReset().mockResolvedValue(OK);
   getBusinessSettings.mockReset().mockResolvedValue({ timeZone: '' });
+  currentSessionSeat.mockReset().mockResolvedValue(OWNER_SEAT);
+  call.mockReset().mockImplementation(staffOnlyCall);
   staffNames.current = new Map();
   staffRoles.current = new Map();
 });
@@ -574,5 +587,69 @@ describe('ActivityLog actor role (#1820)', () => {
         entry({ actionType: 'VISIT_ARRIVED', actorRole: 'AUNTIE', payload: { admin: true, staffRole: null, visitId: 's1' } }),
       ),
     ).toBe('Operator');
+  });
+});
+
+/**
+ * #2192. The log read the business clock straight from `business_settings`,
+ * which an Auntie's sign-in may not read, so for her it failed without a word
+ * and counted days on Central time. It now goes through the work-settings read.
+ */
+describe('ActivityLog business clock (#2192)', () => {
+  // 21:34 UTC on Nov 4: 3:34 pm in Chicago, 2:34 pm in Denver.
+  const ROW = entry({ _id: 'a', timestamp: '2026-11-04T21:34:00Z', seq: 5 });
+  const shownTime = () => document.querySelector('time.activity__time')?.textContent;
+
+  it('owner: shows a loading row until her own settings read lands, then the business clock', async () => {
+    let land: (v: unknown) => void = () => undefined;
+    getBusinessSettings.mockReturnValue(new Promise((resolve) => (land = resolve)));
+    useCollection.mockReturnValue({ status: 'ready', data: [ROW] });
+    render(<ActivityLog />);
+    expect(await screen.findByText(BUSINESS_CLOCK_LOADING)).toBeInTheDocument();
+    // The log still draws while it waits.
+    expect(shownTime()).toBe('3:34p');
+
+    land({ timeZone: 'America/Denver' });
+    await waitFor(() => expect(shownTime()).toBe('2:34p'));
+    expect(screen.queryByText(BUSINESS_CLOCK_LOADING)).toBeNull();
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('owner: a failed read says so, keeps the log on Central time, and Try again reads again', async () => {
+    getBusinessSettings.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ timeZone: 'America/Denver' });
+    useCollection.mockReturnValue({ status: 'ready', data: [ROW] });
+    render(<ActivityLog />);
+    expect(await screen.findByText(BUSINESS_CLOCK_FAILED)).toBeInTheDocument();
+    expect(screen.getByText('Until it loads, days are counted on Central time.')).toBeInTheDocument();
+    expect(shownTime()).toBe('3:34p');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(shownTime()).toBe('2:34p'));
+    expect(screen.queryByText(BUSINESS_CLOCK_FAILED)).toBeNull();
+  });
+
+  it('Auntie: counts days on the business clock from the staff read, and never reads the settings record', async () => {
+    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+    useCollection.mockReturnValue({ status: 'ready', data: [ROW] });
+    render(<ActivityLog />);
+    // STAFF_WORK_REPLY carries America/Denver.
+    await waitFor(() => expect(shownTime()).toBe('2:34p'));
+    expect(call).toHaveBeenCalledWith('getStaffWorkSettings', {});
+    expect(getBusinessSettings).not.toHaveBeenCalled();
+    expect(screen.queryByText(BUSINESS_CLOCK_LOADING)).toBeNull();
+    expect(screen.queryByText(BUSINESS_CLOCK_FAILED)).toBeNull();
+  });
+
+  it('Auntie: a failed staff read says so instead of failing silently, and Try again recovers', async () => {
+    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+    call.mockRejectedValueOnce(new Error('unavailable'));
+    useCollection.mockReturnValue({ status: 'ready', data: [ROW] });
+    render(<ActivityLog />);
+    expect(await screen.findByText(BUSINESS_CLOCK_FAILED)).toBeInTheDocument();
+    expect(shownTime()).toBe('3:34p');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(shownTime()).toBe('2:34p'));
+    expect(getBusinessSettings).not.toHaveBeenCalled();
   });
 });

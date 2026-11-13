@@ -945,6 +945,23 @@ describe('Notifications quick actions (issue #20)', () => {
     });
   });
 
+  // #2200 / #2201: Invoices sends an Auntie Home, so her rows offer neither a
+  // Create quote nor an Open that lands there. Approve / Deny stays hers.
+  it('offers an Auntie no Create quote and no Open into Invoices', () => {
+    mockStreams({
+      status: 'ready',
+      data: [
+        waitingRequest(),
+        entry({ _id: 'n2', key: 'quote.denied', targetType: 'invoice', targetId: 'inv1', data: { kinfolkId: 'k9' } }),
+      ],
+    });
+    render(<Notifications onNavigate={vi.fn()} isAuntie />);
+    expect(screen.queryByRole('button', { name: 'Create quote' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    // The waiting request still opens its booking; the quote row opens nothing.
+    expect(screen.getAllByRole('button', { name: 'Open' })).toHaveLength(1);
+  });
+
   it('offers no Create quote on a plain invoice notification, even with a household in data', () => {
     mockStreams({
       status: 'ready',

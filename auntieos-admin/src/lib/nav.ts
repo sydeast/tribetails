@@ -79,22 +79,32 @@ export const NAV: readonly NavEntry[] = [
   { dest: 'kintales', title: 'KinTales', group: 'den', slug: 'kintales' },
   { dest: 'gallery', title: 'Gallery', group: 'den', slug: 'gallery' },
 
-  { dest: 'coveragePackages', title: 'Packages', group: 'careOps', slug: 'packages' },
+  // #2200 / #2201, lead ruling 2026-11-13: an Auntie never sees money, and
+  // marketing and audit oversight are the owner's. Packages, Invoices,
+  // Marketing blasts and Activity Log are off her rail and their addresses
+  // send her Home, the way Settings and Templates are (#2163).
+  { dest: 'coveragePackages', title: 'Packages', group: 'careOps', slug: 'packages', ownerOnly: true },
   { dest: 'schedule', title: 'Schedule', group: 'careOps', slug: 'schedule' },
   { dest: 'bookings', title: 'Bookings', group: 'careOps', slug: 'bookings' },
   // The rail says "Auntie Time"; the slug and the code say sessions.
   { dest: 'sessions', title: 'Auntie Time', group: 'careOps', slug: 'sessions' },
-  { dest: 'invoices', title: 'Invoices', group: 'careOps', slug: 'invoices' },
+  { dest: 'invoices', title: 'Invoices', group: 'careOps', slug: 'invoices', ownerOnly: true },
   { dest: 'communicate', title: 'Communicate', group: 'careOps', slug: 'communicate' },
   // Beside Communicate because the two are the same act at two times:
   // Communicate sends now, this schedules. Pinned rather than contextual, since
   // "what goes out next week" is a question asked cold, with no screen to
   // arrive from.
-  { dest: 'marketingBlasts', title: 'Marketing blasts', group: 'careOps', slug: 'marketing-blasts' },
+  {
+    dest: 'marketingBlasts',
+    title: 'Marketing blasts',
+    group: 'careOps',
+    slug: 'marketing-blasts',
+    ownerOnly: true,
+  },
 
   { dest: 'inbox', title: 'Inbox', group: 'more', slug: 'inbox' },
   { dest: 'notifications', title: 'Notifications', group: 'more', slug: 'notifications' },
-  { dest: 'activity', title: 'Activity Log', group: 'more', slug: 'activity' },
+  { dest: 'activity', title: 'Activity Log', group: 'more', slug: 'activity', ownerOnly: true },
   // #2163, operator ruling 2026-11-13: an Auntie sees neither Settings nor
   // Templates (email, SMS, push). KinTale templates below stays hers.
   { dest: 'settings', title: 'Settings', group: 'more', slug: 'settings', ownerOnly: true },
@@ -178,6 +188,22 @@ const BY_SLUG = new Map<string, Destination>([
 ]);
 
 const BY_DEST = new Map<Destination, string>(NAV.map((e) => [e.dest, e.slug]));
+
+const OWNER_ONLY_DESTS = new Set<Destination>(NAV.filter((e) => e.ownerOnly).map((e) => e.dest));
+
+/**
+ * Does this in-app path open an owner-only screen (#2200 / #2201)? Reads the
+ * first segment through the same slug table the rail uses, so a retired
+ * address (`/template-bank`, `/notification-gate`) counts as the screen it
+ * lands on. A link that answers true is hidden for an Auntie rather than left
+ * as a button that only sends her Home.
+ */
+export function isOwnerOnlyPath(to: string): boolean {
+  const slug = segments(to)[0];
+  if (slug === undefined) return false;
+  const dest = BY_SLUG.get(slug);
+  return dest !== undefined && OWNER_ONLY_DESTS.has(dest);
+}
 
 const TITLE_BY_DEST = new Map<Destination, string>(NAV.map((e) => [e.dest, e.title]));
 
