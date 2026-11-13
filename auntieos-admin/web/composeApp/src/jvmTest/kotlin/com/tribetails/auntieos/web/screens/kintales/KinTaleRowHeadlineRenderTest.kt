@@ -1,12 +1,14 @@
 package com.tribetails.auntieos.web.screens.kintales
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsNodeInteractionsProvider
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -127,6 +129,33 @@ class KinTaleRowHeadlineRenderTest {
         onNodeWithTag(KIN_TALE_ROW_HEADLINE_TAG, useUnmergedTree = true).performClick()
         waitForIdle()
         assertEquals("s1", opened)
+    }
+
+    // The console is driven by a mouse, and the line sits inside TooltipBox's
+    // pointer handling: a real mouse press and release on it must still reach
+    // the row's click, on a report row and on a generated draft row.
+    @Test
+    fun aMouseClickOnTheHeadlineStillOpensTheTaleAndTheDraft() = runDesktopComposeUiTest {
+        var openedReport: String? = null
+        var openedDraft: String? = null
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                Column {
+                    ReportRow(report("A great day at the park"), onOpenReport = { openedReport = it })
+                    GeneratedDraftRow(
+                        GeneratedDraft(_id = "d1", kinfolkName = "The Okafors", generatedTitle = "Mabel naps in the sun"),
+                        onOpenDraft = { openedDraft = it._id },
+                    )
+                }
+            }
+        }
+        val lines = onAllNodesWithTag(KIN_TALE_ROW_HEADLINE_TAG, useUnmergedTree = true)
+        lines[0].performMouseInput { click(center) }
+        waitForIdle()
+        assertEquals("s1", openedReport)
+        lines[1].performMouseInput { click(center) }
+        waitForIdle()
+        assertEquals("d1", openedDraft)
     }
 
     @Test
