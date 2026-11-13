@@ -3,6 +3,7 @@ import {
   NAV,
   navKicker,
   NOTIFICATION_GATE_REDIRECT,
+  isOwnerOnlyPath,
   parseHash,
   railEntries,
   railGroup,
@@ -128,14 +129,43 @@ describe('rail composition', () => {
     expect(new Set(slugs).size).toBe(slugs.length);
   });
 
-  // #2163: an Auntie's rail drops exactly Settings and Templates, nothing else.
-  it('leaves Settings and Templates, and only those, off an Auntie rail', () => {
+  // #2163, then #2200 / #2201: an Auntie's rail drops exactly Settings and
+  // Templates, and Packages, Invoices, Marketing blasts and Activity Log,
+  // nothing else.
+  it('leaves exactly the owner screens off an Auntie rail', () => {
     const owner = railEntries().map((e) => e.slug);
     const auntie = railEntries(true).map((e) => e.slug);
-    expect(owner.filter((s) => !auntie.includes(s))).toEqual(['settings', 'templates']);
+    expect(owner.filter((s) => !auntie.includes(s))).toEqual([
+      'packages',
+      'invoices',
+      'marketing-blasts',
+      'activity',
+      'settings',
+      'templates',
+    ]);
     expect(auntie).toContain('kintale-templates');
     expect(railGroup('more', true).map((e) => e.slug)).not.toContain('settings');
     expect(railGroup('more').map((e) => e.slug)).toContain('settings');
+  });
+
+  // #2200 / #2201: the one test in-app links use to hide a way into an owner
+  // screen, so an Auntie never meets a button that only sends her Home.
+  it('names an owner screen by its path, old addresses included', () => {
+    for (const to of [
+      '/invoices',
+      '/packages',
+      '/marketing-blasts',
+      '/activity',
+      '/settings',
+      '/templates',
+      '/template-bank',
+      '/notification-gate',
+    ]) {
+      expect(isOwnerOnlyPath(to)).toBe(true);
+    }
+    for (const to of ['/home', '/bookings', '/kintales', '/directory/$kinfolkId', '/kintale-templates', '/communicate', '']) {
+      expect(isOwnerOnlyPath(to)).toBe(false);
+    }
   });
 });
 

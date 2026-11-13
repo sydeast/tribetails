@@ -1,6 +1,7 @@
 import { rec, str } from './coerce';
 import { normalizedTargetType, notificationKinfolkId } from './notificationContext';
 import { sessionIdForVisit } from '../api/bookings';
+import { isOwnerOnlyPath } from './nav';
 import { type NotificationEntry } from '../api/notifications';
 
 /**
@@ -234,7 +235,10 @@ const QUOTE_DENIED_KEY = 'quote.denied';
  * the server has stamped as answered (#1647): it is no longer a fresh ask. The
  * button still disappears when no household is identifiable, same as before.
  */
-export function applicableNotificationActions(entry: NotificationEntry): NotificationActionSet {
+export function applicableNotificationActions(
+  entry: NotificationEntry,
+  { isAuntie = false }: { isAuntie?: boolean } = {},
+): NotificationActionSet {
   const type = normalizedTargetType(entry.targetType);
   const targetId = str(entry.targetId).trim();
   const key = str(entry.key).trim();
@@ -254,10 +258,17 @@ export function applicableNotificationActions(entry: NotificationEntry): Notific
     key === PENDING_BOOKING_REQUEST_KEY && outcome === null && !hasInvoiceReference;
   const quoteEligible = kinfolkId !== '' && (isQuoteDenial || isUninvoicedBookingRequest);
 
+  // #2200 / #2201: an owner-only screen (Invoices, for these rows) sends an
+  // Auntie Home, so for her a button into one is dropped rather than drawn as
+  // a dead end. `bookingId` is untouched: Approve / Deny is hers, and the
+  // "Needs a decision" count is derived from it.
+  const forViewer = (route: NotificationRoute | null): NotificationRoute | null =>
+    route !== null && isAuntie && isOwnerOnlyPath(route.to) ? null : route;
+
   return {
-    open: notificationOpenRoute(entry),
+    open: forViewer(notificationOpenRoute(entry)),
     bookingId: isPendingBookingRequest ? targetId : '',
-    quote: quoteEligible ? notificationQuoteRoute(kinfolkId) : null,
+    quote: forViewer(quoteEligible ? notificationQuoteRoute(kinfolkId) : null),
     outcome,
   };
 }

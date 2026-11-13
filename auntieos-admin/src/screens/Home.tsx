@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouteContext } from '@tanstack/react-router';
 import { DenPanel, DenScreenHeading } from '../components/DenScreenKit';
 import { GhostButton } from '../components/Buttons';
 import { WidgetEditBar } from '../components/WidgetEditBar';
 import { useAuth } from '../lib/auth';
+import { isAuntieAccess } from '../lib/access';
 import { getDashboardLayout, saveDashboardLayout } from '../api/dashboardLayout';
 import {
   DEFAULT_DASHBOARD,
@@ -105,7 +106,8 @@ interface WidgetProps {
   onOpenKinTales: () => void;
   /** Directory's Kin tab, filtered to the pets "Kin in care" counts. */
   onOpenKinInCare: () => void;
-  onOpenInvoices: () => void;
+  /** Null for an Auntie (#2200 / #2201): Invoices sends her Home. */
+  onOpenInvoices: (() => void) | null;
 }
 
 /**
@@ -184,6 +186,12 @@ export function Home() {
   const navigate = useNavigate();
   const auth = useAuth();
   const uid = auth.status === 'signedIn' ? auth.user.uid : '';
+  // #2200 / #2201: an Auntie never sees money, and Invoices sends her Home, so
+  // the stat row gets no way into it (and draws no revenue tile) for her. Read
+  // off the access the admin layout already resolved, so it is known on the
+  // first paint and the invoices read is never opened.
+  const { access } = useRouteContext({ from: '/admin' });
+  const isAuntie = isAuntieAccess(access);
 
   // `null` = the stored layout is not known yet. NOTHING is drawn on the board
   // while that is true. Painting the web default meanwhile looks like a free
@@ -386,7 +394,7 @@ export function Home() {
                 onOpenKinInCare={() =>
                   void navigate({ to: '/directory', search: { tab: 'kin', inCare: '1' } })
                 }
-                onOpenInvoices={() => void navigate({ to: '/invoices' })}
+                onOpenInvoices={isAuntie ? null : () => void navigate({ to: '/invoices' })}
               />
             </div>
           ))
