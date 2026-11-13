@@ -108,6 +108,18 @@ class BillingAccessPaysControllerTest {
     }
 
     @Test
+    fun `#2156 an accept refused because the work was billed elsewhere shows the server's sentence beside the quote`() = runTest {
+        val billedElsewhere =
+            "This quote can no longer be accepted, because some of the work on it has been billed on another invoice since it was sent. Ask your Auntie for an up-to-date quote."
+        val fake = FakeFunctionsClient()
+        fake.stubError("acceptQuote", IllegalStateException(billedElsewhere))
+        val c = InvoicesController("kin-1", PortalApi(fake), this) { }
+        c.startQuoteDecision(invoice(id = "q-1", status = InvoiceStatus.Quote), accept = true)
+        advanceUntilIdle()
+        assertEquals(billedElsewhere, c.quoteErrorFor("q-1"))
+    }
+
+    @Test
     fun `a member without billing access sees the server's refusal on use credit`() = runTest {
         val fake = FakeFunctionsClient()
         fake.stubError("redeemCredit", IllegalStateException(refusal))

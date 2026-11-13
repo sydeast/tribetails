@@ -88,19 +88,18 @@ describe('resendQuote over the real dispatcher', () => {
     await resendQuoteHandler(req());
     expect(householdQuoteMessages(ctx.writes)).toHaveLength(1);
 
-    // The retry: the quote reads as it did before the first attempt's
-    // transaction (declined, count unchanged), i.e. that commit never landed
+    // The retry: the quote reads as it did before the first attempt (declined,
+    // count unchanged), i.e. that attempt was put back after its notice failed
     // although the household was already told.
     await ctx.db.collection('invoices').doc('q1').set(declined());
     vi.setSystemTime(NOW + 20_000);
     await expect(resendQuoteHandler(req())).resolves.toMatchObject({ ok: true });
     expect(householdQuoteMessages(ctx.writes)).toHaveLength(1);
 
-    // The quote is open again, so a later press is refused by the quote's own
-    // state and still sends nothing.
+    // The quote is open again, so a later press inside the window is a retry
+    // of a completed resend: answered ok, and still nothing is sent.
     vi.setSystemTime(NOW + 30_000);
-    const later = await resendQuoteHandler(req()).catch((e) => e);
-    expect(later.code).toBe('failed-precondition');
+    await expect(resendQuoteHandler(req())).resolves.toMatchObject({ ok: true });
     expect(householdQuoteMessages(ctx.writes)).toHaveLength(1);
 
     // The household declines the revised quote and the office resends again,

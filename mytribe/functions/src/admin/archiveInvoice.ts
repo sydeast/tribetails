@@ -36,6 +36,12 @@ import { readSessionsHeldBy, stageSessionLinks, storedSessionIds, visitsNamedBy 
  * The draft's `sessionIds` empties and the set is kept in `releasedSessionIds`,
  * which `unarchiveInvoice` takes back from. Its lines are left as they were.
  * Any other invoice keeps its visits: it was sent, so it billed them.
+ *
+ * #2156: A QUOTE KEEPS ITS VISITS TOO. It holds them from the day it is made,
+ * and archiving does not take it away from the Kinfolk: MyTribe still lists an
+ * archived quote and they can still accept it. Letting its visits go would put
+ * work the household can still agree to back on the un-invoiced list for a
+ * second invoice to bill. A decline is what lets them go (`denyQuote`).
  */
 // Exported so the callable-contract drift guard can freeze this request shape.
 export const Args = z.object({

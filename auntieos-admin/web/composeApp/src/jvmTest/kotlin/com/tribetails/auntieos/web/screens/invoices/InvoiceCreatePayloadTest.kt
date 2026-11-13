@@ -117,6 +117,29 @@ class InvoiceCreatePayloadTest {
         assertEquals(3, p["lineItems"]!!.jsonArray.size)
     }
 
+    /**
+     * #2156: a quote now holds its visits, so the server refuses one for a visit
+     * another quote or invoice already holds. The composer shows that sentence
+     * as the server wrote it, and the quote's visits still go on the wire.
+     */
+    @Test
+    fun aQuoteRefusedOverAHeldVisitComesBackVerbatim() = runBlocking {
+        val refusal = "Already on another quote or invoice: the visit on 2026-10-02 is on quote 1041. Remove it there first."
+        JvmFirestoreFixtures.callableErrors = mapOf("createQuote" to refusal)
+        val r = composed(isQuote = true, sendToKinfolk = false)
+        val res = FirestoreClient().createQuote(
+            r.invoice,
+            r.sendToKinfolk,
+            termsCode = r.termsCode,
+            lineItems = r.lineItems,
+            invoiceDiscountCents = r.invoiceDiscountCents,
+        )
+        assertTrue(res is WriteResult.Err, "$res")
+        assertEquals(refusal, (res as WriteResult.Err).message)
+        val bound = lastPayload()["lineItems"]!!.jsonArray.mapNotNull { it.jsonObject["sessionId"]?.jsonPrimitive?.content }
+        assertEquals(listOf("s1", "s2"), bound)
+    }
+
     @Test
     fun theBlankPathSendsNoLineItemsKeyAtAll() = runBlocking {
         JvmFirestoreFixtures.callableResponses = mapOf("createInvoice" to """{"ok":true,"invoiceId":"inv_2"}""")
