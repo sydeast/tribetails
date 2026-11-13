@@ -1022,4 +1022,4 @@ private fun List<TimeBlockRow>.replaceAt(index: Int, edit: (TimeBlockRow) -> Tim
 /** #2123: the KinTale task switch's row, in the operator's words. */
 internal const val KIN_TALE_REQUIRED_TITLE = "KinTale required"
 internal const val KIN_TALE_REQUIRED_DESCRIPTION =
-    "The Auntie keeps a Send the KinTale task until it is sent. The visit is still Completed when she leaves."
+    "Auntie Time lists the visit under KinTales to send until its KinTale is sent. The visit is still Completed when the Auntie leaves."

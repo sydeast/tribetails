@@ -802,7 +802,7 @@ internal fun BookingRulesPanel(
 /** #2123: the "KinTale required" row's words, the same as admin web and Android. */
 internal const val KINTALE_REQUIRED_TITLE = "KinTale required"
 internal const val KINTALE_REQUIRED_DESCRIPTION =
-    "The Auntie keeps a Send the KinTale task until it is sent. The visit is still Completed when she leaves."
+    "Auntie Time lists the visit under KinTales to send until its KinTale is sent. The visit is still Completed when the Auntie leaves."
 
 @Composable
 internal fun VisitsTrackingPanel(
