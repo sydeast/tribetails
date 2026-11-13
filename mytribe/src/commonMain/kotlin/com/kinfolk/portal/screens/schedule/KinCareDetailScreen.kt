@@ -171,7 +171,7 @@ fun KinCareDetailScreen(
     }
 
     // #1823: while this visit is under way or about due, the screen follows the
-    // Auntie's taps (On the way, Arrived, Departed, Completed) without being
+    // Auntie's taps (On the way, Arrived, then Completed at departure) without being
     // left and reopened. Quiet on purpose: a dropped re-read, or one that no
     // longer lists the visit, leaves what is on screen alone.
     KeepBookingsCurrent(bookings, nowMs) {
@@ -206,7 +206,8 @@ fun KinCareDetailScreen(
     // #1303: the replay of a completed visit comes from the same getMyVisits row
     // the Schedule screen's Visit Replays reads (GPS lives on the AuntieOS
     // session, not the booking). Best effort: a failure only drops the replay.
-    val replaySessionId = kinCare?.takeIf { it.status == com.kinfolk.portal.portal.BookingStatus.Completed }?.sessionId
+    // #2123: through the stage, so a departed visit from an older answer counts as completed.
+    val replaySessionId = kinCare?.takeIf { it.stage() == com.kinfolk.portal.portal.VisitStage.Completed }?.sessionId
     var replayVisit by remember { mutableStateOf<com.kinfolk.portal.portal.Visit?>(null) }
     var replayLoading by remember { mutableStateOf(false) }
     LaunchedEffect(replaySessionId, kinfolkId) {
@@ -496,7 +497,7 @@ private fun KinCareDetailBody(
 
         // #1303: what a completed visit leaves behind: its KinTale, its bill and
         // its replay, each only when the record exists.
-        if (kinCare.status == com.kinfolk.portal.portal.BookingStatus.Completed) {
+        if (kinCare.stage() == com.kinfolk.portal.portal.VisitStage.Completed) {
             GlassCard(
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(KinfolkSpacing.l),

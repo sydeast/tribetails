@@ -28,6 +28,10 @@ import kotlin.test.assertEquals
  * Arrived it is, names the Kin, opens the visit, and clears when the Auntie
  * leaves; Up next lists the visit with its current status until it is
  * finished. The web mirror is `Home.underWay.test.tsx`.
+ *
+ * #2123 (operator ruling 2026-11-12): a visit is Completed at departure. The
+ * server sends it completed; an older answer's `active` + `ended` pair reads
+ * COMPLETED. Nothing on Home says DEPARTED.
  */
 class HomeVisitUnderWayTest {
     private val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
@@ -47,9 +51,10 @@ class HomeVisitUnderWayTest {
     }
 
     private fun answer(v: JsonObject, live: Boolean): JsonObject = buildJsonObject {
+        val finished = v["status"].toString().trim('"') in setOf("completed", "cancelled")
         put("liveVisit", if (live) v else JsonNull)
-        put("upcoming", buildJsonArray { add(v) })
-        put("recent", buildJsonArray {})
+        put("upcoming", buildJsonArray { if (!finished) add(v) })
+        put("recent", buildJsonArray { if (finished) add(v) })
     }
 
     private fun fakeWith(vararg answers: JsonObject): FakeFunctionsClient {
@@ -106,13 +111,14 @@ class HomeVisitUnderWayTest {
     }
 
     @Test
-    fun departed_noCard_andUpNextStillListsTheVisit() = runComposeUiTest {
+    fun departed_fromAnOlderAnswer_noCard_andTheVisitReadsCompleted() = runComposeUiTest {
         val opened = mutableListOf<String>()
         show(fakeWith(answer(visit("active", "ended"), live = false)), opened)
 
         onNodeWithTag(HOME_LIVE_VISIT_TAG).assertDoesNotExist()
         onNodeWithText("IN PROGRESS").assertDoesNotExist()
-        onNodeWithText("DEPARTED").assertIsDisplayed()
+        onNodeWithText("DEPARTED").assertDoesNotExist()
+        onNodeWithText("COMPLETED").assertIsDisplayed()
 
         onNodeWithText("30 Minute Quick Check").performClick()
         waitForIdle()
@@ -123,7 +129,7 @@ class HomeVisitUnderWayTest {
     fun departed_anAnswerStillNamingItLiveDoesNotBringTheCardBack() = runComposeUiTest {
         show(fakeWith(answer(visit("active", "ended"), live = true)))
         onNodeWithTag(HOME_LIVE_VISIT_TAG).assertDoesNotExist()
-        onNodeWithText("DEPARTED").assertIsDisplayed()
+        onNodeWithText("COMPLETED").assertIsDisplayed()
     }
 
     @Test
@@ -132,7 +138,8 @@ class HomeVisitUnderWayTest {
             answer(visit("confirmed", null), live = false),
             answer(visit("enRoute", "enRoute"), live = true),
             answer(visit("active", "active"), live = true),
-            answer(visit("active", "ended"), live = false),
+            // #2123: the Auntie departs and the server answers completed.
+            answer(visit("completed", "ended"), live = false),
         )
         show(fake)
         onNodeWithText("CONFIRMED").assertIsDisplayed()
@@ -149,7 +156,13 @@ class HomeVisitUnderWayTest {
         mainClock.advanceTimeBy(BOOKINGS_POLL_MS)
         waitForIdle()
         onNodeWithTag(HOME_LIVE_VISIT_TAG).assertDoesNotExist()
-        onNodeWithText("DEPARTED").assertIsDisplayed()
+        onNodeWithText("DEPARTED").assertDoesNotExist()
+        onNodeWithText("IN PROGRESS").assertDoesNotExist()
+        assertEquals(4, fake.calls.count { it.first == "getMyBookings" })
+
+        // Finished: nothing is due, so Home stops reading.
+        mainClock.advanceTimeBy(BOOKINGS_POLL_MS * 2)
+        waitForIdle()
         assertEquals(4, fake.calls.count { it.first == "getMyBookings" })
     }
 }

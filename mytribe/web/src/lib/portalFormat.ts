@@ -16,25 +16,34 @@ type BookingStatus = GetMyBookingsResultLiveVisit['status'];
 
 /**
  * #1830 / #1832 / #1823: a visit's place in its life as the household reads
- * it. One more value than the wire's `status`, because Departed has no status
- * of its own there: the server sends it as `status: 'active'` with
- * `visitProgress: 'ended'` (see `functions/src/lib/portalVisitProgress.ts`,
- * which this mirrors). Every chip, the timeline, the status tile and the live
- * card read the stage through {@link visitStageOf}, never `status` alone, so a
- * departed visit cannot read IN PROGRESS on one screen and DEPARTED on another.
+ * it. Every chip, the timeline, the status tile and the live card read the
+ * stage through {@link visitStageOf}, never `status` alone.
+ *
+ * #2123 (operator ruling 2026-11-12): a visit is Completed at departure,
+ * whether or not its KinTale has been sent. The server sends a departed visit
+ * as `status: 'completed'` (`functions/src/lib/portalVisitProgress.ts`, which
+ * this mirrors). An answer from before that change sent `status: 'active'`
+ * with `visitProgress: 'ended'`, and that pair reads Completed here too, so no
+ * screen can show a Departed stage.
  */
-export type VisitStage = BookingStatus | 'departed';
+export type VisitStage = BookingStatus;
 type StagePair = Pick<GetMyBookingsResultLiveVisit, 'status' | 'visitProgress'>;
 
 export function visitStageOf(b: StagePair): VisitStage {
-  if (b.status === 'active' && b.visitProgress === 'ended') return 'departed';
+  if (b.status === 'active' && b.visitProgress === 'ended') return 'completed';
   return b.status;
 }
 
-/** On the way, arrived or departed: the Auntie has started and the visit is not finished. */
+/** On the way or arrived: the Auntie has started and the visit is not finished. A departed visit is finished (#2123). */
 export function isUnderWay(b: StagePair): boolean {
   const stage = visitStageOf(b);
-  return stage === 'enRoute' || stage === 'active' || stage === 'departed';
+  return stage === 'enRoute' || stage === 'active';
+}
+
+/** Completed or cancelled, read through the stage so a departed visit counts (#2123). */
+export function isFinished(b: StagePair): boolean {
+  const stage = visitStageOf(b);
+  return stage === 'completed' || stage === 'cancelled';
 }
 
 /**
@@ -241,8 +250,6 @@ export function bookingChip(stage: VisitStage): ChipInfo {
   switch (stage) {
     case 'requested':
       return { label, tone: 'go' };
-    // Departed is over for the Auntie, so it takes the finished colour.
-    case 'departed':
     case 'completed':
     case 'cancelled':
       return { label, tone: 'done' };
@@ -335,10 +342,6 @@ export function bookingStatusChip(stage: VisitStage): BookingStatusChip {
       return { label: 'EN ROUTE', tone: 'inprogress' };
     case 'active':
       return { label: 'IN PROGRESS', tone: 'inprogress' };
-    // The Auntie has left and the KinTale is still to come. Not the pulsing
-    // in-progress chip: nobody is at the house.
-    case 'departed':
-      return { label: 'DEPARTED', tone: 'completed' };
     case 'completed':
       return { label: 'COMPLETED', tone: 'completed' };
     case 'cancelled':
@@ -363,11 +366,7 @@ export const BOOKING_TIMELINE_STEPS: { id: BookingTimelineStepId; label: string 
  * bar — BookingDetail shows the CANCELLED chip instead of the timeline).
  * Every other status gets its own forward step, including `enRoute`, which
  * is distinct from `active`: the Auntie being on her way is not the same as
- * the Auntie being in the house.
- *
- * Departed has no step of its own (the mock draws five): In progress is behind
- * it and Completed is the step it is waiting on, so it sits on Completed
- * without that step being ticked. {@link isTimelineStepDone} is what ticks it.
+ * the Auntie being in the house. A departed visit is Completed (#2123).
  */
 export function bookingTimelineIndex(stage: VisitStage): number | null {
   switch (stage) {
@@ -379,7 +378,6 @@ export function bookingTimelineIndex(stage: VisitStage): number | null {
       return 2;
     case 'active':
       return 3;
-    case 'departed':
     case 'completed':
       return 4;
     case 'cancelled':
@@ -390,8 +388,8 @@ export function bookingTimelineIndex(stage: VisitStage): number | null {
 /**
  * Whether timeline step `i` is ticked. Every step behind the current one is,
  * and on a completed visit the last one is too (#1303: nothing comes after
- * Completed, so it does not stay "current"). A departed visit stops one short:
- * four ticks, with Completed as the step it is on.
+ * Completed, so it does not stay "current"). A departed visit is completed,
+ * so it ticks all five (#2123).
  */
 export function isTimelineStepDone(stage: VisitStage, i: number): boolean {
   const index = bookingTimelineIndex(stage);

@@ -12,7 +12,10 @@ import {
   withSessionProgress,
 } from '../src/lib/portalVisitProgress';
 
-/** #1830 / #1832 / #1823: the pure rules behind a visit's stage and its list. */
+/**
+ * #1830 / #1832 / #1823: the pure rules behind a visit's stage and its list.
+ * #2123: a departed visit is Completed for the household.
+ */
 
 const NOW = Date.parse('2026-11-10T23:20:00Z');
 
@@ -32,7 +35,8 @@ describe('sessionProgressOf', () => {
   it.each([
     ['ON_MY_WAY', { status: 'enRoute', visitProgress: 'enRoute' }],
     ['ARRIVED', { status: 'active', visitProgress: 'active' }],
-    ['DEPARTED', { status: 'active', visitProgress: 'ended' }],
+    ['DEPARTED', { status: 'completed', visitProgress: 'ended' }],
+    [' departed ', { status: 'completed', visitProgress: 'ended' }],
     ['COMPLETED', { status: 'completed', visitProgress: 'ended' }],
     [' arrived ', { status: 'active', visitProgress: 'active' }],
   ])('%s', (raw, expected) => {
@@ -49,11 +53,24 @@ describe('sessionProgressOf', () => {
 
 describe('withSessionProgress', () => {
   it('lays the session over a confirmed visit', () => {
-    expect(withSessionProgress({ status: 'confirmed', visitProgress: null, title: 'x' }, 'DEPARTED')).toEqual({
+    expect(withSessionProgress({ status: 'confirmed', visitProgress: null, title: 'x' }, 'ARRIVED')).toEqual({
       status: 'active',
+      visitProgress: 'active',
+      title: 'x',
+    });
+  });
+
+  it('#2123: a departed session completes the visit for the household', () => {
+    expect(withSessionProgress({ status: 'confirmed', visitProgress: null, title: 'x' }, 'DEPARTED')).toEqual({
+      status: 'completed',
       visitProgress: 'ended',
       title: 'x',
     });
+  });
+
+  it('#2123: a departed session never reopens a cancelled visit', () => {
+    const data = { status: 'cancelled', visitProgress: null };
+    expect(withSessionProgress(data, 'DEPARTED')).toBe(data);
   });
 
   it.each(['completed', 'cancelled'])('never moves a %s visit', (status) => {
@@ -74,7 +91,9 @@ describe('visitStageOf', () => {
     ['enRoute', 'enRoute', 'enRoute'],
     ['active', 'active', 'active'],
     ['active', null, 'active'],
-    ['active', 'ended', 'departed'],
+    // #2123: an older answer that still pairs active with ended is a departed
+    // visit, and a departed visit is Completed.
+    ['active', 'ended', 'completed'],
     ['completed', 'ended', 'completed'],
     ['completed', null, 'completed'],
     ['cancelled', null, 'cancelled'],
@@ -82,7 +101,7 @@ describe('visitStageOf', () => {
     expect(visitStageOf({ status, visitProgress })).toBe(stage);
   });
 
-  it('under way is on the way, arrived or departed; live is the first two', () => {
+  it('under way is on the way or arrived; a departed visit is neither', () => {
     const stages = [
       dto({ status: 'requested' }),
       dto({ status: 'confirmed' }),
@@ -92,7 +111,7 @@ describe('visitStageOf', () => {
       dto({ status: 'completed' }),
       dto({ status: 'cancelled' }),
     ];
-    expect(stages.map(isUnderWay)).toEqual([false, false, true, true, true, false, false]);
+    expect(stages.map(isUnderWay)).toEqual([false, false, true, true, false, false, false]);
     expect(stages.map(isLive)).toEqual([false, false, true, true, false, false, false]);
   });
 });
@@ -103,7 +122,7 @@ describe('bucketOf, for a visit whose start has passed', () => {
     ['confirmed', null, 'upcoming'],
     ['enRoute', 'enRoute', 'upcoming'],
     ['active', 'active', 'upcoming'],
-    ['active', 'ended', 'upcoming'],
+    ['active', 'ended', 'recent'],
     ['completed', 'ended', 'recent'],
     ['cancelled', null, 'recent'],
   ] as const)('%s + %s: %s', (status, visitProgress, bucket) => {
@@ -122,7 +141,12 @@ describe('bucketOf, for a visit whose start has passed', () => {
   });
 
   it('a visit under way is upcoming however old its start', () => {
-    expect(bucketOf(dto({ status: 'active', visitProgress: 'ended', startTimeMs: NOW - 3 * LATE_VISIT_WINDOW_MS }), NOW)).toBe('upcoming');
+    expect(bucketOf(dto({ status: 'active', visitProgress: 'active', startTimeMs: NOW - 3 * LATE_VISIT_WINDOW_MS }), NOW)).toBe('upcoming');
+  });
+
+  it('#2123: a departed visit is recent whatever the clock says', () => {
+    expect(bucketOf(dto({ status: 'active', visitProgress: 'ended', startTimeMs: NOW + 3600_000 }), NOW)).toBe('recent');
+    expect(bucketOf(dto({ status: 'active', visitProgress: 'ended', startTimeMs: NOW - 3 * LATE_VISIT_WINDOW_MS }), NOW)).toBe('recent');
   });
 
   it('#1098: a night awaiting its start time is upcoming while its night has not passed', () => {

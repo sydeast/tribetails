@@ -30,6 +30,7 @@ import {
   isStartTimePending,
   isTimelineStepDone,
   visitStageOf,
+  isFinished,
   speciesEmoji,
   visitTile,
   visitWhenLine,
@@ -90,12 +91,14 @@ export function BookingDetail() {
     queryFn: () => getBookingNotes(found!.kinfolkId, found!.batchId!, found!.id),
     enabled: !!found?.batchId,
   });
-  const finished = found?.status === 'completed' || found?.status === 'cancelled';
+  // #2123: through the stage, so a departed visit from an older answer is finished too.
+  const finished = found ? isFinished(found) : false;
+  const completed = found ? visitStageOf(found) === 'completed' : false;
   // #1303: the replay of a completed visit comes from the same getMyVisits row
   // the Schedule list's Past Visits replay reads (GPS lives on the AuntieOS
   // session, not the booking). Best effort, like there: a failure only drops
   // the replay, never the page. Asked only when there is a session to look up.
-  const sessionId = found?.status === 'completed' ? found.sessionId : null;
+  const sessionId = completed ? (found?.sessionId ?? null) : null;
   const visits = useQuery({
     queryKey: ['myVisits', kinfolkId],
     queryFn: () => getMyVisits(kinfolkId, 20),
@@ -233,8 +236,8 @@ export function BookingDetail() {
     );
   }
 
-  // #1823: the stage, not `status` alone. A departed visit is sent as active +
-  // ended, and reading `status` would call it IN PROGRESS after the Auntie left.
+  // #1823: the stage, not `status` alone. #2123: a departed visit is
+  // Completed, and an older answer's active + ended pair reads that way too.
   const stage = visitStageOf(found);
   const chip = bookingStatusChip(stage);
   const timelineIndex = bookingTimelineIndex(stage);
@@ -298,7 +301,7 @@ export function BookingDetail() {
         <div className="crumbrow">
           {/* #1304: back lands on the tab this visit lives in, so a past visit
               returns to Past Visits and not to the default tab. */}
-          <Link className="backlink" to="/schedule" search={found.status === 'completed' || found.status === 'cancelled' ? { tab: 'past' } : {}}>
+          <Link className="backlink" to="/schedule" search={finished ? { tab: 'past' } : {}}>
             {'←'} Back to Schedule
           </Link>
         </div>
@@ -472,7 +475,7 @@ export function BookingDetail() {
                 )}
               </section>
             )}
-            {found.status === 'completed' && (
+            {completed && (
               <section className="glass card d4" aria-label="After the visit" data-testid="after-visit">
                 <div className="sectlabel">After the visit</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>

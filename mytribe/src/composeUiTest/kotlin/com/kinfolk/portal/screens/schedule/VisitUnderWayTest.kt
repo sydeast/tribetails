@@ -31,6 +31,10 @@ import kotlin.test.assertTrue
  * visit and clears when the Auntie leaves, and the visit's own screen opens at
  * every status and follows the visit. The web mirrors are
  * `Schedule.underWay.test.tsx` and `BookingDetail.underWay.test.tsx`.
+ *
+ * #2123 (operator ruling 2026-11-12): a visit is Completed at departure. The
+ * server sends it completed; an older answer's `active` + `ended` pair reads
+ * Completed. No screen says Departed.
  */
 class VisitUnderWayTest {
     // The real clock: Schedule decides what is due against it.
@@ -124,14 +128,14 @@ class VisitUnderWayTest {
     }
 
     @Test
-    fun schedule_departed_cardIsGoneAndTheVisitStaysListedAndOpens() = runComposeUiTest {
+    fun schedule_departed_fromAnOlderAnswer_cardIsGoneAndTheRowReadsCompletedAndOpens() = runComposeUiTest {
         val opened = mutableListOf<String>()
         showSchedule(fakeWith(answer(visit("active", "ended"), live = false)), opened)
 
         onNodeWithTag(LIVE_VISIT_TAG).assertDoesNotExist()
         onNodeWithText("IN PROGRESS").assertDoesNotExist()
-        onNodeWithText("DEPARTED").assertIsDisplayed()
-        onNodeWithText("No upcoming bookings").assertDoesNotExist()
+        onNodeWithText("DEPARTED").assertDoesNotExist()
+        onNodeWithText("COMPLETED").assertIsDisplayed()
 
         onNodeWithText("30 Minute Quick Check").performClick()
         waitForIdle()
@@ -142,7 +146,7 @@ class VisitUnderWayTest {
     fun schedule_departed_anAnswerStillNamingItLiveDoesNotBringTheCardBack() = runComposeUiTest {
         showSchedule(fakeWith(answer(visit("active", "ended"), live = true)))
         onNodeWithTag(LIVE_VISIT_TAG).assertDoesNotExist()
-        onNodeWithText("DEPARTED").assertIsDisplayed()
+        onNodeWithText("COMPLETED").assertIsDisplayed()
     }
 
     @Test
@@ -151,7 +155,8 @@ class VisitUnderWayTest {
             answer(visit("confirmed", null), live = false),
             answer(visit("enRoute", "enRoute"), live = true),
             answer(visit("active", "active"), live = true),
-            answer(visit("active", "ended"), live = false),
+            // #2123: the Auntie departs and the server answers completed.
+            answer(visit("completed", "ended"), live = false),
         )
         showSchedule(fake)
         onNodeWithText("CONFIRMED").assertIsDisplayed()
@@ -169,7 +174,13 @@ class VisitUnderWayTest {
         mainClock.advanceTimeBy(BOOKINGS_POLL_MS)
         waitForIdle()
         onNodeWithTag(LIVE_VISIT_TAG).assertDoesNotExist()
-        onNodeWithText("DEPARTED").assertIsDisplayed()
+        onNodeWithText("DEPARTED").assertDoesNotExist()
+        onNodeWithText("No upcoming bookings").assertIsDisplayed()
+        assertEquals(4, bookingsReads(fake))
+
+        // Finished: nothing is due, so the reading stops.
+        mainClock.advanceTimeBy(BOOKINGS_POLL_MS * 2)
+        waitForIdle()
         assertEquals(4, bookingsReads(fake))
     }
 
@@ -204,7 +215,7 @@ class VisitUnderWayTest {
 
     @Test
     fun schedule_aVisitUnderWayInAMultiVisitBookingKeepsItsOwnRow() = runComposeUiTest {
-        val underWay = visit("active", "ended")
+        val underWay = visit("active", "active")
         val later = buildJsonObject {
             put("id", "v2")
             put("kinfolkId", "3")
@@ -229,7 +240,7 @@ class VisitUnderWayTest {
         })
         fake.stub("getMyVisits", buildJsonObject { put("visits", buildJsonArray {}) })
         showSchedule(fake)
-        onNodeWithText("DEPARTED").assertIsDisplayed()
+        onNodeWithText("IN PROGRESS").assertIsDisplayed()
         onNodeWithText("2 visits").assertIsDisplayed()
     }
 
@@ -253,7 +264,8 @@ class VisitUnderWayTest {
         Triple("confirmed", null, "Confirmed"),
         Triple("enRoute", "enRoute", "En route"),
         Triple("active", "active", "In progress"),
-        Triple("active", "ended", "Departed"),
+        // #2123: a departed visit from an older answer reads Completed.
+        Triple("active", "ended", "Completed"),
         Triple("completed", "ended", "Completed"),
         Triple("cancelled", null, "Cancelled"),
     )
@@ -298,20 +310,22 @@ class VisitUnderWayTest {
             answer(visit("confirmed", null), live = false),
             answer(visit("enRoute", "enRoute"), live = true),
             answer(visit("active", "active"), live = true),
-            answer(visit("active", "ended"), live = false),
+            // #2123: the Auntie departs and the server answers completed,
+            // KinTale or not. There is no Departed step in between.
             answer(visit("completed", "ended"), live = false),
         )
         showDetail(fake)
         onNodeWithText("Confirmed").assertIsDisplayed()
 
         val seen = mutableListOf<String>()
-        listOf("En route", "In progress", "Departed", "Completed").forEachIndexed { i, word ->
+        listOf("En route", "In progress", "Completed").forEachIndexed { i, word ->
             mainClock.advanceTimeBy(BOOKINGS_POLL_MS + if (i == 0) 100 else 0)
             waitForIdle()
             onNodeWithText(word).assertIsDisplayed()
             seen += word
         }
-        assertEquals(listOf("En route", "In progress", "Departed", "Completed"), seen)
+        assertEquals(listOf("En route", "In progress", "Completed"), seen)
+        onNodeWithText("Departed").assertDoesNotExist()
 
         // Finished: nothing is due, so the reading stops.
         val reads = bookingsReads(fake)

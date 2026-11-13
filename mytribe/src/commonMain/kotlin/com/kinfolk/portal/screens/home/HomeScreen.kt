@@ -688,8 +688,6 @@ private fun StatusPill(b: Booking) {
         VisitStage.Confirmed -> KinfolkBrand.KinTeal
         VisitStage.EnRoute -> KinfolkBrand.PackPink
         VisitStage.Active -> KinfolkBrand.SnuggleCoral
-        // Over for the Auntie, so it takes the finished colour.
-        VisitStage.Departed -> KinfolkBrand.KinTeal
         VisitStage.Completed -> KinfolkBrand.KinTeal
         VisitStage.Cancelled -> KinfolkBrand.NavyMuted
     }
