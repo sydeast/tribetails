@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SkikoComposeUiTest
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -249,6 +250,30 @@ class TemplateChannelWordingRenderTest {
         onNodeWithText("Save text message").assertExists()
         onNodeWithText("New words.").assertExists()
         onNodeWithText("10 of 1600 characters").assertExists()
+    }
+
+    // Android and admin web lock the boxes while a save is on its way. Here the
+    // box stays drawn, so anything typed in that wait would be wiped by the
+    // saved copy landing on top of it: the edit is held off instead.
+    @Test
+    fun typingOrAChipWhileSavingChangesNothingTheSaveIsAbout() = runDesktopComposeUiTest {
+        val gate = CompletableDeferred<WriteResult<TemplateChannels>>()
+        show(load = { WriteResult.Ok(channels()) }, save = { _, _, _ -> gate.await() })
+        awaitText("Save text message")
+        onNodeWithContentDescription("Text message").performTextReplacement("New words.")
+        onNodeWithText("Save text message").performClick()
+        awaitText("Saving…")
+
+        onNodeWithContentDescription("Text message").performTextReplacement("Typed while saving")
+        // The text message's chips come first; the push notification has its own.
+        onAllNodesWithText("{{kinName}}").onFirst().performClick()
+        waitForIdle()
+        onNodeWithText("Typed while saving").assertDoesNotExist()
+        onNodeWithText("10 of 1600 characters").assertExists()
+
+        gate.complete(WriteResult.Ok(channels(sms = TextMessageWording(true, true, "New words.", 1600))))
+        awaitText("Text message saved.")
+        onNodeWithText("New words.").assertExists()
     }
 
     @Test

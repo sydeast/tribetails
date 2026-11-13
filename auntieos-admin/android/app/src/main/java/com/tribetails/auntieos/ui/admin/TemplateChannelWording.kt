@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -384,8 +385,10 @@ private fun TextMessageCard(
     val channel = WordingChannel.TEXT
     val sms = channels.sms
     val scope = rememberCoroutineScope()
-    var adding by remember { mutableStateOf(false) }
-    var text by remember(sms.text) { mutableStateOf(sms.text) }
+    // Saveable, like the email editor above (#953): a rotation rebuilds the
+    // Activity, and what was typed here has to come back with it.
+    var adding by rememberSaveable { mutableStateOf(false) }
+    var text by rememberSaveable(sms.text) { mutableStateOf(sms.text) }
     var error by remember { mutableStateOf<String?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -446,9 +449,9 @@ private fun PushCard(
     val channel = WordingChannel.PUSH
     val push = channels.push
     val scope = rememberCoroutineScope()
-    var adding by remember { mutableStateOf(false) }
-    var title by remember(push.title) { mutableStateOf(push.title) }
-    var body by remember(push.body) { mutableStateOf(push.body) }
+    var adding by rememberSaveable { mutableStateOf(false) }
+    var title by rememberSaveable(push.title) { mutableStateOf(push.title) }
+    var body by rememberSaveable(push.body) { mutableStateOf(push.body) }
     var titleError by remember { mutableStateOf<String?>(null) }
     var bodyError by remember { mutableStateOf<String?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }

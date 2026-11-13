@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -96,6 +97,55 @@ class TemplateChannelWordingUiTest {
         composeRule.onNode(inPush("6 of 100 characters")).assertExists()
         composeRule.onNode(inPush("18 of 500 characters")).assertExists()
         composeRule.onNode(inText("{{kinName}}")).assertExists()
+    }
+
+    // #953 keeps the email editor's draft through a rotation; the text and push
+    // drafts drawn under it have to survive the same Activity rebuild.
+    @Test
+    fun `rotating mid-edit keeps the typed text message and push wording`() {
+        val tester = StateRestorationTester(composeRule)
+        tester.setContent {
+            AuntieOSTheme {
+                TemplateChannelWording(
+                    templateId = "kincare.booking.confirm",
+                    load = { Result.success(channels()) },
+                    save = { _, _, _ -> Result.success(channels()) },
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TEXT_FIELD_TAG).performTextReplacement("Typed before turning, {{kinName}}.")
+        composeRule.onNodeWithTag(PUSH_BODY_FIELD_TAG).performTextReplacement("Half a message")
+
+        tester.emulateSavedInstanceStateRestore()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(TEXT_FIELD_TAG).assertTextContains("Typed before turning, {{kinName}}.")
+        composeRule.onNodeWithTag(PUSH_BODY_FIELD_TAG).assertTextContains("Half a message")
+        composeRule.onNodeWithTag(PUSH_TITLE_FIELD_TAG).assertTextContains("Booked")
+    }
+
+    @Test
+    fun `rotating after Add text message keeps the new box open`() {
+        val tester = StateRestorationTester(composeRule)
+        tester.setContent {
+            AuntieOSTheme {
+                TemplateChannelWording(
+                    templateId = "kincare.booking.confirm",
+                    load = { Result.success(channels(smsText = "")) },
+                    save = { _, _, _ -> Result.success(channels()) },
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Add text message").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TEXT_FIELD_TAG).performTextReplacement("A first text")
+
+        tester.emulateSavedInstanceStateRestore()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(TEXT_FIELD_TAG).assertTextContains("A first text")
     }
 
     @Test

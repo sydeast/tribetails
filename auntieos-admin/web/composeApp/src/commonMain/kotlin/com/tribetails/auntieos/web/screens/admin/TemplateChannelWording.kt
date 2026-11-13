@@ -311,7 +311,7 @@ private fun WordingField(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FieldChips(fields: List<String>, onInsert: (String) -> Unit) {
+private fun FieldChips(fields: List<String>, enabled: Boolean, onInsert: (String) -> Unit) {
     if (fields.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         AuntieFieldLabel(text = "Fields you can use")
@@ -323,7 +323,7 @@ private fun FieldChips(fields: List<String>, onInsert: (String) -> Unit) {
                 val token = "{{$name}}"
                 // Not the mono chip: it draws its label in capitals, and a field
                 // name is typed exactly as shown ({{Business}} is not {{business}}).
-                AuntieChip(label = token, onClick = { onInsert(token) }, tone = AuntieChipTone.Teal)
+                AuntieChip(label = token, onClick = { onInsert(token) }, enabled = enabled, tone = AuntieChipTone.Teal)
             }
         }
     }
@@ -393,13 +393,15 @@ private fun TextMessageSection(
                 WordingField(
                     label = CHANNEL_TEXT,
                     value = draft,
-                    onValueChange = { draft = it; fieldError = null; saveError = null; notice = null },
+                    // Held while a save is on its way: the saved copy replaces the
+                    // box when it lands, and would wipe anything typed meanwhile.
+                    onValueChange = { if (!saving) { draft = it; fieldError = null; saveError = null; notice = null } },
                     max = sms.maxLength,
                     error = fieldError,
                     minLines = 3,
                     hint = smsSegmentHint(draft.text),
                 )
-                FieldChips(channels.fields) { draft = draft.insert(it); fieldError = null; notice = null }
+                FieldChips(channels.fields, enabled = !saving) { draft = draft.insert(it); fieldError = null; notice = null }
                 SaveRow(channel, saving, saveError, notice) {
                     val local = wordingPrecheck(CHANNEL_TEXT, draft.text, sms.maxLength)
                     fieldError = local
@@ -469,7 +471,7 @@ private fun PushSection(
                 WordingField(
                     label = "Title",
                     value = title,
-                    onValueChange = { title = it; titleError = null; saveError = null; notice = null },
+                    onValueChange = { if (!saving) { title = it; titleError = null; saveError = null; notice = null } },
                     max = push.titleMaxLength,
                     error = titleError,
                     minLines = 1,
@@ -478,13 +480,13 @@ private fun PushSection(
                 WordingField(
                     label = "Message",
                     value = body,
-                    onValueChange = { body = it; bodyError = null; saveError = null; notice = null },
+                    onValueChange = { if (!saving) { body = it; bodyError = null; saveError = null; notice = null } },
                     max = push.bodyMaxLength,
                     error = bodyError,
                     minLines = 2,
                     onFocused = { titleFocused = false },
                 )
-                FieldChips(channels.fields) {
+                FieldChips(channels.fields, enabled = !saving) {
                     if (titleFocused) { title = title.insert(it); titleError = null } else { body = body.insert(it); bodyError = null }
                     notice = null
                 }
