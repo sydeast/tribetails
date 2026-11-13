@@ -204,7 +204,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * `saveEmailFrame`, all entries already in this graph), so they can no longer
  * disagree about what `updatedBy` holds. One function with no import of its own.
  *
- * 444 since #1820 (on top of #1962's 441): three helpers behind two entries
+ * 442 since #1912 (on top of #1962's 441): `lib/kinLink.ts`, the one place
+ * that says which admin record is a household Kin's own. `portal/kinWrites.ts`,
+ * `admin/kinArchive.ts`, `admin/kinRemovalRequests.ts` and
+ * `triggers/onFamilyKinWrite.ts` (four entries already in this graph) all ask
+ * it, so it is resident by construction; every module it imports is too.
+ *
+ * 445 since #1820 (on top of #1912's 442): three helpers behind two entries
  * already in this graph. `lib/auditActor.ts` (who the caller is, for an
  * Activity Log line) and `lib/activityPayload.ts` (the allow-list for a
  * line's facts) load with `admin/logActivity.ts`; `lib/staffRoles.ts` (owner
@@ -213,7 +219,7 @@ const ALLOWED_EAGER_PACKAGES = [
  * `operatorAllowlist`, `firestoreAdmin`, `logger`), so they add no package
  * to a cold start.
  */
-const MAX_OWN_EAGER_MODULES = 444;
+const MAX_OWN_EAGER_MODULES = 445;
 
 interface Edge {
   spec: string;

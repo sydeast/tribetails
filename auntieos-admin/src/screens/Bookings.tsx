@@ -282,6 +282,12 @@ interface BookingsProps {
    * "Booking unavailable" dialog rather than silence.
    */
   initialBookingId?: string;
+  /**
+   * The Kin removal request a notification opened this screen for. Set by the
+   * router from `/bookings?kinRemoval=<request id>` (#1912); the removal queue
+   * arrives unfolded on it.
+   */
+  kinRemovalRequestId?: string;
 }
 
 /** One row's derived display facts, computed once per render pass. */
@@ -332,7 +338,7 @@ function rowViewsFor(rows: BookingEntry[]): RowView[] {
  * and api/bookingsWrite.ts for exactly why those two callables don't apply to
  * this list's rows.
  */
-export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
+export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestId }: BookingsProps) {
   const navigate = useNavigate();
   const rows = useCollection<BookingEntry>(BOOKINGS_QUERY);
   // History is open like every other section, and grows a page at a time. It
@@ -682,7 +688,7 @@ export function Bookings({ onSelectBooking, initialBookingId }: BookingsProps) {
           queue that is usually empty was pushing the first one to y=580. */}
       <VisitRequestsSection refreshKey={requestsRefresh} />
       {/* #1408: the other household request waiting on the office. */}
-      <KinRemovalRequestsSection />
+      <KinRemovalRequestsSection {...(kinRemovalRequestId ? { focusRequestId: kinRemovalRequestId } : {})} />
       {outcome !== null && <BulkOutcomeBanner outcome={outcome} onDismiss={() => setOutcome(null)} />}
       {rescheduleOutcome !== null && (
         <BulkRescheduleBanner

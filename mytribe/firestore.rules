@@ -1020,8 +1020,10 @@ service cloud.firestore {
         // profile, the care block, and the five descriptive facts shared with
         // the admin (sex, weight, colorMarkings, spayedNeutered, vetInfo; see
         // functions/src/triggers/kinMirror.ts HOUSEHOLD_SHARED_FIELDS).
+        // #1912: `legacyKinId` is not on the list. The mirror makes the tie to
+        // the admin record (functions/src/lib/kinLink.ts).
         allow update: if familyKinMeasuresOkOnUpdate() && ((hasPerm(fid, 'kin_edit') && diffOnly([
-            'name','species','breed','ageYears','photoUrl','status','legacyKinId',
+            'name','species','breed','ageYears','photoUrl','status',
             'feedingInstructions','walkingInstructions','sitterNotes',
             'emergencyNotes','medications','allergies',
             'sex','weight','colorMarkings','spayedNeutered','vetInfo',
