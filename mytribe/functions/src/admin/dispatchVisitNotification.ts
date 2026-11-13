@@ -168,6 +168,13 @@ async function householdRecipientUid(familyId: string): Promise<string | null> {
  * moves the status, rather than asking the browser to make a second one that a
  * closed tab or a failed round-trip would skip.
  *
+ * #2037: THAT IS NO LONGER TRUE. `triggers/onKinCareSessionLifecycle.ts`
+ * reads every session write and sends each clock step from the server, through
+ * `lib/visitStepNotice.ts#announceVisitStep`, which calls this. The admin
+ * clients no longer dispatch a clock step themselves. The callable below stays
+ * for a KinTale (`report_sent`) and for installed clients from before #2037,
+ * whose clock dispatch carries the same dedupe key and so is the duplicate.
+ *
  * `actorDisplayNameFallback` is what the callable used to read straight off
  * `req.auth.token.name`; a non-callable caller passes its own or nothing.
  */
@@ -175,6 +182,13 @@ export async function dispatchVisitNotificationCore(
   args: Args,
   actorUid: string,
   actorDisplayNameFallback?: string | undefined,
+  opts: {
+    /**
+     * #2037: a fixed id for the "notice dispatched" line, so the trigger and
+     * `setVisitLifecycle` reaching the same clock step write it once.
+     */
+    auditDocId?: string;
+  } = {},
 ): Promise<DispatchVisitNotificationOutcome> {
   const resolved = await resolveKinCareRef({
     familyId: args.familyId,
@@ -222,14 +236,16 @@ export async function dispatchVisitNotificationCore(
     return { ok: true, dispatchIds: [], suppressed: true, reason: 'household_has_no_portal_account' };
   }
 
+  // #2037: the clock trigger may not know who made the write. With no actor
+  // there is no staff record to read, and the notice says "Your Auntie".
   const [recipientSnap, actorSnap] = await Promise.all([
     db().doc(`clients/${recipientUid}`).get(),
-    db().doc(`staff/${actorUid}`).get(),
+    actorUid !== '' ? db().doc(`staff/${actorUid}`).get() : Promise.resolve(null),
   ]);
   const recipientDisplayName =
     (recipientSnap.data() as { displayName?: string } | undefined)?.displayName ?? null;
   const auntieDisplayName =
-    (actorSnap.data() as { displayName?: string } | undefined)?.displayName ??
+    (actorSnap?.data() as { displayName?: string } | undefined)?.displayName ??
     actorDisplayNameFallback ??
     'Your Auntie';
 
@@ -259,21 +275,28 @@ export async function dispatchVisitNotificationCore(
   const dispatchIds = enqueued.written;
   const reason = visitNoticeReasonFor(enqueued);
 
-  await writeAuditEntry({
-    status: 'SUCCESS',
-    event: AUDIT_EVENTS.NOTIFICATION_DISPATCHED,
-    severity: 'info',
-    actorRole: 'AUNTIE',
-    actorUid,
-    familyId: args.familyId,
-    payload: { key, batchId, visitId, event: args.event, dispatchIds, reason },
-  });
+  // #2037: a step the household already heard about dispatched nothing, so it
+  // writes no "dispatched" line. Since the server sends each clock step itself,
+  // that is what an installed client from before #2037 reaches when it still
+  // dispatches after its write, and a second line would be a second claim.
+  if (reason !== 'already_notified') {
+    await writeAuditEntry({
+      status: 'SUCCESS',
+      event: AUDIT_EVENTS.NOTIFICATION_DISPATCHED,
+      severity: 'info',
+      actorRole: actorUid !== '' ? 'AUNTIE' : 'SYSTEM',
+      ...(actorUid !== '' ? { actorUid } : {}),
+      familyId: args.familyId,
+      payload: { key, batchId, visitId, event: args.event, dispatchIds, reason },
+      ...(opts.auditDocId !== undefined ? { docId: opts.auditDocId } : {}),
+    });
+  }
 
   logEvent({
     severity: 'info',
     function: 'dispatchVisitNotification',
     event: 'visit.notification.dispatched',
-    uid: actorUid,
+    ...(actorUid !== '' ? { uid: actorUid } : {}),
     extra: { key, familyId: args.familyId, batchId, visitId, dispatchCount: dispatchIds.length, reason },
   });
 

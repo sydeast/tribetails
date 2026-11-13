@@ -592,22 +592,11 @@ class HomeViewModel(
     fun onMyWay(sessionId: String, etaMinutes: Int) {
         runOnSession(sessionId) { card ->
             kinCareRepo.markSessionOnMyWay(sessionId, etaMinutes).onSuccess { onMyWayAt ->
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope            = viewModelScope,
-                    repository       = repo,
-                    actionType       = "VISIT_ON_MY_WAY",
-                    description      = "Marked on the way (ETA ${etaMinutes}m) for ${auditHousehold(card.kinfolk?.displayName)}",
-                    targetId         = sessionId,
-                    targetCollection = "kin_care_sessions",
-                    payload          = visitTapFacts(sessionId, "ON_MY_WAY", card.session.status),
-                )
+                // #2037: the Activity Log line and the household notice come
+                // from the server, driven by this write (with its ETA); the
+                // card only reads what the household was told.
                 reportVisitNotice(card) {
-                    notifier.notify(
-                        event = VisitNotifier.Event.ON_MY_WAY,
-                        session = card.session,
-                        etaMinutes = etaMinutes,
-                        eventAtIso = onMyWayAt,
-                    )
+                    notifier.awaitStepNotice(card.session.id, VisitNotifier.Event.ON_MY_WAY, onMyWayAt)
                 }
             }
         }
@@ -617,15 +606,9 @@ class HomeViewModel(
         runOnSession(sessionId) { card ->
             // Mark arrived first; the GPS service will fill in visitRouteId once tracking starts
             kinCareRepo.markSessionArrived(sessionId, visitRouteId = "").onSuccess { arrivedAt ->
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope            = viewModelScope,
-                    repository       = repo,
-                    actionType       = "VISIT_ARRIVED",
-                    description      = "Arrived at ${auditHousehold(card.kinfolk?.displayName)}",
-                    targetId         = sessionId,
-                    targetCollection = "kin_care_sessions",
-                    payload          = visitTapFacts(sessionId, "ARRIVED", card.session.status),
-                )
+                // #2037: no client line any more. The server writes "Visit
+                // arrived" and tells the household from this write, even if the
+                // app is closed a second from now.
                 // ISSUE #519: `autoStartTrackingOnVisitStart` was persisted by
                 // the Settings panel and read by nothing — arriving always
                 // started tracking, under the master switch alone, so the
@@ -637,8 +620,8 @@ class HomeViewModel(
                 if (settings.enableGPSTrackingForAllVisits && settings.autoStartTrackingOnVisitStart) {
                     startGpsForSession(context, card.session)
                 }
-                // #832: the arrivedAt just written names this notification.
-                reportVisitNotice(card) { notifier.notify(VisitNotifier.Event.ARRIVED, card.session, eventAtIso = arrivedAt) }
+                // #832 / #2037: the arrivedAt just written names the server's record.
+                reportVisitNotice(card) { notifier.awaitStepNotice(card.session.id, VisitNotifier.Event.ARRIVED, arrivedAt) }
                 // ISSUE #582. AFTER the arrival, never before it, and never
                 // gated on it: the arrival is a direct patch on an offline
                 // write queue and this is a callable, so anything that goes
@@ -683,17 +666,28 @@ class HomeViewModel(
     }
 
     /**
-     * #1794: run one household dispatch and say what it did. The dispatch never
-     * fails the tap (the visit is already moved); a throw here is reported as a
-     * notice that could not be sent, the same as a failed call.
+     * #1794: say what the household was told about one clock step. #2037: the
+     * server tells them from the saved step; [dispatch] reads the server's
+     * record of it. It never fails the tap (the visit is already moved); a
+     * throw here is reported as a notice that could not be sent.
      */
     private suspend fun reportVisitNotice(
         card: TodayVisitCard,
         dispatch: suspend () -> Result<VisitNotifier.DispatchResult>,
     ) {
+        val household = card.kinfolk?.displayName?.takeIf { it.isNotBlank() }
+            ?: card.session.kinfolkName.ifBlank { "the household" }
         // A row with nothing to route to is named from the row, not reported as
         // a failed call (VisitNotifier `error()`s on it).
-        val outcome = visitRoutingSkip(card.session)
+        val skip = visitRoutingSkip(card.session)
+        if (skip == null) {
+            // #2037: the wait for the server's answer is never a silent one.
+            _uiState.value = _uiState.value.copy(
+                visitNotice = "Checking whether $household was told.",
+                visitNoticeSent = false,
+            )
+        }
+        val outcome = skip
             ?.let { VisitNotifyOutcome(notified = false, notifySkipped = it) }
             ?: try {
                 visitNotifyOutcomeOf(dispatch())
@@ -701,8 +695,6 @@ class HomeViewModel(
                 e.rethrowIfCancellation()
                 VisitNotifyOutcome(notified = false, notifySkipped = "dispatch_failed")
             }
-        val household = card.kinfolk?.displayName?.takeIf { it.isNotBlank() }
-            ?: card.session.kinfolkName.ifBlank { "the household" }
         val sentence = visitNoticeOutcomeSentence(outcome, household)
         _uiState.value = _uiState.value.copy(
             visitNotice = sentence.ifBlank { null },
@@ -723,20 +715,12 @@ class HomeViewModel(
     fun departed(sessionId: String, context: Context) {
         runOnSession(sessionId) { card ->
             kinCareRepo.markSessionDeparted(sessionId).onSuccess { departedAt ->
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope            = viewModelScope,
-                    repository       = repo,
-                    actionType       = "VISIT_DEPARTED",
-                    description      = "Departed ${auditHousehold(card.kinfolk?.displayName)}",
-                    targetId         = sessionId,
-                    targetCollection = "kin_care_sessions",
-                    payload          = visitTapFacts(sessionId, "DEPARTED", card.session.status),
-                )
+                // #2037: the server writes "Visit departed" from this write.
                 if (_uiState.value.businessSettings.enableGPSTrackingForAllVisits) {
                     stopGpsTracking(context)
                 }
-                // #832: the departedAt just written names this notification.
-                reportVisitNotice(card) { notifier.notify(VisitNotifier.Event.DEPARTED, card.session, eventAtIso = departedAt) }
+                // #832 / #2037: the departedAt just written names the server's record.
+                reportVisitNotice(card) { notifier.awaitStepNotice(card.session.id, VisitNotifier.Event.DEPARTED, departedAt) }
             }
         }
     }

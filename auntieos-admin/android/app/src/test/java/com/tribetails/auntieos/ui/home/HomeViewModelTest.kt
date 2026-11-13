@@ -433,7 +433,7 @@ class HomeViewModelTest {
         advanceUntilIdle()
 
         coVerify(exactly = 1) {
-            mockNotifier.notify(VisitNotifier.Event.ARRIVED, any(), any(), any(), ARRIVED_AT, any())
+            mockNotifier.awaitStepNotice(any(), VisitNotifier.Event.ARRIVED, ARRIVED_AT, any())
         }
     }
 
@@ -450,8 +450,8 @@ class HomeViewModelTest {
         vm.arrived("ses1", context)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { mockNotifier.notify(VisitNotifier.Event.ARRIVED, any(), any(), any(), ARRIVED_AT, any()) }
-        coVerify(exactly = 1) { mockNotifier.notify(VisitNotifier.Event.ARRIVED, any(), any(), any(), REARRIVED_AT, any()) }
+        coVerify(exactly = 1) { mockNotifier.awaitStepNotice(any(), VisitNotifier.Event.ARRIVED, ARRIVED_AT, any()) }
+        coVerify(exactly = 1) { mockNotifier.awaitStepNotice(any(), VisitNotifier.Event.ARRIVED, REARRIVED_AT, any()) }
     }
 
     @Test
@@ -465,8 +465,50 @@ class HomeViewModelTest {
         advanceUntilIdle()
 
         coVerify(exactly = 1) {
-            mockNotifier.notify(VisitNotifier.Event.DEPARTED, any(), any(), any(), DEPARTED_AT, any())
+            mockNotifier.awaitStepNotice(any(), VisitNotifier.Event.DEPARTED, DEPARTED_AT, any())
         }
+    }
+
+    // ── #2037: the server writes the line and tells the household ────────────
+
+    @Test
+    fun `a clock step writes no client line and dispatches nothing itself`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings())
+        coEvery { mockKinCareRepo.markSessionDeparted(any()) } returns Result.success(DEPARTED_AT)
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+        vm.departed("ses1", context)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { mockRepo.logActivity(match { it.actionType.startsWith("VISIT_") }) }
+        coVerify(exactly = 0) { mockNotifier.notify(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `the record the card reads is named the way the server names it`() {
+        val atMs = java.time.Instant.parse(ARRIVED_AT).toEpochMilli()
+        assertEquals("ses1__arrived__$atMs", VisitNotifier.stepNoticeId("ses1", VisitNotifier.Event.ARRIVED, atMs))
+        assertEquals(VisitNotifier.DispatchResult(emptyList(), suppressed = false), VisitNotifier.stepRecordResult(true, null))
+        assertEquals("household_notices_off", VisitNotifier.stepRecordResult(false, "household_notices_off").reason)
+        assertEquals("not_sent", VisitNotifier.stepRecordResult(false, null).reason)
+        assertEquals("notice_pending", VisitNotifier.STILL_CHECKING.reason)
+    }
+
+    @Test
+    fun `no record in time reads as still checking, never as not told`() = runTest(testDispatcher) {
+        val context = arriveWithSettings(BusinessSettings())
+        coEvery { mockNotifier.awaitStepNotice(any(), any(), any(), any()) } returns Result.success(VisitNotifier.STILL_CHECKING)
+        val vm = buildViewModel()
+        advanceUntilIdle()
+
+        vm.arrived("ses1", context)
+        advanceUntilIdle()
+
+        assertEquals("Still checking whether Rosa Parks was told.", vm.uiState.value.visitNotice)
+        assertFalse(vm.uiState.value.visitNoticeSent)
     }
 
     @Test
@@ -482,7 +524,7 @@ class HomeViewModelTest {
     @Test
     fun `an arrival for a household with no portal account says so, and the arrival stands`() = runTest(testDispatcher) {
         val context = arriveWithSettings(BusinessSettings())
-        coEvery { mockNotifier.notify(any(), any(), any(), any(), any(), any()) } returns Result.success(
+        coEvery { mockNotifier.awaitStepNotice(any(), any(), any(), any()) } returns Result.success(
             VisitNotifier.DispatchResult(emptyList(), suppressed = true, reason = "household_has_no_portal_account"),
         )
         val vm = buildViewModel()
@@ -503,7 +545,7 @@ class HomeViewModelTest {
     fun `the switch being off is named, and survives the reload after the tap`() = runTest(testDispatcher) {
         val context = arriveWithSettings(BusinessSettings())
         coEvery { mockKinCareRepo.markSessionDeparted(any()) } returns Result.success(DEPARTED_AT)
-        coEvery { mockNotifier.notify(any(), any(), any(), any(), any(), any()) } returns Result.success(
+        coEvery { mockNotifier.awaitStepNotice(any(), any(), any(), any()) } returns Result.success(
             VisitNotifier.DispatchResult(emptyList(), suppressed = true, reason = "household_notices_off"),
         )
         val vm = buildViewModel()
@@ -521,7 +563,7 @@ class HomeViewModelTest {
     @Test
     fun `a delivered notice says the household was notified`() = runTest(testDispatcher) {
         val context = arriveWithSettings(BusinessSettings())
-        coEvery { mockNotifier.notify(any(), any(), any(), any(), any(), any()) } returns
+        coEvery { mockNotifier.awaitStepNotice(any(), any(), any(), any()) } returns
             Result.success(VisitNotifier.DispatchResult(listOf("n1"), suppressed = false))
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -538,7 +580,7 @@ class HomeViewModelTest {
     @Test
     fun `a failed dispatch never fails the tap, and says the notice could not be sent`() = runTest(testDispatcher) {
         val context = arriveWithSettings(BusinessSettings())
-        coEvery { mockNotifier.notify(any(), any(), any(), any(), any(), any()) } returns
+        coEvery { mockNotifier.awaitStepNotice(any(), any(), any(), any()) } returns
             Result.failure(RuntimeException("INTERNAL"))
         val vm = buildViewModel()
         advanceUntilIdle()
@@ -561,7 +603,7 @@ class HomeViewModelTest {
         vm.arrived("ses1", context)
         advanceUntilIdle()
 
-        coVerify(exactly = 0) { mockNotifier.notify(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { mockNotifier.awaitStepNotice(any(), any(), any(), any()) }
         assertEquals(
             "Rosa Parks was not notified, because this visit is not linked to a booking.",
             vm.uiState.value.visitNotice,

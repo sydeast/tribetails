@@ -25,7 +25,7 @@ data class NotificationItem(
     val description: String,
     val actorName: String,
     val actorPhotoUrl: String,
-    /** 'booking' | 'invoice' | 'kintale' | 'kinfolk' | '' as the dispatcher resolved it. */
+    /** 'booking' | 'invoice' | 'kintale' | 'kinfolk' | 'conversation' | '' as the dispatcher resolved it. */
     val targetType: String,
     val targetId: String,
     /**
@@ -59,6 +59,8 @@ sealed interface NotificationTarget {
     data object Schedule : NotificationTarget
     data class Invoice(val invoiceId: String) : NotificationTarget
     data class KinTale(val taleId: String) : NotificationTarget
+    /** #1874: a reply from the office opens Messages. */
+    data object Messages : NotificationTarget
     data object None : NotificationTarget
 }
 
@@ -86,6 +88,7 @@ fun notificationTargetOf(item: NotificationItem): NotificationTarget {
         }
         "invoice" -> if (id.isEmpty()) NotificationTarget.None else NotificationTarget.Invoice(id)
         "kintale" -> if (id.isEmpty()) NotificationTarget.None else NotificationTarget.KinTale(id)
+        "conversation" -> NotificationTarget.Messages
         else -> NotificationTarget.None
     }
 }

@@ -149,6 +149,7 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'kintale.published': ['kinfolkName', 'kinName'],
   'marketing.optin': ['business'],
   'message.received': ['Business', 'kinfolkName', 'preview'],
+  'message.reply': ['Business', 'preview'],
   'newsletter.announcement': ['business'],
   'pet.marked.inactive': ['Business', 'kinName'],
   'pets.updated': ['kinName'],

@@ -163,6 +163,8 @@ export type NotificationTargetType =
   | 'invoice'
   | 'kintale'
   | 'kinfolk'
+  // #1874: a household's Messages thread (targetId is the household id).
+  | 'conversation'
   | '';
 
 /** Caller-side input to enqueueNotification. */
@@ -201,6 +203,16 @@ export interface EnqueueArgs {
    * last-sent time instead of being sent again.
    */
   dedupeWindowMs?: number;
+  /**
+   * #1973: recipients whose copy of THIS send is a notifications-list record
+   * only: every delivery channel (email, SMS, push) off for them, whatever
+   * their own settings say. The record still passes the operator's switch and
+   * the household send gate like any other copy. `recordPayment` uses it when
+   * a payment pays an invoice off and the admin left "Send a confirmation
+   * email" unticked: the household sees the payoff on their list, and nothing
+   * is emailed, texted or pushed.
+   */
+  listOnlyFor?: string[];
 }
 
 /**

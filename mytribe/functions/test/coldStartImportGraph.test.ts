@@ -262,8 +262,15 @@ const ALLOWED_EAGER_PACKAGES = [
  * Auntie's narrow settings reads. Their file-scope imports (the booking-policy
  * resolver, the notification catalog and prefs, the callable wrapper) are
  * already resident, so each entry is the only module it adds.
+ *
+ * 454 since #2037 (on top of #2164 / #2182's 453):
+ * `triggers/onKinCareSessionLifecycle.ts`, the trigger that sends each clock
+ * step's household notice and Activity Log line from the committed write. Its
+ * rules, `lib/visitStepNotice.ts`, load with `await import()` inside the
+ * handler (and inside `setVisitLifecycle`), so the entry is the only module it
+ * adds.
  */
-const MAX_OWN_EAGER_MODULES = 453;
+const MAX_OWN_EAGER_MODULES = 454;
 
 interface Edge {
   spec: string;

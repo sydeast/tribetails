@@ -61,6 +61,8 @@ fun visitNoticeOutcomeSentence(outcome: VisitNotifyOutcome, household: String): 
         "session_has_no_kinfolk" -> "No household was notified, because this visit is not linked to one."
         "session_has_no_routing_ids" -> "$name was not notified, because this visit is not linked to a booking."
         "dispatch_failed" -> "The notice to $household could not be sent."
+        // #2037: the server sends from the saved step; the card only stopped waiting.
+        "notice_pending" -> if (household.isBlank()) "Still checking who was told." else "Still checking whether $household was told."
         else -> "$name was not notified."
     }
 }

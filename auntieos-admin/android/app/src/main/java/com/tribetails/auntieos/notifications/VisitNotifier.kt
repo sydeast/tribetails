@@ -1,9 +1,15 @@
 package com.tribetails.auntieos.notifications
 
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.repository.awaitCallable
 import com.tribetails.auntieos.util.AuntieLog
+import com.tribetails.auntieos.util.rethrowIfCancellation
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 
 /**
  * Dispatches visit-lifecycle notifications via the MyTribe catalog-driven
@@ -13,6 +19,14 @@ import com.tribetails.auntieos.util.AuntieLog
  * (email / SMS / push). Templates own the copy. The Auntie app only declares
  * the lifecycle event.
  *
+ * #2037: THE THREE CLOCK STEPS ARE NO LONGER SENT FROM HERE. The server sends
+ * On my way, Arrived and Departed from the committed session write
+ * (`functions/src/triggers/onKinCareSessionLifecycle.ts`), so a step held in
+ * the offline queue, or an app closed right after the tap, still reaches the
+ * household. [awaitStepNotice] reads the server's record of what the household
+ * was told. [notify] stays for a KinTale (`REPORT_SENT`), which the app sends
+ * itself.
+ *
  * Previously this routed through SOTU's `sendMessage` HTTP → n8n proxy with
  * hardcoded body strings and a single hardcoded channel - that bypassed the
  * catalog, kinfolk prefs, multi-channel delivery, and templating. Migrated
@@ -21,6 +35,7 @@ import com.tribetails.auntieos.util.AuntieLog
  */
 class VisitNotifier(
     private val functions: FirebaseFunctions = FirebaseFunctions.getInstance("us-central1"),
+    private val firestore: () -> FirebaseFirestore = { FirebaseFirestore.getInstance() },
 ) {
 
     enum class Event(val wire: String) {
@@ -72,6 +87,79 @@ class VisitNotifier(
         /** The stamped ISO instant as epoch millis, or null when absent or unparseable (never a guess). */
         fun epochMillisOrNull(iso: String?): Long? =
             iso?.takeIf { it.isNotBlank() }?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+
+        /** #2037: how long a card waits for the server's record before it says it is still checking. */
+        const val VISIT_NOTICE_WAIT_MS: Long = 30_000L
+
+        /** Where the server records what the household was told about one clock step. */
+        const val VISIT_STEP_NOTICES_COLLECTION = "visit_step_notices"
+
+        /**
+         * #2037: the id of one step's record: the session, the notice and the
+         * stamped time. The server builds the same string
+         * (`functions/src/lib/visitStepNotice.ts#visitStepNoticeId`), and so do
+         * web and the desktop console.
+         */
+        fun stepNoticeId(sessionId: String, event: Event, atMs: Long): String = "${sessionId}__${event.wire}__$atMs"
+
+        /** PURE. The server's record of one step, in the shape [notify] answers. */
+        fun stepRecordResult(notified: Boolean?, reason: String?): DispatchResult =
+            if (notified == true) {
+                DispatchResult(emptyList(), suppressed = false)
+            } else {
+                DispatchResult(emptyList(), suppressed = true, reason = reason?.takeIf { it.isNotBlank() } ?: "not_sent")
+            }
+
+        /** What [awaitStepNotice] answers when no record arrived in time. Never "not told". */
+        val STILL_CHECKING = DispatchResult(emptyList(), suppressed = true, reason = "notice_pending")
+    }
+
+    /**
+     * #2037: what the household was told about one clock step, as the SERVER
+     * recorded it at `visit_step_notices/{id}`.
+     *
+     * The server sends the notice from the committed write, so nothing here can
+     * lose it: this only waits up to [waitMs] for the record, for the sentence
+     * on the card. No record in time, or a read that fails, answers
+     * [STILL_CHECKING]. Never fails.
+     *
+     * @param eventAtIso the `onMyWayAt` / `arrivedAt` / `departedAt` the caller
+     *   just wrote. With the session id and the step it names the record.
+     */
+    suspend fun awaitStepNotice(
+        sessionId: String,
+        event: Event,
+        eventAtIso: String?,
+        waitMs: Long = VISIT_NOTICE_WAIT_MS,
+    ): Result<DispatchResult> {
+        val atMs = epochMillisOrNull(eventAtIso) ?: return Result.success(STILL_CHECKING)
+        val id = stepNoticeId(sessionId, event, atMs)
+        val read = try {
+            withTimeoutOrNull(waitMs) {
+                suspendCancellableCoroutine<DispatchResult> { cont ->
+                    var registration: ListenerRegistration? = null
+                    registration = firestore().collection(VISIT_STEP_NOTICES_COLLECTION).document(id)
+                        .addSnapshotListener { snap, err ->
+                            if (!cont.isActive) return@addSnapshotListener
+                            if (err != null) {
+                                AuntieLog.e("VisitNotifier: could not read what the household was told", err)
+                                registration?.remove()
+                                cont.resume(STILL_CHECKING)
+                                return@addSnapshotListener
+                            }
+                            if (snap == null || !snap.exists()) return@addSnapshotListener
+                            registration?.remove()
+                            cont.resume(stepRecordResult(snap.getBoolean("notified"), snap.getString("reason")))
+                        }
+                    cont.invokeOnCancellation { registration?.remove() }
+                }
+            }
+        } catch (e: Exception) {
+            e.rethrowIfCancellation()
+            AuntieLog.e("VisitNotifier: could not read what the household was told", e)
+            null
+        }
+        return Result.success(read ?: STILL_CHECKING)
     }
 
     /**

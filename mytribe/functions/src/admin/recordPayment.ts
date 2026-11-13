@@ -817,9 +817,10 @@ export async function recordPaymentHandler(
   //
   // #866: this callable is the only sender of `invoice.payment.applied` for the
   // payment it records. Ticked, the household and the office are told, full or
-  // partial. Unticked (or no portal account), the household gets nothing from
-  // any path, and the office is told only when this payment paid the invoice
-  // off (`settlesInvoice`, decided in the transaction above), as on main.
+  // partial. Unticked, the household hears only when this payment paid the
+  // invoice off (`settlesInvoice`, decided in the transaction above), on their
+  // notifications list with nothing emailed (#1973), and so does the office.
+  // An unticked partial tells nobody.
   const sent = await sendPaymentConfirmation({
     kinfolkId,
     // The invoice the confirmation is ABOUT: the one this payment was
@@ -831,6 +832,9 @@ export async function recordPaymentHandler(
     householdRequested: args.sendConfirmationEmail,
     settlesInvoice: committed.settlesInvoice,
     officeDue: true,
+    // #1973: an unticked payment that pays the invoice off still puts the
+    // payoff on the household's notifications list (nothing is emailed).
+    householdOnPayoff: true,
   });
   // #1511: "sent" means a channel carried it. A copy that reached the household
   // in the app only is reported through `confirmationAppOnly` instead.
@@ -1045,12 +1049,14 @@ async function replayWithConfirmation(
   const settlesInvoice = stored['settlesInvoice'] === true;
   const householdTold = stored['confirmationEmailSent'] === true || stored['confirmationAppOnly'] === true;
   const householdDue = householdRequested && !householdTold;
+  // #1973: the unticked payoff's list-only copy, owed until it is on record.
+  const listDue = !householdRequested && settlesInvoice && !householdTold;
   const officeDue =
     (settlesInvoice || householdRequested) &&
     stored['officeNoticeSentAt'] == null &&
     // Nobody existed to receive it last time; that is final, not unfinished.
     stored['officeNoticeSkippedReason'] == null;
-  if (!householdDue && !officeDue) return answer;
+  if (!householdDue && !listDue && !officeDue) return answer;
   const sent = await sendPaymentConfirmation({
     kinfolkId: answer.kinfolkId,
     invoiceId: answer.application?.invoiceId ?? (typeof stored['invoiceId'] === 'string' ? stored['invoiceId'] : ''),
@@ -1065,6 +1071,7 @@ async function replayWithConfirmation(
     // out (the roster could not be read). The office is owed that copy alone,
     // settled invoice or not, because the ticked first attempt owed it one.
     officeOwedWithoutHousehold: householdRequested && householdTold,
+    householdOnPayoff: listDue,
   });
   // #1511: what the household copy amounted to, first attempt or this one. The
   // stored stamps are exclusive, and a retry only sends when neither is set, so
@@ -1166,10 +1173,12 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
  *     full or a partial payment. The office copy is the same "Payment received"
  *     template the household gets, not an "Invoice Paid" message, so a partial
  *     may carry it, and main sent it.
- *   - unticked, or no household account: the office alone is told, and only
- *     when this payment paid the invoice off (`settlesInvoice`). An enqueue with
- *     no household uid writes only the office copy, the shape the Stripe webhook
- *     uses. A partial, or a payment that paid nothing off, tells nobody.
+ *   - unticked, paying the invoice off (#1973): the office, and the household
+ *     on their notifications list only (`listOnlyFor`, every channel off).
+ *   - no household account: the office alone is told, and only when this
+ *     payment paid the invoice off (`settlesInvoice`). An enqueue with no
+ *     household uid writes only the office copy, the shape the Stripe webhook
+ *     uses. An unticked partial, or a payment that paid nothing off, tells nobody.
  */
 interface ConfirmationOutcome {
   /**
@@ -1225,6 +1234,14 @@ async function sendPaymentConfirmation(input: {
    * owed the office a copy too.
    */
   officeOwedWithoutHousehold?: boolean;
+  /**
+   * #1973: when the toggle is unticked and this payment paid the invoice off,
+   * the household still gets the payoff on their notifications list, with
+   * every delivery channel off (`listOnlyFor`). The form has always said "the
+   * household is only notified once it is paid off", and #866 had made that
+   * untrue: an unticked payoff told the household nothing at all.
+   */
+  householdOnPayoff?: boolean;
 }): Promise<ConfirmationOutcome> {
   const none: ConfirmationOutcome = {
     household: false,
@@ -1237,10 +1254,12 @@ async function sendPaymentConfirmation(input: {
   let recipientUid: string | null = null;
   let noPortalAccount = false;
   const officeOnlyAllowed = input.settlesInvoice || input.officeOwedWithoutHousehold === true;
+  const listOnly = !input.householdRequested && input.settlesInvoice && input.householdOnPayoff === true;
   try {
-    if (input.householdRequested) {
+    if (input.householdRequested || listOnly) {
       recipientUid = await resolveBillingRecipientUid(input.kinfolkId);
-      if (recipientUid === null) {
+      // Only a copy the admin asked for is reported as not reaching anyone.
+      if (recipientUid === null && input.householdRequested) {
         noPortalAccount = true;
         logEvent({
           severity: 'info',
@@ -1265,6 +1284,7 @@ async function sendPaymentConfirmation(input: {
       // A retry of the same submission may land hours later (#866 replay
       // recovery below); the ledger has to remember this payment's copies that long.
       dedupeWindowMs: PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS,
+      ...(listOnly && recipientUid !== null ? { listOnlyFor: [recipientUid] } : {}),
     });
     // #866: a failed lookup (the office roster read) leaves that audience out of
     // this delivery. The household copy went out; the office copy did not, and
@@ -1289,7 +1309,8 @@ async function sendPaymentConfirmation(input: {
     return {
       household,
       // Per recipient: the office's channels are not the household's.
-      householdAppOnly: household && recipientUid !== null && reachedAppOnly(outcome, recipientUid),
+      // #1973: a list-only copy is app-only by construction.
+      householdAppOnly: household && recipientUid !== null && (listOnly || reachedAppOnly(outcome, recipientUid)),
       office: !officeUnresolved,
       noPortalAccount,
       officePending: officeUnresolved,

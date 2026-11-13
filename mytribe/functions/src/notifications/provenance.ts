@@ -668,6 +668,13 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       dataKeys: ['kinfolkId', 'kinfolkName', 'messageId', 'preview'],
     },
   ],
+  'message.reply': [
+    {
+      trigger: 'The office replies to a household in Messages.',
+      source: 'src/admin/conversations.ts',
+      dataKeys: ['kinfolkId', 'kinfolkName', 'messageId', 'preview'],
+    },
+  ],
   'pets.updated': [
     {
       trigger:
