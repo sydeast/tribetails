@@ -2,7 +2,11 @@ package com.tribetails.auntieos.ui.directory
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -18,6 +22,7 @@ import com.tribetails.auntieos.data.repository.KinRemovalRequestRow
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieLinearProgress
+import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.DenPanel
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
@@ -40,7 +45,19 @@ data class KinRemovalQueueState(
     /** The request [actionError] belongs to, so a refusal shows on that row only. */
     val actionErrorFor: String? = null,
     val message: String? = null,
+    /** Every request the last read returned, kept after a row is answered here. */
+    val loadedIds: Set<String> = emptySet(),
 )
+/**
+ * #1912. True when the request a notice opened the screen for was answered
+ * before the Admin got here: the read finished and did not return it. False
+ * while loading, after a failed read (that is an error, not an answer), and
+ * for a request answered on this screen (its own message covers that).
+ */
+internal fun kinRemovalAnsweredElsewhere(state: KinRemovalQueueState, focusRequestId: String): Boolean =
+    focusRequestId.isNotBlank() && !state.loading && state.error == null && focusRequestId !in state.loadedIds
+/** The one line shown for a request that is no longer waiting. */
+internal const val KIN_REMOVAL_ALREADY_ANSWERED = "That request has already been answered."
 
 class KinRemovalQueueViewModel(
     private val repository: KinRemovalRequestRepository = KinRemovalRequestRepository(),
@@ -52,9 +69,11 @@ class KinRemovalQueueViewModel(
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
             val result = repository.list()
+            val pending = result.getOrDefault(emptyList()).filter { it.status == "pending" }
             _state.value = _state.value.copy(
                 loading = false,
-                requests = result.getOrDefault(emptyList()).filter { it.status == "pending" },
+                requests = pending,
+                loadedIds = pending.map { it.id }.toSet(),
                 error = result.exceptionOrNull()?.let { it.message ?: "Couldn't load Kin removal requests" },
             )
         }
@@ -130,3 +149,37 @@ fun KinRemovalRequestsPanel(viewModel: KinRemovalQueueViewModel = viewModel()) {
         }
     }
 }
+/**
+ * #1912. Where a "Kinfolk asked to remove a Kin" notice opens: the waiting
+ * removal requests, each with Archive and Decline. The household profile the
+ * notice used to open has no place to answer one. The React twin is the queue
+ * on Bookings opened with `?kinRemoval=`.
+ */
+@Composable
+fun KinRemovalRequestsScreen(
+    focusRequestId: String,
+    onBack: () -> Unit,
+    viewModel: KinRemovalQueueViewModel = viewModel(),
+) {
+    val state by viewModel.state.collectAsState()
+    AuntieScreenScaffold(title = "Kin removal requests", onBack = onBack, imePaddingEnabled = true) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (kinRemovalAnsweredElsewhere(state, focusRequestId)) {
+                AuntieBanner(tone = AuntieBannerTone.Info, title = "Kin removal request") {
+                    Text(KIN_REMOVAL_ALREADY_ANSWERED, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                }
+            }
+            KinRemovalRequestsPanel(viewModel)
+            if (!state.loading && state.error == null && state.requests.isEmpty() && !kinRemovalAnsweredElsewhere(state, focusRequestId)) {
+                DenPanel(title = "Kin removal requests", detail = "None waiting") {}
+            }
+        }
+    }
+}
+

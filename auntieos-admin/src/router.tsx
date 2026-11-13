@@ -274,7 +274,9 @@ const householdMembersRoute = createRoute({
 const bookingsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'bookings',
-  validateSearch: optionalIdSearch(['bookingId'] as const),
+  // `kinRemoval=<request id>` is where a "Kinfolk asked to remove a Kin" notice
+  // opens: the removal queue on this screen, already unfolded (#1912).
+  validateSearch: optionalIdSearch(['bookingId', 'kinRemoval'] as const),
   component: lazyRouteComponent(() => import('./routes/BookingsView'), 'BookingsView'),
 });
 

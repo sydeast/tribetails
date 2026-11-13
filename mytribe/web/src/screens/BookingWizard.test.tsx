@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { BookingWizardBody } from './BookingWizard';
@@ -1327,6 +1327,19 @@ describe('BookingWizard: #1300 / #1302 step behaviour', () => {
     expect(scroll).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole('button', { name: 'Back' }));
     expect(scroll).toHaveBeenCalledTimes(2);
+  });
+  it('marks the current step in the step row (#1933)', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Select Kin');
+    const items = within(screen.getByRole('list', { name: 'Booking steps' })).getAllByRole('listitem');
+    expect(items).toHaveLength(5);
+    expect(items[0]).toHaveAttribute('aria-current', 'step');
+    expect(items[1]).not.toHaveAttribute('aria-current');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Choose KinCare Duration');
+    expect(items[1]).toHaveAttribute('aria-current', 'step');
+    expect(items[0]).not.toHaveAttribute('aria-current');
   });
   it('names the chosen Kin in the summary instead of counting them', async () => {
     const user = userEvent.setup();

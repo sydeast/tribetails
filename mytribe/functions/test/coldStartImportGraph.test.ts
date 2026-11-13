@@ -204,13 +204,19 @@ const ALLOWED_EAGER_PACKAGES = [
  * `saveEmailFrame`, all entries already in this graph), so they can no longer
  * disagree about what `updatedBy` holds. One function with no import of its own.
  *
- * 442 since #1935 (on top of #1962's 441): `admin/templateChannels.ts` is a new
+ * 442 since #1912 (on top of #1962's 441): `lib/kinLink.ts`, the one place
+ * that says which admin record is a household Kin's own. `portal/kinWrites.ts`,
+ * `admin/kinArchive.ts`, `admin/kinRemovalRequests.ts` and
+ * `triggers/onFamilyKinWrite.ts` (four entries already in this graph) all ask
+ * it, so it is resident by construction; every module it imports is too.
+ *
+ * 443 since #1935 (on top of #1912's 442): `admin/templateChannels.ts` is a new
  * FUNCTIONS entry (the read and the save of a template's text-message and push
  * wording, which no client may touch directly). Its rules,
  * `lib/templateChannelWording.ts`, load with `await import()` inside the
  * handler, so the entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 442;
+const MAX_OWN_EAGER_MODULES = 443;
 
 interface Edge {
   spec: string;
