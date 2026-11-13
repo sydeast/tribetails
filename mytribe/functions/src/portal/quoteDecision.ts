@@ -16,6 +16,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotification } from '../notifications/dispatcher';
+import { readAcceptClaims, readDeclineRelease, stageSessionLinks } from '../lib/invoiceSessionLinks';
 import {
   businessTodayIso,
   quoteDecisionOf,
@@ -49,7 +50,11 @@ import {
  * change at all. A quote billed at nothing lands on 'zero'. The classifier
  * decides; this file does not hand-pick the resulting state.
  *
- * DENY DOES NOT. A declined quote keeps `status: 'quote'`, and that is a
+ * #2156: THE VISITS. A quote holds its visits from the day it is made, so a
+ * DECLINE puts them back on the un-invoiced list in the same transaction, and
+ * an ACCEPT keeps them: the quote is now the invoice that bills them.
+ *
+ * DENY DOES NOT RE-STAMP. A declined quote keeps `status: 'quote'`, and that is a
  * deliberate call rather than an omission. `cancelled` in this codebase means
  * the OPERATOR withdrew a bill; the household saying no is a different fact and
  * the office needs to tell the two apart. It also matters to the household:
@@ -175,6 +180,10 @@ interface DecisionOutcome {
    * answers, and this is what keeps their notifications apart (#832).
    */
   round: number;
+  /** #2156: the visits accepting claimed (a quote made before quotes held their visits). */
+  sessionsLinked: string[];
+  /** #2156: the visits declining put back on the un-invoiced list. */
+  sessionsReleased: string[];
 }
 
 /**
@@ -250,7 +259,19 @@ async function decideQuote(
     const refusal = quoteDecisionRefusal(txInv, decision, todayIso);
     if (refusal) throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
 
+    // #2156: THE VISITS MOVE WITH THE ANSWER, in this same transaction and
+    // read before the write. A quote holds its visits from the day it is made:
+    // declining puts every one back on the un-invoiced list, and accepting
+    // keeps them, because the quote is now the invoice that bills them (see
+    // lib/invoiceSessionLinks.ts). An accept that would bill a visit twice is
+    // refused here, with nothing written.
+    const visits =
+      decision === 'accepted'
+        ? await readAcceptClaims(tx, firestore, args.invoiceId, txInv)
+        : await readDeclineRelease(tx, firestore, args.invoiceId, txInv);
+
     const update: Record<string, unknown> = {
+      ...visits.fields,
       quoteDecision: decision,
       quoteDecidedAt: FieldValue.serverTimestamp(),
       quoteDecidedByUid: uid,
@@ -272,6 +293,7 @@ async function decideQuote(
     // accept the doc is a brand-new bill with nothing collected against it.
     const stamp = invoiceStateStampOf({ ...txInv, ...update }, 0);
     tx.set(invoiceRef, { ...update, ...stamp }, { merge: true });
+    stageSessionLinks(tx, firestore, visits.plan, new Date().toISOString());
 
     return {
       invoiceId: args.invoiceId,
@@ -279,6 +301,8 @@ async function decideQuote(
       status: stamp.status,
       invoiceNumber: typeof txInv['invoiceNumber'] === 'string' ? txInv['invoiceNumber'] : '',
       round: typeof txInv['quoteResendCount'] === 'number' ? txInv['quoteResendCount'] : 0,
+      sessionsLinked: visits.plan.claim,
+      sessionsReleased: visits.plan.release,
     };
   });
 
@@ -296,6 +320,8 @@ async function decideQuote(
       invoiceId: outcome.invoiceId,
       invoiceNumber: outcome.invoiceNumber,
       status: outcome.status,
+      sessionsLinked: outcome.sessionsLinked,
+      sessionsReleased: outcome.sessionsReleased,
     },
   }).catch((err) => {
     logEvent({

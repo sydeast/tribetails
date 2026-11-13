@@ -20,6 +20,7 @@ import { servedHouseholdTimeMode } from '../lib/householdVisitTime';
 import { mergeBusinessSettings } from './settings';
 import { loadSharedWorkSettings } from '../lib/useWorkSettings';
 import { invalidateSharedLoad } from '../lib/useSharedOneShot';
+import { DEFAULT_TAG_COLOR, TAG_PALETTE } from '../lib/tags/model';
 
 const OWNER = { uid: 'owner-1', caretaker: false };
 const AUNTIE = { uid: 'auntie-1', caretaker: true };
@@ -125,6 +126,31 @@ describe('#2164 decodeStaffWorkSettings', () => {
     });
     expect(s.serviceRates).toEqual({ Walk: '' });
     expect(s.serviceDurations).toEqual({});
+  });
+
+  it('#2186: reads the tag names as suggestions with the default color and no icon', () => {
+    const s = decodeStaffWorkSettings({
+      householdTagNames: [' VIP ', '', 'vip', 7, 'Gate code'],
+      kinTagNames: ['Reactive'],
+    });
+    expect(s.householdTags).toEqual([
+      { name: 'VIP', color: DEFAULT_TAG_COLOR, icon: '' },
+      { name: 'Gate code', color: DEFAULT_TAG_COLOR, icon: '' },
+    ]);
+    expect(s.petTags).toEqual([{ name: 'Reactive', color: DEFAULT_TAG_COLOR, icon: '' }]);
+    expect(decodeStaffWorkSettings({}).householdTags).toEqual([]);
+    expect(decodeStaffWorkSettings({ kinTagNames: 'Reactive' }).petTags).toEqual([]);
+  });
+});
+
+describe('#2186 tag suggestions', () => {
+  it("the owner's rows come through as stored, color and icon included", async () => {
+    currentSessionSeat.mockResolvedValue(OWNER);
+    const vip = { name: 'VIP', color: TAG_PALETTE[1]!, icon: '⭐' };
+    getBusinessSettings.mockResolvedValue(mergeBusinessSettings({ householdTags: [vip], petTags: [] }));
+    const s = await getWorkSettings();
+    expect(s.householdTags).toEqual([vip]);
+    expect(s.petTags).toEqual([]);
   });
 });
 

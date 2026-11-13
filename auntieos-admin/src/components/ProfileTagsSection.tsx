@@ -1,11 +1,29 @@
-import { useEffect, useState } from 'react';
-import { getBusinessSettings, type BusinessSettings } from '../api/settings';
+import { useCallback, useEffect, useState } from 'react';
+import { type BusinessSettings } from '../api/settings';
 import { saveBusinessSettings } from '../api/settingsWrite';
+import { getWorkSettingsFor } from '../api/workSettings';
+import { currentSessionSeat } from '../lib/sessionSeat';
 import { addTag, DEFAULT_TAG_COLOR, type TagDef, type TagScope } from '../lib/tags/model';
 import { DenPanel } from './DenScreenKit';
 import { Banner } from './Banner';
+import { GhostButton } from './Buttons';
+import { LoadingRow } from './LoadingRow';
 import { TagAssignField } from './TagAssignField';
 import './ProfileTagsSection.css';
+
+/** The words on the wait, exported so tests spell it once. */
+export const TAG_SUGGESTIONS_LOADING = 'Loading tag suggestions…';
+
+/**
+ * Where the suggestions stand. `canGrow` is whether this session may add a
+ * typed name to the business's tag list: the owner may (Business Settings is
+ * hers), an Auntie may not (#2186), and nobody may before the list has loaded,
+ * because the save replaces the whole list and an empty one would wipe it.
+ */
+type VocabLoad =
+  | { status: 'loading' }
+  | { status: 'ready'; canGrow: boolean }
+  | { status: 'error'; message: string };
 
 /**
  * The "Tags" panel shared by the kinfolk profile (household tags) and the kin
@@ -19,6 +37,12 @@ import './ProfileTagsSection.css';
  * ("add to your tags"): that both assigns the name and appends a default-colored
  * `TagDef` to the right vocabulary list via `saveBusinessSettings`, so it becomes
  * a reusable suggestion (recolorable later in the Tags settings panel).
+ *
+ * #2186: the vocabulary comes through the work-settings read, so an Auntie, who
+ * cannot read `business_settings`, gets the suggestions from the narrow staff
+ * read (names only) while the owner's read stays her direct one. An Auntie is
+ * never offered "add to your tags": that edits Business Settings, which is the
+ * owner's.
  */
 
 interface ProfileTagsSectionProps {
@@ -58,27 +82,33 @@ export function ProfileTagsSection({
   const copy = SCOPE_COPY[scope];
   const [tags, setTags] = useState<string[]>(initialTags);
   const [vocab, setVocab] = useState<TagDef[]>([]);
-  const [vocabError, setVocabError] = useState<string | null>(null);
+  const [vocabLoad, setVocabLoad] = useState<VocabLoad>({ status: 'loading' });
+  const [attempt, setAttempt] = useState(0);
+  const retryVocab = useCallback(() => setAttempt((n) => n + 1), []);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let live = true;
-    getBusinessSettings()
-      .then((s: BusinessSettings) => {
-        if (live) setVocab(scope === 'household' ? s.householdTags : s.petTags);
+    setVocabLoad({ status: 'loading' });
+    // Its own read per mount, never the shared cache: the owner may have just
+    // added a tag on another profile, and this list should carry it.
+    currentSessionSeat()
+      .then(async (seat) => ({ seat, settings: await getWorkSettingsFor(seat) }))
+      .then(({ seat, settings }) => {
+        if (!live) return;
+        setVocab(scope === 'household' ? settings.householdTags : settings.petTags);
+        setVocabLoad({ status: 'ready', canGrow: !seat.caretaker });
       })
-      .catch(
-        (err: unknown) =>
-          live &&
-          setVocabError(
-            `Couldn't load tag suggestions: ${err instanceof Error ? err.message : 'Load failed'}`,
-          ),
-      );
+      .catch((err: unknown) => {
+        if (!live) return;
+        const detail = (err instanceof Error && err.message.trim() !== '' ? err.message.trim() : 'Load failed').replace(/\.+$/, '');
+        setVocabLoad({ status: 'error', message: `Couldn't load tag suggestions: ${detail}` });
+      });
     return () => {
       live = false;
     };
-  }, [scope]);
+  }, [scope, attempt]);
 
   function handleChange(next: string[]) {
     const prev = tags;
@@ -121,9 +151,15 @@ export function ProfileTagsSection({
 
   return (
     <DenPanel title="Tags" subtitle={copy.subtitle}>
-      {vocabError !== null && (
-        <Banner tone="warning" title="Tag suggestions unavailable" className="profileTags__banner">
-          {vocabError}
+      {vocabLoad.status === 'loading' && <LoadingRow label={TAG_SUGGESTIONS_LOADING} className="profileTags__loading" />}
+      {vocabLoad.status === 'error' && (
+        <Banner
+          tone="warning"
+          title="Tag suggestions unavailable"
+          className="profileTags__banner"
+          trailing={<GhostButton label="Try again" onClick={retryVocab} />}
+        >
+          {vocabLoad.message}. Tags you type still save.
         </Banner>
       )}
       {saveError !== null && (
@@ -135,7 +171,7 @@ export function ProfileTagsSection({
         value={tags}
         vocab={vocab}
         onChange={handleChange}
-        onCreateVocab={handleCreateVocab}
+        {...(vocabLoad.status === 'ready' && vocabLoad.canGrow ? { onCreateVocab: handleCreateVocab } : {})}
         disabled={saving}
         inputLabel={copy.inputLabel}
       />

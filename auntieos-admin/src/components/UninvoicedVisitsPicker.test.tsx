@@ -67,7 +67,12 @@ const CATALOG = vi.hoisted(() => ({
 }));
 vi.mock('../lib/useBookingCatalog', () => ({ useBookingCatalog: () => CATALOG }));
 
-import { UninvoicedVisitsPicker, visitLineDescription } from './UninvoicedVisitsPicker';
+import {
+  UninvoicedVisitsPicker,
+  carriedSelection,
+  leftUntickedAfter,
+  visitLineDescription,
+} from './UninvoicedVisitsPicker';
 
 function session(over: Partial<ListUninvoicedSessionsResultSession> = {}): ListUninvoicedSessionsResultSession {
   return {
@@ -344,6 +349,119 @@ describe('UninvoicedVisitsPicker do not invoice', () => {
     expect(
       await screen.findByText(/Could not save:.*already billed on invoice INV-9/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe('carriedSelection and leftUntickedAfter (pure, #2089)', () => {
+  it('ticks everything when nothing has been left unticked', () => {
+    expect([...carriedSelection(['a', 'b'], new Set())]).toEqual(['a', 'b']);
+  });
+
+  it('keeps a visit the admin left unticked unticked, and drops one that left the list', () => {
+    const left = leftUntickedAfter(new Set(), ['a', 'b', 'c'], new Set(['a', 'c']));
+    expect([...left]).toEqual(['b']);
+    // `c` was excluded and is gone; `b` stays off; `a` stays on.
+    expect([...carriedSelection(['a', 'b'], left)]).toEqual(['a']);
+  });
+
+  it('remembers a visit the current list does not show, so wider dates do not re-tick it', () => {
+    const left = leftUntickedAfter(new Set(['b']), ['a'], new Set());
+    expect([...left].sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe("UninvoicedVisitsPicker re-reads keep the admin's ticks (#2089)", () => {
+  const THREE = [
+    session({ sessionId: 'v1', startTime: '2026-07-10T14:00:00.000Z' }),
+    session({ sessionId: 'v2', startTime: '2026-07-11T14:00:00.000Z' }),
+    session({ sessionId: 'v3', startTime: '2026-07-12T14:00:00.000Z' }),
+  ];
+  const box = (day: string) => screen.getByRole('checkbox', { name: new RegExp(day) });
+
+  it('ticks every visit on first open', async () => {
+    listUninvoicedSessions.mockResolvedValue(result({ sessions: THREE }));
+    render(<Harness />);
+    await screen.findAllByRole('checkbox');
+    expect(screen.getAllByRole('checkbox').every((c) => (c as HTMLInputElement).checked)).toBe(true);
+    expect(screen.getByText(/3 of 3 un-invoiced visits selected/i)).toBeInTheDocument();
+  });
+
+  it('after Select none and Do not invoice on one visit, the others stay unticked and that visit leaves', async () => {
+    listUninvoicedSessions
+      .mockResolvedValueOnce(result({ sessions: THREE }))
+      .mockResolvedValueOnce(result({ sessions: THREE.filter((s) => s.sessionId !== 'v2') }));
+    setSessionDoNotInvoice.mockResolvedValue({ ok: true, doNotInvoice: true, changed: ['v2'], unchanged: [] });
+    render(<Harness />);
+    await screen.findAllByRole('checkbox');
+
+    await userEvent.click(screen.getByRole('button', { name: /select none/i }));
+    await userEvent.click(box('2026-07-11'));
+    await userEvent.click(screen.getByRole('button', { name: /do not invoice this visit/i }));
+    // One visit, so the way out is singular too.
+    expect(screen.getByRole('button', { name: /^keep it billable$/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /do not invoice this visit/i }));
+
+    await waitFor(() => expect(setSessionDoNotInvoice).toHaveBeenCalledWith(['v2'], true, ''));
+    expect(await screen.findByText(/0 of 2 un-invoiced visits selected/i)).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /2026-07-11/ })).toBeNull();
+    expect(box('2026-07-10')).not.toBeChecked();
+    expect(box('2026-07-12')).not.toBeChecked();
+    // The trap the walk found: one more press would have excluded everything.
+    expect(screen.getByRole('button', { name: /^do not invoice$/i })).toBeDisabled();
+  });
+
+  it('a visit put back arrives ticked, like any other unbilled work, and the rest keep their state', async () => {
+    const gone = {
+      sessionId: 'v9',
+      kinfolkId: 'kf1',
+      serviceType: 'Dog walk',
+      startTime: '2026-07-02T14:00:00.000Z',
+      reason: '',
+    };
+    listUninvoicedSessions
+      .mockResolvedValueOnce(result({ sessions: THREE, excluded: [gone] }))
+      .mockResolvedValueOnce(
+        result({ sessions: [...THREE, session({ sessionId: 'v9', startTime: '2026-07-02T14:00:00.000Z' })] }),
+      );
+    setSessionDoNotInvoice.mockResolvedValue({ ok: true, doNotInvoice: false, changed: ['v9'], unchanged: [] });
+    render(<Harness />);
+    await screen.findAllByRole('checkbox');
+
+    await userEvent.click(box('2026-07-10'));
+    await userEvent.click(screen.getByRole('button', { name: /put it back/i }));
+
+    expect(await screen.findByText(/3 of 4 un-invoiced visits selected/i)).toBeInTheDocument();
+    expect(box('2026-07-02')).toBeChecked();
+    expect(box('2026-07-10')).not.toBeChecked();
+  });
+
+  it('narrowing the dates and widening them again does not re-tick a visit the admin unticked', async () => {
+    listUninvoicedSessions
+      .mockResolvedValueOnce(result({ sessions: THREE, truncated: true }))
+      .mockResolvedValueOnce(result({ sessions: [THREE[2]!] }))
+      .mockResolvedValueOnce(result({ sessions: THREE, truncated: true }));
+    render(<Harness />);
+    await screen.findAllByRole('checkbox');
+
+    await userEvent.click(box('2026-07-10'));
+    await userEvent.click(screen.getByRole('button', { name: /narrow the dates/i }));
+    expect(await screen.findByText(/1 of 1 un-invoiced visit selected/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /show everything again/i }));
+
+    expect(await screen.findByText(/2 of 3 un-invoiced visits selected/i)).toBeInTheDocument();
+    expect(box('2026-07-10')).not.toBeChecked();
+    expect(box('2026-07-11')).toBeChecked();
+  });
+
+  it('a different household starts fresh, with every visit ticked again', async () => {
+    listUninvoicedSessions.mockResolvedValue(result({ sessions: THREE }));
+    const { rerender } = render(<Harness kinfolkId="kf1" />);
+    await screen.findAllByRole('checkbox');
+    await userEvent.click(screen.getByRole('button', { name: /select none/i }));
+    expect(screen.getByText(/0 of 3/i)).toBeInTheDocument();
+
+    rerender(<Harness kinfolkId="kf2" />);
+    expect(await screen.findByText(/3 of 3 un-invoiced visits selected/i)).toBeInTheDocument();
   });
 });
 

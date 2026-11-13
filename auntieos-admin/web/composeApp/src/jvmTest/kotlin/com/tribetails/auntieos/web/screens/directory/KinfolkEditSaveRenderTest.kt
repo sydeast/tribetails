@@ -80,7 +80,7 @@ class KinfolkEditSaveRenderTest {
         val w = JvmFirestoreFixtures.lastWrite
         assertEquals("kinfolk", w?.collection)
         assertEquals("kf1", w?.id)
-        assertEquals(setOf("gateCode"), w?.fields)
+        assertEquals(setOf("gateCode", "updatedAt"), w?.fields, "the gate code plus the #2155 last-change stamp")
     }
 
     /**
@@ -169,7 +169,7 @@ class KinfolkEditSaveRenderTest {
         onNodeWithText("Save changes").performScrollTo().performClick()
         waitUntil(timeoutMillis = 5_000) { JvmFirestoreFixtures.lastWrite?.op == "MERGE" }
 
-        assertEquals(setOf("gateCode"), JvmFirestoreFixtures.lastWrite?.fields)
+        assertEquals(setOf("gateCode", "updatedAt"), JvmFirestoreFixtures.lastWrite?.fields)
         waitForIdle()
         assertTrue(JvmFirestoreFixtures.lastCallableName != "saveEmergencyContacts", "a contact that failed the pre-check reached the callable")
         assertNull(saved, "the screen closed while the contact still needs fixing")

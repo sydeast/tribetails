@@ -140,9 +140,8 @@ class DesktopTimestampRoundTripTest {
         val kf = JvmFirestoreRest.getDoc<Kinfolk>("kinfolk", "kf1")!!
         assertEquals("2026-11-10T15:00:00.123456Z", kf.createdAt)
         assertEquals("live", kf.createdAtSource)
-        val at = com.tribetails.auntieos.web.screens.directory.kinfolkCreatedAt(kf)
-        assertEquals(com.tribetails.auntieos.web.screens.directory.CreatedTier.Created, at.tier)
-        assertEquals(java.time.Instant.parse("2026-11-10T15:00:00.123Z").toEpochMilli(), at.millis)
+        val at = com.tribetails.auntieos.web.screens.directory.kinfolkCreatedMillis(kf)
+        assertEquals(java.time.Instant.parse("2026-11-10T15:00:00.123Z").toEpochMilli(), at)
     }
 
     /**

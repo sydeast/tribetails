@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, type DocumentReference } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -20,6 +20,7 @@ import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { InvoiceStateSchema, OkSchema } from '../lib/invoiceResponseSchema';
 import { businessTodayIso, quoteDecisionOf, quoteHasExpired } from '../lib/quoteDecision';
+import { readQuoteReopen, readSessionsHeldBy, stageSessionLinks, visitsNamedBy } from '../lib/invoiceSessionLinks';
 
 /**
  * SENDS A DECLINED QUOTE BACK OUT, revised (issue #448).
@@ -67,12 +68,20 @@ import { businessTodayIso, quoteDecisionOf, quoteHasExpired } from '../lib/quote
  * one that says no. The refusal names the fix — give it a new due date first,
  * which is an ordinary edit because a declined quote is fully editable.
  *
- * THE NOTIFICATION GOES FIRST, and its failure is NOT swallowed, mirroring
- * `reviewAndSendDraftInvoice.ts` for the same reason: sending is the point of
- * this callable, so there must be no path that reopens the quote while leaving
- * the household untold. The inverse order would also strand a retry — the
- * second attempt would find the decision already cleared and refuse as
- * "not declined".
+ * ORDER (#2156 review, the order `reviewAndSendDraftInvoice.ts` took in the
+ * #2168 review): the checks, the claim on the quote's visits and the reopen are
+ * ONE transaction, and the household's notice goes out only after it commits.
+ * The notice used to go first, so a New invoice that took one of the quote's
+ * visits before the reopen left the household told about a quote holding
+ * nothing, whose Accept was then refused.
+ *
+ * The notice's failure is still NOT swallowed: sending is the point of this
+ * callable, so there must be no path that reopens the quote while leaving the
+ * household untold. When it fails, the quote is put back to the declined quote
+ * it was and the visits it took go back on the list (`putBackToDeclined`), so
+ * an error still means "not sent" and a retry starts clean. The retry carries
+ * the same resend ordinal, so a notice the failed attempt did deliver is a
+ * `duplicate` and is not sent twice (#832).
  */
 export const Args = z.object({
   invoiceId: z.string().min(1).max(200),
@@ -200,6 +209,81 @@ async function completedResendAnswer(
   });
 }
 
+/**
+ * #2156 review: the notice failed after the reopen committed. Puts the quote
+ * back to the declined quote it was, in a transaction, and lets go of the
+ * visits this resend took, so "an error means it was not sent" stays true and
+ * the visits are back on the un-invoiced list. Only when nothing has happened
+ * to it since: still a quote with no answer, reopened by this caller, on this
+ * resend's ordinal. When it cannot be put back, the error says it went out
+ * unannounced.
+ */
+async function putBackToDeclined(
+  ref: DocumentReference,
+  uid: string,
+  invoiceId: string,
+  prior: Record<string, unknown>,
+  claimed: readonly string[],
+  resendNumber: number,
+  cause: unknown,
+): Promise<void> {
+  let restored = false;
+  try {
+    restored = await db().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const now = (snap.exists ? snap.data() : undefined) as Record<string, unknown> | undefined;
+      const rawStatus = now?.['status'] ?? now?.['invoiceStatus'];
+      const untouched =
+        now !== undefined &&
+        typeof rawStatus === 'string' &&
+        rawStatus.trim().toLowerCase() === 'quote' &&
+        quoteDecisionOf(now['quoteDecision']) === null &&
+        now['quoteResentByUid'] === uid &&
+        now['quoteResendCount'] === resendNumber;
+      if (!untouched) return false;
+      // Every read before any write: the visits this resend claimed, and any
+      // other visit the quote names now (an Edit landing while the notice was
+      // failing can add a line and take its visit). A declined quote holds
+      // none, so every one still naming the quote is let go.
+      const candidates = Array.from(new Set([...claimed, ...visitsNamedBy(now)]));
+      const plan = candidates.length > 0 ? await readSessionsHeldBy(tx, db(), invoiceId, candidates) : null;
+      const doc: Record<string, unknown> = { ...now, updatedAt: FieldValue.serverTimestamp() };
+      for (const [k, v] of Object.entries(prior)) {
+        if (v === undefined) delete doc[k];
+        else doc[k] = v;
+      }
+      // A whole-document set, not a merge: a field the declined quote never
+      // had (a first resend's `quoteResentAt`) is removed, not left behind.
+      tx.set(ref, doc);
+      if (plan !== null) stageSessionLinks(tx, db(), plan, new Date().toISOString());
+      return true;
+    });
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'resendQuote',
+      event: 'quote.resend.revert.failed',
+      extra: { invoiceId },
+      errorMessage: (err as Error)?.message,
+    });
+  }
+  logEvent({
+    severity: restored ? 'warn' : 'error',
+    function: 'resendQuote',
+    event: restored ? 'quote.resend.reverted' : 'quote.resent.unannounced',
+    uid,
+    extra: { invoiceId, resendNumber },
+    errorMessage: (cause as Error)?.message,
+  });
+  if (!restored) {
+    throw new HttpsError(
+      'internal',
+      'The quote was sent back out, but the household could not be told about it. Use Send reminder to tell them.',
+      { code: 'quote_resent_not_announced' },
+    );
+  }
+}
+
 export async function resendQuoteHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
@@ -260,7 +344,7 @@ export async function resendQuoteHandler(
   // #832: no household account means nobody the resend is FOR. `invoice.new`
   // also copies the office, so without this the dispatcher would write that
   // copy, report something written, and the quote would reopen having reached
-  // no household at all. Refused before anything is sent.
+  // no household at all. Refused before anything is written or sent.
   if (recipientUid === null) {
     throw new HttpsError(
       'failed-precondition',
@@ -269,42 +353,121 @@ export async function resendQuoteHandler(
     );
   }
 
-  // FAIL LOUD, and BEFORE the write. See the header: a resend that reopened the
-  // quote without telling the household would look like it worked and reach
-  // nobody, and a retry after a swallowed failure would refuse as
-  // "not declined" because the first attempt had already cleared the decision.
+  // THE CHECK, THE CLAIM AND THE REOPEN: ONE TRANSACTION, BEFORE THE HOUSEHOLD
+  // HEARS (#2156 review). The order `reviewAndSendDraftInvoice` moved to in the
+  // #2168 review, for the same reason. Until now the notice went out first and
+  // the reopen followed, so a New invoice that took one of the quote's visits
+  // in between left the household told about a quote that reopened holding
+  // nothing and whose Accept was then refused. Every refusal (not declined,
+  // accepted, expired, a line's visit billed elsewhere, cancelled or gone) is
+  // decided on what this transaction read, before it writes anything and
+  // before any notification. A New invoice save or a second resend racing this
+  // one is refereed by Firestore: whichever commits second re-runs and sees
+  // the other.
+  const { status, sessionsLinked, resendNumber, prior } = await firestore.runTransaction(async (tx) => {
+    const txSnap = await tx.get(ref);
+    if (!txSnap.exists) throw new HttpsError('not-found', `Quote '${args.invoiceId}' not found.`);
+    const txData = txSnap.data() as Record<string, unknown>;
+
+    // ATOMIC guard, the same shape `acceptQuote` uses: re-read the decision
+    // inside the transaction that clears it, so a resend racing an acceptance
+    // (or a second resend) re-reads the committed answer and fails instead of
+    // reopening a quote somebody has just agreed to.
+    const refusal = resendQuoteRefusal(txData, todayIso);
+    if (refusal) throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
+    // #2156: declining let the quote's visits go back on the un-invoiced list,
+    // and sending it back out takes them back, or refuses when a line's visit
+    // can no longer be quoted (accepting it would bill that work twice).
+    const visits = await readQuoteReopen(tx, firestore, args.invoiceId, txData);
+
+    // #832: THIS RESEND'S ORDINAL, written as a number rather than an
+    // increment, so a failed notice can put the count back exactly.
+    const resendNumber =
+      (typeof txData['quoteResendCount'] === 'number' ? (txData['quoteResendCount'] as number) : 0) + 1;
+    const update: Record<string, unknown> = {
+      ...visits.fields,
+      quoteDecision: FieldValue.delete(),
+      quoteDecidedAt: FieldValue.delete(),
+      quoteDecidedByUid: FieldValue.delete(),
+      // #1039: the name goes with the decision it named. Deleted alongside
+      // the other three so a resent quote never carries the PREVIOUS round's
+      // "Sam accepted" into an invoice nobody has answered yet.
+      quoteDecidedByName: FieldValue.delete(),
+      quoteResentAt: FieldValue.serverTimestamp(),
+      quoteResentByUid: uid,
+      quoteResendCount: resendNumber,
+      // Re-asserted rather than assumed. A declined quote already carries both
+      // spellings as 'quote' (declining never moved them), but writing them
+      // here means a doc some other path left inconsistent goes back out as an
+      // unambiguous quote rather than as whatever it had drifted to.
+      status: 'quote',
+      invoiceStatus: 'quote',
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    // The state stamp (ADR-0002) in the SAME write. The stamp is computed over
+    // the post-write doc with `quoteDecision` spelled out as null rather than
+    // left as the delete sentinel, so the acceptance dimension of
+    // `invoiceEditScope` reads the answer this write actually leaves behind:
+    // no decision, a quote, fully editable again. paidCents is 0 by
+    // construction — a quote cannot have been paid.
+    const stamp = invoiceStateStampOf({ ...txData, ...update, quoteDecision: null }, 0);
+    const write = { ...update, ...stamp };
+    tx.set(ref, write, { merge: true });
+    stageSessionLinks(tx, firestore, visits.plan, new Date().toISOString());
+    // What each written field held before, so a failed notice can put the
+    // quote back exactly (`updatedAt` is restamped, not restored).
+    const prior = Object.fromEntries(
+      Object.keys(write)
+        .filter((k) => k !== 'updatedAt')
+        .map((k) => [k, txData[k]]),
+    ) as Record<string, unknown>;
+    return { status: stamp.status, sessionsLinked: visits.plan.claim, resendNumber, prior };
+  });
+
+  // The notice, now that the quote is reopened and holds its visits. FAIL
+  // LOUD: a resend that reopened the quote without telling the household would
+  // look like it worked and reach nobody, so any failure below puts the quote
+  // back to declined and lets the visits it just took go again
+  // (`putBackToDeclined`), and an error still means "not sent".
   //
   // #832: THIS RESEND HAS ITS OWN IDENTITY. `createQuote` sends the same key
   // for the same invoice, so without a `dedupeKey` a resend inside the
   // dispatcher's window of the original issue (or of an earlier resend) was
   // refused as a duplicate and the dispatcher returned nothing, silently. The
-  // key is the resend's ordinal: a retry of THIS resend (the transaction below
-  // never committed, so the count did not move) carries the same number and is
-  // deduped, while the next real resend, after the household declines again,
-  // carries the next one and sends.
-  const resendNumber =
-    (typeof data['quoteResendCount'] === 'number' ? (data['quoteResendCount'] as number) : 0) + 1;
-  const dispatched = await enqueueNotificationDetailed({
-    // There is no quote.issued key; `invoice.new` is the catalog's
-    // "New invoice/quote issued." row, and it is what createQuote sends when it
-    // issues one in the first place.
-    key: 'invoice.new',
-    recipientUid,
-    data: { kinfolkId, invoiceId: args.invoiceId, isQuote: true, resent: true },
-    actorUid: uid,
-    targetType: 'invoice',
-    targetId: args.invoiceId,
-    dedupeKey: `quote:${args.invoiceId}:resend:${resendNumber}`,
-  });
+  // key is the resend's ordinal. A failed attempt puts the count back, so its
+  // retry carries the same number: a notice the failed attempt did deliver
+  // reads as a `duplicate` below and is not sent twice. The next real resend,
+  // after the household declines again, carries the next number and sends.
+  const putBack = (cause: unknown) =>
+    putBackToDeclined(ref, uid, args.invoiceId, prior, sessionsLinked, resendNumber, cause);
+  let dispatched: Awaited<ReturnType<typeof enqueueNotificationDetailed>>;
+  try {
+    dispatched = await enqueueNotificationDetailed({
+      // There is no quote.issued key; `invoice.new` is the catalog's
+      // "New invoice/quote issued." row, and it is what createQuote sends when
+      // it issues one in the first place.
+      key: 'invoice.new',
+      recipientUid,
+      data: { kinfolkId, invoiceId: args.invoiceId, isQuote: true, resent: true },
+      actorUid: uid,
+      targetType: 'invoice',
+      targetId: args.invoiceId,
+      dedupeKey: `quote:${args.invoiceId}:resend:${resendNumber}`,
+    });
+  } catch (err) {
+    await putBack(err);
+    throw err;
+  }
 
   // STILL FAIL LOUD when the dispatcher answered without reaching the household:
   // the header's reasoning applies to "nothing was enqueued" exactly as to "it
   // threw".
   //
   // ONE EXCEPTION, AND IT IS NOT A FAILURE. A household `duplicate` means an
-  // earlier attempt at THIS resend (same ordinal) already reached them, and only
-  // its reopening transaction did not land. The household has the quote, so the
-  // honest thing is to finish the job: reopen it and answer ok. Refusing would
+  // earlier attempt at THIS resend (same ordinal) already reached them, and
+  // that attempt was then put back. The household has the quote, so the honest
+  // thing is to finish the job: keep it reopened and answer ok. Refusing would
   // leave a quote the household was told about still declined, and the next
   // press would try again with no way to succeed.
   const householdMiss = dispatched.suppressed.find((s) => s.recipientUid === recipientUid);
@@ -324,81 +487,39 @@ export async function resendQuoteHandler(
     });
   } else if (dispatched.written.length === 0 || householdMiss) {
     const reason = householdMiss?.reason ?? dispatched.suppressed[0]?.reason ?? null;
-    if (reason === 'prefs') {
-      throw new HttpsError(
-        'failed-precondition',
-        "The household's notification settings block new quote messages, so a resend would reach nobody. The quote is still declined.",
-        { code: 'quote_resend_suppressed' },
-      );
-    }
-    // The pre-launch household gate is shut (notifications/householdSendGate.ts).
-    // Its own message, because the fix has nothing to do with this household:
-    // `quote_resend_suppressed` would send the operator to a notification
-    // settings screen that is not the problem, and the generic message below
-    // reads as a broken recipient roster. Nothing was written and the quote
-    // stays declined, so pressing again once the gate is open does exactly what
-    // this press meant to do.
-    if (reason === 'gate') {
-      throw new HttpsError(
-        'failed-precondition',
-        'Household notifications are switched off until the business goes live, so this quote was not sent again. It is still declined. Turn household notifications on, then press again.',
-        { code: 'quote_resend_gated' },
-      );
-    }
-    throw new HttpsError(
-      'failed-precondition',
-      'Nobody could be notified about this quote, so it was not sent again. The quote is still declined.',
-      { code: 'quote_resend_unreachable' },
-    );
+    const refusal =
+      reason === 'prefs'
+        ? new HttpsError(
+            'failed-precondition',
+            "The household's notification settings block new quote messages, so a resend would reach nobody. The quote is still declined.",
+            { code: 'quote_resend_suppressed' },
+          )
+        : // The pre-launch household gate is shut (notifications/householdSendGate.ts).
+          // Its own message, because the fix has nothing to do with this
+          // household: `quote_resend_suppressed` would send the operator to a
+          // notification settings screen that is not the problem, and the
+          // generic message below reads as a broken recipient roster. The quote
+          // is put back to declined, so pressing again once the gate is open
+          // does exactly what this press meant to do.
+          reason === 'gate'
+          ? new HttpsError(
+              'failed-precondition',
+              'Household notifications are switched off until the business goes live, so this quote was not sent again. It is still declined. Turn household notifications on, then press again.',
+              { code: 'quote_resend_gated' },
+            )
+          : new HttpsError(
+              'failed-precondition',
+              'Nobody could be notified about this quote, so it was not sent again. The quote is still declined.',
+              { code: 'quote_resend_unreachable' },
+            );
+    await putBack(refusal);
+    throw refusal;
   }
 
   // #1507: the household's copy exists; this says whether anything was sent
   // behind it. Read for the household alone: `invoice.new` also writes an
   // office copy, and the office's email is not the household's.
   const appOnly = alreadyReachedHousehold ? false : reachedAppOnly(dispatched, recipientUid);
-
-  const status = await firestore.runTransaction(async (tx) => {
-    const txSnap = await tx.get(ref);
-    if (!txSnap.exists) throw new HttpsError('not-found', `Quote '${args.invoiceId}' not found.`);
-    const txData = txSnap.data() as Record<string, unknown>;
-
-    // ATOMIC guard, the same shape `acceptQuote` uses: re-read the decision
-    // inside the transaction that clears it, so a resend racing an acceptance
-    // (or a second resend) re-reads the committed answer and fails instead of
-    // reopening a quote somebody has just agreed to.
-    const refusal = resendQuoteRefusal(txData, todayIso);
-    if (refusal) throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
-
-    const update: Record<string, unknown> = {
-      quoteDecision: FieldValue.delete(),
-      quoteDecidedAt: FieldValue.delete(),
-      quoteDecidedByUid: FieldValue.delete(),
-      // #1039: the name goes with the decision it named. Deleted alongside
-      // the other three so a resent quote never carries the PREVIOUS round's
-      // "Sam accepted" into an invoice nobody has answered yet.
-      quoteDecidedByName: FieldValue.delete(),
-      quoteResentAt: FieldValue.serverTimestamp(),
-      quoteResentByUid: uid,
-      quoteResendCount: FieldValue.increment(1),
-      // Re-asserted rather than assumed. A declined quote already carries both
-      // spellings as 'quote' (declining never moved them), but writing them
-      // here means a doc some other path left inconsistent goes back out as an
-      // unambiguous quote rather than as whatever it had drifted to.
-      status: 'quote',
-      invoiceStatus: 'quote',
-      updatedAt: FieldValue.serverTimestamp(),
-    };
-
-    // The state stamp (ADR-0002) in the SAME write. The stamp is computed over
-    // the post-write doc with `quoteDecision` spelled out as null rather than
-    // left as the delete sentinel, so the acceptance dimension of
-    // `invoiceEditScope` reads the answer this write actually leaves behind:
-    // no decision, a quote, fully editable again. paidCents is 0 by
-    // construction — a quote cannot have been paid.
-    const stamp = invoiceStateStampOf({ ...txData, ...update, quoteDecision: null }, 0);
-    tx.set(ref, { ...update, ...stamp }, { merge: true });
-    return stamp.status;
-  });
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -415,6 +536,8 @@ export async function resendQuoteHandler(
       invoiceNumber,
       kinfolkId,
       recipientUid: recipientUid ?? null,
+      // #2156: the visits the quote took back from the un-invoiced list.
+      sessionsLinked,
     },
   }).catch((err) => {
     logEvent({

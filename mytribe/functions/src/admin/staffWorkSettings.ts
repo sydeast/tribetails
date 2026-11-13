@@ -13,7 +13,8 @@ import { BUSINESS_SETTINGS_SOURCE_DOC } from '../lib/businessPublicCard';
  * integration state and every other switch on Business Settings, which an
  * Auntie never sees (role rule: never money; ruling 2026-11-13: never Business
  * Settings). Her visit, schedule, booking and KinTale template screens still
- * need a handful of its values to work at all, so this callable reads the
+ * need a handful of its values to work at all (and her household and Kin tag
+ * fields need the tag suggestions, #2186), so this callable reads the
  * document on the server and returns a closed projection of it.
  *
  * ── EXACTLY WHAT CROSSES THE BOUNDARY ────────────────────────────────────────
@@ -32,6 +33,10 @@ import { BUSINESS_SETTINGS_SOURCE_DOC } from '../lib/businessPublicCard';
  *                                   in Time Blocks mode (#1092, names only)
  *   requireArrivalDepartureVerification   the arrival rule
  *   kinTaleRequired                 the "KinTale required" switch
+ *   householdTagNames[]             #2186: the tag suggestions on a household
+ *   kinTagNames[]                   and a Kin profile, by NAME only (the
+ *                                   `householdTags` / `petTags` rows' `name`).
+ *                                   The color and icon stay on the server.
  *
  * and NOTHING else. Every field is copied by name below, so a field added to
  * the settings document later cannot reach an Auntie by spread. Adding one here
@@ -77,6 +82,10 @@ export interface StaffWorkSettings {
   startTimeServiceIds: string[];
   requireArrivalDepartureVerification: boolean;
   kinTaleRequired: boolean;
+  /** #2186: `householdTags[].name`, trimmed, blanks dropped, in stored order. */
+  householdTagNames: string[];
+  /** #2186: `petTags[].name`, the same way. */
+  kinTagNames: string[];
 }
 
 function isPlainMap(raw: unknown): raw is Record<string, unknown> {
@@ -109,6 +118,18 @@ function timeBlocksFrom(data: Record<string, unknown>): StaffWorkTimeBlock[] | n
   }));
 }
 
+/** The tag NAMES off a `householdTags` / `petTags` list. The color and icon are never read. */
+function tagNamesFrom(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const names: string[] = [];
+  for (const row of raw) {
+    if (!isPlainMap(row)) continue;
+    const name = trimmedString(row['name']);
+    if (name !== '') names.push(name);
+  }
+  return names;
+}
+
 /**
  * Pure: the raw settings document onto the staff projection. The ONLY place the
  * field list is spelled.
@@ -130,6 +151,8 @@ export function buildStaffWorkSettings(settings: Record<string, unknown> | undef
     // entry adds no module to every cold start (test/coldStartImportGraph).
     requireArrivalDepartureVerification: data['requireArrivalDepartureVerification'] === true,
     kinTaleRequired: data['kinTaleRequired'] === true,
+    householdTagNames: tagNamesFrom(data['householdTags']),
+    kinTagNames: tagNamesFrom(data['petTags']),
   };
 }
 

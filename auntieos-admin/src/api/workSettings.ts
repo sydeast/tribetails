@@ -1,6 +1,7 @@
 import { call } from '../lib/fns';
 import { arr, str } from '../lib/coerce';
 import { currentSessionSeat, type SessionSeat } from '../lib/sessionSeat';
+import { DEFAULT_TAG_COLOR, type TagDef } from '../lib/tags/model';
 import { getBusinessSettings, mergeBusinessSettings, type BusinessSettings, type TimeBlockDefinition } from './settings';
 import { startTimeServiceIdsFrom } from '../lib/householdVisitTime';
 
@@ -47,6 +48,14 @@ export interface WorkSettings {
   kinTaleRequired: boolean;
   /** The owner's Schedule snap. Not sent to an Auntie, so hers is the default (off). */
   snapRescheduleTo15Min: boolean;
+  /**
+   * #2186: the tag suggestions on a household and a Kin profile. The owner's
+   * rows as stored. An Auntie is sent the names only, so each of hers carries
+   * the default color and no icon, which is how a chip with no vocabulary
+   * entry already draws.
+   */
+  householdTags: TagDef[];
+  petTags: TagDef[];
 }
 
 /** The owner's full settings, narrowed to the work fields. Tolerates a partial object. */
@@ -67,7 +76,22 @@ export function workSettingsFromBusinessSettings(s: Partial<BusinessSettings>): 
     requireArrivalDepartureVerification: s.requireArrivalDepartureVerification === true,
     kinTaleRequired: s.kinTaleRequired === true,
     snapRescheduleTo15Min: s.snapRescheduleTo15Min === true,
+    householdTags: s.householdTags ?? [],
+    petTags: s.petTags ?? [],
   };
+}
+
+/** Tag names off the staff reply as vocabulary rows: default color, no icon. Blanks and repeats dropped. */
+function tagDefsFromNames(raw: unknown): TagDef[] {
+  const seen = new Set<string>();
+  const out: TagDef[] = [];
+  for (const value of arr<unknown>(raw)) {
+    const name = str(value).trim();
+    if (name === '' || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push({ name, color: DEFAULT_TAG_COLOR, icon: '' });
+  }
+  return out;
 }
 
 /** The `getStaffWorkSettings` reply, as the server sends it. Every field optional: the decoder defaults. */
@@ -81,6 +105,8 @@ interface RawStaffWorkSettings {
   startTimeServiceIds?: unknown;
   requireArrivalDepartureVerification?: unknown;
   kinTaleRequired?: unknown;
+  householdTagNames?: unknown;
+  kinTagNames?: unknown;
 }
 
 /**
@@ -116,6 +142,8 @@ export function decodeStaffWorkSettings(raw: RawStaffWorkSettings | null | undef
     startTimeServiceIds: arr<unknown>(r.startTimeServiceIds).filter(
       (id): id is string => typeof id === 'string' && id.trim() !== '',
     ),
+    householdTags: tagDefsFromNames(r.householdTagNames),
+    petTags: tagDefsFromNames(r.kinTagNames),
   };
 }
 

@@ -838,6 +838,8 @@ class PortalApi(
             }.orEmpty()
             KinTale(
                 id = o["id"]?.jsonPrimitive?.contentOrNull ?: error("kinTale: missing id"),
+                // #2166: absent (an older deployed function) or null reads as no headline.
+                title = (o["title"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
                 body = o["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 authorDisplayName = o["authorDisplayName"]?.jsonPrimitive?.contentOrNull,
                 mediaIds = (o["mediaIds"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),

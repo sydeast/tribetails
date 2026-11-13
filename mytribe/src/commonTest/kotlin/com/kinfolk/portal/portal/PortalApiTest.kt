@@ -415,6 +415,45 @@ class PortalApiTest {
         assertEquals(false, res.hasMore)
     }
 
+    // #2166: the headline the callable sends as `title` reaches the model.
+
+    @Test
+    fun `getMyKinTales decodes the tale's title`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1"); put("title", "Miso ate every bite"); put("body", "A fine dinner."); put("shared", false)
+                })
+            })
+        })
+        val tale = PortalApi(fake).getMyKinTales().tales.single()
+        assertEquals("Miso ate every bite", tale.title)
+        assertEquals("A fine dinner.", tale.body)
+    }
+
+    @Test
+    fun `getMyKinTales reads an absent, null or empty title as no title`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                // An old tale written before titles existed, from a function that omits the key.
+                add(buildJsonObject { put("id", "absent"); put("body", "b"); put("shared", false) })
+                add(buildJsonObject { put("id", "null"); put("title", JsonNull); put("body", "b"); put("shared", false) })
+                add(buildJsonObject { put("id", "empty"); put("title", ""); put("body", "b"); put("shared", false) })
+                // A malformed value never crashes the feed.
+                add(buildJsonObject {
+                    put("id", "object"); put("title", buildJsonObject { put("x", 1) }); put("body", "b"); put("shared", false)
+                })
+            })
+        })
+        val tales = PortalApi(fake).getMyKinTales().tales
+        assertEquals(listOf("absent", "null", "empty", "object"), tales.map { it.id })
+        tales.forEach { assertEquals("", it.title, "tale ${it.id}") }
+    }
+
     // task-25 (P4): visit facts — arrival/departure times and the checked-only
     // task checklist.
 

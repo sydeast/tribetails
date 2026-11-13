@@ -1,7 +1,7 @@
 /**
  * #2164 test fixtures: who is signed in, and what `getStaffWorkSettings`
  * answers an Auntie. The reply carries KinCare names and lengths and never a
- * rate, exactly as the server builds it
+ * rate, and tag names with no color or icon, exactly as the server builds it
  * (mytribe/functions/src/admin/staffWorkSettings.ts).
  */
 export const OWNER_SEAT = { uid: 'owner-1', caretaker: false } as const;
@@ -24,6 +24,9 @@ export const STAFF_WORK_REPLY = {
   startTimeServiceIds: [],
   requireArrivalDepartureVerification: true,
   kinTaleRequired: false,
+  // #2186: the tag suggestions, by name only. No color, no icon.
+  householdTagNames: ['VIP', 'Gate code'],
+  kinTagNames: ['Reactive', 'On meds'],
 };
 
 /** A `call` stand-in that answers only the staff read, as the app's real stub refuses everything else. */

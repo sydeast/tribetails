@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { listUninvoicedSessions, setSessionDoNotInvoice } from '../api/invoicesWrite';
 import type {
@@ -93,6 +93,39 @@ export function visitLineDescription(
   return day === '' ? label : `${label}, ${day}`;
 }
 
+/**
+ * #2089: the visits a list the admin has already seen should arrive ticked.
+ *
+ * The first read of a household's work ticks every visit (the #1965 ruling:
+ * New invoice pre-ticks every unbilled visit). Every LATER read of the same
+ * household's list, after Do not invoice, Put it back, Try again or a change of
+ * dates, keeps what the admin did: a visit the admin left unticked stays
+ * unticked, a ticked one stays ticked, a visit that left the list is gone, and a
+ * visit the admin has never left unticked arrives ticked like any other unbilled
+ * work. That last case is what Put it back produces, and the admin pressing it is
+ * saying the visit is billable again.
+ */
+export function carriedSelection(
+  listedIds: readonly string[],
+  leftUnticked: ReadonlySet<string>,
+): Set<string> {
+  return new Set(listedIds.filter((id) => !leftUnticked.has(id)));
+}
+/**
+ * The visits the admin has seen and left unticked, after a tick change on the
+ * list currently shown. Visits not on that list (hidden by narrower dates) keep
+ * whatever they had, so widening the dates again does not re-tick them.
+ */
+export function leftUntickedAfter(
+  previous: ReadonlySet<string>,
+  shownIds: readonly string[],
+  next: ReadonlySet<string>,
+): Set<string> {
+  const shown = new Set(shownIds);
+  const out = new Set([...previous].filter((id) => !shown.has(id)));
+  for (const id of shownIds) if (!next.has(id)) out.add(id);
+  return out;
+}
 export function UninvoicedVisitsPicker({
   kinfolkId,
   householdLabel,
@@ -117,6 +150,10 @@ export function UninvoicedVisitsPicker({
   const [excludeError, setExcludeError] = useState<string | null>(null);
   const [excludeBusy, setExcludeBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // #2089: the visits the admin has seen and left unticked, for this household.
+  // A ref, not state: it only decides what a re-read list ticks, and reading it
+  // from inside a load must see the latest value, not the one the load closed over.
+  const leftUnticked = useRef<ReadonlySet<string>>(new Set());
   // #1744: each row names the KinCare, never the stored `visit_60`.
   const catalog = useBookingCatalog();
   const serviceName = (serviceType: string) => bookingServiceName(serviceType, catalog);
@@ -133,7 +170,14 @@ export function UninvoicedVisitsPicker({
         // EVERY BILLABLE VISIT STARTS SELECTED. The ordinary invoice covers all
         // of a household's outstanding work; unticking two is less work than
         // ticking eleven, and the count is stated on the button either way.
-        onSelectedChange(new Set(res.sessions.map((s) => s.sessionId)));
+        // A RE-READ KEEPS THE ADMIN'S OWN TICKS (#2089): a visit left unticked
+        // stays unticked, and only the first read finds nothing remembered.
+        onSelectedChange(
+          carriedSelection(
+            res.sessions.map((s) => s.sessionId),
+            leftUnticked.current,
+          ),
+        );
         onSessionsLoaded(res.sessions);
         setLoading(false);
       } catch (caught) {
@@ -154,6 +198,7 @@ export function UninvoicedVisitsPicker({
     setNarrowed(null);
     setNotice(null);
     setExcluding(false);
+    leftUnticked.current = new Set();
     void load(null);
     // Deliberately keyed on the household alone. Reloading a narrowed window is
     // the narrowing control's job, and listing `load` here would re-fire this
@@ -167,11 +212,20 @@ export function UninvoicedVisitsPicker({
   const unplaceable = result?.unplaceable ?? [];
   const selectedSessions = sessions.filter((s) => selected.has(s.sessionId));
 
+  /** Every tick change the admin makes goes through here, so a re-read can keep it. */
+  function choose(next: ReadonlySet<string>) {
+    leftUnticked.current = leftUntickedAfter(
+      leftUnticked.current,
+      sessions.map((s) => s.sessionId),
+      next,
+    );
+    onSelectedChange(next);
+  }
   function toggle(sessionId: string) {
     const next = new Set(selected);
     if (next.has(sessionId)) next.delete(sessionId);
     else next.add(sessionId);
-    onSelectedChange(next);
+    choose(next);
   }
 
   async function applyExclusion(sessionIds: readonly string[], doNotInvoice: boolean, reason: string) {
@@ -329,12 +383,12 @@ export function UninvoicedVisitsPicker({
               <div className="visit-picker__actions visit-picker__actions--start">
                 <GhostButton
                   label="Select all"
-                  onClick={() => onSelectedChange(new Set(sessions.map((s) => s.sessionId)))}
+                  onClick={() => choose(new Set(sessions.map((s) => s.sessionId)))}
                   disabled={disabled || selectedSessions.length === sessions.length}
                 />
                 <GhostButton
                   label="Select none"
-                  onClick={() => onSelectedChange(new Set())}
+                  onClick={() => choose(new Set())}
                   disabled={disabled || selectedSessions.length === 0}
                 />
               </div>
@@ -434,7 +488,7 @@ export function UninvoicedVisitsPicker({
                   </label>
                   <div className="visit-picker__actions">
                     <GhostButton
-                      label="Keep them billable"
+                      label={selectedSessions.length === 1 ? 'Keep it billable' : 'Keep them billable'}
                       onClick={() => {
                         setExcluding(false);
                         setExcludeReason('');
