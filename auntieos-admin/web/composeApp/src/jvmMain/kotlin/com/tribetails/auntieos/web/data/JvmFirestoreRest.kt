@@ -645,17 +645,22 @@ internal object JvmFirestoreRest {
                     })
                 })
                 // 2) session doc: atomic transforms (arrayUnion + increment) plus the
-                //    plain autoCompleteEligible / updatedAt fields, masked to those two.
+                //    plain autoCompleteEligible / kinTaleDue / updatedAt fields,
+                //    masked to those three. #2123: `kinTaleDue: false` ends the
+                //    Auntie's "Send the KinTale" task in the same commit as the
+                //    send; `autoCompleteEligible` is kept for installed Android
+                //    builds and completes nothing on this console.
                 add(buildJsonObject {
                     put("update", buildJsonObject {
                         put("name", sessionName)
                         put("fields", buildJsonObject {
                             put("autoCompleteEligible", plainToFs(JsonPrimitive(true)))
+                            put("kinTaleDue", plainToFs(JsonPrimitive(false)))
                             put("updatedAt", session("updatedAt", updatedAtIso))
                         })
                     })
                     put("updateMask", buildJsonObject {
-                        put("fieldPaths", buildJsonArray { add("autoCompleteEligible"); add("updatedAt") })
+                        put("fieldPaths", buildJsonArray { add("autoCompleteEligible"); add("kinTaleDue"); add("updatedAt") })
                     })
                     put("updateTransforms", buildJsonArray {
                         add(buildJsonObject {

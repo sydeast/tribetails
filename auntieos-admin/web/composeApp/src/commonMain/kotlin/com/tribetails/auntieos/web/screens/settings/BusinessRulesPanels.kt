@@ -19,6 +19,7 @@ import com.composables.icons.lucide.CalendarClock
 import com.composables.icons.lucide.Clock
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.MapPin
+import com.composables.icons.lucide.Send
 import com.tribetails.auntieos.web.data.BusinessSettings
 import com.tribetails.auntieos.web.data.DEFAULT_BUSINESS_TIME_ZONE
 import com.tribetails.auntieos.web.data.SettingsChecks
@@ -791,11 +792,18 @@ internal fun BookingRulesPanel(
  * accuracy change what the phone's `LocationTrackingService` does; the ETA
  * default and its choices drive the On My Way sheet; photo tagging stamps a
  * KinTale photo with where the visit was; arrival verification stops
- * `transitionBookingStatus` completing a visit nobody arrived at; kinfolk
+ * `transitionBookingStatus` completing a visit nobody arrived at; "KinTale
+ * required" (#2123) gives the Auntie a "Send the KinTale" task on Auntie Time
+ * for a visit completed with no KinTale, and never holds the visit back; kinfolk
  * location sharing withholds coordinates from the portal callables and the live
  * breadcrumb read; and the two retention periods are applied nightly by
  * `purgeOldVisitRoutes` and `purgeOldDrafts`.
  */
+/** #2123: the "KinTale required" row's words, the same as admin web and Android. */
+internal const val KINTALE_REQUIRED_TITLE = "KinTale required"
+internal const val KINTALE_REQUIRED_DESCRIPTION =
+    "The Auntie keeps a Send the KinTale task until it is sent. The visit is still Completed when she leaves."
+
 @Composable
 internal fun VisitsTrackingPanel(
     settingsData: BusinessSettings?,
@@ -812,6 +820,8 @@ internal fun VisitsTrackingPanel(
     var accuracy by remember(s) { mutableStateOf(s?.trackingAccuracy ?: "HIGH") }
     var photoTagging by remember(s) { mutableStateOf(s?.enablePhotoLocationTagging != false) }
     var arrivalCheck by remember(s) { mutableStateOf(s?.requireArrivalDepartureVerification == true) }
+    // #2123: absent reads ON, as on the server and every client.
+    var kinTaleRequired by remember(s) { mutableStateOf(s?.kinTaleRequired != false) }
     var arrivalRadius by remember(s) { mutableStateOf((s?.arrivalRadiusMeters ?: 150).toString()) }
     var clientSharing by remember(s) { mutableStateOf(s?.allowClientLocationSharing != false) }
     var routeDays by remember(s) { mutableStateOf((s?.saveRoutesForDays ?: 90).toString()) }
@@ -940,6 +950,16 @@ internal fun VisitsTrackingPanel(
                 color = c.textDim,
             )
             AuntieSettingRow(
+                title = KINTALE_REQUIRED_TITLE,
+                description = KINTALE_REQUIRED_DESCRIPTION,
+                leadingIcon = Lucide.Send,
+                iconTone = AuntieStatusTone.Teal,
+                showDivider = true,
+                trailing = {
+                    AuntieToggle(checked = kinTaleRequired, onCheckedChange = { kinTaleRequired = it }, enabled = settingsLoaded)
+                },
+            )
+            AuntieSettingRow(
                 title = "Let kinfolk see visit locations",
                 description = "Off withholds route coordinates from the portal and the live map.",
                 leadingIcon = Lucide.MapPin,
@@ -980,6 +1000,7 @@ internal fun VisitsTrackingPanel(
                                 trackingAccuracy = accuracy,
                                 enablePhotoLocationTagging = photoTagging,
                                 requireArrivalDepartureVerification = arrivalCheck,
+                                kinTaleRequired = kinTaleRequired,
                                 arrivalRadiusMeters =
                                     parseWholeNumber(arrivalRadius, 10, 5000) ?: loaded.arrivalRadiusMeters,
                                 allowClientLocationSharing = clientSharing,

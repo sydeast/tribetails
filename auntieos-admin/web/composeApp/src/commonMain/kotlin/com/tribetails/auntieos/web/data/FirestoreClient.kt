@@ -1900,21 +1900,6 @@ class FirestoreClient {
     suspend fun completeKinCare(sessionId: String, completedAt: String): WriteResult<Unit> =
         bookingTransition(sessionId, null, "COMPLETE", completedAt = completedAt)
 
-    /**
-     * #1799: after a KinTale send, mark the visit Completed when it is DEPARTED
-     * and the send flagged it (`autoCompleteEligible`), the rule Android's Home
-     * sweep and admin web (#1793) follow. Reads the session fresh, then goes
-     * through [completeKinCare]. Never throws: see [runVisitCompletionAfterKinTale].
-     * Kept apart from [markKinTaleReportSent] and [sendReport] on purpose, so a
-     * refused completion can never read as a failed send.
-     */
-    suspend fun completeVisitAfterKinTale(sessionId: String): VisitCompletionAfterSend =
-        runVisitCompletionAfterKinTale(
-            sessionId = sessionId,
-            read = { platformSessionCompletionFields(it) },
-            complete = { id, at -> completeKinCare(id, at) },
-            now = { com.tribetails.auntieos.web.util.nowIso() },
-        )
     private suspend fun bookingTransition(
         bookingId: String,
         visitId: String?,
@@ -2831,11 +2816,6 @@ internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailM
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
 /** #1567: one invoice document from the server as plain JSON, or null when it does not exist. */
 internal expect suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject?
-/**
- * #1799: `status` and `autoCompleteEligible` of one `kin_care_sessions` doc,
- * read fresh. Null when the doc does not exist; throws when the read fails.
- */
-internal expect suspend fun platformSessionCompletionFields(sessionId: String): SessionCompletionFields?
 internal expect fun platformActivityStream():   Flow<FirestoreResult<List<ActivityLogEntry>>>
 internal expect fun platformNotificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>>
 internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>>
@@ -3699,7 +3679,14 @@ data class KinCareSession(
     val etaMinutesAway: Int = 0,
     val reportIds: List<String> = emptyList(),
     val sentReportCount: Int = 0,
+    // Still written by every send batch (installed Android builds read it), and
+    // read by nothing on this console since #2123: a KinTale no longer completes
+    // a visit.
     val autoCompleteEligible: Boolean = false,
+    // #2123: stamped true by the server when it completes this visit with
+    // "KinTale required" on and no KinTale sent; the send batch writes it false.
+    // Absent is false. See data/KinTaleOwed.kt.
+    val kinTaleDue: Boolean = false,
     val createdAt: String = "",
     val updatedAt: String = "",
 
@@ -4545,6 +4532,12 @@ data class BusinessSettings(
     // #1620: absent means OFF, the server's reading (`=== true` in
     // functions/src/lib/arrivalVerification.ts).
     val requireArrivalDepartureVerification: Boolean = false,
+    // #2123: "KinTale required". ABSENT READS ON, as on the server
+    // (`lib/kinTaleRequirement.ts`) and every client: before this setting a
+    // departed visit waited on its KinTale on every field path, so the Auntie
+    // was in effect required to send one. On, she keeps a "Send the KinTale"
+    // task until it is sent; it never holds the visit back from Completed.
+    val kinTaleRequired: Boolean = true,
     // ISSUE #582: how close to the household counts as arrived, in metres. The
     // threshold under the switch above, not a second switch — there is no "off"
     // value. 150 m matches ARRIVAL_RADIUS_DEFAULT_METERS on the server, which

@@ -288,19 +288,6 @@ internal actual fun platformInvoicesStream(): Flow<FirestoreResult<List<Invoice>
 // screen says it cannot tell, which is the honest answer there too.
 internal actual suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject? =
     if (JvmFirestoreFixtures.invoices != null) null else JvmFirestoreRest.getDocPlain("invoices", invoiceId)
-// #1799: read raw, not through getDoc<KinCareSession>, which answers an
-// undecodable doc with null and would leave a ready visit open without a word.
-internal actual suspend fun platformSessionCompletionFields(sessionId: String): SessionCompletionFields? {
-    JvmFirestoreFixtures.sessions?.let { fixture ->
-        return fixture.firstOrNull { it._id == sessionId }
-            ?.let { SessionCompletionFields(status = it.status, autoCompleteEligible = it.autoCompleteEligible) }
-    }
-    val doc = JvmFirestoreRest.getDocPlain("kin_care_sessions", sessionId) ?: return null
-    return SessionCompletionFields(
-        status = (doc["status"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
-        autoCompleteEligible = (doc["autoCompleteEligible"] as? JsonPrimitive)?.booleanOrNull == true,
-    )
-}
 internal actual fun platformActivityStream(): Flow<FirestoreResult<List<ActivityLogEntry>>> =
     JvmFirestoreFixtures.activity?.let { fixtureFlow(it) }
         ?: JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<ActivityLogEntry>("activity_log") }

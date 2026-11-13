@@ -160,14 +160,6 @@ interface AuntieDataSource {
      * error returns [WriteResult.Err] and the report is NOT flipped to SENT.
      */
     suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit>
-    /**
-     * #1799: after a send, complete the visit when it is DEPARTED and flagged
-     * ([FirestoreClient.completeVisitAfterKinTale]). Never throws. The default
-     * says plainly that it was not done, so a data source that forgets to wire
-     * it is visible rather than silently leaving the visit open.
-     */
-    suspend fun completeVisitAfterKinTale(sessionId: String): VisitCompletionAfterSend =
-        VisitCompletionAfterSend.NotCompleted("This screen cannot mark the visit Completed.")
     /** #1631: delete an unsent report draft (`deleteKinTaleReportDraft`). The server refuses a sent one. */
     // Defaulted so the screen-scoped data sources that never show a KinTale need not implement it.
     suspend fun deleteReportDraft(reportId: String): WriteResult<Unit> =
