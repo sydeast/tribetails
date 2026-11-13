@@ -4,6 +4,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { withSignInFallback } from '../lib/staffIdentity';
+import { staffRolesByUid, type StaffRosterRole } from '../lib/staffRoles';
 
 /**
  * The staff roster, for the Assigned Auntie picker (web + android). One doc
@@ -20,6 +21,12 @@ export interface StaffMemberDto {
   displayName: string | null;
   /** The staff record's email, as stored. */
   email: string | null;
+  /**
+   * #1820: which side of the #944 split this account is on, so the Activity
+   * Log can say "Operator" or "Auntie" for a line whose stored role covers
+   * both. Null when it could not be read; a screen then says "Staff".
+   */
+  role: StaffRosterRole | null;
 }
 
 /**
@@ -33,13 +40,19 @@ export async function listStaffHandler(
   initSentry();
   const snap = await db().collection('staff').get();
   const uids = snap.docs.map((d) => d.id);
-  const records = snap.docs.map((d) => d.data() as { displayName?: unknown; email?: unknown });
-  const identities = await withSignInFallback(uids, records, 'listStaff');
+  const records = snap.docs.map(
+    (d) => d.data() as { displayName?: unknown; email?: unknown; staffRole?: unknown },
+  );
+  const [identities, roles] = await Promise.all([
+    withSignInFallback(uids, records, 'listStaff'),
+    staffRolesByUid(uids, records, 'listStaff'),
+  ]);
   const staff = identities
     .map((who) => ({
       uid: who.uid,
       displayName: who.displayName,
       email: who.email,
+      role: roles.get(who.uid) ?? null,
     }))
     .sort((a, b) => (a.displayName ?? a.email ?? a.uid).localeCompare(b.displayName ?? b.email ?? b.uid));
   return { staff };

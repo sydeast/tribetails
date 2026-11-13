@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { loadStaffNames } from '../api/staff';
+import { loadStaffNames, loadStaffRoles, type StaffRole } from '../api/staff';
 
 const EMPTY: ReadonlyMap<string, string> = new Map();
 
@@ -21,4 +21,25 @@ export function useStaffNames(): ReadonlyMap<string, string> {
     };
   }, []);
   return names;
+}
+
+const NO_ROLES: ReadonlyMap<string, StaffRole> = new Map();
+
+/**
+ * uid -> 'owner' | 'auntie', for the Activity Log's actor role (#1820). Shares
+ * the one `listStaff` read with [useStaffNames]. Empty until it lands, and a
+ * uid it does not hold keeps the role the entry stored.
+ */
+export function useStaffRoles(): ReadonlyMap<string, StaffRole> {
+  const [roles, setRoles] = useState<ReadonlyMap<string, StaffRole>>(NO_ROLES);
+  useEffect(() => {
+    let live = true;
+    void loadStaffRoles().then((m) => {
+      if (live) setRoles(m);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return roles;
 }
