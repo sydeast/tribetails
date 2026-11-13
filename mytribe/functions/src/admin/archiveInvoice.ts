@@ -12,6 +12,7 @@ import { invoiceStateOf } from '../lib/invoiceEditPolicy';
 import { isArchived, amountStillOwed, formatOwed, type ArchivableInvoice } from '../lib/invoiceArchive';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
+import { readSessionsHeldBy, stageSessionLinks, storedSessionIds, visitsNamedBy } from '../lib/invoiceSessionLinks';
 
 /**
  * Archives one invoice: hides it from the operator's default list view and from
@@ -27,6 +28,14 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
  * is refused by default and permitted only with an explicit `force`, which is
  * recorded distinctly in the audit trail. A draft or a quote is exempt because
  * neither was ever claimed from anyone: abandoning a draft is routine.
+ *
+ * #2168: ARCHIVING A DRAFT LETS GO OF ITS VISITS. A draft made in New invoice
+ * marks its visits as billed by it (#1901), and archiving is the only way to
+ * abandon one, so in the same transaction as the archive stamp every visit the
+ * draft holds gets its back-link cleared and goes back on the un-invoiced list.
+ * The draft's `sessionIds` empties and the set is kept in `releasedSessionIds`,
+ * which `unarchiveInvoice` takes back from. Its lines are left as they were.
+ * Any other invoice keeps its visits: it was sent, so it billed them.
  */
 // Exported so the callable-contract drift guard can freeze this request shape.
 export const Args = z.object({
@@ -46,8 +55,11 @@ export const Result = z
     ok: OkSchema,
     /** Echoed back so a caller batching several calls can pair up the answers. */
     invoiceId: z.string().min(1),
+    /** #2168: the visits archiving a draft put back on the un-invoiced list. Empty for any other invoice. */
+    releasedSessionIds: z.array(z.string()),
   })
   .strict();
+
 export async function archiveInvoiceHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
@@ -68,33 +80,57 @@ export async function archiveInvoiceHandler(
   }
 
   const ref = db().collection('invoices').doc(args.invoiceId);
-  const snap = await ref.get();
-  if (!snap.exists) throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
-  const data = snap.data() as ArchivableInvoice;
-
-  if (isArchived(data)) {
-    throw new HttpsError('failed-precondition', 'This invoice is already archived.', {
-      code: 'invoice_already_archived',
-    });
-  }
-
-  const state = invoiceStateOf(data);
-  const owed = amountStillOwed(data);
-  const exempt = state === 'draft' || state === 'quote';
   const forced = args.force === true;
+  // ONE TRANSACTION (#2168): the archive stamp and the release of a draft's
+  // visits land together or not at all. Every refusal is decided on what the
+  // transaction read, before anything is written.
+  const outcome = await db().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+    const data = snap.data() as ArchivableInvoice;
+    if (isArchived(data)) {
+      throw new HttpsError('failed-precondition', 'This invoice is already archived.', {
+        code: 'invoice_already_archived',
+      });
+    }
 
-  if (!exempt && owed > 0 && !forced) {
-    throw new HttpsError(
-      'failed-precondition',
-      `This invoice still has ${formatOwed(owed)} owing. Archiving it would drop that from the outstanding total. Record the payment first, or archive it anyway to write it off.`,
-      { code: 'invoice_still_owing' },
-    );
-  }
+    const state = invoiceStateOf(data);
+    const owed = amountStillOwed(data);
+    const exempt = state === 'draft' || state === 'quote';
 
-  await ref.set(
-    { archivedAt: FieldValue.serverTimestamp(), archivedBy: uid, updatedAt: FieldValue.serverTimestamp() },
-    { merge: true },
-  );
+    if (!exempt && owed > 0 && !forced) {
+      throw new HttpsError(
+        'failed-precondition',
+        `This invoice still has ${formatOwed(owed)} owing. Archiving it would drop that from the outstanding total. Record the payment first, or archive it anyway to write it off.`,
+        { code: 'invoice_still_owing' },
+      );
+    }
+
+    const update: Record<string, unknown> = {
+      archivedAt: FieldValue.serverTimestamp(),
+      archivedBy: uid,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    let released: string[] = [];
+    if (state === 'draft') {
+      const named = visitsNamedBy(data);
+      const plan = named.length > 0 ? await readSessionsHeldBy(tx, db(), args.invoiceId, named) : null;
+      const stored = storedSessionIds(data);
+      if (plan !== null && (stored.length > 0 || plan.release.length > 0)) {
+        update['sessionIds'] = [];
+        update['releasedSessionIds'] = Array.from(new Set([...stored, ...plan.release]));
+      }
+      tx.set(ref, update, { merge: true });
+      if (plan !== null) stageSessionLinks(tx, db(), plan, new Date().toISOString());
+      released = plan?.release ?? [];
+    } else {
+      tx.set(ref, update, { merge: true });
+    }
+    return { data, state, owed, released };
+  });
+
+  const { data, state, owed, released } = outcome;
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -107,7 +143,7 @@ export async function archiveInvoiceHandler(
     familyId: data.kinfolkId,
     // #1752: the number, never the id, in the sentence.
     description: (await import('../lib/activityWords.js')).invoiceSentence(data.invoiceNumber, `archived${forced ? ' (forced, money still owed)' : ''}`),
-    payload: { invoiceId: args.invoiceId, state, owed, forced },
+    payload: { invoiceId: args.invoiceId, state, owed, forced, sessionsReleased: released },
   }).catch((err) => {
     logEvent({
       severity: 'warn',
@@ -123,10 +159,10 @@ export async function archiveInvoiceHandler(
     function: 'archiveInvoice',
     event: 'admin.invoice.archived',
     uid,
-    extra: { invoiceId: args.invoiceId, state, forced },
+    extra: { invoiceId: args.invoiceId, state, forced, released: released.length },
   });
 
-  return validateResponse('archiveInvoice', Result, { ok: true, invoiceId: args.invoiceId });
+  return validateResponse('archiveInvoice', Result, { ok: true, invoiceId: args.invoiceId, releasedSessionIds: released });
 }
 
 export const archiveInvoice = onCall(

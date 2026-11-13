@@ -143,12 +143,75 @@ describe('reviewAndSendDraftInvoice validation + sad paths', () => {
     await expect(reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }, null))).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 
-  it('fails loud (does NOT swallow, does NOT flip status) when dispatch throws', async () => {
-    const ctx = seed();
+  it('fails loud (does NOT swallow) when dispatch throws, and the invoice is the draft it was', async () => {
+    const draft = { kinfolkId: 'fam1', invoiceNumber: 'INV-9', status: 'draft', invoiceStatus: 'draft', total: 40, amountDue: 40 };
+    const ctx = buildDbMock({ docs: { 'invoices/inv1': { ...draft } }, writeThrough: true });
     mocks.dbFn.mockReturnValue(ctx.db);
     mocks.enqueue.mockRejectedValueOnce(new Error('boom'));
     await expect(reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }))).rejects.toThrow('boom');
-    expect(ctx.writes.find((w) => w.path === 'invoices/inv1')).toBeUndefined();
+    // Every field the flip wrote is back to what the draft held, and a field
+    // the draft never had (sentAt, sentBy, the state stamp) is gone again.
+    const { updatedAt, ...after } = ((await ctx.db.doc('invoices/inv1').get()).data() ?? {}) as Record<string, unknown>;
+    expect(updatedAt).toBe('__TS__');
+    expect(after).toEqual(draft);
+  });
+});
+
+/**
+ * #2168 review: THE HOUSEHOLD IS TOLD ONLY ABOUT AN INVOICE IT CAN SEE. Drafts
+ * are hidden from Kinfolk, so the notice goes out after the flip commits, never
+ * before a check that could still keep the invoice a draft.
+ */
+describe('reviewAndSendDraftInvoice: the notice follows the flip', () => {
+  const draft = { kinfolkId: 'fam1', invoiceNumber: 'INV-9', status: 'draft', total: 40, amountDue: 40 };
+
+  it('the invoice is already open when invoice.new is dispatched', async () => {
+    const ctx = buildDbMock({ docs: { 'invoices/inv1': { ...draft } }, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const statusAtDispatch: unknown[] = [];
+    mocks.enqueue.mockImplementation(async () => {
+      statusAtDispatch.push((await ctx.db.doc('invoices/inv1').get()).data()?.status);
+      return ['n1'];
+    });
+    await reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }));
+    expect(statusAtDispatch).toEqual(['open']);
+  });
+
+  it('two sends at once: one notice, and the second is refused before it dispatches', async () => {
+    const ctx = buildDbMock({ docs: { 'invoices/inv1': { ...draft } }, writeThrough: true });
+    // Firestore runs one transaction at a time on a contended doc and re-runs
+    // the second against what the first committed.
+    const inner = ctx.db.runTransaction;
+    let chain: Promise<unknown> = Promise.resolve();
+    ctx.db.runTransaction = (fn: any) => {
+      const run = chain.then(() => inner(fn));
+      chain = run.catch(() => undefined);
+      return run;
+    };
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const [a, b] = await Promise.allSettled([
+      reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' })),
+      reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' })),
+    ]);
+    expect([a.status, b.status].sort()).toEqual(['fulfilled', 'rejected']);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    const refused = (a.status === 'rejected' ? a : b) as PromiseRejectedResult;
+    expect(refused.reason).toMatchObject({ code: 'failed-precondition', message: 'Invoice is not a draft; nothing to send.' });
+  });
+
+  it('a notice that fails after a payment landed is not undone, and the error says the household was not told', async () => {
+    const ctx = buildDbMock({ docs: { 'invoices/inv1': { ...draft } }, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.enqueue.mockImplementationOnce(async () => {
+      await ctx.db.doc('invoices/inv1/payments/p1').set({ amountCents: 4000 });
+      throw new Error('boom');
+    });
+    await expect(reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'inv1' }))).rejects.toMatchObject({
+      code: 'internal',
+      message: 'The invoice was sent, but the household could not be told about it. Use Send reminder to tell them.',
+      details: { code: 'invoice_sent_not_announced' },
+    });
+    expect((await ctx.db.doc('invoices/inv1').get()).data()?.status).toBe('open');
   });
 });
 

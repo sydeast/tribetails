@@ -106,6 +106,7 @@ export interface ArchiveInvoiceArgs {
 export interface ArchiveInvoiceResult {
   ok: true;
   invoiceId: string;
+  releasedSessionIds: string[];
 }
 
 // ---------- createInvoice ----------
@@ -402,6 +403,7 @@ export interface LinkInvoiceSessionsResult {
   sessionIds: string[];
   added: string[];
   removed: string[];
+  linkedWithoutLine: string[];
   status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
   editScope: 'all' | 'metadataOnly' | 'none';
 }
@@ -1110,11 +1112,23 @@ export interface UnarchiveInvoiceArgs {
 }
 
 /**
+ * Nested in the `unarchiveInvoice` contract.
+ */
+export interface UnarchiveInvoiceResultNotReclaimed {
+  sessionId: string;
+  reason: 'on_other_invoice' | 'cancelled' | 'not_found';
+  invoiceNumber: string;
+}
+
+/**
  * Response from the `unarchiveInvoice` callable.
  */
 export interface UnarchiveInvoiceResult {
   ok: true;
   invoiceId: string;
+  reclaimedSessionIds: string[];
+  notReclaimed: UnarchiveInvoiceResultNotReclaimed[];
+  notice: string;
 }
 
 // ---------- updateInvoice ----------

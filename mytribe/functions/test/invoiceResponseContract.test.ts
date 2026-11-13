@@ -263,11 +263,11 @@ const CASES: Array<{
     accepts: [
       [
         'a link with a delta',
-        { ok: true, invoiceId: 'inv1', sessionIds: ['s1', 's2'], added: ['s2'], removed: [], status: 'open', editScope: 'all' },
+        { ok: true, invoiceId: 'inv1', sessionIds: ['s1', 's2'], added: ['s2'], removed: [], linkedWithoutLine: ['s2'], status: 'open', editScope: 'all' },
       ],
       [
         'the full unlink, which is an empty set and not a no-op',
-        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: ['s1'], status: 'paid', editScope: 'none' },
+        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: ['s1'], linkedWithoutLine: [], status: 'paid', editScope: 'none' },
       ],
     ],
     refuses: [
@@ -276,19 +276,25 @@ const CASES: Array<{
       // the classifier this ADR-0002 work deleted.
       [
         "a raw stored spelling ('QUOTE') instead of the classified state",
-        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], status: 'QUOTE', editScope: 'all' },
+        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], linkedWithoutLine: [], status: 'QUOTE', editScope: 'all' },
       ],
       [
         'a ninth invoice state',
-        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], status: 'refunded', editScope: 'all' },
+        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], linkedWithoutLine: [], status: 'refunded', editScope: 'all' },
       ],
       [
         'a fourth editScope',
-        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], status: 'open', editScope: 'readOnly' },
+        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], linkedWithoutLine: [], status: 'open', editScope: 'readOnly' },
+      ],
+      [
+        // #2091: a client told nothing about which visits carry no line would
+        // be back to guessing, so the field is required, never optional.
+        'no linkedWithoutLine, which every answer carries',
+        { ok: true, invoiceId: 'inv1', sessionIds: ['s1'], added: ['s1'], removed: [], status: 'open', editScope: 'all' },
       ],
       [
         'a null status, which linking always stamps',
-        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], status: null, editScope: 'all' },
+        { ok: true, invoiceId: 'inv1', sessionIds: [], added: [], removed: [], linkedWithoutLine: [], status: null, editScope: 'all' },
       ],
     ],
   },
@@ -435,14 +441,38 @@ const CASES: Array<{
   {
     name: 'archiveInvoice',
     schema: ArchiveInvoiceResult,
-    accepts: [['the archived id', { ok: true, invoiceId: 'inv1' }]],
-    refuses: [['a forced flag echoed back, which is a shape change', { ok: true, invoiceId: 'inv1', forced: true }]],
+    accepts: [
+      ['the archived id, nothing released', { ok: true, invoiceId: 'inv1', releasedSessionIds: [] }],
+      ['#2168: a draft that let go of two visits', { ok: true, invoiceId: 'inv1', releasedSessionIds: ['s1', 's2'] }],
+    ],
+    refuses: [
+      ['a forced flag echoed back, which is a shape change', { ok: true, invoiceId: 'inv1', releasedSessionIds: [], forced: true }],
+      ['#2168: the released list missing', { ok: true, invoiceId: 'inv1' }],
+    ],
   },
   {
     name: 'unarchiveInvoice',
     schema: UnarchiveInvoiceResult,
-    accepts: [['the restored id', { ok: true, invoiceId: 'inv1' }]],
-    refuses: [['a missing invoiceId', { ok: true }]],
+    accepts: [
+      ['the restored id, nothing to take back', { ok: true, invoiceId: 'inv1', reclaimedSessionIds: [], notReclaimed: [], notice: '' }],
+      [
+        '#2168: one visit taken back, one billed elsewhere since',
+        {
+          ok: true,
+          invoiceId: 'inv1',
+          reclaimedSessionIds: ['s2'],
+          notReclaimed: [{ sessionId: 's1', reason: 'on_other_invoice', invoiceNumber: '1042' }],
+          notice: '1 visit could not be taken back: the visit on 2026-06-02 is now on invoice 1042.',
+        },
+      ],
+    ],
+    refuses: [
+      ['a missing invoiceId', { ok: true, reclaimedSessionIds: [], notReclaimed: [], notice: '' }],
+      [
+        '#2168: a reason outside the three',
+        { ok: true, invoiceId: 'inv1', reclaimedSessionIds: [], notReclaimed: [{ sessionId: 's1', reason: 'stolen', invoiceNumber: '' }], notice: '' },
+      ],
+    ],
   },
   {
     name: 'retryInvoiceCheckoutClose',

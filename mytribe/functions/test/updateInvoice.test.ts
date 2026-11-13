@@ -910,7 +910,10 @@ describe('updateInvoice settling a balance by lowering the total (#884)', () => 
 /** #408: editing an invoice must not cut its lines loose from their visits. */
 describe('updateInvoice bound line items', () => {
   it('keeps the binding on a line the patch carries', async () => {
-    const ctx = seed();
+    const ctx = buildDbMock({
+      docs: { 'invoices/inv1': OPEN_INVOICE, 'kin_care_sessions/s1': { kinfolkId: 'fam1', status: 'COMPLETED' } },
+      queryDocs: { 'invoices/inv1/payments': [] },
+    });
     mocks.dbFn.mockReturnValue(ctx.db);
     await updateInvoiceHandler(
       req({

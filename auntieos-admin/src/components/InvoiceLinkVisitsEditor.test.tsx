@@ -26,6 +26,8 @@ vi.mock('../lib/useBookingCatalog', () => ({
 
 import {
   InvoiceLinkVisitsEditor,
+  LINK_ADDS_NO_PRICE_TEXT,
+  LINK_ADDS_NO_PRICE_TITLE,
   linkVisitsSavedText,
   onOtherInvoice,
 } from './InvoiceLinkVisitsEditor';
@@ -52,6 +54,7 @@ function result(over: Partial<LinkInvoiceSessionsResult> = {}): LinkInvoiceSessi
     sessionIds: [],
     added: [],
     removed: [],
+    linkedWithoutLine: [],
     status: 'open',
     editScope: 'all',
     ...over,
@@ -275,5 +278,101 @@ describe('linkVisitsSavedText', () => {
     expect(linkVisitsSavedText({ added: [], removed: [] })).toBe('Linked visits unchanged.');
     expect(linkVisitsSavedText({ added: ['a', 'b'], removed: [] })).toBe('Visits saved: 2 linked.');
     expect(linkVisitsSavedText({ added: ['a'], removed: ['b'] })).toBe('Visits saved: 1 linked, 1 unlinked.');
+  });
+});
+describe('#2091 linking says it does not add a price', () => {
+  it('says nothing until a new visit is ticked, then warns before Save', async () => {
+    useCollection.mockReturnValue(ready([visit('s1', { invoiceId: 'inv1' }), visit('s2')]));
+    render(
+      <InvoiceLinkVisitsEditor invoiceId="inv1" kinfolkId="kf1" linkedIds={['s1']} onCancel={vi.fn()} onSaved={vi.fn()} />,
+    );
+    expect(screen.queryByText(LINK_ADDS_NO_PRICE_TITLE)).toBeNull();
+    await userEvent.click(box('s2'));
+    expect(screen.getByText(LINK_ADDS_NO_PRICE_TITLE)).toBeInTheDocument();
+    expect(screen.getByText(LINK_ADDS_NO_PRICE_TEXT)).toBeInTheDocument();
+    // Unticking it again takes the warning away: an unlink adds nothing to warn about.
+    await userEvent.click(box('s2'));
+    expect(screen.queryByText(LINK_ADDS_NO_PRICE_TITLE)).toBeNull();
+  });
+  it('an unlink alone does not warn about prices', async () => {
+    useCollection.mockReturnValue(ready([visit('s1', { invoiceId: 'inv1' })]));
+    render(
+      <InvoiceLinkVisitsEditor invoiceId="inv1" kinfolkId="kf1" linkedIds={['s1']} onCancel={vi.fn()} onSaved={vi.fn()} />,
+    );
+    await userEvent.click(box('s1'));
+    expect(screen.queryByText(LINK_ADDS_NO_PRICE_TITLE)).toBeNull();
+  });
+  it('a visit a line on this invoice bills stays ticked and cannot be unticked', async () => {
+    useCollection.mockReturnValue(ready([visit('s1', { invoiceId: 'inv1' }), visit('s2', { invoiceId: 'inv1' })]));
+    render(
+      <InvoiceLinkVisitsEditor
+        invoiceId="inv1"
+        kinfolkId="kf1"
+        linkedIds={['s1', 's2']}
+        billedIds={['s1']}
+        onCancel={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(box('s1').checked).toBe(true);
+    expect(box('s1').disabled).toBe(true);
+    expect(screen.getByText(/billed on a line of this invoice, remove the line in Edit to unlink it/)).toBeInTheDocument();
+    // A linked visit with no line is still free to unlink.
+    expect(box('s2').disabled).toBe(false);
+  });
+  it('a billed visit the stored set left out can be ticked and unticked again before Save', async () => {
+    useCollection.mockReturnValue(ready([visit('s1')]));
+    render(
+      <InvoiceLinkVisitsEditor
+        invoiceId="inv1"
+        kinfolkId="kf1"
+        linkedIds={[]}
+        billedIds={['s1']}
+        onCancel={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(box('s1').disabled).toBe(false);
+    await userEvent.click(box('s1'));
+    expect(box('s1').checked).toBe(true);
+    await userEvent.click(box('s1'));
+    expect(box('s1').checked).toBe(false);
+  });
+  it('on a locked invoice the billed visit does not point to Edit', () => {
+    useCollection.mockReturnValue(ready([visit('s1', { invoiceId: 'inv1' })]));
+    render(
+      <InvoiceLinkVisitsEditor
+        invoiceId="inv1"
+        kinfolkId="kf1"
+        linkedIds={['s1']}
+        billedIds={['s1']}
+        linesEditable={false}
+        onCancel={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(box('s1').disabled).toBe(true);
+    expect(screen.getByText(/billed on a line of this invoice, and its lines are locked/)).toBeInTheDocument();
+    expect(screen.queryByText(/remove the line in Edit/)).toBeNull();
+  });
+  it('the save sends the full set and reports the server answer, price note included', async () => {
+    useCollection.mockReturnValue(ready([visit('s2')]));
+    const onSaved = vi.fn();
+    linkInvoiceSessions.mockResolvedValue(result({ sessionIds: ['s2'], added: ['s2'], linkedWithoutLine: ['s2'] }));
+    render(<InvoiceLinkVisitsEditor invoiceId="inv1" kinfolkId="kf1" linkedIds={[]} onCancel={vi.fn()} onSaved={onSaved} />);
+    await userEvent.click(box('s2'));
+    await userEvent.click(saveButton());
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(linkVisitsSavedText(onSaved.mock.calls[0]![0] as LinkInvoiceSessionsResult)).toBe(
+      'Visits saved: 1 linked. The linked visit no longer shows as un-invoiced, and its price was not added to this invoice.',
+    );
+  });
+  it('linkVisitsSavedText: the price note covers only visits added with no line', () => {
+    expect(linkVisitsSavedText({ added: ['a', 'b'], removed: [], linkedWithoutLine: ['a', 'b', 'old'] })).toBe(
+      'Visits saved: 2 linked. The 2 linked visits no longer show as un-invoiced, and their prices were not added to this invoice.',
+    );
+    // Already linked without a line before this save: not news, not repeated.
+    expect(linkVisitsSavedText({ added: [], removed: ['x'], linkedWithoutLine: ['old'] })).toBe('Visits saved: 1 unlinked.');
+    expect(linkVisitsSavedText({ added: ['a'], removed: [], linkedWithoutLine: [] })).toBe('Visits saved: 1 linked.');
   });
 });

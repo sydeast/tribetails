@@ -1593,6 +1593,20 @@ class FirestoreClient {
     }
 
     /**
+     * #2168: restores an archived invoice (`unarchiveInvoice`), the one way back
+     * from read-only. Answers the server's `notice`, its sentence about visits a
+     * restored draft could not take back ('' when every visit came back, or from
+     * a server too old to send one). A refusal is returned verbatim.
+     */
+    suspend fun unarchiveInvoice(invoiceId: String): WriteResult<String> {
+        val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
+        return when (val r = platformInvokeCallable("unarchiveInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(decodeUnarchiveNotice(r.value))
+        }
+    }
+
+    /**
      * Slice 2: marks an invoice receipted (generateReceipt callable + invoice.receipt notify).
      *
      * #1511: answers whether the receipt notice reached the household in the app
@@ -5206,3 +5220,12 @@ fun orderVisitReports(reports: List<KinCareReport>, sessionId: String): List<Kin
         .sortedWith(compareByDescending<KinCareReport> { it.updatedAt }.thenByDescending { it.createdAt }.thenByDescending { it._id })
     return sent + rest
 }
+
+/**
+ * #2168: the `notice` of an `unarchiveInvoice` answer. '' when it is absent,
+ * not a string, or the body does not parse: the restore itself happened, and
+ * only the sentence about visits is unknown.
+ */
+internal fun decodeUnarchiveNotice(body: String): String = runCatching {
+    Json.parseToJsonElement(body).jsonObject["notice"]?.jsonPrimitive?.contentOrNull.orEmpty()
+}.getOrDefault("")

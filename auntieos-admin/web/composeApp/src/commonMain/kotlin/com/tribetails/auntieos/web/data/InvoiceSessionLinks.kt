@@ -22,6 +22,13 @@ data class InvoiceSessionLinkOutcome(
     val removed: List<String>,
     val status: String,
     val editScope: String,
+    /**
+     * #2091: the linked visits (after the save) that no line on the invoice
+     * bills. Linking marks them billed by this invoice without adding a price,
+     * and [invoiceSessionLinksSavedText] says so. Empty when the server is an
+     * older build that does not send it. Last, so positional callers keep working.
+     */
+    val linkedWithoutLine: List<String> = emptyList(),
 )
 
 /**
@@ -59,12 +66,17 @@ internal fun decodeInvoiceSessionLinkOutcome(
         sessionIds = strings(obj["sessionIds"]) ?: requestedSessionIds.distinct(),
         added = strings(obj["added"]).orEmpty(),
         removed = strings(obj["removed"]).orEmpty(),
+        linkedWithoutLine = strings(obj["linkedWithoutLine"]).orEmpty(),
         status = text("status"),
         editScope = text("editScope"),
     )
 }
 
-/** The confirmation the console shows once the server has saved the set. */
+/**
+ * The confirmation the console shows once the server has saved the set. Same
+ * wording as admin web and Android. #2091: a visit linked with no line to bill
+ * it is named as not priced.
+ */
 internal fun invoiceSessionLinksSavedText(outcome: InvoiceSessionLinkOutcome): String {
     val a = outcome.added.size
     val r = outcome.removed.size
@@ -73,8 +85,33 @@ internal fun invoiceSessionLinksSavedText(outcome: InvoiceSessionLinkOutcome): S
         if (a > 0) add("$a linked")
         if (r > 0) add("$r unlinked")
     }
-    return "Visits saved: ${parts.joinToString(", ")}."
+    val withoutLine = outcome.linkedWithoutLine.toSet()
+    val unpriced = outcome.added.count { it in withoutLine }
+    val priceNote = when {
+        unpriced == 0 -> ""
+        unpriced == 1 -> " The linked visit no longer shows as un-invoiced, and its price was not added to this invoice."
+        else -> " The $unpriced linked visits no longer show as un-invoiced, and their prices were not added to this invoice."
+    }
+    return "Visits saved: ${parts.joinToString(", ")}.$priceNote"
 }
+/** #2091: the warning shown while a newly ticked visit waits to be saved. Same words as web and Android. */
+internal const val LINK_ADDS_NO_PRICE_TITLE = "Linking does not change the total"
+internal const val LINK_ADDS_NO_PRICE_TEXT =
+    "A visit you link here is marked as billed by this invoice and leaves the un-invoiced list, but its " +
+        "price is not added. To bill a visit's price, leave it unticked and put it on an invoice from New invoice."
+/**
+ * #2091: the visits a line on the invoice bills, read off the RAW stored
+ * `lineItems` (anything that is not a list of objects reads as none). The
+ * picker keeps them ticked and will not untick them, and `linkInvoiceSessions`
+ * refuses the unlink with `session_billed_on_line`: unlinking a visit a line
+ * still bills would put billed work back on the un-invoiced list. Removing the
+ * line in Edit unlinks it (#1970). Same rule as admin web and Android.
+ */
+internal fun linkPickerBilledIds(lineItems: JsonElement?): Set<String> =
+    (lineItems as? JsonArray).orEmpty()
+        .mapNotNull { ((it as? JsonObject)?.get("sessionId") as? JsonPrimitive)?.takeIf { p -> p.isString }?.content?.trim() }
+        .filter { it.isNotEmpty() }
+        .toSet()
 
 /**
  * #1609: a CANCELLED visit is work that did not happen, so the picker shows it
@@ -119,8 +156,12 @@ internal fun toggleLinkPick(
     sessions: List<KinCareSession>,
     invoiceId: String,
     storedIds: Collection<String>,
+    /** #2091: visits a line bills; a STORED one stays ticked. */
+    billedIds: Set<String> = emptySet(),
 ): Set<String> {
-    if (sessionId in pending) return pending - sessionId
+    // Only a stored link is held: a billed visit the set left out (an old half
+    // link) can be ticked and unticked again before Save, as the server allows.
+    if (sessionId in pending) return if (sessionId in billedIds && sessionId in storedIds) pending else pending - sessionId
     val session = sessions.firstOrNull { it._id == sessionId }
     if (session != null && (linkPickerOnOtherInvoice(session, invoiceId, storedIds) || linkPickerCancelled(session, storedIds))) {
         return pending

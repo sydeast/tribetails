@@ -247,8 +247,17 @@ const ALLOWED_EAGER_PACKAGES = [
  * FUNCTIONS entry (the owner-only Archive / Restore of a Kinfolk household,
  * with its Activity Log line). Its words, `lib/activityWords.ts`, load with
  * `await import()` inside the handler, so the entry is the only module it adds.
+ *
+ * 451 since #1901 (on top of #2161's 450): `lib/invoiceSessionLinks.ts`, the
+ * one place that sets and clears a visit's billed link, which
+ * `admin/createInvoice.ts`, `admin/updateInvoice.ts` and
+ * `admin/linkInvoiceSessions.ts` (entries already in this graph) share inside
+ * their transactions so the three cannot disagree. Its runtime imports are
+ * firebase-admin, firebase-functions, `lib/sessionInvoicing.ts`, and (for the
+ * Chicago day) `lib/bookingTimeBlocks.ts` and `lib/businessHours.ts`, all
+ * already resident.
  */
-const MAX_OWN_EAGER_MODULES = 450;
+const MAX_OWN_EAGER_MODULES = 451;
 
 interface Edge {
   spec: string;

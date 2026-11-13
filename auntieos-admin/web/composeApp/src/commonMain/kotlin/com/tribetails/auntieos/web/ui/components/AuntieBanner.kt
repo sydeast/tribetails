@@ -4,6 +4,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -284,6 +286,8 @@ private fun BannerDismiss(
                 indication = null,
                 onClick = onDismiss,
             )
+            // Named for screen readers (and tests), as on Android: "Dismiss".
+            .semantics { contentDescription = "Dismiss" }
             .drawBehind {
                 val pad = 7.dp.toPx()
                 val w = strokeWidthDp.toPx()
