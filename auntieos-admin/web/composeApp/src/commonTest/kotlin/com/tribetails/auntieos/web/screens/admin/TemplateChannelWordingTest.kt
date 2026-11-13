@@ -175,6 +175,33 @@ class TemplateChannelWordingTest {
         }
     }
 
+    @Test fun textsSplitAt160Then153TheSameCountTheWebAndAndroidMake() {
+        assertEquals(SmsSegments(0, false), smsSegments("   "))
+        assertEquals(SmsSegments(1, false), smsSegments("a".repeat(160)))
+        assertEquals(SmsSegments(2, false), smsSegments("a".repeat(161)))
+        assertEquals(SmsSegments(2, false), smsSegments("a".repeat(306)))
+        assertEquals(SmsSegments(3, false), smsSegments("a".repeat(307)))
+        assertEquals(1, smsSegments("  ${"a".repeat(160)}  ").segments)
+        assertEquals(2, smsSegments("${"a".repeat(159)}{").segments)
+        assertEquals(1, smsSegments("${"a".repeat(158)}€").segments)
+    }
+
+    @Test fun anEmojiOrCurlyQuoteDropsEachTextTo70Then67() {
+        assertEquals(SmsSegments(1, true), smsSegments("${"a".repeat(69)}’"))
+        assertEquals(SmsSegments(2, true), smsSegments("${"a".repeat(70)}’"))
+        assertEquals(3, smsSegments("${"a".repeat(133)}🐾").segments)
+    }
+
+    @Test fun theTextsLineIsPlainWords() {
+        assertNull(smsSegmentHint(""))
+        assertEquals("Sends as 1 text.", smsSegmentHint("Hi {{kinName}}"))
+        assertEquals("Sends as 2 texts.", smsSegmentHint("a".repeat(200)))
+        assertEquals(
+            "Sends as 1 text. An emoji or special character makes each text shorter.",
+            smsSegmentHint("Hi 🐾"),
+        )
+    }
+
     @Test fun theOperatorNeverReadsAStoredNameOrADeveloperWord() {
         val words = WordingChannel.entries.flatMap {
             listOf(it.title, it.noun, it.notSent, it.addLabel, it.saveLabel, it.savedNotice)

@@ -181,6 +181,46 @@ class TemplateChannelWordingTest {
     }
 
     @Test
+    fun `texts split at 160 then 153, the same count the web editor makes`() {
+        assertEquals(SmsSegments(0, false), smsSegments("   "))
+        assertEquals(SmsSegments(1, false), smsSegments("a".repeat(160)))
+        assertEquals(SmsSegments(2, false), smsSegments("a".repeat(161)))
+        assertEquals(SmsSegments(2, false), smsSegments("a".repeat(306)))
+        assertEquals(SmsSegments(3, false), smsSegments("a".repeat(307)))
+        assertEquals(1, smsSegments("  ${"a".repeat(160)}  ").segments)
+        // A bracket takes two places, a euro sign too.
+        assertEquals(2, smsSegments("${"a".repeat(159)}{").segments)
+        assertEquals(1, smsSegments("${"a".repeat(158)}€").segments)
+    }
+
+    @Test
+    fun `an emoji or curly quote drops each text to 70 then 67`() {
+        assertEquals(SmsSegments(1, true), smsSegments("${"a".repeat(69)}’"))
+        assertEquals(SmsSegments(2, true), smsSegments("${"a".repeat(70)}’"))
+        assertEquals(3, smsSegments("${"a".repeat(133)}🐾").segments)
+    }
+
+    @Test
+    fun `the texts line is plain words`() {
+        assertNull(smsSegmentHint(""))
+        assertEquals("Sends as 1 text.", smsSegmentHint("Hi {{kinName}}"))
+        assertEquals("Sends as 2 texts.", smsSegmentHint("a".repeat(200)))
+        assertEquals(
+            "Sends as 1 text. An emoji or special character makes each text shorter.",
+            smsSegmentHint("Hi 🐾"),
+        )
+    }
+
+    @Test
+    fun `half-written push wording counts as wording to finish`() {
+        val blank = com.tribetails.auntieos.data.repository.PushChannel(true, false, "", "", 100, 500)
+        assertFalse(pushHasWording(blank))
+        assertTrue(pushHasWording(blank.copy(title = "Booked")))
+        assertTrue(pushHasWording(blank.copy(body = "Tap")))
+        assertTrue(pushHasWording(blank.copy(set = true)))
+    }
+
+    @Test
     fun `a field chip lands on the end with a space before it`() {
         assertEquals("{{kinName}}", appendField("", "kinName"))
         assertEquals("Hi {{kinName}}", appendField("Hi", "kinName"))

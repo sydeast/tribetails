@@ -197,6 +197,34 @@ describe('reading the wording', () => {
     expect(within(panel('sms')).getByText('23 of 1600 characters')).toBeInTheDocument();
   });
 
+  it('says how many texts the message sends as, and updates while typing', async () => {
+    open();
+    fireEvent.click(tab('Text message'));
+    const box = await findSmsBox();
+    expect(screen.getByTestId('template-channel-sms-segments')).toHaveTextContent('Sends as 1 text.');
+    fireEvent.change(box, { target: { value: 'a'.repeat(200) } });
+    expect(screen.getByTestId('template-channel-sms-segments')).toHaveTextContent('Sends as 2 texts.');
+    fireEvent.change(box, { target: { value: 'See you soon 🐾' } });
+    expect(screen.getByTestId('template-channel-sms-segments')).toHaveTextContent(
+      'Sends as 1 text. An emoji or special character makes each text shorter.',
+    );
+    fireEvent.change(box, { target: { value: '  ' } });
+    expect(screen.queryByTestId('template-channel-sms-segments')).toBeNull();
+  });
+
+  it('half-written push wording opens to be finished, not as "Not set"', async () => {
+    getTemplateChannels.mockResolvedValue(
+      channels({
+        push: { supported: true, set: false, title: 'Booked', body: '', titleMaxLength: 100, bodyMaxLength: 500 },
+      }),
+    );
+    open();
+    fireEvent.click(tab('Push notification'));
+    expect(await screen.findByLabelText('Title')).toHaveValue('Booked');
+    expect(screen.getByLabelText('Message')).toHaveValue('');
+    expect(screen.queryByTestId('template-channel-push-notset')).toBeNull();
+  });
+
   it('shows the stored push title and message', async () => {
     open();
     fireEvent.click(tab('Push notification'));

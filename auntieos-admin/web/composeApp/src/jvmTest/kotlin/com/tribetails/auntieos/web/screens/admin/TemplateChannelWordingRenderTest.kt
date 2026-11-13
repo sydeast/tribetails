@@ -109,6 +109,13 @@ class TemplateChannelWordingRenderTest {
     }
 
     @Test
+    fun theTextMessageSaysHowManyTextsItSendsAs() = runDesktopComposeUiTest {
+        show(load = { WriteResult.Ok(channels(sms = TextMessageWording(true, true, "a".repeat(200), 1600))) })
+        awaitText("Save text message")
+        onNodeWithText("Sends as 2 texts.").assertExists()
+    }
+
+    @Test
     fun storedWordingIsShownWithItsCountsAndTheFieldsItCanUse() = runDesktopComposeUiTest {
         show(load = { WriteResult.Ok(channels()) })
         awaitText("Save text message")

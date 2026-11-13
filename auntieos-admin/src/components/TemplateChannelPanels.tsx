@@ -15,6 +15,7 @@ import {
   characterCount,
   localWordingError,
   saveChannelLabel,
+  smsSegmentHint,
   type WordingChannel,
 } from '../lib/templateChannelFormat';
 import { GhostButton, PrimaryButton } from './Buttons';
@@ -239,6 +240,11 @@ export function TemplateChannelPanels({ templateId, active }: TemplateChannelPan
         <p id={`${id}-count`} className="template-editor__hint">
           {characterCount(draft[name], max)}
         </p>
+        {name === 'smsText' && smsSegmentHint(draft.smsText) ? (
+          <p className="template-editor__hint" data-testid="template-channel-sms-segments">
+            {smsSegmentHint(draft.smsText)}
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -279,7 +285,14 @@ export function TemplateChannelPanels({ templateId, active }: TemplateChannelPan
     if (!state.supported) {
       return notSet(channel, channelUnavailableReason(channel, channels.notificationLabel));
     }
-    if (!state.set && !adding[channel]) {
+    // Half-written push wording (a title and no message) is not "set" for the
+    // sender, but it is there to read and finish, so it opens the form. Same
+    // reading on Android and desktop.
+    const hasWording =
+      channel === 'sms'
+        ? channels.sms.set
+        : channels.push.set || channels.push.title.trim() !== '' || channels.push.body.trim() !== '';
+    if (!hasWording && !adding[channel]) {
       return notSet(channel, null, () => setAdding((prev) => ({ ...prev, [channel]: true })));
     }
     const failure = saveError[channel];

@@ -9,6 +9,8 @@ import {
   characterCount,
   localWordingError,
   saveChannelLabel,
+  smsSegmentHint,
+  smsSegments,
 } from './templateChannelFormat';
 
 describe('templateChannelFormat (#1935)', () => {
@@ -51,10 +53,43 @@ describe('templateChannelFormat (#1935)', () => {
     expect(localWordingError('Message', 'Hi {{{anything}}}', 500)).toBeNull();
   });
 
+  it('counts texts the way carriers split them: 160, then 153 a text', () => {
+    expect(smsSegments('')).toEqual({ segments: 0, unicode: false });
+    expect(smsSegments('   ')).toEqual({ segments: 0, unicode: false });
+    expect(smsSegments('a'.repeat(160))).toEqual({ segments: 1, unicode: false });
+    expect(smsSegments('a'.repeat(161))).toEqual({ segments: 2, unicode: false });
+    expect(smsSegments('a'.repeat(306))).toEqual({ segments: 2, unicode: false });
+    expect(smsSegments('a'.repeat(307))).toEqual({ segments: 3, unicode: false });
+    // Spaces at either end are not sent, so they are not counted.
+    expect(smsSegments(`  ${'a'.repeat(160)}  `).segments).toBe(1);
+  });
+
+  it('counts a bracket or euro sign as two places, and a field as its own letters', () => {
+    // 159 + one "{" (two places) = 161 places: two texts.
+    expect(smsSegments(`${'a'.repeat(159)}{`).segments).toBe(2);
+    expect(smsSegments(`${'a'.repeat(158)}€`).segments).toBe(1);
+  });
+
+  it('an emoji or curly quote drops each text to 70, then 67', () => {
+    expect(smsSegments(`${'a'.repeat(69)}’`)).toEqual({ segments: 1, unicode: true });
+    expect(smsSegments(`${'a'.repeat(70)}’`)).toEqual({ segments: 2, unicode: true });
+    // An emoji is two UTF-16 units: 133 + 2 = 135, one over two 67-unit parts.
+    expect(smsSegments(`${'a'.repeat(133)}🐾`).segments).toBe(3);
+  });
+
+  it('says how many texts in plain words, and why they got shorter', () => {
+    expect(smsSegmentHint('')).toBeNull();
+    expect(smsSegmentHint('Hi {{kinName}}')).toBe('Sends as 1 text.');
+    expect(smsSegmentHint('a'.repeat(200))).toBe('Sends as 2 texts.');
+    expect(smsSegmentHint('Hi 🐾')).toBe('Sends as 1 text. An emoji or special character makes each text shorter.');
+  });
+
   it('carries no developer word and no em dash in any sentence', () => {
     const all = [
       ...Object.values(CHANNEL_LABEL),
       SAVE_TEMPLATE_FIRST,
+      smsSegmentHint('a'.repeat(200)),
+      smsSegmentHint('🐾'),
       addChannelLabel('sms'),
       addChannelLabel('push'),
       channelUnavailableReason('sms', null),

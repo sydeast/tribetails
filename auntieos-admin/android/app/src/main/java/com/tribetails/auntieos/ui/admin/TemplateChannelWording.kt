@@ -68,6 +68,7 @@ internal const val PUSH_BODY_FIELD_TAG = "channel-push-body-field"
 internal const val TEXT_SAVE_TAG = "channel-text-save"
 internal const val PUSH_SAVE_TAG = "channel-push-save"
 internal const val CHANNEL_LOADING_TAG = "channel-loading"
+internal const val TEXT_SEGMENTS_TAG = "channel-text-segments"
 
 /** Which of the two channels a sentence is about. */
 internal enum class WordingChannel(
@@ -134,6 +135,53 @@ internal fun wordingPrecheck(label: String, value: String, max: Int): String? {
 
 /** "12 of 1600 characters", counted the way the server counts. */
 internal fun wordingCounter(value: String, max: Int): String = "${value.trim().length} of $max characters"
+
+/** The GSM-7 alphabet: 160 to a text. The extension set takes two places each. */
+private const val GSM7_BASIC =
+    "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
+        "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà"
+private const val GSM7_EXTENDED = "^{}\\[~]|€\u000C"
+
+/** How many texts a message goes out as, and whether a special character shortened each one. */
+internal data class SmsSegments(val segments: Int, val unicode: Boolean)
+
+/**
+ * The same count as the web editor's `smsSegments`: 160 places in one text or
+ * 153 each when split, 70 or 67 (UTF-16 units) once any character is outside
+ * the plain alphabet. Counted on the trimmed wording as typed.
+ */
+internal fun smsSegments(text: String): SmsSegments {
+    val value = text.trim()
+    if (value.isEmpty()) return SmsSegments(0, false)
+    var places = 0
+    var i = 0
+    while (i < value.length) {
+        val cp = value.codePointAt(i)
+        val ch = String(Character.toChars(cp))
+        when {
+            GSM7_BASIC.contains(ch) -> places += 1
+            GSM7_EXTENDED.contains(ch) -> places += 2
+            else -> {
+                val units = value.length
+                return SmsSegments(if (units <= 70) 1 else (units + 66) / 67, true)
+            }
+        }
+        i += Character.charCount(cp)
+    }
+    return SmsSegments(if (places <= 160) 1 else (places + 152) / 153, false)
+}
+
+/** "Sends as 2 texts.", or null when nothing is typed. */
+internal fun smsSegmentHint(text: String): String? {
+    val (segments, unicode) = smsSegments(text)
+    if (segments == 0) return null
+    val count = if (segments == 1) "Sends as 1 text." else "Sends as $segments texts."
+    return if (unicode) "$count An emoji or special character makes each text shorter." else count
+}
+
+/** Half-written push wording is not "set" for the sender, but it is there to read and finish. */
+internal fun pushHasWording(push: com.tribetails.auntieos.data.repository.PushChannel): Boolean =
+    push.set || push.title.isNotBlank() || push.body.isNotBlank()
 
 /** A field dropped onto the end of what is typed, with one space before it when needed. */
 internal fun appendField(value: String, field: String): String {
@@ -250,6 +298,8 @@ private fun WordingField(
     singleLine: Boolean,
     tag: String,
     onFocused: () -> Unit = {},
+    /** A second line under the count: how many texts a text message sends as. */
+    hint: String? = null,
     onChange: (String) -> Unit,
 ) {
     val c = AuntieTheme.colors
@@ -267,6 +317,9 @@ private fun WordingField(
         )
         error?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = c.error) }
         Text(wordingCounter(value, max), style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+        hint?.let {
+            Text(it, style = AuntieTheme.typography.labelSmall, color = c.textFaint, modifier = Modifier.testTag(TEXT_SEGMENTS_TAG))
+        }
     }
 }
 
@@ -360,6 +413,7 @@ private fun TextMessageCard(
             enabled = !saving,
             singleLine = false,
             tag = TEXT_FIELD_TAG,
+            hint = smsSegmentHint(text),
         ) { text = it; error = null; failure = null; notice = null }
         FieldChips(channels.fields, enabled = !saving) { text = appendField(text, it); error = null }
         SaveRow(channel, TEXT_SAVE_TAG, saving, failure, notice) {
@@ -403,7 +457,7 @@ private fun PushCard(
     // A field chip goes into whichever of the two was touched last.
     var titleFocused by remember { mutableStateOf(false) }
 
-    if (!push.supported || (!push.set && (readOnly || !adding))) {
+    if (!push.supported || (!pushHasWording(push) && (readOnly || !adding))) {
         NotSetCard(
             channel,
             PUSH_SECTION_TAG,

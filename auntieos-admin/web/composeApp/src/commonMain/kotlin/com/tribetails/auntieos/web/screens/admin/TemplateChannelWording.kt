@@ -131,6 +131,46 @@ internal fun wordingCounter(value: String, max: Int): String {
     return if (max > 0) "$length of $max characters" else "$length characters"
 }
 
+/** The GSM-7 alphabet: 160 to a text. The extension set takes two places each. */
+private const val GSM7_BASIC =
+    "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
+        "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà"
+private const val GSM7_EXTENDED = "^{}\\[~]|€\u000C"
+
+/** How many texts a message goes out as, and whether a special character shortened each one. */
+internal data class SmsSegments(val segments: Int, val unicode: Boolean)
+
+/**
+ * The same count as the web and Android editors: 160 places in one text or 153
+ * each when split, 70 or 67 (UTF-16 units) once any character is outside the
+ * plain alphabet. Every GSM-7 character is a single UTF-16 unit, so half of an
+ * emoji is already "outside" and the walk can go unit by unit.
+ */
+internal fun smsSegments(text: String): SmsSegments {
+    val value = text.trim()
+    if (value.isEmpty()) return SmsSegments(0, false)
+    var places = 0
+    for (ch in value) {
+        when {
+            GSM7_BASIC.indexOf(ch) >= 0 -> places += 1
+            GSM7_EXTENDED.indexOf(ch) >= 0 -> places += 2
+            else -> {
+                val units = value.length
+                return SmsSegments(if (units <= 70) 1 else (units + 66) / 67, true)
+            }
+        }
+    }
+    return SmsSegments(if (places <= 160) 1 else (places + 152) / 153, false)
+}
+
+/** "Sends as 2 texts.", or null when nothing is typed. */
+internal fun smsSegmentHint(text: String): String? {
+    val (segments, unicode) = smsSegments(text)
+    if (segments == 0) return null
+    val count = if (segments == 1) "Sends as 1 text." else "Sends as $segments texts."
+    return if (unicode) "$count An emoji or special character makes each text shorter." else count
+}
+
 internal sealed interface ChannelsLoad {
     data object Loading : ChannelsLoad
     data class Failed(val message: String) : ChannelsLoad
@@ -247,6 +287,8 @@ private fun WordingField(
     error: String?,
     minLines: Int,
     onFocused: () -> Unit = {},
+    /** A second line under the count: how many texts a text message sends as. */
+    hint: String? = null,
 ) {
     val c = AuntieTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -262,6 +304,7 @@ private fun WordingField(
             style = AuntieTheme.typography.bodySmall,
             color = if (max > 0 && value.text.trim().length > max) c.error else c.textDim,
         )
+        hint?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = c.textDim) }
         error?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = c.error) }
     }
 }
@@ -354,6 +397,7 @@ private fun TextMessageSection(
                     max = sms.maxLength,
                     error = fieldError,
                     minLines = 3,
+                    hint = smsSegmentHint(draft.text),
                 )
                 FieldChips(channels.fields) { draft = draft.insert(it); fieldError = null; notice = null }
                 SaveRow(channel, saving, saveError, notice) {

@@ -99,6 +99,22 @@ class TemplateChannelWordingUiTest {
     }
 
     @Test
+    fun `says how many texts the message sends as, and follows the typing`() {
+        show()
+        composeRule.onNodeWithTag(TEXT_SEGMENTS_TAG).assertTextContains("Sends as 1 text.")
+        composeRule.onNodeWithTag(TEXT_FIELD_TAG).performTextReplacement("a".repeat(200))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TEXT_SEGMENTS_TAG).assertTextContains("Sends as 2 texts.")
+    }
+
+    @Test
+    fun `half-written push wording opens to be finished`() {
+        show(load = { Result.success(channels(pushTitle = "Booked", pushBody = "")) })
+        composeRule.onNodeWithTag(PUSH_TITLE_FIELD_TAG).assertTextContains("Booked")
+        composeRule.onNodeWithTag(PUSH_BODY_FIELD_TAG).assertExists()
+    }
+
+    @Test
     fun `a failed load says so and Try again asks the server once more`() {
         var calls = 0
         show(load = {
