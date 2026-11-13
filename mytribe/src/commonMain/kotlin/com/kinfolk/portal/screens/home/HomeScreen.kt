@@ -265,13 +265,15 @@ fun HomeScreen(
         else -> null
     }
 
-    // The canonical layout (empty config) keeps the two-column wide split:
-    // main = liveVisit + upNext + tales, aside = quickStart; narrow puts
-    // quickStart first. When the operator supplies an explicit order, we honor
-    // that order in a single column (a custom order can't be meaningfully
-    // forced into two fixed columns), still skipping disabled sections and
-    // applying limits.
-    val custom = sections.isNotEmpty()
+    // The standard order keeps the two-column wide split: main = liveVisit +
+    // upNext + tales, aside = quickStart; narrow puts quickStart first. When
+    // the operator has changed the order, we honor that order in a single
+    // column (a custom order can't be meaningfully forced into two fixed
+    // columns). Both shapes skip switched-off sections and apply limits.
+    // #1987: the order alone chooses. A Limit or a hidden card never does
+    // (see homeLayoutMode in HomeLayout.kt).
+    val stacked = remember(sections) { homeLayoutMode(sections) == HomeLayoutMode.Stacked }
+    fun shows(id: String): Boolean = cfg(id) != null
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val wide = isWideShell(maxWidth.value)
@@ -289,7 +291,7 @@ fun HomeScreen(
                 if (!cardDismissed) DevicePushCard(pushCoordinator, onDismiss = { pushCoordinator.dismissHomeCard() })
             }
 
-            if (custom) {
+            if (stacked) {
                 // Operator order: liveVisit spans full width, everything else
                 // stacks in the configured order within the padded column.
                 // #1462: Balance due follows Up next, or goes last when Up next
@@ -315,11 +317,11 @@ fun HomeScreen(
                     }
                 }
             } else {
-                liveVisitSection()
+                if (shows("liveVisit")) liveVisitSection()
                 val mainColumn: @Composable () -> Unit = {
-                    upNextSection()
+                    if (shows("upNext")) upNextSection()
                     balanceDueSection()
-                    talesSection()
+                    if (shows("tales")) talesSection()
                 }
                 val asideColumn: @Composable () -> Unit = {
                     quickStartSection()
@@ -352,25 +354,6 @@ fun HomeScreen(
             Spacer(Modifier.height(KinfolkSpacing.l))
         }
     }
-}
-
-/** A resolved home section: id + per-section limit (0 = unlimited). */
-private data class HomeSectionResolved(val id: String, val limit: Int)
-
-/** Canonical section order used when the operator supplies no config. */
-private val CANONICAL_HOME_ORDER = listOf("liveVisit", "upNext", "tales", "roster", "quickStart")
-
-/**
- * Resolves the home layout from the operator [sections] config. Empty config →
- * the canonical order with all sections enabled. Otherwise: the configured
- * order, dropping `enabled == false` and any unknown ids, carrying each
- * section's limit through.
- */
-private fun resolveHomeLayout(sections: List<PortalHomeSection>): List<HomeSectionResolved> {
-    if (sections.isEmpty()) return CANONICAL_HOME_ORDER.map { HomeSectionResolved(it, 0) }
-    return sections
-        .filter { it.enabled && it.id in CANONICAL_HOME_ORDER }
-        .map { HomeSectionResolved(it.id, it.limit) }
 }
 
 // ---- Sections ----

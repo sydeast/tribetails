@@ -139,6 +139,45 @@ fun decodeHomeSections(raw: Any?): List<PortalHomeSection> {
 }
 
 /**
+ * The Home sections of the default layout, in the default order. The same four
+ * ids as `HOME_SECTION_CATALOG` (ui/admin/HomeLayoutConfig.kt, which adds the
+ * operator-facing labels), the React admin's `HOME_SECTION_CATALOG` and the
+ * server's `DEFAULT_HOME_SECTION_IDS` (mytribe/functions/src/lib/homeLayout.ts).
+ */
+val DEFAULT_HOME_SECTION_IDS: List<String> = listOf("liveVisit", "upNext", "tales", "quickStart")
+/**
+ * #1987: is this layout the default? True for the empty list (how the default
+ * is stored) and for the four default rows written out in full: each once, in
+ * the default order, each on, each with no limit. A layout equal to the
+ * default IS the default, however it came to be stored.
+ *
+ * Before this the test was "is the list empty", and the editor writes every
+ * row as soon as one value is touched. Typing a Limit of 2 and then putting 0
+ * back left four default-looking rows that read "Custom layout" and turned the
+ * portal's Home into one stacked column, with Reset the only way out.
+ *
+ * Deliberately exact, the same rule as the server and the React admin: a list
+ * with any other row (an unknown or legacy id, a repeat, a blank id) is never
+ * called the default, because collapsing it would throw away a row the
+ * operator can see.
+ */
+fun isDefaultHomeLayout(sections: List<PortalHomeSection>): Boolean {
+    if (sections.isEmpty()) return true
+    if (sections.size != DEFAULT_HOME_SECTION_IDS.size) return false
+    return sections.withIndex().all { (i, row) ->
+        row.id == DEFAULT_HOME_SECTION_IDS[i] && row.enabled && row.limit == 0
+    }
+}
+/**
+ * The layout as it should be held and saved: the empty list when it is equal
+ * to the default, otherwise the rows untouched. Applied where the stored layout
+ * is read ([BusinessSettings.homeSections], for a document stored before the
+ * server collapsed these) and on every edit in `HomeLayoutPanel`, so putting
+ * each value back is the same state as never having touched it.
+ */
+fun normalizeHomeSections(sections: List<PortalHomeSection>): List<PortalHomeSection> =
+    if (isDefaultHomeLayout(sections)) emptyList() else sections
+/**
  * Encode a Home layout back onto a raw `mytribePortal` map, replacing ONLY the
  * `home.sections` key. Every other key already on [raw] — `logoUrl`,
  * `logoRemovedAt`, `themeId`, `banner`, `chat` — survives unread and unchanged.
