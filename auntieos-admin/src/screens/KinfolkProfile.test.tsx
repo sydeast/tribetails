@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import type { Kin } from '../api/directory';
 import type { KinfolkProfile as Profile } from '../api/kinfolkProfile';
 import { listUnappliedPayments } from '../api/unappliedPayments';
+import { getAccountCreditHistory } from '../api/accountCredit';
 
 const { getKinfolkProfile } = vi.hoisted(() => ({ getKinfolkProfile: vi.fn() }));
 vi.mock('../api/kinfolkProfile', async (orig) => ({
@@ -66,9 +67,12 @@ vi.mock('../api/unappliedPayments', () => ({
 // decide between stepping back and the `onBack` fallback (#689). Default is a
 // cold arrival (nothing behind us), which is what most of this file asserts.
 const routerHistory = vi.hoisted(() => ({ canGoBack: vi.fn(() => false), back: vi.fn() }));
+// #2200: the access the admin layout resolved. The owner unless a spec says so.
+const useRouteContext = vi.hoisted(() => vi.fn());
 vi.mock('@tanstack/react-router', () => ({
   linkOptions: (o: unknown) => o,
   useRouter: () => ({ history: routerHistory }),
+  useRouteContext,
   Link: ({
     to,
     params,
@@ -153,6 +157,8 @@ beforeEach(() => {
   routerHistory.canGoBack.mockReset();
   routerHistory.canGoBack.mockReturnValue(false);
   routerHistory.back.mockReset();
+  useRouteContext.mockReset();
+  useRouteContext.mockReturnValue({ access: { status: 'admin' } });
 });
 
 describe('mergeKinfolkProfile (pure)', () => {
@@ -856,6 +862,68 @@ describe('KinfolkProfile: the mock', () => {
     expect(left[0]).toBe('Contact');
     expect(left[left.length - 1]).toBe('Auntie’s notes');
   });
+
+  // #2200 / #2201: an Auntie never sees money, and Invoices sends her Home, so
+  // the household's Invoices card (every row a link into Invoices) is not on
+  // her profile and its read is never opened. Her work cards stay.
+  it('draws no Invoices card for an Auntie and opens no invoices read', async () => {
+    useRouteContext.mockReturnValue({ access: { status: 'caretaker' } });
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Recent KinTales' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Upcoming KinCare' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Invoices' })).toBeNull();
+    const paths = useCollection.mock.calls.map(([spec]) => (spec as { path: string }).path);
+    expect(paths).not.toContain('invoices');
+  });
+
+  for (const access of [{ status: 'testAdmin', testTribeId: 'tribe-sandbox' }, null]) {
+    it(`keeps the Invoices card for ${access === null ? 'the offline session' : 'the test admin'}`, async () => {
+      useRouteContext.mockReturnValue({ access });
+      getKinfolkProfile.mockResolvedValue(profile());
+      render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+      expect(await screen.findByRole('heading', { name: 'Invoices' })).toBeInTheDocument();
+    });
+  }
+
+  // #2208: Account credit is money, and the server refuses an Auntie its
+  // history, so the panel is not mounted for her and neither of its reads (the
+  // history and the "Payments needing a decision" list) is started. That holds
+  // when she arrives the way the payment notice used to send her, too.
+  it('draws no Account credit card for an Auntie and starts none of its reads', async () => {
+    useRouteContext.mockReturnValue({ access: { status: 'caretaker' } });
+    vi.mocked(getAccountCreditHistory).mockClear();
+    vi.mocked(listUnappliedPayments).mockClear();
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(
+      <KinfolkProfile
+        kinfolkId="k1"
+        kinfolkName="Jamie"
+        kin={[]}
+        onBack={vi.fn()}
+        openUnappliedPayments
+        unappliedPaymentId="evt_1"
+      />,
+    );
+    expect(await screen.findByRole('heading', { name: 'Recent KinTales' })).toBeInTheDocument();
+    await act(async () => {});
+    expect(screen.queryByRole('heading', { name: 'Account credit' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Payments needing a decision' })).toBeNull();
+    expect(vi.mocked(getAccountCreditHistory)).not.toHaveBeenCalled();
+    expect(vi.mocked(listUnappliedPayments)).not.toHaveBeenCalled();
+  });
+
+  for (const access of [{ status: 'admin' }, { status: 'testAdmin', testTribeId: 'tribe-sandbox' }, null]) {
+    const who = access === null ? 'the offline session' : access.status === 'admin' ? 'the owner' : 'the test admin';
+    it(`keeps the Account credit card and its read for ${who}`, async () => {
+      useRouteContext.mockReturnValue({ access });
+      vi.mocked(getAccountCreditHistory).mockClear();
+      getKinfolkProfile.mockResolvedValue(profile());
+      render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+      expect(await screen.findByRole('heading', { name: 'Account credit' })).toBeInTheDocument();
+      await waitFor(() => expect(vi.mocked(getAccountCreditHistory)).toHaveBeenCalledWith('k1'));
+    });
+  }
 
   it('#1003 opened from the unapplied-payment notice, the Account credit panel shows the decision list even when empty', async () => {
     getKinfolkProfile.mockResolvedValue(profile());

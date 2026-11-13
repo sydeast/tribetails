@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, linkOptions } from '@tanstack/react-router';
+import { Link, linkOptions, useRouteContext } from '@tanstack/react-router';
 import { getKinfolkProfile, type KinfolkProfile as Profile } from '../api/kinfolkProfile';
 import { kinfolkDisplayName, initialsOf, type Kin } from '../api/directory';
 import { getKin411 } from '../api/recipientContext';
+import { isAuntieAccess } from '../lib/access';
 import { type Async } from '../lib/async';
 import { str } from '../lib/coerce';
 import { directionsHref } from '../lib/directions';
@@ -196,6 +197,12 @@ export function KinfolkProfile({
   view: urlView,
   onViewChange,
 }: KinfolkProfileProps) {
+  // #2200 / #2201: an Auntie never sees money, and Invoices sends her Home, so
+  // the household's Invoices card (every row a link into Invoices) is not
+  // drawn for her and its read is never opened. Read off the access the admin
+  // layout already resolved, so it is known on the first paint.
+  const { access } = useRouteContext({ from: '/admin' });
+  const isAuntie = isAuntieAccess(access);
   const urlDriven = onViewChange !== undefined;
   const [view, setLocalView] = useState<ProfileView>(() =>
     duplicateAdd !== null ? 'edit' : urlDriven && urlView !== undefined ? urlView : 'profile',
@@ -685,12 +692,18 @@ export function KinfolkProfile({
 
           <UpcomingVisitsPanel kinfolkId={kinfolkId} />
           <RecentKinTalesPanel kinfolkId={kinfolkId} />
-          <HouseholdInvoicesPanel kinfolkId={kinfolkId} />
-          <AccountCreditPanel
-            kinfolkId={kinfolkId}
-            openUnappliedPayments={openUnappliedPayments}
-            unappliedPaymentId={unappliedPaymentId}
-          />
+          {!isAuntie && <HouseholdInvoicesPanel kinfolkId={kinfolkId} />}
+          {/* #2208: Account credit is money, and the server refuses an Auntie
+              its history, so the panel (and its reads) is not mounted for her.
+              That includes the "Payments needing a decision" section a payment
+              notice opens; her notice offers no Open into it. */}
+          {!isAuntie && (
+            <AccountCreditPanel
+              kinfolkId={kinfolkId}
+              openUnappliedPayments={openUnappliedPayments}
+              unappliedPaymentId={unappliedPaymentId}
+            />
+          )}
         </div>
       </div>
     </div>

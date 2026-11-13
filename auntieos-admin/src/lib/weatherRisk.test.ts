@@ -83,3 +83,22 @@ describe('formatTempF', () => {
     expect(formatTempF(null)).toBe('no reading');
   });
 });
+
+// #2185: an Auntie never sees Settings, so the unset-area line names the owner.
+describe('#2185 weatherErrorText under an Auntie sign-in', () => {
+  it('names the owner, not Settings', () => {
+    const line = weatherErrorText('weather_location_not_set', true);
+    expect(line).toBe('The owner has not set a weather area yet, so this card is off.');
+    expect(line).not.toMatch(/Settings/);
+  });
+
+  it('the owner keeps the Settings wording, and that is the default', () => {
+    const owner = 'Set your weather area (city, metro, or ZIP) in Settings to turn this card on.';
+    expect(weatherErrorText('weather_location_not_set', false)).toBe(owner);
+    expect(weatherErrorText('weather_location_not_set')).toBe(owner);
+  });
+
+  it('passes any other failure through for an Auntie too', () => {
+    expect(weatherErrorText('upstream 503', true)).toBe("Couldn't load weather: upstream 503");
+  });
+});

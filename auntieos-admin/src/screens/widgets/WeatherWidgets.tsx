@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { DenPanel, EmptyHint, ErrorHint } from '../../components/DenScreenKit';
 import { useSharedOneShot } from '../../lib/useSharedOneShot';
+import { useIsAuntie } from '../../lib/useIsAuntie';
 import { getLocalWeather, type LocalWeather } from '../../api/weather';
 import {
   WEATHER_RISK_LABEL,
@@ -104,6 +105,8 @@ interface WeatherPanelProps {
  */
 function WeatherPanel({ title, subtitle, children }: WeatherPanelProps) {
   const state = useSharedOneShot(WEATHER_KEY, getLocalWeather, 'getLocalWeather');
+  // #2185: the unset-area sentence names the owner for an Auntie, not Settings.
+  const auntie = useIsAuntie();
 
   return (
     <DenPanel title={title} subtitle={subtitle} hoverLift>
@@ -115,7 +118,7 @@ function WeatherPanel({ title, subtitle, children }: WeatherPanelProps) {
 
       {state.status === 'error' && (
         <>
-          <ErrorHint>{weatherErrorText(state.message)}</ErrorHint>
+          <ErrorHint>{weatherErrorText(state.message, auntie)}</ErrorHint>
           {state.retry && (
             <button type="button" className="async-retry" onClick={state.retry}>
               Retry

@@ -306,3 +306,90 @@ describe('requestOutcomeLabel (#1647)', () => {
     ).toBeNull();
   });
 });
+
+/**
+ * #2200 / #2201: Invoices is the owner's screen, and its address sends an
+ * Auntie Home. A notice row must not offer her an Open or Create quote that
+ * only does that, so both drop for her. Her own routes (a booking, a KinTale,
+ * a household) stay, and so does Approve / Deny, which the "Needs a decision"
+ * count is derived from.
+ */
+describe('applicableNotificationActions for an Auntie (#2200 / #2201)', () => {
+  const request = entry({
+    key: 'kincare.requested',
+    targetType: 'booking',
+    targetId: 'req_1',
+    data: { kinfolkId: 'kf1' },
+  });
+
+  it('gives her no Open on an invoice notice, and keeps it for everyone else', () => {
+    const e = entry({ key: 'invoice.paid', targetType: 'invoice', targetId: 'inv_1' });
+    expect(applicableNotificationActions(e, { isAuntie: true }).open).toBeNull();
+    expect(applicableNotificationActions(e).open).toEqual({ to: '/invoices', search: { invoiceId: 'inv_1' } });
+    expect(applicableNotificationActions(e, { isAuntie: false }).open).not.toBeNull();
+  });
+
+  it('gives her no Create quote on a fresh request, and keeps her Approve / Deny and Open', () => {
+    const forHer = applicableNotificationActions(request, { isAuntie: true });
+    expect(forHer.quote).toBeNull();
+    expect(forHer.bookingId).toBe('req_1');
+    expect(forHer.open).toEqual({ to: '/bookings', search: { bookingId: 'vis_req_1' } });
+    expect(applicableNotificationActions(request).quote).toEqual({
+      to: '/invoices',
+      search: { composeQuoteForKinfolkId: 'kf1' },
+    });
+  });
+
+  it('keeps her Open on a KinTale and a household notice', () => {
+    for (const [targetType, targetId] of [
+      ['kintale', 'kt_1'],
+      ['kinfolk', 'kf_1'],
+    ] as const) {
+      expect(applicableNotificationActions(entry({ targetType, targetId }), { isAuntie: true }).open).not.toBeNull();
+    }
+  });
+});
+/**
+ * #2208: the "Payment needing a decision" notice (`invoice.payment.unapplied`)
+ * opens the household's Account credit section, which is money and is not
+ * drawn for an Auntie. Her row offers no Open at all, with or without a
+ * household on the notice; the owner keeps the profile deep link.
+ */
+describe('applicableNotificationActions: the payment decision notice for an Auntie (#2208)', () => {
+  const withHousehold = entry({
+    key: 'invoice.payment.unapplied',
+    targetType: 'invoice',
+    targetId: 'inv_9',
+    data: { kinfolkId: 'kf1', stripeEventId: 'evt_1' },
+  });
+  const withoutHousehold = entry({ key: 'invoice.payment.unapplied', targetType: 'invoice', targetId: 'inv_9' });
+  const onHousehold = entry({ key: 'invoice.payment.unapplied', targetType: 'kinfolk', targetId: 'kf1' });
+  it('gives her no Open, whichever way the notice names its household', () => {
+    for (const e of [withHousehold, withoutHousehold, onHousehold]) {
+      expect(applicableNotificationActions(e, { isAuntie: true }).open).toBeNull();
+    }
+  });
+  it('keeps the owner on the Account credit section of the household', () => {
+    expect(applicableNotificationActions(withHousehold).open).toEqual({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'kf1' },
+      search: { section: 'unapplied-payments', paymentId: 'evt_1' },
+    });
+    expect(applicableNotificationActions(onHousehold, { isAuntie: false }).open).toEqual({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'kf1' },
+      search: { section: 'unapplied-payments' },
+    });
+    expect(applicableNotificationActions(withoutHousehold).open).toEqual({
+      to: '/invoices',
+      search: { invoiceId: 'inv_9' },
+    });
+  });
+  it('still opens her own household notices', () => {
+    const e = entry({ key: 'kinfolk.updated', targetType: 'kinfolk', targetId: 'kf1' });
+    expect(applicableNotificationActions(e, { isAuntie: true }).open).toEqual({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'kf1' },
+    });
+  });
+});

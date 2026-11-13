@@ -229,12 +229,16 @@ export const CHANNEL_SET_BY_BUSINESS = 'Set by your business';
  * lock reason when one was written, else the stock line for catalog-required
  * versus business-locked. Both stock lines name the layer that decides and
  * where it can be changed; neither says the channel will always send.
+ *
+ * `caretaker` (#2185): an Auntie never sees Business Settings (ruling
+ * 2026-11-13), so her business-locked line names the owner instead.
  */
 export function adminChannelReason(
   matrix: NotificationMatrix,
   entry: NotificationCatalogEntry,
   stream: NotifStream,
   channel: NotificationChannel,
+  caretaker = false,
 ): string {
   const ownReason = lockReasonFor(matrix, entry.key);
   if (ownReason !== undefined) return ownReason;
@@ -242,8 +246,11 @@ export function adminChannelReason(
   // can't turn OFF a channel that is already off is the wrong sentence in the
   // one place they most need the right one.
   const direction = adminChannelResolved(matrix, entry, stream, channel) ? 'off' : 'on';
-  return channelRequired(entry, channel)
-    ? `Set by the notification itself; your choice here can't turn it ${direction}.`
+  if (channelRequired(entry, channel)) {
+    return `Set by the notification itself; your choice here can't turn it ${direction}.`;
+  }
+  return caretaker
+    ? `Set by the owner; your choice here can't turn it ${direction}.`
     : `Set in your business settings; your choice here can't turn it ${direction}.`;
 }
 
