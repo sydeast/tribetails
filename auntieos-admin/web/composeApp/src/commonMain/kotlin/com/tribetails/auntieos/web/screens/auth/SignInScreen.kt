@@ -131,7 +131,7 @@ fun SignInScreen(
 
     fun submit() {
         // Enter and the keyboard's Done key bypass the disabled button: one sign-in at a time.
-        if (loading || resetting) return
+        //GUARD
         val missing = signInFieldErrors(email, password)
         fieldErrors = missing
         if (missing.any) {

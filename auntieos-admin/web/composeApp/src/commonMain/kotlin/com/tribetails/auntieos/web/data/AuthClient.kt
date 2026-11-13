@@ -31,6 +31,8 @@ class AuthClient(
     private val failedLoginReporter: suspend (String) -> Unit = { platformReportFailedLogin(it) },
     /** #886: where that report runs. Production shares [sharedAuthReportScope]; tests pass `Unconfined`. */
     private val reportScope: CoroutineScope = sharedAuthReportScope,
+    /** Test seam: the platform password-reset call. Production passes nothing. */
+    private val passwordResetImpl: suspend (String) -> PasswordResetResult = { platformSendPasswordReset(it) },
 ) {
     /** Test seam: which scope reports run in. */
     internal val reportScopeForTest: CoroutineScope get() = reportScope
@@ -80,7 +82,7 @@ class AuthClient(
      * Android apps do (#905), so the email is the operator's `auth.password.reset`
      * template. Only the trimmed address goes up.
      */
-    suspend fun sendPasswordReset(email: String): PasswordResetResult = platformSendPasswordReset(email)
+    suspend fun sendPasswordReset(email: String): PasswordResetResult = passwordResetImpl(email)
 
     suspend fun idToken(forceRefresh: Boolean = false): String? = platformIdToken(forceRefresh)
 
