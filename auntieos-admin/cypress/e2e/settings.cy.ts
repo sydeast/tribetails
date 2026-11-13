@@ -238,7 +238,7 @@ describe('settings', () => {
     });
   });
   describe('booking rules', () => {
-    it('#710 turning off Offer specific times moves the default to time blocks and leaves Save enabled', () => {
+    it('#1863 the one Time Blocks | Exact times mode: switching to Time Blocks leaves Save enabled', () => {
       openSection('Booking rules');
 
       // Scoped to this section's own mounted panel, not a bare
@@ -247,27 +247,20 @@ describe('settings', () => {
       // own "Save" button (permanently disabled here, since nothing on it
       // was touched), which an unscoped `cy.contains` would match first.
       cy.get('#settings-panel-bookingRules').within(() => {
-        cy.contains('.settingsEdit__fieldLabel', 'New bookings start as')
-          .parent()
-          .find('select')
-          .should('have.value', 'SPECIFIC_TIME')
-          .find('option:selected')
-          .should('have.text', 'A specific time (11:15 AM)');
+        // #1863 replaced the two "Offer ..." switches and the "New bookings
+        // start as" picker (#710) with one radio group.
+        cy.contains('.settingsEdit__fieldLabel', 'New bookings start as').should('not.exist');
+        cy.get('[role="radiogroup"][aria-labelledby="booking-time-mode-heading"]').should('exist');
+        // The seeded document stores both switches on with SPECIFIC_TIME, the
+        // shape every business had before #1863, which reads as Exact times.
+        cy.get('input[type="radio"][name="booking-time-mode"][value="SPECIFIC_TIME"]').should('be.checked');
 
-        cy.get('[role="switch"][aria-label="Toggle booking at a specific time"]')
-          .should('have.attr', 'aria-checked', 'true')
-          .click();
+        cy.get('input[type="radio"][name="booking-time-mode"][value="TIME_BLOCK"]').check();
+        cy.get('input[type="radio"][name="booking-time-mode"][value="TIME_BLOCK"]').should('be.checked');
+        cy.get('input[type="radio"][name="booking-time-mode"][value="SPECIFIC_TIME"]').should('not.be.checked');
 
-        cy.contains('.settingsEdit__fieldLabel', 'New bookings start as')
-          .parent()
-          .find('select')
-          .should('have.value', 'TIME_BLOCK')
-          .find('option:selected')
-          .should('have.text', 'A time block (Midday)');
-
-        // Not ready-to-save banner: the panel itself carried the picker
-        // forward to a mode that is still legal, so nothing is left to warn
-        // about.
+        // The seed has an active block, so Time Blocks is a legal mode and
+        // there is nothing to warn about.
         cy.contains('Not ready to save').should('not.exist');
         cy.contains('button', 'Save').should('be.enabled');
         // Never clicked, per the harness rule: this suite proves the screen,
@@ -323,6 +316,57 @@ describe('settings', () => {
       cy.contains('Tag removed').should('exist');
       cy.contains(`It came off 1 household.`).should('exist');
       cy.contains('.tagsEditor__row', TAG_NAME).should('not.exist');
+    });
+
+    it('#2205 Save sends the new tag by name through changeBusinessTags, never the whole list', () => {
+      const NEW_TAG = 'E2E Added';
+      cy.intercept('POST', CALLABLE('changeBusinessTags'), (req) => {
+        // One named change. A whole list here is what let a stale screen undo tags.
+        expect(req.body.data).to.deep.equal({
+          changes: [
+            {
+              action: 'add',
+              scope: 'household',
+              name: NEW_TAG,
+              color: { token: 'teal', css: 'var(--color-accent)' },
+              icon: '',
+            },
+          ],
+        });
+        req.reply({
+          statusCode: 200,
+          body: {
+            result: {
+              ok: true,
+              householdTags: [
+                { name: TAG_NAME, color: { token: 'teal', css: '#0f766e' }, icon: '🏷️' },
+                { name: 'E2E Elsewhere', color: { token: 'teal', css: 'var(--color-accent)' }, icon: '' },
+                { name: NEW_TAG, color: { token: 'teal', css: 'var(--color-accent)' }, icon: '' },
+              ],
+              petTags: [],
+              updatedAt: new Date().toISOString(),
+              updatedBy: 'e2e',
+            },
+          },
+        });
+      }).as('changeTags');
+      cy.intercept('POST', CALLABLE('saveBusinessSettings'), () => {
+        throw new Error('the Tags editor must not save through saveBusinessSettings');
+      });
+
+      openSection('Tags');
+      cy.get('input[aria-label="New household tag name"]').type(NEW_TAG);
+      cy.get('input[aria-label="New household tag name"]')
+        .closest('.tagsEditor__addForm')
+        .contains('button', 'Add tag')
+        .click();
+      cy.contains('button', 'Save tags').click();
+      cy.wait('@changeTags');
+
+      // The list repaints from what the server holds, a tag added elsewhere included.
+      cy.contains('.tagsEditor__row', 'E2E Elsewhere').should('exist');
+      cy.contains('.tagsEditor__row', NEW_TAG).should('exist');
+      cy.contains('Saved').should('exist');
     });
 
     it('#713 the Directory shows a tag filter', () => {

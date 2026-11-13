@@ -341,7 +341,7 @@ class BookingWizardTest {
             .withAllKinMode(false)
             .toggleKin("kin-a")
             .toggleDate(tuesday)
-            .copy(emailConfirmation = true, timeVisibility = true, notes = "  Gate code 1234  ")
+            .copy(emailConfirmation = true, notes = "  Gate code 1234  ")
 
         val submission = bookingSubmission(state, roster)
 
@@ -354,7 +354,8 @@ class BookingWizardTest {
         assertTrue(submission.visits.all { it.endTimeMs == null })
         assertEquals("new-invoice", submission.billing.mode)
         assertTrue(submission.communication.emailConfirmation)
-        assertTrue(submission.communication.timeVisibility)
+        // #1863: no per-booking "Exact times" choice; the business's mode decides.
+        assertNull(submission.communication.timeVisibility)
         assertEquals("Gate code 1234", submission.staffNotes)
         assertEquals(false, submission.overrideBusyConflict)
     }

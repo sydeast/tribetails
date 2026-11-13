@@ -447,7 +447,7 @@ private fun UpcomingRow(b: Booking, onOpen: () -> Unit) {
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(com.kinfolk.portal.util.visitTitle(b.title, b.serviceLabel) ?: "Booking", style = type.heritageTitle)
-            Text(bookingWhenLabel(b), style = type.sansLabel)
+            Text(bookingWhenLabel(b, withDate = true), style = type.sansLabel)
             val withText = (listOf(b.auntieDisplayName).filterNotNull() + b.kinNames).joinToString(" • ").ifBlank { null }
             if (withText != null) Text(withText, style = type.sansMeta)
             // #1299: the cancellation or new time still waiting on the office.

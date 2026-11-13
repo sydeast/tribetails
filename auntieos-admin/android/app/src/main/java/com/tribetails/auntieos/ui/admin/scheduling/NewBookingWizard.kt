@@ -901,13 +901,6 @@ private fun LazyListScope.reviewStep(
                 hint = "Send the household a confirmation email when this request is approved.",
                 onCheckedChange = { onState(state.copy(emailConfirmation = it)) },
             )
-            Spacer(Modifier.height(10.dp))
-            CheckRow(
-                checked = state.timeVisibility,
-                label = "Exact times",
-                hint = "Off shows the household a time window instead of the exact start time.",
-                onCheckedChange = { onState(state.copy(timeVisibility = it)) },
-            )
         }
     }
 

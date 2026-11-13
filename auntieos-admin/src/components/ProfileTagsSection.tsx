@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { type BusinessSettings } from '../api/settings';
-import { saveBusinessSettings } from '../api/settingsWrite';
+import { changeBusinessTags } from '../api/settingsWrite';
 import { getWorkSettingsFor } from '../api/workSettings';
 import { currentSessionSeat } from '../lib/sessionSeat';
 import { addTag, DEFAULT_TAG_COLOR, type TagDef, type TagScope } from '../lib/tags/model';
@@ -18,7 +17,7 @@ export const TAG_SUGGESTIONS_LOADING = 'Loading tag suggestions…';
  * Where the suggestions stand. `canGrow` is whether this session may add a
  * typed name to the business's tag list: the owner may (Business Settings is
  * hers), an Auntie may not (#2186), and nobody may before the list has loaded,
- * because the save replaces the whole list and an empty one would wipe it.
+ * so the field can tell a new name from one already on the list.
  */
 type VocabLoad =
   | { status: 'loading' }
@@ -34,9 +33,10 @@ type VocabLoad =
  * error (fail-loud), never a silent no-op.
  *
  * A typed name that is not yet in the vocabulary can be promoted to it inline
- * ("add to your tags"): that both assigns the name and appends a default-colored
- * `TagDef` to the right vocabulary list via `saveBusinessSettings`, so it becomes
- * a reusable suggestion (recolorable later in the Tags settings panel).
+ * ("add to your tags"): that both assigns the name and adds a default-colored
+ * `TagDef` to the right vocabulary list via `changeBusinessTags` (#2205: the one
+ * name, added to the list as stored, never this panel's copy of the list), so it
+ * becomes a reusable suggestion (recolorable later in the Tags settings panel).
  *
  * #2186: the vocabulary comes through the work-settings read, so an Auntie, who
  * cannot read `business_settings`, gets the suggestions from the narrow staff
@@ -139,14 +139,18 @@ export function ProfileTagsSection({
     }
     const prev = vocab;
     setVocab(nextVocab);
-    const patch: Partial<BusinessSettings> =
-      scope === 'household' ? { householdTags: nextVocab } : { petTags: nextVocab };
-    saveBusinessSettings(patch).catch((err: unknown) => {
-      setVocab(prev); // revert
-      setSaveError(
-        `Couldn't add that tag to your list: ${err instanceof Error ? err.message : 'Save failed'}`,
-      );
-    });
+    // #2205: the one name goes to the server, which adds it to the list as
+    // stored. The list this panel read is never sent, so a tag added or
+    // deleted elsewhere since it loaded stays that way.
+    const added = nextVocab[nextVocab.length - 1]!;
+    changeBusinessTags([{ action: 'add', scope, name: added.name, color: added.color, icon: added.icon }])
+      .then((after) => setVocab(scope === 'household' ? after.householdTags : after.petTags))
+      .catch((err: unknown) => {
+        setVocab(prev); // revert
+        setSaveError(
+          `Couldn't add that tag to your list: ${err instanceof Error ? err.message : 'Save failed'}`,
+        );
+      });
   }
 
   return (

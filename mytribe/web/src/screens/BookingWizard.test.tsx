@@ -1382,7 +1382,7 @@ describe('BookingWizard: #1281 after a successful Create Booking', () => {
       notes: null, requestedByUid: 'u1', createdAtMs: null, updatedAtMs: null, visitProgress: null,
       sourceBookingId: null, sessionId: null, cancelRequested: false, cancelRequestStatus: null,
       cancelRequestReason: null, cancelResponseNote: null, rescheduleRequestStatus: null,
-      rescheduleRequestedStartTimeMs: null, rescheduleRequestedEndTimeMs: null, rescheduleRequestReason: null,
+      rescheduleRequestedStartTimeMs: null, rescheduleRequestedEndTimeMs: null, rescheduleRequestedTimeBlockLabel: null, rescheduleRequestedTimeBlockStartTime: null, rescheduleRequestedTimeBlockEndTime: null, rescheduleRequestReason: null,
       rescheduleResponseNote: null, address: null, kinTaleId: null, invoiceId: null, ...overrides,
     };
   }

@@ -674,7 +674,7 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
  * anything malformed (a hand-edited doc, a half-written row, a legacy shape).
  * Never throws: a bad vocabulary must never take down the whole settings read.
  */
-function decodeTagDefs(raw: unknown): TagDef[] {
+export function decodeTagDefs(raw: unknown): TagDef[] {
   if (!Array.isArray(raw)) return [];
   const out: TagDef[] = [];
   for (const row of raw) {

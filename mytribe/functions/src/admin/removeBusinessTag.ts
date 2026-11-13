@@ -199,16 +199,19 @@ export async function removeBusinessTagHandler(
   }
 
   // ── 2. Drop the vocabulary entry ────────────────────────────────────────
+  // #2205: read and write in ONE transaction. A plain read then set wrote back
+  // the list as it was read, so a tag another device added in between
+  // (`changeBusinessTags`) was lost. The transaction re-reads on a conflict.
   const settingsRef = firestore.doc(BUSINESS_SETTINGS_DOC);
-  const settingsSnap = await settingsRef.get();
-  const stored = (settingsSnap.data() ?? {}) as Record<string, unknown>;
-  const { next, removed } = filterVocab(stored[scope.vocabField], key);
-  if (removed) {
-    await settingsRef.set(
-      { [scope.vocabField]: next, ...savedByStamp(uid) },
-      { merge: true },
-    );
-  }
+  const removed = await firestore.runTransaction(async (tx) => {
+    const settingsSnap = await tx.get(settingsRef);
+    const stored = (settingsSnap.data() ?? {}) as Record<string, unknown>;
+    const filtered = filterVocab(stored[scope.vocabField], key);
+    if (filtered.removed) {
+      tx.set(settingsRef, { [scope.vocabField]: filtered.next, ...savedByStamp(uid) }, { merge: true });
+    }
+    return filtered.removed;
+  });
 
   await writeAuditEntry({
     status: 'SUCCESS',

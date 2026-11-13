@@ -170,8 +170,15 @@ describe('requestBookingReschedule: time blocks (#1284)', () => {
     ctxWith(blockSettings);
     await expect(ask({ proposedStartTimeMs: chicago('Tuesday', '14:00'), timeBlockId: 'morning' })).rejects.toMatchObject({
       code: 'invalid-argument',
-      message: expect.stringContaining('outside the Morning block'),
+      message: 'That visit time is outside Morning (8 AM to 12 PM). Pick the block again.',
     });
+  });
+  it('#1863: the refusal names the block as its 12-hour window, never its stored 24-hour bounds', async () => {
+    ctxWith(blockSettings);
+    const err = await ask({ proposedStartTimeMs: chicago('Tuesday', '14:00'), timeBlockId: 'morning' }).catch((e: unknown) => e);
+    const message = (err as { message?: string }).message ?? '';
+    expect(message).toContain('Morning (8 AM to 12 PM)');
+    expect(message).not.toMatch(/\d{1,2}:\d{2}/);
   });
   it('accepts a start inside the named block and stores the block beside the proposal', async () => {
     const ctx = ctxWith(blockSettings);

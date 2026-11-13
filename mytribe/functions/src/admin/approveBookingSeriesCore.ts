@@ -17,6 +17,8 @@ import {
   buildVisitDateData,
   formatBookingDate,
   formatBookingTime,
+  householdVisitTime,
+  loadHouseholdTimeContext,
   formatRequestedDate,
   isNotHappeningStatus,
   loadBusinessTimeZone,
@@ -758,8 +760,12 @@ async function dispatchSeriesConfirmation(args: {
     // approval must not appear in it. See notifications/visitDates.ts.
     const visits = await loadEnvelopeVisits(kinfolkId, batchId);
     const tz = await loadBusinessTimeZone();
-    const dateData = buildVisitDateData(visits, tz);
-    const firstMs = visits[0]?.startTimeMs ?? null;
+    // #1863: the household's copy names each visit's time the way the portal
+    // shows it: a window in Time Blocks mode, the clock in Exact times mode.
+    const household = await loadHouseholdTimeContext();
+    const dateData = buildVisitDateData(visits, tz, undefined, household);
+    const first = visits[0] ?? null;
+    const firstMs = first?.startTimeMs ?? null;
     const recipientUid = await resolveKinfolkUid(kinfolkId);
 
     let householdNotified = false;
@@ -784,6 +790,8 @@ async function dispatchSeriesConfirmation(args: {
           // instead of rendering blanks in the gap between deploy and re-import.
           bookingDate: firstMs == null ? null : formatBookingDate(firstMs, tz),
           bookingTime: firstMs == null ? null : formatBookingTime(firstMs, tz),
+          // #1863: what the household's own copy says; see `visitTimesForStream`.
+          householdBookingTime: first == null ? null : householdVisitTime(first, household, tz),
         },
         targetType: 'booking',
         targetId: batchId,

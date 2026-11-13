@@ -186,96 +186,71 @@ describe('HH:MM round-trip', () => {
 });
 
 /**
- * The normalization matrix. These four switch combinations x "are there usable
- * blocks" are the whole reason this resolver exists: both `getBookingPolicy`
+ * The normalization matrix, #1863: ONE mode per business. Both `getBookingPolicy`
  * and `requestBooking` read it, so a portal cannot be offered a control the
- * write path refuses.
+ * write path refuses, and exactly one of the two modes is ever served.
  */
 describe('resolveBookingPolicy', () => {
   const BLOCKS = [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }];
-
-  it('defaults, on a document that says nothing: specific time only, no blocks', () => {
+  const TIME_BLOCKS = { allowTimeBlockBooking: true, allowSpecificTimeBooking: false, defaultBookingMode: 'TIME_BLOCK' };
+  const EXACT_TIMES = { allowTimeBlockBooking: false, allowSpecificTimeBooking: true, defaultBookingMode: 'SPECIFIC_TIME' };
+  it('a document that says nothing starts on Exact times, the stored defaults (both on, SPECIFIC_TIME)', () => {
     const { policy, degrades } = resolveBookingPolicy({});
-    expect(policy.allowSpecificTimeBooking).toBe(true);
-    // Both switches default true, but with no configured window block booking
-    // cannot be offered — that is the empty-picker rule.
-    expect(policy.allowTimeBlockBooking).toBe(false);
+    expect(policy).toMatchObject({ allowSpecificTimeBooking: true, allowTimeBlockBooking: false, defaultBookingMode: 'SPECIFIC_TIME' });
     expect(policy.timeBlocks).toEqual([]);
-    expect(policy.defaultBookingMode).toBe('SPECIFIC_TIME');
-    expect(degrades).toContain('no-usable-blocks');
+    expect(degrades).toEqual(['both-modes-stored']);
   });
-
-  it('both allowed, blocks present: both modes, default honoured', () => {
-    const { policy, degrades } = resolveBookingPolicy({
-      allowTimeBlockBooking: true,
-      allowSpecificTimeBooking: true,
-      defaultBookingMode: 'TIME_BLOCK',
-      timeBlocks: BLOCKS,
-    });
-    expect(policy).toMatchObject({
-      allowTimeBlockBooking: true,
-      allowSpecificTimeBooking: true,
-      defaultBookingMode: 'TIME_BLOCK',
-    });
+  it('Time Blocks mode: blocks only, never a clock', () => {
+    const { policy, degrades } = resolveBookingPolicy({ ...TIME_BLOCKS, timeBlocks: BLOCKS });
+    expect(policy).toMatchObject({ allowTimeBlockBooking: true, allowSpecificTimeBooking: false, defaultBookingMode: 'TIME_BLOCK' });
     expect(policy.timeBlocks).toHaveLength(1);
     expect(degrades).toEqual([]);
   });
-
-  it('block only: specific time is off and the default is forced onto the allowed mode', () => {
+  it('Exact times mode: blocks are not served even when rows exist', () => {
+    const { policy, degrades } = resolveBookingPolicy({ ...EXACT_TIMES, timeBlocks: BLOCKS });
+    expect(policy).toMatchObject({ allowTimeBlockBooking: false, allowSpecificTimeBooking: true, defaultBookingMode: 'SPECIFIC_TIME' });
+    expect(policy.timeBlocks).toEqual([]);
+    expect(degrades).toEqual([]);
+  });
+  it('legacy both-on: the ONE mode is the one defaultBookingMode names, never both', () => {
+    const blocks = resolveBookingPolicy({ allowTimeBlockBooking: true, allowSpecificTimeBooking: true, defaultBookingMode: 'TIME_BLOCK', timeBlocks: BLOCKS });
+    expect(blocks.policy).toMatchObject({ allowTimeBlockBooking: true, allowSpecificTimeBooking: false, defaultBookingMode: 'TIME_BLOCK' });
+    expect(blocks.degrades).toEqual(['both-modes-stored']);
+    const exact = resolveBookingPolicy({ allowTimeBlockBooking: true, allowSpecificTimeBooking: true, defaultBookingMode: 'SPECIFIC_TIME', timeBlocks: BLOCKS });
+    expect(exact.policy).toMatchObject({ allowTimeBlockBooking: false, allowSpecificTimeBooking: true, defaultBookingMode: 'SPECIFIC_TIME' });
+  });
+  it('one switch on: that switch is the mode, whatever a stale defaultBookingMode says', () => {
     const { policy, degrades } = resolveBookingPolicy({
       allowTimeBlockBooking: true,
       allowSpecificTimeBooking: false,
       defaultBookingMode: 'SPECIFIC_TIME',
       timeBlocks: BLOCKS,
     });
-    expect(policy.allowSpecificTimeBooking).toBe(false);
-    expect(policy.allowTimeBlockBooking).toBe(true);
-    expect(policy.defaultBookingMode).toBe('TIME_BLOCK');
+    expect(policy).toMatchObject({ allowTimeBlockBooking: true, allowSpecificTimeBooking: false, defaultBookingMode: 'TIME_BLOCK' });
     expect(degrades).toEqual(['default-mode-unavailable']);
   });
-
-  it('specific only: blocks are not served even when rows exist', () => {
-    const { policy } = resolveBookingPolicy({
-      allowTimeBlockBooking: false,
-      allowSpecificTimeBooking: true,
-      timeBlocks: BLOCKS,
-    });
-    expect(policy.allowTimeBlockBooking).toBe(false);
-    // Empty iff block booking is off, so an allowed mode always has something
-    // to offer and no client has to reconcile the two.
-    expect(policy.timeBlocks).toEqual([]);
-  });
-
-  it('NEITHER switch on: falls back to specific time rather than a dead wizard', () => {
+  it('NEITHER switch on: the mode defaultBookingMode names, never a dead wizard', () => {
     const { policy, degrades } = resolveBookingPolicy({
       allowTimeBlockBooking: false,
       allowSpecificTimeBooking: false,
       defaultBookingMode: 'TIME_BLOCK',
       timeBlocks: BLOCKS,
     });
-    expect(policy.allowSpecificTimeBooking).toBe(true);
-    expect(policy.allowTimeBlockBooking).toBe(false);
-    expect(policy.defaultBookingMode).toBe('SPECIFIC_TIME');
-    expect(degrades).toEqual(['no-mode-allowed', 'default-mode-unavailable']);
+    expect(policy).toMatchObject({ allowTimeBlockBooking: true, allowSpecificTimeBooking: false, defaultBookingMode: 'TIME_BLOCK' });
+    expect(degrades).toEqual(['no-mode-allowed']);
   });
-
-  it('block booking on with only unreadable rows degrades to specific time, never an empty picker', () => {
+  it('Time Blocks with only unreadable rows is served as Exact times, never an empty picker', () => {
     const { policy, degrades } = resolveBookingPolicy({
-      allowTimeBlockBooking: true,
-      allowSpecificTimeBooking: false,
-      defaultBookingMode: 'TIME_BLOCK',
+      ...TIME_BLOCKS,
       // The exact legacy row the admin comment warns about, plus junk.
       timeBlocks: [{ id: 'midday' }, null, 'nope', { startTime: '11:00' }],
     });
-    expect(policy.allowTimeBlockBooking).toBe(false);
-    expect(policy.allowSpecificTimeBooking).toBe(true);
-    expect(policy.defaultBookingMode).toBe('SPECIFIC_TIME');
-    expect(degrades).toEqual(['no-usable-blocks', 'no-mode-allowed', 'default-mode-unavailable']);
+    expect(policy).toMatchObject({ allowTimeBlockBooking: false, allowSpecificTimeBooking: true, defaultBookingMode: 'SPECIFIC_TIME' });
+    expect(degrades).toEqual(['no-usable-blocks']);
   });
-
   it('keeps the readable rows out of a mixed list, in start order', () => {
     const { policy } = resolveBookingPolicy({
-      allowTimeBlockBooking: true,
+      ...TIME_BLOCKS,
       timeBlocks: [
         { id: 'evening', label: 'Evening', startTime: '17:00', endTime: '21:00', active: true },
         { id: 'broken' },
@@ -285,22 +260,20 @@ describe('resolveBookingPolicy', () => {
     });
     expect(policy.timeBlocks.map((b) => b.id)).toEqual(['morning', 'evening']);
   });
-
   it('an unknown defaultBookingMode string reads as SPECIFIC_TIME, not as a third mode', () => {
     const { policy } = resolveBookingPolicy({ defaultBookingMode: 'garbage', allowSpecificTimeBooking: true });
     expect(policy.defaultBookingMode).toBe('SPECIFIC_TIME');
   });
-
   it('never throws on a document of the wrong shape entirely', () => {
     for (const junk of [null, undefined, 'settings', 7, []]) {
       expect(() => resolveBookingPolicy(junk)).not.toThrow();
     }
   });
 });
-
 describe('findTimeBlock', () => {
   const { policy } = resolveBookingPolicy({
     allowTimeBlockBooking: true,
+    allowSpecificTimeBooking: false,
     timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }],
   });
 
@@ -428,6 +401,7 @@ describe('businessCalendarDate', () => {
 describe('containmentIsInert', () => {
   const withBlocks = resolveBookingPolicy({
     allowTimeBlockBooking: true,
+    allowSpecificTimeBooking: false,
     timeBlocks: [{ id: 'midday', startTime: '11:00', endTime: '15:00', active: true }],
   }).policy;
 

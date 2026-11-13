@@ -157,7 +157,9 @@ describe('approveBookingSeriesCore: one confirmation per REQUEST (#536)', () => 
     expect(arg.data.visits[0].time).toBe('12:00 PM');
 
     // SMS and push cannot enumerate, so they get the count and the next day.
-    expect(arg.data.nextVisit).toEqual({ weekday: 'Fri', date: 'Sep 4', time: '12:00 PM' });
+    // #1863: the household's own copy reads `householdTime`; with no blocks on
+    // file the business is on Exact times, so it is the same clock.
+    expect(arg.data.nextVisit).toEqual({ weekday: 'Fri', date: 'Sep 4', time: '12:00 PM', householdTime: '12:00 PM' });
     expect(arg.data.portalUrl).toBe('https://kinfolk.tribetails.com');
 
     // No summarising span reaches the template. That token belongs to the
@@ -435,10 +437,11 @@ describe('onBookingsWrite: the per-visit confirm after #536', () => {
     // template that enumerates four days enumerates one day here.
     expect(arg.data.visitCount).toBe(1);
     expect(arg.data.visits).toEqual([
-      { dateIso: '2026-09-04', weekday: 'Fri', date: 'Sep 4', time: '12:00 PM', visitId: 'v1' },
+      { dateIso: '2026-09-04', weekday: 'Fri', date: 'Sep 4', time: '12:00 PM', householdTime: '12:00 PM', visitId: 'v1' },
     ]);
     expect(arg.data.bookingDate).toBe('Fri, Sep 4');
     expect(arg.data.bookingTime).toBe('12:00 PM');
+    expect(arg.data.householdBookingTime).toBe('12:00 PM');
   });
 
   it('a visit with no readable start still sends, with an empty list rather than a wrong day', async () => {

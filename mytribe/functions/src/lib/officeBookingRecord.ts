@@ -76,7 +76,7 @@ export function officeBookingRecordDocs(o: OfficeBookingRecordInput): {
     billing: null,
     // `COMMUNICATION_DEFAULT` (portal/requestBooking.ts), spelled out so this
     // module does not load the portal callable's module at cold start.
-    communication: { emailConfirmation: false, timeVisibility: false } satisfies BookingCommunication,
+    communication: { emailConfirmation: false } satisfies BookingCommunication,
     visitCount: 1,
     confirmedCount: o.backdated ? 0 : 1,
     completedCount: o.backdated ? 1 : 0,

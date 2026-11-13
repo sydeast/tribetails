@@ -360,17 +360,15 @@ describe('requestBookingHandler wizard fields', () => {
     } as any);
     const envelope = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`);
     expect(envelope?.data?.billing).toEqual({ mode: 'new-invoice' });
-    expect(envelope?.data?.communication).toEqual({
-      emailConfirmation: true,
-      timeVisibility: false,
-    });
+    // #1863: the retired "Exact times" choice an older app sends is never stored.
+    expect(envelope?.data?.communication).toEqual({ emailConfirmation: true });
     const visit = ctx.writes.find((w) =>
       w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
     );
     expect(visit?.data).not.toHaveProperty('location');
     expect(envelope?.data).not.toHaveProperty('location');
   });
-  it('a payload with none of the new fields still writes, with both toggles off', async () => {
+  it('a payload with none of the new fields still writes, with the email off', async () => {
     const ctx = portalDb();
     mocks.dbFn.mockReturnValue(ctx.db);
     const { requestBookingHandler } = await import('../src/portal/requestBooking');
@@ -384,10 +382,7 @@ describe('requestBookingHandler wizard fields', () => {
     } as any);
     const envelope = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`);
     expect(envelope?.data?.billing).toBeNull();
-    expect(envelope?.data?.communication).toEqual({
-      emailConfirmation: false,
-      timeVisibility: false,
-    });
+    expect(envelope?.data?.communication).toEqual({ emailConfirmation: false });
   });
   it('the LEGACY single-visit payload still writes its 1-visit envelope unchanged', async () => {
     const ctx = portalDb();
@@ -401,10 +396,7 @@ describe('requestBookingHandler wizard fields', () => {
     const envelope = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`);
     expect(envelope?.data?.visitCount).toBe(1);
     expect(envelope?.data?.billing).toBeNull();
-    expect(envelope?.data?.communication).toEqual({
-      emailConfirmation: false,
-      timeVisibility: false,
-    });
+    expect(envelope?.data?.communication).toEqual({ emailConfirmation: false });
     const visit = ctx.writes.find((w) =>
       w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
     );
