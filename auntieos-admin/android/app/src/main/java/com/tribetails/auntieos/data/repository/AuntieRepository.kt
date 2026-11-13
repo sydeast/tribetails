@@ -3718,17 +3718,9 @@ class AuntieRepository(
         require(schema.id.isNotBlank()) { "FormSchema.id required" }
         val payload = mapOf("schema" to formSchemaToMap(schema))
         functions.getHttpsCallable("saveFormSchema").call(payload).awaitCallable()
-        // Await the audit write - fire-and-forget on a detached CoroutineScope
-        // would drop the entry if the app process is killed mid-flight (per
-        // [[fail-loud-policy]] / reviewer finding). fireSync suspends until
-        // the activity_log doc is committed before this function returns.
-        com.tribetails.auntieos.data.admin.AuditLog.fireSync(
-            repository       = this,
-            actionType       = "SAVE_FORM_SCHEMA",
-            description      = "Saved form schema ${schema.id}",
-            targetId         = schema.id,
-            targetCollection = "formSchemas",
-        )
+        // No line from here (#2162): the `saveFormSchema` callable writes the
+        // SAVE_FORM_SCHEMA line itself, inside the same request, and the server
+        // refuses a client copy of that kind.
         Unit
     }.onFailure { AuntieLog.e("Failed to save form schema ${schema.id}", it) }
 
@@ -3738,15 +3730,8 @@ class AuntieRepository(
         functions.getHttpsCallable("deleteFormSchema")
             .call(mapOf("id" to id))
             .awaitCallable()
-        // See comment on saveFormSchema: await the audit row so it doesn't drop
-        // if the process is killed before the detached coroutine flushes.
-        com.tribetails.auntieos.data.admin.AuditLog.fireSync(
-            repository       = this,
-            actionType       = "DELETE_FORM_SCHEMA",
-            description      = "Deleted form schema $id",
-            targetId         = id,
-            targetCollection = "formSchemas",
-        )
+        // No line from here (#2162): `deleteFormSchema` writes the
+        // DELETE_FORM_SCHEMA line itself.
         Unit
     }.onFailure { AuntieLog.e("Failed to delete form schema $id", it) }
 

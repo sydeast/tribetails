@@ -93,15 +93,9 @@ class BookingViewModel(
                     else
                         "$who's request is cancelled."
                 }
-                audit(
-                    if (action == BookingSeriesAction.APPROVE) "APPROVE_BOOKING_SERIES" else "CANCEL_BOOKING_SERIES",
-                    buildString {
-                        append("$action booking series $batchId (${res.affectedVisits} ok")
-                        if (res.failedVisits > 0) append(", ${res.failedVisits} failed")
-                        append(")")
-                    },
-                    batchId,
-                )
+                // No line from here (#2162): `manageBookingSeries` writes the
+                // series line itself, with its counts, and the server refuses a
+                // client copy of that kind.
             }
             is WriteResult.Err -> errorMessage = "Series $action failed: ${r.message}"
         }

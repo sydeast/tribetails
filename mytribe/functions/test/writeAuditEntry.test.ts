@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AuditEvent } from '../src/lib/auditEvents';
+import { SERVER_ONLY_AUDIT_EVENTS, type AuditEvent } from '../src/lib/auditEvents';
 
 interface FakeRef {
   __ref: true;
@@ -305,5 +305,22 @@ describe('writeAuditEntry', () => {
     expect(id).toBe('stripe_evt_1_paid');
     expect(writes).toHaveLength(0);
     expect(headState.data!['seq']).toBe(4);
+  });
+});
+
+// #2162: `logActivity` refuses the server-only kinds from client sign-ins. The
+// server's own writers go straight to writeAuditEntry, which has no such gate.
+describe('writeAuditEntry writes every server-only kind for a server writer', () => {
+  it.each([...SERVER_ONLY_AUDIT_EVENTS].sort())('writes %s', async (event) => {
+    const { writeAuditEntry } = await import('../src/lib/writeAuditEntry');
+    await writeAuditEntry({
+      status: 'SUCCESS',
+      event: event as AuditEvent,
+      severity: 'info',
+      actorRole: 'SYSTEM',
+      actorUid: 'system',
+    });
+    const logWrite = writes.find((w) => w.ref.collection === 'activity_log');
+    expect(logWrite?.data.actionType).toBe(event);
   });
 });

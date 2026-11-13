@@ -1984,18 +1984,9 @@ class EnhancedSchedulingViewModel(
                 // The visit moved; the envelope this screen draws has to follow,
                 // or the calendar keeps showing the old slot.
                 val patched = bookingRepository.updateBookingTimes(booking.id, startIso, endIso)
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope            = viewModelScope,
-                    repository       = auntieRepository,
-                    actionType       = "RESCHEDULE_BOOKING",
-                    description      = "Rescheduled visit for ${auditHousehold(booking.kinfolkName)} to $startIso" +
-                        (if (override != null) " (override: ${override.name.lowercase()} conflict)" else ""),
-                    targetId         = sessionId,
-                    // The write the callable made, not the envelope patch that
-                    // followed it: an audit entry that named enhanced_bookings
-                    // would point at a document the reschedule did not author.
-                    targetCollection = "kin_care_sessions",
-                )
+                // No line from here (#2162): `rescheduleBooking` writes the
+                // RESCHEDULE_BOOKING line itself (and the override line when one
+                // was used), and the server refuses a client copy of that kind.
                 VisitMoveOutcome.Moved(
                     staleWarning = patched.exceptionOrNull()?.let {
                         // Fail loud rather than quietly: the visit really did

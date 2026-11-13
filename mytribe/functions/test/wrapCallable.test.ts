@@ -257,6 +257,36 @@ describe('wrapCallable', () => {
     );
   });
 
+  // #2162: a refusal marked as not a failure is still refused and logged, and
+  // writes no failure line for the daily error digest. An unmarked refusal of
+  // the same code still writes one.
+  it('#2162: a marked refusal is rethrown as is, logged at warn, and writes no failure line', async () => {
+    const { HttpsError } = await import('firebase-functions/v2/https');
+    const { wrapCallable, unauditedRefusal } = await import('../src/lib/wrapCallable');
+    const refusal = new HttpsError('permission-denied', 'Already recorded.');
+    const wrapped = wrapCallable('test', async () => {
+      throw unauditedRefusal(refusal);
+    });
+    await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toBe(refusal);
+    expect(writeAuditEntryMock).not.toHaveBeenCalled();
+    expect(captureMock).not.toHaveBeenCalled();
+    expect(logEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: 'warn', event: 'test.failure', errorCode: 'permission-denied' }),
+    );
+  });
+
+  it('#2162: an unmarked refusal of the same code still writes the failure line', async () => {
+    const { HttpsError } = await import('firebase-functions/v2/https');
+    const { wrapCallable } = await import('../src/lib/wrapCallable');
+    const wrapped = wrapCallable('test', async () => {
+      throw new HttpsError('permission-denied', 'Already recorded.');
+    });
+    await expect(wrapped({ auth: { uid: 'u1' } } as any)).rejects.toMatchObject({ code: 'permission-denied' });
+    expect(writeAuditEntryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'FAILURE', event: 'ERROR_FUNCTION_FAILURE' }),
+    );
+  });
+
   // -------------------------------------------------------------------------
   // #557 session revocation
   // -------------------------------------------------------------------------
