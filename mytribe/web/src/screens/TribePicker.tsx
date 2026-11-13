@@ -39,7 +39,7 @@ export function TribePicker() {
     }
   }, [summaries.data, selected]);
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
   const summariesView = viewOfQuery(summaries);
 
   function handleEnter() {
@@ -118,8 +118,13 @@ export function TribePicker() {
         {/* An anchor ignores `disabled`; useSignOut's ref guard is the real
             double-tap defence, aria-disabled just tells AT the same story. */}
         <a onClick={signOut} aria-disabled={signingOut} style={signingOut ? { opacity: 0.5 } : undefined}>
-          {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign Out'}
+          {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign out'}
         </a>
+        {signOutError && (
+          <p className="hint" role="alert" style={{ color: 'var(--coral)' }}>
+            {signOutError}
+          </p>
+        )}
       </div>
     </main>
   );

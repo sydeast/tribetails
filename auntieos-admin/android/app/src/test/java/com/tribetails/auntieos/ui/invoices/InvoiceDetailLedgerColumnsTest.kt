@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResult
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResult
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
 import com.tribetails.auntieos.data.model.BusinessSettings
@@ -157,6 +158,12 @@ class InvoiceDetailLedgerColumnsTest {
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repo.getBusinessSettings() } returns Result.success(BusinessSettings())
         coEvery { invoiceRepo.getInvoiceLedger("inv1") } returns result
+        // #1872: an open invoice also reads the household's account credit for
+        // its Account credit box. Read here as none, so this file's assertions
+        // see only the ledger's own words (a failed credit read has its own
+        // "Try again", pinned in InvoiceApplyCreditControllerTest).
+        coEvery { invoiceRepo.getAccountCreditHistory(any()) } returns
+            Result.success(GetAccountCreditHistoryResult(true, "fam1", 0L, emptyList(), emptyList()))
         return InvoiceDetailViewModel(
             repository = repo,
             invoiceRepository = invoiceRepo,

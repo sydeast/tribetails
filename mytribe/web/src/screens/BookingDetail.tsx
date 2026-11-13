@@ -70,7 +70,7 @@ export function BookingDetail() {
   // or about due, so the chip, the timeline and the status tile follow the
   // Auntie's taps without a reload.
   const bookings = useMyBookings(kinfolkId);
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   const [noteBody, setNoteBody] = useState('');
   const [noteSaved, setNoteSaved] = useState(false);
@@ -182,6 +182,7 @@ export function BookingDetail() {
         retrying={bookings.isRefetching}
         onSignOut={signOut}
         signingOut={signingOut}
+        signOutError={signOutError}
       />
     );
   }

@@ -689,6 +689,18 @@ private fun InvoiceDetailBody(
             onRecordPayment = { showRecordPayment = true },
         )
 
+        // ── Account credit (#1872) ─────────────────────────────────────────────
+        // Never spent automatically: it goes onto this invoice only here, as an
+        // amount she types and confirms. Offered where Record payment is, and
+        // not on an archived invoice.
+        if (offersApplyCredit(invoice, actions)) {
+            InvoiceApplyCreditPanel(
+                invoice   = invoice,
+                client    = client,
+                onApplied = { sentence -> showToast(sentence, false) },
+            )
+        }
+
         // ── Linked Sessions section ───────────────────────────────────────────
         LinkedSessionsSection(
             invoice         = invoice,

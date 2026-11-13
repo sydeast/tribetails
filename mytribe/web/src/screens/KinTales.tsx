@@ -113,7 +113,7 @@ export function KinTales(props: { focusTaleId?: string | undefined } = {}) {
     const next = nextTalesCursor(loaded);
     if (next !== undefined) loadMore.mutate(next);
   }, [focusTaleId, firstPageTales, firstPageHasMore, extraPages, hasMoreOverride, loadMorePending, loadMoreFailed]);
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
   // #1303: a completed visit links here as `/kintales?tale=<id>`. Once that tale
   // is on screen it is scrolled into view; if it is on a page not loaded yet the
   // household simply lands on the list. Read off the address bar rather than the
@@ -130,6 +130,7 @@ export function KinTales(props: { focusTaleId?: string | undefined } = {}) {
         onRetry={() => void firstPage.refetch()}
         retrying={firstPage.isRefetching}
         onSignOut={signOut} signingOut={signingOut}
+        signOutError={signOutError}
       />
     );
   }

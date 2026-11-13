@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
-import { getAccountCreditHistory, giveAccountCredit } from './accountCredit';
+import { applyAccountCredit, getAccountCreditHistory, giveAccountCredit } from './accountCredit';
 
 describe('accountCredit api (Q6)', () => {
   it('giveAccountCredit sends the whole request with its key, and opts in to the retry', async () => {
@@ -15,6 +15,22 @@ describe('accountCredit api (Q6)', () => {
     expect(res.newAccountBalanceCents).toBe(3700);
   });
 
+  it('applyAccountCredit (#1872) sends the invoice, the entered amount and its key, and opts in to the retry', async () => {
+    call.mockReset();
+    call.mockResolvedValue({
+      ok: true,
+      invoiceId: 'inv1',
+      paymentId: 'acr_1790000000000_abc123',
+      appliedCents: 2500,
+      amountDueCents: 7500,
+      accountBalanceCents: 9500,
+      replayed: false,
+    });
+    const input = { invoiceId: 'inv1', amountCents: 2500, idempotencyKey: 'acr_1790000000000_abc123' };
+    const res = await applyAccountCredit(input);
+    expect(call).toHaveBeenCalledWith('applyAccountCredit', input, { idempotent: true });
+    expect(res.accountBalanceCents).toBe(9500);
+  });
   it('getAccountCreditHistory names the household', async () => {
     call.mockReset();
     call.mockResolvedValue({ ok: true, kinfolkId: 'fam1', accountBalanceCents: 0, credits: [], uses: [] });

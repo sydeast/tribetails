@@ -71,10 +71,10 @@ export function TribeHub() {
   });
   const profile = useQuery({ queryKey: tribeProfileKey(kinfolkId), queryFn: () => getMyTribeProfile(kinfolkId) });
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   if (kin.isError) {
-    return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
+    return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
   }
 
   const kinView = viewOfQuery(kin, { isEmpty: (d) => d.kin.filter((k) => k.status === 'active').length === 0 });

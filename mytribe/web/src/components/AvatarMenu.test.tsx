@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AvatarMenu } from './AvatarMenu';
@@ -171,5 +173,75 @@ describe('AvatarMenu About label (#1490)', () => {
   it.each([[undefined], [null], [''], ['   ']])('falls back to About your Auntie for %j', async (name) => {
     const { items } = await openMenu(false, false, name);
     expect(items[3]!.textContent).toBe('About your Auntie');
+  });
+});
+
+/**
+ * #1849: the panel was the frosted `.glass` card, and inside the nav (which
+ * already blurs) a nested backdrop-filter blurs nothing, so page links and a
+ * tale card's gradient showed through the rows. It is a solid surface now.
+ * #1931: one spelling of sign-out everywhere.
+ */
+describe('AvatarMenu panel and sign-out (#1849, #1931)', () => {
+  const css = readFileSync(resolve(process.cwd(), 'src/styles/base.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  it('is not the see-through glass card', async () => {
+    await openMenu();
+    expect(screen.getByRole('menu').className).not.toMatch(/glass/);
+  });
+
+  it('paints the panel with an opaque background and no blur', () => {
+    const rule = css.split('}').find((r) => r.includes('.avatar-menu__panel {'))!;
+    expect(rule).toMatch(/background:\s*var\(--surface-solid\)/);
+    expect(rule).not.toMatch(/backdrop-filter/);
+    const tokens = readFileSync(resolve(process.cwd(), 'src/styles/tokens.css'), 'utf8');
+    expect(tokens).toMatch(/--surface-solid:\s*#fff/i);
+  });
+
+  it('reserves the scrollbar gutter so opening the menu does not shift the page', () => {
+    expect(css).toMatch(/html\s*\{[^}]*scrollbar-gutter:\s*stable/);
+  });
+
+  it('says "Sign out", and signs out only on that press', async () => {
+    const { onSignOut } = await openMenu();
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a wait indicator and disables the item while signing out', async () => {
+    render(<AvatarMenu initial="J" onSignOut={vi.fn()} signingOut={true} billingAccess={false} isOperator={false} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    const busy = screen.getByRole('menuitem', { name: /Signing out/ });
+    expect(busy).toBeDisabled();
+  });
+
+  it('tells the person when sign-out failed, keeps the menu open and the item usable', async () => {
+    const onSignOut = vi.fn();
+    render(
+      <AvatarMenu initial="J" onSignOut={onSignOut} signingOut={false} signOutError="We couldn't sign you out. You are still signed in." billingAccess={false} isOperator={false} />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    expect(within(screen.getByRole('menu')).getByRole('alert').textContent).toContain('still signed in');
+    const again = screen.getByRole('menuitem', { name: 'Sign out' });
+    expect(again).not.toBeDisabled();
+    await userEvent.click(again);
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays open through the press, the wait and the failure, so the message is seen (#2140)', async () => {
+    const onSignOut = vi.fn();
+    const props = { initial: 'J', onSignOut, billingAccess: false, isOperator: false };
+    const { rerender } = render(<AvatarMenu {...props} signingOut={false} signOutError={null} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('menu')).toBeTruthy();
+
+    rerender(<AvatarMenu {...props} signingOut={true} signOutError={null} />);
+    expect(screen.getByRole('menuitem', { name: /Signing out/ })).toBeDisabled();
+
+    rerender(<AvatarMenu {...props} signingOut={false} signOutError="We couldn't sign you out. You are still signed in." />);
+    expect(within(screen.getByRole('menu')).getByRole('alert')).toHaveTextContent('still signed in');
+    expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeEnabled();
   });
 });

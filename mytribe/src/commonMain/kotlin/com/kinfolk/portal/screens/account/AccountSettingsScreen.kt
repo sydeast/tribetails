@@ -601,7 +601,7 @@ fun AccountSettingsScreen(
         )
 
         KinGhostButton(
-            label = "Sign Out",
+            label = "Sign out",
             onClick = { showSignOutConfirm = true },
             modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
         )
@@ -617,7 +617,7 @@ fun AccountSettingsScreen(
                 TextButton(onClick = {
                     showSignOutConfirm = false
                     onSignOut()
-                }) { Text("Sign Out") }
+                }) { Text("Yes, sign out") }
             },
             dismissButton = {
                 TextButton(onClick = { showSignOutConfirm = false }) { Text("Cancel") }

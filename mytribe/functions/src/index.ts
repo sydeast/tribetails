@@ -406,10 +406,12 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // calls them until Android re-points (W2-2), and rules are revoked after that.
   linkInvoiceSessions: () => require('./admin/linkInvoiceSessions'),
   recordPayment: () => require('./admin/recordPayment'),
-  // Auto-apply: the on-demand half of "apply any Unapplied amount to future
-  // invoices". The trigger below is the automatic half; this is the same pass
-  // for an operator whose invoice was already sent when she ticked the box.
+  // #1872: DISABLED, still deployed. It took no amount and spent everything;
+  // every call is now refused. Kept in the map so a release overwrites the old
+  // copy in prod (a release does not delete a function that left the source).
   runAutoApply: () => require('./admin/runAutoApply'),
+  // #1872: the one path that spends account credit, by an amount the admin enters.
+  applyAccountCredit: () => require('./admin/applyAccountCredit'),
   giveAccountCredit: () => require('./admin/giveAccountCredit'),
   // #1003: the admin decides what an unapplied card payment becomes.
   listUnappliedPayments: () => require('./admin/listUnappliedPayments'),
@@ -708,9 +710,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // the sign-in screen reads before anyone is signed in.
   onBusinessSettingsWrite: () => require('./triggers/onBusinessSettingsWrite'),
   onInvoicesWrite: () => require('./triggers/onInvoicesWrite'),
-  // A SECOND trigger on the same collection, deliberately: onInvoicesWrite
-  // decides who to tell about a state change and writes nothing, this one moves
-  // a household's unapplied credit onto a bill that has just become collectable.
+  // #1872: DISABLED, still deployed. It used to move a household's credit onto
+  // a bill that had just become collectable; it now moves no money and logs the
+  // transition. Kept in the map so a release overwrites the old copy in prod.
   onInvoiceAutoApply: () => require('./triggers/onInvoiceAutoApply'),
   // A THIRD, and the only one holding the Stripe key: when an invoice becomes
   // paid it expires every Checkout Session still open for it, so a paid invoice

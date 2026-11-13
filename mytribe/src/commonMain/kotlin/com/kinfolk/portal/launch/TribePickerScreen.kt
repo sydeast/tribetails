@@ -65,7 +65,7 @@ fun TribePickerScreen(
 }
 
 /**
- * "Sign Out" text affordance for pre-shell screens (TribePicker, NoTribes),
+ * "Sign out" text affordance for pre-shell screens (TribePicker, NoTribes),
  * mirroring the inline-link treatment of SignInScreen's "Forgot password?"
  * rather than a pill CTA. Signed-in shell screens keep their avatar-menu
  * sign-out; this exists for destinations that render without the shell chrome.
@@ -74,7 +74,7 @@ fun TribePickerScreen(
 fun LaunchSignOutButton(onSignOut: () -> Unit, modifier: Modifier = Modifier) {
     val type = LocalKinfolkTypography.current
     Text(
-        text = "Sign Out",
+        text = "Sign out",
         style = type.sansLabel.copy(
             color = KinfolkBrand.NavySoft,
             fontWeight = FontWeight.SemiBold,
