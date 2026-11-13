@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { linkOptions, useNavigate, useRouteContext } from '@tanstack/react-router';
 import { useAuth } from '../lib/auth';
+import { isAuntieAccess } from '../lib/access';
 import { getUserProfile, type UserProfile } from '../api/account';
 import { saveUserProfile } from '../api/accountWrite';
 import { listBusinessAdmins } from '../api/businessAdmins';
@@ -141,6 +142,10 @@ function draftChanged(draft: ProfileDraft, stored: ProfileDraft): boolean {
 export function Account({ onOpenNotifications }: AccountProps) {
   const authState = useAuth();
   const { access } = useRouteContext({ from: '/admin' });
+  // #2163: business settings are the owner's. An Auntie's Account page draws
+  // no Business profile panel (so it never reads business_settings, which the
+  // rules refuse her) and no Settings crumb (a screen she cannot open).
+  const isAuntie = isAuntieAccess(access);
   const user = authState.status === 'signedIn' ? authState.user : null;
   const uid = user?.uid ?? '';
 
@@ -281,6 +286,7 @@ export function Account({ onOpenNotifications }: AccountProps) {
         uid={uid}
         email={user.email ?? ''}
         role={role}
+        isAuntie={isAuntie}
         photoStage={photoStage}
         photoInputRef={photoInputRef}
         onPhotoFile={(file) => void handlePhotoFile(file)}
@@ -390,7 +396,7 @@ export function Account({ onOpenNotifications }: AccountProps) {
                     </div>
                   </DenPanel>
 
-                  <BusinessProfilePanel />
+                  {!isAuntie && <BusinessProfilePanel />}
                 </div>
 
                 <div className="account__col">
@@ -441,6 +447,8 @@ interface AccountHeroProps {
   uid: string;
   email: string;
   role: string;
+  /** #2163: no Settings crumb and no business-admin roster read for an Auntie. */
+  isAuntie: boolean;
   photoStage: UploadStage | null;
   photoInputRef: React.RefObject<HTMLInputElement | null>;
   onPhotoFile: (file: File | null) => void;
@@ -471,6 +479,7 @@ function AccountHero({
   uid,
   email,
   role,
+  isAuntie,
   photoStage,
   photoInputRef,
   onPhotoFile,
@@ -482,6 +491,9 @@ function AccountHero({
   const [soleAdmin, setSoleAdmin] = useState(false);
 
   useEffect(() => {
+    // The roster is owner-only on the server, and "Sole admin" is not a claim
+    // about an Auntie's account, so she makes no read and gets no badge.
+    if (isAuntie) return;
     let live = true;
     listBusinessAdmins()
       .then((roster) => {
@@ -493,12 +505,16 @@ function AccountHero({
     return () => {
       live = false;
     };
-  }, []);
+  }, [isAuntie]);
 
   return (
     <DenScreenHeading
       className="account__hero"
-      crumbs={[{ label: 'Settings', link: linkOptions({ to: '/settings' }) }, { label: 'User profile' }]}
+      crumbs={
+        isAuntie
+          ? [{ label: 'User profile' }]
+          : [{ label: 'Settings', link: linkOptions({ to: '/settings' }) }, { label: 'User profile' }]
+      }
       title={name}
       {...(role !== '' ? { detail: role } : {})}
       leading={
