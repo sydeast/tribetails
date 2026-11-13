@@ -182,10 +182,14 @@ the stale "~26":
     `templateId` and that row really sends the channel (`allowedChannels` and
     `templates.sms` / `templates.push`, not an `external` row). The catalog
     opens all three channels on every row at load, so that is every catalog
-    notification except the `external` ones. The documents
-    read and written are the ids the senders read off that row, so an edit
-    changes what is sent. A template no notification sends (operator-made,
-    invites, recovery) comes back `supported: false` on both, and a save to an
+    notification except the `external` ones. A template that is not a
+    catalog row's own email but is the target of exactly one active
+    Template Routing override (`notificationTemplateBindings`, read through
+    `readTemplateBindings`) answers for that override's notification. The
+    documents read and written are the ids the senders read off that row, so
+    an edit changes what is sent. A template no notification sends
+    (operator-made with no override or with two or more, invites, recovery)
+    comes back `supported: false` on both, and a save to an
     unsupported channel is `failed-precondition`. `set: false` with
     `supported: true` is "not set, can be added"; a save creates the document.
   - `fields` is `TEMPLATE_FIELDS[key]`, the same list `getNotificationMatrix`

@@ -14,8 +14,10 @@
  *     `def.templates.sms` / `def.templates.push` off the notification's catalog
  *     row (`notifications/senders/smsChannel.ts`, `pushChannel.ts`) and never
  *     consult a binding. So a template has text or push wording only when a
- *     catalog row's EMAIL template is that template and the row really sends
- *     that channel. The catalog opens all three channels on every row when
+ *     catalog row's EMAIL template is that template (or, for a template the
+ *     operator made, when one live Template Routing override sends it as that
+ *     row's email; `admin/templateChannels.ts` resolves that) and the row
+ *     really sends that channel. The catalog opens all three channels on every row when
  *     it loads (`normalizeAllChannels` in notifications/catalog.ts), so in
  *     practice that is every catalog notification except the ones delivered
  *     outside the dispatcher. A template the operator made themselves, an
@@ -75,8 +77,22 @@ export interface ChannelSupport {
  * which never reaches the text or push senders, so they support neither.
  */
 export function channelSupportFor(templateId: string): ChannelSupport {
-  const def =
-    Object.values(NOTIFICATION_CATALOG).find((d) => d.templates.email === templateId) ?? null;
+  return supportForDef(
+    Object.values(NOTIFICATION_CATALOG).find((d) => d.templates.email === templateId) ?? null,
+  );
+}
+
+/**
+ * The same answer for the notification [catalogKey], reached through a
+ * Template Routing override rather than the catalog's own email. Null when the
+ * key is not a catalog notification.
+ */
+export function channelSupportForKey(catalogKey: string): ChannelSupport | null {
+  const def = Object.hasOwn(NOTIFICATION_CATALOG, catalogKey) ? NOTIFICATION_CATALOG[catalogKey]! : null;
+  return def ? supportForDef(def) : null;
+}
+
+function supportForDef(def: NotificationDef | null): ChannelSupport {
   if (!def || def.external === true) return { def, smsId: null, pushId: null, fields: [] };
   const idFor = (channel: 'sms' | 'push'): string | null =>
     def.allowedChannels.includes(channel) ? (def.templates[channel] ?? null) : null;

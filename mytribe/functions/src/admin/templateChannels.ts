@@ -31,7 +31,9 @@ const loadWording = (): Promise<Wording> => import('../lib/templateChannelWordin
  *
  * Which documents a template's wording lives in is decided by
  * `lib/templateChannelWording.ts#channelSupportFor`, from the catalog row the
- * senders read. A channel the notification does not send comes back
+ * senders read, or, for a template the operator made, from the one live
+ * Template Routing override that sends it (`supportThroughRouting`). A channel
+ * the notification does not send comes back
  * `supported: false` and a save to it is refused, so nothing here can store
  * words that are never sent.
  *
@@ -101,12 +103,29 @@ interface Stored {
   push: Record<string, unknown> | null;
 }
 
+/**
+ * The notification a template the operator made is sent for, through a
+ * Template Routing override, when exactly one live override points at it.
+ * Two or more would leave no single text or push to show, so that template
+ * reads as sending neither, the same as one no override points at.
+ *
+ * `readTemplateBindings` is THE reading of that collection (an override that
+ * is switched off falls back to the catalog's own email, so it does not
+ * count), loaded here like the rules module so this entry stays small.
+ */
+async function supportThroughRouting(wording: Wording, id: string): Promise<ChannelSupport | null> {
+  const { readTemplateBindings } = await import('../lib/sendFromTemplate.js');
+  const { activeBindings } = await readTemplateBindings();
+  const keys = [...activeBindings].filter(([, templateId]) => templateId === id).map(([key]) => key);
+  return keys.length === 1 ? wording.channelSupportForKey(keys[0]!) : null;
+}
+
 /** Reads the stored wording, or refuses when the template is nowhere to be found. */
 async function readStored(wording: Wording, id: string): Promise<Stored> {
-  const support = wording.channelSupportFor(id);
+  let support = wording.channelSupportFor(id);
   if (!support.def) {
-    // A template the operator made, an invite or a recovery email. It has no
-    // text or push, but it has to exist to be read at all.
+    // A template the operator made, an invite or a recovery email. It has to
+    // exist to be read at all.
     const email = await db().doc(`emailTemplates/${id}`).get();
     if (!email.exists) {
       throw new HttpsError(
@@ -114,7 +133,11 @@ async function readStored(wording: Wording, id: string): Promise<Stored> {
         'That template is no longer in the Template Bank. Go back and open it again.',
       );
     }
-    return { support, sms: null, push: null };
+    // Template Routing can make it the email of a catalog notification, and
+    // then it has that notification's text and push. Otherwise it has neither.
+    const routed = await supportThroughRouting(wording, id);
+    if (!routed?.def) return { support, sms: null, push: null };
+    support = routed;
   }
   const [sms, push] = await Promise.all([
     support.smsId ? db().doc(`smsTemplates/${support.smsId}`).get() : null,

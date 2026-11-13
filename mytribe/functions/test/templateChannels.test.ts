@@ -57,6 +57,16 @@ function seed(docs: Record<string, Record<string, unknown> | null>) {
   return ctx;
 }
 
+/** [seed] plus Template Routing overrides (`notificationTemplateBindings`, one row per notification). */
+function seedWithBindings(
+  docs: Record<string, Record<string, unknown> | null>,
+  bindings: Array<{ id: string; data: Record<string, unknown> }>,
+) {
+  const ctx = buildDbMock({ docs, queryDocs: { notificationTemplateBindings: bindings } });
+  mocks.dbFn.mockReturnValue(ctx.db);
+  return ctx;
+}
+
 async function refusal(run: Promise<unknown>): Promise<{ code: string; message: string; details: any }> {
   try {
     await run;
@@ -122,6 +132,47 @@ describe('getTemplateChannels', () => {
       expect(res.push.supported).toBe(false);
       expect(res.fields).toEqual([]);
     }
+  });
+
+  it('a template Template Routing sends for one notification shows that notification\'s text and push', async () => {
+    seedWithBindings(
+      {
+        'emailTemplates/my.own.confirm': { subject: 's' },
+        [`smsTemplates/${CONFIRM}`]: { text: 'Booked for {{kinName}}.' },
+        [`pushTemplates/${CONFIRM}`]: { title: 'Booked', body: 'Tap for the dates.' },
+      },
+      [{ id: CONFIRM, data: { templateId: 'my.own.confirm', active: true } }],
+    );
+    const res = await getTemplateChannelsHandler(admin({ templateId: 'my.own.confirm' }));
+    expect(res.notificationLabel).toBe('KinCare booking confirmed');
+    expect(res.sms).toMatchObject({ supported: true, set: true, text: 'Booked for {{kinName}}.' });
+    expect(res.push).toMatchObject({ supported: true, set: true, title: 'Booked' });
+    expect(res.fields).toContain('kinName');
+  });
+
+  it('a save through a routed template writes the notification\'s own text message', async () => {
+    const ctx = seedWithBindings(
+      { 'emailTemplates/my.own.confirm': { subject: 's' }, [`smsTemplates/${CONFIRM}`]: { text: 'Old.' } },
+      [{ id: CONFIRM, data: { templateId: 'my.own.confirm' } }],
+    );
+    await saveTemplateChannelsHandler(admin({ templateId: 'my.own.confirm', sms: { text: 'New.' } }));
+    expect(ctx.writes).toHaveLength(1);
+    expect(ctx.writes[0]).toMatchObject({ path: `smsTemplates/${CONFIRM}`, data: { text: 'New.' } });
+  });
+
+  it('a switched-off route, or a template routed to two notifications, has neither channel', async () => {
+    seedWithBindings({ 'emailTemplates/my.own': { subject: 's' } }, [
+      { id: CONFIRM, data: { templateId: 'my.own', active: false } },
+    ]);
+    expect((await getTemplateChannelsHandler(admin({ templateId: 'my.own' }))).sms.supported).toBe(false);
+
+    seedWithBindings({ 'emailTemplates/my.own': { subject: 's' } }, [
+      { id: CONFIRM, data: { templateId: 'my.own' } },
+      { id: INVOICE, data: { templateId: 'my.own' } },
+    ]);
+    const twice = await getTemplateChannelsHandler(admin({ templateId: 'my.own' }));
+    expect(twice.notificationLabel).toBeNull();
+    expect(twice.sms.supported).toBe(false);
   });
 
   it('SAD: an unknown template is not-found, in words', async () => {
@@ -296,6 +347,54 @@ describe('saveTemplateChannels', () => {
   });
 });
 
+describe('ERROR: when Firestore fails', () => {
+  it('a save whose write fails rejects, and no Activity Log line claims the change', async () => {
+    const ctx = seed({ [`smsTemplates/${CONFIRM}`]: { text: 'Old words.' } });
+    ctx.db.batch = () => ({
+      set: vi.fn(),
+      commit: vi.fn(async () => {
+        throw new Error('UNAVAILABLE: write failed');
+      }),
+    });
+    await expect(
+      saveTemplateChannelsHandler(admin({ templateId: CONFIRM, sms: { text: 'New words.' } })),
+    ).rejects.toThrow(/UNAVAILABLE/);
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it('a read that fails rejects instead of answering "not set"', async () => {
+    const ctx = seed({});
+    const realDoc = ctx.db.doc;
+    ctx.db.doc = (path: string) =>
+      path.startsWith('smsTemplates/')
+        ? {
+            get: async () => {
+              throw new Error('UNAVAILABLE: read failed');
+            },
+          }
+        : realDoc(path);
+    await expect(getTemplateChannelsHandler(admin({ templateId: CONFIRM }))).rejects.toThrow(/UNAVAILABLE/);
+  });
+
+  it('a save whose read of the stored copy fails writes nothing', async () => {
+    const ctx = seed({});
+    const realDoc = ctx.db.doc;
+    ctx.db.doc = (path: string) =>
+      path.startsWith('pushTemplates/')
+        ? {
+            get: async () => {
+              throw new Error('UNAVAILABLE: read failed');
+            },
+          }
+        : realDoc(path);
+    await expect(
+      saveTemplateChannelsHandler(admin({ templateId: CONFIRM, sms: { text: 'New words.' } })),
+    ).rejects.toThrow(/UNAVAILABLE/);
+    expect(ctx.writes).toEqual([]);
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+});
+
 describe('who may call them', () => {
   const cases = [
     ['getTemplateChannels', getTemplateChannelsHandler, { templateId: CONFIRM }],
@@ -370,6 +469,18 @@ describe('the wording rules', () => {
     // Sent outside the dispatcher, which is the only caller of the two senders.
     expect(channelSupportFor(RESET)).toMatchObject({ smsId: null, pushId: null });
     expect(channelSupportFor('my.own').def).toBeNull();
+  });
+
+  // `channelSupportFor` takes the first catalog row whose email is the
+  // template. That is only the right row while no two notifications share an
+  // email, a text or a push id; otherwise an edit would reach one row's wording
+  // and be checked against the other's fields.
+  it('no two notifications share an email, text or push id', () => {
+    const rows = Object.values(NOTIFICATION_CATALOG);
+    for (const channel of ['email', 'sms', 'push'] as const) {
+      const ids = rows.map((d) => d.templates[channel]).filter((id): id is string => typeof id === 'string');
+      expect(new Set(ids).size, channel).toBe(ids.length);
+    }
   });
 
   // The same wording reaches Firestore through Template Import. If a rule here
