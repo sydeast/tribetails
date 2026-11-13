@@ -1,0 +1,217 @@
+{
+  "hostile": [
+    {
+      "input": "<script>alert(1)</script>",
+      "stored": "&lt;script&gt;alert(1)&lt;/script&gt;"
+    },
+    {
+      "input": "<script",
+      "stored": "&lt;script"
+    },
+    {
+      "input": "x <script src=//e.x/a.js",
+      "stored": "x &lt;script src=//e.x/a.js"
+    },
+    {
+      "input": "<img src=x onerror=alert(1)>",
+      "stored": "&lt;img src=x onerror=alert(1)&gt;"
+    },
+    {
+      "input": "<img src=x onerror=alert(1)",
+      "stored": "&lt;img src=x onerror=alert(1)"
+    },
+    {
+      "input": "<svg onload=alert(1)>",
+      "stored": "&lt;svg onload=alert(1)&gt;"
+    },
+    {
+      "input": "<svg><script>alert(1)</script></svg>",
+      "stored": "&lt;svg&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;/svg&gt;"
+    },
+    {
+      "input": "<!-- <img src=x onerror=alert(1)> -->",
+      "stored": "&lt;!-- &lt;img src=x onerror=alert(1)&gt; --&gt;"
+    },
+    {
+      "input": "<![CDATA[<img src=x onerror=alert(1)>]]>",
+      "stored": "&lt;![CDATA[&lt;img src=x onerror=alert(1)&gt;]]&gt;"
+    },
+    {
+      "input": "<iframe src=\"javascript:alert(1)\"></iframe>",
+      "stored": "&lt;iframe src=\"javascript:alert(1)\"&gt;&lt;/iframe&gt;"
+    },
+    {
+      "input": "<<b>bold</b>",
+      "stored": "&lt;<b>bold</b>"
+    },
+    {
+      "input": "<<script>alert(1)//<</script>",
+      "stored": "&lt;&lt;script&gt;alert(1)//&lt;&lt;/script&gt;"
+    },
+    {
+      "input": "<a href=\"javascript:alert(1)\">x</a>",
+      "stored": "<a>x</a>"
+    },
+    {
+      "input": "<a href=\"JaVaScRiPt:alert(1)\">x</a>",
+      "stored": "<a>x</a>"
+    },
+    {
+      "input": "<a href=\" javascript:alert(1)\">x</a>",
+      "stored": "<a>x</a>"
+    },
+    {
+      "input": "<a href=\"java&#x73;cript:alert(1)\">x</a>",
+      "stored": "<a>x</a>"
+    },
+    {
+      "input": "<a href=\"javascript&colon;alert(1)\">x</a>",
+      "stored": "<a>x</a>"
+    },
+    {
+      "input": "<a href=javascript:alert(1)>x</a>",
+      "stored": "<a>x</a>"
+    },
+    {
+      "input": "<a\thref=\"javascript:alert(1)\">x</a>",
+      "stored": "<a>x</a>"
+    },
+    {
+      "input": "<a href=`javascript:alert(1)`>x</a>",
+      "stored": "&lt;a href=`javascript:alert(1)`&gt;x"
+    },
+    {
+      "input": "<b onclick=`alert(1)`>x</b>",
+      "stored": "&lt;b onclick=`alert(1)`&gt;x"
+    },
+    {
+      "input": "<b title=\"a>b\" onclick=\"alert(1)\">x</b>",
+      "stored": "&lt;b title=\"a&gt;b\" onclick=\"alert(1)\"&gt;x"
+    },
+    {
+      "input": "<a href='https://example.com' onmouseover='alert(1)'>x</a>",
+      "stored": "<a href=\"https://example.com\">x</a>"
+    },
+    {
+      "input": "<a href=\"https://example.com\"\nonclick=\"alert(1)\">x</a>",
+      "stored": "<a href=\"https://example.com\">x</a>"
+    },
+    {
+      "input": "<b\nonclick=\"alert(1)\">x</b>",
+      "stored": "<b>x</b>"
+    },
+    {
+      "input": "<a href=\"https://example.com/&quot; onclick=&quot;alert(1)\">x</a>",
+      "stored": "<a href=\"https://example.com/&quot; onclick=&quot;alert(1)\">x</a>"
+    },
+    {
+      "input": "<a href=\"https://example.com/&amp;quot; onclick=&amp;quot;alert(1)\">x</a>",
+      "stored": "<a href=\"https://example.com/&amp;quot; onclick=&amp;quot;alert(1)\">x</a>"
+    },
+    {
+      "input": "<a href=\"java&amp;#x73;cript:alert(1)\">x</a>",
+      "stored": "<a href=\"java&amp;#x73;cript:alert(1)\">x</a>"
+    },
+    {
+      "input": "<a href=\"https://example.com/?a=1&b=2\">x</a>",
+      "stored": "<a href=\"https://example.com/?a=1&amp;b=2\">x</a>"
+    },
+    {
+      "input": "<a href=\"data:text/html,<script>alert(1)</script>\">x</a>",
+      "stored": "&lt;a href=\"data:text/html,&lt;script&gt;alert(1)&lt;/script&gt;\"&gt;x"
+    },
+    {
+      "input": "&lt;script&gt;alert(1)&lt;/script&gt;",
+      "stored": "&lt;script&gt;alert(1)&lt;/script&gt;"
+    },
+    {
+      "input": "&amp;lt;img src=x onerror=alert(1)&amp;gt;",
+      "stored": "&amp;lt;img src=x onerror=alert(1)&amp;gt;"
+    },
+    {
+      "input": "&amp;lt;a href=&amp;quot;javascript:alert(1)&amp;quot;&amp;gt;x&amp;lt;/a&amp;gt;",
+      "stored": "&amp;lt;a href=&amp;quot;javascript:alert(1)&amp;quot;&amp;gt;x&amp;lt;/a&amp;gt;"
+    },
+    {
+      "input": "<p>Hi <strong>there</strong> <em>friend</em><br>next</p>",
+      "stored": "<p>Hi <strong>there</strong> <em>friend</em><br />next</p>"
+    },
+    {
+      "input": "<ul><li><p>one</p></li></ul>",
+      "stored": "<ul><li><p>one</p></li></ul>"
+    },
+    {
+      "input": "<a href=\"mailto:pawsome@hanasamku.com\">mail</a>",
+      "stored": "<a href=\"mailto:pawsome@hanasamku.com\">mail</a>"
+    }
+  ],
+  "plainText": [
+    {
+      "typed": "a < b",
+      "sent": "a &lt; b",
+      "stored": "a &lt; b"
+    },
+    {
+      "typed": "I think 5 < 6 and 7 > 3",
+      "sent": "I think 5 &lt; 6 and 7 &gt; 3",
+      "stored": "I think 5 &lt; 6 and 7 &gt; 3"
+    },
+    {
+      "typed": "use the <side gate> today",
+      "sent": "use the &lt;side gate&gt; today",
+      "stored": "use the &lt;side gate&gt; today"
+    },
+    {
+      "typed": "the entity &lt; is how you write <",
+      "sent": "the entity &amp;lt; is how you write &lt;",
+      "stored": "the entity &amp;lt; is how you write &lt;"
+    },
+    {
+      "typed": "Tom &amp; Jerry & friends",
+      "sent": "Tom &amp;amp; Jerry &amp; friends",
+      "stored": "Tom &amp;amp; Jerry &amp; friends"
+    },
+    {
+      "typed": "write to Pawsome <pawsome@hanasamku.com> or <catch@hanasamku.com>",
+      "sent": "write to Pawsome &lt;pawsome@hanasamku.com&gt; or &lt;catch@hanasamku.com&gt;",
+      "stored": "write to Pawsome &lt;pawsome@hanasamku.com&gt; or &lt;catch@hanasamku.com&gt;"
+    },
+    {
+      "typed": "I use <script>alert(1)</script> tags",
+      "sent": "I use &lt;script&gt;alert(1)&lt;/script&gt; tags",
+      "stored": "I use &lt;script&gt;alert(1)&lt;/script&gt; tags"
+    },
+    {
+      "typed": "<b>not bold</b> and 1<2",
+      "sent": "&lt;b&gt;not bold&lt;/b&gt; and 1&lt;2",
+      "stored": "&lt;b&gt;not bold&lt;/b&gt; and 1&lt;2"
+    },
+    {
+      "typed": "line one\nline two > three",
+      "sent": "line one\nline two &gt; three",
+      "stored": "line one\nline two &gt; three"
+    },
+    {
+      "typed": "love <3",
+      "sent": "love &lt;3",
+      "stored": "love &lt;3"
+    }
+  ],
+  "editor": [
+    {
+      "html": "<p>a &lt; b and &lt;side gate&gt; and <strong>bold</strong></p>",
+      "typed": "a < b and <side gate> and bold",
+      "stored": "<p>a &lt; b and &lt;side gate&gt; and <strong>bold</strong></p>"
+    },
+    {
+      "html": "<p>the entity &amp;lt; and Tom &amp;amp; Jerry</p>",
+      "typed": "the entity &lt; and Tom &amp; Jerry",
+      "stored": "<p>the entity &amp;lt; and Tom &amp;amp; Jerry</p>"
+    },
+    {
+      "html": "<p>write to &lt;pawsome@hanasamku.com&gt;</p>",
+      "typed": "write to <pawsome@hanasamku.com>",
+      "stored": "<p>write to &lt;pawsome@hanasamku.com&gt;</p>"
+    }
+  ]
+}

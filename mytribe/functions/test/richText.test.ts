@@ -6,7 +6,10 @@ import {
   sanitizeMessageBody,
   messagePlainText,
   messagePreview,
+  plainTextToMessageBody,
 } from '../src/lib/richText';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 describe('sanitizeRichText', () => {
   it('passes plain text through unchanged', () => {
@@ -179,19 +182,17 @@ describe('a less-than sign that does not open a tag is kept as typed (#1873)', (
   });
 });
 
-describe('sanitizeMessageBody: a message keeps every word, as typed (#1873)', () => {
-  // The admin web, admin Android, desktop console and MyTribe Android send a
-  // message as typed plain text. Any `<` that does not open one of the twelve
-  // formatting tags is a character the person typed, so it is kept as text
-  // (escaped while parsing, never stripped).
-  it('happy: keeps a word between angle brackets in a plain-text message', () => {
+describe('sanitizeMessageBody: a message keeps every word, stored as safe HTML (#1873)', () => {
+  // The stored body is HTML: every `<`, `>` and `&` that is text is an entity,
+  // so a renderer that inserts it as HTML shows it as text, and the clients
+  // that draw it from a fixed tag list decode it once.
+  it('happy: keeps a word between angle brackets, as entities', () => {
     expect(sanitizeMessageBody('write to Pawsome <pawsome@hanasamku.com> today')).toBe(
-      'write to Pawsome <pawsome@hanasamku.com> today',
+      'write to Pawsome &lt;pawsome@hanasamku.com&gt; today',
     );
-    expect(sanitizeMessageBody('if a<x and c>d then go')).toBe('if a<x and c>d then go');
-    expect(sanitizeMessageBody('the gate code is <1234> ok')).toBe('the gate code is <1234> ok');
+    expect(sanitizeMessageBody('if a<x and c>d then go')).toBe('if a&lt;x and c&gt;d then go');
+    expect(sanitizeMessageBody('the gate code is <1234> ok')).toBe('the gate code is &lt;1234&gt; ok');
   });
-
   it('happy: keeps formatting the editor wrote', () => {
     expect(sanitizeMessageBody('<p>Hi <strong>there</strong> <em>friend</em><br>next</p>')).toBe(
       '<p>Hi <strong>there</strong> <em>friend</em><br />next</p>',
@@ -199,130 +200,71 @@ describe('sanitizeMessageBody: a message keeps every word, as typed (#1873)', ()
     expect(
       sanitizeMessageBody('<p><a target="_blank" rel="noopener noreferrer nofollow" href="https://example.com">site</a></p>'),
     ).toBe('<p><a href="https://example.com">site</a></p>');
-    expect(sanitizeMessageBody('<ul><li><p>one</p></li></ul>')).toBe('<ul><li><p>one</p></li></ul>');
   });
-
-  it('negative: text that looks like a tag outside the twelve is shown as typed, not stripped', () => {
-    expect(sanitizeMessageBody('I use <script>alert(1)</script> tags')).toBe('I use <script>alert(1)</script> tags');
-    expect(sanitizeMessageBody('<div onclick="evil()">hello</div>')).toBe('<div onclick="evil()">hello</div>');
-    expect(sanitizeMessageBody('<img src=x onerror="evil()">caption')).toBe('<img src=x onerror="evil()">caption');
-    expect(sanitizeMessageBody('<!-- note --> after')).toBe('<!-- note --> after');
+  it('negative: text that looks like a tag outside the twelve is kept as escaped text', () => {
+    expect(sanitizeMessageBody('I use <script>alert(1)</script> tags')).toBe('I use &lt;script&gt;alert(1)&lt;/script&gt; tags');
+    expect(sanitizeMessageBody('<div onclick="evil()">hello</div>')).toBe('&lt;div onclick="evil()"&gt;hello&lt;/div&gt;');
+    expect(sanitizeMessageBody('<!-- note --> after')).toBe('&lt;!-- note --&gt; after');
   });
-
   it('negative: an allowed tag still loses every attribute but a safe href', () => {
     expect(sanitizeMessageBody('<b onclick="evil()">hi</b>')).toBe('<b>hi</b>');
     expect(sanitizeMessageBody('<a href="javascript:alert(1)">click</a>')).toBe('<a>click</a>');
     expect(sanitizeMessageBody('<a href="//evil.example/x">click</a>')).toBe('<a>click</a>');
   });
-
-  it('error: the two write passes (callable, then appendMessage) give the same text as one', () => {
-    // The portal editor sends typed signs as entities. The first pass decodes
-    // them; the second pass must not then read the decoded text as a tag.
-    const inputs = [
-      '<p>x &lt;y and z&gt; w</p>',
-      '<p>&lt;script&gt;alert(1)&lt;/script&gt; typed</p>',
-      '<p>5 &lt; 6 and <strong>bold</strong> &amp; more</p>',
-      'write to Pawsome <pawsome@hanasamku.com> today',
-    ];
-    for (const input of inputs) {
-      const once = sanitizeMessageBody(input);
-      expect(sanitizeMessageBody(once)).toBe(once);
-    }
-    expect(sanitizeMessageBody(sanitizeMessageBody('<p>x &lt;y and z&gt; w</p>'))).toBe('<p>x <y and z> w</p>');
-    expect(sanitizeMessageBody(sanitizeMessageBody('<p>&lt;script&gt;alert(1)&lt;/script&gt; typed</p>'))).toBe(
-      '<p><script>alert(1)</script> typed</p>',
-    );
-  });
-
-  it('messagePlainText and messagePreview keep the same words, with no tags', () => {
-    expect(messagePlainText('<p>I use <script> tags and <b>bold</b></p>')).toBe('I use <script> tags and bold');
-    expect(messagePlainText('write to Pawsome <pawsome@hanasamku.com> today')).toBe(
-      'write to Pawsome <pawsome@hanasamku.com> today',
-    );
-    expect(messagePreview('<p>x <y and z> w</p>', 6)).toBe('x <y a');
+  it('messagePlainText and messagePreview decode once, to the text as typed', () => {
+    expect(messagePlainText('<p>I use &lt;script&gt; tags and <b>bold</b></p>')).toBe('I use <script> tags and bold');
+    expect(messagePlainText('the entity &amp;lt; and Tom &amp;amp; Jerry')).toBe('the entity &lt; and Tom &amp; Jerry');
+    expect(messagePreview('<p>x &lt;y and z&gt; w</p>', 6)).toBe('x <y a');
     expect(messagePlainText('<p><br></p>')).toBe('');
   });
+  it('a body from an older plain-text client (not escaped) keeps every word', () => {
+    expect(sanitizeMessageBody('use the <side gate> and 2 < 3')).toBe('use the &lt;side gate&gt; and 2 &lt; 3');
+    expect(messagePlainText(sanitizeMessageBody('use the <side gate> and 2 < 3'))).toBe('use the <side gate> and 2 < 3');
+  });
 });
-
-describe('sanitizeMessageBody: hostile bodies settle to one safe stored form', () => {
-  // Exact stored output for each hostile body. Text that is not one of the
-  // twelve formatting tags is kept as the characters typed (every client draws
-  // it as text); an allowed tag keeps only a safe href.
-  const table: [string, string][] = [
-    ['<script>alert(1)</script>', '<script>alert(1)</script>'],
-    ['<script', '<script'],
-    ['x <script src=//e.x/a.js', 'x <script src=//e.x/a.js'],
-    ['<img src=x onerror=alert(1)>', '<img src=x onerror=alert(1)>'],
-    ['<img src=x onerror=alert(1)', '<img src=x onerror=alert(1)'],
-    ['<svg onload=alert(1)>', '<svg onload=alert(1)>'],
-    ['<svg><script>alert(1)</script></svg>', '<svg><script>alert(1)</script></svg>'],
-    ['<!-- <img src=x onerror=alert(1)> -->', '<!-- <img src=x onerror=alert(1)> -->'],
-    ['<![CDATA[<img src=x onerror=alert(1)>]]>', '<![CDATA[<img src=x onerror=alert(1)>]]>'],
-    ['<iframe src="javascript:alert(1)"></iframe>', '<iframe src="javascript:alert(1)"></iframe>'],
-    ['<<b>bold</b>', '<<b>bold</b>'],
-    ['<<script>alert(1)//<</script>', '<<script>alert(1)//<</script>'],
-    ['<a href="javascript:alert(1)">x</a>', '<a>x</a>'],
-    ['<a href="JaVaScRiPt:alert(1)">x</a>', '<a>x</a>'],
-    ['<a href=" javascript:alert(1)">x</a>', '<a>x</a>'],
-    ['<a href="java&#x73;cript:alert(1)">x</a>', '<a>x</a>'],
-    ['<a href="javascript&colon;alert(1)">x</a>', '<a>x</a>'],
-    ['<a href=javascript:alert(1)>x</a>', '<a>x</a>'],
-    ['<a\thref="javascript:alert(1)">x</a>', '<a>x</a>'],
-    ['<a href=`javascript:alert(1)`>x</a>', '<a href=`javascript:alert(1)`>x'],
-    ['<b onclick=`alert(1)`>x</b>', '<b onclick=`alert(1)`>x'],
-    ['<b title="a>b" onclick="alert(1)">x</b>', '<b title="a>b" onclick="alert(1)">x'],
-    ["<a href='https://example.com' onmouseover='alert(1)'>x</a>", '<a href="https://example.com">x</a>'],
-    ['<a href="https://example.com"\nonclick="alert(1)">x</a>', '<a href="https://example.com">x</a>'],
-    ['<b\nonclick="alert(1)">x</b>', '<b>x</b>'],
-    // An entity inside a link stays an entity: it can never close the href
-    // and open a second attribute, or hide a scheme.
-    [
-      '<a href="https://example.com/&quot; onclick=&quot;alert(1)">x</a>',
-      '<a href="https://example.com/&quot; onclick=&quot;alert(1)">x</a>',
-    ],
-    [
-      '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">x</a>',
-      '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">x</a>',
-    ],
-    ['<a href="java&amp;#x73;cript:alert(1)">x</a>', '<a href="java&amp;#x73;cript:alert(1)">x</a>'],
-    ['<a href="https://example.com/?a=1&b=2">x</a>', '<a href="https://example.com/?a=1&amp;b=2">x</a>'],
-    // Typed entities are read as the characters they stand for, and a tag
-    // they spell goes through the same tag and link rules.
-    ['&lt;script&gt;alert(1)&lt;/script&gt;', '<script>alert(1)</script>'],
-    ['&amp;lt;img src=x onerror=alert(1)&amp;gt;', '<img src=x onerror=alert(1)>'],
-    ['&amp;lt;a href=&amp;quot;javascript:alert(1)&amp;quot;&amp;gt;x&amp;lt;/a&amp;gt;', '<a>x</a>'],
-    ['&amp;amp;lt;b onclick=&amp;amp;quot;x()&amp;amp;quot;&amp;amp;gt;hi&amp;amp;lt;/b&amp;amp;gt;', '<b>hi</b>'],
-  ];
-
-  it.each(table)('stores %j as %j', (input, expected) => {
-    expect(sanitizeMessageBody(input)).toBe(expected);
+/**
+ * Shared with the admin web and portal web suites, which draw every stored
+ * string and insert it as HTML (the older portal did) in jsdom.
+ */
+interface Fixtures {
+  hostile: { input: string; stored: string }[];
+  plainText: { typed: string; sent: string; stored: string }[];
+  editor: { html: string; typed: string; stored: string }[];
+}
+const fixtures = JSON.parse(readFileSync(join(__dirname, 'fixtures', 'messageBodies.json'), 'utf8')) as Fixtures;
+const allStored = [
+  ...fixtures.hostile.map((f) => f.stored),
+  ...fixtures.plainText.map((f) => f.stored),
+  ...fixtures.editor.map((f) => f.stored),
+];
+describe('sanitizeMessageBody: the stored form of every fixture', () => {
+  it.each(fixtures.hostile.map((f) => [f.input, f.stored]))('stores %j as %j', (input, stored) => {
+    expect(sanitizeMessageBody(input)).toBe(stored);
   });
-
+  it.each(fixtures.plainText.map((f) => [f.typed, f.sent, f.stored]))(
+    'a plain-text sender: %j is sent as %j and stored as %j, and reads back as typed',
+    (typed, sent, stored) => {
+      expect(plainTextToMessageBody(typed)).toBe(sent);
+      expect(sanitizeMessageBody(sent)).toBe(stored);
+      expect(messagePlainText(stored)).toBe(typed);
+    },
+  );
+  it.each(fixtures.editor.map((f) => [f.html, f.stored, f.typed]))(
+    'the portal editor: %j is stored as %j and reads back as %j',
+    (html, stored, typed) => {
+      expect(sanitizeMessageBody(html)).toBe(stored);
+      expect(messagePlainText(stored)).toBe(typed);
+    },
+  );
   it('a second pass changes nothing (the callable, then appendMessage)', () => {
-    for (const [input] of table) {
-      const once = sanitizeMessageBody(input);
-      expect(sanitizeMessageBody(once)).toBe(once);
-    }
+    for (const stored of allStored) expect(sanitizeMessageBody(stored)).toBe(stored);
   });
-
-  it('every link a client reads as a link carries only a safe href', () => {
-    // The clients read `<a` as a link only with quoted attributes, and every
-    // other allowed tag only with none. So every such `<a ...>` in a stored
-    // body must hold a single href whose value, once decoded, is not a script.
-    const clientLink = /<a((?:\s+[A-Za-z_:][-A-Za-z0-9_:.]*\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*>/gi;
-    const decodeOnce = (s: string) =>
-      s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
-    for (const [input] of table) {
-      for (const m of sanitizeMessageBody(input).matchAll(clientLink)) {
-        const attrs = m[1] ?? '';
-        expect(attrs).toMatch(/^ href="[^"]*"$/);
-        const href = decodeOnce(/"([^"]*)"/.exec(attrs)?.[1] ?? '');
-        expect(href).not.toMatch(/^\s*(javascript|data|vbscript):/i);
-      }
+  it('every < and > in a stored body belongs to an allowed tag, and every & starts an entity', () => {
+    const allowedTag = /<\/?(?:b|strong|i|em|u|p|br|ul|ol|li|blockquote|a)(?: href="[^"<>]*")?(?: \/)?>/g;
+    for (const stored of allStored) {
+      const text = stored.replace(allowedTag, '');
+      expect(text).not.toMatch(/[<>]/);
+      expect(text).not.toMatch(/&(?!(?:amp|lt|gt|quot|#39);)/);
     }
-  });
-
-  it('sad: a body that never settles is stored as nothing, so the send is refused', () => {
-    expect(sanitizeMessageBody(`<p>&${'amp;'.repeat(12)}lt;b&gt;x</p>`)).toBe('');
   });
 });

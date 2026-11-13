@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { contentToText, frameHtml, isVisualTemplate, sendPartsFor } from '../src/lib/emailFrame';
 import { renderEmailParts } from '../src/lib/email';
 import { SEED_CORPUS } from '../src/notifications/seedCorpus.generated';
+import { messagePreview } from '../src/lib/richText';
 
 describe('frameHtml', () => {
   it('puts headline and content inside the shared frame', () => {
@@ -244,5 +245,16 @@ describe('message.received quotes a message with a less-than sign whole (#1873)'
     const out = renderEmailParts({ ...sendPartsFor(doc), data: { kinfolkName: 'Jane <Doe>', preview } });
     expect(out.text).toContain(preview);
     expect(out.subject).toBe('New message from Jane <Doe>');
+  });
+  it('a preview made from a stored body is decoded once: the reader sees the signs as typed', () => {
+    // Stored: typed `<` as `&lt;`, typed `&lt;` as `&amp;lt;`. The preview is
+    // plain text; the html part escapes it once more, never twice.
+    const previewText = messagePreview('<p>5 &lt; 6 and the entity &amp;lt; and &lt;side gate&gt;</p>', 200);
+    expect(previewText).toBe('5 < 6 and the entity &lt; and <side gate>');
+    const out = renderEmailParts({ ...sendPartsFor(doc), data: { kinfolkName: 'Jane', preview: previewText } });
+    expect(out.html).toContain('5 &lt; 6 and the entity &amp;lt; and &lt;side gate&gt;');
+    expect(out.html).not.toContain('&amp;amp;');
+    expect(out.html).not.toContain('&amp;lt; 6');
+    expect(out.text).toContain('5 < 6 and the entity &lt; and <side gate>');
   });
 });

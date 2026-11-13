@@ -156,6 +156,17 @@ describe('ConversationThread reply guards', () => {
     expect(screen.getByRole('button', { name: /send reply/i })).toBeDisabled();
     expect(replyToConversation).not.toHaveBeenCalled();
   });
+  it('sends a reply with its typed signs escaped, so they are kept as typed (#1873)', async () => {
+    getConversationThread.mockResolvedValue([msg()]);
+    replyToConversation.mockResolvedValue('m-new');
+    render(<ConversationThread kinfolkId="k1" kinfolkName="The Alvarez Household" onBack={vi.fn()} />);
+    await screen.findByText('hello');
+    fireEvent.change(screen.getByLabelText(/reply to this household/i), { target: { value: 'a < b, the <side gate> & &lt;' } });
+    await userEvent.click(screen.getByRole('button', { name: /send reply/i }));
+    await waitFor(() =>
+      expect(replyToConversation).toHaveBeenCalledWith('k1', 'a &lt; b, the &lt;side gate&gt; &amp; &amp;lt;'),
+    );
+  });
   it('sends a reply that sits exactly on the server maximum', async () => {
     getConversationThread.mockResolvedValue([msg()]);
     replyToConversation.mockResolvedValue('m-new');

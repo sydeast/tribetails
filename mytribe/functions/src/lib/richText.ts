@@ -103,52 +103,46 @@ function sanitizeRich(escaped: string): string {
 }
 
 /**
- * decodeEntities for the text between tags only. Every tag stays exactly as
- * sanitize-html wrote it, so an attribute value keeps its `&quot;`/`&amp;` and
- * can never be decoded into a second attribute or a hidden scheme. Exact
- * because sanitize-html escapes `<` in text and `<`, `>`, `"` in attributes.
- */
-function decodeTextOnly(html: string): string {
-  return html.replace(/<[^>]*>|[^<]+/g, (part) => (part.charAt(0) === '<' ? part : decodeEntities(part)));
-}
-function sanitizeMessageOnce(body: string): string {
-  return decodeTextOnly(sanitizeHtml(escapeStrayLessThan(body, true), RICH_OPTIONS)).trim();
-}
-/**
- * Passes a message body gets to settle. Each pass reads one layer of typed
- * entities (`&amp;lt;` then `&lt;` then `<`); ordinary text settles in two.
- */
-const MESSAGE_MAX_PASSES = 6;
-/**
- * Sanitizes a conversation message body (#1873). Same formatting subset and
+ * Sanitizes a conversation message body (#1873) into the form it is stored
+ * in: HTML that is safe to insert as HTML. Same formatting subset and
  * attribute rules as sanitizeRichText, but every `<` that does not open one of
  * the twelve formatting tags is a character someone typed and is kept as text,
- * never stripped with the words after it. The admin web, admin Android,
- * desktop console and MyTribe Android all send plain text, and the portal
- * editor sends typed signs as entities that the first of the two write passes
- * (the callable, then appendMessage) decodes, so stripping "tags" here would
- * drop words. Every client draws the stored body from a fixed tag list, so a
- * kept `<script>` is only ever shown as those characters.
+ * never stripped with the words after it.
  *
- * The body is cleaned until another pass changes nothing, so running it again
- * (the callable, then appendMessage) gives the same string, and any text that
- * reads as one of the twelve tags has been through the tag and link rules
- * itself: layered entities such as `&amp;lt;a href=&amp;quot;javascript:...`
- * can never come out as a link that skipped them. A body that has not settled
- * after MESSAGE_MAX_PASSES is returned as '' and refused as empty. Known
- * limits of the decoded storage: a typed entity such as `&lt;` reads back as
- * `<`, and a typed `<b>x</b>` is stored as real bold.
+ * The stored string is sanitize-html's own output, not decoded: every `<`,
+ * `>` and `&` in the text is an entity (`&lt;`, `&gt;`, `&amp;`), and every
+ * kept attribute value has its quotes and signs as entities. So a renderer
+ * that inserts the body as HTML shows typed `<script>` as those characters,
+ * and the clients that draw it from a fixed tag list decode the text once.
+ *
+ * The input is HTML. The portal editor sends HTML already; the plain-text
+ * senders (admin web, admin Android, desktop console, MyTribe Android) escape
+ * `&`, `<` and `>` first (plainTextToMessageBody on each client), so a typed
+ * `&lt;` is kept as typed. A body from an older plain-text client still works:
+ * its stray `<` is kept as text, and only a typed entity reads as its sign.
+ *
+ * Running it again over its own output gives the same string (sanitize-html
+ * decodes on read and escapes on write), which the two write passes (the
+ * callable, then appendMessage) rely on. A typed `<b>x</b>` from the editor is
+ * real bold; from a plain-text sender it arrives escaped and stays text.
  */
 export function sanitizeMessageBody(body: string): string {
-  let out = sanitizeMessageOnce(body);
-  for (let pass = 1; pass < MESSAGE_MAX_PASSES; pass++) {
-    const next = sanitizeMessageOnce(out);
-    if (next === out) return out;
-    out = next;
-  }
-  return '';
+  return sanitizeHtml(escapeStrayLessThan(body, true), RICH_OPTIONS).trim();
 }
-/** Plain text of a stored message body, with the same rule: every word typed stays. */
+/**
+ * Plain typed text as a message body: `&`, `<` and `>` as entities, so every
+ * character is kept as typed. The same rule as each plain-text client's
+ * plainTextToMessageBody.
+ */
+export function plainTextToMessageBody(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+/**
+ * Plain text of a stored message body, with the same rule: every word typed
+ * stays. Entities are decoded exactly once, so this is the text as typed, for
+ * plain-text uses (list preview, SMS, push, the email's text part). An HTML
+ * use escapes it again (Handlebars does, in the email's HTML part).
+ */
 export function messagePlainText(body: string): string {
   const sanitized = sanitizeHtml(escapeStrayLessThan(body, true), { allowedTags: [], allowedAttributes: {} });
   return decodeEntities(sanitized).trim();

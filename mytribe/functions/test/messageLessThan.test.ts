@@ -65,16 +65,16 @@ describe('sendKinfolkMessage keeps a message with a less-than sign whole (#1873)
       req({ body: '<p>I think 5 &lt; 6 and &lt;y and z&gt; and <strong>bold</strong> four more words</p>' }),
     );
     const s = stored(ctx);
-    expect(s.body).toBe('<p>I think 5 < 6 and <y and z> and <strong>bold</strong> four more words</p>');
+    expect(s.body).toBe('<p>I think 5 &lt; 6 and &lt;y and z&gt; and <strong>bold</strong> four more words</p>');
     expect(s.preview).toBe('I think 5 < 6 and <y and z> and bold four more words');
     expect(noticePreview()).toBe('I think 5 < 6 and <y and z> and bold four more words');
   });
 
-  it('happy: MyTribe Android (plain text) keeps a word between angle brackets', async () => {
+  it('happy: MyTribe Android (plain text, escaped before sending) keeps a word between angle brackets', async () => {
     const ctx = household();
-    await sendKinfolkMessageHandler(req({ body: 'write to Pawsome <pawsome@hanasamku.com> today' }));
+    await sendKinfolkMessageHandler(req({ body: 'write to Pawsome &lt;pawsome@hanasamku.com&gt; today' }));
     const s = stored(ctx);
-    expect(s.body).toBe('write to Pawsome <pawsome@hanasamku.com> today');
+    expect(s.body).toBe('write to Pawsome &lt;pawsome@hanasamku.com&gt; today');
     expect(s.preview).toBe('write to Pawsome <pawsome@hanasamku.com> today');
     expect(noticePreview()).toBe('write to Pawsome <pawsome@hanasamku.com> today');
   });
@@ -82,37 +82,44 @@ describe('sendKinfolkMessage keeps a message with a less-than sign whole (#1873)
   it('negative: a typed script tag is kept as the text typed, never removed', async () => {
     const ctx = household();
     await sendKinfolkMessageHandler(req({ body: '<p>&lt;script&gt;alert(1)&lt;/script&gt; is what I saw</p>' }));
-    expect(stored(ctx).body).toBe('<p><script>alert(1)</script> is what I saw</p>');
+    expect(stored(ctx).body).toBe('<p>&lt;script&gt;alert(1)&lt;/script&gt; is what I saw</p>');
     expect(stored(ctx).preview).toBe('<script>alert(1)</script> is what I saw');
   });
 
-  it('negative: layered entities sent straight to the callable come out as one settled, safe body', async () => {
+  it('negative: layered entities are kept as the text they spell, still escaped', async () => {
     const ctx = household();
     await sendKinfolkMessageHandler(
       req({
         body:
           '<p>&amp;lt;img src=x onerror=alert(1)&amp;gt; and ' +
-          '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">site</a> and ' +
-          '&amp;lt;a href=&amp;quot;javascript:alert(1)&amp;quot;&amp;gt;tap&amp;lt;/a&amp;gt;</p>',
+          '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">site</a></p>',
       }),
     );
     expect(stored(ctx).body).toBe(
-      '<p><img src=x onerror=alert(1)> and ' +
-        '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">site</a> and <a>tap</a></p>',
+      '<p>&amp;lt;img src=x onerror=alert(1)&amp;gt; and ' +
+        '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">site</a></p>',
     );
+    expect(stored(ctx).preview).toBe('&lt;img src=x onerror=alert(1)&gt; and site');
   });
-
-  it('sad: a body that never settles is refused and nothing is written', async () => {
+  it('sad: a message longer than the typed limit is refused, counted as typed', async () => {
     const ctx = household();
-    const layered = `<p>&${'amp;'.repeat(12)}lt;b&gt;x</p>`;
-    await expect(sendKinfolkMessageHandler(req({ body: layered }))).rejects.toMatchObject({
+    await expect(sendKinfolkMessageHandler(req({ body: 'x'.repeat(5001) }))).rejects.toMatchObject({
       code: 'invalid-argument',
-      message: 'message_body_empty',
+      message: 'message_too_long',
     });
     expect(ctx.writes.filter((w) => w.path.startsWith('conversations/'))).toEqual([]);
-    expect(mocks.enqueueNotification).not.toHaveBeenCalled();
   });
-
+  it('happy: the length limits count typed characters, not the longer escaped form', async () => {
+    // 2000 typed signs (the default chat limit) are 8000 characters escaped.
+    const ctx = household();
+    await sendKinfolkMessageHandler(req({ body: '&lt;'.repeat(2000) }));
+    expect(stored(ctx).body).toBe('&lt;'.repeat(2000));
+    household();
+    await expect(sendKinfolkMessageHandler(req({ body: '&lt;'.repeat(2001) }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'message_too_long',
+    });
+  });
   it('sad: a body with no words at all is refused', async () => {
     household();
     await expect(sendKinfolkMessageHandler(req({ body: '<p><br></p>' }))).rejects.toMatchObject({
@@ -126,9 +133,20 @@ describe('replyToConversation keeps an Auntie reply with a less-than sign whole 
   it('happy: a plain reply keeps a word between angle brackets and a script-like word', async () => {
     const ctx = buildDbMock({ docs: { 'conversations/kf1': { kinfolkName: 'Jane Doe', messageCount: 2 } } });
     mocks.dbFn.mockReturnValue(ctx.db);
-    await replyToConversationHandler(req({ kinfolkId: 'kf1', body: 'use the <side gate> and ignore <script> 2 < 3' }));
+    await replyToConversationHandler(
+      req({ kinfolkId: 'kf1', body: 'use the &lt;side gate&gt; and ignore &lt;script&gt; 2 &lt; 3 &amp;lt;' }),
+    );
     const s = stored(ctx);
-    expect(s.body).toBe('use the <side gate> and ignore <script> 2 < 3');
-    expect(s.preview).toBe('use the <side gate> and ignore <script> 2 < 3');
+    expect(s.body).toBe('use the &lt;side gate&gt; and ignore &lt;script&gt; 2 &lt; 3 &amp;lt;');
+    expect(s.preview).toBe('use the <side gate> and ignore <script> 2 < 3 &lt;');
+  });
+  it('sad: a reply longer than the typed limit is refused with readable words', async () => {
+    const ctx = buildDbMock({ docs: { 'conversations/kf1': { kinfolkName: 'Jane Doe', messageCount: 2 } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(replyToConversationHandler(req({ kinfolkId: 'kf1', body: 'x'.repeat(5001) }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'Message is too long (5000 character max).',
+    });
+    expect(ctx.writes.filter((w) => w.path.startsWith('conversations/'))).toEqual([]);
   });
 });

@@ -1,14 +1,15 @@
 import type { ReactNode } from 'react';
-import { hasMarkup, parseRichText, type RichNode } from '../lib/richText';
+import { decodeEntities, hasMarkup, parseRichText, type RichNode } from '../lib/richText';
 /**
  * Draws a stored message body. Rich text (the server's b/strong/i/em/u/p/br/
  * ul/ol/li/blockquote/a subset) becomes real elements built from a fixed list,
  * so no stored string is ever injected as HTML. A body with no tags (the
- * operator's own plain replies) is shown as text with its line breaks kept.
+ * operator's own plain replies) is shown as text with its line breaks kept,
+ * its entities decoded once (the server stores a typed `<` as `&lt;`).
  */
 export function RichText({ body, className }: { body: string; className?: string }) {
   if (!hasMarkup(body)) {
-    return <span className={className} style={{ whiteSpace: 'pre-wrap' }}>{body}</span>;
+    return <span className={className} style={{ whiteSpace: 'pre-wrap' }}>{decodeEntities(body)}</span>;
   }
   return <div className={className}>{renderNodes(parseRichText(body))}</div>;
 }

@@ -151,3 +151,12 @@ export function parseRichText(html: string): RichNode[] {
   }
   return root;
 }
+
+/**
+ * Plain typed text as a message body for the server: `&`, `<` and `>` as
+ * entities, so a typed `&lt;` or `<side gate>` is stored and shown as typed.
+ * Same rule as the server's `plainTextToMessageBody` (functions/src/lib/richText.ts).
+ */
+export function plainTextToMessageBody(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}

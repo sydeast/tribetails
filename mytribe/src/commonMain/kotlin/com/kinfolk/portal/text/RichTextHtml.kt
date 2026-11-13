@@ -335,3 +335,16 @@ public fun hasRichTextMarkup(body: String): Boolean {
     }
     return false
 }
+
+/**
+ * The text of a tag-less stored body, as typed: the server stores every typed
+ * `&`, `<` and `>` as an entity, decoded here exactly once.
+ */
+public fun messageBodyText(body: String): String = decodeHtmlEntities(body)
+/**
+ * Plain typed text as a message body for the server: `&`, `<` and `>` as
+ * entities, so a typed `&lt;` or `<side gate>` is stored and shown as typed.
+ * Same rule as the server's `plainTextToMessageBody` (functions/src/lib/richText.ts).
+ */
+public fun plainTextToMessageBody(text: String): String =
+    text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

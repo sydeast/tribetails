@@ -232,4 +232,33 @@ class RichTextHtmlTest {
         assertEquals(listOf("https://example.com/?a=1&b=2", "https://example.com/&quot; onclick=&quot;alert(1)"), urls)
         assertEquals("ok x s <a href=`javascript:alert(1)`>y <b onclick=`alert(1)`>z", r.text)
     }
+    @Test fun storedMessageBodiesReadBackAsTyped() {
+        // Stored exactly as the server writes them (mytribe/functions/test/fixtures/messageBodies.json).
+        val cases = listOf(
+            "a &lt; b" to "a < b",
+            "use the &lt;side gate&gt; today" to "use the <side gate> today",
+            "the entity &amp;lt; is how you write &lt;" to "the entity &lt; is how you write <",
+            "Tom &amp;amp; Jerry &amp; friends" to "Tom &amp; Jerry & friends",
+            "write to Pawsome &lt;pawsome@hanasamku.com&gt; or &lt;catch@hanasamku.com&gt;" to
+                "write to Pawsome <pawsome@hanasamku.com> or <catch@hanasamku.com>",
+            "I use &lt;script&gt;alert(1)&lt;/script&gt; tags" to "I use <script>alert(1)</script> tags",
+            "line one\nline two &gt; three" to "line one\nline two > three",
+            "<p>a &lt; b and &lt;side gate&gt; and <strong>bold</strong></p>" to "a < b and <side gate> and bold",
+            "<p>the entity &amp;lt; and Tom &amp;amp; Jerry</p>" to "the entity &lt; and Tom &amp; Jerry",
+        )
+        for ((stored, typed) in cases) {
+            val shown = if (hasRichTextMarkup(stored)) richTextToAnnotatedString(stored).text else messageBodyText(stored)
+            assertEquals(typed, shown)
+            assertEquals(typed, richTextToAnnotatedString(stored).text)
+        }
+    }
+    @Test fun plainTextIsEscapedForSending() {
+        assertEquals("a &lt; b, the &lt;side gate&gt; &amp; &amp;lt;", plainTextToMessageBody("a < b, the <side gate> & &lt;"))
+        assertEquals("<side gate>", messageBodyText(plainTextToMessageBody("<side gate>")))
+    }
+    @Test fun storedHostileBodiesAreTextWithNoLink() {
+        val r = richTextToAnnotatedString("&lt;img src=x onerror=alert(1)&gt; &lt;a href=`javascript:alert(1)`&gt;x <a>y</a>")
+        assertEquals("<img src=x onerror=alert(1)> <a href=`javascript:alert(1)`>x y", r.text)
+        assertEquals(0, r.getLinkAnnotations(0, r.length).size)
+    }
 }
