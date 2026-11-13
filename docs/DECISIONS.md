@@ -607,7 +607,7 @@ so the ID resolves.
 - Date: 2026-08-04
 - Ruling: "the old data's actual createdAt should be its original creation as in from the old system not the date that it was migrated". `createdAtSource` records where each date came from.
 - Supersedes: the 2026-08-01 createdAt ruling, which stamped the ingest date.
-- Enforced in: `auntieos-admin/migrate_visit_logs_to_kin_care_reports.py`, `auntieos-admin/src/api/kinTales.ts`, `auntieos-admin/src/lib/createdAtProvenance.ts`, `auntieos-admin/src/screens/KinTales.tsx`
+- Enforced in: `auntieos-admin/migrate_visit_logs_to_kin_care_reports.py`, `auntieos-admin/src/api/kinTales.ts`, `auntieos-admin/src/lib/createdAtProvenance.ts`, `auntieos-admin/src/screens/KinTales.tsx`, `auntieos-admin/src/api/directory.ts` (households, #2171), `mytribe/scripts/createdAtProvenance.ts` (the household importer contract)
 
 ### D-593-VIDEO-STRIP-ASYNC: Video metadata is stripped after upload
 - Source: #593

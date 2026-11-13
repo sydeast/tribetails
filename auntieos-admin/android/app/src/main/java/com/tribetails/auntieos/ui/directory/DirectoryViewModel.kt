@@ -131,8 +131,8 @@ internal val KIN_SORT_OPTIONS: List<SortOption> =
 /**
  * The Kinfolk tab's order. A to Z is by surname with a first-name tiebreak
  * (03-directory item 3, parity with web); Z to A is that reversed; Recently
- * Created follows [kinfolkCreatedAt] (#1953) and Recently Updated reads
- * `updatedAt`, newest first. Pure; tested.
+ * Created follows [kinfolkCreatedMillis] (#1953, #2171) and Recently Updated
+ * follows [kinfolkUpdatedMillis] (#2155), newest first. Pure; tested.
  */
 internal fun sortKinfolkDirectory(rows: List<Kinfolk>, sort: SortOption): List<Kinfolk> {
     val surname = { kf: Kinfolk ->
@@ -141,32 +141,42 @@ internal fun sortKinfolkDirectory(rows: List<Kinfolk>, sort: SortOption): List<K
     return when (sort) {
         SortOption.AlphaAsc -> rows.sortedBy(surname)
         SortOption.AlphaDesc -> rows.sortedByDescending(surname)
-        SortOption.RecentlyCreated -> rows
-            .map { kf -> Triple(kf, kinfolkCreatedAt(kf), surname(kf)) }
-            .sortedWith(
-                compareBy<Triple<Kinfolk, KinfolkCreatedAt, String>> { it.second.tier.ordinal }
-                    .thenByDescending { it.second.millis }
-                    .thenBy { it.third },
-            )
-            .map { it.first }
-        SortOption.RecentlyUpdated -> rows.sortedByDescending { it.updatedAtIso() }
+        SortOption.RecentlyCreated -> sortKinfolkByDate(rows, surname, ::kinfolkCreatedMillis)
+        SortOption.RecentlyUpdated -> sortKinfolkByDate(rows, surname, ::kinfolkUpdatedMillis)
     }
 }
 
-/** Which date places a household under Recently Created; declared in rank order, highest first. */
-internal enum class CreatedTier { Created, Joined, None }
-
-internal data class KinfolkCreatedAt(val tier: CreatedTier, val millis: Long)
+/** Newest first; equal dates A to Z by surname; households with no date last, A to Z. */
+private fun sortKinfolkByDate(
+    rows: List<Kinfolk>,
+    surname: (Kinfolk) -> String,
+    dateOf: (Kinfolk) -> Long?,
+): List<Kinfolk> = rows
+    .map { kf -> Triple(kf, dateOf(kf), surname(kf)) }
+    .sortedWith(
+        compareBy<Triple<Kinfolk, Long?, String>> { it.second == null }
+            .thenByDescending { it.second ?: 0L }
+            .thenBy { it.third },
+    )
+    .map { it.first }
 
 private val ISO_DAY = Regex("""^\d{4}-\d{2}-\d{2}$""")
 private val ISO_INSTANT = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$""")
 
-/** Epoch millis of an ISO day (UTC midnight) or ISO instant, else null. Free text is never guessed at. */
+/**
+ * Epoch millis of an ISO instant, or of an ISO day read as midnight on the
+ * business's clock (America/Chicago, the server's default), else null. A join
+ * date of 12 Nov must sort above a household made at 11:30 PM on 11 Nov in
+ * Chicago, which UTC midnight would not do (#2171 review). The web admin and the
+ * desktop console read a day the same way. Free text is never guessed at.
+ */
 private fun isoMillis(raw: String): Long? {
     val s = raw.trim()
     return runCatching {
         when {
-            ISO_DAY.matches(s) -> java.time.LocalDate.parse(s).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+            ISO_DAY.matches(s) -> java.time.LocalDate.parse(s)
+                .atStartOfDay(java.time.ZoneId.of(com.tribetails.auntieos.data.model.DEFAULT_BUSINESS_TIME_ZONE))
+                .toInstant().toEpochMilli()
             ISO_INSTANT.matches(s) -> java.time.OffsetDateTime.parse(s).toInstant().toEpochMilli()
             else -> null
         }
@@ -174,24 +184,35 @@ private fun isoMillis(raw: String): Long? {
 }
 
 /**
- * #1953, the same rule as the web admin's `kinfolkCreatedMillis`. Highest tier
- * first:
- *  - Created: the record's own `createdAt`, stamped by the createKinfolk
- *    callable, so every stamped household is newer than every unstamped one. A
- *    `createdAtSource` of "import" is only the import date and is skipped.
- *  - Joined: a household from before that stamp is placed by its join date,
- *    when that reads as a date.
- *  - None: no readable date. Sorts last, A to Z; never given a made-up date.
- * The Firestore document create time is never used: after a data reload it is
- * the import date.
+ * The date that places a household under Recently Created, in epoch millis, or
+ * null when it has none (#1953, #2171). The same rule as the web admin's and
+ * the desktop console's `kinfolkCreatedMillis`. ONE timeline, whichever of
+ * these the household has first:
+ *  1. `createdAt`: the auntieOS creation stamp (`createdAtSource` "live" or
+ *     blank) or, for a migrated household, the old system's own creation date
+ *     ("original"). "import" means the original was lost and the value is only
+ *     the day of the import, so it is skipped.
+ *  2. The join date, when it reads as a date.
+ *  3. Nothing: null. Sorts last, A to Z; never given a made-up date.
+ * The Firestore document create time is never used: after the data reload it
+ * is the import date.
  */
-internal fun kinfolkCreatedAt(kf: Kinfolk): KinfolkCreatedAt {
+internal fun kinfolkCreatedMillis(kf: Kinfolk): Long? {
     if (kf.createdAtSource.trim() != "import") {
-        isoMillis(kf.createdAtIso())?.let { return KinfolkCreatedAt(CreatedTier.Created, it) }
+        isoMillis(kf.createdAtIso())?.let { return it }
     }
-    isoMillis(kf.joinDate)?.let { return KinfolkCreatedAt(CreatedTier.Joined, it) }
-    return KinfolkCreatedAt(CreatedTier.None, 0L)
+    return isoMillis(kf.joinDate)
 }
+
+/**
+ * The date that places a household under Recently Updated, in epoch millis, or
+ * null (#2155): its last change, `updatedAt`, compared as an instant (live
+ * kinfolk hold it as a String or a Timestamp, so text order is not time order).
+ * A household never changed since it was made was last changed when it was
+ * made, so with no readable `updatedAt` it falls back to [kinfolkCreatedMillis].
+ */
+internal fun kinfolkUpdatedMillis(kf: Kinfolk): Long? =
+    isoMillis(kf.updatedAtIso()) ?: kinfolkCreatedMillis(kf)
 
 // ── Search (#1952) ──────────────────────────────────────────────────────────
 
