@@ -35,13 +35,16 @@
  * which ignores `invoiceId`; an `invoices` write of `sessionIds` alone changes
  * no state `onInvoicesWrite` reads, so no household is told anything.
  *
- * Dry run unless `--apply`. `--allow-prod` only says the target is production.
+ * MODES, the same as the other backfills in this folder: `--allow-prod` IS
+ * the write. Without it the run is a dry run that writes nothing, against
+ * production or the emulator; `--dry-run` forces a dry run and wins in either
+ * flag order. A real write to production needs GOOGLE_APPLICATION_CREDENTIALS.
  *
- *   npm --prefix mytribe/functions run backfill:invoice-session-backlinks -- --project <id> --allow-prod
- *   npm --prefix mytribe/functions run backfill:invoice-session-backlinks -- --project <id> --allow-prod --apply
+ *   npm --prefix mytribe/functions run backfill:invoice-session-backlinks -- --project <id>                # dry run
+ *   npm --prefix mytribe/functions run backfill:invoice-session-backlinks -- --project <id> --allow-prod   # writes
  */
 // The single firebase-admin import point (#846).
-import { getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
+import { FieldValue, getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 import { isSessionCancelled, isSessionClaimed } from '../functions/src/lib/sessionInvoicing';
 import { boundSessionIds, storedSessionIds } from '../functions/src/lib/invoiceSessionLinks';
 
@@ -54,7 +57,9 @@ export const ATTRIBUTION = 'backfill_1901';
 
 export interface Args {
   projectId: string | null;
+  /** `--allow-prod` was passed. It is the write flag, as in every sibling backfill. */
   allowProd: boolean;
+  /** Whether this run writes: `--allow-prod` without `--dry-run`. */
   apply: boolean;
 }
 
@@ -70,18 +75,22 @@ export function parseArgs(argv: string[]): Args {
       args.projectId = v;
       i += 1;
     } else if (a === '--allow-prod') args.allowProd = true;
-    else if (a === '--apply') args.apply = true;
     else if (a === '--dry-run') explicitDryRun = true;
+    else if (a === '--apply') {
+      // Not a flag here. Refused out loud so nobody reads "--allow-prod alone
+      // is a dry run" from an older copy of the command and writes by mistake.
+      throw new Error('--apply is not a flag of this script: --allow-prod is the write. Leave it off for a dry run.');
+    }
     else if (a === '--help' || a === '-h') {
       console.log(
         [
           'backfillInvoiceSessionBacklinks.ts: marks visits billed by the invoice whose line bills them (#1901, #1970)',
           '',
-          '  npm --prefix mytribe/functions run backfill:invoice-session-backlinks -- --project <id> --allow-prod',
-          '  npm --prefix mytribe/functions run backfill:invoice-session-backlinks -- --project <id> --allow-prod --apply',
+          '  npm --prefix mytribe/functions run backfill:invoice-session-backlinks -- --project <id>               # DRY RUN',
+          '  npm --prefix mytribe/functions run backfill:invoice-session-backlinks -- --project <id> --allow-prod  # writes',
           '',
-          'Dry run unless --apply. --dry-run forces it back and wins in either flag order.',
-          '--allow-prod says the target is production; it is refused when FIRESTORE_EMULATOR_HOST is set.',
+          'Dry run unless --allow-prod. --dry-run forces a dry run and wins in either flag order.',
+          'A real write to production needs GOOGLE_APPLICATION_CREDENTIALS. FIRESTORE_EMULATOR_HOST points every read and write at the emulator.',
         ].join('\n'),
       );
       process.exit(0);
@@ -89,28 +98,29 @@ export function parseArgs(argv: string[]): Args {
       throw new Error(`unknown arg: ${a}`);
     }
   }
-  if (explicitDryRun) args.apply = false;
+  args.apply = args.allowProd && !explicitDryRun;
   return args;
 }
 
 export type Target = { kind: 'emulator'; host: string } | { kind: 'production' };
 
-/** Throws when the flags and the environment disagree about where the writes would go. */
+/**
+ * Where the run goes, and the refusal when a write could not be made safely.
+ * FIRESTORE_EMULATOR_HOST sends everything to the emulator, dry run or not.
+ * Without it the target is production: a dry run only reads, and a write
+ * (`--allow-prod`) is refused unless GOOGLE_APPLICATION_CREDENTIALS names the
+ * credentials it writes with.
+ */
 export function resolveTarget(args: Args, env: Record<string, string | undefined>): Target {
   const host = env['FIRESTORE_EMULATOR_HOST'];
-  if (host && args.allowProd) {
-    throw new Error(
-      `--allow-prod refused: FIRESTORE_EMULATOR_HOST is set (${host}), so this would touch the emulator, not production. ` +
-        'Unset FIRESTORE_EMULATOR_HOST to reach production, or drop --allow-prod to work against the emulator.',
-    );
-  }
   if (host) return { kind: 'emulator', host };
-  if (!args.allowProd) {
-    throw new Error('FIRESTORE_EMULATOR_HOST is not set, so this would reach PRODUCTION. Pass --allow-prod to confirm.');
+  if (args.apply && !(env['GOOGLE_APPLICATION_CREDENTIALS'] ?? '').trim()) {
+    throw new Error(
+      'A real write needs GOOGLE_APPLICATION_CREDENTIALS. Set it to the credentials file and run again, or drop --allow-prod for a dry run.',
+    );
   }
   return { kind: 'production' };
 }
-
 export function describeTarget(args: Args, env: Record<string, string | undefined>): string {
   const host = env['FIRESTORE_EMULATOR_HOST'];
   const project = args.projectId ?? '(default credentials project)';
@@ -134,8 +144,13 @@ export type Finding =
 export interface Plan {
   /** Visits to mark as billed by `invoiceId`. */
   backlinks: { sessionId: string; invoiceId: string }[];
-  /** Invoices whose `sessionIds` gains the visits its lines bill. */
-  invoiceSets: { invoiceId: string; sessionIds: string[] }[];
+  /**
+   * Invoices whose `sessionIds` gains the visits its lines bill. `sessionIds`
+   * is the set as it will read, for the report; `added` is what is written,
+   * as an array union, so an edit landing between the read and the write is
+   * not overwritten.
+   */
+  invoiceSets: { invoiceId: string; sessionIds: string[]; added: string[] }[];
   findings: Finding[];
   scanned: { invoices: number; sessions: number };
 }
@@ -217,7 +232,7 @@ export function buildPlanFromRows(invoices: Row[], sessions: Row[]): Plan {
 
   for (const [invoiceId, adds] of setAdds) {
     const inv = invoices.find((i) => i.id === invoiceId)!;
-    plan.invoiceSets.push({ invoiceId, sessionIds: [...storedSessionIds(inv.data), ...adds] });
+    plan.invoiceSets.push({ invoiceId, sessionIds: [...storedSessionIds(inv.data), ...adds], added: adds });
   }
   return plan;
 }
@@ -265,7 +280,7 @@ export function reportLines(plan: Plan, applied: boolean): string[] {
     }
   }
   lines.push('');
-  if (!applied) lines.push('DRY RUN: nothing was written. Re-run with --apply to write.');
+  if (!applied) lines.push('DRY RUN: nothing was written. Re-run with --allow-prod to write.');
   return lines;
 }
 
@@ -280,7 +295,7 @@ export async function applyPlan(db: Firestore, plan: Plan, nowIso = new Date().t
       );
     }),
     ...plan.invoiceSets.map((s) => (batch: ReturnType<Firestore['batch']>) => {
-      batch.update(db.collection(INVOICES).doc(s.invoiceId), { sessionIds: s.sessionIds });
+      batch.update(db.collection(INVOICES).doc(s.invoiceId), { sessionIds: FieldValue.arrayUnion(...s.added) });
     }),
   ];
   for (let i = 0; i < ops.length; i += BATCH_LIMIT) {

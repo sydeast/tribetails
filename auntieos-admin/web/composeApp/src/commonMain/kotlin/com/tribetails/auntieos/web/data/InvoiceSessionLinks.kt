@@ -156,10 +156,12 @@ internal fun toggleLinkPick(
     sessions: List<KinCareSession>,
     invoiceId: String,
     storedIds: Collection<String>,
-    /** #2091: visits a line bills; they stay ticked. */
+    /** #2091: visits a line bills; a STORED one stays ticked. */
     billedIds: Set<String> = emptySet(),
 ): Set<String> {
-    if (sessionId in pending) return if (sessionId in billedIds) pending else pending - sessionId
+    // Only a stored link is held: a billed visit the set left out (an old half
+    // link) can be ticked and unticked again before Save, as the server allows.
+    if (sessionId in pending) return if (sessionId in billedIds && sessionId in storedIds) pending else pending - sessionId
     val session = sessions.firstOrNull { it._id == sessionId }
     if (session != null && (linkPickerOnOtherInvoice(session, invoiceId, storedIds) || linkPickerCancelled(session, storedIds))) {
         return pending

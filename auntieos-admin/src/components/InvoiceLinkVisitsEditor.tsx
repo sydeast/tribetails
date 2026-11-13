@@ -127,8 +127,11 @@ export function InvoiceLinkVisitsEditor({
   const billed = new Set(billedIds);
   function toggle(id: string) {
     if (saving) return;
-    // A visit a line bills stays linked (the checkbox is disabled too).
-    if (billed.has(id) && pending.has(id)) return;
+    // A visit a line bills stays linked (the checkbox is disabled too). Only
+    // one already in the stored set: a billed visit the set left out (an old
+    // half link) can be ticked here, and unticked again before Save, which is
+    // what the server allows (it refuses only unlinking a stored one).
+    if (billed.has(id) && initial.includes(id) && pending.has(id)) return;
     setPending((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);

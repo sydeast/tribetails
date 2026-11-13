@@ -453,6 +453,26 @@ class InvoiceSessionLinkViewModelTest {
         assertEquals(setOf("ses1"), vm.uiState.value.pendingSessionIds)
     }
     @Test
+    fun `a billed visit the stored set left out can be ticked and unticked again`() = runTest(testDispatcher) {
+        // ses3 has a line on this invoice but is not in its stored set (an old half link).
+        val halfLinked = itemizedInvoice.copy(
+            lineItems = listOf(
+                mapOf("description" to "Dog Walking, May 1", "qty" to 1.0, "unitCents" to 4500L, "sessionId" to "ses1"),
+                mapOf("description" to "Dog Walking, May 3", "qty" to 1.0, "unitCents" to 4500L, "sessionId" to "ses3"),
+            ),
+        )
+        coEvery { mockInvoiceRepo.getInvoiceById("inv1") } returns Result.success(halfLinked)
+        coEvery { mockKinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(listOf(session1, session2, session3))
+        val vm = buildViewModel()
+        vm.loadInvoice("inv1")
+        advanceUntilIdle()
+        vm.openEditMode()
+        vm.toggleSessionInPending("ses3")
+        assertEquals(setOf("ses1", "ses2", "ses3"), vm.uiState.value.pendingSessionIds)
+        vm.toggleSessionInPending("ses3")
+        assertEquals(setOf("ses1", "ses2"), vm.uiState.value.pendingSessionIds)
+    }
+    @Test
     fun `the saved toast says the linked visit's price was not added`() = runTest(testDispatcher) {
         coEvery { mockKinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(
             listOf(session1, session2, session3)

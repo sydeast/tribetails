@@ -68,6 +68,13 @@ class LinkSessionsWithoutLineTest {
         assertEquals(pending, toggleLinkPick(pending, "s1", sessions, "inv1", stored, setOf("s1")))
         assertEquals(setOf("s1"), toggleLinkPick(pending, "s2", sessions, "inv1", stored, setOf("s1")))
     }
+    @Test
+    fun aBilledVisitTheStoredSetLeftOutCanBeTickedAndUntickedAgain() {
+        val sessions = listOf(KinCareSession(_id = "s1"))
+        val ticked = toggleLinkPick(emptySet(), "s1", sessions, "inv1", emptyList(), setOf("s1"))
+        assertEquals(setOf("s1"), ticked)
+        assertEquals(emptySet(), toggleLinkPick(ticked, "s1", sessions, "inv1", emptyList(), setOf("s1")))
+    }
 
     @Test
     fun theChipSaysWhyABilledVisitStaysLinked() {

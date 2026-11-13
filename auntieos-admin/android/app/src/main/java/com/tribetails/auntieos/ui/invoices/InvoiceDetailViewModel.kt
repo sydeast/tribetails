@@ -564,9 +564,13 @@ class InvoiceDetailViewModel(
         }
         // #2091: a visit a line on this invoice bills stays linked. The chip is
         // disabled; this keeps the rule for any other caller. Edit removes the
-        // line, and the server unlinks the visit with it (#1970).
+        // line, and the server unlinks the visit with it (#1970). Only a STORED
+        // link is held: a billed visit the set left out (an old half link) can
+        // be ticked and unticked again before Save, as the server allows.
         val invoice = state.invoice
-        if (invoice != null && sessionId !in pending && sessionId in linkPickerBilledIds(invoice)) return
+        if (invoice != null && sessionId !in pending && sessionId in invoice.sessionIds &&
+            sessionId in linkPickerBilledIds(invoice)
+        ) return
         _uiState.value = state.copy(pendingSessionIds = pending, linkError = null)
     }
 

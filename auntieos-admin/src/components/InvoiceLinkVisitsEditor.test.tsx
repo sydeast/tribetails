@@ -320,6 +320,24 @@ describe('#2091 linking says it does not add a price', () => {
     // A linked visit with no line is still free to unlink.
     expect(box('s2').disabled).toBe(false);
   });
+  it('a billed visit the stored set left out can be ticked and unticked again before Save', async () => {
+    useCollection.mockReturnValue(ready([visit('s1')]));
+    render(
+      <InvoiceLinkVisitsEditor
+        invoiceId="inv1"
+        kinfolkId="kf1"
+        linkedIds={[]}
+        billedIds={['s1']}
+        onCancel={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(box('s1').disabled).toBe(false);
+    await userEvent.click(box('s1'));
+    expect(box('s1').checked).toBe(true);
+    await userEvent.click(box('s1'));
+    expect(box('s1').checked).toBe(false);
+  });
   it('on a locked invoice the billed visit does not point to Edit', () => {
     useCollection.mockReturnValue(ready([visit('s1', { invoiceId: 'inv1' })]));
     render(

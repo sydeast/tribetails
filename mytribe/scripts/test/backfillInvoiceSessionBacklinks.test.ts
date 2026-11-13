@@ -7,30 +7,43 @@ import {
   reportLines,
   resolveTarget,
 } from '../backfillInvoiceSessionBacklinks';
+import { FieldValue } from '../lib/firebaseAdmin';
 
 const line = (sessionId?: string) => ({ description: 'Walk', qty: 1, unitCents: 4500, ...(sessionId ? { sessionId } : {}) });
 const visit = (over: Record<string, unknown> = {}) => ({ kinfolkId: 'fam1', status: 'COMPLETED', ...over });
 
 describe('parseArgs / resolveTarget', () => {
-  it('is a dry run by default, and --allow-prod alone is still a dry run', () => {
+  it('is a dry run by default; --allow-prod is the write, as in every sibling backfill', () => {
     expect(parseArgs([])).toEqual({ projectId: null, allowProd: false, apply: false });
-    expect(parseArgs(['--allow-prod'])).toMatchObject({ allowProd: true, apply: false });
+    expect(parseArgs(['--allow-prod'])).toMatchObject({ allowProd: true, apply: true });
+    expect(parseArgs(['--project', 'p1'])).toEqual({ projectId: 'p1', allowProd: false, apply: false });
   });
-  it('--dry-run beats --apply in either order', () => {
-    expect(parseArgs(['--apply', '--dry-run']).apply).toBe(false);
-    expect(parseArgs(['--dry-run', '--apply']).apply).toBe(false);
+  it('--dry-run beats --allow-prod in either order', () => {
+    expect(parseArgs(['--allow-prod', '--dry-run']).apply).toBe(false);
+    expect(parseArgs(['--dry-run', '--allow-prod']).apply).toBe(false);
   });
-  it('refuses an unknown flag and a bare --project', () => {
+  it('refuses --apply out loud, an unknown flag, and a bare --project', () => {
+    expect(() => parseArgs(['--apply'])).toThrow(/--allow-prod is the write/);
+    expect(() => parseArgs(['--allow-prod', '--apply'])).toThrow(/--allow-prod is the write/);
     expect(() => parseArgs(['--write'])).toThrow(/unknown arg/);
     expect(() => parseArgs(['--project'])).toThrow(/requires a value/);
+    expect(() => parseArgs(['--project', '--allow-prod'])).toThrow(/requires a value/);
   });
-  it('refuses production without --allow-prod, and --allow-prod against the emulator', () => {
-    expect(() => resolveTarget(parseArgs([]), {})).toThrow(/PRODUCTION/);
-    expect(() => resolveTarget(parseArgs(['--allow-prod']), { FIRESTORE_EMULATOR_HOST: 'localhost:8080' })).toThrow(/refused/);
-    expect(resolveTarget(parseArgs([]), { FIRESTORE_EMULATOR_HOST: 'localhost:8080' })).toEqual({ kind: 'emulator', host: 'localhost:8080' });
+  it('a dry run may read production with no credentials file; a write to production needs one', () => {
+    expect(resolveTarget(parseArgs([]), {})).toEqual({ kind: 'production' });
+    expect(resolveTarget(parseArgs(['--allow-prod', '--dry-run']), {})).toEqual({ kind: 'production' });
+    expect(() => resolveTarget(parseArgs(['--allow-prod']), {})).toThrow(/GOOGLE_APPLICATION_CREDENTIALS/);
+    expect(() => resolveTarget(parseArgs(['--allow-prod']), { GOOGLE_APPLICATION_CREDENTIALS: '  ' })).toThrow(
+      /GOOGLE_APPLICATION_CREDENTIALS/,
+    );
+    expect(resolveTarget(parseArgs(['--allow-prod']), { GOOGLE_APPLICATION_CREDENTIALS: '/k.json' })).toEqual({ kind: 'production' });
+  });
+  it('the emulator host sends a dry run and a write to the emulator', () => {
+    const env = { FIRESTORE_EMULATOR_HOST: 'localhost:8080' };
+    expect(resolveTarget(parseArgs([]), env)).toEqual({ kind: 'emulator', host: 'localhost:8080' });
+    expect(resolveTarget(parseArgs(['--allow-prod']), env)).toEqual({ kind: 'emulator', host: 'localhost:8080' });
   });
 });
-
 describe('buildPlanFromRows', () => {
   it('#1901: a visit a draft bills by a line, with a blank back-link, is marked billed by it', () => {
     const plan = buildPlanFromRows(
@@ -48,7 +61,7 @@ describe('buildPlanFromRows', () => {
       [{ id: 's1', data: visit({ invoiceId: 'inv1' }) }, { id: 's2', data: visit() }],
     );
     expect(plan.backlinks).toEqual([{ sessionId: 's2', invoiceId: 'inv1' }]);
-    expect(plan.invoiceSets).toEqual([{ invoiceId: 'inv1', sessionIds: ['s1', 's2'] }]);
+    expect(plan.invoiceSets).toEqual([{ invoiceId: 'inv1', sessionIds: ['s1', 's2'], added: ['s2'] }]);
   });
 
   it('an already consistent link writes nothing and reports nothing', () => {
@@ -166,7 +179,9 @@ describe('reportLines / applyPlan', () => {
       ['kin_care_sessions/s1', { invoiceId: 'inv1', _attribution: ATTRIBUTION, _attributionAt: '2026-11-12T00:00:00.000Z' }, { merge: true }],
       ['kin_care_sessions/s2', { invoiceId: 'inv1', _attribution: ATTRIBUTION, _attributionAt: '2026-11-12T00:00:00.000Z' }, { merge: true }],
     ]);
-    expect(updates).toEqual([['invoices/inv1', { sessionIds: ['s1', 's2'] }]]);
+    // An array union of the added ids only, so an edit landing between the
+    // read and the write keeps its own changes to the set.
+    expect(updates).toEqual([['invoices/inv1', { sessionIds: FieldValue.arrayUnion('s2') }]]);
     expect(commit).toHaveBeenCalledTimes(1);
   });
 });
