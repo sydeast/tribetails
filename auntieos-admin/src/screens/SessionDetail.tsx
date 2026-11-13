@@ -3,6 +3,7 @@ import { addressLooksIncomplete, INCOMPLETE_ADDRESS_HINT } from '../lib/addressC
 import { type SessionEntry } from '../api/sessions';
 import { kinForHouseholdQuery, type Kin, type Kinfolk } from '../api/directory';
 import { useWorkSettingsRead } from '../lib/useWorkSettings';
+import { currentSessionSeat } from '../lib/sessionSeat';
 import { bookingServiceName } from '../lib/bookingFormat';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { useRecordTitle } from '../lib/pageTitle';
@@ -347,7 +348,23 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   // #2164: the work-settings read, so an Auntie's session gets the KinCare list
   // and the clock from the narrow staff read instead of a refused document.
   const workSettings = useWorkSettingsRead();
-  const ratesShown = workSettings.status !== 'ready' || workSettings.data.ratesIncluded;
+  // Who is signed in, so a failed read does not tell an Auntie about the rate
+  // card or pricing (she never sees money). The owner's wording is unchanged.
+  const [caretaker, setCaretaker] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void currentSessionSeat()
+      .then((seat) => {
+        if (live) setCaretaker(seat.caretaker);
+      })
+      .catch(() => {
+        // The owner's wording stands; it is only a sentence.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const ratesShown = !caretaker && (workSettings.status !== 'ready' || workSettings.data.ratesIncluded);
   useEffect(() => {
     if (workSettings.status === 'ready') {
       setCatalog(serviceOptionsFromRates(workSettings.data.serviceRates, workSettings.data.serviceDurations));
@@ -717,7 +734,9 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                             list would silently re-price the visit on the next
                             save to whatever happened to be first. */}
                         {!catalog.some((o) => o.name === serviceType) && serviceType !== '' && (
-                          <option value={serviceType}>{serviceType} (not on the rate card)</option>
+                          <option value={serviceType}>
+                            {serviceType} {caretaker ? '(no longer offered)' : '(not on the rate card)'}
+                          </option>
                         )}
                         {serviceType === '' && <option value="">Choose a service</option>}
                         {catalog.map((o) => (
@@ -738,7 +757,13 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                   {catalog === null && catalogError === null && (
                     <LoadingRow label="Loading the KinCare list…" className="sdetail__hint" />
                   )}
-                  {catalogError !== null && (
+                  {catalogError !== null && caretaker && (
+                    <p className="sdetail__hint">
+                      The KinCare list couldn&rsquo;t be read ({catalogError}), so the service is a free-text
+                      box rather than a list. Type the KinCare name exactly as the business spells it.
+                    </p>
+                  )}
+                  {catalogError !== null && !caretaker && (
                     <p className="sdetail__hint">
                       The rate card couldn&rsquo;t be read ({catalogError}), so the service is a free-text
                       box rather than a list. Pricing is by this exact name, so match it to a service on

@@ -1060,8 +1060,18 @@ describe('#2164 SessionDetail under an Auntie sign-in', () => {
   it('says plainly when her read fails, and keeps the service editable', async () => {
     call.mockRejectedValue(new Error('unavailable'));
     render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
-    expect(await screen.findByText(/couldn’t be read \(unavailable\)/i)).toBeInTheDocument();
+    expect(await screen.findByText(/KinCare list couldn’t be read \(unavailable\)/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/service type/i)).toHaveValue('Dog Walk');
+    // She never sees money: her failure line names no rate card and no pricing.
+    expect(screen.queryByText(/rate card/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/pric/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Rate')).not.toBeInTheDocument();
+  });
+
+  it('names a retired KinCare without the rate card', async () => {
+    render(<SessionDetail entry={entry({ serviceType: 'Retired Service' })} onBack={vi.fn()} />);
+    expect(await screen.findByRole('option', { name: 'Retired Service (no longer offered)' })).toBeInTheDocument();
+    expect(screen.queryByText(/rate card/i)).not.toBeInTheDocument();
   });
 
   it('the owner still reads business_settings, rates and all', async () => {
