@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { initialWizardState, newSlot, type WizardState } from '../lib/bookingWizard';
 
 /**
@@ -61,6 +61,29 @@ describe('#2185 ServiceStep with no KinCare types', () => {
     await waitFor(() =>
       expect(screen.getByText(/Add them in Settings, under KinCare types/)).toBeInTheDocument(),
     );
+  });
+});
+
+describe('#2185 ServiceStep when the KinCare list could not be read', () => {
+  const failed = "Couldn't load your KinCare types: Load failed. Type the service name instead.";
+
+  it('an Auntie reads only the load failure, never "No KinCare types yet"', async () => {
+    seat.caretaker = true;
+    render(<ServiceStep state={initialWizardState()} onChange={vi.fn()} options={[]} optionsError={failed} />);
+    // Let the sign-in read land first, so the Auntie branch is the one on screen.
+    await act(async () => {});
+    expect(screen.getByRole('alert')).toHaveTextContent(failed);
+    expect(screen.queryByText(/No KinCare types yet/)).toBeNull();
+    expect(screen.queryByText(/Ask the owner/)).toBeNull();
+    expect(screen.getByLabelText('Service')).toBeInTheDocument();
+  });
+
+  it('the owner reads only the load failure, and can still type the service', async () => {
+    render(<ServiceStep state={initialWizardState()} onChange={vi.fn()} options={[]} optionsError={failed} />);
+    await act(async () => {});
+    expect(screen.getByRole('alert')).toHaveTextContent(failed);
+    expect(screen.queryByText(/No KinCare types yet/)).toBeNull();
+    expect(screen.getByLabelText('Service')).toBeInTheDocument();
   });
 });
 

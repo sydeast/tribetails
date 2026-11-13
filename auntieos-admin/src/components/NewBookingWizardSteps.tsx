@@ -325,11 +325,17 @@ export function ServiceStep({ state, onChange, options, optionsError }: ServiceS
             }
             placeholder="e.g. Dog Walk"
           />
-          <span className="new-booking__hint">
-            {auntie
-              ? 'No KinCare types yet. Ask the owner to add them, and they show up here.'
-              : 'No KinCare types yet. Add them in Settings, under KinCare types, and they show up here with their prices.'}
-          </span>
+          {/* #2185 review: only when the list really is empty. A failed read
+              already says so above; "No KinCare types yet" beside it would
+              claim the owner has none, and an Auntie, whose sign-in may not
+              read that list (#2187), would be sent to ask for types that exist. */}
+          {optionsError === null && (
+            <span className="new-booking__hint">
+              {auntie
+                ? 'No KinCare types yet. Ask the owner to add them, and they show up here.'
+                : 'No KinCare types yet. Add them in Settings, under KinCare types, and they show up here with their prices.'}
+            </span>
+          )}
         </div>
       ) : (
         <>
