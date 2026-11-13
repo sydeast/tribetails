@@ -83,13 +83,14 @@ class EmergencyContactsClientTest {
         assertEquals("MERGE", w?.op)
         assertEquals("kinfolk", w?.collection)
         assertEquals("kf1", w?.id)
-        assertEquals(setOf("gateCode"), w?.fields)
+        // #2155: plus the last-change stamp, so Recently Updated moves the household.
+        assertEquals(setOf("gateCode", "updatedAt"), w?.fields)
     }
 
     @Test
     fun aTagSaveNamesOnlyTags() = runBlocking {
         FirestoreClient().updateKinfolkTags(onFile, listOf("VIP", "Cats"))
-        assertEquals(setOf("tags"), JvmFirestoreFixtures.lastWrite?.fields)
+        assertEquals(setOf("tags", "updatedAt"), JvmFirestoreFixtures.lastWrite?.fields)
     }
 
     /**
@@ -105,7 +106,7 @@ class EmergencyContactsClientTest {
         val w = JvmFirestoreFixtures.lastWrite
         assertEquals("MERGE", w?.op)
         assertEquals("kinfolk", w?.collection)
-        assertEquals(setOf("tags"), w?.fields)
+        assertEquals(setOf("tags", "updatedAt"), w?.fields)
     }
 
     @Test
@@ -113,6 +114,22 @@ class EmergencyContactsClientTest {
         val r = FirestoreClient().updateKinfolk(onFile, onFile.copy())
         assertEquals(false, (r as WriteResult.Ok).value, "Ok(false): nothing was written")
         assertEquals(null, JvmFirestoreFixtures.lastWrite)
+    }
+
+    /**
+     * #2155: admin web and Android stamp `updatedAt` on every household edit; this
+     * console stamped nothing, so a desktop edit never moved the household under
+     * Recently Updated. The stamp is added once, replaces any stale `updatedAt`
+     * the diff carried, and an empty diff stays empty (no write, no stamp).
+     */
+    @Test
+    fun theLastChangeStampIsAddedOnceAndNeverToAnEmptyDiff() {
+        val gate = KinfolkFieldChange(listOf("gateCode"), kotlinx.serialization.json.JsonPrimitive("9999"))
+        val stale = KinfolkFieldChange(listOf("updatedAt"), kotlinx.serialization.json.JsonPrimitive("2020-01-01T00:00:00Z"))
+        val stamped = withKinfolkUpdatedAt(listOf(gate, stale), "2026-11-13T10:00:00.000Z")
+        assertEquals(listOf(listOf("gateCode"), listOf("updatedAt")), stamped.map { it.path })
+        assertEquals("2026-11-13T10:00:00.000Z", stamped.last().value?.jsonPrimitive?.content)
+        assertTrue(withKinfolkUpdatedAt(emptyList(), "2026-11-13T10:00:00.000Z").isEmpty())
     }
 
     @Test
@@ -137,14 +154,14 @@ class EmergencyContactsClientTest {
     fun changingOneCustomFieldNamesOnlyThatKey() = runBlocking {
         FirestoreClient().updateKinfolk(withCustomFields, withCustomFields.copy(formValues = withCustomFields.formValues + ("petName" to "Pepper")))
         assertEquals("MERGE", JvmFirestoreFixtures.lastWrite?.op)
-        assertEquals(setOf("formValues.petName"), JvmFirestoreFixtures.lastWrite?.fields)
+        assertEquals(setOf("formValues.petName", "updatedAt"), JvmFirestoreFixtures.lastWrite?.fields)
     }
 
     @Test
     fun aKeyWithADotIsQuotedAndARemovedKeyIsADelete() = runBlocking {
         val edited = withCustomFields.copy(formValues = mapOf("petName" to "Biscuit", "pet.vet" to "Dr Ruiz"))
         FirestoreClient().updateKinfolk(withCustomFields, edited)
-        assertEquals(setOf("formValues.`pet.vet`", "formValues.notes"), JvmFirestoreFixtures.lastWrite?.fields)
+        assertEquals(setOf("formValues.`pet.vet`", "formValues.notes", "updatedAt"), JvmFirestoreFixtures.lastWrite?.fields)
         val changes = kinfolkChanges(withCustomFields, edited)
         assertEquals(null, changes.single { it.path == listOf("formValues", "notes") }.value, "a removed key is a delete")
     }
