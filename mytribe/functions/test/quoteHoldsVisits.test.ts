@@ -578,6 +578,24 @@ describe('#2156 sending a declined quote back out takes its visits back', () => 
     expect(q['quoteResendCount']).toBe(1);
     expect(q['sessionIds']).toEqual(['s1']);
   });
+
+  it('a visit an Edit added while the notice was failing is let go with the rest when the quote is put back', async () => {
+    const ctx = world();
+    const quoteId = await makeQuote(ctx, ['s1']);
+    await denyQuoteHandler(kinfolk({ invoiceId: quoteId }));
+    mocks.enqueue.mockImplementationOnce(async () => {
+      // The quote is reopened and waiting, so this Edit takes a hold on s3.
+      await updateInvoiceHandler(admin({ invoiceId: quoteId, patch: { lineItems: [line('s1'), line('s3')] } }));
+      throw new Error('dispatcher down');
+    });
+
+    await expect(resendQuoteHandler(admin({ invoiceId: quoteId }))).rejects.toThrow('dispatcher down');
+
+    expect((await docOf(ctx, `invoices/${quoteId}`))['quoteDecision']).toBe('denied');
+    for (const sid of ['s1', 's3']) {
+      expect(isSessionBillable(await docOf(ctx, `kin_care_sessions/${sid}`))).toBe(true);
+    }
+  });
 });
 
 // ── archive ─────────────────────────────────────────────────────────────────

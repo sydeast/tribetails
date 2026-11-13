@@ -20,7 +20,7 @@ import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { InvoiceStateSchema, OkSchema } from '../lib/invoiceResponseSchema';
 import { businessTodayIso, quoteDecisionOf, quoteHasExpired } from '../lib/quoteDecision';
-import { readQuoteReopen, readSessionsHeldBy, stageSessionLinks } from '../lib/invoiceSessionLinks';
+import { readQuoteReopen, readSessionsHeldBy, stageSessionLinks, visitsNamedBy } from '../lib/invoiceSessionLinks';
 
 /**
  * SENDS A DECLINED QUOTE BACK OUT, revised (issue #448).
@@ -241,9 +241,12 @@ async function putBackToDeclined(
         now['quoteResentByUid'] === uid &&
         now['quoteResendCount'] === resendNumber;
       if (!untouched) return false;
-      // Every read before any write: the visits this resend claimed, and only
-      // those still naming the quote are let go.
-      const plan = claimed.length > 0 ? await readSessionsHeldBy(tx, db(), invoiceId, claimed) : null;
+      // Every read before any write: the visits this resend claimed, and any
+      // other visit the quote names now (an Edit landing while the notice was
+      // failing can add a line and take its visit). A declined quote holds
+      // none, so every one still naming the quote is let go.
+      const candidates = Array.from(new Set([...claimed, ...visitsNamedBy(now)]));
+      const plan = candidates.length > 0 ? await readSessionsHeldBy(tx, db(), invoiceId, candidates) : null;
       const doc: Record<string, unknown> = { ...now, updatedAt: FieldValue.serverTimestamp() };
       for (const [k, v] of Object.entries(prior)) {
         if (v === undefined) delete doc[k];
