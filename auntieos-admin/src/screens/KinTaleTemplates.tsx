@@ -10,7 +10,7 @@ import {
   pickInitialTemplate,
 } from '../api/kinTaleTemplates';
 import { saveKinTaleTemplate } from '../api/kinTaleTemplatesWrite';
-import { getBusinessSettings } from '../api/settings';
+import { getWorkSettings } from '../api/workSettings';
 import { serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
 import { listChecklistBank, saveChecklistBankItem } from '../api/checklistBank';
 import {
@@ -209,9 +209,11 @@ export function KinTaleTemplates() {
   // failed load is kept as its own error state rather than falling back to an
   // empty list: the Basic Settings step reads it directly, so it can still
   // show what the draft already has selected instead of silently losing them.
+  // #2164: through the work-settings read, so an Auntie (who cannot read
+  // `business_settings`) gets the KinCare names from the narrow staff read.
   useEffect(() => {
     let cancelled = false;
-    void getBusinessSettings()
+    void getWorkSettings()
       .then((s) => {
         if (cancelled) return;
         setServiceCatalog({ status: 'ready', data: serviceOptionsFromRates(s.serviceRates, s.serviceDurations) });

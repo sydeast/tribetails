@@ -142,6 +142,14 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // ── Herself ────────────────────────────────────────────────────────────
   'getMyAdminNotificationPrefs',
   'saveMyAdminNotificationPrefs',
+  // #2182: the notification types SHE can receive and what the business set
+  // for them, so her own choices can be drawn. The owner's Settings >
+  // Notifications read (getBusinessNotificationOverrides) stays off this list.
+  'getMyStaffNotificationOptions',
+  // #2164: the KinCare list (names and lengths, never a rate), the business
+  // clock, the Time Blocks and their mode, the arrival rule and "KinTale
+  // required". Business Settings itself stays owner-only.
+  'getStaffWorkSettings',
   'markNotificationRead',
   'archiveNotification',
   'bulkMarkNotificationsRead',

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type SessionEntry } from '../api/sessions';
 import { type Kin, type Kinfolk } from '../api/directory';
@@ -50,9 +50,18 @@ vi.mock('../api/sessionsWrite', () => ({
   updateKinCareSession: vi.fn(),
 }));
 vi.mock('../api/bookingsWrite', () => ({ transitionBookingStatus }));
-vi.mock('../api/settings', () => ({
+vi.mock('../api/settings', async (orig) => ({
+  ...(await orig<typeof import('../api/settings')>()),
   getBusinessSettings: vi.fn().mockResolvedValue({ serviceRates: {}, serviceDurations: {} }),
 }));
+// #2164: who is signed in, and the transport the Auntie's narrow read goes
+// through. The owner by default, so every other case reads as it always did.
+const { currentSessionSeat, call } = vi.hoisted(() => ({ currentSessionSeat: vi.fn(), call: vi.fn() }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat,
+}));
+vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fns')>()), call }));
 vi.mock('../lib/breadcrumbs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/breadcrumbs')>();
   return { ...actual, useBreadcrumbs: () => ({ points: [], error: null, ready: true }) };
@@ -83,6 +92,9 @@ vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
 }));
 import { Sessions } from './Sessions';
+import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
+import { WORK_SETTINGS_FAILED, WORK_SETTINGS_LOADING } from '../components/WorkSettingsNotice';
+import { invalidateSharedLoad } from '../lib/useSharedOneShot';
 import { businessTodayIso, businessWallClockToMs } from '../lib/businessZoneTime';
 import { shiftDayIso } from '../lib/sessionFormat';
 /** The zone the mocked settings resolve to: no `timeZone` stored, so the server default. */
@@ -232,6 +244,8 @@ function renderBoard(props: Partial<Parameters<typeof Sessions>[0]> = {}) {
 
 beforeEach(() => {
   onSelect.mockReset();
+  currentSessionSeat.mockReset().mockResolvedValue(OWNER_SEAT);
+  call.mockReset().mockImplementation(staffOnlyCall);
   useCollection.mockReset();
   useDocById.mockReset().mockReturnValue({ status: 'loading' });
   directory();
@@ -1406,5 +1420,25 @@ describe('Auntie Time: a failed FIRST page is not a failed LATER page', () => {
     await user.click(within(screen.getByRole('alert')).getByRole('button', { name: /retry/i }));
     expect(loadMore).toHaveBeenCalledOnce();
     expect(reload).not.toHaveBeenCalled();
+  });
+});
+
+describe('#2164 Auntie Time under an Auntie sign-in', () => {
+  beforeEach(() => {
+    invalidateSharedLoad();
+    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+  });
+
+  it('waits visibly for the clock and the arrival rule, then reads them from her own read', async () => {
+    renderBoard();
+    expect(screen.getByText(WORK_SETTINGS_LOADING)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(WORK_SETTINGS_LOADING)).not.toBeInTheDocument());
+    expect(call).toHaveBeenCalledWith('getStaffWorkSettings', {});
+  });
+
+  it('says plainly when her read fails', async () => {
+    call.mockRejectedValue(new Error('unavailable'));
+    renderBoard();
+    expect(await screen.findByText(WORK_SETTINGS_FAILED)).toBeInTheDocument();
   });
 });

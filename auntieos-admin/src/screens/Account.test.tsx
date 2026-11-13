@@ -4,7 +4,7 @@ import { render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { mergeBusinessSettings } from '../api/settings';
-import { STREAM_BUSINESS, type NotificationCatalogEntry } from '../api/myNotifications';
+import { STREAM_BUSINESS, STREAM_STAFF, type NotificationCatalogEntry } from '../api/myNotifications';
 
 const { useAuth } = vi.hoisted(() => ({ useAuth: vi.fn() }));
 const { useRouteContext, useNavigate, navigate } = vi.hoisted(() => {
@@ -60,6 +60,7 @@ vi.mock('../api/settingsWrite', () => ({ saveBusinessSettings }));
 vi.mock('../api/myNotifications', async (orig) => ({
   ...(await orig<typeof import('../api/myNotifications')>()),
   getNotificationMatrix,
+  getMyNotificationMatrix: getNotificationMatrix,
   getMyNotificationPrefs,
 }));
 vi.mock('../api/myNotificationsWrite', () => ({ saveMyAdminNotificationPrefs }));
@@ -479,6 +480,25 @@ describe('Account business profile', () => {
 });
 
 describe('Account notifications', () => {
+  /**
+   * #2182: an Auntie's panel draws from her own options (staff rows only), so
+   * it loads, and a flip saves to her own prefs. Which callable serves that
+   * matrix is pinned in api/myNotificationsSeat.test.ts.
+   */
+  it("an Auntie's panel loads her staff rows and saves a flip to her own prefs", async () => {
+    const staffRow = { ...catalogEntry('schedule.upcoming.digest'), audience: 'staff', audiences: new Set([STREAM_STAFF]) };
+    getNotificationMatrix.mockResolvedValue({ ...matrix(), catalog: [staffRow], businessAdminCount: null });
+    const user = userEvent.setup();
+    render(<Account />);
+    await heroName();
+    await user.click(await screen.findByRole('switch', { name: 'SMS notifications' }));
+    expect(saveMyAdminNotificationPrefs).toHaveBeenCalledWith({
+      byKey: { 'schedule.upcoming.digest': { sms: true } },
+      byCategory: {},
+      marketingOptIn: {},
+    });
+  });
+
   it('shows one switch per channel, off where the operator receives nothing', async () => {
     render(<Account />);
     await heroName();
