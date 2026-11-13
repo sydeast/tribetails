@@ -243,3 +243,86 @@ describe('sanitizeMessageBody: a message keeps every word, as typed (#1873)', ()
     expect(messagePlainText('<p><br></p>')).toBe('');
   });
 });
+
+describe('sanitizeMessageBody: hostile bodies settle to one safe stored form', () => {
+  // Exact stored output for each hostile body. Text that is not one of the
+  // twelve formatting tags is kept as the characters typed (every client draws
+  // it as text); an allowed tag keeps only a safe href.
+  const table: [string, string][] = [
+    ['<script>alert(1)</script>', '<script>alert(1)</script>'],
+    ['<script', '<script'],
+    ['x <script src=//e.x/a.js', 'x <script src=//e.x/a.js'],
+    ['<img src=x onerror=alert(1)>', '<img src=x onerror=alert(1)>'],
+    ['<img src=x onerror=alert(1)', '<img src=x onerror=alert(1)'],
+    ['<svg onload=alert(1)>', '<svg onload=alert(1)>'],
+    ['<svg><script>alert(1)</script></svg>', '<svg><script>alert(1)</script></svg>'],
+    ['<!-- <img src=x onerror=alert(1)> -->', '<!-- <img src=x onerror=alert(1)> -->'],
+    ['<![CDATA[<img src=x onerror=alert(1)>]]>', '<![CDATA[<img src=x onerror=alert(1)>]]>'],
+    ['<iframe src="javascript:alert(1)"></iframe>', '<iframe src="javascript:alert(1)"></iframe>'],
+    ['<<b>bold</b>', '<<b>bold</b>'],
+    ['<<script>alert(1)//<</script>', '<<script>alert(1)//<</script>'],
+    ['<a href="javascript:alert(1)">x</a>', '<a>x</a>'],
+    ['<a href="JaVaScRiPt:alert(1)">x</a>', '<a>x</a>'],
+    ['<a href=" javascript:alert(1)">x</a>', '<a>x</a>'],
+    ['<a href="java&#x73;cript:alert(1)">x</a>', '<a>x</a>'],
+    ['<a href="javascript&colon;alert(1)">x</a>', '<a>x</a>'],
+    ['<a href=javascript:alert(1)>x</a>', '<a>x</a>'],
+    ['<a\thref="javascript:alert(1)">x</a>', '<a>x</a>'],
+    ['<a href=`javascript:alert(1)`>x</a>', '<a href=`javascript:alert(1)`>x'],
+    ['<b onclick=`alert(1)`>x</b>', '<b onclick=`alert(1)`>x'],
+    ['<b title="a>b" onclick="alert(1)">x</b>', '<b title="a>b" onclick="alert(1)">x'],
+    ["<a href='https://example.com' onmouseover='alert(1)'>x</a>", '<a href="https://example.com">x</a>'],
+    ['<a href="https://example.com"\nonclick="alert(1)">x</a>', '<a href="https://example.com">x</a>'],
+    ['<b\nonclick="alert(1)">x</b>', '<b>x</b>'],
+    // An entity inside a link stays an entity: it can never close the href
+    // and open a second attribute, or hide a scheme.
+    [
+      '<a href="https://example.com/&quot; onclick=&quot;alert(1)">x</a>',
+      '<a href="https://example.com/&quot; onclick=&quot;alert(1)">x</a>',
+    ],
+    [
+      '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">x</a>',
+      '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">x</a>',
+    ],
+    ['<a href="java&amp;#x73;cript:alert(1)">x</a>', '<a href="java&amp;#x73;cript:alert(1)">x</a>'],
+    ['<a href="https://example.com/?a=1&b=2">x</a>', '<a href="https://example.com/?a=1&amp;b=2">x</a>'],
+    // Typed entities are read as the characters they stand for, and a tag
+    // they spell goes through the same tag and link rules.
+    ['&lt;script&gt;alert(1)&lt;/script&gt;', '<script>alert(1)</script>'],
+    ['&amp;lt;img src=x onerror=alert(1)&amp;gt;', '<img src=x onerror=alert(1)>'],
+    ['&amp;lt;a href=&amp;quot;javascript:alert(1)&amp;quot;&amp;gt;x&amp;lt;/a&amp;gt;', '<a>x</a>'],
+    ['&amp;amp;lt;b onclick=&amp;amp;quot;x()&amp;amp;quot;&amp;amp;gt;hi&amp;amp;lt;/b&amp;amp;gt;', '<b>hi</b>'],
+  ];
+
+  it.each(table)('stores %j as %j', (input, expected) => {
+    expect(sanitizeMessageBody(input)).toBe(expected);
+  });
+
+  it('a second pass changes nothing (the callable, then appendMessage)', () => {
+    for (const [input] of table) {
+      const once = sanitizeMessageBody(input);
+      expect(sanitizeMessageBody(once)).toBe(once);
+    }
+  });
+
+  it('every link a client reads as a link carries only a safe href', () => {
+    // The clients read `<a` as a link only with quoted attributes, and every
+    // other allowed tag only with none. So every such `<a ...>` in a stored
+    // body must hold a single href whose value, once decoded, is not a script.
+    const clientLink = /<a((?:\s+[A-Za-z_:][-A-Za-z0-9_:.]*\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*>/gi;
+    const decodeOnce = (s: string) =>
+      s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+    for (const [input] of table) {
+      for (const m of sanitizeMessageBody(input).matchAll(clientLink)) {
+        const attrs = m[1] ?? '';
+        expect(attrs).toMatch(/^ href="[^"]*"$/);
+        const href = decodeOnce(/"([^"]*)"/.exec(attrs)?.[1] ?? '');
+        expect(href).not.toMatch(/^\s*(javascript|data|vbscript):/i);
+      }
+    }
+  });
+
+  it('sad: a body that never settles is stored as nothing, so the send is refused', () => {
+    expect(sanitizeMessageBody(`<p>&${'amp;'.repeat(12)}lt;b&gt;x</p>`)).toBe('');
+  });
+});

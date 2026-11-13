@@ -86,6 +86,33 @@ describe('sendKinfolkMessage keeps a message with a less-than sign whole (#1873)
     expect(stored(ctx).preview).toBe('<script>alert(1)</script> is what I saw');
   });
 
+  it('negative: layered entities sent straight to the callable come out as one settled, safe body', async () => {
+    const ctx = household();
+    await sendKinfolkMessageHandler(
+      req({
+        body:
+          '<p>&amp;lt;img src=x onerror=alert(1)&amp;gt; and ' +
+          '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">site</a> and ' +
+          '&amp;lt;a href=&amp;quot;javascript:alert(1)&amp;quot;&amp;gt;tap&amp;lt;/a&amp;gt;</p>',
+      }),
+    );
+    expect(stored(ctx).body).toBe(
+      '<p><img src=x onerror=alert(1)> and ' +
+        '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">site</a> and <a>tap</a></p>',
+    );
+  });
+
+  it('sad: a body that never settles is refused and nothing is written', async () => {
+    const ctx = household();
+    const layered = `<p>&${'amp;'.repeat(12)}lt;b&gt;x</p>`;
+    await expect(sendKinfolkMessageHandler(req({ body: layered }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'message_body_empty',
+    });
+    expect(ctx.writes.filter((w) => w.path.startsWith('conversations/'))).toEqual([]);
+    expect(mocks.enqueueNotification).not.toHaveBeenCalled();
+  });
+
   it('sad: a body with no words at all is refused', async () => {
     household();
     await expect(sendKinfolkMessageHandler(req({ body: '<p><br></p>' }))).rejects.toMatchObject({

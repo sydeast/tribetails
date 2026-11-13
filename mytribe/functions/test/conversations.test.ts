@@ -355,6 +355,28 @@ describe('replyToConversation (admin)', () => {
     const msg = ctx.writes.find((w) => w.path.startsWith('conversations/kf1/messages/'));
     expect(msg?.data.body).toBe('<b>Thanks!</b>');
   });
+
+  it('refuses a reply with no words (spaces or empty formatting) and writes nothing', async () => {
+    for (const body of ['   ', '<p><br></p>']) {
+      const ctx = buildDbMock({ docs: { 'conversations/kf1': { kinfolkName: 'Jane Doe', messageCount: 2 } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await expect(replyToConversationHandler(req({ kinfolkId: 'kf1', body }))).rejects.toMatchObject({
+        code: 'invalid-argument',
+        message: 'message_body_empty',
+      });
+      expect(ctx.writes.filter((w) => w.path.startsWith('conversations/'))).toEqual([]);
+    }
+  });
+
+  it('a reply with layered entities is stored as a link that passed the link rules', async () => {
+    const ctx = buildDbMock({ docs: { 'conversations/kf1': { kinfolkName: 'Jane Doe', messageCount: 2 } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await replyToConversationHandler(
+      req({ kinfolkId: 'kf1', body: '&amp;lt;a href=&amp;quot;javascript:alert(1)&amp;quot;&amp;gt;tap&amp;lt;/a&amp;gt;' }),
+    );
+    const msg = ctx.writes.find((w) => w.path.startsWith('conversations/kf1/messages/'));
+    expect(msg?.data.body).toBe('<a>tap</a>');
+  });
 });
 
 describe('markConversationRead (admin)', () => {

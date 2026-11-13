@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.inbox
 
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.font.FontWeight
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -67,5 +68,18 @@ class RichTextHtmlTest {
     }
     @Test fun tagWithAttributesOtherThanQuotedOnesOnALinkIsText() {
         assertEquals("""<p onclick="x()">hi""", richTextToAnnotatedString("""<p onclick="x()">hi</p>""").text)
+    }
+    @Test fun storedLinkFormsOpenOnlySafeAddresses() {
+        // What the server stores for hostile links: an entity inside an href
+        // stays an entity, and a tag the clients do not read is text.
+        val r = richTextToAnnotatedString(
+            "<a href=\"https://example.com/?a=1&amp;b=2\">ok</a> " +
+                "<a href=\"java&amp;#x73;cript:alert(1)\">x</a> " +
+                "<a href=\"https://example.com/&amp;quot; onclick=&amp;quot;alert(1)\">s</a> " +
+                "<a href=`javascript:alert(1)`>y <b onclick=`alert(1)`>z",
+        )
+        val urls = r.getLinkAnnotations(0, r.length).map { (it.item as LinkAnnotation.Url).url }
+        assertEquals(listOf("https://example.com/?a=1&b=2", "https://example.com/&quot; onclick=&quot;alert(1)"), urls)
+        assertEquals("ok x s <a href=`javascript:alert(1)`>y <b onclick=`alert(1)`>z", r.text)
     }
 }

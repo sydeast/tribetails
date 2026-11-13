@@ -91,16 +91,34 @@ export function escapeStrayLessThan(text: string, otherTagsAreText = false): str
 export function sanitizeRichText(body: string): string {
   return sanitizeRich(escapeStrayLessThan(body));
 }
+const RICH_OPTIONS: sanitizeHtml.IOptions = {
+  allowedTags: ALLOWED_TAGS,
+  allowedAttributes: ALLOWED_ATTRIBUTES,
+  allowedSchemes: ['http', 'https', 'mailto'],
+  allowProtocolRelative: false,
+  disallowedTagsMode: 'discard',
+};
 function sanitizeRich(escaped: string): string {
-  const sanitized = sanitizeHtml(escaped, {
-    allowedTags: ALLOWED_TAGS,
-    allowedAttributes: ALLOWED_ATTRIBUTES,
-    allowedSchemes: ['http', 'https', 'mailto'],
-    allowProtocolRelative: false,
-    disallowedTagsMode: 'discard',
-  });
-  return decodeEntities(sanitized).trim();
+  return decodeEntities(sanitizeHtml(escaped, RICH_OPTIONS)).trim();
 }
+
+/**
+ * decodeEntities for the text between tags only. Every tag stays exactly as
+ * sanitize-html wrote it, so an attribute value keeps its `&quot;`/`&amp;` and
+ * can never be decoded into a second attribute or a hidden scheme. Exact
+ * because sanitize-html escapes `<` in text and `<`, `>`, `"` in attributes.
+ */
+function decodeTextOnly(html: string): string {
+  return html.replace(/<[^>]*>|[^<]+/g, (part) => (part.charAt(0) === '<' ? part : decodeEntities(part)));
+}
+function sanitizeMessageOnce(body: string): string {
+  return decodeTextOnly(sanitizeHtml(escapeStrayLessThan(body, true), RICH_OPTIONS)).trim();
+}
+/**
+ * Passes a message body gets to settle. Each pass reads one layer of typed
+ * entities (`&amp;lt;` then `&lt;` then `<`); ordinary text settles in two.
+ */
+const MESSAGE_MAX_PASSES = 6;
 /**
  * Sanitizes a conversation message body (#1873). Same formatting subset and
  * attribute rules as sanitizeRichText, but every `<` that does not open one of
@@ -112,13 +130,23 @@ function sanitizeRich(escaped: string): string {
  * drop words. Every client draws the stored body from a fixed tag list, so a
  * kept `<script>` is only ever shown as those characters.
  *
- * A second pass over its own output keeps every word and every `<`, which the
- * two write passes rely on. Known limits of the decoded storage, unchanged
- * here: a typed entity such as `&lt;` reads back as `<` after the two passes,
- * and a typed `<b>x</b>` is stored as real bold.
+ * The body is cleaned until another pass changes nothing, so running it again
+ * (the callable, then appendMessage) gives the same string, and any text that
+ * reads as one of the twelve tags has been through the tag and link rules
+ * itself: layered entities such as `&amp;lt;a href=&amp;quot;javascript:...`
+ * can never come out as a link that skipped them. A body that has not settled
+ * after MESSAGE_MAX_PASSES is returned as '' and refused as empty. Known
+ * limits of the decoded storage: a typed entity such as `&lt;` reads back as
+ * `<`, and a typed `<b>x</b>` is stored as real bold.
  */
 export function sanitizeMessageBody(body: string): string {
-  return sanitizeRich(escapeStrayLessThan(body, true));
+  let out = sanitizeMessageOnce(body);
+  for (let pass = 1; pass < MESSAGE_MAX_PASSES; pass++) {
+    const next = sanitizeMessageOnce(out);
+    if (next === out) return out;
+    out = next;
+  }
+  return '';
 }
 /** Plain text of a stored message body, with the same rule: every word typed stays. */
 export function messagePlainText(body: string): string {

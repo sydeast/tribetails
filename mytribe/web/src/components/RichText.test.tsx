@@ -64,3 +64,23 @@ describe('RichText with a less-than sign (#1873)', () => {
     expect(container.textContent).toBe('');
   });
 });
+
+describe('RichText with the stored form of a hostile link', () => {
+  it('opens only a safe address and adds no handler', () => {
+    const { container } = render(
+      <RichText
+        body={
+          '<p><a href="https://example.com/?a=1&amp;b=2">ok</a> ' +
+          '<a href="java&amp;#x73;cript:alert(1)">x</a> ' +
+          '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">s</a> ' +
+          '<a href=`javascript:alert(1)`>y <b onclick=`alert(1)`>z</p>'
+        }
+      />,
+    );
+    const hrefs = Array.from(container.querySelectorAll('a')).map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual(['https://example.com/?a=1&b=2', 'https://example.com/&quot; onclick=&quot;alert(1)']);
+    expect(container.querySelector('[onclick]')).toBeNull();
+    expect(container.querySelector('b')).toBeNull();
+    expect(container.textContent).toBe('ok x s <a href=`javascript:alert(1)`>y <b onclick=`alert(1)`>z');
+  });
+});

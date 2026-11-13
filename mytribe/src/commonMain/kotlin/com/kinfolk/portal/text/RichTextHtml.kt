@@ -16,17 +16,15 @@ import com.kinfolk.portal.theme.KinfolkBrand
  * ol, li, blockquote, a` — href only, http/https/mailto) into a Compose
  * [AnnotatedString].
  *
- * This is a rendering convenience, not a security boundary: the string has
- * already been through `sanitizeRichText()` before it ever reaches a client,
- * so this parser doesn't defend against arbitrary/malicious markup — it just
- * needs to not crash on well-formed input from that exact tag subset. No
- * third-party HTML/XML dependency: the tag subset is tiny and fixed, so a
- * small hand-rolled walker is the right amount of engineering here.
+ * Nothing here evaluates markup: only the allowed tags are read as tags (any
+ * other `<` is text, drawn as typed), every attribute but `href` is ignored,
+ * and an `href` outside the three schemes is dropped. A stored message body
+ * can hold text such as `<img ...>` as the characters typed, so this walker is
+ * a real gate, not a convenience. No third-party HTML/XML dependency: the tag
+ * subset is tiny and fixed.
  *
- * Mirrors the web portal's rendering of the same field
- * (`web/src/screens/Messages.tsx`'s `MessageBubble`, which trusts the
- * sanitized HTML and sets it via `dangerouslySetInnerHTML`) so all platforms
- * show the same bold/italic/underline/lists/links instead of literal tags.
+ * Same rendering as the web portal's `web/src/components/RichText.tsx`, which
+ * builds elements from the same fixed tag list.
  */
 public fun richTextToAnnotatedString(html: String): AnnotatedString {
     if (html.isEmpty()) return AnnotatedString("")

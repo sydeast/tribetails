@@ -1,4 +1,5 @@
 import { FieldValue } from 'firebase-admin/firestore';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from './firestoreAdmin';
 import { sanitizeMessageBody, messagePlainText } from './richText';
 
@@ -61,6 +62,11 @@ export async function appendMessage(args: AppendMessageArgs): Promise<string> {
   // raw-input MAX_MESSAGE_BODY check the callables already ran (rare, but a
   // sanitizer's job is to never trust its own output length either).
   const body = sanitizeMessageBody(args.body).slice(0, MAX_MESSAGE_BODY);
+  // Nothing readable left (blank, empty formatting, or a body that never
+  // settles): refuse before anything is written.
+  if (messagePlainText(body).length === 0) {
+    throw new HttpsError('invalid-argument', 'message_body_empty');
+  }
   const now = Date.now();
   const convRef = db().collection(CONVERSATIONS_COLLECTION).doc(kinfolkId);
   const msgRef = convRef.collection(MESSAGES_SUBCOLLECTION).doc();
