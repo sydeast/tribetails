@@ -198,7 +198,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * graph. It has no import of its own, and it cannot sit behind the lazy
  * `businessSettingsChecks.ts` because `getMyHome` needs it on every call.
  *
- * 443 since #1820 (on top of #1987's 440): three helpers behind two entries
+ * 441 since #1962 (on top of #1987's 440): `lib/savedByStamp.ts`, the one
+ * "last saved" stamp the four writers of the Settings documents share
+ * (`saveBusinessSettings`, `removeBusinessTag`, `confirmBrandAssetUpload`,
+ * `saveEmailFrame`, all entries already in this graph), so they can no longer
+ * disagree about what `updatedBy` holds. One function with no import of its own.
+ *
+ * 444 since #1820 (on top of #1962's 441): three helpers behind two entries
  * already in this graph. `lib/auditActor.ts` (who the caller is, for an
  * Activity Log line) and `lib/activityPayload.ts` (the allow-list for a
  * line's facts) load with `admin/logActivity.ts`; `lib/staffRoles.ts` (owner
@@ -207,7 +213,7 @@ const ALLOWED_EAGER_PACKAGES = [
  * `operatorAllowlist`, `firestoreAdmin`, `logger`), so they add no package
  * to a cold start.
  */
-const MAX_OWN_EAGER_MODULES = 443;
+const MAX_OWN_EAGER_MODULES = 444;
 
 interface Edge {
   spec: string;

@@ -82,42 +82,44 @@ export function staffRolesByUid(staff: readonly StaffMember[]): Map<string, Staf
   return out;
 }
 
-let staffOnce: Promise<StaffMember[]> | null = null;
+let staffRosterOnce: Promise<StaffMember[]> | null = null;
+let staffNamesOnce: Promise<Map<string, string>> | null = null;
 
 /**
- * The roster, read once per page load and shared by the name and role maps. A
- * failed read resolves to an empty list (and is retried on the next call), so
- * a screen that only wants nicer labels never fails over it.
+ * The staff roster, read once per page load and shared by every caller
+ * (`loadStaffNames` and `useStaffRoster` both sit on this one read). A failed
+ * read resolves to an empty roster (and is retried on the next call), so a
+ * screen that only wants to name a person never fails over it.
  */
-function loadStaffOnce(): Promise<StaffMember[]> {
-  if (staffOnce === null) {
-    staffOnce = listStaff().catch(() => {
-      staffOnce = null;
+export function loadStaffRoster(): Promise<StaffMember[]> {
+  if (staffRosterOnce === null) {
+    staffRosterOnce = listStaff().catch(() => {
+      staffRosterOnce = null;
+      staffNamesOnce = null;
       return [];
     });
   }
-  return staffOnce;
+  return staffRosterOnce;
 }
 
-let staffNamesOnce: { from: Promise<StaffMember[]>; names: Promise<Map<string, string>> } | null = null;
-
-/** The staff names, from the one shared roster read. Every caller gets the same map. */
+/**
+ * The staff names, read once per page load and shared by every caller. A
+ * failed read resolves to an empty map (and is retried on the next call), so a
+ * screen that only wants nicer labels never fails over it.
+ */
 export function loadStaffNames(): Promise<Map<string, string>> {
-  const from = loadStaffOnce();
-  if (staffNamesOnce === null || staffNamesOnce.from !== from) {
-    staffNamesOnce = { from, names: from.then(staffNamesByUid) };
-  }
-  return staffNamesOnce.names;
+  if (staffNamesOnce === null) staffNamesOnce = loadStaffRoster().then(staffNamesByUid);
+  return staffNamesOnce;
 }
 
-/** The staff roles (#1820), from the same read as the names. */
+/** The staff roles (#1820), from the same roster read as the names. */
 export function loadStaffRoles(): Promise<Map<string, StaffRole>> {
-  return loadStaffOnce().then(staffRolesByUid);
+  return loadStaffRoster().then(staffRolesByUid);
 }
 
 /** Test seam: forget the cached read. */
 export function resetStaffNamesForTest(): void {
-  staffOnce = null;
+  staffRosterOnce = null;
   staffNamesOnce = null;
 }
 

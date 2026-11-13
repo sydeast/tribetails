@@ -39,6 +39,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.X
+import com.tribetails.auntieos.AuntieOSApp
+import com.tribetails.auntieos.data.repository.StaffMember
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieDialog
@@ -67,8 +69,20 @@ import kotlinx.coroutines.isActive
 @Composable
 internal fun EmailFramePanel(
     vm: EmailFrameViewModel = viewModel { EmailFrameViewModel() },
+    /**
+     * #1962: the staff roster (`listStaff`) the "Last saved ... by" line names
+     * the saver from. A failed read is an empty roster, so the line says
+     * "an Admin" and never the uid.
+     */
+    loadStaff: suspend () -> List<StaffMember> = {
+        runCatching { AuntieOSApp.instance.kinCareRepository.listStaff() }
+            .getOrNull()?.getOrNull().orEmpty()
+    },
 ) {
     val s by vm.state.collectAsState()
+    // Null until the roster is read: the line names nobody rather than guess.
+    var staff by remember { mutableStateOf<List<StaffMember>?>(null) }
+    LaunchedEffect(Unit) { staff = loadStaff() }
     when (val load = s.load) {
         EmailFrameViewModel.Load.Loading -> AuntieLoading(text = "Loading the email frame…", onSync = { vm.load() })
         is EmailFrameViewModel.Load.Failed -> AuntieBanner(
@@ -78,7 +92,7 @@ internal fun EmailFramePanel(
             trailing = { GhostButton(label = "Retry", onClick = { vm.load() }) },
             body = { Text(load.message, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim) },
         )
-        is EmailFrameViewModel.Load.Ready -> EmailFrameEditor(vm, s, load.frame)
+        is EmailFrameViewModel.Load.Ready -> EmailFrameEditor(vm, s, load.frame, staff)
     }
 }
 
@@ -88,6 +102,7 @@ private fun EmailFrameEditor(
     vm: EmailFrameViewModel,
     s: EmailFrameViewModel.UiState,
     frame: com.tribetails.auntieos.data.repository.EmailFrameRepository.EmailFrameState,
+    staff: List<StaffMember>?,
 ) {
     val c = AuntieTheme.colors
     val t = AuntieTheme.typography
@@ -111,8 +126,7 @@ private fun EmailFrameEditor(
     DenPanel(
         title = "Email frame",
         subtitle = "The colors, header, logo and footer every email is sent in. Changes reach the next email sent.",
-        detail = frame.updatedAt?.let { "Last saved ${it.take(10)}" + (frame.updatedBy?.let { by -> " by $by" } ?: "") }
-            ?: "Using the default frame",
+        detail = emailFrameDetail(frame, staff),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
             s.error?.let { msg ->

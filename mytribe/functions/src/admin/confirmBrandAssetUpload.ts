@@ -7,6 +7,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { savedByStamp } from '../lib/savedByStamp';
 import { assertCloudinaryUrlInFolder } from '../lib/cloudinary';
 import { BRAND_ASSET_KINDS, BRAND_ASSET_FOLDER, brandAssetFields, type BrandAssetKind } from '../lib/brandAsset';
 
@@ -89,7 +90,7 @@ export async function confirmBrandAssetUploadHandler(
     .collection('business_settings')
     .doc('business_settings')
     .set(
-      { ...brandAssetFields(args.kind, logoUrl, logoRemovedAt), updatedAt: new Date().toISOString(), updatedBy: uid },
+      { ...brandAssetFields(args.kind, logoUrl, logoRemovedAt), ...savedByStamp(uid) },
       { merge: true },
     );
 

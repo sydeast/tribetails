@@ -15,7 +15,6 @@ vi.mock('../src/lib/sessionRevocation', () => import('./_helpers/mockSessionRevo
 
 import {
   DEFAULT_EMAIL_FRAME,
-  EMAIL_FRAME_FIELDS,
   parseStoredFrame,
   resolveEmailFrame,
 } from '../src/lib/emailFrameConfig';
@@ -278,6 +277,42 @@ describe('getEmailFrame', () => {
     const res = await getEmailFrameHandler(owner({}));
     expect(res).toEqual({ stored: {}, defaults: DEFAULT_EMAIL_FRAME, updatedAt: null, updatedBy: null });
   });
+
+  // #1989: the document the 2026-11-10 walk left behind. A footer was saved and
+  // then cleared, so only the stamp remained, and Reset was greyed.
+  it('reads a document holding only a stamp as the default frame, with no stamp', async () => {
+    setup({ [PATH]: { updatedAt: '2026-11-11T19:45:00.000Z', updatedBy: 'owner-1' } });
+    const res = await getEmailFrameHandler(owner({}));
+    expect(res).toEqual({ stored: {}, defaults: DEFAULT_EMAIL_FRAME, updatedAt: null, updatedBy: null });
+  });
+
+  it('reads stored values equal to the defaults as the default frame', async () => {
+    setup({
+      [PATH]: {
+        accentColor: DEFAULT_EMAIL_FRAME.accentColor.toUpperCase(),
+        pageBackground: DEFAULT_EMAIL_FRAME.pageBackground,
+        updatedAt: '2026-11-11T19:45:00.000Z',
+        updatedBy: 'owner-1',
+      },
+    });
+    const res = await getEmailFrameHandler(owner({}));
+    expect(res).toEqual({ stored: {}, defaults: DEFAULT_EMAIL_FRAME, updatedAt: null, updatedBy: null });
+  });
+
+  it('keeps the stamp, and only the differing field, when one value is not the default', async () => {
+    setup({
+      [PATH]: {
+        accentColor: DEFAULT_EMAIL_FRAME.accentColor,
+        footerText: 'Thanks',
+        updatedAt: '2026-11-11T19:45:00.000Z',
+        updatedBy: 'owner-1',
+      },
+    });
+    const res = await getEmailFrameHandler(owner({}));
+    expect(res.stored).toEqual({ footerText: 'Thanks' });
+    expect(res.updatedAt).toBe('2026-11-11T19:45:00.000Z');
+    expect(res.updatedBy).toBe('owner-1');
+  });
 });
 
 describe('saveEmailFrame', () => {
@@ -307,10 +342,66 @@ describe('saveEmailFrame', () => {
   it('resetAll removes every frame field', async () => {
     setup({ [PATH]: { footerText: 'Old footer', accentColor: '#123456' } });
     const res = await saveEmailFrameHandler(owner({ resetAll: true }));
-    expect(res.stored).toEqual({});
-    const written = lastWrite();
-    for (const f of EMAIL_FRAME_FIELDS) expect(written).not.toHaveProperty(f);
+    // #1989: nothing is left, so the document goes and the answer has no stamp.
+    expect(res).toEqual({ stored: {}, defaults: DEFAULT_EMAIL_FRAME, updatedAt: null, updatedBy: null });
+    expect(ctx.deletes).toEqual([PATH]);
+    expect(ctx.writes.filter((w: { path: string }) => w.path === PATH)).toEqual([]);
     expect(mocks.writeAuditEntry.mock.calls[0]![0].payload).toEqual({ resetAll: true, fields: {} });
+    // After a reload it still reads as the default.
+    expect(await getEmailFrameHandler(owner({}))).toEqual({
+      stored: {},
+      defaults: DEFAULT_EMAIL_FRAME,
+      updatedAt: null,
+      updatedBy: null,
+    });
+  });
+
+  it('#1989 clearing the last stored field leaves the default frame, with no stamp', async () => {
+    setup({ [PATH]: { footerText: 'Old footer', updatedAt: '2026-11-11T19:45:00.000Z', updatedBy: 'owner-1' } });
+    const res = await saveEmailFrameHandler(owner({ changes: { footerText: '' } }));
+    expect(res).toEqual({ stored: {}, defaults: DEFAULT_EMAIL_FRAME, updatedAt: null, updatedBy: null });
+    expect(ctx.deletes).toEqual([PATH]);
+    expect((await getEmailFrameHandler(owner({}))).updatedAt).toBeNull();
+    // The audit entry is where the reset is recorded.
+    expect(mocks.writeAuditEntry.mock.calls[0]![0]).toMatchObject({
+      actorUid: 'owner-1',
+      payload: { resetAll: false, fields: { footerText: null } },
+    });
+  });
+
+  it('#1989 saving content equal to the default counts as the default', async () => {
+    const res = await saveEmailFrameHandler(
+      owner({
+        changes: {
+          accentColor: DEFAULT_EMAIL_FRAME.accentColor.toUpperCase(),
+          cardBackground: DEFAULT_EMAIL_FRAME.cardBackground,
+        },
+      }),
+    );
+    expect(res).toEqual({ stored: {}, defaults: DEFAULT_EMAIL_FRAME, updatedAt: null, updatedBy: null });
+    expect(ctx.writes.filter((w: { path: string }) => w.path === PATH)).toEqual([]);
+    expect((await getEmailFrameHandler(owner({}))).updatedAt).toBeNull();
+  });
+
+  it('#1989 a default-equal value beside a real change stores only the real change', async () => {
+    setup({ [PATH]: { accentColor: '#123456' } });
+    const res = await saveEmailFrameHandler(
+      owner({ changes: { accentColor: DEFAULT_EMAIL_FRAME.accentColor, footerText: 'Thanks' } }),
+    );
+    expect(res.stored).toEqual({ footerText: 'Thanks' });
+    expect(lastWrite()).not.toHaveProperty('accentColor');
+    expect(res.updatedBy).toBe('owner-1');
+    expect(res.updatedAt).not.toBeNull();
+    expect(ctx.deletes).toEqual([]);
+  });
+
+  it('#1962 stamps the uid, and a frame that differs from the default keeps reading as saved', async () => {
+    const res = await saveEmailFrameHandler(owner({ changes: { footerText: 'Thanks' } }));
+    expect(lastWrite()).toEqual({ footerText: 'Thanks', updatedAt: res.updatedAt, updatedBy: 'owner-1' });
+    const again = await getEmailFrameHandler(owner({}));
+    expect(again.stored).toEqual({ footerText: 'Thanks' });
+    expect(again.updatedAt).toBe(res.updatedAt);
+    expect(again.updatedBy).toBe('owner-1');
   });
 
   const refused: [string, unknown][] = [

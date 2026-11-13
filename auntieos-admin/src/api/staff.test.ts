@@ -7,6 +7,7 @@ import {
   listStaff,
   loadStaffNames,
   loadStaffRoles,
+  loadStaffRoster,
   resetStaffNamesForTest,
   staffLabel,
   staffNamesByUid,
@@ -79,6 +80,23 @@ describe('staff names by uid (#1564)', () => {
     expect(one.get('a')).toBe('E2E Admin');
     expect(two).toBe(one);
     expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('#1962 the roster, the names and (#1820) the roles share the one read', async () => {
+    call.mockResolvedValue({ staff: [{ uid: 'a', displayName: 'E2E Admin', email: null, role: 'owner' }] });
+    const [roster, names, roles] = await Promise.all([loadStaffRoster(), loadStaffNames(), loadStaffRoles()]);
+    expect(roster).toEqual([{ uid: 'a', displayName: 'E2E Admin', email: null, role: 'owner' }]);
+    expect(names.get('a')).toBe('E2E Admin');
+    expect(roles.get('a')).toBe('owner');
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('#1962 a failed roster read gives an empty roster and is tried again next time', async () => {
+    call.mockRejectedValueOnce(new Error('permission-denied'));
+    expect(await loadStaffRoster()).toEqual([]);
+    call.mockResolvedValue({ staff: [{ uid: 'a', displayName: 'E2E Admin', email: null }] });
+    expect(await loadStaffRoster()).toHaveLength(1);
+    expect((await loadStaffNames()).get('a')).toBe('E2E Admin');
   });
 
   it('a failed read gives an empty map and is tried again next time', async () => {
