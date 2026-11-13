@@ -59,7 +59,25 @@ export function staffNamesByUid(staff: readonly StaffMember[]): Map<string, stri
   return new Map(staff.map((m) => [m.uid, staffLabel(m)]));
 }
 
+let staffRosterOnce: Promise<StaffMember[]> | null = null;
 let staffNamesOnce: Promise<Map<string, string>> | null = null;
+
+/**
+ * The staff roster, read once per page load and shared by every caller
+ * (`loadStaffNames` and `useStaffRoster` both sit on this one read). A failed
+ * read resolves to an empty roster (and is retried on the next call), so a
+ * screen that only wants to name a person never fails over it.
+ */
+export function loadStaffRoster(): Promise<StaffMember[]> {
+  if (staffRosterOnce === null) {
+    staffRosterOnce = listStaff().catch(() => {
+      staffRosterOnce = null;
+      staffNamesOnce = null;
+      return [];
+    });
+  }
+  return staffRosterOnce;
+}
 
 /**
  * The staff names, read once per page load and shared by every caller. A
@@ -67,19 +85,13 @@ let staffNamesOnce: Promise<Map<string, string>> | null = null;
  * screen that only wants nicer labels never fails over it.
  */
 export function loadStaffNames(): Promise<Map<string, string>> {
-  if (staffNamesOnce === null) {
-    staffNamesOnce = listStaff()
-      .then(staffNamesByUid)
-      .catch(() => {
-        staffNamesOnce = null;
-        return new Map<string, string>();
-      });
-  }
+  if (staffNamesOnce === null) staffNamesOnce = loadStaffRoster().then(staffNamesByUid);
   return staffNamesOnce;
 }
 
 /** Test seam: forget the cached read. */
 export function resetStaffNamesForTest(): void {
+  staffRosterOnce = null;
   staffNamesOnce = null;
 }
 

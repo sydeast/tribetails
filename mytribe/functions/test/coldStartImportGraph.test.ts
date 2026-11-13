@@ -198,13 +198,19 @@ const ALLOWED_EAGER_PACKAGES = [
  * graph. It has no import of its own, and it cannot sit behind the lazy
  * `businessSettingsChecks.ts` because `getMyHome` needs it on every call.
  *
- * 441 since #1935 (on top of #1987's 440): `admin/templateChannels.ts` is a new
+ * 441 since #1962 (on top of #1987's 440): `lib/savedByStamp.ts`, the one
+ * "last saved" stamp the four writers of the Settings documents share
+ * (`saveBusinessSettings`, `removeBusinessTag`, `confirmBrandAssetUpload`,
+ * `saveEmailFrame`, all entries already in this graph), so they can no longer
+ * disagree about what `updatedBy` holds. One function with no import of its own.
+ *
+ * 442 since #1935 (on top of #1962's 441): `admin/templateChannels.ts` is a new
  * FUNCTIONS entry (the read and the save of a template's text-message and push
  * wording, which no client may touch directly). Its rules,
  * `lib/templateChannelWording.ts`, load with `await import()` inside the
  * handler, so the entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 441;
+const MAX_OWN_EAGER_MODULES = 442;
 
 interface Edge {
   spec: string;
