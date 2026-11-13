@@ -16,6 +16,7 @@ import {
   isoTime,
   kinVariant,
   relativeDay,
+  homeLayoutMode,
   resolveHomeLayout,
   speciesEmoji,
   bookingSubtitle,
@@ -255,6 +256,50 @@ describe('resolveHomeLayout', () => {
   });
 });
 
+// #1987: the same vectors the Android portal pins in HomeLayoutTest.kt.
+describe('homeLayoutMode', () => {
+  const row = (id: string, enabled = true, limit = 0) => ({ id, enabled, limit });
+  const DEFAULT_ROWS = ['liveVisit', 'upNext', 'tales', 'quickStart'].map((id) => row(id));
+  it('no config is the standard two-column page', () => {
+    expect(homeLayoutMode([])).toBe('columns');
+  });
+  it('a stored layout equal to the default is the standard page', () => {
+    expect(homeLayoutMode(DEFAULT_ROWS)).toBe('columns');
+  });
+  it('a Limit never changes the page: one limit, or every limit, stays in columns', () => {
+    expect(homeLayoutMode(DEFAULT_ROWS.map((r) => (r.id === 'upNext' ? { ...r, limit: 2 } : r)))).toBe('columns');
+    expect(homeLayoutMode(DEFAULT_ROWS.map((r) => ({ ...r, limit: 9 })))).toBe('columns');
+  });
+  it('a Limit on a custom order leaves it stacked, as it was', () => {
+    const custom = [row('quickStart'), row('liveVisit'), row('upNext'), row('tales')];
+    expect(homeLayoutMode(custom)).toBe('stacked');
+    expect(homeLayoutMode(custom.map((r) => (r.id === 'upNext' ? { ...r, limit: 2 } : r)))).toBe('stacked');
+  });
+  it('a moved section is a custom order, so the page stacks', () => {
+    expect(homeLayoutMode([row('upNext'), row('liveVisit'), row('tales'), row('quickStart')])).toBe('stacked');
+    expect(homeLayoutMode([row('liveVisit'), row('tales'), row('upNext'), row('quickStart')])).toBe('stacked');
+  });
+  it('hiding a card in the standard order keeps the columns', () => {
+    expect(homeLayoutMode(DEFAULT_ROWS.map((r) => (r.id === 'tales' ? { ...r, enabled: false } : r)))).toBe('columns');
+    expect(homeLayoutMode(DEFAULT_ROWS.map((r) => (r.id === 'liveVisit' ? { ...r, enabled: false } : r)))).toBe('columns');
+  });
+  it('with nothing to put side by side there is one column', () => {
+    expect(homeLayoutMode(DEFAULT_ROWS.map((r) => (r.id === 'quickStart' ? { ...r, enabled: false } : r)))).toBe('stacked');
+    expect(
+      homeLayoutMode(DEFAULT_ROWS.map((r) => (r.id === 'upNext' || r.id === 'tales' ? { ...r, enabled: false } : r))),
+    ).toBe('stacked');
+    expect(homeLayoutMode(DEFAULT_ROWS.map((r) => ({ ...r, enabled: false })))).toBe('stacked');
+  });
+  it('a legacy roster row or an unknown id does not count as a move', () => {
+    expect(
+      homeLayoutMode([row('liveVisit'), row('upNext'), row('tales'), row('roster'), row('quickStart')]),
+    ).toBe('columns');
+    expect(homeLayoutMode([row('someFutureWidget'), ...DEFAULT_ROWS])).toBe('columns');
+  });
+  it('a repeated section is not the standard order', () => {
+    expect(homeLayoutMode([...DEFAULT_ROWS, row('upNext')])).toBe('stacked');
+  });
+});
 function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBookingsResultLiveVisit {
   return {
     id: 'v1',

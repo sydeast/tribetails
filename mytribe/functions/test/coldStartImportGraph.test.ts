@@ -191,13 +191,20 @@ const ALLOWED_EAGER_PACKAGES = [
  * (an entry already in this graph) reads a visit's On the way / Arrived /
  * Departed and its list by. Its one import is a type, erased at build.
  *
- * 440 since #1935 (on top of #1830's 439): `admin/templateChannels.ts` is a new
+ * 440 since #1987 (on top of #1830's 439): `lib/homeLayout.ts`, the one test for "this portal Home
+ * layout is the default", which `admin/saveBusinessSettings.ts` (stores such a
+ * layout as the empty list) and `portal/getMyHome.ts` (answers with the empty
+ * list for a document stored earlier) share. Both are entries already in this
+ * graph. It has no import of its own, and it cannot sit behind the lazy
+ * `businessSettingsChecks.ts` because `getMyHome` needs it on every call.
+ *
+ * 441 since #1935 (on top of #1987's 440): `admin/templateChannels.ts` is a new
  * FUNCTIONS entry (the read and the save of a template's text-message and push
  * wording, which no client may touch directly). Its rules,
  * `lib/templateChannelWording.ts`, load with `await import()` inside the
  * handler, so the entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 440;
+const MAX_OWN_EAGER_MODULES = 441;
 
 interface Edge {
   spec: string;
