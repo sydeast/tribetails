@@ -21,6 +21,7 @@ import {
   RESET_HOME_SECTIONS,
   lastSavedLabel,
 } from './settingsFormat';
+import { US_HOLIDAY_PRESETS } from './closureRecurrence';
 import type { HomeSectionCfg } from '../api/settings';
 
 describe('businessHoursRows', () => {
@@ -102,10 +103,10 @@ describe('parseDatedEntry', () => {
   });
 });
 
-describe('companyHolidayRows / specialHourRows', () => {
+describe('specialHourRows', () => {
   it('sorts oldest first', () => {
-    const rows = companyHolidayRows(['2026-12-25|Christmas', '2026-01-01|New Year']);
-    expect(rows.map((r) => r.date)).toEqual(['2026-01-01', '2026-12-25']);
+    const rows = specialHourRows(['2026-12-24|09:00-12:00', '2026-07-03|08:00-12:00']);
+    expect(rows.map((r) => r.date)).toEqual(['2026-07-03', '2026-12-24']);
   });
 
   it('sorts an unparseable (blank-date) entry last', () => {
@@ -114,8 +115,122 @@ describe('companyHolidayRows / specialHourRows', () => {
   });
 
   it('returns an empty list for no entries', () => {
-    expect(companyHolidayRows([])).toEqual([]);
     expect(specialHourRows([])).toEqual([]);
+  });
+});
+
+describe('US_HOLIDAYS names come from the one-click preset catalog (#1947)', () => {
+  const presetName = (id: string) => US_HOLIDAY_PRESETS.find((p) => p.id === id)?.name;
+
+  it('names the observed "columbus" switch exactly as its quick-add chip', () => {
+    const columbus = US_HOLIDAYS.find(([id]) => id === 'columbus');
+    expect(columbus?.[1]).toBe(presetName('indigenous_columbus'));
+  });
+
+  it('every switch label is a chip label, so no holiday has two names', () => {
+    const chipNames = US_HOLIDAY_PRESETS.map((p) => p.name);
+    expect(US_HOLIDAYS.map(([, name]) => name)).toEqual(chipNames);
+  });
+
+  it('keeps the stored observed ids unchanged', () => {
+    expect(US_HOLIDAYS.map(([id]) => id)).toEqual([
+      'new_years',
+      'mlk',
+      'presidents',
+      'memorial',
+      'juneteenth',
+      'independence',
+      'labor',
+      'columbus',
+      'veterans',
+      'thanksgiving',
+      'christmas',
+    ]);
+  });
+
+  it('the overview reads the same name for a stored "columbus" id', () => {
+    expect(observedHolidayLabels(['columbus'])).toEqual([presetName('indigenous_columbus')]);
+  });
+});
+
+describe('companyHolidayRows: next closure first (#1979)', () => {
+  const TODAY = '2026-11-12';
+
+  it('lists yearly and one-time rows by the date each next falls on', () => {
+    const stored = [
+      'yearly:08-14|Summer break',
+      'yearly:09-02|Owner birthday',
+      'yearly:04-14|Spring A',
+      'yearly:04-20|Spring B',
+      'yearly:04-15|Spring C',
+      'yearly:04-13|Spring D',
+      '2026-12-16|Staff day',
+      'yearly-nth:11-4-4|Thanksgiving',
+    ];
+    const rows = companyHolidayRows(stored, TODAY);
+    expect(rows.map((r) => r.closure.name)).toEqual([
+      'Thanksgiving',
+      'Staff day',
+      'Spring D',
+      'Spring A',
+      'Spring C',
+      'Spring B',
+      'Summer break',
+      'Owner birthday',
+    ]);
+    expect(rows.map((r) => r.next)).toEqual([
+      '2026-11-26',
+      '2026-12-16',
+      '2027-04-13',
+      '2027-04-14',
+      '2027-04-15',
+      '2027-04-20',
+      '2027-08-14',
+      '2027-09-02',
+    ]);
+  });
+
+  it('keeps each row\'s place in the stored list, so Remove can take out the right one', () => {
+    const stored = ['2027-01-05|Later', '2026-12-01|Sooner'];
+    const rows = companyHolidayRows(stored, TODAY);
+    expect(rows.map((r) => [r.index, r.entry])).toEqual([
+      [1, '2026-12-01|Sooner'],
+      [0, '2027-01-05|Later'],
+    ]);
+  });
+
+  it('a closure on today itself is still upcoming', () => {
+    const rows = companyHolidayRows(['2026-12-01|Later', `${TODAY}|Today`], TODAY);
+    expect(rows.map((r) => r.closure.name)).toEqual(['Today', 'Later']);
+  });
+
+  it('puts one-time closures that have passed after every upcoming one, oldest first', () => {
+    const rows = companyHolidayRows(['2025-06-01|Old B', '2026-12-25|Upcoming', '2025-01-01|Old A'], TODAY);
+    expect(rows.map((r) => r.closure.name)).toEqual(['Upcoming', 'Old A', 'Old B']);
+    expect(rows.map((r) => r.next)).toEqual(['2026-12-25', null, null]);
+  });
+
+  it('puts a row it cannot read at the very end, after passed closures', () => {
+    const rows = companyHolidayRows(['not a closure', '2025-01-01|Old', '2026-12-25|Upcoming'], TODAY);
+    expect(rows.map((r) => r.entry)).toEqual(['2026-12-25|Upcoming', '2025-01-01|Old', 'not a closure']);
+  });
+
+  it('breaks a same-day tie by name, then by stored position', () => {
+    const rows = companyHolidayRows(
+      ['yearly:12-25|Zoo day', '2026-12-25|Christmas', 'yearly:12-25|Christmas'],
+      TODAY,
+    );
+    expect(rows.map((r) => r.index)).toEqual([1, 2, 0]);
+  });
+
+  it('never reorders the stored list it was given', () => {
+    const stored = ['2027-01-05|Later', '2026-12-01|Sooner'];
+    companyHolidayRows(stored, TODAY);
+    expect(stored).toEqual(['2027-01-05|Later', '2026-12-01|Sooner']);
+  });
+
+  it('returns an empty list for no entries', () => {
+    expect(companyHolidayRows([], TODAY)).toEqual([]);
   });
 });
 
