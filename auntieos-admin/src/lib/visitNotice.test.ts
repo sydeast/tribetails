@@ -299,3 +299,51 @@ describe('useVisitNoticeReach: the confirm asks the server (#1840)', () => {
     expect(result.current).toEqual({ status: 'ready', willNotify: false, reason: 'household_notices_off' });
   });
 });
+
+// #2185: an Auntie never sees Settings (ruling 2026-11-13), so her lines name
+// the owner. The owner's lines stay word for word.
+describe('#2185 the switch-off lines under an Auntie sign-in', () => {
+  it('the outcome names the owner, not Settings', () => {
+    const line = visitNoticeOutcomeSentence(
+      { notified: false, notifySkipped: 'household_notices_off' },
+      'Dre East',
+      true,
+    );
+    expect(line).toBe('Dre East was not notified, because the owner has notices to households turned off.');
+    expect(line).not.toMatch(/Settings/);
+  });
+
+  it('the confirm names the owner, not Settings', () => {
+    const line = visitNoticeConfirmFor({
+      action: 'ARRIVED',
+      session: ROUTED,
+      reach: { status: 'ready', willNotify: false, reason: 'household_notices_off' },
+      household: 'Dre East',
+      auntie: true,
+    });
+    expect(line).toBe('Dre East will not be told, because the owner has notices to households turned off.');
+    expect(line).not.toMatch(/Settings/);
+  });
+
+  it('the owner keeps the Settings wording, and that is the default', () => {
+    expect(
+      visitNoticeOutcomeSentence({ notified: false, notifySkipped: 'household_notices_off' }, 'Dre East', false),
+    ).toBe('Dre East was not notified, because notices to households are off in Settings.');
+    expect(
+      visitNoticeConfirmLine({ kind: 'will_not_notify', reason: 'household_notices_off' }, 'ARRIVED', 'Dre East', false),
+    ).toBe('Dre East will not be told, because notices to households are off in Settings.');
+  });
+
+  it('changes no other line for an Auntie', () => {
+    expect(
+      visitNoticeOutcomeSentence(
+        { notified: false, notifySkipped: 'household_has_no_portal_account' },
+        'Dre East',
+        true,
+      ),
+    ).toBe('Dre East was not notified, because they have no portal account.');
+    expect(visitNoticeConfirmLine({ kind: 'will_notify' }, 'ARRIVED', 'Dre East', true)).toBe(
+      'Dre East will be told their Auntie has arrived.',
+    );
+  });
+});

@@ -463,3 +463,53 @@ describe('myNotificationsFormat', () => {
     });
   });
 });
+
+// #2185: an Auntie never sees Business Settings, so her business-locked row
+// names the owner. The owner's line, the catalog-required line and a written
+// lock reason are unchanged.
+describe('#2185 adminChannelReason under an Auntie sign-in', () => {
+  const lockedOn = matrix({
+    overrides: {
+      'kincare.booking.confirm': { enabled: true, channels: {}, lockedEnabled: true, locked: {}, streams: {} },
+    },
+  });
+
+  it('a business-locked row names the owner, not business settings', () => {
+    const line = adminChannelReason(lockedOn, entry({ required: {} }), STREAM_BUSINESS, 'sms', true);
+    expect(line).toBe("Set by the owner; your choice here can't turn it on.");
+    expect(line).not.toMatch(/settings/i);
+    expect(adminChannelReason(lockedOn, entry({ required: {} }), STREAM_BUSINESS, 'email', true)).toBe(
+      "Set by the owner; your choice here can't turn it off.",
+    );
+  });
+
+  it('the owner keeps the business settings wording, and that is the default', () => {
+    expect(adminChannelReason(lockedOn, entry({ required: {} }), STREAM_BUSINESS, 'sms', false)).toBe(
+      "Set in your business settings; your choice here can't turn it on.",
+    );
+    expect(adminChannelReason(lockedOn, entry({ required: {} }), STREAM_BUSINESS, 'sms')).toBe(
+      "Set in your business settings; your choice here can't turn it on.",
+    );
+  });
+
+  it('a catalog-required row and a written lock reason read the same for an Auntie', () => {
+    expect(adminChannelReason(matrix(), entry({ required: { email: true } }), STREAM_BUSINESS, 'email', true)).toBe(
+      "Set by the notification itself; your choice here can't turn it off.",
+    );
+    const reasoned = matrix({
+      overrides: {
+        'kincare.booking.confirm': {
+          enabled: true,
+          channels: {},
+          lockedEnabled: true,
+          locked: {},
+          lockReason: 'Kept on for every visit.',
+          streams: {},
+        },
+      },
+    });
+    expect(adminChannelReason(reasoned, entry({ required: {} }), STREAM_BUSINESS, 'sms', true)).toBe(
+      'Kept on for every visit.',
+    );
+  });
+});

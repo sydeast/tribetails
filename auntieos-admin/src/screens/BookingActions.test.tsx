@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
+import { act, render as rtlRender, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import type { Timestamp } from 'firebase/firestore';
@@ -37,6 +37,12 @@ vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule }));
 // minutes, so a stored `visit_45` reads as "Long walk".
 vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
+}));
+// #2185: who is signed in, for the arrival refusal's wording.
+const { seat } = vi.hoisted(() => ({ seat: { caretaker: false } }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat: async () => ({ uid: 'u1', caretaker: seat.caretaker }),
 }));
 import { BookingActions, BookingStatusActions } from './BookingActions';
 
@@ -499,6 +505,45 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
     expect(screen.queryByRole('heading', { name: 'Mark this visit completed?' })).toBeNull();
     expect(markBookingCompleted).not.toHaveBeenCalled();
     useArrivalRule.mockReturnValue(null);
+  });
+  // #2185: the owner reads the Settings remedy word for word; an Auntie, who
+  // never sees Settings, reads only the remedy she can do herself.
+  it('#2185: the owner refusal names the Settings switch, word for word', async () => {
+    useArrivalRule.mockReturnValue(true);
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED', arrivedAt: '' })} onDone={vi.fn()} />);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    expect(
+      screen.getByText(
+        'This visit has no arrival and departure recorded, and your settings require both before a visit can be ' +
+          'marked complete. Mark it on the visit card first, or turn off "Verify arrival and departure" in Settings.',
+      ),
+    ).toBeInTheDocument();
+    useArrivalRule.mockReturnValue(null);
+  });
+  it('#2185: an Auntie refusal names no Settings screen', async () => {
+    seat.caretaker = true;
+    useArrivalRule.mockReturnValue(true);
+    try {
+      render(<BookingStatusActions entry={entry({ status: 'SCHEDULED', arrivedAt: '' })} onDone={vi.fn()} />);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+      expect(
+        screen.getByText(
+          'This visit has no arrival and departure recorded, and the business requires both before a visit can be ' +
+            'marked complete. Mark it on the visit card first.',
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Settings/)).toBeNull();
+      expect(markBookingCompleted).not.toHaveBeenCalled();
+    } finally {
+      seat.caretaker = false;
+      useArrivalRule.mockReturnValue(null);
+    }
   });
   it('Cancel is never held back by the arrival rule', async () => {
     useArrivalRule.mockReturnValue(true);

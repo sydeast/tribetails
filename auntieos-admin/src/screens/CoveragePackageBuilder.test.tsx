@@ -9,6 +9,12 @@ vi.mock('../api/settings', () => ({
   getBusinessSettings: () => getBusinessSettings(),
 }));
 
+// #2185: who is signed in, for the heading's Settings sentence.
+const { seat } = vi.hoisted(() => ({ seat: { caretaker: false } }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat: async () => ({ uid: 'u1', caretaker: seat.caretaker }),
+}));
 import { CoveragePackageBuilder } from './CoveragePackageBuilder';
 
 /**
@@ -55,6 +61,29 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+});
+
+// #2185: an Auntie never sees Settings. Her sign-in cannot read the rates this
+// screen loads, so the heading's tip is the one line of it she reaches.
+describe('CoveragePackageBuilder heading tip (#2185)', () => {
+  const tip = () => document.querySelector('.den-heading-subtitle')?.textContent ?? '';
+  it('the owner is told the rates come from Settings', async () => {
+    render(<CoveragePackageBuilder />);
+    await waitFor(() => expect(getBusinessSettings).toHaveBeenCalled());
+    expect(tip()).toMatch(/Lengths and prices come from your KinCare types in Settings\.$/);
+  });
+
+  it("an Auntie is told they are the owner's, and no Settings screen is named", async () => {
+    seat.caretaker = true;
+    try {
+      getBusinessSettings.mockRejectedValue(new Error('Missing or insufficient permissions.'));
+      render(<CoveragePackageBuilder />);
+      await waitFor(() => expect(tip()).toMatch(/Lengths and prices come from the owner's KinCare types\.$/));
+      expect(tip()).not.toMatch(/Settings/);
+    } finally {
+      seat.caretaker = false;
+    }
+  });
 });
 
 describe('CoveragePackageBuilder panel order', () => {
