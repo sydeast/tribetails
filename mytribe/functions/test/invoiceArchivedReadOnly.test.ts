@@ -310,29 +310,33 @@ describe('#2168 review: a draft is sent only when every visit its lines bill is 
     await expect(reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'd1' }))).resolves.toMatchObject({ ok: true });
   });
 
-  it('a claim that lands while the household is being told is refused at the flip, and the draft stays a draft', async () => {
-    const { docOf, ctx } = draftBilling({ s1: visit({ invoiceId: 'd1' }), s2: visit() }, { other: { invoiceNumber: 'INV-31' } });
-    // The first transaction claimed s2 for the draft. A write that took it
-    // anyway between the check and the flip (outside any callable) is caught
-    // by the second read rather than overwritten.
+  // The check and the flip are one transaction and the notice follows it, so
+  // nothing landing while the household is being told can leave a household
+  // told about an invoice that is still a draft (hidden from Kinfolk).
+  it('a write landing while the household is being told cannot turn a told invoice back into a draft', async () => {
+    const { docOf, ctx } = draftBilling({ s1: visit({ invoiceId: 'd1' }), s2: visit() });
+    const seenByNotice: unknown[] = [];
     mocks.enqueue.mockImplementation(async () => {
-      await ctx.db.doc('kin_care_sessions/s2').set({ invoiceId: 'other' }, { merge: true });
-      return ['n1'];
-    });
-
-    await expect(reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'd1' }))).rejects.toMatchObject({
-      details: { code: 'draft_visits_not_billable', visits: [{ sessionId: 's2', reason: 'on_other_invoice', invoiceNumber: 'INV-31' }] },
-    });
-    expect((await docOf('invoices/d1'))['status']).toBe('draft');
-  });
-
-  it('an archive that lands while the household is being told is refused at the flip', async () => {
-    const { docOf, ctx } = draftBilling({ s1: visit({ invoiceId: 'd1' }) });
-    mocks.enqueue.mockImplementation(async () => {
+      seenByNotice.push((await docOf('invoices/d1'))['status']);
       await ctx.db.doc('invoices/d1').set({ archivedAt: '__TS__' }, { merge: true });
       return ['n1'];
     });
+    await expect(reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'd1' }))).resolves.toMatchObject({ ok: true });
+    expect(seenByNotice).toEqual(['open']);
+    expect((await docOf('invoices/d1'))['status']).toBe('open');
+    // The first transaction claimed the blank-linked visit along with the flip.
+    expect((await docOf('kin_care_sessions/s2'))['invoiceId']).toBe('d1');
+  });
+
+  it('a draft archived or with a visit billed elsewhere is refused with no notice at all', async () => {
+    const archived = draftBilling({ s1: visit({ invoiceId: 'd1' }) });
+    await archived.ctx.db.doc('invoices/d1').set({ archivedAt: '__TS__' }, { merge: true });
     await expect(reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'd1' }))).rejects.toMatchObject(ARCHIVED);
-    expect((await docOf('invoices/d1'))['status']).toBe('draft');
+    const claimed = draftBilling({ s1: visit({ invoiceId: 'other' }) }, { other: { invoiceNumber: 'INV-31' } });
+    await expect(reviewAndSendDraftInvoiceHandler(req({ invoiceId: 'd1' }))).rejects.toMatchObject({
+      details: { code: 'draft_visits_not_billable' },
+    });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect((await claimed.docOf('invoices/d1'))['status']).toBe('draft');
   });
 });

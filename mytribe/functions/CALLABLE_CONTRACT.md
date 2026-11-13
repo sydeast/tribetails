@@ -990,10 +990,16 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 ### reviewAndSendDraftInvoice
 - req `{ invoiceId: string /* 1..200 */ }`
 - res `{ ok: true, invoiceId: string, appOnly?: boolean /* #1511 */ }`
-- Sends a draft: `invoice.new` to the household's billing member, then the
-  status flips to `open` with the state stamp and the pay-method snapshot.
-  The dispatch comes first and is not swallowed, so a failed send leaves a
-  draft.
+- Sends a draft: one transaction checks it and flips the status to `open`
+  with the state stamp and the pay-method snapshot, and only after that
+  commits does `invoice.new` go to the household's billing member, so a
+  household is never told about an invoice that is still a hidden draft. The
+  dispatch is not swallowed: when it fails, the invoice is put back to the
+  draft it was (only if it is still open, sent by this caller, not archived
+  and unpaid) and the error surfaces, so a failed send leaves a draft. When it
+  cannot be put back, the error is `internal` / `invoice_sent_not_announced`
+  ("The invoice was sent, but the household could not be told about it. Use
+  Send reminder to tell them.").
 - Refusals, all `failed-precondition` unless noted, every one before the
   household is told and with nothing written: `not-found` for an unknown
   invoice; `invoice_archived` (#2168); not a draft; missing total, household
@@ -1003,11 +1009,10 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   invoice by its number ("another invoice" when it has none), and
   `details.visits[]` carries `{ sessionId, reason: 'on_other_invoice'|'cancelled'|'not_found', invoiceNumber }`.
   A visit linked with no line is attribution and is not judged.
-- Checked twice: in a transaction before the dispatch, and again in the
-  transaction that flips the status, so an archive or a claim landing in
-  between is refused rather than overwritten. The first transaction also
-  claims a line's visit whose back-link is blank (a draft made before #1901)
-  and adds it to `sessionIds`.
+- Checked in the same transaction that flips the status, so an archive, a
+  claim or a second send landing first re-runs it and is refused before any
+  notice. That transaction also claims a line's visit whose back-link is blank
+  (a draft made before #1901) and adds it to `sessionIds`.
 
 ### retryInvoiceCheckoutClose (#1113)
 - req `{ invoiceId: string /* 1..200 */ }`
