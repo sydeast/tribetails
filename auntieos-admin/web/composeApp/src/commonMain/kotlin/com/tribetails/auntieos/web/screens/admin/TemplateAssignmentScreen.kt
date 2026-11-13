@@ -352,7 +352,7 @@ fun TemplateAssignmentBody(
 
             Spacer(Modifier.height(dims.space4))
             AuntieNoteCallout(
-                text = "An override changes the EMAIL template only. SMS and push send the template the catalog names and never look at an override. Audience is stored with the override and no sender reads it, so it records intent and changes nothing.",
+                text = "An override changes the EMAIL template only. The text message and push notification keep their own wording, which you change in the template editor. Audience is stored with the override and no sender reads it, so it records intent and changes nothing.",
             )
         }
     }

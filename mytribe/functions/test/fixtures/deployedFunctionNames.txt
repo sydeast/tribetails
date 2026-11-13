@@ -104,6 +104,7 @@ getRecordingAudio
 getServiceCatalog
 getShareLink
 getSharedKinTalePage
+getTemplateChannels
 getVetClinics
 giveAccountCredit
 googleOAuthCallback
@@ -258,6 +259,7 @@ saveMyAdminNotificationPrefs
 saveMyNotificationPrefs
 saveSecondaryKinfolk
 saveTemplate
+saveTemplateChannels
 saveTribeProfile
 scheduleDigestCron
 scheduleMarketingBlast
