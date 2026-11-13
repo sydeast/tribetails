@@ -1193,6 +1193,16 @@ describe('Invoices row quick action', () => {
       within(rowOf('1042')).getByRole('button', { name: 'Review and send' }),
     ).toBeInTheDocument();
   });
+  it('#2168: offers no Review and send on an ARCHIVED draft, which is read-only until restored', async () => {
+    usePagedCollection.mockReturnValue(
+      paged([entry({ status: 'draft', editScope: 'all', archivedAt: fakeTs('2026-07-16T10:00:00Z') })]),
+    );
+    render(<Invoices />);
+    await userEvent.selectOptions(screen.getByLabelText('Archived'), 'only');
+    const row = rowOf('1042');
+    expect(within(row).getByText('ARCHIVED')).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Review and send' })).toBeNull();
+  });
   it('offers Receipt on a paid invoice, and never Send reminder', () => {
     usePagedCollection.mockReturnValue(
       paged([entry({ status: 'paid', amountDue: 0, editScope: 'none' })]),

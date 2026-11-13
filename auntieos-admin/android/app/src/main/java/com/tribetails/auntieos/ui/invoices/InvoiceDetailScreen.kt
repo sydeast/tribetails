@@ -55,7 +55,7 @@ import com.tribetails.auntieos.domain.invoiceEditScopeOf
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.QuoteDecision
 import com.tribetails.auntieos.domain.invoiceQuoteDecision
-import com.tribetails.auntieos.domain.invoiceActionsFor
+import com.tribetails.auntieos.domain.invoiceActionsOffered
 import com.tribetails.auntieos.domain.invoiceIsOverdue
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.dollarsToCents
@@ -209,6 +209,10 @@ fun InvoiceDetailScreen(
             selectedIds = uiState.pendingSessionIds,
             invoiceId   = uiState.invoice?.id.orEmpty(),
             storedIds   = uiState.invoice?.sessionIds.orEmpty(),
+            billedIds   = uiState.invoice?.let { linkPickerBilledIds(it) }.orEmpty(),
+            linesEditable = uiState.invoice?.let {
+                com.tribetails.auntieos.domain.invoiceEditScopeOf(it) == com.tribetails.auntieos.domain.InvoiceEditScope.ALL
+            } ?: true,
             error       = uiState.linkError,
             onToggle    = { viewModel.toggleSessionInPending(it) },
             onSave      = { viewModel.saveLinks() },
@@ -255,6 +259,28 @@ fun InvoiceDetailScreen(
                     kind      = if (uiState.toastIsError) ToastKind.Error else ToastKind.Success,
                     onDismiss = { viewModel.dismissToast() },
                 )
+            }
+
+            // #2168: a restore that could not take every visit back. It names
+            // the lines to remove before sending, so it stays until dismissed,
+            // as web's warning does. Keyed by its text so a second restore's
+            // notice is shown even after the first was closed.
+            uiState.restoreNotice?.let { notice ->
+                item(key = "restore-notice") {
+                    androidx.compose.runtime.key(notice) {
+                        AuntieBanner(
+                            tone      = AuntieBannerTone.Warning,
+                            title     = "Done, but not all of it",
+                            onDismiss = { viewModel.dismissRestoreNotice() },
+                        ) {
+                            Text(
+                                text  = notice,
+                                style = AuntieTheme.typography.bodySmall,
+                                color = AuntieTheme.colors.textDim,
+                            )
+                        }
+                    }
+                }
             }
 
             when {
@@ -462,11 +488,14 @@ private fun invoiceDetailBody(
     // changes the pill and the copy and leaves the action set alone. That is
     // what keeps "Record payment" available for collecting the rest.
     val partPaid = invoicePartPaid(invoice)
-    val actions  = invoiceActionsFor(state)
+    // #2168: an archived invoice is read-only until restored, so it offers no
+    // Review and send, no Edit and no Link sessions; Restore is the way back.
+    val archived = com.tribetails.auntieos.domain.invoiceIsArchived(invoice)
+    val actions  = invoiceActionsOffered(state, archived)
     // #1174: Edit is OFFERED per the STORED editScope, as on web: `none`
     // offers nothing, `metadataOnly` and `all` open the editor. The server is
     // the enforcement and its refusal is shown verbatim in the form.
-    val canEditInvoice = invoiceEditScopeOf(invoice) != InvoiceEditScope.NONE
+    val canEditInvoice = invoiceEditScopeOf(invoice) != InvoiceEditScope.NONE && !archived
 
     // ── Header status bar (accent-tinted full-width) ────────────────────────────
     item {
@@ -995,6 +1024,7 @@ private fun invoiceDetailBody(
             linkedSessions  = linkedSessions,
             sessionsLoading = sessionsLoading,
             onOpenEdit      = onOpenEdit,
+            canLink         = !archived,
         )
     }
 }
@@ -1223,6 +1253,8 @@ private fun LinkedSessionsSection(
     linkedSessions: List<KinCareSession>,
     sessionsLoading: Boolean,
     onOpenEdit: () -> Unit,
+    /** #2168: false on an archived invoice, which links nothing until restored. */
+    canLink: Boolean = true,
 ) {
     val c = AuntieTheme.colors
     val attributionLabel = when (invoice.attribution) {
@@ -1241,12 +1273,14 @@ private fun LinkedSessionsSection(
                 if (attributionLabel != null) {
                     AuntieChip(label = attributionLabel, selected = true, onClick = {})
                 }
-                AuntieIconButton(
-                    icon               = Lucide.Pencil,
-                    contentDescription = "Edit linked sessions",
-                    onClick            = onOpenEdit,
-                    size               = 30.dp,
-                )
+                if (canLink) {
+                    AuntieIconButton(
+                        icon               = Lucide.Pencil,
+                        contentDescription = "Edit linked sessions",
+                        onClick            = onOpenEdit,
+                        size               = 30.dp,
+                    )
+                }
             }
         },
     ) {
@@ -1270,11 +1304,13 @@ private fun LinkedSessionsSection(
 
             linkedSessions.isEmpty() -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 EmptyHint("No linked sessions yet.")
-                GhostButton(
-                    label   = "Link sessions",
-                    onClick = onOpenEdit,
-                    leading = { Icon(Lucide.Link, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                )
+                if (canLink) {
+                    GhostButton(
+                        label   = "Link sessions",
+                        onClick = onOpenEdit,
+                        leading = { Icon(Lucide.Link, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                    )
+                }
             }
 
             else -> Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
@@ -1955,12 +1991,21 @@ internal fun linkPickerChipLabel(
     elsewhere: Boolean,
     cancelled: Boolean,
     catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog,
+    /** #2091: a line on this invoice bills it, so it stays linked. */
+    billedHere: Boolean = false,
+    /** False when the invoice's lines are locked, so Edit cannot remove the line. */
+    linesEditable: Boolean = true,
 ): String {
     val service = if (session.serviceType.isBlank()) "Session" else catalog.nameOf(session.serviceType)
     return "$service · $dateLabel" +
         (if (elsewhere) " · on another invoice" else "") +
-        (if (cancelled) " · cancelled, not billable" else "")
+        (if (cancelled) " · cancelled, not billable" else "") +
+        (if (billedHere) linkPickerBilledHereNote(linesEditable) else "")
 }
+/** #2091: why a billed visit's chip is locked. Edit is named only when Edit can remove the line. Same words as web and desktop. */
+internal fun linkPickerBilledHereNote(linesEditable: Boolean): String =
+    if (linesEditable) " · billed on a line of this invoice, remove the line in Edit to unlink it"
+    else " · billed on a line of this invoice, and its lines are locked"
 
 @Composable
 private fun LinkSessionsDialog(
@@ -1968,6 +2013,8 @@ private fun LinkSessionsDialog(
     selectedIds: Set<String>,
     invoiceId: String,
     storedIds: List<String>,
+    billedIds: Set<String>,
+    linesEditable: Boolean,
     error: String?,
     onToggle: (String) -> Unit,
     onSave: () -> Unit,
@@ -1995,6 +2042,22 @@ private fun LinkSessionsDialog(
                 modifier = Modifier.padding(bottom = 8.dp),
             )
         }
+        // #2091: the moment a new visit is ticked, say that linking adds no price.
+        if (selectedIds.any { it !in storedIds }) {
+            AuntieBanner(
+                tone     = AuntieBannerTone.Warning,
+                title    = LINK_ADDS_NO_PRICE_TITLE,
+                icon     = Lucide.CircleAlert,
+                modifier = Modifier.padding(bottom = 8.dp),
+                body     = {
+                    Text(
+                        LINK_ADDS_NO_PRICE_TEXT,
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
+                },
+            )
+        }
         if (available.isEmpty()) {
             Text(
                 text  = "No sessions found for this kinfolk.",
@@ -2016,12 +2079,14 @@ private fun LinkSessionsDialog(
                     val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
                     // #1609: a cancelled visit is not billable.
                     val cancelled = linkPickerCancelled(session, storedIds)
-                    val chipLabel = linkPickerChipLabel(session, dateLabel, elsewhere, cancelled, catalog)
+                    // #2091: a line on this invoice bills it; Edit is where it leaves.
+                    val billedHere = session.id in billedIds && session.id in storedIds
+                    val chipLabel = linkPickerChipLabel(session, dateLabel, elsewhere, cancelled, catalog, billedHere, linesEditable)
                     AuntieChip(
                         label    = chipLabel,
                         selected = session.id in selectedIds,
                         onClick  = { onToggle(session.id) },
-                        enabled  = !elsewhere && !cancelled && !saveLoading,
+                        enabled  = !elsewhere && !cancelled && !billedHere && !saveLoading,
                     )
                 }
             }

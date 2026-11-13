@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
+import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsResult
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
@@ -51,6 +52,14 @@ data class InvoiceDetailUiState(
     val toastMessage: String = "",
     val toastVisible: Boolean = false,
     val toastIsError: Boolean = false,
+    /**
+     * #2168: a restore that could not take every visit back. Shown as a warning
+     * that stays until the operator dismisses it, like web's, because it says
+     * which line to remove before the draft can be sent, and a toast that
+     * vanishes after four seconds could not be read in full. Null otherwise; a
+     * plain restore is a toast.
+     */
+    val restoreNotice: String? = null,
     /**
      * The invoice's DISPLAY ledger (spec 17 items 5/6): root `payments` rows
      * naming this invoice, as `getInvoiceLedger` returns them — every figure
@@ -561,6 +570,15 @@ class InvoiceDetailViewModel(
             }
             pending.add(sessionId)
         }
+        // #2091: a visit a line on this invoice bills stays linked. The chip is
+        // disabled; this keeps the rule for any other caller. Edit removes the
+        // line, and the server unlinks the visit with it (#1970). Only a STORED
+        // link is held: a billed visit the set left out (an old half link) can
+        // be ticked and unticked again before Save, as the server allows.
+        val invoice = state.invoice
+        if (invoice != null && sessionId !in pending && sessionId in invoice.sessionIds &&
+            sessionId in linkPickerBilledIds(invoice)
+        ) return
         _uiState.value = state.copy(pendingSessionIds = pending, linkError = null)
     }
 
@@ -592,6 +610,9 @@ class InvoiceDetailViewModel(
                 return@launch
             }
 
+            // #2091: the server's answer, in the web and desktop wording, which
+            // says when a linked visit's price was not added to this invoice.
+            val savedText = linkResult.getOrNull()?.let { invoiceSessionLinksSavedText(it) } ?: "Visits saved."
             // Refresh invoice to pick up new sessionIds + attribution + persisted state
             invoiceRepository.getInvoiceById(invoiceId)
                 .onSuccess { refreshed ->
@@ -599,7 +620,7 @@ class InvoiceDetailViewModel(
                         invoice      = refreshed,
                         saveLoading  = false,
                         editMode     = false,
-                        toastMessage = "Sessions linked.",
+                        toastMessage = savedText,
                         toastVisible = true,
                         toastIsError = false,
                     )
@@ -609,7 +630,7 @@ class InvoiceDetailViewModel(
                     _uiState.value = _uiState.value.copy(
                         saveLoading  = false,
                         editMode     = false,
-                        toastMessage = "Sessions linked (refresh failed).",
+                        toastMessage = "$savedText The invoice did not refresh; reopen it to see the change.",
                         toastVisible = true,
                         toastIsError = false,
                     )
@@ -854,13 +875,15 @@ class InvoiceDetailViewModel(
         val restoring = com.tribetails.auntieos.domain.invoiceIsArchived(invoice)
         _uiState.value = _uiState.value.copy(archiving = true)
         viewModelScope.launch {
-            val outcome = if (restoring) {
-                invoiceRepository.unarchiveInvoice(invoice.id)
+            // #2168: (visits an archived draft let go, the restore's sentence
+            // about visits it could not take back).
+            val outcome: Result<Pair<Int, String>> = if (restoring) {
+                invoiceRepository.unarchiveInvoice(invoice.id).map { 0 to it }
             } else {
-                invoiceRepository.archiveInvoice(invoice.id, force)
+                invoiceRepository.archiveInvoice(invoice.id, force).map { it to "" }
             }
             outcome
-                .onSuccess {
+                .onSuccess { (released, notice) ->
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
                         repository       = repository,
@@ -871,12 +894,17 @@ class InvoiceDetailViewModel(
                         targetId         = invoice.id,
                         targetCollection = "invoices",
                     )
+                    val message = archiveSuccessMessage(restoring, force, released, notice)
+                    // #2168: visits a restore could not take back stay on screen
+                    // until dismissed; every other outcome is a toast.
+                    val lasting = restoring && notice.isNotBlank()
                     _uiState.value = _uiState.value.copy(
                         archiving = false,
                         archivePrompt = false,
                         archiveForceOffered = false,
-                        toastMessage = archiveSuccessMessage(restoring, force),
-                        toastVisible = true,
+                        restoreNotice = if (lasting) message else null,
+                        toastMessage = if (lasting) "" else message,
+                        toastVisible = !lasting,
                         toastIsError = false,
                     )
                     // The doc changed, so the panel must re-read it or it would
@@ -1158,6 +1186,11 @@ class InvoiceDetailViewModel(
     fun dismissToast() {
         _uiState.value = _uiState.value.copy(toastVisible = false)
     }
+
+    /** #2168: the operator closed the restore warning. */
+    fun dismissRestoreNotice() {
+        _uiState.value = _uiState.value.copy(restoreNotice = null)
+    }
 }
 
 /**
@@ -1207,6 +1240,45 @@ internal fun linkPickerOnOtherInvoice(
     return claimed.isNotEmpty() && claimed != invoiceId
 }
 
+/**
+ * #2091: the visits a line on [invoice] bills. The picker keeps them ticked and
+ * will not untick them, and `linkInvoiceSessions` refuses the unlink with
+ * `session_billed_on_line`: unlinking a visit a line still bills would put
+ * billed work back on the un-invoiced list. Removing the line in Edit unlinks
+ * it (#1970). Same rule as admin web's InvoiceLinkVisitsEditor. Pure; tested.
+ */
+internal fun linkPickerBilledIds(invoice: Invoice): Set<String> =
+    com.tribetails.auntieos.domain.decodeInvoiceLineItems(invoice.lineItems).orEmpty()
+        .map { it.sessionId.trim() }
+        .filter { it.isNotEmpty() }
+        .toSet()
+/** #2091: the warning shown while a newly ticked visit waits to be saved. Same words as web and desktop. */
+internal const val LINK_ADDS_NO_PRICE_TITLE = "Linking does not change the total"
+internal const val LINK_ADDS_NO_PRICE_TEXT =
+    "A visit you link here is marked as billed by this invoice and leaves the un-invoiced list, but its " +
+        "price is not added. To bill a visit's price, leave it unticked and put it on an invoice from New invoice."
+/**
+ * The confirmation once the server saved the set, in the web and desktop
+ * wording. #2091: a visit linked with no line to bill it (the server's
+ * `linkedWithoutLine`) is named as not priced. Pure; tested.
+ */
+internal fun invoiceSessionLinksSavedText(result: LinkInvoiceSessionsResult): String {
+    val a = result.added.size
+    val r = result.removed.size
+    if (a == 0 && r == 0) return "Linked visits unchanged."
+    val parts = buildList {
+        if (a > 0) add("$a linked")
+        if (r > 0) add("$r unlinked")
+    }
+    val withoutLine = result.linkedWithoutLine.toSet()
+    val unpriced = result.added.count { it in withoutLine }
+    val priceNote = when {
+        unpriced == 0 -> ""
+        unpriced == 1 -> " The linked visit no longer shows as un-invoiced, and its price was not added to this invoice."
+        else -> " The $unpriced linked visits no longer show as un-invoiced, and their prices were not added to this invoice."
+    }
+    return "Visits saved: ${parts.joinToString(", ")}.$priceNote"
+}
 /**
  * #1609: a CANCELLED visit is work that did not happen, so the picker shows it
  * but will not newly tick it, and `linkInvoiceSessions` refuses it with
@@ -1316,10 +1388,23 @@ internal fun archiveRefusedForMoneyOwed(message: String): Boolean =
  * same bland success as an ordinary one. The operator has just written a real
  * balance off the outstanding total and nothing will chase it again.
  */
-internal fun archiveSuccessMessage(restoring: Boolean, force: Boolean): String = when {
-    restoring -> "Invoice restored to the working list."
-    force -> "Invoice archived, and the balance written off the outstanding total."
-    else -> "Invoice archived."
+internal fun archiveSuccessMessage(
+    restoring: Boolean,
+    force: Boolean,
+    /** #2168: visits an archived draft put back on the un-invoiced list. */
+    released: Int = 0,
+    /** #2168: the server's sentence about visits a restored draft could not take back. */
+    notice: String = "",
+): String {
+    if (restoring) {
+        return if (notice.isBlank()) "Invoice restored to the working list." else "Invoice restored to the working list. $notice"
+    }
+    val base = if (force) "Invoice archived, and the balance written off the outstanding total." else "Invoice archived."
+    return when {
+        released <= 0 -> base
+        released == 1 -> "$base Its visit is back on the un-invoiced list."
+        else -> "$base Its $released visits are back on the un-invoiced list."
+    }
 }
 /**
  * WHAT THE SERVER SAYS HAPPENED, in the operator's words. Pure; unit-tested.

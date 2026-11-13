@@ -80,9 +80,12 @@ class LinkSessionsOtherInvoiceTest {
         val t = screen.readText()
         assertTrue("linkPickerOnOtherInvoice(session, invoiceId, storedIds)" in t)
         // #1609: a cancelled visit is not tickable either.
-        assertTrue("enabled  = !elsewhere && !cancelled && !saveLoading" in t)
+        // #2091: and a visit a line on this invoice bills cannot be unticked.
+        assertTrue("enabled  = !elsewhere && !cancelled && !billedHere && !saveLoading" in t)
         assertTrue("linkPickerCancelled(session, storedIds)" in t)
-        assertTrue("toggleLinkPick(pendingIds, sid, allSessions, invoice._id, invoice.sessionIds)" in t)
+        assertTrue(
+            "pendingIds, sid, allSessions, invoice._id, invoice.sessionIds, linkPickerBilledIds(invoice.lineItems)" in t,
+        )
         assertTrue("\" · on another invoice\"" in t)
     }
 }

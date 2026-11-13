@@ -65,7 +65,9 @@ const validPayload = {
   total: 150.5,
   amountDue: 150.5,
   status: 'sent',
-  sessionIds: ['s1', 's2'],
+  // #1901: an invoice now claims the visits it names, and a visit with no record
+  // is refused, so the shared fixture names none. Suites about visits seed them.
+  sessionIds: [] as string[],
 };
 
 describe('createInvoice zod validation', () => {
@@ -592,7 +594,7 @@ describe('createInvoice structured terms', () => {
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     await createInvoiceHandler(
-      req({ ...validPayload, termsCode: 'net_7_after_last_visit', dueDate: '' }),
+      req({ ...validPayload, sessionIds: ['s1', 's2'], termsCode: 'net_7_after_last_visit', dueDate: '' }),
     );
     const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
     expect(written?.data.dueDate).toBe('2026-06-16');
@@ -646,7 +648,7 @@ describe('createInvoice structured terms', () => {
 /** #408: a line drawn from a visit stays bound to it. */
 describe('createInvoice bound line items', () => {
   it('stores the session a line was drawn from', async () => {
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ docs: { 'kin_care_sessions/s1': { kinfolkId: 'fam1', status: 'COMPLETED' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await createInvoiceHandler(
       req({

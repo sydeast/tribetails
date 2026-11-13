@@ -477,6 +477,17 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 - The SERVER mints the doc id; the composer does not invent one. Stamps
   `kinfolkId` from `familyId` (this is why the portal can see the invoice at all),
   plus `_id`, `createdAt`, `updatedAt`.
+- #1901: EVERY VISIT IT BILLS IS MARKED AS BILLED BY IT, in the same
+  transaction: the stored `sessionIds` is the request's ids plus any visit a
+  line is bound to (blanks and repeats collapse), and each visit gets
+  `invoiceId` = the new invoice (`_attribution: 'manual'`, ISO
+  `_attributionAt`). A visit with no record (`session_not_found`), a cancelled
+  one (`session_cancelled`) or one another invoice bills
+  (`session_on_other_invoice`, naming that invoice's number, or "another
+  invoice" with `invoiceNumber: ''` when it has none, never its id) is refused
+  before anything is written, and before a number is drawn. A replay writes no visit.
+  Rules shared with `linkInvoiceSessions` and `updateInvoice`
+  (`lib/invoiceSessionLinks.ts`).
 - `lineItems` IS ADDITIVE. Omit it and the behaviour is unchanged: the caller's
   `total` / `amountDue` are stored verbatim and NO cents field is written at all.
   That absence is load-bearing rather than cosmetic. `updateInvoice` reads the
@@ -642,6 +653,18 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   The W3-1 response schema DESCRIBES this rather than correcting it, because
   three clients are deployed against it. Clamping the wire, or adding
   `overpaidCents` to it, is a shape change and belongs to its own PR.
+- #1970: A VISIT'S LINE AND ITS LINK MOVE TOGETHER. When `patch.lineItems`
+  drops a line bound to a visit, that visit leaves the invoice's `sessionIds`
+  and its own `invoiceId` is cleared (`''`, `'manual_unlink'`) in the same
+  transaction, unless its back-link names another invoice (#1259). A line
+  newly bound to a visit claims it by the `createInvoice` rules. A delta, not
+  "the set is the lines": a visit linked with no line of its own is left
+  alone. Structured terms resolve from the set the edit leaves. Audit payload
+  carries `sessionsLinked` / `sessionsUnlinked`.
+- #2168: AN ARCHIVED INVOICE IS READ-ONLY. Any edit of one, in any state, is
+  `failed-precondition` / `invoice_archived` ("This invoice is archived.
+  Restore it before sending or changing it."), decided on the transaction's
+  read, nothing written. `unarchiveInvoice` is the way back.
 - **There is no `total` or `amountDue` in the request, and `patch` is `.strict()`.**
   The server recomputes every money field from the stored line items and the
   recorded payments and IGNORES anything else. A client that tries to assert what
@@ -685,7 +708,8 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   is the computed one), so it does not count as touching money and stays
   editable on a settled invoice. Still deliberately absent from the patch:
   `status` (the classifier owns it, ADR-0002), `sessionIds`/`_attribution`
-  (`linkInvoiceSessions` owns the link), `archivedAt`/`archivedBy`
+  (not settable: since #1970 the set follows the visit-bound lines, see
+  below, and `linkInvoiceSessions` owns links with no line), `archivedAt`/`archivedBy`
   (`archiveInvoice`/`unarchiveInvoice`), and `kinfolkId` (re-homing an invoice
   to another household is not an edit).
 
@@ -759,7 +783,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### linkInvoiceSessions
 - req `{ invoiceId: string /* 1..200 */, sessionIds: string[] /* each 1..200, max 200; duplicates collapsed */ }`
-- res `{ ok: true, invoiceId: string, sessionIds: string[], added: string[], removed: string[], status: string /* classifier state */, editScope: 'all'|'metadataOnly'|'none' }`
+- res `{ ok: true, invoiceId: string, sessionIds: string[], added: string[], removed: string[], linkedWithoutLine: string[] /* #2091: linked visits no line on this invoice bills */, status: string /* classifier state */, editScope: 'all'|'metadataOnly'|'none' }`
 - W2-1 (ADR-0002): replaces android's two direct writes,
   `AuntieRepository.updateInvoiceSessionIds` (invoice side) and the per-session
   `updateSessionInvoiceId` loop. ONE TRANSACTION owns both directions: the
@@ -791,9 +815,26 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   written. There is deliberately NO invoice/session kinfolk-equality check on
   the staff path: legacy rows carry blank kinfolkIds and android performs no
   such check today.
-- Errors: `not-found` for an unknown invoice; `failed-precondition` /
-  `session_not_found` (with `details.missing`) when any named session does not
-  exist. Atomic: nothing written.
+- #2091: linking moves NO money. A linked visit leaves the un-invoiced list
+  without its price being added (the callable runs on paid, cancelled and
+  typed-total invoices, and an unpriceable visit has no line to add), so the
+  response names every linked visit with no line on this invoice
+  (`linkedWithoutLine`) and every client says so at the moment of linking.
+  The other direction is strict: a visit a line on this invoice bills cannot
+  be unlinked here (`session_billed_on_line`, `details.sessionIds`); removing
+  the line in `updateInvoice` unlinks it (#1970).
+- The claim and release rules are shared with `createInvoice` and
+  `updateInvoice` (`lib/invoiceSessionLinks.ts`): a claim on a visit with no
+  record (`session_not_found`), a cancelled one (`session_cancelled`) or one
+  another invoice bills (`session_on_other_invoice`, `details.conflicts[]`
+  with that invoice's number, `''` when it has none, never its id) is refused;
+  a release leaves a back-link naming another invoice alone (#1259), and a
+  release of a visit whose record is gone just drops it from the set.
+- #2168: an archived invoice links and unlinks nothing:
+  `failed-precondition` / `invoice_archived`, the same refusal as
+  `updateInvoice`.
+- Errors: `not-found` for an unknown invoice; `failed-precondition` with the
+  codes above. Atomic: nothing written.
 - Audit `BILLING_INVOICE_SESSIONS_LINKED` with the full added/removed delta.
 
 ### recordPayment
@@ -906,7 +947,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### archiveInvoice
 - req `{ invoiceId: string /* 1..200 */, force?: boolean }`
-- res `{ ok: true, invoiceId: string }`
+- res `{ ok: true, invoiceId: string, releasedSessionIds: string[] }`
 - Stamps `archivedAt` (serverTimestamp) + `archivedBy`. Archiving is NOT deletion
   and NOT cancellation: every field survives, and the kinfolk portal is unaffected.
   It means the operator has stopped working the invoice, so it drops out of the
@@ -917,6 +958,61 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   anyone). `force: true` overrides and is audited at `warn` with `forced: true`,
   since it is a decision to write off real money.
 - `failed-precondition` / `invoice_already_archived` rather than restamping.
+- #2168: ARCHIVING A DRAFT LETS GO OF ITS VISITS. One transaction: every visit
+  the draft names (`sessionIds`, its lines' `sessionId`) whose `invoiceId` is this
+  draft gets `invoiceId: ''` (`_attribution: 'manual_unlink'`) and is back on the
+  un-invoiced list; the draft's `sessionIds` becomes `[]` and the set it had is
+  kept in `releasedSessionIds`. Lines are untouched. `releasedSessionIds` in the
+  response names the visits let go. Any other state (sent, paid, quote) keeps
+  its visits and answers `[]`.
+
+### unarchiveInvoice
+- req `{ invoiceId: string /* 1..200 */ }`
+- res `{ ok: true, invoiceId: string, reclaimedSessionIds: string[], notReclaimed: { sessionId: string, reason: 'on_other_invoice'|'cancelled'|'not_found', invoiceNumber: string }[], notice: string }`
+- Writes `archivedAt: null`, `archivedBy: null`. `failed-precondition` /
+  `invoice_not_archived` when it was not archived.
+- #2168: RESTORING A DRAFT TAKES BACK ONLY THE FREE VISITS. One transaction,
+  every visit read in it: a visit the draft names (`releasedSessionIds`,
+  `sessionIds`, its lines) that is unclaimed or still names it is claimed again
+  and becomes the draft's `sessionIds`; one another invoice has billed since
+  (`on_other_invoice`, with that invoice's number, or `''` when it has none,
+  never its id), one cancelled since, or one with no record is left where it
+  is and listed in `notReclaimed`. `notice` says those in plain words, by
+  their America/Chicago day, and names a number-less invoice "another
+  invoice", for every client to show ('' when every visit came back). Never
+  refused for this. Any other state touches no visit. A line left on the draft
+  for such a visit keeps the draft from being sent (`reviewAndSendDraftInvoice`,
+  `draft_visits_not_billable`) until Edit removes it.
+- Until it is restored, an archived invoice is read-only: `updateInvoice`,
+  `linkInvoiceSessions` and `reviewAndSendDraftInvoice` (and `postInvoiceEvent`,
+  which delegates to it) refuse it with `invoice_archived`.
+
+### reviewAndSendDraftInvoice
+- req `{ invoiceId: string /* 1..200 */ }`
+- res `{ ok: true, invoiceId: string, appOnly?: boolean /* #1511 */ }`
+- Sends a draft: one transaction checks it and flips the status to `open`
+  with the state stamp and the pay-method snapshot, and only after that
+  commits does `invoice.new` go to the household's billing member, so a
+  household is never told about an invoice that is still a hidden draft. The
+  dispatch is not swallowed: when it fails, the invoice is put back to the
+  draft it was (only if it is still open, sent by this caller, not archived
+  and unpaid) and the error surfaces, so a failed send leaves a draft. When it
+  cannot be put back, the error is `internal` / `invoice_sent_not_announced`
+  ("The invoice was sent, but the household could not be told about it. Use
+  Send reminder to tell them.").
+- Refusals, all `failed-precondition` unless noted, every one before the
+  household is told and with nothing written: `not-found` for an unknown
+  invoice; `invoice_archived` (#2168); not a draft; missing total, household
+  or number; and (#2168 review) `draft_visits_not_billable` when a line bills
+  a visit another invoice now bills, a cancelled visit or one with no record.
+  That message names each visit by its America/Chicago day and the other
+  invoice by its number ("another invoice" when it has none), and
+  `details.visits[]` carries `{ sessionId, reason: 'on_other_invoice'|'cancelled'|'not_found', invoiceNumber }`.
+  A visit linked with no line is attribution and is not judged.
+- Checked in the same transaction that flips the status, so an archive, a
+  claim or a second send landing first re-runs it and is refused before any
+  notice. That transaction also claims a line's visit whose back-link is blank
+  (a draft made before #1901) and adds it to `sessionIds`.
 
 ### retryInvoiceCheckoutClose (#1113)
 - req `{ invoiceId: string /* 1..200 */ }`

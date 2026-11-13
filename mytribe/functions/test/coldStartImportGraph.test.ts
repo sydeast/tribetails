@@ -248,13 +248,22 @@ const ALLOWED_EAGER_PACKAGES = [
  * with its Activity Log line). Its words, `lib/activityWords.ts`, load with
  * `await import()` inside the handler, so the entry is the only module it adds.
  *
- * 452 since #2164 / #2182 (on top of #2161's 450): two new FUNCTIONS entries,
+ * 451 since #1901 (on top of #2161's 450): `lib/invoiceSessionLinks.ts`, the
+ * one place that sets and clears a visit's billed link, which
+ * `admin/createInvoice.ts`, `admin/updateInvoice.ts` and
+ * `admin/linkInvoiceSessions.ts` (entries already in this graph) share inside
+ * their transactions so the three cannot disagree. Its runtime imports are
+ * firebase-admin, firebase-functions, `lib/sessionInvoicing.ts`, and (for the
+ * Chicago day) `lib/bookingTimeBlocks.ts` and `lib/businessHours.ts`, all
+ * already resident.
+ *
+ * 453 since #2164 / #2182 (on top of #1901's 451): two new FUNCTIONS entries,
  * `admin/staffWorkSettings.ts` and `admin/myStaffNotificationOptions.ts`, the
  * Auntie's narrow settings reads. Their file-scope imports (the booking-policy
  * resolver, the notification catalog and prefs, the callable wrapper) are
  * already resident, so each entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 452;
+const MAX_OWN_EAGER_MODULES = 453;
 
 interface Edge {
   spec: string;

@@ -137,6 +137,18 @@ export function invoiceActionsFor(state: InvoiceState): readonly InvoiceAction[]
   }
 }
 
+/**
+ * #2168: what an invoice is offered once archiving is counted in. An archived
+ * invoice is read-only until it is restored: the server refuses to send, edit
+ * or link one (`invoice_archived`), so Review and send is never offered on it,
+ * from the list row or from the detail panel. The collection actions are left
+ * as the state gives them: archiving does not stop a household paying.
+ */
+export function invoiceActionsOffered(state: InvoiceState, archived: boolean): readonly InvoiceAction[] {
+  const actions = invoiceActionsFor(state);
+  return archived ? actions.filter((a) => a !== 'reviewSend') : actions;
+}
+
 const USD_DIGITS = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,

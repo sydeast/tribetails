@@ -27,6 +27,7 @@ import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { payMethodSnapshotForIssue } from '../lib/payMethodSnapshot';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
+import { boundSessionIds, readSessionLinks, stageSessionLinks } from '../lib/invoiceSessionLinks';
 
 /**
  * Server-mints the invoice doc id so the id is authoritative (the composer does
@@ -238,6 +239,13 @@ export async function createInvoiceHandler(
     };
   }
 
+  // #1901: THE VISITS THIS INVOICE BILLS, ONE SET. The composer sends the ids
+  // of the visits its lines were drawn from; a line bound to a visit the list
+  // left out is still billing it, so it joins the set rather than being billed
+  // with no link behind it. Blank and repeated ids collapse.
+  const sessionIds = Array.from(
+    new Set([...args.sessionIds.map((id) => id.trim()).filter((id) => id !== ''), ...boundSessionIds(args.lineItems)]),
+  );
   const firestore = db();
   // TERMS, AND THE DUE DATE THEY DECIDE (#408). Structured terms make the
   // server the authority on when this invoice is due, resolved from the visits
@@ -245,7 +253,7 @@ export async function createInvoiceHandler(
   // `termsCode` both fields are stored verbatim, exactly as they always were.
   let termsFields: Record<string, unknown> = { terms: args.terms, dueDate: args.dueDate };
   if (args.termsCode !== undefined) {
-    const serviceDates = await serviceDaysForSessions(firestore, args.sessionIds);
+    const serviceDates = await serviceDaysForSessions(firestore, sessionIds);
     const outcome = resolveStructuredTerms({
       termsCode: args.termsCode,
       date: args.date,
@@ -279,7 +287,7 @@ export async function createInvoiceHandler(
     total: args.total,
     amountDue: args.amountDue,
     status: args.status,
-    sessionIds: args.sessionIds,
+    sessionIds,
     kinfolkId: args.familyId,
     _id: ref.id,
     ...money,
@@ -312,6 +320,16 @@ export async function createInvoiceHandler(
         return null;
       }
     }
+    // #1901: EVERY VISIT THIS INVOICE BILLS IS MARKED AS BILLED BY IT, in this
+    // same transaction. Until now only the invoice's `sessionIds` named the
+    // visit; the visit named nothing back, so New invoice kept offering it and
+    // the next invoice billed it again. Read here, before the number is drawn,
+    // because drawing it writes the counter and every read must come first. A
+    // visit with no record, a cancelled one, or one another invoice already
+    // bills is refused before anything is written; two New invoice saves for
+    // one visit are refereed by the transaction, the loser re-runs and is
+    // refused.
+    const links = await readSessionLinks(tx, firestore, { invoiceId: ref.id, claim: sessionIds, release: [] });
     // #1609: a typed number is refused when another invoice already holds it,
     // and a minted one steps over any such number, so no two share one.
     const typedNumber = (args.invoiceNumber ?? '').trim();
@@ -346,6 +364,7 @@ export async function createInvoiceHandler(
     // are refereed by the server rather than by the read above.
     if (args.idempotencyKey !== undefined) tx.create(ref, full);
     else tx.set(ref, full);
+    stageSessionLinks(tx, firestore, links, new Date().toISOString());
     return { invoiceNumber, storedStatus: full.status };
   });
 

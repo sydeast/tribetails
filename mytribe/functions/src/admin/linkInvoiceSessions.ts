@@ -17,7 +17,13 @@ import {
 } from '../lib/invoiceEditPolicy';
 import { paidCentsFromPayments, invoiceTotalCentsOf, type PaymentAmount } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
-import { isSessionCancelled, isSessionClaimed } from '../lib/sessionInvoicing';
+import { refuseIfArchived } from '../lib/invoiceArchive';
+import {
+  boundSessionIds,
+  linkedWithoutLine,
+  readSessionLinks,
+  stageSessionLinks,
+} from '../lib/invoiceSessionLinks';
 import {
   InvoiceEditScopeSchema,
   InvoiceStateSchema,
@@ -83,6 +89,16 @@ import {
  * Linking is NOT gated on editScope: attributing which sessions a paid or
  * cancelled invoice covered is legitimate after-the-fact bookkeeping (it moves
  * no money), and Android permits it today.
+ *
+ * #2091: LINKING MOVES NO MONEY, AND SAYS SO. A linked visit leaves the
+ * un-invoiced list without its price being added, because this callable runs
+ * on paid, cancelled and typed-total invoices, where adding a line would move
+ * locked money or overwrite a total typed by hand. The response names every
+ * linked visit with no line (`linkedWithoutLine`) and every client says it at
+ * the moment of linking. The other direction is held strictly: a visit a line
+ * on this invoice still bills cannot be unlinked here (`session_billed_on_line`),
+ * because that would put billed work back on the un-invoiced list. Removing
+ * the line in Edit unlinks it (`updateInvoice`, #1970).
  */
 // Exported so the callable-contract drift guard can freeze this request shape.
 export const Args = z.object({
@@ -111,6 +127,15 @@ export const Result = z
     added: z.array(z.string()),
     /** Sessions whose `invoiceId` was cleared in this write. */
     removed: z.array(z.string()),
+    /**
+     * #2091: the linked visits (after this write) that no line on this
+     * invoice bills. Linking marks a visit as billed by this invoice, so it
+     * leaves the un-invoiced list, but it does not add the visit's price: the
+     * clients say so from this list, at the moment of linking, rather than
+     * guessing from the lines they hold. On an invoice with a typed total and
+     * no lines, every linked visit is here.
+     */
+    linkedWithoutLine: z.array(z.string()),
     /**
      * The classifier state persisted onto the doc (ADR-0002). NOT nullable and
      * NOT a free string: linking always stamps, so a caller that reads this
@@ -176,100 +201,15 @@ export async function linkInvoiceSessionsHandler(
     if (!testOwnsDoc(actor.testMode, data.kinfolkId ?? '')) {
       throw new HttpsError('permission-denied', 'This invoice is outside your test sandbox.');
     }
+    // #2168: an archived invoice is read-only until it is restored, so no
+    // visit is linked to or unlinked from it here.
+    refuseIfArchived(data);
 
     const current = storedSessionIds(data);
     const currentSet = new Set(current);
     const newSet = new Set(newIds);
     const added = newIds.filter((id) => !currentSet.has(id));
     const removed = current.filter((id) => !newSet.has(id));
-
-    // ALL reads before ANY write (a Firestore transaction requirement, and the
-    // point of the design: nothing is written until every touched doc has been
-    // proven to exist and to be in scope).
-    const touched = [...added, ...removed];
-    const sessionRefs = touched.map((id) => db().collection('kin_care_sessions').doc(id));
-    const sessionSnaps = await Promise.all(sessionRefs.map((ref) => tx.get(ref)));
-    const missing: string[] = [];
-    const addedSet = new Set(added);
-    const elsewhere: Array<{ sessionId: string; invoiceId: string }> = [];
-    // #1259: removed sessions whose back-link names ANOTHER invoice. They drop
-    // out of this invoice's set but their `invoiceId` is left alone.
-    const claimedElsewhere = new Set<string>();
-    // #1609: ADDED sessions that were cancelled. Already-linked ones can stay
-    // (and be unlinked); a new link to work that never happened is refused.
-    const cancelled: string[] = [];
-    sessionSnaps.forEach((snap, i) => {
-      const sid = touched[i];
-      if (!snap.exists) {
-        missing.push(sid);
-        return;
-      }
-      const sData = snap.data() as { kinfolkId?: string; invoiceId?: unknown; status?: unknown } | undefined;
-      if (addedSet.has(sid) && isSessionCancelled(sData?.status)) cancelled.push(sid);
-      if (!testOwnsDoc(actor.testMode, sData?.kinfolkId ?? '')) {
-        throw new HttpsError('permission-denied', `Session '${sid}' is outside your test sandbox.`);
-      }
-      // #1254: an ADDED session already billed by another invoice is refused.
-      // Taking it would leave that invoice's `sessionIds` still claiming the
-      // same visit. Absent, empty and whitespace are unclaimed (the rule
-      // `listUninvoicedSessions` uses), and a back-link to THIS invoice is a
-      // half-link being completed, not a theft. A session already in the
-      // stored set is not an add, so it never reaches this check.
-      if (addedSet.has(sid) && isSessionClaimed(sData?.invoiceId)) {
-        const claimedBy = String(sData?.invoiceId).trim();
-        if (claimedBy !== args.invoiceId) elsewhere.push({ sessionId: sid, invoiceId: claimedBy });
-      }
-      // #1259: a removed session whose back-link names another invoice is a
-      // half-link left by the old behaviour. That invoice still bills it, so
-      // clearing the back-link would offer it to the composer again.
-      if (!addedSet.has(sid) && isSessionClaimed(sData?.invoiceId)) {
-        if (String(sData?.invoiceId).trim() !== args.invoiceId) claimedElsewhere.add(sid);
-      }
-    });
-    if (missing.length > 0) {
-      // Fail-loud and atomic, unlike Android's log-and-continue loop: a link
-      // set naming a session that does not exist is a caller bug, and writing
-      // the rest would store an invoice that claims it.
-      throw new HttpsError(
-        'failed-precondition',
-        `Session(s) not found: ${missing.join(', ')}.`,
-        { code: 'session_not_found', missing },
-      );
-    }
-    if (cancelled.length > 0) {
-      throw new HttpsError(
-        'failed-precondition',
-        `A cancelled visit cannot be billed: ${cancelled.join(', ')}. Untick it, or restore the visit first.`,
-        { code: 'session_cancelled', sessionIds: cancelled },
-      );
-    }
-    if (elsewhere.length > 0) {
-      // Still before any write. The other invoice is read only to name it by
-      // its number in the message the clients show verbatim; a missing or
-      // number-less invoice falls back to its id.
-      const otherIds = Array.from(new Set(elsewhere.map((e) => e.invoiceId)));
-      const otherSnaps = await Promise.all(
-        otherIds.map((id) => tx.get(db().collection('invoices').doc(id))),
-      );
-      const numberOf = new Map<string, string>();
-      otherSnaps.forEach((snap, i) => {
-        const n = snap.exists ? (snap.data() as InvoiceDoc | undefined)?.invoiceNumber : undefined;
-        numberOf.set(otherIds[i], typeof n === 'string' && n.trim() !== '' ? n.trim() : otherIds[i]);
-      });
-      const conflicts = elsewhere.map((e) => ({
-        sessionId: e.sessionId,
-        invoiceId: e.invoiceId,
-        invoiceNumber: numberOf.get(e.invoiceId) ?? e.invoiceId,
-      }));
-      const named = conflicts
-        .map((c) => `visit ${c.sessionId} is on invoice ${c.invoiceNumber}`)
-        .join('; ');
-      throw new HttpsError(
-        'failed-precondition',
-        `Already billed on another invoice: ${named}. Unlink it there first.`,
-        { code: 'session_on_other_invoice', conflicts },
-      );
-    }
 
     const paymentsSnap = await tx.get(invRef.collection('payments'));
     const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
@@ -283,6 +223,51 @@ export async function linkInvoiceSessionsHandler(
       quoteAcceptanceOf(data),
     );
 
+    // #2091: A VISIT A LINE STILL BILLS CANNOT BE UNLINKED HERE. Unlinking it
+    // would put it back on the un-invoiced list while this invoice still
+    // charges for it, so the next New invoice bills it a second time. The line
+    // is the thing to remove (Edit), and since #1970 removing it unlinks the
+    // visit in the same write. Named by the line's own words, the ones the
+    // operator reads under What was billed.
+    const lines = Array.isArray(data.lineItems) ? (data.lineItems as Array<Record<string, unknown>>) : [];
+    const billedHere = new Set(boundSessionIds(lines));
+    const stillBilled = removed.filter((id) => billedHere.has(id));
+    if (stillBilled.length > 0) {
+      const words = stillBilled.map((id) => {
+        const line = lines.find((l) => typeof l['sessionId'] === 'string' && (l['sessionId'] as string).trim() === id);
+        const d = typeof line?.['description'] === 'string' ? (line['description'] as string).trim() : '';
+        return d === '' ? 'a visit' : `"${d}"`;
+      });
+      // Only point at Edit when Edit can remove the line: on a paid, cancelled
+      // or accepted invoice the lines are locked, and saying "remove it in
+      // Edit" would send the operator to a refusal.
+      const one = stillBilled.length === 1;
+      const route =
+        scope === 'all'
+          ? ' Remove the line in Edit, and the visit is unlinked with it.'
+          : " This invoice's lines are locked, so the line cannot be removed.";
+      throw new HttpsError(
+        'failed-precondition',
+        `${words.join(', ')} ${one ? 'is' : 'are'} billed on a line of this invoice, so ${one ? 'it stays' : 'they stay'} linked.${route}`,
+        { code: 'session_billed_on_line', sessionIds: stillBilled },
+      );
+    }
+    // ALL reads before ANY write (a Firestore transaction requirement, and the
+    // point of the design: nothing is written until every touched doc has been
+    // proven to exist and to be in scope). The rules for a claim (exists, not
+    // cancelled, not on another invoice) and for a release (#1259: a back-link
+    // naming another invoice is left alone) live in lib/invoiceSessionLinks.ts,
+    // shared with createInvoice and updateInvoice so the three cannot drift.
+    const plan = await readSessionLinks(tx, db(), {
+      invoiceId: args.invoiceId,
+      claim: added,
+      release: removed,
+      checkScope: (sid, sData) => {
+        if (!testOwnsDoc(actor.testMode, typeof sData['kinfolkId'] === 'string' ? sData['kinfolkId'] : '')) {
+          throw new HttpsError('permission-denied', `Session '${sid}' is outside your test sandbox.`);
+        }
+      },
+    });
     tx.set(
       invRef,
       {
@@ -295,33 +280,9 @@ export async function linkInvoiceSessionsHandler(
       },
       { merge: true },
     );
-    added.forEach((sid) => {
-      tx.set(
-        db().collection('kin_care_sessions').doc(sid),
-        {
-          invoiceId: args.invoiceId,
-          _attribution: 'manual',
-          _attributionAt: nowIso,
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
-    });
-    removed.forEach((sid) => {
-      if (claimedElsewhere.has(sid)) return;
-      tx.set(
-        db().collection('kin_care_sessions').doc(sid),
-        {
-          invoiceId: '',
-          _attribution: 'manual_unlink',
-          _attributionAt: nowIso,
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
-    });
+    stageSessionLinks(tx, db(), plan, nowIso);
 
-    return { data, added, removed, state, scope };
+    return { data, added, removed, state, scope, withoutLine: linkedWithoutLine(newIds, data.lineItems) };
   });
 
   await writeAuditEntry({
@@ -376,6 +337,7 @@ export async function linkInvoiceSessionsHandler(
     sessionIds: newIds,
     added: outcome.added,
     removed: outcome.removed,
+    linkedWithoutLine: outcome.withoutLine,
     status: outcome.state,
     editScope: outcome.scope,
   });

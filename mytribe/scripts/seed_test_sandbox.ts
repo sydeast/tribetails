@@ -271,6 +271,8 @@ export interface SessionDoc {
   endTime: string;
   arrivedAt: string | null;
   departedAt: string | null;
+  /** The invoice that bills this visit, when one does (#1901). */
+  invoiceId?: string;
   gpsSummary?: {
     distanceMeters: number;
     durationSeconds: number;
@@ -680,6 +682,8 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
     mkSession(2, 'SCHEDULED', t2Start, t2End),
     {
       ...mkSession(3, 'COMPLETED', p1Start, p1End),
+      // #1901: billed by the open invoice below, and says so.
+      invoiceId: `${TEST_TRIBE_ID}-invoice-open`,
       // GPS replay for the Schedule screen route map.
       gpsSummary: {
         distanceMeters: 1830,
@@ -698,7 +702,9 @@ export function buildSandboxPayload(now: Date = new Date(), uid: string = TEST_A
       },
     },
     mkSession(4, 'CANCELLED', p2Start, p2End),
-    mkSession(5, 'COMPLETED', p3Start, p3End),
+    // #1901: a billed visit names its invoice back, as createInvoice now writes
+    // it, so the sandbox does not show the "does not point back" warning.
+    { ...mkSession(5, 'COMPLETED', p3Start, p3End), invoiceId: `${TEST_TRIBE_ID}-invoice-paid` },
   ];
 
   // -------------------------------------------------------------------------

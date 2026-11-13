@@ -722,7 +722,9 @@ private fun InvoiceList(
  * receipt claims a payment.
  */
 internal fun invoiceRowActionOrNull(invoice: Invoice): InvoiceAction? {
-    val actions = invoiceActionsFor(invoiceStateOrNull(invoice))
+    // #2168: an archived draft is read-only until restored, so its row offers
+    // no Review & send.
+    val actions = invoiceActionsOffered(invoiceStateOrNull(invoice), invoiceIsArchived(invoice))
     return listOf(InvoiceAction.REVIEW_AND_SEND, InvoiceAction.SEND_REMINDER, InvoiceAction.GENERATE_RECEIPT)
         .firstOrNull { it in actions }
 }
@@ -878,6 +880,11 @@ internal fun InvoiceRow(
                 color = amountColor,
             )
             AuntieStatusPill(label = statusLabel, tone = statusTone, mono = true)
+            // #2168: the console lists archived invoices with the rest, so the
+            // row says which ones are, as web and Android do.
+            if (invoiceIsArchived(invoice)) {
+                AuntieStatusPill(label = "Archived", tone = AuntieStatusTone.Neutral, mono = true)
+            }
             RowAction(
                 action = action,
                 onReceipt = { onReceipt(invoice._id) },

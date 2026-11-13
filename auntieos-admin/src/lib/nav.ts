@@ -58,6 +58,11 @@ export interface NavEntry {
   readonly slug: string;
   /** Reachable by URL but never pinned in the rail. */
   readonly contextual?: true;
+  /**
+   * The owner's screen only (#2163): an Auntie gets no rail entry and every
+   * address for it sends her Home (`router.tsx#refuseAuntie`).
+   */
+  readonly ownerOnly?: true;
 }
 
 /** Order is the order shown in the rail. */
@@ -90,9 +95,11 @@ export const NAV: readonly NavEntry[] = [
   { dest: 'inbox', title: 'Inbox', group: 'more', slug: 'inbox' },
   { dest: 'notifications', title: 'Notifications', group: 'more', slug: 'notifications' },
   { dest: 'activity', title: 'Activity Log', group: 'more', slug: 'activity' },
-  { dest: 'settings', title: 'Settings', group: 'more', slug: 'settings' },
+  // #2163, operator ruling 2026-11-13: an Auntie sees neither Settings nor
+  // Templates (email, SMS, push). KinTale templates below stays hers.
+  { dest: 'settings', title: 'Settings', group: 'more', slug: 'settings', ownerOnly: true },
   { dest: 'trainingDocs', title: 'Tribal Intel', group: 'more', slug: 'tribal-intel' },
-  { dest: 'templates', title: 'Templates', group: 'more', slug: 'templates' },
+  { dest: 'templates', title: 'Templates', group: 'more', slug: 'templates', ownerOnly: true },
   // The visit-recap / checklist template editor (kintale_templates), distinct
   // from the email "Templates" above. Reachable from KinTales conceptually; a
   // pinned rail entry so it is discoverable next to the other authoring screens.
@@ -143,14 +150,19 @@ export const NAV: readonly NavEntry[] = [
   },
 ];
 
-/** What the rail renders, in order. Contextual destinations are filtered out. */
-export function railEntries(): NavEntry[] {
-  return NAV.filter((e) => !e.contextual);
+/**
+ * What the rail renders, in order. Contextual destinations are filtered out,
+ * and so are the owner-only ones when the signed-in account is an Auntie
+ * (#2163). `isAuntie` defaults to false, so the owner, the test admin and the
+ * offline session whose claims were not read keep the full rail.
+ */
+export function railEntries(isAuntie = false): NavEntry[] {
+  return NAV.filter((e) => !e.contextual && !(isAuntie && e.ownerOnly));
 }
 
 /** Rail entries for one group, in order. */
-export function railGroup(group: NavGroup): NavEntry[] {
-  return railEntries().filter((e) => e.group === group);
+export function railGroup(group: NavGroup, isAuntie = false): NavEntry[] {
+  return railEntries(isAuntie).filter((e) => e.group === group);
 }
 
 const BY_SLUG = new Map<string, Destination>([

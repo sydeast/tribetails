@@ -117,6 +117,17 @@ describe('#944 the allowlist is a real list of real callables', () => {
     const leaked = banks.filter((n) => AUNTIE_ALLOWED_CALLABLES.has(n));
     expect(leaked).toEqual([]);
   });
+
+  // #2163: Templates (email, SMS, push) and Business Settings are owner-only.
+  it('nothing on the allowlist reads or writes Templates or Business Settings', () => {
+    const ownerScreens = [
+      'listTemplates', 'listTemplateBindings', 'listCategories', 'listCatalogKeys',
+      'saveTemplate', 'assignTemplate', 'unassignTemplate', 'assignTemplatesToCategory',
+      'saveBusinessSettings',
+    ];
+    const leaked = ownerScreens.filter((n) => AUNTIE_ALLOWED_CALLABLES.has(n));
+    expect(leaked).toEqual([]);
+  });
 });
 
 describe('#944 wrapAdminCallable enforces the table', () => {
@@ -161,6 +172,24 @@ describe('#944 wrapAdminCallable enforces the table', () => {
       const wrapped = wrapAdminCallable(name, async () => ({ ok: true }));
       await expect(wrapped({ auth: auntieAuth } as never)).rejects.toMatchObject({ code: 'permission-denied' });
     }
+  });
+
+  /**
+   * #2163, operator ruling 2026-11-13: an Auntie never sees Templates (email,
+   * SMS, push). These three reads are called only by the Templates screens on
+   * every client (web Templates, TemplateAssignments, CategoryBindingDialog;
+   * Android TemplateRepository; desktop TemplateService), so they leave her
+   * list. The KinTale checklist bank is a different collection and stays.
+   */
+  it('#2163: REFUSES an Auntie the Templates reads, and still admits the owner', async () => {
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    for (const name of ['listTemplates', 'listTemplateBindings', 'listCategories']) {
+      const wrapped = wrapAdminCallable(name, async () => ({ ok: true }));
+      await expect(wrapped({ auth: auntieAuth } as never)).rejects.toMatchObject({ code: 'permission-denied' });
+      await expect(wrapped({ auth: ownerAuth } as never)).resolves.toMatchObject({ ok: true });
+    }
+    const kinTaleBank = wrapAdminCallable('listChecklistBank', async () => ({ ok: true }));
+    await expect(kinTaleBank({ auth: auntieAuth } as never)).resolves.toMatchObject({ ok: true });
   });
 
   it('admits an Auntie to the callables her job needs', async () => {

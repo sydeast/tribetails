@@ -23,6 +23,7 @@
  * would give it, and the admin's reader already treats null as "not archived".
  */
 
+import { HttpsError } from 'firebase-functions/v2/https';
 import { formatUsd } from './invoiceMath';
 
 export interface ArchivableInvoice {
@@ -58,6 +59,28 @@ export function amountStillOwed(doc: ArchivableInvoice): number {
     return doc.amountDue;
   }
   return 0;
+}
+
+/** `details.code` of the refusal below. */
+export const INVOICE_ARCHIVED_CODE = 'invoice_archived';
+
+/**
+ * #2168: AN ARCHIVED INVOICE IS READ-ONLY UNTIL IT IS RESTORED.
+ *
+ * Archiving a draft lets go of its visits (`archiveInvoice`), and only
+ * `unarchiveInvoice` takes them back, checking each one is still free. A send,
+ * an Edit or a Link visits on an archived invoice would go round that check: a
+ * draft sent while archived bills visits that are back on the un-invoiced list,
+ * and an Edit or a link made while archived claims or drops visits the restore
+ * then cannot account for. Every callable that writes an invoice's lines or
+ * its visits calls this on the snapshot its transaction read, in every state,
+ * not only on drafts.
+ */
+export function refuseIfArchived(doc: ArchivableInvoice): void {
+  if (!isArchived(doc)) return;
+  throw new HttpsError('failed-precondition', 'This invoice is archived. Restore it before sending or changing it.', {
+    code: INVOICE_ARCHIVED_CODE,
+  });
 }
 
 /** "$40.00" from a dollar amount, for the refusal message. */

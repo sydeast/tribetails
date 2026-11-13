@@ -127,6 +127,16 @@ describe('rail composition', () => {
     const slugs = NAV.map((e) => e.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
   });
+
+  // #2163: an Auntie's rail drops exactly Settings and Templates, nothing else.
+  it('leaves Settings and Templates, and only those, off an Auntie rail', () => {
+    const owner = railEntries().map((e) => e.slug);
+    const auntie = railEntries(true).map((e) => e.slug);
+    expect(owner.filter((s) => !auntie.includes(s))).toEqual(['settings', 'templates']);
+    expect(auntie).toContain('kintale-templates');
+    expect(railGroup('more', true).map((e) => e.slug)).not.toContain('settings');
+    expect(railGroup('more').map((e) => e.slug)).toContain('settings');
+  });
 });
 
 describe('NOTIFICATION_GATE_REDIRECT (#718)', () => {

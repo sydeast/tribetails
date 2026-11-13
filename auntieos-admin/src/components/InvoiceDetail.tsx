@@ -15,7 +15,7 @@ import {
 } from '../api/invoices';
 import {
   formatUsd,
-  invoiceActionsFor,
+  invoiceActionsOffered,
   invoicePartialPayment,
   invoiceStateInfo,
   isInvoiceOverdue,
@@ -646,6 +646,24 @@ interface EditDraft {
   moneyEditable: boolean;
 }
 
+/**
+ * The confirmation once an invoice is archived. #2168: an archived draft lets
+ * go of its visits, and the message says they are back on the un-invoiced list.
+ * Same words as Android.
+ */
+export function archiveNoticeText(force: boolean, released: number): string {
+  const base = force ? 'Invoice archived, and the balance written off the outstanding total.' : 'Invoice archived.';
+  if (released === 0) return base;
+  return released === 1
+    ? `${base} Its visit is back on the un-invoiced list.`
+    : `${base} Its ${String(released)} visits are back on the un-invoiced list.`;
+}
+
+/** The confirmation once an invoice is restored, with the server's #2168 sentence when a visit could not come back. */
+export function restoreNoticeText(notice: string): string {
+  return notice === '' ? 'Invoice restored to the working list.' : `Invoice restored to the working list. ${notice}`;
+}
+
 /** Which way the archive confirm is pointing, and whether money is at stake. */
 interface ArchivePrompt {
   direction: 'archive' | 'restore';
@@ -858,7 +876,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // a display refinement of `open`, never its own state, so an overdue invoice
   // already resolves to the outstanding set. An unstamped doc is offered
   // nothing: no state, no claim about what acting on it would do.
-  const allowed = state === null ? [] : invoiceActionsFor(state);
+  // #2168: an archived invoice is read-only until restored, so Review and send
+  // is not offered, nor armed from the list row.
+  const archived = isArchivedInvoice(invoice);
+  const allowed = state === null ? [] : invoiceActionsOffered(state, archived);
   const available = ACTIONS.filter((a) => allowed.includes(a.key));
 
   // `allowed.includes` is the guard on an ARMED action (see `initialAction`).
@@ -905,7 +926,6 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // an empty list and must not be rendered as an empty items table: a heading
   // over no rows reads as "nothing was billed".
   const storedLines = invoiceLineItems(invoice);
-  const archived = isArchivedInvoice(invoice);
   const dispute = invoiceDispute(invoice);
   const checkoutClosure = invoiceCheckoutClosure(invoice);
   // The household's answer to a quote (issue #385). Read through the accessor
@@ -949,7 +969,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // scope from `paidCents`; the server now persists its own answer next to the
   // state (ADR-0002), so offering is reading. `invoiceStamp` answered 'none'
   // for an unstamped doc — the safe affordance — so no extra null-check here.
-  const canEdit = editScope !== 'none';
+  // #2168: an archived invoice offers neither Edit nor Link visits; Restore is
+  // the way back, and the server refuses both until then.
+  const canEdit = editScope !== 'none' && !archived;
   const moneyEditable = editScope === 'all';
 
   const invoiceId = invoice._id;
@@ -1138,17 +1160,15 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     setActionError(null);
     try {
       if (archivePrompt.direction === 'restore') {
-        await unarchiveInvoice(invoice._id);
-        setNoticeIncomplete(false);
-        setNotice('Invoice restored to the working list.');
+        const { notice } = await unarchiveInvoice(invoice._id);
+        // #2168: a visit another invoice billed while this draft was archived
+        // stays there, and the server's sentence says which.
+        setNoticeIncomplete(notice !== '');
+        setNotice(restoreNoticeText(notice));
       } else {
-        await archiveInvoice(invoice._id, force);
+        const { releasedSessionIds } = await archiveInvoice(invoice._id, force);
         setNoticeIncomplete(false);
-        setNotice(
-          force
-            ? 'Invoice archived, and the balance written off the outstanding total.'
-            : 'Invoice archived.',
-        );
+        setNotice(archiveNoticeText(force, releasedSessionIds.length));
       }
       setBusy(false);
       setArchivePrompt(null);
@@ -1967,6 +1987,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             invoiceId={invoice._id}
             kinfolkId={invoice.kinfolkId}
             linkedIds={invoice.sessionIds}
+            // #2091: a visit a line bills stays linked; Edit is where its line goes.
+            billedIds={(invoice.lineItems ?? []).flatMap((l) => (l.sessionId ? [l.sessionId] : []))}
+            linesEditable={moneyEditable}
             // Held in the overlay's own busy flag, so the overlay cannot be
             // closed while the save is in flight.
             onBusyChange={setBusy}
@@ -2223,8 +2246,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             {canEdit && <GhostButton label="Edit" onClick={startEditing} />}
             {/* Offered in every state, as on Android and desktop: the callable
                 does not gate linking on editScope, since attributing work to a
-                bill moves no money. */}
-            <GhostButton label="Link visits" onClick={startLinking} />
+                bill moves no money. Not on an archived invoice (#2168). */}
+            {!archived && <GhostButton label="Link visits" onClick={startLinking} />}
             <GhostButton
               label={pdfBusy ? 'Making PDF…' : 'Download PDF'}
               onClick={() => void downloadPdf()}

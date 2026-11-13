@@ -214,7 +214,7 @@ describe('linkInvoiceSessions atomicity', () => {
       },
     });
     expect((err as Error).message).toBe(
-      'Already billed on another invoice: visit s1 is on invoice INV-7. Unlink it there first.',
+      'Already billed on another invoice: a visit with no date is on invoice INV-7. Unlink it there first.',
     );
     // Neither the invoice, nor s2 (which was fine), nor s1, nor invA changed.
     expect(ctx.writes).toEqual([]);
@@ -237,17 +237,19 @@ describe('linkInvoiceSessions atomicity', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: ['s1', 's2'] }))).resolves.toBeTruthy();
   });
-  it('#1254: the other invoice is named by its trimmed id when its doc is missing', async () => {
+  // #2168 review: an id never goes on screen. A missing or number-less other
+  // invoice is "another invoice", and its number is '' (the id stays in `invoiceId`).
+  it('#1254: the other invoice is "another invoice" when its doc is missing, never its id', async () => {
     const ctx = seed({ sessions: { s1: session('fam1', { invoiceId: '  gone  ' }) } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await expect(
       linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: ['s1'] })),
     ).rejects.toMatchObject({
       code: 'failed-precondition',
-      message: 'Already billed on another invoice: visit s1 is on invoice gone. Unlink it there first.',
+      message: 'Already billed on another invoice: a visit with no date is on another invoice. Unlink it there first.',
       details: {
         code: 'session_on_other_invoice',
-        conflicts: [{ sessionId: 's1', invoiceId: 'gone', invoiceNumber: 'gone' }],
+        conflicts: [{ sessionId: 's1', invoiceId: 'gone', invoiceNumber: '' }],
       },
     });
     expect(ctx.writes).toEqual([]);

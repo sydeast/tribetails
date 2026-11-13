@@ -1466,10 +1466,15 @@ private fun AuthenticatedNavHost(
                     }
                 )
             }
+            // #2163: Templates (email, SMS, push) is the owner's screen, the same
+            // as Settings, so it sits behind the same AdminGate. KinTale
+            // templates above is not gated: it stays reachable for an Auntie.
             composable(Screen.Templates.route) {
-                com.tribetails.auntieos.ui.admin.TemplatesScreen(
-                    onBack = { navController.popBackStack() },
-                )
+                AdminGate(repository = app.repository, onDenied = { navController.popBackStack() }) {
+                    com.tribetails.auntieos.ui.admin.TemplatesScreen(
+                        onBack = { navController.popBackStack() },
+                    )
+                }
             }
             composable(
                 route = Screen.KinTaleTemplateEditor.route,

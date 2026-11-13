@@ -124,7 +124,13 @@ vi.mock('../api/invoiceSendCheck', () => ({ readInvoiceSendMarks }));
 vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
 }));
-import { InvoiceDetail, paymentSplit, parseOptionalMoney } from './InvoiceDetail';
+import {
+  InvoiceDetail,
+  archiveNoticeText,
+  paymentSplit,
+  parseOptionalMoney,
+  restoreNoticeText,
+} from './InvoiceDetail';
 import { CallableTimeoutError } from '../lib/fns';
 import { sendMarksOf } from '../lib/invoiceSendCheck';
 import { formatUsd } from '../lib/invoiceFormat';
@@ -305,8 +311,8 @@ beforeEach(() => {
   updateInvoice.mockReset().mockResolvedValue({
     subtotalCents: 0, totalCents: 0, paidCents: 0, amountDueCents: 0,
   });
-  archiveInvoice.mockReset().mockResolvedValue(undefined);
-  unarchiveInvoice.mockReset().mockResolvedValue(undefined);
+  archiveInvoice.mockReset().mockResolvedValue({ releasedSessionIds: [] });
+  unarchiveInvoice.mockReset().mockResolvedValue({ notice: '' });
   retryInvoiceCheckoutClose.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv1', closedCount: 1, failedCount: 0 });
   getInvoiceLedger.mockReset().mockResolvedValue(ledgerResult());
   linkInvoiceSessions.mockReset();
@@ -1038,6 +1044,32 @@ describe('InvoiceDetail editing', () => {
     await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
     expect(updateInvoice).toHaveBeenCalledWith('inv1', { termsCode: 'net_30' });
   });
+  it('#1970: removing a visit line sends the lines without it, then re-reads Linked visits', async () => {
+    const user = userEvent.setup();
+    render(
+      <InvoiceDetail
+        invoice={entry({
+          amountDue: 90,
+          total: 90,
+          sessionIds: ['s1', 's2'],
+          lineItems: [
+            { description: 'Walk one', qty: 1, unitCents: 4500, sessionId: 's1' },
+            { description: 'Walk two', qty: 1, unitCents: 4500, sessionId: 's2' },
+          ],
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole('button', { name: /^edit$/i }));
+    await user.click(screen.getByRole('button', { name: 'Remove line 2' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateInvoice).toHaveBeenCalled());
+    const patch = updateInvoice.mock.calls[0]![1] as { lineItems: Array<{ sessionId?: string }> };
+    expect(patch.lineItems.map((l) => l.sessionId)).toEqual(['s1']);
+    // The server unlinks s2 with its line; the panel reads the ledger again.
+    await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(2));
+  });
   it('refuses an empty patch instead of writing an audit entry for nothing', async () => {
     render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
@@ -1244,6 +1276,68 @@ describe('InvoiceDetail archive and restore', () => {
     await userEvent.click(screen.getByRole('button', { name: /^restore$/i }));
     await userEvent.click(screen.getByRole('button', { name: /restore invoice/i }));
     await waitFor(() => expect(unarchiveInvoice).toHaveBeenCalledWith('inv1'));
+  });
+
+  // #2168 review: an archived invoice is read-only until restored, and the
+  // server refuses a send, an edit and a link on it, so none is offered.
+  it('#2168: an archived draft offers Restore, and no Review and send, Edit or Link visits', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'draft', editScope: 'all', archivedAt: fakeTs('2026-07-20T00:00:00Z') })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^restore$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /review and send/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /link visits/i })).toBeNull();
+  });
+  it('#2168: the same draft, not archived, offers all three (the control)', () => {
+    render(<InvoiceDetail invoice={entry({ status: 'draft', editScope: 'all' })} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /review and send/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /link visits/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^archive$/i })).toBeInTheDocument();
+  });
+  it('#2168: a list row armed on Review and send does not open the send confirm on an archived draft', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ status: 'draft', editScope: 'all', archivedAt: fakeTs('2026-07-20T00:00:00Z') })}
+        initialAction="reviewSend"
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /review and send/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /^restore$/i })).toBeInTheDocument();
+  });
+  it('#2168: an archived sent invoice offers no Edit or Link visits either', () => {
+    render(<InvoiceDetail invoice={entry({ archivedAt: fakeTs('2026-07-20T00:00:00Z') })} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /link visits/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /^restore$/i })).toBeInTheDocument();
+  });
+
+  it('#2168: archiving a draft says its visits are back on the un-invoiced list', async () => {
+    archiveInvoice.mockResolvedValueOnce({ releasedSessionIds: ['s1', 's2'] });
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /archive invoice/i }));
+    expect(await screen.findByText('Invoice archived. Its 2 visits are back on the un-invoiced list.')).toBeInTheDocument();
+  });
+  it('#2168: a restore that could not take a visit back says which, as a warning', async () => {
+    const notice =
+      '1 visit could not be taken back: the visit on 2026-06-02 is now on invoice 1042. Its line is still on this draft, so remove it in Edit before sending the draft.';
+    unarchiveInvoice.mockResolvedValueOnce({ notice });
+    render(<InvoiceDetail invoice={entry({ archivedAt: fakeTs('2026-07-20T00:00:00Z') })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^restore$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /restore invoice/i }));
+    expect(await screen.findByText(`Invoice restored to the working list. ${notice}`)).toBeInTheDocument();
+  });
+  it('#2168: the archive and restore messages, in the same words as Android', () => {
+    expect(archiveNoticeText(false, 0)).toBe('Invoice archived.');
+    expect(archiveNoticeText(false, 1)).toBe('Invoice archived. Its visit is back on the un-invoiced list.');
+    expect(archiveNoticeText(true, 0)).toBe('Invoice archived, and the balance written off the outstanding total.');
+    expect(restoreNoticeText('')).toBe('Invoice restored to the working list.');
   });
 
   // #406: this Archived notice used to have no close button at all — the
@@ -3364,6 +3458,42 @@ describe('Link visits (#1245)', () => {
     expect(linkInvoiceSessions).toHaveBeenCalledWith('inv1', ['s1', 's2']);
     expect(screen.queryByRole('region', { name: 'Link visits' })).toBeNull();
     await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(2));
+  });
+  it('#2091: the saved notice says the linked visit\u2019s price was not added', async () => {
+    const user = userEvent.setup();
+    useCollection.mockReturnValue({ status: 'ready', data: visits });
+    linkInvoiceSessions.mockResolvedValue({
+      ok: true, invoiceId: 'inv1', sessionIds: ['s1', 's2'], added: ['s2'], removed: [], linkedWithoutLine: ['s2'], status: 'open', editScope: 'all',
+    });
+    render(<InvoiceDetail invoice={entry({ sessionIds: ['s1'] })} onClose={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Link visits' }));
+    const editor = screen.getByRole('region', { name: 'Link visits' });
+    await user.click(within(editor).getByRole('checkbox', { name: /Walk two/ }));
+    expect(within(editor).getByText('Linking does not change the total')).toBeInTheDocument();
+    await user.click(within(editor).getByRole('button', { name: 'Save' }));
+    expect(
+      await screen.findByText(
+        'Visits saved: 1 linked. The linked visit no longer shows as un-invoiced, and its price was not added to this invoice.',
+      ),
+    ).toBeInTheDocument();
+  });
+  it('#2091: a visit a line of this invoice bills cannot be unticked in Link visits', async () => {
+    const user = userEvent.setup();
+    useCollection.mockReturnValue({ status: 'ready', data: visits });
+    render(
+      <InvoiceDetail
+        invoice={entry({
+          sessionIds: ['s1'],
+          lineItems: [{ description: 'Walk one', qty: 1, unitCents: 4500, sessionId: 's1' }],
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Link visits' }));
+    const editor = screen.getByRole('region', { name: 'Link visits' });
+    const one = within(editor).getByRole('checkbox', { name: /Walk one/ }) as HTMLInputElement;
+    expect(one.checked).toBe(true);
+    expect(one.disabled).toBe(true);
   });
   it('keeps the editor open with the refusal inside it', async () => {
     const user = userEvent.setup();

@@ -11,6 +11,7 @@ import {
   type NavGroup,
 } from '../lib/nav';
 import { OFFLINE_ROLE_LABEL, profileDisplayName, profileInitials } from '../lib/accountFormat';
+import { isAuntieAccess } from '../lib/access';
 import { NavGlyph } from './NavGlyphs';
 import { GhostButton } from './Buttons';
 import { Banner } from './Banner';
@@ -385,7 +386,7 @@ export function AppShell({ counts }: { counts?: RailCounts } = {}) {
           <nav key={group} className="shell__group" aria-label={NAV_GROUP_LABEL[group]}>
             <p className="shell__group-label">{NAV_GROUP_LABEL[group]}</p>
             <ul>
-              {railGroup(group).map((entry) => (
+              {railGroup(group, isAuntieAccess(access)).map((entry) => (
                 <li key={entry.dest}>
                   <RailItem entry={entry} count={railCount(railCounts, entry.slug)} />
                 </li>

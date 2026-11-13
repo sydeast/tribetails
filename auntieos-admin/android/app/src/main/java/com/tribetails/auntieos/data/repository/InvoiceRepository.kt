@@ -3,6 +3,8 @@ package com.tribetails.auntieos.data.repository
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.data.contracts.ArchiveInvoiceArgs
+import com.tribetails.auntieos.data.contracts.decodeArchiveInvoiceResult
+import com.tribetails.auntieos.data.contracts.decodeUnarchiveInvoiceResult
 import com.tribetails.auntieos.data.contracts.PreviewInvoiceNoticeArgs
 import com.tribetails.auntieos.data.contracts.PreviewInvoiceNoticeResult
 import com.tribetails.auntieos.data.contracts.decodePreviewInvoiceNoticeResult
@@ -395,12 +397,19 @@ class InvoiceRepository(
      * Fail-loud: the server's message (still owing, already archived) is
      * surfaced verbatim, because it is the part that tells the operator what to
      * do next.
+     *
+     * #2168: the answer is how many visits archiving a DRAFT put back on the
+     * un-invoiced list (0 for any other invoice, and from a server older than
+     * #2168, which does not say).
      */
-    suspend fun archiveInvoice(invoiceId: String, force: Boolean = false): Result<Unit> = runCatchingCancellable {
+    suspend fun archiveInvoice(invoiceId: String, force: Boolean = false): Result<Int> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "archiveInvoice requires an invoice id" }
-        functions.getHttpsCallable("archiveInvoice").call(archiveInvoiceArgs(invoiceId, force).toPayload()).awaitCallable()
-        Unit
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("archiveInvoice")
+            .call(archiveInvoiceArgs(invoiceId, force).toPayload())
+            .awaitCallable().data as? Map<String, Any?>
+        decodeArchiveInvoiceResult(raw).releasedSessionIds.size
     }.onFailure { AuntieLog.e("archiveInvoice failed for $invoiceId", it) }
 
     /**
@@ -411,13 +420,16 @@ class InvoiceRepository(
      * legacy invoice. `invoiceIsArchived` reads null as "not archived" for that
      * reason.
      */
-    suspend fun unarchiveInvoice(invoiceId: String): Result<Unit> = runCatchingCancellable {
+    suspend fun unarchiveInvoice(invoiceId: String): Result<String> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "unarchiveInvoice requires an invoice id" }
-        functions.getHttpsCallable("unarchiveInvoice")
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("unarchiveInvoice")
             .call(UnarchiveInvoiceArgs(invoiceId = invoiceId).toPayload())
-            .awaitCallable()
-        Unit
+            .awaitCallable().data as? Map<String, Any?>
+        // #2168: the server's sentence naming any visit a restored draft could
+        // not take back ('' when all came back, or from an older server).
+        decodeUnarchiveInvoiceResult(raw).notice
     }.onFailure { AuntieLog.e("unarchiveInvoice failed for $invoiceId", it) }
 
     /**

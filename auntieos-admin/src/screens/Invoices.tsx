@@ -16,7 +16,7 @@ import { kinfolkDisplayName } from '../api/directory';
 import {
   formatUsd,
   humanizeDate,
-  invoiceActionsFor,
+  invoiceActionsOffered,
   invoiceDaysOverdue,
   invoiceStateInfo,
   invoicePartialPayment,
@@ -176,9 +176,10 @@ const ROW_ACTION_LABELS: Readonly<Record<InvoiceAction, string>> = {
 };
 
 /** The one action a row offers, or null. Order is the offer precedence. */
-function rowActionFor(state: InvoiceState | null): InvoiceAction | null {
+function rowActionFor(state: InvoiceState | null, archived: boolean): InvoiceAction | null {
   if (state === null) return null;
-  const allowed = invoiceActionsFor(state);
+  // #2168: an archived draft's row offers no Review and send; Restore is in its detail.
+  const allowed = invoiceActionsOffered(state, archived);
   return allowed.find((a) => a === 'reviewSend' || a === 'reminder' || a === 'receipt') ?? null;
 }
 
@@ -930,7 +931,7 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
   // different fact), so without this marker a dead quote sits in the Quote
   // filter looking exactly like one still waiting for an answer.
   const declinedQuote = state === 'quote' && invoiceQuoteDecision(entry) === 'denied';
-  const action = rowActionFor(state);
+  const action = rowActionFor(state, archived);
   // OPEN disputes only. See the chip below for why a won one is not marked.
   const disputed = invoiceDispute(entry)?.open === true;
 

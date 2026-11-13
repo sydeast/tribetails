@@ -54,6 +54,9 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.lastReminderLabel
+import com.tribetails.auntieos.web.data.LINK_ADDS_NO_PRICE_TEXT
+import com.tribetails.auntieos.web.data.LINK_ADDS_NO_PRICE_TITLE
+import com.tribetails.auntieos.web.data.linkPickerBilledIds
 import com.tribetails.auntieos.web.data.linkPickerCancelled
 import com.tribetails.auntieos.web.data.linkPickerOnOtherInvoice
 import com.tribetails.auntieos.web.data.toggleLinkPick
@@ -202,7 +205,10 @@ private fun InvoiceDetailBody(
     val linesPanel = invoiceDetailLinesPanelOf(invoice)
     // #1238: what this invoice may be offered, from the same stored stamp as
     // the badge. Overdue and part paid do not change it.
-    val actions = invoiceActionsFor(badge.state)
+    // #2168: an archived invoice is read-only until restored, so it offers no
+    // send, no Edit and no Link sessions; Restore is the way back.
+    val archived = invoiceIsArchived(invoice)
+    val actions = invoiceActionsOffered(badge.state, archived)
 
     // Sessions for this kinfolk (for the link editor + linked-session rows).
     // P0-FLICKER: remember keyed on kinfolkId so a re-render keeps the same Flow.
@@ -269,6 +275,28 @@ private fun InvoiceDetailBody(
         toastMsg = msg; toastIsError = isError; toastVisible = true
     }
 
+    // #2168: Restore. A restore that could not take every visit back says which
+    // in a warning that stays until dismissed, as on web and Android; a plain
+    // restore is a toast.
+    var askRestore    by remember(invoice._id) { mutableStateOf(false) }
+    var restoring     by remember(invoice._id) { mutableStateOf(false) }
+    var restoreNotice by remember(invoice._id) { mutableStateOf<String?>(null) }
+    fun restoreNow() {
+        if (restoring) return
+        askRestore = false
+        restoring = true
+        scope.launch {
+            when (val r = client.unarchiveInvoice(invoice._id)) {
+                is WriteResult.Err -> showToast("Couldn't restore: ${r.message}", true)
+                is WriteResult.Ok  -> {
+                    val sentence = invoiceRestoredText(r.value)
+                    if (r.value.isBlank()) showToast(sentence, false) else restoreNotice = sentence
+                }
+            }
+            restoring = false
+        }
+    }
+
     // #1197: the server's refusal, shown inside the Link Sessions dialog, which
     // stays open with the operator's picks intact so they can correct and retry.
     var linkSessionsError by remember(invoice._id) { mutableStateOf<String?>(null) }
@@ -306,7 +334,7 @@ private fun InvoiceDetailBody(
     var invoiceEdit       by remember(invoice._id) { mutableStateOf<InvoiceEditDraft?>(null) }
     var invoiceEditError  by remember(invoice._id) { mutableStateOf<String?>(null) }
     var savingInvoiceEdit by remember(invoice._id) { mutableStateOf(false) }
-    val canEditInvoice = invoiceEditScopeOf(invoice) != InvoiceEditScope.NONE
+    val canEditInvoice = invoiceEditScopeOf(invoice) != InvoiceEditScope.NONE && !archived
     fun saveInvoiceEdit() {
         val draft = invoiceEdit ?: return
         if (savingInvoiceEdit) return
@@ -356,10 +384,15 @@ private fun InvoiceDetailBody(
         error         = linkSessionsError,
         invoiceId     = invoice._id,
         storedIds     = invoice.sessionIds,
+        billedIds     = linkPickerBilledIds(invoice.lineItems),
+        linesEditable = invoiceEditScopeOf(invoice) == InvoiceEditScope.ALL,
         onToggle      = { sid ->
             // #1254: a visit another invoice bills cannot be ticked.
+            // #2091: a visit a line bills cannot be unticked.
             if (!saveLoading) {
-                pendingIds = toggleLinkPick(pendingIds, sid, allSessions, invoice._id, invoice.sessionIds)
+                pendingIds = toggleLinkPick(
+                    pendingIds, sid, allSessions, invoice._id, invoice.sessionIds, linkPickerBilledIds(invoice.lineItems),
+                )
             }
         },
         // Not while the call is in flight: its answer has to land somewhere.
@@ -419,6 +452,32 @@ private fun InvoiceDetailBody(
             kind      = if (toastIsError) ToastKind.Error else ToastKind.Success,
             onDismiss = { toastVisible = false },
         )
+
+        restoreNotice?.let { notice ->
+            AuntieBanner(
+                tone      = AuntieBannerTone.Warning,
+                title     = "Done, but not all of it",
+                onDismiss = { restoreNotice = null },
+            ) {
+                Text(notice, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+            }
+        }
+        if (archived) {
+            AuntieBanner(tone = AuntieBannerTone.Info, title = "Archived") {
+                Text(ARCHIVED_INVOICE_TEXT, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+            }
+        }
+        AuntieDialog(
+            visible   = askRestore,
+            title     = "Restore this invoice?",
+            onDismiss = { askRestore = false },
+            footer    = {
+                GhostButton(label = "Cancel", onClick = { askRestore = false })
+                PrimaryButton(label = "Restore invoice", onClick = { restoreNow() })
+            },
+        ) {
+            Text(RESTORE_CONFIRM_TEXT, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+        }
 
         // ── Header status badge (accent-tinted full-width bar) ─────────────────
         Row(
@@ -581,6 +640,13 @@ private fun InvoiceDetailBody(
                 enabled = !pdfLoading,
                 leading = { Icon(Lucide.FileText, contentDescription = null, modifier = Modifier.size(14.dp)) },
             )
+            // #2168: the way back from read-only. The console has no Archive
+            // of its own; an invoice archived on web or Android is restored here.
+            if (archived) GhostButton(
+                label   = if (restoring) "Restoring..." else "Restore",
+                onClick = { if (!restoring) askRestore = true },
+                enabled = !restoring,
+            )
         }
 
         // ── Billing panel ────────────────────────────────────────────────────
@@ -707,6 +773,7 @@ private fun InvoiceDetailBody(
             linkedSessions  = linkedSessions,
             sessionsState   = sessionsState,
             onOpenEdit      = { pendingIds = invoice.sessionIds.toSet(); linkSessionsError = null; editMode = true },
+            canLink         = !archived,
         )
 
         // How-to-pay (#1200): the methods the household is offered on this invoice,
@@ -1033,12 +1100,21 @@ internal fun linkPickerChipLabel(
     elsewhere: Boolean,
     cancelled: Boolean,
     catalog: com.tribetails.auntieos.web.screens.ServiceCatalog,
+    /** #2091: a line on this invoice bills it, so it stays linked. */
+    billedHere: Boolean = false,
+    /** False when the invoice's lines are locked, so Edit cannot remove the line. */
+    linesEditable: Boolean = true,
 ): String {
     val service = if (serviceType.isBlank()) "Session" else catalog.nameOf(serviceType)
     return "$service · $dateLabel" +
         (if (elsewhere) " · on another invoice" else "") +
-        (if (cancelled) " · cancelled, not billable" else "")
+        (if (cancelled) " · cancelled, not billable" else "") +
+        (if (billedHere) linkPickerBilledHereNote(linesEditable) else "")
 }
+/** #2091: why a billed visit's chip is locked. Edit is named only when Edit can remove the line. Same words as web and Android. */
+internal fun linkPickerBilledHereNote(linesEditable: Boolean): String =
+    if (linesEditable) " · billed on a line of this invoice, remove the line in Edit to unlink it"
+    else " · billed on a line of this invoice, and its lines are locked"
 
 @Composable
 private fun LinkSessionsDialog(
@@ -1049,6 +1125,8 @@ private fun LinkSessionsDialog(
     error: String?,
     invoiceId: String,
     storedIds: List<String>,
+    billedIds: Set<String>,
+    linesEditable: Boolean,
     onToggle: (String) -> Unit,
     onCancel: () -> Unit,
     onSave: () -> Unit,
@@ -1069,6 +1147,12 @@ private fun LinkSessionsDialog(
         if (error != null) {
             AuntieBanner(tone = AuntieBannerTone.Error, title = "Can't save") {
                 Text(error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            }
+        }
+        // #2091: the moment a new visit is ticked, say that linking adds no price.
+        if (pendingIds.any { it !in storedIds }) {
+            AuntieBanner(tone = AuntieBannerTone.Warning, title = LINK_ADDS_NO_PRICE_TITLE) {
+                Text(LINK_ADDS_NO_PRICE_TEXT, style = AuntieTheme.typography.bodySmall, color = c.textDim)
             }
         }
         when (val s = sessionsState) {
@@ -1100,15 +1184,19 @@ private fun LinkSessionsDialog(
                             val elsewhere = linkPickerOnOtherInvoice(session, invoiceId, storedIds)
                             // #1609: a cancelled visit is not billable.
                             val cancelled = linkPickerCancelled(session, storedIds)
+                            // #2091: a line on this invoice bills it; Edit is where it leaves.
+                            val billedHere = session._id in billedIds && session._id in storedIds
                             val chipLabel = linkPickerChipLabel(
                                 session.serviceType, dateLabel, elsewhere, cancelled, com.tribetails.auntieos.web.screens.LocalServiceCatalog.current,
+                                billedHere,
+                                linesEditable,
                             )
                             AuntieChip(
                                 label    = chipLabel,
                                 selected = session._id in pendingIds,
                                 tone     = AuntieChipTone.Orange,
                                 onClick  = { onToggle(session._id) },
-                                enabled  = !elsewhere && !cancelled && !saveLoading,
+                                enabled  = !elsewhere && !cancelled && !billedHere && !saveLoading,
                             )
                         }
                     }
@@ -1124,6 +1212,8 @@ private fun LinkedSessionsSection(
     linkedSessions: List<KinCareSession>,
     sessionsState: FirestoreResult<List<KinCareSession>>,
     onOpenEdit: () -> Unit,
+    /** #2168: false on an archived invoice, which links nothing until restored. */
+    canLink: Boolean = true,
 ) {
     val c = AuntieTheme.colors
     val attributionLabel = when (invoice.attribution) {
@@ -1142,7 +1232,7 @@ private fun LinkedSessionsSection(
                 if (attributionLabel != null) {
                     AuntieChip(label = attributionLabel, tone = AuntieChipTone.Orange)
                 }
-                AuntieIconButton(
+                if (canLink) AuntieIconButton(
                     icon               = Lucide.Pencil,
                     contentDescription = "Edit linked sessions",
                     onClick            = onOpenEdit,
@@ -1176,7 +1266,7 @@ private fun LinkedSessionsSection(
 
             linkedSessions.isEmpty() -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 EmptyHint("No linked sessions yet.")
-                GhostButton(
+                if (canLink) GhostButton(
                     label   = "Link sessions",
                     onClick = onOpenEdit,
                     leading = { Icon(Lucide.Link, contentDescription = null, modifier = Modifier.size(14.dp)) },
@@ -1248,3 +1338,16 @@ private fun DetailRow(
         showDivider = true,
     )
 }
+
+/** #2168: the Archived notice, in the same words as web. */
+internal const val ARCHIVED_INVOICE_TEXT =
+    "This invoice is out of the working list and out of the outstanding and billed totals. It " +
+        "has not been deleted or cancelled, and the household can still see it and still pay it."
+
+/** #2168: the Restore confirm, in the same words as web. */
+internal const val RESTORE_CONFIRM_TEXT =
+    "This puts the invoice back into the working list and back into the outstanding and billed totals. Continue?"
+
+/** #2168: what a restore says, in the same words as web and Android, with the server's notice appended. */
+internal fun invoiceRestoredText(notice: String): String =
+    if (notice.isBlank()) "Invoice restored to the working list." else "Invoice restored to the working list. $notice"
