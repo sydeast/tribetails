@@ -233,18 +233,52 @@ describe('KinTales screen', () => {
     }
   });
 
-  it('draws the row as the mock does: a status tile, no headline line', () => {
-    // The logs mock's `.row` carries the household, "service · when" and the
-    // pips, and nothing of the body. Neither does Android's. The tale is read
-    // on the detail screen.
+  it('draws the row as the mock does: a status tile, and none of the body', () => {
     usePagedCollection.mockReturnValue(paged([entry({ title: 'A great day at the park' })]));
     render(<KinTales />);
     const row = screen.getByText('The Whitfields').closest('.kintales__row') as HTMLElement;
     expect(row.querySelector('.icon-tile')).not.toBeNull();
-    expect(within(row).queryByText('A great day at the park')).toBeNull();
     expect(within(row).queryByText('Biscuit had a wonderful time at the park today.')).toBeNull();
   });
-
+  it('#2059: shows the headline as the last, lighter line of the row', () => {
+    usePagedCollection.mockReturnValue(paged([entry({ title: '  A great day at the park  ', status: 'SENT' })]));
+    render(<KinTales />);
+    const row = screen.getByText('The Whitfields').closest('.kintales__row') as HTMLElement;
+    const line = within(row).getByText('A great day at the park');
+    expect(line).toHaveClass('kintales__row-headline');
+    // Under the existing content: the text column's last child.
+    expect(line.parentElement).toHaveClass('kintales__row-text');
+    expect(line.parentElement!.lastElementChild).toBe(line);
+  });
+  it('#2059: a KinTale with no headline draws no empty line', () => {
+    usePagedCollection.mockReturnValue(
+      paged([
+        entry({ _id: 'a', kinfolkName: 'Household A', title: '' }),
+        entry({ _id: 'b', kinfolkName: 'Household B', title: '   ' }),
+        entry({ _id: 'c', kinfolkName: 'Household C', title: undefined }),
+      ]),
+    );
+    render(<KinTales />);
+    expect(document.querySelectorAll('.kintales__row')).toHaveLength(3);
+    expect(document.querySelectorAll('.kintales__row-headline')).toHaveLength(0);
+  });
+  it('#2059: a long headline stays one line and keeps its full text as the tooltip', () => {
+    const long =
+      'Biscuit and Mabel spent the whole afternoon chasing leaves around the back garden before a long nap in the sun';
+    usePagedCollection.mockReturnValue(paged([entry({ title: long })]));
+    render(<KinTales />);
+    const line = document.querySelector('.kintales__row-headline') as HTMLElement;
+    // jsdom does no layout, so the clamp is asserted by its carriers: the class
+    // that holds the single-line ellipsis, and the full text on `title`.
+    expect(line).toHaveTextContent(long);
+    expect(line).toHaveAttribute('title', long);
+  });
+  it('#2059: a generated draft shows its generator headline on the Drafts row', () => {
+    setDrafts([draft({ generatedTitle: 'Mabel naps in the sun' })]);
+    render(<KinTales />);
+    const row = screen.getByText('The Okafors').closest('.kintales__row') as HTMLElement;
+    expect(within(row).getByText('Mabel naps in the sun')).toHaveClass('kintales__row-headline');
+  });
   it('reads a blank household as the italic fallback, never as a household called that', () => {
     usePagedCollection.mockReturnValue(paged([entry({ kinfolkName: '' })]));
     render(<KinTales />);
@@ -591,20 +625,31 @@ describe('KinTales screen: search, and what it admits to searching', () => {
     expect(screen.getByText('Household B')).toBeInTheDocument();
   });
 
-  it('narrows by title too', async () => {
+  it('narrows by headline too, and the hit shows the headline that matched', async () => {
     usePagedCollection.mockReturnValue(paged(two));
     render(<KinTales />);
-    await user.type(screen.getByRole('searchbox'), 'vet');
-    expect(screen.getByText('Household B')).toBeInTheDocument();
+    await user.type(screen.getByRole('searchbox'), 'vet visit');
+    const row = screen.getByText('Household B').closest('.kintales__row') as HTMLElement;
+    expect(within(row).getByText('Vet visit')).toHaveClass('kintales__row-headline');
     expect(screen.queryByText('Household A')).toBeNull();
+    expect(screen.queryByText('Park day')).toBeNull();
   });
-
+  it('#2059: a search hit on a draft headline keeps that draft', async () => {
+    setDrafts([
+      draft({ _id: 'd1', kinfolkName: 'The Okafors', generatedTitle: 'Mabel naps in the sun' }),
+      draft({ _id: 'd2', kinfolkName: 'The Lins', generatedTitle: 'Rainy day indoors' }),
+    ]);
+    render(<KinTales />);
+    await user.type(screen.getByRole('searchbox'), 'naps in');
+    expect(screen.getByText('Mabel naps in the sun')).toBeInTheDocument();
+    expect(screen.queryByText('The Lins')).toBeNull();
+  });
   it('states what is really being searched: the LOADED rows, and the window they came from', () => {
     usePagedCollection.mockReturnValue(paged(two));
     render(<KinTales />);
     expect(
       screen.getByText(
-        'Searching the 2 KinTales loaded from the last 7 days, by household and title.',
+        'Searching the 2 KinTales loaded from the last 7 days, by household and headline.',
       ),
     ).toBeInTheDocument();
   });
@@ -614,7 +659,7 @@ describe('KinTales screen: search, and what it admits to searching', () => {
     render(<KinTales />);
     expect(
       screen.getByText(
-        'Searching the 2 KinTales loaded from the last 7 days, by household and title. Load more to reach further back.',
+        'Searching the 2 KinTales loaded from the last 7 days, by household and headline. Load more to reach further back.',
       ),
     ).toBeInTheDocument();
   });
@@ -623,7 +668,7 @@ describe('KinTales screen: search, and what it admits to searching', () => {
     usePagedCollection.mockReturnValue(paged([], { state: { status: 'loading' } }));
     render(<KinTales />);
     expect(
-      screen.getByText('Search covers household and title, within the last 7 days.'),
+      screen.getByText('Search covers household and headline, within the last 7 days.'),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Searching the 0 KinTales/)).toBeNull();
   });

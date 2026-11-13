@@ -18,8 +18,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
@@ -33,8 +38,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Archive
 import com.composables.icons.lucide.ClipboardList
@@ -177,7 +184,7 @@ fun KinTaleLogsScreen(
         AuntieSearchField(
             value = search,
             onValueChange = { search = it },
-            placeholder = "Search KinTales by Kinfolk or body...",
+            placeholder = "Search KinTales by Kinfolk, headline or body...",
             leadingIcon = Lucide.Search,
             onClear = { search = "" },
             modifier = Modifier.fillMaxWidth(),
@@ -748,7 +755,7 @@ private fun BucketGroup(
  * Always tappable: it opens the draft in Communicate.
  */
 @Composable
-private fun GeneratedDraftRow(draft: GeneratedDraft, onOpenDraft: (GeneratedDraft) -> Unit) {
+internal fun GeneratedDraftRow(draft: GeneratedDraft, onOpenDraft: (GeneratedDraft) -> Unit) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val name = draft.household()
@@ -776,6 +783,7 @@ private fun GeneratedDraftRow(draft: GeneratedDraft, onOpenDraft: (GeneratedDraf
                 color = if (name.isBlank()) c.textDim else c.textPrimary,
             )
             Text(draftSubmeta(draft), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            kinTaleRowHeadline(draft.title())?.let { KinTaleRowHeadline(it) }
         }
         // #1598: "Draft" everywhere, never the stored `pending` / `generated`.
         AuntieStatusPill(label = "Draft", tone = AuntieStatusTone.Neutral)
@@ -795,11 +803,12 @@ internal fun draftSubmeta(
     return "$type · $whenText"
 }
 
-/** #1563: the list search over a draft (household, type, copy). Pure; tested. */
+/** #1563: the list search over a draft (household, headline, type, copy). Pure; tested. */
 internal fun matchesDraftSearch(d: GeneratedDraft, query: String): Boolean {
     val q = query.lowercase().trim()
     if (q.isBlank()) return true
     return d.household().lowercase().contains(q) ||
+        d.title().lowercase().contains(q) ||
         d.type().replace('_', ' ').lowercase().contains(q) ||
         d.body().lowercase().contains(q)
 }
@@ -813,7 +822,7 @@ internal fun matchesDraftSearch(d: GeneratedDraft, query: String): Boolean {
  * present and routes to the report via [onOpenReport].
  */
 @Composable
-private fun ReportRow(
+internal fun ReportRow(
     report: KinCareReport,
     onOpenReport: (sessionId: String) -> Unit = {},
     serviceRates: Map<String, String> = emptyMap(),
@@ -868,6 +877,7 @@ private fun ReportRow(
                 color = if (unnamed) c.textDim else c.textPrimary,
             )
             SubMetaColumn(report, serviceRates)
+            kinTaleRowHeadline(report.title)?.let { KinTaleRowHeadline(it) }
         }
 
         AuntieStatusPill(
@@ -877,6 +887,38 @@ private fun ReportRow(
     }
 }
 
+/** Test tag on a KinTale row's headline line (#2059). */
+internal const val KIN_TALE_ROW_HEADLINE_TAG = "kintale-row-headline"
+/**
+ * #2059: the headline a KinTale row shows, or null when it has none. Blank and
+ * whitespace-only both mean none, so the row draws no empty line. Pure; tested.
+ */
+internal fun kinTaleRowHeadline(title: String?): String? = title?.trim()?.takeIf { it.isNotEmpty() }
+/**
+ * #2059 (operator ruling 2026-11-13): the tale's headline as the last, lighter
+ * line of a Drafts or Sent row, so two tales for one household and KinCare can
+ * be told apart. The mock draws no headline, so it takes the submeta's face and
+ * dim colour. One line with an ellipsis; hovering it shows the full text as a
+ * tooltip (the AuntieInfoTip pattern). A tap still reaches the row.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun KinTaleRowHeadline(text: String) {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(text, style = AuntieTheme.typography.bodySmall) } },
+        state = rememberTooltipState(),
+    ) {
+        Text(
+            text = text,
+            style = AuntieTheme.typography.bodySmall,
+            color = AuntieTheme.colors.textDim,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.testTag(KIN_TALE_ROW_HEADLINE_TAG),
+        )
+    }
+}
 /**
  * The text under the Kinfolk name: serviceType · visit timestamp, then the meta
  * pips (media count, send channel).
@@ -1003,11 +1045,12 @@ internal fun sortReports(reports: List<KinCareReport>, mode: ReportSort): List<K
     )
 }
 
-/** SUGGESTION: list-level search predicate (Kinfolk name, service, body). */
+/** SUGGESTION: list-level search predicate (Kinfolk name, headline, service, body). */
 internal fun matchesSearch(r: KinCareReport, query: String): Boolean {
     val q = query.lowercase().trim()
     if (q.isBlank()) return true
     return r.kinfolkName.lowercase().contains(q) ||
+        r.title.lowercase().contains(q) ||
         r.serviceType.lowercase().contains(q) ||
         r.bodyCopy.lowercase().contains(q)
 }

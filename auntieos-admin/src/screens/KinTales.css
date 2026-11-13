@@ -187,6 +187,20 @@
   font-style: italic;
 }
 
+/* #2059: the tale's headline, the last line of the text column. The mock draws
+   none, so it borrows `.submeta`'s face and dim colour rather than inventing
+   one, and stays to a single line; the full text is the element's tooltip. */
+.kintales__row-headline {
+  display: block;
+  min-width: 0;
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Below the mock's own breakpoint the pill drops under the text rather than
    squeezing the household to a word. */
 @media (max-width: 560px) {
