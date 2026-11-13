@@ -23,6 +23,18 @@ export interface StaffMember {
    */
   displayName: string | null;
   email: string | null;
+  /**
+   * #1820: 'owner' or 'auntie', from the sign-in account's claims. Null when
+   * the server could not tell (or is an older deploy that does not say).
+   */
+  role?: StaffRole | null;
+}
+
+/** Which side of the admin/Auntie split a staff account is on. */
+export type StaffRole = 'owner' | 'auntie';
+
+function staffRole(v: unknown): StaffRole | null {
+  return v === 'owner' || v === 'auntie' ? v : null;
 }
 
 function str(v: unknown): string | null {
@@ -48,6 +60,7 @@ export async function listStaff(): Promise<StaffMember[]> {
       uid: row.uid as string,
       displayName: str(row.displayName),
       email: str(row.email),
+      role: staffRole(row.role),
     }));
 }
 
@@ -57,6 +70,16 @@ export async function listStaff(): Promise<StaffMember[]> {
  */
 export function staffNamesByUid(staff: readonly StaffMember[]): Map<string, string> {
   return new Map(staff.map((m) => [m.uid, staffLabel(m)]));
+}
+
+/**
+ * uid -> role, for the Activity Log's "Actor role" (#1820). Only staff the
+ * server could place are in it; a uid that is absent is not relabelled.
+ */
+export function staffRolesByUid(staff: readonly StaffMember[]): Map<string, StaffRole> {
+  const out = new Map<string, StaffRole>();
+  for (const m of staff) if (m.role != null) out.set(m.uid, m.role);
+  return out;
 }
 
 let staffRosterOnce: Promise<StaffMember[]> | null = null;
@@ -87,6 +110,11 @@ export function loadStaffRoster(): Promise<StaffMember[]> {
 export function loadStaffNames(): Promise<Map<string, string>> {
   if (staffNamesOnce === null) staffNamesOnce = loadStaffRoster().then(staffNamesByUid);
   return staffNamesOnce;
+}
+
+/** The staff roles (#1820), from the same roster read as the names. */
+export function loadStaffRoles(): Promise<Map<string, StaffRole>> {
+  return loadStaffRoster().then(staffRolesByUid);
 }
 
 /** Test seam: forget the cached read. */

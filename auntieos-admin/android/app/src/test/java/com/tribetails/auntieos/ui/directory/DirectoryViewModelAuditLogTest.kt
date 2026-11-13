@@ -19,6 +19,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -95,7 +96,7 @@ class DirectoryViewModelAuditLogTest {
         }
 
     @Test
-    fun `unarchiveKinfolk fires UNARCHIVE_KINFOLK audit entry`() = runTest(testDispatcher) {
+    fun `unarchiveKinfolk fires the declared RESTORE_KINFOLK audit entry`() = runTest(testDispatcher) {
         coEvery { repository.getKinfolk() } returns Result.success(
             listOf(Kinfolk(id = "kf-un", firstName = "T", lastName = "U", status = "archived"))
         )
@@ -109,9 +110,18 @@ class DirectoryViewModelAuditLogTest {
 
         coVerify(exactly = 1) {
             repository.logActivity(match<ActivityLogEntry> {
-                it.actionType == "UNARCHIVE_KINFOLK" && it.targetId == "kf-un"
+                it.actionType == "RESTORE_KINFOLK" && it.targetId == "kf-un" &&
+                    it.targetCollection == "kinfolk"
             })
         }
+        // #1820: the old spelling is not the declared key, and no chip filed it.
+        coVerify(exactly = 0) {
+            repository.logActivity(match<ActivityLogEntry> { it.actionType == "UNARCHIVE_KINFOLK" })
+        }
+        assertEquals(
+            com.tribetails.auntieos.ui.admin.ActivityCategory.Admin,
+            com.tribetails.auntieos.ui.admin.activityCategoryOf("RESTORE_KINFOLK"),
+        )
     }
 
     @Test

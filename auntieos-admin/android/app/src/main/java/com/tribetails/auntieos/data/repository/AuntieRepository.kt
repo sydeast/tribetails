@@ -575,18 +575,8 @@ class AuntieRepository(
     // server uses req.auth.uid as the actual actor and re-runs all validation.
     suspend fun logActivity(entry: com.tribetails.auntieos.data.admin.ActivityLogEntry): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
-        val payload = buildMap<String, Any> {
-            put("actionType", entry.actionType)
-            if (entry.description.isNotBlank()) put("description", entry.description)
-            if (entry.status.isNotBlank()) put("status", entry.status)
-            val actor = entry.actorId.ifBlank { auth.currentUser?.uid.orEmpty() }
-            if (actor.isNotBlank()) put("actorId", actor)
-            if (entry.targetId.isNotBlank()) put("targetId", entry.targetId)
-            if (entry.targetCollection.isNotBlank()) put("targetCollection", entry.targetCollection)
-            // #1747: the household, now that the description no longer carries its id.
-            if (entry.familyId.isNotBlank()) put("familyId", entry.familyId)
-        }
-        functions.getHttpsCallable("logActivity").call(payload).awaitCallable()
+        val request = logActivityRequest(entry, signedInUid = auth.currentUser?.uid.orEmpty())
+        functions.getHttpsCallable("logActivity").call(request).awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to write activity_log entry", it) }
 
@@ -4131,3 +4121,34 @@ internal fun decodeBatchBookingResult(raw: Map<String, Any?>?, requestedAction: 
     return BatchBookingResult(action = action, updated = generated.updated.toInt(), failed = failed)
 }
 
+/**
+ * The body of one `logActivity` call. Pure, so it is tested directly.
+ *
+ * #1820: NO ROLE IS SENT. [com.tribetails.auntieos.data.admin.ActivityLogEntry]
+ * is also the model the Activity Log reads, so it carries `actorRole`,
+ * `severity` and the chain fields; none of them is copied here. The server
+ * works out who the caller is from the sign-in. `payload` carries the facts
+ * behind the sentence, with the client named so a line can be traced to it.
+ */
+internal fun logActivityRequest(
+    entry: com.tribetails.auntieos.data.admin.ActivityLogEntry,
+    signedInUid: String,
+): Map<String, Any> = buildMap {
+    put("actionType", entry.actionType)
+    if (entry.description.isNotBlank()) put("description", entry.description)
+    if (entry.status.isNotBlank()) put("status", entry.status)
+    val actor = entry.actorId.ifBlank { signedInUid }
+    if (actor.isNotBlank()) put("actorId", actor)
+    if (entry.targetId.isNotBlank()) put("targetId", entry.targetId)
+    if (entry.targetCollection.isNotBlank()) put("targetCollection", entry.targetCollection)
+    // #1747: the household, now that the description no longer carries its id.
+    if (entry.familyId.isNotBlank()) put("familyId", entry.familyId)
+    val facts = buildMap<String, Any> {
+        entry.payload.forEach { (key, value) ->
+            // The server stamps these two itself and refuses them from a client.
+            if (value != null && key != "admin" && key != "staffRole") put(key, value)
+        }
+        put("source", "android")
+    }
+    put("payload", facts)
+}

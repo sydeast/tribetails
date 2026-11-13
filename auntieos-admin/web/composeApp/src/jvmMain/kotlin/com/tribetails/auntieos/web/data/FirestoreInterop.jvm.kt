@@ -735,7 +735,8 @@ internal actual suspend fun platformUpdateUserProfile(uid: String, loaded: UserP
 // a direct addDoc/deleteDoc here the same way they refuse the whole-doc PATCH
 // updateVetClinic replaced in #994.
 internal actual suspend fun platformLogActivity(entry: ActivityLogEntry): WriteResult<String> =
-    JvmFirestoreRest.callable("logActivity", jsonOut.encodeToString(entry)).let { if (it is WriteResult.Ok) WriteResult.Ok("ok") else WriteResult.Err((it as WriteResult.Err).message) }
+    // #1820: only the fields the callable takes, never the whole read model (which carries a role).
+    JvmFirestoreRest.callable("logActivity", logActivityBody(entry)).let { if (it is WriteResult.Ok) WriteResult.Ok("ok") else WriteResult.Err((it as WriteResult.Err).message) }
 
 internal actual suspend fun platformGetHouseholdData(kinfolkId: String): WriteResult<HouseholdData?> =
     transportResult("read failed") { WriteResult.Ok(JvmFirestoreRest.first<HouseholdData>("household_data") { it["kinfolkId"]?.jsonPrimitive?.content == kinfolkId }) }

@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import type { ActivityLogEntry } from '../api/activityLog';
 import {
   activityCategoryOf,
+  actorRoleFor,
   actorRoleLabel,
   activityChainRows,
   activityDayLabel,
@@ -318,6 +319,28 @@ describe('activityMatchesCategory', () => {
     const unclaimed = events.filter((e) => activityCategoryOf(entry({ actionType: e })) === null);
     expect(unclaimed).toEqual([]);
   });
+  it('#1820: files the keys declared ahead of their writers, and takes nothing from Bookings', () => {
+    const cat = (a: string) => activityCategoryOf(entry({ actionType: a }));
+    for (const a of [
+      'UPDATE_KINFOLK', 'UPDATE_KINFOLK_TAGS', 'ARCHIVE_KINFOLK', 'RESTORE_KINFOLK', 'CREATE_KIN', 'UPDATE_KIN',
+      'UPDATE_KIN_TAGS', 'SECONDARY_KINFOLK_SAVED', 'SECONDARY_KINFOLK_REMOVED', 'HOUSEHOLD_DATA_SAVED',
+      'TEMPLATE_CREATED', 'TEMPLATE_SAVED', 'TEMPLATE_DELETED', 'TEMPLATE_ASSIGNED', 'TEMPLATE_UNASSIGNED', 'TEMPLATE_CONVERTED',
+    ]) {
+      expect(cat(a), a).toBe('admin');
+    }
+    for (const a of ['CONTENT_KINTALE_SENT', 'KINTALE_TEMPLATE_CREATED', 'KINTALE_TEMPLATE_SAVED', 'KINTALE_TEMPLATE_DELETED']) {
+      expect(cat(a), a).toBe('kintales');
+    }
+    for (const a of ['VISIT_ON_MY_WAY', 'VISIT_ARRIVED', 'VISIT_DEPARTED', 'VISIT_UNDO_ARRIVAL']) {
+      expect(cat(a), a).toBe('bookings');
+    }
+    expect(cat('NOTIFICATION_NOT_SENT')).toBe('notifications');
+    expect(cat('NOTIFICATION_MARKED_UNREAD')).toBe('notifications');
+    expect(cat('BILLING_PAYMENT_PARTIAL')).toBe('billing');
+    // CREATE_KIN and UPDATE_KIN are exact: a visit is still a Bookings line.
+    expect(cat('CREATE_KINCARE_SESSION')).toBe('bookings');
+    expect(cat('UPDATE_KINCARE_SESSION')).toBe('bookings');
+  });
   it('claims nothing for an action no chip recognises', () => {
     expect(activityCategoryOf(entry({ actionType: 'RECONCILE_RUN' }))).toBeNull();
   });
@@ -408,5 +431,62 @@ describe('EMERGENCY_CONTACT_SAVE_REFUSED (#1049)', () => {
       { label: 'kinfolkId', value: 'fam1' },
       { label: 'reason', value: 'An Emergency Contact has to be someone outside the household.' },
     ]);
+  });
+});
+
+/**
+ * #1820. One signed-in owner read "Primary kinfolk" on the lines her own taps
+ * wrote, "Staff" on the lines the server wrote, and "Operator" in the header.
+ */
+describe('actorRoleFor (#1820)', () => {
+  const roster = new Map<string, 'owner' | 'auntie'>([
+    ['owner-uid', 'owner'],
+    ['auntie-uid', 'auntie'],
+  ]);
+  const role = (over: Partial<ActivityLogEntry>, roles = roster) =>
+    actorRoleFor({ _id: 'e', actorId: 'owner-uid', ...over }, roles);
+
+  it('corrects a line already stored with a household role, from the roster', () => {
+    expect(role({ actorRole: 'PRIMARY' })).toBe('Operator');
+    expect(role({ actorRole: 'PRIMARY', actorId: 'auntie-uid' })).toBe('Auntie');
+    expect(role({ actorRole: 'SECONDARY', actorId: 'auntie-uid' })).toBe('Auntie');
+  });
+
+  it('tells the owner from an Auntie on a staff line', () => {
+    expect(role({ actorRole: 'AUNTIE' })).toBe('Operator');
+    expect(role({ actorRole: 'AUNTIE', actorId: 'auntie-uid' })).toBe('Auntie');
+  });
+
+  it('reads the role the server stamped on the line before it reads the roster', () => {
+    // She was an Auntie when she tapped, whatever the roster says today.
+    expect(role({ actorRole: 'AUNTIE', payload: { admin: false, staffRole: 'auntie' } })).toBe('Auntie');
+    expect(role({ actorRole: 'AUNTIE', actorId: 'gone', payload: { admin: true, staffRole: null } })).toBe('Operator');
+    // Both stamps on one line is the Auntie, as every gate treats that account.
+    expect(role({ actorRole: 'AUNTIE', actorId: 'x', payload: { admin: true, staffRole: 'auntie' } })).toBe('Auntie');
+  });
+
+  it('never reads a stamp off a household line', () => {
+    expect(role({ actorRole: 'PRIMARY', actorId: 'kf-uid', payload: { admin: true } })).toBe('Primary kinfolk');
+  });
+
+  it('keeps a Kinfolk as a Kinfolk', () => {
+    expect(role({ actorRole: 'PRIMARY', actorId: 'kf-uid' })).toBe('Primary kinfolk');
+    expect(role({ actorRole: 'SECONDARY', actorId: 'sk-uid' })).toBe('Secondary kinfolk');
+  });
+
+  it('never relabels a System line, even when its actor is on the roster', () => {
+    expect(role({ actorRole: 'SYSTEM' })).toBe('System');
+  });
+
+  it('guesses nothing when the roster has not answered or does not hold the actor', () => {
+    expect(role({ actorRole: 'AUNTIE' }, new Map())).toBe('Staff');
+    expect(role({ actorRole: 'AUNTIE', actorId: 'gone' })).toBe('Staff');
+    expect(role({ actorRole: 'PRIMARY' }, new Map())).toBe('Primary kinfolk');
+    expect(role({ actorRole: '' }, new Map())).toBe('');
+  });
+
+  it('is what the opened row shows', () => {
+    const rows = activityDetailRows({ _id: 'e', actorId: 'owner-uid', actorRole: 'PRIMARY' }, undefined, new Map(), roster);
+    expect(rows).toContainEqual({ label: 'Actor role', value: 'Operator' });
   });
 });

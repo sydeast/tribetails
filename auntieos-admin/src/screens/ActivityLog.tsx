@@ -7,7 +7,8 @@ import {
   type VerifyResult,
 } from '../api/activityLog';
 import { useCollection } from '../lib/firestore';
-import { useStaffNames } from '../lib/useStaffNames';
+import { useStaffNames, useStaffRoles } from '../lib/useStaffNames';
+import { type StaffRole } from '../api/staff';
 import { str } from '../lib/coerce';
 import { activityDescriptionWords } from '../lib/activityWords';
 import { type Async } from '../lib/async';
@@ -117,6 +118,8 @@ function byDay(rows: ActivityLogEntry[], zone: string): [string, ActivityLogEntr
 export function ActivityLog() {
   const entries = useCollection<ActivityLogEntry>(ACTIVITY_LOG_QUERY);
   const staffNames = useStaffNames();
+  // #1820: which staff account is the owner and which an Auntie, for Actor role.
+  const staffRoles = useStaffRoles();
   const [chain, setChain] = useState<Async<VerifyResult>>({ status: 'loading' });
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<ActivityCategory>('all');
@@ -245,6 +248,7 @@ export function ActivityLog() {
                             entry={e}
                             zone={zone}
                             names={staffNames}
+                            roles={staffRoles}
                             open={openIds.has(e._id)}
                             onToggle={() => toggleOpen(e._id)}
                           />
@@ -492,17 +496,19 @@ function ActivityRow({
   entry,
   zone,
   names,
+  roles,
   open,
   onToggle,
 }: {
   entry: ActivityLogEntry;
   zone: string;
   names: ReadonlyMap<string, string>;
+  roles: ReadonlyMap<string, StaffRole>;
   open: boolean;
   onToggle: () => void;
 }) {
   const detailId = `log-detail-${entry._id}`;
-  const detail = activityDetailRows(entry, zone, names);
+  const detail = activityDetailRows(entry, zone, names, roles);
   const chain = activityChainRows(entry);
   const payload = activityPayloadRows(entry);
   const tile = rowTile(entry);

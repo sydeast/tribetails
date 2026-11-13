@@ -1,7 +1,9 @@
 package com.tribetails.auntieos.web.screens.activity
 
 import com.tribetails.auntieos.web.screens.unreadableTimesNote
-import com.tribetails.auntieos.web.screens.media.rememberUploaderNames
+import com.tribetails.auntieos.web.screens.media.rememberStaffRoster
+import com.tribetails.auntieos.web.data.staffRolesFrom
+import com.tribetails.auntieos.web.data.uploaderNamesFrom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -119,8 +121,11 @@ private fun ActivityFilter.chipTone(): AuntieChipTone = when (this) {
 @Composable
 fun ActivityLogScreen() {
     val client = remember { FirestoreClient() }
-    // #1592: uid -> name from listStaff (#1564's fallback), the Gallery's read.
-    val staffNames = rememberUploaderNames(client)
+    // The staff roster, read once. #1592 takes each actor's name from it (#1564's
+    // fallback); #1820 takes whether they are the owner or an Auntie.
+    val staff = rememberStaffRoster(client)
+    val staffNames = remember(staff) { uploaderNamesFrom(staff) }
+    val staffRoles = remember(staff) { staffRolesFrom(staff) }
     // P0-FLICKER: hoist the Flow via remember so it survives recomposition.
     val state by remember { client.activityStream() }.collectAsState(initial = FirestoreResult.Loading)
 
@@ -207,7 +212,7 @@ fun ActivityLogScreen() {
     }
 
     selectedEntry?.let { entry ->
-        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null }, names = staffNames)
+        ActivityDetailModal(entry = entry, zone = zone, onDismiss = { selectedEntry = null }, names = staffNames, roles = staffRoles)
     }
 }
 
@@ -557,6 +562,8 @@ private fun ActivityDetailModal(
     zone: TimeZone,
     onDismiss: () -> Unit,
     names: Map<String, String> = emptyMap(),
+    /** uid -> "owner" | "auntie" (listStaff), #1820. See [actorRoleFor]. */
+    roles: Map<String, String> = emptyMap(),
 ) {
     val target = listOf(entry.targetCollection, entry.targetId).filter { it.isNotBlank() }.joinToString("/")
     AuntieDialog(
@@ -583,6 +590,10 @@ private fun ActivityDetailModal(
                 AuntieKeyValueRow(label = "Actor id", value = entry.actorId, valueMono = true)
             } else {
                 AuntieKeyValueRow(label = "Actor", value = entry.actorId.ifBlank { "-" }, valueMono = true)
+            }
+            // #1820: Operator, Auntie or the household role. Left out when the entry stores none.
+            actorRoleFor(entry, roles).takeIf { it.isNotBlank() }?.let {
+                AuntieKeyValueRow(label = "Actor role", value = it)
             }
             if (entry.description.isNotBlank()) {
                 // #1747: a stored path reads as words; the entry is never rewritten.

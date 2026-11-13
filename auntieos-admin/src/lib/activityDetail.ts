@@ -1,5 +1,6 @@
 import { rec, str } from './coerce';
 import { type ActivityLogEntry } from '../api/activityLog';
+import { type StaffRole } from '../api/staff';
 import { businessInstantMs, businessWallClock } from './businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 import { formatTime } from './denFormat';
@@ -46,6 +47,8 @@ export function activityDetailRows(
   zone: string = DEFAULT_BUSINESS_TIME_ZONE,
   /** uid -> name (`useStaffNames`), #1592. A uid it does not know shows as it is. */
   names: ReadonlyMap<string, string> = new Map(),
+  /** uid -> 'owner' | 'auntie' (`useStaffRoles`), #1820. See `actorRoleFor`. */
+  roles: ReadonlyMap<string, StaffRole> = new Map(),
 ): ActivityDetailRow[] {
   const rows: ActivityDetailRow[] = [];
   const push = (label: string, value: string): void => {
@@ -66,7 +69,7 @@ export function activityDetailRows(
   const actorName = names.get(actorId);
   push('Actor', actorName ?? actorId);
   if (actorName !== undefined) push('Actor id', actorId);
-  push('Actor role', actorRoleLabel(str(entry.actorRole)));
+  push('Actor role', actorRoleFor(entry, roles));
   push('Household', str(entry.familyId));
   // A path, not a link. Where a route exists the screen offers one separately;
   // where none does, the path is still the most useful thing that can honestly
@@ -267,7 +270,13 @@ const CATEGORY_RULES: readonly (readonly [RealCategory, (a: string) => boolean])
         'ARCHIVE_KIN', 'RESTORE_KIN', 'KIN_REMOVAL', 'CREATE_TRAINING', 'UPDATE_TRAINING', 'DELETE_TRAINING',
         'SUPPL', 'EXPIRATION_', 'INTEGRATION_', 'AUDIENCE_SEGMENT', 'EXTERNAL_SUPPRESSION', 'OPERATOR_',
         'RETENTION_', 'ERROR_', 'PROFILE_', 'HOME_ACCESS', 'EMERGENCY_CONTACT',
-      ]) || a.includes('TRIAGE'),
+        // #1820: Kinfolk and Kin record edits, and email and message templates.
+        'UPDATE_KINFOLK', 'UPDATE_KIN_TAGS', 'SECONDARY_KINFOLK', 'HOUSEHOLD_DATA', 'TEMPLATE_',
+      ]) ||
+      // Exact, never a prefix: CREATE_KINCARE_SESSION and UPDATE_KINCARE_SESSION are Bookings.
+      a === 'CREATE_KIN' ||
+      a === 'UPDATE_KIN' ||
+      a.includes('TRIAGE'),
   ],
   [
     'kintales',
@@ -377,4 +386,45 @@ export function actorRoleLabel(role: string): string {
       return words.charAt(0).toUpperCase() + words.slice(1);
     }
   }
+}
+
+/** The owner, in the word the page header uses for that account. */
+export const OWNER_ROLE_LABEL = 'Operator';
+/** A caretaker, in the word the page header uses for that account. */
+export const AUNTIE_ROLE_LABEL = 'Auntie';
+
+/**
+ * The role an entry's actor held, in the words the page header uses for the
+ * same account (#1820): "Operator" for the owner, "Auntie" for a caretaker.
+ *
+ * The stored role cannot say that on its own. The server files the owner and a
+ * caretaker under one value, and until #1820 every line a client asked for was
+ * stored as PRIMARY, so the owner's clock taps read "Primary kinfolk". Three
+ * sources, in order:
+ *
+ *   1. What the server stamped on the entry when it wrote it (`payload.admin`,
+ *      `payload.staffRole`), on a staff entry. That is the role held at the
+ *      time, so it wins.
+ *   2. The staff roster (`roles`), by the actor's uid, whatever role is stored.
+ *      This is what corrects the entries already stored with the wrong role.
+ *   3. The stored role, through `actorRoleLabel`.
+ *
+ * A System entry is never relabelled, and an actor the roster does not hold
+ * keeps the stored role. Display only: the entry is sealed and never rewritten.
+ */
+export function actorRoleFor(
+  entry: ActivityLogEntry,
+  roles: ReadonlyMap<string, StaffRole> = new Map(),
+): string {
+  const stored = str(entry.actorRole).trim().toUpperCase();
+  if (stored === 'SYSTEM') return actorRoleLabel(stored);
+  if (stored === 'AUNTIE') {
+    const payload = rec(entry.payload);
+    if (payload.staffRole === 'auntie') return AUNTIE_ROLE_LABEL;
+    if (payload.admin === true) return OWNER_ROLE_LABEL;
+  }
+  const onRoster = roles.get(str(entry.actorId).trim());
+  if (onRoster === 'owner') return OWNER_ROLE_LABEL;
+  if (onRoster === 'auntie') return AUNTIE_ROLE_LABEL;
+  return actorRoleLabel(stored);
 }
