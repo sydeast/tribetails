@@ -18,6 +18,12 @@ vi.mock('../api/myNotifications', async (orig) => ({
 const { saveMyAdminNotificationPrefs } = vi.hoisted(() => ({ saveMyAdminNotificationPrefs: vi.fn() }));
 vi.mock('../api/myNotificationsWrite', () => ({ saveMyAdminNotificationPrefs }));
 
+// #2185: who is signed in, for the business-locked row's reason.
+const { seat } = vi.hoisted(() => ({ seat: { caretaker: false } }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat: async () => ({ uid: 'u1', caretaker: seat.caretaker }),
+}));
 import { MyNotificationsEdit } from './MyNotificationsEdit';
 
 function entry(over: Partial<NotificationCatalogEntry> = {}): NotificationCatalogEntry {
@@ -96,6 +102,29 @@ describe('MyNotificationsEdit screen', () => {
    * to read on, and being disabled there was nothing the recipient could do
    * about the difference.
    */
+  it('#2185: under an Auntie sign-in a business-locked row names the owner, not business settings', async () => {
+    seat.caretaker = true;
+    try {
+      getNotificationMatrix.mockResolvedValue(
+        matrix({
+          catalog: [entry({ required: {} })],
+          overrides: {
+            'kincare.booking.confirm': { enabled: true, channels: {}, lockedEnabled: true, locked: {}, streams: {} },
+          },
+        }),
+      );
+      render(<MyNotificationsEdit />);
+      const smsRow = (await screen.findByText('Text (SMS)')).closest('.mynotif__channel-row') as HTMLElement;
+      expect(
+        await within(smsRow).findByText("Set by the owner; your choice here can't turn it on."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/business settings/i)).toBeNull();
+      expect(screen.queryByText(/Business Settings/)).toBeNull();
+    } finally {
+      seat.caretaker = false;
+    }
+  });
+
   it('a forced channel the dispatcher resolves off is disabled and OFF, and says so', async () => {
     getNotificationMatrix.mockResolvedValue(
       matrix({

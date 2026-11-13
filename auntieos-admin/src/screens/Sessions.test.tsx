@@ -717,6 +717,42 @@ describe('Auntie Time: the card runs the visit', () => {
     useArrivalRule.mockReturnValue(null);
   });
 
+  // #2185: an Auntie never sees Settings, so her refusal keeps only the remedy
+  // she can do herself. The owner's line above still names the Settings switch.
+  it('#2185: under an Auntie sign-in the refusal names no Settings screen', async () => {
+    invalidateSharedLoad();
+    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+    useArrivalRule.mockReturnValue(true);
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+    await waitFor(() => expect(currentSessionSeat).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText(WORK_SETTINGS_LOADING)).not.toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /^Complete$/ }));
+    // The card's alert opens "Couldn't complete this visit." and then gives the reason.
+    const auntieLine =
+      'This visit has no arrival and departure recorded, and the business requires both before a visit can be ' +
+      'marked complete. Mark it on the visit card first.';
+    await waitFor(() =>
+      expect(screen.getAllByRole('alert').some((el) => (el.textContent ?? '').includes(auntieLine))).toBe(true),
+    );
+    expect(screen.queryByText(/in Settings/)).toBeNull();
+    expect(transitionBookingStatus).not.toHaveBeenCalled();
+    useArrivalRule.mockReturnValue(null);
+  });
+
+  it('#2185: the owner refusal names the Settings switch, word for word', async () => {
+    useArrivalRule.mockReturnValue(true);
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+    await waitFor(() => expect(currentSessionSeat).toHaveBeenCalled());
+    await user.click(screen.getByRole('button', { name: /^Complete$/ }));
+    const ownerLine =
+      'This visit has no arrival and departure recorded, and your settings require both before a visit can be ' +
+      'marked complete. Mark it on the visit card first, or turn off "Verify arrival and departure" in Settings.';
+    await waitFor(() =>
+      expect(screen.getAllByRole('alert').some((el) => (el.textContent ?? '').includes(ownerLine))).toBe(true),
+    );
+    useArrivalRule.mockReturnValue(null);
+  });
+
   it('asks as before when the rule is off', async () => {
     useArrivalRule.mockReturnValue(false);
     mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });

@@ -10,6 +10,7 @@ import { serviceChipLabel, serviceOptionsFromRates, type ServiceOption } from '.
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
+import { useIsAuntie } from '../lib/useIsAuntie';
 import './NewVisitDialog.css';
 
 export interface HouseholdOption {
@@ -86,6 +87,8 @@ export function NewVisitDialog({
     () => serviceOptionsFromRates(serviceRates, serviceDurations),
     [serviceRates, serviceDurations],
   );
+  // #2185: an Auntie never sees Settings, so her empty line names the owner.
+  const auntie = useIsAuntie();
 
   const [kinfolkId, setKinfolkId] = useState('');
   const [serviceType, setServiceType] = useState('');
@@ -242,7 +245,9 @@ export function NewVisitDialog({
           </select>
           {options.length === 0 && (
             <p className="new-visit__error" role="alert">
-              No KinCare types are configured yet. Add them in Settings, so the visit can be priced.
+              {auntie
+                ? 'No KinCare types are set up yet. Ask the owner to add them.'
+                : 'No KinCare types are configured yet. Add them in Settings, so the visit can be priced.'}
             </p>
           )}
         </div>

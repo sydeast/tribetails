@@ -260,6 +260,7 @@ export function MyNotificationsEdit() {
                 matrix={matrix}
                 prefs={draft}
                 stream={STREAM_BUSINESS}
+                caretaker={caretaker}
                 onChannelChange={setChannel}
                 onBulkChange={bulkToggle}
               />
@@ -269,6 +270,7 @@ export function MyNotificationsEdit() {
                 matrix={matrix}
                 prefs={draft}
                 stream={STREAM_STAFF}
+                caretaker={caretaker}
                 onChannelChange={setChannel}
                 onBulkChange={bulkToggle}
               />
@@ -286,6 +288,8 @@ interface NotifHatSectionProps {
   matrix: NotificationMatrix;
   prefs: AdminNotificationPrefs;
   stream: NotifStream;
+  /** An Auntie is signed in (#2185): a business-locked row names the owner, not Business Settings. */
+  caretaker: boolean;
   onChannelChange: (key: string, channel: NotificationChannel, next: boolean) => void;
   onBulkChange: (entries: readonly NotificationCatalogEntry[], stream: NotifStream, on: boolean) => void;
 }
@@ -297,6 +301,7 @@ function NotifHatSection({
   matrix,
   prefs,
   stream,
+  caretaker,
   onChannelChange,
   onBulkChange,
 }: NotifHatSectionProps) {
@@ -335,6 +340,7 @@ function NotifHatSection({
                   prefs={prefs}
                   entry={entry}
                   stream={stream}
+                  caretaker={caretaker}
                   onChannelChange={onChannelChange}
                 />
               ))}
@@ -351,6 +357,7 @@ interface NotifBlockProps {
   prefs: AdminNotificationPrefs;
   entry: NotificationCatalogEntry;
   stream: NotifStream;
+  caretaker: boolean;
   onChannelChange: (key: string, channel: NotificationChannel, next: boolean) => void;
 }
 
@@ -367,7 +374,7 @@ interface NotifBlockProps {
  * catalog-required channel. What IS true here is only that the person editing
  * this screen is not the one who decides, so that is all the pill claims.
  */
-function NotifBlock({ matrix, prefs, entry, stream, onChannelChange }: NotifBlockProps) {
+function NotifBlock({ matrix, prefs, entry, stream, caretaker, onChannelChange }: NotifBlockProps) {
   const channels = adminGateEnabledChannels(matrix, entry, stream);
   const title = displayTitle(entry);
   return (
@@ -387,7 +394,7 @@ function NotifBlock({ matrix, prefs, entry, stream, onChannelChange }: NotifBloc
               <div className="mynotif__channel-main">
                 <span className="mynotif__channel-label">{label}</span>
                 {forced && (
-                  <span className="mynotif__channel-reason">{adminChannelReason(matrix, entry, stream, channel)}</span>
+                  <span className="mynotif__channel-reason">{adminChannelReason(matrix, entry, stream, channel, caretaker)}</span>
                 )}
               </div>
               <div className="mynotif__channel-trailing">

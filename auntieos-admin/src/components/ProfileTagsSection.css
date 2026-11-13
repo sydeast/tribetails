@@ -3,3 +3,7 @@
 .profileTags__banner {
   margin-bottom: var(--space-3);
 }
+
+.profileTags__loading {
+  margin: 0 0 var(--space-3);
+}

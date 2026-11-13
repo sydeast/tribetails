@@ -36,8 +36,11 @@ import { invoiceNumberTaken } from '../lib/invoiceNumber';
 import { refuseIfArchived } from '../lib/invoiceArchive';
 import {
   boundSessionIds,
+  quoteHoldsNoVisits,
   readSessionLinks,
+  readSessionsHeldBy,
   stageSessionLinks,
+  storedReleasedSessionIds,
   storedSessionIds,
   type SessionLinkPlan,
 } from '../lib/invoiceSessionLinks';
@@ -318,7 +321,27 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
     const after = boundSessionIds(patch.lineItems);
     const dropped = before.filter((id) => !after.includes(id));
     const gained = after.filter((id) => !before.includes(id));
-    if (dropped.length > 0 || gained.length > 0) {
+    if ((dropped.length > 0 || gained.length > 0) && quoteHoldsNoVisits(data)) {
+      // #2156: A DECLINED QUOTE HOLDS NO VISITS. Declining let them go, so an
+      // Edit of it writes no back-link: a hold taken here would have nothing
+      // to release it. It records which visits its lines now name, which is
+      // what sending it back out takes back (`resendQuote`). A dropped line's
+      // visit whose back-link still names this quote (one linked before
+      // declines let go of visits) is let go here, or nothing could free it.
+      if (dropped.length > 0) {
+        const held = await readSessionsHeldBy(tx, db(), invoiceId, dropped);
+        if (held.release.length > 0) linkPlan = held;
+      }
+      const released = storedReleasedSessionIds(data);
+      const nextReleased = [
+        ...released.filter((id) => !dropped.includes(id)),
+        ...gained.filter((id) => !released.includes(id)),
+      ];
+      update['releasedSessionIds'] = nextReleased;
+      const kept = currentSessionIds.filter((id) => !dropped.includes(id));
+      if (kept.length !== currentSessionIds.length) update['sessionIds'] = kept;
+      nextSessionIds = [...kept, ...nextReleased.filter((id) => !kept.includes(id))];
+    } else if (dropped.length > 0 || gained.length > 0) {
       linkPlan = await readSessionLinks(tx, db(), { invoiceId, claim: gained, release: dropped });
       nextSessionIds = [
         ...currentSessionIds.filter((id) => !dropped.includes(id)),

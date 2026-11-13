@@ -221,7 +221,7 @@ class DirectoryViewModelTest {
     @Test
     fun recently_created_puts_households_made_minutes_ago_first_though_their_join_date_is_blank() {
         val rows = listOf(
-            kinfolk("old", "Amy", "Adams").copy(joinDate = "2026-11-12"),
+            kinfolk("old", "Amy", "Adams").copy(joinDate = "2026-06-01"),
             kinfolk("first", "Bea", "Brook").copy(createdAt = "2026-11-10T15:00:00Z"),
             kinfolk("none", "Cal", "Cole"),
             kinfolk("second", "Dee", "Dale").copy(createdAt = "2026-11-10T15:04:00Z"),
@@ -248,6 +248,123 @@ class DirectoryViewModelTest {
             kinfolk("dated", "Mo", "Mills").copy(joinDate = "2025-05-05"),
         )
         assertEquals(listOf("dated", "junk", "z"), sorted(rows))
+    }
+
+    /** #2171: a join date sits on the same timeline as a creation stamp, not below every stamped one. */
+    @Test
+    fun recently_created_puts_a_join_date_on_the_same_timeline_as_a_creation_stamp() {
+        val rows = listOf(
+            kinfolk("joined-today", "Amy", "Adams").copy(joinDate = "2026-11-12"),
+            kinfolk("stamped", "Bea", "Brook").copy(createdAt = "2026-10-01T12:00:00Z"),
+            kinfolk("joined-2025", "Cal", "Cole").copy(joinDate = "2025-03-04T10:00:00.000Z"),
+        )
+        assertEquals(listOf("joined-today", "stamped", "joined-2025"), sorted(rows))
+    }
+
+    /** #2171 review: same rows and order as the web admin's and Android's test. */
+    @Test
+    fun a_day_only_join_date_starts_at_midnight_business_time_not_utc_midnight() {
+        val rows = listOf(
+            // 11:30 PM on 11 Nov in Chicago, which is already 12 Nov in UTC.
+            kinfolk("late-night", "Bea", "Brook").copy(createdAt = "2026-11-12T05:30:00Z", createdAtSource = "live"),
+            kinfolk("joined-next-day", "Amy", "Adams").copy(joinDate = "2026-11-12"),
+            // 12:30 AM on 12 Nov in Chicago.
+            kinfolk("early-morning", "Cal", "Cole").copy(createdAt = "2026-11-12T06:30:00Z", createdAtSource = "live"),
+        )
+        val expected = listOf("early-morning", "joined-next-day", "late-night")
+        assertEquals(expected, sorted(rows))
+        assertEquals(
+            expected,
+            DirectoryUiState(allKinfolk = FirestoreResult.Data(rows), sort = SortOption.RecentlyUpdated).filteredSorted.map { it._id },
+        )
+    }
+
+    /** The instant forms web `Date.parse` and Android `OffsetDateTime.parse` both accept: no seconds, and an offset. */
+    @Test
+    fun an_instant_without_seconds_or_with_an_offset_is_still_an_instant() {
+        val rows = listOf(
+            kinfolk("no-seconds", "Amy", "Adams").copy(createdAt = "2026-11-12T07:00Z"),
+            kinfolk("offset", "Bea", "Brook").copy(createdAt = "2026-11-12T00:30:00-06:00"),
+            kinfolk("utc", "Cal", "Cole").copy(createdAt = "2026-11-12T06:45:00Z"),
+        )
+        assertEquals(listOf("no-seconds", "utc", "offset"), sorted(rows))
+    }
+
+    /** #2171: a migrated household sorts by the old system's creation date, never its migration date. */
+    @Test
+    fun recently_created_places_a_migrated_household_below_a_newer_one_and_above_an_older_one() {
+        val rows = listOf(
+            kinfolk("older", "Amy", "Adams").copy(createdAt = "2021-08-15T10:30:00Z", createdAtSource = "original"),
+            kinfolk("migrated", "Bea", "Brook").copy(createdAt = "2024-03-02T09:00:00.000Z", createdAtSource = "original", joinDate = "2025-06-01"),
+            kinfolk("auntieos", "Cal", "Cole").copy(createdAt = "2026-11-10T15:04:00Z", createdAtSource = "live"),
+            kinfolk("joined-older", "Dee", "Dale").copy(joinDate = "2022-04-01"),
+        )
+        assertEquals(listOf("auntieos", "migrated", "joined-older", "older"), sorted(rows))
+    }
+
+    // ── #2171 / #2155: the shared date-sort fixture ───────────────────────────
+    // Same ids, instants and expected orders as admin web `directory.test.ts` and
+    // Android `DirectorySortTest`, so the three clients are held to one order.
+
+    private val sharedFixture: List<Kinfolk> = listOf(
+        kinfolk("auntie-new", "Bea", "Brook").copy(createdAt = "2026-11-10T15:04:00Z", createdAtSource = "live"),
+        kinfolk("migrated-mid", "Cal", "Cole").copy(
+            createdAt = "2024-03-02T09:00:00.000Z", createdAtSource = "original", joinDate = "2025-06-01", updatedAt = "2026-11-12T08:00:00Z",
+        ),
+        kinfolk("migrated-old", "Eve", "Earl").copy(createdAt = "2021-08-15T10:30:00Z", createdAtSource = "original", updatedAt = "2026-11-11T20:00:00Z"),
+        kinfolk("joined-only", "Amy", "Adams").copy(joinDate = "2022-04-01", updatedAt = "2026-11-11T20:00:00.500Z"),
+        kinfolk("imported-unknown", "Fay", "Ford").copy(createdAt = "2026-11-11T00:00:00Z", createdAtSource = "import", joinDate = "2020-02-02"),
+        kinfolk("tie-grant", "Gus", "Grant").copy(createdAt = "2026-09-01T00:00:00.000Z"),
+        kinfolk("tie-hill", "Hal", "Hill").copy(createdAt = "2026-09-01T00:00:00Z"),
+        kinfolk("no-date", "Zed", "Young"),
+        kinfolk("no-date-junk", "Ann", "Abbot").copy(joinDate = "07/24/2026", createdAt = "sometime", updatedAt = "yesterday"),
+    )
+
+    private fun sharedOrder(sort: SortOption): List<String> =
+        DirectoryUiState(allKinfolk = FirestoreResult.Data(sharedFixture), sort = sort).filteredSorted.map { it._id }
+
+    @Test
+    fun shared_fixture_recently_created_is_one_timeline_undated_last_a_to_z() {
+        assertEquals(
+            listOf(
+                "auntie-new", "tie-grant", "tie-hill", "migrated-mid", "joined-only", "migrated-old", "imported-unknown",
+                "no-date-junk", "no-date",
+            ),
+            sharedOrder(SortOption.RecentlyCreated),
+        )
+    }
+
+    /** #2155: this sort read `joinDate`, so an edit never moved a household. */
+    @Test
+    fun shared_fixture_recently_updated_follows_the_last_change_and_falls_back_to_the_creation_date() {
+        assertEquals(
+            listOf(
+                "migrated-mid", "joined-only", "migrated-old", "auntie-new", "tie-grant", "tie-hill", "imported-unknown",
+                "no-date-junk", "no-date",
+            ),
+            sharedOrder(SortOption.RecentlyUpdated),
+        )
+    }
+
+    /**
+     * #2155: the stamp a desktop edit actually writes must read back as an
+     * instant, or the edited household sorts as never changed. (The desktop's
+     * `nowIso()` is zone-less and would not.)
+     */
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    @Test
+    fun the_desktop_edit_stamp_reads_back_as_the_last_change() {
+        val stamp = com.tribetails.auntieos.web.data.kinfolkUpdatedAtNow()
+        val at = com.tribetails.auntieos.web.screens.directory.kinfolkUpdatedMillis(Kinfolk(_id = "k", updatedAt = stamp))
+        assertTrue(at != null, "stamp $stamp did not read as an instant")
+        val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
+        assertTrue(now - at in 0..60_000, "stamp $stamp is not now")
+        val edited = kinfolk("edited", "Zed", "Young").copy(createdAt = "2020-01-01T00:00:00Z", updatedAt = stamp)
+        val newer = kinfolk("created-today", "Amy", "Adams").copy(createdAt = "2026-11-01T00:00:00Z")
+        assertEquals(
+            listOf("edited", "created-today"),
+            DirectoryUiState(allKinfolk = FirestoreResult.Data(listOf(newer, edited)), sort = SortOption.RecentlyUpdated).filteredSorted.map { it._id },
+        )
     }
 
     /** The REST decoder hands a Timestamp over as `{seconds,nanoseconds}` or an ISO string; both read. */

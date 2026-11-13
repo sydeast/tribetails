@@ -7,6 +7,12 @@ import type { LocalWeather } from '../../api/weather';
 const { getLocalWeather } = vi.hoisted(() => ({ getLocalWeather: vi.fn() }));
 vi.mock('../../api/weather', () => ({ getLocalWeather }));
 
+// #2185: who is signed in, for the unset-area line.
+const { seat } = vi.hoisted(() => ({ seat: { caretaker: false } }));
+vi.mock('../../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../../lib/sessionSeat')>()),
+  currentSessionSeat: async () => ({ uid: 'u1', caretaker: seat.caretaker }),
+}));
 import { HeatIndexWidget, WeatherWatchdogWidget } from './WeatherWidgets';
 
 /**
@@ -82,6 +88,29 @@ describe('WeatherWatchdogWidget', () => {
     expect(await screen.findByText(/Set your weather area/i)).toBeInTheDocument();
     // Not a raw error code, and not a silent blank card.
     expect(screen.queryByText(/weather_location_not_set/)).not.toBeInTheDocument();
+  });
+
+  it('#2185: the owner reads the Settings line word for word', async () => {
+    seat.caretaker = false;
+    getLocalWeather.mockRejectedValue(new Error('weather_location_not_set'));
+    render(<WeatherWatchdogWidget />);
+    expect(
+      await screen.findByText('Set your weather area (city, metro, or ZIP) in Settings to turn this card on.'),
+    ).toBeInTheDocument();
+  });
+
+  it('#2185: an Auntie is told the owner has not set the area, and no Settings screen is named', async () => {
+    seat.caretaker = true;
+    try {
+      getLocalWeather.mockRejectedValue(new Error('weather_location_not_set'));
+      render(<WeatherWatchdogWidget />);
+      expect(
+        await screen.findByText('The owner has not set a weather area yet, so this card is off.'),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Settings/)).not.toBeInTheDocument();
+    } finally {
+      seat.caretaker = false;
+    }
   });
 
   it('reports any other failure verbatim, with a working Retry', async () => {

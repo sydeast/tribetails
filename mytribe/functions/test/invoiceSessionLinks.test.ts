@@ -692,7 +692,7 @@ describe('#2168 archiving a draft lets go of its visits; restoring takes back on
     expect((await docOf(ctx, 'kin_care_sessions/s2'))['invoiceId']).toBe('invOther');
   });
 
-  it('a quote is not a draft: archiving it moves no visit (quote holds are #2156)', async () => {
+  it('#2156: archiving a quote moves no visit; the Kinfolk can still answer it, and a decline lets them go', async () => {
     const ctx = buildDbMock({
       docs: {
         'invoices/q1': { kinfolkId: 'fam1', invoiceNumber: '1011', status: 'quote', total: 45, amountDue: 45, sessionIds: ['s1'], lineItems: [line('s1')] },

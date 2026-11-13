@@ -39,6 +39,37 @@
  *                      are the same bytes, and a reader who cannot tell them
  *                      apart is looking at the same bug in a new field.
  *
+ * ── HOUSEHOLDS (`kinfolk/{id}`), #2171 ─────────────────────────────────
+ *
+ * The same three fields, and the contract a household importer (none exists
+ * yet; the pre-launch reload needs one) must follow:
+ *
+ *   `createdAt`        auntieOS households: server time from the createKinfolk
+ *                      callable, `createdAtSource: 'live'`. Migrated households:
+ *                      the OLD system's creation instant, written through
+ *                      `resolveMigratedCreatedAt` (so `'original'`, or `'import'`
+ *                      when the source has none). Write it as a Firestore
+ *                      Timestamp, the type createKinfolk writes; the clients
+ *                      also read an ISO string. `canonicalInstant` refuses a
+ *                      bare day, so expand a day-only source date to an instant
+ *                      (midnight on the business's clock, America/Chicago, the
+ *                      same reading the Directory gives a bare join date) first,
+ *                      or the row is marked `'import'`.
+ *   `_migratedAt`      the ingest instant, as above.
+ *   `updatedAt`        the old system's own last-change instant when it has
+ *                      one, otherwise ABSENT. Never the migration time: the
+ *                      Directory's "Recently Updated" reads it as the last
+ *                      change. A Timestamp, or an ISO string WITH a zone (`Z`
+ *                      or an offset): all three clients refuse a zone-less
+ *                      wall-clock string and treat the household as never
+ *                      changed.
+ *
+ * The Directory (admin web `api/directory.ts`, Android and desktop
+ * `DirectoryViewModel.kt`) orders "Recently Created" on ONE timeline:
+ * `createdAt` unless it is marked `'import'`, else the household's `joinDate`,
+ * else last (A to Z). "Recently Updated" orders on `updatedAt`, else that same
+ * creation date. The Firestore document create time is never read.
+ *
  * ── WHY NOT A SEPARATE `originalCreatedAt`, LEAVING `createdAt` AS INGEST ──
  *
  * That is the obvious shape and it does not survive contact with Firestore.

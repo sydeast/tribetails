@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getBusinessSettings, type BusinessSettings } from '../api/settings';
+import { useIsAuntie } from '../lib/useIsAuntie';
 import {
   DEFAULT_COVERAGE_RULES,
   MAX_GAP_FIELD,
@@ -72,6 +73,8 @@ import './CoveragePackageBuilder.css';
  */
 export function CoveragePackageBuilder() {
   const [settings, setSettings] = useState<Async<BusinessSettings>>({ status: 'loading' });
+  // #2185: the heading's last sentence names the owner for an Auntie, not Settings.
+  const auntie = useIsAuntie();
 
   const load = useCallback(() => {
     let live = true;
@@ -100,7 +103,11 @@ export function CoveragePackageBuilder() {
         kicker="Care Ops · Pricing"
         title="Coverage"
         accentTail="package builder."
-        subtitle="Name the client and the dates, set that client's rules, then build packages: mix any visit lengths, pick which nights get an overnight, and compare totals side by side. Visits an overnight covers drop off automatically, and every overnight adds a free visit the next day. Lengths and prices come from your KinCare types in Settings."
+        subtitle={`Name the client and the dates, set that client's rules, then build packages: mix any visit lengths, pick which nights get an overnight, and compare totals side by side. Visits an overnight covers drop off automatically, and every overnight adds a free visit the next day. ${
+          auntie
+            ? "Lengths and prices come from the owner's KinCare types."
+            : 'Lengths and prices come from your KinCare types in Settings.'
+        }`}
       />
 
       <AsyncRegion

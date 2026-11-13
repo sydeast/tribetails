@@ -166,6 +166,30 @@ describe('buildPlanFromRows', () => {
     expect(plan).toMatchObject({ backlinks: [], invoiceSets: [], findings: [] });
   });
 
+  it('#2156: a declined quote holds nothing, so it is no claimant and its visits are not reported', () => {
+    const plan = buildPlanFromRows(
+      [
+        // Declined after #2156: its set emptied, its lines still name the visits.
+        { id: 'q1', data: { status: 'quote', quoteDecision: 'denied', sessionIds: [], releasedSessionIds: ['s1', 's2'], lineItems: [line('s1'), line('s2')] } },
+        { id: 'inv2', data: { status: 'open', sessionIds: ['s1'], lineItems: [line('s1')] } },
+      ],
+      [{ id: 's1', data: visit({ invoiceId: 'inv2' }) }, { id: 's2', data: visit({ invoiceId: '' }) }],
+    );
+    expect(plan).toMatchObject({ backlinks: [], invoiceSets: [], findings: [] });
+  });
+
+  it('#2156: a visit whose back-link still names a declined quote is reported, never changed', () => {
+    const plan = buildPlanFromRows(
+      // Declined before declines let go of visits: the set and the back-link still name it.
+      [{ id: 'q1', data: { status: 'quote', quoteDecision: 'denied', sessionIds: ['s1'], lineItems: [line('s1')] } }],
+      [{ id: 's1', data: visit({ invoiceId: 'q1' }) }],
+    );
+    expect(plan).toMatchObject({
+      backlinks: [],
+      invoiceSets: [],
+      findings: [{ kind: 'held_by_declined_quote', sessionId: 's1', invoiceId: 'q1' }],
+    });
+  });
   it('is idempotent: the plan after applying is empty', () => {
     const invoices = [{ id: 'inv1', data: { status: 'draft', sessionIds: ['s1'], lineItems: [line('s1'), line('s2')] } }];
     const sessions = [{ id: 's1', data: visit() }, { id: 's2', data: visit() }];

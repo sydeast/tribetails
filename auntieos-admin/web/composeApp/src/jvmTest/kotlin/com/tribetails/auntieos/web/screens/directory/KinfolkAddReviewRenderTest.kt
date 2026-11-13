@@ -190,6 +190,6 @@ class KinfolkAddReviewRenderTest {
 
         onNodeWithText("Save changes").performScrollTo().performClick()
         waitUntil(timeoutMillis = 5_000) { JvmFirestoreFixtures.lastWrite?.op == "MERGE" }
-        assertEquals(setOf("lastName"), JvmFirestoreFixtures.lastWrite?.fields)
+        assertEquals(setOf("lastName", "updatedAt"), JvmFirestoreFixtures.lastWrite?.fields)
     }
 }

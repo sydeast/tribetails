@@ -39,7 +39,16 @@ const SETTINGS: Record<string, unknown> = {
   paymentOptions: { stripe: true },
   householdNotificationsLive: true,
   calendarSyncId: 'calendar-sync-xyz',
-  householdTags: [{ id: 't1', label: 'Gate code' }],
+  // The stored vocabulary shape (`lib/tags/model.ts` on admin web), with a
+  // color token and an icon distinctive enough to search the reply for.
+  householdTags: [
+    { name: ' VIP ', color: { token: 'gold-xyz', css: 'var(--css-xyz)' }, icon: 'icon-xyz' },
+    { name: '   ', color: { token: 'teal', css: 'var(--color-accent)' }, icon: '' },
+    { id: 't1', label: 'Legacy label' },
+    'not a row',
+    { name: 'Gate code', color: { token: 'teal', css: 'var(--color-accent)' }, icon: '' },
+  ],
+  petTags: [{ name: 'Reactive', color: { token: 'coral', css: 'var(--color-coral)' }, icon: 'kin-icon-xyz' }],
   weatherLocation: 'Denver',
 };
 
@@ -47,6 +56,8 @@ const EXPECTED_KEYS = [
   'allowSpecificTimeBooking',
   'allowTimeBlockBooking',
   'defaultBookingMode',
+  'householdTagNames',
+  'kinTagNames',
   'kinTaleRequired',
   'requireArrivalDepartureVerification',
   'services',
@@ -72,8 +83,26 @@ describe('#2164 buildStaffWorkSettings', () => {
       { id: 'Overnight', durationMinutes: '720' },
     ]);
     const wire = JSON.stringify(out);
-    for (const secret of ['27.50', '131.75', '9.99', 'serviceRates', 'pawsome', '555-0142', 'venmo', 'paypal', 'cashapp', 'calendar-sync', 'Gate code', 'Hanasamku']) {
+    for (const secret of ['27.50', '131.75', '9.99', 'serviceRates', 'pawsome', '555-0142', 'venmo', 'paypal', 'cashapp', 'calendar-sync', 'Hanasamku', 'Legacy label']) {
       expect(wire, `the reply must not carry ${secret}`).not.toContain(secret);
+    }
+  });
+
+  it('#2186: carries the household and Kin tag names, never a color or an icon', () => {
+    const out = buildStaffWorkSettings(SETTINGS);
+    expect(out.householdTagNames).toEqual(['VIP', 'Gate code']);
+    expect(out.kinTagNames).toEqual(['Reactive']);
+    const wire = JSON.stringify(out);
+    for (const secret of ['gold-xyz', 'css-xyz', 'icon-xyz', 'coral', 'color', 'icon']) {
+      expect(wire, `the reply must not carry ${secret}`).not.toContain(secret);
+    }
+  });
+
+  it('#2186: reads a missing or malformed tag list as no suggestions', () => {
+    for (const doc of [undefined, {}, { householdTags: 'VIP', petTags: { name: 'Reactive' } }]) {
+      const out = buildStaffWorkSettings(doc);
+      expect(out.householdTagNames).toEqual([]);
+      expect(out.kinTagNames).toEqual([]);
     }
   });
 
@@ -128,6 +157,8 @@ describe('#2164 getStaffWorkSettings', () => {
     expect(Object.keys(res).sort()).toEqual(EXPECTED_KEYS);
     expect(res.services.map((s) => s.id)).toEqual(['30 Minute Visit', 'Overnight']);
     expect(JSON.stringify(res)).not.toContain('131.75');
+    expect(res.householdTagNames).toEqual(['VIP', 'Gate code']);
+    expect(res.kinTagNames).toEqual(['Reactive']);
   });
 
   it('answers the owner the same projection', async () => {
