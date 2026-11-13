@@ -47,6 +47,7 @@ import type {
   UpdateInvoiceArgsPatch,
 } from '../contracts/invoiceContracts.generated';
 import { InvoiceLedgerPanels } from './InvoiceLedger';
+import { InvoiceApplyCredit } from './InvoiceApplyCredit';
 import { InvoiceLinkVisitsEditor, linkVisitsSavedText } from './InvoiceLinkVisitsEditor';
 import {
   InvoiceLineItemsTable,
@@ -1513,7 +1514,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                 ' The office copy of the payment notice did not go out, because the admin roster could not be read. The household copy is not affected.';
             }
             if (ledgerRow.creditedToAccountCents > 0) {
-              ledgerNote += ` ${formatUsd(ledgerRow.creditedToAccountCents / 100)} has been added to the household's account credit, which goes onto their next invoice automatically.`;
+              ledgerNote += ` ${formatUsd(ledgerRow.creditedToAccountCents / 100)} has been added to the household's account credit. It stays there until you apply an amount to an invoice.`;
             }
           } catch (caught) {
             incomplete = true;
@@ -1779,6 +1780,27 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             // from, so the empty payments state can never point an operator at
             // a control this invoice is not offering.
             canRecordPayment={allowed.includes('markPaid')}
+          />
+        )}
+
+        {/* #1872: ACCOUNT CREDIT IS NEVER SPENT AUTOMATICALLY. It goes onto this
+            invoice only here, as an amount she types and confirms. Offered where
+            Record payment is offered (the same stored-state answer), so a draft,
+            a quote, a paid invoice and an archived one never show it. Hidden
+            while another confirm step is open, so one question is asked at a
+            time. */}
+        {editing === null && !linking && pending === null && !archived && allowed.includes('markPaid') && (
+          <InvoiceApplyCredit
+            invoiceId={invoice._id}
+            invoiceNumber={invoice.invoiceNumber}
+            kinfolkId={invoice.kinfolkId ?? ''}
+            dueCents={balanceDueCents}
+            onApplied={(_res, sentence) => {
+              setActionError(null);
+              setNoticeIncomplete(false);
+              setNotice(sentence);
+              reloadLedger();
+            }}
           />
         )}
 

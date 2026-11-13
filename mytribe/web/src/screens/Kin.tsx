@@ -19,10 +19,10 @@ export function Kin() {
   const kinfolkId = getActiveKinfolkId();
   const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   if (kin.isError) {
-    return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
+    return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
   }
 
   const kinView = viewOfQuery(kin, { isEmpty: (d) => d.kin.length === 0 });

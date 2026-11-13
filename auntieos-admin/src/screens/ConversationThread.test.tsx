@@ -59,6 +59,27 @@ describe('ConversationThread', () => {
     expect(strong.tagName).toBe('STRONG');
     expect(screen.queryByText(/<p>/)).toBeNull();
   });
+  it('shows the whole message when a less-than sign sits beside real tags (#1873)', async () => {
+    getConversationThread.mockResolvedValue([
+      msg({ id: 'm1', body: '<p>I think 5 < 6 and 7 > 3 and <b>bold</b> four more words</p>' }),
+      msg({ id: 'm2', senderRole: 'auntie', body: 'plain reply 2 < 3 and then more' }),
+    ]);
+    const { container } = render(<ConversationThread kinfolkId="k1" kinfolkName="Alvarez" onBack={vi.fn()} />);
+    await screen.findByText('bold');
+    expect(container.textContent).toContain('I think 5 < 6 and 7 > 3 and bold four more words');
+    expect(container.textContent).toContain('plain reply 2 < 3 and then more');
+  });
+  it('draws a script-like message as text and runs nothing (#1873)', async () => {
+    getConversationThread.mockResolvedValue([
+      msg({ body: '<p><img src=x onerror="window.__pwn=3"><script>window.__pwn=3</script></p>' }),
+    ]);
+    const { container } = render(<ConversationThread kinfolkId="k1" kinfolkName="Alvarez" onBack={vi.fn()} />);
+    await screen.findByText('window.__pwn=3', { exact: false });
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('script')).toBeNull();
+    expect(container.textContent).toContain('<script>window.__pwn=3</script>');
+    expect((window as unknown as { __pwn?: number }).__pwn).toBeUndefined();
+  });
   it('sends a reply, then reloads the thread', async () => {
     getConversationThread.mockResolvedValue([msg({ body: 'hi' })]);
     replyToConversation.mockResolvedValue('m_new');
@@ -134,6 +155,17 @@ describe('ConversationThread reply guards', () => {
     await userEvent.type(screen.getByLabelText(/reply to this household/i), '   ');
     expect(screen.getByRole('button', { name: /send reply/i })).toBeDisabled();
     expect(replyToConversation).not.toHaveBeenCalled();
+  });
+  it('sends a reply with its typed signs escaped, so they are kept as typed (#1873)', async () => {
+    getConversationThread.mockResolvedValue([msg()]);
+    replyToConversation.mockResolvedValue('m-new');
+    render(<ConversationThread kinfolkId="k1" kinfolkName="The Alvarez Household" onBack={vi.fn()} />);
+    await screen.findByText('hello');
+    fireEvent.change(screen.getByLabelText(/reply to this household/i), { target: { value: 'a < b, the <side gate> & &lt;' } });
+    await userEvent.click(screen.getByRole('button', { name: /send reply/i }));
+    await waitFor(() =>
+      expect(replyToConversation).toHaveBeenCalledWith('k1', 'a &lt; b, the &lt;side gate&gt; &amp; &amp;lt;'),
+    );
   });
   it('sends a reply that sits exactly on the server maximum', async () => {
     getConversationThread.mockResolvedValue([msg()]);

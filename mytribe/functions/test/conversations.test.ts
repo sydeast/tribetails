@@ -92,20 +92,30 @@ describe('sendKinfolkMessage (portal)', () => {
     await expect(sendKinfolkMessageHandler(req({ kinfolkId: 'other', body: 'x' }))).rejects.toBeTruthy();
   });
 
-  it('strips injected markup from the message body before writing and previewing', async () => {
+  it('keeps markup outside the formatting subset as the text typed, never as a tag (#1873)', async () => {
+    // Every client draws a stored body from a fixed tag list, so an `<img>`
+    // here is shown as the characters typed and is never an element.
     const ctx = buildDbMock({ docs: { 'kinfolk/kf1': { firstName: 'Jane', lastName: 'Doe' } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await sendKinfolkMessageHandler(req({ body: '<img src=x onerror="evil()">See you at 3pm' }));
     const msg = ctx.writes.find((w) => w.path.startsWith('conversations/kf1/messages/'));
-    expect(msg?.data.body).toBe('See you at 3pm');
+    expect(msg?.data.body).toBe('&lt;img src=x onerror="evil()"&gt;See you at 3pm');
     const summary = ctx.writes.find((w) => w.path === 'conversations/kf1');
-    expect(summary?.data.lastMessagePreview).toBe('See you at 3pm');
+    expect(summary?.data.lastMessagePreview).toBe('<img src=x onerror="evil()">See you at 3pm');
   });
 
-  it('rejects a body that is only markup (empty after sanitizing)', async () => {
+  it('strips attributes from an allowed tag before writing', async () => {
+    const ctx = buildDbMock({ docs: { 'kinfolk/kf1': { firstName: 'Jane', lastName: 'Doe' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await sendKinfolkMessageHandler(req({ body: '<p onclick="evil()">See <a href="javascript:x()">you</a></p>' }));
+    const msg = ctx.writes.find((w) => w.path.startsWith('conversations/kf1/messages/'));
+    expect(msg?.data.body).toBe('<p>See <a>you</a></p>');
+  });
+
+  it('rejects a body that is only empty formatting (no words after sanitizing)', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock().db);
     await expect(
-      sendKinfolkMessageHandler(req({ body: '<script>alert(1)</script>' })),
+      sendKinfolkMessageHandler(req({ body: '<p></p><p><br></p>' })),
     ).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 });
@@ -330,12 +340,32 @@ describe('replyToConversation (admin)', () => {
     await expect(replyToConversationHandler(req({ kinfolkId: 'kf1', body: '' }))).rejects.toMatchObject({ code: 'invalid-argument' });
   });
 
-  it('strips injected markup from an auntie reply body', async () => {
+  it('keeps a script-like word in an auntie reply as the text typed (#1873)', async () => {
     const ctx = buildDbMock({ docs: { 'conversations/kf1': { kinfolkName: 'Jane Doe', messageCount: 2 } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await replyToConversationHandler(req({ kinfolkId: 'kf1', body: '<script>alert(1)</script>Thanks!' }));
     const msg = ctx.writes.find((w) => w.path.startsWith('conversations/kf1/messages/'));
-    expect(msg?.data.body).toBe('Thanks!');
+    expect(msg?.data.body).toBe('&lt;script&gt;alert(1)&lt;/script&gt;Thanks!');
+  });
+
+  it('strips attributes from an allowed tag in an auntie reply', async () => {
+    const ctx = buildDbMock({ docs: { 'conversations/kf1': { kinfolkName: 'Jane Doe', messageCount: 2 } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await replyToConversationHandler(req({ kinfolkId: 'kf1', body: '<b onclick="evil()">Thanks!</b>' }));
+    const msg = ctx.writes.find((w) => w.path.startsWith('conversations/kf1/messages/'));
+    expect(msg?.data.body).toBe('<b>Thanks!</b>');
+  });
+
+  it('refuses a reply with no words (spaces or empty formatting) and writes nothing', async () => {
+    for (const body of ['   ', '<p><br></p>']) {
+      const ctx = buildDbMock({ docs: { 'conversations/kf1': { kinfolkName: 'Jane Doe', messageCount: 2 } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await expect(replyToConversationHandler(req({ kinfolkId: 'kf1', body }))).rejects.toMatchObject({
+        code: 'invalid-argument',
+        message: 'This reply has no words to send.',
+      });
+      expect(ctx.writes.filter((w) => w.path.startsWith('conversations/'))).toEqual([]);
+    }
   });
 });
 

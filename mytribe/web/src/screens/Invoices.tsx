@@ -91,12 +91,12 @@ export function Invoices() {
   // Try again." over a payment whose fate is unknown is the one line this
   // screen must not print.
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   // #1005: refused billing access is not a failure to report. Back to Home.
   if (invoices.isError && isPermissionDenied(invoices.error)) return <LeaveBilling />;
   if (invoices.isError) {
-    return <LaunchError onRetry={() => void invoices.refetch()} retrying={invoices.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
+    return <LaunchError onRetry={() => void invoices.refetch()} retrying={invoices.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
   }
 
   const data = invoices.data;
@@ -136,12 +136,12 @@ export function Invoices() {
           <section className="balance">
             <div className="btag">ACCOUNT BALANCE</div>
             <div className="bnum">{formatCentsUsd(data.accountBalanceCents)}</div>
-            {/* #1294: this figure is what the household can spend, and it is the
-                only one here that comes off a bill by itself (onInvoiceAutoApply
-                draws it when an invoice is issued). A credit below counts only
-                once it is saved, so it is labelled as waiting, and the AUTO
-                APPLIED chip that sat beside it is gone. */}
-            <p className="bnote">What you can spend. It comes off your next invoice.</p>
+            {/* #1294: this figure is what the household can spend. #1872
+                (operator ruling 2026-11-11): nothing takes it off a bill by
+                itself any more; the admin applies an amount to an invoice. A
+                credit below counts only once it is saved, so it is labelled as
+                waiting, and the AUTO APPLIED chip that sat beside it is gone. */}
+            <p className="bnote">What you can spend. Your Auntie applies it to an invoice for you.</p>
             <div className="brow">
               {creditsAvailableCents > 0 && (
                 <>
@@ -377,7 +377,7 @@ function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeemPhase: 
         <b>{invoiceTitle(inv)}</b>
         <small>
           Invoice #{inv.id}.{' '}
-          {redeemed ? 'It comes off your next invoice.' : 'Save it to your account balance to spend it.'}
+          {redeemed ? 'It is in your account balance.' : 'Save it to your account balance to spend it.'}
         </small>
         {redeemed && (
           <span className="savedline">

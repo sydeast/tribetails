@@ -171,6 +171,10 @@ export const AUDIT_EVENTS = {
   // (`admin/giveAccountCredit.ts`, operator ruling 2026-09-27, docket Q6).
   // The only path that adds credit with no payment behind it.
   BILLING_ACCOUNT_CREDIT_GIVEN: 'BILLING_ACCOUNT_CREDIT_GIVEN',
+  // #1872: the admin applied an amount of a household's account credit to one
+  // open invoice (`admin/applyAccountCredit.ts`, operator ruling 2026-11-11).
+  // The only path that spends credit, and only by an amount she enters.
+  BILLING_ACCOUNT_CREDIT_APPLIED: 'BILLING_ACCOUNT_CREDIT_APPLIED',
   // #1003: the owner decided what an unapplied card payment becomes: some or
   // all of it as account credit, some or all of it on another open invoice of
   // the same household, and the rest kept as recorded.
@@ -521,6 +525,10 @@ export const AUDIT_EVENTS = {
   // refusal message with any phone-shaped digits masked; never a name or phone.
   EMERGENCY_CONTACT_SAVE_REFUSED: 'EMERGENCY_CONTACT_SAVE_REFUSED',
 
+  // #1935: an admin changed what a notification says by text message or by
+  // push (`saveTemplateChannels`). The payload names the template and which
+  // channels changed, never the wording itself.
+  ADMIN_TEMPLATE_WORDING_UPDATED: 'ADMIN_TEMPLATE_WORDING_UPDATED',
   // ── Declared ahead of their writers (#1820) ──────────────────────────────
   // The Activity Log lane lands as a chain of PRs that each add lines for
   // actions that leave none today. Their keys are declared here in one go, with

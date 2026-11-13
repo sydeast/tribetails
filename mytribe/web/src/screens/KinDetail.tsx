@@ -33,13 +33,13 @@ export function KinDetail() {
   const kinfolkId = getActiveKinfolkId();
   const kin = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
 
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
   // #2007: the tab names the Kin once it has loaded, never the id in the URL.
   // Above the early returns below, because a hook cannot sit behind one.
   useRecordTitle(kin.data?.kin.find((k) => k.id === kinId)?.name);
 
   if (kin.isError) {
-    return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} />;
+    return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
   }
 
   // Paused, this gate used to be false and the screen fell through to the

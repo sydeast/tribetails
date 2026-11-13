@@ -227,7 +227,7 @@ const pickRoute = createRoute({
  */
 function AccountError() {
   const navigate = useNavigate();
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
   const [retrying, setRetrying] = useState(false);
 
   async function handleRetry() {
@@ -238,7 +238,7 @@ function AccountError() {
     setRetrying(false);
   }
 
-  return <LaunchError onRetry={() => void handleRetry()} retrying={retrying} onSignOut={signOut} signingOut={signingOut} />;
+  return <LaunchError onRetry={() => void handleRetry()} retrying={retrying} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
 }
 
 const errorRoute = createRoute({

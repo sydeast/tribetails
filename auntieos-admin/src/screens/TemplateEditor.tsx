@@ -37,7 +37,9 @@ import { ENRICHABLE_SAMPLE } from '../lib/mergeFields';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
 import { useToast } from '../components/Toast';
-import { DenPanel, DenScreenHeading, StatusPill } from '../components/DenScreenKit';
+import { DenPanel, DenScreenHeading } from '../components/DenScreenKit';
+import { TemplateChannelPanels } from '../components/TemplateChannelPanels';
+import { CHANNEL_LABEL, TEMPLATE_CHANNELS, type TemplateChannel } from '../lib/templateChannelFormat';
 import './TemplateEditor.css';
 
 export interface TemplateEditorProps {
@@ -110,15 +112,6 @@ function SaveGlyph() {
   );
 }
 
-function MailGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <path d="m3 7 9 6 9-6" />
-    </svg>
-  );
-}
-
 /**
  * The Template Bank editor (create + edit), the write surface Templates.tsx's
  * row activation and "New template" action open. One component for both
@@ -182,6 +175,16 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
     template ? templateToFormFields(template) : blankFormFields(),
   );
   const [view, setView] = useState<View>('edit');
+  // #1935: which of the three things this template sends is on screen. The
+  // text and push panels mount the first time either is opened and then stay,
+  // so a draft in one survives a look at another, and a template opened only
+  // for its email never asks the server for the other two.
+  const [channel, setChannel] = useState<TemplateChannel>('email');
+  const [wordingOpened, setWordingOpened] = useState(false);
+  function showChannel(next: TemplateChannel) {
+    if (next !== 'email') setWordingOpened(true);
+    setChannel(next);
+  }
   const [error, setError] = useState<string | null>(null);
   // #1614: every blocking problem at once, drawn at its own field and cleared
   // when that field is edited. `error` stays for what the server said.
@@ -550,31 +553,73 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           { label: 'Template bank', onSelect: requestClose },
           { label: isCreate ? 'New template' : 'Edit template' },
         ]}
-        title="Email"
+        title={CHANNEL_LABEL[channel]}
         accentTail="template"
-        subtitle={
-          mode === 'old'
-            ? 'Subject and body render with Handlebars. Merge fields resolve to each recipient at send time.'
-            : 'Merge fields fill in for each person when the email is sent.'
-        }
+        {...(channel === 'email'
+          ? {
+              subtitle:
+                mode === 'old'
+                  ? 'Subject and body render with Handlebars. Merge fields resolve to each recipient at send time.'
+                  : 'Merge fields fill in for each person when the email is sent.',
+            }
+          : {})}
         trailing={
           <>
             <GhostButton label="Cancel" onClick={requestClose} disabled={saving} />
-            {!isCreate && onDeleted ? (
+            {/* Delete and Save template act on the email. On the other two
+                tabs the panel carries its own Save, named for what it saves. */}
+            {channel === 'email' && !isCreate && onDeleted ? (
               <GhostButton label="Delete" onClick={openConfirmDelete} disabled={saving} leading={<TrashGlyph />} />
             ) : null}
-            <PrimaryButton
-              label={saving ? 'Saving…' : 'Save template'}
-              onClick={() => void handleSave()}
-              // Off while a conversion is on its way or being compared: the form
-              // still holds the old fields then, and Save would write those.
-              disabled={saving || readOnly || convert.status !== 'idle'}
-              busy={saving}
-              leading={<SaveGlyph />}
-            />
+            {channel === 'email' ? (
+              <PrimaryButton
+                label={saving ? 'Saving…' : 'Save template'}
+                onClick={() => void handleSave()}
+                // Off while a conversion is on its way or being compared: the form
+                // still holds the old fields then, and Save would write those.
+                disabled={saving || readOnly || convert.status !== 'idle'}
+                busy={saving}
+                leading={<SaveGlyph />}
+              />
+            ) : null}
           </>
         }
       />
+
+      {/* The mock's channel switch (#1935). It sits outside the email form's
+          fieldset on purpose: a read-only or mid-save email must not lock the
+          way to the text message and the push notification. */}
+      <div className="template-editor__strip" role="tablist" aria-label="What this template sends">
+        {TEMPLATE_CHANNELS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            role="tab"
+            id={`template-channel-tab-${c}`}
+            className="template-editor__tab"
+            aria-selected={channel === c}
+            aria-controls={`template-channel-panel-${c}`}
+            onClick={() => showChannel(c)}
+          >
+            {CHANNEL_LABEL[c]}
+          </button>
+        ))}
+      </div>
+
+      {wordingOpened ? (
+        <TemplateChannelPanels
+          templateId={isCreate ? null : fields.templateId}
+          active={channel === 'push' ? 'push' : 'sms'}
+        />
+      ) : null}
+
+      <div
+        id="template-channel-panel-email"
+        role="tabpanel"
+        aria-labelledby="template-channel-tab-email"
+        className="template-editor__email"
+        hidden={channel !== 'email'}
+      >
 
       {fieldErrorCount > 0 ? (
         <Banner tone="error" title="Couldn&rsquo;t save yet" className="template-editor__error">
@@ -710,18 +755,6 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
                     maxLength={200}
                   />
                 </div>
-              </div>
-
-              {/* The mock's channel strip. Only the email bank exists, so the
-                  strip states the channel and nothing else: the mock's Push and
-                  SMS switch positions are disabled there and would be dead here,
-                  and its "Active binding" toggle belongs to a TemplateBinding
-                  this editor does not hold (see Manage assignments). */}
-              <div className="template-editor__strip">
-                <span className="template-editor__channel">
-                  <MailGlyph />
-                  <StatusPill tone="teal" label="Channel · Email" />
-                </span>
               </div>
 
               <div className="template-editor__field">
@@ -1096,6 +1129,7 @@ export function TemplateEditor({ template, categories, onClose, onSaved, onDelet
           </div>
         </div>
       )}
+      </div>
 
       {confirmLeave ? (
         <Dialog

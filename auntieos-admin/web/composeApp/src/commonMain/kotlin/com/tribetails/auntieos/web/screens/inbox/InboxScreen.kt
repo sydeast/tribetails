@@ -449,7 +449,7 @@ private fun MessagesPanel(client: FirestoreClient) {
         if (blocker != null) { threadError = blocker; return }
         sending = true
         scope.launch {
-            when (val r = client.replyToConversation(id, reply.trim())) {
+            when (val r = client.replyToConversation(id, plainTextToMessageBody(reply.trim()))) {
                 is WriteResult.Ok -> { reply = ""; threadError = null; openThread(id) }
                 is WriteResult.Err -> threadError = r.message
             }

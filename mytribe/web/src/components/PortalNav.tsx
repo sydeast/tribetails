@@ -98,7 +98,7 @@ export function PortalNav(props: { active: PortalNavTab | null }) {
   const bellName = bellAccessibleName(branding.data?.unreadNotifications);
   // #1290: one source for the avatar on every screen (see lib/identity.ts).
   const { initial } = usePortalIdentity();
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
   return (
     <>
       <nav className="nav">
@@ -144,6 +144,7 @@ export function PortalNav(props: { active: PortalNavTab | null }) {
               initial={initial}
               onSignOut={signOut}
               signingOut={signingOut}
+              signOutError={signOutError}
               billingAccess={billingAccess}
               isOperator={access?.isOperator === true}
               businessName={branding.data?.businessName}

@@ -202,6 +202,27 @@ class InvoiceDetailViewModel(
     private var invoicePaymentSubmissionKey: String? = null
     private var paymentSubmissionSignature: String? = null
 
+    /**
+     * #1872: the Account credit box on an invoice that can take a payment.
+     * Credit is never spent automatically; it goes onto this invoice only as an
+     * amount she types and confirms there. Once it has moved, the payments and
+     * the invoice are read again, as after Record payment, so the balance and
+     * the chip show what the server decided.
+     */
+    val applyCredit: InvoiceApplyCreditController = InvoiceApplyCreditController(
+        invoiceRepository = invoiceRepository,
+        scope = viewModelScope,
+        onApplied = { res, sentence ->
+            loadPaymentsForInvoice(res.invoiceId)
+            reloadInvoiceQuietly(res.invoiceId)
+            _uiState.value = _uiState.value.copy(
+                toastMessage = sentence,
+                toastVisible = true,
+                toastIsError = false,
+            )
+        },
+    )
+
     fun loadInvoice(invoiceId: String) {
         _uiState.value = InvoiceDetailUiState(isLoading = true)
         viewModelScope.launch {
@@ -1383,7 +1404,7 @@ internal fun recordPaymentConfirmationNote(
 internal fun recordPaymentCreditNote(creditedToAccountCents: Long?): String =
     if (creditedToAccountCents != null && creditedToAccountCents > 0L) {
         " ${formatCentsUsd(creditedToAccountCents)} has been added to the household's " +
-            "account credit, which goes onto their next invoice automatically."
+            "account credit. It stays there until you apply an amount to an invoice."
     } else {
         ""
     }

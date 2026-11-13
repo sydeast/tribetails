@@ -324,6 +324,102 @@ describe('TimeOffEditor: one-click US holiday presets', () => {
   });
 });
 
+describe('TimeOffEditor: one name per holiday (#1947)', () => {
+  it('the switch and the quick-add chip call the October holiday the same thing', () => {
+    render(<TimeOffEditor data={EMPTY} onSave={vi.fn()} />);
+    const chip = screen.getByRole('button', { name: "Indigenous Peoples' Day (Columbus Day)" });
+    expect(chip).toBeInTheDocument();
+    expect(
+      screen.getByRole('switch', { name: "Toggle Indigenous Peoples' Day (Columbus Day) observed" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Columbus Day')).toBeNull();
+  });
+
+  it('the renamed switch still saves the stored "columbus" id', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<TimeOffEditor data={EMPTY} onSave={onSave} />);
+    await userEvent.click(
+      screen.getByRole('switch', { name: "Toggle Indigenous Peoples' Day (Columbus Day) observed" }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ observedUsHolidays: ['columbus'] }));
+  });
+});
+
+describe('TimeOffEditor: company holidays in date order (#1979)', () => {
+  // PINNED_NOW is 2026-11-09 in the business zone.
+  const STORED = [
+    'yearly:08-14|Summer break',
+    'yearly:04-20|Spring B',
+    'yearly:04-13|Spring A',
+    '2026-12-16|Staff day',
+  ];
+  const listedNames = () =>
+    Array.from(document.querySelectorAll('.timeOff__datedName')).map((el) => el.textContent);
+
+  it('lists the next closure first, whatever order the list was stored in', () => {
+    render(<TimeOffEditor data={{ ...EMPTY, companyHolidays: STORED }} onSave={vi.fn()} />);
+    expect(listedNames()).toEqual(['Staff day', 'Spring A', 'Spring B', 'Summer break']);
+  });
+
+  it('a stored list out of date order does not open the panel as changed', () => {
+    render(<TimeOffEditor data={{ ...EMPTY, companyHolidays: STORED }} onSave={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+  });
+
+  it('Remove on a row takes out that holiday, not the one stored at its screen position', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<TimeOffEditor data={{ ...EMPTY, companyHolidays: STORED }} onSave={onSave} />);
+    const firstRow = screen.getByText('Staff day').closest('li')!;
+    await userEvent.click(within(firstRow).getByRole('button', { name: /remove/i }));
+    expect(listedNames()).toEqual(['Spring A', 'Spring B', 'Summer break']);
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        companyHolidays: ['yearly:08-14|Summer break', 'yearly:04-20|Spring B', 'yearly:04-13|Spring A'],
+      }),
+    );
+  });
+
+  it('a new one-time closure dated before the others lands at the top, and saves at the end of the list', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<TimeOffEditor data={{ ...EMPTY, companyHolidays: STORED }} onSave={onSave} />);
+    await userEvent.type(screen.getByPlaceholderText('2026-12-25'), '2026-11-20');
+    await userEvent.type(screen.getByPlaceholderText('Christmas closure'), 'Office closed');
+    await userEvent.click(screen.getAllByRole('button', { name: /^add$/i })[0]!);
+    expect(listedNames()[0]).toBe('Office closed');
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ companyHolidays: [...STORED, '2026-11-20|Office closed'] }),
+    );
+  });
+
+  it('a quick-add chip lands at its own date, not at the bottom', async () => {
+    render(<TimeOffEditor data={{ ...EMPTY, companyHolidays: STORED }} onSave={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Thanksgiving' }));
+    expect(listedNames()).toEqual(['Thanksgiving', 'Staff day', 'Spring A', 'Spring B', 'Summer break']);
+  });
+
+  it('orders by "today" in the business time zone across New Year, not this computer’s day', () => {
+    // 03:30 UTC on Jan 1 2027: still Dec 31 in Chicago, already Jan 1 in UTC.
+    // Whatever zone this computer is in, only one of the two renders could
+    // match it, so both orders below hold only when the business zone is read.
+    vi.setSystemTime(new Date('2027-01-01T03:30:00Z'));
+    try {
+      const yearEnd = ['yearly:01-01|New Year closure', 'yearly:12-31|Year end'];
+      const { unmount } = render(
+        <TimeOffEditor data={{ ...EMPTY, companyHolidays: yearEnd, timeZone: 'America/Chicago' }} onSave={vi.fn()} />,
+      );
+      expect(listedNames()).toEqual(['Year end', 'New Year closure']);
+      unmount();
+      render(<TimeOffEditor data={{ ...EMPTY, companyHolidays: yearEnd, timeZone: 'UTC' }} onSave={vi.fn()} />);
+      expect(listedNames()).toEqual(['New Year closure', 'Year end']);
+    } finally {
+      vi.setSystemTime(PINNED_NOW);
+    }
+  });
+});
+
 /**
  * #1593: the add rows refuse what the server would, under the row, and the
  * Add button is never off without a sentence saying why once anything is in

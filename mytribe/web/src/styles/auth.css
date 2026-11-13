@@ -167,6 +167,8 @@
 h3.title.errmsg { font-size: 25px; line-height: 1.18; justify-content: center; display: block; margin-bottom: 12px; }
 .errhelp { color: var(--navy-soft); font-size: 14px; line-height: 1.55; max-width: 34ch; margin: 0 auto 26px; }
 .erractions { display: flex; flex-direction: column; gap: 11px; }
+/* #2140: a failed sign-out, said under the buttons it came from. */
+.errsignout { color: var(--coral); font-size: 14px; line-height: 1.5; max-width: 34ch; margin: 14px auto 0; }
 .errfoot { font-family: var(--mono); font-size: 11px; color: var(--navy-muted); text-align: center; margin-top: 24px;
   animation: rise .6s var(--ease) .2s both; letter-spacing: .04em; }
 .errfoot b { background: var(--tribe-grad); -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: 500; }

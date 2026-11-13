@@ -48,6 +48,7 @@ import com.kinfolk.portal.components.KinSpinner
 import com.kinfolk.portal.components.KinTintPill
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.nav.isWideShell
+import com.kinfolk.portal.portal.BOOKINGS_POLL_MS
 import com.kinfolk.portal.portal.Booking
 import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.CancelRequestStatus
@@ -105,6 +106,8 @@ fun ScheduleScreen(
     /** #1281: see [ScheduleHandoff]. Taken once, then [onHandoffTaken] clears it. */
     handoff: ScheduleHandoff? = null,
     onHandoffTaken: () -> Unit = {},
+    /** #2122: how often [KeepBookingsCurrent] re-reads; see there. */
+    pollMs: Long = BOOKINGS_POLL_MS,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -136,7 +139,7 @@ fun ScheduleScreen(
 
     // #1832: while a visit is under way or about due, the list keeps itself
     // current. Quiet on purpose: a dropped re-read leaves the screen as it is.
-    KeepBookingsCurrent(data) {
+    KeepBookingsCurrent(data, pollMs = pollMs) {
         try {
             data = portalApi.getMyBookings(kinfolkId)
             error = null

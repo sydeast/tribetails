@@ -818,6 +818,30 @@ export interface GiveAccountCreditResult {
   replayed: boolean;
 }
 
+// ---------- applyAccountCredit ----------
+
+/**
+ * Request payload for the `applyAccountCredit` callable.
+ */
+export interface ApplyAccountCreditArgs {
+  invoiceId: string;
+  amountCents: number;
+  idempotencyKey: string;
+}
+
+/**
+ * Response from the `applyAccountCredit` callable.
+ */
+export interface ApplyAccountCreditResult {
+  ok: true;
+  invoiceId: string;
+  paymentId: string;
+  appliedCents: number;
+  amountDueCents: number;
+  accountBalanceCents: number;
+  replayed: boolean;
+}
+
 // ---------- getAccountCreditHistory ----------
 
 /**

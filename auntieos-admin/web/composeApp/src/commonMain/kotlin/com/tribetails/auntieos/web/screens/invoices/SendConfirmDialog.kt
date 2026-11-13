@@ -22,6 +22,19 @@ import com.tribetails.auntieos.web.ui.components.PrimaryButton
 enum class HouseholdSend(val wire: String) { REMINDER("reminder"), REVIEW_SEND("reviewSend") }
 
 /**
+ * What the confirm says the send does. #1872: only what really happens. Review
+ * and send sends the draft and marks the invoice open; it does not touch the
+ * household's account credit, and the words make no claim about a payment.
+ */
+fun sendConfirmBodyText(send: HouseholdSend): String =
+    if (send == HouseholdSend.REMINDER) {
+        "This sends a real payment-reminder notification to the household."
+    } else {
+        "This sends the draft to the household and marks the invoice open. A draft missing its " +
+            "total, household, or invoice number is rejected rather than sent."
+    }
+
+/**
  * #1609: the confirm before a household send. The walk's confirms said "the
  * household on file"; this names the person and each channel, read through
  * `previewInvoiceNotice` (the same recipient, prefs and gate the send uses).
@@ -57,12 +70,7 @@ internal fun SendConfirmDialog(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                if (send == HouseholdSend.REMINDER) {
-                    "This sends a real payment-reminder notification to the household."
-                } else {
-                    "This sends the draft to the household and marks the invoice open. A draft missing its " +
-                        "total, household, or invoice number is rejected rather than sent."
-                },
+                sendConfirmBodyText(send),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )

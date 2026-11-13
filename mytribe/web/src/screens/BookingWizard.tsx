@@ -140,12 +140,12 @@ export interface BookingWizardProps {
  * BookingWizard.test.tsx) without a RouterProvider.
  */
 export function BookingWizard(props: BookingWizardProps) {
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
 
   return (
     <>
       <PortalNav active="schedule" />
-      <BookingWizardBody {...props} onSignOut={signOut} signingOut={signingOut} />
+      <BookingWizardBody {...props} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />
     </>
   );
 }
@@ -178,6 +178,8 @@ export function BookingWizardRoute() {
 export interface BookingWizardBodyProps extends BookingWizardProps {
   onSignOut: () => void;
   signingOut?: boolean;
+  /** `useSignOut().error`, for the load-error screen (#2140). */
+  signOutError?: string | null | undefined;
 }
 
 /**
@@ -511,6 +513,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
         retrying={kinQuery.isRefetching || servicesQuery.isRefetching}
         onSignOut={props.onSignOut}
         signingOut={props.signingOut ?? false}
+        signOutError={props.signOutError}
       />
     );
   }

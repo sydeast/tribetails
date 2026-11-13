@@ -588,7 +588,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
     },
     {
       trigger:
-        'Account credit pays an invoice off (automatically, or with the Run auto-apply button). Credit that pays only part of an invoice tells nobody.',
+        'The admin applies an amount of account credit that pays an invoice off. Credit that pays only part of an invoice tells nobody.',
       source: 'src/lib/accountCredit.ts',
       dataKeys: ['kinfolkId', 'invoiceId', 'amountDue', 'currency', 'dueDate', 'paymentId'],
     },

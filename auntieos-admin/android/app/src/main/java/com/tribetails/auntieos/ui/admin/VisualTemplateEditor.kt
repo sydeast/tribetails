@@ -122,6 +122,8 @@ internal fun VisualTemplateEditorScreen(
     previewDebounceMs: Long = PREVIEW_DEBOUNCE_MS,
     /** Whose sample values the preview fills in; see [previewCatalogKey]. */
     previewCatalogKey: String = template.templateId,
+    /** #1935: the text-message and push wording, drawn under the email. */
+    channelWording: @Composable () -> Unit = {},
 ) {
     val c = AuntieTheme.colors
     var draft by rememberSaveable(template.templateId, stateSaver = VisualDraftSaver) {
@@ -182,6 +184,7 @@ internal fun VisualTemplateEditorScreen(
 
         GlassSurface(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(CHANNEL_EMAIL, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
                 Column {
                     AuntieFieldLabel(text = "Template key")
                     Spacer(Modifier.height(6.dp))
@@ -250,6 +253,7 @@ internal fun VisualTemplateEditorScreen(
                 EmailPreviewPanel(draft.previewRequest(previewCatalogKey), loadPreview, previewDebounceMs)
             }
         }
+        channelWording()
     }
 }
 

@@ -41,7 +41,7 @@ export function sessionNoticeContent(health: SessionHealth): SessionNoticeConten
 
 export function SessionNotice() {
   const content = sessionNoticeContent(useSessionHealth());
-  const { signOut, signingOut } = useSignOut();
+  const { signOut, signingOut, error: signOutError } = useSignOut();
   if (content === null) return null;
   return (
     <section className="glass session-notice" role="alert">
@@ -59,6 +59,9 @@ export function SessionNotice() {
           {signingOut ? <BusyLabel>Signing out…</BusyLabel> : 'Sign in again'}
         </button>
       ) : null}
+      {/* #2140: the section is already the alert, so this line is announced
+          with it; a second role="alert" inside would double up. */}
+      {content.reauth && signOutError ? <p className="session-notice__err">{signOutError}</p> : null}
     </section>
   );
 }

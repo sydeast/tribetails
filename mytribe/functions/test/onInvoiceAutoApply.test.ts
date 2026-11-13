@@ -1,32 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), drawAccountCredit: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), drawAccountCredit: vi.fn(), logEvent: vi.fn() }));
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
-vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
+vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEvent }));
 vi.mock('../src/lib/accountCredit', () => ({ drawAccountCredit: mocks.drawAccountCredit }));
-
 import {
   AUTO_APPLY_ACTOR_UID,
   collectableForAutoApply,
   onInvoiceAutoApplyHandler,
 } from '../src/triggers/onInvoiceAutoApply';
-
 beforeEach(() => {
   mocks.dbFn.mockReset().mockReturnValue({});
-  mocks.drawAccountCredit.mockReset().mockResolvedValue({
-    invoiceId: 'inv1',
-    skipped: null,
-    appliedCents: 5000,
-    accountBalanceCents: 0,
-    amountDueCents: 0,
-  });
+  mocks.logEvent.mockReset();
+  mocks.drawAccountCredit.mockReset();
 });
-
 /**
- * The automatic half of auto-apply, and the transition check that stops it
- * reacting to its own write.
+ * #1872, operator ruling 2026-11-11: ACCOUNT CREDIT IS NEVER SPENT
+ * AUTOMATICALLY. This trigger used to draw a household's credit the moment an
+ * invoice became collectable. It still deploys and still recognises that
+ * moment, and it moves no money on any of them.
  */
-
 function event(
   before: Record<string, unknown> | undefined,
   after: Record<string, unknown> | undefined,
@@ -86,66 +79,38 @@ describe('collectableForAutoApply: what counts as a bill worth looking at', () =
   });
 });
 
-describe('onInvoiceAutoApply: it fires on the TRANSITION and nothing else', () => {
-  it('runs when an invoice is created collectable', async () => {
-    await onInvoiceAutoApplyHandler(event(undefined, OPEN));
-    expect(mocks.drawAccountCredit).toHaveBeenCalledWith(expect.any(Object), {
-      invoiceId: 'inv1',
-      actorUid: AUTO_APPLY_ACTOR_UID,
-    });
-  });
+const QUOTE = { kinfolkId: 'fam1', status: 'quote', amountDue: 100 };
 
-  it('runs when a draft is reviewed and sent, which is the other way an invoice arrives', async () => {
+describe('onInvoiceAutoApply: it never draws credit (#1872)', () => {
+  it('does not draw when an invoice is created open', async () => {
+    await onInvoiceAutoApplyHandler(event(undefined, OPEN));
+    expect(mocks.drawAccountCredit).not.toHaveBeenCalled();
+    expect(mocks.dbFn).not.toHaveBeenCalled();
+  });
+  it('does not draw when a draft is reviewed and sent', async () => {
     await onInvoiceAutoApplyHandler(event(DRAFT, OPEN));
-    expect(mocks.drawAccountCredit).toHaveBeenCalledTimes(1);
+    expect(mocks.drawAccountCredit).not.toHaveBeenCalled();
+    expect(mocks.dbFn).not.toHaveBeenCalled();
   });
-
-  it('DOES NOT run when the invoice was already collectable: the loop guard', async () => {
-    // This is what stops the trigger reacting to its own write. Its write leaves
-    // an invoice that was already collectable, so the next invocation lands here.
+  it('does not draw when a household accepts a quote', async () => {
+    await onInvoiceAutoApplyHandler(event(QUOTE, OPEN));
+    expect(mocks.drawAccountCredit).not.toHaveBeenCalled();
+    expect(mocks.dbFn).not.toHaveBeenCalled();
+  });
+  it('says so in the log on each of those, so the old firing points stay visible', async () => {
+    await onInvoiceAutoApplyHandler(event(DRAFT, OPEN));
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'payment.autoapply.disabled', extra: { invoiceId: 'inv1' } }),
+    );
+  });
+  it('stays silent on a write that is not a move into collectable', async () => {
     await onInvoiceAutoApplyHandler(event(OPEN, { ...OPEN, amountDue: 50 }));
-    expect(mocks.drawAccountCredit).not.toHaveBeenCalled();
-  });
-
-  it('does not run on the paid transition its own write causes', async () => {
     await onInvoiceAutoApplyHandler(event(OPEN, { ...OPEN, status: 'paid', amountDue: 0 }));
-    expect(mocks.drawAccountCredit).not.toHaveBeenCalled();
-  });
-
-  it('does not run on a deleted document', async () => {
     await onInvoiceAutoApplyHandler(event(OPEN, undefined));
+    expect(mocks.logEvent).not.toHaveBeenCalled();
     expect(mocks.drawAccountCredit).not.toHaveBeenCalled();
   });
-
-  it('does not run when a paid invoice is edited', async () => {
-    const paid = { ...OPEN, status: 'paid', amountDue: 0 };
-    await onInvoiceAutoApplyHandler(event(paid, { ...paid, invoiceNumber: '1030' }));
-    expect(mocks.drawAccountCredit).not.toHaveBeenCalled();
-  });
-
-  it('stamps the write as the SYSTEM, never as whichever admin touched the invoice', async () => {
-    await onInvoiceAutoApplyHandler(event(undefined, OPEN));
+  it('keeps the system actor constant that older payment rows carry', () => {
     expect(AUTO_APPLY_ACTOR_UID).toBe('system:auto-apply');
-  });
-});
-
-describe('onInvoiceAutoApply: failure is logged, never rethrown', () => {
-  it('swallows a pass that threw, because a retry could collect twice', async () => {
-    // Firestore retries a trigger that throws. Retrying a money write whose
-    // first attempt may have committed is worse than credit sitting unspent
-    // until the operator runs the callable.
-    mocks.drawAccountCredit.mockRejectedValue(new Error('firestore unavailable'));
-    await expect(onInvoiceAutoApplyHandler(event(undefined, OPEN))).resolves.toBeUndefined();
-  });
-
-  it('accepts a skipped pass quietly, because doing nothing is a normal outcome', async () => {
-    mocks.drawAccountCredit.mockResolvedValue({
-      invoiceId: 'inv1',
-      skipped: 'no_credit',
-      appliedCents: 0,
-      accountBalanceCents: 0,
-      amountDueCents: 10000,
-    });
-    await expect(onInvoiceAutoApplyHandler(event(undefined, OPEN))).resolves.toBeUndefined();
   });
 });

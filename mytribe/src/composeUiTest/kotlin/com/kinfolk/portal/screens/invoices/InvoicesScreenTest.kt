@@ -154,6 +154,59 @@ class InvoicesScreenTest {
         onNodeWithText("\$15.00").assertIsDisplayed()
     }
 
+    // #1872: credit is never spent automatically, so the balance card says who
+    // applies it and makes no promise about the next invoice.
+    @Test
+    fun accountBalance_saysTheAuntieAppliesIt_notThatItComesOffByItself() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", buildJsonObject {
+            put("accountBalanceCents", 1500L)
+            put("open", buildJsonArray {})
+            put("paid", buildJsonArray {})
+            put("credits", buildJsonArray {})
+        })
+        setThemedContent {
+            InvoicesScreen("The Foster", "3", PortalApi(fake))
+        }
+        waitForIdle()
+        onNodeWithText("What you can spend. Your Auntie applies it to an invoice for you.").assertIsDisplayed()
+        onNodeWithText("What you can spend. It comes off your next invoice.").assertDoesNotExist()
+    }
+
+    // #1872: after the admin applies $25.00 of a $120.00 balance to a $100.00
+    // invoice, one payload comes back. The balance and the amount asked for
+    // both read from it and agree.
+    @Test
+    fun afterAnAdminAppliesCredit_theBalanceAndTheInvoiceAgree() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", buildJsonObject {
+            put("accountBalanceCents", 9500L)
+            put("open", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "1026")
+                    put("kinfolkId", "3")
+                    put("amountDue", 75.0)
+                    put("total", 100.0)
+                    put("paidCents", 2500L)
+                    put("partiallyPaid", true)
+                    put("isPaid", false)
+                    put("status", "open")
+                    put("client", "Buddy (Nora)")
+                    put("dueDate", "Nov 19, 2026")
+                })
+            })
+            put("paid", buildJsonArray {})
+            put("credits", buildJsonArray {})
+        })
+        setThemedContent {
+            InvoicesScreen("The Foster", "3", PortalApi(fake))
+        }
+        waitForIdle()
+        onNodeWithText("\$95.00").assertIsDisplayed()
+        onNodeWithText("Pay \$75.00").assertIsDisplayed()
+        onNodeWithText("Pay \$100.00").assertDoesNotExist()
+    }
+
     @Test
     fun redeemedCredit_showsTargetLabel() = runComposeUiTest {
         val fake = FakeFunctionsClient()
