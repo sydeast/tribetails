@@ -7,6 +7,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { logEvent } from '../lib/logger';
+import { savedByStamp } from '../lib/savedByStamp';
 import { BUSINESS_SETTINGS_DOC, FALLBACK_BUSINESS_TIME_ZONE, zonedNow } from '../lib/businessHours';
 import { withDefaultHomeLayoutCollapsed } from '../lib/homeLayout';
 import type { SettingsRefusal } from '../lib/businessSettingsChecks';
@@ -152,9 +153,8 @@ export async function saveBusinessSettingsHandler(
     });
   }
 
-  const updatedAt = new Date().toISOString();
-  const email = (req.auth?.token as { email?: unknown } | undefined)?.email;
-  const updatedBy = typeof email === 'string' && email !== '' ? email : uid;
+  // #1962: the uid, not the sign-in email. The screens name the person from it.
+  const { updatedAt, updatedBy } = savedByStamp(uid);
   // #1987: a Home layout equal to the default is stored as the default (the
   // empty list), so it reads as "Default" on every client and the portal keeps
   // its standard page. After the checks, so a bad row is still refused by name.

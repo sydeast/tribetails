@@ -378,16 +378,17 @@ describe('saveBusinessSettings', () => {
     const res = await saveBusinessSettingsHandler(
       owner({ changes: { travelBufferMinutes: 45, businessEmail: 'hi@tribetails.com' } }),
     );
+    // #1962: the uid, though this caller's token carries a sign-in email.
     expect(res).toEqual({
       updatedAt: '2026-11-09T18:00:00.000Z',
-      updatedBy: 'owner@tribetails.com',
+      updatedBy: 'owner-1',
     });
     const [w] = settingsWrites();
     expect(w!.data).toEqual({
       travelBufferMinutes: 45,
       businessEmail: 'hi@tribetails.com',
       updatedAt: '2026-11-09T18:00:00.000Z',
-      updatedBy: 'owner@tribetails.com',
+      updatedBy: 'owner-1',
     });
     expect(w!.options?.merge).toBeUndefined();
     expect((w!.options?.mergeFields ?? []).map(String)).toEqual([
@@ -404,7 +405,7 @@ describe('saveBusinessSettings', () => {
     );
   });
 
-  it('stamps the uid when the token has no email', async () => {
+  it('stamps the uid when the token has no email, the same as when it has one', async () => {
     const res = await saveBusinessSettingsHandler({
       data: { changes: { enableConflictDetection: false } },
       auth: { uid: 'owner-1', token: { admin: true } },
