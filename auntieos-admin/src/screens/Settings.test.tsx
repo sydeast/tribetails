@@ -1081,6 +1081,96 @@ describe('Settings — MyTribe portal Home layout editor', () => {
     expect(within(panel).getByRole('switch', { name: 'Show Up next on Home' })).toBeChecked();
   });
 });
+// #1987 (walk 2026-11-10): typing one Limit and putting it back left the chip
+// on "Custom layout" and the Kinfolk Home in one stacked column, with Reset
+// the only way out. A layout equal to the default is the default: the chip
+// says so, there is nothing to save, and a save that lands on it sends `[]`.
+describe('Settings: a Home layout equal to the default is the default (#1987)', () => {
+  const DEFAULT_ROWS = ['liveVisit', 'upNext', 'tales', 'quickStart'].map((id) => ({ id, enabled: true, limit: 0 }));
+  const LIMIT_ONLY = DEFAULT_ROWS.map((r) => (r.id === 'upNext' ? { ...r, limit: 2 } : r));
+  const withHome = (sections: Array<{ id: string; enabled: boolean; limit: number }>) =>
+    withOverrides({ mytribePortal: { ...DEFAULT_BUSINESS_SETTINGS.mytribePortal, home: { sections } } });
+  async function openPortal(settings = DEFAULT_BUSINESS_SETTINGS) {
+    getBusinessSettings.mockResolvedValue(settings);
+    saveBusinessSettings.mockResolvedValue({ updatedAt: 'x', updatedBy: 'y' });
+    render(<Settings />);
+    await screen.findByLabelText('Business name');
+    return openSection('MyTribe portal');
+  }
+  const limitOf = (panel: HTMLElement, label: string) =>
+    within(within(panel).getByText(label).closest('li') as HTMLElement).getByLabelText('Limit');
+  async function typeLimit(panel: HTMLElement, label: string, text: string) {
+    const input = limitOf(panel, label);
+    await userEvent.clear(input);
+    await userEvent.type(input, text);
+  }
+  const sentSections = () =>
+    (saveBusinessSettings.mock.calls[0]?.[0] as { mytribePortal: { home: { sections: unknown } } }).mytribePortal.home
+      .sections;
+  it('a limit-only change saves the order untouched with just that limit', async () => {
+    const panel = await openPortal();
+    await typeLimit(panel, 'Up next', '2');
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(sentSections()).toEqual(LIMIT_ONLY);
+  });
+  it('typing a limit and putting 0 back is the default again, with nothing to save', async () => {
+    const panel = await openPortal();
+    await typeLimit(panel, 'Up next', '2');
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    await typeLimit(panel, 'Up next', '0');
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    expect(within(panel).queryByText('Custom layout')).not.toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Reset to default layout' })).toBeDisabled();
+    const save = within(panel).getByRole('button', { name: /^save$/i });
+    expect(save).toBeDisabled();
+    await userEvent.click(save);
+    expect(saveBusinessSettings).not.toHaveBeenCalled();
+  });
+  it('a saved limit put back to 0 reads Default and saves the empty list, not four rows', async () => {
+    const panel = await openPortal(withHome(LIMIT_ONLY));
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    await typeLimit(panel, 'Up next', '0');
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(sentSections()).toEqual([]);
+  });
+  it('a switch turned off and back on, and a section moved and moved back, are the default again', async () => {
+    const panel = await openPortal();
+    const quick = within(panel).getByRole('switch', { name: 'Show Quick start on Home' });
+    await userEvent.click(quick);
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    await userEvent.click(quick);
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Move Live visit down' }));
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Move Live visit up' }));
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+  });
+  it('a stored layout equal to the default opens as Default, with nothing to reset or save', async () => {
+    const panel = await openPortal(withHome(DEFAULT_ROWS));
+    expect(within(panel).getByText('Default layout')).toBeInTheDocument();
+    expect(within(panel).queryByText('Custom layout')).not.toBeInTheDocument();
+    expect(within(panel).getByText('Default layout (no custom sections configured)')).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Reset to default layout' })).toBeDisabled();
+    expect(within(panel).getByRole('button', { name: /^save$/i })).toBeDisabled();
+  });
+  it('a real custom order still reads Custom and is saved in that order with its limit', async () => {
+    const custom = [
+      { id: 'quickStart', enabled: true, limit: 0 },
+      { id: 'liveVisit', enabled: true, limit: 0 },
+      { id: 'upNext', enabled: true, limit: 0 },
+      { id: 'tales', enabled: true, limit: 0 },
+    ];
+    const panel = await openPortal(withHome(custom));
+    expect(within(panel).getByText('Custom layout')).toBeInTheDocument();
+    expect(within(panel).getAllByRole('listitem')[0]).toHaveTextContent('Quick start');
+    await typeLimit(panel, 'Up next', '3');
+    await userEvent.click(within(panel).getByRole('button', { name: /^save$/i }));
+    expect(sentSections()).toEqual(custom.map((r) => (r.id === 'upNext' ? { ...r, limit: 3 } : r)));
+  });
+});
 describe('Settings: Integrations is a report, and its Google row opens Calendar in place', () => {
   it('does not ask the server until the section is opened', async () => {
     getBusinessSettings.mockResolvedValue(DEFAULT_BUSINESS_SETTINGS);
