@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { db } from './firestoreAdmin';
-import { sanitizeRichText, toPlainTextPreview } from './richText';
+import { sanitizeMessageBody, messagePlainText } from './richText';
 
 /**
  * Stage 2 step 7 (Inbox conversations / Message Auntie 16.4). Two-way threads
@@ -28,14 +29,21 @@ import { sanitizeRichText, toPlainTextPreview } from './richText';
 
 export const CONVERSATIONS_COLLECTION = 'conversations';
 export const MESSAGES_SUBCOLLECTION = 'messages';
+/** Longest message, in characters as typed (the plain text of the body). */
 export const MAX_MESSAGE_BODY = 5000;
+/**
+ * Longest body as sent and stored. A body is HTML with every typed `&`, `<`
+ * and `>` as an entity (up to five characters each), plus the editor's tags,
+ * so a message at the typed limit can be several times longer as HTML.
+ */
+export const MAX_MESSAGE_HTML = MAX_MESSAGE_BODY * 6;
 export const PREVIEW_MAX = 140;
 
 export type SenderRole = 'kinfolk' | 'auntie';
 
 /** Single-line preview for the thread list. Pure. Strips any markup, collapses whitespace + truncates. */
 export function previewOf(body: string): string {
-  const oneLine = toPlainTextPreview(body, Number.MAX_SAFE_INTEGER).replace(/\s+/g, ' ').trim();
+  const oneLine = messagePlainText(body).replace(/\s+/g, ' ').trim();
   return oneLine.length <= PREVIEW_MAX ? oneLine : `${oneLine.slice(0, PREVIEW_MAX - 1)}…`;
 }
 
@@ -57,10 +65,21 @@ export interface AppendMessageArgs {
  */
 export async function appendMessage(args: AppendMessageArgs): Promise<string> {
   const { kinfolkId, kinfolkName, senderRole, senderUid, memberUid } = args;
-  // Re-cap post-sanitize: the allowed tag subset can grow a body past the
-  // raw-input MAX_MESSAGE_BODY check the callables already ran (rare, but a
-  // sanitizer's job is to never trust its own output length either).
-  const body = sanitizeRichText(args.body).slice(0, MAX_MESSAGE_BODY);
+  // Re-cap post-sanitize: escaping can grow a body past the raw-input
+  // MAX_MESSAGE_HTML check the callables already ran (rare, but a sanitizer's
+  // job is to never trust its own output length either).
+  const body = sanitizeMessageBody(args.body).slice(0, MAX_MESSAGE_HTML);
+  // sendKinfolkMessage refuses these bodies first with its own codes, so in
+  // practice the two checks below are the Auntie reply path, where the admin
+  // web, admin Android and desktop console show the message as written: it is
+  // screen copy, not a code. Both refuse before anything is written.
+  const typed = messagePlainText(body);
+  if (typed.length === 0) {
+    throw new HttpsError('invalid-argument', 'This reply has no words to send.');
+  }
+  if (typed.length > MAX_MESSAGE_BODY) {
+    throw new HttpsError('invalid-argument', `Message is too long (${MAX_MESSAGE_BODY} character max).`);
+  }
   const now = Date.now();
   const convRef = db().collection(CONVERSATIONS_COLLECTION).doc(kinfolkId);
   const msgRef = convRef.collection(MESSAGES_SUBCOLLECTION).doc();

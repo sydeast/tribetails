@@ -2,6 +2,10 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { RichText } from './RichText';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { plainTextToMessageBody } from '../lib/richText';
 describe('RichText', () => {
   it('renders formatting, not the tags as text', () => {
     const { container } = render(
@@ -32,5 +36,84 @@ describe('RichText', () => {
     const { container } = render(<RichText body={'line one\nline two'} />);
     expect(container.firstElementChild).toHaveStyle({ whiteSpace: 'pre-wrap' });
     expect(container.textContent).toBe('line one\nline two');
+  });
+});
+
+describe('RichText with the stored form of a hostile link', () => {
+  it('opens only a safe address and adds no handler', () => {
+    const { container } = render(
+      <RichText
+        body={
+          '<p><a href="https://example.com/?a=1&amp;b=2">ok</a> ' +
+          '<a href="java&amp;#x73;cript:alert(1)">x</a> ' +
+          '<a href="https://example.com/&amp;quot; onclick=&amp;quot;alert(1)">s</a> ' +
+          '<a href=`javascript:alert(1)`>y <b onclick=`alert(1)`>z</p>'
+        }
+      />,
+    );
+    const hrefs = Array.from(container.querySelectorAll('a')).map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual(['https://example.com/?a=1&b=2', 'https://example.com/&quot; onclick=&quot;alert(1)']);
+    expect(container.querySelector('[onclick]')).toBeNull();
+    expect(container.querySelector('b')).toBeNull();
+    expect(container.textContent).toBe('ok x s <a href=`javascript:alert(1)`>y <b onclick=`alert(1)`>z');
+  });
+});
+
+interface MessageFixtures {
+  hostile: { input: string; stored: string }[];
+  plainText: { typed: string; sent: string; stored: string }[];
+  editor: { html: string; typed: string; stored: string }[];
+}
+// Stored bodies exactly as the server writes them (pinned by the functions suite).
+const fixtures = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../../mytribe/functions/test/fixtures/messageBodies.json'), 'utf8'),
+) as MessageFixtures;
+const allStored = [
+  ...fixtures.hostile.map((f) => f.stored),
+  ...fixtures.plainText.map((f) => f.stored),
+  ...fixtures.editor.map((f) => f.stored),
+];
+const ALLOWED_ELEMENTS = ['b', 'strong', 'i', 'em', 'u', 'p', 'br', 'ul', 'ol', 'li', 'blockquote', 'a'];
+describe('RichText and the stored message bodies', () => {
+  it('inserted as HTML (as an older screen did), a stored body makes only allowed elements and safe links', () => {
+    for (const stored of allStored) {
+      const div = document.createElement('div');
+      div.innerHTML = stored;
+      for (const el of Array.from(div.querySelectorAll('*'))) {
+        expect(ALLOWED_ELEMENTS).toContain(el.tagName.toLowerCase());
+        for (const attr of Array.from(el.attributes)) {
+          expect(`${el.tagName.toLowerCase()} ${attr.name}`).toBe('a href');
+          expect(['http:', 'https:', 'mailto:']).toContain(new URL(attr.value, 'https://example.com/').protocol);
+        }
+      }
+    }
+  });
+  it('a plain-text message reads back as typed, drawn here and inserted as HTML', () => {
+    for (const f of fixtures.plainText) {
+      expect(plainTextToMessageBody(f.typed)).toBe(f.sent);
+      const { container, unmount } = render(<RichText body={f.stored} />);
+      expect(container.textContent).toBe(f.typed);
+      unmount();
+      const div = document.createElement('div');
+      div.innerHTML = f.stored;
+      expect(div.textContent).toBe(f.typed);
+    }
+  });
+  it('an editor message reads back as typed, with its formatting', () => {
+    for (const f of fixtures.editor) {
+      const { container, unmount } = render(<RichText body={f.stored} />);
+      expect(container.textContent).toBe(f.typed);
+      unmount();
+    }
+  });
+  it('a hostile body never becomes a script, image or handler when drawn', () => {
+    for (const f of fixtures.hostile) {
+      const { container, unmount } = render(<RichText body={f.stored} />);
+      expect(container.querySelector('script, img, svg, iframe, [onclick], [onerror], [onload]')).toBeNull();
+      for (const a of Array.from(container.querySelectorAll('a'))) {
+        expect(a.getAttribute('href') ?? '').toMatch(/^(https?:\/\/|mailto:)/);
+      }
+      unmount();
+    }
   });
 });

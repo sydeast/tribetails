@@ -7,7 +7,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { requireKinfolkPerm } from '../lib/memberGate';
 import { enforceRateLimit } from '../lib/rateLimit';
-import { sanitizeRichText, sanitizePlainText, toPlainTextPreview } from '../lib/richText';
+import { sanitizeRichText, sanitizePlainText, messagePreview } from '../lib/richText';
 import { readThread } from '../lib/conversations';
 import { generateCopy } from '../lib/aiCopy';
 import { logEvent } from '../lib/logger';
@@ -131,7 +131,7 @@ export async function generateHandler(req: CallableRequest<unknown>): Promise<Ge
     input = recent
       .map((m) => {
         const who = m.senderRole === 'auntie' ? 'Auntie' : 'Kinfolk';
-        return `${who}: ${toPlainTextPreview(m.body, 600)}`;
+        return `${who}: ${messagePreview(m.body, 600)}`;
       })
       .join('\n');
   }

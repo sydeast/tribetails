@@ -8,6 +8,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.kinfolk.portal.portal.ConversationMessage
 import com.kinfolk.portal.portal.PortalApi
+import com.kinfolk.portal.text.plainTextToMessageBody
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -76,7 +77,7 @@ class MessageAuntieController internal constructor(
         sendError = null
         scope.launch {
             try {
-                portalApi.sendKinfolkMessage(body = trimmed, kinfolkId = kinfolkId)
+                portalApi.sendKinfolkMessage(body = plainTextToMessageBody(trimmed), kinfolkId = kinfolkId)
                 onSent()
                 reload()
             } catch (c: CancellationException) {

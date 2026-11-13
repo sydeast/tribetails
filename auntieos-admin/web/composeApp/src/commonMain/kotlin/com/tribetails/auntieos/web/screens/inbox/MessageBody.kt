@@ -8,12 +8,13 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 /**
  * One stored message body. Rich text (the server's tag subset) is drawn as
- * formatting; a body with no tags is drawn as typed. Never shows raw tags.
+ * formatting; a body with no tags is drawn as typed (its entities decoded
+ * once). Never shows raw tags.
  */
 @Composable
 fun MessageBody(body: String, style: TextStyle, color: Color, linkColor: Color, modifier: Modifier = Modifier) {
     val text = remember(body, linkColor) {
-        if (hasRichTextMarkup(body)) richTextToAnnotatedString(body, linkColor) else AnnotatedString(body)
+        if (hasRichTextMarkup(body)) richTextToAnnotatedString(body, linkColor) else AnnotatedString(messageBodyText(body))
     }
     Text(text = text, style = style, color = color, modifier = modifier)
 }
