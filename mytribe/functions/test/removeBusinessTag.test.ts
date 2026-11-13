@@ -161,6 +161,18 @@ describe('removeBusinessTag', () => {
     expect(ctx.writes.some((w) => w.path === 'kinfolk/kf1')).toBe(false);
   });
 
+  it('#1962 stamps the settings doc the way every Settings save does', async () => {
+    const ctx = world({ householdTags: [def('Unused')] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await removeBusinessTagHandler(req({ scope: 'household', name: 'Unused' }, 'owner-1'));
+
+    const write = ctx.writes.find((w) => w.path === BUSINESS_SETTINGS_DOC)!;
+    expect(write.data['updatedBy']).toBe('owner-1');
+    expect(write.data['updatedAt']).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(Object.keys(write.data).sort()).toEqual(['householdTags', 'updatedAt', 'updatedBy']);
+  });
+
   it('ignores non-string entries in a malformed tags array instead of throwing', async () => {
     const ctx = world({
       kinfolk: [{ id: 'kf1', tags: ['VIP', 7, null, 'Meds Needed'] }],

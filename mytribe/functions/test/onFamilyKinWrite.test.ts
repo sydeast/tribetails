@@ -92,7 +92,7 @@ describe('buildFlatMirrorPayload: a cleared field the admin decodes as non-null 
 });
 describe('mirrorFamilyKinToFlat: CREATE', () => {
   it('creates a flat mirror, copies parent fields, stamps the symmetric link on BOTH docs', async () => {
-    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK }, [FAMILY_PATH]: { name: 'Rex' } }, queryDocs: { kin: [] } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
     const after = {
@@ -154,7 +154,7 @@ describe('mirrorFamilyKinToFlat: CREATE', () => {
 describe('mirrorFamilyKinToFlat: UPDATE merges parent fields into existing flat doc', () => {
   it('merges changed parent fields, keeps the guard + link, leaves the_411 alone', async () => {
     const FLAT_ID = 'flat1';
-    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK }, [FAMILY_PATH]: { name: 'Rex' } }, queryDocs: { kin: [] } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
     const before = { name: 'Rex', legacyKinId: FLAT_ID, familyKinPath: FAMILY_PATH, status: 'active' };
@@ -172,7 +172,7 @@ describe('mirrorFamilyKinToFlat: UPDATE merges parent fields into existing flat 
 
   it('SKIPS the mirror write when no parent-owned field changed (loop guard)', async () => {
     const FLAT_ID = 'flat1';
-    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK }, [FAMILY_PATH]: { name: 'Rex' } }, queryDocs: { kin: [] } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
     // Only the link/guard fields differ (e.g. the echo of our own create stamp).
@@ -193,7 +193,7 @@ describe('mirrorFamilyKinToFlat: UPDATE merges parent fields into existing flat 
 describe('mirrorFamilyKinToFlat: ARCHIVE soft-marks the flat mirror', () => {
   it('sets status inactive on the flat doc (no hard delete, no field clobber)', async () => {
     const FLAT_ID = 'flat1';
-    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK }, [FAMILY_PATH]: { name: 'Rex' } }, queryDocs: { kin: [] } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
     const before = { name: 'Rex', legacyKinId: FLAT_ID, familyKinPath: FAMILY_PATH, status: 'active' };
@@ -228,7 +228,7 @@ describe('mirrorFamilyKinToFlat: household photo reaches the admin portrait fiel
   });
 
   it('create: the flat mirror carries profilePictureUrl alongside photoUrl', async () => {
-    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK }, [FAMILY_PATH]: { name: 'Rex' } }, queryDocs: { kin: [] } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await mirrorFamilyKinToFlat(KINFOLK, KIN_ID, undefined, { name: 'Rex', status: 'active', photoUrl: URL_A } as any);
     const flatWrite = ctx.writes.find((w) => w.path === `kin/${res.flatDocId}`);
@@ -237,7 +237,7 @@ describe('mirrorFamilyKinToFlat: household photo reaches the admin portrait fiel
   });
 
   it('replace: a changed photoUrl overwrites profilePictureUrl on the flat doc', async () => {
-    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK }, [FAMILY_PATH]: { name: 'Rex' } }, queryDocs: { kin: [] } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await mirrorFamilyKinToFlat(KINFOLK, KIN_ID, { ...linked, photoUrl: URL_A } as any, { ...linked, photoUrl: URL_B } as any);
     expect(res.action).toBe('updated');
@@ -247,7 +247,7 @@ describe('mirrorFamilyKinToFlat: household photo reaches the admin portrait fiel
   });
 
   it('remove: a cleared photoUrl clears profilePictureUrl to the empty string', async () => {
-    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK }, [FAMILY_PATH]: { name: 'Rex' } }, queryDocs: { kin: [] } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await mirrorFamilyKinToFlat(KINFOLK, KIN_ID, { ...linked, photoUrl: URL_A } as any, { ...linked, photoUrl: null } as any);
     const flatWrite = ctx.writes.find((w) => w.path === `kin/${FLAT_ID}`);
@@ -256,7 +256,7 @@ describe('mirrorFamilyKinToFlat: household photo reaches the admin portrait fiel
   });
 
   it('an unrelated parent edit leaves profilePictureUrl alone (an Auntie-set portrait survives)', async () => {
-    const ctx = buildDbMock({ docs: {}, queryDocs: { kin: [] } });
+    const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK }, [FAMILY_PATH]: { name: 'Rex' } }, queryDocs: { kin: [] } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await mirrorFamilyKinToFlat(
       KINFOLK,

@@ -259,6 +259,32 @@ describe('notificationOpenRoute: invoice.payment.unapplied (#1003)', () => {
   });
 });
 
+describe('notificationOpenRoute: kin.removal.requested (#1912)', () => {
+  const removal = (data: Record<string, unknown>) =>
+    entry({ key: 'kin.removal.requested', targetType: 'kinfolk', targetId: 'fam1', data });
+  it('opens the removal queue on Bookings with the request named', () => {
+    const route = { to: '/bookings', search: { kinRemoval: 'fam1_k1' } };
+    const e = removal({ kinfolkId: 'fam1', kinId: 'k1', flatKinId: 'flat1', requestId: 'fam1_k1' });
+    expect(notificationOpenRoute(e)).toEqual(route);
+    expect(applicableNotificationActions(e).open).toEqual(route);
+  });
+  it('a Kin with no admin record yet still opens the queue', () => {
+    expect(notificationOpenRoute(removal({ kinfolkId: 'fam1', kinId: 'k1', flatKinId: null, requestId: 'fam1_k1' }))).toEqual({
+      to: '/bookings',
+      search: { kinRemoval: 'fam1_k1' },
+    });
+  });
+  it('falls back to the household when the notice names no request', () => {
+    expect(notificationOpenRoute(removal({ kinfolkId: 'fam1' }))).toEqual({
+      to: '/directory/$kinfolkId',
+      params: { kinfolkId: 'fam1' },
+    });
+  });
+  it('the answers the household hears keep their own target', () => {
+    const e = entry({ key: 'kin.removal.declined', targetType: 'kinfolk', targetId: 'fam1', data: { requestId: 'fam1_k1' } });
+    expect(notificationOpenRoute(e)).toEqual({ to: '/directory/$kinfolkId', params: { kinfolkId: 'fam1' } });
+  });
+});
 describe('requestOutcomeLabel (#1647)', () => {
   it.each([
     ['booked', 'Booked'],

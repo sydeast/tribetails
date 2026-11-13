@@ -41,6 +41,19 @@ if ! command -v unzip >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# The desktop console's render tests (auntieos-admin/web :composeApp:jvmTest)
+# draw through Skia, which loads libGL.so.1 even headless. Without it 147 of
+# the suite's tests fail with "Could not initialize class
+# org.jetbrains.skia.Surface" (#2126). CI runs that job only on manual
+# dispatch, so the codespace is where it gets run before a merge.
+STEP="installing libgl1 for the desktop render tests"
+if ! ldconfig -p | grep -q 'libGL\.so\.1'; then
+  say "$STEP"
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq libgl1 >/dev/null
+fi
+
+# ---------------------------------------------------------------------------
 STEP="installing Android command-line tools"
 if [ ! -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
   say "$STEP into $SDK"

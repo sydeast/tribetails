@@ -22,6 +22,11 @@ vi.mock('../../api/emailFrame', async (orig) => ({
   previewEmailFrame: api.previewEmailFrame,
 }));
 vi.mock('../../api/emailImageUpload', () => ({ uploadEmailImage: api.uploadEmailImage }));
+// #1962: the shared staff roster (`listStaff`), stubbed so no test dials it.
+const staffRoster = vi.hoisted(() => ({
+  current: null as { uid: string; displayName: string | null; email: string | null }[] | null,
+}));
+vi.mock('../../lib/useStaffRoster', () => ({ useStaffRoster: () => staffRoster.current }));
 
 import { EmailFrameSection } from './EmailFrameSection';
 
@@ -42,11 +47,14 @@ const DEFAULTS = {
 };
 
 function state(stored: Record<string, string> = {}, updatedAt: string | null = null) {
-  return { stored, defaults: DEFAULTS, updatedAt, updatedBy: updatedAt ? 'owner@x.test' : null };
+  return { stored, defaults: DEFAULTS, updatedAt, updatedBy: updatedAt ? OWNER_UID : null };
 }
+
+const OWNER_UID = 'nppJNdMNYJfUigibGKUQj3n4obt2';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  staffRoster.current = [{ uid: OWNER_UID, displayName: 'Syd East', email: null }];
   api.previewEmailFrame.mockResolvedValue({ subject: 'Your visit is booked', html: '<p>rendered</p>', text: 'T' });
 });
 
@@ -123,6 +131,84 @@ describe('Email frame section', () => {
     await waitFor(() => expect(api.resetEmailFrame).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Back to the default frame.')).toBeInTheDocument();
     expect(screen.getByLabelText('Accent hex')).toHaveValue('');
+  });
+
+  // #1962 and #1989: the line under the title.
+  describe('the line under the title', () => {
+    it('names who saved a frame that differs from the default, never their user id', async () => {
+      api.getEmailFrame.mockResolvedValue(state({ footerText: 'Thanks' }, '2026-11-11T19:45:00.000Z'));
+      render(<EmailFrameSection />);
+      await screen.findByLabelText('Accent hex');
+      expect(screen.getByText(/^Last saved .* by Syd East$/)).toBeInTheDocument();
+      expect(screen.queryByText('Using the default frame')).not.toBeInTheDocument();
+      expect(document.body.textContent).not.toContain(OWNER_UID);
+    });
+
+    it('says "an Admin" for a saver the roster does not know', async () => {
+      staffRoster.current = [];
+      api.getEmailFrame.mockResolvedValue(state({ footerText: 'Thanks' }, '2026-11-11T19:45:00.000Z'));
+      render(<EmailFrameSection />);
+      await screen.findByLabelText('Accent hex');
+      expect(screen.getByText(/^Last saved .* by an Admin$/)).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain(OWNER_UID);
+    });
+
+    it('prints no user id while the roster is still being read', async () => {
+      staffRoster.current = null;
+      api.getEmailFrame.mockResolvedValue(state({ footerText: 'Thanks' }, '2026-11-11T19:45:00.000Z'));
+      render(<EmailFrameSection />);
+      await screen.findByLabelText('Accent hex');
+      expect(screen.getByText(/^Last saved \S+ \S+$/)).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain(OWNER_UID);
+    });
+
+    it('reads "Using the default frame" when nothing is stored, even if a stamp came with it', async () => {
+      api.getEmailFrame.mockResolvedValue(state({}, '2026-11-11T19:45:00.000Z'));
+      render(<EmailFrameSection />);
+      await screen.findByLabelText('Accent hex');
+      expect(screen.getByText('Using the default frame')).toBeInTheDocument();
+      expect(screen.queryByText(/Last saved/)).not.toBeInTheDocument();
+    });
+
+    it('goes back to "Using the default frame" once the last field is cleared and saved', async () => {
+      api.getEmailFrame.mockResolvedValue(state({ footerText: 'Thanks' }, '2026-11-11T19:45:00.000Z'));
+      // What the server answers once nothing differs from the default.
+      api.saveEmailFrame.mockResolvedValue(state());
+      const user = userEvent.setup();
+      render(<EmailFrameSection />);
+      const footer = await screen.findByRole('textbox', { name: 'Footer line' });
+      expect(screen.getByText(/^Last saved /)).toBeInTheDocument();
+      await user.clear(footer);
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(api.saveEmailFrame).toHaveBeenCalledWith({ footerText: null }));
+      expect(await screen.findByText('Using the default frame')).toBeInTheDocument();
+      expect(screen.queryByText(/Last saved/)).not.toBeInTheDocument();
+    });
+
+    it('goes back to "Using the default frame" after Reset', async () => {
+      api.getEmailFrame.mockResolvedValue(state({ accentColor: '#123456' }, '2026-11-11T19:45:00.000Z'));
+      api.resetEmailFrame.mockResolvedValue(state());
+      const user = userEvent.setup();
+      render(<EmailFrameSection />);
+      await user.click(await screen.findByRole('button', { name: 'Reset to default' }));
+      await user.click(screen.getByRole('button', { name: 'Reset' }));
+      expect(await screen.findByText('Using the default frame')).toBeInTheDocument();
+      expect(screen.queryByText(/Last saved/)).not.toBeInTheDocument();
+    });
+
+    it('still reads "Using the default frame" after a save of content equal to the default', async () => {
+      api.getEmailFrame.mockResolvedValue(state());
+      // The server keeps nothing for a value equal to its default.
+      api.saveEmailFrame.mockResolvedValue(state());
+      const user = userEvent.setup();
+      render(<EmailFrameSection />);
+      await user.type(await screen.findByLabelText('Accent hex'), '#DF8431');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(api.saveEmailFrame).toHaveBeenCalledWith({ accentColor: '#df8431' }));
+      await screen.findByText('Saved. The next email sent uses it.');
+      expect(screen.getByText('Using the default frame')).toBeInTheDocument();
+      expect(screen.getByLabelText('Accent hex')).toHaveValue('');
+    });
   });
 
   it('Reset is off when nothing is stored', async () => {

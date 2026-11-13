@@ -38,6 +38,8 @@ One document, `business_settings/email_frame`. Only the fields the operator set 
 
 The document also carries `updatedAt` (ISO string) and `updatedBy` (uid).
 
+Since #1989 a field equal to its default is not stored, and a frame with nothing stored has no document: the save deletes it, and a read reports no stamp for it. The screens name the saver from the uid (#1962).
+
 Clients never read or write it directly. The Firestore rules deny it to every client, and the `business_settings/{docId}` wildcard excludes it, because in rules any matching `allow` grants access. All access is through the three callables below, which is where validation lives. This also keeps it off the main `business_settings/business_settings` document, which three clients write with changed-field patches that know nothing about the frame.
 
 ## Validation

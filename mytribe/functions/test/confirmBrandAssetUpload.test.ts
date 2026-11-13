@@ -56,6 +56,18 @@ describe('confirmBrandAssetUpload: what it will persist', () => {
     expect(payload.mytribePortal).toEqual({ logoUrl: GOOD, logoRemovedAt: '' });
     expect(payload.logoUrl).toBeUndefined();
   });
+
+  it('#1962 stamps who saved as the uid, for a set and for a removal', async () => {
+    const h = await handler();
+    await h(req({ kind: 'businessLogo', secureUrl: GOOD }));
+    await h(req({ kind: 'businessLogo', secureUrl: null }));
+
+    for (const [payload] of setMock.mock.calls) {
+      expect(payload.updatedBy).toBe('admin1');
+      expect(payload.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    }
+    expect(setMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('confirmBrandAssetUpload: URLs it refuses', () => {

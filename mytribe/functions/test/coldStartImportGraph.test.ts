@@ -197,8 +197,20 @@ const ALLOWED_EAGER_PACKAGES = [
  * list for a document stored earlier) share. Both are entries already in this
  * graph. It has no import of its own, and it cannot sit behind the lazy
  * `businessSettingsChecks.ts` because `getMyHome` needs it on every call.
+ *
+ * 441 since #1962 (on top of #1987's 440): `lib/savedByStamp.ts`, the one
+ * "last saved" stamp the four writers of the Settings documents share
+ * (`saveBusinessSettings`, `removeBusinessTag`, `confirmBrandAssetUpload`,
+ * `saveEmailFrame`, all entries already in this graph), so they can no longer
+ * disagree about what `updatedBy` holds. One function with no import of its own.
+ *
+ * 442 since #1912 (on top of #1962's 441): `lib/kinLink.ts`, the one place
+ * that says which admin record is a household Kin's own. `portal/kinWrites.ts`,
+ * `admin/kinArchive.ts`, `admin/kinRemovalRequests.ts` and
+ * `triggers/onFamilyKinWrite.ts` (four entries already in this graph) all ask
+ * it, so it is resident by construction; every module it imports is too.
  */
-const MAX_OWN_EAGER_MODULES = 440;
+const MAX_OWN_EAGER_MODULES = 442;
 
 interface Edge {
   spec: string;
