@@ -91,7 +91,9 @@ const claimIdRoute = createRoute({
 const secureResetRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/account/secure-reset',
-  staticData: { title: 'Set a new password' },
+  // Every kind of Firebase email link lands here; the screen names the kind
+  // once it has read the link (`emailLinkTabTitle`).
+  staticData: { title: 'Email link' },
   component: lazyRouteComponent(() => import('./screens/SecureReset'), 'SecureReset'),
 });
 
@@ -103,7 +105,7 @@ const secureResetRoute = createRoute({
 const emailActionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/account/action',
-  staticData: { title: 'Confirm your email' },
+  staticData: { title: 'Email link' },
   component: lazyRouteComponent(() => import('./screens/SecureReset'), 'SecureReset'),
 });
 

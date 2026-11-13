@@ -398,3 +398,33 @@ describe('SecureReset: the other Firebase email links', () => {
     expect(await screen.findByText('pepper@example.com')).toBeInTheDocument();
   });
 });
+
+describe('SecureReset names the kind of link in the browser tab (#2007)', () => {
+  // Both routes take every kind of link, so a route title alone would call a
+  // verify-email link "Set a new password". The screen names it from the link.
+  it.each([
+    [NATIVE, 'Set a new password · MyTribe'],
+    ['?mode=verifyEmail&oobCode=V-1', 'Confirm your email · MyTribe'],
+    ['?mode=verifyAndChangeEmail&oobCode=V-2', 'Confirm your new sign-in email · MyTribe'],
+    ['?mode=recoverEmail&oobCode=R-1', 'Restore your sign-in email · MyTribe'],
+    ['?mode=revertSecondFactorAddition&oobCode=X', 'Email link · MyTribe'],
+    ['?source=unauthorized_attempt', 'Email link · MyTribe'],
+  ])('%s', async (search, title) => {
+    document.title = '';
+    openLink(search);
+    await waitFor(() => expect(document.title).toBe(title));
+  });
+
+  it('names a reset link the same way on the /account/action alias', async () => {
+    document.title = '';
+    openLink(NATIVE, '/account/action');
+    await waitFor(() => expect(document.title).toBe('Set a new password · MyTribe'));
+  });
+
+  it('keeps the address out of the tab', async () => {
+    document.title = '';
+    openLink(NATIVE);
+    expect(await screen.findByText('pepper@example.com')).toBeInTheDocument();
+    expect(document.title).not.toContain('@');
+  });
+});
