@@ -250,14 +250,14 @@
 }
 
 /* The mock's `.ktop .nm b`: the household name in Fraunces at 18px. */
+/* #1964: the name wraps onto a second line rather than being cut short beside a
+   status chip. `anywhere` breaks a single long word too, so nothing overflows. */
 .directory__card-name {
   font-family: var(--font-fraunces);
   font-size: 18px;
   font-weight: 500;
   color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .directory__card-sub {

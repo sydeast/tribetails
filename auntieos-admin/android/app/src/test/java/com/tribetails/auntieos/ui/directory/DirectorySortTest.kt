@@ -90,15 +90,100 @@ class DirectorySortTest {
         assertEquals(listOf("1", "2", "3"), sortKinfolkDirectory(rows, SortOption.AlphaDesc).map { it.id })
     }
 
-    /** `joinDate` is the household's creation field, the same one the web admin reads. */
+    /** A household from before the `createdAt` stamp is placed by its join date. */
     @Test
-    fun `Recently Created puts the newest join date first`() {
+    fun `Recently Created puts the newest join date first among households with no creation stamp`() {
         val rows = listOf(
             household("1", "Amy", "Adams", joinDate = "2026-01-05"),
             household("2", "Bea", "Brook", joinDate = "2026-03-01"),
             household("3", "Cal", "Cole", joinDate = "2025-12-30"),
         )
         assertEquals(listOf("2", "1", "3"), sortKinfolkDirectory(rows, SortOption.RecentlyCreated).map { it.id })
+    }
+
+    private fun ts(iso: String) = com.google.firebase.Timestamp(java.util.Date.from(java.time.Instant.parse(iso)))
+
+    /**
+     * #1953: Add Kinfolk writes `joinDate` blank, so two households made minutes
+     * ago sorted near the bottom. `createdAt`, stamped by the createKinfolk
+     * callable, is the creation date; every stamped household is newer than
+     * every unstamped one.
+     */
+    @Test
+    fun `Recently Created puts households made minutes ago first, newest first, though their join date is blank`() {
+        val rows = listOf(
+            household("old", "Amy", "Adams", joinDate = "2026-11-12"),
+            household("first", "Bea", "Brook").copy(createdAt = ts("2026-11-10T15:00:00Z")),
+            household("none", "Cal", "Cole"),
+            household("second", "Dee", "Dale").copy(createdAt = ts("2026-11-10T15:04:00Z")),
+        )
+        assertEquals(listOf("second", "first", "old", "none"), sortKinfolkDirectory(rows, SortOption.RecentlyCreated).map { it.id })
+    }
+
+    @Test
+    fun `Recently Created never orders by an import date and compares instants, not text`() {
+        val rows = listOf(
+            household("imported", "Amy", "Adams", joinDate = "2025-02-01")
+                .copy(createdAt = ts("2026-11-11T00:00:00Z"), createdAtSource = "import"),
+            household("live", "Bea", "Brook").copy(createdAt = ts("2026-09-01T00:00:00Z"), createdAtSource = "live"),
+            household("no-ms", "Cal", "Cole").copy(createdAt = "2026-09-01T00:00:01Z"),
+            household("ms", "Dee", "Dale").copy(createdAt = "2026-09-01T00:00:00.900Z"),
+        )
+        assertEquals(listOf("no-ms", "ms", "live", "imported"), sortKinfolkDirectory(rows, SortOption.RecentlyCreated).map { it.id })
+    }
+
+    @Test
+    fun `Recently Created puts records with no readable date last, A to Z among themselves`() {
+        val rows = listOf(
+            household("z", "Zed", "Young"),
+            household("junk", "Ann", "Adams", joinDate = "07/24/2026").copy(createdAt = "sometime"),
+            household("dated", "Mo", "Mills", joinDate = "2025-05-05"),
+        )
+        assertEquals(listOf("dated", "junk", "z"), sortKinfolkDirectory(rows, SortOption.RecentlyCreated).map { it.id })
+    }
+
+    // ── Search (#1952) ──────────────────────────────────────────────────────
+
+    private val tess = Kinfolk(id = "t", firstName = "Tess", lastName = "Quill", email = "catch@hanasamku.com", phoneNumber = "(805) 555-0188")
+
+    /** #1952: text holding a digit used to list households by that digit alone (web, desktop). */
+    @Test
+    fun `text with letters and a digit never matches on the phone`() {
+        assertEquals(false, matchesKinfolkSearch(tess, "zzzz8"))
+        assertEquals(false, matchesKinfolkSearch(tess, "Tes1"))
+        assertEquals(false, matchesKinfolkSearch(tess, "8"))
+        assertEquals(false, matchesKinfolkSearch(tess, "88"))
+        assertEquals(true, matchesKinfolkSearch(Kinfolk(email = "e2e-admin@tribetails.com"), "e2e"))
+        assertEquals(true, matchesKinfolkSearch(tess, "quill"))
+        assertEquals(true, matchesKinfolkSearch(tess, "  "))
+    }
+
+    /** Android compared the typed text with the stored phone as text, so bare digits never found "(805) 555-0188". */
+    @Test
+    fun `an area code, the last four or a full number in any common format matches the phone`() {
+        for (q in listOf("805", "0188", "8055550188", "805-555-0188", "(805) 555-0188", "805.555.0188", "+1 805 555 0188")) {
+            assertEquals(q, true, matchesKinfolkSearch(tess, q))
+        }
+        assertEquals(true, matchesKinfolkSearch(tess.copy(phoneNumber = "+18055550188"), "805 555 0188"))
+        assertEquals(false, matchesKinfolkSearch(tess, "555-0199"))
+        assertEquals(false, matchesKinfolkSearch(tess.copy(phoneNumber = ""), "0188"))
+    }
+
+    @Test
+    fun `the view model search uses the phone rule`() = runTest(testDispatcher) {
+        val vm = viewModelOver(
+            listOf(
+                tess.copy(id = "a"),
+                Kinfolk(id = "b", firstName = "Amy", lastName = "Adams", phoneNumber = "805-555-0128"),
+            ),
+        )
+        advanceUntilIdle()
+        vm.search("zzzz8")
+        advanceUntilIdle()
+        assertEquals(emptyList<String>(), vm.directoryState.value.displayedKinfolk.map { it.id })
+        vm.search("8055550188")
+        advanceUntilIdle()
+        assertEquals(listOf("a"), vm.directoryState.value.displayedKinfolk.map { it.id })
     }
 
     @Test

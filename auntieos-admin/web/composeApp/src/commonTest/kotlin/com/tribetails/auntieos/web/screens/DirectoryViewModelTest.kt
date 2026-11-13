@@ -3,7 +3,9 @@ package com.tribetails.auntieos.web.screens
 import com.tribetails.auntieos.web.FakeAuntieDataSource
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.screens.directory.DirectoryUiState
 import com.tribetails.auntieos.web.screens.directory.DirectoryViewModel
+import com.tribetails.auntieos.web.util.SortOption
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -184,5 +186,76 @@ class DirectoryViewModelTest {
         ds.emitKinfolk(FirestoreResult.Data(listOf(kinfolk("k1", "X", phone = "555-123-4567"))))
         vm.search("123")
         assertEquals(1, vm.state.value.filteredSorted.size)
+    }
+
+    // ── #1952: phone search only for phone-shaped text ───────────────────────
+
+    private fun ids(query: String, rows: List<Kinfolk>): List<String> =
+        DirectoryUiState(allKinfolk = FirestoreResult.Data(rows), query = query).filteredSorted.map { it._id }
+
+    private val tess = kinfolk("t", "Tess", "Quill", phone = "(805) 555-0188", email = "catch@hanasamku.com")
+
+    @Test
+    fun text_with_a_digit_never_matches_on_the_phone() {
+        assertEquals(emptyList(), ids("zzzz8", listOf(tess)))
+        assertEquals(emptyList(), ids("Tes1", listOf(tess)))
+        assertEquals(emptyList(), ids("8", listOf(tess)))
+        assertEquals(emptyList(), ids("88", listOf(tess)))
+        assertEquals(listOf("r"), ids("e2e", listOf(tess, kinfolk("r", "Rue", email = "e2e-admin@tribetails.com"))))
+    }
+
+    @Test
+    fun a_full_number_in_any_common_format_matches_the_phone() {
+        for (q in listOf("805", "0188", "805-555-0188", "(805) 555-0188", "805.555.0188", "+1 805 555 0188")) {
+            assertEquals(listOf("t"), ids(q, listOf(tess)), q)
+        }
+        assertEquals(listOf("p"), ids("805 555 0188", listOf(kinfolk("p", "P", phone = "+18055550188"))))
+        assertEquals(emptyList(), ids("555-0199", listOf(tess)))
+    }
+
+    // ── #1953: Recently Created ───────────────────────────────────────────────
+
+    private fun sorted(rows: List<Kinfolk>): List<String> =
+        DirectoryUiState(allKinfolk = FirestoreResult.Data(rows), sort = SortOption.RecentlyCreated).filteredSorted.map { it._id }
+
+    @Test
+    fun recently_created_puts_households_made_minutes_ago_first_though_their_join_date_is_blank() {
+        val rows = listOf(
+            kinfolk("old", "Amy", "Adams").copy(joinDate = "2026-11-12"),
+            kinfolk("first", "Bea", "Brook").copy(createdAt = "2026-11-10T15:00:00Z"),
+            kinfolk("none", "Cal", "Cole"),
+            kinfolk("second", "Dee", "Dale").copy(createdAt = "2026-11-10T15:04:00Z"),
+        )
+        assertEquals(listOf("second", "first", "old", "none"), sorted(rows))
+    }
+
+    @Test
+    fun recently_created_never_orders_by_an_import_date_and_compares_instants() {
+        val rows = listOf(
+            kinfolk("imported", "Amy", "Adams").copy(createdAt = "2026-11-11T00:00:00Z", createdAtSource = "import", joinDate = "2025-02-01"),
+            kinfolk("live", "Bea", "Brook").copy(createdAt = "2026-09-01T00:00:00Z", createdAtSource = "live"),
+            kinfolk("no-ms", "Cal", "Cole").copy(createdAt = "2026-09-01T00:00:01Z"),
+            kinfolk("ms", "Dee", "Dale").copy(createdAt = "2026-09-01T00:00:00.900Z"),
+        )
+        assertEquals(listOf("no-ms", "ms", "live", "imported"), sorted(rows))
+    }
+
+    @Test
+    fun recently_created_puts_records_with_no_readable_date_last_a_to_z() {
+        val rows = listOf(
+            kinfolk("z", "Zed", "Young"),
+            kinfolk("junk", "Ann", "Adams").copy(joinDate = "07/24/2026", createdAt = "sometime"),
+            kinfolk("dated", "Mo", "Mills").copy(joinDate = "2025-05-05"),
+        )
+        assertEquals(listOf("dated", "junk", "z"), sorted(rows))
+    }
+
+    /** The REST decoder hands a Timestamp over as `{seconds,nanoseconds}` or an ISO string; both read. */
+    @Test
+    fun createdAt_decodes_from_a_timestamp_object() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val kf = json.decodeFromString(Kinfolk.serializer(), """{"_id":"k","createdAt":{"seconds":1762786800,"nanoseconds":0},"createdAtSource":"live"}""")
+        assertEquals("2025-11-10T15:00:00Z", kf.createdAt)
+        assertEquals("live", kf.createdAtSource)
     }
 }

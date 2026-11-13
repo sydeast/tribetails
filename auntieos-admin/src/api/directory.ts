@@ -59,20 +59,29 @@ export interface Kinfolk {
    */
   serviceAddress?: string | undefined;
   /**
-   * Admin-entered ISO date, "Admin & Relationship" section. The ONLY recency
-   * signal the `kinfolk` collection carries, no `createdAt`/`updatedAt` field
-   * exists anywhere in the wasm Kinfolk model, and no MyTribe function was
-   * found writing either onto the top-level `kinfolk/{kinfolkId}` doc (checked
-   * every writer under functions/src for `.collection('kinfolk')`/`doc(kinfolk/`
-   *, none stamp a create/update timestamp on it; `onKinfolkCreate.ts` only
-   * timestamps the SEPARATE `families/{id}` portal envelope). `joinDate` is
-   * what `DirectoryUiState.filteredSorted` already sorts both recency axes by
-   * (see the wasm comment: "Kinfolk has no createdAt/updatedAt yet; joinDate is
-   * the only recency signal on hand. Used for both recency axes until the
-   * schema grows real timestamps."). Ported verbatim rather than improved on,
-   * since it is real operator-entered data, not a fabricated fallback.
+   * Admin-entered date, "Admin & Relationship" section: the day the household
+   * joined, `YYYY-MM-DD` (older docs hold a full ISO instant or free text, see
+   * lib/joinDate.ts). Add Kinfolk writes it blank. "Recently Updated" still
+   * orders by it; "Recently Created" reads it only for a household that
+   * predates [createdAt] (#1953).
    */
   joinDate?: string | undefined;
+  /**
+   * When the household record was created. Stamped with server time by the
+   * `createKinfolk` callable, the only way a staff client can create a
+   * household (#909). A household from before that stamp has none. Typed
+   * `unknown`: a Firestore Timestamp here, but read through
+   * {@link kinfolkCreatedMillis}, which also takes an ISO string or a
+   * `{seconds}` object and never throws.
+   */
+  createdAt?: unknown;
+  /**
+   * Where [createdAt] came from (mytribe/scripts/createdAtProvenance.ts):
+   * absent or `live` means this system created the row, `original` is a source
+   * system's own creation instant, `import` means [createdAt] is only the day
+   * the row was imported. An import date is never a creation date.
+   */
+  createdAtSource?: string | undefined;
   /**
    * Assigned household tag NAMES, written by `updateKinfolkTags` from the
    * profile's Tags panel. Typed `unknown` for the same cast-not-validation
@@ -146,19 +155,48 @@ function digitsOnly(s: string): string {
 }
 
 /**
- * Ports `DirectoryViewModel.kt`'s private `Kinfolk.matches`: name/email
- * substring match OR a digits-only phone match (never a naive substring
- * against the formatted phone string, which would miss "(512) 555-1234"
- * against a "1234" query).
+ * The fewest digits a search must hold before it is compared with phones
+ * (#1952). Three covers an area code; the "last 4 of a phone number" the empty
+ * state suggests clears it. One or two digits would match most of the roster.
+ */
+export const MIN_PHONE_SEARCH_DIGITS = 3;
+
+/** Only digits and the marks people type in a phone number: space ( ) + - . */
+const PHONE_SHAPED = /^[\d\s()+.-]+$/;
+
+/** A US number with its leading country code 1 reads as the ten digits after it. */
+function withoutCountryCode(digits: string): string {
+  return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+}
+
+/**
+ * The digits to compare against phones, or null when the search is not a phone
+ * search. #1952: the digits used to be pulled out of ANY text, so "zzzz8"
+ * listed every household with an 8 in its phone. Now the text has to read as a
+ * phone number (digits and phone marks only, no letters, no @) and hold at
+ * least [MIN_PHONE_SEARCH_DIGITS] digits.
+ */
+export function phoneSearchDigits(needle: string): string | null {
+  const trimmed = needle.trim();
+  if (!PHONE_SHAPED.test(trimmed)) return null;
+  const digits = withoutCountryCode(digitsOnly(trimmed));
+  return digits.length >= MIN_PHONE_SEARCH_DIGITS ? digits : null;
+}
+
+/**
+ * Name/email substring match OR, for a phone-shaped search, a digits-only
+ * phone match. Digits to digits, so "805-555-0188", "(805) 555-0188" and
+ * "+1 805 555 0188" all find a number stored as "(805) 555-0188". Android's
+ * `matchesKinfolkSearch` and desktop's `Kinfolk.matches` follow the same rule.
  */
 export function matchesKinfolk(kf: Kinfolk, needle: string): boolean {
   if (needle.trim() === '') return true;
   const n = needle.trim().toLowerCase();
   const byText =
     kinfolkDisplayName(kf).toLowerCase().includes(n) || str(kf.email).toLowerCase().includes(n);
-  const digits = digitsOnly(needle);
-  const byPhone = digits !== '' && digitsOnly(str(kf.phoneNumber)).includes(digits);
-  return byText || byPhone;
+  if (byText) return true;
+  const digits = phoneSearchDigits(needle);
+  return digits !== null && withoutCountryCode(digitsOnly(str(kf.phoneNumber))).includes(digits);
 }
 
 /**
@@ -433,7 +471,7 @@ interface SortOptionMeta {
   label: string;
 }
 
-/** All four, for the Kinfolk tab, `joinDate` gives both recency axes a real (if shared) backing field. */
+/** All four, for the Kinfolk tab: `createdAt` (then `joinDate`) backs Recently Created, `joinDate` backs Recently Updated. */
 export const KINFOLK_SORT_OPTIONS: readonly SortOptionMeta[] = [
   { value: 'alpha_asc', label: 'A → Z' },
   { value: 'alpha_desc', label: 'Z → A' },
@@ -536,6 +574,85 @@ export function matchesTag(row: { tags?: unknown }, tag: string): boolean {
   return tagNamesOf(row).some((t) => tagKey(t) === key);
 }
 
+// ── Recently Created (#1953) ─────────────────────────────────────────────────
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/** Epoch millis of an ISO day (read as UTC midnight) or ISO instant, else null. Free text is never guessed at. */
+function isoMillis(raw: string): number | null {
+  const s = raw.trim();
+  if (!ISO_DAY.test(s) && !ISO_INSTANT.test(s)) return null;
+  const ms = Date.parse(ISO_DAY.test(s) ? `${s}T00:00:00Z` : s);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** Epoch millis of a stored timestamp: a Firestore Timestamp, a `{seconds}` object, or an ISO string. */
+function storedMillis(v: unknown): number | null {
+  if (typeof v === 'string') return isoMillis(v);
+  if (v === null || typeof v !== 'object') return null;
+  const o = v as { toMillis?: unknown; toDate?: unknown; seconds?: unknown; nanoseconds?: unknown };
+  try {
+    if (typeof o.toMillis === 'function') {
+      const ms = (o.toMillis as () => number).call(v);
+      return Number.isFinite(ms) ? ms : null;
+    }
+    if (typeof o.toDate === 'function') {
+      const ms = (o.toDate as () => Date).call(v).getTime();
+      return Number.isFinite(ms) ? ms : null;
+    }
+  } catch {
+    return null;
+  }
+  if (typeof o.seconds === 'number' && Number.isFinite(o.seconds)) {
+    const nanos = typeof o.nanoseconds === 'number' && Number.isFinite(o.nanoseconds) ? o.nanoseconds : 0;
+    return o.seconds * 1000 + Math.floor(nanos / 1e6);
+  }
+  return null;
+}
+
+/**
+ * Which date places a household under "Recently Created", and that date in
+ * epoch millis. The tiers, highest first:
+ *
+ *  - `created`: the record's own [Kinfolk.createdAt]. Every household the
+ *    createKinfolk callable made carries it, so all of them are newer than
+ *    every household without one. A `createdAtSource` of `import` is the day
+ *    the row was imported, not a creation date, and is skipped.
+ *  - `joined`: a household from before that stamp is placed by its join date,
+ *    the date the business recorded for it, when that reads as a date.
+ *  - `none`: no readable date at all. Sorts last, never given a made-up date.
+ *
+ * The Firestore document create time is never used: after a reload of the
+ * data that is the import date.
+ */
+export function kinfolkCreatedMillis(
+  kf: Pick<Kinfolk, 'createdAt' | 'createdAtSource' | 'joinDate'>,
+): { tier: 'created' | 'joined' | 'none'; ms: number } {
+  if (str(kf.createdAtSource).trim() !== 'import') {
+    const created = storedMillis(kf.createdAt);
+    if (created !== null) return { tier: 'created', ms: created };
+  }
+  const joined = isoMillis(str(kf.joinDate));
+  if (joined !== null) return { tier: 'joined', ms: joined };
+  return { tier: 'none', ms: 0 };
+}
+
+const CREATED_TIER_RANK = { created: 0, joined: 1, none: 2 } as const;
+
+/** Newest first within each tier, then A to Z by surname so equal dates (and the undated) keep a stable order. */
+function sortKinfolkRecentlyCreated(rows: Kinfolk[]): Kinfolk[] {
+  return rows
+    .map((kf) => ({ kf, at: kinfolkCreatedMillis(kf), name: kinfolkSurnameSortKey(kf) }))
+    .sort(
+      (a, b) =>
+        CREATED_TIER_RANK[a.at.tier] - CREATED_TIER_RANK[b.at.tier] ||
+        b.at.ms - a.at.ms ||
+        cmp(a.name, b.name),
+    )
+    .map((r) => r.kf);
+}
+
 /** Search-filter (and tag-filter) then sort Kinfolk, ports `DirectoryUiState.filteredSorted`. */
 export function filterSortKinfolk(
   rows: Kinfolk[],
@@ -544,13 +661,14 @@ export function filterSortKinfolk(
   tag: string = TAG_FILTER_ALL,
 ): Kinfolk[] {
   const filtered = rows.filter((kf) => matchesKinfolk(kf, query) && matchesTag(kf, tag));
+  if (sort === 'recently_created') return sortKinfolkRecentlyCreated(filtered);
   return sortByOption(
     filtered,
     sort,
     (kf) => kinfolkSurnameSortKey(kf),
-    // A kinfolk with no joinDate sorts last on both recency axes rather than
-    // being fabricated a date it never had.
-    (kf) => str(kf.joinDate),
+    () => '',
+    // A kinfolk with no joinDate sorts last rather than being fabricated a
+    // date it never had.
     (kf) => str(kf.joinDate),
   );
 }

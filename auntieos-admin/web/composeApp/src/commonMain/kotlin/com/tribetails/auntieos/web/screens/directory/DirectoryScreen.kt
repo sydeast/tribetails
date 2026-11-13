@@ -575,11 +575,15 @@ internal fun KinfolkCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
+                        // #1964: the name wraps onto a second line beside the
+                        // "New" pill instead of being cut to its first words.
+                        // Two lines is what the fixed-height card holds with
+                        // the chips and footer (KinfolkCardRenderTest).
                         Text(
                             text     = kf.displayName,
                             style    = AuntieTheme.typography.titleMedium,
                             color    = c.textPrimary,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
                         )

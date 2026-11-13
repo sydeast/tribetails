@@ -108,6 +108,47 @@ describe('matchesKinfolk', () => {
   });
 });
 
+/**
+ * #1952: "zzzz8" listed every household whose phone has an 8, because the
+ * digits were pulled out of any text and matched alone. A phone is searched
+ * only when the text reads as a phone number.
+ */
+describe('matchesKinfolk phone search (#1952)', () => {
+  const kf = kinfolk({ firstName: 'Tess', lastName: 'Quill', email: 'catch@hanasamku.com', phoneNumber: '(805) 555-0188' });
+
+  it('text with letters and a digit never matches on the phone', () => {
+    expect(matchesKinfolk(kf, 'zzzz8')).toBe(false);
+    expect(matchesKinfolk(kf, 'Tes1')).toBe(false);
+    expect(matchesKinfolk(kf, 'catch1@')).toBe(false);
+  });
+
+  it('a name or email fragment holding a digit still matches on the name or email', () => {
+    const digitEmail = kinfolk({ email: 'e2e-admin@tribetails.com', phoneNumber: '(805) 555-0100' });
+    expect(matchesKinfolk(digitEmail, 'e2e')).toBe(true);
+    expect(matchesKinfolk(kinfolk({ firstName: 'Unit 4', lastName: 'Hall', phoneNumber: '' }), 'unit 4')).toBe(true);
+  });
+
+  it('one or two digits alone are too short to search phones', () => {
+    expect(matchesKinfolk(kf, '8')).toBe(false);
+    expect(matchesKinfolk(kf, '88')).toBe(false);
+  });
+
+  it('an area code, the last four, or a full number in any common format matches', () => {
+    expect(matchesKinfolk(kf, '805')).toBe(true);
+    expect(matchesKinfolk(kf, '0188')).toBe(true);
+    expect(matchesKinfolk(kf, '805-555-0188')).toBe(true);
+    expect(matchesKinfolk(kf, '(805) 555-0188')).toBe(true);
+    expect(matchesKinfolk(kf, '805.555.0188')).toBe(true);
+    expect(matchesKinfolk(kf, '+1 805 555 0188')).toBe(true);
+    expect(matchesKinfolk(kinfolk({ phoneNumber: '+18055550188' }), '805 555 0188')).toBe(true);
+  });
+
+  it('a phone-shaped query that is not in the number does not match', () => {
+    expect(matchesKinfolk(kf, '555-0199')).toBe(false);
+    expect(matchesKinfolk(kinfolk({ phoneNumber: '' }), '0188')).toBe(false);
+  });
+});
+
 describe('matchesKin', () => {
   it('matches name, species, or breed substrings', () => {
     expect(matchesKin(kin({}), 'biscuit')).toBe(true);
@@ -190,12 +231,67 @@ describe('filterSortKinfolk', () => {
   it('sorts alpha_desc by surname', () => {
     expect(filterSortKinfolk(rows, '', 'alpha_desc').map((r) => r._id)).toEqual(['a', 'b']);
   });
-  it('sorts recently_created and recently_updated by joinDate (both proxy the same field)', () => {
-    expect(filterSortKinfolk(rows, '', 'recently_created').map((r) => r._id)).toEqual(['b', 'a']);
+  it('sorts recently_updated by joinDate', () => {
     expect(filterSortKinfolk(rows, '', 'recently_updated').map((r) => r._id)).toEqual(['b', 'a']);
   });
   it('filters by the query before sorting', () => {
     expect(filterSortKinfolk(rows, 'amy', 'alpha_asc').map((r) => r._id)).toEqual(['b']);
+  });
+});
+
+/**
+ * #1953: "Recently Created" sorted on `joinDate`, which Add Kinfolk writes
+ * blank, so two households made minutes ago sat 11th and 13th of 14. The
+ * creation stamp is `createdAt`, written by the createKinfolk callable.
+ */
+describe('Recently Created (#1953)', () => {
+  const ids = (rows: Kinfolk[]) => filterSortKinfolk(rows, '', 'recently_created').map((r) => r._id);
+
+  it('puts the households made minutes ago first, newest first, though their join date is blank', () => {
+    const rows = [
+      kinfolk({ _id: 'old', lastName: 'Adams', joinDate: '2026-06-01' }),
+      kinfolk({ _id: 'first', lastName: 'Brook', createdAt: fakeTs('2026-11-10T15:00:00.000Z'), joinDate: '' }),
+      kinfolk({ _id: 'none', lastName: 'Cole', joinDate: '' }),
+      kinfolk({ _id: 'second', lastName: 'Dale', createdAt: fakeTs('2026-11-10T15:04:00.000Z'), joinDate: '' }),
+    ];
+    expect(ids(rows)).toEqual(['second', 'first', 'old', 'none']);
+  });
+
+  it('a household from before the creation stamp is placed by its join date, below every stamped one', () => {
+    const rows = [
+      kinfolk({ _id: 'joined-today', lastName: 'Adams', joinDate: '2026-11-12' }),
+      kinfolk({ _id: 'stamped', lastName: 'Brook', createdAt: fakeTs('2026-10-01T12:00:00.000Z') }),
+      kinfolk({ _id: 'joined-2025', lastName: 'Cole', joinDate: '2025-03-04T10:00:00.000Z' }),
+    ];
+    expect(ids(rows)).toEqual(['stamped', 'joined-today', 'joined-2025']);
+  });
+
+  it('never orders by an import date: a createdAt marked import counts as no creation date', () => {
+    const rows = [
+      kinfolk({ _id: 'imported', lastName: 'Adams', createdAt: fakeTs('2026-11-11T00:00:00.000Z'), createdAtSource: 'import', joinDate: '2025-02-01' }),
+      kinfolk({ _id: 'live', lastName: 'Brook', createdAt: fakeTs('2026-09-01T00:00:00.000Z'), createdAtSource: 'live' }),
+      kinfolk({ _id: 'original', lastName: 'Cole', createdAt: '2025-01-15T09:00:00Z', createdAtSource: 'original' }),
+    ];
+    expect(ids(rows)).toEqual(['live', 'original', 'imported']);
+  });
+
+  it('reads createdAt as a Timestamp, a {seconds} object or an ISO string, and compares instants, not text', () => {
+    const rows = [
+      kinfolk({ _id: 'iso-no-ms', lastName: 'Adams', createdAt: '2026-11-10T15:00:01Z' }),
+      kinfolk({ _id: 'seconds', lastName: 'Brook', createdAt: { seconds: Date.parse('2026-11-10T15:00:00.500Z') / 1000, nanoseconds: 0 } }),
+      kinfolk({ _id: 'iso-ms', lastName: 'Cole', createdAt: '2026-11-10T15:00:00.900Z' }),
+    ];
+    expect(ids(rows)).toEqual(['iso-no-ms', 'iso-ms', 'seconds']);
+  });
+
+  it('records with no date at all sort last, A to Z among themselves; unreadable text is no date', () => {
+    const rows = [
+      kinfolk({ _id: 'z', firstName: 'Zed', lastName: 'Young', joinDate: '' }),
+      kinfolk({ _id: 'junk', firstName: 'Ann', lastName: 'Adams', joinDate: '07/24/2026', createdAt: 'sometime' }),
+      kinfolk({ _id: 'dated', lastName: 'Mills', joinDate: '2025-05-05' }),
+      kinfolk({ _id: 'nullstamp', firstName: 'Bo', lastName: 'Brook', createdAt: null }),
+    ];
+    expect(ids(rows)).toEqual(['dated', 'junk', 'nullstamp', 'z']);
   });
 });
 
