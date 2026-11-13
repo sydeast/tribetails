@@ -49,16 +49,18 @@ describe('isKinTaleRequired', () => {
 });
 
 describe('kinTaleSent', () => {
-  it('a sent count or a listed report is a sent KinTale', () => {
+  it('a sent count is a sent KinTale', () => {
     expect(kinTaleSent({ sentReportCount: 1 })).toBe(true);
-    expect(kinTaleSent({ reportIds: ['r1'] })).toBe(true);
   });
 
-  it('nothing sent, a zero count, blank ids or junk is not', () => {
+  it('nothing sent, a zero count or junk is not', () => {
     expect(kinTaleSent({})).toBe(false);
-    expect(kinTaleSent({ sentReportCount: 0, reportIds: [] })).toBe(false);
-    expect(kinTaleSent({ reportIds: ['', '  '] })).toBe(false);
-    expect(kinTaleSent({ sentReportCount: '2', reportIds: 'r1' })).toBe(false);
+    expect(kinTaleSent({ sentReportCount: 0 })).toBe(false);
+    expect(kinTaleSent({ sentReportCount: '2' })).toBe(false);
+  });
+
+  it("a listed report is not a sent one: Android lists a draft's id when it is created", () => {
+    expect(kinTaleSent({ reportIds: ['draft1'] } as never)).toBe(false);
   });
 });
 
@@ -70,6 +72,5 @@ describe('kinTaleDueAtCompletion', () => {
   it('never due with the switch off, or once a KinTale is out', () => {
     expect(kinTaleDueAtCompletion({}, false)).toBe(false);
     expect(kinTaleDueAtCompletion({ sentReportCount: 1 }, true)).toBe(false);
-    expect(kinTaleDueAtCompletion({ reportIds: ['r1'] }, true)).toBe(false);
   });
 });

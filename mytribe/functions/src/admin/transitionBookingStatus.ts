@@ -251,7 +251,6 @@ export async function transitionBookingStatusHandler(
         sourceBookingId?: unknown;
         // #2123: whether a KinTale has gone out, for "KinTale required".
         sentReportCount?: unknown;
-        reportIds?: unknown;
       }
     | undefined;
   const decision = evaluateTransition({ currentStatus: prev?.status, action: args.action });

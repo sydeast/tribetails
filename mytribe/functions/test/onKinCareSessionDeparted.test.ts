@@ -140,6 +140,13 @@ describe('a visit is Completed at departure', () => {
     expect(sessionWrite(ctx)?.data).not.toHaveProperty('kinTaleDue');
   });
 
+  it('a draft started before departure still leaves the KinTale owed', async () => {
+    // Android lists a draft's id on `reportIds` when it is created; only a send bumps the count.
+    const ctx = seed({ session: departedSession({ reportIds: ['draft1'] }) });
+    expect(await completeDepartedSession('s1')).toEqual({ kind: 'completed', kinTaleDue: true });
+    expect(sessionWrite(ctx)?.data).toMatchObject({ kinTaleDue: true });
+  });
+
   it('a session with no departure stamp completes now', async () => {
     const ctx = seed({ session: departedSession({ departedAt: '' }) });
     await completeDepartedSession('s1', '2026-11-12T16:00:00.000Z');

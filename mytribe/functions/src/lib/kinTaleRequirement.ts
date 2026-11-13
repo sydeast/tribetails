@@ -45,19 +45,19 @@ export async function isKinTaleRequired(firestore: Firestore): Promise<boolean> 
   }
 }
 
-/** The session fields a send writes: `sentReportCount` and `reportIds`. */
+/** The session field every send bumps (`increment(1)` in the send batch, on every client). */
 export interface KinTaleSendFields {
   sentReportCount?: unknown;
-  reportIds?: unknown;
 }
 
-/** Has a KinTale gone out for this visit? Either field set by a send says so. */
+/**
+ * Has a KinTale gone out for this visit? `sentReportCount` alone. NOT
+ * `reportIds`: Android's `KinCareRepository.createKinCareReport` appends a
+ * DRAFT's id to the session's `reportIds` when the draft is created, so a
+ * listed report is not a sent one.
+ */
 export function kinTaleSent(session: KinTaleSendFields): boolean {
-  if (typeof session.sentReportCount === 'number' && session.sentReportCount > 0) return true;
-  return (
-    Array.isArray(session.reportIds) &&
-    session.reportIds.some((id) => typeof id === 'string' && id.trim() !== '')
-  );
+  return typeof session.sentReportCount === 'number' && session.sentReportCount > 0;
 }
 
 /** Does completing this visit leave the Auntie a "Send the KinTale" task? */
