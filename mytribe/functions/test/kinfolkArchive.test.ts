@@ -108,6 +108,20 @@ describe('setKinfolkArchived: who may call it (#2161)', () => {
     expect(kinfolkWrites(ctx)).toEqual([]);
   });
 
+  it('refuses a sandbox test admin, even on its own household', async () => {
+    const ctx = office();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinfolkArchived } = await import('../src/admin/kinfolkArchive');
+    await expect(
+      (setKinfolkArchived as any).run({
+        data: { kinfolkId: 'kf1', archived: true },
+        auth: { uid: 'test-admin-uid', token: { testTribeId: 'kf1' } },
+      }),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+    expect(kinfolkWrites(ctx)).toEqual([]);
+    expect(archiveAudits()).toEqual([]);
+  });
+
   it('is not on the Auntie allowlist', async () => {
     const { auntieMayCall } = await import('../src/lib/auntieAccess');
     expect(auntieMayCall('setKinfolkArchived')).toBe(false);
@@ -169,6 +183,25 @@ describe('setKinfolkArchived: what it writes (#2161)', () => {
     const res = await setKinfolkArchivedHandler(call({ kinfolkId: 'kf1', archived: false }));
     expect(kinfolkWrites(ctx)[0]!.data).toMatchObject({ status: 'active' });
     expect(res).toMatchObject({ changed: true, status: 'active' });
+  });
+
+  it('restores a household stored with spaces and capitals around archived', async () => {
+    const ctx = office({ ...ARCHIVED, status: ' ARCHIVED ' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinfolkArchivedHandler } = await import('../src/admin/kinfolkArchive');
+    const res = await setKinfolkArchivedHandler(call({ kinfolkId: 'kf1', archived: false }));
+    expect(kinfolkWrites(ctx)[0]!.data).toMatchObject({ status: 'active', archivedAt: '' });
+    expect(res).toMatchObject({ changed: true, status: 'active' });
+  });
+
+  it('archiving a household stored as " Archived " changes nothing and logs nothing', async () => {
+    const ctx = office({ ...ARCHIVED, status: ' Archived ' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinfolkArchivedHandler } = await import('../src/admin/kinfolkArchive');
+    const res = await setKinfolkArchivedHandler(call({ kinfolkId: 'kf1', archived: true }));
+    expect(kinfolkWrites(ctx)).toEqual([]);
+    expect(archiveAudits()).toEqual([]);
+    expect(res).toMatchObject({ changed: false, status: ' Archived ' });
   });
 
   it('archiving an archived household changes nothing and logs nothing', async () => {

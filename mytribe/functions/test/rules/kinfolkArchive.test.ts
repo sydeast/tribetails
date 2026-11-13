@@ -182,6 +182,14 @@ describe('rules: #2161 no client restores a Kinfolk household directly', () => {
     await assertFails(ref.update({ status: 'active' }));
     await assertFails(ref.update(RESTORE_PATCH));
   });
+
+  it('the sandbox test admin cannot restore its own household directly', async () => {
+    const env = await getEnv();
+    await seed(TEST_TRIBE, ARCHIVED);
+    const ref = asTestAdmin(env).firestore().doc(`kinfolk/${TEST_TRIBE}`);
+    await assertFails(ref.update({ status: 'active' }));
+    await assertFails(ref.update(RESTORE_PATCH));
+  });
 });
 
 describe('rules: #2161 every other household edit still works', () => {
