@@ -112,7 +112,10 @@ function sanitizeRich(escaped: string): string {
  * drop words. Every client draws the stored body from a fixed tag list, so a
  * kept `<script>` is only ever shown as those characters.
  *
- * Idempotent on its own output, which the two write passes rely on.
+ * A second pass over its own output keeps every word and every `<`, which the
+ * two write passes rely on. Known limits of the decoded storage, unchanged
+ * here: a typed entity such as `&lt;` reads back as `<` after the two passes,
+ * and a typed `<b>x</b>` is stored as real bold.
  */
 export function sanitizeMessageBody(body: string): string {
   return sanitizeRich(escapeStrayLessThan(body, true));
