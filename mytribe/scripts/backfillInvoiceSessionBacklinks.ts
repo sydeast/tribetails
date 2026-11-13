@@ -15,8 +15,9 @@
  *   - exactly one invoice claims the visit (in `sessionIds` or by a line);
  *   - that invoice has a LINE bound to the visit, so it really bills it;
  *   - the visit exists, is not cancelled, and its back-link is blank;
- *   - the invoice is not a quote and not cancelled (a quote's hold on a visit
- *     is an open question, and a cancelled invoice bills nothing);
+ *   - the invoice is not a quote and not cancelled (a quote made before #2156
+ *     held nothing, and whether it should is the operator's call on each
+ *     one; a cancelled invoice bills nothing);
  *   - the invoice is not an ARCHIVED DRAFT. Archiving is how a draft is
  *     abandoned, and since #2168 archiving a draft lets go of its visits, so
  *     marking them would undo that. An archived draft is never counted as a
@@ -24,6 +25,10 @@
  *     dispute); a visit only an archived draft names is reported. An archived
  *     invoice that was sent did bill its visits, so it is repaired like any
  *     other.
+ *
+ * #2156: a DECLINED quote is never counted as a claimant either: declining let
+ * go of its visits, so a visit it names and another invoice billed since is
+ * that invoice's alone, and a visit only it names is left as it is.
  *
  * When that line's visit is missing from the invoice's own `sessionIds`, the
  * id is added there too, so the two sides name each other.
@@ -53,7 +58,7 @@
 // The single firebase-admin import point (#846).
 import { FieldValue, getApps, initializeApp, getFirestore, type Firestore } from './lib/firebaseAdmin';
 import { isSessionCancelled, isSessionClaimed } from '../functions/src/lib/sessionInvoicing';
-import { boundSessionIds, storedSessionIds } from '../functions/src/lib/invoiceSessionLinks';
+import { boundSessionIds, quoteHoldsNoVisits, storedSessionIds } from '../functions/src/lib/invoiceSessionLinks';
 import { isArchived } from '../functions/src/lib/invoiceArchive';
 
 export const INVOICES = 'invoices';
@@ -148,7 +153,8 @@ export type Finding =
   | { kind: 'missing_session'; sessionId: string; invoiceId: string }
   | { kind: 'cancelled_session'; sessionId: string; invoiceId: string }
   | { kind: 'held_by_quote_or_cancelled'; sessionId: string; invoiceId: string; state: string }
-  | { kind: 'held_by_archived_draft'; sessionId: string; invoiceId: string };
+  | { kind: 'held_by_archived_draft'; sessionId: string; invoiceId: string }
+  | { kind: 'held_by_declined_quote'; sessionId: string; invoiceId: string };
 
 export interface Plan {
   /** Visits to mark as billed by `invoiceId`. */
@@ -176,16 +182,17 @@ export function buildPlanFromRows(invoices: Row[], sessions: Row[]): Plan {
   // visit id -> the invoices that claim it, and how.
   const claims = new Map<
     string,
-    { invoiceId: string; byLine: boolean; inSet: boolean; state: string; archived: boolean }[]
+    { invoiceId: string; byLine: boolean; inSet: boolean; state: string; archived: boolean; declined: boolean }[]
   >();
   for (const inv of invoices) {
     const inSet = new Set(storedSessionIds(inv.data));
     const byLine = new Set(boundSessionIds(inv.data['lineItems']));
     const state = stateWord(inv.data);
     const archived = isArchived(inv.data);
+    const declined = quoteHoldsNoVisits(inv.data);
     for (const sid of new Set([...inSet, ...byLine])) {
       const list = claims.get(sid) ?? [];
-      list.push({ invoiceId: inv.id, byLine: byLine.has(sid), inSet: inSet.has(sid), state, archived });
+      list.push({ invoiceId: inv.id, byLine: byLine.has(sid), inSet: inSet.has(sid), state, archived, declined });
       claims.set(sid, list);
     }
   }
@@ -201,11 +208,22 @@ export function buildPlanFromRows(invoices: Row[], sessions: Row[]): Plan {
   for (const [sid, all] of [...claims.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     // #2168: an archived draft was abandoned, not sent, and let go of its
     // visits. It is not a claimant; a visit nothing else names is reported.
-    const list = all.filter((c) => !(c.state === 'draft' && c.archived));
+    // #2156: a declined quote let go of its visits the same way, and holds
+    // none until it is sent back out, so it is no claimant either.
+    const list = all.filter((c) => !(c.state === 'draft' && c.archived) && !c.declined);
     if (list.length === 0) {
       const visit = sessionById.get(sid);
       const backlink = visit && isSessionClaimed(visit['invoiceId']) ? String(visit['invoiceId']).trim() : '';
-      const named = all[0]!.invoiceId;
+      // A back-link that still names a declined quote: linked before declines
+      // let go of visits, so nothing released it. Reported, never changed.
+      const heldByDeclined = all.find((c) => c.declined && c.invoiceId === backlink);
+      if (visit !== undefined && heldByDeclined !== undefined) {
+        plan.findings.push({ kind: 'held_by_declined_quote', sessionId: sid, invoiceId: heldByDeclined.invoiceId });
+        continue;
+      }
+      // Only a declined quote names it: nothing to report, its decline let go.
+      if (all.every((c) => c.declined)) continue;
+      const named = all.find((c) => !c.declined)!.invoiceId;
       if (visit !== undefined && (backlink === '' || backlink === named)) {
         plan.findings.push({ kind: 'held_by_archived_draft', sessionId: sid, invoiceId: named });
       }
@@ -278,6 +296,7 @@ const FINDING_WORDS: Record<Finding['kind'], string> = {
   cancelled_session: 'invoice bills a cancelled visit',
   held_by_quote_or_cancelled: 'held by a quote or a cancelled invoice',
   held_by_archived_draft: 'named only by an archived draft, left for the operator',
+  held_by_declined_quote: 'still held by a declined quote; remove its line in Edit or unlink it in Link visits',
 };
 
 export function reportLines(plan: Plan, applied: boolean): string[] {

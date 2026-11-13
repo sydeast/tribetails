@@ -27,6 +27,7 @@ import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
 import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
 import { invoiceNumberTaken, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
 import { QuoteIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
+import { boundSessionIds, readSessionLinks, stageSessionLinks } from '../lib/invoiceSessionLinks';
 
 /**
  * A quote is NOT a separate model: it is an invoice in QUOTE status. This
@@ -199,13 +200,19 @@ export async function createQuoteHandler(
     };
   }
 
+  // #2156: THE VISITS THIS QUOTE HOLDS, ONE SET, built exactly as New invoice
+  // builds it (#1901): the ids the composer sent plus every visit a line is
+  // bound to, blanks and repeats collapsed.
+  const sessionIds = Array.from(
+    new Set([...args.sessionIds.map((id) => id.trim()).filter((id) => id !== ''), ...boundSessionIds(args.lineItems)]),
+  );
   const firestore = db();
   // Terms and the number: the same two rules `createInvoice` applies, from the
   // same module, so a quote and the invoice it becomes cannot date themselves
   // differently or number themselves out of two sequences.
   let termsFields: Record<string, unknown> = { terms: args.terms, dueDate: args.dueDate };
   if (args.termsCode !== undefined) {
-    const serviceDates = await serviceDaysForSessions(firestore, args.sessionIds);
+    const serviceDates = await serviceDaysForSessions(firestore, sessionIds);
     const outcome = resolveStructuredTerms({
       termsCode: args.termsCode,
       date: args.date,
@@ -238,7 +245,7 @@ export async function createQuoteHandler(
     // point, ignoring the caller's status arg, visible in one place.
     status: 'quote',
     invoiceStatus: 'quote',
-    sessionIds: args.sessionIds,
+    sessionIds,
     kinfolkId: args.familyId,
     _id: ref.id,
     ...money,
@@ -263,6 +270,16 @@ export async function createQuoteHandler(
         return null;
       }
     }
+    // #2156: A QUOTE HOLDS ITS VISITS FROM THE START (operator ruling
+    // 2026-11-13). Every visit it is for is marked as held by it in this same
+    // transaction, so it leaves the un-invoiced list at once and no second
+    // invoice can claim it; a decline lets it go again (`denyQuote`). Read
+    // before the number is drawn, because drawing it writes the counter and
+    // every read comes first. The rules are New invoice's: a visit with no
+    // record, a cancelled one, or one another invoice or quote already holds is
+    // refused before anything is written, and a New invoice save racing this
+    // one for the same visit is refereed by the transaction.
+    const links = await readSessionLinks(tx, firestore, { invoiceId: ref.id, claim: sessionIds, release: [] });
     // #1609: a typed number is refused when another invoice already holds it,
     // and a minted one steps over any such number, so no two share one.
     const typedNumber = (args.invoiceNumber ?? '').trim();
@@ -289,6 +306,7 @@ export async function createQuoteHandler(
     };
     if (args.idempotencyKey !== undefined) tx.create(ref, full);
     else tx.set(ref, full);
+    stageSessionLinks(tx, firestore, links, new Date().toISOString());
     return invoiceNumber;
   });
 
@@ -313,6 +331,8 @@ export async function createQuoteHandler(
       sendToKinfolk: args.sendToKinfolk,
       itemized: args.lineItems !== undefined,
       lineCount: args.lineItems?.length ?? 0,
+      // #2156: the visits this quote now holds.
+      sessionsLinked: sessionIds,
       // Which submission this quote belongs to (#825).
       idempotencyKey: args.idempotencyKey ?? null,
     },

@@ -321,8 +321,8 @@ export async function updateKinTags(kinId: string, tags: string[]): Promise<void
  * pattern as `updateKinTags`: a whole-list `string[]` replace, direct
  * rules-backed `updateDoc` (kinfolk is `isAuntie`-writable), fail-loud. This is
  * the write half of the otherwise read-only `api/kinfolkProfile.ts`. `updatedAt`
- * is stamped for consistency with the kin write, but no kinfolk list orders on
- * it, so it is informational only.
+ * is stamped so a tag change moves the household under the Directory's
+ * "Recently Updated" (`kinfolkUpdatedMillis`, #2155).
  */
 export async function updateKinfolkTags(kinfolkId: string, tags: string[]): Promise<void> {
   const id = kinfolkId.trim();

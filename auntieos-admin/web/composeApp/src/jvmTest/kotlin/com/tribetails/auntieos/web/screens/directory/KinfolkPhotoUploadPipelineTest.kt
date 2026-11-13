@@ -173,7 +173,7 @@ class KinfolkPhotoUploadPipelineTest {
 
         writeKinfolkPhoto(FirestoreClient(), loadedRecord, "https://res.cloudinary.com/demo/image/upload/new.jpg")
 
-        assertEquals(setOf("profilePictureUrl"), JvmFirestoreFixtures.lastWrite?.fields)
+        assertEquals(setOf("profilePictureUrl", "updatedAt"), JvmFirestoreFixtures.lastWrite?.fields, "the photo plus the #2155 last-change stamp, nothing else")
         assertEquals("kinfolk", JvmFirestoreFixtures.lastWrite?.collection)
         assertEquals("kf1", JvmFirestoreFixtures.lastWrite?.id)
     }

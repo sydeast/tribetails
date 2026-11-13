@@ -65,7 +65,9 @@ const validPayload = {
   total: 200,
   amountDue: 200,
   status: 'sent', // ignored on purpose
-  sessionIds: ['s1'],
+  // #2156: a quote now holds the visits it names, and a visit with no record is
+  // refused, so the shared fixture names none. Suites about visits seed them.
+  sessionIds: [] as string[],
 };
 
 describe('createQuote zod validation', () => {

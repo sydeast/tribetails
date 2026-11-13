@@ -1,5 +1,8 @@
 import { type CollectionSpec } from '../lib/firestore';
 import { str } from '../lib/coerce';
+import { createdAtIsImportDate } from '../lib/createdAtProvenance';
+import { DEFAULT_BUSINESS_TIME_ZONE } from '../lib/businessOperations';
+import { businessWallClockToMs } from '../lib/businessZoneTime';
 import type { Timestamp } from 'firebase/firestore';
 
 /**
@@ -61,18 +64,19 @@ export interface Kinfolk {
   /**
    * Admin-entered date, "Admin & Relationship" section: the day the household
    * joined, `YYYY-MM-DD` (older docs hold a full ISO instant or free text, see
-   * lib/joinDate.ts). Add Kinfolk writes it blank. "Recently Updated" still
-   * orders by it; "Recently Created" reads it only for a household that
-   * predates [createdAt] (#1953).
+   * lib/joinDate.ts). Add Kinfolk writes it blank. "Recently Created" reads
+   * it only for a household with no usable [createdAt] (#1953, #2171).
    */
   joinDate?: string | undefined;
   /**
-   * When the household record was created. Stamped with server time by the
-   * `createKinfolk` callable, the only way a staff client can create a
-   * household (#909). A household from before that stamp has none. Typed
-   * `unknown`: a Firestore Timestamp here, but read through
-   * {@link kinfolkCreatedMillis}, which also takes an ISO string or a
-   * `{seconds}` object and never throws.
+   * When the household came into existence. For a household made in auntieOS,
+   * server time stamped by the `createKinfolk` callable (the only way a staff
+   * client can create one, #909), `createdAtSource: 'live'`. For a migrated
+   * household, the OLD system's creation instant, `createdAtSource: 'original'`
+   * (the field contract is in mytribe/scripts/createdAtProvenance.ts). Typed
+   * `unknown`: a Firestore Timestamp or an ISO string, read through
+   * {@link kinfolkCreatedMillis}, which also takes a `{seconds}` object and
+   * never throws.
    */
   createdAt?: unknown;
   /**
@@ -82,6 +86,15 @@ export interface Kinfolk {
    * the row was imported. An import date is never a creation date.
    */
   createdAtSource?: string | undefined;
+  /**
+   * The household's last change. Stamped `serverTimestamp()` by web
+   * (`kinfolkProfileWrite.ts`, `directoryWrite.ts`), Android
+   * (`updateKinfolkFields`) and the server writes to the household doc; the
+   * desktop console stamps its own clock as a UTC instant
+   * (`withKinfolkUpdatedAt`). Older docs hold an ISO string. Typed
+   * `unknown` and read through {@link kinfolkUpdatedMillis} only (#2155).
+   */
+  updatedAt?: unknown;
   /**
    * Assigned household tag NAMES, written by `updateKinfolkTags` from the
    * profile's Tags panel. Typed `unknown` for the same cast-not-validation
@@ -471,7 +484,7 @@ interface SortOptionMeta {
   label: string;
 }
 
-/** All four, for the Kinfolk tab: `createdAt` (then `joinDate`) backs Recently Created, `joinDate` backs Recently Updated. */
+/** All four, for the Kinfolk tab: see {@link kinfolkCreatedMillis} (Recently Created) and {@link kinfolkUpdatedMillis} (Recently Updated). */
 export const KINFOLK_SORT_OPTIONS: readonly SortOptionMeta[] = [
   { value: 'alpha_asc', label: 'A → Z' },
   { value: 'alpha_desc', label: 'Z → A' },
@@ -574,16 +587,23 @@ export function matchesTag(row: { tags?: unknown }, tag: string): boolean {
   return tagNamesOf(row).some((t) => tagKey(t) === key);
 }
 
-// ── Recently Created (#1953) ─────────────────────────────────────────────────
+// ── Recently Created / Recently Updated (#1953, #2171, #2155) ────────────────
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-/** Epoch millis of an ISO day (read as UTC midnight) or ISO instant, else null. Free text is never guessed at. */
+/**
+ * Epoch millis of an ISO instant, or of an ISO day read as midnight on the
+ * business's clock (America/Chicago, the server's default), else null. A join
+ * date of 12 Nov must sort above a household made at 11:30 PM on 11 Nov in
+ * Chicago, which UTC midnight would not do (#2171 review). Android and the
+ * desktop console read a day the same way. Free text is never guessed at.
+ */
 function isoMillis(raw: string): number | null {
   const s = raw.trim();
-  if (!ISO_DAY.test(s) && !ISO_INSTANT.test(s)) return null;
-  const ms = Date.parse(ISO_DAY.test(s) ? `${s}T00:00:00Z` : s);
+  if (ISO_DAY.test(s)) return businessWallClockToMs(s, '00:00', DEFAULT_BUSINESS_TIME_ZONE);
+  if (!ISO_INSTANT.test(s)) return null;
+  const ms = Date.parse(s);
   return Number.isNaN(ms) ? null : ms;
 }
 
@@ -612,44 +632,54 @@ function storedMillis(v: unknown): number | null {
 }
 
 /**
- * Which date places a household under "Recently Created", and that date in
- * epoch millis. The tiers, highest first:
+ * The date that places a household under "Recently Created", in epoch millis,
+ * or null when it has none (#1953, #2171). ONE timeline, whichever of these
+ * the household has first:
  *
- *  - `created`: the record's own [Kinfolk.createdAt]. Every household the
- *    createKinfolk callable made carries it, so all of them are newer than
- *    every household without one. A `createdAtSource` of `import` is the day
- *    the row was imported, not a creation date, and is skipped.
- *  - `joined`: a household from before that stamp is placed by its join date,
- *    the date the business recorded for it, when that reads as a date.
- *  - `none`: no readable date at all. Sorts last, never given a made-up date.
+ *  1. [Kinfolk.createdAt]: the auntieOS creation stamp (`createdAtSource`
+ *     `live` or absent) or, for a migrated household, the old system's own
+ *     creation date (`original`). A `createdAtSource` of `import` means the
+ *     original was lost and the value is only the day of the import, so it is
+ *     skipped.
+ *  2. The join date, when it reads as a date.
+ *  3. Nothing: null. The household sorts last, never given a made-up date.
  *
- * The Firestore document create time is never used: after a reload of the
- * data that is the import date.
+ * The Firestore document create time is never used: after the reload of the
+ * data it is the import date. Android `kinfolkCreatedMillis` and the desktop
+ * console's `kinfolkCreatedMillis` apply the same rule.
  */
 export function kinfolkCreatedMillis(
   kf: Pick<Kinfolk, 'createdAt' | 'createdAtSource' | 'joinDate'>,
-): { tier: 'created' | 'joined' | 'none'; ms: number } {
-  if (str(kf.createdAtSource).trim() !== 'import') {
+): number | null {
+  if (!createdAtIsImportDate(kf.createdAtSource)) {
     const created = storedMillis(kf.createdAt);
-    if (created !== null) return { tier: 'created', ms: created };
+    if (created !== null) return created;
   }
-  const joined = isoMillis(str(kf.joinDate));
-  if (joined !== null) return { tier: 'joined', ms: joined };
-  return { tier: 'none', ms: 0 };
+  return isoMillis(str(kf.joinDate));
 }
 
-const CREATED_TIER_RANK = { created: 0, joined: 1, none: 2 } as const;
+/**
+ * The date that places a household under "Recently Updated", in epoch millis,
+ * or null (#2155): its last change, [Kinfolk.updatedAt]. A household never
+ * changed since it was made was last changed when it was made, so with no
+ * readable `updatedAt` it falls back to {@link kinfolkCreatedMillis}.
+ */
+export function kinfolkUpdatedMillis(
+  kf: Pick<Kinfolk, 'updatedAt' | 'createdAt' | 'createdAtSource' | 'joinDate'>,
+): number | null {
+  return storedMillis(kf.updatedAt) ?? kinfolkCreatedMillis(kf);
+}
 
-/** Newest first within each tier, then A to Z by surname so equal dates (and the undated) keep a stable order. */
-function sortKinfolkRecentlyCreated(rows: Kinfolk[]): Kinfolk[] {
+/** Newest first; equal dates A to Z by surname; households with no date last, A to Z. */
+function sortKinfolkByDate(rows: Kinfolk[], dateOf: (kf: Kinfolk) => number | null): Kinfolk[] {
   return rows
-    .map((kf) => ({ kf, at: kinfolkCreatedMillis(kf), name: kinfolkSurnameSortKey(kf) }))
-    .sort(
-      (a, b) =>
-        CREATED_TIER_RANK[a.at.tier] - CREATED_TIER_RANK[b.at.tier] ||
-        b.at.ms - a.at.ms ||
-        cmp(a.name, b.name),
-    )
+    .map((kf) => ({ kf, at: dateOf(kf), name: kinfolkSurnameSortKey(kf) }))
+    .sort((a, b) => {
+      if (a.at !== null && b.at !== null && a.at !== b.at) return b.at - a.at;
+      if (a.at === null && b.at !== null) return 1;
+      if (a.at !== null && b.at === null) return -1;
+      return cmp(a.name, b.name);
+    })
     .map((r) => r.kf);
 }
 
@@ -661,15 +691,14 @@ export function filterSortKinfolk(
   tag: string = TAG_FILTER_ALL,
 ): Kinfolk[] {
   const filtered = rows.filter((kf) => matchesKinfolk(kf, query) && matchesTag(kf, tag));
-  if (sort === 'recently_created') return sortKinfolkRecentlyCreated(filtered);
+  if (sort === 'recently_created') return sortKinfolkByDate(filtered, kinfolkCreatedMillis);
+  if (sort === 'recently_updated') return sortKinfolkByDate(filtered, kinfolkUpdatedMillis);
   return sortByOption(
     filtered,
     sort,
     (kf) => kinfolkSurnameSortKey(kf),
     () => '',
-    // A kinfolk with no joinDate sorts last rather than being fabricated a
-    // date it never had.
-    (kf) => str(kf.joinDate),
+    () => '',
   );
 }
 
