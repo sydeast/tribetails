@@ -3,10 +3,16 @@ package com.tribetails.auntieos.ui.admin
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResult
+import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResultExcluded
 import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResultSession
 import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResultUnplaceable
 import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResultUnpriceable
@@ -208,7 +214,7 @@ class UninvoicedVisitsPickerTest {
         // work, and the reason field is worth the half second it takes to read.
         rule.onNodeWithText("This visit leaves the un-invoiced list without being billed. You can put it back.")
             .assertExists()
-        rule.onNodeWithText("Keep them billable").assertExists()
+        rule.onNodeWithText("Keep it billable").assertExists()
 
         rule.onNodeWithText("Do not invoice this visit").performClick()
         rule.waitForIdle()
@@ -233,5 +239,131 @@ class UninvoicedVisitsPickerTest {
         rule.onNodeWithText("Open this visit").performClick()
         rule.waitForIdle()
         assertEquals("s1", opened)
+    }
+
+    // ── #2089: a re-read keeps the admin's ticks ─────────────────────────────
+    private val checkbox = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox)
+    /**
+     * The picker with a list that changes between reads, the way the server's
+     * does after a write. Each read takes the next result; the last one repeats.
+     */
+    private fun mountReads(
+        reads: List<ListUninvoicedSessionsResult>,
+        onDoNotInvoice: (List<String>, Boolean) -> Unit = { _, _ -> },
+    ): () -> Set<String> {
+        val selectedNow = mutableStateOf<Set<String>>(emptySet())
+        var n = 0
+        rule.setContent {
+            AuntieOSTheme {
+                val prices = remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+                UninvoicedVisitsPicker(
+                    kinfolkId = "kf1",
+                    householdLabel = "Jamie Halbrook",
+                    todayIso = "2026-08-19",
+                    selected = selectedNow.value,
+                    onSelectedChange = { selectedNow.value = it },
+                    prices = prices.value,
+                    onPriceChange = { id, text -> prices.value = prices.value + (id to text) },
+                    onSessionsLoaded = {},
+                    onWriteBlankInvoice = {},
+                    onOpenVisit = {},
+                    load = { _, _, _ -> Result.success(reads[minOf(n++, reads.lastIndex)]) },
+                    setDoNotInvoice = { ids, flag, _ ->
+                        onDoNotInvoice(ids, flag)
+                        Result.success(SetSessionDoNotInvoiceResult(ok = true, doNotInvoice = flag, changed = ids, unchanged = emptyList()))
+                    },
+                )
+            }
+        }
+        rule.waitForIdle()
+        return { selectedNow.value }
+    }
+    private fun excludedRow(id: String) = ListUninvoicedSessionsResultExcluded(
+        sessionId = id,
+        kinfolkId = "kf1",
+        serviceType = "Dog walk",
+        startTime = "2026-08-02T15:00:00.000Z",
+        reason = "",
+    )
+    private val three = listOf(session("v1", 2500L), session("v2", 2500L), session("v3", 2500L))
+    @Test
+    fun `#2089 the first read ticks every visit`() {
+        val selected = mountReads(listOf(result(three)))
+        assertEquals(setOf("v1", "v2", "v3"), selected())
+        rule.onNodeWithText("3 of 3 un-invoiced visits selected for Jamie Halbrook.").assertExists()
+    }
+    @Test
+    fun `#2089 after Select none and Do not invoice on one visit the rest stay unticked and it leaves`() {
+        val calls = mutableListOf<Pair<List<String>, Boolean>>()
+        val selected = mountReads(
+            listOf(result(three), result(three.filter { it.sessionId != "v2" })),
+            onDoNotInvoice = { ids, flag -> calls += ids to flag },
+        )
+        rule.onNodeWithText("Select none").performClick()
+        rule.waitForIdle()
+        rule.onAllNodes(checkbox)[1].performClick()
+        rule.waitForIdle()
+        assertEquals(setOf("v2"), selected())
+        rule.onNodeWithText("Do not invoice this visit").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("Keep it billable").assertExists()
+        rule.onNodeWithText("Do not invoice this visit").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf(listOf("v2") to true), calls)
+        assertEquals(emptySet<String>(), selected())
+        rule.onNodeWithText("0 of 2 un-invoiced visits selected for Jamie Halbrook.").assertExists()
+        assertEquals(2, rule.onAllNodes(checkbox).fetchSemanticsNodes().size)
+        // The trap the walk found: one more press would have excluded everything.
+        rule.onNodeWithText("Do not invoice").assertIsNotEnabled()
+    }
+    @Test
+    fun `#2089 a visit put back arrives ticked and the others keep their state`() {
+        val selected = mountReads(
+            listOf(
+                result(three).copy(excluded = listOf(excludedRow("v9"))),
+                result(three + session("v9", 2500L)),
+            ),
+        )
+        rule.onAllNodes(checkbox)[0].performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("Put it back").performClick()
+        rule.waitForIdle()
+        assertEquals(setOf("v2", "v3", "v9"), selected())
+        assertEquals(1, rule.onAllNodesWithText("3 of 4 un-invoiced visits selected for Jamie Halbrook.").fetchSemanticsNodes().size)
+    }
+    @Test
+    fun `#2089 a change of household starts fresh, so coming back ticks every visit again`() {
+        val household = mutableStateOf("kf1")
+        val selectedNow = mutableStateOf<Set<String>>(emptySet())
+        rule.setContent {
+            AuntieOSTheme {
+                UninvoicedVisitsPicker(
+                    kinfolkId = household.value,
+                    householdLabel = "Jamie Halbrook",
+                    todayIso = "2026-08-19",
+                    selected = selectedNow.value,
+                    onSelectedChange = { selectedNow.value = it },
+                    prices = emptyMap(),
+                    onPriceChange = { _, _ -> },
+                    onSessionsLoaded = {},
+                    onWriteBlankInvoice = {},
+                    onOpenVisit = {},
+                    load = { id, _, _ ->
+                        Result.success(if (id == "kf1") result(three) else result(listOf(session("w1", 2500L))))
+                    },
+                    setDoNotInvoice = { _, _, _ -> error("not called in this test") },
+                )
+            }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithText("Select none").performClick()
+        rule.waitForIdle()
+        assertEquals(emptySet<String>(), selectedNow.value)
+        household.value = "kf2"
+        rule.waitForIdle()
+        assertEquals(setOf("w1"), selectedNow.value)
+        household.value = "kf1"
+        rule.waitForIdle()
+        assertEquals(setOf("v1", "v2", "v3"), selectedNow.value)
     }
 }

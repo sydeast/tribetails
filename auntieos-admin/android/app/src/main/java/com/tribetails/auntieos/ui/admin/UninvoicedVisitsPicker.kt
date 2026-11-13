@@ -109,6 +109,10 @@ fun UninvoicedVisitsPicker(
     var excludeError by remember { mutableStateOf<String?>(null) }
     var excludeBusy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
+    // #2089: the visits the admin has seen and left unticked, for this
+    // household. A held state object, so a load that started several
+    // compositions ago still reads the latest value when it lands.
+    val leftUnticked = remember { mutableStateOf<Set<String>>(emptySet()) }
 
     suspend fun runLoad(from: String?, to: String?) {
         if (kinfolkId.isBlank()) return
@@ -120,8 +124,10 @@ fun UninvoicedVisitsPicker(
                 // EVERY BILLABLE VISIT STARTS SELECTED. The ordinary invoice
                 // covers all of a household's outstanding work; unticking two is
                 // less work than ticking eleven, and the count is stated on the
-                // button either way.
-                onSelectedChange(res.sessions.map { it.sessionId }.toSet())
+                // button either way. A RE-READ KEEPS THE ADMIN'S OWN TICKS
+                // (#2089): a visit left unticked stays unticked, and only the
+                // first read finds nothing remembered.
+                onSelectedChange(carriedSelection(res.sessions.map { it.sessionId }, leftUnticked.value))
                 onSessionsLoaded(res.sessions)
                 loading = false
             }
@@ -142,6 +148,7 @@ fun UninvoicedVisitsPicker(
         excluding = false
         windowFrom = ""
         windowTo = ""
+        leftUnticked.value = emptySet()
         runLoad(null, null)
     }
 
@@ -152,6 +159,11 @@ fun UninvoicedVisitsPicker(
     val unpriceableIds = result?.unpriceable.orEmpty().map { it.sessionId }.toSet()
     val unplaceable = result?.unplaceable.orEmpty()
     val selectedSessions = sessions.filter { it.sessionId in selected }
+    // Every tick change the admin makes goes through here, so a re-read can keep it.
+    fun choose(next: Set<String>) {
+        leftUnticked.value = leftUntickedAfter(leftUnticked.value, sessions.map { it.sessionId }, next)
+        onSelectedChange(next)
+    }
 
     fun applyExclusion(ids: List<String>, doNotInvoice: Boolean, reason: String) {
         if (excludeBusy) return
@@ -343,12 +355,12 @@ fun UninvoicedVisitsPicker(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GhostButton(
                         label = "Select all",
-                        onClick = { onSelectedChange(sessions.map { it.sessionId }.toSet()) },
+                        onClick = { choose(sessions.map { it.sessionId }.toSet()) },
                         enabled = !disabled && selectedSessions.size != sessions.size,
                     )
                     GhostButton(
                         label = "Select none",
-                        onClick = { onSelectedChange(emptySet()) },
+                        onClick = { choose(emptySet()) },
                         enabled = !disabled && selectedSessions.isNotEmpty(),
                     )
                 }
@@ -371,7 +383,7 @@ fun UninvoicedVisitsPicker(
                                 onCheckedChange = {
                                     val next = selected.toMutableSet()
                                     if (s.sessionId in next) next.remove(s.sessionId) else next.add(s.sessionId)
-                                    onSelectedChange(next)
+                                    choose(next)
                                 },
                                 enabled = !disabled,
                             )
@@ -461,7 +473,7 @@ fun UninvoicedVisitsPicker(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             GhostButton(
-                                label = "Keep them billable",
+                                label = keepBillableLabel(selectedSessions.size),
                                 onClick = { excluding = false; excludeReason = "" },
                                 enabled = !excludeBusy,
                             )
