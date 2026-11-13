@@ -2,11 +2,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import {
-  hasPortalAccount,
+  actionNotifiesHousehold,
   visitNoticeConfirmFor,
   visitNoticeConfirmLine,
   visitNoticeOutcomeSentence,
   visitNoticePreview,
+  visitRoutingSkip,
+  type VisitNoticeReach,
 } from './visitNotice';
 import {
   beginVisitClockWrite,
@@ -14,12 +16,10 @@ import {
   settleVisitClockWrite,
   visitClockState,
 } from './visitClockOutcome';
-import { BOOKING_CATALOG_KEY } from './useBookingCatalog';
-import { BUSINESS_SETTINGS_SHARED_KEY, useHouseholdNoticesLive } from './useHouseholdNoticesLive';
-import { invalidateSharedLoad } from './useSharedOneShot';
+import { useVisitNoticeReach } from './useVisitNoticeReach';
 
-const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
-vi.mock('../api/settings', () => ({ getBusinessSettings }));
+const { call } = vi.hoisted(() => ({ call: vi.fn() }));
+vi.mock('./fns', () => ({ call }));
 
 /**
  * #1794: the words the operator reads about the household, before and after a
@@ -84,37 +84,44 @@ describe('visitNoticeOutcomeSentence', () => {
 });
 
 describe('visitNoticePreview', () => {
-  const base = { action: 'ON_MY_WAY' as const, session: ROUTED, hasPortalAccount: true, noticesLive: true };
+  const told: VisitNoticeReach = { status: 'ready', willNotify: true, reason: null };
+  const not = (reason: string | null): VisitNoticeReach => ({ status: 'ready', willNotify: false, reason });
+  const base = { action: 'ON_MY_WAY' as const, session: ROUTED, reach: told };
 
-  it('will notify only with an account and the switch on', () => {
+  it('will notify when the server says a notice can go out', () => {
     expect(visitNoticePreview(base)).toEqual({ kind: 'will_notify' });
   });
 
-  it('names no portal account before the switch (one order, shared with the server)', () => {
-    expect(visitNoticePreview({ ...base, hasPortalAccount: false, noticesLive: false })).toEqual({
+  it('names no portal account when the server does', () => {
+    expect(visitNoticePreview({ ...base, reach: not('household_has_no_portal_account') })).toEqual({
       kind: 'will_not_notify',
       reason: 'household_has_no_portal_account',
     });
   });
 
-  it('names the switch when the household has an account', () => {
-    expect(visitNoticePreview({ ...base, noticesLive: false })).toEqual({
+  it('names the switch when the server does', () => {
+    expect(visitNoticePreview({ ...base, reach: not('household_notices_off') })).toEqual({
       kind: 'will_not_notify',
       reason: 'household_notices_off',
     });
   });
 
-  it('is unknown while either input is loading', () => {
-    expect(visitNoticePreview({ ...base, hasPortalAccount: null })).toEqual({ kind: 'unknown' });
-    expect(visitNoticePreview({ ...base, noticesLive: null })).toEqual({ kind: 'unknown' });
+  it('is checking while the server is being asked', () => {
+    expect(visitNoticePreview({ ...base, reach: { status: 'checking' } })).toEqual({ kind: 'checking' });
   });
 
-  it('knows from the row alone when there is nothing to route to', () => {
+  it('is unknown, and promises nothing, when the server gave no usable answer', () => {
+    expect(visitNoticePreview({ ...base, reach: { status: 'unknown' } })).toEqual({ kind: 'unknown' });
+    expect(visitNoticePreview({ ...base, reach: not('a_reason_from_a_newer_server') })).toEqual({ kind: 'unknown' });
+    expect(visitNoticePreview({ ...base, reach: not(null) })).toEqual({ kind: 'unknown' });
+  });
+
+  it('knows from the row alone when there is nothing to route to, whatever the server would say', () => {
     expect(visitNoticePreview({ ...base, session: { kinfolkId: '' } })).toEqual({
       kind: 'will_not_notify',
       reason: 'session_has_no_kinfolk',
     });
-    expect(visitNoticePreview({ ...base, session: { kinfolkId: 'kf1' } })).toEqual({
+    expect(visitNoticePreview({ ...base, session: { kinfolkId: 'kf1' }, reach: { status: 'checking' } })).toEqual({
       kind: 'will_not_notify',
       reason: 'session_has_no_routing_ids',
     });
@@ -125,6 +132,14 @@ describe('visitNoticePreview', () => {
 
   it('is none for an undo, which never notifies', () => {
     expect(visitNoticePreview({ ...base, action: 'UNDO_ARRIVAL' })).toEqual({ kind: 'none' });
+  });
+
+  it('visitRoutingSkip and actionNotifiesHousehold say whether there is anything to ask', () => {
+    expect(visitRoutingSkip(ROUTED)).toBeNull();
+    expect(visitRoutingSkip({ kinfolkId: '  ' })).toBe('session_has_no_kinfolk');
+    expect(visitRoutingSkip({ kinfolkId: 'kf1' })).toBe('session_has_no_routing_ids');
+    expect(actionNotifiesHousehold('ARRIVED')).toBe(true);
+    expect(actionNotifiesHousehold('UNDO_ARRIVAL')).toBe(false);
   });
 });
 
@@ -154,9 +169,15 @@ describe('visitNoticeConfirmLine', () => {
     ).toBe('Dre East will not be told, because they have no portal account.');
   });
 
-  it('is null when there is nothing honest to say yet', () => {
+  it('is null when there is nothing honest to say', () => {
     expect(visitNoticeConfirmLine({ kind: 'unknown' }, 'ARRIVED', 'Dre East')).toBeNull();
     expect(visitNoticeConfirmLine({ kind: 'none' }, 'UNDO_ARRIVAL', 'Dre East')).toBeNull();
+  });
+
+  it('says it is checking while the answer is on its way, and promises nothing', () => {
+    const line = visitNoticeConfirmLine({ kind: 'checking' }, 'ARRIVED', 'Dre East');
+    expect(line).toBe('Checking whether Dre East will be told.');
+    expect(visitNoticeConfirmLine({ kind: 'checking' }, 'ARRIVED', '')).toBe('Checking who will be told.');
   });
 
   it('visitNoticeConfirmFor runs both steps', () => {
@@ -164,21 +185,10 @@ describe('visitNoticeConfirmLine', () => {
       visitNoticeConfirmFor({
         action: 'ARRIVED',
         session: ROUTED,
-        hasPortalAccount: true,
-        noticesLive: false,
+        reach: { status: 'ready', willNotify: false, reason: 'household_notices_off' },
         household: 'Dre East',
       }),
     ).toBe('Dre East will not be told, because notices to households are off in Settings.');
-  });
-});
-
-describe('hasPortalAccount', () => {
-  it('reads the linked login on the household record', () => {
-    expect(hasPortalAccount({ uid: 'u1' })).toBe(true);
-    expect(hasPortalAccount({ uid: '  ' })).toBe(false);
-    expect(hasPortalAccount({})).toBe(false);
-    expect(hasPortalAccount(null)).toBeNull();
-    expect(hasPortalAccount(undefined)).toBeNull();
   });
 });
 
@@ -207,35 +217,85 @@ describe('visitClockOutcome: the store the card reads after it remounts', () => 
   });
 });
 
-describe('useHouseholdNoticesLive', () => {
+describe('useVisitNoticeReach: the confirm asks the server (#1840)', () => {
   beforeEach(() => {
-    invalidateSharedLoad();
-    getBusinessSettings.mockReset();
+    call.mockReset();
   });
 
-  it('joins the settings read useBookingCatalog already makes', () => {
-    expect(BUSINESS_SETTINGS_SHARED_KEY).toBe(BOOKING_CATALOG_KEY);
+  it('asks nothing while there is no household to ask about', () => {
+    const { result } = renderHook(() => useVisitNoticeReach(null));
+    expect(result.current).toEqual({ status: 'checking' });
+    expect(call).not.toHaveBeenCalled();
   });
 
-  it('is null until the read lands, then the switch', async () => {
-    getBusinessSettings.mockResolvedValue({ householdNotificationsLive: true });
-    const { result } = renderHook(() => useHouseholdNoticesLive());
-    expect(result.current).toBeNull();
-    await waitFor(() => expect(result.current).toBe(true));
+  it('is checking until the answer lands, then carries it', async () => {
+    call.mockResolvedValue({ ok: true, willNotify: true, reason: null });
+    const { result } = renderHook(() => useVisitNoticeReach('kf1'));
+    expect(result.current).toEqual({ status: 'checking' });
+    await waitFor(() => expect(result.current).toEqual({ status: 'ready', willNotify: true, reason: null }));
+    expect(call).toHaveBeenCalledWith('previewVisitNotification', { familyId: 'kf1' });
   });
 
-  it('reads anything but true as off', async () => {
-    getBusinessSettings.mockResolvedValue({ householdNotificationsLive: false });
-    const { result } = renderHook(() => useHouseholdNoticesLive());
-    await waitFor(() => expect(result.current).toBe(false));
+  it('carries the reason for a household with no portal sign-in', async () => {
+    call.mockResolvedValue({ ok: true, willNotify: false, reason: 'household_has_no_portal_account' });
+    const { result } = renderHook(() => useVisitNoticeReach('kf1'));
+    await waitFor(() =>
+      expect(result.current).toEqual({
+        status: 'ready',
+        willNotify: false,
+        reason: 'household_has_no_portal_account',
+      }),
+    );
   });
 
-  it('stays null when the read fails, rather than guessing', async () => {
-    getBusinessSettings.mockRejectedValue(new Error('permission denied'));
-    const { result } = renderHook(() => useHouseholdNoticesLive());
-    await act(async () => {
-      await Promise.resolve();
+  it('is unknown when the call fails, never a guess', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    call.mockRejectedValue(new Error('functions/not-found'));
+    const { result } = renderHook(() => useVisitNoticeReach('kf1'));
+    await waitFor(() => expect(result.current).toEqual({ status: 'unknown' }));
+    warn.mockRestore();
+  });
+
+  it('is unknown when the answer has no willNotify (a server from before the preview)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    call.mockResolvedValue({ ok: true });
+    const { result } = renderHook(() => useVisitNoticeReach('kf1'));
+    await waitFor(() => expect(result.current).toEqual({ status: 'unknown' }));
+    warn.mockRestore();
+  });
+
+  it('asks again each time a confirm opens, and never shows the last answer meanwhile', async () => {
+    call.mockResolvedValueOnce({ ok: true, willNotify: false, reason: 'household_has_no_portal_account' });
+    const { result, rerender } = renderHook(({ id }: { id: string | null }) => useVisitNoticeReach(id), {
+      initialProps: { id: 'kf1' as string | null },
     });
-    expect(result.current).toBeNull();
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+
+    rerender({ id: null });
+    let release: (v: unknown) => void = () => {};
+    call.mockReturnValueOnce(new Promise((r) => (release = r)));
+    rerender({ id: 'kf1' });
+    expect(result.current).toEqual({ status: 'checking' });
+
+    await act(async () => {
+      release({ ok: true, willNotify: true, reason: null });
+    });
+    expect(result.current).toEqual({ status: 'ready', willNotify: true, reason: null });
+    expect(call).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops an answer that lands after the confirm moved to another household', async () => {
+    let releaseFirst: (v: unknown) => void = () => {};
+    call.mockReturnValueOnce(new Promise((r) => (releaseFirst = r)));
+    call.mockResolvedValueOnce({ ok: true, willNotify: false, reason: 'household_notices_off' });
+    const { result, rerender } = renderHook(({ id }: { id: string | null }) => useVisitNoticeReach(id), {
+      initialProps: { id: 'kf1' as string | null },
+    });
+    rerender({ id: 'kf2' });
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    await act(async () => {
+      releaseFirst({ ok: true, willNotify: true, reason: null });
+    });
+    expect(result.current).toEqual({ status: 'ready', willNotify: false, reason: 'household_notices_off' });
   });
 });

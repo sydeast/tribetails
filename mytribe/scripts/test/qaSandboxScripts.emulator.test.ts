@@ -118,6 +118,10 @@ describe.runIf(BOTH_EMULATOR_HOSTS_SET)('qa_enable_sandbox_login.ts and qa_set_s
     const list = await auth.listUsers();
     await Promise.all(list.users.map((u) => auth.deleteUser(u.uid)));
     await db.collection('clients').doc(TEST_ADMIN_UID).delete().catch(() => undefined);
+    // #2096: the sandbox household exists (seed_test_sandbox writes it) and
+    // the login starts with no member record, as a login linked before #2096.
+    await db.doc(`families/${TEST_TRIBE_ID}/members/${TEST_ADMIN_UID}`).delete().catch(() => undefined);
+    await db.doc(`families/${TEST_TRIBE_ID}`).set({ displayName: 'TEST SANDBOX', isTestData: true });
   });
 
   describe('qa_enable_sandbox_login.run', () => {
@@ -139,6 +143,9 @@ describe.runIf(BOTH_EMULATOR_HOSTS_SET)('qa_enable_sandbox_login.ts and qa_set_s
       expect(result.uid).toBe(TEST_ADMIN_UID);
       const client = (await db.collection('clients').doc(TEST_ADMIN_UID).get()).data();
       expect(client?.['kinfolkIds']).toEqual([TEST_TRIBE_ID]);
+      // #2096: the member record a real invite acceptance writes.
+      const member = (await db.doc(`families/${TEST_TRIBE_ID}/members/${TEST_ADMIN_UID}`).get()).data();
+      expect(member).toMatchObject({ uid: TEST_ADMIN_UID, role: 'PRIMARY', status: 'ACTIVE', isTestData: true });
 
       // The password file holds the ACTUAL password: prove it by signing in
       // with it against the Auth emulator, the strongest available proof
@@ -170,6 +177,18 @@ describe.runIf(BOTH_EMULATOR_HOSTS_SET)('qa_enable_sandbox_login.ts and qa_set_s
       expect(client.exists).toBe(false);
       const stillWorks = await signInWithPassword(TEST_ADMIN_EMAIL, 'old-password-123');
       expect(stillWorks.ok, JSON.stringify(stillWorks)).toBe(true); // password untouched
+    });
+
+    it('#2096: refuses a sandbox login that carries a staff claim, and writes nothing', async () => {
+      await auth.createUser({ uid: TEST_ADMIN_UID, email: TEST_ADMIN_EMAIL, password: 'old-password-123' });
+      await auth.setCustomUserClaims(TEST_ADMIN_UID, { admin: true });
+
+      await expect(runEnableLogin({ auth, db })).rejects.toThrow(/staff login/);
+
+      expect((await db.collection('clients').doc(TEST_ADMIN_UID).get()).exists).toBe(false);
+      expect((await db.doc(`families/${TEST_TRIBE_ID}/members/${TEST_ADMIN_UID}`).get()).exists).toBe(false);
+      const stillWorks = await signInWithPassword(TEST_ADMIN_EMAIL, 'old-password-123');
+      expect(stillWorks.ok, JSON.stringify(stillWorks)).toBe(true);
     });
 
     it('refuses and writes nothing when the sandbox account does not exist at all', async () => {

@@ -308,11 +308,11 @@ describe('seed_test_sandbox: planAllWrites', () => {
   const writes = planAllWrites(FIXED_NOW);
   const paths = writes.map((w) => w.path);
 
-  it('produces 29 writes with no duplicate paths', () => {
-    // 3 identity/access + 3 tree kin + 3 flat kin + 2 envelopes + 4 kinCares
+  it('produces 30 writes with no duplicate paths', () => {
+    // 3 identity/access + 1 member record (#2096) + 3 tree kin + 3 flat kin + 2 envelopes + 4 kinCares
     // + 5 sessions + 3 invoices + 1 payment + 3 reports + 1 media + 1 schema
-    expect(writes).toHaveLength(29);
-    expect(new Set(paths).size).toBe(29);
+    expect(writes).toHaveLength(30);
+    expect(new Set(paths).size).toBe(30);
   });
 
   it('targets the families tree paths the portal reads', () => {

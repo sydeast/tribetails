@@ -3,6 +3,9 @@
  *
  * One-off QA helper: make the TEST SANDBOX account a usable kinfolk login.
  *   1. clients/<uid>.kinfolkIds -> ['test-kinfolk-001']  (so getMyAccess routes to Home)
+ *   1b. families/test-kinfolk-001/members/<uid> -> the ACTIVE PRIMARY record a
+ *      real invite acceptance writes (#2096), so household notices reach it.
+ *      Re-running repairs a login linked before this existed.
  *   2. a fresh random temp password on the Auth user, written to a local
  *      0600 file (never printed or logged - see writePasswordFile below)
  * Safe: test-kinfolk-001 is isolated isTestData. Reversible (clear kinfolkIds after).
@@ -45,7 +48,8 @@ import * as os from 'os';
 import * as path from 'path';
 import type { Auth } from 'firebase-admin/auth';
 import type { Firestore } from 'firebase-admin/firestore';
-import { getApps, initializeApp, applicationDefault, getFirestore, getAuth } from './lib/firebaseAdmin';
+import { getApps, initializeApp, applicationDefault, getFirestore, getAuth, FieldValue } from './lib/firebaseAdmin';
+import { assertPrimaryLinkAllowed, planPrimaryLink, writePrimaryMember } from './lib/householdPrimary';
 import {
   TEST_TRIBE_ID,
   TEST_ADMIN_EMAIL,
@@ -148,8 +152,22 @@ export async function run(
   const write = opts.writePasswordFile ?? writePasswordFile;
   const uid = await resolveSandboxUid(deps.auth);
 
+  // #2096: decide BEFORE any write. A staff login, a removed member, or a
+  // sandbox that already has another PRIMARY stops the run with nothing
+  // changed. Read before the link, so a re-run on an already-linked login
+  // still finds what is missing and repairs it.
+  const plan = await planPrimaryLink(deps, TEST_TRIBE_ID, uid);
+  assertPrimaryLinkAllowed(plan);
+
   await deps.db.collection('clients').doc(uid).set({ kinfolkIds: [TEST_TRIBE_ID] }, { merge: true });
-  console.log(`[1/2] linked kinfolkIds -> [${TEST_TRIBE_ID}]`);
+  console.log(`[1/3] linked kinfolkIds -> [${TEST_TRIBE_ID}]`);
+
+  // The member record a real invite acceptance writes, so household notices
+  // reach this login and the Members panel lists it (#1840, #2096).
+  const wrote = await writePrimaryMember(deps.db, TEST_TRIBE_ID, uid, plan, FieldValue.serverTimestamp(), {
+    isTestData: true,
+  });
+  console.log(wrote ? '[2/3] member record written (PRIMARY, ACTIVE)' : '[2/3] member record already ACTIVE, left as it is');
 
   const password = generateTempPassword();
   // Persist the password BEFORE changing it in Auth, not after. If the write
@@ -160,7 +178,7 @@ export async function run(
   // password on a live QA account, discoverable only by trying to sign in.
   const passwordFilePath = write(password);
   await deps.auth.updateUser(uid, { password });
-  console.log('[2/2] temp password set.');
+  console.log('[3/3] temp password set.');
 
   return { uid, passwordFilePath };
 }
@@ -174,6 +192,8 @@ async function main(): Promise<void> {
 
   console.log(`qa_enable_sandbox_login  mode=${args.apply ? 'apply' : 'dry-run'}  project=${projectId}`);
   console.log(`[plan] clients/${TEST_ADMIN_UID}.kinfolkIds -> [${TEST_TRIBE_ID}] (merge)`);
+  console.log(`[plan] families/${TEST_TRIBE_ID}/members/${TEST_ADMIN_UID} -> ACTIVE PRIMARY, unless one is already there`);
+  console.log('[plan] refuses, writing nothing, if the login is staff, was removed, or the sandbox has another PRIMARY');
   console.log('[plan] set a fresh random password on the Auth user (value never logged)');
   console.log(`[plan] refuses unless ${TEST_ADMIN_EMAIL} resolves to uid ${TEST_ADMIN_UID}`);
 

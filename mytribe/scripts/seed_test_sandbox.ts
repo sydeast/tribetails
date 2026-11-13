@@ -36,7 +36,10 @@
  * What it provisions:
  *   1. Firebase Auth user TEST_ADMIN_EMAIL with fixed uid TEST_ADMIN_UID and
  *      custom claim { testTribeId: TEST_TRIBE_ID }. NEVER admin:true.
- *   2. clients/{uid} with kinfolkIds: [TEST_TRIBE_ID] (REQUIRED for access).
+ *   2. clients/{uid} with kinfolkIds: [TEST_TRIBE_ID] (REQUIRED for access),
+ *      and families/{TEST_TRIBE_ID}/members/{uid}, the ACTIVE PRIMARY record
+ *      a real invite acceptance writes (#2096: without it the sandbox gets no
+ *      household notices since #1840).
  *   3. families/{TEST_TRIBE_ID} (displayName 'TEST SANDBOX', balance 1500c)
  *      + 3 kin (dog with full care fields, cat, bird noLongerWithUs to
  *      exercise the memorial state)
@@ -83,6 +86,7 @@ import {
   getAuth,
 } from './lib/firebaseAdmin';
 import { canonicalCreditMoney, canonicalInvoiceMoney, type SeedInvoiceMoney } from './lib/seedInvoiceMoney';
+import { primaryMemberRecord } from '../functions/src/lib/householdMember';
 
 // ---------------------------------------------------------------------------
 // Fixed identity. Deterministic so re-runs converge and the rules match
@@ -904,6 +908,15 @@ export function planAllWrites(now: Date = new Date(), uid: string = TEST_ADMIN_U
   writes.push({ path: `kinfolk/${p.kinfolk._id}`, data: rec(p.kinfolk) });
   writes.push({ path: `families/${p.family._id}`, data: rec(p.family) });
   writes.push({ path: `clients/${p.client._id}`, data: rec(p.client) });
+  // #2096: the ACTIVE PRIMARY member record a real invite acceptance writes
+  // (functions/src/lib/householdMember.ts, the same shape acceptInvite uses),
+  // so household notices reach the sandbox login (#1840) and the Members
+  // panel lists it. Reset with everything else on each run: this script owns
+  // the whole sandbox, and its login is never staff (claim below).
+  writes.push({
+    path: sandboxMemberPath(uid),
+    data: { ...primaryMemberRecord(uid, TEST_ADMIN_EMAIL, ts(now)), isTestData: true },
+  });
 
   // Kin: families tree (portal reads) + flat mirror (AuntieOS-side tooling).
   for (const k of p.kin) {
@@ -935,12 +948,18 @@ export function planAllWrites(now: Date = new Date(), uid: string = TEST_ADMIN_U
   return writes;
 }
 
+/** The sandbox login's member record in the sandbox household (#2096). */
+export function sandboxMemberPath(uid: string): string {
+  return `families/${TEST_TRIBE_ID}/members/${uid}`;
+}
+
 // Fixed paths that are scoped by their doc id rather than a kinfolkId field.
 function allowedFixedPaths(uid: string): Set<string> {
   return new Set([
     `kinfolk/${TEST_TRIBE_ID}`,
     `families/${TEST_TRIBE_ID}`,
     `clients/${uid}`,
+    sandboxMemberPath(uid),
     'formSchemas/kinProfile',
   ]);
 }

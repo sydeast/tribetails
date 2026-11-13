@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type SessionEntry } from '../api/sessions';
 /**
@@ -31,11 +31,9 @@ const { useCollection, useDocById } = vi.hoisted(() => ({
 vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
 vi.mock('../api/settings', () => ({ getBusinessSettings }));
-// #1794: the household-notices switch the clock confirm reads. On by default.
-const { useHouseholdNoticesLive } = vi.hoisted(() => ({
-  useHouseholdNoticesLive: vi.fn<() => boolean | null>(() => true),
-}));
-vi.mock('../lib/useHouseholdNoticesLive', () => ({ useHouseholdNoticesLive }));
+// #1840: the server's answer the clock confirm reads. "Will be told" by default.
+const { previewVisitNotification } = vi.hoisted(() => ({ previewVisitNotification: vi.fn() }));
+vi.mock('../api/visitNoticePreview', () => ({ previewVisitNotification }));
 // #1744: services are named from the KinCare catalog. "Long walk" runs 45
 // minutes, so a stored `visit_45` reads as "Long walk".
 vi.mock('../lib/useBookingCatalog', () => ({
@@ -78,8 +76,8 @@ beforeEach(() => {
   getBusinessSettings.mockResolvedValue({ serviceRates: {}, serviceDurations: {} });
   useBreadcrumbs.mockReset();
   useBreadcrumbs.mockReturnValue({ points: [], error: null, ready: true });
-  useHouseholdNoticesLive.mockReset();
-  useHouseholdNoticesLive.mockReturnValue(true);
+  previewVisitNotification.mockReset();
+  previewVisitNotification.mockResolvedValue({ willNotify: true, reason: null });
 });
 
 function entry(over: Partial<SessionEntry> = {}): SessionEntry {
@@ -969,9 +967,9 @@ describe('SessionDetail visit facts (#1581)', () => {
     expect(screen.getByText('QA-Pup · 1 without a name on file')).toBeInTheDocument();
   });
 });
-// #1794: the visit sheet's clock confirm promises the household a notice only
-// when one can be sent: the switch on, and a portal login on the household
-// record this screen already reads (`kinfolk.uid`).
+// #1794, #1840: the visit sheet's clock confirm promises the household a
+// notice only when the server says one can be sent. The login on the household
+// record this screen reads (`kinfolk.uid`) is not consulted.
 describe('SessionDetail: the clock confirm and the household notice', () => {
   function household(state: { status: 'ready'; data: Record<string, unknown> | null } | { status: 'loading' }) {
     useDocById.mockImplementation((path: string) => (path === 'kinfolk' ? state : { status: 'ready', data: null }));
@@ -981,29 +979,45 @@ describe('SessionDetail: the clock confirm and the household notice', () => {
     await userEvent.click(screen.getByRole('button', { name: /^on the way$/i }));
     return screen.getByRole('dialog');
   }
-  it('promises the notice with a portal login and the switch on', async () => {
-    household({ status: 'ready', data: { uid: 'u1' } });
+
+  it('promises the notice when the server says the household will be told', async () => {
     const dialog = await openOnTheWay();
-    expect(within(dialog).getByText('The Whitfields will be told their Auntie is on the way.')).toBeInTheDocument();
+    expect(
+      await within(dialog).findByText('The Whitfields will be told their Auntie is on the way.'),
+    ).toBeInTheDocument();
   });
+
   it('says the switch is off in Settings when it is', async () => {
-    household({ status: 'ready', data: { uid: 'u1' } });
-    useHouseholdNoticesLive.mockReturnValue(false);
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_notices_off' });
     const dialog = await openOnTheWay();
     expect(
-      within(dialog).getByText('The Whitfields will not be told, because notices to households are off in Settings.'),
+      await within(dialog).findByText(
+        'The Whitfields will not be told, because notices to households are off in Settings.',
+      ),
     ).toBeInTheDocument();
   });
-  it('a household record that loaded and is not there has no portal account', async () => {
-    household({ status: 'ready', data: null });
+
+  it("#1840: a login on the household record does not make it a portal sign-in; the server's answer does", async () => {
+    household({ status: 'ready', data: { uid: 'uidAdmin' } });
+    previewVisitNotification.mockResolvedValue({ willNotify: false, reason: 'household_has_no_portal_account' });
     const dialog = await openOnTheWay();
     expect(
-      within(dialog).getByText('The Whitfields will not be told, because they have no portal account.'),
+      await within(dialog).findByText('The Whitfields will not be told, because they have no portal account.'),
     ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/will be told/)).toBeNull();
   });
-  it('says nothing about the household while its record is still loading', async () => {
-    household({ status: 'loading' });
+
+  it('says it is checking while the answer is on its way', async () => {
+    previewVisitNotification.mockReturnValue(new Promise(() => {}));
     const dialog = await openOnTheWay();
-    expect(within(dialog).queryByText(/told/)).toBeNull();
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Checking whether The Whitfields will be told.');
+  });
+
+  it('says nothing about the household when the server cannot be asked', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    previewVisitNotification.mockRejectedValue(new Error('functions/unavailable'));
+    const dialog = await openOnTheWay();
+    await waitFor(() => expect(within(dialog).queryByText(/told/)).toBeNull());
+    warn.mockRestore();
   });
 });

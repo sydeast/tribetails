@@ -57,6 +57,7 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // A KinTale itself is a direct client write governed by firestore.rules, not
   // a callable. These are the callables its lifecycle reaches for.
   'dispatchVisitNotification', // Android + desktop announce a send through this
+  'previewVisitNotification', // the clock confirm asks who would be told (#1840)
   'createShareLink', // share a tale with someone outside the household
   'addKinTaleComment', // comments are write-closed in rules; this is the only path
   'getKinTaleComments',
