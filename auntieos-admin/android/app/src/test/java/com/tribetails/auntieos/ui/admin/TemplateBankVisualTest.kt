@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import com.tribetails.auntieos.data.repository.TemplateRepository
+import com.tribetails.auntieos.data.repository.decodeTemplateChannels
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -41,6 +42,8 @@ class TemplateBankVisualTest {
 
     private fun repo(templates: List<TemplateRepository.EmailTemplate>): TemplateRepository {
         val r = mockk<TemplateRepository>()
+        // #1935: the editor reads the text and push wording; none is sent here.
+        coEvery { r.getTemplateChannels(any()) } returns Result.success(decodeTemplateChannels(emptyMap()))
         coEvery { r.listTemplates() } returns Result.success(templates)
         coEvery { r.listCategories() } returns Result.success(emptyList())
         coEvery { r.listBindings() } returns Result.success(emptyList())
@@ -79,6 +82,8 @@ class TemplateBankVisualTest {
     fun `a successful visual save closes the editor and the bank shows the reloaded template`() {
         val updated = visual.copy(title = "Password reset (updated)")
         val r = mockk<TemplateRepository>()
+        // #1935: the editor reads the text and push wording; none is sent here.
+        coEvery { r.getTemplateChannels(any()) } returns Result.success(decodeTemplateChannels(emptyMap()))
         coEvery { r.listTemplates() } returnsMany listOf(Result.success(listOf(visual)), Result.success(listOf(updated)))
         coEvery { r.listCategories() } returns Result.success(emptyList())
         coEvery { r.listBindings() } returns Result.success(emptyList())
@@ -105,6 +110,8 @@ class TemplateBankVisualTest {
     fun `a successful visual save confirms which template was saved`() {
         val updated = visual.copy(title = "Password reset (updated)")
         val r = mockk<TemplateRepository>()
+        // #1935: the editor reads the text and push wording; none is sent here.
+        coEvery { r.getTemplateChannels(any()) } returns Result.success(decodeTemplateChannels(emptyMap()))
         coEvery { r.listTemplates() } returnsMany listOf(Result.success(listOf(visual)), Result.success(listOf(updated)))
         coEvery { r.listCategories() } returns Result.success(emptyList())
         coEvery { r.listBindings() } returns Result.success(emptyList())
