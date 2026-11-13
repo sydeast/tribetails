@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { addressLooksIncomplete, INCOMPLETE_ADDRESS_HINT } from '../lib/addressCompleteness';
 import { type SessionEntry } from '../api/sessions';
 import { kinForHouseholdQuery, type Kin, type Kinfolk } from '../api/directory';
-import { getBusinessSettings } from '../api/settings';
+import { useWorkSettingsRead } from '../lib/useWorkSettings';
 import { bookingServiceName } from '../lib/bookingFormat';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { useRecordTitle } from '../lib/pageTitle';
@@ -344,26 +344,23 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   // The zone note stamps are read in (#1592). Chicago until settings land.
   const [noteZone, setNoteZone] = useState<string>(resolveBusinessTimeZone(null));
+  // #2164: the work-settings read, so an Auntie's session gets the KinCare list
+  // and the clock from the narrow staff read instead of a refused document.
+  const workSettings = useWorkSettingsRead();
+  const ratesShown = workSettings.status !== 'ready' || workSettings.data.ratesIncluded;
   useEffect(() => {
-    let cancelled = false;
-    void getBusinessSettings()
-      .then((s) => {
-        if (cancelled) return;
-        setCatalog(serviceOptionsFromRates(s.serviceRates, s.serviceDurations));
-        setNoteZone(resolveBusinessTimeZone(s.timeZone));
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        // A failed catalog read is NOT a reason to hide the field: the visit's
-        // own service type is still true and still editable as free text. It is
-        // a reason to say the picker is missing, so the operator knows why they
-        // are typing instead of choosing.
-        setCatalogError(messageOf(err));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (workSettings.status === 'ready') {
+      setCatalog(serviceOptionsFromRates(workSettings.data.serviceRates, workSettings.data.serviceDurations));
+      setNoteZone(resolveBusinessTimeZone(workSettings.data.timeZone));
+      setCatalogError(null);
+    } else if (workSettings.status === 'error') {
+      // A failed catalog read is NOT a reason to hide the field: the visit's
+      // own service type is still true and still editable as free text. It is
+      // a reason to say the picker is missing, so the operator knows why they
+      // are typing instead of choosing.
+      setCatalogError(workSettings.message);
+    }
+  }, [workSettings]);
 
   // The household's roster, for the Kin checkboxes. A blank household matches
   // nothing, which is exactly right (see `kinForHouseholdQuery`).
@@ -738,6 +735,9 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                       />
                     )}
                   </label>
+                  {catalog === null && catalogError === null && (
+                    <LoadingRow label="Loading the KinCare list…" className="sdetail__hint" />
+                  )}
                   {catalogError !== null && (
                     <p className="sdetail__hint">
                       The rate card couldn&rsquo;t be read ({catalogError}), so the service is a free-text
@@ -768,7 +768,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                       is by exact name (the hint above says so), so the row
                       appears only when the name matches a rate and the operator
                       typed one. Never a computed total. */}
-                  <FieldRow label="Rate" value={rate === '' ? '' : `$${rate}`} />
+                  {ratesShown && <FieldRow label="Rate" value={rate === '' ? '' : `$${rate}`} />}
 
                   {/* What the RECORD says the visit covers, before the picker
                       below that changes it. Named Kin can be fewer than covered

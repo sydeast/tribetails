@@ -6,6 +6,7 @@ import com.tribetails.auntieos.data.contracts.ManageBookingSeriesArgs
 import com.tribetails.auntieos.data.contracts.decodeBatchUpdateBookingsResult
 import com.tribetails.auntieos.data.contracts.decodeManageBookingSeriesResult
 import com.tribetails.auntieos.domain.withSandboxScope
+import com.tribetails.auntieos.domain.isOwnerClaims
 import com.tribetails.auntieos.domain.sortVetClinics
 import com.tribetails.auntieos.domain.RecentSend
 import com.tribetails.auntieos.domain.decodeRecentSends
@@ -160,7 +161,7 @@ class AuntieRepository(
                 throw t
             }
             val token = auth.currentUser?.getIdToken(true)?.await()
-            if (token?.claims?.get("admin") != true) {
+            if (!isOwnerClaims(token?.claims)) {
                 endSession()
                 error("This account does not have admin access.")
             }
@@ -303,12 +304,13 @@ class AuntieRepository(
         token
     }.onFailure { AuntieLog.e("Failed to fetch Firebase ID token", it) }
 
-    /** Reads custom claim `admin` from current user's ID token. Forces refresh so server-side
-     *  changes (e.g. setAdminClaim Cloud Function) are picked up without app restart. */
+    /** Reads the owner claim from current user's ID token. Forces refresh so server-side
+     *  changes (e.g. setAdminClaim Cloud Function) are picked up without app restart.
+     *  The owner gate matches the web role rule ([isOwnerClaims]). */
     suspend fun isCurrentUserAdmin(): Result<Boolean> = runCatching {
         authGate.ensureAuthenticated()
         val token = auth.currentUser?.getIdToken(true)?.await()
-        val isAdmin = token?.claims?.get("admin") == true
+        val isAdmin = isOwnerClaims(token?.claims)
         AuntieLog.d("isCurrentUserAdmin uid=${auth.currentUser?.uid} → $isAdmin")
         isAdmin
     }.onFailure {

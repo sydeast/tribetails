@@ -1,4 +1,6 @@
 import { useKinfolkRoster } from '../lib/useKinfolkRoster';
+import { useWorkSettings } from '../lib/useWorkSettings';
+import { WorkSettingsNotice } from '../components/WorkSettingsNotice';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   KINTALES_DUE_QUERY,
@@ -160,6 +162,10 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
   // opens on the 30 days that end where Recent stops, so no wrapped visit sits
   // between the two lists; a box the operator has set is left alone.
   const businessZone = useBusinessZone();
+  // #2164: the clock and the arrival rule come off the shared work-settings
+  // read (an Auntie's session reads it through the narrow staff read). This is
+  // what the board says while it loads, and if it fails.
+  const workSettings = useWorkSettings();
   const archiveToday = useMemo(() => businessTodayIso(businessZone), [businessZone]);
   const [pickedFrom, setArchiveFrom] = useState<string | null>(null);
   const [pickedTo, setArchiveTo] = useState<string | null>(null);
@@ -276,6 +282,8 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
           />
         }
       />
+
+      <WorkSettingsNotice state={workSettings} />
 
       {mode === 'archive' && (
         <div className="sessions__range">

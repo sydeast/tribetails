@@ -16,7 +16,7 @@ import {
   type ApproveOptions,
   type PendingBookingRequestDto,
 } from '../api/bookingRequests';
-import { getBusinessSettings } from '../api/settings';
+import { getWorkSettings } from '../api/workSettings';
 import type { ListPendingBookingRequestsResultRequestVisit } from '../contracts/bookingContracts.generated';
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import { bookingServiceName, EMPTY_BOOKING_CATALOG, type BookingCatalog } from '../lib/bookingFormat';
@@ -793,7 +793,8 @@ function useBusinessZone(needed: boolean): ZoneLoad {
   useEffect(() => {
     if (!needed) return undefined;
     let live = true;
-    getBusinessSettings()
+    // #2164: the work-settings read, which an Auntie's session can make.
+    getWorkSettings()
       .then((s) => {
         if (live) setLoad({ status: 'ready', zone: resolveBusinessTimeZone(s.timeZone) });
       })

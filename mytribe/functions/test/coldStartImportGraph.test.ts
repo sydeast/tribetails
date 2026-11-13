@@ -247,8 +247,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * FUNCTIONS entry (the owner-only Archive / Restore of a Kinfolk household,
  * with its Activity Log line). Its words, `lib/activityWords.ts`, load with
  * `await import()` inside the handler, so the entry is the only module it adds.
+ *
+ * 452 since #2164 / #2182 (on top of #2161's 450): two new FUNCTIONS entries,
+ * `admin/staffWorkSettings.ts` and `admin/myStaffNotificationOptions.ts`, the
+ * Auntie's narrow settings reads. Their file-scope imports (the booking-policy
+ * resolver, the notification catalog and prefs, the callable wrapper) are
+ * already resident, so each entry is the only module it adds.
  */
-const MAX_OWN_EAGER_MODULES = 450;
+const MAX_OWN_EAGER_MODULES = 452;
 
 interface Edge {
   spec: string;

@@ -64,7 +64,18 @@ vi.mock('../api/bookingsWrite', () => ({
  * `60Mins` labels on the live screen resolvable at all.
  */
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
-vi.mock('../api/settings', () => ({ getBusinessSettings }));
+vi.mock('../api/settings', async (orig) => ({
+  ...(await orig<typeof import('../api/settings')>()),
+  getBusinessSettings,
+}));
+// #2164: who is signed in, and the transport the Auntie's narrow read goes
+// through. The owner by default, so every other case reads as it always did.
+const { currentSessionSeat, call } = vi.hoisted(() => ({ currentSessionSeat: vi.fn(), call: vi.fn() }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat,
+}));
+vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fns')>()), call }));
 
 const TEST_SETTINGS = {
   serviceRates: { '30Minute': '25', '60Minute': '45' },
@@ -125,6 +136,8 @@ vi.mock('../components/BookingDetailModal', () => ({
 // #1608: BookingStatusActions reads the arrival rule; keep it off Firestore.
 vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule: () => null }));
 import { Bookings, groupBookingsByStatus } from './Bookings';
+import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
+import { WORK_SETTINGS_FAILED, WORK_SETTINGS_LOADING } from '../components/WorkSettingsNotice';
 
 function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;
@@ -163,6 +176,8 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ ok: true, action: 'APPROVE', updated: 0, failed: [] });
   getBusinessSettings.mockReset().mockResolvedValue(TEST_SETTINGS);
+  currentSessionSeat.mockReset().mockResolvedValue(OWNER_SEAT);
+  call.mockReset().mockImplementation(staffOnlyCall);
 });
 
 /**
@@ -1222,5 +1237,24 @@ describe('Bookings, the #1607 walk', () => {
     const row = (name: string) => within(scheduled).getByText(name).closest('li') as HTMLElement;
     expect(within(row('Left Behind')).getByText('OVERDUE')).toBeInTheDocument();
     expect(within(row('Still Ahead')).queryByText('OVERDUE')).toBeNull();
+  });
+});
+
+describe('#2164 Bookings under an Auntie sign-in', () => {
+  beforeEach(() => currentSessionSeat.mockResolvedValue(AUNTIE_SEAT));
+
+  it('names each booking from her own read and never reads the settings document', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ serviceType: 'Drop-in' })] });
+    render(<Bookings />);
+    expect(screen.getByText(WORK_SETTINGS_LOADING)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(WORK_SETTINGS_LOADING)).not.toBeInTheDocument());
+    expect(call).toHaveBeenCalledWith('getStaffWorkSettings', {});
+    expect(getBusinessSettings).not.toHaveBeenCalled();
+  });
+
+  it('says plainly when her read fails', async () => {
+    call.mockRejectedValue(new Error('unavailable'));
+    render(<Bookings />);
+    expect(await screen.findByText(WORK_SETTINGS_FAILED)).toBeInTheDocument();
   });
 });

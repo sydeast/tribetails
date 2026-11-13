@@ -12,7 +12,8 @@ import {
   type BookingCatalog,
   type BookingState,
 } from '../lib/bookingFormat';
-import { getBusinessSettings } from '../api/settings';
+import { useWorkSettingsRead } from '../lib/useWorkSettings';
+import { WorkSettingsNotice } from '../components/WorkSettingsNotice';
 import { useCollection, useDocById } from '../lib/firestore';
 import { DenScreenHeading, EmptyHint, InfoTip, StatusPill, type DenTone } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
@@ -399,25 +400,21 @@ export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestI
    * server's own default, until the read lands or if it fails.
    */
   const [businessZone, setBusinessZone] = useState<string>(DEFAULT_BUSINESS_TIME_ZONE);
+  // #2164: the work-settings read, so an Auntie's session gets the KinCare list
+  // and the clock from the narrow staff read instead of a refused document.
+  // The fallbacks above still stand while it loads or if it fails, and the
+  // notice under the heading now says which.
+  const workSettings = useWorkSettingsRead();
   useEffect(() => {
-    let live = true;
-    getBusinessSettings()
-      .then((settings) => {
-        if (!live) return;
-        setBusinessZone(resolveBusinessTimeZone(settings.timeZone));
-        setCatalog({
-          serviceRates: settings.serviceRates,
-          serviceDurations: settings.serviceDurations,
-          timeBlocks: settings.timeBlocks,
-        });
-      })
-      .catch(() => {
-        // See the state's doc above: the empty catalog IS the fallback.
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
+    if (workSettings.status !== 'ready') return;
+    const settings = workSettings.data;
+    setBusinessZone(resolveBusinessTimeZone(settings.timeZone));
+    setCatalog({
+      serviceRates: settings.serviceRates,
+      serviceDurations: settings.serviceDurations,
+      timeBlocks: settings.timeBlocks,
+    });
+  }, [workSettings]);
 
   // ── bulk select ──────────────────────────────────────────────────────────
   // Off by default, exactly as the mock has it: checkboxes only appear once
@@ -670,6 +667,8 @@ export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestI
         // (#701's reason). Two buttons doing the same thing read as two modes.
         trailing={<PrimaryButton label="New booking" onClick={() => setShowCreate(true)} />}
       />
+
+      <WorkSettingsNotice state={workSettings} />
 
       {createNotice !== null && (
         <Banner tone="success" title="Request created" onDismiss={() => setCreateNotice(null)}>

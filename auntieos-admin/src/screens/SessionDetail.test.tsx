@@ -30,7 +30,18 @@ const { useCollection, useDocById } = vi.hoisted(() => ({
 }));
 vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
-vi.mock('../api/settings', () => ({ getBusinessSettings }));
+vi.mock('../api/settings', async (orig) => ({
+  ...(await orig<typeof import('../api/settings')>()),
+  getBusinessSettings,
+}));
+// #2164: who is signed in, and the transport the Auntie's narrow read goes
+// through. The owner by default, so every case above reads as it always did.
+const { currentSessionSeat, call } = vi.hoisted(() => ({ currentSessionSeat: vi.fn(), call: vi.fn() }));
+vi.mock('../lib/sessionSeat', async (orig) => ({
+  ...(await orig<typeof import('../lib/sessionSeat')>()),
+  currentSessionSeat,
+}));
+vi.mock('../lib/fns', async (orig) => ({ ...(await orig<typeof import('../lib/fns')>()), call }));
 // #1840: the server's answer the clock confirm reads. "Will be told" by default.
 const { previewVisitNotification } = vi.hoisted(() => ({ previewVisitNotification: vi.fn() }));
 vi.mock('../api/visitNoticePreview', () => ({ previewVisitNotification }));
@@ -59,6 +70,7 @@ vi.mock('../lib/visitTracking', () => ({
   stopVisitTracking: vi.fn(),
 }));
 import { SessionDetail } from './SessionDetail';
+import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
 beforeEach(() => {
   useVisitTracking.mockReturnValue({ phase: 'idle' });
   patchVisitLifecycle.mockReset();
@@ -74,6 +86,8 @@ beforeEach(() => {
   useDocById.mockReturnValue({ status: 'ready', data: null });
   getBusinessSettings.mockReset();
   getBusinessSettings.mockResolvedValue({ serviceRates: {}, serviceDurations: {} });
+  currentSessionSeat.mockReset().mockResolvedValue(OWNER_SEAT);
+  call.mockReset().mockImplementation(staffOnlyCall);
   useBreadcrumbs.mockReset();
   useBreadcrumbs.mockReturnValue({ points: [], error: null, ready: true });
   previewVisitNotification.mockReset();
@@ -570,9 +584,10 @@ describe('SessionDetail: editing the visit', () => {
       serviceDurations: {},
     });
     render(<SessionDetail entry={entry({ serviceType: 'Retired Service' })} onBack={vi.fn()} />);
-    const select = await screen.findByLabelText(/service type/i);
-    expect(select).toHaveValue('Retired Service');
-    expect(screen.getByRole('option', { name: /Retired Service \(not on the rate card\)/ })).toBeInTheDocument();
+    // The picker replaces the free-text box once the catalog lands, so wait for
+    // the option rather than for the first field carrying the label.
+    expect(await screen.findByRole('option', { name: /Retired Service \(not on the rate card\)/ })).toBeInTheDocument();
+    expect(screen.getByLabelText(/service type/i)).toHaveValue('Retired Service');
   });
   it('falls back to a free-text service box, and says why, when the rate card cannot be read', async () => {
     getBusinessSettings.mockRejectedValue(new Error('permission denied'));
@@ -1025,5 +1040,35 @@ describe('SessionDetail: the clock confirm and the household notice', () => {
     const dialog = await openOnTheWay();
     await waitFor(() => expect(within(dialog).queryByText(/told/)).toBeNull());
     warn.mockRestore();
+  });
+});
+
+describe('#2164 SessionDetail under an Auntie sign-in', () => {
+  beforeEach(() => currentSessionSeat.mockResolvedValue(AUNTIE_SEAT));
+
+  it('offers the KinCare list from her own read, with no Rate row and no settings read', async () => {
+    render(<SessionDetail entry={entry({ serviceType: 'Long walk' })} onBack={vi.fn()} />);
+    expect(screen.getByText(/Loading the KinCare list/)).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'Drop-in' })).toBeInTheDocument();
+    expect(screen.getByLabelText(/service type/i)).toHaveValue('Long walk');
+    expect(call).toHaveBeenCalledWith('getStaffWorkSettings', {});
+    expect(getBusinessSettings).not.toHaveBeenCalled();
+    expect(screen.queryByText('Rate')).not.toBeInTheDocument();
+    expect(screen.queryByText(/\$/)).not.toBeInTheDocument();
+  });
+
+  it('says plainly when her read fails, and keeps the service editable', async () => {
+    call.mockRejectedValue(new Error('unavailable'));
+    render(<SessionDetail entry={entry()} onBack={vi.fn()} />);
+    expect(await screen.findByText(/couldn’t be read \(unavailable\)/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/service type/i)).toHaveValue('Dog Walk');
+  });
+
+  it('the owner still reads business_settings, rates and all', async () => {
+    currentSessionSeat.mockResolvedValue(OWNER_SEAT);
+    getBusinessSettings.mockResolvedValue({ serviceRates: { 'Long walk': '45' }, serviceDurations: {} });
+    render(<SessionDetail entry={entry({ serviceType: 'Long walk' })} onBack={vi.fn()} />);
+    expect(await screen.findByText('$45')).toBeInTheDocument();
+    expect(call).not.toHaveBeenCalledWith('getStaffWorkSettings', expect.anything());
   });
 });
