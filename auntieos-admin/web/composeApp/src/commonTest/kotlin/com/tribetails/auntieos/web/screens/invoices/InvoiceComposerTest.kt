@@ -183,6 +183,27 @@ class InvoiceComposerTest {
     }
 
     @Test
+    fun keepBillableIsSingularForOneVisit() {
+        assertEquals("Keep it billable", keepBillableLabel(1))
+        assertEquals("Keep them billable", keepBillableLabel(2))
+    }
+    // #2089: a re-read keeps the admin's ticks; only the first read ticks all.
+    @Test
+    fun aFirstReadTicksEveryVisit() {
+        assertEquals(setOf("a", "b"), carriedSelection(listOf("a", "b"), emptySet()))
+    }
+    @Test
+    fun aReReadKeepsUntickedVisitsOffAndDropsTheOneThatLeft() {
+        val left = leftUntickedAfter(emptySet(), listOf("a", "b", "c"), setOf("a", "c"))
+        assertEquals(setOf("b"), left)
+        assertEquals(setOf("a"), carriedSelection(listOf("a", "b"), left))
+    }
+    @Test
+    fun aVisitHiddenByNarrowerDatesKeepsItsUntick() {
+        assertEquals(setOf("a", "b"), leftUntickedAfter(setOf("b"), listOf("a"), emptySet()))
+        assertEquals(emptySet<String>(), leftUntickedAfter(setOf("b"), listOf("b"), setOf("b")))
+    }
+    @Test
     fun theScopeLineSaysHowMuchIsTicked() {
         assertEquals(
             "2 of 3 un-invoiced visits selected for Ada Wren.",

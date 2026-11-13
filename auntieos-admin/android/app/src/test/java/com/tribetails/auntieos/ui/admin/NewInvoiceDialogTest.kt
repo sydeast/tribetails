@@ -1,9 +1,15 @@
 package com.tribetails.auntieos.ui.admin
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResult
 import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResultExcluded
 import com.tribetails.auntieos.data.contracts.ListUninvoicedSessionsResultSession
@@ -230,6 +236,55 @@ class NewInvoiceDialogTest {
         // The amount due on an invoice nobody has paid IS its total.
         assertEquals(50.0, request.invoice.total, 0.0001)
         assertEquals(50.0, request.invoice.amountDue, 0.0001)
+    }
+
+    @Test
+    fun `#2089 after a re-read Create bills exactly the visits ticked, not every visit left`() {
+        var captured: NewInvoiceRequest? = null
+        var reads = 0
+        val first = result(sessions = listOf(session("s1"), session("s2"), session("s3")), scanned = 3L)
+        val second = result(sessions = listOf(session("s1"), session("s3")), scanned = 3L)
+        rule.setContent {
+            AuntieOSTheme {
+                NewInvoiceDialog(
+                    visible = true,
+                    kinfolk = kinfolk,
+                    todayIso = "2026-08-19",
+                    initialKind = InvoiceCreateKind.INVOICE,
+                    initialKinfolkId = "kf1",
+                    onDismiss = {},
+                    onConfirm = { captured = it },
+                    onOpenVisit = {},
+                    loadUninvoiced = { _, _, _ -> Result.success(if (reads++ == 0) first else second) },
+                    setDoNotInvoice = { ids, flag, _ ->
+                        Result.success(SetSessionDoNotInvoiceResult(ok = true, doNotInvoice = flag, changed = ids, unchanged = emptyList()))
+                    },
+                )
+            }
+        }
+        rule.waitForIdle()
+        // Clicked by semantics action: the picker sits inside the dialog's scrolling
+        // body, where a pointer click did not reach the confirm button in Robolectric.
+        val checkbox = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox)
+        rule.onNodeWithText("Create invoice for 3 visits").assertExists()
+        rule.onNodeWithText("Select none").performSemanticsAction(SemanticsActions.OnClick)
+        rule.waitForIdle()
+        rule.onAllNodes(checkbox)[1].performSemanticsAction(SemanticsActions.OnClick)
+        rule.waitForIdle()
+        rule.onNodeWithText("Do not invoice this visit").performSemanticsAction(SemanticsActions.OnClick)
+        rule.waitForIdle()
+        rule.onNodeWithText("Do not invoice this visit").performSemanticsAction(SemanticsActions.OnClick)
+        rule.waitForIdle()
+        rule.onNodeWithText("0 of 2 un-invoiced visits selected for Jamie Halbrook.").assertExists()
+        rule.onNodeWithText("Create invoice").assertIsNotEnabled()
+
+        rule.onAllNodes(checkbox)[1].performSemanticsAction(SemanticsActions.OnClick)
+        rule.waitForIdle()
+        rule.onNodeWithText("Create invoice for 1 visit").performSemanticsAction(SemanticsActions.OnClick)
+        rule.waitForIdle()
+        val request = requireNotNull(captured) { "The create button did not produce a request" }
+        assertEquals(listOf("s3"), request.invoice.sessionIds)
+        assertEquals(listOf("s3"), request.lineItems?.map { it.sessionId })
     }
 
     @Test

@@ -177,6 +177,115 @@ class NewInvoiceDialogFlowTest {
         assertEquals(listOf(listOf("s1") to false), calls)
         onNodeWithText(exclusionNotice(1, false), useUnmergedTree = true).assertExists()
     }
+    /**
+     * #2089: after Select none, a re-read of the list (Put it back, then Do not
+     * invoice) keeps the admin's unticks. The visit put back arrives ticked like
+     * any unbilled work, and the visit marked do not invoice leaves the list.
+     */
+    @Test
+    fun reReadsKeepTheAdminsUnticksAndOnlyTheNotInvoicedVisitLeaves() = runDesktopComposeUiTest {
+        val drop = UninvoicedSession("s3", "kf1", "Long walk", 45.0, "2026-10-12T09:00:00.000Z", 3000L)
+        val dropExcluded = UninvoicedExcluded("s3", "kf1", "Long walk", drop.startTime, "")
+        var reads = 0
+        val calls = mutableListOf<Pair<List<String>, Boolean>>()
+        var confirmed: NewInvoiceRequest? = null
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                NewInvoiceDialogContent(
+                    visible = true,
+                    picks = picks,
+                    todayIso = "2026-10-20",
+                    onDismiss = {},
+                    onConfirm = { confirmed = it },
+                    loadUninvoiced = { _, _, _ ->
+                        reads += 1
+                        WriteResult.Ok(
+                            when (reads) {
+                                1 -> result(listOf(walk, sit), listOf(dropExcluded))
+                                2 -> result(listOf(walk, sit, drop))
+                                else -> result(listOf(walk, sit), listOf(dropExcluded))
+                            },
+                        )
+                    },
+                    setDoNotInvoice = { ids, flag, _ ->
+                        calls += ids to flag
+                        WriteResult.Ok(DoNotInvoiceResult(true, flag, ids, emptyList()))
+                    },
+                    initialKinfolkId = "kf1",
+                )
+            }
+        }
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodesWithText("2 of 2 un-invoiced visits selected for Ada Wren.", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        onNodeWithText("Select none").performClick()
+        waitForIdle()
+        onNodeWithText("Put it back").performClick()
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodesWithText("1 of 3 un-invoiced visits selected for Ada Wren.", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        // Only the visit put back is ticked, so the verb is singular.
+        onNodeWithText("Do not invoice this visit").performClick()
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodesWithText("Keep it billable", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        onNodeWithText("Do not invoice this visit").performClick()
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodesWithText("0 of 2 un-invoiced visits selected for Ada Wren.", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        assertEquals(listOf(listOf("s3") to false, listOf("s3") to true), calls)
+        // The trap the walk found: nothing is ticked, so nothing can be excluded or billed.
+        onNodeWithText("Do not invoice").assertIsNotEnabled()
+        onNodeWithText("Create invoice").assertIsNotEnabled()
+        assertNull(confirmed)
+    }
+    /** #2089: after a re-read, Create bills exactly the ticked visits, not every visit listed. */
+    @Test
+    fun afterAReReadCreateBillsOnlyTheTickedVisits() = runDesktopComposeUiTest {
+        val drop = UninvoicedSession("s3", "kf1", "Long walk", 45.0, "2026-10-12T09:00:00.000Z", 3000L)
+        var reads = 0
+        var confirmed: NewInvoiceRequest? = null
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                NewInvoiceDialogContent(
+                    visible = true,
+                    picks = picks,
+                    todayIso = "2026-10-20",
+                    onDismiss = {},
+                    onConfirm = { confirmed = it },
+                    loadUninvoiced = { _, _, _ ->
+                        reads += 1
+                        WriteResult.Ok(
+                            if (reads == 1) {
+                                result(listOf(walk, sit), listOf(UninvoicedExcluded("s3", "kf1", "Long walk", drop.startTime, "")))
+                            } else {
+                                result(listOf(walk, sit, drop))
+                            },
+                        )
+                    },
+                    setDoNotInvoice = { ids, flag, _ -> WriteResult.Ok(DoNotInvoiceResult(true, flag, ids, emptyList())) },
+                    initialKinfolkId = "kf1",
+                )
+            }
+        }
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodesWithText("Create invoice for 2 visits", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        onNodeWithText("Select none").performClick()
+        waitForIdle()
+        onNodeWithText("Put it back").performClick()
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodesWithText("Create invoice for 1 visit", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        onNodeWithText("Create invoice for 1 visit").assertIsEnabled().performClick()
+        waitForIdle()
+        val r = assertNotNull(confirmed, "create did not hand over a request")
+        assertEquals(listOf("s3"), r.lineItems!!.map { it.sessionId })
+        assertEquals(30.0, r.invoice.total)
+    }
     @Test
     fun aHouseholdWithNoWorkGetsABlankDraftWithATypedTotal() = runDesktopComposeUiTest {
         var confirmed: NewInvoiceRequest? = null

@@ -4,6 +4,9 @@ package com.kinfolk.portal.screens.kintales
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -43,6 +46,7 @@ class KinTalesScreenTest {
             put("tales", buildJsonArray {
                 add(buildJsonObject {
                     put("id", "t1")
+                    put("title", "Fetch champion")
                     put("body", "Kai played fetch today.")
                     put("authorDisplayName", "Auntie Avery")
                     put("mediaIds", buildJsonArray { add("m1"); add("m2") })
@@ -53,7 +57,8 @@ class KinTalesScreenTest {
         })
         setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
         waitForIdle()
-        onNodeWithText("Auntie Avery").assertIsDisplayed()
+        onNodeWithText("Fetch champion").assertIsDisplayed()
+        onNodeWithText("FROM AUNTIE AVERY · ", substring = true).assertIsDisplayed()
         onNodeWithText("Kai played fetch today.").assertIsDisplayed()
         // The full-gallery control reads "View Gallery (2)" (task-24 follow-up:
         // "N photos" misdescribed a tale whose media includes video, so it no
@@ -69,6 +74,7 @@ class KinTalesScreenTest {
             put("tales", buildJsonArray {
                 add(buildJsonObject {
                     put("id", "t-text")
+                    put("title", "Story time")
                     put("body", "Just a story.")
                     put("authorDisplayName", "Auntie")
                     put("mediaIds", buildJsonArray {})
@@ -191,6 +197,7 @@ class KinTalesScreenTest {
             put("tales", buildJsonArray {
                 add(buildJsonObject {
                     put("id", "t-none")
+                    put("title", "Lore only")
                     put("body", "Just a story, no photos.")
                     put("authorDisplayName", "Auntie Avery")
                     put("mediaIds", buildJsonArray {})
@@ -291,6 +298,7 @@ class KinTalesScreenTest {
             put("tales", buildJsonArray {
                 add(buildJsonObject {
                     put("id", "t1")
+                    put("title", "Walk day")
                     put("body", "A fine walk, no checklist.")
                     put("authorDisplayName", "Auntie Avery")
                     put("mediaIds", buildJsonArray {})
@@ -306,6 +314,7 @@ class KinTalesScreenTest {
 
     private fun taleJson(id: String, body: String, sentAtMs: Long) = buildJsonObject {
         put("id", id)
+        put("title", "Tale $id")
         put("body", body)
         put("authorDisplayName", "Maya")
         put("mediaIds", buildJsonArray {})
@@ -339,6 +348,7 @@ class KinTalesScreenTest {
             put("tales", buildJsonArray {
                 add(buildJsonObject {
                     put("id", "junk")
+                    put("title", "Spring visit")
                     put("body", "A migrated visit.")
                     put("authorDisplayName", "Maya")
                     put("mediaIds", buildJsonArray {})
@@ -350,6 +360,78 @@ class KinTalesScreenTest {
         setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
         waitForIdle()
         onNodeWithText("A migrated visit.").assertIsDisplayed()
-        onNodeWithText("sometime in the spring").assertIsDisplayed()
+        onNodeWithText("FROM AUNTIE MAYA · sometime in the spring").assertIsDisplayed()
+    }
+
+    // #2166: the card head shows the tale's headline as the web portal does:
+    // the Auntie's title whole, else the body's opening (90 on the first card,
+    // which web features, 70 on the rest), and no line at all when neither.
+    private fun headlineTale(id: String, title: String?, body: String) = buildJsonObject {
+        put("id", id)
+        if (title != null) put("title", title)
+        put("body", body)
+        put("authorDisplayName", "Maya")
+        put("mediaIds", buildJsonArray {})
+        put("sentAtText", "sometime in the spring")
+        put("shared", false)
+    }
+    private val longBody =
+        "Miso ate every bite of dinner, then claimed the windowsill for the whole afternoon and watched the birds."
+    @Test
+    fun headline_titleLeadsTheCardAboveTheByline() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray { add(headlineTale("t1", "Miso claimed the windowsill", "Dinner went well.")) })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag(KIN_TALE_HEADLINE_TAG).assertTextEquals("Miso claimed the windowsill").assertIsDisplayed()
+        val headlineBottom = onNodeWithTag(KIN_TALE_HEADLINE_TAG).getBoundsInRoot().bottom
+        val bylineTop = onNodeWithText("FROM AUNTIE MAYA · sometime in the spring").getBoundsInRoot().top
+        kotlin.test.assertTrue(headlineBottom <= bylineTop, "headline sits above the byline")
+        onNodeWithText("Dinner went well.").assertIsDisplayed()
+    }
+    @Test
+    fun headline_aLongTitleIsShownWhole() = runComposeUiTest {
+        val title = "Miso ate every bite, then claimed the windowsill, then the couch, then the whole bed for the night"
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray { add(headlineTale("t1", title, "Dinner went well.")) })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag(KIN_TALE_HEADLINE_TAG).assertTextEquals(title)
+    }
+    @Test
+    fun headline_oldTalesWithoutATitleShowTheBodyOpening() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                // `title` absent: an old tale, from before titles existed.
+                add(headlineTale("first", null, longBody))
+                add(headlineTale("second", "", longBody))
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        val headlines = onAllNodesWithTag(KIN_TALE_HEADLINE_TAG)
+        headlines.assertCountEquals(2)
+        headlines[0].assertTextEquals(longBody.take(90).trim())
+        headlines[1].assertTextEquals(longBody.take(70).trim())
+    }
+    @Test
+    fun headline_noTitleAndNoBodyDrawsNoHeadlineLine() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray { add(headlineTale("t1", "  ", "")) })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onAllNodesWithTag(KIN_TALE_HEADLINE_TAG).assertCountEquals(0)
+        onNodeWithText("FROM AUNTIE MAYA · sometime in the spring").assertIsDisplayed()
     }
 }
