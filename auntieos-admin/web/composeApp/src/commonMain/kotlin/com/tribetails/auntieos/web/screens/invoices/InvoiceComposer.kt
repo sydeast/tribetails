@@ -424,6 +424,32 @@ fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean): String {
     }
 }
 
+/** The confirm step's way out, in the number the selection has. */
+fun keepBillableLabel(count: Int): String = if (count == 1) "Keep it billable" else "Keep them billable"
+/**
+ * #2089: the ticks a re-read of the un-invoiced list arrives with.
+ *
+ * The first read of a household's work ticks every visit (the #1965 ruling:
+ * New invoice pre-ticks every unbilled visit). Every LATER read of the same
+ * household's list, after Do not invoice, Put it back, Try again or a change of
+ * dates, keeps what the admin did: a visit the admin left unticked stays
+ * unticked, a ticked one stays ticked, a visit that left the list is gone, and a
+ * visit the admin has never left unticked arrives ticked like any other unbilled
+ * work. That last case is what Put it back produces, and pressing it says the
+ * visit is billable again.
+ */
+fun carriedSelection(listedIds: List<String>, leftUnticked: Set<String>): Set<String> =
+    listedIds.filterNot { it in leftUnticked }.toSet()
+/**
+ * The visits the admin has seen and left unticked, after a tick change on the
+ * list currently shown. Visits not on that list (hidden by narrower dates) keep
+ * what they had, so widening the dates again does not re-tick them.
+ */
+fun leftUntickedAfter(previous: Set<String>, shownIds: List<String>, next: Set<String>): Set<String> {
+    val shown = shownIds.toSet()
+    return (previous - shown) + shownIds.filterNot { it in next }
+}
+
 /** The heading over the excluded visits. */
 fun excludedWorkLine(count: Int): String = if (count == 1) {
     "1 completed visit is marked do not invoice, so it is not on the list above."

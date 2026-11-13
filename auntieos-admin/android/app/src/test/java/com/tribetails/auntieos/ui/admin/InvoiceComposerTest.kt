@@ -440,6 +440,27 @@ class InvoiceComposerTest {
     }
 
     @Test
+    fun `keep billable is singular for one visit`() {
+        assertEquals("Keep it billable", keepBillableLabel(1))
+        assertEquals("Keep them billable", keepBillableLabel(2))
+    }
+    // #2089: a re-read keeps the admin's ticks; only the first read ticks all.
+    @Test
+    fun `a first read ticks every visit`() {
+        assertEquals(setOf("a", "b"), carriedSelection(listOf("a", "b"), emptySet()))
+    }
+    @Test
+    fun `a re-read keeps unticked visits off and drops the one that left`() {
+        val left = leftUntickedAfter(emptySet(), listOf("a", "b", "c"), setOf("a", "c"))
+        assertEquals(setOf("b"), left)
+        assertEquals(setOf("a"), carriedSelection(listOf("a", "b"), left))
+    }
+    @Test
+    fun `a visit hidden by narrower dates keeps its untick`() {
+        assertEquals(setOf("a", "b"), leftUntickedAfter(setOf("b"), listOf("a"), emptySet()))
+        assertEquals(emptySet<String>(), leftUntickedAfter(setOf("b"), listOf("b"), setOf("b")))
+    }
+    @Test
     fun `the exclusion confirmation counts what actually changed`() {
         assertEquals(
             "1 visit is marked do not invoice, and off this list until you put it back.",

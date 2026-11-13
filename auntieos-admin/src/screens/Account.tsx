@@ -9,7 +9,7 @@ import { getBusinessSettings, type BusinessSettings } from '../api/settings';
 import { saveBusinessSettings } from '../api/settingsWrite';
 import {
   getMyNotificationPrefs,
-  getNotificationMatrix,
+  getMyNotificationMatrix,
   NOTIFICATION_CHANNELS,
   STREAM_BUSINESS,
   STREAM_STAFF,
@@ -763,7 +763,7 @@ function NotificationChannelsPanel({ onOpenNotifications }: AccountProps) {
   const load = useCallback(() => {
     let live = true;
     setState({ status: 'loading' });
-    Promise.all([getNotificationMatrix(), getMyNotificationPrefs()])
+    Promise.all([getMyNotificationMatrix(), getMyNotificationPrefs()])
       .then(([matrix, own]) => {
         if (live) setState({ status: 'ready', data: { matrix, prefs: own.prefs } });
       })

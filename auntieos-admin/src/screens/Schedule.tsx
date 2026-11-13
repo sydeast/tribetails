@@ -33,7 +33,8 @@ import {
   minutesFromHHmm,
   hhmmFromMinutes,
 } from '../lib/scheduleGrid';
-import { getBusinessSettings } from '../api/settings';
+import { useWorkSettingsRead } from '../lib/useWorkSettings';
+import { WorkSettingsNotice } from '../components/WorkSettingsNotice';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import { businessInstantMs, businessTodayIso, sessionsByBusinessDay } from '../lib/businessZoneTime';
 import { kinfolkDisplayName } from '../api/directory';
@@ -266,27 +267,19 @@ export function Schedule({ onSelect }: ScheduleProps) {
     setSelected((cur) => (cur === previous ? todayIso : cur));
   }, [todayIso]);
 
+  // #2164: through the work-settings read, so an Auntie's session gets the
+  // KinCare list and the clock from the narrow staff read instead of a refused
+  // document. The degrades above still hold while it loads or if it fails, and
+  // the notice under the heading now says which.
+  const workSettings = useWorkSettingsRead();
   useEffect(() => {
-    let live = true;
-    getBusinessSettings()
-      .then((settings) => {
-        if (!live) return;
-        setServiceDurations(settings.serviceDurations);
-        setServiceRates(settings.serviceRates);
-        setBusinessZone(resolveBusinessTimeZone(settings.timeZone));
-        setSnapMinutes(settings.snapRescheduleTo15Min ? SNAP_MINUTES_ON : SNAP_MINUTES_OFF);
-      })
-      .catch(() => {
-        // See the state's own doc comment: leaving `serviceDurations` at `{}`
-        // is the correct degrade here, not an omission. The same applies to the
-        // other two: an empty catalog makes the New visit dialog say so out
-        // loud rather than offer a made-up list, and an unread snap preference
-        // falls back to its own stored default rather than to the other value.
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
+    if (workSettings.status !== 'ready') return;
+    const settings = workSettings.data;
+    setServiceDurations(settings.serviceDurations);
+    setServiceRates(settings.serviceRates);
+    setBusinessZone(resolveBusinessTimeZone(settings.timeZone));
+    setSnapMinutes(settings.snapRescheduleTo15Min ? SNAP_MINUTES_ON : SNAP_MINUTES_OFF);
+  }, [workSettings]);
 
   // The household list for the New visit dialog. Directory already streams this
   // collection for its own tab; this is Schedule's own bounded listener, the
@@ -457,6 +450,8 @@ export function Schedule({ onSelect }: ScheduleProps) {
           </div>
         }
       />
+
+      <WorkSettingsNotice state={workSettings} />
 
       <div className="schedule__summary">
         <StatCard

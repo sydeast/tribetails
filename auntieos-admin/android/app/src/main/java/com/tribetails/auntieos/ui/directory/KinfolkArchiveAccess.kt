@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.directory
 
 import com.google.firebase.functions.FirebaseFunctionsException
+import com.tribetails.auntieos.domain.isOwnerClaims
 
 /**
  * #2161, operator ruling 2026-11-13: only the owner archives or restores a
@@ -21,8 +22,7 @@ internal val KINFOLK_PICKABLE_STATUSES = listOf("active", "prospect", "inactive"
  * both degrades to the Auntie, as `isOwner()` in the rules and the server gate
  * do, so it is not offered owner-only controls.
  */
-internal fun isOwnerFromClaims(claims: Map<String, Any?>): Boolean =
-    claims["admin"] == true && claims["staffRole"] != "auntie"
+internal fun isOwnerFromClaims(claims: Map<String, Any?>): Boolean = isOwnerClaims(claims)
 
 /** Which archive control the household editor shows. */
 internal enum class KinfolkArchiveControl { NONE, ARCHIVE, RESTORE }

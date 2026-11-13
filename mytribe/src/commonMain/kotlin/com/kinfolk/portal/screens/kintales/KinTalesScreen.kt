@@ -76,10 +76,16 @@ import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.clockTime
-import com.kinfolk.portal.util.kinTaleSentLabel
+import com.kinfolk.portal.util.KIN_TALE_HEADLINE_CARD_CHARS
+import com.kinfolk.portal.util.KIN_TALE_HEADLINE_FEATURED_CHARS
+import com.kinfolk.portal.util.kinTaleByline
+import com.kinfolk.portal.util.kinTaleHeadline
 import com.kinfolk.portal.util.relativeTime
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
+
+/** Test tag on a KinTale card's headline line (#2166). */
+internal const val KIN_TALE_HEADLINE_TAG = "kinTaleHeadline"
 
 /** Filter labels are user-facing; the enum constants stay the stable keys. */
 private enum class KinTalesFilter(val label: String) { All("All"), Lore("Notes"), Gallery("Gallery") }
@@ -193,13 +199,19 @@ fun KinTalesScreen(
                     message = "Your Auntie's daily updates and photos from visits will appear here.",
                 )
                 else -> {
+                    // #2166: web features the first tale of the feed and cuts a
+                    // title-less headline at 90 there, 70 on every other card.
+                    val firstTale = filtered!!.first()
+                    val headlineChars: (KinTale) -> Int = { tale ->
+                        if (tale === firstTale) KIN_TALE_HEADLINE_FEATURED_CHARS else KIN_TALE_HEADLINE_CARD_CHARS
+                    }
                     val columns = talesColumnCount(wide)
                     if (columns == 1) {
                         Column(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
                             verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
                         ) {
-                            filtered!!.forEach { tale -> KinTaleCard(tale, kinfolkId, portalApi) }
+                            filtered!!.forEach { tale -> KinTaleCard(tale, kinfolkId, portalApi, headlineChars(tale)) }
                         }
                     } else {
                         Row(
@@ -212,7 +224,7 @@ fun KinTalesScreen(
                                     modifier = Modifier.weight(1f),
                                     verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
                                 ) {
-                                    columnTales.forEach { tale -> KinTaleCard(tale, kinfolkId, portalApi) }
+                                    columnTales.forEach { tale -> KinTaleCard(tale, kinfolkId, portalApi, headlineChars(tale)) }
                                 }
                             }
                         }
@@ -263,6 +275,7 @@ private fun KinTaleCard(
     tale: KinTale,
     kinfolkId: String,
     portalApi: PortalApi,
+    headlineChars: Int = KIN_TALE_HEADLINE_CARD_CHARS,
     modifier: Modifier = Modifier,
 ) {
     val type = LocalKinfolkTypography.current
@@ -294,13 +307,20 @@ private fun KinTaleCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // #2166: the card head as on web and the mock: the tale's
+                // headline, then "FROM AUNTIE AVERY · 2D AGO" under it. No
+                // headline to show means no line at all, not an empty one.
                 Column(modifier = Modifier.weight(1f)) {
+                    kinTaleHeadline(tale.title, tale.body, headlineChars)?.let { headline ->
+                        Text(
+                            text = headline,
+                            style = type.heritageTitle,
+                            modifier = Modifier.testTag(KIN_TALE_HEADLINE_TAG),
+                        )
+                        Spacer(Modifier.height(KinfolkSpacing.xs))
+                    }
                     Text(
-                        text = auntieName(tale.authorDisplayName) ?: "Auntie",
-                        style = type.heritageTitle,
-                    )
-                    Text(
-                        text = kinTaleSentLabel(tale.sentAtMs, tale.sentAtText),
+                        text = kinTaleByline(tale.authorDisplayName, tale.sentAtMs, tale.sentAtText),
                         style = type.sansMeta,
                     )
                 }

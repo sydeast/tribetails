@@ -368,6 +368,33 @@ describe('InvoiceCreate work path', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
+  it('#2089: after Do not invoice, Create bills only what the admin ticked, not every visit left', async () => {
+    const three = [
+      session({ sessionId: 'v1', startTime: '2026-07-10T14:00:00.000Z' }),
+      session({ sessionId: 'v2', startTime: '2026-07-11T14:00:00.000Z' }),
+      session({ sessionId: 'v3', startTime: '2026-07-12T14:00:00.000Z' }),
+    ];
+    listUninvoicedSessions
+      .mockResolvedValueOnce(work({ sessions: three }))
+      .mockResolvedValueOnce(work({ sessions: three.filter((s) => s.sessionId !== 'v2') }));
+    setSessionDoNotInvoice.mockResolvedValue({ ok: true, doNotInvoice: true, changed: ['v2'], unchanged: [] });
+    render(<InvoiceCreate mode="invoice" onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await screen.findAllByRole('checkbox');
+    expect(screen.getByRole('button', { name: /create invoice for 3 visits/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /select none/i }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /2026-07-11/ }));
+    await userEvent.click(screen.getByRole('button', { name: /do not invoice this visit/i }));
+    await userEvent.click(screen.getByRole('button', { name: /do not invoice this visit/i }));
+    expect(await screen.findByText(/0 of 2 un-invoiced visits selected/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /2026-07-12/ }));
+    await userEvent.click(screen.getByRole('button', { name: /create invoice for 1 visit$/i }));
+    await waitFor(() => expect(createInvoice).toHaveBeenCalledTimes(1));
+    expect(createInvoice.mock.calls[0]?.[0].sessionIds).toEqual(['v3']);
+  });
+
   it('Cancel closes without calling createInvoice', async () => {
     const onClose = vi.fn();
     render(<InvoiceCreate mode="invoice" onClose={onClose} />);
