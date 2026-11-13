@@ -221,6 +221,20 @@ describe('StatsWidget', () => {
     render(<StatsWidget {...statsNav()} />);
     expect(screen.getByLabelText(/Kin in care, still loading/i)).toBeInTheDocument();
   });
+
+  // #2200 / #2201: an Auntie never sees money, and Invoices sends her Home.
+  // With no way into Invoices the week's revenue tile is not drawn at all,
+  // and the invoices read behind it is never opened.
+  it('draws no This week tile and reads no invoices when there is no Invoices to open', () => {
+    wire({ invoices: { status: 'ready', data: [inv()] } });
+    render(<StatsWidget {...statsNav()} onOpenInvoices={null} />);
+    const labels = [...document.querySelectorAll('.den-stat-label')].map((el) => el.textContent);
+    expect(labels).toEqual(["Today's pack", 'KinTales to review', 'Kin in care']);
+    expect(screen.queryByText('paid invoices this week')).toBeNull();
+    const paths = useCollection.mock.calls.map(([spec]) => (spec as { path: string }).path);
+    expect(paths).not.toContain('invoices');
+    expect(paths).toContain('kin_care_sessions');
+  });
 });
 
 describe('TodaysPackWidget', () => {

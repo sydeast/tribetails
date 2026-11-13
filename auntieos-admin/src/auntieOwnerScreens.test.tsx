@@ -71,6 +71,15 @@ vi.mock('./routes/TemplatesView', () => ({ TemplatesView: () => <div>TEMPLATES S
 vi.mock('./screens/KinTaleTemplates', () => ({
   KinTaleTemplates: () => <div>KINTALE TEMPLATES SCREEN</div>,
 }));
+// #2200 / #2201: the four money, marketing and audit screens.
+vi.mock('./screens/ActivityLog', () => ({ ActivityLog: () => <div>ACTIVITY LOG SCREEN</div> }));
+vi.mock('./routes/InvoicesView', () => ({ InvoicesView: () => <div>INVOICES SCREEN</div> }));
+vi.mock('./screens/CoveragePackageBuilder', () => ({
+  CoveragePackageBuilder: () => <div>PACKAGES SCREEN</div>,
+}));
+vi.mock('./screens/MarketingBlasts', () => ({
+  MarketingBlasts: () => <div>MARKETING BLASTS SCREEN</div>,
+}));
 
 const USER = { uid: 'uid-staff', email: 'e2e-admin@tribetails.com', displayName: 'Auntie' };
 const OWNER_CLAIMS = { admin: true };
@@ -247,5 +256,105 @@ describe('#2163 the owner and the test admin are unchanged', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/settings'));
     expect(new URLSearchParams(window.location.search).get('section')).toBe('notifications');
     expect(await screen.findByText('SETTINGS SCREEN')).toBeInTheDocument();
+  });
+});
+
+/**
+ * #2200 / #2201, lead ruling 2026-11-13: an Auntie never sees money, and
+ * marketing and audit oversight are the owner's. Activity Log, Marketing
+ * blasts, Packages and Invoices come off her rail the way Settings and
+ * Templates did, and every address for them sends her Home. None of the four
+ * has a retired slug (lib/nav.ts `BY_SLUG` holds none), so the addresses are
+ * the live paths and the deep-link query strings Invoices takes.
+ */
+const MONEY_SCREENS = [
+  { rail: 'Activity Log', path: '/activity', sentinel: 'ACTIVITY LOG SCREEN' },
+  { rail: 'Marketing blasts', path: '/marketing-blasts', sentinel: 'MARKETING BLASTS SCREEN' },
+  { rail: 'Packages', path: '/packages', sentinel: 'PACKAGES SCREEN' },
+  { rail: 'Invoices', path: '/invoices', sentinel: 'INVOICES SCREEN' },
+] as const;
+
+const MONEY_ADDRESSES = [
+  '/activity',
+  '/marketing-blasts',
+  '/packages',
+  '/invoices',
+  '/invoices?invoiceId=inv-1',
+  '/invoices?composeQuoteForKinfolkId=kf-1',
+];
+
+function noMoneyScreen(): void {
+  for (const s of MONEY_SCREENS) expect(screen.queryByText(s.sentinel)).toBeNull();
+}
+
+describe('#2200 / #2201 an Auntie never reaches Activity Log, Marketing blasts, Packages or Invoices', () => {
+  it('shows her none of the four rail entries, and keeps her work screens', async () => {
+    await boot('/home', AUNTIE_CLAIMS);
+    expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    for (const s of MONEY_SCREENS) expect(railLink(s.rail)).toBeNull();
+    for (const name of ['Directory', 'KinTales', 'Schedule', 'Bookings', 'Auntie Time', 'Communicate', 'Inbox', 'Notifications']) {
+      expect(railLink(name)).not.toBeNull();
+    }
+  });
+
+  for (const path of MONEY_ADDRESSES) {
+    it(`sends her from ${path} to Home`, async () => {
+      await boot(path, AUNTIE_CLAIMS);
+      await waitFor(() => expect(window.location.pathname).toBe('/home'));
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+      noMoneyScreen();
+    });
+  }
+
+  it('treats a double-claimed account as the Auntie', async () => {
+    await boot('/invoices', DOUBLE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    noMoneyScreen();
+    for (const s of MONEY_SCREENS) expect(railLink(s.rail)).toBeNull();
+  });
+});
+
+describe('#2200 / #2201 the owner and the test admin keep all four', () => {
+  for (const claims of [OWNER_CLAIMS, TEST_ADMIN_CLAIMS]) {
+    const who = claims === OWNER_CLAIMS ? 'owner' : 'test admin';
+
+    it(`shows the ${who} all four rail entries`, async () => {
+      await boot('/home', claims);
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+      for (const s of MONEY_SCREENS) expect(railLink(s.rail)).not.toBeNull();
+    });
+
+    for (const s of MONEY_SCREENS) {
+      it(`opens ${s.rail} for the ${who}`, async () => {
+        await boot(s.path, claims);
+        expect(await screen.findByText(s.sentinel)).toBeInTheDocument();
+        expect(window.location.pathname).toBe(s.path);
+      });
+    }
+  }
+
+  it('keeps the invoice deep link for the owner', async () => {
+    await boot('/invoices?invoiceId=inv-1', OWNER_CLAIMS);
+    expect(await screen.findByText('INVOICES SCREEN')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/invoices');
+    expect(new URLSearchParams(window.location.search).get('invoiceId')).toBe('inv-1');
+  });
+
+  it('keeps all four for the offline session whose claims were not read', async () => {
+    const offline = Object.assign(new Error('Failed to fetch'), { code: 'auth/network-request-failed' });
+    currentUser = USER;
+    window.history.replaceState(null, '', '/invoices');
+    const { router } = await importRouterTrackingListeners();
+    getIdTokenResult.mockRejectedValue(offline);
+    lastRouter = router;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(/Signed in, but out of touch/i)).toBeInTheDocument();
+    expect(await screen.findByText('INVOICES SCREEN')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/invoices');
+    for (const s of MONEY_SCREENS) expect(railLink(s.rail)).not.toBeNull();
   });
 });
