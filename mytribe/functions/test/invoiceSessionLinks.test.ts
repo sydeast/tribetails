@@ -44,7 +44,7 @@ import { archiveInvoiceHandler } from '../src/admin/archiveInvoice';
 import { unarchiveInvoiceHandler } from '../src/admin/unarchiveInvoice';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 import { isSessionBillable } from '../src/lib/sessionInvoicing';
-import { boundSessionIds, linkedWithoutLine } from '../src/lib/invoiceSessionLinks';
+import { boundSessionIds, linkedWithoutLine, visitWords } from '../src/lib/invoiceSessionLinks';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -591,6 +591,34 @@ describe('#2168 archiving a draft lets go of its visits; restoring takes back on
       '2 visits could not be taken back: the visit on 2026-06-02 was cancelled; one visit no longer has a record. Their lines are still on this draft, so remove them in Edit before sending the draft.',
     );
     expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe('');
+  });
+
+  it('names an evening visit by its Chicago day, not the next UTC day', async () => {
+    // 7:30 PM CDT on June 2 is 00:30 UTC on June 3.
+    const { ctx, invoiceId } = await archivedDraft({ 'kin_care_sessions/s1': visit({ startTime: '2026-06-03T00:30:00.000Z' }) });
+    await ctx.db.doc('kin_care_sessions/s1').set({ status: 'CANCELLED' }, { merge: true });
+    const res = await unarchiveInvoiceHandler(req({ invoiceId }));
+    expect(res.notice).toContain('the visit on 2026-06-02 was cancelled');
+    expect(res.notice).not.toContain('2026-06-03');
+  });
+
+  it('a visit now on an invoice with no number says "another invoice", never its id', async () => {
+    const { ctx, invoiceId } = await archivedDraft({
+      'invoices/legacyNoNumber': { kinfolkId: 'fam1', status: 'open', total: 45, amountDue: 45, sessionIds: ['s1'] },
+    });
+    await ctx.db.doc('kin_care_sessions/s1').set({ invoiceId: 'legacyNoNumber' }, { merge: true });
+    const res = await unarchiveInvoiceHandler(req({ invoiceId }));
+    expect(res.notReclaimed).toEqual([{ sessionId: 's1', reason: 'on_other_invoice', invoiceNumber: '' }]);
+    expect(res.notice).toContain('the visit on 2026-06-02 is now on another invoice');
+    expect(res.notice).not.toContain('legacyNoNumber');
+  });
+
+  it('visitWords: an instant is read in Chicago, a zone-less time keeps its own date, junk has no date', () => {
+    expect(visitWords({ startTime: '2026-06-03T00:30:00.000Z' })).toBe('the visit on 2026-06-02');
+    expect(visitWords({ startTime: '2026-06-03T00:30:00-05:00' })).toBe('the visit on 2026-06-03');
+    expect(visitWords({ startTime: '2026-06-03T19:30:00' })).toBe('the visit on 2026-06-03');
+    expect(visitWords({ startTime: 'soon' })).toBe('a visit with no date');
+    expect(visitWords(undefined)).toBe('a visit with no date');
   });
 
   it('a restore racing a New invoice save for the same visit: exactly one invoice ends up billing it', async () => {

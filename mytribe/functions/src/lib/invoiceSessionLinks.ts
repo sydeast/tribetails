@@ -1,6 +1,8 @@
 import { FieldValue, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { isSessionCancelled, isSessionClaimed } from './sessionInvoicing';
+import { businessCalendarDate } from './bookingTimeBlocks';
+import { FALLBACK_BUSINESS_TIME_ZONE } from './businessHours';
 
 /**
  * #1901 / #1970 / #2091: ONE place that sets and clears a visit's billed link.
@@ -56,10 +58,19 @@ export function linkedWithoutLine(sessionIds: readonly string[], lines: unknown)
   return sessionIds.filter((id) => !bound.has(id));
 }
 
-/** How a visit is named in a refusal the clients show verbatim: its day, never its id. */
-function visitWords(data: Record<string, unknown> | undefined): string {
+/**
+ * How a visit is named in a refusal the clients show verbatim: its day, never its id.
+ *
+ * The day is the BUSINESS day (America/Chicago). A stored `startTime` that is an
+ * instant (`...Z` or an offset) is read in that zone, so an evening visit is not
+ * named by the next UTC day; a zone-less wall-clock value keeps its own date.
+ */
+export function visitWords(data: Record<string, unknown> | undefined): string {
   const start = typeof data?.['startTime'] === 'string' ? (data['startTime'] as string).trim() : '';
-  return /^\d{4}-\d{2}-\d{2}/.test(start) ? `the visit on ${start.slice(0, 10)}` : 'a visit with no date';
+  if (!/^\d{4}-\d{2}-\d{2}/.test(start)) return 'a visit with no date';
+  const ms = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(start) ? Date.parse(start) : NaN;
+  const day = Number.isFinite(ms) ? businessCalendarDate(ms, FALLBACK_BUSINESS_TIME_ZONE) : start.slice(0, 10);
+  return `the visit on ${day}`;
 }
 
 export interface SessionLinkRequest {
@@ -264,7 +275,7 @@ export interface ReclaimLoss {
   sessionId: string;
   /** `on_other_invoice`: billed since by another invoice. `cancelled`: the visit was cancelled. `not_found`: no record. */
   reason: 'on_other_invoice' | 'cancelled' | 'not_found';
-  /** The other invoice's number (its id when it has none), or '' for the other reasons. */
+  /** The other invoice's number ('' when it has none, never its id), or '' for the other reasons. */
   invoiceNumber: string;
 }
 
@@ -322,15 +333,16 @@ export async function readSessionReclaim(
   const numberOf = new Map<string, string>();
   otherSnaps.forEach((snap, i) => {
     const n = snap.exists ? (snap.data() as { invoiceNumber?: unknown } | undefined)?.invoiceNumber : undefined;
-    numberOf.set(others[i], typeof n === 'string' && n.trim() !== '' ? n.trim() : others[i]);
+    // No number: '' rather than the id, which never goes on screen.
+    numberOf.set(others[i], typeof n === 'string' && n.trim() !== '' ? n.trim() : '');
   });
-  for (const l of lost) if (l.reason === 'on_other_invoice') l.invoiceNumber = numberOf.get(l.invoiceNumber) ?? l.invoiceNumber;
+  for (const l of lost) if (l.reason === 'on_other_invoice') l.invoiceNumber = numberOf.get(l.invoiceNumber) ?? '';
 
   let notice = '';
   if (lost.length > 0) {
     const parts = lost.map((l) =>
       l.reason === 'on_other_invoice'
-        ? `${visitWords(l.data)} is now on invoice ${l.invoiceNumber}`
+        ? `${visitWords(l.data)} is now on ${l.invoiceNumber === '' ? 'another invoice' : `invoice ${l.invoiceNumber}`}`
         : l.reason === 'cancelled'
           ? `${visitWords(l.data)} was cancelled`
           : 'one visit no longer has a record',
