@@ -27,11 +27,17 @@ import com.composables.icons.lucide.Send
 import com.tribetails.auntieos.data.model.BusinessSettings
 import com.tribetails.auntieos.data.model.DEFAULT_BUSINESS_TIME_ZONE
 import com.tribetails.auntieos.data.model.TimeBlockDefinition
+import com.tribetails.auntieos.domain.EXACT_TIMES_MODE
+import com.tribetails.auntieos.domain.TIME_BLOCKS_NEED_A_BLOCK
+import com.tribetails.auntieos.domain.TIME_BLOCK_MODE
+import com.tribetails.auntieos.domain.storedHouseholdTimeMode
+import com.tribetails.auntieos.domain.withHouseholdTimeMode
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieDropdownField
 import com.tribetails.auntieos.ui.components.AuntieField
 import com.tribetails.auntieos.ui.components.AuntieFieldLabel
+import com.tribetails.auntieos.ui.components.AuntieRadio
 import com.tribetails.auntieos.ui.components.AuntieSettingRow
 import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.ui.components.AuntieToggle
@@ -95,42 +101,11 @@ internal fun optionsIncluding(
     if (options.any { it.first == current }) options
     else options + (current to "$current (not a known value)")
 
-/**
- * ISSUE #710: the "New bookings start as" picker, narrowed to the modes that
- * are actually on. [current] always stays in the list under its real label,
- * even when its mode is currently off: it is a legal value the operator has
- * to see and change deliberately, not an unknown one [optionsIncluding] would
- * mislabel "(not a known value)".
- */
-internal fun bookingModeOptions(
-    current: String,
-    allowSpecificTimeBooking: Boolean,
-    allowTimeBlockBooking: Boolean,
-): List<Pair<String, String>> = optionsIncluding(BOOKING_MODE_WIRE, current).filter { (wire, _) ->
-    wire == current ||
-        (wire == "SPECIFIC_TIME" && allowSpecificTimeBooking) ||
-        (wire == "TIME_BLOCK" && allowTimeBlockBooking)
-}
-
-/**
- * ISSUE #710: the default mode to carry forward when a booking-mode toggle
- * flips. Turning off the mode that is currently the default used to leave
- * `defaultBookingMode` pointed at a mode that is now off, which
- * `bookingRulesError` refuses to save until the operator finds and changes
- * the picker by hand. Turning off the default now hands it to the mode that
- * stayed on. Turning both off leaves [current] alone; the "leave one mode on"
- * guard already refuses that save regardless of what the default says.
- */
-internal fun nextDefaultBookingMode(
-    current: String,
-    allowSpecificTimeBooking: Boolean,
-    allowTimeBlockBooking: Boolean,
-): String {
-    if (current == "SPECIFIC_TIME" && !allowSpecificTimeBooking && allowTimeBlockBooking) return "TIME_BLOCK"
-    if (current == "TIME_BLOCK" && !allowTimeBlockBooking && allowSpecificTimeBooking) return "SPECIFIC_TIME"
-    return current
-}
-
+/** #1863: the two modes, in the operator's own words, with what each means for a household. */
+internal val HOUSEHOLD_TIME_MODE_OPTIONS: List<Triple<String, String, String>> = listOf(
+    Triple(TIME_BLOCK_MODE, "Time Blocks", "Kinfolk pick and see blocks. Exact times show only on KinTale check-in and check-out."),
+    Triple(EXACT_TIMES_MODE, "Exact times", "Kinfolk pick and see a specific time."),
+)
 internal val HHMM_REGEX = Regex("^([01]\\d|2[0-3]):([0-5]\\d)$")
 
 /** How many bookable blocks one business may define. Mirrors the React editor. */
@@ -418,31 +393,19 @@ internal fun isUsableTimeZone(zone: String): Boolean =
 /**
  * What is wrong with the whole booking-rules draft, or null.
  *
- * The mode and the two allow-flags are checked TOGETHER because they are one
- * decision: defaulting to a mode you have turned off leaves the document in a
- * state no screen can act on.
+ * #1863: the business has ONE mode, Time Blocks or Exact times, so there is
+ * no "both off" or "default names an off mode" state left to refuse. Time
+ * Blocks still needs a block turned on ([TIME_BLOCKS_NEED_A_BLOCK], the
+ * server's own sentence).
  */
 internal fun bookingRulesError(
-    defaultBookingMode: String,
-    allowSpecificTimeBooking: Boolean,
-    allowTimeBlockBooking: Boolean,
+    timeMode: String,
     blockDurationHours: String,
     travelBufferMinutes: String,
     blocks: List<TimeBlockRow>,
     timeZone: String,
     edits: BookingRulesEdits = BookingRulesEdits.ALL,
 ): String? {
-    if (edits.modes) {
-        if (!allowSpecificTimeBooking && !allowTimeBlockBooking) {
-            return "Leave at least one booking mode on, or nothing can be booked at all."
-        }
-        if (defaultBookingMode == "TIME_BLOCK" && !allowTimeBlockBooking) {
-            return "Time blocks are turned off, so they cannot be the default. Pick the other mode."
-        }
-        if (defaultBookingMode == "SPECIFIC_TIME" && !allowSpecificTimeBooking) {
-            return "Specific times are turned off, so they cannot be the default. Pick the other mode."
-        }
-    }
     // Blank is "not set yet" (#1109), flagged by its own banner, not a draft error.
     if (edits.zone && timeZone.isNotBlank() && !isUsableTimeZone(timeZone)) {
         return "This phone cannot read a time in \"$timeZone\". Pick a zone from the list."
@@ -454,8 +417,8 @@ internal fun bookingRulesError(
         return "Travel buffer: enter 0 to 480 minutes."
     }
     if (edits.blocks) timeBlockError(blocks)?.let { return it }
-    if (edits.blockActive && allowTimeBlockBooking && blocks.none { it.active }) {
-        return "Time-block booking is on but no block is active, so there is nothing to book into."
+    if (edits.blockActive && timeMode == TIME_BLOCK_MODE && blocks.none { it.active }) {
+        return TIME_BLOCKS_NEED_A_BLOCK
     }
     return null
 }
@@ -482,9 +445,7 @@ internal data class BookingRulesEdits(
 /** The parts of the booking-rules draft that differ from [settings]. */
 internal fun bookingRulesEdits(
     settings: BusinessSettings,
-    mode: String,
-    allowSpecific: Boolean,
-    allowBlock: Boolean,
+    timeMode: String,
     blockHours: String,
     travelBuffer: String,
     blocks: List<TimeBlockRow>,
@@ -492,14 +453,14 @@ internal fun bookingRulesEdits(
 ): BookingRulesEdits {
     val blocksChanged = blocks != settings.timeBlocks.map { it.toRow() }.sortedWith(::compareBlocksByStart)
     return BookingRulesEdits(
-        modes = mode != settings.defaultBookingMode ||
-            allowSpecific != settings.allowSpecificTimeBooking ||
-            allowBlock != settings.allowTimeBlockBooking,
+        // #1863: the mode as stored, so a pre-#1863 both-on document is not
+        // rewritten by a save that never touched the mode.
+        modes = timeMode != storedHouseholdTimeMode(settings),
         zone = timeZone != settings.timeZone,
         blockHours = blockHours.trim() != settings.defaultTimeBlockDurationHours.toString(),
         travelBuffer = travelBuffer.trim() != settings.travelBufferMinutes.toString(),
         blocks = blocksChanged,
-        blockActive = blocksChanged || allowBlock != settings.allowTimeBlockBooking,
+        blockActive = blocksChanged || timeMode != storedHouseholdTimeMode(settings),
     )
 }
 /** Which visit-records boxes differ from what is stored (#1783). */
@@ -574,10 +535,9 @@ internal fun BookingRulesPanel(
     // Re-seeded whenever a fresh document arrives, the convention every other
     // panel on this screen uses (`remember(settings.field)`).
     var timeZone by remember(settings) { mutableStateOf(settings.timeZone) }
-    var mode by remember(settings) { mutableStateOf(settings.defaultBookingMode) }
+    // #1863: the ONE mode, Time Blocks or Exact times, as stored.
+    var timeMode by remember(settings) { mutableStateOf(storedHouseholdTimeMode(settings)) }
     var view by remember(settings) { mutableStateOf(settings.defaultCalendarView) }
-    var allowSpecific by remember(settings) { mutableStateOf(settings.allowSpecificTimeBooking) }
-    var allowBlock by remember(settings) { mutableStateOf(settings.allowTimeBlockBooking) }
     var reminder by remember(settings) { mutableStateOf(settings.enableAutoReminder24h) }
     var blockHours by remember(settings) { mutableStateOf(settings.defaultTimeBlockDurationHours.toString()) }
     var travelBuffer by remember(settings) { mutableStateOf(settings.travelBufferMinutes.toString()) }
@@ -590,9 +550,9 @@ internal fun BookingRulesPanel(
 
     // #1783: `shownProblem` is everything wrong on screen; `problem` is what the
     // save would carry, the only thing that holds Save back.
-    val shownProblem = bookingRulesError(mode, allowSpecific, allowBlock, blockHours, travelBuffer, blocks, timeZone)
-    val edits = bookingRulesEdits(settings, mode, allowSpecific, allowBlock, blockHours, travelBuffer, blocks, timeZone)
-    val problem = bookingRulesError(mode, allowSpecific, allowBlock, blockHours, travelBuffer, blocks, timeZone, edits)
+    val shownProblem = bookingRulesError(timeMode, blockHours, travelBuffer, blocks, timeZone)
+    val edits = bookingRulesEdits(settings, timeMode, blockHours, travelBuffer, blocks, timeZone)
+    val problem = bookingRulesError(timeMode, blockHours, travelBuffer, blocks, timeZone, edits)
     val overlaps = blockOverlaps(blocks)
 
     DenPanel(
@@ -639,40 +599,19 @@ internal fun BookingRulesPanel(
             // mode toggles, the defaults below them, and the time blocks. It is
             // now three named groups, matching the split BookingRulesSection.tsx
             // uses on the web admin.
-            AuntieFieldLabel(text = "Booking modes")
-            AuntieSettingRow(
-                title = "Offer specific times",
-                description = "Kinfolk pick an exact start time.",
-                leadingIcon = Lucide.Clock,
-                iconTone = AuntieStatusTone.Orange,
-                showDivider = true,
-                trailing = {
-                    AuntieToggle(
-                        checked = allowSpecific,
-                        onCheckedChange = { v ->
-                            mode = nextDefaultBookingMode(mode, v, allowBlock)
-                            allowSpecific = v
-                        },
-                    )
-                },
-            )
-            AuntieSettingRow(
-                title = "Offer time blocks",
-                description = "Kinfolk pick a named window instead of a clock time.",
-                leadingIcon = Lucide.CalendarClock,
-                iconTone = AuntieStatusTone.Orange,
-                showDivider = false,
-                trailing = {
-                    AuntieToggle(
-                        checked = allowBlock,
-                        onCheckedChange = { v ->
-                            mode = nextDefaultBookingMode(mode, allowSpecific, v)
-                            allowBlock = v
-                        },
-                    )
-                },
-            )
-
+            // #1863: ONE mode for the business, the operator ruling of
+            // 2026-11-12. Same two words the web and desktop panels use.
+            AuntieFieldLabel(text = "Kinfolk book and see")
+            for ((wire, title, description) in HOUSEHOLD_TIME_MODE_OPTIONS) {
+                AuntieSettingRow(
+                    title = title,
+                    description = description,
+                    leadingIcon = if (wire == TIME_BLOCK_MODE) Lucide.CalendarClock else Lucide.Clock,
+                    iconTone = AuntieStatusTone.Orange,
+                    showDivider = wire == TIME_BLOCK_MODE,
+                    trailing = { AuntieRadio(selected = timeMode == wire, onClick = { timeMode = wire }) },
+                )
+            }
             AuntieFieldLabel(text = "Defaults")
             AuntieSettingRow(
                 title = VISIT_REMINDER_TOGGLE_TITLE,
@@ -683,15 +622,6 @@ internal fun BookingRulesPanel(
                 trailing = { AuntieToggle(checked = reminder, onCheckedChange = { reminder = it }) },
             )
 
-            val modeOptions = bookingModeOptions(mode, allowSpecific, allowBlock)
-            AuntieDropdownField(
-                value = mode,
-                options = modeOptions.map { it.first },
-                onSelect = { mode = it },
-                displayText = { wire -> modeOptions.first { it.first == wire }.second },
-                label = "New bookings start as",
-                modifier = Modifier.fillMaxWidth(),
-            )
             AuntieDropdownField(
                 value = view,
                 options = optionsIncluding(CALENDAR_VIEW_WIRE, view).map { it.first },
@@ -811,12 +741,10 @@ internal fun BookingRulesPanel(
                 label = "Save booking rules",
                 onClick = {
                     onSettingsChange(
-                        settings.copy(
+                        // #1863: the mode only when it changed, then as all three fields.
+                        (if (edits.modes) settings.withHouseholdTimeMode(timeMode) else settings).copy(
                             timeZone = editedText(timeZone, settings.timeZone),
-                            defaultBookingMode = mode,
                             defaultCalendarView = view,
-                            allowSpecificTimeBooking = allowSpecific,
-                            allowTimeBlockBooking = allowBlock,
                             enableAutoReminder24h = reminder,
                             defaultTimeBlockDurationHours = parseWholeNumber(blockHours, 1, 24) ?: settings.defaultTimeBlockDurationHours,
                             travelBufferMinutes = parseWholeNumber(travelBuffer, 0, 480) ?: settings.travelBufferMinutes,

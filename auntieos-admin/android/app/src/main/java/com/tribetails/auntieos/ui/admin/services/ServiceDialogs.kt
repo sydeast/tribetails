@@ -1,5 +1,10 @@
 package com.tribetails.auntieos.ui.admin.services
 
+import com.tribetails.auntieos.domain.EXACT_TIMES_MODE
+import com.tribetails.auntieos.domain.TIME_BLOCKS_NEED_A_BLOCK
+import com.tribetails.auntieos.domain.TIME_BLOCK_MODE
+import com.tribetails.auntieos.domain.storedHouseholdTimeMode
+import com.tribetails.auntieos.domain.withHouseholdTimeMode
 import com.tribetails.auntieos.ui.admin.DayHoursKind
 import com.tribetails.auntieos.ui.admin.WeeklyHoursRow
 import com.tribetails.auntieos.ui.admin.businessHoursRowProblem
@@ -710,8 +715,10 @@ fun AdminSettingsCard(
 ) {
     var editMode by remember { mutableStateOf(false) }
     var businessName by remember { mutableStateOf(settings.businessName) }
-    var allowTimeBlock by remember { mutableStateOf(settings.allowTimeBlockBooking) }
-    var allowSpecificTime by remember { mutableStateOf(settings.allowSpecificTimeBooking) }
+    // #1863: the ONE mode, Time Blocks or Exact times, as stored.
+    var timeMode by remember { mutableStateOf(storedHouseholdTimeMode(settings)) }
+    val modeChanged = timeMode != storedHouseholdTimeMode(settings)
+    val modeError = householdTimeModeError(timeMode, settings)
     // #1409: the business name is required. The same check the Account screen's
     // Business profile panel runs; Save stays off and the reason sits under the
     // field while the typed name is blank, trimmed.
@@ -726,14 +733,15 @@ fun AdminSettingsCard(
             ) {
                 Text("Business Settings", style = AuntieTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = AuntieTheme.colors.textPrimary)
                 AuntieTextBtn(
-                    enabled = !editMode || nameError == null,
+                    enabled = !editMode || (nameError == null && modeError == null),
                     onClick = {
                         if (editMode) {
-                            onUpdate(settings.copy(
-                                businessName = businessName.trim(),
-                                allowTimeBlockBooking = allowTimeBlock,
-                                allowSpecificTimeBooking = allowSpecificTime
-                            ))
+                            // #1863: the mode only when it changed, as all three
+                            // fields, the only shape the server accepts.
+                            onUpdate(
+                                (if (modeChanged) settings.withHouseholdTimeMode(timeMode) else settings)
+                                    .copy(businessName = businessName.trim())
+                            )
                         }
                         editMode = !editMode
                     },
@@ -755,29 +763,35 @@ fun AdminSettingsCard(
                         Text(nameError, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.error)
                     }
 
-                    Text("Booking Modes", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.Medium, color = AuntieTheme.colors.textPrimary)
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AuntieCheckbox(checked = allowSpecificTime, onCheckedChange = { allowSpecificTime = it })
-                        Text("Allow specific time booking (11:15 AM)", modifier = Modifier.clickable { allowSpecificTime = !allowSpecificTime }, color = AuntieTheme.colors.textPrimary)
+                    Text("Kinfolk book and see", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.Medium, color = AuntieTheme.colors.textPrimary)
+                    for ((wire, title) in HOUSEHOLD_TIME_MODE_CHOICES) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            AuntieRadio(selected = timeMode == wire, onClick = { timeMode = wire })
+                            Text(title, modifier = Modifier.clickable { timeMode = wire }.padding(start = 8.dp), color = AuntieTheme.colors.textPrimary)
+                        }
                     }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AuntieCheckbox(checked = allowTimeBlock, onCheckedChange = { allowTimeBlock = it })
-                        Text("Allow time block booking (11 AM - 3 PM)", modifier = Modifier.clickable { allowTimeBlock = !allowTimeBlock }, color = AuntieTheme.colors.textPrimary)
+                    if (modeError != null) {
+                        Text(modeError, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.error)
                     }
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SettingItem("Business Name", businessName)
-                    SettingItem("Specific Time Booking", if (allowSpecificTime) "Enabled" else "Disabled")
-                    SettingItem("Time Block Booking", if (allowTimeBlock) "Enabled" else "Disabled")
+                    SettingItem("Kinfolk book and see", householdTimeModeTitle(timeMode))
                 }
             }
         }
     }
 }
 
+/** #1863: the two modes, in the operator's own words. */
+internal val HOUSEHOLD_TIME_MODE_CHOICES: List<Pair<String, String>> =
+    listOf(TIME_BLOCK_MODE to "Time Blocks", EXACT_TIMES_MODE to "Exact times")
+internal fun householdTimeModeTitle(mode: String): String =
+    HOUSEHOLD_TIME_MODE_CHOICES.firstOrNull { it.first == mode }?.second ?: "Exact times"
+/** #1863: what holds Save back on the mode, or null. Time Blocks needs a block turned on. */
+internal fun householdTimeModeError(mode: String, settings: BusinessSettings): String? =
+    if (mode == TIME_BLOCK_MODE && settings.timeBlocks.none { it.isActive }) TIME_BLOCKS_NEED_A_BLOCK else null
 @Composable
 fun SettingItem(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
