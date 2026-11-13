@@ -24,7 +24,6 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
 import com.tribetails.auntieos.data.model.ContactOverride
 import com.tribetails.auntieos.data.model.HouseholdData
 import com.tribetails.auntieos.data.model.Invoice
@@ -39,6 +38,7 @@ import com.tribetails.auntieos.data.model.EMERGENCY_CONTACTS_OVER_LIMIT
 import com.tribetails.auntieos.data.model.FormSchema
 // Tags (2026-07-19): the vocabulary lives on business_settings, so the scope ->
 // field mapping is shared with the Den's Tags editor rather than duplicated.
+import com.tribetails.auntieos.data.model.TagChange
 import com.tribetails.auntieos.data.model.TagDef
 import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.data.repository.AuntieRepository
@@ -51,7 +51,6 @@ import com.tribetails.auntieos.domain.tenureLabel
 import com.tribetails.auntieos.ui.admin.ServiceCatalog
 import com.tribetails.auntieos.ui.admin.bookingServiceTone
 import com.tribetails.auntieos.ui.admin.rememberServiceCatalog
-import com.tribetails.auntieos.ui.admin.settingsWithTagVocab
 import com.tribetails.auntieos.ui.admin.tagVocabFor
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.ui.components.*
@@ -246,8 +245,9 @@ fun KinfolkProfileScreen(
                                 ).getOrThrow()
                             },
                             loadVocab = { loadTagVocab(tagRepository, TagScope.HOUSEHOLD) },
-                            onSaveVocab = { defs ->
-                                saveTagVocab(tagRepository, TagScope.HOUSEHOLD, defs)
+                            loadIsOwner = { canAddToTagVocab(tagRepository) },
+                            onAddVocab = { name ->
+                                addTagToVocab(tagRepository, TagScope.HOUSEHOLD, name)
                             },
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -1125,33 +1125,30 @@ internal suspend fun loadTagVocab(
 ): List<TagDef> = tagVocabFor(repository.getBusinessSettings().getOrThrow(), scope)
 
 /**
- * Persist a vocabulary grown by an inline promotion on a profile.
+ * Add ONE name typed on a profile to the business's tag list ("add to your
+ * tags"), and answer with that scope's list as the server now stores it.
  *
- * React patches the single key it changed, and now so does this: the re-read is
- * the baseline, and only the fields that differ from it go out. The re-read used
- * to be the whole defence - android sent the entire settings object, so a
- * household promotion carried a stale copy of the pet list, the calendar id and
- * the payment handles along with it, and a fresh read only narrowed that window.
- * With the diff one vocabulary key is written and the window closes: no tag
- * promotion can revert anything else on the document, whatever landed between
- * the read and the write.
+ * #2204 / #2205: this used to re-read the settings and then write the panel's
+ * whole list back over the stored one. A panel whose list had not loaded (or
+ * had failed to load) sent a list of one and wiped every other tag; a panel
+ * left open put back a tag deleted elsewhere and dropped one added elsewhere.
+ * Now only the name travels, through `changeBusinessTags`, and the server adds
+ * it to the list as stored inside a transaction.
  *
- * An unchanged vocabulary writes nothing rather than moving the stamp.
- *
- * Fail-loud is unchanged: `ProfileTagsSection` turns a throw into a reverted chip
- * plus a visible banner, so a swallowed failure would tell the operator a tag
- * saved when it never left the device.
+ * Fail-loud is unchanged: `ProfileTagsSection` turns a throw into a reverted
+ * list plus a visible banner (a duplicate added elsewhere reads "A "VIP" tag
+ * already exists.").
  */
-internal suspend fun saveTagVocab(
+internal suspend fun addTagToVocab(
     repository: AuntieRepository,
     scope: TagScope,
-    defs: List<TagDef>,
-) {
-    val current = repository.getBusinessSettings().getOrThrow()
-    val changes = businessSettingsFieldChanges(current, settingsWithTagVocab(current, scope, defs))
-    if (changes.isEmpty()) return
-    repository.updateBusinessSettingsFields(changes).getOrThrow()
-}
+    name: String,
+): List<TagDef> =
+    repository.changeBusinessTags(listOf(TagChange.addFromProfile(scope, name))).getOrThrow().forScope(scope)
+
+/** Whether this sign-in may add to the business's tag list: the owner only. Unknown is a no. */
+internal suspend fun canAddToTagVocab(repository: AuntieRepository): Boolean =
+    repository.isCurrentUserOwner().getOrDefault(false)
 
 /**
  * The kinfolk to write when its tag assignments change.

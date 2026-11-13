@@ -1046,6 +1046,31 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("removeBusinessTag failed (scope=$scope)", it) }
 
     /**
+     * #2204 / #2205: add or recolour tags one named tag at a time, through the
+     * owner-only `changeBusinessTags` callable, which applies each change to the
+     * list AS STORED inside one transaction. This phone's copy of the list is
+     * never sent, so a tag added elsewhere is kept, a deleted one stays deleted,
+     * and an add made before the list loaded cannot replace it.
+     *
+     * A refusal (a name already on the list, or a recolour of a tag deleted
+     * elsewhere) comes back as the server's plain sentence. Answers with both
+     * lists as stored after the write, decoded through the same gate as a read.
+     */
+    suspend fun changeBusinessTags(changes: List<TagChange>): Result<TagListsAfterChange> = runCatchingCancellable {
+        require(changes.isNotEmpty()) { "changeBusinessTags called with no changes" }
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("changeBusinessTags")
+            .call(mapOf("changes" to changes.map { it.toWire() }))
+            .awaitCallable().data as? Map<String, Any?>
+            ?: error("changeBusinessTags: non-map payload")
+        TagListsAfterChange(
+            household = decodeTagDefs(raw["householdTags"]),
+            pet = decodeTagDefs(raw["petTags"]),
+        )
+    }.onFailure { AuntieLog.e("changeBusinessTags failed", it) }
+
+    /**
      * Run-4 #6: dog + cat breed name banks for the Kin breed dropdown, from the
      * `getBreeds` callable (reads the seeded dog_breeds / cat_breeds collections).
      * Fail-loud: a failure propagates via Result so the UI falls back to free-text

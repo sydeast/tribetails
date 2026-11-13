@@ -1,6 +1,6 @@
 import { call } from '../lib/fns';
-import { type BusinessSettings } from './settings';
-import { type TagScope } from '../lib/tags/model';
+import { type BusinessSettings, decodeTagDefs } from './settings';
+import { type TagChange, type TagDef, type TagScope } from '../lib/tags/model';
 /**
  * The Settings editor's write path, paired with `getBusinessSettings` in
  * `./settings.ts`.
@@ -48,8 +48,8 @@ export async function saveBusinessSettings(patch: Partial<BusinessSettings>): Pr
  * and reports how many records it touched.
  *
  * Deliberately NOT routed through `saveBusinessSettings`: this is the one tag
- * edit that is not a local list edit waiting on Save. Every other change (add,
- * recolor, re-emoji) still batches into the Save button.
+ * edit that does not wait on Save. Adds and recolours batch into the Save
+ * button and go out through `changeBusinessTags` above.
  *
  * Not marked idempotent for `call`'s retry (see CallOptions): the callable IS
  * safe to re-run, but a retry that lands after a lost reply would report a
@@ -74,4 +74,34 @@ export async function removeBusinessTag(
     scope,
     name,
   });
+}
+
+/**
+ * #2205: adds and recolours tags one named tag at a time, against the list AS
+ * STORED. Before this, "add to your tags" and the Tags editor's Save sent the
+ * whole list as the screen had read it, and the settings save replaced the
+ * stored list with it: a tag added on another device was lost and a deleted
+ * one came back. `saveBusinessSettings` now refuses a changed tag list.
+ *
+ * All the changes apply in one transaction or none do. A refusal carries the
+ * server's sentence as `message` ("A "VIP" tag already exists.", or "The tag
+ * list changed since this screen opened ... Reload and try again.").
+ *
+ * Answers with both lists as stored after the write, decoded the way the
+ * settings read decodes them, so the screen repaints from what the server has.
+ *
+ * Not marked idempotent for `call`'s retry: a retried add that landed the
+ * first time is refused as a duplicate, which would read as a failure.
+ */
+export interface TagListsAfterChange {
+  householdTags: TagDef[];
+  petTags: TagDef[];
+}
+
+export async function changeBusinessTags(changes: TagChange[]): Promise<TagListsAfterChange> {
+  const res = await call<{ changes: TagChange[] }, { householdTags?: unknown; petTags?: unknown }>(
+    'changeBusinessTags',
+    { changes },
+  );
+  return { householdTags: decodeTagDefs(res?.householdTags), petTags: decodeTagDefs(res?.petTags) };
 }

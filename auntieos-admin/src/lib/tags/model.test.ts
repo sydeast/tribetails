@@ -8,6 +8,7 @@ import {
   addTag,
   removeTag,
   editTag,
+  tagListChanges,
   type TagDef,
 } from './model';
 
@@ -111,5 +112,30 @@ describe('editTag', () => {
     const vocab = [def('VIP'), def('Reactive', { color: teal })];
     const next = editTag(vocab, 'VIP', { color: orange });
     expect(next[1]).toEqual(vocab[1]);
+  });
+});
+
+// #2205: Save sends named changes, never the list.
+describe('tagListChanges', () => {
+  const teal = DEFAULT_TAG_COLOR;
+  const orange = TAG_PALETTE[1]!;
+  const vip: TagDef = { name: 'VIP', color: teal, icon: '' };
+
+  it('an add for each new name and a style for each recolour or new emoji', () => {
+    const draft: TagDef[] = [{ ...vip, color: orange }, { name: 'Slow pay', color: teal, icon: '⭐' }];
+    expect(tagListChanges('household', [vip], draft)).toEqual([
+      { action: 'style', scope: 'household', name: 'VIP', color: orange, icon: '' },
+      { action: 'add', scope: 'household', name: 'Slow pay', color: teal, icon: '⭐' },
+    ]);
+  });
+
+  it('nothing for an unchanged row, and nothing for a row only the baseline has', () => {
+    expect(tagListChanges('pet', [vip, { name: 'Gone', color: teal, icon: '' }], [vip])).toEqual([]);
+  });
+
+  it('matches names the way the lists do, case-insensitively', () => {
+    expect(tagListChanges('pet', [vip], [{ ...vip, name: 'vip', icon: '⭐' }])).toEqual([
+      { action: 'style', scope: 'pet', name: 'vip', color: teal, icon: '⭐' },
+    ]);
   });
 });

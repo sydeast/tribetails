@@ -22,6 +22,22 @@ class ProfileTagsSectionTest {
     private fun def(name: String) =
         TagDef(name = name, color = TagColor(token = "gold", css = "var(--color-warning)"), icon = "⭐")
 
+    // ----- #2204: "add to your tags" waits for the list, and is the owner's -----
+    @Test
+    fun `no add to your tags before the list loads or after a failed load`() {
+        assertEquals(false, vocabAddOffered(TagVocabLoad.LOADING, isOwner = true))
+        assertEquals(false, vocabAddOffered(TagVocabLoad.FAILED, isOwner = true))
+        assertEquals(true, vocabAddOffered(TagVocabLoad.READY, isOwner = true))
+    }
+    @Test
+    fun `no add to your tags unless the owner is signed in, and unknown is a no`() {
+        assertEquals(false, vocabAddOffered(TagVocabLoad.READY, isOwner = false))
+        assertEquals(false, vocabAddOffered(TagVocabLoad.READY, isOwner = null))
+    }
+    @Test
+    fun `the loading line uses the React panel's words`() {
+        assertEquals("Loading tag suggestions…", TAG_SUGGESTIONS_LOADING)
+    }
     // ----- panel copy -----
 
     @Test

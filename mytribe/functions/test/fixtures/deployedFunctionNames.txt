@@ -25,6 +25,7 @@ bulkArchiveNotifications
 bulkMarkNotificationsRead
 bulkUnarchiveNotifications
 cancelMarketingBlast
+changeBusinessTags
 checkBusinessAdmins
 claimInviteSignup
 cleanupExpiredShareLinks

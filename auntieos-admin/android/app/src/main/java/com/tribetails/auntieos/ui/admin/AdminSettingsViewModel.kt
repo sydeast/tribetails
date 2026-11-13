@@ -11,7 +11,9 @@ import com.tribetails.auntieos.data.model.businessSettingsFieldChanges
 import com.tribetails.auntieos.data.model.paymentOptionsSaveProblem
 import com.tribetails.auntieos.data.model.revertBusinessSettingsFields
 import com.tribetails.auntieos.data.model.MediaEntityType
+import com.tribetails.auntieos.data.model.TagDef
 import com.tribetails.auntieos.data.model.TagScope
+import com.tribetails.auntieos.data.model.tagListChanges
 import com.tribetails.auntieos.data.model.UserProfile
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.IntegrationsRepository
@@ -106,6 +108,14 @@ data class AdminSettingsUiState(
     /** What the last delete actually did. Null until one succeeds. */
     val tagRemoveMessage: String? = null,
     val tagRemoveError: String? = null,
+    /**
+     * #2205: the Tags panel's Save, which sends named adds and recolours
+     * through `changeBusinessTags`, not a settings save. Its own fields for the
+     * same reason as the delete's: it says nothing about the rest of Settings.
+     */
+    val tagSaveBusy: Boolean = false,
+    val tagSaveError: String? = null,
+    val tagSaved: Boolean = false,
 )
 
 class AdminSettingsViewModel(
@@ -335,6 +345,90 @@ class AdminSettingsViewModel(
     /** Clears the delete banners once the operator has read them. */
     fun clearTagRemoveFeedback() {
         _uiState.value = _uiState.value.copy(tagRemoveMessage = null, tagRemoveError = null)
+    }
+
+    // ---- Tag adds and recolours (#2204, #2205) ----
+
+    /**
+     * Save the Tags panel: each new name and each colour or emoji change, as
+     * named changes against the lists AS STORED (`changeBusinessTags`). The
+     * lists themselves never go out, so a tag added on another device is kept
+     * and one deleted there is not brought back; a recolour of a tag deleted
+     * elsewhere is refused with "the tag list changed, reload".
+     *
+     * The diff is against [settingsBaseline], the copy the panel was seeded
+     * from. On success the baseline and the on-screen settings take both lists
+     * as the server now holds them, which brings in tags added elsewhere and
+     * keeps any later settings diff from seeing a tag change. A failure changes
+     * nothing locally, so the edit stays and Save stays live.
+     */
+    fun saveTagChanges(household: List<TagDef>, pet: List<TagDef>) {
+        if (_uiState.value.tagSaveBusy) return
+        val baseline = settingsBaseline
+        if (baseline == null) {
+            _uiState.value = _uiState.value.copy(
+                tagSaveError = "Reopen Settings before saving: its saved copy was never loaded.",
+                tagSaved = false,
+            )
+            return
+        }
+        val changes = tagListChanges(TagScope.HOUSEHOLD, tagVocabFor(baseline, TagScope.HOUSEHOLD), household) +
+            tagListChanges(TagScope.PET, tagVocabFor(baseline, TagScope.PET), pet)
+        if (changes.isEmpty()) {
+            _uiState.value = _uiState.value.copy(tagSaveError = null, tagSaved = true)
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(tagSaveBusy = true, tagSaveError = null, tagSaved = false)
+            repository.changeBusinessTags(changes).fold(
+                onSuccess = { after -> applyStoredTagLists(after.household, after.pet, saved = true) },
+                onFailure = { e ->
+                    _uiState.value = _uiState.value.copy(
+                        tagSaveBusy = false,
+                        tagSaveError = "Couldn't save tags: ${e.message?.takeIf { it.isNotBlank() } ?: "Save failed"}",
+                    )
+                },
+            )
+        }
+    }
+
+    /**
+     * Re-read the two tag lists after a refused save ("the tag list changed,
+     * reload"), leaving every other panel's copy alone.
+     */
+    fun reloadTagLists() {
+        if (_uiState.value.tagSaveBusy) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(tagSaveBusy = true, tagSaveError = null)
+            repository.getBusinessSettings().fold(
+                onSuccess = { fresh ->
+                    applyStoredTagLists(
+                        tagVocabFor(fresh, TagScope.HOUSEHOLD),
+                        tagVocabFor(fresh, TagScope.PET),
+                        saved = false,
+                    )
+                },
+                onFailure = { e ->
+                    _uiState.value = _uiState.value.copy(
+                        tagSaveBusy = false,
+                        tagSaveError = "Couldn't read tags: ${e.message?.takeIf { it.isNotBlank() } ?: "Load failed"}",
+                    )
+                },
+            )
+        }
+    }
+
+    private fun applyStoredTagLists(household: List<TagDef>, pet: List<TagDef>, saved: Boolean) {
+        val withLists = { s: BusinessSettings ->
+            settingsWithTagVocab(settingsWithTagVocab(s, TagScope.HOUSEHOLD, household), TagScope.PET, pet)
+        }
+        settingsBaseline = settingsBaseline?.let(withLists)
+        _uiState.value = _uiState.value.copy(
+            businessSettings = withLists(_uiState.value.businessSettings),
+            tagSaveBusy = false,
+            tagSaveError = null,
+            tagSaved = saved,
+        )
     }
 
     // ---- Business hours ----
