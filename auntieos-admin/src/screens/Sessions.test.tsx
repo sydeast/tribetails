@@ -954,6 +954,23 @@ describe('Auntie Time: the card runs the visit', () => {
       expect(screen.getByText('No KinTale is waiting to be sent.')).toBeInTheDocument();
     });
 
+    it('a failed read of older owed visits says so, keeps the board rows and offers a retry', async () => {
+      useKinTaleRequired.mockReturnValue(true);
+      const retry = vi.fn();
+      useCollection.mockImplementation((spec: CollectionSpec) =>
+        spec.path === 'kin_care_sessions' && spec.filters?.[0]?.[0] === 'kinTaleDue'
+          ? { status: 'error', message: 'permission-denied', retry }
+          : { status: 'ready', data: [] },
+      );
+      usePagedCollection.mockReturnValue(paged([owed('o1')]));
+      renderBoard({ onComposeKinTale: vi.fn() });
+      expect(screen.getByText(/couldn.t load older kintales to send\. permission-denied/i)).toBeInTheDocument();
+      expect(phaseCount('KinTales to send')).toBe('1');
+      expect(screen.queryByText('No KinTale is waiting to be sent.')).toBeNull();
+      await user.click(screen.getByRole('button', { name: 'Retry' }));
+      expect(retry).toHaveBeenCalledOnce();
+    });
+
     it('with the switch off there is no group, and the visit stays in Recent with its button', () => {
       useKinTaleRequired.mockReturnValue(false);
       usePagedCollection.mockReturnValue(paged([owed('o1')]));

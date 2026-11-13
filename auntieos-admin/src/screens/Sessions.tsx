@@ -334,7 +334,15 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
                     them on the viewport. */}
                 <ul className="sessions__phases">
                   {kinTaleRequired === true && (
-                    <OwedKinTalesGroup rows={boardGroups(data).owed} ctx={cardContext} />
+                    <OwedKinTalesGroup
+                      rows={boardGroups(data).owed}
+                      ctx={cardContext}
+                      readError={
+                        kinTalesDue.status === 'error'
+                          ? { message: kinTalesDue.message, retry: kinTalesDue.retry }
+                          : null
+                      }
+                    />
                   )}
                   {groupSessionsByPhase([...boardGroups(data).rest], todayIso).map((p) => (
                     <li key={p.phase} className={`sessions__phase sessions__phase--${p.phase}`}>
@@ -404,14 +412,33 @@ export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: Sessions
  * newest first. Each card is the ordinary completed card, whose "Send the
  * KinTale" opens the composer; the visit leaves this group when the send lands.
  */
-function OwedKinTalesGroup({ rows, ctx }: { rows: readonly SessionEntry[]; ctx: CardContext }) {
+function OwedKinTalesGroup({
+  rows,
+  ctx,
+  readError,
+}: {
+  rows: readonly SessionEntry[];
+  ctx: CardContext;
+  /** The older-visits read failed: the group holds only the board's own rows, and says so. */
+  readError: { message: string; retry?: (() => void) | undefined } | null;
+}) {
   return (
     <li className="sessions__phase sessions__phase--kintales">
       <h3 className="sessions__phase-header">
         KinTales to send
         <span className="sessions__phase-count">{rows.length}</span>
       </h3>
-      {rows.length === 0 ? (
+      {readError !== null && (
+        <ErrorHint>
+          Couldn&rsquo;t load older KinTales to send. {readError.message}
+          {readError.retry && (
+            <button type="button" className="async-retry" onClick={readError.retry}>
+              Retry
+            </button>
+          )}
+        </ErrorHint>
+      )}
+      {rows.length === 0 && readError === null ? (
         <p className="sessions__phase-empty">No KinTale is waiting to be sent.</p>
       ) : (
         <ul className="sessions__cards">
