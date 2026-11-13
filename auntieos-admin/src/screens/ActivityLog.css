@@ -67,6 +67,12 @@
   margin-left: 6px;
 }
 
+/* ── #2192: the business clock's wait or failure, under the hero ── */
+
+.activity__clock {
+  margin: 8px 0;
+}
+
 /* ── filters row: chips then the search box, between the hero and the log ── */
 
 .activity__filters {
