@@ -7,7 +7,7 @@ import { logEvent } from '../../lib/logger';
 import { isEmailHardBounced } from '../../lib/suppressions';
 import { fallbackEmail } from '../fallbackTemplate';
 import { businessLabel, loadBusinessName } from '../../lib/businessName';
-import { operatorAllowlistUids, readBusinessAdmins } from '../../lib/businessAdmins';
+import { businessNoticeRecipients, readBusinessAdmins } from '../../lib/businessAdmins';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
 /**
@@ -134,11 +134,14 @@ type EmailTarget =
  * roster (or, while the roster is empty, the operator allowlist the dispatch
  * path seeds it from). The roster check keeps a household uid with no
  * `clients/` document from being mailed to the business by mistake.
+ *
+ * #2223: the same owner-only recipients the dispatcher resolved, so an Auntie
+ * left on the list is not treated as a business copy, and the allowlist owner
+ * the dispatcher fell back to (a list holding only an Auntie) is.
  */
 async function isBusinessRosterCopy(def: ChannelSendArgs['def'], uid: string): Promise<boolean> {
   if (def.recipientResolver !== 'businessAdmins' && def.secondaryResolver !== 'businessAdmins') return false;
-  const roster = (await readBusinessAdmins()).uids;
-  const uids = roster.length > 0 ? roster : operatorAllowlistUids();
+  const { uids } = await businessNoticeRecipients(await readBusinessAdmins(), 'emailChannel');
   return uids.includes(uid);
 }
 
