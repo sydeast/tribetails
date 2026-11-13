@@ -38,6 +38,8 @@ import '../SettingsEdit.css';
  *         priority, so it trades battery against precision for real.
  *  LIVE   `defaultEtaMinutes` + `etaMinuteOptions`  the value and the choices on
  *         the "On My Way" sheet.
+ *  LIVE   `kinTaleRequired` (#2123): the Auntie's "Send the KinTale" task on
+ *         Auntie Time. Absent reads on; it never blocks completion.
  *  LIVE   `enablePhotoLocationTagging`, `requireArrivalDepartureVerification`,
  *         `saveRoutesForDays`, `allowClientLocationSharing`,
  *         `draftRetentionDays` + `draftRetentionOptions`. These five were
@@ -68,6 +70,7 @@ interface Draft {
   trackingAccuracy: string;
   enablePhotoLocationTagging: boolean;
   requireArrivalDepartureVerification: boolean;
+  kinTaleRequired: boolean;
   arrivalRadiusMeters: string;
   allowClientLocationSharing: boolean;
   saveRoutesForDays: string;
@@ -84,6 +87,7 @@ function seed(data: BusinessSettings): Draft {
     trackingAccuracy: data.trackingAccuracy,
     enablePhotoLocationTagging: data.enablePhotoLocationTagging,
     requireArrivalDepartureVerification: data.requireArrivalDepartureVerification,
+    kinTaleRequired: data.kinTaleRequired,
     arrivalRadiusMeters: String(data.arrivalRadiusMeters),
     allowClientLocationSharing: data.allowClientLocationSharing,
     saveRoutesForDays: String(data.saveRoutesForDays),
@@ -112,6 +116,7 @@ export function editedVisitsFields(draft: Draft, data: BusinessSettings): Readon
     'trackingAccuracy',
     'enablePhotoLocationTagging',
     'requireArrivalDepartureVerification',
+    'kinTaleRequired',
     'allowClientLocationSharing',
     'defaultEtaMinutes',
     'draftRetentionDays',
@@ -186,6 +191,7 @@ export function visitsTrackingPatch(
   if (has('autoStartTrackingOnVisitStart')) patch.autoStartTrackingOnVisitStart = draft.autoStartTrackingOnVisitStart;
   if (has('trackingAccuracy')) patch.trackingAccuracy = draft.trackingAccuracy;
   if (has('enablePhotoLocationTagging')) patch.enablePhotoLocationTagging = draft.enablePhotoLocationTagging;
+  if (has('kinTaleRequired')) patch.kinTaleRequired = draft.kinTaleRequired;
   if (has('requireArrivalDepartureVerification')) {
     patch.requireArrivalDepartureVerification = draft.requireArrivalDepartureVerification;
   }
@@ -431,6 +437,18 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
               checked={draft.requireArrivalDepartureVerification}
               disabled={busy}
               onChange={(next) => edit({ requireArrivalDepartureVerification: next })}
+            />
+          </li>
+          {/* #2123: never blocks completion. With it on, a visit completed with
+              no KinTale sent stays under "KinTales to send" on Auntie Time
+              until one is. */}
+          <li className="settingsEdit__toggleRow">
+            <span className="settingsEdit__toggleLabel">KinTale required</span>
+            <Toggle
+              label="Toggle KinTale required"
+              checked={draft.kinTaleRequired}
+              disabled={busy}
+              onChange={(next) => edit({ kinTaleRequired: next })}
             />
           </li>
           <li className="settingsEdit__toggleRow">

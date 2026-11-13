@@ -441,6 +441,12 @@ export interface BusinessSettings {
   enablePhotoLocationTagging: boolean;
   requireArrivalDepartureVerification: boolean;
   /**
+   * #2123: "KinTale required". Never blocks completion; with it on, a visit
+   * completed with no KinTale sent stays on the Auntie's "KinTales to send"
+   * list until one is. Absent reads ON (`lib/kinTaleTask.ts`).
+   */
+  kinTaleRequired: boolean;
+  /**
    * ISSUE #582: how close to the household counts as arrived, in metres. Only
    * meaningful while `requireArrivalDepartureVerification` is on — it is that
    * switch's threshold, not a second switch, so there is no "off" value here.
@@ -617,6 +623,9 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   // functions/src/lib/arrivalVerification.ts). A default of true showed the switch
   // on while Complete went through, and the next Settings save turned it on.
   requireArrivalDepartureVerification: false,
+  // #2123: absent means ON, as the server reads it (`kinTaleRequiredFrom` in
+  // functions/src/lib/kinTaleRequirement.ts): only an explicit false is off.
+  kinTaleRequired: true,
   // 150 m. Android's dormant geofence constants are 50 m and 100 m, which are
   // too tight for a fix taken indoors, where an Auntie usually is when she
   // presses the button. See ARRIVAL_RADIUS_DEFAULT_METERS in
@@ -871,6 +880,9 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
       (r.enablePhotoLocationTagging as boolean) ?? d.enablePhotoLocationTagging,
     // #1620: only a stored `true` is on, the server's reading.
     requireArrivalDepartureVerification: r.requireArrivalDepartureVerification === true,
+    // #2123: only a stored `false` is off, the server's reading (and
+    // `lib/kinTaleTask.ts#kinTaleRequiredFrom`, which the board reads raw).
+    kinTaleRequired: r.kinTaleRequired !== false,
     arrivalRadiusMeters: (r.arrivalRadiusMeters as number) ?? d.arrivalRadiusMeters,
     autoStartTrackingOnVisitStart:
       (r.autoStartTrackingOnVisitStart as boolean) ?? d.autoStartTrackingOnVisitStart,

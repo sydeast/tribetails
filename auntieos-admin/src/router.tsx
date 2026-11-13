@@ -324,7 +324,7 @@ const kinTalesRoute = createRoute({
   // counts are not limited to the last week (#1601).
   // `kinTaleId` opens one report in DETAIL (a kintale notification's "Open").
   // `sessionId` opens the COMPOSER scaffolded from that visit, which is where
-  // Auntie Time's "Complete KinTale" button routes (#703): the write-up belongs
+  // Auntie Time's "Send the KinTale" button routes (#703, #2123): the write-up belongs
   // to a visit, and the composer already takes a `sessionId` to seed a draft
   // from one. Two ids because they name two different things and two different
   // destinations, never one id the view has to guess the meaning of.

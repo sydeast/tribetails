@@ -345,7 +345,7 @@
   flex: 1 1 8rem;
 }
 
-/* Mock `.btn.teal`, worn by "Complete KinTale" alone: the kit's primary button
+/* Mock `.btn.teal`, worn by "Send the KinTale" alone: the kit's primary button
    recoloured to the KinTale teal. The hover and active rules are restated at
    higher specificity because Buttons.css sets them at `button.auntie-btn--primary
    :hover:not(:disabled)`, which would flash the brand orange back on hover. */

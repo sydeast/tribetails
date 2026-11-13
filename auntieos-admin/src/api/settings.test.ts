@@ -134,6 +134,14 @@ describe('mergeBusinessSettings', () => {
       mergeBusinessSettings({ requireArrivalDepartureVerification: 'true' as unknown as boolean }).requireArrivalDepartureVerification,
     ).toBe(false);
   });
+  it('#2123: reads an absent kinTaleRequired as ON, the server reading; only a stored false is off', () => {
+    expect(mergeBusinessSettings({}).kinTaleRequired).toBe(true);
+    expect(mergeBusinessSettings(undefined).kinTaleRequired).toBe(true);
+    expect(DEFAULT_BUSINESS_SETTINGS.kinTaleRequired).toBe(true);
+    expect(mergeBusinessSettings({ kinTaleRequired: true }).kinTaleRequired).toBe(true);
+    expect(mergeBusinessSettings({ kinTaleRequired: false }).kinTaleRequired).toBe(false);
+    expect(mergeBusinessSettings({ kinTaleRequired: 'false' }).kinTaleRequired).toBe(true);
+  });
   it('defaults both tag vocabularies to [] when the doc has neither field', () => {
     const result = mergeBusinessSettings({ businessName: 'Tribe Tails' });
     expect(result.householdTags).toEqual([]);

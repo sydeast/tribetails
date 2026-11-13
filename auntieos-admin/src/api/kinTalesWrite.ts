@@ -1,11 +1,9 @@
-import { arrayUnion, collection, doc, getDoc, increment, writeBatch } from 'firebase/firestore';
+import { arrayUnion, collection, doc, increment, writeBatch } from 'firebase/firestore';
 import { addDoc, commitBatch, setDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
 import { getAuthState } from '../lib/auth';
 import { checklistHasContent } from '../lib/kinTaleChecklist';
-import { completesAfterKinTale, lifecycleNowIso } from '../lib/sessionLifecycle';
 import type { FieldResponse } from '../lib/kinTale/model';
-import { transitionBookingStatus } from './bookingsWrite';
 
 /**
  * The write-side counterpart to `api/kinTales.ts` (list/read only). Confirmed
@@ -280,62 +278,14 @@ export async function sendKinTale(input: SendKinTaleInput): Promise<void> {
   batch.update(doc(db, 'kin_care_sessions', input.sessionId), {
     reportIds: arrayUnion(input.reportId),
     sentReportCount: increment(1),
+    // Kept for installed Android builds, whose Home sweep still reads it. Since
+    // #2123 nothing completes a visit off it: departure does
+    // (`functions/src/triggers/onKinCareSessionDeparted.ts`).
     autoCompleteEligible: true,
+    // #2123: the visit no longer owes its KinTale, so it leaves the Auntie's
+    // "KinTales to send" list (`lib/kinTaleTask.ts`).
+    kinTaleDue: false,
     updatedAt: now,
   });
   await commitBatch(batch, 'this KinTale');
-}
-
-/** What {@link completeVisitAfterKinTale} did. It never throws; this says why. */
-export type VisitCompletionAfterSend =
-  /** The visit is now COMPLETED. */
-  | { kind: 'completed' }
-  /** Not DEPARTED (or not flagged), so nothing was asked of the server. */
-  | { kind: 'left_open'; status: string }
-  /** It was ready, and the read or the server refused. `message` is the reason. */
-  | { kind: 'not_completed'; message: string };
-
-/**
- * #1793: after a send, mark the visit Completed when it is ready, which is the
- * web's half of Android's Home sweep (`HomeViewModel.kt`: DEPARTED and
- * `autoCompleteEligible` -> `markSessionComplete`). Before this, nothing on web
- * read the flag `sendKinTale` sets, so a visit written up here stayed DEPARTED
- * on Auntie Time for good.
- *
- * WHY THE CLIENT AND NOT A TRIGGER. Completion is terminal and billable, and
- * `transitionBookingStatus` is where that is decided: it audits against the
- * signed-in admin's uid and runs the operator's arrival rule, and its refusals
- * need a person to read them. A Firestore trigger has neither the actor nor
- * anyone to tell. So both admin clients call the same callable on the same
- * rule (`lib/sessionLifecycle.ts#completesAfterKinTale`).
- *
- * IT READS THE SESSION FRESH, after the send has committed, rather than
- * trusting whatever row the composer was holding. The server accepts COMPLETE
- * from SCHEDULED, ON_MY_WAY and ARRIVED as well, so asking on a stale "it
- * departed" would complete a visit the Auntie is still inside. The read also
- * sees the flag the send just set.
- *
- * NEVER THROWS. By the time this runs the KinTale has gone home, and a caller
- * that reported a refusal here as "couldn't send" would invite a second send,
- * which bumps `sentReportCount` again. Every failure comes back as
- * `not_completed` with the reason in words.
- */
-export async function completeVisitAfterKinTale(sessionId: string): Promise<VisitCompletionAfterSend> {
-  try {
-    const snap = await getDoc(doc(db, 'kin_care_sessions', sessionId));
-    const session = (snap.data() ?? {}) as { status?: unknown; autoCompleteEligible?: unknown };
-    const status = typeof session.status === 'string' ? session.status : '';
-    const fields = {
-      status,
-      autoCompleteEligible: session.autoCompleteEligible === true,
-    };
-    if (!completesAfterKinTale(fields)) return { kind: 'left_open', status };
-    await transitionBookingStatus({ sessionId, action: 'COMPLETE', completedAt: lifecycleNowIso() });
-    return { kind: 'completed' };
-  } catch (err) {
-    return {
-      kind: 'not_completed',
-      message: err instanceof Error && err.message !== '' ? err.message : 'Unknown error.',
-    };
-  }
 }
