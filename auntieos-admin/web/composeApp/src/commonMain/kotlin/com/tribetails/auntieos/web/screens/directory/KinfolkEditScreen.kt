@@ -44,6 +44,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieInfoTip
 import com.tribetails.auntieos.web.data.draftsEqual
 import com.tribetails.auntieos.web.data.emergencyContactsOf
 import com.tribetails.auntieos.web.data.kinfolkChanges
+import com.tribetails.auntieos.web.data.kinfolkArchiveOffered
 import com.tribetails.auntieos.web.data.isBlankDrafts
 import com.tribetails.auntieos.web.data.toDrafts
 import com.tribetails.auntieos.web.data.validateEmergencyContactDrafts
@@ -1036,32 +1037,37 @@ fun KinfolkEditScreen(
         }
 
         // ── Archive block (edit path only; absent on create) ──────────────────
-        if (!isNew && existing != null) {
+        // #2161: owner-only. The `setKinfolkArchived` callable writes the
+        // Activity Log line itself, so no client line is fired here. A sandbox
+        // test admin is not offered the panel: the server refuses it.
+        if (!isNew && existing != null && kinfolkArchiveOffered(FirestoreClient.currentSessionTestMode())) {
             ArchivePanel(
                 kinfolkName = existing.displayName,
                 archived    = existing.status == "archived",
                 disabled    = saving,
+                busy        = saving,
                 onArchive   = {
                     saving = true
                     scope.launch {
                         val r = client.archiveKinfolk(existing._id)
                         saving = false
                         when (r) {
-                            is WriteResult.Ok  -> {
-                                AuditLog.fire(
-                                    scope            = scope,
-                                    client           = client,
-                                    actorId          = "",
-                                    actionType       = "ARCHIVE_KINFOLK",
-                                    description      = "Archived ${existing.displayName}",
-                                    targetId         = existing._id,
-                                    targetCollection = "kinfolk",
-                                )
-                                // #854: onArchived navigates away; the confirmation
-                                // goes to the route-level host so it survives that.
-                                routeToast.show("Archived ${existing.displayName}.", ToastKind.Success); onArchived()
-                            }
+                            // #854: onArchived navigates away; the confirmation
+                            // goes to the route-level host so it survives that.
+                            is WriteResult.Ok  -> { routeToast.show("Archived ${existing.displayName}.", ToastKind.Success); onArchived() }
                             is WriteResult.Err -> showToast("Archive failed: ${r.message}", ToastKind.Error)
+                        }
+                    }
+                },
+                onRestore   = {
+                    saving = true
+                    scope.launch {
+                        val r = client.restoreKinfolk(existing._id)
+                        saving = false
+                        when (r) {
+                            // Same exit as an archive: back to where the operator came from.
+                            is WriteResult.Ok  -> { routeToast.show("${existing.displayName} is active again.", ToastKind.Success); onArchived() }
+                            is WriteResult.Err -> showToast("Restore failed: ${r.message}", ToastKind.Error)
                         }
                     }
                 },
@@ -1368,14 +1374,18 @@ private fun VetClinicSuggestionRow(clinic: VetClinic, onClick: () -> Unit) {
 
 /**
  * Edit-only Archive block, in a Den glass panel matching the form subsections.
- * Copy and behavior verbatim from the original ArchiveBlock.
+ * Archive on an active household; Restore on an archived one (#2161, the
+ * console had no way back before). Owner-only: the caller shows it only when
+ * [kinfolkArchiveOffered].
  */
 @Composable
-private fun ArchivePanel(
+internal fun ArchivePanel(
     kinfolkName: String,
     archived: Boolean,
     disabled: Boolean,
     onArchive: () -> Unit,
+    onRestore: () -> Unit,
+    busy: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     GlassSurface(cornerRadius = 20.dp, modifier = Modifier.fillMaxWidth()) {
@@ -1394,9 +1404,11 @@ private fun ArchivePanel(
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
-            if (!archived) {
-                Spacer(Modifier.height(6.dp))
-                GhostButton(label = "Archive", onClick = onArchive, enabled = !disabled, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            if (archived) {
+                GhostButton(label = if (busy) "Restoring…" else "Restore", onClick = onRestore, enabled = !disabled, modifier = Modifier.fillMaxWidth())
+            } else {
+                GhostButton(label = if (busy) "Archiving…" else "Archive", onClick = onArchive, enabled = !disabled, modifier = Modifier.fillMaxWidth())
             }
         }
     }

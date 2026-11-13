@@ -1236,7 +1236,17 @@ class DirectoryViewModel(
     fun updateEditLastName(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(lastName = value) }
     fun updateEditPhoneNumber(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(phoneNumber = value) }
     fun updateEditEmail(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(email = value) }
-    fun updateEditStatus(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(status = value) }
+    /**
+     * #2161: the status picker never archives or restores. A pick of
+     * `archived`, or any pick while the household is archived, is ignored:
+     * Archive and Restore are their own owner-only controls, through the
+     * `setKinfolkArchived` callable, and the rules refuse the direct write.
+     */
+    fun updateEditStatus(value: String) {
+        val current = _editKinfolkState.value.status
+        if (value !in KINFOLK_PICKABLE_STATUSES || current.equals("archived", ignoreCase = true)) return
+        _editKinfolkState.value = _editKinfolkState.value.copy(status = value)
+    }
     fun updateEditOutstandingBalance(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(outstandingBalance = value) }
     fun updateEditTags(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(tags = value) }
     fun updateEditSecondaryPhone(value: String) { _editKinfolkState.value = _editKinfolkState.value.copy(secondaryPhone = value) }
@@ -1646,15 +1656,9 @@ class DirectoryViewModel(
 
         AuntieLog.i("Archiving kinfolk: $kinfolkId (reason: $reason)")
         viewModelScope.launch {
+            // #2161: the owner-only `setKinfolkArchived` callable writes the
+            // ARCHIVE_KINFOLK Activity Log line itself, so none is fired here.
             repository.archiveKinfolk(kinfolkId, reason.trim()).onSuccess {
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope            = viewModelScope,
-                    repository       = repository,
-                    actionType       = "ARCHIVE_KINFOLK",
-                    description      = if (reason.isBlank()) "Archived kinfolk" else "Archived kinfolk (reason: ${reason.trim()})",
-                    targetId         = kinfolkId,
-                    targetCollection = "kinfolk",
-                )
                 // #1009: web's exact wording, `KinfolkEdit.tsx`'s
                 // `showToast(\`${displayName} is archived.\`)`.
                 val displayName = loadedKinfolk?.displayName ?: "Unnamed Kinfolk"
@@ -1666,7 +1670,7 @@ class DirectoryViewModel(
             }.onFailure { error ->
                 AuntieLog.e("Failed to archive kinfolk", error)
                 _editKinfolkState.value = _editKinfolkState.value.copy(
-                    error = error.message ?: "Failed to archive Kinfolk"
+                    error = kinfolkArchiveErrorText(error, "Failed to archive Kinfolk")
                 )
             }
         }
@@ -1678,18 +1682,12 @@ class DirectoryViewModel(
 
         AuntieLog.i("Unarchiving kinfolk: $kinfolkId")
         viewModelScope.launch {
+            // #2161: the owner-only `setKinfolkArchived` callable writes the
+            // RESTORE_KINFOLK Activity Log line itself, so none is fired here.
             repository.unarchiveKinfolk(kinfolkId).onSuccess {
-                com.tribetails.auntieos.data.admin.AuditLog.fire(
-                    scope            = viewModelScope,
-                    repository       = repository,
-                    // #1820: the key the server declares (AUDIT_EVENTS.RESTORE_KINFOLK)
-                    // and the Activity Log files under Admin. This line used to
-                    // say UNARCHIVE_KINFOLK, which no chip claimed.
-                    actionType       = "RESTORE_KINFOLK",
-                    description      = "Restored Kinfolk",
-                    targetId         = kinfolkId,
-                    targetCollection = "kinfolk",
-                )
+                // The record on file is restored now. Moving the baseline with it
+                // keeps the next Save from sending a status it did not change.
+                loadedKinfolk = loadedKinfolk?.copy(status = "active", archivedAt = "", archivedReason = "", archivedBy = "")
                 // #1009: web's exact wording, `KinfolkEdit.tsx`'s
                 // `showToast(\`${displayName} is active again.\`)`. This save does
                 // not navigate anywhere - the operator stays on this editor - so
@@ -1705,7 +1703,7 @@ class DirectoryViewModel(
             }.onFailure { error ->
                 AuntieLog.e("Failed to unarchive kinfolk", error)
                 _editKinfolkState.value = _editKinfolkState.value.copy(
-                    error = error.message ?: "Failed to unarchive Kinfolk"
+                    error = kinfolkArchiveErrorText(error, "Failed to unarchive Kinfolk")
                 )
             }
         }

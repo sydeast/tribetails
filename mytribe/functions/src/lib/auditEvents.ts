@@ -703,6 +703,9 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.INTEGRATION_CALENDAR_SYNC,
   // Households, Kin and their records.
   AUDIT_EVENTS.CREATE_KINFOLK,
+  // #2161: setKinfolkArchived, the owner-only Archive / Restore of a household.
+  AUDIT_EVENTS.ARCHIVE_KINFOLK,
+  AUDIT_EVENTS.RESTORE_KINFOLK,
   AUDIT_EVENTS.ARCHIVE_KIN,
   AUDIT_EVENTS.RESTORE_KIN,
   AUDIT_EVENTS.KIN_REMOVAL_REQUEST_RESOLVED,

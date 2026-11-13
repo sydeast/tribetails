@@ -1,7 +1,7 @@
 import { doc, serverTimestamp } from 'firebase/firestore';
 import { updateDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
-import { getAuthState } from '../lib/auth';
+import { call } from '../lib/fns';
 
 /**
  * The write half of the otherwise read-only `api/kinfolkProfile.ts` (the
@@ -33,9 +33,9 @@ import { getAuthState } from '../lib/auth';
  *                    web-admin save unlinks the Kinfolk from their MyTribe login.
  *   myTribeLinkedAt  same writer (`setKinfolkClaim.ts:65`), present in NO Kotlin
  *                    model at all, so BOTH clients drop it.
- *   archivedAt /     written by the archive helpers below and by
- *   archivedReason / AuntieRepository.kt:312-323. Absent from the wasm model, so
- *   archivedBy       a wasm save erases the archive audit trail.
+ *   archivedAt /     written only by the `setKinfolkArchived` callable (#2161),
+ *   archivedReason / which the archive helpers below call. Absent from the wasm
+ *   archivedBy       model, so a wasm whole-document save would erase them.
  *   displayName,     backend-only, written by triggers/familyProvision.ts:38-46
  *   businessName,    and never modelled on any client.
  *   isTestData,
@@ -189,53 +189,61 @@ export function changedKinfolkEditFields(
   return out;
 }
 
-/**
- * Archive a household: reversible, and it records WHY.
- *
- * Ports `AuntieRepository.kt:312-323` field for field, including its
- * `archivedBy` default of "admin" when no signed-in uid is available. Four keys,
- * so an archived record always carries when, why, and by whom, which is exactly
- * what the status picker cannot express (see `KINFOLK_STATUS_OPTIONS`).
- *
- * `archivedAt` is a client ISO instant, not `serverTimestamp()`, because the
- * Kotlin source writes `java.time.Instant.now().toString()`
- * (AuntieRepository.kt:1085). Matching it keeps one type on the field across
- * platforms; "fixing" it here unilaterally would be the type drift the
- * `updatedAt` comment above warns about, in the other direction.
- *
- * The reason is optional (the source's dialog labels it "Reason (optional)"), so
- * a blank reason writes a blank string rather than being refused.
- */
-export async function archiveKinfolk(kinfolkId: string, reason: string): Promise<void> {
-  const id = kinfolkId.trim();
-  if (id === '') throw new Error('archiveKinfolk requires a kinfolk id');
-
-  const auth = getAuthState();
-  const archivedBy = (auth.status === 'signedIn' ? auth.user.uid : '') || 'admin';
-
-  await updateDoc(doc(db, 'kinfolk', id), {
-    status: 'archived',
-    archivedAt: new Date().toISOString(),
-    archivedReason: reason.trim(),
-    archivedBy,
-    updatedAt: serverTimestamp(),
-  });
+/** What the `setKinfolkArchived` callable answers (`mytribe/functions/src/admin/kinfolkArchive.ts`). */
+export interface SetKinfolkArchivedResult {
+  ok: true;
+  archived: boolean;
+  /** The status now on `kinfolk/{id}`. */
+  status: string;
+  /** False when the household was already in the asked-for state. */
+  changed: boolean;
 }
 
 /**
- * Restore an archived household. Ports `AuntieRepository.kt:361-372`: back to
- * `active`, and the three archive fields cleared to "" rather than deleted, so
- * the shape of the document stays stable for the readers that expect them.
+ * #2161: what an archive or restore refused by the server says. The callable
+ * refuses everyone but the owner, and its own text is not for the operator.
  */
-export async function unarchiveKinfolk(kinfolkId: string): Promise<void> {
+export const KINFOLK_ARCHIVE_OWNER_ONLY = 'Only the owner can archive or restore a Kinfolk household.';
+
+function isPermissionDenied(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && (code === 'permission-denied' || code.endsWith('/permission-denied'));
+}
+
+async function setKinfolkArchived(id: string, archived: boolean, reason?: string): Promise<SetKinfolkArchivedResult> {
+  const payload = archived ? { kinfolkId: id, archived, reason: (reason ?? '').trim() } : { kinfolkId: id, archived };
+  try {
+    return await call<typeof payload, SetKinfolkArchivedResult>('setKinfolkArchived', payload);
+  } catch (err) {
+    if (isPermissionDenied(err)) throw new Error(KINFOLK_ARCHIVE_OWNER_ONLY);
+    throw err;
+  }
+}
+
+/**
+ * Archive a household: reversible, and it records WHY.
+ *
+ * #2161: through the owner-only `setKinfolkArchived` callable, never a direct
+ * write. The server sets `status`, `archivedAt`, `archivedReason` and
+ * `archivedBy`, and writes the `ARCHIVE_KINFOLK` Activity Log line, so this
+ * writes none of its own. The rules refuse a direct change to those fields.
+ *
+ * The reason is optional (the dialog labels it "Reason (optional)"), so a blank
+ * reason is sent as a blank string rather than being refused.
+ */
+export async function archiveKinfolk(kinfolkId: string, reason: string): Promise<SetKinfolkArchivedResult> {
+  const id = kinfolkId.trim();
+  if (id === '') throw new Error('archiveKinfolk requires a kinfolk id');
+  return setKinfolkArchived(id, true, reason);
+}
+
+/**
+ * Restore an archived household: back to `active`, the three archive fields
+ * cleared. #2161: through the same owner-only callable, which writes the
+ * `RESTORE_KINFOLK` Activity Log line.
+ */
+export async function unarchiveKinfolk(kinfolkId: string): Promise<SetKinfolkArchivedResult> {
   const id = kinfolkId.trim();
   if (id === '') throw new Error('unarchiveKinfolk requires a kinfolk id');
-
-  await updateDoc(doc(db, 'kinfolk', id), {
-    status: 'active',
-    archivedAt: '',
-    archivedReason: '',
-    archivedBy: '',
-    updatedAt: serverTimestamp(),
-  });
+  return setKinfolkArchived(id, false);
 }
