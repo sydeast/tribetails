@@ -136,6 +136,23 @@ describe('buildPlanFromRows', () => {
     ]);
   });
 
+  it('#2168: an archived draft is abandoned work, so its visits are reported and not marked billed', () => {
+    const plan = buildPlanFromRows(
+      [
+        { id: 'd1', data: { status: 'draft', archivedAt: '2026-11-01T00:00:00Z', sessionIds: ['s1'], lineItems: [line('s1')] } },
+        // A restored draft carries archivedAt: null and is repaired as usual.
+        { id: 'd2', data: { status: 'draft', archivedAt: null, sessionIds: ['s2'], lineItems: [line('s2')] } },
+        // An archived invoice that was sent did bill its visit.
+        { id: 'o1', data: { status: 'open', archivedAt: '2026-11-01T00:00:00Z', sessionIds: ['s3'], lineItems: [line('s3')] } },
+      ],
+      [{ id: 's1', data: visit() }, { id: 's2', data: visit() }, { id: 's3', data: visit() }],
+    );
+    expect(plan.backlinks).toEqual([
+      { sessionId: 's2', invoiceId: 'd2' },
+      { sessionId: 's3', invoiceId: 'o1' },
+    ]);
+    expect(plan.findings).toEqual([{ kind: 'held_by_archived_draft', sessionId: 's1', invoiceId: 'd1' }]);
+  });
   it('is idempotent: the plan after applying is empty', () => {
     const invoices = [{ id: 'inv1', data: { status: 'draft', sessionIds: ['s1'], lineItems: [line('s1'), line('s2')] } }];
     const sessions = [{ id: 's1', data: visit() }, { id: 's2', data: visit() }];
