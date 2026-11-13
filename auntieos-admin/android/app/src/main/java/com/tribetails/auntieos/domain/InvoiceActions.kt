@@ -255,6 +255,17 @@ fun invoiceActionsFor(state: InvoiceState?): List<InvoiceAction> = when (state) 
     // does not claim to understand.
     null -> emptyList()
 }
+
+/**
+ * #2168: what an invoice is offered once archiving is counted in. An archived
+ * invoice is read-only until restored (the server refuses to send, edit or
+ * link one, `invoice_archived`), so REVIEW_AND_SEND is never offered on it,
+ * from the list row or the detail screen. The collection actions are left as
+ * the state gives them: archiving does not stop a household paying.
+ */
+fun invoiceActionsOffered(state: InvoiceState?, archived: Boolean): List<InvoiceAction> =
+    invoiceActionsFor(state).let { if (archived) it - InvoiceAction.REVIEW_AND_SEND else it }
+
 /**
  * What has been collected against an invoice, and what is left, in integer
  * cents. Null when the invoice is not part-paid.

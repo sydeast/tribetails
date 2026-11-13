@@ -42,6 +42,7 @@ import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.domain.InvoiceAction
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.invoiceActionsFor
+import com.tribetails.auntieos.domain.invoiceActionsOffered
 import com.tribetails.auntieos.domain.invoiceDisputeOrNull
 import com.tribetails.auntieos.domain.invoiceIsArchived
 import com.tribetails.auntieos.domain.invoiceIsOverdue
@@ -904,7 +905,8 @@ private fun InvoiceRow(
             }
             Spacer(Modifier.weight(1f))
             RowAction(
-                actions = invoiceActionsFor(state),
+                // #2168: an archived draft's row offers no Review & send.
+                actions = invoiceActionsOffered(state, com.tribetails.auntieos.domain.invoiceIsArchived(invoice)),
                 onReceipt = { onReceipt(invoice) },
                 onSendReminder = { onSendReminder(invoice) },
                 onSendDraft = { onSendDraft(invoice) },

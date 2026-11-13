@@ -159,7 +159,23 @@ class InvoiceArchiveViewModelTest {
         viewModel.promptArchive()
         viewModel.confirmArchive(false)
         advanceUntilIdle()
-        assertEquals("Invoice restored to the working list. $notice", viewModel.uiState.value.toastMessage)
+        // A lasting warning, not the 4-second toast (#2168 review).
+        assertEquals("Invoice restored to the working list. $notice", viewModel.uiState.value.restoreNotice)
+        assertFalse(viewModel.uiState.value.toastVisible)
+        viewModel.dismissRestoreNotice()
+        assertEquals(null, viewModel.uiState.value.restoreNotice)
+    }
+
+    @Test
+    fun `#2168 a plain restore is a toast and leaves no lasting notice`() = runTest {
+        loadInvoice(archivedInvoice())
+        coEvery { invoiceRepository.unarchiveInvoice("i1") } returns Result.success("")
+        viewModel.promptArchive()
+        viewModel.confirmArchive(false)
+        advanceUntilIdle()
+        assertEquals(null, viewModel.uiState.value.restoreNotice)
+        assertTrue(viewModel.uiState.value.toastVisible)
+        assertEquals("Invoice restored to the working list.", viewModel.uiState.value.toastMessage)
     }
 
     @Test

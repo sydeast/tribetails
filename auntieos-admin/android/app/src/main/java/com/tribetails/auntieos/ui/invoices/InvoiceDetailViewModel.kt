@@ -53,6 +53,14 @@ data class InvoiceDetailUiState(
     val toastVisible: Boolean = false,
     val toastIsError: Boolean = false,
     /**
+     * #2168: a restore that could not take every visit back. Shown as a warning
+     * that stays until the operator dismisses it, like web's, because it says
+     * which line to remove before the draft can be sent, and a toast that
+     * vanishes after four seconds could not be read in full. Null otherwise; a
+     * plain restore is a toast.
+     */
+    val restoreNotice: String? = null,
+    /**
      * The invoice's DISPLAY ledger (spec 17 items 5/6): root `payments` rows
      * naming this invoice, as `getInvoiceLedger` returns them — every figure
      * already in INTEGER CENTS, resolved server-side.
@@ -886,12 +894,17 @@ class InvoiceDetailViewModel(
                         targetId         = invoice.id,
                         targetCollection = "invoices",
                     )
+                    val message = archiveSuccessMessage(restoring, force, released, notice)
+                    // #2168: visits a restore could not take back stay on screen
+                    // until dismissed; every other outcome is a toast.
+                    val lasting = restoring && notice.isNotBlank()
                     _uiState.value = _uiState.value.copy(
                         archiving = false,
                         archivePrompt = false,
                         archiveForceOffered = false,
-                        toastMessage = archiveSuccessMessage(restoring, force, released, notice),
-                        toastVisible = true,
+                        restoreNotice = if (lasting) message else null,
+                        toastMessage = if (lasting) "" else message,
+                        toastVisible = !lasting,
                         toastIsError = false,
                     )
                     // The doc changed, so the panel must re-read it or it would
@@ -1172,6 +1185,11 @@ class InvoiceDetailViewModel(
 
     fun dismissToast() {
         _uiState.value = _uiState.value.copy(toastVisible = false)
+    }
+
+    /** #2168: the operator closed the restore warning. */
+    fun dismissRestoreNotice() {
+        _uiState.value = _uiState.value.copy(restoreNotice = null)
     }
 }
 

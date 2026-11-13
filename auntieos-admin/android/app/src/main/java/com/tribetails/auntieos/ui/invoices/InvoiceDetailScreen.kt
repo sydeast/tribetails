@@ -55,7 +55,7 @@ import com.tribetails.auntieos.domain.invoiceEditScopeOf
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.QuoteDecision
 import com.tribetails.auntieos.domain.invoiceQuoteDecision
-import com.tribetails.auntieos.domain.invoiceActionsFor
+import com.tribetails.auntieos.domain.invoiceActionsOffered
 import com.tribetails.auntieos.domain.invoiceIsOverdue
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.dollarsToCents
@@ -259,6 +259,28 @@ fun InvoiceDetailScreen(
                     kind      = if (uiState.toastIsError) ToastKind.Error else ToastKind.Success,
                     onDismiss = { viewModel.dismissToast() },
                 )
+            }
+
+            // #2168: a restore that could not take every visit back. It names
+            // the lines to remove before sending, so it stays until dismissed,
+            // as web's warning does. Keyed by its text so a second restore's
+            // notice is shown even after the first was closed.
+            uiState.restoreNotice?.let { notice ->
+                item(key = "restore-notice") {
+                    androidx.compose.runtime.key(notice) {
+                        AuntieBanner(
+                            tone      = AuntieBannerTone.Warning,
+                            title     = "Done, but not all of it",
+                            onDismiss = { viewModel.dismissRestoreNotice() },
+                        ) {
+                            Text(
+                                text  = notice,
+                                style = AuntieTheme.typography.bodySmall,
+                                color = AuntieTheme.colors.textDim,
+                            )
+                        }
+                    }
+                }
             }
 
             when {
@@ -466,11 +488,14 @@ private fun invoiceDetailBody(
     // changes the pill and the copy and leaves the action set alone. That is
     // what keeps "Record payment" available for collecting the rest.
     val partPaid = invoicePartPaid(invoice)
-    val actions  = invoiceActionsFor(state)
+    // #2168: an archived invoice is read-only until restored, so it offers no
+    // Review and send, no Edit and no Link sessions; Restore is the way back.
+    val archived = com.tribetails.auntieos.domain.invoiceIsArchived(invoice)
+    val actions  = invoiceActionsOffered(state, archived)
     // #1174: Edit is OFFERED per the STORED editScope, as on web: `none`
     // offers nothing, `metadataOnly` and `all` open the editor. The server is
     // the enforcement and its refusal is shown verbatim in the form.
-    val canEditInvoice = invoiceEditScopeOf(invoice) != InvoiceEditScope.NONE
+    val canEditInvoice = invoiceEditScopeOf(invoice) != InvoiceEditScope.NONE && !archived
 
     // ── Header status bar (accent-tinted full-width) ────────────────────────────
     item {
@@ -999,6 +1024,7 @@ private fun invoiceDetailBody(
             linkedSessions  = linkedSessions,
             sessionsLoading = sessionsLoading,
             onOpenEdit      = onOpenEdit,
+            canLink         = !archived,
         )
     }
 }
@@ -1227,6 +1253,8 @@ private fun LinkedSessionsSection(
     linkedSessions: List<KinCareSession>,
     sessionsLoading: Boolean,
     onOpenEdit: () -> Unit,
+    /** #2168: false on an archived invoice, which links nothing until restored. */
+    canLink: Boolean = true,
 ) {
     val c = AuntieTheme.colors
     val attributionLabel = when (invoice.attribution) {
@@ -1245,12 +1273,14 @@ private fun LinkedSessionsSection(
                 if (attributionLabel != null) {
                     AuntieChip(label = attributionLabel, selected = true, onClick = {})
                 }
-                AuntieIconButton(
-                    icon               = Lucide.Pencil,
-                    contentDescription = "Edit linked sessions",
-                    onClick            = onOpenEdit,
-                    size               = 30.dp,
-                )
+                if (canLink) {
+                    AuntieIconButton(
+                        icon               = Lucide.Pencil,
+                        contentDescription = "Edit linked sessions",
+                        onClick            = onOpenEdit,
+                        size               = 30.dp,
+                    )
+                }
             }
         },
     ) {
@@ -1274,11 +1304,13 @@ private fun LinkedSessionsSection(
 
             linkedSessions.isEmpty() -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 EmptyHint("No linked sessions yet.")
-                GhostButton(
-                    label   = "Link sessions",
-                    onClick = onOpenEdit,
-                    leading = { Icon(Lucide.Link, contentDescription = null, modifier = Modifier.size(14.dp)) },
-                )
+                if (canLink) {
+                    GhostButton(
+                        label   = "Link sessions",
+                        onClick = onOpenEdit,
+                        leading = { Icon(Lucide.Link, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                    )
+                }
             }
 
             else -> Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
