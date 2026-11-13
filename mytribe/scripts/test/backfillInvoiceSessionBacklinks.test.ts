@@ -153,6 +153,19 @@ describe('buildPlanFromRows', () => {
     ]);
     expect(plan.findings).toEqual([{ kind: 'held_by_archived_draft', sessionId: 's1', invoiceId: 'd1' }]);
   });
+
+  it('#2168: an archived draft is no claimant, so a visit billed since by another invoice is that invoice\'s alone', () => {
+    const plan = buildPlanFromRows(
+      [
+        // Archived after #2168: its set emptied, its line still names the visit.
+        { id: 'd1', data: { status: 'draft', archivedAt: '2026-11-01T00:00:00Z', sessionIds: [], releasedSessionIds: ['s1'], lineItems: [line('s1')] } },
+        { id: 'inv2', data: { status: 'open', sessionIds: ['s1'], lineItems: [line('s1')] } },
+      ],
+      [{ id: 's1', data: visit({ invoiceId: 'inv2' }) }],
+    );
+    expect(plan).toMatchObject({ backlinks: [], invoiceSets: [], findings: [] });
+  });
+
   it('is idempotent: the plan after applying is empty', () => {
     const invoices = [{ id: 'inv1', data: { status: 'draft', sessionIds: ['s1'], lineItems: [line('s1'), line('s2')] } }];
     const sessions = [{ id: 's1', data: visit() }, { id: 's2', data: visit() }];

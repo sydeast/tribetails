@@ -645,6 +645,24 @@ interface EditDraft {
   moneyEditable: boolean;
 }
 
+/**
+ * The confirmation once an invoice is archived. #2168: an archived draft lets
+ * go of its visits, and the message says they are back on the un-invoiced list.
+ * Same words as Android.
+ */
+export function archiveNoticeText(force: boolean, released: number): string {
+  const base = force ? 'Invoice archived, and the balance written off the outstanding total.' : 'Invoice archived.';
+  if (released === 0) return base;
+  return released === 1
+    ? `${base} Its visit is back on the un-invoiced list.`
+    : `${base} Its ${String(released)} visits are back on the un-invoiced list.`;
+}
+
+/** The confirmation once an invoice is restored, with the server's #2168 sentence when a visit could not come back. */
+export function restoreNoticeText(notice: string): string {
+  return notice === '' ? 'Invoice restored to the working list.' : `Invoice restored to the working list. ${notice}`;
+}
+
 /** Which way the archive confirm is pointing, and whether money is at stake. */
 interface ArchivePrompt {
   direction: 'archive' | 'restore';
@@ -1137,17 +1155,15 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     setActionError(null);
     try {
       if (archivePrompt.direction === 'restore') {
-        await unarchiveInvoice(invoice._id);
-        setNoticeIncomplete(false);
-        setNotice('Invoice restored to the working list.');
+        const { notice } = await unarchiveInvoice(invoice._id);
+        // #2168: a visit another invoice billed while this draft was archived
+        // stays there, and the server's sentence says which.
+        setNoticeIncomplete(notice !== '');
+        setNotice(restoreNoticeText(notice));
       } else {
-        await archiveInvoice(invoice._id, force);
+        const { releasedSessionIds } = await archiveInvoice(invoice._id, force);
         setNoticeIncomplete(false);
-        setNotice(
-          force
-            ? 'Invoice archived, and the balance written off the outstanding total.'
-            : 'Invoice archived.',
-        );
+        setNotice(archiveNoticeText(force, releasedSessionIds.length));
       }
       setBusy(false);
       setArchivePrompt(null);

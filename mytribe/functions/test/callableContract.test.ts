@@ -975,8 +975,21 @@ const FROZEN_RESPONSE_SHAPES: Record<
   // channel was off for them.
   createInvoice: { load: () => import('../src/admin/createInvoice'), signature: ['appOnly', 'invoiceId', 'ok'] },
   createQuote: { load: () => import('../src/admin/createQuote'), signature: ['appOnly', 'invoiceId', 'ok'] },
-  archiveInvoice: { load: () => import('../src/admin/archiveInvoice'), signature: ['invoiceId', 'ok'] },
-  unarchiveInvoice: { load: () => import('../src/admin/unarchiveInvoice'), signature: ['invoiceId', 'ok'] },
+  // #2168: archiving a draft names the visits it let go; restoring one names
+  // the visits it took back and, in plain words, the ones it could not.
+  archiveInvoice: { load: () => import('../src/admin/archiveInvoice'), signature: ['invoiceId', 'ok', 'releasedSessionIds[]'] },
+  unarchiveInvoice: {
+    load: () => import('../src/admin/unarchiveInvoice'),
+    signature: [
+      'invoiceId',
+      'notReclaimed[].invoiceNumber',
+      'notReclaimed[].reason',
+      'notReclaimed[].sessionId',
+      'notice',
+      'ok',
+      'reclaimedSessionIds[]',
+    ],
+  },
   retryInvoiceCheckoutClose: {
     load: () => import('../src/admin/retryInvoiceCheckoutClose'),
     signature: ['closedCount', 'failedCount', 'invoiceId', 'ok'],

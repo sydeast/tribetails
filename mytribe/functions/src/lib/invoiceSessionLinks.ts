@@ -218,3 +218,140 @@ export function stageSessionLinks(
     );
   }
 }
+
+// ── #2168: archiving a draft lets go of its visits; restoring takes them back ──
+/**
+ * The visits an invoice would bill: its stored `sessionIds`, the visits its
+ * lines are bound to, and (for an archived draft) the ones archiving let go,
+ * in that order, each once.
+ */
+export function visitsNamedBy(data: Record<string, unknown>): string[] {
+  const released = Array.isArray(data['releasedSessionIds'])
+    ? (data['releasedSessionIds'] as unknown[]).filter((s): s is string => typeof s === 'string' && s.trim() !== '')
+    : [];
+  return Array.from(new Set([...storedSessionIds(data), ...boundSessionIds(data['lineItems']), ...released]));
+}
+
+/**
+ * The READ half of archiving a draft. Archiving is how an unwanted draft is
+ * abandoned (there is no delete), so the visits it holds go back on the
+ * un-invoiced list. Only a visit whose back-link names THIS draft is let go: a
+ * visit another invoice bills is that invoice's, and a blank one has nothing
+ * to clear. Pass the plan to `stageSessionLinks`.
+ */
+export async function readSessionsHeldBy(
+  tx: Transaction,
+  firestore: Firestore,
+  invoiceId: string,
+  candidates: readonly string[],
+): Promise<SessionLinkPlan> {
+  const ids = Array.from(new Set(candidates));
+  const snaps = await Promise.all(ids.map((id) => tx.get(firestore.collection('kin_care_sessions').doc(id))));
+
+  const release: string[] = [];
+
+  snaps.forEach((snap, i) => {
+    if (!snap.exists) return;
+    const owner = (snap.data() as Record<string, unknown> | undefined)?.['invoiceId'];
+    if (isSessionClaimed(owner) && String(owner).trim() === invoiceId) release.push(ids[i]);
+  });
+
+  return { invoiceId, claim: [], release };
+}
+
+/** A visit a restored draft could not take back, and why. */
+export interface ReclaimLoss {
+  sessionId: string;
+  /** `on_other_invoice`: billed since by another invoice. `cancelled`: the visit was cancelled. `not_found`: no record. */
+  reason: 'on_other_invoice' | 'cancelled' | 'not_found';
+  /** The other invoice's number (its id when it has none), or '' for the other reasons. */
+  invoiceNumber: string;
+}
+
+export interface SessionReclaim {
+  plan: SessionLinkPlan;
+  lost: ReclaimLoss[];
+  /** What the clients show after the restore, in plain words. '' when every visit came back. */
+  notice: string;
+}
+
+/**
+ * The READ half of restoring an archived draft. It takes back every visit it
+ * names that is still free (or still names it), and NEVER takes one another
+ * invoice has billed since: that would bill the same work twice. Each visit is
+ * read inside `tx`, so a New invoice save racing the restore for one visit is
+ * refereed by Firestore: whichever commits second re-runs and sees the other's
+ * claim. Nothing is refused: the restore goes ahead, and `notice` names each
+ * visit it could not take back, by its day, never its id.
+ */
+export async function readSessionReclaim(
+  tx: Transaction,
+  firestore: Firestore,
+  invoiceId: string,
+  candidates: readonly string[],
+  lines: unknown,
+): Promise<SessionReclaim> {
+  const ids = Array.from(new Set(candidates));
+  const snaps = await Promise.all(ids.map((id) => tx.get(firestore.collection('kin_care_sessions').doc(id))));
+  const claim: string[] = [];
+  const lost: Array<ReclaimLoss & { data: Record<string, unknown> | undefined }> = [];
+
+  snaps.forEach((snap, i) => {
+    const sid = ids[i];
+    if (!snap.exists) {
+      lost.push({ sessionId: sid, reason: 'not_found', invoiceNumber: '', data: undefined });
+      return;
+    }
+    const data = (snap.data() ?? {}) as Record<string, unknown>;
+    const owner = isSessionClaimed(data['invoiceId']) ? String(data['invoiceId']).trim() : '';
+    if (owner !== '' && owner !== invoiceId) {
+      lost.push({ sessionId: sid, reason: 'on_other_invoice', invoiceNumber: owner, data });
+      return;
+    }
+    // A visit that still names this draft is already its own; only a free one
+    // is checked for having been cancelled since.
+    if (owner === '' && isSessionCancelled(data['status'])) {
+      lost.push({ sessionId: sid, reason: 'cancelled', invoiceNumber: '', data });
+      return;
+    }
+    claim.push(sid);
+  });
+
+  const others = Array.from(new Set(lost.filter((l) => l.reason === 'on_other_invoice').map((l) => l.invoiceNumber)));
+  const otherSnaps = await Promise.all(others.map((id) => tx.get(firestore.collection('invoices').doc(id))));
+  const numberOf = new Map<string, string>();
+  otherSnaps.forEach((snap, i) => {
+    const n = snap.exists ? (snap.data() as { invoiceNumber?: unknown } | undefined)?.invoiceNumber : undefined;
+    numberOf.set(others[i], typeof n === 'string' && n.trim() !== '' ? n.trim() : others[i]);
+  });
+  for (const l of lost) if (l.reason === 'on_other_invoice') l.invoiceNumber = numberOf.get(l.invoiceNumber) ?? l.invoiceNumber;
+
+  let notice = '';
+  if (lost.length > 0) {
+    const parts = lost.map((l) =>
+      l.reason === 'on_other_invoice'
+        ? `${visitWords(l.data)} is now on invoice ${l.invoiceNumber}`
+        : l.reason === 'cancelled'
+          ? `${visitWords(l.data)} was cancelled`
+          : 'one visit no longer has a record',
+    );
+    const bound = new Set(boundSessionIds(lines));
+    const onLines = lost.filter((l) => bound.has(l.sessionId)).length;
+    const one = lost.length === 1;
+    notice =
+      `${one ? '1 visit' : `${lost.length} visits`} could not be taken back: ${parts.join('; ')}.` +
+      (onLines === 0
+        ? ''
+        : onLines === 1
+          ? one
+            ? ' Its line is still on this draft, so remove it in Edit before sending the draft.'
+            : ' The line for one of them is still on this draft, so remove it in Edit before sending the draft.'
+          : ' Their lines are still on this draft, so remove them in Edit before sending the draft.');
+  }
+
+  return {
+    plan: { invoiceId, claim, release: [] },
+    lost: lost.map(({ sessionId, reason, invoiceNumber }) => ({ sessionId, reason, invoiceNumber })),
+    notice,
+  };
+}

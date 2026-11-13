@@ -212,6 +212,7 @@ data class ArchiveInvoiceArgs(
 data class ArchiveInvoiceResult(
     val ok: Boolean,
     val invoiceId: String,
+    val releasedSessionIds: List<String>,
 )
 
 /**
@@ -223,6 +224,7 @@ internal fun decodeArchiveInvoiceResult(raw: Map<String, Any?>?): ArchiveInvoice
     ArchiveInvoiceResult(
         ok = raw?.get("ok") as? Boolean ?: false,
         invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        releasedSessionIds = (raw?.get("releasedSessionIds") as? List<*>).orEmpty().mapNotNull { it as? String },
     )
 
 // ---------- createInvoice ----------
@@ -2226,10 +2228,33 @@ data class UnarchiveInvoiceArgs(
     }
 }
 
+/** Nested in the `unarchiveInvoice` contract. */
+data class UnarchiveInvoiceResultNotReclaimed(
+    val sessionId: String,
+    /** One of `on_other_invoice`, `cancelled`, `not_found`. `""` when the payload omits it. */
+    val reason: String,
+    val invoiceNumber: String,
+)
+
+/**
+ * Fail-soft decode of `UnarchiveInvoiceResultNotReclaimed` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeUnarchiveInvoiceResultNotReclaimed(raw: Map<String, Any?>?): UnarchiveInvoiceResultNotReclaimed =
+    UnarchiveInvoiceResultNotReclaimed(
+        sessionId = (raw?.get("sessionId") as? String).orEmpty(),
+        reason = (raw?.get("reason") as? String).orEmpty(),
+        invoiceNumber = (raw?.get("invoiceNumber") as? String).orEmpty(),
+    )
+
 /** Response from the `unarchiveInvoice` callable. */
 data class UnarchiveInvoiceResult(
     val ok: Boolean,
     val invoiceId: String,
+    val reclaimedSessionIds: List<String>,
+    val notReclaimed: List<UnarchiveInvoiceResultNotReclaimed>,
+    val notice: String,
 )
 
 /**
@@ -2241,6 +2266,9 @@ internal fun decodeUnarchiveInvoiceResult(raw: Map<String, Any?>?): UnarchiveInv
     UnarchiveInvoiceResult(
         ok = raw?.get("ok") as? Boolean ?: false,
         invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        reclaimedSessionIds = (raw?.get("reclaimedSessionIds") as? List<*>).orEmpty().mapNotNull { it as? String },
+        notReclaimed = (raw?.get("notReclaimed") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeUnarchiveInvoiceResultNotReclaimed(nested) } },
+        notice = (raw?.get("notice") as? String).orEmpty(),
     )
 
 // ---------- updateInvoice ----------

@@ -867,13 +867,15 @@ class InvoiceDetailViewModel(
         val restoring = com.tribetails.auntieos.domain.invoiceIsArchived(invoice)
         _uiState.value = _uiState.value.copy(archiving = true)
         viewModelScope.launch {
-            val outcome = if (restoring) {
-                invoiceRepository.unarchiveInvoice(invoice.id)
+            // #2168: (visits an archived draft let go, the restore's sentence
+            // about visits it could not take back).
+            val outcome: Result<Pair<Int, String>> = if (restoring) {
+                invoiceRepository.unarchiveInvoice(invoice.id).map { 0 to it }
             } else {
-                invoiceRepository.archiveInvoice(invoice.id, force)
+                invoiceRepository.archiveInvoice(invoice.id, force).map { it to "" }
             }
             outcome
-                .onSuccess {
+                .onSuccess { (released, notice) ->
                     com.tribetails.auntieos.data.admin.AuditLog.fire(
                         scope            = viewModelScope,
                         repository       = repository,
@@ -888,7 +890,7 @@ class InvoiceDetailViewModel(
                         archiving = false,
                         archivePrompt = false,
                         archiveForceOffered = false,
-                        toastMessage = archiveSuccessMessage(restoring, force),
+                        toastMessage = archiveSuccessMessage(restoring, force, released, notice),
                         toastVisible = true,
                         toastIsError = false,
                     )
@@ -1368,10 +1370,23 @@ internal fun archiveRefusedForMoneyOwed(message: String): Boolean =
  * same bland success as an ordinary one. The operator has just written a real
  * balance off the outstanding total and nothing will chase it again.
  */
-internal fun archiveSuccessMessage(restoring: Boolean, force: Boolean): String = when {
-    restoring -> "Invoice restored to the working list."
-    force -> "Invoice archived, and the balance written off the outstanding total."
-    else -> "Invoice archived."
+internal fun archiveSuccessMessage(
+    restoring: Boolean,
+    force: Boolean,
+    /** #2168: visits an archived draft put back on the un-invoiced list. */
+    released: Int = 0,
+    /** #2168: the server's sentence about visits a restored draft could not take back. */
+    notice: String = "",
+): String {
+    if (restoring) {
+        return if (notice.isBlank()) "Invoice restored to the working list." else "Invoice restored to the working list. $notice"
+    }
+    val base = if (force) "Invoice archived, and the balance written off the outstanding total." else "Invoice archived."
+    return when {
+        released <= 0 -> base
+        released == 1 -> "$base Its visit is back on the un-invoiced list."
+        else -> "$base Its $released visits are back on the un-invoiced list."
+    }
 }
 /**
  * WHAT THE SERVER SAYS HAPPENED, in the operator's words. Pure; unit-tested.

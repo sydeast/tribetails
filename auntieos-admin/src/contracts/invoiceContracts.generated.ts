@@ -106,6 +106,7 @@ export interface ArchiveInvoiceArgs {
 export interface ArchiveInvoiceResult {
   ok: true;
   invoiceId: string;
+  releasedSessionIds: string[];
 }
 
 // ---------- createInvoice ----------
@@ -1111,11 +1112,23 @@ export interface UnarchiveInvoiceArgs {
 }
 
 /**
+ * Nested in the `unarchiveInvoice` contract.
+ */
+export interface UnarchiveInvoiceResultNotReclaimed {
+  sessionId: string;
+  reason: 'on_other_invoice' | 'cancelled' | 'not_found';
+  invoiceNumber: string;
+}
+
+/**
  * Response from the `unarchiveInvoice` callable.
  */
 export interface UnarchiveInvoiceResult {
   ok: true;
   invoiceId: string;
+  reclaimedSessionIds: string[];
+  notReclaimed: UnarchiveInvoiceResultNotReclaimed[];
+  notice: string;
 }
 
 // ---------- updateInvoice ----------

@@ -124,7 +124,13 @@ vi.mock('../api/invoiceSendCheck', () => ({ readInvoiceSendMarks }));
 vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
 }));
-import { InvoiceDetail, paymentSplit, parseOptionalMoney } from './InvoiceDetail';
+import {
+  InvoiceDetail,
+  archiveNoticeText,
+  paymentSplit,
+  parseOptionalMoney,
+  restoreNoticeText,
+} from './InvoiceDetail';
 import { CallableTimeoutError } from '../lib/fns';
 import { sendMarksOf } from '../lib/invoiceSendCheck';
 import { formatUsd } from '../lib/invoiceFormat';
@@ -305,8 +311,8 @@ beforeEach(() => {
   updateInvoice.mockReset().mockResolvedValue({
     subtotalCents: 0, totalCents: 0, paidCents: 0, amountDueCents: 0,
   });
-  archiveInvoice.mockReset().mockResolvedValue(undefined);
-  unarchiveInvoice.mockReset().mockResolvedValue(undefined);
+  archiveInvoice.mockReset().mockResolvedValue({ releasedSessionIds: [] });
+  unarchiveInvoice.mockReset().mockResolvedValue({ notice: '' });
   retryInvoiceCheckoutClose.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv1', closedCount: 1, failedCount: 0 });
   getInvoiceLedger.mockReset().mockResolvedValue(ledgerResult());
   linkInvoiceSessions.mockReset();
@@ -1262,6 +1268,29 @@ describe('InvoiceDetail archive and restore', () => {
     await userEvent.click(screen.getByRole('button', { name: /^restore$/i }));
     await userEvent.click(screen.getByRole('button', { name: /restore invoice/i }));
     await waitFor(() => expect(unarchiveInvoice).toHaveBeenCalledWith('inv1'));
+  });
+
+  it('#2168: archiving a draft says its visits are back on the un-invoiced list', async () => {
+    archiveInvoice.mockResolvedValueOnce({ releasedSessionIds: ['s1', 's2'] });
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /archive invoice/i }));
+    expect(await screen.findByText('Invoice archived. Its 2 visits are back on the un-invoiced list.')).toBeInTheDocument();
+  });
+  it('#2168: a restore that could not take a visit back says which, as a warning', async () => {
+    const notice =
+      '1 visit could not be taken back: the visit on 2026-06-02 is now on invoice 1042. Its line is still on this draft, so remove it in Edit before sending the draft.';
+    unarchiveInvoice.mockResolvedValueOnce({ notice });
+    render(<InvoiceDetail invoice={entry({ archivedAt: fakeTs('2026-07-20T00:00:00Z') })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^restore$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /restore invoice/i }));
+    expect(await screen.findByText(`Invoice restored to the working list. ${notice}`)).toBeInTheDocument();
+  });
+  it('#2168: the archive and restore messages, in the same words as Android', () => {
+    expect(archiveNoticeText(false, 0)).toBe('Invoice archived.');
+    expect(archiveNoticeText(false, 1)).toBe('Invoice archived. Its visit is back on the un-invoiced list.');
+    expect(archiveNoticeText(true, 0)).toBe('Invoice archived, and the balance written off the outstanding total.');
+    expect(restoreNoticeText('')).toBe('Invoice restored to the working list.');
   });
 
   // #406: this Archived notice used to have no close button at all — the

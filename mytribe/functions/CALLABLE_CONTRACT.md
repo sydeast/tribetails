@@ -938,7 +938,7 @@ handler until ADR-0001 codegen replaces the hand-mirror).
 
 ### archiveInvoice
 - req `{ invoiceId: string /* 1..200 */, force?: boolean }`
-- res `{ ok: true, invoiceId: string }`
+- res `{ ok: true, invoiceId: string, releasedSessionIds: string[] }`
 - Stamps `archivedAt` (serverTimestamp) + `archivedBy`. Archiving is NOT deletion
   and NOT cancellation: every field survives, and the kinfolk portal is unaffected.
   It means the operator has stopped working the invoice, so it drops out of the
@@ -949,6 +949,28 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   anyone). `force: true` overrides and is audited at `warn` with `forced: true`,
   since it is a decision to write off real money.
 - `failed-precondition` / `invoice_already_archived` rather than restamping.
+- #2168: ARCHIVING A DRAFT LETS GO OF ITS VISITS. One transaction: every visit
+  the draft names (`sessionIds`, its lines' `sessionId`) whose `invoiceId` is this
+  draft gets `invoiceId: ''` (`_attribution: 'manual_unlink'`) and is back on the
+  un-invoiced list; the draft's `sessionIds` becomes `[]` and the set it had is
+  kept in `releasedSessionIds`. Lines are untouched. `releasedSessionIds` in the
+  response names the visits let go. Any other state (sent, paid, quote) keeps
+  its visits and answers `[]`.
+
+### unarchiveInvoice
+- req `{ invoiceId: string /* 1..200 */ }`
+- res `{ ok: true, invoiceId: string, reclaimedSessionIds: string[], notReclaimed: { sessionId: string, reason: 'on_other_invoice'|'cancelled'|'not_found', invoiceNumber: string }[], notice: string }`
+- Writes `archivedAt: null`, `archivedBy: null`. `failed-precondition` /
+  `invoice_not_archived` when it was not archived.
+- #2168: RESTORING A DRAFT TAKES BACK ONLY THE FREE VISITS. One transaction,
+  every visit read in it: a visit the draft names (`releasedSessionIds`,
+  `sessionIds`, its lines) that is unclaimed or still names it is claimed again
+  and becomes the draft's `sessionIds`; one another invoice has billed since
+  (`on_other_invoice`, with that invoice's number), one cancelled since, or one
+  with no record is left where it is and listed in `notReclaimed`. `notice` says
+  those in plain words, by day, never by id, for every client to show ('' when
+  every visit came back). Never refused for this. Any other state touches no
+  visit.
 
 ### retryInvoiceCheckoutClose (#1113)
 - req `{ invoiceId: string /* 1..200 */ }`

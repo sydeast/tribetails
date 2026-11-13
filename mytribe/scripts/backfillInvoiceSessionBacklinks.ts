@@ -18,9 +18,12 @@
  *   - the invoice is not a quote and not cancelled (a quote's hold on a visit
  *     is an open question, and a cancelled invoice bills nothing);
  *   - the invoice is not an ARCHIVED DRAFT. Archiving is how a draft is
- *     abandoned, and marking its visits would keep them off New invoice for
- *     good (#2168). An archived invoice that was sent did bill its visits, so
- *     it is repaired like any other.
+ *     abandoned, and since #2168 archiving a draft lets go of its visits, so
+ *     marking them would undo that. An archived draft is never counted as a
+ *     claimant (a visit it named and another invoice billed since is not a
+ *     dispute); a visit only an archived draft names is reported. An archived
+ *     invoice that was sent did bill its visits, so it is repaired like any
+ *     other.
  *
  * When that line's visit is missing from the invoice's own `sessionIds`, the
  * id is added there too, so the two sides name each other.
@@ -195,7 +198,19 @@ export function buildPlanFromRows(invoices: Row[], sessions: Row[]): Plan {
   };
   const setAdds = new Map<string, string[]>();
 
-  for (const [sid, list] of [...claims.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+  for (const [sid, all] of [...claims.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    // #2168: an archived draft was abandoned, not sent, and let go of its
+    // visits. It is not a claimant; a visit nothing else names is reported.
+    const list = all.filter((c) => !(c.state === 'draft' && c.archived));
+    if (list.length === 0) {
+      const visit = sessionById.get(sid);
+      const backlink = visit && isSessionClaimed(visit['invoiceId']) ? String(visit['invoiceId']).trim() : '';
+      const named = all[0]!.invoiceId;
+      if (visit !== undefined && (backlink === '' || backlink === named)) {
+        plan.findings.push({ kind: 'held_by_archived_draft', sessionId: sid, invoiceId: named });
+      }
+      continue;
+    }
     if (list.length > 1) {
       plan.findings.push({ kind: 'multiple_claimants', sessionId: sid, invoiceIds: list.map((c) => c.invoiceId).sort() });
       continue;
@@ -213,12 +228,6 @@ export function buildPlanFromRows(invoices: Row[], sessions: Row[]): Plan {
     }
     if (claim.state === 'quote' || claim.state === 'cancelled') {
       plan.findings.push({ kind: 'held_by_quote_or_cancelled', sessionId: sid, invoiceId: claim.invoiceId, state: claim.state });
-      continue;
-    }
-    // #2168: an archived draft was abandoned, not sent. Its visits are left
-    // for the operator; marking them would hide them from New invoice.
-    if (claim.state === 'draft' && claim.archived) {
-      if (backlink === '') plan.findings.push({ kind: 'held_by_archived_draft', sessionId: sid, invoiceId: claim.invoiceId });
       continue;
     }
     if (isSessionCancelled(visit['status'])) {
@@ -268,7 +277,7 @@ const FINDING_WORDS: Record<Finding['kind'], string> = {
   missing_session: 'invoice names a visit with no record',
   cancelled_session: 'invoice bills a cancelled visit',
   held_by_quote_or_cancelled: 'held by a quote or a cancelled invoice',
-  held_by_archived_draft: 'named by an archived draft, back-link blank, left unbilled',
+  held_by_archived_draft: 'named only by an archived draft, left for the operator',
 };
 
 export function reportLines(plan: Plan, applied: boolean): string[] {

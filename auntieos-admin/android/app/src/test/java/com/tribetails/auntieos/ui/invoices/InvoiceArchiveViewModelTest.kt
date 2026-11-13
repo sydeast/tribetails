@@ -79,7 +79,7 @@ class InvoiceArchiveViewModelTest {
     @Test
     fun `confirming archives without force`() = runTest {
         loadInvoice(openInvoice())
-        coEvery { invoiceRepository.archiveInvoice("i1", false) } returns Result.success(Unit)
+        coEvery { invoiceRepository.archiveInvoice("i1", false) } returns Result.success(0)
         viewModel.promptArchive()
         viewModel.confirmArchive(false)
         advanceUntilIdle()
@@ -107,7 +107,7 @@ class InvoiceArchiveViewModelTest {
     @Test
     fun `forcing takes a SECOND explicit press and says what was given up`() = runTest {
         loadInvoice(openInvoice())
-        coEvery { invoiceRepository.archiveInvoice("i1", true) } returns Result.success(Unit)
+        coEvery { invoiceRepository.archiveInvoice("i1", true) } returns Result.success(0)
         viewModel.promptArchive()
         viewModel.confirmArchive(true)
         advanceUntilIdle()
@@ -130,7 +130,7 @@ class InvoiceArchiveViewModelTest {
     @Test
     fun `an ARCHIVED invoice restores instead of archiving`() = runTest {
         loadInvoice(archivedInvoice())
-        coEvery { invoiceRepository.unarchiveInvoice("i1") } returns Result.success(Unit)
+        coEvery { invoiceRepository.unarchiveInvoice("i1") } returns Result.success("")
         viewModel.promptArchive()
         viewModel.confirmArchive(false)
         advanceUntilIdle()
@@ -140,12 +140,35 @@ class InvoiceArchiveViewModelTest {
     }
 
     @Test
+    fun `#2168 archiving a draft says its visits are back on the un-invoiced list`() = runTest {
+        loadInvoice(openInvoice())
+        coEvery { invoiceRepository.archiveInvoice("i1", false) } returns Result.success(2)
+        viewModel.promptArchive()
+        viewModel.confirmArchive(false)
+        advanceUntilIdle()
+        assertEquals("Invoice archived. Its 2 visits are back on the un-invoiced list.", viewModel.uiState.value.toastMessage)
+        assertFalse(viewModel.uiState.value.toastIsError)
+    }
+
+    @Test
+    fun `#2168 a restore that could not take a visit back says which`() = runTest {
+        loadInvoice(archivedInvoice())
+        val notice = "1 visit could not be taken back: the visit on 2026-06-02 is now on invoice 1042. " +
+            "Its line is still on this draft, so remove it in Edit before sending the draft."
+        coEvery { invoiceRepository.unarchiveInvoice("i1") } returns Result.success(notice)
+        viewModel.promptArchive()
+        viewModel.confirmArchive(false)
+        advanceUntilIdle()
+        assertEquals("Invoice restored to the working list. $notice", viewModel.uiState.value.toastMessage)
+    }
+
+    @Test
     fun `dismissing while a call is in flight does not close the prompt`() = runTest {
         loadInvoice(openInvoice())
         // Stubbed even though this test never advances to it: `runTest` drains
         // the scheduler on the way out, and a relaxed mockk hands back a bare
         // Object that cannot be cast to the Result the coroutine awaits.
-        coEvery { invoiceRepository.archiveInvoice("i1", false) } returns Result.success(Unit)
+        coEvery { invoiceRepository.archiveInvoice("i1", false) } returns Result.success(0)
         viewModel.promptArchive()
         viewModel.confirmArchive(false)
         // Still in flight: the dispatcher has not been advanced.
@@ -174,6 +197,9 @@ class InvoiceArchiveHelpersTest {
     @Test
     fun `a forced archive says what was actually given up`() {
         assertEquals("Invoice archived.", archiveSuccessMessage(restoring = false, force = false))
+        // #2168: the same words as admin web.
+        assertEquals("Invoice archived. Its visit is back on the un-invoiced list.", archiveSuccessMessage(false, false, released = 1))
+        assertEquals("Invoice restored to the working list.", archiveSuccessMessage(true, false, notice = ""))
         assertTrue(archiveSuccessMessage(restoring = false, force = true).contains("written off"))
         assertTrue(archiveSuccessMessage(restoring = true, force = false).contains("restored"))
     }

@@ -539,12 +539,17 @@ export async function resendQuote(invoiceId: string): Promise<ResendQuoteOutcome
  *
  * Re-archiving throws `invoice_already_archived` rather than succeeding
  * silently.
+ *
+ * #2168: archiving a DRAFT puts the visits it held back on the un-invoiced
+ * list; the answer names them. Empty for any other invoice, and empty from a
+ * server older than #2168, which does not send the list.
  */
-export async function archiveInvoice(invoiceId: string, force = false): Promise<void> {
-  await call<ArchiveInvoiceArgs, ArchiveInvoiceResult>('archiveInvoice', {
+export async function archiveInvoice(invoiceId: string, force = false): Promise<{ releasedSessionIds: string[] }> {
+  const res = await call<ArchiveInvoiceArgs, ArchiveInvoiceResult>('archiveInvoice', {
     invoiceId,
     ...(force ? { force: true } : {}),
   });
+  return { releasedSessionIds: Array.isArray(res?.releasedSessionIds) ? res.releasedSessionIds : [] };
 }
 
 /**
@@ -554,9 +559,15 @@ export async function archiveInvoice(invoiceId: string, force = false): Promise<
  * invoice carries the same shape a future backfill would give every legacy
  * invoice, and because `isArchivedInvoice` already reads null as "not archived".
  * Throws `failed-precondition` when the invoice was not archived to begin with.
+ *
+ * #2168: restoring a draft takes back the visits it let go, except any another
+ * invoice has billed since (or that was cancelled or is gone). `notice` names
+ * those in the server's words, '' when every visit came back or the server is
+ * older than #2168.
  */
-export async function unarchiveInvoice(invoiceId: string): Promise<void> {
-  await call<UnarchiveInvoiceArgs, UnarchiveInvoiceResult>('unarchiveInvoice', { invoiceId });
+export async function unarchiveInvoice(invoiceId: string): Promise<{ notice: string }> {
+  const res = await call<UnarchiveInvoiceArgs, UnarchiveInvoiceResult>('unarchiveInvoice', { invoiceId });
+  return { notice: typeof res?.notice === 'string' ? res.notice : '' };
 }
 
 /**

@@ -40,6 +40,8 @@ vi.mock('firebase-admin/firestore', async () => {
 import { createInvoiceHandler } from '../src/admin/createInvoice';
 import { updateInvoiceHandler } from '../src/admin/updateInvoice';
 import { linkInvoiceSessionsHandler } from '../src/admin/linkInvoiceSessions';
+import { archiveInvoiceHandler } from '../src/admin/archiveInvoice';
+import { unarchiveInvoiceHandler } from '../src/admin/unarchiveInvoice';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 import { isSessionBillable } from '../src/lib/sessionInvoicing';
 import { boundSessionIds, linkedWithoutLine } from '../src/lib/invoiceSessionLinks';
@@ -509,5 +511,194 @@ describe('lib/invoiceSessionLinks pure helpers', () => {
   it('linkedWithoutLine: linked ids no line is bound to', () => {
     expect(linkedWithoutLine(['a', 'b', 'c'], [{ sessionId: 'b' }])).toEqual(['a', 'c']);
     expect(linkedWithoutLine(['a'], undefined)).toEqual(['a']);
+  });
+});
+
+// ── Archive and restore a draft (#2168) ─────────────────────────────────────
+
+describe('#2168 archiving a draft lets go of its visits; restoring takes back only the free ones', () => {
+  const docOf = async (ctx: ReturnType<typeof buildDbMock>, path: string) =>
+    ((await ctx.db.doc(path).get()).data() ?? {}) as Record<string, unknown>;
+
+  /** A draft made in New invoice for s1 and s2, then archived. */
+  async function archivedDraft(extraDocs: Record<string, Record<string, unknown>> = {}) {
+    const ctx = buildDbMock({
+      docs: { 'kin_care_sessions/s1': visit(), 'kin_care_sessions/s2': visit(), ...extraDocs },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { invoiceId } = await createInvoiceHandler(req({ ...composerDraft(['s1', 's2']), idempotencyKey: 'inv_1700000002168_d' }));
+    const archived = await archiveInvoiceHandler(req({ invoiceId }));
+    return { ctx, invoiceId, archived };
+  }
+
+  it('archiving the draft puts its visits back on the un-invoiced list, in one transaction', async () => {
+    const { ctx, invoiceId, archived } = await archivedDraft();
+    expect(archived.releasedSessionIds).toEqual(['s1', 's2']);
+    for (const sid of ['s1', 's2']) {
+      const v = await docOf(ctx, `kin_care_sessions/${sid}`);
+      expect(v['invoiceId']).toBe('');
+      expect(v['_attribution']).toBe('manual_unlink');
+      expect(isSessionBillable(v)).toBe(true);
+    }
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['sessionIds']).toEqual([]);
+    expect(inv['releasedSessionIds']).toEqual(['s1', 's2']);
+    expect(inv['archivedAt']).toBe('__TS__');
+    // The lines are the draft's record of what it was for, and stay.
+    expect(boundSessionIds(inv['lineItems'])).toEqual(['s1', 's2']);
+  });
+
+  it('restoring it takes every visit back when none was billed since', async () => {
+    const { ctx, invoiceId } = await archivedDraft();
+    const res = await unarchiveInvoiceHandler(req({ invoiceId }));
+    expect(res).toMatchObject({ reclaimedSessionIds: ['s1', 's2'], notReclaimed: [], notice: '' });
+    for (const sid of ['s1', 's2']) expect((await docOf(ctx, `kin_care_sessions/${sid}`))['invoiceId']).toBe(invoiceId);
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['sessionIds']).toEqual(['s1', 's2']);
+    expect(inv['releasedSessionIds']).toEqual([]);
+    expect(inv['archivedAt']).toBeNull();
+  });
+
+  it('a visit billed by another invoice since stays there, and the restore says so in plain words', async () => {
+    const { ctx, invoiceId } = await archivedDraft();
+    const other = await createInvoiceHandler(req({ ...composerDraft(['s1']), idempotencyKey: 'inv_1700000002168_o' }));
+    const otherNumber = String((await docOf(ctx, `invoices/${other.invoiceId}`))['invoiceNumber']);
+
+    const res = await unarchiveInvoiceHandler(req({ invoiceId }));
+    expect(res.reclaimedSessionIds).toEqual(['s2']);
+    expect(res.notReclaimed).toEqual([{ sessionId: 's1', reason: 'on_other_invoice', invoiceNumber: otherNumber }]);
+    expect(res.notice).toBe(
+      `1 visit could not be taken back: the visit on 2026-06-02 is now on invoice ${otherNumber}. Its line is still on this draft, so remove it in Edit before sending the draft.`,
+    );
+    expect(res.notice).not.toContain('s1');
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(other.invoiceId);
+    expect((await docOf(ctx, 'kin_care_sessions/s2'))['invoiceId']).toBe(invoiceId);
+    expect((await docOf(ctx, `invoices/${invoiceId}`))['sessionIds']).toEqual(['s2']);
+  });
+
+  it('a visit cancelled since, or gone, is reported and not taken back', async () => {
+    const { ctx, invoiceId } = await archivedDraft();
+    await ctx.db.doc('kin_care_sessions/s1').set({ status: 'CANCELLED' }, { merge: true });
+    await ctx.db.doc('kin_care_sessions/s2').delete();
+    const res = await unarchiveInvoiceHandler(req({ invoiceId }));
+    expect(res.reclaimedSessionIds).toEqual([]);
+    expect(res.notReclaimed).toEqual([
+      { sessionId: 's1', reason: 'cancelled', invoiceNumber: '' },
+      { sessionId: 's2', reason: 'not_found', invoiceNumber: '' },
+    ]);
+    expect(res.notice).toBe(
+      '2 visits could not be taken back: the visit on 2026-06-02 was cancelled; one visit no longer has a record. Their lines are still on this draft, so remove them in Edit before sending the draft.',
+    );
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe('');
+  });
+
+  it('a restore racing a New invoice save for the same visit: exactly one invoice ends up billing it', async () => {
+    const { ctx, invoiceId } = await archivedDraft();
+    serializeTransactions(ctx);
+    const [restore, create] = await Promise.allSettled([
+      unarchiveInvoiceHandler(req({ invoiceId })),
+      createInvoiceHandler(req({ ...composerDraft(['s1']), idempotencyKey: 'inv_1700000002168_r' })),
+    ]);
+    // The restore never refuses: it reports what it could not take back.
+    expect(restore.status).toBe('fulfilled');
+    const restored = (restore as PromiseFulfilledResult<Awaited<ReturnType<typeof unarchiveInvoiceHandler>>>).value;
+    const owner = (await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId'];
+    const draftSet = (await docOf(ctx, `invoices/${invoiceId}`))['sessionIds'] as string[];
+    if (create.status === 'fulfilled') {
+      expect(owner).toBe(create.value.invoiceId);
+      expect(draftSet).not.toContain('s1');
+      expect(restored.notReclaimed.map((l) => l.sessionId)).toEqual(['s1']);
+    } else {
+      expect(create.reason).toMatchObject({ details: { code: 'session_on_other_invoice' } });
+      expect(owner).toBe(invoiceId);
+      expect(draftSet).toContain('s1');
+      expect((await ctx.db.doc('invoices/inv_1700000002168_r').get()).exists).toBe(false);
+    }
+  });
+
+  it('archiving a sent invoice keeps its visits: it billed them', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/inv9': { kinfolkId: 'fam1', invoiceNumber: '1009', status: 'paid', amountDue: 0, total: 45, sessionIds: ['s1'], lineItems: [line('s1')] },
+        'kin_care_sessions/s1': visit({ invoiceId: 'inv9' }),
+      },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await archiveInvoiceHandler(req({ invoiceId: 'inv9' }));
+    expect(res.releasedSessionIds).toEqual([]);
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe('inv9');
+    expect((await docOf(ctx, 'invoices/inv9'))['sessionIds']).toEqual(['s1']);
+    const back = await unarchiveInvoiceHandler(req({ invoiceId: 'inv9' }));
+    expect(back).toMatchObject({ reclaimedSessionIds: [], notReclaimed: [], notice: '' });
+    expect(ctx.writes.filter((w) => w.path === 'kin_care_sessions/s1')).toHaveLength(0);
+  });
+
+  it('a sent invoice still owing is still refused, and no visit moves', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/inv9': { kinfolkId: 'fam1', invoiceNumber: '1009', status: 'open', amountDue: 45, total: 45, sessionIds: ['s1'] },
+        'kin_care_sessions/s1': visit({ invoiceId: 'inv9' }),
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(archiveInvoiceHandler(req({ invoiceId: 'inv9' }))).rejects.toMatchObject({
+      details: { code: 'invoice_still_owing' },
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('archiving a draft leaves alone a visit another invoice bills', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/d1': { kinfolkId: 'fam1', invoiceNumber: '1010', status: 'draft', total: 90, amountDue: 90, sessionIds: ['s1', 's2'], lineItems: [line('s1'), line('s2')] },
+        'kin_care_sessions/s1': visit({ invoiceId: 'd1' }),
+        'kin_care_sessions/s2': visit({ invoiceId: 'invOther' }),
+      },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await archiveInvoiceHandler(req({ invoiceId: 'd1' }));
+    expect(res.releasedSessionIds).toEqual(['s1']);
+    expect((await docOf(ctx, 'kin_care_sessions/s2'))['invoiceId']).toBe('invOther');
+  });
+
+  it('a quote is not a draft: archiving it moves no visit (quote holds are #2156)', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/q1': { kinfolkId: 'fam1', invoiceNumber: '1011', status: 'quote', total: 45, amountDue: 45, sessionIds: ['s1'], lineItems: [line('s1')] },
+        'kin_care_sessions/s1': visit({ invoiceId: 'q1' }),
+      },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await archiveInvoiceHandler(req({ invoiceId: 'q1' }));
+    expect(res.releasedSessionIds).toEqual([]);
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe('q1');
+  });
+
+  it('a draft archived before #2168, still holding its visit, keeps it when restored', async () => {
+    // Archived by the old code: sessionIds kept, back-link kept, no releasedSessionIds.
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/d1': { kinfolkId: 'fam1', invoiceNumber: '1012', status: 'draft', total: 45, amountDue: 45, sessionIds: ['s1'], lineItems: [line('s1')], archivedAt: '__OLD__' },
+        'kin_care_sessions/s1': visit({ invoiceId: 'd1' }),
+      },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await unarchiveInvoiceHandler(req({ invoiceId: 'd1' }));
+    expect(res).toMatchObject({ reclaimedSessionIds: ['s1'], notReclaimed: [], notice: '' });
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe('d1');
+  });
+
+  it('archiving twice is still refused, and the second call moves nothing', async () => {
+    const { ctx, invoiceId } = await archivedDraft();
+    const before = ctx.writes.length;
+    await expect(archiveInvoiceHandler(req({ invoiceId }))).rejects.toMatchObject({
+      details: { code: 'invoice_already_archived' },
+    });
+    expect(ctx.writes.length).toBe(before);
   });
 });

@@ -441,14 +441,38 @@ const CASES: Array<{
   {
     name: 'archiveInvoice',
     schema: ArchiveInvoiceResult,
-    accepts: [['the archived id', { ok: true, invoiceId: 'inv1' }]],
-    refuses: [['a forced flag echoed back, which is a shape change', { ok: true, invoiceId: 'inv1', forced: true }]],
+    accepts: [
+      ['the archived id, nothing released', { ok: true, invoiceId: 'inv1', releasedSessionIds: [] }],
+      ['#2168: a draft that let go of two visits', { ok: true, invoiceId: 'inv1', releasedSessionIds: ['s1', 's2'] }],
+    ],
+    refuses: [
+      ['a forced flag echoed back, which is a shape change', { ok: true, invoiceId: 'inv1', releasedSessionIds: [], forced: true }],
+      ['#2168: the released list missing', { ok: true, invoiceId: 'inv1' }],
+    ],
   },
   {
     name: 'unarchiveInvoice',
     schema: UnarchiveInvoiceResult,
-    accepts: [['the restored id', { ok: true, invoiceId: 'inv1' }]],
-    refuses: [['a missing invoiceId', { ok: true }]],
+    accepts: [
+      ['the restored id, nothing to take back', { ok: true, invoiceId: 'inv1', reclaimedSessionIds: [], notReclaimed: [], notice: '' }],
+      [
+        '#2168: one visit taken back, one billed elsewhere since',
+        {
+          ok: true,
+          invoiceId: 'inv1',
+          reclaimedSessionIds: ['s2'],
+          notReclaimed: [{ sessionId: 's1', reason: 'on_other_invoice', invoiceNumber: '1042' }],
+          notice: '1 visit could not be taken back: the visit on 2026-06-02 is now on invoice 1042.',
+        },
+      ],
+    ],
+    refuses: [
+      ['a missing invoiceId', { ok: true, reclaimedSessionIds: [], notReclaimed: [], notice: '' }],
+      [
+        '#2168: a reason outside the three',
+        { ok: true, invoiceId: 'inv1', reclaimedSessionIds: [], notReclaimed: [{ sessionId: 's1', reason: 'stolen', invoiceNumber: '' }], notice: '' },
+      ],
+    ],
   },
   {
     name: 'retryInvoiceCheckoutClose',
