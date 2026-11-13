@@ -17,6 +17,12 @@ data class KinTaleChecklistItem(
 
 data class KinTale(
     val id: String,
+    /**
+     * The Auntie-written headline `getMyKinTales` sends as `title` (#2166).
+     * Empty for a tale that has none (one written before titles existed);
+     * the cards then fall back to the body's opening, as the web portal does.
+     */
+    val title: String = "",
     val body: String,
     val authorDisplayName: String?,
     val mediaIds: List<String>,
