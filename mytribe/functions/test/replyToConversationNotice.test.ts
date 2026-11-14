@@ -85,6 +85,23 @@ describe('#1874 a reply from the office tells the household', () => {
     });
   });
 
+  it('#2321: the notice holds the reply as typed, though the thread stores it with codes', async () => {
+    // What a plain-text client sends for `Tom & Jerry's <key>`: `&`, `<` and
+    // `>` as codes (#2144). The notice, which a text message, a push and the
+    // notifications list all print as plain text, gets the characters back once.
+    seed();
+    await reply("Tom &amp; Jerry's &lt;key&gt; is under the mat");
+    const row = householdNotices()[0]?.data as { description: string; data: { preview: string } };
+    expect(row.data.preview).toBe("Tom & Jerry's <key> is under the mat");
+    expect(row.description).toBe("Tom & Jerry's <key> is under the mat");
+  });
+  it('#2321: a code typed on purpose is still that code on the notice, never markup', async () => {
+    seed();
+    await reply('type &amp;lt;b&amp;gt; for bold');
+    const row = householdNotices()[0]?.data as { description: string; data: { preview: string } };
+    expect(row.data.preview).toBe('type &lt;b&gt; for bold');
+    expect(row.description).toBe('type &lt;b&gt; for bold');
+  });
   it('two replies are two notices, even a minute apart', async () => {
     seed();
     await reply('First');
