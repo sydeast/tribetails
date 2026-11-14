@@ -162,7 +162,10 @@ export function resendQuoteRefusal(doc: Record<string, unknown>): ResendRefusal 
     return {
       code: 'quote_not_declined',
       message:
-        'This quote is still waiting for an answer, so there is nothing to revive. Send a reminder if the household needs a nudge.',
+        // #2220: no next step is named. A reminder is not one: a quote the
+        // household has not accepted is not a bill, and `sendInvoiceReminder`
+        // refuses it.
+        "This quote is still waiting for the household's answer, so there is nothing to send again yet.",
     };
   }
   return null;
@@ -271,7 +274,9 @@ async function putBackToDeclined(
   if (!restored) {
     throw new HttpsError(
       'internal',
-      'The quote was sent back out, but the household could not be told about it. Use Send reminder to tell them.',
+      // #2220: never "Use Send reminder": a quote waiting for an answer cannot
+      // get one. Worded like reviewAndSendDraftInvoice's sent-quote sentence.
+      'The quote was sent back out and the household can see it in MyTribe, but they could not be told about it. Let them know it is there.',
       { code: 'quote_resent_not_announced' },
     );
   }

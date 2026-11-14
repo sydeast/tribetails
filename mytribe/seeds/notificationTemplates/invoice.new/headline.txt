@@ -1,1 +1,1 @@
-Your invoice is ready
+{{#if isQuote}}Your quote is ready{{else}}Your invoice is ready{{/if}}

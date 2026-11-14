@@ -15,11 +15,14 @@ import { buildDbMock } from './_helpers/mockDb';
 const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
   setClaims: vi.fn(async () => undefined),
+  // #2228 reads the claims before the wipe. These are household accounts; the
+  // Auntie and owner cases are in staffRoleRemoval.test.ts.
+  getUser: vi.fn(async () => ({ customClaims: { role: 'kinfolk', kinfolkId: 'fam-a' } })),
   syncKinfolkClaim: vi.fn(async () => ({ kinfolkId: 'fam-a' })),
 }));
 vi.mock('../src/lib/firestoreAdmin', () => ({
   db: mocks.dbFn,
-  auth: vi.fn(() => ({ setCustomUserClaims: mocks.setClaims })),
+  auth: vi.fn(() => ({ setCustomUserClaims: mocks.setClaims, getUser: mocks.getUser })),
   getAdmin: vi.fn(),
 }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));

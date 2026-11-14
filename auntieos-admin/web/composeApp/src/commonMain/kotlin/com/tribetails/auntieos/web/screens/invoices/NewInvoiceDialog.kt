@@ -184,8 +184,9 @@ internal fun NewInvoiceDialogContent(
         draftCount = extraLines.size,
         money = money,
         totalText = totalText,
+        quote = quoteMode,
     )
-    val termsNote = if (termsSetting.loading) TERMS_LOADING else composerTermsNote(termsCode, due, date)
+    val termsNote = if (termsSetting.loading) TERMS_LOADING else composerTermsNote(termsCode, due, date, quote = quoteMode)
 
     // #1593: each refusal under the field it is about, while it is wrong.
     val dueOrderProblem = if (termsCode == InvoiceTermsCode.CUSTOM) {
@@ -269,7 +270,7 @@ internal fun NewInvoiceDialogContent(
 
         when {
             pick.id.isBlank() -> Text(
-                "Pick a household to see its un-invoiced visits.",
+                if (quoteMode) "Pick a household to see its unbilled visits." else "Pick a household to see its un-invoiced visits.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -287,11 +288,16 @@ internal fun NewInvoiceDialogContent(
                 load = loadUninvoiced,
                 setDoNotInvoice = setDoNotInvoice,
                 disabled = submitting,
+                forQuote = quoteMode,
             )
 
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "A blank invoice with a typed total. It is not linked to any logged visit.",
+                    if (quoteMode) {
+                        "A blank quote with a typed total. It is not linked to any logged visit."
+                    } else {
+                        "A blank invoice with a typed total. It is not linked to any logged visit."
+                    },
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )
@@ -306,7 +312,7 @@ internal fun NewInvoiceDialogContent(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 GhostButton(
-                    label = "Bill this household's logged work instead",
+                    label = if (quoteMode) "Quote this household's logged work instead" else "Bill this household's logged work instead",
                     onClick = { path = InvoiceCreatePath.WORK },
                     enabled = !submitting,
                 )
@@ -389,7 +395,7 @@ internal fun NewInvoiceDialogContent(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "Send to kinfolk now",
+                    "Send to Kinfolk now",
                     style = AuntieTheme.typography.bodyMedium,
                     color = c.textPrimary,
                     modifier = Modifier.weight(1f),

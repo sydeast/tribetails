@@ -184,6 +184,13 @@ export function declinedQuoteStatusInfo(): InvoiceStatusInfo {
   return { label: 'Declined', chipLabel: 'DECLINED', cssClass: 'cancelled', invClass: '' };
 }
 /**
+ * #2092: what the document is called on screen. A quote (answered or not) is a
+ * "Quote"; an accepted one is an open invoice now and is an "Invoice".
+ */
+export function documentNoun(invoice: Pick<InvoiceDto, 'status'>): 'Quote' | 'Invoice' {
+  return invoice.status === 'quote' ? 'Quote' : 'Invoice';
+}
+/**
  * The status info for one invoice, decision included: the single place the two
  * screens agree on what a quote with an answer on it is called.
  */

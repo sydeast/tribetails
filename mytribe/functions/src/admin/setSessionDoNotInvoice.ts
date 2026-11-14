@@ -136,23 +136,37 @@ export async function setSessionDoNotInvoiceHandler(
     else changed.push(id);
   });
 
+  // #2196: no sentence below carries a visit's or an invoice's id: the
+  // clients show it word for word, and the ids stay in `details`.
   if (missing.length > 0) {
     throw new HttpsError(
       'not-found',
       missing.length === 1
-        ? `Visit '${missing[0]!}' no longer exists, so nothing was changed. Refresh the list and try again.`
-        : `${String(missing.length)} of these visits no longer exist (${missing.join(', ')}), so nothing was changed. Refresh the list and try again.`,
+        ? 'That visit no longer exists, so nothing was changed. Refresh the list and try again.'
+        : `${String(missing.length)} of these visits no longer exist, so nothing was changed. Refresh the list and try again.`,
       { code: 'session_not_found', sessionIds: missing },
     );
   }
 
   if (claimed.length > 0) {
-    const first = claimed[0]!;
+    // The holder by its number, the way New invoice's refusal names it
+    // (#2156): "is billed on invoice 1042", or "is on quote 1042", since a
+    // quote holds a visit without billing it. A holder with no number is
+    // "another invoice" or "another quote".
+    const { holderWordsFor } = await import('../lib/invoiceSessionLinks.js');
+    const words = await holderWordsFor(firestore, claimed.map((c) => c.invoiceId));
+    const first = words.get(claimed[0]!.invoiceId);
+    const firstHeld = first?.held ?? 'is billed on another invoice';
+    const anyQuote = claimed.some((c) => words.get(c.invoiceId)?.quote === true);
     throw new HttpsError(
       'failed-precondition',
       claimed.length === 1
-        ? `That visit is already billed on invoice ${first.invoiceId}, so it cannot be marked do not invoice. Unlink it from that invoice first, then mark it.`
-        : `${String(claimed.length)} of these visits are already billed (the first is on invoice ${first.invoiceId}), so nothing was changed. Unlink them from their invoices first, then mark them.`,
+        ? first?.quote === true
+          ? `That visit ${firstHeld}, so it cannot be marked do not invoice. Remove its line from that quote first, then mark it.`
+          : `That visit ${firstHeld}, so it cannot be marked do not invoice. Unlink it from that invoice first, then mark it.`
+        : anyQuote
+          ? `${String(claimed.length)} of these visits are already on other invoices or quotes (the first ${firstHeld}), so nothing was changed. Take them off there first, then mark them.`
+          : `${String(claimed.length)} of these visits are already billed (the first ${firstHeld}), so nothing was changed. Unlink them from their invoices first, then mark them.`,
       { code: 'session_already_invoiced', sessionIds: claimed.map((c) => c.sessionId) },
     );
   }

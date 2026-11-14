@@ -21,6 +21,31 @@ class InvoiceQuoteTest {
     ) = Invoice(id = "i1", status = status, quoteDraft = quoteDraft, quoteDecision = quoteDecision, archivedAt = archivedAt)
 
     @Test
+    fun `2092 a quote is headed Quote, sent or saved unsent, and an accepted one is an Invoice`() {
+        assertEquals("Quote #1026", invoiceDocTitle(inv("quote").copy(invoiceNumber = "1026")))
+        assertEquals("Quote #1026", invoiceDocTitle(inv("draft", quoteDraft = true).copy(invoiceNumber = "1026")))
+        assertEquals("Invoice #1026", invoiceDocTitle(inv("open", quoteDecision = "accepted").copy(invoiceNumber = "1026")))
+        assertEquals("Invoice #1042", invoiceDocTitle(inv("draft").copy(invoiceNumber = "1042")))
+        assertEquals("Invoice #-", invoiceDocTitle(inv("open")))
+    }
+
+    @Test
+    fun `2092 the draft panel says Kinfolk, never client`() {
+        assertEquals("This invoice is still a draft. Review it, then send it to let the Kinfolk know.", draftPanelLine(false))
+        assertFalse(draftPanelLine(false).contains("client"))
+        assertTrue(draftPanelLine(true).startsWith("This quote is saved but not sent"))
+    }
+
+    @Test
+    fun `2087 a quote saved but not sent is told apart from every other refusal by its code`() {
+        assertEquals("q1", quoteSavedNotSentId(mapOf("code" to "quote_saved_not_sent", "invoiceId" to "q1")))
+        assertEquals(null, quoteSavedNotSentId(mapOf("code" to "quote_saved_not_sent", "invoiceId" to "")))
+        assertEquals(null, quoteSavedNotSentId(mapOf("code" to "session_on_other_invoice", "invoiceId" to "q1")))
+        assertEquals(null, quoteSavedNotSentId(null))
+        assertEquals(null, quoteSavedNotSentId("quote_saved_not_sent"))
+    }
+
+    @Test
     fun `a draft carrying the quote mark is a quote saved unsent, and an ordinary draft is not`() {
         assertTrue(isQuoteDraft(inv("draft", quoteDraft = true)))
         assertFalse(isQuoteDraft(inv("draft")))

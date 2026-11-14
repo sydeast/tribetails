@@ -973,6 +973,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // #2088: send it, turn it into an invoice, or withdraw it, while it is still
   // a quote the household has not accepted and it is not archived.
   const changeableQuote = quoteIsChangeable(invoice);
+  // #2092: a quote is named as one, sent or saved unsent. An accepted quote is
+  // an open invoice now and is named as an invoice.
+  const isQuote = state === 'quote' || quoteDraft;
+  const docNoun = isQuote ? 'Quote' : 'Invoice';
 
   // `allowed.includes` is the guard on an ARMED action (see `initialAction`).
   // The list derives its row button from this same function, but the live
@@ -1723,11 +1727,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // #2007: the tab names the open invoice by its number, over the list's
   // "Invoices". An invoice with no number leaves the tab on the screen name.
   const tabNumber = invoice.invoiceNumber.trim();
-  useRecordTitle(tabNumber === '' ? null : `Invoice #${tabNumber}`);
+  useRecordTitle(tabNumber === '' ? null : `${docNoun} #${tabNumber}`);
 
   return (
     <Dialog
-      title={invoice.invoiceNumber.trim() === '' ? 'Invoice with no number' : `Invoice #${invoice.invoiceNumber}`}
+      title={invoice.invoiceNumber.trim() === '' ? `${docNoun} with no number` : `${docNoun} #${invoice.invoiceNumber}`}
       onClose={handleDialogClose}
     >
       <div className="invoice-detail">
@@ -1902,6 +1906,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             </p>
           ) : (
             <InvoiceLineItemsTable
+              {...(isQuote ? { caption: 'What is quoted' } : {})}
               lines={storedLines}
               invoiceDiscountCents={invoice.invoiceDiscountCents ?? 0}
             />
@@ -2372,7 +2377,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     // state stamp (impossible per ADR-0002): say so, offer
                     // nothing, and never guess a state from the money fields.
                     'This invoice carries no recognized state, so no collection actions are offered.'
-                  : `No collection actions for a ${info.label.toLowerCase()} invoice.`}
+                  : isQuote
+                    ? 'A quote has no collection actions: nothing is owed on it.'
+                    : `No collection actions for a ${info.label.toLowerCase()} invoice.`}
               </p>
             ) : (
               available.map((a) => (
@@ -2395,7 +2402,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             />
             {/* THE WAY OUT OF A DECLINE (issue #448). Offered only when the
                 household has actually said no: one still waiting for an answer
-                has nothing to revive (a reminder is the action for that), and an
+                has nothing to revive (and no reminder: a quote is not a bill), and an
                 accepted one is agreed and frozen. Like Edit, this is an
                 affordance, not the enforcement — the server refuses the other
                 two by name and the refusal is shown verbatim above. */}

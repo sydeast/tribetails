@@ -76,6 +76,19 @@ class OpenRowMetaLabelTest {
         assertNull(quoteActorLabel(inv, viewerUid = "u1"))
     }
 
+    // ---- invoiceDocNoun (#2092) ----
+
+    @Test
+    fun invoiceDocNoun_aQuoteIsAQuote_answeredOrNot() {
+        assertEquals("Quote", invoiceDocNoun(quote()))
+        assertEquals("Quote", invoiceDocNoun(quote(decision = QuoteDecision.Denied)))
+    }
+
+    @Test
+    fun invoiceDocNoun_anAcceptedQuoteIsAnOpenInvoice() {
+        assertEquals("Invoice", invoiceDocNoun(quote(decision = QuoteDecision.Accepted).copy(status = InvoiceStatus.Open)))
+    }
+
     // ---- openRowMetaLabel ----
 
     @Test

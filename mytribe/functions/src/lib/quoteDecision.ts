@@ -68,12 +68,16 @@ export function isSentQuote(doc: Record<string, unknown>): boolean {
  *   - #2195: an archived quote. Archiving a quote works like archiving a draft:
  *     the household stops seeing it and its visits go back on the list.
  *
- * A withdrawn quote is `cancelled`, which MyTribe already shows no one.
+ *   - a withdrawn quote (`cancelled`, stamped `quoteWithdrawnAt`). No list
+ *     bucket ever showed one, but its PDF was still served by id: the office
+ *     took the offer back, so nothing of it stays in front of the household.
+ *
  * Ordinary drafts are #1906's, and are not decided here.
  */
 export function hiddenFromHousehold(doc: Record<string, unknown>): boolean {
   if (isQuoteDraft(doc)) return true;
   const status = statusOf(doc);
+  if (status === 'cancelled' && doc['quoteWithdrawnAt'] !== undefined && doc['quoteWithdrawnAt'] !== null) return true;
   if (status === 'draft' && doc['quoteConvertedAt'] !== undefined && doc['quoteConvertedAt'] !== null) return true;
   return status === 'quote' && isArchived(doc);
 }

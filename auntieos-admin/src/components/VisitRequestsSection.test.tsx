@@ -49,6 +49,15 @@ const CATALOG = vi.hoisted(() => ({
   timeBlocks: [],
 }));
 vi.mock('../lib/useBookingCatalog', () => ({ useBookingCatalog: () => CATALOG }));
+// #1864: the live nudge. A number the test moves to stand for a household's
+// ask landing in Firestore; the hook itself is tested in visitRequestSignal.test.ts.
+const { liveSignal } = vi.hoisted(() => ({ liveSignal: { value: 0, kinds: [] as string[][] } }));
+vi.mock('../lib/visitRequestSignal', () => ({
+  useVisitRequestSignal: (kinds: string[]) => {
+    liveSignal.kinds.push([...kinds]);
+    return liveSignal.value;
+  },
+}));
 
 import {
   VisitRequestsSection,
@@ -136,6 +145,8 @@ function newBooking(
   };
 }
 beforeEach(() => {
+  liveSignal.value = 0;
+  liveSignal.kinds = [];
   listRescheduleRequests.mockReset();
   resolveBookingRescheduleRequest.mockReset();
   listCancelRequests.mockReset();
@@ -1269,5 +1280,112 @@ describe('VisitRequestsSection stays live (#1607)', () => {
     expect(await screen.findByText('Evening sit · Nutmeg')).toBeInTheDocument();
     expect(listRescheduleRequests).toHaveBeenCalledTimes(2);
     expect(screen.getByText('2 WAITING')).toBeInTheDocument();
+  });
+});
+
+/**
+ * #1864: the walk filed a request and watched Bookings for 70 seconds while
+ * the count stood at 5 WAITING and the open list did not change. #1607's
+ * 60-second poll plus a slow callable was not live. The queue now reads again
+ * the moment the live signal moves.
+ */
+describe('VisitRequestsSection is live on a household ask (#1864)', () => {
+  it('watches all three queues', () => {
+    listRescheduleRequests.mockReturnValue(new Promise(() => {}));
+    render(<VisitRequestsSection />);
+    expect(liveSignal.kinds.at(-1)?.slice().sort()).toEqual(['cancel', 'newBooking', 'reschedule']);
+  });
+
+  it('a new request lands first, and the count moves, without a reload or a poll', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking({ batchId: 'b-old', kinfolkName: 'The Wrens' })] });
+    const { rerender } = render(<VisitRequestsSection />);
+    expect(await screen.findByText('1 WAITING')).toBeInTheDocument();
+    expect(listPendingBookingRequests).toHaveBeenCalledTimes(1);
+
+    // A Kinfolk files a request: Firestore tells the listener, the signal moves.
+    listPendingBookingRequests.mockResolvedValue({
+      requests: [
+        newBooking({ batchId: 'b-old', kinfolkName: 'The Wrens' }),
+        newBooking({ batchId: 'b-new', kinfolkName: 'The Rivera Home', requestedAtMs: CURRENT_MS + 60_000 }),
+      ],
+    });
+    liveSignal.value = 1;
+    rerender(
+      <ToastProvider>
+        <VisitRequestsSection />
+      </ToastProvider>,
+    );
+    expect(await screen.findByText('2 WAITING')).toBeInTheDocument();
+    expect(listPendingBookingRequests).toHaveBeenCalledTimes(2);
+    await openQueue();
+    const titles = screen.getAllByText(/^The (Wrens|Rivera Home)$/).map((el) => el.textContent);
+    expect(titles[0]).toBe('The Rivera Home');
+  });
+
+  it('reads nothing again while the signal stands still', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    const { rerender } = render(<VisitRequestsSection />);
+    expect(await screen.findByText('1 WAITING')).toBeInTheDocument();
+    rerender(
+      <ToastProvider>
+        <VisitRequestsSection />
+      </ToastProvider>,
+    );
+    expect(listPendingBookingRequests).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * #2028: Open on a "Kinfolk requested a KinCare visit" notice showed "Booking
+ * unavailable". It now opens the request's own card, ready to Accept or
+ * Decline.
+ */
+describe('VisitRequestsSection opens the request a notice named (#2028)', () => {
+  it('arrives unfolded with that request open, ready to answer', async () => {
+    listPendingBookingRequests.mockResolvedValue({
+      requests: [
+        newBooking({ batchId: 'b-other', kinfolkName: 'The Wrens' }),
+        newBooking({ kinfolkId: 'fam-3', batchId: 'b3', kinfolkName: 'The Rivera Home' }),
+      ],
+    });
+    render(<VisitRequestsSection focusRequest={{ kinfolkId: 'fam-3', batchId: 'b3' }} />);
+    const dialog = await screen.findByRole('dialog', { name: 'New request from The Rivera Home' });
+    expect(within(dialog).getByRole('button', { name: 'Accept' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Decline' })).toBeInTheDocument();
+    // The queue is open behind it.
+    expect(screen.getByRole('button', { name: 'Hide' })).toBeInTheDocument();
+  });
+
+  it('shows the loading cue while the queue reads, then the card', async () => {
+    let settle: (v: { requests: ListPendingBookingRequestsResultRequest[] }) => void = () => {};
+    listPendingBookingRequests.mockReturnValue(new Promise((res) => (settle = res)));
+    render(<VisitRequestsSection focusRequest={{ kinfolkId: 'fam-3', batchId: 'b3' }} />);
+    expect(screen.getByText('Checking for requests…')).toBeInTheDocument();
+    settle({ requests: [newBooking()] });
+    expect(await screen.findByRole('dialog', { name: 'New request from The Rivera Home' })).toBeInTheDocument();
+  });
+
+  it('says so when the request is no longer waiting, instead of "Booking unavailable"', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [] });
+    render(<VisitRequestsSection focusRequest={{ kinfolkId: 'fam-3', batchId: 'b3' }} />);
+    expect(await screen.findByText('That request is no longer waiting')).toBeInTheDocument();
+    expect(screen.queryByText('Booking unavailable')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText('That request is no longer waiting')).toBeNull();
+  });
+
+  it('opens the card once: closing it does not bring it back when the queue reads again', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    const { rerender } = render(<VisitRequestsSection focusRequest={{ kinfolkId: 'fam-3', batchId: 'b3' }} />);
+    const dialog = await screen.findByRole('dialog', { name: 'New request from The Rivera Home' });
+    await userEvent.click(within(dialog).getAllByRole('button', { name: 'Close' })[0]!);
+    liveSignal.value = 1;
+    rerender(
+      <ToastProvider>
+        <VisitRequestsSection focusRequest={{ kinfolkId: 'fam-3', batchId: 'b3' }} />
+      </ToastProvider>,
+    );
+    await waitFor(() => expect(listPendingBookingRequests).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

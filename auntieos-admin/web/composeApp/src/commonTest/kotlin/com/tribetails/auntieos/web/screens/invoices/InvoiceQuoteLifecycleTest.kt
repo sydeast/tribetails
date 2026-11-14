@@ -18,6 +18,36 @@ class InvoiceQuoteLifecycleTest {
         Invoice(_id = "i1", status = status, quoteDraft = quoteDraft, archivedAt = if (archived) JsonPrimitive("2026-11-12") else null)
 
     @Test
+    fun aQuoteIsHeadedQuoteAndAnAcceptedOneAnInvoice() {
+        assertEquals("Quote #1026", invoiceDocTitle(inv("quote").copy(invoiceNumber = "1026")))
+        assertEquals("Quote #1026", invoiceDocTitle(inv("draft", quoteDraft = true).copy(invoiceNumber = "1026")))
+        assertEquals("Invoice #1026", invoiceDocTitle(inv("open").copy(invoiceNumber = "1026")))
+        assertEquals("Invoice #-", invoiceDocTitle(inv("draft")))
+    }
+
+    @Test
+    fun aQuoteSavedButNotSentIsToldApartByItsCode() {
+        assertEquals("q1", quoteSavedNotSentId("quote_saved_not_sent", "{\"code\":\"quote_saved_not_sent\",\"invoiceId\":\"q1\"}"))
+        assertEquals(null, quoteSavedNotSentId("session_on_other_invoice", "{\"invoiceId\":\"q1\"}"))
+        assertEquals(null, quoteSavedNotSentId("quote_saved_not_sent", null))
+        assertEquals(null, quoteSavedNotSentId("quote_saved_not_sent", "not json"))
+        assertEquals(null, quoteSavedNotSentId("quote_saved_not_sent", "{\"invoiceId\":\"\"}"))
+    }
+
+    @Test
+    fun aQuotesLinesSayUnbilledAndItsTermsNoteNoOverdue() {
+        assertEquals(
+            "2 of 3 unbilled visits selected for Ada Wren.",
+            uninvoicedScopeLine("Ada Wren", 3, 2, 3L, null, null, quote = true),
+        )
+        assertEquals(
+            "2 of 3 un-invoiced visits selected for Ada Wren.",
+            uninvoicedScopeLine("Ada Wren", 3, 2, 3L, null, null),
+        )
+        assertEquals("1 visit is back in this household's unbilled work.", exclusionNotice(1, false, quote = true))
+    }
+
+    @Test
     fun aDraftCarryingTheQuoteMarkIsAQuoteSavedUnsent() {
         assertTrue(isQuoteDraft(inv("draft", quoteDraft = true)))
         assertFalse(isQuoteDraft(inv("draft")))

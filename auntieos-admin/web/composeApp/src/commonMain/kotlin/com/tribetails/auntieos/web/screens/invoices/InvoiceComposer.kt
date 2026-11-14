@@ -350,6 +350,8 @@ fun composerBlockedReason(
     draftCount: Int,
     money: ComposerMoney?,
     totalText: String,
+    /** #2092: the composer is making a quote, and says so. */
+    quote: Boolean = false,
 ): String? {
     if (kinfolkId.isBlank()) return "Pick a household first."
     if (date.isNotBlank() && !isValidNewInvoiceIsoDate(date)) return "Date must be a real YYYY-MM-DD date"
@@ -364,7 +366,8 @@ fun composerBlockedReason(
     }
     return when (path) {
         InvoiceCreatePath.WORK -> when {
-            selectedCount == 0 && draftCount == 0 -> "Tick the work this invoice covers, or add a line of your own."
+            selectedCount == 0 && draftCount == 0 ->
+                "Tick the work this ${if (quote) "quote" else "invoice"} covers, or add a line of your own."
             money?.error != null -> money.error
             else -> null
         }
@@ -379,7 +382,6 @@ fun composerCreateLabel(isQuote: Boolean, visitCount: Int): String {
     return "$verb for $visitCount visit${if (visitCount == 1) "" else "s"}"
 }
 
-/** What the due-date field is doing. */
 /** #1966: said beside Terms when visit-relative terms have no visits to count from. */
 const val NO_VISITS_DUE_ON_RECEIPT = "There are no visits on this invoice, so it is due on receipt."
 
@@ -415,16 +417,23 @@ fun invoiceTermsSettingStateOf(settings: com.tribetails.auntieos.web.data.Busine
         else -> InvoiceTermsSettingState()
     }
 
-/** What the due-date field is doing, and why it is not typeable. Said once. */
-fun composerTermsNote(termsCode: InvoiceTermsCode, due: DueDateResolution, invoiceDate: String): String = when {
+/** What the due-date field is doing. #2092: a quote is not a bill, so a past date does not make it overdue. */
+fun composerTermsNote(
+    termsCode: InvoiceTermsCode,
+    due: DueDateResolution,
+    invoiceDate: String,
+    quote: Boolean = false,
+): String = when {
     termsCode == InvoiceTermsCode.CUSTOM -> "These terms leave the due date to you."
     due.dueDate == null -> due.problem.orEmpty()
     // #1966 review: a bill is never due before its own date.
-    due.beforeInvoiceDate && due.isPast -> "$TERMS_BEFORE_INVOICE_DATE The invoice date has already passed, " +
+    due.beforeInvoiceDate && due.isPast && !quote -> "$TERMS_BEFORE_INVOICE_DATE The invoice date has already passed, " +
         "so this invoice is overdue the moment it goes out."
     due.beforeInvoiceDate -> TERMS_BEFORE_INVOICE_DATE
     // #1966: a visit rule on an invoice with no visits is due on receipt.
     due.appliedCode != termsCode -> NO_VISITS_DUE_ON_RECEIPT
+    due.isPast && quote ->
+        "Worked out from the terms, counting from ${due.basisDay ?: invoiceDate}. That date has already passed."
     due.isPast ->
         "Worked out from the terms, counting from ${due.basisDay ?: invoiceDate}. That date has already " +
             "passed, so this invoice is overdue the moment it goes out."
@@ -439,12 +448,15 @@ fun uninvoicedScopeLine(
     scanned: Long,
     narrowedFrom: String?,
     narrowedTo: String?,
+    /** #2092: on a quote the work is "unbilled"; "un-invoiced" is an invoice's word. */
+    quote: Boolean = false,
 ): String {
     val window = if (narrowedFrom != null && narrowedTo != null) " between $narrowedFrom and $narrowedTo" else ""
+    val open = if (quote) "unbilled" else "un-invoiced"
     return if (total == 0) {
-        "No un-invoiced completed visits for $householdLabel$window. $scanned visits were checked."
+        "No $open completed visits for $householdLabel$window. $scanned visits were checked."
     } else {
-        "$selectedCount of $total un-invoiced visit${if (total == 1) "" else "s"} selected for $householdLabel$window."
+        "$selectedCount of $total $open visit${if (total == 1) "" else "s"} selected for $householdLabel$window."
     }
 }
 
@@ -456,13 +468,13 @@ fun doNotInvoiceLabel(count: Int): String = when (count) {
 }
 
 /** What happened after the queue changed. Counts CHANGED visits, not requested ones. */
-fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean): String {
+fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean, quote: Boolean = false): String {
     val subject = if (changedCount == 1) "1 visit is" else "$changedCount visits are"
     return if (doNotInvoice) {
         val obj = if (changedCount == 1) "it" else "them"
         "$subject marked do not invoice, and off this list until you put $obj back."
     } else {
-        "$subject back in this household's un-invoiced work."
+        "$subject back in this household's ${if (quote) "unbilled" else "un-invoiced"} work."
     }
 }
 

@@ -25,6 +25,8 @@ import { BOOKING_BUSY_CONFLICT_CODE, callableConflictCode } from '../lib/booking
 import { nightLabel, startTimeOnNight } from '../lib/businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/businessOperations';
 import { useRefreshingLoad } from '../lib/useOneShot';
+import { usePollTick, VISIT_REQUESTS_REFRESH_MS } from '../lib/pendingBookingRequests';
+import { useVisitRequestSignal, type RequestQueueKind } from '../lib/visitRequestSignal';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
@@ -151,37 +153,67 @@ function reasonOf(err: unknown): string {
   return err instanceof Error ? err.message : 'the read did not land';
 }
 
-/** #1607: how often the waiting queue reads again while the screen is open. */
-export const VISIT_REQUESTS_REFRESH_MS = 60_000;
+export { VISIT_REQUESTS_REFRESH_MS };
 
-export function VisitRequestsSection({ refreshKey = 0 }: { refreshKey?: number } = {}) {
+/** #1864: every queue this section lists, watched live. */
+const ALL_QUEUES: readonly RequestQueueKind[] = ['newBooking', 'reschedule', 'cancel'];
+
+/**
+ * #2028: a booking request a notification opened this screen for. The queue
+ * arrives unfolded with that request's card open.
+ */
+export interface FocusRequest {
+  kinfolkId: string;
+  batchId: string;
+}
+
+export function VisitRequestsSection({
+  refreshKey = 0,
+  focusRequest,
+}: { refreshKey?: number; focusRequest?: FocusRequest } = {}) {
   // #1744: a request names its KinCare off the catalog, never a stored key.
   const catalog = useBookingCatalog();
-  // #1607: the waiting count stayed at 6 after a new request until a reload.
-  // It now reads again every minute, when the tab comes back into view, and
-  // whenever this screen itself files a request (`refreshKey`).
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const bump = () => setTick((n) => n + 1);
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') bump();
-    };
-    const id = setInterval(bump, VISIT_REQUESTS_REFRESH_MS);
-    window.addEventListener('focus', bump);
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      clearInterval(id);
-      window.removeEventListener('focus', bump);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, []);
-  const loaded = useRefreshingLoad(loadQueues, 'visit requests', `${String(refreshKey)}:${String(tick)}`);
+  // #1607: the waiting count stayed at 6 after a new request until a reload,
+  // so it got a 60-second poll. #1864: the walk then watched 70 seconds with
+  // the count standing still. The queue now also reads again the moment a
+  // household's ask lands (`useVisitRequestSignal`), when the tab comes back
+  // into view, and whenever this screen itself files a request (`refreshKey`).
+  // The poll stays as the floor for a listener that could not attach.
+  const tick = usePollTick(VISIT_REQUESTS_REFRESH_MS);
+  const signal = useVisitRequestSignal(ALL_QUEUES);
+  const loaded = useRefreshingLoad(
+    loadQueues,
+    'visit requests',
+    `${String(refreshKey)}:${String(tick)}:${String(signal)}`,
+  );
   const [resolvedKeys, setResolvedKeys] = useState<ReadonlySet<string>>(new Set());
   const [activeSheet, setActiveSheet] = useState<
     { row: VisitRequest; decision: 'accept' | 'decline' } | null
   >(null);
   /** #1577: the request whose card body was pressed, open in its detail sheet. */
   const [detailRow, setDetailRow] = useState<VisitRequest | null>(null);
+  /**
+   * #2028: Open on a "Kinfolk requested a KinCare visit" notice used to land on
+   * "Booking unavailable", because a request has no visit record until it is
+   * booked. It now lands here, on the request's own card, once the queue has
+   * read it. Consumed once, so closing the card does not reopen it.
+   */
+  const [focusPending, setFocusPending] = useState(focusRequest !== undefined);
+  const focusKey =
+    focusRequest !== undefined ? `newBooking/${focusRequest.kinfolkId}/${focusRequest.batchId}` : null;
+  const focusedRow =
+    focusPending && focusKey !== null && loaded.status === 'ready'
+      ? (loaded.data.requests.find((r) => requestKey(r) === focusKey) ?? null)
+      : null;
+  useEffect(() => {
+    if (focusedRow === null) return;
+    setFocusPending(false);
+    setOpen(true);
+    setDetailRow(focusedRow);
+  }, [focusedRow]);
+  /** #2028: the notice named a request this queue no longer holds. */
+  const focusMissing =
+    focusPending && focusKey !== null && loaded.status === 'ready' && focusedRow === null;
   /**
    * #704: the queue reads as ONE compact banner until asked to open.
    *
@@ -192,7 +224,7 @@ export function VisitRequestsSection({ refreshKey = 0 }: { refreshKey?: number }
    * banner still states the count out loud, so nothing is hidden: "Review 3"
    * is one press away and the rows are unchanged underneath it.
    */
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(focusRequest !== undefined);
   /**
    * #1577: what the last answer did, and for whom, kept on the screen until the
    * operator dismisses it. It used to be a toast, and that was not enough: the QA walk pressed
@@ -237,6 +269,15 @@ export function VisitRequestsSection({ refreshKey = 0 }: { refreshKey?: number }
 
   const rows = loaded.data.requests.filter((r) => !resolvedKeys.has(requestKey(r)));
   const { failures } = loaded.data;
+  const missingNotice = focusMissing ? (
+    <Banner
+      tone="info"
+      title="That request is no longer waiting"
+      trailing={<GhostButton label="Dismiss" onClick={() => setFocusPending(false)} />}
+    >
+      It was booked, turned down or withdrawn, so there is nothing left to answer.
+    </Banner>
+  ) : null;
   function onResolved(row: VisitRequest, message: string) {
     // #1577: the answer names who it was for, and stays on the screen.
     const said = `${householdLabel(row)}: ${message}`;
@@ -249,6 +290,7 @@ export function VisitRequestsSection({ refreshKey = 0 }: { refreshKey?: number }
     return (
       <section className="visit-requests">
         {outcomeBanner}
+        {missingNotice}
         <p className="visit-requests__empty">No visit requests waiting.</p>
       </section>
     );
@@ -257,6 +299,7 @@ export function VisitRequestsSection({ refreshKey = 0 }: { refreshKey?: number }
   return (
     <section className="visit-requests">
       {outcomeBanner}
+      {missingNotice}
       {failures.length > 0 && (
         <Banner tone="error" title="One of these queues didn't load">
           {`${failures.join(' ')} Anything waiting there is not on this list.`}
@@ -517,7 +560,7 @@ interface RequestDetailDialogProps {
  * carries. Answering still goes through `DecisionDialog`, so the confirm step
  * and its copy are one path whichever way the operator got there.
  */
-function RequestDetailDialog({ row, onClose, onDecide }: RequestDetailDialogProps) {
+export function RequestDetailDialog({ row, onClose, onDecide }: RequestDetailDialogProps) {
   const catalog = useBookingCatalog();
   const reason = reasonOfRow(row);
   const kin = row.request.kinNames.filter((n) => n.trim() !== '');
@@ -603,7 +646,7 @@ interface DecisionDialogProps {
  * repeats the trigger's label, per the convention `screens/BookingActions.tsx`
  * sets for every other booking decision in this app.
  */
-function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogProps) {
+export function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogProps) {
   const catalog = useBookingCatalog();
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);

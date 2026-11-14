@@ -584,6 +584,7 @@ data class GetMyBookingsResultLiveVisit(
     val cancelRequestStatus: String?,
     val cancelRequestReason: String?,
     val cancelResponseNote: String?,
+    val requestDeclinedAtMs: Long?,
     /** One of `pending`, `accepted`, `declined`, or null when the payload omits it. */
     val rescheduleRequestStatus: String?,
     val rescheduleRequestedStartTimeMs: Long?,
@@ -635,6 +636,7 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         cancelRequestStatus = raw?.get("cancelRequestStatus") as? String,
         cancelRequestReason = raw?.get("cancelRequestReason") as? String,
         cancelResponseNote = raw?.get("cancelResponseNote") as? String,
+        requestDeclinedAtMs = (raw?.get("requestDeclinedAtMs") as? Number)?.toLong(),
         rescheduleRequestStatus = raw?.get("rescheduleRequestStatus") as? String,
         rescheduleRequestedStartTimeMs = (raw?.get("rescheduleRequestedStartTimeMs") as? Number)?.toLong(),
         rescheduleRequestedEndTimeMs = (raw?.get("rescheduleRequestedEndTimeMs") as? Number)?.toLong(),

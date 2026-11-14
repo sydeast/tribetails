@@ -196,6 +196,8 @@ private fun SignedInApp(
     // N1: a notification "Create quote" lands on Invoices with the quote composer
     // pre-seeded for this kinfolk; consumed once the composer opens.
     var composeQuoteForKinfolkId by remember { mutableStateOf<String?>(null) }
+    // #2028: the visit request a notification opened Bookings for (household/request id).
+    var bookingsFocusRequest by remember { mutableStateOf<String?>(null) }
     // #1199: the visit an invoice's bound line opened in Auntie Time; dropped on leaving it.
     var invoiceLineVisitId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(current) { if (current != Destination.Sessions) invoiceLineVisitId = null }
@@ -454,7 +456,10 @@ private fun SignedInApp(
                     )
                 }
             }
-            Destination.Bookings    -> BookingScreen()
+            Destination.Bookings    -> BookingScreen(
+                focusRequestKey = bookingsFocusRequest,
+                onFocusRequestConsumed = { bookingsFocusRequest = null },
+            )
             Destination.Sessions    -> KinCareSessionsScreen(initialKinCareId = invoiceLineVisitId)
             Destination.Schedule    -> ScheduleScreen()
             Destination.Invoices    -> {
@@ -543,6 +548,17 @@ private fun SignedInApp(
                     directoryDecidePaymentId = null
                     composeQuoteForKinfolkId = kinfolkId
                     current = Destination.Invoices
+                },
+                onOpenVisitRequest = { kinfolkId, batchId ->
+                    // #2028: the request itself, on Bookings' Visit requests, not
+                    // a booking (a waiting request has no booking record yet).
+                    selectedInvoiceId = null
+                    reportSessionId = null
+                    directoryKinfolkId = null
+                    directoryKinId = null
+                    directoryDecidePaymentId = null
+                    bookingsFocusRequest = com.tribetails.auntieos.web.screens.notifications.visitRequestKey(kinfolkId, batchId)
+                    current = Destination.Bookings
                 },
                 onOpenUnappliedPayment = { kinfolkId, paymentId ->
                     // #1003: the household profile, with that payment's Decide dialog.

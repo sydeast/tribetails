@@ -334,6 +334,8 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
   ]);
 
   const isQuote = kind === 'quote';
+  /** #2092: what the form is making, in its own word. A quote is not an invoice to the reader. */
+  const noun = isQuote ? 'quote' : 'invoice';
   const selectedHousehold = households.find((h) => h._id === kinfolkId);
   const householdLabel = selectedHousehold ? kinfolkDisplayName(selectedHousehold) : 'this household';
   const onWork = path === 'work';
@@ -424,7 +426,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
     if (dueOrderProblem !== null) return dueOrderProblem;
     if (onWork) {
       if (selected.size === 0 && extraLines.length === 0) {
-        return 'Tick the work this invoice covers, or add a line of your own.';
+        return `Tick the work this ${noun} covers, or add a line of your own.`;
       }
       if (money?.error != null) return money.error;
       return null;
@@ -442,11 +444,11 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
 
     if (onWork) {
       if (money === null || money.error !== null || money.lines === null || money.totals === null) {
-        setValidationError(money?.error ?? 'This invoice has no work on it yet.');
+        setValidationError(money?.error ?? `This ${noun} has no work on it yet.`);
         return;
       }
       if (money.lines.length === 0) {
-        setValidationError('Tick the work this invoice covers, or add a line of your own.');
+        setValidationError(`Tick the work this ${noun} covers, or add a line of your own.`);
         return;
       }
       // Both dollar scalars are the PROJECTION of the same cents figure the
@@ -575,13 +577,15 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
       : due.dueDate === null
         ? due.problem
         : due.beforeInvoiceDate
-          ? due.isPast
+          ? due.isPast && !isQuote
             ? 'These terms work out to a day before the invoice date, so it is due on receipt. The invoice date has already passed, so this invoice is overdue the moment it goes out.'
             : 'These terms work out to a day before the invoice date, so it is due on receipt.'
           : due.appliedCode !== termsCode
           ? 'There are no visits on this invoice, so it is due on receipt.'
           : due.isPast
-          ? `Worked out from the terms, counting from ${due.basisDay ?? date}. That date has already passed, so this invoice is overdue the moment it goes out.`
+          ? isQuote
+            ? `Worked out from the terms, counting from ${due.basisDay ?? date}. That date has already passed.`
+            : `Worked out from the terms, counting from ${due.basisDay ?? date}. That date has already passed, so this invoice is overdue the moment it goes out.`
           : `Worked out from the terms, counting from ${due.basisDay ?? date}. Choose "A date I pick myself" to set it by hand.`;
   const createLabel = isQuote ? 'Create quote' : 'Create invoice';
   const idBase = useId();
@@ -681,7 +685,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
 
         {kinfolkId === '' ? (
           <p className="invoice-create__derived">
-            Pick a household and its un-invoiced work appears here, ready to tick.
+            Pick a household and its {isQuote ? 'unbilled' : 'un-invoiced'} work appears here, ready to tick.
           </p>
         ) : onWork ? (
           <UninvoicedVisitsPicker
@@ -694,12 +698,14 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
             onSessionsLoaded={handleSessionsLoaded}
             disabled={submitting}
             onWriteBlankInvoice={() => setPath('blank')}
+            forQuote={isQuote}
           />
         ) : (
           <div className="invoice-create__blank">
             <p className="invoice-create__derived">
-              A blank invoice, with a total you type. Nothing on it is linked to logged work, so
-              nothing here can tell whether this household has already been billed for it.
+              {isQuote
+                ? 'A blank quote, with a total you type. Nothing on it is linked to logged work.'
+                : 'A blank invoice, with a total you type. Nothing on it is linked to logged work, so nothing here can tell whether this household has already been billed for it.'}
             </p>
             <label className="invoice-create__field">
               <span className="invoice-create__label">Total ($)</span>
@@ -720,7 +726,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
               )}
             </label>
             <GhostButton
-              label="Bill this household's logged work instead"
+              label={isQuote ? "Quote this household's logged work instead" : "Bill this household's logged work instead"}
               onClick={() => setPath('work')}
               disabled={submitting}
             />
@@ -747,8 +753,8 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
                 are different facts and must not read alike. */}
             <p className="invoice-create__derived">
               {money?.totals && money.lines !== null && money.lines.length > 0
-                ? `This invoice will be created for ${formatCentsUsd(money.totals.totalCents)}, worked out from the work it covers. There is nowhere to type a total, so it can never say a different number from the work it lists.`
-                : 'Totals are worked out from the work this invoice covers. Tick a visit above, or add a line of your own.'}
+                ? `This ${noun} will be created for ${formatCentsUsd(money.totals.totalCents)}, worked out from the work it covers. There is nowhere to type a total, so it can never say a different number from the work it lists.`
+                : `Totals are worked out from the work this ${noun} covers. Tick a visit above, or add a line of your own.`}
             </p>
           </>
         )}
@@ -765,7 +771,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
               value={date}
               onChange={(e) => setDate(e.target.value)}
               disabled={submitting}
-              aria-label="Invoice date"
+              aria-label={isQuote ? 'Quote date' : 'Invoice date'}
             />
           </label>
           <label className="invoice-create__field">
@@ -797,7 +803,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
               // DISABLED WITH THE REASON STATED BELOW, never hidden. The terms
               // decide this date, and the way to change it is to change them.
               disabled={submitting || termsCode !== 'custom'}
-              aria-label="Invoice due date"
+              aria-label={isQuote ? 'Quote due date' : 'Invoice due date'}
               aria-invalid={dueOrderProblem !== null}
               aria-describedby={dueOrderProblem !== null ? dueErrorId : undefined}
             />
@@ -821,12 +827,12 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
 
         {isQuote && (
           <div className="invoice-create__toggle-row">
-            <span>Send to kinfolk now</span>
+            <span>Send to Kinfolk now</span>
             <Toggle
               checked={sendToKinfolk}
               onChange={setSendToKinfolk}
               disabled={submitting}
-              label="Send to kinfolk now"
+              label="Send to Kinfolk now"
             />
           </div>
         )}

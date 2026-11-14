@@ -332,5 +332,7 @@ class InvoiceComposerTest {
         val note = composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, backdated, "2026-11-13")
         assertTrue(note.startsWith(TERMS_BEFORE_INVOICE_DATE))
         assertTrue(note.contains("overdue the moment it goes out"))
+        // #2092: a quote is not a bill, so it never says overdue.
+        assertEquals(TERMS_BEFORE_INVOICE_DATE, composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, backdated, "2026-11-13", quote = true))
     }
 }

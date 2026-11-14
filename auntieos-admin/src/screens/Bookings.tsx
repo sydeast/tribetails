@@ -26,7 +26,7 @@ import { Dialog } from '../components/Dialog';
 import { BookingDetailModal } from '../components/BookingDetailModal';
 import { BookingStatusActions, type BookingActionKind } from './BookingActions';
 import { NewBookingDialog } from '../components/NewBookingDialog';
-import { VisitRequestsSection } from '../components/VisitRequestsSection';
+import { VisitRequestsSection, type FocusRequest } from '../components/VisitRequestsSection';
 import { KinRemovalRequestsSection } from '../components/KinRemovalRequests';
 import {
   approveBooking,
@@ -290,6 +290,12 @@ interface BookingsProps {
    * arrives unfolded on it.
    */
   kinRemovalRequestId?: string;
+  /**
+   * #2028: the booking request a notification opened this screen for, from
+   * `/bookings?requestId=&requestKinfolkId=`. The Visit requests queue arrives
+   * unfolded with that request's card open.
+   */
+  focusRequest?: FocusRequest;
 }
 
 /** One row's derived display facts, computed once per render pass. */
@@ -340,7 +346,7 @@ function rowViewsFor(rows: BookingEntry[]): RowView[] {
  * and api/bookingsWrite.ts for exactly why those two callables don't apply to
  * this list's rows.
  */
-export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestId }: BookingsProps) {
+export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestId, focusRequest }: BookingsProps) {
   const navigate = useNavigate();
   const rows = useCollection<BookingEntry>(BOOKINGS_QUERY);
   // History is open like every other section, and grows a page at a time. It
@@ -703,7 +709,7 @@ export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestI
           compact banner rather than an open list of request cards, because the
           mock puts the three status sections directly under the heading and a
           queue that is usually empty was pushing the first one to y=580. */}
-      <VisitRequestsSection refreshKey={requestsRefresh} />
+      <VisitRequestsSection refreshKey={requestsRefresh} {...(focusRequest ? { focusRequest } : {})} />
       {/* #1408: the other household request waiting on the office. */}
       <KinRemovalRequestsSection {...(kinRemovalRequestId ? { focusRequestId: kinRemovalRequestId } : {})} />
       {outcome !== null && <BulkOutcomeBanner outcome={outcome} onDismiss={() => setOutcome(null)} />}

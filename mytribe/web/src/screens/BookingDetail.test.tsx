@@ -15,6 +15,7 @@ import type {
   RequestBookingRescheduleResult,
 } from '../contracts/bookingContracts.generated';
 import { warmSave } from '../lib/warmSave';
+import { CallableTimeoutError } from '../lib/fns';
 
 const mocks = vi.hoisted(() => ({
   getMyBookings: vi.fn<() => Promise<GetMyBookingsResult>>(),
@@ -102,6 +103,7 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     cancelRequestStatus: null,
     cancelRequestReason: null,
     cancelResponseNote: null,
+    requestDeclinedAtMs: null,
     rescheduleRequestStatus: null,
     rescheduleRequestedStartTimeMs: null,
     rescheduleRequestedEndTimeMs: null,
@@ -1023,5 +1025,140 @@ describe('BookingDetail: warm on open (#1504)', () => {
     renderScreen();
     await screen.findByRole('heading', { name: 'Drop-in Visit' });
     expect(warmSave).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #1919: the send took over 20 seconds, the page said it may not have gone
+ * through, and a reload showed the new time on file. #1281 covered the reply
+ * that arrives; these cover the reply that does not.
+ */
+describe('BookingDetail: a send that got no answer (#1919)', () => {
+  it('reschedule: looks before saying anything, and closes as sent when the new time is on file', async () => {
+    mocks.getMyBookings.mockResolvedValueOnce(bookingsResult({ upcoming: [booking()] }));
+    mocks.requestBookingReschedule.mockImplementation(async (_k, _b, _v, startMs) => {
+      // The server saved it; only the reply was lost.
+      mocks.getMyBookings.mockResolvedValue(
+        bookingsResult({
+          upcoming: [booking({ rescheduleRequestStatus: 'pending', rescheduleRequestedStartTimeMs: startMs })],
+        }),
+      );
+      throw new CallableTimeoutError('requestBookingReschedule');
+    });
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    const form = await screen.findByTestId('reschedule-form');
+    await pickDay(user, form);
+    await user.click(within(form).getByRole('button', { name: /send this time to your auntie/i }));
+    expect(await screen.findByText(/New time requested/)).toBeInTheDocument();
+    expect(screen.queryByTestId('reschedule-form')).not.toBeInTheDocument();
+    expect(screen.queryByText(/No answer came back/)).not.toBeInTheDocument();
+    expect(mocks.requestBookingReschedule).toHaveBeenCalledTimes(1);
+  });
+
+  it('reschedule: says so in plain words, with no function name, when the time is not on file', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.requestBookingReschedule.mockRejectedValue(new CallableTimeoutError('requestBookingReschedule'));
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    const form = await screen.findByTestId('reschedule-form');
+    await pickDay(user, form);
+    await user.click(within(form).getByRole('button', { name: /send this time to your auntie/i }));
+    expect(await within(form).findByText(/No answer came back within 20 seconds/)).toBeInTheDocument();
+    expect(form.textContent).not.toMatch(/requestBookingReschedule|Tribe Tails/);
+    // It looked before it spoke: the first read, then the check.
+    expect(mocks.getMyBookings).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('reschedule-form')).toBeInTheDocument();
+  });
+
+  it('reschedule: any other refusal is shown as it arrives, with no extra read', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.requestBookingReschedule.mockRejectedValue(new Error('Only a requested or confirmed visit can ask for a new time.'));
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /reschedule visit/i }));
+    const form = await screen.findByTestId('reschedule-form');
+    await pickDay(user, form);
+    await user.click(within(form).getByRole('button', { name: /send this time to your auntie/i }));
+    expect(await screen.findByText(/only a requested or confirmed visit can ask for a new time/i)).toBeInTheDocument();
+    expect(mocks.getMyBookings).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancel: closes as sent when the cancellation is on file after no answer', async () => {
+    mocks.getMyBookings.mockResolvedValueOnce(bookingsResult({ upcoming: [booking()] }));
+    mocks.requestBookingCancellation.mockImplementation(async () => {
+      mocks.getMyBookings.mockResolvedValue(
+        bookingsResult({ upcoming: [booking({ cancelRequested: true, cancelRequestStatus: 'pending' })] }),
+      );
+      throw new CallableTimeoutError('requestBookingCancellation');
+    });
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /Request cancellation/i }));
+    await user.click(screen.getByRole('button', { name: /Yes, request cancellation/i }));
+    expect(await screen.findByText(/Cancellation requested/)).toBeInTheDocument();
+    expect(screen.queryByText(/No answer came back/)).not.toBeInTheDocument();
+  });
+
+  it('cancel: never reads as sent when the cancellation is not on file', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.requestBookingCancellation.mockRejectedValue(new CallableTimeoutError('requestBookingCancellation'));
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /Request cancellation/i }));
+    await user.click(screen.getByRole('button', { name: /Yes, request cancellation/i }));
+    expect(await screen.findByText(/No answer came back within \d+ seconds/)).toBeInTheDocument();
+    expect(screen.queryByText(/Cancellation requested/)).not.toBeInTheDocument();
+    // It looked before it spoke: the first read, then the check.
+    expect(mocks.getMyBookings).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * #2029: a request the office declined read CANCELLED on its page, Status
+ * "Cancelled" and Auntie "Not yet assigned", and nothing on the page said
+ * declined.
+ */
+describe('BookingDetail: a declined request (#2029)', () => {
+  const declined = () =>
+    booking({ status: 'cancelled', auntieDisplayName: null, requestDeclinedAtMs: Date.now() - 60_000 });
+
+  it('reads DECLINED on the badge and Declined on the Status tile, never Cancelled', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [declined()] }));
+    renderScreen();
+    expect(await screen.findByText('DECLINED')).toBeInTheDocument();
+    expect(screen.getByText('Declined')).toBeInTheDocument();
+    expect(screen.queryByText('CANCELLED')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cancelled')).not.toBeInTheDocument();
+  });
+
+  it('does not promise an Auntie on a request that will never get one', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [declined()] }));
+    renderScreen();
+    expect(await screen.findByText('Not assigned')).toBeInTheDocument();
+    expect(screen.queryByText('Not yet assigned')).not.toBeInTheDocument();
+  });
+
+  it('still reads CANCELLED on a visit that was cancelled, not declined', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking({ status: 'cancelled' })] }));
+    renderScreen();
+    expect(await screen.findByText('CANCELLED')).toBeInTheDocument();
+    expect(screen.queryByText('DECLINED')).not.toBeInTheDocument();
+  });
+
+  it('shows the office note beside the Declined badge', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ recent: [declined()] }));
+    mocks.getBookingNotes.mockResolvedValue({
+      bookingNote: null,
+      notes: [],
+      fromBusiness: [
+        { id: 'request-declined', kind: 'requestDeclined', body: 'We are full that week.', createdAtMs: Date.now() - 60_000, authorName: 'Syd' },
+      ],
+    });
+    renderScreen();
+    expect(await screen.findByText('DECLINED')).toBeInTheDocument();
+    expect(await screen.findByText('We are full that week.')).toBeInTheDocument();
   });
 });

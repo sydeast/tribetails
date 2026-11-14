@@ -6,6 +6,7 @@ import { loadEmailFrame } from '../../lib/emailFrameStore';
 import { logEvent } from '../../lib/logger';
 import { isEmailHardBounced } from '../../lib/suppressions';
 import { fallbackEmail } from '../fallbackTemplate';
+import { kinForStoredTemplate } from '../templateParsers';
 import { businessLabel, loadBusinessName } from '../../lib/businessName';
 import { businessNoticeRecipients, readBusinessAdmins } from '../../lib/businessAdmins';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
@@ -113,11 +114,13 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
 
   // #957: the operator's frame, read once for this send. Never throws.
   const frame = await loadEmailFrame('emailChannel');
+  const parts = sendPartsFor(tpl, frame);
   const providerMessageId = await sendTemplatedEmail({
     to: email,
-    data: renderData,
+    // #2093: a template stored before the quote wording changed still reads whole.
+    data: kinForStoredTemplate(renderData, [parts.subjectTemplate, parts.bodyTemplate, parts.htmlTemplate]),
     templateKey: def.key,
-    ...sendPartsFor(tpl, frame),
+    ...parts,
   });
   return { providerMessageId };
 }

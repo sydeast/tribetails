@@ -100,15 +100,30 @@ private sealed interface BookingRoute {
  * Screens that need a test double pass [dataSource] directly.
  */
 @Composable
-fun BookingScreen() {
+fun BookingScreen(
+    /**
+     * #2028: the request a "Kinfolk requested a KinCare visit" notice opened
+     * this screen for, as [com.tribetails.auntieos.web.screens.notifications.visitRequestKey]
+     * (household/request id). Its detail opens once the queue holds it.
+     */
+    focusRequestKey: String? = null,
+    onFocusRequestConsumed: () -> Unit = {},
+) {
     val client = remember { FirestoreClient() }
-    BookingScreenContent(dataSource = FirestoreClientBookingDataSource(client), client = client)
+    BookingScreenContent(
+        dataSource = FirestoreClientBookingDataSource(client),
+        client = client,
+        focusRequestKey = focusRequestKey,
+        onFocusRequestConsumed = onFocusRequestConsumed,
+    )
 }
 
 @Composable
 internal fun BookingScreenContent(
     dataSource: AuntieDataSource,
     client: FirestoreClient? = null,
+    focusRequestKey: String? = null,
+    onFocusRequestConsumed: () -> Unit = {},
 ) {
     val vm = remember { BookingViewModel(dataSource) }
     var route by remember { mutableStateOf<BookingRoute>(BookingRoute.List) }
@@ -118,6 +133,8 @@ internal fun BookingScreenContent(
             vm           = vm,
             client       = client,
             onNewBooking = { route = BookingRoute.Create },
+            focusRequestKey = focusRequestKey,
+            onFocusRequestConsumed = onFocusRequestConsumed,
         )
         BookingRoute.Create -> BookingCreateScreen(
             vm     = vm,
@@ -147,6 +164,8 @@ private fun BookingListScreen(
     vm: BookingViewModel,
     client: FirestoreClient?,
     onNewBooking: () -> Unit,
+    focusRequestKey: String? = null,
+    onFocusRequestConsumed: () -> Unit = {},
 ) {
     val c     = AuntieTheme.colors
     val scope = rememberReportingScope()
@@ -282,6 +301,19 @@ private fun BookingListScreen(
         val visits = (incomingState as? FirestoreResult.Data)?.value.orEmpty()
         val names = (incomingKinfolkState as? FirestoreResult.Data)?.value.orEmpty().associate { it._id to it.displayName }
         groupIncomingBySeries(visits) { names[it] }
+    }
+    // #2028: what became of the request a notice opened this screen for, once
+    // the queue has answered: open its card, or say it is no longer waiting.
+    val focus = focusRequestOutcome(focusRequestKey, incomingState, incomingSeries)
+    var focusedKey by remember { mutableStateOf<String?>(null) }
+    var focusNotice by remember { mutableStateOf<String?>(null) }
+    androidx.compose.runtime.LaunchedEffect(focusRequestKey, focus) {
+        when (focus) {
+            FocusRequestOutcome.Waiting -> Unit
+            FocusRequestOutcome.Open -> { focusedKey = focusRequestKey; onFocusRequestConsumed() }
+            FocusRequestOutcome.NotWaiting -> { focusNotice = FOCUS_REQUEST_NOT_WAITING; onFocusRequestConsumed() }
+            FocusRequestOutcome.None -> Unit
+        }
     }
 
     ScreenScaffold {
@@ -438,6 +470,21 @@ private fun BookingListScreen(
         }
         Spacer(Modifier.height(20.dp))
 
+        focusNotice?.let { msg ->
+            com.tribetails.auntieos.web.ui.components.AuntieBanner(
+                tone = com.tribetails.auntieos.web.ui.components.AuntieBannerTone.Info,
+                title = "Request answered",
+                onDismiss = { focusNotice = null },
+                body = { Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim) },
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+        // #2028: a notice that opened a request whose queue is still loading says so.
+        if (focus == FocusRequestOutcome.Waiting) {
+            EmptyHint("Opening the request\u2026")
+            Spacer(Modifier.height(12.dp))
+        }
+
         // ── 16.5 Incoming requests (MyTribe envelopes; approve/cancel a series) ──
         if (incomingSeries.isNotEmpty() || incomingState is FirestoreResult.Error) {
             DenPanel(
@@ -454,6 +501,8 @@ private fun BookingListScreen(
                         incomingSeries.forEach { series ->
                             IncomingSeriesCard(
                                 series = series,
+                                openDetail = focusedKey == com.tribetails.auntieos.web.screens.notifications.visitRequestKey(series.kinfolkId, series.batchId),
+                                onDetailClosed = { focusedKey = null },
                                 busy = vm.seriesActionBatchId == series.batchId,
                                 locked = vm.seriesActionBatchId != null,
                                 onApprove = { note -> scope.launch { vm.approveSeries(series.kinfolkId, series.batchId, series.kinfolkName, note) } },
@@ -760,13 +809,14 @@ private fun IncomingSeriesCard(
     onApprove: (note: String) -> Unit,
     onCancel: (note: String) -> Unit,
     zone: TimeZone,
+    /** #2028: a notification opened this request, so its detail opens on arrival. */
+    openDetail: Boolean = false,
+    onDetailClosed: () -> Unit = {},
 ) {
     val c = AuntieTheme.colors
     var confirming by remember(series.kinfolkId, series.batchId) { mutableStateOf<String?>(null) }
-    var detailOpen by remember(series.kinfolkId, series.batchId) { mutableStateOf(false) }
-    // #2030: what the operator writes the household with the answer. Cleared on
-    // every new confirm, so a note meant for a decline never rides an approval.
-    var householdNote by remember(series.kinfolkId, series.batchId) { mutableStateOf("") }
+    var detailOpen by remember(series.kinfolkId, series.batchId) { mutableStateOf(openDetail) }
+    androidx.compose.runtime.LaunchedEffect(openDetail) { if (openDetail) detailOpen = true }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -783,61 +833,36 @@ private fun IncomingSeriesCard(
             Text(series.subject(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current), style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = { householdNote = ""; confirming = "approve" }, enabled = !locked)
-            GhostButton(label = "Cancel", onClick = { householdNote = ""; confirming = "cancel" }, enabled = !locked)
+            PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = { confirming = "approve" }, enabled = !locked)
+            GhostButton(label = "Cancel", onClick = { confirming = "cancel" }, enabled = !locked)
         }
     }
 
-    AuntieDialog(
-        visible = confirming != null,
-        title = if (confirming == "cancel") series.declineConfirmTitle() else series.approveConfirmTitle(),
+    SeriesDecisionDialog(
+        series = series.takeIf { confirming != null },
+        decline = confirming == "cancel",
+        zone = zone,
+        busy = false,
+        enabled = !locked,
         onDismiss = { confirming = null },
-        footer = {
-            GhostButton(label = "Never mind", onClick = { confirming = null })
-            PrimaryButton(
-                label = if (confirming == "cancel") "Turn it down" else "Book it",
-                onClick = {
-                    val decision = confirming
-                    val note = householdNote.trim()
-                    confirming = null
-                    householdNote = ""
-                    if (decision == "cancel") onCancel(note) else onApprove(note)
-                },
-                enabled = !locked,
-            )
+        onConfirm = { note ->
+            val decision = confirming
+            confirming = null
+            if (decision == "cancel") onCancel(note) else onApprove(note)
         },
-    ) {
-        Text(series.subject(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
-        Text(
-            when {
-                confirming == "cancel" -> "Nothing will be booked. The household will be told."
-                series.visitCount == 1 -> "This visit will go on the schedule and on the household's portal."
-                else -> "All ${series.visitCount} visits will go on the schedule and on the household's portal."
-            },
-            style = AuntieTheme.typography.bodyMedium,
-            color = c.textPrimary,
-        )
-        // #2030: the same two labels as the web's and Android's dialogs.
-        MultilineField(
-            value = householdNote,
-            onValueChange = { householdNote = it.take(500) },
-            label = if (confirming == "cancel") "Anything to add for the household (optional)" else "Note for the household (optional)",
-            minLines = 3,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
+    )
 
     AuntieDialog(
         visible = detailOpen,
         title = series.detailTitle(),
-        onDismiss = { detailOpen = false },
+        onDismiss = { detailOpen = false; onDetailClosed() },
         footer = {
-            GhostButton(label = "Close", onClick = { detailOpen = false })
+            GhostButton(label = "Close", onClick = { detailOpen = false; onDetailClosed() })
             GhostButton(
                 label = "Cancel",
                 onClick = {
                     detailOpen = false
-                    householdNote = ""
+                    onDetailClosed()
                     confirming = "cancel"
                 },
                 enabled = !locked,
@@ -846,7 +871,7 @@ private fun IncomingSeriesCard(
                 label = "Approve",
                 onClick = {
                     detailOpen = false
-                    householdNote = ""
+                    onDetailClosed()
                     confirming = "approve"
                 },
                 enabled = !locked,
@@ -862,6 +887,87 @@ private fun IncomingSeriesCard(
         val notes = series.visits.map { it.notes.trim() }.filter { it.isNotEmpty() }.distinct()
         IncomingFact("Notes on the request", notes.joinToString("\n").ifBlank { "None given" })
     }
+}
+
+/**
+ * #1577 / #2030 / #1875: the one confirm step for answering a request, used by
+ * the Visit requests card and by the notification row, so both say the same
+ * thing: the household (title), what is asked, the day and time, who will be
+ * told, and the note box. Visible while [series] is non-null. [busy] keeps the
+ * step open on "Working…" while the answer is out, for a caller that waits on it.
+ */
+@Composable
+internal fun SeriesDecisionDialog(
+    series: BookingSeries?,
+    decline: Boolean,
+    zone: TimeZone,
+    busy: Boolean,
+    enabled: Boolean = true,
+    onDismiss: () -> Unit,
+    onConfirm: (note: String) -> Unit,
+) {
+    val c = AuntieTheme.colors
+    // #2030: cleared for every new confirm, so a note meant for a decline never
+    // rides an approval.
+    var householdNote by remember(series?.kinfolkId, series?.batchId, decline) { mutableStateOf("") }
+    AuntieDialog(
+        visible = series != null,
+        title = when {
+            series == null -> ""
+            decline -> series.declineConfirmTitle()
+            else -> series.approveConfirmTitle()
+        },
+        onDismiss = { if (!busy) onDismiss() },
+        footer = {
+            GhostButton(label = "Never mind", onClick = onDismiss, enabled = !busy)
+            PrimaryButton(
+                label = when {
+                    busy -> "Working\u2026"
+                    decline -> "Turn it down"
+                    else -> "Book it"
+                },
+                onClick = { onConfirm(householdNote.trim()) },
+                enabled = enabled && !busy,
+            )
+        },
+    ) {
+        if (series != null) {
+            Text(series.subject(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            Text(series.decisionLine(decline, zone), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            // #2030: the same two labels as the web's and Android's dialogs.
+            MultilineField(
+                value = householdNote,
+                onValueChange = { householdNote = it.take(com.tribetails.auntieos.web.screens.notifications.HOUSEHOLD_NOTE_MAX) },
+                label = if (decline) "Anything to add for the household (optional)" else "Note for the household (optional)",
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/** #2028: what the request a notification opened Bookings for came to. */
+internal enum class FocusRequestOutcome { None, Waiting, Open, NotWaiting }
+
+/** #2028: said when the request a notice opened has already been answered. */
+internal const val FOCUS_REQUEST_NOT_WAITING =
+    "That request is no longer waiting. It was answered or withdrawn, so there is nothing to approve."
+
+/**
+ * #2028: open the request's card once the live queue holds it; while the queue
+ * is loading, wait; once it has loaded without it (or failed), say it is not
+ * waiting rather than opening an empty sheet. Pure; unit-tested.
+ */
+internal fun focusRequestOutcome(
+    focusKey: String?,
+    incoming: FirestoreResult<*>,
+    series: List<BookingSeries>,
+): FocusRequestOutcome = when {
+    focusKey.isNullOrBlank() -> FocusRequestOutcome.None
+    incoming is FirestoreResult.Loading -> FocusRequestOutcome.Waiting
+    incoming is FirestoreResult.Error -> FocusRequestOutcome.None
+    focusKey in com.tribetails.auntieos.web.screens.notifications.pendingRequestKeys(series) -> FocusRequestOutcome.Open
+    else -> FocusRequestOutcome.NotWaiting
 }
 
 @Composable

@@ -293,14 +293,15 @@ describe('resendQuote refusals', () => {
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 
-  it('refuses a quote still waiting for an answer, and points at the reminder instead', async () => {
+  it('#2220: refuses a quote still waiting for an answer, and names no reminder a quote cannot get', async () => {
     const ctx = ctxFor(declinedQuote({ quoteDecision: undefined, quoteDecidedAt: undefined }));
     mocks.dbFn.mockReturnValue(ctx.db);
 
     const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
 
     expect(err.details).toMatchObject({ code: 'quote_not_declined' });
-    expect(err.message).toContain('reminder');
+    expect(err.message).toBe("This quote is still waiting for the household's answer, so there is nothing to send again yet.");
+    expect(err.message).not.toMatch(/reminder/i);
     expect(quoteWrite(ctx)).toBeUndefined();
   });
 
@@ -421,7 +422,7 @@ describe('resendQuote refusals', () => {
     const err = await resendQuoteHandler(req({ invoiceId: 'q1' })).catch((e) => e);
     expect(err.code).toBe('internal');
     expect(err.details).toMatchObject({ code: 'quote_resent_not_announced' });
-    expect(err.message).toBe('The quote was sent back out, but the household could not be told about it. Use Send reminder to tell them.');
+    expect(err.message).toBe('The quote was sent back out and the household can see it in MyTribe, but they could not be told about it. Let them know it is there.');
   });
 });
 

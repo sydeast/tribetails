@@ -648,7 +648,9 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'businessAdmins',
     templates: { email: 'quote.accepted', push: 'quote.accepted' },
     description: 'Quote accepted confirmation.',
-    householdTitle: 'You accepted a quote',
+    // Not "You accepted a quote": the household copy goes to the billing
+    // recipient, who may be a different member from the one who accepted.
+    householdTitle: 'A quote was accepted',
     householdDescription: 'Confirmation that your household accepted a quote.',
   },
   {
@@ -771,9 +773,9 @@ const CATALOG_LIST: NotificationDef[] = [
     // household's own preferences. One notice per reply (`dedupeKey` is the
     // message id), so two replies a minute apart are two notices.
     key: 'message.reply',
-    // The label and description are the row on the household's notifications
-    // list (the dispatcher writes them as its title and description), so they
-    // are in the household's words.
+    // The household's notifications list row is `householdTitle` and
+    // `householdDescription` (the dispatcher writes those on the household's
+    // copy, #2093); the label and description are the operator's matrix row.
     label: 'You have a new message',
     audience: 'kinfolk',
     audiences: { kinfolk: true },
@@ -848,8 +850,8 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'kinfolkAcct',
     templates: { email: 'pets.updated', push: 'pets.updated' },
     description: 'Kinfolk/Auntie updated or added Pets (30-min inactive debounce).',
-    householdTitle: 'Your pets were updated',
-    householdDescription: 'When a pet on your household is added or changed.',
+    householdTitle: 'Your Kin were updated',
+    householdDescription: 'When a Kin in your household is added or changed.',
   },
   {
     key: 'profile.updated',

@@ -502,7 +502,7 @@ private fun StatusChip(stage: VisitStage) {
         VisitStage.EnRoute -> KinfolkBrand.PackPink
         VisitStage.Active -> KinfolkBrand.SnuggleCoral
         VisitStage.Completed -> KinfolkBrand.FamilyPurple
-        VisitStage.Cancelled -> KinfolkBrand.NavyMuted
+        VisitStage.Cancelled, VisitStage.Declined -> KinfolkBrand.NavyMuted
     }
     KinTintPill(stage.label(), color)
 }

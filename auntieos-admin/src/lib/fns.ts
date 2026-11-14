@@ -115,10 +115,9 @@ export class CallableTimeoutError extends Error {
   readonly seconds: number;
   constructor(name: string, timeoutMs: number = callableTimeoutMs(name)) {
     const seconds = Math.round(timeoutMs / 1000);
-    super(
-      `${name} got no answer from Tribe Tails within ${seconds} seconds, so it may still have gone through. ` +
-        'Check before trying again.',
-    );
+    // #1919: plain words. The call's name stays on `callableName` for logs and
+    // never reaches the screen, and no business name is guessed at here.
+    super(`No answer came back within ${seconds} seconds, so it may still have gone through. Check before trying again.`);
     this.name = 'CallableTimeoutError';
     this.callableName = name;
     this.seconds = seconds;

@@ -16,7 +16,8 @@ import {
   bulkUnarchiveNotifications,
 } from '../api/notificationsWrite';
 import { type BatchBookingAction } from '../api/bookingsWrite';
-import { approveBookingRequest, declineBookingRequest } from '../api/bookingRequests';
+import { usePendingBookingRequests } from '../lib/pendingBookingRequests';
+import { DecisionDialog, type VisitRequest } from '../components/VisitRequestsSection';
 import { kinfolkDisplayName } from '../api/directory';
 import { useCollection } from '../lib/firestore';
 import { useAuth } from '../lib/auth';
@@ -44,7 +45,7 @@ import {
   notificationDetailRows,
   notificationDetailSummary,
 } from '../lib/notificationDetail';
-import { type NotificationRoute } from '../lib/notificationActions';
+import { pendingRequestKey, type NotificationRoute, type PendingRequestSet } from '../lib/notificationActions';
 import { useBulkMarkRead } from '../lib/useBulkMarkRead';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { asyncScalar } from '../lib/async';
@@ -173,6 +174,14 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
   const ownUid = auth.status === 'signedIn' ? auth.user.uid : '';
   const rows = useCollection<NotificationEntry>(notificationsQueryFor(ownUid));
   const households = useKinfolkRoster();
+  // #2069: the booking requests still waiting, live (#1864). A request row
+  // offers Approve and Deny only when this holds it.
+  const pending = usePendingBookingRequests();
+  const pendingSet = pending.status === 'ready' ? pending.data : null;
+  /** #1875: the confirm step a request row's Approve or Deny opened. */
+  const [decision, setDecision] = useState<{ row: VisitRequest; decision: 'accept' | 'decline' } | null>(null);
+  /** #1875: what the answer did, kept on screen until dismissed. */
+  const [decisionOutcome, setDecisionOutcome] = useState<string | null>(null);
 
   // Issue #707: WAS a Set<string>, so any write for a row disabled all six of
   // its buttons for however long that ONE call took (10s+ for
@@ -288,36 +297,25 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
 
   /**
    * #1675: Approve / Deny on a waiting request answers the whole request, the
-   * same `manageBookingSeries` call Bookings > Review makes. `batchId` is the
-   * row's envelope id; the household comes off the row. A refusal (a closed
-   * day, a busy block, a night with no start time, a time already passed)
-   * throws with the server's sentence, which `runRowAction` shows. A clean
-   * answer needs no banner: the server stamps the row, and it shows "Booked"
-   * or "Declined" in place of the buttons.
+   * same `manageBookingSeries` call Bookings > Review makes.
+   *
+   * #1875: and asks first. One press used to decline the request and tell the
+   * household, with "Mark read" sliding under the pointer afterwards. The press
+   * now opens the confirm step Bookings > Review uses (`DecisionDialog`), which
+   * names the household and the dates, says what the household will be told,
+   * takes the optional note for them, and reports what the server actually did.
+   * It is fed the request from the live queue, so it is the same request the
+   * Bookings card shows.
    */
   function bookingAction(entry: NotificationEntry, batchId: string, action: BatchBookingAction) {
-    const kinfolkId = notificationKinfolkId(entry);
-    void runRowAction(
-      entry._id,
-      'booking',
-      async () => {
-        if (action !== 'APPROVE') {
-          const declined = await declineBookingRequest(kinfolkId, batchId);
-          return declined.householdNotified
-            ? null
-            : 'Declined, but the message to the household did not go out, so tell them another way.';
-        }
-        const res = await approveBookingRequest(kinfolkId, batchId);
-        if (res.failedVisits > 0) {
-          return `Approved ${String(res.affectedVisits)} of ${String(res.affectedVisits + res.failedVisits)} visits. The rest did not go through and the household has not been told. Open the request in Bookings to finish it.`;
-        }
-        if (res.newlyConfirmed > 0 && !res.householdNotified) {
-          return 'Approved, but the message to the household did not go out, so tell them another way.';
-        }
-        return null;
-      },
-      'Answering the request failed.',
-    );
+    const request = pendingSet?.get(pendingRequestKey(notificationKinfolkId(entry), batchId));
+    if (request === undefined) {
+      // The queue moved between the render and the press.
+      setActionError('This request is no longer waiting, so there is nothing to answer.');
+      return;
+    }
+    setDecisionOutcome(null);
+    setDecision({ row: { kind: 'newBooking', request }, decision: action === 'APPROVE' ? 'accept' : 'decline' });
   }
 
   /**
@@ -376,7 +374,12 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
   // whole reason StatCard exists; see the note on it in DenScreenKit.tsx.
   const totalCount = asyncScalar(rows, () => inScope.length);
   const unreadStat = asyncScalar(rows, () => unreadNotificationCount(inScope));
-  const actionableStat = asyncScalar(rows, () => actionableNotificationCount(inScope));
+  // #2069: counted against the live queue of new requests, the same read
+  // Bookings > Review lists; while that read is out the tile waits too.
+  const actionableStat =
+    rows.status === 'ready' && pending.status !== 'ready'
+      ? asyncScalar(pending, () => 0)
+      : asyncScalar(rows, () => actionableNotificationCount(inScope, pendingSet));
 
   // The heading badge. Only claimed once the stream has actually resolved, never
   // a fabricated 0 while loading/erroring (the StatCard / AsyncRegion policy
@@ -416,14 +419,43 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
         </Banner>
       ) : null}
 
+      {decisionOutcome !== null ? (
+        <Banner tone="success" title="Done" onDismiss={() => setDecisionOutcome(null)}>
+          <span role="status">{decisionOutcome}</span>
+        </Banner>
+      ) : null}
+
+      {pending.status === 'error' ? (
+        <Banner
+          tone="warning"
+          title="Waiting requests did not load"
+          trailing={pending.retry ? <GhostButton label="Retry" onClick={pending.retry} /> : undefined}
+        >
+          {`Approve and Deny are hidden until they do. Open a request to answer it on Bookings. ${pending.message}`}
+        </Banner>
+      ) : null}
+
+      {decision !== null ? (
+        <DecisionDialog
+          row={decision.row}
+          decision={decision.decision}
+          onClose={() => setDecision(null)}
+          onResolved={(row, message) => {
+            setDecision(null);
+            const name = row.request.kinfolkName?.trim() ?? '';
+            setDecisionOutcome(name === '' ? message : `${name}: ${message}`);
+          }}
+        />
+      ) : null}
+
       {/* The Den stat vocabulary, on the screen that was the last list without
           it. Counts come through asyncScalar, so a failed listener shows a dash
           and the reason instead of three confident zeros. */}
       <div className="notif-summary">
         <StatCard
-          label={showingArchived ? 'Filed away' : 'In your inbox'}
+          label={showingArchived ? 'Filed away' : 'Active'}
           value={totalCount}
-          trend={showingArchived ? 'archived notifications' : 'active notifications'}
+          trend={showingArchived ? 'archived notifications' : 'in your notifications list'}
           tone="purple"
         />
         <StatCard
@@ -580,6 +612,8 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
                               }
                               {...(onNavigate ? { onNavigate } : {})}
                               isAuntie={isAuntie}
+                              pendingRequests={pendingSet}
+                              pendingRequestsLoading={pending.status === 'loading'}
                             />
                           ))}
                         </ul>
@@ -666,6 +700,9 @@ interface NotificationRowProps {
   onNavigate?: (route: NotificationRoute) => void;
   onBookingAction: (bookingId: string, action: BatchBookingAction) => void;
   isAuntie: boolean;
+  /** #2069: the waiting booking requests, or null while unknown. */
+  pendingRequests: PendingRequestSet;
+  pendingRequestsLoading: boolean;
 }
 
 function NotificationRow({
@@ -680,6 +717,8 @@ function NotificationRow({
   onNavigate,
   onBookingAction,
   isAuntie,
+  pendingRequests,
+  pendingRequestsLoading,
 }: NotificationRowProps) {
   const read = isRead(entry);
   // Visible only under the "Included" / "Only archived" facet, where the row
@@ -806,6 +845,8 @@ function NotificationRow({
           onNavigate={(route) => onNavigate?.(route)}
           onBookingAction={onBookingAction}
           isAuntie={isAuntie}
+          pendingRequests={pendingRequests}
+          pendingRequestsLoading={pendingRequestsLoading}
         />
       </div>
       <div className="notif-row__side">

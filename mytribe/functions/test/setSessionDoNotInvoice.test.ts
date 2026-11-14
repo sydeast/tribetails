@@ -42,8 +42,11 @@ const visit = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-function seed(sessions: Record<string, Record<string, unknown> | null>) {
-  const docs: Record<string, Record<string, unknown> | null> = {};
+function seed(
+  sessions: Record<string, Record<string, unknown> | null>,
+  extra: Record<string, Record<string, unknown> | null> = {},
+) {
+  const docs: Record<string, Record<string, unknown> | null> = { ...extra };
   for (const [id, data] of Object.entries(sessions)) docs[`kin_care_sessions/${id}`] = data;
   return buildDbMock({ docs });
 }
@@ -135,17 +138,74 @@ describe('setSessionDoNotInvoice reversal', () => {
 });
 
 describe('setSessionDoNotInvoice refusals', () => {
-  it('REFUSES to exclude a visit an invoice already bills for, and names the invoice', async () => {
-    const ctx = seed({ s1: visit({ invoiceId: 'inv_42' }) });
+  it('#2196: REFUSES to exclude a visit an invoice already bills for, naming the invoice by its number, never its id', async () => {
+    const ctx = seed({ s1: visit({ invoiceId: 'inv_42' }) }, { 'invoices/inv_42': { status: 'open', invoiceNumber: '1042' } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
-    await expect(
-      setSessionDoNotInvoiceHandler(req({ sessionIds: ['s1'], doNotInvoice: true })),
-    ).rejects.toMatchObject({
+    const err = await setSessionDoNotInvoiceHandler(req({ sessionIds: ['s1'], doNotInvoice: true })).catch((e) => e);
+
+    expect(err).toMatchObject({
       code: 'failed-precondition',
-      message: expect.stringContaining('inv_42'),
+      details: { code: 'session_already_invoiced', sessionIds: ['s1'] },
     });
+    expect(err.message).toBe(
+      'That visit is billed on invoice 1042, so it cannot be marked do not invoice. Unlink it from that invoice first, then mark it.',
+    );
+    expect(err.message).not.toContain('inv_42');
     expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('#2196: a visit a QUOTE holds is "on quote N", never "billed"', async () => {
+    const ctx = seed({ s1: visit({ invoiceId: 'q_9' }) }, { 'invoices/q_9': { status: 'quote', invoiceNumber: '1026' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const err = await setSessionDoNotInvoiceHandler(req({ sessionIds: ['s1'], doNotInvoice: true })).catch((e) => e);
+
+    expect(err.message).toBe(
+      'That visit is on quote 1026, so it cannot be marked do not invoice. Remove its line from that quote first, then mark it.',
+    );
+    expect(err.message).not.toMatch(/billed/);
+    expect(err.message).not.toContain('q_9');
+  });
+
+  it('#2196: a quote saved unsent is a quote too, and one with no number is "another quote"', async () => {
+    const ctx = seed({ s1: visit({ invoiceId: 'q_10' }) }, { 'invoices/q_10': { status: 'draft', quoteDraft: true } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const err = await setSessionDoNotInvoiceHandler(req({ sessionIds: ['s1'], doNotInvoice: true })).catch((e) => e);
+
+    expect(err.message).toBe(
+      'That visit is on another quote, so it cannot be marked do not invoice. Remove its line from that quote first, then mark it.',
+    );
+  });
+
+  it('#2196: an invoice with no record is "another invoice", never its id', async () => {
+    const ctx = seed({ s1: visit({ invoiceId: 'gone_1' }) });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const err = await setSessionDoNotInvoiceHandler(req({ sessionIds: ['s1'], doNotInvoice: true })).catch((e) => e);
+
+    expect(err.message).toBe(
+      'That visit is billed on another invoice, so it cannot be marked do not invoice. Unlink it from that invoice first, then mark it.',
+    );
+  });
+
+  it('#2196: a batch held by a quote and an invoice names the first by number and neither id', async () => {
+    const ctx = seed(
+      { s1: visit({ invoiceId: 'q_9' }), s2: visit({ invoiceId: 'inv_42' }) },
+      {
+        'invoices/q_9': { status: 'quote', invoiceNumber: '1026' },
+        'invoices/inv_42': { status: 'open', invoiceNumber: '1042' },
+      },
+    );
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const err = await setSessionDoNotInvoiceHandler(req({ sessionIds: ['s1', 's2'], doNotInvoice: true })).catch((e) => e);
+
+    expect(err.message).toBe(
+      '2 of these visits are already on other invoices or quotes (the first is on quote 1026), so nothing was changed. Take them off there first, then mark them.',
+    );
+    expect(err.message).not.toMatch(/q_9|inv_42/);
   });
 
   it('writes NOTHING when one visit of a batch is already billed', async () => {
@@ -159,13 +219,16 @@ describe('setSessionDoNotInvoice refusals', () => {
     expect(ctx.writes).toHaveLength(0);
   });
 
-  it('REFUSES a visit that no longer exists, and names it', async () => {
+  it('REFUSES a visit that no longer exists, with its id in details and not in the sentence (#2196)', async () => {
     const ctx = seed({ s1: visit() });
     mocks.dbFn.mockReturnValue(ctx.db);
 
-    await expect(
-      setSessionDoNotInvoiceHandler(req({ sessionIds: ['s1', 'ghost'], doNotInvoice: true })),
-    ).rejects.toMatchObject({ code: 'not-found', message: expect.stringContaining('ghost') });
+    const err = await setSessionDoNotInvoiceHandler(req({ sessionIds: ['s1', 'ghost'], doNotInvoice: true })).catch(
+      (e) => e,
+    );
+
+    expect(err).toMatchObject({ code: 'not-found', details: { code: 'session_not_found', sessionIds: ['ghost'] } });
+    expect(err.message).toBe('That visit no longer exists, so nothing was changed. Refresh the list and try again.');
     expect(ctx.writes).toHaveLength(0);
   });
 
