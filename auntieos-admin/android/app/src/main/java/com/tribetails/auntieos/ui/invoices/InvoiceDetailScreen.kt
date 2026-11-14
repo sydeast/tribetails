@@ -368,6 +368,7 @@ fun InvoiceDetailScreen(
                         onQuoteAction     = { viewModel.promptQuoteAction(it) },
                         onDownloadPdf     = { viewModel.downloadPdf() },
                         onArchive         = { viewModel.promptArchive() },
+                        onWriteOff        = { viewModel.promptWriteOff(it) },
                         onRetryCheckout   = { viewModel.retryCheckoutClose() },
                     )
                 }
@@ -439,9 +440,13 @@ fun InvoiceDetailScreen(
         } else {
             com.tribetails.auntieos.domain.quoteIsChangeable(inv)
         }
+        // #2090: archiving is tidying. An invoice with money owed says why it
+        // cannot be archived and offers the write-off; never "Archive anyway".
+        val owedCents = if (restoring) null else uiState.archiveOwedCents
         AuntieDialog(
             visible   = uiState.archivePrompt,
             title     = when {
+                owedCents != null -> "This invoice still has money owed"
                 quote && restoring -> "Restore this quote?"
                 quote -> "Archive this quote?"
                 restoring -> "Restore this invoice?"
@@ -449,20 +454,26 @@ fun InvoiceDetailScreen(
             },
             onDismiss = { viewModel.dismissArchivePrompt() },
             footer = {
-                GhostButton(label = "Cancel", onClick = { viewModel.dismissArchivePrompt() })
-                PrimaryButton(
-                    label = when {
-                        restoring -> "Restore"
-                        uiState.archiveForceOffered -> "Archive anyway"
-                        else -> "Archive"
-                    },
-                    onClick = { viewModel.confirmArchive(uiState.archiveForceOffered) },
-                    loading = uiState.archiving,
-                )
+                if (owedCents != null) {
+                    GhostButton(label = "Close", onClick = { viewModel.dismissArchivePrompt() })
+                    PrimaryButton(
+                        label = "Write off balance",
+                        onClick = { viewModel.promptWriteOff(owedCents) },
+                    )
+                } else {
+                    GhostButton(label = "Cancel", onClick = { viewModel.dismissArchivePrompt() })
+                    PrimaryButton(
+                        label = if (restoring) "Restore" else "Archive",
+                        onClick = { viewModel.confirmArchive() },
+                        loading = uiState.archiving,
+                    )
+                }
             },
         ) {
             Text(
-                text = if (quote) {
+                text = if (owedCents != null) {
+                    com.tribetails.auntieos.domain.cannotArchiveOwedText(owedCents)
+                } else if (quote) {
                     if (restoring) {
                         com.tribetails.auntieos.domain.restoreQuoteConfirmCopy(inv)
                     } else {
@@ -472,20 +483,36 @@ fun InvoiceDetailScreen(
                     "This puts the invoice back into the working list and back into the revenue and " +
                         "outstanding totals."
                 } else {
-                    "This takes the invoice out of the working list and out of the revenue and outstanding " +
-                        "totals. It does NOT delete it, cancel it, or forgive what is owed, and the household " +
-                        "can still see it and still pay it."
+                    "This takes the invoice out of the working list and out of the revenue totals. It is " +
+                        "not deleted or cancelled, and Restore brings it back."
                 },
                 style = AuntieTheme.typography.bodySmall,
                 color = AuntieTheme.colors.textDim,
             )
-            if (!restoring && uiState.archiveForceOffered) {
+        }
+        // ── #2090: the write-off confirm, naming household, invoice and amount ──
+        uiState.writeOffPromptCents?.let { cents ->
+            AuntieDialog(
+                visible   = true,
+                title     = "Write off the balance?",
+                onDismiss = { viewModel.dismissWriteOffPrompt() },
+                footer = {
+                    GhostButton(label = "Cancel", onClick = { viewModel.dismissWriteOffPrompt() })
+                    PrimaryButton(
+                        label = "Write off ${formatCentsUsd(cents)}",
+                        onClick = { viewModel.confirmWriteOff() },
+                        loading = uiState.writingOff,
+                    )
+                },
+            ) {
                 Text(
-                    text = "This invoice still has money owing. Archiving it anyway writes that balance off " +
-                        "the outstanding total, so nothing will remind you to collect it. That choice is " +
-                        "recorded separately in the audit trail.",
+                    text = com.tribetails.auntieos.domain.writeOffConfirmText(
+                        inv.kinfolkName.ifBlank { inv.client }.ifBlank { "this household" },
+                        inv.invoiceNumber,
+                        cents,
+                    ),
                     style = AuntieTheme.typography.bodySmall,
-                    color = AuntieTheme.colors.error,
+                    color = AuntieTheme.colors.textDim,
                 )
             }
         }
@@ -532,6 +559,7 @@ private fun invoiceDetailBody(
     onQuoteAction: (String) -> Unit,
     onDownloadPdf: () -> Unit,
     onArchive: () -> Unit,
+    onWriteOff: (Long) -> Unit,
     onRetryCheckout: () -> Unit,
     onOpenVisit: (String) -> Unit,
 ) = with(scope) {
@@ -613,6 +641,13 @@ private fun invoiceDetailBody(
                     state == InvoiceState.CREDIT -> "credit owed to the household"
                     state == InvoiceState.REDEEMED -> "credit redeemed"
                     state == InvoiceState.ZERO -> "nothing billed"
+                    // #2090: closed by the owner, nothing to collect.
+                    state == InvoiceState.WRITTEN_OFF ->
+                        if (invoice.writtenOffCents > 0L) {
+                            "${formatCentsUsd(invoice.writtenOffCents)} written off"
+                        } else {
+                            "balance written off"
+                        }
                     // No recognizable stamp: the raw stored word, not a guess.
                     else -> invoice.status.trim().ifBlank { "no status on record" }
                 },
@@ -725,6 +760,14 @@ private fun invoiceDetailBody(
                     label   = "Withdraw quote",
                     onClick = { onQuoteAction("withdraw") },
                     enabled = !changingQuote,
+                )
+            }
+            // #2090: the owner gives up what is left, behind its own confirm.
+            com.tribetails.auntieos.domain.invoiceWriteOffOwedCents(invoice)?.let { owed ->
+                GhostButton(
+                    label   = "Write off balance",
+                    onClick = { onWriteOff(owed) },
+                    enabled = !archiving,
                 )
             }
             // Archive is deliberately NOT part of `actions`. That matrix answers
@@ -2242,6 +2285,7 @@ private fun statusTriple(
         InvoiceState.CREDIT    -> Triple(AuntieStatusTone.Teal, "CREDIT", Lucide.CircleAlert)
         InvoiceState.REDEEMED  -> Triple(AuntieStatusTone.Muted, "REDEEMED", Lucide.CircleCheckBig)
         InvoiceState.ZERO      -> Triple(AuntieStatusTone.Muted, "ZERO", Lucide.FileText)
+        InvoiceState.WRITTEN_OFF -> Triple(AuntieStatusTone.Muted, "WRITTEN OFF", Lucide.FileText)
         null                   -> Triple(
             AuntieStatusTone.Muted,
             rawStatus.trim().uppercase().ifBlank { "NO STATUS" },

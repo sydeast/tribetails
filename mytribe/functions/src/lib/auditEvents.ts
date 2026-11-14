@@ -124,6 +124,9 @@ export const AUDIT_EVENTS = {
   // chasing money, not a cosmetic filter.
   BILLING_INVOICE_ARCHIVED: 'BILLING_INVOICE_ARCHIVED',
   BILLING_INVOICE_UNARCHIVED: 'BILLING_INVOICE_UNARCHIVED',
+  // #2090: the owner wrote off what was left on an invoice (writeOffInvoice).
+  // Real money given up, so it is its own line, never folded into an archive.
+  BILLING_INVOICE_WRITTEN_OFF: 'BILLING_INVOICE_WRITTEN_OFF',
   // #1113: the operator retried closing the open Stripe payment links of a
   // paid invoice after the automatic pass could not (retryInvoiceCheckoutClose).
   BILLING_CHECKOUT_CLOSE_RETRIED: 'BILLING_CHECKOUT_CLOSE_RETRIED',
@@ -670,6 +673,7 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.BILLING_INVOICE_SESSIONS_LINKED,
   AUDIT_EVENTS.BILLING_INVOICE_UNARCHIVED,
   AUDIT_EVENTS.BILLING_INVOICE_UPDATED,
+  AUDIT_EVENTS.BILLING_INVOICE_WRITTEN_OFF,
   AUDIT_EVENTS.BILLING_PAYMENT_DISPUTE_CLOSED,
   AUDIT_EVENTS.BILLING_PAYMENT_DISPUTE_FUNDS_REINSTATED,
   AUDIT_EVENTS.BILLING_PAYMENT_DISPUTE_FUNDS_WITHDRAWN,

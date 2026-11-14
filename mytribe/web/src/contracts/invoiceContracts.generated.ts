@@ -49,7 +49,7 @@ export interface InvoiceDto {
   total: number;
   amountDue: number;
   isPaid: boolean;
-  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open' | 'written_off';
   editScope: 'all' | 'metadataOnly' | 'none' | null;
   paidCents: number;
   partiallyPaid: boolean;
@@ -67,6 +67,7 @@ export interface InvoiceDto {
   creditAmountCents: number | null;
   creditTarget: 'accountBalance' | null;
   creditRedeemedAtMs: number | null;
+  writtenOffCents: number | null;
   lineItems?: InvoiceLineItemDto[];
   payMethods: InvoiceDtoPayMethod[];
 }
@@ -87,7 +88,7 @@ export interface AcceptQuoteArgs {
 export interface AcceptQuoteResult {
   ok: true;
   invoiceId: string;
-  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open' | 'written_off';
 }
 
 // ---------- archiveInvoice ----------
@@ -235,7 +236,7 @@ export interface DenyQuoteArgs {
 export interface DenyQuoteResult {
   ok: true;
   invoiceId: string;
-  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open' | 'written_off';
 }
 
 // ---------- generateInvoicePdf ----------
@@ -298,6 +299,16 @@ export interface GetInvoiceLedgerResultPayment {
 /**
  * Nested in the `getInvoiceLedger` contract.
  */
+export interface GetInvoiceLedgerResultWriteOff {
+  writeOffId: string;
+  amountCents: number;
+  writtenOffAtMs: number | null;
+  writtenOffBy: string | null;
+}
+
+/**
+ * Nested in the `getInvoiceLedger` contract.
+ */
 export interface GetInvoiceLedgerResultLedgerPayment {
   paymentId: string;
   amountCents: number;
@@ -341,6 +352,8 @@ export interface GetInvoiceLedgerResult {
   paidCents: number;
   totalCents: number;
   amountDueCents: number;
+  writeOffs: GetInvoiceLedgerResultWriteOff[];
+  writtenOffCents: number;
   ledgerPayments: GetInvoiceLedgerResultLedgerPayment[];
   unlinkedKinfolkPayments: GetInvoiceLedgerResultLedgerPayment[];
   unresolvedAmountCount: number;
@@ -404,7 +417,7 @@ export interface LinkInvoiceSessionsResult {
   added: string[];
   removed: string[];
   linkedWithoutLine: string[];
-  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open' | 'written_off';
   editScope: 'all' | 'metadataOnly' | 'none';
 }
 
@@ -772,7 +785,7 @@ export interface RepairInvoicePaymentsResult {
   scanned: number;
   findings: RepairInvoicePaymentsResultFinding[];
   repaired: number;
-  skipped: Record<'no_payments' | 'payments_cover_total' | 'no_total' | 'balance_already_correct' | 'would_lower_balance', number>;
+  skipped: Record<'no_payments' | 'payments_cover_total' | 'no_total' | 'balance_already_correct' | 'would_lower_balance' | 'written_off', number>;
   nextCursor: string | null;
 }
 
@@ -991,7 +1004,7 @@ export interface ResendQuoteArgs {
 export interface ResendQuoteResult {
   ok: true;
   invoiceId: string;
-  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open' | 'written_off';
   appOnly?: boolean;
 }
 
@@ -1010,7 +1023,7 @@ export interface ConvertQuoteToInvoiceArgs {
 export interface ConvertQuoteToInvoiceResult {
   ok: true;
   invoiceId: string;
-  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open' | 'written_off';
 }
 
 // ---------- withdrawQuote ----------
@@ -1028,7 +1041,7 @@ export interface WithdrawQuoteArgs {
 export interface WithdrawQuoteResult {
   ok: true;
   invoiceId: string;
-  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open' | 'written_off';
   releasedSessionIds: string[];
 }
 
@@ -1166,6 +1179,26 @@ export interface UnarchiveInvoiceResult {
   reclaimedSessionIds: string[];
   notReclaimed: UnarchiveInvoiceResultNotReclaimed[];
   notice: string;
+}
+
+// ---------- writeOffInvoice ----------
+
+/**
+ * Request payload for the `writeOffInvoice` callable.
+ */
+export interface WriteOffInvoiceArgs {
+  invoiceId: string;
+  amountCents: number;
+}
+
+/**
+ * Response from the `writeOffInvoice` callable.
+ */
+export interface WriteOffInvoiceResult {
+  ok: true;
+  invoiceId: string;
+  writeOffId: string;
+  writtenOffCents: number;
 }
 
 // ---------- updateInvoice ----------

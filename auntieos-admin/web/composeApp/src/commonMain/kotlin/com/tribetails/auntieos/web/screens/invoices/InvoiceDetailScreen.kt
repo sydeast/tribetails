@@ -197,7 +197,7 @@ private fun InvoiceDetailBody(
         else -> when (badge.state) {
             InvoiceState.PAID, InvoiceState.REDEEMED -> Lucide.CircleCheckBig
             InvoiceState.OPEN, InvoiceState.DRAFT -> Lucide.Clock
-            InvoiceState.QUOTE, InvoiceState.ZERO -> Lucide.FileText
+            InvoiceState.QUOTE, InvoiceState.ZERO, InvoiceState.WRITTEN_OFF -> Lucide.FileText
             InvoiceState.CANCELLED -> Lucide.X
             InvoiceState.CREDIT, null -> Lucide.CircleAlert
         }
@@ -280,6 +280,23 @@ private fun InvoiceDetailBody(
     // #2168: Restore. A restore that could not take every visit back says which
     // in a warning that stays until dismissed, as on web and Android; a plain
     // restore is a toast.
+    // #2090: the write-off confirm, holding the balance it names, and its call.
+    var writeOffCents by remember(invoice._id) { mutableStateOf<Long?>(null) }
+    var writingOff    by remember(invoice._id) { mutableStateOf(false) }
+    fun writeOffNow() {
+        val cents = writeOffCents ?: return
+        if (writingOff) return
+        writingOff = true
+        scope.launch {
+            when (val r = client.writeOffInvoice(invoice._id, cents)) {
+                // The server's sentence as it is: a moved balance names the new figure.
+                is WriteResult.Err -> showToast(r.message, true)
+                is WriteResult.Ok  -> showToast(writeOffNoticeText(if (r.value > 0L) r.value else cents), false)
+            }
+            writeOffCents = null
+            writingOff = false
+        }
+    }
     var askRestore    by remember(invoice._id) { mutableStateOf(false) }
     var restoring     by remember(invoice._id) { mutableStateOf(false) }
     var restoreNotice by remember(invoice._id) { mutableStateOf<String?>(null) }
@@ -500,6 +517,32 @@ private fun InvoiceDetailBody(
                 )
             }
         }
+        // #2090: the write-off confirm, naming the household, the invoice and the amount.
+        writeOffCents?.let { cents ->
+            AuntieDialog(
+                visible   = true,
+                title     = "Write off the balance?",
+                onDismiss = { if (!writingOff) writeOffCents = null },
+                footer    = {
+                    GhostButton(label = "Cancel", onClick = { if (!writingOff) writeOffCents = null })
+                    PrimaryButton(
+                        label   = if (writingOff) "Writing off..." else "Write off ${com.tribetails.auntieos.web.util.formatUsdCents(cents)}",
+                        onClick = { writeOffNow() },
+                        enabled = !writingOff,
+                    )
+                },
+            ) {
+                Text(
+                    writeOffConfirmText(
+                        invoice.kinfolkName.ifBlank { invoice.client }.ifBlank { "this household" },
+                        invoice.invoiceNumber,
+                        cents,
+                    ),
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            }
+        }
         AuntieDialog(
             visible   = askRestore,
             title     = if (archivedQuote) "Restore this quote?" else "Restore this invoice?",
@@ -715,6 +758,14 @@ private fun InvoiceDetailBody(
                     label   = "Withdraw quote",
                     onClick = { quotePrompt = "withdraw" },
                     enabled = !changingQuote,
+                )
+            }
+            // #2090: the owner gives up what is left, behind its own confirm.
+            invoiceWriteOffOwedCents(invoice)?.let { owed ->
+                GhostButton(
+                    label   = "Write off balance",
+                    onClick = { writeOffCents = owed },
+                    enabled = !writingOff,
                 )
             }
             // #2168: the way back from read-only. The console has no Archive
@@ -1421,7 +1472,7 @@ private fun DetailRow(
 /** #2168: the Archived notice, in the same words as web. */
 internal const val ARCHIVED_INVOICE_TEXT =
     "This invoice is out of the working list and out of the outstanding and billed totals. It " +
-        "has not been deleted or cancelled, and the household can still see it and still pay it."
+        "has not been deleted or cancelled, and the household can still see it."
 
 /** #2168: the Restore confirm, in the same words as web. */
 internal const val RESTORE_CONFIRM_TEXT =

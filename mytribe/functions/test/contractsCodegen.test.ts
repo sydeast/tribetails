@@ -295,7 +295,8 @@ describe('the committed Contracts module', () => {
     // 33 since #1872: applyAccountCredit. 35 since #2088: convertQuoteToInvoice
     // and withdrawQuote, the office turning a quote into an invoice or
     // withdrawing it.
-    expect(model.callables).toHaveLength(35);
+    // #2090: writeOffInvoice.
+    expect(model.callables).toHaveLength(36);
     // getMyInvoices is the only one with no zod request schema; see the
     // registry header.
     const withoutArgs = model.callables.filter((c) => c.argsObject === null).map((c) => c.name);

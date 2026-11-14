@@ -336,6 +336,18 @@ describe('weeklyRevenue and outstandingTotals', () => {
     expect(outstandingTotals(rows)).toEqual({ total: 15, count: 1 });
   });
 
+  it('#2090: a written-off invoice adds nothing to Outstanding and only what was collected to the week', () => {
+    const rows = [
+      // $100 bill, $30 came in, $70 written off.
+      inv({ _id: 'w', status: 'written_off', amountDue: 0, total: 100, writtenOffCents: 7000 }),
+      // Written off whole.
+      inv({ _id: 'x', status: 'written_off', amountDue: 0, total: 40, writtenOffCents: 4000 }),
+      inv({ _id: 'o', status: 'open', amountDue: 9, total: 9 }),
+    ];
+    expect(invoiceIsPaidForRevenue({ status: 'written_off', amountDue: 0, total: 100 })).toBe(false);
+    expect(weeklyRevenue(rows, '2026-07-20', '2026-07-22')).toBe(30);
+    expect(outstandingTotals(rows)).toEqual({ total: 9, count: 1 });
+  });
   it('#2000 owes nothing on an unsent draft or an unanswered quote: only a sent, open balance', () => {
     const rows = [
       inv({ _id: 'o', status: 'open', amountDue: 19.5 }),

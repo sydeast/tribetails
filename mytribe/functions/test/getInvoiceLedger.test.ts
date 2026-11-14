@@ -34,6 +34,8 @@ interface Seed {
   sessions?: Record<string, Record<string, unknown>>;
   /** Rows the reverse `invoiceId ==` query on kin_care_sessions should see. */
   sessionQuery?: Array<{ id: string; data: Record<string, unknown> }>;
+  /** #2090: rows of `invoices/inv1/writeOffs`. */
+  writeOffs?: Array<{ id: string; data: Record<string, unknown> }>;
 }
 
 function seed(s: Seed = {}) {
@@ -48,6 +50,7 @@ function seed(s: Seed = {}) {
     docs,
     queryDocs: {
       'invoices/inv1/payments': s.subPayments ?? [],
+      'invoices/inv1/writeOffs': s.writeOffs ?? [],
       payments: s.rootPayments ?? [],
       kin_care_sessions: s.sessionQuery ?? [],
     },
@@ -126,6 +129,31 @@ describe('getInvoiceLedger payments (the settlement authority)', () => {
     expect(res.amountDueCents).toBe(2000);
   });
 
+  it('#2090: lists the write-off as its own entry, never as a payment, and reads nothing owed', async () => {
+    // $10 came in on a $40 invoice and the owner wrote off the other $30.
+    mocks.dbFn.mockReturnValue(
+      seed({
+        invoice: { kinfolkId: 'fam1', total: 40, amountDue: 0, amountDueCents: 0, status: 'written_off' },
+        subPayments: [{ id: 'p1', data: { amountCents: 1000 } }],
+        writeOffs: [{ id: 'w1', data: { amountCents: 3000, writtenOffAt: 1_763_000_000_000, writtenOffBy: 'owner1' } }],
+      }).db,
+    );
+    const res = await run();
+    expect(res.paidCents).toBe(1000);
+    expect(res.payments).toHaveLength(1);
+    expect(res.writeOffs).toEqual([
+      { writeOffId: 'w1', amountCents: 3000, writtenOffAtMs: 1_763_000_000_000, writtenOffBy: 'owner1' },
+    ]);
+    expect(res.writtenOffCents).toBe(3000);
+    expect(res.amountDueCents).toBe(0);
+  });
+  it('#2090: an invoice with no write-off answers an empty list and leaves the balance alone', async () => {
+    mocks.dbFn.mockReturnValue(seed({ subPayments: [{ id: 'p1', data: { amountCents: 1000 } }] }).db);
+    const res = await run();
+    expect(res.writeOffs).toEqual([]);
+    expect(res.writtenOffCents).toBe(0);
+    expect(res.amountDueCents).toBe(3000);
+  });
   it('reads a legacy payment that carries only float DOLLARS, rounding once', async () => {
     mocks.dbFn.mockReturnValue(
       seed({ subPayments: [{ id: 'old', data: { amount: 12.34 } }] }).db,

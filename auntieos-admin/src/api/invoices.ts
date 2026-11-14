@@ -75,6 +75,8 @@ export const INVOICE_STATES = [
   'paid',
   'zero',
   'open',
+  // #2090: the owner wrote off what was left (writeOffInvoice).
+  'written_off',
 ] as const satisfies readonly InvoiceState[];
 
 export interface InvoiceEntry {
@@ -113,6 +115,14 @@ export interface InvoiceEntry {
   paidCents?: number;
   /** Collected beyond the total, in integer cents. Present only after an overpayment. */
   overpaidCents?: number;
+  /**
+   * #2090: what the owner wrote off, in integer cents, stamped by
+   * `writeOffInvoice` with `status: 'written_off'` and a zero balance. Absent
+   * on every invoice that was not written off. Never counted as collected.
+   */
+  writtenOffCents?: number;
+  /** #2090: when the balance was written off. */
+  writtenOffAt?: Timestamp;
   /**
    * The persisted Invoice State Classifier verdict (ADR-0002), stamped by the
    * server in the same write as every money change. Typed as the union because

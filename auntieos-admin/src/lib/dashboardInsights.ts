@@ -692,7 +692,21 @@ export function householdVisitGaps(
 export function invoiceIsPaidForRevenue(
   row: Pick<InvoiceEntry, 'status' | 'amountDue' | 'total'>,
 ): boolean {
-  return str(row.status).trim().toLowerCase() !== 'draft' && row.amountDue <= 0 && row.total > 0;
+  const status = str(row.status).trim().toLowerCase();
+  // #2090: a written-off invoice owes nothing, but nobody paid the part given
+  // up, so it is never counted whole. `revenueOf` counts what did come in.
+  return status !== 'draft' && status !== 'written_off' && row.amountDue <= 0 && row.total > 0;
+}
+/**
+ * What one invoice adds to revenue, in dollars: its total when it is paid, and
+ * for a written-off one (#2090) only what was collected before the rest was
+ * written off. Nothing for anything else.
+ */
+export function revenueOf(row: Pick<InvoiceEntry, 'status' | 'amountDue' | 'total' | 'writtenOffCents'>): number {
+  if (invoiceIsPaidForRevenue(row)) return row.total;
+  if (str(row.status).trim().toLowerCase() !== 'written_off') return 0;
+  const writtenOff = typeof row.writtenOffCents === 'number' && row.writtenOffCents > 0 ? row.writtenOffCents : 0;
+  return Math.max(0, Math.round(row.total * 100) - writtenOff) / 100;
 }
 /**
  * Money collected in the week window [weekStartIso]..[nowIso], both inclusive
@@ -715,10 +729,11 @@ export function weeklyRevenue(
   let sum = 0;
   for (const inv of invoices) {
     if (isArchivedInvoice(inv)) continue;
-    if (!invoiceIsPaidForRevenue(inv)) continue;
+    const earned = revenueOf(inv);
+    if (earned <= 0) continue;
     const date = isoDatePrefixOrNull(str(inv.date));
     if (date === null) continue;
-    if (date >= start && date <= end) sum += inv.total;
+    if (date >= start && date <= end) sum += earned;
   }
   return sum;
 }

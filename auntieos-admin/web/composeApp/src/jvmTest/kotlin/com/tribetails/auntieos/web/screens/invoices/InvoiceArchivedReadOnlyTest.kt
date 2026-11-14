@@ -151,7 +151,12 @@ class InvoiceArchivedReadOnlyTest {
         assertNull(invoiceRowActionOrNull(draft(archived = true)))
         assertEquals(emptyList(), invoiceActionsOffered(InvoiceState.DRAFT, archived = true))
         for (s in InvoiceState.values().toList() + listOf(null)) {
-            assertEquals(invoiceActionsFor(s) - InvoiceAction.REVIEW_AND_SEND, invoiceActionsOffered(s, archived = true))
+            // #2090: Send reminder goes too; the server refuses it on an archived invoice.
+            assertEquals(
+                invoiceActionsFor(s) - InvoiceAction.REVIEW_AND_SEND - InvoiceAction.SEND_REMINDER,
+                invoiceActionsOffered(s, archived = true),
+            )
         }
+        assertEquals(listOf(InvoiceAction.RECORD_PAYMENT), invoiceActionsOffered(InvoiceState.OPEN, archived = true))
     }
 }

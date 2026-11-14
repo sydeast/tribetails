@@ -89,6 +89,8 @@ class InvoiceDetailDueDateTest {
         paidCents = 0L,
         totalCents = 30000L,
         amountDueCents = 4444L,
+        writeOffs = emptyList(),
+        writtenOffCents = 0L,
         ledgerPayments = emptyList(),
         unlinkedKinfolkPayments = emptyList(),
         unresolvedAmountCount = 0L,

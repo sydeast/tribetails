@@ -133,6 +133,10 @@ export function invoiceStatusInfo(status: InvoiceStatus, creditRedeemedAtMs: num
       return { label: 'Paid', chipLabel: 'PAID', cssClass: 'paid', invClass: '' };
     case 'cancelled':
       return { label: 'Cancelled', chipLabel: 'CANCELLED', cssClass: 'cancelled', invClass: '' };
+    case 'written_off':
+      // #2090: the business wrote off what was left. Nothing to pay, and not
+      // "Paid": the household did not pay the part that was written off.
+      return { label: 'Written off', chipLabel: 'WRITTEN OFF', cssClass: 'writtenoff', invClass: '' };
     case 'redeemed':
       return { label: 'Redeemed', chipLabel: 'REDEEMED', cssClass: 'redeemed', invClass: 'credit' };
     case 'credit':
@@ -146,6 +150,20 @@ export function invoiceStatusInfo(status: InvoiceStatus, creditRedeemedAtMs: num
   }
 }
 
+/** #2090: the row's money line on a written-off invoice. Same words as the Android portal. */
+export const WRITTEN_OFF_ROW_LABEL = 'Written off, nothing to pay';
+/** #2090: the Amount Due cell on a written-off invoice. */
+export const NOTHING_TO_PAY = 'Nothing to pay';
+/**
+ * #2090: what the household actually paid, in dollars, for the Paid row and
+ * Paid this month. On a written-off invoice it is the recorded payments and
+ * nothing else: total minus balance would count the written-off part as paid.
+ * Every other invoice keeps the legacy fallback the detail screen documents.
+ */
+export function paidDollarsOf(inv: Pick<InvoiceDto, 'status' | 'paidCents' | 'total' | 'amountDue'>): number {
+  if (inv.status === 'written_off') return inv.paidCents > 0 ? inv.paidCents / 100 : 0;
+  return inv.paidCents > 0 ? inv.paidCents / 100 : Math.max(0, inv.total - inv.amountDue);
+}
 /**
  * "Saved to Account Balance" / "Redeemed", per InvoicesScreen.kt's targetLabel.
  * The old "Returned to Original Payment Method" case is gone: credits are NOT

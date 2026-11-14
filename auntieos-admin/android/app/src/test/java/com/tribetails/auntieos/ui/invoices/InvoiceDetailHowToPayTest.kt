@@ -64,6 +64,8 @@ class InvoiceDetailHowToPayTest {
         paidCents = 0L,
         totalCents = 6000L,
         amountDueCents = 6000L,
+        writeOffs = emptyList(),
+        writtenOffCents = 0L,
         ledgerPayments = emptyList(),
         unlinkedKinfolkPayments = emptyList(),
         unresolvedAmountCount = 0L,

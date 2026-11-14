@@ -142,6 +142,8 @@ function refusalMessage(refusal: ChaseRefusal): string {
       return 'This is a credit owed to the household, so there is nothing to remind them about.';
     case 'zero':
       return 'This invoice is for $0, so there is nothing to remind anyone about.';
+    case 'written_off':
+      return 'The balance on this invoice was written off, so there is nothing to remind anyone about.';
     case 'open':
       return '';
   }
