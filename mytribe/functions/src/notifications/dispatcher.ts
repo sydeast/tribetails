@@ -1108,6 +1108,9 @@ export async function deliverListedCopy(
       data: (record.data() as { data?: unknown } | undefined)?.data ?? args.data,
       mode: 'trigger',
       channels,
+      // #2280: as on an enqueue's work order, so the senders keep a household's
+      // text message and push short. Without it they send the long form.
+      stream,
       status: 'pending',
       createdAt: FieldValue.serverTimestamp(),
     });

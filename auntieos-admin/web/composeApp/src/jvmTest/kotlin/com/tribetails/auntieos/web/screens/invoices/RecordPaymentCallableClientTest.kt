@@ -156,6 +156,33 @@ class RecordPaymentCallableClientTest {
         assertTrue(r is WriteResult.Err, "$r")
     }
 
+    @Test
+    fun anAnswerThatCannotBeReadIsShownInPlainWordsAndNeverAsNotRecorded() = runBlocking {
+        // #2315: the call went through, so the payment may be recorded.
+        for (answer in listOf("""{"ok":true}""", "not json", """["pay_1"]""")) {
+            JvmFirestoreFixtures.callableResponses = mapOf("recordPayment" to answer)
+            val r = submitInvoicePayment(FirestoreClient(), entry(), PaymentSubmissionKeys())
+            assertTrue(r is WriteResult.Err, "$answer: $r")
+            assertEquals(
+                "The payment could not be confirmed. Check the invoice before recording it again.",
+                recordPaymentRefusalText((r as WriteResult.Err).message),
+                answer,
+            )
+        }
+    }
+
+    @Test
+    fun anUnreadableAnswerKeepsTheKeySoRecordAgainLandsOnTheSamePayment() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf("recordPayment" to """{"ok":true}""")
+        val keys = PaymentSubmissionKeys()
+        val client = FirestoreClient()
+        submitInvoicePayment(client, entry(), keys)
+        submitInvoicePayment(client, entry(), keys)
+        val sentKeys = sent().map { it["idempotencyKey"]!!.jsonPrimitive.content }
+        assertEquals(2, sentKeys.size)
+        assertEquals(sentKeys[0], sentKeys[1], "pressing Record again must carry the same key")
+    }
+
     // ── The key ─────────────────────────────────────────────────────────────
 
     @Test

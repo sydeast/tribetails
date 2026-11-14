@@ -503,6 +503,21 @@ export function refusalAmountDueCents(caught: unknown): number | null {
   const cents = (details as { amountDueCents?: unknown }).amountDueCents;
   return typeof cents === 'number' && Number.isInteger(cents) && cents >= 0 ? cents : null;
 }
+/** The server's own code for a refusal (`details.code`), or null. */
+function refusalCode(caught: unknown): string | null {
+  const details = (caught as { details?: unknown } | null)?.details;
+  if (details === null || typeof details !== 'object') return null;
+  const code = (details as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
+/**
+ * #2299: a blank Amount reached a server from before `apply.settleBalance`,
+ * which reads it as nothing applied and refuses, recording nothing. Its own
+ * sentence talks about leaving the invoice off the payment, which this form
+ * cannot do, so the panel says what to do here.
+ */
+export const BLANK_AMOUNT_NOT_TAKEN =
+  'This payment was not recorded. Enter the amount collected, then record it again.';
 /**
  * #2299: shown where the split would be, when Amount is blank and the panel
  * holds no balance it can trust (the payments have not loaded, or failed to).
@@ -1786,7 +1801,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         return;
       }
       setBusy(false);
-      setActionError(invoiceActionError(caught, meta.callableName));
+      setActionError(
+        meta.key === 'markPaid' && paidAmount.trim() === '' && refusalCode(caught) === 'apply_zero_amount'
+          ? BLANK_AMOUNT_NOT_TAKEN
+          : invoiceActionError(caught, meta.callableName),
+      );
       if (meta.key === 'markPaid') {
         // #2299: a refused or failed payment may mean the balance moved since
         // the panel loaded. The server's figure is shown straight away when it

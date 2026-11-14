@@ -107,6 +107,24 @@ describe('#2281 review: a list-only copy the admin then asks to have sent', () =
     expect(workOrders(ctx.writes).filter((w) => w.data.recipientUid === 'office1')).toHaveLength(1);
   });
 
+  it('writes the work order an ordinary send writes, field for field, so a text or push stays short (#2280)', async () => {
+    const prefs = { 'clients/kinUid': { notificationPrefs: { byKey: { [KEY]: { email: true, sms: true, push: true } } } } };
+    // An ordinary ticked send for one payment.
+    const sentCtx = setup(prefs);
+    await enqueueNotificationDetailed({ key: KEY, recipientUid: 'kinUid', data: DATA, dedupeWindowMs: WEEK_MS });
+    const ordinary = workOrders(sentCtx.writes).find((w) => w.data.recipientUid === 'kinUid')!;
+    expect(ordinary.data.stream).toBe('kinfolk');
+    // The same payment listed by the sweep, then sent on the late ticked call.
+    const listedCtx = setup(prefs);
+    await listOnly();
+    expect((await deliver()).outcome).toBe('sent');
+    const late = workOrders(listedCtx.writes).find((w) => w.data.recipientUid === 'kinUid')!;
+    // The senders read `stream` to keep a household's text and push short
+    // with a link. A work order without it gets the long form.
+    expect(late.data.stream).toBe('kinfolk');
+    expect(late.data.channels).toEqual(ordinary.data.channels);
+    expect(Object.keys(late.data).sort()).toEqual(Object.keys(ordinary.data).sort());
+  });
   it('never sends it twice', async () => {
     const ctx = setup();
     await listOnly();

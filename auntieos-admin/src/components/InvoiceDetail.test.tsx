@@ -1918,6 +1918,28 @@ describe('recording a payment is one call that writes the settlement and the led
       ),
     );
   });
+  it('a server from before this change refuses a blank Amount: nothing is recorded and the form says to enter the amount', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ amountDueCents: 4000 }));
+    recordPayment.mockRejectedValueOnce(
+      Object.assign(
+        new Error('Nothing was entered against invoice 1029. Enter an amount to apply, or leave the invoice off the payment.'),
+        { code: 'functions/failed-precondition', details: { code: 'apply_zero_amount' } },
+      ),
+    );
+    await openBlankForm();
+    await screen.findByText(/\$40\.00 to this invoice/i);
+    await pressRecord();
+    expect(
+      await screen.findByText('This payment was not recorded. Enter the amount collected, then record it again.'),
+    ).toBeInTheDocument();
+    // Not the older server's sentence about a choice this form does not have.
+    expect(screen.queryByText(/leave the invoice off the payment/i)).not.toBeInTheDocument();
+    // One call, refused: no second attempt with a figure of the panel's own.
+    expect(recordPayment).toHaveBeenCalledTimes(1);
+    expect(recordPayment.mock.calls[0]![0].apply).toEqual(expect.objectContaining({ amount: 0, settleBalance: true }));
+    // The form is still open to take the amount.
+    expect(screen.getByLabelText(/amount collected/i)).toBeInTheDocument();
+  });
   it('a refusal with no balance in it still reads the payments again', async () => {
     recordPayment.mockRejectedValueOnce(new Error('Invoice is already settled.'));
     getInvoiceLedger.mockResolvedValueOnce(ledgerResult({ amountDueCents: 4000 }));

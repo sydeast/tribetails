@@ -165,7 +165,16 @@ fun recordPaymentOutcomeMessage(outcome: RecordPaymentOutcome, confirmationReque
  * message goes through verbatim: it names the reason (a draft, a settled
  * invoice, an apply larger than the payment) better than any paraphrase here.
  */
-fun recordPaymentRefusalText(serverMessage: String): String = "Couldn't record payment: $serverMessage"
+fun recordPaymentRefusalText(serverMessage: String): String =
+    if (serverMessage == PAYMENT_ANSWER_UNREADABLE_MESSAGE) serverMessage else "Couldn't record payment: $serverMessage"
+/**
+ * #2315 (#2298 on Android): the server answered `recordPayment` and the answer
+ * could not be read. The call went through, so the payment may be recorded:
+ * the dialog must not say it was not, and shows no decoder wording. The key is
+ * kept on an Err, so pressing Record again lands on the same payment.
+ */
+const val PAYMENT_ANSWER_UNREADABLE_MESSAGE: String =
+    "The payment could not be confirmed. Check the invoice before recording it again."
 /**
  * #825 and #881: ONE KEY PER SUBMISSION, NOT PER PRESS.
  *
