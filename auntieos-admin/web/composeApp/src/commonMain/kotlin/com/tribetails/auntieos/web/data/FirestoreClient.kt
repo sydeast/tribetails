@@ -2204,12 +2204,8 @@ class FirestoreClient {
      *  child visits). Returns the full [ManageSeriesResult] so the caller can fail
      *  loud on a partial failure (failedVisits > 0). A response missing the
      *  affectedVisits field is treated as an error, not a silent 0. */
-    suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String): WriteResult<ManageSeriesResult> {
-        val payload = buildJsonObject {
-            put("action", JsonPrimitive(action))
-            put("kinfolkId", JsonPrimitive(kinfolkId))
-            put("batchId", JsonPrimitive(batchId))
-        }
+    suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String, note: String? = null): WriteResult<ManageSeriesResult> {
+        val payload = manageBookingSeriesPayload(action, kinfolkId, batchId, note)
         return when (val r = platformInvokeCallable("manageBookingSeries", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
             is WriteResult.Ok -> runCatchingCancellable {
@@ -5342,3 +5338,15 @@ internal fun decodeReleasedCount(body: String): Int = runCatching {
 internal fun decodeUnarchiveNotice(body: String): String = runCatching {
     Json.parseToJsonElement(body).jsonObject["notice"]?.jsonPrimitive?.contentOrNull.orEmpty()
 }.getOrDefault("")
+/**
+ * The `manageBookingSeries` payload. #2030: [note] is the operator's note for
+ * the household, trimmed and withheld when blank, as the web and Android send it.
+ * The server stamps it where the household's booking page reads it.
+ */
+internal fun manageBookingSeriesPayload(action: String, kinfolkId: String, batchId: String, note: String?): JsonObject =
+    buildJsonObject {
+        put("action", JsonPrimitive(action))
+        put("kinfolkId", JsonPrimitive(kinfolkId))
+        put("batchId", JsonPrimitive(batchId))
+        note?.trim()?.takeIf { it.isNotEmpty() }?.let { put("note", JsonPrimitive(it)) }
+    }

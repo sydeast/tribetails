@@ -79,6 +79,19 @@ export const CARD_DETAIL_FIELDS: readonly string[] = [
  */
 export const STAFF_ONLY_DETAIL_FIELDS: readonly string[] = ['notes'];
 /**
+ * #2030: the keys whose `data.note` is the office's own words TO the household,
+ * typed into a box labelled for them ("Note for the household", "Anything to
+ * add for the household") and sent with the answer to their request. That is
+ * the "separate, explicitly-labelled field" the #380 note above asks for, so it
+ * rides on the card as `householdNote`, on every copy. It is read from the
+ * emitter's merge bag only, never from an entity, so nothing staff-only can
+ * reach it by way of the enricher.
+ */
+export const HOUSEHOLD_NOTE_KEYS: ReadonlySet<string> = new Set([
+  'kincare.booking.confirm',
+  'kincare.request.declined',
+]);
+/**
  * The detail fields to resolve for one copy, given the audience stream that copy
  * is addressed to.
  *
@@ -168,6 +181,8 @@ export async function buildNotificationDetail(
   // Staff-only, per issue #380. Guarded on the WRITE and not only on the
   // request, because `ctx` begins life as the emitter's own merge bag.
   if (staffSide) assign('notes', present(ctx.notes));
+  // #2030: the office's words to the household, from the emitter alone.
+  if (HOUSEHOLD_NOTE_KEYS.has(key)) assign('householdNote', present(data?.['note']));
   assign('invoiceNumber', present(ctx.invoiceNumber));
   assign('amount', present(ctx.amount));
   assign('dueDate', present(ctx.dueDate));

@@ -42,6 +42,8 @@ import com.kinfolk.portal.portal.BOOKINGS_POLL_MS
 import com.kinfolk.portal.portal.Booking
 import com.kinfolk.portal.portal.BookingMode
 import com.kinfolk.portal.portal.BookingNotes
+import com.kinfolk.portal.portal.BusinessNote
+import com.kinfolk.portal.portal.heading
 import com.kinfolk.portal.portal.BookingPolicy
 import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.BusinessCalendar
@@ -73,6 +75,7 @@ import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.auntieName
 import com.kinfolk.portal.util.bookingWhenLabel
 import com.kinfolk.portal.util.noteWrittenAt
+import com.kinfolk.portal.screens.messages.BUSINESS_TIME_ZONE
 import com.kinfolk.portal.util.rescheduleAskWhen
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
@@ -450,6 +453,12 @@ private fun KinCareDetailBody(
             }
         }
 
+        // #2030: what the office told the household: the note with its Accept,
+        // the note with its Decline and any kinfolk-facing visit note. Shown on a
+        // declined request too, which is the page that most needs its answer.
+        savedNotes?.fromBusiness?.takeIf { it.isNotEmpty() }?.let { notes ->
+            BusinessNotesCard(notes)
+        }
         // #1283: what the household already told its Auntie. The booking note
         // from the wizard and every note saved from this screen, each with the
         // time it was written. The server sends the household's own notes only.
@@ -852,6 +861,33 @@ private fun RescheduleProposalForm(
         enabled = !sending,
         modifier = Modifier.fillMaxWidth(),
     )
+}
+/**
+ * #2030: the office's notes to the household on this visit, each with what it
+ * was about, who wrote it and when. Never mixed into [SavedNotesCard], which is
+ * the household's own words.
+ */
+@Composable
+private fun BusinessNotesCard(notes: List<BusinessNote>) {
+    val type = LocalKinfolkTypography.current
+    val business = LocalBusinessName.current
+    GlassCard(
+        modifier = Modifier.fillMaxWidth().testTag("businessNotes"),
+        contentPadding = PaddingValues(KinfolkSpacing.l),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
+            Text("From ${businessLabel(business)}", style = type.heritageSection)
+            notes.forEach { n ->
+                Column(
+                    modifier = Modifier.testTag("businessNote"),
+                    verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs),
+                ) {
+                    Text(n.heading(business) { noteWrittenAt(it, BUSINESS_TIME_ZONE) }, style = type.sansLabel)
+                    Text(n.body, style = type.sansBody)
+                }
+            }
+        }
+    }
 }
 /**
  * #1283: what the household already told its Auntie about this visit. The

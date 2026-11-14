@@ -550,9 +550,9 @@ class EnhancedSchedulingViewModel(
     /** Approve a whole incoming series: flips every visit confirmed + creates the
      *  linked sessions server-side (manageBookingSeries). The stream then drops the
      *  series (no longer 'requested'). */
-    fun approveSeries(series: IncomingSeries) {
+    fun approveSeries(series: IncomingSeries, note: String = "") {
         if (series.pendingNights.isEmpty()) {
-            runSeriesAction(series, "APPROVE")
+            runSeriesAction(series, "APPROVE", note = note)
             return
         }
         // #1098: an Overnight asked for as a night is approved by setting its
@@ -566,7 +566,7 @@ class EnhancedSchedulingViewModel(
             )
             return
         }
-        runSeriesAction(series, "APPROVE", startTimes, SeriesOverrides())
+        runSeriesAction(series, "APPROVE", startTimes, SeriesOverrides(), note)
     }
 
     /**
@@ -590,6 +590,8 @@ class EnhancedSchedulingViewModel(
         val series: IncomingSeries,
         val startTimes: Map<String, Long>,
         val granted: SeriesOverrides,
+        /** #2030: the operator's note, re-sent with the override so it is not lost. */
+        val note: String = "",
     )
 
     private var pendingIncomingRetry: PendingIncomingRetry? = null
@@ -606,7 +608,7 @@ class EnhancedSchedulingViewModel(
             ScheduleOverrideKind.BUSY -> pending.granted.copy(busy = true)
             ScheduleOverrideKind.VISIT -> pending.granted.copy(visit = true)
         }
-        runSeriesAction(pending.series, "APPROVE", pending.startTimes, granted)
+        runSeriesAction(pending.series, "APPROVE", pending.startTimes, granted, pending.note)
     }
 
     /** Which override this refusal offers, never one already granted. Null for every other refusal. */
@@ -618,7 +620,7 @@ class EnhancedSchedulingViewModel(
         }
 
     /** Cancel a whole incoming series. */
-    fun cancelSeries(series: IncomingSeries) = runSeriesAction(series, "CANCEL")
+    fun cancelSeries(series: IncomingSeries, note: String = "") = runSeriesAction(series, "CANCEL", note = note)
     /**
      * What the household actually heard about this decision (#536), for the
      * SUCCESS message only. The partial-failure branch says its own thing.
@@ -660,8 +662,11 @@ class EnhancedSchedulingViewModel(
         action: String,
         startTimes: Map<String, Long>? = null,
         granted: SeriesOverrides = SeriesOverrides(),
+        /** #2030: the operator's note for the household; blank sends none. */
+        note: String = "",
     ) {
         if (_state.value.seriesActionBatchId != null) return
+        val householdNote = note.trim().takeIf { it.isNotEmpty() }
         pendingIncomingRetry = null
         _state.value = _state.value.copy(
             seriesActionBatchId = series.batchId,
@@ -671,13 +676,14 @@ class EnhancedSchedulingViewModel(
         )
         viewModelScope.launch {
             val result = if (startTimes == null) {
-                auntieRepository.manageBookingSeries(action, series.kinfolkId, series.batchId)
+                auntieRepository.manageBookingSeries(action, series.kinfolkId, series.batchId, note = householdNote)
             } else {
                 auntieRepository.manageBookingSeries(
                     action, series.kinfolkId, series.batchId,
                     startTimes = startTimes,
                     overrideBusyConflict = granted.busy,
                     overrideVisitConflict = granted.visit,
+                    note = householdNote,
                 )
             }
             result
@@ -711,7 +717,7 @@ class EnhancedSchedulingViewModel(
                     // time off the night cannot, and offers nothing.
                     val offer = if (startTimes != null) approveOverrideFor(e, granted) else null
                     pendingIncomingRetry = if (offer != null && startTimes != null) {
-                        PendingIncomingRetry(series, startTimes, granted)
+                        PendingIncomingRetry(series, startTimes, granted, note)
                     } else {
                         null
                     }

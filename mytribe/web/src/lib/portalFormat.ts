@@ -3,6 +3,8 @@
  * Kept separate from the screens themselves so the mapping logic (not
  * just the markup) has direct vitest coverage.
  */
+import { businessLabel } from './businessLabel';
+import { BUSINESS_TIME_ZONE } from './messageDays';
 import type { PortalHomeSection } from '../api/types';
 import type { GetMyBookingsResult, GetMyBookingsResultLiveVisit } from '../contracts/bookingContracts.generated';
 import { formatClockRange12, parseDateKey } from './bookingWizardLogic';
@@ -110,6 +112,23 @@ export function noteWrittenAt(ms: number): string {
   const ampm = hours >= 12 ? 'PM' : 'AM';
   hours = hours % 12 || 12;
   return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${hours}:${minutes} ${ampm}`;
+}
+/**
+ * #2030: "Nov 1, 3:05 PM" on the business's clock (America/Chicago), whatever
+ * zone the device is in, so a household away from home reads the time the
+ * office wrote the note. Mirrored on Android by `noteWrittenAt(ms, BUSINESS_TIME_ZONE)`.
+ */
+export function businessNoteWrittenAt(ms: number): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: BUSINESS_TIME_ZONE,
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).formatToParts(new Date(ms));
+  const get = (t: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${MONTHS[Number(get('month')) - 1]} ${get('day')}, ${get('hour')}:${get('minute')} ${get('dayPeriod').toUpperCase()}`;
 }
 /** The named window a block-booked visit sits in (#1301); absent on by-the-clock visits and on older servers. */
 type VisitBlock = Partial<Pick<GetMyBookingsResultLiveVisit, 'timeBlockLabel' | 'timeBlockStartTime' | 'timeBlockEndTime'>>;
@@ -516,4 +535,19 @@ export function homeLayoutMode(sections: PortalHomeSection[]): 'columns' | 'stac
   if (!standardOrder) return 'stacked';
   const has = (id: string) => shown.includes(DRAWN_HOME_ORDER.indexOf(id));
   return has('quickStart') && (has('upNext') || has('tales')) ? 'columns' : 'stacked';
+}
+
+/**
+ * #2030: the line above one note from the office: what it was about, who wrote
+ * it and when. "Booked · Syd · Nov 1, 3:05 PM". The writer is the staff name the
+ * server resolved, else the business, never an email (the server drops those).
+ * The time is on the business's clock (`businessNoteWrittenAt`).
+ */
+export function businessNoteHeading(
+  n: { kind: string; createdAtMs: number | null; authorName: string | null },
+  businessName: string,
+): string {
+  const what = n.kind === 'requestAccepted' ? 'Booked' : n.kind === 'requestDeclined' ? 'Not booked' : 'Note';
+  const who = n.authorName && n.authorName.trim() !== '' ? n.authorName.trim() : businessLabel(businessName);
+  return [what, who, n.createdAtMs !== null ? businessNoteWrittenAt(n.createdAtMs) : null].filter(Boolean).join(' · ');
 }

@@ -3820,12 +3820,19 @@ class AuntieRepository(
         overrideBusyConflict: Boolean = false,
         /** #1098: the knowing "Approve anyway" after a `visit_overlap_conflict` refusal. */
         overrideVisitConflict: Boolean = false,
+        /**
+         * #2030: the operator's note for the household, on an approval or a
+         * decline. The server stamps it where the household's booking page reads
+         * it and puts it on the answer's notice. Blank or null sends none.
+         */
+        note: String? = null,
     ): Result<ManageSeriesResult> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val args = ManageBookingSeriesArgs(
             action = action,
             kinfolkId = kinfolkId,
             batchId = batchId,
+            note = note?.trim()?.takeIf { it.isNotEmpty() },
             startTimes = startTimes,
             // Omitted rather than sent as `false`, as `rescheduleBooking` does:
             // the server audits each override it is given.
