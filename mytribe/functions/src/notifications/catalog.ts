@@ -773,9 +773,9 @@ const CATALOG_LIST: NotificationDef[] = [
     // household's own preferences. One notice per reply (`dedupeKey` is the
     // message id), so two replies a minute apart are two notices.
     key: 'message.reply',
-    // The label and description are the row on the household's notifications
-    // list (the dispatcher writes them as its title and description), so they
-    // are in the household's words.
+    // The household's notifications list row is `householdTitle` and
+    // `householdDescription` (the dispatcher writes those on the household's
+    // copy, #2093); the label and description are the operator's matrix row.
     label: 'You have a new message',
     audience: 'kinfolk',
     audiences: { kinfolk: true },
