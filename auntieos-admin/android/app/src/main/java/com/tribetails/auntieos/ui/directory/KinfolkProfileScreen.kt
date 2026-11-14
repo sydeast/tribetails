@@ -794,7 +794,7 @@ private fun AuntieNotesPanel(
 @Composable
 private fun KinRow(kin: Kin, kin411: Kin411?, onOpen: () -> Unit) {
     val c = AuntieTheme.colors
-    val facts = listOf(kin.species, kin.breed, kin.age.takeIf { it.isNotBlank() }?.let { "$it yrs" }.orEmpty())
+    val facts = listOf(kin.species, kin.breed, kin.age.orEmpty().takeIf { it.isNotBlank() }?.let { "$it yrs" }.orEmpty())
         .filter { it.isNotBlank() }
     val own = kin411?.let { f -> listOf(f.tldr, f.personality, f.quirksAndPreferences).firstOrNull { it.isNotBlank() } }
         ?.let { stripDossierSources(it) }.orEmpty()

@@ -61,6 +61,24 @@ class ModelNullSafetyDecodeTest {
         setVia(k, "setPottyRoutine", String::class.java, null)
     }
 
+    @Test fun `Kin accepts null for every text field the household shares`() {
+        // #1370 / #1908: the old forward mirror copied the portal's null for a
+        // cleared field onto the flat kin doc. One null must not blank the Kin list.
+        val k = Kin(
+            age = null, staysAs = null, routine = null, trainingCommands = null,
+            feedingBrand = null, vaccinations = null, medicationHealthNotes = null,
+            vetInfo = null, feedingInstructions = null, walkingInstructions = null,
+            allergies = null, emergencyNotes = null, sitterNotes = null, ownVetClinicId = null,
+        )
+        assertEquals(null, k.allergies)
+        for (setter in listOf(
+            "setAge", "setStaysAs", "setRoutine", "setTrainingCommands", "setFeedingBrand",
+            "setVaccinations", "setMedicationHealthNotes", "setVetInfo", "setFeedingInstructions",
+            "setWalkingInstructions", "setAllergies", "setEmergencyNotes", "setSitterNotes", "setOwnVetClinicId",
+        )) {
+            setVia(k, setter, String::class.java, null)
+        }
+    }
     @Test fun `VisitLog accepts null arrival`() {
         // 8 of the 83 live visit_logs store arrival as null. getVisitLogs()
         // decodes the whole collection with toObjects(VisitLog), so a single

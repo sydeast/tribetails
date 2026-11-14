@@ -8,6 +8,8 @@ import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.data.model.TagDef
+import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.KinRemovalRequestRepository
@@ -69,6 +71,18 @@ data class KinDetailUiState(
     val removalActionErrorFor: String? = null,
     /** What the last answer did, for the success banner. */
     val removalMessage: String? = null,
+    /**
+     * #1908 kin-vet: the vet this Kin goes to (its own, else the household's),
+     * or null while it has not been read. A failed read leaves it null rather
+     * than showing a stale vet.
+     */
+    val kinVet: KinVet? = null,
+    /**
+     * #2015: the pet tag vocabulary, so a tag in the band says what it is (an
+     * allergy reads with its icon and colour, as in the Tags panel). Empty when
+     * the read fails: each tag still shows by name.
+     */
+    val tagVocab: List<TagDef> = emptyList(),
     val isLoading: Boolean = true,
     val error: String? = null,
 )
@@ -118,6 +132,17 @@ class KinDetailViewModel(
                 if (kinfolkId.isBlank()) Result.success(null) else repository.getKinfolkById(kinfolkId)
             }
             val reportsDef = async { kinCareRepository.getAllKinCareReports() }
+            // #1908 kin-vet: the household's vet and the clinic catalog behind it.
+            // Each judged on its own: a failure here leaves the vet unshown, never
+            // the page down.
+            val householdDataDef = async {
+                runCatchingCancellable {
+                    if (kinfolkId.isBlank()) null else repository.getHouseholdData(kinfolkId).getOrThrow()
+                }
+            }
+            val clinicsDef = async { runCatchingCancellable { repository.getVetClinicsOnce().getOrThrow() } }
+            // #2015: the pet tag vocabulary for the band's tags.
+            val vocabDef = async { runCatchingCancellable { loadTagVocab(repository, TagScope.PET) } }
             val sessionsDef = async {
                 if (kinfolkId.isBlank()) {
                     Result.success(emptyList())
@@ -128,6 +153,14 @@ class KinDetailViewModel(
 
             val the411 = the411Def.await()
             val owner = ownerDef.await().getOrNull()
+            val householdData = householdDataDef.await()
+            val clinics = clinicsDef.await()
+            val kinVet = if (householdData.isSuccess && clinics.isSuccess) {
+                val catalog = clinics.getOrDefault(emptyList())
+                resolveKinVet(kin.ownVetClinicId, resolveHouseholdVet(householdData.getOrNull(), catalog), catalog)
+            } else {
+                null
+            }
 
             // The household's own feeds, kept to the rows that cover THIS pet.
             // The reads stay household-scoped because that is the indexed query;
@@ -154,6 +187,8 @@ class KinDetailViewModel(
                 talesError = reports.exceptionOrNull()?.let { it.message ?: "Couldn't load KinTales" },
                 upcomingVisits = upcomingVisitsFor(mineSessions, kinfolkId, nowIso, throughIso),
                 visitsError = sessions.exceptionOrNull()?.let { it.message ?: "Couldn't load visits" },
+                kinVet = kinVet,
+                tagVocab = vocabDef.await().getOrDefault(emptyList()),
                 isLoading = false,
             )
 

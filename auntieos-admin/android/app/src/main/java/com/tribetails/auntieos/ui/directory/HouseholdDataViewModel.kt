@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.HouseholdData
+import com.tribetails.auntieos.data.model.VetClinic
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +53,14 @@ data class HouseholdDataUiState(
     val vet: HouseholdVet? = null,
     /** Set when the vet read failed, so the card fails loud rather than blank. */
     val vetError: String? = null,
+    /**
+     * #1908 kin-vet: the area vet list the household's vet is picked from (the
+     * owner ruling: "a dropdown preloaded with all vets in the area, settable
+     * by admin"). Empty until the catalog read lands.
+     */
+    val clinics: List<VetClinic> = emptyList(),
+    /** A clinic being added to the shared list from the picker. */
+    val creatingClinic: Boolean = false,
     val isLoading: Boolean = true,
     /**
      * #994: true once the household read has answered (a document, or a
@@ -122,6 +131,7 @@ class HouseholdDataViewModel(
             .onSuccess { clinics ->
                 _uiState.value = _uiState.value.copy(
                     vetError = null,
+                    clinics = clinics,
                     vet = resolveHouseholdVet(household, clinics),
                 )
             }
@@ -154,6 +164,48 @@ class HouseholdDataViewModel(
      * the diff strips the no-op ones back out before the write, so there is
      * nothing to gain from checking here first.
      */
+    /**
+     * #1908 kin-vet: pick (or clear, with an empty selection) the household's
+     * regular vet, or its emergency vet when [emergency]. Only the clinic id is
+     * stored; name, phone, address and hours resolve through the clinic. Saved
+     * with the rest of the form, through the same diffed save.
+     */
+    fun selectVetClinic(emergency: Boolean, selection: VetClinicSelection) {
+        val current = _uiState.value
+        val id = selection.clinicId.trim()
+        val next = if (emergency) current.householdData.copy(emergencyVetClinicId = id)
+                   else current.householdData.copy(primaryVetClinicId = id)
+        _uiState.value = current.copy(householdData = next, vet = resolveHouseholdVet(next, current.clinics))
+    }
+    /**
+     * Adds a clinic the list lacks (`submitVetClinic`) and picks it. A near
+     * match the server finds is refused rather than duplicated: the operator
+     * picks the existing clinic instead.
+     */
+    fun createVetClinic(emergency: Boolean, clinic: VetClinic) {
+        if (_uiState.value.creatingClinic) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(creatingClinic = true, error = null)
+            repository.submitVetClinicDetailed(clinic).onSuccess { result ->
+                if (result.needsChoice || result.clinicId.isBlank()) {
+                    _uiState.value = _uiState.value.copy(
+                        creatingClinic = false,
+                        error = "A clinic with a name like that is on the list already. Pick it from the list.",
+                    )
+                    return@onSuccess
+                }
+                val added = clinic.copy(id = result.clinicId)
+                val clinics = _uiState.value.clinics.filterNot { it.id == added.id } + added
+                _uiState.value = _uiState.value.copy(creatingClinic = false, clinics = clinics)
+                selectVetClinic(emergency, vetClinicSelectionOf(added))
+            }.onFailure { e ->
+                _uiState.value = _uiState.value.copy(
+                    creatingClinic = false,
+                    error = "Couldn't add the clinic: ${e.message}",
+                )
+            }
+        }
+    }
     fun clearLegacyVetLeftovers() {
         val current = _uiState.value.householdData
         _uiState.value = _uiState.value.copy(
