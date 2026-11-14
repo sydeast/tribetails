@@ -75,6 +75,7 @@ import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.auntieName
 import com.kinfolk.portal.util.bookingWhenLabel
 import com.kinfolk.portal.util.noteWrittenAt
+import com.kinfolk.portal.screens.messages.BUSINESS_TIME_ZONE
 import com.kinfolk.portal.util.rescheduleAskWhen
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
@@ -881,7 +882,7 @@ private fun BusinessNotesCard(notes: List<BusinessNote>) {
                     modifier = Modifier.testTag("businessNote"),
                     verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs),
                 ) {
-                    Text(n.heading(business) { noteWrittenAt(it) }, style = type.sansLabel)
+                    Text(n.heading(business) { noteWrittenAt(it, BUSINESS_TIME_ZONE) }, style = type.sansLabel)
                     Text(n.body, style = type.sansBody)
                 }
             }

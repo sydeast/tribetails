@@ -2723,8 +2723,17 @@ the handler.
 - React admin and android both call this.
 
 ### manageBookingSeries
-- req `{ action: 'APPROVE' | 'CANCEL', kinfolkId: string, batchId: string }`
+- req `{ action: 'APPROVE' | 'CANCEL', kinfolkId: string, batchId: string, note?: string /* trimmed, max 500 */ }`
 - res `{ ok: true, action, batchId: string, affectedVisits: number, sessionsCreated: number, failedVisits: number }`
+- `note` is the office's words to the household with its answer. CANCEL that
+  declines a request stamps it as `requestDeclineNote` (+ `requestDeclinedAt`,
+  `requestDeclinedBy`) and carries it on `kincare.request.declined`. APPROVE
+  (#2030) stamps `requestAcceptNote` (+ `requestAcceptedAt`,
+  `requestAcceptedBy`) on each visit it newly confirms, never on a visit
+  already confirmed or already carrying one, and carries it on the one
+  `kincare.booking.confirm`. The household reads both through
+  `getBookingNotes.fromBusiness` and on the notice as `detail.householdNote`.
+  A client that sends no `note` gets exactly the old behaviour.
 - Series-level approve/cancel on ONE parent booking envelope: flips every
   child `kinCares` visit's status and rolls the envelope status + counts in a
   single pass. APPROVE delegates to `approveBookingSeriesCore` (also used by
@@ -2896,12 +2905,20 @@ instead of hand mirrors.
 
 ### getBookingNotes
 - req `{ kinfolkId?: string, batchId: string, visitId: string }`
-- res `{ bookingNote: string | null, notes: Array<{ id: string, body: string, createdAtMs: number | null }> }`
+- res `{ bookingNote: string | null, notes: Array<{ id: string, body: string, createdAtMs: number | null }>, fromBusiness: Array<{ id: string, kind: 'requestAccepted' | 'requestDeclined' | 'visitNote', body: string, createdAtMs: number | null, authorName: string | null }> }`
 - `bookingNote` is the booking wizard's Extra Love & Context text off the parent
   booking; `notes` are the household's own rows from `.../kinCares/{visitId}/notes`
   (`authorRole === 'kinfolk'` only), oldest first, at most 200
-- NEVER returns staff rows (`authorRole: 'admin'`), `internalNotes`, dossier or
-  411 text; the filter runs on the server (#1283)
+- #2030: `fromBusiness` is what the office wrote TO the household, oldest
+  first: the visit's `requestAcceptNote` (APPROVE), its `requestDeclineNote`
+  (the CANCEL that declines a request), and the staff rows of the same
+  kinfolk-facing `notes` thread (`addBookingNote` from an admin client). Kept
+  out of `notes` so no client shows them as the household's own words.
+  `authorName` is the writer's `staff/{uid}.displayName`, null when there is
+  none or it is an email; the writer's uid never leaves the server
+- NEVER returns `internalNotes`, `adminNotes`, the session's `notes` text,
+  dossier or 411 text; none of them is read, and the filter runs on the server
+  (#1283, #2030)
 - an Auntie is refused (household callable, `householdStaffFlag`)
 
 ### addInternalBookingNote

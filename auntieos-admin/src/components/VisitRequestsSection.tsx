@@ -754,6 +754,9 @@ function DecisionDialog({ row, decision, onClose, onResolved }: DecisionDialogPr
         className="visit-requests__dialog-note"
         value={note}
         onChange={(e) => setNote(e.target.value)}
+        // #2030: every answer this box goes with takes at most 500 characters
+        // of note on the server, as the Android and desktop boxes cap it.
+        maxLength={500}
         disabled={busy}
       />
       {error !== null && (

@@ -130,6 +130,29 @@ describe('#2030 APPROVE carries the note for the household', () => {
     expect(lastVisitWrite(ctx, 'v2')).toMatchObject({ requestAcceptNote: 'Second answer' });
   });
 
+  it('never overwrites an accept note a visit already carries, whatever its status', async () => {
+    const first = { id: 'v1', data: { ...VISIT('v1').data, requestAcceptNote: 'First answer', requestAcceptedBy: 'owner1' } };
+    const ctx = envelope([first, VISIT('v2', 'requested', 5)]);
+    await manageBookingSeriesHandler(
+      req({ action: 'APPROVE', kinfolkId: 'fam1', batchId: 'req_1', note: 'Second answer' }),
+    );
+    expect(lastVisitWrite(ctx, 'v1')).toMatchObject({ status: 'confirmed' });
+    expect(lastVisitWrite(ctx, 'v1')).not.toHaveProperty('requestAcceptNote');
+    expect(lastVisitWrite(ctx, 'v1')).not.toHaveProperty('requestAcceptedBy');
+    expect(lastVisitWrite(ctx, 'v2')).toMatchObject({ requestAcceptNote: 'Second answer' });
+  });
+
+  it('a retry after a partial failure stamps only the visits it now books, once', async () => {
+    // First pass: v1 booked and stamped, v2 failed. The retry finds v1 confirmed.
+    const v1 = { id: 'v1', data: { ...VISIT('v1', 'confirmed').data, requestAcceptNote: 'See you then.', requestAcceptedBy: 'owner1' } };
+    const ctx = envelope([v1, VISIT('v2', 'requested', 5)]);
+    await manageBookingSeriesHandler(
+      req({ action: 'APPROVE', kinfolkId: 'fam1', batchId: 'req_1', note: 'See you then.' }),
+    );
+    expect(lastVisitWrite(ctx, 'v1')).not.toHaveProperty('requestAcceptNote');
+    expect(lastVisitWrite(ctx, 'v2')).toMatchObject({ requestAcceptNote: 'See you then.', requestAcceptedBy: 'owner1' });
+  });
+
   it('refuses a note longer than the box allows', async () => {
     envelope([VISIT('v1')]);
     await expect(

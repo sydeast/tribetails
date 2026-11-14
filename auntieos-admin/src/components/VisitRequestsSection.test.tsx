@@ -638,6 +638,13 @@ describe('VisitRequestsSection: new booking requests (#533)', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Book it' }));
     await waitFor(() => expect(approveBookingRequest).toHaveBeenCalledWith('fam-3', 'b3'));
   });
+  it('#2030: the note box stops at the 500 characters the server takes', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    render(<VisitRequestsSection />);
+    await openQueue();
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    expect(screen.getByLabelText('Note for the household (optional)')).toHaveAttribute('maxLength', '500');
+  });
   it('#1577: says what Accept did and for whom, and keeps saying it once the queue is empty', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
     approveBookingRequest.mockResolvedValue({

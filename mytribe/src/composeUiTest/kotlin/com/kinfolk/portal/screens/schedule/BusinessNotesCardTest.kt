@@ -106,6 +106,31 @@ class BusinessNotesCardTest {
         onNodeWithText("Not booked · Syd", substring = true).assertExists()
     }
 
+    /**
+     * The time is on the business's clock (America/Chicago), not the device's.
+     * 21:05 UTC on Nov 2 2026 is 3:05 PM in Chicago; on a device in any other
+     * zone (CI runs in UTC) a device-clock formatter prints another hour.
+     */
+    @Test
+    fun the_note_time_is_on_the_business_clock() = runComposeUiTest {
+        val written = 1_793_653_500_000L // 2026-11-02T21:05:00Z
+        val f = fake(
+            visit("confirmed"),
+            buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "request-accepted"); put("kind", "requestAccepted"); put("body", "See you then.")
+                    put("createdAtMs", written); put("authorName", "Syd")
+                })
+            },
+        )
+        setThemedContent {
+            KinCareDetailScreen(kinCareId = "v1", kinfolkId = "3", portalApi = PortalApi(f), onBack = {}, nowMs = { now })
+        }
+        waitUntil(timeoutMillis = 5_000) { onAllNodes(hasTestTag("businessNotes")).fetchSemanticsNodes().isNotEmpty() }
+
+        onNodeWithText("Booked · Syd · Nov 2, 3:05 PM").assertExists()
+    }
+
     @Test
     fun no_card_when_the_office_wrote_nothing() = runComposeUiTest {
         val f = fake(visit("confirmed"), buildJsonArray {})

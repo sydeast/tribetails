@@ -585,7 +585,12 @@ export async function approveBookingSeriesCore(opts: {
           // #2030: the office's note, on the visits this approval books. Not on
           // a visit that was already confirmed: a re-approve is not a new answer,
           // and a retry after a partial failure finds its first pass's stamp.
-          ...(householdNote !== '' && data['status'] !== 'confirmed'
+          // Nor on a visit that already carries an accept note, whatever its
+          // status now: the household has read that answer, and a later run of
+          // this core never rewrites it.
+          ...(householdNote !== '' &&
+          data['status'] !== 'confirmed' &&
+          !(typeof data['requestAcceptNote'] === 'string' && data['requestAcceptNote'].trim() !== '')
             ? {
                 requestAcceptNote: householdNote,
                 requestAcceptedAt: FieldValue.serverTimestamp(),

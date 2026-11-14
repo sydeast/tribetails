@@ -289,7 +289,9 @@ describe('BookingDetail: add a note', () => {
 });
 
 describe('BookingDetail: what the office told the household (#2030)', () => {
-  const at = (h: number) => new Date(2026, 10, 1, h, 5).getTime();
+  // `h`:05 on Nov 2 on the business's clock (America/Chicago is UTC-6 that
+  // day), so the expected rows hold on a runner in any zone.
+  const at = (h: number) => Date.UTC(2026, 10, 2, h + 6, 5);
   const fromBusiness = [
     { id: 'request-declined', kind: 'requestDeclined' as const, body: 'We are full that week.', createdAtMs: at(9), authorName: 'Syd' },
     { id: 'n9', kind: 'visitNote' as const, body: 'Treats are on the shelf.', createdAtMs: at(11), authorName: null },
@@ -304,10 +306,10 @@ describe('BookingDetail: what the office told the household (#2030)', () => {
     expect(within(card).getByText('From Test Business')).toBeInTheDocument();
     const rows = within(card).getAllByTestId('business-note').map((r) => r.textContent);
     expect(rows).toEqual([
-      'Not booked · Syd · Nov 1, 9:05 AMWe are full that week.',
+      'Not booked · Syd · Nov 2, 9:05 AMWe are full that week.',
       // No staff name the household may see: the business is named instead.
-      'Note · Test Business · Nov 1, 11:05 AMTreats are on the shelf.',
-      'Booked · Syd · Nov 1, 3:05 PMBooked. Bring the spare key.',
+      'Note · Test Business · Nov 2, 11:05 AMTreats are on the shelf.',
+      'Booked · Syd · Nov 2, 3:05 PMBooked. Bring the spare key.',
     ]);
   });
   it("keeps the office's notes out of the household's own notes card", async () => {
