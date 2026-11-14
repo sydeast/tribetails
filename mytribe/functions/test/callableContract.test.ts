@@ -52,6 +52,7 @@ import { RecordFailedLoginArgs } from '../src/auth/loginSecurity';
 // stored token list: the React admin (auntieos-admin/src/lib/dashboardLayout.ts),
 // android (ui/home/DashboardLayout.kt) and the superseded Compose web build.
 import { Args as SaveDashboardLayoutArgs } from '../src/admin/saveDashboardLayout';
+import { Args as SaveMyStaffProfileArgs } from '../src/admin/saveMyStaffProfile';
 // Nested / effects shapes (2026-07-21 next tranche). A top-level key freeze is
 // blind below level 1: saveFormSchema's top level is just `{ schema }`, but the
 // client mirrors 3 levels down (schema.sections[].fields[].required). These get
@@ -362,6 +363,13 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   // 17.3 operator dashboard layout. One key, so the top-level freeze is thin on
   // its own; the token-VALUE freeze below is the part that actually matters.
   saveDashboardLayout: { schema: SaveDashboardLayoutArgs, keys: ['tokens'] },
+  // #2287: a staff member's own Account profile. Six keys and it must STAY
+  // these six: there is no uid here on purpose (the record written is the
+  // caller's), and no photo, email or layout key.
+  saveMyStaffProfile: {
+    schema: SaveMyStaffProfileArgs,
+    keys: ['bio', 'displayName', 'firstName', 'lastName', 'phone', 'title'],
+  },
 
   // Task 7.1 calendar sync. One optional key, and it must STAY one: the calendar
   // id is resolved server-side from business_settings, never sent by a client,

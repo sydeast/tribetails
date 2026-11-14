@@ -68,6 +68,24 @@ export function plainCallableMessage(code: string, message: string): string {
   return PLAIN_BY_CODE[bare] ?? CALLABLE_FALLBACK_TEXT;
 }
 
+/**
+ * #2287: the sentence for a failure caught on a screen, whichever road it came
+ * by. A callable's error is already plain by the time a screen catches it
+ * (`lib/fns.ts`). A direct database read or write is not: its refusal arrives
+ * as the SDK's own text ("Missing or insufficient permissions."), with the
+ * reason on `code`. That code gets the same sentence a callable refusal gets.
+ * Anything else keeps its own message, and a blank one gets `fallback`.
+ */
+export function plainFailureText(err: unknown, fallback: string): string {
+  if (!(err instanceof Error)) return fallback;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === 'string' && !code.startsWith('functions/')) {
+    const bare = code.replace(/^firestore\//, '');
+    if (CODE_NAMES.has(bare)) return PLAIN_BY_CODE[bare] ?? CALLABLE_FALLBACK_TEXT;
+  }
+  const text = err.message.trim();
+  return text === '' ? fallback : text;
+}
 /** The verb a callable's name starts with, as the operator would say it failed. */
 const FAILED_TO: Record<string, string> = {
   get: 'Could not load', list: 'Could not load', load: 'Could not load', fetch: 'Could not load', read: 'Could not load',

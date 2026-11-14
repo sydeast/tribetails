@@ -7,6 +7,8 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { auditActorPayload, resolveAuditActor } from '../lib/auditActor';
+import { isAuntieClaim } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 /**
@@ -17,6 +19,11 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * in one atomic batch with an audit entry. The doc's own entityId/entityType are
  * the source of truth so a caller cannot flip a media file onto a foreign entity.
  * Gated by wrapAdminCallable (admin custom claim); admin SDK bypasses rules.
+ *
+ * #2287: an Auntie changes her Account photo through this callable. A staff
+ * photo change applies only to the caller's own profile, so for an Auntie a
+ * USER target has to be her own record. The owner manages every staff record
+ * and keeps the reach he had.
  */
 const Args = z.object({
   mediaFileId: z.string().min(1).max(120),
@@ -50,6 +57,15 @@ export async function setMediaProfilePhotoHandler(
     throw err;
   }
 
+  // #2287: before any read or write. The type is compared upper-cased, the way
+  // the rest of this handler reads it, so `user` and `USER` are one target.
+  if (
+    isAuntieClaim(req.auth?.token) &&
+    args.entityType.toUpperCase() === 'USER' &&
+    args.entityId !== uid
+  ) {
+    throw new HttpsError('permission-denied', 'You can change only your own account photo.');
+  }
   const chosenRef = db().doc(`media_files/${args.mediaFileId}`);
   const chosenSnap = await chosenRef.get();
   if (!chosenSnap.exists) {
@@ -117,6 +133,8 @@ export async function setMediaProfilePhotoHandler(
 
   await batch.commit();
 
+  // #2287: the row says whether the owner or an Auntie made the change.
+  const actor = await resolveAuditActor(req.auth, 'setMediaProfilePhoto');
   await writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.PROFILE_UPDATED,
@@ -128,6 +146,7 @@ export async function setMediaProfilePhotoHandler(
       entityType: argEntityType,
       entityId: args.entityId,
       photoUrl: storageUrl,
+      ...auditActorPayload(actor),
     },
   });
 

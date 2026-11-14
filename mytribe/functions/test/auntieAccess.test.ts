@@ -267,6 +267,20 @@ describe('#944 wrapAdminCallable enforces the table', () => {
       .rejects.toMatchObject({ code: 'permission-denied' });
   });
 
+  /**
+   * #2287: an Auntie saves her own Account profile. The handler writes the
+   * caller's own record and only the profile fields (test/saveMyStaffProfile).
+   */
+  it('#2287: admits an Auntie to save her own Account profile', async () => {
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    const wrapped = wrapAdminCallable('saveMyStaffProfile', async () => ({ ok: true }));
+    await expect(wrapped({ auth: auntieAuth } as never)).resolves.toMatchObject({ ok: true });
+    await expect(wrapped({ auth: ownerAuth } as never)).resolves.toMatchObject({ ok: true });
+    await expect(wrapped({ auth: { uid: 'stranger', token: {} } } as never))
+      .rejects.toMatchObject({ code: 'permission-denied' });
+    await expect(wrapped({ auth: { uid: 'kin-1', token: { role: 'kinfolk', kinfolkId: 'kf1' } } } as never))
+      .rejects.toMatchObject({ code: 'permission-denied' });
+  });
   it('still refuses a caller with neither role, and an unauthenticated one', async () => {
     const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
     const wrapped = wrapAdminCallable('listStaff', async () => ({ ok: true }));

@@ -263,6 +263,7 @@ saveMediaTags
 saveMyAccount
 saveMyAdminNotificationPrefs
 saveMyNotificationPrefs
+saveMyStaffProfile
 saveSecondaryKinfolk
 saveTemplate
 saveTemplateChannels
