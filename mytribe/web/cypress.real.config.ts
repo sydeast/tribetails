@@ -1,8 +1,7 @@
 import { defineConfig } from 'cypress';
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import seed, { remove, upsert } from './cypress/seed';
+import { confirmCheckoutByCli } from './scripts/e2e-real/stripe-confirm.mjs';
 
 /**
  * Cypress config for the portal's REAL-SERVICES run (#1194, operator ruling D3,
@@ -80,47 +79,6 @@ function structuredErrors(text: string): string[] {
   return text.split('\n').filter((line) => /"severity":"(error|critical)"/.test(line));
 }
 
-/**
- * WHAT STRIPE'S PAGE WROTE TO THE BROWSER CONSOLE (#2304). The pay spec can
- * only count the errors Stripe's scripts throw: the browser hands a page
- * another origin's exception as the bare words "Script error.". Chrome's own
- * log has the message and the script's address. `e2e:real:run` starts Chrome
- * (it was Electron until #2304), and the launch hook below asks Chrome to
- * write that log to a file outside the repo.
- *
- * Only console lines that name a Stripe address are kept, with session ids and
- * key-shaped words cut out, so nothing the portal itself logged reaches the
- * job log or the artifact. A missing file is said, never an error: the log is
- * there to explain a red pay spec, not to decide one.
- */
-const CHROME_LOG = join(tmpdir(), `e2e-real-portal-chrome-${process.pid}.log`);
-const STRIPE_CONSOLE_FILE = 'cypress/.artifacts/real/stripe-page-console.log';
-const STRIPE_CONSOLE_MAX_LINES = 60;
-function stripeConsoleLines(chromeLog: string): string[] {
-  return chromeLog
-    .split('\n')
-    .filter((line) => line.includes(':CONSOLE(') && /stripe\.(com|network)/.test(line))
-    .map((line) =>
-      line
-        .replace(/\b(cs|pi|seti|pm|cus|acct)_(test_)?[A-Za-z0-9]{8,}/g, '$1_...')
-        .replace(/\b(sk|rk|pk)_(test|live)_[A-Za-z0-9]+/g, '$1_$2_...')
-        .replace(/whsec_[A-Za-z0-9]+/g, 'whsec_...')
-        .slice(0, 400),
-    );
-}
-function reportStripeConsole(): void {
-  if (!existsSync(CHROME_LOG)) {
-    console.log('== e2e-real (portal): Stripe page console: Chrome wrote no log file');
-    return;
-  }
-  const lines = stripeConsoleLines(readFileSync(CHROME_LOG, 'utf8'));
-  rmSync(CHROME_LOG, { force: true });
-  const shown = lines.slice(0, STRIPE_CONSOLE_MAX_LINES);
-  console.log(`== e2e-real (portal): Stripe page console: ${lines.length} lines, ${shown.length} shown`);
-  for (const line of shown) console.log(`   ${line}`);
-  mkdirSync('cypress/.artifacts/real', { recursive: true });
-  writeFileSync(STRIPE_CONSOLE_FILE, `${shown.join('\n')}\n`);
-}
 let seeded: Promise<void> | null = null;
 
 export default defineConfig({
@@ -149,11 +107,12 @@ export default defineConfig({
     // also strips Subresource Integrity from rewritten scripts, which matters
     // only to this test run, never to the app.
     //
-    // THE BROWSER IS CHROME (#2304), set in package.json's `e2e:real:run`. In
-    // Electron 146, with this flag on, Stripe's `/g/pay/` page drew the
-    // business and the amount and left its form frame 2 px tall for the whole
-    // budget (run 43629608013). The flag is unchanged: the browser is the one
-    // thing that moved.
+    // STILL NEEDED AFTER #2304. With it on, Stripe's `/g/pay/` page draws the
+    // business, the invoice line and the amount, which the pay spec reads. It
+    // does not draw the card form for an automated browser, in Electron 146
+    // (run 43629608013) or in Chrome 157 (run 43632254872), so the spec pays
+    // through the `stripeConfirmCheckout` task below instead. The browser is
+    // `cypress run`'s default again: Chrome changed nothing.
     experimentalModifyObstructiveThirdPartyCode: true,
     // A real callable cold-starts inside the emulator on its first call, which
     // the PR-time stubs never had to wait for.
@@ -161,19 +120,6 @@ export default defineConfig({
     setupNodeEvents(on) {
       on('after:run', (results) => {
         writeRunResults(results);
-        // Reading the browser log can never change the run's result.
-        try {
-          reportStripeConsole();
-        } catch (error) {
-          console.log(`== e2e-real (portal): Stripe page console: could not be read (${String(error)})`);
-        }
-      });
-      // Chrome only: Electron ignores the flags, and no other browser runs here.
-      on('before:browser:launch', (browser, launchOptions) => {
-        if (browser.name === 'chrome') {
-          launchOptions.args.push('--enable-logging', `--log-file=${CHROME_LOG}`, '--v=0');
-        }
-        return launchOptions;
       });
       on('task', {
         /** Seeds the emulator once per run (`cypress/seed.ts`, `E2E_PROJECT_ID` from run.sh). */
@@ -217,6 +163,19 @@ export default defineConfig({
         /** Our functions' structured error lines since [since]. */
         serverErrorsSince({ since }: { since: number }) {
           return structuredErrors(serverLogSince(since));
+        },
+        /**
+         * Pays a test-mode Checkout Session through the Stripe CLI, with
+         * Stripe's test card token, because Stripe's hosted form does not draw
+         * for an automated browser (#2304). `scripts/e2e-real/stripe-confirm.mjs`
+         * has the three requests, the refusals and the caveat. Stripe then
+         * sends its own signed events to `stripe listen`; nothing here touches
+         * `stripeWebhook`. The line printed names the steps and nothing else.
+         */
+        stripeConfirmCheckout(input: { sessionId: string; amountCents: number; email: string; name: string }) {
+          const steps = confirmCheckoutByCli(input);
+          console.log(`== e2e-real (portal): Stripe test payment confirmed through the CLI (${steps.join(', ')})`);
+          return steps;
         },
       });
     },
