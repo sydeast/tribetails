@@ -46,6 +46,8 @@ import { FieldValue } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 
 import { logEvent } from './logger';
+import { businessDayOfStoredStart } from './bookingTimeBlocks';
+import { FALLBACK_BUSINESS_TIME_ZONE } from './businessHours';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS } from './auditEvents';
 import { centsToDollars, paidCentsFromPayments, type PaymentAmount } from './invoiceMath';
@@ -76,12 +78,22 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
-/** The settled-on date as the ledger's free-text `date`: the day part of the stored ISO time, or '' . */
-function ledgerDateOf(paidAt: unknown): string {
-  const s = str(paidAt);
-  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : '';
+/**
+ * The settled-on date as the ledger's free-text `date`: the BUSINESS day the
+ * payment was recorded on, or ''.
+ *
+ * `markInvoicePaid` stores `paidAt` as a UTC instant, and the apps write the
+ * ledger `date` as the day on their own clock. Cutting the day off the stored
+ * text would date every payment taken after 6 PM (7 PM in summer) Chicago time
+ * on the next day. An instant is read on the business clock (America/Chicago,
+ * ruling 2026-08-11); a bare day or a wall-clock time with no zone keeps its
+ * own date.
+ */
+export function ledgerDateOf(paidAt: unknown): string {
+  const s = str(paidAt).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return businessDayOfStoredStart(s, FALLBACK_BUSINESS_TIME_ZONE) ?? '';
 }
-
 type Staged =
   | { kind: 'gone' }
   | { kind: 'claimed' }

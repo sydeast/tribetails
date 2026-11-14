@@ -71,7 +71,7 @@ import { recordPaymentHandler } from '../src/admin/recordPayment';
 import { applyAccountCreditHandler } from '../src/admin/applyAccountCredit';
 import { writeOffInvoiceHandler } from '../src/admin/archiveInvoice';
 import { repairInvoicePaymentsHandler } from '../src/admin/repairInvoicePayments';
-import { sweepAbandonedSettlements, settlementLedgerRowId } from '../src/lib/settlementLedgerSweep';
+import { ledgerDateOf, sweepAbandonedSettlements, settlementLedgerRowId } from '../src/lib/settlementLedgerSweep';
 import {
   PAYMENT_APPLIED_CLAIM_FIELD,
   SETTLEMENT_LEDGER_PENDING_AT_FIELD,
@@ -463,6 +463,26 @@ describe('#2230: an older admin client stops between its two calls', () => {
     expect(Object.keys(docs).filter((p) => p.startsWith('payments/'))).toEqual([`payments/${pay(1)}`]);
     expect(hooks.enqueue).toHaveBeenCalledTimes(1);
     expectBalanceMatchesPayments();
+  });
+
+  it('the ledger row is dated on the business day, not the UTC day, for an evening payment', async () => {
+    // 7:30 PM on the 13th in Chicago is already the 14th in UTC.
+    await markInvoicePaidHandler(
+      req({ invoiceId: 'inv1', amount: 40, paidAt: '2026-11-14T01:30:00.000Z', idempotencyKey: ipay(1) }),
+    );
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    expect(docs[`payments/${settleRow}`]).toMatchObject({ date: '2026-11-13' });
+  });
+
+  it('reads the business day off every stored shape of the paid time', () => {
+    // Summer: Chicago is five hours behind UTC, so 11:30 PM on the 3rd is 04:30 UTC on the 4th.
+    expect(ledgerDateOf('2026-07-04T04:30:00.000Z')).toBe('2026-07-03');
+    expect(ledgerDateOf('2026-11-13T18:00:00.000Z')).toBe('2026-11-13');
+    // A bare day and a wall-clock time with no zone keep their own date.
+    expect(ledgerDateOf('2026-11-13')).toBe('2026-11-13');
+    expect(ledgerDateOf('2026-11-13T23:45:00')).toBe('2026-11-13');
+    expect(ledgerDateOf('yesterday')).toBe('');
+    expect(ledgerDateOf(undefined)).toBe('');
   });
 
   it('a partial settlement stamps nothing for the sweep', async () => {
