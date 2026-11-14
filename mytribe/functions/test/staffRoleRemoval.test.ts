@@ -418,15 +418,33 @@ describe('grant-staff-role --role none', () => {
 
     expect(code).toBe(1);
     expect(errors.join('\n')).toMatch(/FAILED to take catch@hanasamku\.com off the business admin list/);
+    // Nothing changed, so the re-run still has her claim as evidence.
+    expect(mocks.users.get('a1')?.customClaims).toEqual({ staffRole: 'auntie' });
     expect(world.docs['staff/a1']).toMatchObject({ staffRole: 'auntie' });
     expect(world.docs[ADMINS]?.['uids']).toEqual(['op1', 'a1']);
 
-    // Re-run: the claim is already gone, the staff record is the evidence.
     const again = collector();
     expect(await runGrantStaffRole({ email: AUNTIE_EMAIL, role: 'none' }, again.out)).toBe(0);
     expect(world.docs[ADMINS]?.['uids']).toEqual(['op1']);
+    expect(mocks.users.get('a1')?.customClaims).toEqual({});
     expect(world.docs['staff/a1']).toBeUndefined();
-    expect(again.lines).toContain('No staff role claim on this account; finishing the rest.');
+  });
+
+  it('an Auntie with a claim and no staff record is still finished when the claim step fails', async () => {
+    const world = auntieWorld({ 'staff/a1': null });
+    fakeAuth.setCustomUserClaims.mockRejectedValueOnce(new Error('auth unavailable'));
+    const { out, errors } = collector();
+
+    expect(await runGrantStaffRole({ email: AUNTIE_EMAIL, role: 'none' }, out)).toBe(1);
+    expect(errors.join('\n')).toMatch(/FAILED to remove the staff role claim from catch@hanasamku\.com/);
+    // The list and devices go first, so she is already off the list.
+    expect(world.docs[ADMINS]?.['uids']).toEqual(['op1']);
+    expect(tokensOf(world.docs, 'a1')).toEqual(['tok-a1-portal']);
+
+    // Her claim is still there, so the re-run knows she is an Auntie and finishes.
+    expect(await runGrantStaffRole({ email: AUNTIE_EMAIL, role: 'none' }, collector().out)).toBe(0);
+    expect(mocks.users.get('a1')?.customClaims).toEqual({});
+    expect(auditLines(world.docs)).toHaveLength(1);
   });
 
   it('a second run after a complete one is a clean no-op', async () => {

@@ -33,14 +33,13 @@
  * object, so this reads the existing set first, the same contract
  * `syncKinfolkClaim` (lib/kinfolkClaim.ts) and `grant-admin-claim.mjs` keep.
  *
- * `--role none`, IN THIS ORDER, so a failure at any step leaves her either
- * screened by her staff record at send time or already off the list, and a
- * re-run finishes the job:
- *   1. the `staffRole` claim comes off;
- *   2. one transaction takes her off `businessSettings/admins`, deletes her
+ * `--role none`, IN THIS ORDER, so a failure at any step leaves the evidence
+ * a re-run needs (her claim or her staff record) and a re-run finishes the
+ * job:
+ *   1. one transaction takes her off `businessSettings/admins`, deletes her
  *      admin-app device registrations and writes the Activity Log line;
- *   3. her `staff/{uid}` record is deleted, LAST, because it is the evidence
- *      a re-run needs once the claim is gone.
+ *   2. the `staffRole` claim comes off;
+ *   3. her `staff/{uid}` record is deleted, LAST.
  * Any failed step is reported and the run exits 1. An owner account (the
  * `admin` claim) is never taken off the list this way.
  *
@@ -178,28 +177,36 @@ async function revokeStaffRole(
     return 2;
   }
 
-  // 1. The claim.
-  if (existing['staffRole'] !== undefined) {
-    const next = { ...existing };
-    delete next['staffRole'];
-    await auth().setCustomUserClaims(uid, next);
-    out.log('Staff role claim removed.');
-  } else {
-    out.log('No staff role claim on this account; finishing the rest.');
-  }
-
-  // 2. The business admin list, her work devices and the Activity Log line.
+  // 1. The business admin list, her work devices and the Activity Log line.
   let ended: StaffAccessEndResult;
   try {
     ended = await endStaffBusinessAccess({ uid, claimsBefore: existing, source: 'grant-staff-role' });
   } catch (err) {
     out.error(
       `FAILED to take ${email} off the business admin list and clear her work devices: ${errMessage(err)}\n`
-        + 'Her staff record was kept, so business notices still skip her. Re-run this command.',
+        + 'Nothing was changed: her staff role, her staff record and the list are as they were. Re-run this command.',
     );
     return 1;
   }
   reportEnded(ended, email, out);
+
+  // 2. The claim.
+  try {
+    if (existing['staffRole'] !== undefined) {
+      const next = { ...existing };
+      delete next['staffRole'];
+      await auth().setCustomUserClaims(uid, next);
+      out.log('Staff role claim removed.');
+    } else {
+      out.log('No staff role claim on this account; finishing the rest.');
+    }
+  } catch (err) {
+    out.error(
+      `FAILED to remove the staff role claim from ${email}: ${errMessage(err)}\n`
+        + 'She can still sign in as an Auntie. Re-run this command.',
+    );
+    return 1;
+  }
 
   // 3. The staff record, last.
   const staffRef = db().collection('staff').doc(uid);

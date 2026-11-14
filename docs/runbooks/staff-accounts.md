@@ -29,8 +29,8 @@ unregisters her AuntieOS phone from business notices and writes a
 `PERM_STAFF_ROLE_REMOVED` line to the Activity Log (#2228). Her staff record is
 deleted last. If any step fails the tool says which one and exits 1: run the
 same command again, it picks up where it stopped and changes nothing that is
-already done. It refuses an owner account (the `admin` claim) and never takes
-one off the list. Deleting an Auntie's `clients/{uid}` doc does the same list
+already done. An owner account (the `admin` claim) is never taken off the
+list, and one with no staff role is refused outright. Deleting an Auntie's `clients/{uid}` doc does the same list
 and device cleanup through `onClientsWrite`. Do **not** give an Auntie the `admin` claim: 116 rule sites and 62
 server expressions read `admin`, and the split is safe only because an Auntie
 carries none of it. `grant-staff-role.mjs` refuses to mint both, and
