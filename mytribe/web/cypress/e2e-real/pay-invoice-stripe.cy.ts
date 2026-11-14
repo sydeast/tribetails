@@ -162,10 +162,22 @@ describe('paying an invoice by card (real payInvoice, Stripe test mode, real web
             `visible text: "${words}"`,
           ].join('; ');
         };
-        cy.document({ timeout: budget }).should((doc) => {
-          if (doc.querySelector('#email') === null) {
-            throw new Error(`Stripe's checkout page has no #email field. ${pageFacts(doc)}`);
-          }
+        // ARRIVE FIRST, THEN LOOK (run 43628182398). The Pay click returns
+        // before `payInvoice` answers, so this callback starts while the
+        // browser is still on the portal. `cy.get()` checks the page's origin
+        // inside its retry loop and so waits for Stripe's page, which is what
+        // the old `cy.get('#email')` did. `cy.document()` checks it once, when
+        // it starts, and failed the test on the spot with "expected to run
+        // against origin". So `body` is the wait for arrival, and the look at
+        // the document comes after it. Both share the one budget.
+        const deadline = Date.now() + budget;
+        cy.get('body', { timeout: budget });
+        cy.then(() => {
+          cy.document({ timeout: Math.max(deadline - Date.now(), 1_000) }).should((doc) => {
+            if (doc.querySelector('#email') === null) {
+              throw new Error(`Stripe's checkout page has no #email field. ${pageFacts(doc)}`);
+            }
+          });
         });
         cy.get('#email').type(email);
         cy.get('#cardNumber').type(card.number);
