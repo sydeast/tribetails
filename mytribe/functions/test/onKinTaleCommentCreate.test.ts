@@ -117,6 +117,20 @@ describe('onKinTaleCommentCreate trigger', () => {
       expect(data.authorName).toBe('Dana');
       expect(JSON.stringify(data)).not.toContain('@');
     });
+    it('a staff or member name that is really an email leaves the author unnamed', async () => {
+      const staff = await dataFor(
+        { authorUid: 'admin1', authorRole: 'admin', body: 'Thank you!' },
+        { 'staff/admin1': { displayName: 'e2e-admin@tribetails.com' } },
+      );
+      expect(staff.authorName).toBe('');
+      mocks.enqueue.mockClear();
+      const member = await dataFor(
+        { authorUid: 'kinUid', authorRole: 'kinfolk', body: 'thanks!' },
+        { 'clients/kinUid': { displayName: 'pawsome@hanasamku.com' } },
+      );
+      expect(member.authorName).toBe('');
+      expect(JSON.stringify([staff, member])).not.toContain('@');
+    });
     it('an author nothing names is left unnamed, and the tale with no title has none', async () => {
       const data = await dataFor(
         { authorUid: 'ghost', authorRole: 'kinfolk', body: 'hi' },

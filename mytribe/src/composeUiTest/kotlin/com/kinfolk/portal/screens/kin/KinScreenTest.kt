@@ -217,4 +217,49 @@ class KinScreenTest {
         waitForIdle()
         kotlin.test.assertEquals(listOf("updateKin"), fake.warmCalls)
     }
+
+    private fun oneKin(fake: FakeFunctionsClient) {
+        fake.stub("getMyKin", buildJsonObject {
+            put("kin", buildJsonArray {
+                add(buildJsonObject { put("id", "k1"); put("name", "Buddy"); put("status", "active") })
+            })
+        })
+    }
+    /** A notice, Tribe or the Gallery opens a Kin before the Kin tab has read the roster. */
+    @Test
+    fun detailOpenedFirst_readsTheRoster_andShowsTheKin() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        oneKin(fake)
+        setThemedContent {
+            val controller = rememberKinController("3", PortalApi(fake))
+            KinDetailHost("The Foster", "k1", controller, onBack = {}, onEdit = {})
+        }
+        waitForIdle()
+        onAllNodesWithText("Buddy")[0].assertExists()
+        onAllNodesWithText("Kin not found").assertCountEquals(0)
+        kotlin.test.assertEquals(1, fake.calls.count { it.first == "getMyKin" })
+    }
+    @Test
+    fun detailForAKinNoLongerListed_saysSoAfterReading() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        oneKin(fake)
+        setThemedContent {
+            val controller = rememberKinController("3", PortalApi(fake))
+            KinDetailHost("The Foster", "gone", controller, onBack = {}, onEdit = {})
+        }
+        waitForIdle()
+        onNodeWithText("Kin not found").assertIsDisplayed()
+    }
+    @Test
+    fun detailWhenTheRosterCannotBeRead_saysSo() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubError("getMyKin", IllegalStateException("read failed"))
+        setThemedContent {
+            val controller = rememberKinController("3", PortalApi(fake))
+            KinDetailHost("The Foster", "k1", controller, onBack = {}, onEdit = {})
+        }
+        waitForIdle()
+        onNodeWithText("Couldn't load Kin").assertIsDisplayed()
+        onAllNodesWithText("Kin not found").assertCountEquals(0)
+    }
 }

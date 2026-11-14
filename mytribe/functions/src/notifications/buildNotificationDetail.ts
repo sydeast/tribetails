@@ -285,9 +285,10 @@ async function householdOnlyFacts(
 // wording ("When your Auntie arrives for a KinCare visit."). Neither said which
 // Kin, which KinCare or when. The line is now built from the notice's own facts,
 // the ones `buildNotificationDetail` already writes on the copy and the ids the
-// emitter put in `data`. It is a pure function of the stored row, so the
-// notifications list builds it again on read, and an old row with no facts
-// shows its title alone instead of the words it was stored with.
+// emitter put in `data`. It is built once, when the copy is written, and stored
+// as `householdLine`. The notifications list works out the tap target again on
+// read but never rebuilds the line: a row stored before this has no
+// `householdLine` and shows its title alone, never the words it was stored with.
 //
 // One table, keyed by catalog key, holds the line and the target for every key
 // a household can receive (`HOUSEHOLD_NOTICE_RULES`). A test walks the catalog
@@ -355,6 +356,14 @@ export function joinKinNames(v: unknown): string {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
+/**
+ * A household's name, or '' when what is stored there is an email address: a
+ * name that is really an email is not a name to print (#2030).
+ */
+function nameNotEmail(v: unknown): string {
+  const name = text(v);
+  return name.includes('@') ? '' : name;
+}
 function capitalize(s: string): string {
   return s === '' ? s : s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -469,6 +478,11 @@ function invoiceLine(f: Facts, opts: { due?: 'due' | 'was due' } = {}): string {
   return line;
 }
 
+/** "Invoice 1042", and nothing about money. */
+function invoiceNumberLine(f: Facts): string {
+  const number = text(f.detail.invoiceNumber).replace(/^#/, '');
+  return number ? `Invoice ${number}` : '';
+}
 /** The first words of a message, on one line. */
 function previewLine(v: unknown, max = 140): string {
   const flat = text(v).replace(/\s+/g, ' ');
@@ -498,20 +512,17 @@ export const HOUSEHOLD_NOTICE_RULES: Readonly<Record<string, HouseholdNoticeRule
   'kintale.comment.added': { line: commentLine, target: 'kintale' },
   'kintale.note.added': { line: taleLine, target: 'kintale' },
   'invoice.new': { line: (f) => invoiceLine(f, { due: 'due' }), target: 'invoice' },
-  'invoice.updated': { line: (f) => invoiceLine(f), target: 'invoice' },
-  'invoice.receipt': { line: (f) => invoiceLine(f), target: 'invoice' },
+  // The number only, as for a payment below: with no amount from the emitter
+  // the enricher reads the invoice's BALANCE, and on a part-paid invoice "for
+  // $40.00" would claim the invoice (or the receipt) was for its balance.
+  'invoice.updated': { line: invoiceNumberLine, target: 'invoice' },
+  'invoice.receipt': { line: invoiceNumberLine, target: 'invoice' },
   'invoice.reminder': { line: (f) => invoiceLine(f, { due: 'due' }), target: 'invoice' },
   'invoice.overdue': { line: (f) => invoiceLine(f, { due: 'was due' }), target: 'invoice' },
   'invoice.charge.failed': { line: (f) => invoiceLine(f), target: 'invoice' },
   // The number only: the stored amount is the payment's or the balance's
   // depending on the emitter, and "for $X" would claim it was the invoice's.
-  'invoice.payment.applied': {
-    line: (f) => {
-      const number = text(f.detail.invoiceNumber).replace(/^#/, '');
-      return number ? `Invoice ${number}` : '';
-    },
-    target: 'invoice',
-  },
+  'invoice.payment.applied': { line: invoiceNumberLine, target: 'invoice' },
   'quote.accepted': { line: (f) => invoiceLine(f), target: 'invoice' },
   'message.reply': { line: (f) => previewLine(f.data.preview), target: 'messages' },
   // The broadcast writes its own row: the subject is its title and the body,
@@ -526,14 +537,14 @@ export const HOUSEHOLD_NOTICE_RULES: Readonly<Record<string, HouseholdNoticeRule
   },
   'profile.updated': {
     line: (f) => {
-      const household = text(f.detail.kinfolkName);
+      const household = nameNotEmail(f.detail.kinfolkName);
       return household ? `Household profile for ${household}` : '';
     },
     target: 'household',
   },
   'account.welcome.kinfolk': {
     line: (f) => {
-      const household = text(f.detail.kinfolkName);
+      const household = nameNotEmail(f.detail.kinfolkName);
       return household ? `Your MyTribe account for ${household} is ready` : '';
     },
     target: 'household',

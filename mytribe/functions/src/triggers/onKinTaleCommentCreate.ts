@@ -20,7 +20,8 @@ function textOf(v: unknown): string {
  * (`portal/getKinTaleComments.ts`): a guest by the name they typed, an Auntie
  * as "Auntie" and her staff name, a household member by first name. '' when
  * nothing names them; the notice then counts the comments instead. Never an
- * email: none of these fields holds one.
+ * email: a stored name that is really an email address leaves the author
+ * unnamed.
  */
 export async function commentAuthorName(kinfolkId: string, comment: CommentDoc): Promise<string> {
   const guest = textOf(comment.guestName);
@@ -30,7 +31,8 @@ export async function commentAuthorName(kinfolkId: string, comment: CommentDoc):
   try {
     if (comment.authorRole === 'admin') {
       const name = textOf((await db().doc(`staff/${uid}`).get()).data()?.displayName);
-      if (!name) return '';
+      // A staff name that is really an email is not a name (#2030).
+      if (!name || name.includes('@')) return '';
       return /^auntie\b/i.test(name) ? name : `Auntie ${name}`;
     }
     const [member, client] = await db().getAll(
@@ -38,7 +40,8 @@ export async function commentAuthorName(kinfolkId: string, comment: CommentDoc):
       db().doc(`clients/${uid}`),
     );
     const name = textOf(member?.data()?.displayName) || textOf(client?.data()?.displayName);
-    return name.split(/\s+/)[0] ?? '';
+    const first = name.split(/\s+/)[0] ?? '';
+    return first.includes('@') ? '' : first;
   } catch {
     return '';
   }

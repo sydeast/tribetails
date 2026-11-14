@@ -80,8 +80,8 @@ const EXPECTED: Record<string, string> = {
   'kintale.comment.added': 'Jamie commented on “A sunny walk”',
   'kintale.note.added': '“A sunny walk” about Rex',
   'invoice.new': 'Invoice 1042 for $120.00, due Nov 20, 2026',
-  'invoice.updated': 'Invoice 1042 for $120.00',
-  'invoice.receipt': 'Invoice 1042 for $120.00',
+  'invoice.updated': 'Invoice 1042',
+  'invoice.receipt': 'Invoice 1042',
   'invoice.reminder': 'Invoice 1042 for $120.00, due Nov 20, 2026',
   'invoice.overdue': 'Invoice 1042 for $120.00, was due Nov 20, 2026',
   'invoice.charge.failed': 'Invoice 1042 for $120.00',
@@ -252,6 +252,23 @@ describe('a notice with fewer facts says less, never something wrong', () => {
     expect(householdNoticeLine({ key: 'invoice.receipt', detail: { invoiceNumber: '1042', amount: '$0.00' } })).toBe(
       'Invoice 1042',
     );
+  });
+
+  it('a receipt or an edit on a part-paid invoice never prints its balance as what it was for', () => {
+    // With no amount from the emitter the enricher reads `amountDue`, the balance.
+    for (const key of ['invoice.receipt', 'invoice.updated', 'invoice.payment.applied']) {
+      expect(householdNoticeLine({ key, detail: { invoiceNumber: '1042', amount: '$40.00' } })).toBe('Invoice 1042');
+    }
+    // A bill still owed names what is owed.
+    expect(householdNoticeLine({ key: 'invoice.charge.failed', detail: { invoiceNumber: '1042', amount: '$40.00' } })).toBe(
+      'Invoice 1042 for $40.00',
+    );
+  });
+
+  it('a household name that is really an email is not printed', () => {
+    for (const key of ['profile.updated', 'account.welcome.kinfolk']) {
+      expect(householdNoticeLine({ key, detail: { kinfolkName: 'catch@hanasamku.com' } })).toBe('');
+    }
   });
 
   it('a digest names every commenter once, and "You" for the reader', () => {

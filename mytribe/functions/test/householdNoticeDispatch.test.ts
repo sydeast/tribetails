@@ -101,6 +101,56 @@ describe('the household copy is stored with its facts, not the settings words', 
     expect(doc.householdLine).toBe('');
   });
 });
+describe('#1863: in Time Blocks mode the stored line names the window, never the clock', () => {
+  const BLOCKS_SETTINGS = {
+    ...HOUSEHOLD_GATE_OPEN,
+    timeZone: 'America/Chicago',
+    allowTimeBlockBooking: true,
+    allowSpecificTimeBooking: false,
+    defaultBookingMode: 'TIME_BLOCK',
+    timeBlocks: [{ id: 'midday', label: 'Midday', startTime: '11:00', endTime: '15:00', active: true }],
+  };
+  // 2026-11-17 12:30 PM in Chicago (UTC-6).
+  const MIDDAY_MS = Date.UTC(2026, 10, 17, 18, 30);
+  async function blocksCopy(key: string, data: Record<string, unknown>, docs: Record<string, Record<string, unknown>> = {}) {
+    const ctx = buildDbMock({ docs: { 'business_settings/business_settings': BLOCKS_SETTINGS, ...docs } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await enqueueNotification({ key, recipientUid: 'uid_household', data });
+    const written = ctx.writes.find((w) => w.path.startsWith('notifications/') && w.data.recipientUid === 'uid_household');
+    expect(written, `${key} wrote no household copy`).toBeTruthy();
+    return written!.data as Record<string, unknown>;
+  }
+
+  it('"Your Auntie has arrived" reads the visit\'s block', async () => {
+    const doc = await blocksCopy(
+      'kincare.auntie.arrived',
+      { familyId: 'fam1', batchId: 'b1', visitId: 'v1', bookingId: 'v1', event: 'arrived', serviceType: 'Drop-in visit', scheduledAtMs: MIDDAY_MS },
+      {
+        'families/fam1': { displayName: 'The Rivera Home' },
+        'families/fam1/bookings/b1/kinCares/v1': { kinNames: ['Rex'], timeBlockId: 'midday', startTime: { toMillis: () => MIDDAY_MS } },
+      },
+    );
+    expect(doc.description).toBe('Drop-in visit for Rex on Tue, Nov 17 at Midday (11 AM to 3 PM)');
+    expect(String(doc.description)).not.toContain('12:30');
+  });
+
+  it('the confirmation of several visits reads the first visit\'s block, not the clock the emitter also sent', async () => {
+    const doc = await blocksCopy('kincare.booking.confirm', {
+      kinfolkId: 'fam1',
+      batchId: 'b1',
+      bookingId: 'b1',
+      startTimeMs: MIDDAY_MS,
+      visitCount: 3,
+      // The shape `approveBookingSeriesCore` sends: the clock for the office,
+      // the household's own words beside it.
+      nextVisit: { weekday: 'Tue', date: 'Nov 17', time: '12:30 PM', householdTime: 'Midday (11 AM to 3 PM)' },
+      bookingTime: '12:30 PM',
+      householdBookingTime: 'Midday (11 AM to 3 PM)',
+    });
+    expect(doc.description).toContain('3 visits starting Tue, Nov 17 at Midday (11 AM to 3 PM)');
+    expect(String(doc.description)).not.toContain('12:30');
+  });
+});
 describe('#1898: the comment digest email and push name the Kin', () => {
   it('reads the household off the digest, so "{{kinName}}\'s KinTale" is never "\'s KinTale"', async () => {
     const ctx = buildDbMock({
