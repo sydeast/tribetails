@@ -33,6 +33,8 @@ import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
+import com.tribetails.auntieos.web.ui.components.AuntieFieldLabel
+import com.tribetails.auntieos.web.ui.components.AuntieKeyValueRow
 import com.tribetails.auntieos.web.ui.components.LoadErrorBanner
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.GhostButton
@@ -50,7 +52,8 @@ import kotlinx.coroutines.launch
 /**
  * Per-kinfolk household dossier extension. Mirrors Android HouseholdDataScreen.
  * Five sections: Veterinary, Household Items, Routines, Emergency & Safety,
- * Service Providers. ~30 free-text fields shared across all pets in a household.
+ * Service Providers. ~30 free-text fields shared across all pets in a household;
+ * the vets are links to the area vet list (#1908 kin-vet).
  *
  * One Firestore doc per kinfolk in `household_data` collection. Lazy-create on
  * first save when none exists.
@@ -97,14 +100,15 @@ fun HouseholdDataScreen(
     // Bumped by Retry after a failed read.
     var loadAttempt by remember(kinfolkId) { mutableStateOf(0) }
 
-    // Veterinary
-    var primaryVetName     by remember(kinfolkId) { mutableStateOf("") }
-    var primaryVetPhone    by remember(kinfolkId) { mutableStateOf("") }
-    var primaryVetAddress  by remember(kinfolkId) { mutableStateOf("") }
-    var primaryVetHours    by remember(kinfolkId) { mutableStateOf("") }
-    var emergencyVetName   by remember(kinfolkId) { mutableStateOf("") }
-    var emergencyVetPhone  by remember(kinfolkId) { mutableStateOf("") }
-    var emergencyVetAddress by remember(kinfolkId) { mutableStateOf("") }
+    // Veterinary (#1908 kin-vet): the household's vets are links to the area
+    // vet list, picked from a dropdown and saved the moment they are picked
+    // (HouseholdVet.kt). The free-text vet fields are no longer edited here;
+    // they are carried untouched by every save and shown read-only while no
+    // clinic is linked.
+    val clinicsState by remember { client.vetClinicsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val allClinics = (clinicsState as? FirestoreResult.Data)?.value.orEmpty()
+    var vetSaving by remember(kinfolkId) { mutableStateOf<HouseholdVetSlot?>(null) }
+    var vetError by remember(kinfolkId) { mutableStateOf<Pair<HouseholdVetSlot, String>?>(null) }
 
     // Household Items
     var foodLocation        by remember(kinfolkId) { mutableStateOf("") }
@@ -157,13 +161,6 @@ fun HouseholdDataScreen(
                 val data = r.value
                 existing = data
                 if (data != null) {
-                    primaryVetName       = data.primaryVetName
-                    primaryVetPhone      = data.primaryVetPhone
-                    primaryVetAddress    = data.primaryVetAddress
-                    primaryVetHours      = data.primaryVetHours
-                    emergencyVetName     = data.emergencyVetName
-                    emergencyVetPhone    = data.emergencyVetPhone
-                    emergencyVetAddress  = data.emergencyVetAddress
                     foodLocation         = data.foodLocation
                     treatLocation        = data.treatLocation
                     medicationLocation   = data.medicationLocation
@@ -197,15 +194,36 @@ fun HouseholdDataScreen(
         loading = false
     }
 
+    /**
+     * #1908 kin-vet: a pick writes the one link, diffed against the document as
+     * read, and becomes the baseline Save diffs against, so Save never sends it
+     * again and never puts the old one back.
+     */
+    fun saveVet(slot: HouseholdVetSlot, clinicId: String) {
+        if (vetSaving != null || saving) return
+        val loaded = existing
+        val edited = withHouseholdVet(loaded, kinfolkId, slot, clinicId)
+        vetSaving = slot
+        vetError = null
+        scope.launch {
+            val r = client.saveHouseholdData(loaded, edited)
+            vetSaving = null
+            when (r) {
+                is WriteResult.Ok -> {
+                    if (r.value) {
+                        val id = loaded?._id?.ifBlank { null } ?: edited._id.ifBlank { kinfolkId }
+                        // Only the link is taken from the write: anything else typed
+                        // in the form is still the form's, saved by Save.
+                        existing = withHouseholdVet(existing ?: loaded, kinfolkId, slot, clinicId).copy(_id = id)
+                    }
+                    showToast(if (clinicId.isBlank()) "Vet removed." else "Vet saved.", ToastKind.Success)
+                }
+                is WriteResult.Err -> vetError = slot to "Couldn't save the vet: ${r.message}"
+            }
+        }
+    }
     fun build(): HouseholdData = (existing ?: HouseholdData(kinfolkId = kinfolkId)).copy(
         kinfolkId            = kinfolkId,
-        primaryVetName       = primaryVetName.trim(),
-        primaryVetPhone      = primaryVetPhone.trim(),
-        primaryVetAddress    = primaryVetAddress.trim(),
-        primaryVetHours      = primaryVetHours.trim(),
-        emergencyVetName     = emergencyVetName.trim(),
-        emergencyVetPhone    = emergencyVetPhone.trim(),
-        emergencyVetAddress  = emergencyVetAddress.trim(),
         foodLocation         = foodLocation.trim(),
         treatLocation        = treatLocation.trim(),
         medicationLocation   = medicationLocation.trim(),
@@ -291,23 +309,29 @@ fun HouseholdDataScreen(
 
         SectionPanel {
             SubsectionLabel("Veterinary Information")
-            BottomBorderField(primaryVetName,    { primaryVetName    = it }, label = fieldLabel("Primary vet name", primaryVetName),  modifier = Modifier.fillMaxWidth())
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                BottomBorderField(primaryVetPhone, { primaryVetPhone = it }, label = fieldLabel("Phone", primaryVetPhone), modifier = Modifier.weight(1f))
-                BottomBorderField(primaryVetHours, { primaryVetHours = it }, label = fieldLabel("Hours", primaryVetHours), modifier = Modifier.weight(1f))
+            for (slot in HouseholdVetSlot.entries) {
+                if (slot == HouseholdVetSlot.EMERGENCY) Spacer(Modifier.height(16.dp))
+                VetClinicPicker(
+                    label = if (slot == HouseholdVetSlot.PRIMARY) "Household vet" else "Emergency vet",
+                    clinicsState = clinicsState,
+                    options = householdVetOptions(allClinics, slot),
+                    allClinics = allClinics,
+                    selectedId = householdVetClinicId(existing, slot),
+                    onPick = { saveVet(slot, it) },
+                    allowRemove = true,
+                    busy = vetSaving == slot,
+                    error = vetError?.takeIf { it.first == slot }?.second,
+                    emptyText = if (slot == HouseholdVetSlot.PRIMARY) "No household vet on file yet" else "No emergency vet on file yet",
+                )
+                val legacy = legacyHouseholdVetLines(existing, slot)
+                if (legacy.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    AuntieFieldLabel(text = "On file before the vet list")
+                    legacy.forEach { (label, value) -> AuntieKeyValueRow(label = label, value = value) }
+                }
             }
-            Spacer(Modifier.height(12.dp))
-            MultilineField(primaryVetAddress, { primaryVetAddress = it }, label = fieldLabel("Primary vet address", primaryVetAddress), minLines = 2)
-            Spacer(Modifier.height(16.dp))
-            BottomBorderField(emergencyVetName,  { emergencyVetName  = it }, label = fieldLabel("Emergency vet name", emergencyVetName),  modifier = Modifier.fillMaxWidth())
-            Spacer(Modifier.height(12.dp))
-            BottomBorderField(emergencyVetPhone, { emergencyVetPhone = it }, label = fieldLabel("Emergency phone", emergencyVetPhone),     modifier = Modifier.fillMaxWidth())
-            Spacer(Modifier.height(12.dp))
-            MultilineField(emergencyVetAddress, { emergencyVetAddress = it }, label = fieldLabel("Emergency address", emergencyVetAddress), minLines = 2)
         }
         Spacer(Modifier.height(16.dp))
-
         SectionPanel {
             SubsectionLabel("Household Items & Locations")
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -383,7 +407,7 @@ fun HouseholdDataScreen(
             GhostButton(label = "Back", onClick = onBack, modifier = Modifier.weight(1f))
             PrimaryButton(
                 label   = "Save Household Data",
-                enabled = !saving && !loading && loadError == null,
+                enabled = !saving && vetSaving == null && !loading && loadError == null,
                 loading = saving,
                 onClick = save@{
                     if (loading || loadError != null) return@save

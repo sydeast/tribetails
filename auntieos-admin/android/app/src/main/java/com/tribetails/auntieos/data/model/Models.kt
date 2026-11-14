@@ -409,7 +409,9 @@ data class Kin(
     var name: String = "",
     var species: String = "Dog",
     var breed: String = "",
-    var age: String = "",
+    // Nullable (#1370, #1907): the mirror writes the household's age here as
+    // text, and a doc from before that may carry a null. Read via .orEmpty().
+    var age: String? = "",
     var sex: String = "",
     var weight: String = "",
     var photos: List<BaserowFile> = emptyList(),
@@ -430,13 +432,33 @@ data class Kin(
     // Extended fields from migration data
     var colorMarkings: String = "",
     var spayedNeutered: Boolean = false,
-    var staysAs: String = "",
-    var routine: String = "",
-    var trainingCommands: String = "",
-    var feedingBrand: String = "",
-    var vaccinations: String = "",
-    var medicationHealthNotes: String = "",
-    var vetInfo: String = "",
+    // #1908 (owner ruling 2026-11-11): every text field below is shared with
+    // the household's copy of the Kin, both ways (mytribe/functions/src/
+    // triggers/kinMirror.ts, the field table). NULLABLE on purpose: the old
+    // forward mirror copied the portal's null for a cleared field onto this
+    // doc, and a non-null `String` setter throws under toObject() (#1370),
+    // blanking every Kin on the screen. Read through .orEmpty().
+    var staysAs: String? = "",
+    var routine: String? = "",
+    var trainingCommands: String? = "",
+    var feedingBrand: String? = "",
+    var vaccinations: String? = "",
+    // ONE field with the household's Medications (kin-meds ruling 2026-11-12):
+    // the mirror carries it to `medications` on the household copy.
+    var medicationHealthNotes: String? = "",
+    // Legacy free-text vet note. No longer an input (kin-vet ruling); shown
+    // read-only only when no clinic resolves for the Kin.
+    var vetInfo: String? = "",
+    // #1908: the household's care block, now edited on this side too.
+    var feedingInstructions: String? = "",
+    var walkingInstructions: String? = "",
+    var allergies: String? = "",
+    var emergencyNotes: String? = "",
+    // "Notes for the Auntie": the household's notes. NOT [officeNotes].
+    var sitterNotes: String? = "",
+    // #1908 kin-vet: a `vet_clinics` id for this Kin alone. "" (or absent)
+    // means the Kin goes to the household's vet (`household_data`).
+    var ownVetClinicId: String? = "",
     var checklist: String = "",
     var reactive: Boolean = false,
     var officeNotes: String = "",

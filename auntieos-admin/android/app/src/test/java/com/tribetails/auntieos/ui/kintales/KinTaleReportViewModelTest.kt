@@ -646,4 +646,96 @@ class KinTaleReportViewModelTest {
         assertNotNull(vm.uiState.value.error)
         coVerify(exactly = 0) { mockRepo.generate(any(), any()) }
     }
+
+    // ---- #1816: the send says who the household told, from the server ----
+    private fun stubSendable() {
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
+        coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
+        coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-1")
+        coEvery { mockKinCareRepo.updateKinCareReportFields(any(), any()) } returns Result.success(Unit)
+        coEvery { mockKinCareRepo.markReportSent(any(), any(), any(), any()) } returns Result.success(Unit)
+        coEvery { mockRepo.isCurrentUserOwner() } returns Result.success(true)
+    }
+    @Test
+    fun `1816 HAPPY Send asks first, names who will be told, and the message says who was`() = runTest(testDispatcher) {
+        stubSendable()
+        coEvery { mockNotifier.previewHousehold("kf1", "kintale.published", null) } returns
+            Result.success(com.tribetails.auntieos.domain.HouseholdNoticePreview.Ready(true, null, "Dre East", listOf("email")))
+        coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any(), any(), any()) } returns
+            Result.success(
+                VisitNotifier.DispatchResult(
+                    dispatchIds = listOf("n1"),
+                    suppressed = false,
+                    notice = com.tribetails.auntieos.data.contracts.HouseholdNoticeDto(true, null, "Dre East", listOf("email")),
+                ),
+            )
+        val vm = buildViewModel()
+        vm.load("ses1", null)
+        advanceUntilIdle()
+        vm.updateBodyCopy("Biscuit had a great walk!")
+        vm.requestSend()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.sendConfirmOpen)
+        coVerify(exactly = 0) { mockNotifier.notify(any(), any(), any(), any(), any(), any()) }
+        assertEquals("Dre East will get an email.", vm.sendConfirmLine())
+        assertEquals(
+            "Send to Rosa Parks. Dre East will get an email. This cannot be undone.",
+            kinTaleSendConfirmText("Rosa Parks", vm.sendConfirmLine()),
+        )
+        vm.send()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.sentSuccessfully)
+        assertEquals("KinTale sent. Dre East was sent an email.", vm.uiState.value.sentMessage)
+    }
+    @Test
+    fun `1816 SAD notices off and no account are said, never a promise`() = runTest(testDispatcher) {
+        stubSendable()
+        coEvery { mockNotifier.previewHousehold(any(), any(), any()) } returns
+            Result.success(com.tribetails.auntieos.domain.HouseholdNoticePreview.Ready(false, "household_has_no_portal_account", "Dre East", emptyList()))
+        coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any(), any(), any()) } returns
+            Result.success(
+                VisitNotifier.DispatchResult(
+                    dispatchIds = emptyList(),
+                    suppressed = true,
+                    reason = "household_notices_off",
+                    notice = com.tribetails.auntieos.data.contracts.HouseholdNoticeDto(false, "household_notices_off", "Dre East", emptyList()),
+                ),
+            )
+        val vm = buildViewModel()
+        vm.load("ses1", null)
+        advanceUntilIdle()
+        vm.updateBodyCopy("Biscuit had a great walk!")
+        vm.requestSend()
+        advanceUntilIdle()
+        assertEquals("Nobody will be told: Dre East has no portal account.", vm.sendConfirmLine())
+        vm.send()
+        advanceUntilIdle()
+        assertEquals(
+            "KinTale sent. Nobody was told: notices to households are off in Settings.",
+            vm.uiState.value.sentMessage,
+        )
+    }
+    @Test
+    fun `1816 ERROR the server cannot be asked and an older server answers no notice`() = runTest(testDispatcher) {
+        stubSendable()
+        coEvery { mockNotifier.previewHousehold(any(), any(), any()) } returns Result.failure(RuntimeException("offline"))
+        coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any(), any(), any()) } returns
+            Result.success(VisitNotifier.DispatchResult(dispatchIds = listOf("n1"), suppressed = false))
+        val vm = buildViewModel()
+        vm.load("ses1", null)
+        advanceUntilIdle()
+        vm.updateBodyCopy("Biscuit had a great walk!")
+        vm.requestSend()
+        advanceUntilIdle()
+        assertNull(vm.sendConfirmLine())
+        assertEquals("Send to Rosa Parks. This cannot be undone.", kinTaleSendConfirmText("Rosa Parks", null))
+        vm.cancelSendConfirm()
+        assertFalse(vm.uiState.value.sendConfirmOpen)
+        vm.send()
+        advanceUntilIdle()
+        assertEquals("KinTale sent.", vm.uiState.value.sentMessage)
+    }
 }

@@ -79,6 +79,18 @@ export type MirrorSkipReason = 'session_has_no_envelope_coords' | 'envelope_visi
 export interface MirrorOutcome {
   mirrored: boolean;
   skipped: MirrorSkipReason | null;
+  /**
+   * #2027: the household's visit as it read before the write, and the office
+   * notice stamp written with the new window (null when none was asked for).
+   * Present only when `mirrored`.
+   */
+  visit?: {
+    kinfolkId: string;
+    batchId: string;
+    visitId: string;
+    before: Record<string, unknown>;
+    officeNoticeStamp: string | null;
+  };
 }
 
 /**
@@ -115,6 +127,12 @@ export async function mirrorSessionTimesToEnvelope(args: {
   uid: string;
   /** Names the caller in the log line, so a skip is traceable to a gesture. */
   fn: string;
+  /**
+   * #2027: the stamp to write with the window when the caller will send the
+   * household notice itself (`onBookingsWrite#officeNoticeStampChanged`), read
+   * off the visit as it stands. Null or absent writes none, and the trigger sends.
+   */
+  officeNoticeStampFor?: (visit: Record<string, unknown>) => string | null;
 }): Promise<MirrorOutcome> {
   const target = envelopeVisitRefForSession(args.session);
   if (target === null) {
@@ -152,14 +170,27 @@ export async function mirrorSessionTimesToEnvelope(args: {
 
   const startMs = Date.parse(args.startIso);
   const endMs = args.endIso === null ? null : Date.parse(args.endIso);
+  const before = (snap.data() ?? {}) as Record<string, unknown>;
+  const officeNoticeStamp = args.officeNoticeStampFor?.(before) ?? null;
   await target.ref.set(
     {
       startTime: Timestamp.fromMillis(startMs),
       ...(endMs !== null && Number.isFinite(endMs) ? { endTime: Timestamp.fromMillis(endMs) } : {}),
+      ...(officeNoticeStamp !== null ? { officeNoticeStamp } : {}),
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true },
   );
 
-  return { mirrored: true, skipped: null };
+  return {
+    mirrored: true,
+    skipped: null,
+    visit: {
+      kinfolkId: target.kinfolkId,
+      batchId: target.batchId,
+      visitId: target.visitId,
+      before,
+      officeNoticeStamp,
+    },
+  };
 }

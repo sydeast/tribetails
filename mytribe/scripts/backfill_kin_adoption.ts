@@ -142,8 +142,8 @@ import {
 import {
   MIRROR_ORIGIN_FAMILY,
   MIRROR_ORIGIN_FLAT,
-  PARENT_OWNED_FIELDS,
-  STAFF_EDITABLE_FIELDS,
+  buildFamilyCopyFromFlat,
+  parseAgeYears as sharedParseAgeYears,
 } from '../functions/src/triggers/kinMirror';
 import {
   buildFamilyProvisionDoc,
@@ -164,16 +164,6 @@ export const INACTIVE_FLAT_STATUSES: ReadonlySet<string> = new Set([
   'inactive',
   'archived',
 ]);
-
-/**
- * Parent-owned fields handled explicitly (normalized) by buildFamilyKinDoc.
- * The remaining PARENT_OWNED_FIELDS are the care-instruction block, copied
- * verbatim when present.
- */
-const IDENTITY_FIELDS: readonly string[] = ['name', 'species', 'breed', 'photoUrl', 'ageYears'];
-const CARE_FIELDS: readonly string[] = PARENT_OWNED_FIELDS.filter(
-  (f) => !IDENTITY_FIELDS.includes(f),
-);
 
 // ---------------------------------------------------------------------------
 // Args
@@ -277,17 +267,7 @@ export function normalizeSpecies(v: unknown): string | null {
  * "4 years" -> 4, "4.5" -> 4.5). Unparseable, negative, or absurd (>100 —
  * catches birth-year strings like "2019") -> null (field omitted).
  */
-export function parseAgeYears(v: unknown): number | null {
-  let n: number | null = null;
-  if (typeof v === 'number' && Number.isFinite(v)) {
-    n = v;
-  } else if (typeof v === 'string') {
-    const m = v.match(/\d+(?:\.\d+)?/);
-    n = m ? parseFloat(m[0]) : null;
-  }
-  if (n == null || !Number.isFinite(n) || n < 0 || n > 100) return null;
-  return n;
-}
+export const parseAgeYears = sharedParseAgeYears;
 
 /** Deterministic family-side kin id for a flat doc, so re-runs converge. */
 export function adoptedKinId(flatDocId: string): string {
@@ -399,38 +379,26 @@ export function buildFamilyKinDoc(
   const breed = nonEmptyString(data.breed);
   if (breed) doc.breed = breed;
 
-  // Portal field is photoUrl; AuntieOS stores the pet photo as profilePictureUrl.
-  const photoUrl = nonEmptyString(data.photoUrl) ?? nonEmptyString(data.profilePictureUrl);
-  if (photoUrl) doc.photoUrl = photoUrl;
-
-  // Prefer a numeric ageYears (flat docs previously touched by the mirror);
-  // else parse the AuntieOS `age` string.
-  const ageYears =
-    typeof data.ageYears === 'number' ? parseAgeYears(data.ageYears) : parseAgeYears(data.age);
-  if (ageYears != null) doc.ageYears = ageYears;
-
-  // Care-instruction block (parent-owned) — present only on flat docs the
-  // family->flat mirror already wrote to; copy verbatim when non-empty.
-  for (const f of CARE_FIELDS) {
-    const v = nonEmptyString(data[f]);
-    if (v) doc[f] = v;
+  // Photo, age, the care block, medications and every other shared field come
+  // from the one projection the live trigger uses too (#1847, #1908:
+  // `buildFamilyCopyFromFlat` in functions/src/triggers/kinMirror.ts), so a
+  // Kin adopted here and one adopted by `onFlatKinWrite` carry the same
+  // fields under the same keys. Staff-only fields are never in it (#1335).
+  const shared = buildFamilyCopyFromFlat(data);
+  for (const [k, v] of Object.entries(shared)) {
+    if (k === 'name' || k === 'species' || k === 'breed') continue;
+    doc[k] = v;
   }
-
-  // Household-visible staff-edited facts (flat->family direction per
-  // kinMirror). Staff-only fields are not in this list (#1335). Skip empty strings — AuntieOS models default every string field to "".
-  for (const f of STAFF_EDITABLE_FIELDS) {
-    const v = data[f];
-    if (v === undefined || v === null || v === '') continue;
-    doc[f] = v;
-  }
-
   const flatStatus = typeof data.status === 'string' ? data.status : '';
   doc.status = INACTIVE_FLAT_STATUSES.has(flatStatus) ? 'noLongerWithUs' : 'active';
 
   doc.kinfolkId = familyId;
   doc.legacyKinId = flatDocId;
   doc.familyKinPath = `families/${familyId}/kin/${newKinId}`;
+  // A write id of its own, new on this write, so the mirror reads it as its
+  // own echo (kinMirror.ts ECHOES). Deterministic, so a replan is identical.
   doc._mirrorOrigin = MIRROR_ORIGIN_FLAT;
+  doc._mirrorWriteId = `adopt:${flatDocId}`;
   doc.backfilledFromFlat = true;
 
   return doc;
@@ -448,6 +416,7 @@ export function buildFlatStamp(
       familyKinPath: `families/${familyId}/kin/${kinId}`,
       legacyKinId: flatDocId,
       _mirrorOrigin: MIRROR_ORIGIN_FAMILY,
+      _mirrorWriteId: `adopt:${flatDocId}`,
     },
     merge: true,
   };

@@ -25,6 +25,9 @@ import { confirmKinPhotoUpload, signKinPhotoUpload, validateKinPhotoFile } from 
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
 import { formatRemovalDate, kinRemovalOption } from '../lib/kinRemoval';
+import { getMyTribeProfile, getVetClinics } from '../api/tribeApi';
+import { tribeProfileKey, vetClinicsKey } from '../lib/portalQueryKeys';
+import { KinVetField } from '../components/KinVetField';
 
 /**
  * Kin edit form (open item O-17): the React counterpart to Compose's
@@ -75,6 +78,11 @@ export function KinEdit() {
   // load degrades the field rather than the page, and BreedField's note says so.
   const breeds = useQuery(BREEDS_QUERY);
   const breedBanks = breeds.data ?? EMPTY_BREED_BANKS;
+  // #1908 kin-vet: the household's vet (shown read only) and the area vet
+  // list (for "Different vet for this Kin"). The same queries the Tribe
+  // Profile reads, so a vet changed there is the one shown here.
+  const tribeProfile = useQuery({ queryKey: tribeProfileKey(kinfolkId), queryFn: () => getMyTribeProfile(kinfolkId) });
+  const vetClinics = useQuery({ queryKey: vetClinicsKey(), queryFn: () => getVetClinics() });
 
   // Seed the editable copy once, the first time this kin resolves, so a
   // background refetch of the list query can't clobber in-progress edits.
@@ -398,9 +406,26 @@ export function KinEdit() {
             <div className="grid2">
               {textField('feedingInstructions', 'Feeding Instructions', { full: true, area: true })}
               {textField('walkingInstructions', 'Walking Instructions', { full: true, area: true })}
-              {textField('medications', 'Medications', { full: true, area: true })}
+              {textField('medications', 'Medications / health notes', { full: true, area: true })}
               {textField('allergies', 'Allergies', { full: true, area: true })}
-              {textField('vetInfo', 'Vet', { full: true, area: true })}
+              {textField('staysAs', 'Stays as', { full: true, area: true })}
+              {textField('routine', 'Routine', { full: true, area: true })}
+              {textField('trainingCommands', 'Training / commands', { full: true, area: true })}
+              {textField('feedingBrand', 'Food / brand', { full: true, area: true })}
+              {textField('vaccinations', 'Vaccinations', { full: true, area: true })}
+              <KinVetField
+                idPrefix="kin"
+                householdVet={tribeProfile.data?.vetClinic ?? null}
+                householdVetLoading={tribeProfile.isLoading}
+                clinics={vetClinics.data?.clinics ?? []}
+                clinicsLoading={vetClinics.isLoading}
+                clinicsFailed={vetClinics.isError}
+                differentVet={current.differentVet}
+                ownVetClinicId={current.ownVetClinicId}
+                onDifferentChange={(v) => setForm((f) => (f ? { ...f, differentVet: v } : f))}
+                onPick={(id) => setForm((f) => (f ? { ...f, ownVetClinicId: id } : f))}
+                error={errors.ownVetClinicId}
+              />
             </div>
           </section>
 
@@ -413,7 +438,7 @@ export function KinEdit() {
               </div>
             </div>
             <div className="grid2">
-              {textField('sitterNotes', 'Sitter Notes', { full: true, area: true })}
+              {textField('sitterNotes', 'Notes for your Auntie', { full: true, area: true })}
               {textField('emergencyNotes', 'Emergency Notes', { full: true, area: true })}
             </div>
           </section>

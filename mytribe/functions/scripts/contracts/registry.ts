@@ -35,6 +35,7 @@ import { Args as BatchUpdateBookingsArgs, Result as BatchUpdateBookingsResult } 
 import { Args as CreateMultiDateBookingRequestArgs, Result as CreateMultiDateBookingRequestResult } from '../../src/admin/createMultiDateBookingRequest';
 import { Args as ManageBookingSeriesArgs, Result as ManageBookingSeriesResult } from '../../src/admin/manageBookingSeries';
 import { Args as RescheduleBookingArgs, Result as RescheduleBookingResult } from '../../src/admin/rescheduleBooking';
+import { HouseholdNoticeSchema } from '../../src/admin/dispatchVisitNotification';
 import { Args as CreateInvoiceArgs, Result as CreateInvoiceResult } from '../../src/admin/createInvoice';
 import { Args as CreateQuoteArgs, Result as CreateQuoteResult } from '../../src/admin/createQuote';
 // The office's answer to a decline (issue #448): revise the quote and send it
@@ -239,6 +240,9 @@ export const BOOKING_CONTRACT_REGISTRY: ContractRegistry = {
     // reschedule twin above: the admin surface renders both request types in
     // one list, so both rows need one name per client, not two.
     { name: 'CancelRequestDto', schema: CancelRequestDtoSchema, direction: 'response' },
+    // #1838/#2027: what a household was told about an admin action. One name
+    // for the move, the cancel and the note, instead of a DTO per callable.
+    { name: 'HouseholdNoticeDto', schema: HouseholdNoticeSchema, direction: 'response' },
   ],
   callables: [
     { name: 'addBookingNote', args: AddBookingNoteArgs, result: AddBookingNoteResult },

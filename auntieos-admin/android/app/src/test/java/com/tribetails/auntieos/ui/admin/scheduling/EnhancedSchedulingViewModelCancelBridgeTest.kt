@@ -103,7 +103,7 @@ class EnhancedSchedulingViewModelCancelBridgeTest {
                 Result.success(listOf(linkedSession("s1"), linkedSession("s2")))
             val ids = mutableListOf<String>()
             val reasons = mutableListOf<String>()
-            coEvery { kinCareRepo.cancelSession(capture(ids), capture(reasons)) } returns Result.success(Unit)
+            coEvery { kinCareRepo.cancelSession(capture(ids), capture(reasons)) } returns Result.success(null)
 
             buildViewModel().cancelBooking(booking(), "household away")
 
@@ -115,7 +115,7 @@ class EnhancedSchedulingViewModelCancelBridgeTest {
     fun `it never patches the session status directly any more`() = runTest(testDispatcher) {
         coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns
             Result.success(listOf(linkedSession("s1")))
-        coEvery { kinCareRepo.cancelSession(any(), any()) } returns Result.success(Unit)
+        coEvery { kinCareRepo.cancelSession(any(), any()) } returns Result.success(null)
 
         buildViewModel().cancelBooking(booking(), "household away")
 
@@ -128,7 +128,7 @@ class EnhancedSchedulingViewModelCancelBridgeTest {
             coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns
                 Result.success(listOf(linkedSession("s1", "CANCELLED"), linkedSession("s2")))
             val ids = mutableListOf<String>()
-            coEvery { kinCareRepo.cancelSession(capture(ids), any()) } returns Result.success(Unit)
+            coEvery { kinCareRepo.cancelSession(capture(ids), any()) } returns Result.success(null)
 
             buildViewModel().cancelBooking(booking(), "household away")
 
@@ -151,7 +151,7 @@ class EnhancedSchedulingViewModelCancelBridgeTest {
     fun `cancelling a scheduled booking confirms the visit was cancelled`() = runTest(testDispatcher) {
         coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns
             Result.success(listOf(linkedSession("s1")))
-        coEvery { kinCareRepo.cancelSession(any(), any()) } returns Result.success(Unit)
+        coEvery { kinCareRepo.cancelSession(any(), any()) } returns Result.success(null)
 
         val vm = buildViewModel()
         // booking() is ACCEPTED (scheduled), the "Cancel" button's shape.

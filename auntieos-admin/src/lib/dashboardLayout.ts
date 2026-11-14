@@ -143,11 +143,12 @@ export function hiddenKeys(shown: readonly DashWidget[]): DashKey[] {
  * cards. Web only: Android and the desktop console do not let an Auntie sign
  * in (`isOwnerClaims`, `ownerFromClaims`), so neither carries this list.
  *
- * - `cashFlow` and `expenseLog` are money, and an Auntie never sees money.
- * - `supplies` and `expirations` hold no money, but the server refuses her
- *   both (`firestore.rules` and the callable allowlist keep them owner-only,
- *   unruled: spec section 12), so for her each card could only show a load
- *   error. They come back for her if that ruling opens them.
+ * `cashFlow` and `expenseLog` are money, and an Auntie never sees money.
+ *
+ * `supplies` and `expirations` were on this list until the operator ruled on
+ * 2026-11-14 that an Auntie sees and works both. Neither holds money, and the
+ * server now admits her to their reads and to the +1 restock, so they are her
+ * cards like any other: off the default board, offered under Hidden cards.
  *
  * The stat row stays: its revenue tile is dropped inside `StatsWidget`
  * (#2200 / #2201). This is a view filter, not a storage change: the keys stay
@@ -156,8 +157,6 @@ export function hiddenKeys(shown: readonly DashWidget[]): DashKey[] {
 export const OWNER_ONLY_DASH_KEYS: ReadonlySet<DashKey> = new Set<DashKey>([
   'cashFlow',
   'expenseLog',
-  'supplies',
-  'expirations',
 ]);
 
 /** May this viewer be shown this card? Only an Auntie is refused any (#2208). */

@@ -79,6 +79,19 @@ interface AuntieDataSource {
     /** Calls off an approved visit. Same server path as [rejectBooking] with the CANCEL action. */
     suspend fun cancelBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
         rejectBooking(bookingId, visitId)
+    /**
+     * #1838: [cancelBooking], answering with what the household was told, from
+     * the cancel itself. A source that cannot say answers null, and the toast
+     * then claims nothing about the household.
+     */
+    suspend fun cancelBookingNotice(
+        bookingId: String,
+        visitId: String? = null,
+    ): WriteResult<com.tribetails.auntieos.web.screens.HouseholdNotice?> =
+        when (val r = cancelBooking(bookingId, visitId)) {
+            is WriteResult.Ok -> WriteResult.Ok(null)
+            is WriteResult.Err -> r
+        }
     suspend fun createBooking(booking: KinCareSession): WriteResult<String>
 
     /**
@@ -160,7 +173,19 @@ interface AuntieDataSource {
      * write the session-side reportIds/sentReportCount. Fail-loud: a dispatch
      * error returns [WriteResult.Err] and the report is NOT flipped to SENT.
      */
-    suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit>
+    suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<com.tribetails.auntieos.web.screens.HouseholdNotice?>
+
+    /**
+     * #1816: who a household notice for [key] would reach, from the server's dry
+     * run. A source that cannot ask answers Err, and the confirm says nothing
+     * about the household.
+     */
+    suspend fun previewHouseholdNotice(
+        familyId: String,
+        key: String,
+        sessionId: String? = null,
+    ): WriteResult<com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Ready> =
+        WriteResult.Err("No answer for this notice.")
     /** #1631: delete an unsent report draft (`deleteKinTaleReportDraft`). The server refuses a sent one. */
     // Defaulted so the screen-scoped data sources that never show a KinTale need not implement it.
     suspend fun deleteReportDraft(reportId: String): WriteResult<Unit> =

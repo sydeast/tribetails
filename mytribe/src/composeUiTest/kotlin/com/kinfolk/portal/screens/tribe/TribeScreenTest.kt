@@ -209,7 +209,11 @@ class TribeScreenTest {
         stub("listMembers", buildJsonObject { put("members", buildJsonArray {}) })
         stub("saveTribeProfile", buildJsonObject { put("ok", true) })
         stub("saveHomeAccess", buildJsonObject { put("ok", true) })
+        stub("setHouseholdVet", buildJsonObject { put("ok", true); put("vetClinic", JsonNull) })
     }
+    /** #1917: the clinic ids setHouseholdVet was called with, in order. */
+    private fun FakeFunctionsClient.householdVetCalls(): List<String> =
+        calls.filter { it.first == "setHouseholdVet" }.map { it.second!!["clinicId"]!!.jsonPrimitive.content }
     private fun FakeFunctionsClient.savedProfile(): Pair<List<Pair<String, String>>, List<String>> {
         val payload = calls.last { it.first == "saveTribeProfile" }.second!!
         val rows = payload["customFields"]!!.jsonArray.map {
@@ -230,8 +234,9 @@ class TribeScreenTest {
         onNodeWithText("(805) 555-0170 \u00b7 12 Ridge Rd").assertExists()
         assertEquals(0, onAllNodesWithText("c-77").fetchSemanticsNodes().size)
     }
+    /** #1917: a pick is saved the moment it is made, and the page Save leaves the clinic alone. */
     @Test
-    fun vetClinic_searchAndPick_savesTheIdOnly() = runComposeUiTest {
+    fun vetClinic_searchAndPick_savesAtOnce_andSaveDoesNotSendTheRow() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stubProfileWithVetRows(Triple("allergy", "Allergies", "Chicken"))
         fake.stubCatalog(clinicJson("c-1", "Ridgeline Animal Hospital", "8055550170", "12 Ridge Rd"), clinicJson("c-2", "Harbor Vet"))
@@ -241,19 +246,52 @@ class TribeScreenTest {
         waitForIdle()
         onNodeWithTag("vet-match-c-1").performScrollTo().performClick()
         waitForIdle()
+        assertEquals(listOf("c-1"), fake.householdVetCalls(), "saved on the pick, before any Save")
+        assertTrue(fake.calls.none { it.first == "saveTribeProfile" }, "the pick needs no page Save")
         onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
         onNodeWithText("(805) 555-0170 \u00b7 12 Ridge Rd").assertExists()
+        onNodeWithTag("vet-saved").assertExists()
         onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
         val (rows, removed) = fake.savedProfile()
-        assertTrue("vetClinicId" to "c-1" in rows, "sent $rows")
+        assertTrue(rows.none { it.first == "vetClinicId" }, "the page Save never sends the clinic row: $rows")
         assertTrue(rows.none { it.first == "vetClinicName" || it.first == "vetClinicPhone" || it.first == "vetClinicAddress" }, "sent $rows")
         assertTrue("allergy" to "Chicken" in rows, "the unrelated field rides along: $rows")
         assertEquals(emptyList(), removed)
         assertTrue(fake.calls.none { it.first == "submitVetClinic" })
+        assertEquals(1, fake.householdVetCalls().size, "Save made no second vet call")
+    }
+    /** #1908 kin-vet: the dropdown lists the whole area list as soon as the search box is focused. */
+    @Test
+    fun vetClinic_listOpensOnFocus_withEveryClinic() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows()
+        fake.stubCatalog(clinicJson("c-1", "Ridgeline Animal Hospital"), clinicJson("c-2", "Harbor Vet"))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-search").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("vet-match-c-1").assertExists()
+        onNodeWithTag("vet-match-c-2").assertExists()
+    }
+    /** #1917: a pick the server refuses says so and leaves the card as it was. */
+    @Test
+    fun vetClinic_pickRefused_showsTheErrorAndKeepsTheOldClinic() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stubProfileWithVetRows()
+        fake.stubCatalog(clinicJson("c-1", "Ridgeline Animal Hospital"))
+        fake.stubError("setHouseholdVet", IllegalStateException("That vet is not on the list."))
+        setThemedContent { TribeScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("vet-search").performScrollTo().performTextInput("ridge")
+        waitForIdle()
+        onNodeWithTag("vet-match-c-1").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithTag("vet-save-error").assertExists()
+        onNodeWithTag("vet-on-file").assertDoesNotExist()
     }
     @Test
-    fun vetClinic_clearLink_removesTheIdByName_andKeepsLegacyRows() = runComposeUiTest {
+    fun vetClinic_remove_savesAtOnce_andKeepsLegacyRows() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         fake.stubProfileWithVetRows(
             Triple("vetClinicId", "Vet Clinic", "c-1"),
@@ -264,11 +302,12 @@ class TribeScreenTest {
         waitForIdle()
         onNodeWithTag("vet-clear").performScrollTo().performClick()
         waitForIdle()
+        assertEquals(listOf(""), fake.householdVetCalls())
         onNodeWithTag("vet-on-file").assertDoesNotExist()
         onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
         val (rows, removed) = fake.savedProfile()
-        assertEquals(listOf("vetClinicId"), removed)
+        assertEquals(emptyList(), removed, "the page Save does not remove the clinic row")
         assertTrue(rows.none { it.first == "vetClinicId" }, "sent $rows")
         assertTrue("vetClinicName" to "Old Typed Name" in rows, "the legacy row is kept as stored: $rows")
     }
@@ -312,9 +351,8 @@ class TribeScreenTest {
         onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
         onNodeWithText("Brand New Clinic").assertExists()
         onNodeWithTag("vet-message").assertExists()
-        onNodeWithText("Save Changes").performScrollTo().performClick()
-        waitForIdle()
-        assertTrue("vetClinicId" to "new-9" in fake.savedProfile().first)
+        // #1917: the new clinic is the household's at once, not on the page Save.
+        assertEquals(listOf("new-9"), fake.householdVetCalls())
     }
     @Test
     fun vetClinic_addNew_nearMatchOffersAChoice_andWritesNothingUntilTheHouseholdDecides() = runComposeUiTest {
@@ -367,11 +405,10 @@ class TribeScreenTest {
         onNodeWithTag("vet-candidate-c-5").performScrollTo().performClick()
         waitForIdle()
         assertEquals(1, fake.calls.count { it.first == "submitVetClinic" })
+        // #1917: the chosen candidate is saved as the household's clinic at once.
+        assertEquals(listOf("c-5"), fake.householdVetCalls())
         onNodeWithTag("vet-on-file").performScrollTo().assertIsDisplayed()
         onNodeWithText("(805) 555-0170 \u00b7 12 Ridge Rd").assertExists()
-        onNodeWithText("Save Changes").performScrollTo().performClick()
-        waitForIdle()
-        assertTrue("vetClinicId" to "c-5" in fake.savedProfile().first)
     }
     @Test
     fun vetClinic_catalogLoadFailure_isShown_notSwallowed() = runComposeUiTest {
@@ -392,7 +429,11 @@ class TribeScreenTest {
         onNodeWithTag("vet-missing").performScrollTo().assertIsDisplayed()
         onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
-        assertTrue("vetClinicId" to "gone-1" in fake.savedProfile().first)
+        // #1917: the page Save leaves the clinic link alone: neither sent nor removed.
+        val (rows, removed) = fake.savedProfile()
+        assertTrue(rows.none { it.first == "vetClinicId" }, "sent $rows")
+        assertTrue("vetClinicId" !in removed, "removed $removed")
+        assertTrue(fake.householdVetCalls().isEmpty())
     }
     /**
      * #933 item 3. The After-hours block itself always renders (its header and
@@ -695,7 +736,12 @@ class TribeScreenTest {
         waitForIdle()
         val keep = fake.calls.last { it.first == "saveTribeProfile" }.second!!
         val rows = keep["customFields"]!!.jsonArray.associate { it.jsonObject["key"]!!.jsonPrimitive.content to it.jsonObject["value"]!!.jsonPrimitive.content }
-        assertEquals("m5rTfebiqMxckecn4OCM", rows["vetClinicId"])
+        // #1917: the clinic was saved when it was picked (setHouseholdVet), so the
+        // page Save neither sends its row nor removes it, and the link stands.
+        assertTrue("vetClinicId" !in rows, "sent $rows")
+        val removed = (keep["removeCustomFieldKeys"] as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
+        assertTrue("vetClinicId" !in removed, "removed $removed")
+        assertTrue(fake.calls.none { it.first == "setHouseholdVet" })
         // #1378: there are no free-text clinic fields to type over any more;
         // unlinking is the picker's clear action (vetClinic_clearLink_* above).
     }
@@ -790,7 +836,7 @@ class TribeScreenTest {
         onNodeWithText("Chicken").performScrollTo().assertIsDisplayed()
         onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
-        assertEquals(listOf(office, allergy, vet) to emptyList<String>(), fake.sent("saveTribeProfile"))
+        assertEquals(listOf(office, allergy) to emptyList<String>(), fake.sent("saveTribeProfile"))
         // #868: nothing in the home details changed, so no home access call.
         assertTrue(fake.calls.none { it.first == "saveHomeAccess" }, "calls: ${fake.calls.map { it.first }}")
     }
@@ -805,7 +851,7 @@ class TribeScreenTest {
         waitForIdle()
         onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
-        assertEquals(listOf(office, allergy.copy(third = ""), vet) to emptyList<String>(), fake.sent("saveTribeProfile"))
+        assertEquals(listOf(office, allergy.copy(third = "")) to emptyList<String>(), fake.sent("saveTribeProfile"))
         assertEquals(listOf(shed, alarm.copy(third = ""), afterPhone) to emptyList<String>(), fake.sent("saveHomeAccess"))
     }
 
@@ -819,7 +865,7 @@ class TribeScreenTest {
         onNodeWithText("Save Changes").performScrollTo().performClick()
         waitForIdle()
         assertEquals(listOf(shed, alarm) to listOf("afterHoursVetPhone"), fake.sent("saveHomeAccess"))
-        assertEquals(listOf(office, allergy, vet) to emptyList<String>(), fake.sent("saveTribeProfile"))
+        assertEquals(listOf(office, allergy) to emptyList<String>(), fake.sent("saveTribeProfile"))
     }
 
     @Test

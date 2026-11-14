@@ -1,3 +1,4 @@
+import type { HouseholdNoticeKey } from '../lib/householdNoticeWords';
 import { call } from '../lib/fns';
 
 /** What `previewVisitNotification` answers for one household. */
@@ -24,4 +25,38 @@ export async function previewVisitNotification(familyId: string): Promise<VisitN
   if (typeof res?.willNotify !== 'boolean') throw new Error('previewVisitNotification: no answer');
   const reason = typeof res.reason === 'string' && res.reason.trim() !== '' ? res.reason : null;
   return { willNotify: res.willNotify, reason };
+}
+/**
+ * #1816, #1838, #2027, #1841: ask the server who a household notice for one
+ * admin action would reach, and how. The same callable with a notification
+ * `key`: the dispatcher's own dry run answers with the person and channels.
+ *
+ * Throws when the call fails, or when a server from before the key answers
+ * without `name`/`channels`: the confirm then says nothing about the household
+ * rather than guess.
+ */
+export async function previewHouseholdNotice(
+  familyId: string,
+  key: HouseholdNoticeKey,
+  /** #1838/#2027: the visit a cancel or move is about, so the visit's own checks run too. */
+  sessionId?: string,
+): Promise<{ willNotify: boolean; reason: string | null; name: string | null; channels: string[] }> {
+  const res = await call<
+    { familyId: string; key: HouseholdNoticeKey; sessionId?: string },
+    { willNotify?: unknown; reason?: unknown; name?: unknown; channels?: unknown }
+  >('previewVisitNotification', {
+    // A row naming no household asks by its visit alone; the server reads the household off it.
+    ...(familyId.trim() !== '' ? { familyId } : {}),
+    key,
+    ...(sessionId !== undefined && sessionId !== '' ? { sessionId } : {}),
+  } as { familyId: string; key: HouseholdNoticeKey; sessionId?: string });
+  if (typeof res?.willNotify !== 'boolean' || !Array.isArray(res.channels)) {
+    throw new Error('previewVisitNotification: no answer for this notice');
+  }
+  return {
+    willNotify: res.willNotify,
+    reason: typeof res.reason === 'string' && res.reason.trim() !== '' ? res.reason : null,
+    name: typeof res.name === 'string' && res.name.trim() !== '' ? res.name : null,
+    channels: res.channels.filter((c): c is string => typeof c === 'string'),
+  };
 }

@@ -15,7 +15,18 @@ vi.mock('../src/lib/wrapTrigger', () => ({
 }));
 vi.mock('../src/notifications/dispatcher', async () => {
   const actual = await vi.importActual<typeof import('../src/notifications/dispatcher')>('../src/notifications/dispatcher');
-  return { contentDedupeKey: actual.contentDedupeKey, enqueueNotification: mocks.enqueue };
+  return {
+    contentDedupeKey: actual.contentDedupeKey,
+    enqueueNotification: mocks.enqueue,
+    // #1816: the send goes through `sendHouseholdNotice`, which reads the
+    // detailed report. Same calls are recorded on `mocks.enqueue`.
+    enqueueNotificationDetailed: async (args: { recipientUid?: string }) => {
+      const res = await mocks.enqueue(args);
+      return res && typeof res === 'object' && 'written' in res
+        ? res
+        : { written: ['n1'], suppressed: [], unresolved: [], channelsByRecipient: { [args.recipientUid ?? '']: ['email'] } };
+    },
+  };
 });
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveUid }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
@@ -129,6 +140,78 @@ describe('onKinTaleUpdate trigger — the DRAFT → SENT publish', () => {
     ));
 
     expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('onKinTaleUpdate trigger: the send outcome the web composer waits for (#1816)', () => {
+  function sentEvent(reportId = 'r1') {
+    return makeEvent(
+      { kinfolkId: 'fam1', bodyCopy: 'narrative', status: 'DRAFT', mediaFileIds: [], sentVia: '' },
+      { kinfolkId: 'fam1', bodyCopy: 'narrative', status: 'SENT', mediaFileIds: [], sentVia: 'pending' },
+      reportId,
+    );
+  }
+  function noticeWrite(writes: Array<{ path: string; data: Record<string, unknown> }>) {
+    return writes.find((w) => w.path === 'visit_step_notices/kintale__r1');
+  }
+
+  it('HAPPY: a told household is recorded with who and how', async () => {
+    const fake = buildDbMock({ docs: { 'clients/uid_kinfolk': { displayName: 'Dre East', email: 'catch@hanasamku.com' } } });
+    mocks.dbFn.mockReturnValue(fake.db);
+    await onKinTaleUpdateHandler(sentEvent());
+    expect(noticeWrite(fake.writes)?.data).toMatchObject({
+      kind: 'kintale',
+      reportId: 'r1',
+      notified: true,
+      reason: null,
+      notice: { told: true, reason: null, name: 'Dre East', channels: ['email'] },
+    });
+  });
+
+  it('SAD: household notices off is recorded as the reason, not as a send', async () => {
+    const fake = buildDbMock({ docs: { 'kinfolk/fam1': { kinfolkName: 'Dre East' } } });
+    mocks.dbFn.mockReturnValue(fake.db);
+    mocks.enqueue.mockResolvedValue({
+      written: [],
+      suppressed: [{ recipientUid: 'uid_kinfolk', reason: 'gate' }],
+      unresolved: [],
+      channelsByRecipient: {},
+    });
+    await onKinTaleUpdateHandler(sentEvent());
+    expect(noticeWrite(fake.writes)?.data).toMatchObject({
+      notified: false,
+      reason: 'household_notices_off',
+      notice: { told: false, name: 'Dre East', channels: [] },
+    });
+  });
+
+  it('NEGATIVE: no member login is recorded as no portal account, and nothing claims a send', async () => {
+    const fake = buildDbMock({ docs: {} });
+    mocks.dbFn.mockReturnValue(fake.db);
+    mocks.resolveUid.mockResolvedValue(null);
+    mocks.enqueue.mockRejectedValue(Object.assign(new Error('none'), { name: 'NoRecipientsError' }));
+    await onKinTaleUpdateHandler(sentEvent());
+    expect(noticeWrite(fake.writes)?.data).toMatchObject({ notified: false, reason: 'household_has_no_portal_account' });
+  });
+
+  it('ERROR: a failed send is recorded as could not be sent, never as told', async () => {
+    const fake = buildDbMock({ docs: {} });
+    mocks.dbFn.mockReturnValue(fake.db);
+    mocks.enqueue.mockRejectedValue(new Error('firestore down'));
+    await expect(onKinTaleUpdateHandler(sentEvent())).resolves.toBeUndefined();
+    expect(noticeWrite(fake.writes)?.data).toMatchObject({ notified: false, reason: 'dispatch_failed' });
+  });
+
+  it('a send the client announced itself (sentVia=catalog) records nothing: its callable answered', async () => {
+    const fake = buildDbMock({ docs: {} });
+    mocks.dbFn.mockReturnValue(fake.db);
+    await onKinTaleUpdateHandler(
+      makeEvent(
+        { kinfolkId: 'fam1', bodyCopy: 'n', status: 'DRAFT', mediaFileIds: [] },
+        { kinfolkId: 'fam1', bodyCopy: 'n', status: 'SENT', mediaFileIds: [], sentVia: 'catalog' },
+      ),
+    );
+    expect(noticeWrite(fake.writes)).toBeUndefined();
   });
 });
 

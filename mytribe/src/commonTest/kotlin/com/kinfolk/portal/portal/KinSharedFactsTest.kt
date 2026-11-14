@@ -82,32 +82,27 @@ class KinSharedFactsTest {
     @Test
     fun `an unchanged form sends nothing, so a save never rewrites a shared fact`() {
         val k = kin(sex = "F", weight = "52 lbs", colorMarkings = "Black", spayedNeutered = true, vetInfo = "Dr A")
-        val facts = sharedFactsPayload(k, sex = "F", weight = "52 lbs", markings = "Black", fixed = true, vet = "Dr A")
+        val facts = sharedFactsPayload(k, sex = "F", weight = "52 lbs", markings = "Black", fixed = true)
         assertNull(facts.sex)
         assertNull(facts.weight)
         assertNull(facts.colorMarkings)
         assertNull(facts.spayedNeutered)
-        assertNull(facts.vetInfo)
     }
-
     @Test
     fun `a changed fact is sent, an emptied one is sent as empty to clear it`() {
         val k = kin(sex = "Male", weight = "52 lbs", vetInfo = "Dr A")
-        val facts = sharedFactsPayload(k, sex = "Female", weight = "  ", markings = "", fixed = true, vet = "Dr A")
+        val facts = sharedFactsPayload(k, sex = "Female", weight = "  ", markings = "", fixed = true)
         assertEquals("Female", facts.sex)
         assertEquals("", facts.weight)
         assertNull(facts.colorMarkings)
         assertEquals(true, facts.spayedNeutered)
-        assertNull(facts.vetInfo)
     }
-
     @Test
     fun `adding a kin sends only what was filled in`() {
-        val facts = sharedFactsPayload(null, sex = "", weight = "40 lbs", markings = "", fixed = false, vet = "")
+        val facts = sharedFactsPayload(null, sex = "", weight = "40 lbs", markings = "", fixed = false)
         assertNull(facts.sex)
         assertEquals("40 lbs", facts.weight)
         assertNull(facts.colorMarkings)
         assertNull(facts.spayedNeutered)
-        assertNull(facts.vetInfo)
     }
 }

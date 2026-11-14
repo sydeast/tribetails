@@ -1,9 +1,10 @@
 import { call } from '../lib/fns';
 
 /**
- * AO-41 Supplies Tracker. Admin-gated MyTribe callables over the new top-level
- * `supplies` collection (admin-only read+write in firestore.rules). Shapes are
- * fixed by WIDGET_FANOUT_SPEC.md so all three platforms call the same thing.
+ * AO-41 Supplies Tracker. Staff MyTribe callables over the top-level `supplies`
+ * collection (read by the owner and an Auntie, #2208; no client writes it).
+ * Shapes are fixed by WIDGET_FANOUT_SPEC.md so all three platforms call the
+ * same thing.
  *
  * A supply is "low" when `onHand <= par` (par being the reorder threshold). The
  * server returns `lowCount` under that exact rule; `lib/dashboardInsights.ts#
@@ -39,7 +40,7 @@ export interface SupplyList {
 }
 
 /**
- * `listSupplies` (admin-gated): the full supply list plus how many are at or
+ * `listSupplies` (the owner or an Auntie): the full supply list plus how many are at or
  * below par. Throws (via `lib/fns.call`) on failure, surfaced fail-loud.
  */
 export async function listSupplies(): Promise<SupplyList> {
@@ -54,7 +55,7 @@ export async function listSupplies(): Promise<SupplyList> {
 }
 
 /**
- * `adjustSupply` (admin-gated): change one supply's on-hand count by [delta]
+ * `adjustSupply` (the owner or an Auntie): change one supply's on-hand count by [delta]
  * (the server clamps at 0 and fails loud if the supply is missing), returns the
  * new on-hand. Rejects propagate; the row shows the error rather than pretending
  * the restock landed.
@@ -76,7 +77,7 @@ export interface UpsertSupplyInput {
   unit: string;
 }
 
-/** `upsertSupply` (admin-gated): create or update a supply, returns its id. */
+/** `upsertSupply` (the owner only): create or update a supply, returns its id. */
 export async function upsertSupply(input: UpsertSupplyInput): Promise<{ id: string }> {
   const res = await call<UpsertSupplyInput, { id: string }>('upsertSupply', input);
   return { id: res.id };

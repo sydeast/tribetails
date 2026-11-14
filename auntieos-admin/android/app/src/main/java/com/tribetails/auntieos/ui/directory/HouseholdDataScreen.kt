@@ -205,10 +205,11 @@ private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile:
     val vet = state.vet
     val leftovers = legacyVetLeftovers(state.householdData)
     var confirmingClear by remember { mutableStateOf(false) }
+    // #1908 kin-vet: the household's vet is picked HERE, from the area vet
+    // list (every clinic listed on open), and saved with the form. It used to
+    // send the operator to the household profile, which has no vet picker.
     DenPanel(
         title = "Veterinary Information",
-        subtitle = "Who to call, and who to call at 2am. Chosen from the shared vet bank on the household profile.",
-        trailing = { GhostButton(label = "Edit on the profile", onClick = onOpenProfile) },
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -227,18 +228,15 @@ private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile:
                     color = AuntieTheme.colors.textDim,
                 )
                 else -> {
-                    if (!(vet.primary.hasAny || vet.emergency.hasAny)) {
-                        Text(
-                            "No vet on file for this household. Pick one on the household profile and it appears here.",
-                            style = AuntieTheme.typography.bodySmall,
-                            color = AuntieTheme.colors.textDim,
-                        )
-                    }
-                    Text("Primary Veterinarian", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    VetFactRow("Vet Name", vet.primary.name)
-                    VetFactRow("Phone", vet.primary.phone)
+                    VetClinicPickerField(
+                        label = "Primary Veterinarian",
+                        selection = householdVetSelection(state.householdData.primaryVetClinicId, vet.primary),
+                        clinics = state.clinics,
+                        onSelectionChange = { viewModel.selectVetClinic(emergency = false, selection = it) },
+                        onCreate = { viewModel.createVetClinic(emergency = false, clinic = it) },
+                        enabled = !state.isSaving && !state.creatingClinic,
+                    )
                     VetFactRow("Hours", vet.primary.hours)
-                    VetFactRow("Address", vet.primary.address)
                     // Not an error, but a fact worth stating: with no clinic id
                     // there is nothing for a catalog correction to match on, so
                     // fixing this clinic in the vet bank will not reach here.
@@ -248,7 +246,7 @@ private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile:
                             title = "This vet is not linked to the catalog",
                         ) {
                             Text(
-                                "The name and number above are on file, but no clinic is selected, so correcting this clinic in the vet bank will not update this household. Re-pick it on the profile to link them.",
+                                "The name and number above are on file, but no clinic is selected, so correcting this clinic in the vet bank will not update this household. Pick it from the list again to link them.",
                                 style = AuntieTheme.typography.bodySmall,
                                 color = AuntieTheme.colors.textDim,
                             )
@@ -259,11 +257,16 @@ private fun VeterinaryInfoCard(viewModel: HouseholdDataViewModel, onOpenProfile:
                     // into the primary: "who to call" and "who to call at 2am"
                     // are different practices and the whole card exists to keep
                     // them apart.
-                    Text("Emergency Veterinarian", style = AuntieTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    VetFactRow("Emergency Vet Name", vet.emergency.name)
-                    VetFactRow("Emergency Phone", vet.emergency.phone)
+                    VetClinicPickerField(
+                        label = "Emergency Veterinarian",
+                        selection = householdVetSelection(state.householdData.emergencyVetClinicId, vet.emergency),
+                        clinics = emergencyVetClinics(state.clinics),
+                        onSelectionChange = { viewModel.selectVetClinic(emergency = true, selection = it) },
+                        onCreate = { viewModel.createVetClinic(emergency = true, clinic = it) },
+                        createAsEmergency = true,
+                        enabled = !state.isSaving && !state.creatingClinic,
+                    )
                     VetFactRow("Emergency Hours", vet.emergency.hours)
-                    VetFactRow("Emergency Address", vet.emergency.address)
                 }
             }
             // Fail loud, never silent: the record still carries the retired free
@@ -476,3 +479,16 @@ private fun RoutinesCard(viewModel: HouseholdDataViewModel) {
 // updatePoisonControlNumber / updateGroomerName / etc: they are unused by any
 // composable now, not deleted, on the same "field survives, panel doesn't"
 // basis as the model fields themselves.
+/**
+ * The picker's committed selection for one `household_data` slot: the stored
+ * clinic id with the name, phone and address resolved through the clinic, or
+ * the legacy text for a household from before the list (unlinked).
+ */
+internal fun householdVetSelection(clinicId: String, resolved: ResolvedVet): VetClinicSelection =
+    if (clinicId.isBlank() && !resolved.hasAny) EMPTY_VET_CLINIC_SELECTION
+    else VetClinicSelection(
+        clinicId = clinicId.trim(),
+        name = resolved.name.ifBlank { if (resolved.dangling) "A vet no longer on the list" else "" },
+        phone = resolved.phone,
+        address = resolved.address,
+    )

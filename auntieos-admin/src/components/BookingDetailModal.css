@@ -158,3 +158,9 @@
   text-transform: uppercase;
   color: var(--color-text-dim);
 }
+
+/* #2027: the line that says whether the household is told about a move or a note. */
+.bdm__hint {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-dim);
+}

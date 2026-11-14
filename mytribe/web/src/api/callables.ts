@@ -42,6 +42,7 @@ export const PENDING_CALLABLES = [
   // tribe profile / members
   'getMyTribeProfile',
   'saveTribeProfile',
+  'setHouseholdVet',
   'saveHomeAccess',
   'listMembers',
   'addSecondaryContact',

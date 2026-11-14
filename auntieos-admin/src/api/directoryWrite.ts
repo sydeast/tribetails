@@ -252,6 +252,14 @@ export interface KinEditPatch {
   vaccinations?: string;
   medicationHealthNotes?: string;
   vetInfo?: string;
+  /** #1908 kin-vet: '' sends the Kin back to the household's vet. */
+  ownVetClinicId?: string;
+  /** #1908: the household's care block, which the admin now edits too. */
+  feedingInstructions?: string;
+  walkingInstructions?: string;
+  allergies?: string;
+  emergencyNotes?: string;
+  sitterNotes?: string;
   officeNotes?: string;
 }
 

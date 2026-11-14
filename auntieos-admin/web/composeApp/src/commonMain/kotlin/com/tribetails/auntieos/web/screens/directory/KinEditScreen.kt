@@ -108,12 +108,23 @@ fun KinEditScreen(
         else (state as? FirestoreResult.Data)?.value?.firstOrNull { it._id == kinId }
     }
 
-    // Vet is single-source on the owning Kinfolk (household); the Kin shows it
-    // READ-ONLY (spec 06 item 2 / 04 item 3). Fetch the parent Kinfolk for its vet.
-    val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
-    val parentKinfolk = remember(kinfolkState, kinfolkId) {
-        (kinfolkState as? FirestoreResult.Data)?.value?.firstOrNull { it._id == kinfolkId }
+    // #1908 kin-vet: the household's vet is `household_data.primaryVetClinicId`
+    // (the store admin web, Android and the portal share), shown read-only; the
+    // Kin carries only a clinic of its own (KinVet.kt). The old read here went
+    // to the kinfolk doc's vetClinic* fields, which the A2 migration cleared.
+    var householdVetClinicId by remember(kinfolkId) { mutableStateOf("") }
+    var householdVetError by remember(kinfolkId) { mutableStateOf<String?>(null) }
+    var householdVetLoading by remember(kinfolkId) { mutableStateOf(true) }
+    LaunchedEffect(kinfolkId) {
+        householdVetLoading = true
+        when (val r = client.getHouseholdData(kinfolkId)) {
+            is WriteResult.Ok  -> { householdVetClinicId = r.value?.primaryVetClinicId.orEmpty(); householdVetError = null }
+            is WriteResult.Err -> householdVetError = r.message
+        }
+        householdVetLoading = false
     }
+    val clinicsState by remember { client.vetClinicsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val allClinics = (clinicsState as? FirestoreResult.Data)?.value.orEmpty()
 
     var initialized by remember(kinId) { mutableStateOf(false) }
     /**
@@ -141,6 +152,15 @@ fun KinEditScreen(
     var checklist      by remember(kinId) { mutableStateOf("") }
     var staysAs        by remember(kinId) { mutableStateOf("") }
     var officeNotes    by remember(kinId) { mutableStateOf("") }
+    // #1908: the care block the household keeps, the admin's to edit too.
+    var feedingInstr   by remember(kinId) { mutableStateOf("") }
+    var walkingInstr   by remember(kinId) { mutableStateOf("") }
+    var allergies      by remember(kinId) { mutableStateOf("") }
+    var emergencyNotes by remember(kinId) { mutableStateOf("") }
+    var auntieNotes    by remember(kinId) { mutableStateOf("") }
+    // #1908 kin-vet: the box (unticked unless the Kin has a vet of its own) and its pick.
+    var differentVet   by remember(kinId) { mutableStateOf(false) }
+    var ownVetClinicId by remember(kinId) { mutableStateOf("") }
     var photoUrl       by remember(kinId) { mutableStateOf("") }
 
     // ---- Dynamic KIN form_schemas (spec 06 item 5 / 1C): the precare checklist is
@@ -197,6 +217,13 @@ fun KinEditScreen(
             checklist      = existing.checklist
             staysAs        = existing.staysAs
             officeNotes    = existing.officeNotes
+            feedingInstr   = existing.feedingInstructions
+            walkingInstr   = existing.walkingInstructions
+            allergies      = existing.allergies
+            emergencyNotes = existing.emergencyNotes
+            auntieNotes    = existing.sitterNotes
+            ownVetClinicId = existing.ownVetClinicId
+            differentVet   = existing.ownVetClinicId.isNotBlank()
             photoUrl       = existing.profilePictureUrl
             formValues.clear()
             formValues.putAll(existing.formValues)
@@ -240,6 +267,12 @@ fun KinEditScreen(
         checklist             = checklist,
         staysAs               = staysAs.trim(),
         officeNotes           = officeNotes,
+        feedingInstructions   = feedingInstr,
+        walkingInstructions   = walkingInstr,
+        allergies             = allergies,
+        emergencyNotes        = emergencyNotes,
+        sitterNotes           = auntieNotes,
+        ownVetClinicId        = ownVetClinicIdForSave(differentVet, ownVetClinicId),
         profilePictureUrl     = photoUrl,
         status                = (loaded ?: existing)?.status ?: "active",
         formValues            = formValues.toMap(),
@@ -251,7 +284,7 @@ fun KinEditScreen(
     val weightError = validateKinWeight(weight, (loaded ?: existing)?.weight)
     // item 3: Name + Species + Gender are all required.
     val canSave = name.isNotBlank() && species.isNotBlank() && sex.isNotBlank() &&
-        ageError == null && weightError == null
+        ageError == null && weightError == null && differentVetIsComplete(differentVet, ownVetClinicId)
     val c = AuntieTheme.colors
 
     fun doSave() {
@@ -443,43 +476,48 @@ fun KinEditScreen(
 
         // ---- Care panel ----
         DenPanel(title = "Care", caption = "per visit") {
-            BottomBorderField(staysAs,      { staysAs      = it }, label = "Stays as (boards / day-care / drop-in)", modifier = Modifier.fillMaxWidth())
+            BottomBorderField(staysAs,      { staysAs      = it }, label = "Stays as", modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(14.dp))
-            BottomBorderField(feedingBrand, { feedingBrand = it }, label = "Feeding brand", modifier = Modifier.fillMaxWidth())
+            BottomBorderField(feedingBrand, { feedingBrand = it }, label = "Food / brand", modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(14.dp))
+            MultilineField(feedingInstr, { feedingInstr = it }, label = "Feeding instructions", minLines = 2, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(14.dp))
+            MultilineField(walkingInstr, { walkingInstr = it }, label = "Walking instructions", minLines = 2, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(14.dp))
             MultilineField(routine,      { routine      = it }, label = "Routine",          minLines = 3, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(14.dp))
-            MultilineField(trainingCmds, { trainingCmds = it }, label = "Training commands", minLines = 2, modifier = Modifier.fillMaxWidth())
+            MultilineField(trainingCmds, { trainingCmds = it }, label = "Training / commands", minLines = 2, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(14.dp))
+            MultilineField(auntieNotes,  { auntieNotes  = it }, label = "Notes for the Auntie", minLines = 2, modifier = Modifier.fillMaxWidth())
         }
         Spacer(Modifier.height(16.dp))
 
         // ---- Health panel (Biscuit-only medical, per the mockup) ----
         DenPanel(title = "Health", caption = "this kin only") {
-            MultilineField(medsHealth,   { medsHealth   = it }, label = "Medications & health notes", minLines = 3, modifier = Modifier.fillMaxWidth())
+            MultilineField(medsHealth,   { medsHealth   = it }, label = "Medications / health notes", minLines = 3, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(14.dp))
-            MultilineField(vaccinations, { vaccinations = it }, label = "Vaccinations",                minLines = 2, modifier = Modifier.fillMaxWidth())
+            MultilineField(allergies,    { allergies    = it }, label = "Allergies",                  minLines = 2, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(14.dp))
-            // Vet is read-only here: it is authored once on the owning Kinfolk
-            // (household) and inherited. Edit it on the Kinfolk, not per-kin.
-            run {
-                val household = listOf(parentKinfolk?.firstName, parentKinfolk?.lastName)
-                    .mapNotNull { it?.takeIf(String::isNotBlank) }.joinToString(" ").ifBlank { "household" }
-                val vetLine = listOf(
-                    parentKinfolk?.vetClinicName,
-                    parentKinfolk?.vetClinicPhone,
-                    parentKinfolk?.vetClinicAddress,
-                ).mapNotNull { it?.takeIf(String::isNotBlank) }.joinToString(" · ")
-                AuntieFieldLabel(text = "Vet (from $household)")
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = vetLine.ifBlank { "No household vet on file yet" },
-                    style = AuntieTheme.typography.bodyMedium,
-                    color = if (vetLine.isBlank()) c.textDim else c.textPrimary,
-                )
-            }
+            MultilineField(vaccinations, { vaccinations = it }, label = "Vaccinations",               minLines = 2, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(14.dp))
+            MultilineField(emergencyNotes, { emergencyNotes = it }, label = "Emergency notes",        minLines = 2, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(14.dp))
+            // #1908 kin-vet: the household's vet, read-only, unless the box is
+            // ticked; then a dropdown over the whole area vet list.
+            KinVetEditor(
+                legacyNote = (loaded ?: existing)?.vetInfo.orEmpty(),
+                householdVetClinicId = householdVetClinicId,
+                householdVetLoading = householdVetLoading,
+                householdVetError = householdVetError,
+                clinicsState = clinicsState,
+                allClinics = allClinics,
+                differentVet = differentVet,
+                onDifferentVet = { differentVet = it },
+                pickedClinicId = ownVetClinicId,
+                onPick = { ownVetClinicId = it },
+            )
         }
         Spacer(Modifier.height(16.dp))
-
         // ---- Care checklist panel (structured KIN form_schemas, spec 06 item 5) ----
         DenPanel(title = "Care checklist", caption = "per visit") {
             when {

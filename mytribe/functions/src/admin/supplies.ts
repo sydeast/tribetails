@@ -7,10 +7,14 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { auditActorPayload, resolveAuditActor } from '../lib/auditActor';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 /**
- * AO-41 Supplies Tracker (dashboard widget). Admin-only `supplies` collection.
+ * AO-41 Supplies Tracker (dashboard widget). The `supplies` collection is the
+ * owner's and, since #2208 (ruling 2026-11-14), an Auntie's: she may list and
+ * restock (listSupplies, adjustSupply); upsertSupply stays the owner's
+ * (`lib/auntieAccess.ts`). No money field is stored or returned.
  * listSupplies returns every supply plus how many are at/under par (the widget
  * headline); adjustSupply nudges onHand (clamped at 0, fail loud on a missing
  * supply); upsertSupply creates or updates one. Fail loud: no fabricated stock.
@@ -95,6 +99,7 @@ export async function adjustSupplyHandler(
     return next;
   });
 
+  const actor = await resolveAuditActor(req.auth, 'adjustSupply');
   await writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.SUPPLY_ADJUSTED,
@@ -102,7 +107,8 @@ export async function adjustSupplyHandler(
     actorRole: 'AUNTIE',
     actorUid: uid,
     targetCollection: SUPPLIES_COLLECTION,
-    payload: { supplyId: args.supplyId, delta: args.delta, onHand },
+    // #2208: an Auntie restocks too, so the row says which of the two she was.
+    payload: { supplyId: args.supplyId, delta: args.delta, onHand, ...auditActorPayload(actor) },
   });
 
   logEvent({

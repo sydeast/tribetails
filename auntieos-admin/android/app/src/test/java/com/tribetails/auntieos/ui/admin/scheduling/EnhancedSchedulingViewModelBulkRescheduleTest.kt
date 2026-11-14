@@ -109,7 +109,7 @@ class EnhancedSchedulingViewModelBulkRescheduleTest {
             Result.success(listOf(KinCareSession(id = "ses_wrens", kinfolkId = "kf1", status = "SCHEDULED")))
         coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("bk_devlins") } returns
             Result.success(listOf(KinCareSession(id = "ses_devlins", kinfolkId = "kf2", status = "SCHEDULED")))
-        coEvery { kinCareRepo.rescheduleBooking(any(), any(), any(), any(), any()) } returns Result.success(Unit)
+        coEvery { kinCareRepo.rescheduleBooking(any(), any(), any(), any(), any()) } returns Result.success(null)
     }
 
     @After
@@ -128,7 +128,7 @@ class EnhancedSchedulingViewModelBulkRescheduleTest {
     )
 
     private fun refusal(code: String, message: String) =
-        Result.failure<Unit>(BookingRequestRefusedException(code, message))
+        Result.failure<com.tribetails.auntieos.data.contracts.HouseholdNoticeDto?>(BookingRequestRefusedException(code, message))
 
     @Test
     fun `the sheet prefills every eligible visit and names the one it cannot move`() = runTest {
@@ -268,7 +268,7 @@ class EnhancedSchedulingViewModelBulkRescheduleTest {
         } returns refusal(VISIT_OVERLAP_CONFLICT_CODE, "A visit already runs then.")
         coEvery {
             kinCareRepo.rescheduleBooking("ses_wrens", any(), any(), false, true)
-        } returns Result.success(Unit)
+        } returns Result.success(null)
 
         val vm = buildViewModel()
         vm.openBulkReschedule(setOf("bk_wrens"))

@@ -176,7 +176,7 @@ data class ConditionAttribute(val key: String, val label: String)
  * editors render this same list so they cannot drift.
  */
 val conditionAttributeCatalog: List<ConditionAttribute> = listOf(
-    ConditionAttribute("medicationHealthNotes", "Medication / health notes"),
+    ConditionAttribute("medicationHealthNotes", "Medications / health notes"),
     ConditionAttribute("vaccinations",          "Vaccinations"),
     ConditionAttribute("vetInfo",               "Vet info"),
     ConditionAttribute("feedingBrand",          "Feeding brand"),

@@ -11,6 +11,10 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { viewOfQuery } from '../lib/queryState';
 import { speciesEmoji } from '../lib/portalFormat';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
+import { getMyTribeProfile, getVetClinics } from '../api/tribeApi';
+import { tribeProfileKey, vetClinicsKey } from '../lib/portalQueryKeys';
+import { kinVetNeedsLookup, resolveKinVet, vetLine } from '../lib/kinVet';
+import { formatPhone } from '../lib/phone';
 
 const FALLBACK = 'Not set';
 
@@ -18,8 +22,9 @@ const FALLBACK = 'Not set';
  * Kin detail, ported from ui-ideas/mytribe-kin-detail-2026-05-31.html.
  * There's no dedicated getKinById callable — getMyKin already returns every
  * detail field, so this screen reads the same ['myKin'] cache as Home/Kin
- * and finds the row by id. The Vet line is the free-text `vetInfo` the admin
- * also keeps on the pet (#1310), not a clinic-directory link. Edit (O-17) links to the KinEdit form at
+ * and finds the row by id. #1908 kin-vet: the Vet line is the clinic this Kin
+ * goes to, its own or the household's (lib/kinVet.ts); the old free-text
+ * `vetInfo` shows only when no clinic resolves. Edit (O-17) links to the KinEdit form at
  * /kin/$kinId/edit, mirroring Compose's AddEditKinDialog.
  *
  * #1311: this page reads only. The mockup's Memorial card (and its SUGGESTION
@@ -37,6 +42,12 @@ export function KinDetail() {
   // #2007: the tab names the Kin once it has loaded, never the id in the URL.
   // Above the early returns below, because a hook cannot sit behind one.
   useRecordTitle(kin.data?.kin.find((k) => k.id === kinId)?.name);
+  // #1908 kin-vet: a roster read straight from Firestore carries no resolved
+  // vet, so the vet list and the Tribe Profile vet are read to resolve it.
+  // getMyKin's roster resolves it on the server and needs neither.
+  const needsVetLookup = kinVetNeedsLookup(kin.data?.kin.find((k) => k.id === kinId));
+  const tribeProfile = useQuery({ queryKey: tribeProfileKey(kinfolkId), queryFn: () => getMyTribeProfile(kinfolkId), enabled: needsVetLookup });
+  const vetClinics = useQuery({ queryKey: vetClinicsKey(), queryFn: () => getVetClinics(), enabled: needsVetLookup });
 
   if (kin.isError) {
     return <LaunchError onRetry={() => void kin.refetch()} retrying={kin.isRefetching} onSignOut={signOut} signingOut={signingOut} signOutError={signOutError} />;
@@ -91,6 +102,15 @@ export function KinDetail() {
   }
 
   const memorial = found.status === 'noLongerWithUs';
+  const vet = resolveKinVet(found, tribeProfile.data?.vetClinic ?? null, vetClinics.data?.clinics ?? []);
+  const vetLookupPending = needsVetLookup && (tribeProfile.isLoading || vetClinics.isLoading);
+  const vetText = vet
+    ? `${vetLine(vet.clinic, formatPhone)}${vet.fromHousehold ? ' (your Tribe Profile vet)' : ''}`
+    : vetLookupPending
+      ? 'Loading…'
+      : found.vetInfo
+        ? `On file: ${found.vetInfo}`
+        : FALLBACK;
 
   return (
     <>
@@ -179,7 +199,7 @@ export function KinDetail() {
                   <div className="v">{found.walkingInstructions ?? FALLBACK}</div>
                 </div>
                 <div className="fact">
-                  <div className="k">Medications</div>
+                  <div className="k">Medications / health notes</div>
                   <div className="v">{found.medications ?? 'None'}</div>
                 </div>
                 <div className="fact">
@@ -187,8 +207,28 @@ export function KinDetail() {
                   <div className="v">{found.allergies ?? 'None'}</div>
                 </div>
                 <div className="fact">
+                  <div className="k">Stays as</div>
+                  <div className="v">{found.staysAs ?? FALLBACK}</div>
+                </div>
+                <div className="fact">
+                  <div className="k">Routine</div>
+                  <div className="v">{found.routine ?? FALLBACK}</div>
+                </div>
+                <div className="fact">
+                  <div className="k">Training / commands</div>
+                  <div className="v">{found.trainingCommands ?? FALLBACK}</div>
+                </div>
+                <div className="fact">
+                  <div className="k">Food / brand</div>
+                  <div className="v">{found.feedingBrand ?? FALLBACK}</div>
+                </div>
+                <div className="fact">
+                  <div className="k">Vaccinations</div>
+                  <div className="v">{found.vaccinations ?? FALLBACK}</div>
+                </div>
+                <div className="fact">
                   <div className="k">Vet</div>
-                  <div className="v">{found.vetInfo ?? FALLBACK}</div>
+                  <div className="v" data-testid="kin-vet">{vetText}</div>
                 </div>
               </div>
             </section>
@@ -196,7 +236,7 @@ export function KinDetail() {
 
           <div className="stack">
             <section className="glass card d3">
-              <div className="sectlabel">Sitter Notes</div>
+              <div className="sectlabel">Notes for your Auntie</div>
               <h3 className="title">Good to know</h3>
               <p className="note">{found.sitterNotes ?? 'No notes yet.'}</p>
             </section>

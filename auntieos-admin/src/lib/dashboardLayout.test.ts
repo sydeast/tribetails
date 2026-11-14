@@ -334,8 +334,11 @@ describe('dashboardForViewer (#2208)', () => {
     { key: 'supplies', size: 'compact' },
     { key: 'expirations', size: 'compact' },
   ];
-  it('names exactly Cash Flow, Expense quick-log, Supplies and Expirations', () => {
-    expect([...OWNER_ONLY_DASH_KEYS].sort()).toEqual(['cashFlow', 'expenseLog', 'expirations', 'supplies']);
+  // Ruling 2026-11-14: Supplies and Expirations are an Auntie's cards too.
+  it('names exactly the two money cards, Cash Flow and Expense quick-log', () => {
+    expect([...OWNER_ONLY_DASH_KEYS].sort()).toEqual(['cashFlow', 'expenseLog']);
+    expect(dashKeyVisibleTo('supplies', true)).toBe(true);
+    expect(dashKeyVisibleTo('expirations', true)).toBe(true);
     expect(DASH_KEYS.filter((k) => !dashKeyVisibleTo(k, true)).sort()).toEqual([...OWNER_ONLY_DASH_KEYS].sort());
     expect(DASH_KEYS.every((k) => dashKeyVisibleTo(k, false))).toBe(true);
   });
@@ -343,6 +346,8 @@ describe('dashboardForViewer (#2208)', () => {
     expect(dashboardForViewer(board, true)).toEqual([
       { key: 'stats', size: 'wide' },
       { key: 'safebox', size: 'compact' },
+      { key: 'supplies', size: 'compact' },
+      { key: 'expirations', size: 'compact' },
     ]);
   });
   it('leaves the list whole for everyone else, as a copy', () => {
@@ -355,5 +360,12 @@ describe('dashboardForViewer (#2208)', () => {
       DEFAULT_DASHBOARD.map((x) => ({ ...x })),
     );
     expect(dashboardForViewer([], true)).toEqual([]);
+  });
+  it('keeps a board of only Supplies and Expirations as it is for an Auntie', () => {
+    const hers: DashWidget[] = [
+      { key: 'expirations', size: 'wide' },
+      { key: 'supplies', size: 'compact' },
+    ];
+    expect(dashboardForViewer(hers, true)).toEqual(hers);
   });
 });

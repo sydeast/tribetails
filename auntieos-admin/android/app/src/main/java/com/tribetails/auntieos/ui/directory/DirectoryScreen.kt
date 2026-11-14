@@ -563,7 +563,7 @@ internal fun KinDirectoryCard(kin: Kin, ownerName: String, onClick: () -> Unit) 
     val detail = listOf(
         kin.species.ifBlank { null },
         kin.breed.ifBlank { null },
-        kin.age.ifBlank { null }?.let { "$it yrs" },
+        kin.age.orEmpty().ifBlank { null }?.let { "$it yrs" },
     ).filterNotNull().joinToString(" · ")
     val badge = cardBadge(kin.status, isNew = false)
 

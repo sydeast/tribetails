@@ -61,7 +61,7 @@ describe.runIf(EMULATOR)('the #1335 strip removes staff-only kin fields from fam
     await db.doc('families/f2/kin/k2').set({ name: 'Bo', officeNotes: 'orphan note' });
     await db.doc('families/f3/kin/k3').set({ name: 'Clean', sex: 'Female' });
     const first = await buildPlan(db);
-    expect(first.summary).toMatchObject({ scanned: 4, flatSkipped: 1, alreadyClean: 1, toStrip: 2, keysToDelete: 6 });
+    expect(first.summary).toMatchObject({ scanned: 4, flatSkipped: 1, alreadyClean: 1, toStrip: 2, keysToDelete: 4 });
     expect(first.writes.map((w) => w.path).sort()).toEqual(['families/f1/kin/k1', 'families/f2/kin/k2']);
     expect(first.divergences).toEqual([
       { path: 'families/f2/kin/k2', key: 'officeNotes', comparison: 'no-flat-doc', familyValue: 'orphan note' },
@@ -77,6 +77,9 @@ describe.runIf(EMULATOR)('the #1335 strip removes staff-only kin fields from fam
       sex: 'Male',
       vetInfo: 'Riverside',
       _mirrorOrigin: 'flat',
+      // #1908: the household fills these too now, so the strip leaves them.
+      routine: 'morning walk',
+      vaccinations: 'Rabies 2027',
     });
     expect((await db.doc('families/f2/kin/k2').get()).data()).toEqual({ name: 'Bo' });
     expect((await db.doc('families/f3/kin/k3').get()).data()).toEqual({ name: 'Clean', sex: 'Female' });

@@ -1,5 +1,6 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../lib/firestoreAdmin';
+import { readHouseholdVetClinicId, resolveVetClinicSummary, type VetClinicSummary } from '../lib/vetClinicCatalog';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
@@ -45,6 +46,25 @@ interface KinDto {
   allergies: string | null;
   emergencyNotes: string | null;
   sitterNotes: string | null;
+  sex: string | null;
+  weight: string | null;
+  colorMarkings: string | null;
+  spayedNeutered: boolean;
+  /** Legacy free-text vet note. No longer an input (#1908 kin-vet); shown only when no clinic resolves. */
+  vetInfo: string | null;
+  /** #1908: the care facts the admin always kept, now the household's to fill too. */
+  staysAs: string | null;
+  routine: string | null;
+  trainingCommands: string | null;
+  feedingBrand: string | null;
+  vaccinations: string | null;
+  /** #1908 kin-vet: a clinic for this Kin alone, '' when it goes to the household's vet. */
+  ownVetClinicId: string;
+  /**
+   * The vet this Kin goes to, resolved for display: its own when it has one,
+   * else the household's. Null when neither resolves.
+   */
+  vet: { clinic: VetClinicSummary; fromHousehold: boolean } | null;
 }
 
 interface GetMyKinResult {
@@ -93,10 +113,21 @@ export async function getMyKinHandler(
   const visibleDocs = kinSnap.docs.filter(
     (d) => !isPortalHiddenKinStatus((d.data() as Record<string, unknown>)['status']),
   );
+  // #1908 kin-vet: one read of the household's vet and of each distinct clinic,
+  // however many Kin share them.
+  const householdVetClinicId = visibleDocs.length > 0 ? await readHouseholdVetClinicId(firestore, kinfolkId) : '';
+  const clinicCache = new Map<string, Promise<VetClinicSummary | null>>();
+  const clinic = (id: string): Promise<VetClinicSummary | null> => {
+    if (!clinicCache.has(id)) clinicCache.set(id, resolveVetClinicSummary(firestore, id));
+    return clinicCache.get(id)!;
+  };
 
   const kin: KinDto[] = await Promise.all(
     visibleDocs.map(async (d) => {
       const data = d.data() as Record<string, unknown>;
+      const ownVetClinicId = typeof data['ownVetClinicId'] === 'string' ? data['ownVetClinicId'].trim() : '';
+      const ownClinic = ownVetClinicId !== '' ? await clinic(ownVetClinicId) : null;
+      const householdClinic = ownVetClinicId === '' && householdVetClinicId !== '' ? await clinic(householdVetClinicId) : null;
       return {
         id: d.id,
         name: stringOrNull(data['name']),
@@ -116,6 +147,17 @@ export async function getMyKinHandler(
         colorMarkings: stringOrNull(data['colorMarkings']),
         spayedNeutered: data['spayedNeutered'] === true,
         vetInfo: stringOrNull(data['vetInfo']),
+        staysAs: stringOrNull(data['staysAs']),
+        routine: stringOrNull(data['routine']),
+        trainingCommands: stringOrNull(data['trainingCommands']),
+        feedingBrand: stringOrNull(data['feedingBrand']),
+        vaccinations: stringOrNull(data['vaccinations']),
+        ownVetClinicId,
+        vet: ownClinic
+          ? { clinic: ownClinic, fromHousehold: false }
+          : householdClinic
+            ? { clinic: householdClinic, fromHousehold: true }
+            : null,
       };
     }),
   );

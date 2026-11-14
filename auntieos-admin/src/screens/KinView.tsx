@@ -20,6 +20,13 @@ import { Avatar } from '../components/Avatar';
 import { GhostButton } from '../components/Buttons';
 import { RecentKinTalesPanel, UpcomingVisitsPanel } from '../components/KinfolkProfileFeeds';
 import { ProfileTagsSection } from '../components/ProfileTagsSection';
+import { TagChip } from '../components/TagChip';
+import { useHouseholdVetRecord } from '../components/KinVetField';
+import { getWorkSettingsFor } from '../api/workSettings';
+import { currentSessionSeat } from '../lib/sessionSeat';
+import { useVetClinics } from '../lib/useVetClinics';
+import { resolveKinVet, showsVet, vetLine } from '../lib/kinVet';
+import type { TagDef } from '../lib/tags/model';
 import { KinEdit } from './KinEdit';
 import './KinView.css';
 
@@ -162,7 +169,29 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
   // so closing the editor shows the list that was saved, not the one first read.
   const applySavedTags = useCallback((saved: string[]) => {
     setKin((prev) => (prev.status === 'ready' ? { status: 'ready', data: { ...prev.data, tags: saved } } : prev));
+    setVocabRead((n) => n + 1);
   }, []);
+  // #2015: the pills under the name say what each tag is, the way the Tags
+  // panel's chips do: the tag's icon and colour from the pet tag list, so an
+  // allergy reads as an allergy and not as a food the Kin eats. Read again
+  // after a save, which may have added a tag to the list. A list that will not
+  // load leaves the plain pills, never no pills.
+  const [petTagVocab, setPetTagVocab] = useState<TagDef[] | null>(null);
+  const [vocabRead, setVocabRead] = useState(0);
+  useEffect(() => {
+    let live = true;
+    currentSessionSeat()
+      .then((seat) => getWorkSettingsFor(seat))
+      .then((settings) => {
+        if (live) setPetTagVocab(settings.petTags);
+      })
+      .catch(() => {
+        if (live) setPetTagVocab(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [vocabRead]);
 
   const load = useCallback(() => {
     let live = true;
@@ -291,9 +320,13 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
               {loadedStatus !== '' && loadedStatus !== 'active' && (
                 <StatusPill label={loadedStatus} tone="neutral" />
               )}
-              {loaded.tags.map((tag) => (
-                <StatusPill key={tag} label={tag} tone="muted" />
-              ))}
+              {loaded.tags.map((tag) =>
+                petTagVocab !== null ? (
+                  <TagChip key={tag} name={tag} vocab={petTagVocab} />
+                ) : (
+                  <StatusPill key={tag} label={tag} tone="muted" />
+                ),
+              )}
               <button
                 type="button"
                 className="kview__tags-edit"
@@ -340,7 +373,15 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
           const petId = k._id !== '' ? k._id : kinId;
           const lines = checklistLines(k.checklist);
           const scope = { kinId: petId, kinName: k.name };
-          const hasCare = any(k.staysAs, k.routine, k.trainingCommands, k.feedingBrand);
+          const hasCare = any(
+            k.staysAs,
+            k.routine,
+            k.trainingCommands,
+            k.feedingBrand,
+            k.feedingInstructions,
+            k.walkingInstructions,
+            k.sitterNotes,
+          );
           return (
             <>
               {/* #690: a marker under the hero band, not a page banner and not
@@ -382,6 +423,9 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
                         <Field label="Routine" value={k.routine} />
                         <Field label="Training / commands" value={k.trainingCommands} />
                         <Field label="Food / brand" value={k.feedingBrand} />
+                        <Field label="Feeding instructions" value={k.feedingInstructions} />
+                        <Field label="Walking instructions" value={k.walkingInstructions} />
+                        <Field label="Notes for the Auntie" value={k.sitterNotes} />
                       </dl>
                     )}
                     {lines.length > 0 && (
@@ -398,18 +442,7 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
                     )}
                   </DenPanel>
 
-                  <DenPanel title="Medical" meta={`${k.name} only`} className="d2">
-                    {any(k.vaccinations, k.medicationHealthNotes, k.vetInfo) ? (
-                      <dl className="kview__fields">
-                        <Field label="Vaccinations" value={k.vaccinations} />
-                        <Field label="Medication / health notes" value={k.medicationHealthNotes} />
-                        <Field label="Vet info" value={k.vetInfo} />
-                      </dl>
-                    ) : (
-                      <EmptyHint>No medical notes for {k.name} yet.</EmptyHint>
-                    )}
-                  </DenPanel>
-
+                  <KinMedicalPanel k={k} />
                   {/* Props one per line on purpose: the apostrophe in the title
                       throws off the class scan in styles/tokenUsage.test.ts
                       when it shares a line with `className`. */}
@@ -479,5 +512,45 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
         }}
       </AsyncRegion>
     </div>
+  );
+}
+/**
+ * The Medical panel. #1908: Medications / health notes is the one field the
+ * household sees as Medications; allergies and emergency notes are the
+ * household's care block, shown here too. The vet is the one the Kin goes to
+ * (kin-vet ruling): its own, else the household's, resolved through the shared
+ * clinic list. The old free-text vet note shows only when no clinic does.
+ */
+function KinMedicalPanel({ k }: { k: KinDetail }) {
+  const household = useHouseholdVetRecord(k.kinfolkId);
+  const clinics = useVetClinics();
+  const resolved =
+    household.status === 'ready' && clinics.status === 'ready'
+      ? resolveKinVet(k.ownVetClinicId, household.data, clinics.data)
+      : null;
+  const vetValue =
+    resolved !== null && showsVet(resolved.vet)
+      ? `${vetLine(resolved.vet)}${resolved.fromHousehold ? " (the household's vet)" : ''}`
+      : '';
+  const legacyNote = resolved !== null && vetValue === '' ? k.vetInfo : '';
+  const vetLoading = household.status === 'loading' || clinics.status === 'loading';
+  // A vet that cannot be read is said, never left to look like "no vet".
+  const vetShown =
+    household.status === 'error' || clinics.status === 'error' ? 'Could not load the vet. Reload to try again.' : vetValue;
+  return (
+    <DenPanel title="Medical" meta={`${k.name} only`} className="d2">
+      {any(k.vaccinations, k.medicationHealthNotes, k.allergies, k.emergencyNotes, vetShown, legacyNote) || vetLoading ? (
+        <dl className="kview__fields">
+          <Field label="Vaccinations" value={k.vaccinations} />
+          <Field label="Medications / health notes" value={k.medicationHealthNotes} />
+          <Field label="Allergies" value={k.allergies} />
+          <Field label="Emergency notes" value={k.emergencyNotes} />
+          {vetLoading ? <LoadingRow label="Loading the vet…" className="kview__hint" /> : <Field label="Vet" value={vetShown} />}
+          <Field label="Vet notes on file" value={legacyNote} />
+        </dl>
+      ) : (
+        <EmptyHint>No medical notes for {k.name} yet.</EmptyHint>
+      )}
+    </DenPanel>
   );
 }

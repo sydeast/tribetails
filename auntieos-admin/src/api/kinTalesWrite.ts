@@ -1,10 +1,11 @@
-import { collection, doc } from 'firebase/firestore';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { addDoc, setDoc } from '../lib/firestoreWrite';
 import { call } from '../lib/fns';
 import { db } from '../lib/firebase';
 import { getAuthState } from '../lib/auth';
 import { checklistHasContent } from '../lib/kinTaleChecklist';
 import type { FieldResponse } from '../lib/kinTale/model';
+import { householdNoticeOf, type HouseholdNotice } from '../lib/householdNoticeWords';
 
 /**
  * The write-side counterpart to `api/kinTales.ts` (list/read only). Confirmed
@@ -268,4 +269,59 @@ export async function sendKinTale(input: SendKinTaleInput): Promise<void> {
     'sendKinTaleReport',
     { reportId: input.reportId, sentVia: 'pending' },
   );
+}
+/**
+ * #1816: where the server records what the household was told about one
+ * KinTale send. Built the same way by `functions/src/triggers/onKinTaleUpdate.ts`
+ * (`kinTaleSendNoticeId`).
+ */
+export function kinTaleSendNoticeId(reportId: string): string {
+  return `kintale__${reportId}`;
+}
+/** How long the composer waits for that record before it says it is still checking. */
+export const KINTALE_NOTICE_WAIT_MS = 12_000;
+/**
+ * #1816: what the household was told about a KinTale this screen just sent.
+ *
+ * The send is a direct Firestore write, so the trigger that announces it is
+ * the only thing that knows; it records the outcome at
+ * `visit_step_notices/kintale__{reportId}`. This waits for that record.
+ * Never rejects: no record in time (or a read refused) answers `null`, which
+ * the toast says as "still checking", never as "told" or "not told".
+ */
+export function awaitKinTaleSendNotice(reportId: string, waitMs = KINTALE_NOTICE_WAIT_MS): Promise<HouseholdNotice | null> {
+  const ref = doc(db, 'visit_step_notices', kinTaleSendNoticeId(reportId));
+  return new Promise<HouseholdNotice | null>((resolve) => {
+    let done = false;
+    let unsubscribe: (() => void) | null = null;
+    const finish = (notice: HouseholdNotice | null): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (unsubscribe !== null) unsubscribe();
+      resolve(notice);
+    };
+    const timer = setTimeout(() => finish(null), waitMs);
+    const stop = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data() as { notice?: unknown; notified?: unknown; reason?: unknown };
+        finish(
+          householdNoticeOf(data.notice) ?? {
+            told: data.notified === true,
+            reason: typeof data.reason === 'string' ? data.reason : null,
+            name: null,
+            channels: [],
+          },
+        );
+      },
+      (err) => {
+        console.warn('[kinTale] could not read what the household was told', err);
+        finish(null);
+      },
+    );
+    if (done) stop();
+    else unsubscribe = stop;
+  });
 }

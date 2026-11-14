@@ -655,46 +655,87 @@ describe('Home wiring that predates edit mode', () => {
   }
 });
 /**
- * #2208: an Auntie is never shown the owner's cards. Cash Flow and Expense
- * quick-log are money; Supplies and Expirations are refused her by the server
- * (owner-only, unruled). None is drawn on her board, none is offered under
- * Hidden cards, and her own cards stay. The owner, the test admin and the #812
- * offline session (access null) keep all four. The no-read half is pinned with
- * the real cards in `Home.ownerCards.test.tsx`.
+ * #2208: an Auntie is never shown the owner's money cards, Cash Flow and
+ * Expense quick-log. Neither is drawn on her board, neither is offered under
+ * Hidden cards, and her own cards stay. Supplies and Expirations are hers
+ * (operator ruling 2026-11-14): drawn from a saved layout, offered under
+ * Hidden cards, and added like any other card. The owner, the test admin and
+ * the #812 offline session (access null) keep every card. The reads are
+ * pinned with the real cards in `Home.ownerCards.test.tsx`.
  */
-const OWNER_CARDS = ['cashFlow', 'expenseLog', 'supplies', 'expirations'] as const;
-const OWNER_CARD_LABELS = ['Cash Flow', 'Expense quick-log', 'Supplies tracker', 'Expiration countdown'];
+const OWNER_CARDS = ['cashFlow', 'expenseLog'] as const;
+const OWNER_CARD_LABELS = ['Cash Flow', 'Expense quick-log'];
+const HER_CARDS = ['supplies', 'expirations'] as const;
+const HER_CARD_LABELS = ['Supplies tracker', 'Expiration countdown'];
 const AUNTIE = { access: { status: 'caretaker' } };
 describe('Home for an Auntie (#2208)', () => {
-  it('draws none of the owner cards a saved layout names, and keeps hers in order', async () => {
+  it('draws none of the money cards a saved layout names, and keeps hers in order, Supplies and Expirations among them', async () => {
     useRouteContext.mockReturnValue(AUNTIE);
     getDashboardLayout.mockResolvedValue(
       stored([w('stats', 'wide'), w('cashFlow'), w('safebox'), w('expenseLog'), w('supplies'), w('expirations'), w('careFlags')]),
     );
     render(<Home />);
-    await waitFor(() => expect(boardOrder()).toEqual(['stats', 'safebox', 'careFlags']));
+    await waitFor(() =>
+      expect(boardOrder()).toEqual(['stats', 'safebox', 'supplies', 'expirations', 'careFlags']),
+    );
     for (const key of OWNER_CARDS) expect(screen.queryByText(BODY_MARKER[key] ?? '')).toBeNull();
+    for (const key of HER_CARDS) expect(cellText(key)).toContain(BODY_MARKER[key]);
   });
-  it('offers none of them under Hidden cards in Customize', async () => {
+  it('offers Supplies and Expirations under Hidden cards in Customize, and neither money card', async () => {
     useRouteContext.mockReturnValue(AUNTIE);
     getDashboardLayout.mockResolvedValue(stored([w('safebox')]));
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
     expect(screen.getByRole('button', { name: 'Add Gatekeeper to Home' })).toBeInTheDocument();
+    for (const label of HER_CARD_LABELS) {
+      expect(screen.getByRole('button', { name: `Add ${label} to Home` })).toBeInTheDocument();
+    }
     for (const label of OWNER_CARD_LABELS) {
       expect(screen.queryByRole('button', { name: `Add ${label} to Home` })).toBeNull();
     }
   });
-  it('falls back to the default board when her saved layout held only owner cards', async () => {
+  it('adds Supplies and Expirations to her board from Hidden cards, and saves them', async () => {
     useRouteContext.mockReturnValue(AUNTIE);
-    getDashboardLayout.mockResolvedValue(stored([w('cashFlow'), w('supplies')]));
+    getDashboardLayout.mockResolvedValue(stored([w('safebox')]));
+    render(<Home />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Supplies tracker to Home' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Expiration countdown to Home' }));
+    expect(boardOrder()).toEqual(['safebox', 'supplies', 'expirations']);
+    for (const key of HER_CARDS) expect(cellText(key)).toContain(BODY_MARKER[key]);
+    await waitFor(() =>
+      expect(saveDashboardLayout).toHaveBeenLastCalledWith([w('safebox'), w('supplies'), w('expirations')]),
+    );
+    await act(async () => {});
+    expect(boardOrder()).toEqual(['safebox', 'supplies', 'expirations']);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+  it('puts her board back and says so when the save of an added card is refused', async () => {
+    useRouteContext.mockReturnValue(AUNTIE);
+    getDashboardLayout.mockResolvedValue(stored([w('safebox')]));
+    saveDashboardLayout.mockRejectedValue(new Error('permission-denied'));
+    render(<Home />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Supplies tracker to Home' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/back the way it was/i);
+    expect(boardOrder()).toEqual(['safebox']);
+  });
+  it('keeps a saved board of only Supplies and Expirations as it is', async () => {
+    useRouteContext.mockReturnValue(AUNTIE);
+    getDashboardLayout.mockResolvedValue(stored([w('expirations'), w('supplies')]));
+    render(<Home />);
+    await waitFor(() => expect(boardOrder()).toEqual(['expirations', 'supplies']));
+  });
+  it('falls back to the default board when her saved layout held only money cards', async () => {
+    useRouteContext.mockReturnValue(AUNTIE);
+    getDashboardLayout.mockResolvedValue(stored([w('cashFlow'), w('expenseLog')]));
     render(<Home />);
     await waitFor(() => expect(boardOrder()).toEqual(DEFAULT_DASHBOARD.map((x) => x.key)));
   });
   it('keeps them off her board when a save reconciles to a list that names them', async () => {
     useRouteContext.mockReturnValue(AUNTIE);
     getDashboardLayout.mockResolvedValue(stored([w('safebox'), w('cashFlow'), w('careFlags')]));
-    saveDashboardLayout.mockResolvedValue([w('careFlags'), w('safebox'), w('supplies'), w('expirations')]);
+    saveDashboardLayout.mockResolvedValue([w('careFlags'), w('safebox'), w('cashFlow'), w('expenseLog')]);
     render(<Home />);
     fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
     fireEvent.click(screen.getByRole('button', { name: 'Move Key & code safebox down' }));
@@ -727,20 +768,24 @@ describe('Home for an Auntie (#2208)', () => {
     for (const label of OWNER_CARD_LABELS) {
       expect(screen.queryByRole('button', { name: `Add ${label} to Home` })).toBeNull();
     }
+    for (const label of HER_CARD_LABELS) {
+      expect(screen.getByRole('button', { name: `Add ${label} to Home` })).toBeInTheDocument();
+    }
   });
   for (const access of [{ status: 'admin' }, { status: 'testAdmin', testTribeId: 'tribe-sandbox' }, null]) {
     const who = access === null ? 'the offline session' : access.status === 'admin' ? 'the owner' : 'the test admin';
-    it(`keeps every owner card on the board and under Hidden cards for ${who}`, async () => {
+    it(`keeps all four cards on the board and under Hidden cards for ${who}`, async () => {
+      const all = [...OWNER_CARDS, ...HER_CARDS];
       useRouteContext.mockReturnValue({ access });
-      getDashboardLayout.mockResolvedValue(stored(OWNER_CARDS.map((k) => w(k))));
+      getDashboardLayout.mockResolvedValue(stored(all.map((k) => w(k))));
       const { unmount } = render(<Home />);
-      await waitFor(() => expect(boardOrder()).toEqual([...OWNER_CARDS]));
-      for (const key of OWNER_CARDS) expect(cellText(key)).toContain(BODY_MARKER[key]);
+      await waitFor(() => expect(boardOrder()).toEqual(all));
+      for (const key of all) expect(cellText(key)).toContain(BODY_MARKER[key]);
       unmount();
       getDashboardLayout.mockResolvedValue(stored([w('safebox')]));
       render(<Home />);
       fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));
-      for (const label of OWNER_CARD_LABELS) {
+      for (const label of [...OWNER_CARD_LABELS, ...HER_CARD_LABELS]) {
         expect(screen.getByRole('button', { name: `Add ${label} to Home` })).toBeInTheDocument();
       }
     });

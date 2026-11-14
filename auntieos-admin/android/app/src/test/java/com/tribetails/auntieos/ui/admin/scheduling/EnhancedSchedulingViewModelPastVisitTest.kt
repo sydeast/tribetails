@@ -74,7 +74,7 @@ class EnhancedSchedulingViewModelPastVisitTest {
         coEvery { bookingRepo.updateBookingTimes(any(), any(), any()) } returns Result.success(Unit)
         coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns
             Result.success(listOf(KinCareSession(id = "s1", kinfolkId = "kf1", status = "SCHEDULED")))
-        coEvery { kinCareRepo.rescheduleBooking(any(), any(), any(), any(), any()) } returns Result.success(Unit)
+        coEvery { kinCareRepo.rescheduleBooking(any(), any(), any(), any(), any()) } returns Result.success(null)
     }
 
     @After

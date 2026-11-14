@@ -26,6 +26,7 @@ import {
   type SaveHalf,
   saveHomeAccess,
   saveTribeProfile,
+  setHouseholdVet,
   schemaFieldRow,
   schemaPlaceholder,
   submitVetClinic,
@@ -53,6 +54,7 @@ import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { formatPhone } from '../lib/phone';
 import type { CardSave } from '../components/cardSave';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
+import { VetClinicPicker } from '../components/VetClinicPicker';
 
 /**
  * Reads one of the three reserved home-access fields when a homeAccess schema
@@ -132,7 +134,8 @@ export function TribeProfile() {
   const [homeValues, setHomeValues] = useState<Record<string, string>>({});
 
   // ---- Vet Clinic ----
-  const [vetQuery, setVetQuery] = useState('');
+  /** The name typed into the picker when "Add as a new clinic" was chosen. */
+  const [newClinicName, setNewClinicName] = useState('');
   /**
    * THE SELECTED CLINIC ID. Operator ruling 2026-08-01: "Vets are not a open
    * string textbox, it is a dropdown and search feature".
@@ -151,7 +154,12 @@ export function TribeProfile() {
   const [afterHoursVetPhone, setAfterHoursVetPhone] = useState('');
   const [submittingClinic, setSubmittingClinic] = useState(false);
   const [submitClinicMsg, setSubmitClinicMsg] = useState<string | null>(null);
-  const [removingClinic, setRemovingClinic] = useState(false);
+  /**
+   * #1917: a pick or a removal saves at once through setHouseholdVet. This is
+   * the save in flight (what the card says while it runs), and its failure.
+   */
+  const [vetSaving, setVetSaving] = useState<{ kind: 'pick'; name: string } | { kind: 'remove' } | null>(null);
+  const [vetSaveError, setVetSaveError] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
   /**
@@ -176,7 +184,9 @@ export function TribeProfile() {
     const byKey = (fields: CustomFieldDto[]) => Object.fromEntries(fields.map((f) => [f.key, f.value]));
     const pByKey = byKey(p.customFields);
     const aByKey = byKey(homeAccess.customFields);
-    setVetClinicId(pByKey['vetClinicId'] ?? '');
+    // #1908 kin-vet: the server serves the household's vet from the one store
+    // both apps share, as `vetClinic` and as this row.
+    setVetClinicId(profile.data.vetClinic?.id ?? pByKey['vetClinicId'] ?? '');
     setAfterHoursVetName(aByKey['afterHoursVetName'] ?? '');
     setAfterHoursVetPhone(aByKey['afterHoursVetPhone'] ?? '');
   }, [profile.data]);
@@ -248,7 +258,6 @@ export function TribeProfile() {
     .filter((f) => !HOME_RESERVED_KEYS.includes(f.key as (typeof HOME_RESERVED_KEYS)[number]))
     .filter(isDisplayableField);
 
-  const vetMatches = vetQuery.trim().length > 0 ? clinics.filter((c) => c.name.toLowerCase().includes(vetQuery.trim().toLowerCase())).slice(0, 8) : [];
 
   /** The chosen catalog row, or undefined when nothing is selected yet. */
   // #1325: the picker list hides archived clinics and unapproved submissions,
@@ -257,75 +266,86 @@ export function TribeProfile() {
   const selectedClinic =
     clinics.find((c) => c.id === vetClinicId) ??
     (linkedClinic && linkedClinic.id === vetClinicId ? linkedClinic : undefined);
-  function pickClinic(c: { id: string }) {
-    setVetClinicId(c.id);
-    setVetQuery('');
+  /**
+   * #1917: the household's vet is saved the moment it is set, never held on
+   * the screen for the page's Save Changes. The card shows "Saving" while the
+   * call runs and moves to the new clinic only once the server has it, so a
+   * clinic shown as on file is one that is on file.
+   */
+  async function saveHouseholdVet(clinicId: string, saving: { kind: 'pick'; name: string } | { kind: 'remove' }): Promise<boolean> {
+    if (vetSaving) return false;
+    setVetSaving(saving);
+    setVetSaveError(null);
+    try {
+      const res = await setHouseholdVet({ ...(kinfolkId !== undefined ? { kinfolkId } : {}), clinicId });
+      setVetClinicId(res.vetClinic?.id ?? clinicId);
+      // A Kin with no vet of its own goes to this one (#1908 kin-vet).
+      void queryClient.invalidateQueries({ queryKey: ['myKin', kinfolkId] });
+      await refreshAfterSave(queryClient, tribeProfileKey(kinfolkId));
+      return true;
+    } catch (err) {
+      setVetSaveError(
+        saving.kind === 'remove'
+          ? `Couldn't remove the clinic: ${err instanceof Error ? err.message : 'unknown error'}`
+          : `Couldn't save ${saving.name} as your clinic: ${err instanceof Error ? err.message : 'unknown error'}`,
+      );
+      return false;
+    } finally {
+      setVetSaving(null);
+    }
+  }
+  function pickClinic(c: { id: string; name: string }) {
     setClinicCandidates([]);
     setSubmitClinicMsg(null);
+    void saveHouseholdVet(c.id, { kind: 'pick', name: c.name });
   }
-
-  /**
-   * #1387: unlink the clinic. Pessimistic, like portal Android: the link is
-   * cleared on screen only after saveTribeProfile accepts it. `vetClinicId` is
-   * deleted by naming it in removeCustomFieldKeys; no other row is sent.
-   */
+  /** #1387: unlink the clinic, at once and pessimistically (#1917). */
   function removeClinic() {
-    if (removingClinic || vetClinicId === '') return;
-    setRemovingClinic(true);
+    if (vetSaving || vetClinicId === '') return;
     setSubmitClinicMsg(null);
-    saveTribeProfile({
-      ...(kinfolkId !== undefined ? { kinfolkId } : {}),
-      removeCustomFieldKeys: ['vetClinicId'],
-    })
-      .then(async () => {
-        setVetClinicId('');
-        setVetQuery('');
-        setClinicCandidates([]);
-        await refreshAfterSave(queryClient, tribeProfileKey(kinfolkId));
-      })
-      .catch((err: unknown) =>
-        setSubmitClinicMsg(`Couldn't remove the clinic: ${err instanceof Error ? err.message : 'unknown error'}`),
-      )
-      .finally(() => setRemovingClinic(false));
+    setClinicCandidates([]);
+    void saveHouseholdVet('', { kind: 'remove' });
   }
   /**
    * Add the typed name as a new clinic.
    *
    * [acknowledgedMatchIds] is empty on the first attempt, so a near match comes
    * back as a CHOICE and nothing is written. The user then either picks a
-   * candidate (pure client-side, no call at all) or confirms through
-   * `createClinicAnyway`, which echoes the ids it was just shown. That echo is
-   * what the server checks; a boolean would let a client claim a confirmation
-   * it never actually obtained.
+   * candidate or confirms through `createClinicAnyway`, which echoes the ids it
+   * was just shown. That echo is what the server checks; a boolean would let a
+   * client claim a confirmation it never actually obtained. A clinic that is
+   * added becomes the household's vet through the same save as a pick.
    */
-  function submitClinicToSharedList(acknowledgedMatchIds: string[] = []) {
-    const name = vetQuery.trim();
-    if (submittingClinic || name === '') return;
+  function submitClinicToSharedList(name: string, acknowledgedMatchIds: string[] = []) {
+    const trimmed = name.trim();
+    if (submittingClinic || vetSaving || trimmed === '') return;
+    setNewClinicName(trimmed);
     setSubmittingClinic(true);
     setSubmitClinicMsg(null);
-    submitVetClinic({ name, acknowledgedMatchIds })
-      .then((r) => {
+    submitVetClinic({ name: trimmed, acknowledgedMatchIds })
+      .then(async (r) => {
         if (r.status === 'needs_choice') {
           // NOT an error, and NOT a silent selection: the decision is the user's.
           setClinicCandidates(r.candidates);
           return;
         }
         setClinicCandidates([]);
-        setVetClinicId(r.clinicId);
-        setVetQuery('');
-        setSubmitClinicMsg(
-          r.pending
-            ? 'Sent to Auntie for approval. It is on your record now and joins the shared list once approved.'
-            : 'Added to the shared list and set as your clinic.',
-        );
         void queryClient.invalidateQueries({ queryKey: vetClinicsKey() });
+        const saved = await saveHouseholdVet(r.clinicId, { kind: 'pick', name: trimmed });
+        if (saved) {
+          setSubmitClinicMsg(
+            r.pending
+              ? 'Sent to Auntie for approval. It is on your record now and joins the shared list once approved.'
+              : 'Added to the shared list and set as your clinic.',
+          );
+        }
       })
       .catch((err: unknown) => setSubmitClinicMsg(`Couldn't submit: ${err instanceof Error ? err.message : 'unknown error'}`))
       .finally(() => setSubmittingClinic(false));
   }
   /** "No, mine really is different." Echoes the ids the server just offered. */
   function createClinicAnyway() {
-    submitClinicToSharedList(clinicCandidates.map((c) => c.id));
+    submitClinicToSharedList(newClinicName, clinicCandidates.map((c) => c.id));
   }
 
   async function handleSave() {
@@ -341,13 +361,14 @@ export function TribeProfile() {
       // by naming it in removeCustomFieldKeys. The old rebuild from schema keys
       // deleted every office-set row on save.
       //
-      // Vet: ONE id, not three strings. Name, phone and address are read from
-      // the catalog. Emergency Contacts are not here (#829): the card saves them
+      // Vet: not here (#1917). The card saves it the moment it is picked,
+      // through setHouseholdVet, and its row is never sent, so this Save can
+      // never put back a vet the household or the office has since changed.
+      // Emergency Contacts are not here either (#829): the card saves them
       // through saveEmergencyContacts, and their rows are never sent.
-      const trimmedVetClinicId = vetClinicId.trim();
       const baseProfileFields = profile.data?.profile.customFields ?? [];
       const nextDisplayName = effectiveDisplayName.trim();
-      const profileSet: CustomFieldDto[] = trimmedVetClinicId ? [{ key: 'vetClinicId', label: 'Vet Clinic', value: trimmedVetClinicId }] : [];
+      const profileSet: CustomFieldDto[] = [];
       if (profileSchema) {
         for (const f of profileSchema.sections.flatMap((s) => s.fields)) {
           if (f.key === 'displayName') continue;
@@ -355,12 +376,7 @@ export function TribeProfile() {
           if (row) profileSet.push(row);
         }
       }
-      const profileEdit = editCustomFields(
-        baseProfileFields,
-        profileSet,
-        trimmedVetClinicId ? [] : ['vetClinicId'],
-        LEGACY_EMERGENCY_CONTACT_KEYS,
-      );
+      const profileEdit = editCustomFields(baseProfileFields, profileSet, [], [...LEGACY_EMERGENCY_CONTACT_KEYS, 'vetClinicId']);
       // #868: the two halves are separate callables and either can be refused
       // on its own, so each is attempted and reported on its own.
       try {
@@ -607,35 +623,38 @@ export function TribeProfile() {
                     dropdown and search feature". The create affordance is the
                     LAST row, so choosing an existing clinic is always offered
                     first and creating is the fallback. */}
-                <div className="field full" style={{ marginBottom: 10 }}>
-                  <label htmlFor="vetsearch">Search vet clinics</label>
-                  <input
-                    id="vetsearch"
-                    className="inp"
-                    type="text"
-                    value={vetQuery}
-                    onChange={(e) => setVetQuery(e.target.value)}
-                    placeholder="Start typing a clinic name…"
-                  />
-                  {vetQuery.trim().length > 0 && (
-                    <div className="suggestlist">
-                      {vetMatches.map((c) => (
-                        <div className="suggestrow" key={c.id} onClick={() => pickClinic(c)}>
-                          <b>{c.isEmergency ? `${c.name} · 24hr` : c.name}</b>
-                          {c.address && <small>{c.address}</small>}
-                        </div>
-                      ))}
+                <VetClinicPicker
+                  id="vetsearch"
+                  label={selectedClinic ? 'Change your vet clinic' : 'Choose your vet clinic'}
+                  clinics={clinics}
+                  loading={vetClinicsQ.isLoading}
+                  failed={vetClinicsQ.isError}
+                  disabled={vetSaving !== null}
+                  onPick={pickClinic}
+                  footer={(query) =>
+                    query === '' ? null : (
                       <div
                         className="suggestrow"
-                        onClick={() => submitClinicToSharedList()}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => submitClinicToSharedList(query)}
                         style={{ opacity: submittingClinic ? 0.6 : 1 }}
                       >
-                        <b>{submittingClinic ? <BusyLabel>Checking…</BusyLabel> : `+ Add "${vetQuery.trim()}" as a new clinic`}</b>
+                        <b>{submittingClinic ? <BusyLabel>Checking…</BusyLabel> : `+ Add "${query}" as a new clinic`}</b>
                         <small>Sent to Auntie for approval before other households see it.</small>
                       </div>
-                    </div>
-                  )}
-                </div>
+                    )
+                  }
+                />
+                {vetSaving && (
+                  <p className="sub" role="status">
+                    <BusyLabel>{vetSaving.kind === 'remove' ? 'Removing the clinic…' : `Saving ${vetSaving.name}…`}</BusyLabel>
+                  </p>
+                )}
+                {vetSaveError && (
+                  <p className="hint" role="alert" style={{ color: 'var(--coral)' }}>
+                    {vetSaveError}
+                  </p>
+                )}
                 {/* THE CHOICE. The server found something that looks like the
                     same practice and wrote NOTHING. The user decides: use the
                     existing record, or say theirs really is different. */}
@@ -656,7 +675,7 @@ export function TribeProfile() {
                         </div>
                       ))}
                       <div className="suggestrow" onClick={createClinicAnyway}>
-                        <b>{`No, add "${vetQuery.trim()}" as a different clinic`}</b>
+                        <b>{`No, add "${newClinicName}" as a different clinic`}</b>
                         <small>Use this when yours really is a separate practice.</small>
                       </div>
                     </div>
@@ -672,21 +691,21 @@ export function TribeProfile() {
                     </p>
                     <p className="hint">
                       Details come from the shared list, so if they are wrong Auntie can fix them
-                      once for every household. Search above to change your clinic.
+                      once for every household. Choose another above to change your clinic.
                     </p>
-                    <button type="button" className="btn ghost" onClick={removeClinic} disabled={removingClinic} style={{ padding: '9px 14px', fontSize: 13, marginTop: 8 }}>
-                      {removingClinic ? <BusyLabel>Removing…</BusyLabel> : 'Remove clinic'}
+                    <button type="button" className="btn ghost" onClick={removeClinic} disabled={vetSaving !== null} style={{ padding: '9px 14px', fontSize: 13, marginTop: 8 }}>
+                      {vetSaving?.kind === 'remove' ? <BusyLabel>Removing…</BusyLabel> : 'Remove clinic'}
                     </button>
                   </div>
                 )}
                 {vetClinicId !== '' && !selectedClinic && (
                   <p className="hint" style={{ color: 'var(--coral)' }}>
-                    The clinic on file is no longer on the shared list. Search above to pick it again.
+                    The clinic on file is no longer on the shared list. Choose one above.
                   </p>
                 )}
                 {vetClinicId !== '' && !selectedClinic && (
-                  <button type="button" className="btn ghost" onClick={removeClinic} disabled={removingClinic} style={{ padding: '9px 14px', fontSize: 13, marginTop: 8 }}>
-                    {removingClinic ? <BusyLabel>Removing…</BusyLabel> : 'Remove clinic'}
+                  <button type="button" className="btn ghost" onClick={removeClinic} disabled={vetSaving !== null} style={{ padding: '9px 14px', fontSize: 13, marginTop: 8 }}>
+                    {vetSaving?.kind === 'remove' ? <BusyLabel>Removing…</BusyLabel> : 'Remove clinic'}
                   </button>
                 )}
                 {submitClinicMsg && <p className="sub" style={{ marginTop: 8 }}>{submitClinicMsg}</p>}

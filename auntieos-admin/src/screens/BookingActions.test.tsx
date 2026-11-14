@@ -7,6 +7,19 @@ import type { Timestamp } from 'firebase/firestore';
 import { type BookingEntry } from '../api/bookings';
 import { ToastProvider } from '../components/Toast';
 
+// #1838/#2027/#1841: the confirms ask the server who a household notice reaches.
+const { previewHouseholdNotice } = vi.hoisted(() => ({ previewHouseholdNotice: vi.fn() }));
+vi.mock('../api/visitNoticePreview', async (orig) => ({
+  ...(await orig<typeof import('../api/visitNoticePreview')>()),
+  previewHouseholdNotice,
+}));
+beforeEach(() => {
+  previewHouseholdNotice
+    .mockReset()
+    .mockResolvedValue({ willNotify: true, reason: null, name: 'Dre East', channels: ['email'] });
+});
+
+
 // Both surfaces confirm a landed transition through useToast(), which throws
 // outside a ToastProvider. Same wrap KinfolkEdit.test.tsx uses.
 function render(ui: ReactElement) {
@@ -238,6 +251,83 @@ describe('BookingActions: Reject / Cancel', () => {
     expect(cancelBooking).toHaveBeenCalledWith('ses-2');
     expect(rejectBooking).not.toHaveBeenCalled();
     expect(await screen.findByRole('status')).toHaveTextContent("The Whitfields's visit is cancelled.");
+  });
+});
+
+/**
+ * #1838: a cancel emailed the household and neither the confirm nor the toast
+ * said so. Both now say it, from the server.
+ */
+describe('BookingActions: #1838, the cancel says who the household told', () => {
+  async function openCancel() {
+    render(<BookingActions entry={entry({ _id: 'ses-2', status: 'SCHEDULED' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  }
+
+  it('HAPPY: the confirm names who will get what, and the toast who was sent what', async () => {
+    previewHouseholdNotice.mockResolvedValue({ willNotify: true, reason: null, name: 'Dre East', channels: ['email', 'sms'] });
+    cancelBooking.mockResolvedValue({ told: true, reason: null, name: 'Dre East', channels: ['email', 'sms'] });
+    await openCancel();
+    expect(await screen.findByText('Dre East will get an email and a text.')).toBeInTheDocument();
+    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.booking.cancel', 'ses-2');
+    await userEvent.click(screen.getByRole('button', { name: /yes, cancel the visit/i }));
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      "The Whitfields's visit is cancelled. Dre East was sent an email and a text.",
+    );
+  });
+
+  it('SAD: notices off: nobody will be told, and nobody was', async () => {
+    previewHouseholdNotice.mockResolvedValue({ willNotify: false, reason: 'household_notices_off', name: 'Dre East', channels: [] });
+    cancelBooking.mockResolvedValue({ told: false, reason: 'household_notices_off', name: 'Dre East', channels: [] });
+    await openCancel();
+    expect(await screen.findByText('Nobody will be told: notices to households are off in Settings.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /yes, cancel the visit/i }));
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      "The Whitfields's visit is cancelled. Nobody was told: notices to households are off in Settings.",
+    );
+  });
+
+  it('NEGATIVE: an Auntie is not sent to Settings', async () => {
+    seat.caretaker = true;
+    try {
+      previewHouseholdNotice.mockResolvedValue({ willNotify: false, reason: 'household_notices_off', name: 'Dre East', channels: [] });
+      await openCancel();
+      expect(await screen.findByText('Nobody will be told: the owner has notices to households turned off.')).toBeInTheDocument();
+    } finally {
+      seat.caretaker = false;
+    }
+  });
+
+  it('ERROR: an older server returns no notice: the toast claims nothing about the household', async () => {
+    cancelBooking.mockResolvedValue(null);
+    await openCancel();
+    await userEvent.click(screen.getByRole('button', { name: /yes, cancel the visit/i }));
+    const toast = await screen.findByRole('status');
+    expect(toast).toHaveTextContent("The Whitfields's visit is cancelled.");
+    expect(toast).not.toHaveTextContent(/told|was sent|will get/);
+  });
+
+  it('#2027: the reschedule form names who the move will tell', async () => {
+    render(<BookingActions entry={entry({ _id: 'ses-2', status: 'SCHEDULED' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
+    expect(await screen.findByText('Dre East will get an email.')).toBeInTheDocument();
+    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.changed', 'ses-2');
+  });
+
+  // The walk's own surface: the "Visit detail" sheet's Actions panel.
+  it('the sheet panel (BookingStatusActions): the cancel question names who will be told, the toast who was', async () => {
+    previewHouseholdNotice.mockResolvedValue({ willNotify: false, reason: 'session_has_no_routing_ids', name: 'Dre East', channels: [] });
+    cancelBooking.mockResolvedValue({ told: false, reason: 'session_has_no_routing_ids', name: 'Dre East', channels: [] });
+    const onDone = vi.fn();
+    render(<BookingStatusActions entry={entry({ _id: 'ses-3', status: 'SCHEDULED' })} onDone={onDone} initialAction="cancel" />);
+    expect(screen.getByText('Cancel this scheduled visit?')).toBeInTheDocument();
+    expect(await screen.findByText('Nobody will be told: this visit is not linked to a booking.')).toBeInTheDocument();
+    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.booking.cancel', 'ses-3');
+    await userEvent.click(screen.getByRole('button', { name: /yes, cancel the visit/i }));
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      "The Whitfields's visit is cancelled. Nobody was told: this visit is not linked to a booking.",
+    );
+    expect(onDone).toHaveBeenCalled();
   });
 });
 

@@ -227,6 +227,46 @@ describe('#944 wrapAdminCallable enforces the table', () => {
     }
   });
 
+  /**
+   * #2208, operator ruling 2026-11-14: an Auntie sees and works Supplies and
+   * Expirations on Home. She gets what the two cards call and nothing beside
+   * them: the expense callables are money, and no card calls the two upserts.
+   */
+  it('#2208: admits an Auntie to the Supplies and Expirations cards, and refuses her the expense callables and the upserts', async () => {
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    for (const name of ['listSupplies', 'adjustSupply', 'listExpirations']) {
+      const wrapped = wrapAdminCallable(name, async () => ({ ok: true }));
+      await expect(wrapped({ auth: auntieAuth } as never)).resolves.toMatchObject({ ok: true });
+      await expect(wrapped({ auth: ownerAuth } as never)).resolves.toMatchObject({ ok: true });
+    }
+    for (const name of ['listExpenses', 'logExpense', 'upsertSupply', 'upsertExpiration']) {
+      const wrapped = wrapAdminCallable(name, async () => ({ ok: true }));
+      await expect(wrapped({ auth: auntieAuth } as never)).rejects.toMatchObject({ code: 'permission-denied' });
+      await expect(wrapped({ auth: ownerAuth } as never)).resolves.toMatchObject({ ok: true });
+    }
+    for (const name of ['listSupplies', 'adjustSupply', 'listExpirations']) {
+      const wrapped = wrapAdminCallable(name, async () => ({ ok: true }));
+      await expect(wrapped({ auth: { uid: 'stranger', token: {} } } as never))
+        .rejects.toMatchObject({ code: 'permission-denied' });
+      await expect(wrapped({ auth: { uid: 'kin-1', token: { role: 'kinfolk', kinfolkId: 'kf1' } } } as never))
+        .rejects.toMatchObject({ code: 'permission-denied' });
+      await expect(wrapped({ auth: undefined } as never)).rejects.toMatchObject({ code: 'unauthenticated' });
+    }
+  });
+
+  /**
+   * #2215: an Auntie arranges her own Home. The handler writes the caller's
+   * own record, so the allowlist line cannot reach anyone else's board.
+   */
+  it('#2215: admits an Auntie to save her own Home layout', async () => {
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    const wrapped = wrapAdminCallable('saveDashboardLayout', async () => ({ ok: true }));
+    await expect(wrapped({ auth: auntieAuth } as never)).resolves.toMatchObject({ ok: true });
+    await expect(wrapped({ auth: ownerAuth } as never)).resolves.toMatchObject({ ok: true });
+    await expect(wrapped({ auth: { uid: 'stranger', token: {} } } as never))
+      .rejects.toMatchObject({ code: 'permission-denied' });
+  });
+
   it('still refuses a caller with neither role, and an unauthenticated one', async () => {
     const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
     const wrapped = wrapAdminCallable('listStaff', async () => ({ ok: true }));

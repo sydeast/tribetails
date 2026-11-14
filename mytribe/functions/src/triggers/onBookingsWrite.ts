@@ -57,6 +57,12 @@ type BookingDoc = {
    * message about this one visit.
    */
   seriesApprovedAt?: unknown;
+  /**
+   * #1838/#2027: a fresh value written by `transitionBookingStatus` (CANCEL) or
+   * `rescheduleBooking` when that callable sends the household notice itself,
+   * so it can tell the admin who was told. See `officeNoticeStampChanged`.
+   */
+  officeNoticeStamp?: unknown;
 };
 
 /**
@@ -95,6 +101,22 @@ export function seriesApproveStampChanged(
   return stampValue(before?.seriesApprovedAt) !== now;
 }
 
+/**
+ * #1838/#2027: true when THIS write carries a new `officeNoticeStamp`, which
+ * means the server path that made the write has already sent the household
+ * its `kincare.booking.cancel` or `kincare.changed` (and the office its copy)
+ * and reported the outcome to the admin. The field name is
+ * `notifications/householdNotice.ts#OFFICE_NOTICE_STAMP_FIELD`, spelled out
+ * here so this trigger loads no extra module.
+ *
+ * Only a CHANGED stamp counts, so every later write by anyone else (the
+ * portal, a batch edit, an older client) still sends from here.
+ */
+export function officeNoticeStampChanged(before: BookingDoc | undefined, after: BookingDoc | undefined): boolean {
+  const now = after?.officeNoticeStamp;
+  if (typeof now !== 'string' || now === '') return false;
+  return before?.officeNoticeStamp !== now;
+}
 /**
  * A stamp reduced to something comparable across revisions. Firestore hands back
  * a Timestamp; the emulator and the tests can hand back a string or a number.
@@ -487,6 +509,8 @@ export const onBookingsWrite = onDocumentWritten(
         // writes this stamp.
         if (!declineStampedOn(before) && declineStampedOn(after)) {
           // Declined: the envelope-level key carries this news instead.
+        } else if (officeNoticeStampChanged(before, after)) {
+          // #1838: `transitionBookingStatus` sent this cancel itself.
         } else {
           await dispatch('kincare.booking.cancel');
         }
@@ -497,7 +521,8 @@ export const onBookingsWrite = onDocumentWritten(
     }
 
     if (afterStatus === 'confirmed' || afterStatus === 'approved') {
-      if (changedFieldsAll.length > 0) {
+      if (changedFieldsAll.length > 0 && !officeNoticeStampChanged(before, after)) {
+        // #2027: a stamped write is `rescheduleBooking`'s, which sent this itself.
         // #832: named by this write's event id (the dispatch default), so a
         // redelivery of this write dedupes and every later edit sends.
         await dispatch('kincare.changed', { changedFields: changedFieldsAll });

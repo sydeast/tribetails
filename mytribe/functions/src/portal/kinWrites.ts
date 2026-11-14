@@ -38,7 +38,10 @@ const KinPayload = z.object({
   photoUrl: SafeUrl.nullable().optional(),
   feedingInstructions: z.string().max(2000).nullable().optional(),
   walkingInstructions: z.string().max(2000).nullable().optional(),
-  medications: z.string().max(2000).nullable().optional(),
+  // #1908 kin-meds: one field with the admin's Medication / health notes. Both
+  // sides' notes were joined into it by scripts/backfillKinSharedFields.ts,
+  // so it is allowed twice the room either had.
+  medications: z.string().max(4000).nullable().optional(),
   allergies: z.string().max(2000).nullable().optional(),
   emergencyNotes: z.string().max(2000).nullable().optional(),
   sitterNotes: z.string().max(2000).nullable().optional(),
@@ -56,7 +59,33 @@ const KinPayload = z.object({
   colorMarkings: z.string().max(200).optional(),
   spayedNeutered: z.boolean().optional(),
   vetInfo: z.string().max(2000).optional(),
+  // #1908 (owner ruling 2026-11-11): the care facts the admin always kept, now
+  // filled by the household too. Not nullable, for the same Kotlin reason.
+  staysAs: z.string().max(2000).optional(),
+  routine: z.string().max(2000).optional(),
+  trainingCommands: z.string().max(2000).optional(),
+  feedingBrand: z.string().max(2000).optional(),
+  vaccinations: z.string().max(2000).optional(),
+  // #1908 kin-vet: a clinic from the area vet list for this Kin alone, or ''
+  // for the household's vet. Checked against `vet_clinics` below.
+  ownVetClinicId: z.string().max(128).optional(),
 });
+/**
+ * #1908 kin-vet. A Kin's own vet must be a clinic on the area vet list that a
+ * household may pick: it exists, is not archived, and is not a pending
+ * submission. '' is always allowed (the household's vet).
+ */
+export async function assertPickableVetClinic(clinicId: string | undefined): Promise<void> {
+  if (clinicId === undefined) return;
+  const id = clinicId.trim();
+  if (id === '') return;
+  if (id.includes('/')) throw new HttpsError('invalid-argument', 'That vet is not on the list.');
+  const snap = await db().doc(`vet_clinics/${id}`).get();
+  const data = (snap.data() ?? {}) as Record<string, unknown>;
+  if (!snap.exists || data['archived'] === true || data['verified'] === false) {
+    throw new HttpsError('invalid-argument', 'That vet is not on the list.');
+  }
+}
 
 const AddArgs = z.object({
   kinfolkId: z.string().optional(),
@@ -236,6 +265,7 @@ export async function addKinHandler(req: CallableRequest<unknown>): Promise<{ ki
   const hasAdminClaim = householdStaffFlag(req.auth, 'addKin');
   const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'addKin');
   await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'addKin');
+  await assertPickableVetClinic(args.kin.ownVetClinicId);
 
   const ref = await db().collection(`families/${kinfolkId}/kin`).add({
     ...args.kin,
@@ -256,6 +286,7 @@ export async function updateKinHandler(req: CallableRequest<unknown>): Promise<{
   const hasAdminClaim = householdStaffFlag(req.auth, 'updateKin');
   const kinfolkId = await resolveKinfolkId(uid, args.kinfolkId, hasAdminClaim, 'updateKin');
   await requireKinfolkPerm(uid, kinfolkId, 'kin_edit', hasAdminClaim, 'updateKin');
+  await assertPickableVetClinic(args.kin.ownVetClinicId);
   // #1583: weight is a number with an optional unit. A weight the pet already
   // carries is let through unchanged, so an old free-text value does not block
   // an unrelated edit that happens to re-send it.

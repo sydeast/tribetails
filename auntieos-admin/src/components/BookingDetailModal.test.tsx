@@ -8,6 +8,19 @@ import { type ScheduleSessionEntry } from '../api/schedule';
 import { type BookingNoteEntry } from '../api/bookingNotes';
 import { ToastProvider } from './Toast';
 
+// #1838/#2027/#1841: the confirms ask the server who a household notice reaches.
+const { previewHouseholdNotice } = vi.hoisted(() => ({ previewHouseholdNotice: vi.fn() }));
+vi.mock('../api/visitNoticePreview', async (orig) => ({
+  ...(await orig<typeof import('../api/visitNoticePreview')>()),
+  previewHouseholdNotice,
+}));
+beforeEach(() => {
+  previewHouseholdNotice
+    .mockReset()
+    .mockResolvedValue({ willNotify: true, reason: null, name: 'Dre East', channels: ['email'] });
+});
+
+
 // A landed reschedule now confirms through useToast(), which throws outside a
 // ToastProvider. Same wrap KinfolkEdit.test.tsx uses.
 function render(ui: ReactElement) {
@@ -376,6 +389,60 @@ describe('BookingDetailModal reschedule', () => {
     open();
     await user.click(screen.getByRole('button', { name: 'Reschedule visit' }));
     expect(await screen.findByText(/not found/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * #2027: moving a visit or saving a kinfolk-facing note sent email with nothing
+ * on Schedule saying so. The sheet now says, before, who will be told, and,
+ * after, who was, from the server.
+ */
+describe('BookingDetailModal: #2027, a move and a note say who the household told', () => {
+  it('HAPPY: the Reschedule panel names who the move will tell, and the toast who it told', async () => {
+    rescheduleBooking.mockResolvedValue({
+      ok: true,
+      sessionId: 'vis_v1',
+      notice: { told: true, reason: null, name: 'Dre East', channels: ['email'] },
+    });
+    open();
+    expect(await screen.findByTestId('move-notice-line')).toHaveTextContent('Dre East will get an email.');
+    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.changed', 'vis_v1');
+    await user.click(screen.getByRole('button', { name: 'Reschedule visit' }));
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      "The Whitfields's visit is rescheduled. Dre East was sent an email.",
+    );
+  });
+
+  it('SAD: no portal account: the panel says nobody will be told', async () => {
+    previewHouseholdNotice.mockResolvedValue({ willNotify: false, reason: 'household_has_no_portal_account', name: 'Dre East', channels: [] });
+    open();
+    expect(await screen.findByTestId('move-notice-line')).toHaveTextContent(
+      'Nobody will be told: Dre East has no portal account.',
+    );
+  });
+
+  it('NEGATIVE: a kinfolk-facing note: the panel says no notice goes to the household, and the toast says none went', async () => {
+    previewHouseholdNotice.mockImplementation(async (_id: string, key: string) =>
+      key === 'kincare.note.auntie'
+        ? { willNotify: false, reason: 'not_a_household_notice', name: 'Dre East', channels: [] }
+        : { willNotify: true, reason: null, name: 'Dre East', channels: ['email'] },
+    );
+    addBookingNote.mockResolvedValue({
+      noteId: 'n1',
+      notice: { told: false, reason: 'not_a_household_notice', name: 'Dre East', channels: [] },
+    });
+    open();
+    expect(await screen.findByTestId('note-notice-line')).toHaveTextContent('No notice goes to Dre East for this.');
+    await user.type(screen.getByLabelText('Add a kinfolk-facing note'), 'Walked the long loop.');
+    await user.click(screen.getByRole('button', { name: 'Save kinfolk-facing note' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Note saved. No notice went to Dre East for this.');
+  });
+
+  it('ERROR: the server cannot be asked: the panel claims nothing about the household', async () => {
+    previewHouseholdNotice.mockRejectedValue(new Error('offline'));
+    open();
+    await waitFor(() => expect(screen.queryByText('Checking who will be told.')).toBeNull());
+    expect(screen.queryByTestId('move-notice-line')).toBeNull();
   });
 });
 
