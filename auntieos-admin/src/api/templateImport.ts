@@ -32,6 +32,45 @@ export interface TemplateImportChannelRow {
   outcome: TemplateImportOutcome;
   /** Operator-facing sentences: why it is blocked, or what differs. */
   notes: string[];
+  /**
+   * #1936: the stored and the repo wording, readable, on a skipped or
+   * overwrite channel. Absent from a server older than #1936.
+   */
+  differences?: TemplateImportDifference[];
+}
+
+/** One differing wording (`importPlanner.ts` ChannelDifference). */
+export interface TemplateImportDifference {
+  field: string;
+  /** "Subject", "Headline", "Message", "Text message", "Title". */
+  label: string;
+  stored: string;
+  repo: string;
+  /** Set when the wording matches and something else about the copy differs. */
+  note?: string;
+}
+
+/**
+ * The comparison a skipped or overwrite channel shows before the tick
+ * (#1936), or null for a channel that has nothing to compare.
+ *
+ * `missing` is a differing channel the server sent no wordings for (a server
+ * older than #1936). The screen says so instead of drawing nothing, because a
+ * blank comparison reads as "the two are the same".
+ */
+export function channelComparison(
+  channel: TemplateImportChannelRow,
+): { kind: 'shown'; differences: TemplateImportDifference[] } | { kind: 'missing' } | null {
+  if (channel.outcome !== 'skipped' && channel.outcome !== 'overwrite') return null;
+  const differences = (channel.differences ?? []).filter(
+    (d) => typeof d.stored === 'string' && typeof d.repo === 'string',
+  );
+  return differences.length > 0 ? { kind: 'shown', differences } : { kind: 'missing' };
+}
+
+/** What an empty wording reads as, so a blank column is never mistaken for a load failure. */
+export function wordingOrBlank(text: string): string {
+  return text.trim() === '' ? 'Empty' : text;
 }
 
 export interface TemplateImportRow {

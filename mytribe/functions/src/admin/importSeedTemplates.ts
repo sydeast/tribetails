@@ -33,6 +33,7 @@ import {
   CHANNEL_COLLECTIONS,
   planImport,
   plannedWrites,
+  type ChannelDifference,
   type ImportPlan,
   type TemplateChannel,
 } from '../notifications/importPlanner';
@@ -55,8 +56,12 @@ export interface ImportReportRow {
   templateId: string;
   /** Present when this id is a retired key kept for old bindings. */
   aliasOf: string | null;
-  /** Per channel outcome, in email/sms/push order. */
-  channels: Array<{ channel: TemplateChannel; outcome: string; notes: string[] }>;
+  /**
+   * Per channel outcome, in email/sms/push order. `differences` (#1936) is
+   * present on a skipped or overwrite channel: the stored and repo wording,
+   * readable, so the operator sees both before ticking the overwrite.
+   */
+  channels: Array<{ channel: TemplateChannel; outcome: string; notes: string[]; differences?: ChannelDifference[] }>;
   differsFromRepo: boolean;
   blocked: boolean;
   /**
@@ -105,7 +110,12 @@ export function toRows(plan: ImportPlan): ImportReportRow[] {
   return plan.templates.map((t) => ({
     templateId: t.templateId,
     aliasOf: NOTIFICATION_KEY_ALIASES[t.templateId]?.canonical ?? null,
-    channels: t.channels.map((c) => ({ channel: c.channel, outcome: c.outcome, notes: c.notes })),
+    channels: t.channels.map((c) => ({
+      channel: c.channel,
+      outcome: c.outcome,
+      notes: c.notes,
+      ...(c.differences && (c.outcome === 'skipped' || c.outcome === 'overwrite') ? { differences: c.differences } : {}),
+    })),
     differsFromRepo: t.differsFromRepo,
     blocked: t.blocked,
     issues: t.blocked ? t.issues : [],
