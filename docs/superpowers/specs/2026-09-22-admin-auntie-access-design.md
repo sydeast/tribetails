@@ -420,7 +420,7 @@ listing a site that does not exist or omitting one that does.
 | 1120 | `sms_messages read+write` | `isOwner()` | business phone, unruled |
 | 1121 | `the_411` | read/write split | read isStaff(), write isOwner(): the ruling grants the read; the feed writes it on the Admin SDK |
 | 1126 | `training_documents read` | `isStaff()` | staff training material |
-| 1127 | `users read+write` | `isOwner()` | account administration |
+| 1127 | `users read+write` | `isOwner()`; read also an Auntie's own record | account administration; her own Home layout (#2215) |
 | 1128 | `visit_logs read+write` | `isStaff()` | her visits |
 | 1129 | `visit_routes read+write` | `isStaff()` | her visits |
 | 1158 | `voicemails read` | `isOwner()` | business phone, unruled |
@@ -428,8 +428,8 @@ listing a site that does not exist or omitting one that does.
 | 1160 | `voicemails update` | `isOwner()` | business phone |
 | 1161 | `voicemails delete` | `isOwner()` | business phone |
 | 1178 | `expenses read` | `isOwner()` | money |
-| 1179 | `supplies read` | `isOwner()` | grouped with expenses, unruled |
-| 1180 | `expirations read` | `isOwner()` | grouped with expenses, unruled |
+| 1179 | `supplies read` | `isStaff()` | ruled 2026-11-14 (#2208): an Auntie sees and works Supplies |
+| 1180 | `expirations read` | `isStaff()` | ruled 2026-11-14 (#2208): an Auntie sees Expirations |
 | 1183 | `ipRateLimits read` | `isOwner()` | security |
 | 1184 | `failedLoginEmailRateLimits read` | `isOwner()` | security |
 | 1187 | `unknownLoginAttempts read` | `isOwner()` | security |
@@ -590,9 +590,10 @@ speak to them and refusing to guess is the safe state:
 - `calls_log`, `voicemails`, `sms_messages`. The business phone. All three are
   money-clean, and an Auntie does communicate with households, so there is a
   real case for read.
-- `supplies` and `expirations`. Inventory an Auntie arguably needs on a visit.
-  Grouped with `expenses` for now because they share a dashboard-widget block;
-  `expenses` is money and is not in question.
+- `supplies` and `expirations`. RULED 2026-11-14 (#2208): an Auntie sees and
+  works both on Home. Reads are `isStaff()`, and `listSupplies`, `adjustSupply`
+  and `listExpirations` are on her callable list. `expenses`, in the same
+  dashboard-widget block, is money and stays the owner's.
 - Whether `kinfolk.outstandingBalance` should move off the household record, so
   the household grant and the money boundary stop fighting.
 - **Who marks a visit completed.** `transitionBookingStatus` is owner-only

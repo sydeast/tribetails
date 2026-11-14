@@ -167,6 +167,22 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // for her (`AUNTIE_LOGGABLE_EVENTS` in admin/logActivity.ts): never money,
   // sign-in, permissions, settings or anything destructive.
   'logActivity',
+
+  // ── Her Home board ─────────────────────────────────────────────────────
+  // #2208, operator ruling 2026-11-14: an Auntie sees and works Supplies and
+  // Expirations on Home. These are what the two cards call: the supplies list
+  // and its +1 restock, and the expirations list. Neither carries money (a
+  // supply is a name, a unit and two counts; an expiration is a label, a kind,
+  // a date and its household). The other dashboard-widget callables stay off:
+  // logExpense and listExpenses are money (rule 1), and upsertSupply and
+  // upsertExpiration are called by no card on any client.
+  'listSupplies',
+  'adjustSupply',
+  'listExpirations',
+  // #2215: saving her own Home layout. The handler writes the caller's own
+  // user record and only the layout field, so she can arrange no board but
+  // hers. Without it she could never bring a hidden card onto her Home.
+  'saveDashboardLayout',
 ]);
 
 /**

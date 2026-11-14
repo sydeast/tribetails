@@ -1772,7 +1772,14 @@ service cloud.firestore {
  // deleteTrainingDocument callables (admin SDK bypasses rules), so the audit
  // entry is structurally bound to every mutation. Direct client writes denied.
     match /training_documents/{id}              { allow read: if isStaff(); allow write: if false; }
-    match /users/{uid}                          { allow read, write: if isOwner(); }
+ // #2215: an Auntie reads her OWN user record, which is where her Home layout
+ // is kept (`dashboardWidgets`). Never anyone else's, and she writes none of
+ // them from a client: her layout save goes through saveDashboardLayout, which
+ // writes the caller's own record and only the layout field.
+    match /users/{uid} {
+      allow read: if isOwner() || (isCaretaker() && request.auth.uid == uid);
+      allow write: if isOwner();
+    }
     match /visit_logs/{id}                      { allow read, write: if isStaff(); }
     match /visit_routes/{id}                    { allow read, write: if isStaff(); }
     match /voicemails/{id} {
@@ -1824,8 +1831,14 @@ service cloud.firestore {
  // same callable bodies. This is the shape already used by training_documents,
  // audience_segments and broadcasts for the same reason.
     match /expenses/{id}                        { allow read: if isOwner(); allow write: if false; }
-    match /supplies/{id}                        { allow read: if isOwner(); allow write: if false; }
-    match /expirations/{id}                     { allow read: if isOwner(); allow write: if false; }
+ // #2208, operator ruling 2026-11-14: an Auntie sees and works Supplies and
+ // Expirations on Home, so both reads are isStaff(). Neither collection holds
+ // money: a supply is a name, a unit, an on-hand count and a reorder level; an
+ // expiration is a label, a kind, a date and the household it belongs to.
+ // `expenses` is money and stays the owner's. Writes stay closed to every
+ // client: her +1 restock goes through adjustSupply like the owner's.
+    match /supplies/{id}                        { allow read: if isStaff(); allow write: if false; }
+    match /expirations/{id}                     { allow read: if isStaff(); allow write: if false; }
  // Server-written rate-limit + Stripe dedupe ledgers. Admin reads for
  // monitoring; client writes denied (admin SDK in Cloud Functions bypasses).
     match /ipRateLimits/{key}                   { allow read: if isOwner(); allow write: if false; }
