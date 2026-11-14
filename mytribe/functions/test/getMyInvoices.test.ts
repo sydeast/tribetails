@@ -31,7 +31,8 @@ describe('getMyInvoicesHandler', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
     const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
-    expect(res.open.map((i) => i.id).sort()).toEqual(['inv-draft', 'inv-open']);
+    // #1906: the unsent draft is in no bucket at all.
+    expect(res.open.map((i) => i.id).sort()).toEqual(['inv-open']);
     expect(res.paid.map((i) => i.id)).toEqual(['inv-paid']);
     expect(res.credits.map((i) => i.id)).toEqual(['inv-credit']);
     expect(res.accountBalanceCents).toBe(500);
@@ -498,7 +499,7 @@ describe('getMyInvoices ships the stored state stamp', () => {
     // Newest paid first; as text "January..." outranked every ISO day.
     expect(res.paid.map((i) => i.id)).toEqual(['p-aug', 'p-jan']);
   });
-  it('buckets all eight stamped states by the table: 4 open, 1 paid, 2 credits, cancelled nowhere', async () => {
+  it('buckets all eight stamped states by the table: 3 open, 1 paid, 2 credits, draft and cancelled nowhere', async () => {
     const res = await load([
       { id: 'i-open', data: { status: 'open', amountDue: 50, total: 50 } },
       { id: 'i-draft', data: { status: 'draft', total: 20 } },
@@ -509,13 +510,14 @@ describe('getMyInvoices ships the stored state stamp', () => {
       { id: 'i-redeemed', data: { status: 'redeemed', amountDue: -10, total: -10, creditRedeemedAt: 1_750_000_000_000 } },
       { id: 'i-cancelled', data: { status: 'cancelled', amountDue: 30, total: 30 } },
     ]);
-    expect(res.open.map((i) => i.id).sort()).toEqual(['i-draft', 'i-open', 'i-quote', 'i-zero']);
+    expect(res.open.map((i) => i.id).sort()).toEqual(['i-open', 'i-quote', 'i-zero']);
     expect(res.paid.map((i) => i.id)).toEqual(['i-paid']);
     expect(res.credits.map((i) => i.id).sort()).toEqual(['i-credit', 'i-redeemed']);
     // Cancelled is EXCLUDED, not re-bucketed: the household is not shown a
-    // bill that no longer stands.
+    // bill that no longer stands. #1906: neither is a draft nobody has sent.
     const everywhere = [...res.open, ...res.paid, ...res.credits].map((i) => i.id);
     expect(everywhere).not.toContain('i-cancelled');
+    expect(everywhere).not.toContain('i-draft');
   });
 
   it('ships `quote` verbatim, so no client can render it payable as `open`', async () => {

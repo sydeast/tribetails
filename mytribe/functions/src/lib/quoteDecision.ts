@@ -59,22 +59,27 @@ export function isSentQuote(doc: Record<string, unknown>): boolean {
 
 /**
  * Whether MyTribe keeps this invoice away from the household altogether: not
- * listed, not counted, not openable, not answerable.
+ * listed, not counted, not openable, not payable, not answerable, and not
+ * linked from a visit.
  *
- *   - #2087: a quote saved unsent (`isQuoteDraft`);
- *   - #2088: a quote the office turned into an invoice that has not been sent
- *     yet. It is a draft invoice now, and the household hears about it when the
- *     office sends it, exactly as for any other draft;
+ *   - #1906 (operator ruling 2026-11-11): EVERY UNSENT DRAFT. An invoice the
+ *     office has not sent is the office's alone; the household hears about it
+ *     when it is sent. That takes in the two quote cases that came first:
+ *       - #2087: a quote saved unsent (`isQuoteDraft`);
+ *       - #2088: a quote the office turned into an invoice not sent yet;
  *   - #2195: an archived quote. Archiving a quote works like archiving a draft:
  *     the household stops seeing it and its visits go back on the list.
  *
  * A withdrawn quote is `cancelled`, which MyTribe already shows no one.
- * Ordinary drafts are #1906's, and are not decided here.
+ *
+ * The one rule for every household read: `getMyInvoices` (list, buckets and
+ * totals, and so the detail page and any deep link, which both open from that
+ * list), `getMyInvoicePdf`, `payInvoice`, `redeemCredit`, the quote answer, and
+ * the completed-visit invoice link (`portalVisitLinks.ts`).
  */
 export function hiddenFromHousehold(doc: Record<string, unknown>): boolean {
-  if (isQuoteDraft(doc)) return true;
   const status = statusOf(doc);
-  if (status === 'draft' && doc['quoteConvertedAt'] !== undefined && doc['quoteConvertedAt'] !== null) return true;
+  if (status === 'draft') return true;
   return status === 'quote' && isArchived(doc);
 }
 

@@ -18,7 +18,7 @@ import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { readAcceptClaims, readDeclineRelease, stageSessionLinks } from '../lib/invoiceSessionLinks';
 import { isArchived } from '../lib/invoiceArchive';
-import { isQuoteDraft, quoteDecisionOf, type QuoteDecision } from '../lib/quoteDecision';
+import { quoteDecisionOf, type QuoteDecision } from '../lib/quoteDecision';
 
 /**
  * THE TWO ENDS OF A QUOTE'S LIFE. `admin/createQuote.ts` mints one; these two
@@ -132,10 +132,11 @@ export const QUOTE_NOT_FOUND_MESSAGE = 'Quote not found.';
  *
  * In this order, because each earlier one is the truer sentence:
  *
- *   - #2087: a quote saved unsent (or turned into an invoice not sent yet) is
- *     the office's alone, and is answered exactly as a quote that does not
- *     exist (`quote_not_found`, which the caller raises as `not-found`), so a
- *     guessed id learns nothing;
+ *   - #2087 / #1906: any unsent draft (a quote saved unsent, one turned into
+ *     an invoice not sent yet, or an ordinary draft invoice) is the office's
+ *     alone, and is answered exactly as a quote that does not exist
+ *     (`quote_not_found`, which the caller raises as `not-found`), so a guessed
+ *     id learns nothing;
  *   - #2195: an archived quote cannot be answered until it is restored;
  *   - #2088: a withdrawn quote is cancelled, with nothing left to answer;
  *   - an answered quote keeps its answer; anything else is not a quote.
@@ -148,10 +149,10 @@ export function quoteDecisionRefusal(doc: Record<string, unknown>): { code: Quot
   const status = typeof rawStatus === 'string' ? rawStatus.trim().toLowerCase() : '';
   const existing = quoteDecisionOf(doc['quoteDecision']);
 
-  if (isQuoteDraft(doc) || (status === 'draft' && doc['quoteConvertedAt'] != null)) {
+  if (status === 'draft') {
     return { code: 'quote_not_found', message: QUOTE_NOT_FOUND_MESSAGE };
   }
-  if (isArchived(doc) && (status === 'quote' || status === 'draft')) {
+  if (isArchived(doc) && status === 'quote') {
     return {
       code: 'quote_archived',
       message: 'This quote is not open for an answer right now. Ask your Auntie about it.',

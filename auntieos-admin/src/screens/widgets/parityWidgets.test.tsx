@@ -428,6 +428,25 @@ describe('CashFlowWidget', () => {
     expect(screen.getByText('1 unpaid invoice')).toBeInTheDocument();
   });
 
+  it('#2000 counts only what households were sent and still owe, as Invoices does', () => {
+    // The walk: two open invoices, one unsent draft and one quote waiting for
+    // an answer. Home read the draft as $28.00 owed and "3 unpaid invoices".
+    wire({
+      invoices: {
+        status: 'ready',
+        data: [
+          inv({ _id: 'o1', status: 'open', total: 78.5, amountDue: 78.5 }),
+          inv({ _id: 'o2', status: 'open', total: 127.5, amountDue: 127.5 }),
+          inv({ _id: 'd1', status: 'draft', total: 28, amountDue: 28 }),
+          inv({ _id: 'q1', status: 'quote', total: 40, amountDue: 40 }),
+        ],
+      },
+    });
+    render(<CashFlowWidget />);
+    expect(screen.getByText('$206.00')).toBeInTheDocument();
+    expect(screen.queryByText('$234.00')).not.toBeInTheDocument();
+    expect(screen.getByText('2 unpaid invoices')).toBeInTheDocument();
+  });
   it('reports a genuinely quiet week as zero rather than hiding the card', () => {
     wire({ invoices: READY_EMPTY });
     render(<CashFlowWidget />);

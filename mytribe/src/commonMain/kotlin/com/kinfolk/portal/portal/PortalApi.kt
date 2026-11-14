@@ -862,12 +862,24 @@ class PortalApi(
     }
 
     // -- Invoices --
+    /**
+     * #1906 (operator ruling 2026-11-11): an invoice the office has not sent is
+     * not listed, counted or openable for the household. The server already
+     * leaves every unsent draft out of this answer
+     * (`functions/src/lib/quoteDecision.ts`, `hiddenFromHousehold`); dropping
+     * one here as well holds the same line against a server still on the
+     * earlier rule. Every reader goes through this call: the list, the open
+     * total, `InvoicesController.find` (the detail page and a deep link to it)
+     * and the warm-up.
+     */
     suspend fun getMyInvoices(kinfolkId: String? = null): InvoicesResult {
         val raw = fns.call("getMyInvoices", kinfolkId?.let { buildJsonObject { put("kinfolkId", it) } })
+        fun sent(key: String): List<Invoice> =
+            (raw[key] as? JsonArray)?.map { decodeInvoice(it) }.orEmpty().filterNot { it.status == InvoiceStatus.Draft }
         return InvoicesResult(
-            open = (raw["open"] as? JsonArray)?.map { decodeInvoice(it) }.orEmpty(),
-            paid = (raw["paid"] as? JsonArray)?.map { decodeInvoice(it) }.orEmpty(),
-            credits = (raw["credits"] as? JsonArray)?.map { decodeInvoice(it) }.orEmpty(),
+            open = sent("open"),
+            paid = sent("paid"),
+            credits = sent("credits"),
             accountBalanceCents = raw["accountBalanceCents"]?.jsonPrimitive?.longOrNull ?: 0L,
         )
     }

@@ -10,7 +10,7 @@ import {
   draftStatusAsKinTaleStatus,
   draftTypeLabel,
 } from './kinTaleList';
-import { isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
+import { invoiceStamp, isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
 import type { GeneratedDraftRow } from '../api/drafts';
 import type { ConversationSummary } from '../api/inbox';
 import type { SessionEntry } from '../api/sessions';
@@ -719,16 +719,24 @@ export interface OutstandingTotals {
   count: number;
 }
 /**
- * The Cash Flow card's second row: every non-archived invoice with a positive
- * `amountDue`, summed. Android reads `invoices.filter { it.amountDue > 0.0 }`;
- * the archive guard is the same one `weeklyRevenue` applies, because an invoice
- * that has been written off is not money anyone is waiting on.
+ * The Cash Flow card's second row: what households have been asked to pay and
+ * have not, summed.
+ *
+ * #2000: THE SAME RULE AS THE INVOICES SCREEN'S OUTSTANDING CARD, so Home and
+ * Invoices agree. A POSITIVE test on the stored stamp (ADR-0002): `open`, a
+ * balance above zero, and not archived. An unsent draft has gone to nobody and
+ * a quote is not a bill, so neither is owed; this card used to count every
+ * invoice with a balance, and read an unsent $28.00 draft as money unpaid. The
+ * archive guard is the one `weeklyRevenue` applies: an invoice that has been
+ * written off is not money anyone is waiting on. Android and the desktop
+ * console read the same rule (`cashFlowOutstanding`).
  */
 export function outstandingTotals(invoices: readonly InvoiceEntry[]): OutstandingTotals {
   let total = 0;
   let count = 0;
   for (const inv of invoices) {
     if (isArchivedInvoice(inv)) continue;
+    if (invoiceStamp(inv).state !== 'open') continue;
     if (!(inv.amountDue > 0)) continue;
     total += inv.amountDue;
     count += 1;

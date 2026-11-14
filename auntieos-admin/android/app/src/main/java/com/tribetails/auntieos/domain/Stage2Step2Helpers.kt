@@ -152,6 +152,33 @@ fun weeklyRevenue(invoices: List<Invoice>, weekStartIso: String, nowIso: String)
     return sum
 }
 
+// ── Home: Cash Flow outstanding (home.cashFlow) ────────────────────────────────
+/** What the Cash Flow card says is still owed, and across how many invoices. */
+data class CashFlowOutstanding(val total: Double, val count: Int)
+/**
+ * #2000: what households have been asked to pay and have not. The SAME rule as
+ * the Invoices screen's Outstanding tile (`InvoicesScreen.invoiceIsOutstanding`
+ * over the non-archived list), so Home and Invoices agree: stored state OPEN,
+ * a balance above zero, not archived.
+ *
+ * A POSITIVE test on the stamp. An unsent draft has gone to nobody and a quote
+ * is not a bill, so neither is owed; the card used to count every invoice with
+ * a balance and read an unsent draft as money unpaid. An archived invoice has
+ * been written off, as in [weeklyRevenue]. The web's `outstandingTotals` and
+ * the desktop console's twin of this function read the same rule.
+ */
+fun cashFlowOutstanding(invoices: List<Invoice>): CashFlowOutstanding {
+    var total = 0.0
+    var count = 0
+    for (inv in invoices) {
+        if (invoiceIsArchived(inv)) continue
+        if (invoiceStateOrNull(inv) != InvoiceState.OPEN) continue
+        if (!(inv.amountDue > 0.0)) continue
+        total += inv.amountDue
+        count += 1
+    }
+    return CashFlowOutstanding(total, count)
+}
 // ── Schedule: reschedule arg mapping (schedule.dragReschedule) ─────────────────
 
 /** The (startTime, endTime) args a reschedule maps to for rescheduleBooking. */
