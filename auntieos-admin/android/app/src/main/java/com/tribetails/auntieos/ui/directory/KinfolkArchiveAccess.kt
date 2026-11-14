@@ -45,3 +45,33 @@ internal fun kinfolkArchiveErrorText(err: Throwable, fallback: String): String =
     } else {
         err.message?.takeIf { it.isNotBlank() } ?: fallback
     }
+
+/**
+ * #1958: the status the `setKinfolkArchived` answer says a restore gave back,
+ * the one the household held before the archive. A missing or blank `status`
+ * reads as `active`, what a restore gave before the prior status was kept.
+ */
+internal fun restoredKinfolkStatusFrom(answer: Map<*, *>?): String {
+    val s = (answer?.get("status") as? String)?.trim()?.lowercase().orEmpty()
+    return if (s in KINFOLK_PICKABLE_STATUSES) s else "active"
+}
+
+/** #1958: the restore confirmation, naming that status. Web words it the same. */
+internal fun kinfolkRestoredMessage(name: String, status: String): String = when (status.trim().lowercase()) {
+    "prospect" -> "$name is restored as a Prospect."
+    "inactive" -> "$name is restored as Inactive."
+    else -> "$name is active again."
+}
+
+/** #2017: the title of the confirm Archive opens on Edit kin. */
+internal const val KIN_ARCHIVE_CONFIRM_TITLE = "Archive this Kin"
+
+/**
+ * #2017: the confirm's words. Names the Kin, says what archiving does and where
+ * to find it again. Admin web and the desktop console say the same.
+ */
+internal fun kinArchiveConfirmText(name: String): String {
+    val who = name.trim().ifBlank { "this Kin" }
+    return "Archive $who? $who leaves the Kin list and the household's roster. " +
+        "To bring $who back, choose Archived under Show on the Directory's Kin tab, open $who, and press Restore."
+}

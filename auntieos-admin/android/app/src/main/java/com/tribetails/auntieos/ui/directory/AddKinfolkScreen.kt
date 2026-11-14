@@ -126,7 +126,10 @@ fun AddKinfolkScreen(
                             enabled = householdFieldsEnabled,
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            isError = addKinfolkPhoneError(state.phoneNumber) != null,
                         )
+                        // #1951: why Save is off, said beside the field.
+                        FieldErrorText(addKinfolkPhoneError(state.phoneNumber))
 
                         AuntieField(
                             value = state.email,
@@ -135,7 +138,9 @@ fun AddKinfolkScreen(
                             enabled = householdFieldsEnabled,
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            isError = addKinfolkEmailError(state.email) != null,
                         )
+                        FieldErrorText(addKinfolkEmailError(state.email))
                     }
                 }
             }
@@ -160,7 +165,9 @@ fun AddKinfolkScreen(
                             enabled = householdFieldsEnabled,
                             modifier = Modifier.fillMaxWidth(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            isError = addKinfolkSecondaryPhoneError(state.secondaryPhone) != null,
                         )
+                        FieldErrorText(addKinfolkSecondaryPhoneError(state.secondaryPhone))
 
                         // item 2: Preferred contact method editor removed (Auntie complaint).
 
@@ -332,6 +339,17 @@ fun AddKinfolkScreen(
             }
         }
     }
+}
+
+/** #1951: a field's own message, in the error colour, or nothing. */
+@Composable
+internal fun FieldErrorText(message: String?) {
+    if (message == null) return
+    Text(
+        text = message,
+        style = AuntieTheme.typography.bodySmall,
+        color = AuntieTheme.colors.error,
+    )
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   updateKinfolkProfile,
   archiveKinfolk,
   unarchiveKinfolk,
+  kinfolkRestoredMessage,
   KINFOLK_ARCHIVE_OWNER_ONLY,
   KINFOLK_EDIT_FIELDS,
   type KinfolkEditPatch,
@@ -257,5 +258,14 @@ describe('unarchiveKinfolk (#2161)', () => {
   it('fails loud on a blank id', async () => {
     await expect(unarchiveKinfolk('   ')).rejects.toThrow(/requires a kinfolk id/);
     expect(call).not.toHaveBeenCalled();
+  });
+});
+
+describe('kinfolkRestoredMessage (#1958)', () => {
+  it('names the status the household came back as', () => {
+    expect(kinfolkRestoredMessage('Dre East', 'prospect')).toBe('Dre East is restored as a Prospect.');
+    expect(kinfolkRestoredMessage('Dre East', ' Inactive ')).toBe('Dre East is restored as Inactive.');
+    expect(kinfolkRestoredMessage('Dre East', 'active')).toBe('Dre East is active again.');
+    expect(kinfolkRestoredMessage('Dre East', '')).toBe('Dre East is active again.');
   });
 });

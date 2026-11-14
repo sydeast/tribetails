@@ -4,6 +4,7 @@ import { getKinfolkProfile, type KinfolkProfile } from '../api/kinfolkProfile';
 import {
   archiveKinfolk,
   changedKinfolkEditFields,
+  kinfolkRestoredMessage,
   unarchiveKinfolk,
   updateKinfolkProfile,
   type KinfolkEditPatch,
@@ -497,9 +498,10 @@ export function KinfolkEdit({
     setArchiving(true);
     setError(null);
     try {
-      await unarchiveKinfolk(kinfolkId);
+      const res = await unarchiveKinfolk(kinfolkId);
       setArchiving(false);
-      showToast(`${displayName} is active again.`);
+      // #1958: the household comes back as the status it held before the archive.
+      showToast(kinfolkRestoredMessage(displayName, res?.status ?? ''));
       onDone();
     } catch (err) {
       setArchiving(false);

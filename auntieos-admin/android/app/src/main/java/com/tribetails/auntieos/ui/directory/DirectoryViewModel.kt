@@ -94,9 +94,37 @@ internal fun matchesDirectoryTag(tags: List<String>, filter: String): Boolean {
 }
 
 /**
- * The Kin tab's list: name/species/breed search, then the tag filter, then the
- * chosen [sort]. Lifted out of the composable so the filter is unit-testable
- * without an Android runtime. Pure; tested.
+ * #1902: what the Kin tab's Show picker lists, the same three choices as admin
+ * web and the desktop console. "All kin" is every Kin that is not archived,
+ * "In care" narrows that to [com.tribetails.auntieos.domain.isKinInCare], and
+ * "Archived" lists only the archived ones: the one way back to a Kin's Restore.
+ */
+internal enum class KinShow(val label: String) {
+    All("All kin"),
+    InCare("In care"),
+    Archived("Archived"),
+}
+
+internal fun isKinArchivedStatus(status: String): Boolean = status.trim().equals("archived", ignoreCase = true)
+
+internal fun kinMatchesShow(status: String, show: KinShow): Boolean = when (show) {
+    KinShow.Archived -> isKinArchivedStatus(status)
+    KinShow.InCare -> com.tribetails.auntieos.domain.isKinInCare(status)
+    KinShow.All -> !isKinArchivedStatus(status)
+}
+
+/** #1902: the Kin tab's empty state, which names the Show choice that emptied it. */
+internal fun kinEmptyStateText(search: String, show: KinShow): Pair<String, String> = when {
+    search.isNotBlank() -> "No matches for \"$search\"" to "Try a different name, species, or breed."
+    show == KinShow.Archived -> "No archived Kin" to "An archived Kin is listed here, with Restore on its edit screen."
+    show == KinShow.InCare -> "No Kin in care" to "Choose All kin under Show to see every Kin on file."
+    else -> "No Kin on file yet" to "Add Kin from a Kinfolk profile."
+}
+
+/**
+ * The Kin tab's list: the [show] filter, name/species/breed search, then the
+ * tag filter, then the chosen [sort]. Lifted out of the composable so the
+ * filter is unit-testable without an Android runtime. Pure; tested.
  *
  * The flat `kin` collection has no createdAt, so "Recently Created" has nothing
  * to order by and falls back to A to Z, the same fallback the web admin's
@@ -107,10 +135,10 @@ internal fun filterKinDirectory(
     search: String,
     tag: String,
     sort: SortOption = SortOption.AlphaAsc,
-    inCareOnly: Boolean = false,
+    show: KinShow = KinShow.All,
 ): List<Kin> {
     val rows = kin.filter { k ->
-        if (inCareOnly && !com.tribetails.auntieos.domain.isKinInCare(k.status)) return@filter false
+        if (!kinMatchesShow(k.status, show)) return@filter false
         val matchesSearch = search.isBlank() ||
             k.name.contains(search, ignoreCase = true) ||
             k.species.contains(search, ignoreCase = true) ||
@@ -1053,11 +1081,12 @@ class DirectoryViewModel(
     fun saveKinfolk() {
         val state = _addKinfolkState.value
         state.createdKinfolkId?.let { id ->
-            validateEmergencyContactDrafts(
+            (validateEmergencyContactDrafts(
                 state.emergencyContacts,
                 listOf("${state.firstName} ${state.lastName}"),
                 listOf(state.phoneNumber, state.secondaryPhone),
-            )?.let { _addKinfolkState.value = state.copy(error = it); return }
+            ) ?: emergencyContactPhoneShapeError(state.emergencyContacts))
+                ?.let { _addKinfolkState.value = state.copy(error = it); return }
             saveNewHouseholdEmergencyContacts(id, state)
             return
         }
@@ -1069,11 +1098,16 @@ class DirectoryViewModel(
             _addKinfolkState.value = state.copy(error = PRIMARY_CONTACT_REQUIRED)
             return
         }
-        validateEmergencyContactDrafts(
+        // #1951: nothing is created until every phone and email is one. The
+        // screen says which beside the field; this is the same rule, held here.
+        addKinfolkShapeError(state.phoneNumber, state.secondaryPhone, state.email)
+            ?.let { _addKinfolkState.value = state.copy(error = it); return }
+        (validateEmergencyContactDrafts(
             state.emergencyContacts,
             listOf("${state.firstName} ${state.lastName}"),
             listOf(state.phoneNumber, state.secondaryPhone),
-        )?.let { _addKinfolkState.value = state.copy(error = it); return }
+        ) ?: emergencyContactPhoneShapeError(state.emergencyContacts))
+            ?.let { _addKinfolkState.value = state.copy(error = it); return }
 
         val finalStatus = state.status.ifBlank { "prospect" }
         AuntieLog.i("Saving new kinfolk: ${state.firstName} ${state.lastName} status=$finalStatus")
@@ -1705,20 +1739,22 @@ class DirectoryViewModel(
         viewModelScope.launch {
             // #2161: the owner-only `setKinfolkArchived` callable writes the
             // RESTORE_KINFOLK Activity Log line itself, so none is fired here.
-            repository.unarchiveKinfolk(kinfolkId).onSuccess {
+            repository.unarchiveKinfolk(kinfolkId).onSuccess { restored ->
+                // #1958: the household came back as the status it held before
+                // the archive (Prospect stays Prospect), which the server names.
                 // The record on file is restored now. Moving the baseline with it
                 // keeps the next Save from sending a status it did not change.
-                loadedKinfolk = loadedKinfolk?.copy(status = "active", archivedAt = "", archivedReason = "", archivedBy = "")
-                // #1009: web's exact wording, `KinfolkEdit.tsx`'s
-                // `showToast(\`${displayName} is active again.\`)`. This save does
+                loadedKinfolk = loadedKinfolk?.copy(status = restored, archivedAt = "", archivedReason = "", archivedBy = "")
+                // #1009: web's wording, `KinfolkEdit.tsx`'s
+                // `kinfolkRestoredMessage`. This save does
                 // not navigate anywhere - the operator stays on this editor - so
                 // unlike every other confirmation here, nothing else prompts the
                 // host; the screen's own successMessage effect is the only thing
                 // that shows it.
                 val displayName = loadedKinfolk?.displayName ?: "Unnamed Kinfolk"
                 _editKinfolkState.value = _editKinfolkState.value.copy(
-                    status = "active",
-                    successMessage = "$displayName is active again.",
+                    status = restored,
+                    successMessage = kinfolkRestoredMessage(displayName, restored),
                 )
                 loadDirectory()
             }.onFailure { error ->
@@ -2070,7 +2106,7 @@ class DirectoryViewModel(
         viewModelScope.launch {
             _editKinState.value = state.copy(isSaving = true, error = null)
 
-            repository.updateKinFields(state.kinId, updatedKin.kinfolkId, changes).onSuccess {
+            repository.updateKinFields(state.kinId, updatedKin.kinfolkId, changes, baseline.familyKinPath).onSuccess {
                 AuntieLog.i("Kin changes saved")
                 loadedKin = updatedKin
                 com.tribetails.auntieos.data.admin.AuditLog.fire(
@@ -2223,6 +2259,8 @@ class DirectoryViewModel(
                     state.kinId,
                     state.kinfolkId,
                     mapOf("profilePictureUrl" to media.storageUrl),
+                    // #2115: the link the Kin was loaded with, never re-derived.
+                    loadedKin?.takeIf { it.id == state.kinId }?.familyKinPath,
                 ).onSuccess {
                     loadedKin = loadedKin?.copy(profilePictureUrl = media.storageUrl)
                     _editKinState.value = withPhoto.copy(isUploadingPhoto = false)

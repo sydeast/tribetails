@@ -415,12 +415,35 @@ fun EditKinScreen(
                 // be brought back from the phone.
                 item {
                     val archived = state.status.equals("archived", ignoreCase = true)
+                    // #2017: Archive asks first, naming the Kin. Restore acts at
+                    // once: it puts the Kin back, and Archive is there to undo it.
+                    var askArchive by remember { mutableStateOf(false) }
                     GhostButton(
                         label = if (archived) "Restore" else "Archive",
-                        onClick = { viewModel.setKinArchived(!archived) },
+                        onClick = { if (archived) viewModel.setKinArchived(false) else askArchive = true },
                         enabled = !state.isSaving && state.kinId.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    if (askArchive && !archived) {
+                        AuntieModal(
+                            onDismissRequest = { askArchive = false },
+                            title = KIN_ARCHIVE_CONFIRM_TITLE,
+                            confirmButton = {
+                                PrimaryButton(
+                                    label = "Archive",
+                                    onClick = {
+                                        askArchive = false
+                                        viewModel.setKinArchived(true)
+                                    },
+                                )
+                            },
+                            dismissButton = {
+                                AuntieTextBtn(onClick = { askArchive = false }) { Text("Cancel") }
+                            },
+                        ) {
+                            Text(kinArchiveConfirmText(state.name))
+                        }
+                    }
                 }
 
                 // Phase 3: refresh-intelligence. Synthesis is per-HOUSEHOLD, so this

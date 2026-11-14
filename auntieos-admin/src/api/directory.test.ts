@@ -15,6 +15,7 @@ import {
   tagNamesOf,
   tagFilterOptions,
   matchesTag,
+  TAG_FILTER_ALL,
   KIN_QUERY,
   type Kinfolk,
   type Kin,
@@ -431,6 +432,17 @@ describe('filterSortKin', () => {
 
   it('excludes archived kin regardless of sort or query', () => {
     expect(filterSortKin(rows, '', 'alpha_asc').some((r) => r._id === 'c')).toBe(false);
+  });
+  // #1902: "Archived" is the one list an archived Kin is on.
+  it('lists only the archived kin when Show is Archived, and still searches and sorts them', () => {
+    const more = [...rows, kin({ _id: 'd', name: 'Bean', status: 'ARCHIVED ' })];
+    expect(filterSortKin(more, '', 'alpha_asc', TAG_FILTER_ALL, 'archived').map((r) => r._id)).toEqual(['d', 'c']);
+    expect(filterSortKin(more, 'old', 'alpha_asc', TAG_FILTER_ALL, 'archived').map((r) => r._id)).toEqual(['c']);
+    expect(filterSortKin(more, '', 'alpha_asc', TAG_FILTER_ALL, 'all').map((r) => r._id)).toEqual(['b', 'a']);
+  });
+  it('In care leaves out inactive and archived kin', () => {
+    const more = [...rows, kin({ _id: 'e', name: 'Sleepy', status: 'inactive' })];
+    expect(filterSortKin(more, '', 'alpha_asc', TAG_FILTER_ALL, 'inCare').map((r) => r._id)).toEqual(['b', 'a']);
   });
   it('sorts alpha_asc / alpha_desc by name', () => {
     expect(filterSortKin(rows, '', 'alpha_asc').map((r) => r._id)).toEqual(['b', 'a']);
