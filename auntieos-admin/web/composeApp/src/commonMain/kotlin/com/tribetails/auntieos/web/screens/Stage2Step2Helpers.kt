@@ -8,6 +8,7 @@ import com.tribetails.auntieos.web.screens.invoices.InvoiceState
 import com.tribetails.auntieos.web.screens.invoices.invoiceIsArchived
 import com.tribetails.auntieos.web.screens.invoices.invoiceIsPaid
 import com.tribetails.auntieos.web.screens.invoices.invoiceStateOrNull
+import com.tribetails.auntieos.web.screens.invoices.invoiceWrittenOffCentsOf
 import com.tribetails.auntieos.web.screens.invoices.isoDatePrefixOrNull
 
 /**
@@ -114,11 +115,27 @@ fun weeklyRevenue(invoices: List<Invoice>, weekStartIso: String, nowIso: String)
     val end = isoDatePrefixOrNull(nowIso) ?: return 0.0
     var sum = 0.0
     for (inv in invoices) {
-        if (!invoiceIsPaid(inv)) continue
+        val earned = invoiceRevenueOf(inv)
+        if (earned <= 0.0) continue
         val date = isoDatePrefixOrNull(inv.date) ?: continue
-        if (date in start..end) sum += inv.total
+        if (date in start..end) sum += earned
     }
     return sum
+}
+
+/**
+ * What one invoice adds to revenue, in dollars: its total when paid, and for a
+ * written-off one (#2090) only what came in before the rest was written off.
+ * Checked before [invoiceIsPaid], which reads any non-draft invoice with no
+ * balance as paid and so would count the written-off part as money collected.
+ * Mirrors the web's `revenueOf` and Android's `invoiceRevenueOf`.
+ */
+internal fun invoiceRevenueOf(inv: Invoice): Double {
+    if (invoiceStateOrNull(inv) == InvoiceState.WRITTEN_OFF) {
+        val writtenOff = invoiceWrittenOffCentsOf(inv) ?: 0L
+        return maxOf(0L, kotlin.math.round(inv.total * 100.0).toLong() - writtenOff) / 100.0
+    }
+    return if (invoiceIsPaid(inv)) inv.total else 0.0
 }
 
 // ── Home: Cash Flow outstanding (home.cashFlow) ────────────────────────────────

@@ -122,7 +122,21 @@ fun kinAvatarsForSession(
  * nothing still owed. Mirrors InvoicesScreen.invoiceIsPaid + the web invoiceIsPaid.
  */
 internal fun invoiceIsPaidForRevenue(i: Invoice): Boolean =
-    !i.status.equals("draft", ignoreCase = true) && i.amountDue <= 0.0 && i.total > 0.0
+    !i.status.equals("draft", ignoreCase = true) &&
+        // #2090: written off owes nothing, but the part given up was never paid.
+        !i.status.equals("written_off", ignoreCase = true) &&
+        i.amountDue <= 0.0 && i.total > 0.0
+/**
+ * What one invoice adds to revenue, in dollars: its total when paid, and for a
+ * written-off one (#2090) only what came in before the rest was written off.
+ * Mirrors the web's `revenueOf`.
+ */
+internal fun invoiceRevenueOf(i: Invoice): Double {
+    if (invoiceIsPaidForRevenue(i)) return i.total
+    if (!i.status.equals("written_off", ignoreCase = true)) return 0.0
+    val writtenOff = if (i.writtenOffCents > 0L) i.writtenOffCents else 0L
+    return maxOf(0L, Math.round(i.total * 100.0) - writtenOff) / 100.0
+}
 
 /**
  * Sum the totals of PAID invoices whose invoice date falls within the current
@@ -149,9 +163,10 @@ fun weeklyRevenue(invoices: List<Invoice>, weekStartIso: String, nowIso: String)
         // web would go on being counted into this tile, so Android would report a
         // week's revenue the web says has been written off.
         if (invoiceIsArchived(inv)) continue
-        if (!invoiceIsPaidForRevenue(inv)) continue
+        val earned = invoiceRevenueOf(inv)
+        if (earned <= 0.0) continue
         val date = isoDatePrefixOrNull(inv.date) ?: continue
-        if (date in start..end) sum += inv.total
+        if (date in start..end) sum += earned
     }
     return sum
 }

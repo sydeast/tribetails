@@ -999,6 +999,20 @@ describe('payInvoice refuses a PAID invoice (operator ruling 2026-09-27, docket 
     const { outcome } = await callFor({ amountDue: 0, amountDueCents: 0, total: 137.5 });
     expect((outcome as { err: unknown }).err).toMatchObject({ details: { code: 'invoice_already_paid' } });
   });
+  it('#2090: refuses a written-off invoice in the household\'s words, before Stripe is touched', async () => {
+    const { ctx, outcome } = await callFor(
+      { status: 'written_off', amountDue: 0, amountDueCents: 0, total: 40, writtenOffCents: 4000, writtenOffAt: 'ts' },
+      'cs_open',
+    );
+    expect((outcome as { err: unknown }).err).toMatchObject({
+      code: 'failed-precondition',
+      message: 'There is nothing to pay on this invoice.',
+      details: { code: 'invoice_written_off' },
+    });
+    expect(mocks.stripeMock.checkout.sessions.retrieve).not.toHaveBeenCalled();
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(ctx.writes.find((w) => w.path === 'invoices/inv-1')).toBeUndefined();
+  });
   it('still charges an open invoice, and records the session in the list the paid sweep expires', async () => {
     const { ctx, outcome } = await callFor({ status: 'open', amountDue: 40, total: 40 });
     expect((outcome as { ok: { sessionId: string } }).ok.sessionId).toBe('cs_test_1');

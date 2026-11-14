@@ -114,7 +114,11 @@ fun isUnreadableDueDate(raw: String): Boolean = raw.isNotBlank() && invoiceDayOr
  * `lib/invoiceEditPolicy.ts#INVOICE_STATES`). The same vocabulary as Android's
  * `domain/InvoiceActions.kt#InvoiceState` and the web's `InvoiceState`.
  */
-enum class InvoiceState { QUOTE, DRAFT, CANCELLED, CREDIT, REDEEMED, PAID, ZERO, OPEN }
+enum class InvoiceState {
+    QUOTE, DRAFT, CANCELLED, CREDIT, REDEEMED, PAID, ZERO, OPEN,
+    /** #2090: the owner wrote off what was left. Nothing owed, and not paid. */
+    WRITTEN_OFF,
+}
 
 /**
  * Decodes the stored state stamp, or null when the doc carries none this build
@@ -131,6 +135,7 @@ fun invoiceStateOrNull(invoice: Invoice): InvoiceState? = when (invoice.status.t
     "paid" -> InvoiceState.PAID
     "zero" -> InvoiceState.ZERO
     "open" -> InvoiceState.OPEN
+    "written_off" -> InvoiceState.WRITTEN_OFF
     else -> null
 }
 
@@ -187,6 +192,8 @@ fun invoiceActionsFor(state: InvoiceState?): List<InvoiceAction> = when (state) 
     InvoiceState.REDEEMED -> emptyList()
     // Nothing was ever billed: no bill to collect and no payment to receipt.
     InvoiceState.ZERO -> emptyList()
+    // #2090: written off. Nothing to collect or remind about, and no receipt.
+    InvoiceState.WRITTEN_OFF -> emptyList()
     // No recognisable stamp: no affordance is invented for a doc this build
     // does not understand.
     null -> emptyList()
@@ -196,11 +203,52 @@ fun invoiceActionsFor(state: InvoiceState?): List<InvoiceAction> = when (state) 
  * #2168: what an invoice is offered once archiving is counted in, the same rule
  * as web's and Android's `invoiceActionsOffered`. An archived invoice is
  * read-only until restored (the server refuses to send, edit or link one), so
- * REVIEW_AND_SEND is dropped; the collection actions stay as the state gives
- * them, since archiving does not stop a household paying.
+ * REVIEW_AND_SEND is dropped.
+ *
+ * #2090: so is SEND_REMINDER. The server refuses a reminder on an archived
+ * invoice, and only one with nothing owed can be archived now. Recording a
+ * payment stays as the state gives it: archiving does not stop a household paying.
  */
 fun invoiceActionsOffered(state: InvoiceState?, archived: Boolean): List<InvoiceAction> =
-    invoiceActionsFor(state).let { if (archived) it - InvoiceAction.REVIEW_AND_SEND else it }
+    invoiceActionsFor(state).let {
+        if (archived) it - InvoiceAction.REVIEW_AND_SEND - InvoiceAction.SEND_REMINDER else it
+    }
+
+/**
+ * #2090: the cents an invoice still owes that the owner could write off, or
+ * null when there is nothing to write off: anything but a stamped OPEN invoice
+ * with a balance, or an archived one (restored first). The server decides again
+ * on its own read. Same rule as web's `writeOffOwedCents` and Android's.
+ */
+fun invoiceWriteOffOwedCents(invoice: Invoice): Long? {
+    if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return null
+    if (invoiceIsArchived(invoice)) return null
+    if (!invoice.amountDue.isFinite()) return null
+    val cents = kotlin.math.round(invoice.amountDue * 100.0).toLong()
+    return cents.takeIf { it > 0L }
+}
+
+/** #2090: what was written off, in cents, on a written-off invoice; null on any other. */
+fun invoiceWrittenOffCentsOf(invoice: Invoice): Long? {
+    if (invoiceStateOrNull(invoice) != InvoiceState.WRITTEN_OFF) return null
+    val p = invoice.writtenOffCents as? kotlinx.serialization.json.JsonPrimitive ?: return null
+    if (p.isString) return null
+    val cents = p.content.toDoubleOrNull()?.takeIf { it.isFinite() }?.toLong() ?: return null
+    return cents.takeIf { it > 0L }
+}
+
+/** #2090: the write-off confirm, naming the household, the invoice and the amount. Same words on every admin client. */
+fun writeOffConfirmText(household: String, invoiceNumber: String, owedCents: Long): String {
+    val which = if (invoiceNumber.isBlank()) "this invoice" else "invoice ${invoiceNumber.trim()}"
+    return "Write off ${com.tribetails.auntieos.web.util.formatUsdCents(owedCents)} on $which for $household? " +
+        "The household will no longer be asked to pay it, and it stops counting as outstanding. It is not " +
+        "recorded as a payment or as account credit, and it cannot be undone."
+}
+
+/** #2090: the notice once the balance is written off. */
+fun writeOffNoticeText(writtenOffCents: Long): String =
+    "Balance of ${com.tribetails.auntieos.web.util.formatUsdCents(writtenOffCents)} written off. The household " +
+        "is no longer asked to pay it, and the invoice can be archived now."
 
 /**
  * #1238: the Payments panel's line when nothing is recorded. It points at
@@ -333,6 +381,7 @@ fun invoiceChipLabel(invoice: Invoice, todayIso: String): String {
         InvoiceState.CREDIT -> "Credit"
         InvoiceState.REDEEMED -> "Redeemed"
         InvoiceState.ZERO -> "Zero"
+        InvoiceState.WRITTEN_OFF -> "Written off"
         InvoiceState.OPEN -> "Open"
         InvoiceState.PAID -> "Paid"
         null -> invoice.status.trim().ifBlank { "No status" }

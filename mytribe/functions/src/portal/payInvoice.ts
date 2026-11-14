@@ -22,6 +22,7 @@ import { CheckoutIdempotencyKeyArg } from '../lib/moneyIdempotency';
 import { amountDueCentsOf, statesNoBalance } from '../lib/amountDueRule';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
+import { INVOICE_WRITTEN_OFF_CODE, isWrittenOff } from '../lib/invoiceArchive';
 import { OPEN_CHECKOUT_SESSIONS_FIELD } from '../lib/checkoutSessionSweep';
 import { hiddenFromHousehold } from '../lib/quoteDecision';
 
@@ -147,6 +148,13 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   // document, one extra read, and only when the document states nothing. An
   // invoice that states its balance takes the same path it always did, for the
   // same cost.
+  // #2090: the business wrote off what was left. Nothing is owed, so no
+  // checkout is opened, and the household is told so in its own words.
+  if (isWrittenOff(inv as Record<string, unknown>)) {
+    throw new HttpsError('failed-precondition', 'There is nothing to pay on this invoice.', {
+      code: INVOICE_WRITTEN_OFF_CODE,
+    });
+  }
   let legacyPaidCents: number | null = null;
   if (statesNoBalance(inv)) {
     const rows = await invoiceSnap.ref.collection('payments').get();

@@ -107,6 +107,7 @@ function invoiceDto(over: Record<string, unknown> = {}): Record<string, unknown>
     creditAmountCents: null,
     creditTarget: null,
     creditRedeemedAtMs: null,
+    writtenOffCents: null,
     // Issue #409: how this bill can be paid, resolved off the options it was
     // issued with. A believable invoice carries at least the card, because
     // the card needs nothing configured.
@@ -140,6 +141,7 @@ const FULL_SKIP_TALLY = {
   no_total: 0,
   balance_already_correct: 0,
   would_lower_balance: 0,
+  written_off: 0,
 };
 
 function repairResult(over: Record<string, unknown> = {}): Record<string, unknown> {

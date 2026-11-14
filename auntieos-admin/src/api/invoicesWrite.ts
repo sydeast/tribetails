@@ -40,6 +40,8 @@ import type {
   SetSessionDoNotInvoiceArgs,
   SetSessionDoNotInvoiceResult,
   UnarchiveInvoiceArgs,
+  WriteOffInvoiceArgs,
+  WriteOffInvoiceResult,
   WithdrawQuoteArgs,
   WithdrawQuoteResult,
   UnarchiveInvoiceResult,
@@ -552,16 +554,16 @@ export async function withdrawQuote(invoiceId: string): Promise<WithdrawQuoteRes
  * totals.
  *
  * ARCHIVING IS NOT DELETION AND NOT CANCELLATION. The invoice keeps every field
- * it had, and the kinfolk portal is unaffected: the household still sees it and
- * can still pay it. #2195: except a quote, which the household stops seeing,
+ * it had, and the kinfolk portal is unaffected: the household still sees it
+ * (with nothing to pay, since only a settled or written-off one is archived). #2195: except a quote, which the household stops seeing,
  * and whose visits go back on the not-yet-invoiced list, as a draft's do.
  *
- * `force` exists because archiving an invoice that money is still owed on
- * removes it from the very total that would remind anyone to collect it, which
- * is a decision to write off real money. Without `force` that is refused
- * (`failed-precondition`, `details.code: 'invoice_still_owing'`); with it the
- * audit entry records the write-off distinctly. A draft or a quote is exempt,
- * because neither was ever claimed from anyone.
+ * #2090: AN INVOICE WITH MONEY OWED IS NEVER ARCHIVED (operator ruling
+ * 2026-11-12: archive is only tidying). The server refuses it with
+ * `details.code: 'invoice_still_owing'` and `details.owedCents`, and no flag
+ * gets round that any more; `writeOffInvoice` below is the way to give up a
+ * balance, after which the invoice archives like any settled one. A draft or a
+ * quote is exempt, because neither was ever claimed from anyone.
  *
  * Re-archiving throws `invoice_already_archived` rather than succeeding
  * silently.
@@ -570,14 +572,37 @@ export async function withdrawQuote(invoiceId: string): Promise<WithdrawQuoteRes
  * list; the answer names them. Empty for any other invoice, and empty from a
  * server older than #2168, which does not send the list.
  */
-export async function archiveInvoice(invoiceId: string, force = false): Promise<{ releasedSessionIds: string[] }> {
-  const res = await call<ArchiveInvoiceArgs, ArchiveInvoiceResult>('archiveInvoice', {
-    invoiceId,
-    ...(force ? { force: true } : {}),
-  });
+export async function archiveInvoice(invoiceId: string): Promise<{ releasedSessionIds: string[] }> {
+  const res = await call<ArchiveInvoiceArgs, ArchiveInvoiceResult>('archiveInvoice', { invoiceId });
   return { releasedSessionIds: Array.isArray(res?.releasedSessionIds) ? res.releasedSessionIds : [] };
 }
-
+/**
+ * writeOffInvoice (owner only, #2090): gives up what is left on an open
+ * invoice. The server writes the write-off as its own ledger entry (not a
+ * payment, not credit), stamps the invoice `written_off` with nothing owed,
+ * and the household is no longer asked to pay it. `amountCents` is the balance
+ * the confirm showed; a different balance by then is refused with
+ * `write_off_amount_changed` and `details.owedCents`, so nothing is written off
+ * unseen. Drafts, quotes, paid, archived and already written-off invoices are
+ * refused by name.
+ */
+export async function writeOffInvoice(invoiceId: string, amountCents: number): Promise<WriteOffInvoiceResult> {
+  return call<WriteOffInvoiceArgs, WriteOffInvoiceResult>('writeOffInvoice', { invoiceId, amountCents });
+}
+/** A callable refusal's `details.code`, or null. Clients branch on this, never on the sentence. */
+export function refusalCodeOf(err: unknown): string | null {
+  const details = (err as { details?: unknown } | null | undefined)?.details;
+  if (!details || typeof details !== 'object') return null;
+  const code = (details as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
+/** A refusal's `details.owedCents` (archive and write-off refusals carry it), or null. */
+export function refusalOwedCentsOf(err: unknown): number | null {
+  const details = (err as { details?: unknown } | null | undefined)?.details;
+  if (!details || typeof details !== 'object') return null;
+  const owed = (details as { owedCents?: unknown }).owedCents;
+  return typeof owed === 'number' && Number.isInteger(owed) && owed >= 0 ? owed : null;
+}
 /**
  * unarchiveInvoice (admin): restores an archived invoice to the working list.
  *

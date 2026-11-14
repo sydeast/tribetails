@@ -140,6 +140,24 @@ class Stage2Step2HelpersTest {
         assertEquals(30.0, weeklyRevenue(invoices, "2026-06-01", "2026-06-07"))
     }
 
+    @Test fun `weeklyRevenue counts only what was collected on a written-off invoice (#2090)`() {
+        // $50 billed, $20 paid, $30 written off: $20 came in, never the $50
+        // total that a zero balance alone would read as paid.
+        val invoices = listOf(
+            Invoice(
+                _id = "w1", status = "written_off", amountDue = 0.0, total = 50.0, date = "2026-06-03",
+                writtenOffCents = JsonPrimitive(3000),
+            ),
+            // Written off in full: nothing came in.
+            Invoice(
+                _id = "w2", status = "written_off", amountDue = 0.0, total = 9.0, date = "2026-06-04",
+                writtenOffCents = JsonPrimitive(900),
+            ),
+            Invoice(_id = "p1", status = "paid", amountDue = 0.0, total = 100.0, date = "2026-06-02"),
+        )
+        assertEquals(120.0, weeklyRevenue(invoices, "2026-06-01", "2026-06-07"))
+    }
+
     @Test fun `weeklyRevenue skips invoices with unparseable dates`() {
         val invoices = listOf(
             Invoice(_id = "a", status = "paid", amountDue = 0.0, total = 40.0, date = "garbage"),

@@ -328,3 +328,4 @@ verifyActivityLogChain
 verifyVisitArrival
 videoGpsStripSweep
 withdrawQuote
+writeOffInvoice

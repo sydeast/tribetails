@@ -79,6 +79,7 @@ describe('#944 the allowlist is a real list of real callables', () => {
   it('nothing on the allowlist is a money callable', () => {
     const money = [
       'createInvoice', 'updateInvoice', 'markInvoicePaid', 'archiveInvoice', 'unarchiveInvoice',
+      'writeOffInvoice',
       'generateInvoicePdf', 'generateReceipt', 'postInvoiceEvent', 'repairInvoicePayments',
       'sendInvoiceReminder', 'reviewAndSendDraftInvoice', 'createQuote', 'resendQuote',
       'listUninvoicedSessions', 'setSessionDoNotInvoice', 'logExpense', 'listExpenses',

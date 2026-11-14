@@ -35,6 +35,7 @@ describe('invoiceStateOf table (#884)', () => {
     ['paid', { status: 'open', amountDue: 0, total: 40 }, 'an open label with nothing left due'],
     ['paid', { status: 'paid', total: 40 }, 'a paid label with no amountDue: the rule reads nothing owed'],
     ['zero', { status: 'open', amountDue: 0, total: 0 }, 'a $0 comped invoice'],
+    ['written_off', { status: 'written_off', amountDue: 0, total: 40 }, '#2090: written off, never read as paid'],
     ['zero', {}, 'a doc with no fields'],
     ['open', { status: 'open', amountDue: 40, total: 40 }, 'an open bill'],
     ['open', { status: 'overdue', amountDue: 40, total: 40 }, 'an overdue label with a balance'],

@@ -58,6 +58,7 @@ const {
   updateInvoice,
   archiveInvoice,
   unarchiveInvoice,
+  writeOffInvoice,
   retryInvoiceCheckoutClose,
   linkInvoiceSessions,
   previewInvoiceNotice,
@@ -76,6 +77,7 @@ const {
   updateInvoice: vi.fn(),
   archiveInvoice: vi.fn(),
   unarchiveInvoice: vi.fn(),
+  writeOffInvoice: vi.fn(),
   retryInvoiceCheckoutClose: vi.fn(),
   linkInvoiceSessions: vi.fn(),
   previewInvoiceNotice: vi.fn(),
@@ -101,6 +103,7 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   updateInvoice,
   archiveInvoice,
   unarchiveInvoice,
+  writeOffInvoice,
   retryInvoiceCheckoutClose,
   linkInvoiceSessions,
   previewInvoiceNotice,
@@ -189,6 +192,8 @@ function ledgerResult(over: Partial<GetInvoiceLedgerResult> = {}): GetInvoiceLed
     paidCents: 0,
     totalCents: 4000,
     amountDueCents: 4000,
+    writeOffs: [],
+    writtenOffCents: 0,
     ledgerPayments: [],
     // Same-household money naming no invoice. The callable carries it so the
     // staff Android invoice screen can stop reading the root `payments`
@@ -295,6 +300,16 @@ function entry(over: Partial<InvoiceEntry> = {}): InvoiceEntry {
   };
 }
 
+/** A settled invoice: nothing owed, so archiving is plain tidying (#2090). */
+const PAID_STAMP: Partial<InvoiceEntry> = { status: 'paid', editScope: 'none', amountDue: 0 };
+/** #2090: $30 of a $40 invoice written off after $10 came in. */
+const WRITTEN_OFF_STAMP: Partial<InvoiceEntry> = {
+  status: 'written_off',
+  editScope: 'none',
+  amountDue: 0,
+  amountDueCents: 0,
+  writtenOffCents: 3000,
+};
 beforeEach(() => {
   readInvoiceSendMarks.mockReset();
   sendInvoiceReminder.mockReset();
@@ -321,6 +336,7 @@ beforeEach(() => {
   });
   archiveInvoice.mockReset().mockResolvedValue({ releasedSessionIds: [] });
   unarchiveInvoice.mockReset().mockResolvedValue({ notice: '' });
+  writeOffInvoice.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv1', writeOffId: 'wo1', writtenOffCents: 4000 });
   retryInvoiceCheckoutClose.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv1', closedCount: 1, failedCount: 0 });
   getInvoiceLedger.mockReset().mockResolvedValue(ledgerResult());
   linkInvoiceSessions.mockReset();
@@ -1252,31 +1268,119 @@ describe('InvoiceDetail archive and restore', () => {
     );
     expect(screen.getByRole('button', { name: /^archive$/i })).toBeInTheDocument();
   });
-  it('confirms first, and says what archiving does NOT do', async () => {
-    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+  it('confirms first, and says archiving is only tidying', async () => {
+    render(<InvoiceDetail invoice={entry(PAID_STAMP)} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
-    expect(screen.getByText(/does NOT delete it, cancel it, or forgive what is owed/i)).toBeInTheDocument();
+    expect(screen.getByText(/It is not deleted or cancelled, and Restore brings it back/i)).toBeInTheDocument();
+    expect(screen.queryByText(/forgive what is owed/i)).toBeNull();
     expect(archiveInvoice).not.toHaveBeenCalled();
   });
-  it('archives without force on confirm', async () => {
+  it('archives a settled invoice on confirm, sending no force flag', async () => {
+    render(<InvoiceDetail invoice={entry(PAID_STAMP)} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /archive invoice/i }));
+    await waitFor(() => expect(archiveInvoice).toHaveBeenCalledWith('inv1'));
+    expect(archiveInvoice.mock.calls[0]).toHaveLength(1);
+  });
+  // #2090: archive is only tidying. Money owed is never archived, and the
+  // prompt is the reason and the way forward, never an "Action failed".
+  it('#2090: on an owed invoice, Archive says why it cannot and offers the write-off, never "Archive anyway"', async () => {
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
-    await userEvent.click(screen.getByRole('button', { name: /archive invoice/i }));
-    await waitFor(() => expect(archiveInvoice).toHaveBeenCalledWith('inv1', false));
+    expect(
+      screen.getByText(
+        'This invoice still has $40.00 owing, so it cannot be archived. Record the payment, or write off the balance first.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /archive anyway/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /archive invoice/i })).toBeNull();
+    expect(screen.queryByText(/action failed/i)).toBeNull();
+    expect(archiveInvoice).not.toHaveBeenCalled();
+    await userEvent.click(within(screen.getByTestId('archive-owed')).getByRole('button', { name: /write off balance/i }));
+    expect(screen.getByTestId('write-off-confirm')).toBeInTheDocument();
   });
-  it('re-offers the choice as an explicit write-off when money is still owed', async () => {
-    // The server refuses rather than silently dropping a real balance out of
-    // the outstanding total. That is a decision to hand back to the operator,
-    // not an error to bounce off.
+  it('#2090: a list that was behind the server gets the same prompt from the refusal code, not from the sentence', async () => {
     archiveInvoice.mockRejectedValueOnce(
-      new Error('This invoice still has $40.00 owing. Archiving it would drop that from the outstanding total.'),
+      Object.assign(new Error('anything at all'), { details: { code: 'invoice_still_owing', owedCents: 1250 } }),
     );
-    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    render(<InvoiceDetail invoice={entry(PAID_STAMP)} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
     await userEvent.click(screen.getByRole('button', { name: /archive invoice/i }));
-    expect(await screen.findByText(/writes that balance off the outstanding total/i)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /archive anyway/i }));
-    await waitFor(() => expect(archiveInvoice).toHaveBeenLastCalledWith('inv1', true));
+    expect(await screen.findByText(/still has \$12\.50 owing, so it cannot be archived/)).toBeInTheDocument();
+    expect(archiveInvoice).toHaveBeenCalledTimes(1);
+  });
+  it('#2090: the write-off confirm names the household, the invoice number and the amount, then writes off exactly that', async () => {
+    render(<InvoiceDetail invoice={entry({ amountDueCents: 4000 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^write off balance$/i }));
+    expect(
+      screen.getByText(
+        'Write off $40.00 on invoice 1042 for The Whitfields? The household will no longer be asked to pay it, and it stops counting as outstanding. It is not recorded as a payment or as account credit, and it cannot be undone.',
+      ),
+    ).toBeInTheDocument();
+    expect(writeOffInvoice).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Write off $40.00' }));
+    await waitFor(() => expect(writeOffInvoice).toHaveBeenCalledWith('inv1', 4000));
+    expect(
+      await screen.findByText(
+        'Balance of $40.00 written off. The household is no longer asked to pay it, and the invoice can be archived now.',
+      ),
+    ).toBeInTheDocument();
+  });
+  it('#2090: Cancel on the write-off confirm writes nothing off', async () => {
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^write off balance$/i }));
+    await userEvent.click(within(screen.getByTestId('write-off-confirm')).getByRole('button', { name: /^cancel$/i }));
+    expect(screen.queryByTestId('write-off-confirm')).toBeNull();
+    expect(writeOffInvoice).not.toHaveBeenCalled();
+  });
+  it('#2090: a balance that moved since is shown at its new figure, and nothing is written off', async () => {
+    writeOffInvoice.mockRejectedValueOnce(
+      Object.assign(new Error('The balance on this invoice is now $15.00, not $40.00. Check it and try again.'), {
+        details: { code: 'write_off_amount_changed', owedCents: 1500 },
+      }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^write off balance$/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Write off $40.00' }));
+    expect(await screen.findByText('The balance on this invoice is now $15.00, not $40.00. Check it and try again.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Write off $15.00' })).toBeInTheDocument();
+  });
+  it('#2090: any other refusal is shown in its own words and closes the confirm', async () => {
+    writeOffInvoice.mockRejectedValueOnce(
+      Object.assign(new Error('The balance on this invoice was already written off.'), { details: { code: 'write_off_already' } }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^write off balance$/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Write off $40.00' }));
+    expect(await screen.findByText(/already written off/)).toBeInTheDocument();
+    expect(screen.queryByTestId('write-off-confirm')).toBeNull();
+  });
+  it('#2090: Write off balance is offered only on an open invoice with money owed that is not archived', () => {
+    const none: Partial<InvoiceEntry>[] = [
+      { status: 'draft', editScope: 'all' },
+      { status: 'quote', editScope: 'all' },
+      PAID_STAMP,
+      { ...WRITTEN_OFF_STAMP },
+      { archivedAt: fakeTs('2026-07-20T00:00:00Z') },
+    ];
+    for (const over of none) {
+      const { unmount } = render(<InvoiceDetail invoice={entry(over)} onClose={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: /^write off balance$/i })).toBeNull();
+      unmount();
+    }
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /^write off balance$/i })).toBeInTheDocument();
+  });
+  it('#2090: a written-off invoice reads Written off, offers no collection action, and archives', async () => {
+    render(<InvoiceDetail invoice={entry({ ...WRITTEN_OFF_STAMP, paidCents: 1000 })} onClose={vi.fn()} />);
+    expect(screen.getByText('WRITTEN OFF')).toBeInTheDocument();
+    expect(within(screen.getByTestId('written-off-fact')).getByText('$30.00')).toBeInTheDocument();
+    expect(screen.queryByText('PAID')).toBeNull();
+    expect(screen.queryByRole('button', { name: /send reminder/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /record payment|mark paid/i })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /archive invoice/i }));
+    await waitFor(() => expect(archiveInvoice).toHaveBeenCalledWith('inv1'));
   });
   it('shows Restore, and an explanatory banner, on an already-archived invoice', async () => {
     render(<InvoiceDetail invoice={entry({ archivedAt: fakeTs('2026-07-20T00:00:00Z') })} onClose={vi.fn()} />);
@@ -1327,7 +1431,7 @@ describe('InvoiceDetail archive and restore', () => {
 
   it('#2168: archiving a draft says its visits are back on the un-invoiced list', async () => {
     archiveInvoice.mockResolvedValueOnce({ releasedSessionIds: ['s1', 's2'] });
-    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    render(<InvoiceDetail invoice={entry({ status: 'draft', editScope: 'all' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
     await userEvent.click(screen.getByRole('button', { name: /archive invoice/i }));
     expect(await screen.findByText('Invoice archived. Its 2 visits are back on the un-invoiced list.')).toBeInTheDocument();
@@ -1342,9 +1446,8 @@ describe('InvoiceDetail archive and restore', () => {
     expect(await screen.findByText(`Invoice restored to the working list. ${notice}`)).toBeInTheDocument();
   });
   it('#2168: the archive and restore messages, in the same words as Android', () => {
-    expect(archiveNoticeText(false, 0)).toBe('Invoice archived.');
-    expect(archiveNoticeText(false, 1)).toBe('Invoice archived. Its visit is back on the un-invoiced list.');
-    expect(archiveNoticeText(true, 0)).toBe('Invoice archived, and the balance written off the outstanding total.');
+    expect(archiveNoticeText(0)).toBe('Invoice archived.');
+    expect(archiveNoticeText(1)).toBe('Invoice archived. Its visit is back on the un-invoiced list.');
     expect(restoreNoticeText('')).toBe('Invoice restored to the working list.');
   });
 
@@ -3775,9 +3878,9 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
   });
 
   it('#2195 the archive notice names a quote as a quote', () => {
-    expect(archiveNoticeText(false, 1, 'quote')).toBe(
+    expect(archiveNoticeText(1, 'quote')).toBe(
       'Quote archived. The household no longer sees it. Its visit is back on the un-invoiced list.',
     );
-    expect(archiveNoticeText(false, 0)).toBe('Invoice archived.');
+    expect(archiveNoticeText(0)).toBe('Invoice archived.');
   });
 });

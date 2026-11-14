@@ -971,6 +971,7 @@ internal fun invoiceFeedPill(inv: Invoice): Pair<String, AuntieStatusTone> = whe
     InvoiceState.CANCELLED -> "Cancelled" to AuntieStatusTone.Muted
     InvoiceState.CREDIT -> "Credit" to AuntieStatusTone.Teal
     InvoiceState.REDEEMED -> "Redeemed" to AuntieStatusTone.Muted
+    InvoiceState.WRITTEN_OFF -> "Written off" to AuntieStatusTone.Muted
     null -> inv.status.trim().ifBlank { "No status" } to AuntieStatusTone.Muted
 }
 

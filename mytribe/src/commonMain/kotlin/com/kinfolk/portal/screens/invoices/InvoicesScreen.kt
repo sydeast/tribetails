@@ -348,7 +348,7 @@ private fun PaidInvoiceRow(invoice: Invoice, onClick: () -> Unit) {
                 Text("Invoice #${invoice.id}", style = type.sansMeta)
             }
             // #1330: the day with its year, the same label the web portal shows.
-            Text("Paid ${com.kinfolk.portal.util.invoiceDayLabel(invoice.date).ifEmpty { "—" }}", style = type.sansMeta)
+            Text(paidRowMetaLabel(invoice), style = type.sansMeta)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
             Text(formatUsd(invoice.total), style = type.heritageTitle.copy(fontSize = 18.sp))
@@ -471,6 +471,35 @@ internal fun openRowMetaLabel(invoice: Invoice, viewerUid: String?): String = wh
     else -> "Needs your answer"
 }
 
+/** #2090: the row's money line on a written-off invoice. Same words as the web portal. */
+internal const val WRITTEN_OFF_ROW_LABEL = "Written off, nothing to pay"
+
+/** #2090: the Amount Due cell on a written-off invoice. */
+internal const val NOTHING_TO_PAY = "Nothing to pay"
+
+/** The meta line under a Paid History row: the paid day, or the write-off (#2090). */
+internal fun paidRowMetaLabel(invoice: Invoice): String =
+    if (invoice.status == InvoiceStatus.WrittenOff) {
+        WRITTEN_OFF_ROW_LABEL
+    } else {
+        "Paid ${com.kinfolk.portal.util.invoiceDayLabel(invoice.date).ifEmpty { "—" }}"
+    }
+
+/**
+ * #2090: the detail screen's headline figure. A written-off invoice says there
+ * is nothing to pay, never "Paid" its total: the household did not pay the part
+ * that was written off.
+ */
+internal fun invoiceHeadline(invoice: Invoice): Pair<String, String> {
+    val isCredit = invoice.status == InvoiceStatus.Credit || invoice.status == InvoiceStatus.Redeemed
+    return when {
+        isCredit -> "Credit" to formatUsd(invoice.creditAmountCents?.toDouble()?.div(100.0) ?: 0.0)
+        invoice.status == InvoiceStatus.WrittenOff -> "Amount Due" to NOTHING_TO_PAY
+        invoice.isPaid -> "Paid" to formatUsd(invoice.total)
+        else -> "Amount Due" to formatUsd(invoice.amountDue)
+    }
+}
+
 /**
  * Whether THIS invoice offers a way to pay: the row's Pay button, the detail
  * screen's pay options, and the controller's own check before it calls
@@ -510,6 +539,7 @@ internal fun isPayable(status: InvoiceStatus): Boolean = when (status) {
     InvoiceStatus.Credit,
     InvoiceStatus.Redeemed,
     InvoiceStatus.Cancelled,
+    InvoiceStatus.WrittenOff,
     -> false
 }
 
@@ -530,6 +560,8 @@ internal fun invoiceStatusLabel(status: InvoiceStatus): String = when (status) {
     InvoiceStatus.Credit -> "Credit"
     InvoiceStatus.Redeemed -> "Redeemed"
     InvoiceStatus.Cancelled -> "Cancelled"
+    // #2090: same words as the web portal.
+    InvoiceStatus.WrittenOff -> "Written off"
 }
 
 /**
@@ -554,6 +586,8 @@ private fun StatusChip(status: InvoiceStatus) {
         // The same purple the credits card already uses for a spent credit.
         InvoiceStatus.Redeemed -> KinfolkBrand.FamilyPurple
         InvoiceStatus.Cancelled -> KinfolkBrand.SnuggleCoral
+        // #2090: closed by a write-off. Quiet, never the paid teal.
+        InvoiceStatus.WrittenOff -> KinfolkBrand.NavySoft
     }
     KinTintPill(invoiceStatusChipLabel(status), color)
 }

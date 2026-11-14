@@ -119,6 +119,8 @@ class InvoiceDetailPaymentUnitsTest {
         paidCents = 0L,
         totalCents = 20000L,
         amountDueCents = 6250L,
+        writeOffs = emptyList(),
+        writtenOffCents = 0L,
         ledgerPayments = ledgerPayments,
         unlinkedKinfolkPayments = unlinked,
         unresolvedAmountCount = (ledgerPayments + unlinked).count { !it.amountResolved }.toLong(),
