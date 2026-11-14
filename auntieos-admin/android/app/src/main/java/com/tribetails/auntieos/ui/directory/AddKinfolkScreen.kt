@@ -343,7 +343,7 @@ fun AddKinfolkScreen(
 
 /** #1951: a field's own message, in the error colour, or nothing. */
 @Composable
-private fun FieldErrorText(message: String?) {
+internal fun FieldErrorText(message: String?) {
     if (message == null) return
     Text(
         text = message,

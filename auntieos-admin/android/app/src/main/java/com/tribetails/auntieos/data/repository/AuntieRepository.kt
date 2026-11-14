@@ -737,8 +737,8 @@ class AuntieRepository(
      * office made first. A Kin the household added in the portal has its copy
      * under another id, so one save re-pointed it at a copy that does not exist.
      * [familyKinPath] is the link the Kin was loaded with: it is written only
-     * when that is blank, or when this save moves the Kin to another household
-     * (`kinfolkId` in [changes]); null (not known) writes nothing.
+     * when that is blank; a link that is there is never changed, and null (not
+     * known) writes nothing.
      * [familyKinPathStamp] decides.
      */
     suspend fun updateKinFields(
@@ -755,13 +755,12 @@ class AuntieRepository(
         firestore.collection("kin").document(documentId)
             .set(payload, com.google.firebase.firestore.SetOptions.merge()).await()
         // Additive FK for the MyTribe pet mirror (onFlatKinWrite), only where the
-        // Kin has no link yet or has just moved household (#2115). Leaves the
+        // Kin has no link yet (#2115). Leaves the
         // field writes above untouched.
         familyKinPathStamp(
             kinId = documentId,
             kinfolkId = kinfolkId,
             existingFamilyKinPath = familyKinPath,
-            movedHousehold = "kinfolkId" in changes,
         )?.let { stamp -> writeFamilyKinPathStamp(documentId, stamp) }
         AuntieLog.d("Update successful for kin: $documentId")
         Unit
@@ -797,7 +796,7 @@ class AuntieRepository(
      * (#2115).
      */
     private suspend fun stampFamilyKinPath(kinId: String, kinfolkId: String) {
-        familyKinPathStamp(kinId, kinfolkId, existingFamilyKinPath = "", movedHousehold = false)
+        familyKinPathStamp(kinId, kinfolkId, existingFamilyKinPath = "")
             ?.let { writeFamilyKinPathStamp(kinId, it) }
     }
 

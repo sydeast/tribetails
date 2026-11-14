@@ -28,6 +28,12 @@ internal const val EMERGENCY_CONTACT_PHONE_SHAPE = "An Emergency Contact's phone
 /** Beside Primary Phone. Blank is the "phone or email" rule's business, not this one. */
 internal fun addKinfolkPhoneError(raw: String): String? = if (phoneOkOrBlank(raw)) null else ADD_KINFOLK_PHONE_INVALID
 
+internal const val EDIT_KINFOLK_PHONE_REQUIRED = "A phone number is required."
+
+/** Beside Primary Phone on Edit, where a phone is required (the Save gate's own rule). */
+internal fun editKinfolkPhoneError(raw: String): String? =
+    if (raw.isBlank()) EDIT_KINFOLK_PHONE_REQUIRED else addKinfolkPhoneError(raw)
+
 internal fun addKinfolkSecondaryPhoneError(raw: String): String? =
     if (phoneOkOrBlank(raw)) null else ADD_KINFOLK_SECONDARY_PHONE_INVALID
 

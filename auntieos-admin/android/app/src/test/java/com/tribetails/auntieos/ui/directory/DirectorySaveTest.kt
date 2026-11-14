@@ -364,7 +364,7 @@ class DirectorySaveTest {
         advanceUntilIdle()
 
         assertEquals(listOf<String?>("families/kf1/kin/portal-7"), links)
-        assertEquals(null, familyKinPathStamp("k1", "kf1", links.single(), movedHousehold = false))
+        assertEquals(null, familyKinPathStamp("k1", "kf1", links.single()))
     }
 
     @Test

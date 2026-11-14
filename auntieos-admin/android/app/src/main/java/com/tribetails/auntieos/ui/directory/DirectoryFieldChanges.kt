@@ -176,8 +176,9 @@ internal val KIN_SERVER_OWNED = setOf("id", "updatedAt", "familyKinPath")
  * nameless Kin on the household's roster.
  *
  * So the link is written only when the Kin has none ([existingFamilyKinPath]
- * blank: a Kin just created, or one from before the link existed), or when the
- * save moves the Kin to another household ([movedHousehold]). A null
+ * blank: a Kin just created, or one from before the link existed). A save
+ * never changes a link that is there: Edit kin has no household control, and
+ * the server (#1912) repairs a link from the household copies. A null
  * [existingFamilyKinPath] means the caller does not know the link, and nothing
  * is written: leaving a link alone is always safe, re-pointing one is not.
  */
@@ -185,10 +186,9 @@ internal fun familyKinPathStamp(
     kinId: String,
     kinfolkId: String,
     existingFamilyKinPath: String?,
-    movedHousehold: Boolean,
 ): Map<String, String>? {
     if (kinId.isBlank() || kinfolkId.isBlank() || existingFamilyKinPath == null) return null
-    if (existingFamilyKinPath.isNotBlank() && !movedHousehold) return null
+    if (existingFamilyKinPath.isNotBlank()) return null
     return mapOf("kinfolkId" to kinfolkId, "familyKinPath" to "families/$kinfolkId/kin/$kinId")
 }
 

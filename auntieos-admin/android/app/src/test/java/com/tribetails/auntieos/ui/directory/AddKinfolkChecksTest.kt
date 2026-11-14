@@ -63,6 +63,10 @@ class AddKinfolkChecksTest {
         assertEquals(EMERGENCY_CONTACT_PHONE_SHAPE, emergencyContactPhoneShapeError(listOf(EmergencyContactDraft("Rae Park", "xyz"))))
         assertNull(emergencyContactPhoneShapeError(listOf(EmergencyContactDraft("Rae Park", "8055550199"))))
         assertNull(emergencyContactPhoneShapeError(listOf(EmergencyContactDraft("Rae Park", ""))))
+        // Edit, where the primary phone is required, says so beside it too.
+        assertEquals(EDIT_KINFOLK_PHONE_REQUIRED, editKinfolkPhoneError(" "))
+        assertEquals(ADD_KINFOLK_PHONE_INVALID, editKinfolkPhoneError("abc"))
+        assertNull(editKinfolkPhoneError("805-555-0134"))
     }
 
     @Test
