@@ -152,9 +152,9 @@ class InvoiceComposerTest {
         assertEquals("Due date must be a real YYYY-MM-DD date", blocked(termsCode = InvoiceTermsCode.CUSTOM, customDueDate = "soon"))
         assertNull(blocked(termsCode = InvoiceTermsCode.CUSTOM, customDueDate = "2026-11-01"))
         assertTrue(blocked(selected = setOf("s3"))!!.contains("has no rate on file"))
-        assertTrue(
-            blocked(termsCode = InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, selected = emptySet(), drafts = listOf(ComposerDraftLine("M", "1", "4")))!!
-                .startsWith("These terms count from the last visit"),
+        // #1966: visit terms with no visit ticked are due on receipt, so nothing blocks.
+        assertNull(
+            blocked(termsCode = InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, selected = emptySet(), drafts = listOf(ComposerDraftLine("M", "1", "4"))),
         )
         val badTotal = "Enter the total as dollars, zero or more, like 120.00."
         assertEquals(badTotal, blocked(path = InvoiceCreatePath.BLANK, totalText = ""))
@@ -226,12 +226,13 @@ class InvoiceComposerTest {
         totalText: String = "",
         sendToKinfolk: Boolean = false,
     ): NewInvoiceBuild {
-        val date = "2026-10-20"
+        // Dated on the last visit, so the counts are not held to the invoice date (#1966 review).
+        val date = "2026-10-09"
         val due = resolveDueDate(
             termsCode,
             date,
             if (path == InvoiceCreatePath.WORK) all.filter { it.sessionId in selected }.map { it.startTime } else emptyList(),
-            "2026-10-20",
+            "2026-10-09",
         )
         val money = if (path == InvoiceCreatePath.WORK) composerMoney(all, selected, emptyMap(), emptyList(), "") else null
         return buildNewInvoiceRequest(
@@ -247,7 +248,7 @@ class InvoiceComposerTest {
         assertEquals("", r.invoice.invoiceNumber, "the server assigns the number")
         assertEquals("Ada Wren", r.invoice.client)
         assertEquals("kf1", r.invoice.kinfolkId)
-        assertEquals("2026-10-20", r.invoice.date)
+        assertEquals("2026-10-09", r.invoice.date)
         // Last ticked visit 2026-10-09, plus 7.
         assertEquals("2026-10-16", r.invoice.dueDate)
         assertEquals("net_7_after_last_visit", r.termsCode)
@@ -296,7 +297,8 @@ class InvoiceComposerTest {
         assertNull(r.invoiceDiscountCents)
         assertEquals(40.0, r.invoice.total)
         assertEquals(40.0, r.invoice.amountDue)
-        assertEquals("2026-11-03", r.invoice.dueDate)
+        // 14 days after the Oct 9 invoice date.
+        assertEquals("2026-10-23", r.invoice.dueDate)
         assertTrue(r.invoice.sessionIds.isEmpty())
     }
 
@@ -316,5 +318,21 @@ class InvoiceComposerTest {
         assertNull(parseDollarsToCents("-5"))
         assertNull(parseQty("0"))
         assertEquals(2.5, parseQty("2.5"))
+    }
+
+    @Test
+    fun `#1966 review terms that land before the invoice date say it is due on receipt`() {
+        val due = resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-13", listOf("2026-11-14"), "2026-11-13")
+        assertEquals("2026-11-13", due.dueDate)
+        assertEquals(TERMS_BEFORE_INVOICE_DATE, composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, due, "2026-11-13"))
+        val none = resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-13", emptyList(), "2026-11-13")
+        assertEquals(NO_VISITS_DUE_ON_RECEIPT, composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, none, "2026-11-13"))
+        // Dated Nov 13 and written up on Nov 20: held to Nov 13, which has passed, and it still says so.
+        val backdated = resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-13", listOf("2026-11-14"), "2026-11-20")
+        val note = composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, backdated, "2026-11-13")
+        assertTrue(note.startsWith(TERMS_BEFORE_INVOICE_DATE))
+        assertTrue(note.contains("overdue the moment it goes out"))
+        // #2092: a quote is not a bill, so it never says overdue.
+        assertEquals(TERMS_BEFORE_INVOICE_DATE, composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, backdated, "2026-11-13", quote = true))
     }
 }

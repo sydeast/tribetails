@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -105,6 +106,9 @@ fun NewInvoiceDialog(
     initialKinfolkId: String = "",
     submitting: Boolean = false,
     submitError: String? = null,
+    /** #1966: the business's Payment terms setting and zone, and whether they have loaded. */
+    termsSetting: InvoiceTermsSettingState = InvoiceTermsSettingState(),
+    onRetryTermsSetting: () -> Unit = {},
 ) {
     if (!visible) return
 
@@ -122,7 +126,13 @@ fun NewInvoiceDialog(
     var kind by remember(initialKind) { mutableStateOf(initialKind) }
     var path by remember { mutableStateOf(InvoiceCreatePath.WORK) }
     var date by remember(todayIso) { mutableStateOf(todayIso) }
-    var termsCode by remember { mutableStateOf(InvoiceTermsCode.DUE_ON_RECEIPT) }
+    // #1966: the terms start on the business's Payment terms setting, seeded
+    // once it loads unless the operator has already picked terms here.
+    var termsPicked by remember { mutableStateOf(false) }
+    var termsCode by remember { mutableStateOf(termsSetting.paymentTerms) }
+    LaunchedEffect(termsSetting.loading, termsSetting.paymentTerms) {
+        if (!termsSetting.loading && !termsPicked) termsCode = termsSetting.paymentTerms
+    }
     var customDueDate by remember { mutableStateOf("") }
     var totalText by remember { mutableStateOf("") }
     var invoiceDiscountText by remember { mutableStateOf("") }
@@ -149,6 +159,8 @@ fun NewInvoiceDialog(
         invoiceDate = date,
         serviceDates = if (onWork) sessions.filter { it.sessionId in selected }.map { it.startTime } else emptyList(),
         now = todayIso,
+        // #1966: visit days on the business's clock, as the server counts them.
+        timeZone = termsSetting.timeZone,
     )
     val dueDateForSubmit = if (termsCode == InvoiceTermsCode.CUSTOM) customDueDate.trim() else due.dueDate.orEmpty()
 
@@ -157,7 +169,7 @@ fun NewInvoiceDialog(
     val catalog = rememberServiceCatalog()
     val money = if (onWork) composerMoney(sessions, selected, prices, extraLines, invoiceDiscountText, catalog) else null
 
-    val blocked = composerBlockedReason(
+    val blocked = if (termsSetting.loading) TERMS_LOADING else composerBlockedReason(
         kinfolkId = pick.id,
         path = path,
         termsCode = termsCode,
@@ -170,7 +182,7 @@ fun NewInvoiceDialog(
         totalText = totalText,
         quote = isQuote,
     )
-    val termsNote = composerTermsNote(termsCode, due, date, quote = isQuote)
+    val termsNote = if (termsSetting.loading) TERMS_LOADING else composerTermsNote(termsCode, due, date, quote = isQuote)
 
     // #1593: each refusal under the field it is about, while it is wrong.
     val dueOrderProblem = if (termsCode == InvoiceTermsCode.CUSTOM) {
@@ -433,14 +445,23 @@ fun NewInvoiceDialog(
         AuntieDropdownField(
             value = termsCode,
             options = invoiceTermsDefs(),
-            onSelect = { termsCode = it },
+            onSelect = {
+                termsPicked = true
+                termsCode = it
+            },
             displayText = { it.label },
             label = "Terms",
-            enabled = !submitting,
+            enabled = !submitting && !termsSetting.loading,
             modifier = Modifier.fillMaxWidth(),
         )
 
         Text(termsNote, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        if (termsSetting.failed) {
+            // Stacked, not side by side: beside a weighted sentence the button
+            // measured a few pixels wide and could not be tapped.
+            Text(TERMS_LOAD_FAILED, style = AuntieTheme.typography.bodySmall, color = c.error)
+            GhostButton(label = "Try again", onClick = onRetryTermsSetting, enabled = !submitting)
+        }
 
         if (isQuote) {
             Row(

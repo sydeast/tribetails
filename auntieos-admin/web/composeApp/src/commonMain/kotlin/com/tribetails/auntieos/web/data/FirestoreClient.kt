@@ -4713,6 +4713,10 @@ data class BusinessSettings(
     // and every client. On, the Auntie keeps a "Send the KinTale" task until
     // it is sent; it never holds the visit back from Completed.
     val kinTaleRequired: Boolean = false,
+    // #1966: Settings > Invoices > Payment terms, the terms every new invoice
+    // starts on, as the wire code. Absent reads as due on receipt; read it
+    // through `paymentTermsSettingOf` (screens/invoices/InvoiceTerms.kt).
+    val invoicePaymentTerms: String = "due_on_receipt",
     // ISSUE #582: how close to the household counts as arrived, in metres. The
     // threshold under the switch above, not a second switch — there is no "off"
     // value. 150 m matches ARRIVAL_RADIUS_DEFAULT_METERS on the server, which

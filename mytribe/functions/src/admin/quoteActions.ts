@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -21,6 +21,13 @@ import {
   stageSessionLinks,
   storedReleasedSessionIds,
 } from '../lib/invoiceSessionLinks';
+import {
+  MAX_TERMS_SESSIONS,
+  businessToday,
+  readInvoiceTermsSettings,
+  resolveStructuredTerms,
+  type InvoiceTermsSettings,
+} from '../lib/invoiceCreateFields';
 
 /**
  * #2088: WHAT THE OFFICE CAN DO WITH A QUOTE ONCE IT EXISTS, besides sending it
@@ -190,6 +197,44 @@ async function audit(entry: Parameters<typeof writeAuditEntry>[0], fn: string, u
   });
 }
 
+/**
+ * #1966: the terms fields a quote turned into an invoice is written with.
+ *
+ * The business's Payment terms setting decides the due date, counted on the
+ * business's clock from the visits the invoice holds (due on receipt when it
+ * holds none). A due date the office picked by hand is kept: `custom` terms, or
+ * a typed date with no code at all. So is a quote the setting cannot date (no
+ * invoice date), rather than refusing the change. Reads only, so it runs inside
+ * the transaction before any write.
+ */
+export async function convertedQuoteTerms(
+  tx: Transaction,
+  firestore: Firestore,
+  data: Record<string, unknown>,
+  held: readonly string[],
+  settings: InvoiceTermsSettings,
+): Promise<Record<string, unknown>> {
+  const code = typeof data['termsCode'] === 'string' ? data['termsCode'].trim() : '';
+  const typedDue = typeof data['dueDate'] === 'string' ? data['dueDate'].trim() : '';
+  if (code === 'custom' || (code === '' && typedDue !== '')) return {};
+  const ids = Array.from(new Set(held.filter((id) => id.trim() !== ''))).slice(0, MAX_TERMS_SESSIONS);
+  const snaps = await Promise.all(ids.map((id) => tx.get(firestore.collection('kin_care_sessions').doc(id))));
+  const serviceDates: string[] = [];
+  for (const snap of snaps) {
+    const startTime = snap.exists ? (snap.data() ?? {})['startTime'] : undefined;
+    if (typeof startTime === 'string' && startTime.trim() !== '') serviceDates.push(startTime);
+  }
+  const outcome = resolveStructuredTerms({
+    termsCode: settings.paymentTerms,
+    date: typeof data['date'] === 'string' ? data['date'] : '',
+    dueDate: '',
+    serviceDates,
+    now: businessToday(settings.timeZone),
+    timeZone: settings.timeZone,
+  });
+  return outcome.ok ? outcome.fields : {};
+}
+
 export async function convertQuoteToInvoiceHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof ConvertQuoteToInvoiceResult>> {
@@ -200,6 +245,7 @@ export async function convertQuoteToInvoiceHandler(
   const firestore = db();
   const ref = firestore.collection('invoices').doc(args.invoiceId);
 
+  const termsSettings = await readInvoiceTermsSettings(firestore);
   const outcome = await firestore.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new HttpsError('not-found', 'That quote could not be found.');
@@ -215,8 +261,13 @@ export async function convertQuoteToInvoiceHandler(
     // the change by its day, with nothing written. A declined quote let its
     // visits go, and takes the free ones back here.
     const visits = await readQuoteReopen(tx, firestore, args.invoiceId, data, 'convert');
+    // #1966: the invoice it becomes is due by the business's Payment terms,
+    // counted from the visits it now holds, unless the quote's due date was
+    // picked by hand.
+    const due = await convertedQuoteTerms(tx, firestore, data, visits.held ?? [], termsSettings);
     const update: Record<string, unknown> = {
       ...visits.fields,
+      ...due,
       status: 'draft',
       invoiceStatus: 'draft',
       [QUOTE_DRAFT_FIELD]: FieldValue.delete(),
