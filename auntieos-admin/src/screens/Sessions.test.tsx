@@ -833,6 +833,21 @@ describe('Auntie Time: the card runs the visit', () => {
     });
   });
 
+  // #2199: the route hands the board who is signed in, resolved before it
+  // draws. The seat read answers "owner" here, so only the flag holds the
+  // button: it is held the first time it is drawn and is never an ordinary one.
+  it('#2199: told by the route that an Auntie is signed in, Complete is held without the token read', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'ON_MY_WAY', startTime: at(0, 9) })]));
+    renderBoard({ isAuntie: true });
+    const first = screen.queryByRole('button', { name: /^Complete$/ });
+    if (first !== null) expect(first).toHaveAttribute('aria-disabled', 'true');
+    const button = await screen.findByRole('button', { name: /^Complete$/ });
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button).toHaveAccessibleDescription('Only the owner can complete a visit.');
+    await user.click(button);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(transitionBookingStatus).not.toHaveBeenCalled();
+  });
   it('#2199: the owner\'s Complete is an ordinary button with no held reason', async () => {
     mount({ status: 'ON_MY_WAY', startTime: at(0, 9) });
     await waitFor(() => expect(currentSessionSeat).toHaveBeenCalled());

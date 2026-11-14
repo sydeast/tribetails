@@ -686,6 +686,30 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
     });
   });
 
+  // #2199: the caller knows who is signed in before the panel draws (the
+  // admin layout resolved it), so nothing waits on the token read. The seat is
+  // the owner's here, so only the flag can be what holds the button.
+  describe('#2199 first paint, told by the caller that an Auntie is signed in', () => {
+    it('the panel draws Mark Completed held at once', () => {
+      render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} isAuntie />);
+      const button = screen.getByRole('button', { name: 'Mark Completed' });
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      expect(button).toHaveAccessibleDescription('Only the owner can complete a visit.');
+    });
+    it('a Mark Completed question asked for on mount is never posed', () => {
+      render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} initialAction="complete" isAuntie />);
+      expect(screen.queryByRole('heading', { name: 'Mark this visit completed?' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Mark Completed' })).toHaveAttribute('aria-disabled', 'true');
+    });
+    it('the dialog form draws it held at once', () => {
+      render(<BookingActions entry={entry({ status: 'SCHEDULED' })} onClose={vi.fn()} isAuntie />);
+      expect(screen.getByRole('button', { name: 'Mark Completed' })).toHaveAttribute('aria-disabled', 'true');
+    });
+    it('passed false, the owner keeps an ordinary button', () => {
+      render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} isAuntie={false} />);
+      expect(screen.getByRole('button', { name: 'Mark Completed' })).not.toHaveAttribute('aria-disabled');
+    });
+  });
   it('#2199: the owner\'s Mark Completed is an ordinary button and completes the visit', async () => {
     markBookingCompleted.mockResolvedValue(undefined);
     const onDone = vi.fn();

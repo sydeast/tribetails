@@ -875,6 +875,7 @@ export function Bookings({
                 entry={detailEntry}
                 initialAction={detailAction}
                 onDone={closeDetail}
+                isAuntie={isAuntie}
               />
             }
             onOpenKinfolk={(kinfolkId) =>

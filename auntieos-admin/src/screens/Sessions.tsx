@@ -99,6 +99,12 @@ interface SessionsProps {
    * KinTale is sent). Same absent-means-hidden rule.
    */
   onViewKinTale?: (kinTaleId: string) => void;
+  /**
+   * #2199: whether an Auntie is signed in, from the access the admin layout
+   * resolved before the screen drew, so Complete is held from the first paint.
+   * Left out, the screen reads the token itself, a moment later.
+   */
+  isAuntie?: boolean;
 }
 
 /**
@@ -154,14 +160,18 @@ interface SessionsProps {
  * mounts SessionDetail over the same by-id subscription this screen used to run.
  * That is why nothing below reads `kin_care_sessions` by id any more.
  */
-export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: SessionsProps) {
+export function Sessions({ onSelect, onComposeKinTale, onViewKinTale, isAuntie = false }: SessionsProps) {
   const [mode, setMode] = useState<ViewMode>('window');
 
   // Computed once per render pass, not per keystroke/tick, same rationale as
   // Invoices.tsx's todayIso: "today" doesn't change mid-session.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
   // #2185: asked once for the board, so no card points an Auntie to Settings.
-  const auntie = useIsAuntie();
+  // #2199: the route already knows who is signed in (`isAuntie`), so her
+  // Complete is held from the first paint; the token read stays as the answer
+  // for a caller that passes nothing.
+  const auntieRead = useIsAuntie();
+  const auntie = isAuntie || auntieRead;
 
   // #2036: the Archive's FROM and TO are days on the BUSINESS's calendar. It
   // opens on the 30 days that end where Recent stops, so no wrapped visit sits

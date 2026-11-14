@@ -66,6 +66,12 @@ import './BookingActions.css';
 export interface BookingActionsProps {
   entry: BookingEntry | null;
   onClose: () => void;
+  /**
+   * #2199: whether an Auntie is signed in, from the access the admin layout
+   * resolved before the screen drew, so Complete is held from the first paint.
+   * Left out, the screen reads the token itself, a moment later.
+   */
+  isAuntie?: boolean;
 }
 
 /** The four transitions, by name, so a card can ask the sheet to pose one. */
@@ -218,7 +224,7 @@ function HouseholdNoticeLine({ line }: { line: string | null }) {
   );
 }
 
-export function BookingActions({ entry, onClose }: BookingActionsProps) {
+export function BookingActions({ entry, onClose, isAuntie = false }: BookingActionsProps) {
   const { showToast } = useToast();
   const [mode, setMode] = useState<Mode>({ kind: 'detail' });
   const [busy, setBusy] = useState(false);
@@ -233,7 +239,8 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
   // #1838/#2027: the cancel confirm and the reschedule form ask the server who
   // the household notice will reach. Asked before the guard below, so the
   // hooks run in the same order on every render.
-  const auntie = useIsAuntie();
+  const auntieRead = useIsAuntie();
+  const auntie = isAuntie || auntieRead;
   const familyId = (entry?.kinfolkId ?? '').trim();
   const cancelPreview = useHouseholdNoticePreview(
     mode.kind === 'confirm' && mode.action.kind === 'cancel' ? familyId : null,
@@ -519,6 +526,12 @@ export interface BookingStatusActionsProps {
    * with no question rather than posing one the state no longer allows.
    */
   initialAction?: BookingActionKind | null | undefined;
+  /**
+   * #2199: whether an Auntie is signed in, from the access the admin layout
+   * resolved before the screen drew, so Mark Completed is held from the first
+   * paint. Left out, the panel reads the token itself, a moment later.
+   */
+  isAuntie?: boolean;
 }
 
 /**
@@ -535,7 +548,7 @@ export interface BookingStatusActionsProps {
  * reschedule controls in one sheet would be the only way to "lose" nothing by
  * duplicating something.
  */
-export function BookingStatusActions({ entry, onDone, initialAction }: BookingStatusActionsProps) {
+export function BookingStatusActions({ entry, onDone, initialAction, isAuntie = false }: BookingStatusActionsProps) {
   const { showToast } = useToast();
   const state = bookingState({ status: entry.status ?? '' });
   const actions = actionsFor(state);
@@ -545,7 +558,8 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   // #1608: Mark Completed checks the operator's arrival rule before it asks.
   const arrivalRule = useArrivalRule();
   // #2185: an Auntie's refusal names no Settings screen.
-  const auntie = useIsAuntie();
+  const auntieRead = useIsAuntie();
+  const auntie = isAuntie || auntieRead;
   // #2199: a Mark Completed question posed before her role was read (on mount,
   // from `initialAction`) is put away once it is, back to the row and its held
   // button.
