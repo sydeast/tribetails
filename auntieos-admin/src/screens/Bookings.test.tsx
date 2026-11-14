@@ -1303,6 +1303,38 @@ describe('Bookings, the #1607 walk', () => {
   });
 });
 
+/**
+ * #2187, operator ruling 2026-11-14: "No, only I can". Making a booking is the
+ * owner's alone, so an Auntie gets no New booking button. The route adapter
+ * hands the screen `isAuntie` from the access the admin layout resolved.
+ */
+describe('#2187 New booking is the owner\'s alone', () => {
+  it('draws an Auntie no New booking button, on the first paint and after her reads settle', async () => {
+    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ serviceType: 'visit_45' })] });
+    render(<Bookings isAuntie />);
+    // Synchronously, before any read resolves: a button that shows for a
+    // moment is a button she can press.
+    expect(screen.queryByRole('button', { name: /new booking/i })).toBeNull();
+    expect(screen.getByRole('heading', { level: 1, name: 'Bookings' })).toBeInTheDocument();
+    await screen.findByText(/Long walk/);
+    expect(screen.queryByRole('button', { name: /new booking/i })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // The rest of her list toolbar is untouched.
+    expect(selectToggle()).toBeInTheDocument();
+  });
+  it('keeps the button for the owner, and it opens the New booking request form', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('button', { name: 'New booking' }));
+    expect(await screen.findByRole('dialog', { name: 'New booking request' })).toBeInTheDocument();
+  });
+  it('keeps the button when the flag is passed false', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
+    render(<Bookings isAuntie={false} />);
+    expect(screen.getByRole('button', { name: 'New booking' })).toBeInTheDocument();
+  });
+});
 describe('#2164 Bookings under an Auntie sign-in', () => {
   beforeEach(() => currentSessionSeat.mockResolvedValue(AUNTIE_SEAT));
 
