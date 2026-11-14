@@ -101,6 +101,22 @@ a.auntie-btn--ghost:hover {
   color: var(--color-text-faint);
 }
 
+/* `HeldButton` (#2199): shown, focusable, and not usable. It is `aria-disabled`,
+   never `:disabled`, so the hover and press rules above still match it; these
+   put the resting look back, after them and at the same weight. The focus ring
+   stays: the reason opens on focus, so the keyboard has to see where it is. */
+button.auntie-btn[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+button.auntie-btn--primary[aria-disabled='true']:hover,
+button.auntie-btn--primary[aria-disabled='true']:active {
+  background-color: color-mix(in srgb, var(--color-primary) 18%, var(--color-surface));
+}
+button.auntie-btn--ghost[aria-disabled='true']:hover {
+  border-color: var(--color-border);
+  color: var(--color-text-faint);
+}
+
 /* Toggle ON. Reversed out, the way the mocks paint `.seltoggle.on`, so the mode
    reads from across the screen and not only from the button's label. */
 .auntie-btn--ghost.auntie-is-on {

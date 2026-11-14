@@ -10,7 +10,7 @@ import {
 } from '../api/bookingsWrite';
 import { bookingServiceName, bookingState, bookingStateInfo, bookingWhen, type BookingState } from '../lib/bookingFormat';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
-import { completeRefusal } from '../lib/completeRule';
+import { COMPLETE_OWNER_ONLY, completeRefusal } from '../lib/completeRule';
 import { useArrivalRule } from '../lib/useArrivalRule';
 import { useIsAuntie } from '../lib/useIsAuntie';
 import { Dialog } from '../components/Dialog';
@@ -19,6 +19,7 @@ import { overridableScheduleRefusal, overrideHint } from '../api/scheduleWrite';
 import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
 import { DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { HeldButton } from '../components/HeldButton';
 import { useToast } from '../components/Toast';
 import { useHouseholdNoticePreview } from '../lib/useHouseholdNoticePreview';
 import {
@@ -182,6 +183,17 @@ function actionsFor(state: BookingState): ActionDef[] {
   }
 }
 
+/**
+ * #2199, operator ruling 2026-11-14: completing a visit is the owner's, and for
+ * an Auntie the button "is disabled but visible". True for the one action she
+ * is shown and cannot use. The server refuses her every transition
+ * (`transitionBookingStatus` is not on her list); Approve, Reject and Cancel
+ * wait on their own ruling (#2313) and are left as they were.
+ */
+function heldForAuntie(action: ActionDef, auntie: boolean): boolean {
+  return auntie && action.kind === 'complete';
+}
+
 type Mode = { kind: 'detail' } | { kind: 'confirm'; action: ActionDef } | { kind: 'reschedule' };
 
 /** `startTime`/`endTime` are opaque strings on this doc (see BookingEntry's own
@@ -274,6 +286,11 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
   }
 
   function openConfirm(action: ActionDef) {
+    // #2199: completing a visit is the owner's. See `heldForAuntie`.
+    if (heldForAuntie(action, auntie)) {
+      setError(COMPLETE_OWNER_ONLY);
+      return;
+    }
     setError(null);
     setMode({ kind: 'confirm', action });
   }
@@ -288,6 +305,10 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
 
   async function runAction(action: ActionDef) {
     if (busy) return;
+    if (heldForAuntie(action, auntie)) {
+      setError(COMPLETE_OWNER_ONLY);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -437,7 +458,9 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
           <GhostButton label="Done" onClick={onClose} />
           {canReschedule && <GhostButton label="Reschedule" onClick={openReschedule} />}
           {actions.map((action) =>
-            action.tone === 'primary' ? (
+            heldForAuntie(action, auntie) ? (
+              <HeldButton key={action.kind} label={action.label} tone={action.tone} reason={COMPLETE_OWNER_ONLY} />
+            ) : action.tone === 'primary' ? (
               <PrimaryButton key={action.kind} label={action.label} onClick={() => openConfirm(action)} />
             ) : (
               <GhostButton key={action.kind} label={action.label} onClick={() => openConfirm(action)} />
@@ -516,13 +539,17 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   const { showToast } = useToast();
   const state = bookingState({ status: entry.status ?? '' });
   const actions = actionsFor(state);
-  const [confirming, setConfirming] = useState<ActionDef | null>(
+  const [posed, setConfirming] = useState<ActionDef | null>(
     () => actions.find((a) => a.kind === initialAction) ?? null,
   );
   // #1608: Mark Completed checks the operator's arrival rule before it asks.
   const arrivalRule = useArrivalRule();
   // #2185: an Auntie's refusal names no Settings screen.
   const auntie = useIsAuntie();
+  // #2199: a Mark Completed question posed before her role was read (on mount,
+  // from `initialAction`) is put away once it is, back to the row and its held
+  // button.
+  const confirming = posed !== null && heldForAuntie(posed, auntie) ? null : posed;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // #1145: the override an Approve refusal offers, or null. Cleared once taken,
@@ -542,6 +569,11 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   /** Pose [action]'s question, unless the arrival rule already answers it (#1608). */
   function ask(action: ActionDef) {
     setRetry(null);
+    // #2199: completing a visit is the owner's. See `heldForAuntie`.
+    if (heldForAuntie(action, auntie)) {
+      setError(COMPLETE_OWNER_ONLY);
+      return;
+    }
     const refusal = action.kind === 'complete' ? completeRefusal(arrivalRule, entry, auntie) : null;
     setError(refusal);
     if (refusal === null) setConfirming(action);
@@ -549,6 +581,10 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
 
   async function run(action: ActionDef, override: 'visit' | 'busy' | null = null) {
     if (busy) return;
+    if (heldForAuntie(action, auntie)) {
+      setError(COMPLETE_OWNER_ONLY);
+      return;
+    }
     setBusy(true);
     setError(null);
     setRetry(null);
@@ -580,7 +616,9 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
       ) : confirming === null ? (
         <div className="booking-actions__row">
           {actions.map((action) =>
-            action.tone === 'primary' ? (
+            heldForAuntie(action, auntie) ? (
+              <HeldButton key={action.kind} label={action.label} tone={action.tone} reason={COMPLETE_OWNER_ONLY} />
+            ) : action.tone === 'primary' ? (
               <PrimaryButton
                 key={action.kind}
                 label={action.label}

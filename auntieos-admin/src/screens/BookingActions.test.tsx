@@ -613,28 +613,108 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
     ).toBeInTheDocument();
     useArrivalRule.mockReturnValue(null);
   });
-  it('#2185: an Auntie refusal names no Settings screen', async () => {
-    seat.caretaker = true;
-    useArrivalRule.mockReturnValue(true);
-    try {
-      render(<BookingStatusActions entry={entry({ status: 'SCHEDULED', arrivedAt: '' })} onDone={vi.fn()} />);
+  // #2199, operator ruling 2026-11-14 ("the button is disabled but visible"):
+  // completing a visit is the owner's. This replaces the #2185 case that had an
+  // Auntie press Mark Completed and read the arrival rule.
+  describe('#2199 Mark Completed under an Auntie sign-in', () => {
+    const OWNER_ONLY = 'Only the owner can complete a visit.';
+    beforeEach(() => {
+      seat.caretaker = true;
+    });
+    afterEach(() => {
+      seat.caretaker = false;
+      useArrivalRule.mockReturnValue(null);
+    });
+    async function held() {
       await act(async () => {
         await new Promise((r) => setTimeout(r, 0));
       });
-      await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
-      expect(
-        screen.getByText(
-          'This visit has no arrival and departure recorded, and the business requires both before a visit can be ' +
-            'marked complete. Mark it on the visit card first.',
-        ),
-      ).toBeInTheDocument();
+      return screen.getByRole('button', { name: 'Mark Completed' });
+    }
+
+    it.each(['SCHEDULED', 'ON_MY_WAY', 'ARRIVED', 'DEPARTED'])(
+      'HAPPY: on a %s visit it is shown, held, with the reason as its description',
+      async (status) => {
+        render(<BookingStatusActions entry={entry({ status })} onDone={vi.fn()} />);
+        const button = await held();
+        expect(button).toHaveAttribute('aria-disabled', 'true');
+        expect(button).toHaveAccessibleDescription(OWNER_ONLY);
+        expect(button).not.toHaveAttribute('disabled');
+        button.focus();
+        expect(button).toHaveFocus();
+        expect(await screen.findByRole('tooltip')).toHaveTextContent(OWNER_ONLY);
+      },
+    );
+
+    it('NEGATIVE: pressing it asks nothing and sends nothing, arrival rule on or off', async () => {
+      useArrivalRule.mockReturnValue(true);
+      render(<BookingStatusActions entry={entry({ status: 'SCHEDULED', arrivedAt: '' })} onDone={vi.fn()} />);
+      const button = await held();
+      await userEvent.click(button);
+      await userEvent.keyboard('{Enter}');
+      expect(screen.queryByRole('heading', { name: 'Mark this visit completed?' })).toBeNull();
+      expect(screen.queryByText(/has no arrival and departure recorded/)).toBeNull();
       expect(screen.queryByText(/Settings/)).toBeNull();
       expect(markBookingCompleted).not.toHaveBeenCalled();
-    } finally {
-      seat.caretaker = false;
-      useArrivalRule.mockReturnValue(null);
-    }
+    });
+
+    it('NEGATIVE: a Mark Completed question posed on mount is put away once she is known', async () => {
+      render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} initialAction="complete" />);
+      const button = await held();
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      expect(screen.queryByRole('heading', { name: 'Mark this visit completed?' })).toBeNull();
+      expect(screen.queryByRole('button', { name: /yes, mark it completed/i })).toBeNull();
+      expect(markBookingCompleted).not.toHaveBeenCalled();
+    });
+
+    it('Cancel beside it is left as it was (#2313 is its own ruling)', async () => {
+      render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} />);
+      await held();
+      const cancel = screen.getByRole('button', { name: 'Cancel' });
+      expect(cancel).not.toHaveAttribute('aria-disabled');
+      expect(cancel).toBeEnabled();
+    });
+
+    it('the dialog form of these actions holds it the same way', async () => {
+      render(<BookingActions entry={entry({ status: 'SCHEDULED' })} onClose={vi.fn()} />);
+      const button = await held();
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      expect(button).toHaveAccessibleDescription(OWNER_ONLY);
+      await userEvent.click(button);
+      expect(screen.queryByRole('button', { name: /yes, mark it completed/i })).toBeNull();
+      expect(markBookingCompleted).not.toHaveBeenCalled();
+    });
   });
+
+  it('#2199: the owner\'s Mark Completed is an ordinary button and completes the visit', async () => {
+    markBookingCompleted.mockResolvedValue(undefined);
+    const onDone = vi.fn();
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={onDone} />);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const button = screen.getByRole('button', { name: 'Mark Completed' });
+    expect(button).not.toHaveAttribute('aria-disabled');
+    expect(button).toBeEnabled();
+    expect(screen.queryByText('Only the owner can complete a visit.')).toBeNull();
+    await userEvent.click(button);
+    await userEvent.click(screen.getByRole('button', { name: /yes, mark it completed/i }));
+    expect(markBookingCompleted).toHaveBeenCalledWith('ses1', expect.any(String));
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalled());
+  });
+
+  it('#2199 ERROR: a Complete the server refuses her reads who can, never the gate text', async () => {
+    // The role is read after first paint; the owner seat stands for that moment.
+    markBookingCompleted.mockRejectedValue(
+      Object.assign(new Error('Only the owner can complete a visit.'), { code: 'functions/permission-denied' }),
+    );
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Completed' }));
+    await userEvent.click(screen.getByRole('button', { name: /yes, mark it completed/i }));
+    expect(await screen.findByText('Could not complete: Only the owner can complete a visit.')).toBeInTheDocument();
+    expect(screen.queryByText(/Admin claim/i)).toBeNull();
+  });
+
   it('Cancel is never held back by the arrival rule', async () => {
     useArrivalRule.mockReturnValue(true);
     render(<BookingStatusActions entry={entry({ status: 'SCHEDULED', arrivedAt: '' })} onDone={vi.fn()} />);
