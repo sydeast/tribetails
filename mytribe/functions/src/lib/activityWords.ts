@@ -44,9 +44,75 @@ function quotedName(name: string): string {
   return n === '' ? 'a notification' : `"${n}"`;
 }
 
-/** `Delivered "KinCare booking confirmed" by email`. */
-export function notificationDeliveredWords(name: string, channel: string): string {
-  return `Delivered ${quotedName(name)} by ${channelWords(channel)}`;
+/** ` to Dre East`, or nothing when the writer could not say who. */
+function toWhom(to: string): string {
+  const t = to.trim();
+  return t === '' ? '' : ` to ${t}`;
+}
+/** `email and text message`, or '' for none. */
+function channelListWords(channels: readonly string[]): string {
+  const words = channels.map(channelWords).filter((c) => c !== '');
+  if (words.length <= 1) return words[0] ?? '';
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+/** `Delivered "KinCare booking confirmed" to Dre East by email`. `to` is a name or "the office", never an id. */
+export function notificationDeliveredWords(name: string, channel: string, to = ''): string {
+  return `Delivered ${quotedName(name)}${toWhom(to)} by ${channelWords(channel)}`;
+}
+/**
+ * #1819, #1905: A NOTICE THAT DID NOT GO OUT, OR NOT ON EVERY CHANNEL.
+ *
+ * The Activity Log said "Notification dispatched" with status SUCCESS for a
+ * notice the household send switch had held back, and "Sent ... by email"
+ * without saying to whom, on a notice whose household copy had email turned
+ * off. Each sentence below says who the copy was for and why it did not go,
+ * per channel where the reason is a channel's. `to` is the person's name, "the
+ * household" or "the office", never an email address or an id.
+ */
+/** The send switch in Settings is off: `Held back "Auntie on the way" for Dre East: notices to households are turned off`. */
+export function notificationHeldWords(name: string, to: string): string {
+  const t = to.trim();
+  return `Held back ${quotedName(name)}${t === '' ? '' : ` for ${t}`}: notices to households are turned off`;
+}
+/**
+ * The send switch could not be read, so the copy was held to be safe
+ * (`householdSendGate.ts` fails closed). Not "turned off": nobody turned it off.
+ */
+export function notificationHeldUnreadWords(name: string, to: string): string {
+  const t = to.trim();
+  return `Held back ${quotedName(name)}${t === '' ? '' : ` for ${t}`}: the setting for notices to households could not be read`;
+}
+/** The notification as a whole is switched off in Settings. */
+export function notificationTurnedOffWords(name: string, to: string): string {
+  return `Did not send ${quotedName(name)}${toWhom(to)}: this notification is turned off in Settings`;
+}
+/** The household turned these channels off themselves. The record is still on their notifications list. */
+export function notificationChannelsOffWords(name: string, to: string, channels: readonly string[]): string {
+  const by = channelListWords(channels);
+  return `Did not send ${quotedName(name)}${toWhom(to)}${by === '' ? '' : ` by ${by}`}: they turned that off in their notification settings`;
+}
+/** Nobody in the household can sign in to MyTribe, so there is nobody to address. `household` is its name or ''. */
+export function notificationNoAccountWords(name: string, household: string): string {
+  const h = household.trim();
+  return `Did not send ${quotedName(name)}${h === '' ? '' : ` to ${h}`}: nobody in the household has a MyTribe sign-in`;
+}
+/** Why a channel's sender stood down, by the reason it reported (`senders/*Channel.ts`). */
+const CHANNEL_SKIP_WORDS: Record<string, string> = {
+  recipient_no_email: 'no email address on file',
+  recipient_no_phone: 'no mobile number on file',
+  recipient_hard_bounced: 'an earlier email to this address bounced',
+  business_email_unset: 'no business email is set in Settings',
+  template_text_empty: 'this notification has no text message wording',
+  template_missing: 'this notification has no text message wording',
+};
+/** `Could not send "Invoice sent" to Dre East by text message: no mobile number on file`. */
+export function notificationChannelSkippedWords(name: string, to: string, channel: string, skipReason: string): string {
+  const why = CHANNEL_SKIP_WORDS[skipReason.trim()] ?? 'it could not go out this way';
+  return `Could not send ${quotedName(name)}${toWhom(to)} by ${channelWords(channel)}: ${why}`;
+}
+/** The provider refused it or the send threw. */
+export function notificationChannelFailedWords(name: string, to: string, channel: string): string {
+  return `Could not send ${quotedName(name)}${toWhom(to)} by ${channelWords(channel)}: the send failed`;
 }
 export function notificationArchivedWords(name: string): string {
   return `Archived ${quotedName(name)}`;
@@ -274,16 +340,16 @@ export function paymentNoticeGaveUpWords(attempts: number): string {
 export function vetClinicNotFoundWords(verb: 'update' | 'archive'): string {
   return `Vet clinic ${verb} refused: the clinic was not found`;
 }
-/** `Sent "KinCare booking confirmed" by email and push notification`. */
-export function notificationDispatchedWords(name: string, channels: readonly string[]): string {
-  const words = channels.map(channelWords).filter((c) => c !== '');
-  const by =
-    words.length === 0
-      ? ''
-      : words.length === 1
-        ? ` by ${words[0]}`
-        : ` by ${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-  return `Sent ${quotedName(name)}${by}`;
+/**
+ * `Sending "KinCare booking confirmed" to Dre East by email and push notification`.
+ *
+ * "Sending", not "Sent" (#1905): this line is written when the copy is handed
+ * to its channels, before any of them has answered. Each channel then writes
+ * its own line: delivered, or could not be sent and why.
+ */
+export function notificationDispatchedWords(name: string, channels: readonly string[], to = ''): string {
+  const by = channelListWords(channels);
+  return `Sending ${quotedName(name)}${toWhom(to)}${by === '' ? '' : ` by ${by}`}`;
 }
 /** `Declined quote INV-2027-0001 revised and sent again`. */
 export function quoteRevisedWords(invoiceNumber: unknown): string {

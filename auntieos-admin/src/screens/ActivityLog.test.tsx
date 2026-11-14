@@ -195,6 +195,125 @@ describe('ActivityLog stored ids and keys (#1752)', () => {
 });
 
 /**
+ * #1819, #1905: what the walk read on this screen, row by row.
+ *
+ *   #1819  "Notification dispatched", `NOTIFICATION_DISPATCHED uid=<id>`, and
+ *          STATUS "SUCCESS" on the opened row, for a notice that was held back.
+ *   #1905  "Sent ... by email" ending in a database path, with nothing to say
+ *          whose copy it was.
+ */
+describe('ActivityLog notices that did not go out (#1819, #1905)', () => {
+  const heldAsStored = (): ActivityLogEntry =>
+    entry({
+      _id: 'held1',
+      actionType: 'NOTIFICATION_DISPATCHED',
+      description: 'NOTIFICATION_DISPATCHED uid=AbCdEfGhIjKlMnOpQrStUvWxYz12',
+      status: 'SUCCESS',
+      actorId: '',
+      payload: { key: 'kincare.auntie.on_my_way', event: 'on_my_way', dispatchIds: [], reason: 'household_notices_off' },
+    });
+
+  it('a held notice stored as "dispatched" reads as not sent, with the reason in words', () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [heldAsStored()] });
+    render(<ActivityLog />);
+    const row = screen.getByRole('button', { name: /Notification not sent/ });
+    expect(within(row).getByText('Notification not sent')).toHaveClass('activity__title');
+    expect(
+      within(row).getByText('Held back "Kincare auntie on my way": notices to households are turned off'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Notification dispatched')).toBeNull();
+    expect(screen.queryByText(/uid=/)).toBeNull();
+    // No stored key beside a title that says the opposite.
+    expect(row.querySelector('.activity__code')).toBeNull();
+  });
+
+  it('opened, its status reads "Not sent" and never SUCCESS; the payload is still there as stored', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [heldAsStored()] });
+    render(<ActivityLog />);
+    await userEvent.click(screen.getByRole('button', { name: /Notification not sent/ }));
+    const detail = document.getElementById('log-detail-held1') as HTMLElement;
+    expect(within(detail).getByText('Not sent')).toBeInTheDocument();
+    expect(within(detail).queryByText('SUCCESS')).toBeNull();
+    expect(within(detail).getByText('household_notices_off')).toBeInTheDocument();
+  });
+
+  it('is not listed under Success, and is not a Problem', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [heldAsStored(), entry({ _id: 'ok1' })] });
+    render(<ActivityLog />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Success' }));
+    expect(screen.queryByText('Notification not sent')).toBeNull();
+    expect(screen.getByText('LOGIN')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Problems' }));
+    expect(screen.queryByText('Notification not sent')).toBeNull();
+  });
+
+  it('the line the server writes now shows its sentence as written, and no path after it', () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({
+          _id: 'n1',
+          actionType: 'NOTIFICATION_NOT_SENT',
+          description:
+            'Did not send "Payment or credit applied to an invoice" to Dre East by email: they turned that off in their notification settings',
+          status: 'NOT_SENT',
+          actorId: '',
+          targetId: 'notif9',
+          targetCollection: 'notifications',
+        }),
+        entry({
+          _id: 'n2',
+          actionType: 'NOTIFICATION_DISPATCHED',
+          description: 'Sending "Payment or credit applied to an invoice" to the office by email',
+          actorId: '',
+          targetId: 'notif8',
+          targetCollection: 'notifications',
+        }),
+      ],
+    });
+    render(<ActivityLog />);
+    expect(
+      screen.getByText(
+        'Did not send "Payment or credit applied to an invoice" to Dre East by email: they turned that off in their notification settings',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Sending "Payment or credit applied to an invoice" to the office by email'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/notifications\/notif/)).toBeNull();
+  });
+
+  it('a send that failed wears the warning tile and is listed under Problems', async () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [
+        entry({
+          _id: 'f1',
+          actionType: 'NOTIFICATION_NOT_SENT',
+          description: 'Could not send "Invoice sent" to Dre East by email: the send failed',
+          status: 'FAILURE',
+          actorId: '',
+        }),
+      ],
+    });
+    render(<ActivityLog />);
+    const tile = screen.getByRole('button', { name: /Notification not sent/ }).querySelector('.icon-tile');
+    expect(tile).toHaveAttribute('data-tone', 'error');
+    await userEvent.click(screen.getByRole('tab', { name: 'Problems' }));
+    expect(screen.getByText(/the send failed/)).toBeInTheDocument();
+  });
+
+  it('a row of another kind still ends with its target', () => {
+    useCollection.mockReturnValue({
+      status: 'ready',
+      data: [entry({ _id: 'v1', actionType: 'VISIT_ARRIVED', targetId: 's1', targetCollection: 'kin_care_sessions' })],
+    });
+    render(<ActivityLog />);
+    expect(screen.getByText(/kin_care_sessions\/s1/)).toBeInTheDocument();
+  });
+});
+
+/**
  * R5 on the Activity Log, verbatim: "the Activity Log is seriously lacking, cant
  * see shit or what the fuck actually happened."
  *

@@ -115,25 +115,56 @@ function isDirty(draft: Draft, data: BusinessSettings): boolean {
 }
 
 /**
- * The one state worth naming on screen: sends are on but nothing is scheduled,
- * so no invoice notice will ever go out however many bills are overdue.
+ * The one state worth naming on screen: the switch and the send time
+ * disagreeing, either way round.
  *
- * It is a NOTE AND NOT A BLOCKED SAVE. It is a legal state, and it is a
- * reasonable one to pass through while the operator opens the product before
- * deciding when it should chase anybody. Refusing to save it would be this
- * panel deciding an order of operations the operator did not ask for.
+ * #1834: THE SEND TIME GOVERNS TWO JOBS, NOT EVERY NOTICE. This used to read
+ * "no send time is set, so none will go out yet" with the switch on, while
+ * visit notices were reaching the household: on my way, arrived, departed and
+ * the KinTale all go out as they happen, and so do booking and invoice notices.
+ * Only `invoiceRemindersCron` and `invoiceOverdueCron` wait for the hour
+ * (`mytribe/functions/src/lib/notificationSchedule.ts`). The note says that.
+ *
+ * And the switch holds back AUTOMATIC notices only. A broadcast, a single
+ * message, an invite and a password reset are sent by hand and do not pass it
+ * (`test/householdSendGateGuard.test.ts`), so the off note does not say
+ * "nothing reaches a household".
+ *
+ * It is a NOTE AND NOT A BLOCKED SAVE. Both are legal states, reasonable to
+ * pass through while the operator opens the product. Refusing to save them
+ * would be this panel deciding an order of operations the operator did not ask
+ * for. Same sentences on Android and the desktop console
+ * (`NotificationSchedulePanel.kt`).
  */
+export const SCHEDULE_NOTE_ON_NO_HOUR =
+  'Notices to households are on and go out as things happen. Invoice reminders and overdue notices have no send time, so only those two wait.';
+export const SCHEDULE_NOTE_OFF_WITH_HOUR =
+  'A send time is set, but notices to households are off, so automatic notices are held back.';
+/** The switch's tooltip: what off holds back, and what it does not. */
+export const HOUSEHOLD_SWITCH_TIP =
+  'Off, automatic notices to households are held back. What you send yourself still goes: a broadcast, a single message, an invite, a password reset. Your own alerts and the daily digest still reach you.';
 export function scheduleNote(draft: Draft): string | null {
   const hour = hourFieldNumber(draft.householdNotificationHour);
-  if (draft.householdNotificationsLive && hour === null) {
-    return 'Household notices are on, but no send time is set, so none will go out yet. Pick a time below.';
-  }
-  if (!draft.householdNotificationsLive && hour !== null) {
-    return 'A send time is set, but household notices are off, so nothing reaches a household yet.';
-  }
+  if (draft.householdNotificationsLive && hour === null) return SCHEDULE_NOTE_ON_NO_HOUR;
+  if (!draft.householdNotificationsLive && hour !== null) return SCHEDULE_NOTE_OFF_WITH_HOUR;
   return null;
 }
-
+/**
+ * The panel's value line (#1834): the SAVED state of the switch and of the two
+ * jobs' send time, then the clock the times are on. Values, not a sentence
+ * (ruling 2026-09-11). It reads the saved document, never the draft, so it
+ * cannot say "on" before Save has.
+ */
+export function scheduleDetail(
+  data: Pick<BusinessSettings, 'householdNotificationsLive' | 'householdNotificationHour' | 'timeZone'>,
+): string {
+  const hour = data.householdNotificationHour;
+  return [
+    `Notices to households: ${data.householdNotificationsLive ? 'on' : 'off'}`,
+    `Invoice reminders: ${hour === null ? 'not scheduled' : hourLabel(hour)}`,
+    `Times are in ${resolveBusinessTimeZone(data.timeZone)}`,
+  ].join(' · ');
+}
 export function NotificationScheduleSection({ data, onSave }: NotificationScheduleSectionProps) {
   const [draft, setDraft] = useState<Draft>(() => seed(data));
   const [busy, setBusy] = useState(false);
@@ -165,8 +196,7 @@ export function NotificationScheduleSection({ data, onSave }: NotificationSchedu
   return (
     <DenPanel
       title="Notification schedule"
-      subtitle="Whether automatic notices reach households at all, and what time of day the daily jobs run."
-      detail={`Times are in ${resolveBusinessTimeZone(data.timeZone)}`}
+      detail={scheduleDetail(data)}
     >
       {error ? (
         <Banner tone="error" title="Save failed" className="settingsEdit__sectionBanner">
@@ -185,7 +215,7 @@ export function NotificationScheduleSection({ data, onSave }: NotificationSchedu
           <li className="settingsEdit__toggleRow">
             <span className="settingsEdit__toggleLabel">
               Send notices to households{' '}
-              <InfoTip text="Off, every notice bound for a household is held back and nothing is sent. Your own alerts and the daily digest still reach you." />
+              <InfoTip text={HOUSEHOLD_SWITCH_TIP} />
             </span>
             <Toggle
               label="Toggle household notifications"

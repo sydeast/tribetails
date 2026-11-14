@@ -82,20 +82,50 @@ internal val NOTIFICATION_HOUR_OPTIONS: List<Int?> = listOf<Int?>(null) + (0..23
 internal fun usableNotificationHour(stored: Int?): Int? = stored?.takeIf { it in 0..23 }
 
 /**
- * The one state worth naming on screen: the switch and the cadence disagreeing,
- * either way round.
+ * The one state worth naming on screen: the switch and the send time
+ * disagreeing, either way round.
+ *
+ * #1834: THE SEND TIME GOVERNS TWO JOBS, NOT EVERY NOTICE. This used to read
+ * "no send time is set, so none will go out yet" with the switch on, while
+ * visit notices were reaching the household. On my way, arrived, departed, the
+ * KinTale, booking and invoice notices all go out as they happen; only invoice
+ * reminders and overdue notices wait for the hour. And the switch holds back
+ * AUTOMATIC notices only: a broadcast, a single message, an invite and a
+ * password reset are sent by hand and do not pass it.
  *
  * A NOTE AND NOT A BLOCKED SAVE. Both states are legal and reasonable to pass
- * through while opening the product, so the Save button stays enabled; refusing
- * them would be this panel imposing an order of operations nobody asked for.
+ * through while opening the product, so Save stays enabled. Same sentences as
+ * the web (`NotificationScheduleSection.tsx`) and the other Kotlin client.
  */
+internal const val SCHEDULE_NOTE_ON_NO_HOUR =
+    "Notices to households are on and go out as things happen. " +
+        "Invoice reminders and overdue notices have no send time, so only those two wait."
+internal const val SCHEDULE_NOTE_OFF_WITH_HOUR =
+    "A send time is set, but notices to households are off, so automatic notices are held back."
+
+/** What the switch's own line says: what off holds back, and what it does not. */
+internal const val HOUSEHOLD_SWITCH_TIP =
+    "Off, automatic notices to households are held back. What you send yourself still goes: " +
+        "a broadcast, a single message, an invite, a password reset. " +
+        "Your own alerts and the daily digest still reach you."
+
 internal fun notificationScheduleNote(live: Boolean, hour: Int?): String? = when {
-    live && hour == null ->
-        "Household notices are on, but no send time is set, so none will go out yet. Pick a time below."
-    !live && hour != null ->
-        "A send time is set, but household notices are off, so nothing reaches a household yet."
+    live && hour == null -> SCHEDULE_NOTE_ON_NO_HOUR
+    !live && hour != null -> SCHEDULE_NOTE_OFF_WITH_HOUR
     else -> null
 }
+
+/**
+ * The panel's value line (#1834): the SAVED state of the switch and of the two
+ * jobs' send time, then the clock the times are on. Values, not a sentence
+ * (ruling 2026-09-11). It reads the saved document, never the unsaved flip, so
+ * it cannot say "on" before Save has.
+ */
+internal fun notificationScheduleDetail(live: Boolean, hour: Int?, zone: String): String = listOf(
+    "Notices to households: ${if (live) "on" else "off"}",
+    "Invoice reminders: ${hour?.let(::notificationHourLabel) ?: "not scheduled"}",
+    "Times are in $zone",
+).joinToString(" · ")
 
 @Composable
 internal fun NotificationSchedulePanel(
@@ -120,8 +150,11 @@ internal fun NotificationSchedulePanel(
 
     DenPanel(
         title = "Notification schedule",
-        subtitle = "Whether automatic notices reach households at all, and what time of day the daily jobs run.",
-        detail = "Times are in ${resolveBusinessTimeZone(settings.timeZone)}",
+        detail = notificationScheduleDetail(
+            settings.householdNotificationsLive,
+            usableNotificationHour(settings.householdNotificationHour),
+            resolveBusinessTimeZone(settings.timeZone),
+        ),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
             if (note != null) {
@@ -132,8 +165,7 @@ internal fun NotificationSchedulePanel(
 
             AuntieSettingRow(
                 title = "Send notices to households",
-                description = "Off, every notice bound for a household is held back and nothing is sent. " +
-                    "Your own alerts and the daily digest still reach you.",
+                description = HOUSEHOLD_SWITCH_TIP,
                 leadingIcon = Lucide.Bell,
                 iconTone = AuntieStatusTone.Orange,
                 showDivider = false,
