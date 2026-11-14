@@ -235,4 +235,42 @@ class FormSchemaEditorViewModelTest {
         assertEquals("New Section", vm.state.value.schema.sections[0].title)
         assertEquals("About", vm.state.value.schema.sections[1].title)
     }
+
+    // ---- #2074: a server refusal lands on the card it is about ----
+
+    @Test
+    fun save_refusedByServer_marksTheFieldAndClearsOnTheNextEdit() = runTest {
+        val repo = FakeFormSchemaRepository(saved = mutableMapOf("tribeProfile" to seedSchema()))
+        repo.nextSaveResult = WriteResult.Err(
+            message = "Something in this form was not accepted. Check what you entered and try again.",
+            code = null,
+            details = """{"reason":"form-schema-refused","validationErrors":[{"path":"schema.sections.0.fields.0.label","message":"x","text":"Section 1, Field 1: Label cannot contain <, > or &.","sectionIndex":0,"fieldIndex":0}]}""",
+        )
+        val vm = FormSchemaEditorViewModel(repo)
+        vm.load("tribeProfile")
+
+        vm.save()
+
+        val status = vm.state.value.saveStatus
+        assertIs<SaveStatus.Error>(status)
+        assertEquals("One entry was not accepted: Section 1, Field 1: Label cannot contain <, > or &.", status.message)
+        assertEquals(listOf("Section 1, Field 1: Label cannot contain <, > or &."), vm.state.value.validation.fieldErrors[0 to 0])
+        assertFalse(vm.state.value.canSave)
+
+        vm.updateName("Tribe Profile v2")
+        assertTrue(vm.state.value.validation.isValid)
+    }
+
+    @Test
+    fun save_withAnAmpersandInALabel_neverReachesTheServer() = runTest {
+        val repo = FakeFormSchemaRepository(saved = mutableMapOf("tribeProfile" to seedSchema()))
+        val vm = FormSchemaEditorViewModel(repo)
+        vm.load("tribeProfile")
+        vm.updateFieldLabel(0, 0, "QA-R1 field <b>x</b> ' \" & %")
+
+        vm.save()
+
+        assertEquals(0, repo.saveCalls.size)
+        assertTrue(vm.state.value.validation.fieldErrors[0 to 0].orEmpty().contains("Label cannot contain <, > or &."))
+    }
 }
