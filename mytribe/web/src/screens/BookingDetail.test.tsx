@@ -1101,6 +1101,19 @@ describe('BookingDetail: a send that got no answer (#1919)', () => {
     expect(await screen.findByText(/Cancellation requested/)).toBeInTheDocument();
     expect(screen.queryByText(/No answer came back/)).not.toBeInTheDocument();
   });
+
+  it('cancel: never reads as sent when the cancellation is not on file', async () => {
+    mocks.getMyBookings.mockResolvedValue(bookingsResult({ upcoming: [booking()] }));
+    mocks.requestBookingCancellation.mockRejectedValue(new CallableTimeoutError('requestBookingCancellation'));
+    const user = userEvent.setup();
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: /Request cancellation/i }));
+    await user.click(screen.getByRole('button', { name: /Yes, request cancellation/i }));
+    expect(await screen.findByText(/No answer came back within \d+ seconds/)).toBeInTheDocument();
+    expect(screen.queryByText(/Cancellation requested/)).not.toBeInTheDocument();
+    // It looked before it spoke: the first read, then the check.
+    expect(mocks.getMyBookings).toHaveBeenCalledTimes(2);
+  });
 });
 
 /**

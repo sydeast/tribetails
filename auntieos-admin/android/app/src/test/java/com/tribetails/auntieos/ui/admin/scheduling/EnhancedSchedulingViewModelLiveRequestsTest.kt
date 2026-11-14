@@ -210,4 +210,25 @@ class EnhancedSchedulingViewModelLiveRequestsTest {
         vm.clearFocusedRequest()
         assertNull(vm.state.value.focusedRequestKey)
     }
+
+    @Test
+    fun `Open on a request the live queue no longer holds says so on Bookings`() {
+        val waiting = groupIncomingBySeries(
+            listOf(
+                IncomingKinCare(
+                    familyId = "kf1", batchId = "req_1", visitId = "v1", kinfolkId = "kf1",
+                    startTime = "2026-12-03T15:00:00Z", status = "requested",
+                ),
+            ),
+        ) { null }
+        val live = SchedulingState(incomingSeries = waiting, incomingLive = true)
+
+        assertTrue(live.copy(focusedRequestKey = "kf1/req_gone").focusedRequestGone)
+        assertFalse("its card opens instead", live.copy(focusedRequestKey = "kf1/req_1").focusedRequestGone)
+        assertFalse("nothing asked", live.focusedRequestGone)
+        assertFalse(
+            "not known while the queue is not live",
+            live.copy(focusedRequestKey = "kf1/req_gone", incomingLive = false).focusedRequestGone,
+        )
+    }
 }

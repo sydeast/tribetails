@@ -84,6 +84,19 @@ class NotificationLiveRequestQueueTest {
         assertEquals(0, rows.count { applicableNotificationActions(it, null).canApproveDeny })
     }
 
+    @Test fun `Open lands on the request card whether it waits, was answered, or the queue is unknown`() {
+        // #2028: an answered request used to look itself up as a visit and land on "not found".
+        assertEquals("kf1" to "req_1", requestCardOf(request(), setOf("kf1/req_1")))
+        assertEquals("kf1" to "req_1", requestCardOf(request(stamp = "booked"), emptySet()))
+        assertEquals("kf1" to "req_1", requestCardOf(request(), null))
+    }
+
+    @Test fun `an unstamped row the live queue does not hold keeps its target route`() {
+        // It may predate #532 and name a visit, which the target route opens.
+        assertNull(requestCardOf(request(targetId = "visit_aug21"), setOf("kf1/req_1")))
+        assertNull(requestCardOf(request(kinfolkId = ""), setOf("kf1/req_1")))
+    }
+
     @Test fun `waitingRequestOf names the household and request only while it waits`() {
         assertEquals("kf1" to "req_1", waitingRequestOf(request(), setOf("kf1/req_1")))
         assertNull(waitingRequestOf(request(), emptySet()))

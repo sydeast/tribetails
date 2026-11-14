@@ -390,7 +390,7 @@ fun NotificationsScreen(
                                         viewModel.toggleNotificationRead(entry.id, isNotificationUnread(entry))
                                     },
                                     onOpen = { entry ->
-                                        val request = waitingRequestOf(entry, pendingKeys)
+                                        val request = requestCardOf(entry, pendingKeys)
                                         if (request != null && onOpenRequest != null) {
                                             onOpenRequest(request.first, request.second)
                                         } else {
@@ -1134,6 +1134,27 @@ internal fun applicableNotificationActions(
 internal fun waitingRequestOf(entry: NotificationEntry, pendingRequests: Set<String>?): Pair<String, String>? {
     if (!applicableNotificationActions(entry, pendingRequests).canApproveDeny) return null
     return notificationKinfolkId(entry) to entry.targetId.trim()
+}
+
+/**
+ * #2028: where a request row's Open lands: the household and request, for its
+ * card on Bookings (which says so when the request is no longer waiting).
+ * Every `kincare.requested` row naming both, waiting or answered, and while the
+ * queue is still unknown. The one exception is a row the server never stamped
+ * that the live queue does not hold: it may predate #532 and name a visit,
+ * which the target route still opens. Mirrors web's `opensOnRequestCard`.
+ * Pure; unit-tested.
+ */
+internal fun requestCardOf(entry: NotificationEntry, pendingRequests: Set<String>?): Pair<String, String>? {
+    if (entry.key.trim() != PENDING_BOOKING_REQUEST_KEY) return null
+    if (entry.targetType.trim().lowercase() != "booking") return null
+    val kinfolkId = notificationKinfolkId(entry)
+    val batchId = entry.targetId.trim()
+    if (kinfolkId.isBlank() || batchId.isBlank()) return null
+    val stamped = requestOutcomeLabel(entry) != null
+    val waiting = pendingRequests?.contains(incomingRequestKey(kinfolkId, batchId)) == true
+    if (!stamped && pendingRequests != null && !waiting) return null
+    return kinfolkId to batchId
 }
 
 /** #1003: a card payment the webhook recorded but could not apply to its invoice. */

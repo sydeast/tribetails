@@ -192,6 +192,11 @@ private fun ScheduleViewScreenContent(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val bizZone = LocalBusinessZone.current
+    // #2028: a notification's Open is for this visit to the screen only, so a
+    // "no longer waiting" note does not greet the operator on a later return.
+    androidx.compose.runtime.DisposableEffect(viewModel) {
+        onDispose { viewModel.clearFocusedRequest() }
+    }
 
     // Time-block descriptor for booking cards (spec 15 item 5). Resolver +
     // Business-Settings timeBlocks now exist (Stage 1 §A.8). Always on, same as
@@ -531,6 +536,24 @@ private fun ScheduleViewScreenContent(
                             icon = Lucide.CircleAlert,
                             onDismiss = { viewModel.clearIncomingError() },
                         ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
+                    }
+                }
+            }
+            // #2028: a notification's Open named a request that is no longer
+            // waiting. Same words as the web's Visit requests queue.
+            if (state.focusedRequestGone) {
+                item {
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Info,
+                        title = "That request is no longer waiting",
+                        icon = Lucide.CircleAlert,
+                        onDismiss = { viewModel.clearFocusedRequest() },
+                    ) {
+                        Text(
+                            "It was booked, turned down or withdrawn, so there is nothing left to answer.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.textDim,
+                        )
                     }
                 }
             }

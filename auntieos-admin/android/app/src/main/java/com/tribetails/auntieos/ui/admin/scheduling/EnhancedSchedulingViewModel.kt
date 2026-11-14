@@ -195,7 +195,16 @@ data class SchedulingState(
     val scheduleWriteOverride: ScheduleOverrideKind? = null,
     // The write currently in flight, so the same block/move cannot be fired twice.
     val scheduleWriteInFlight: Boolean = false,
-)
+) {
+    /**
+     * #2028: a notification's Open named a request the live queue does not hold
+     * (booked, turned down or withdrawn since). Bookings says so rather than
+     * landing on nothing. Unknown while the queue is not live, so false then.
+     */
+    val focusedRequestGone: Boolean
+        get() = focusedRequestKey != null && incomingLive &&
+            incomingSeries.none { it.requestKey == focusedRequestKey }
+}
 
 /**
  * UI state for the Google Calendar OAuth connect/push card (Task 7.2). Kept as
