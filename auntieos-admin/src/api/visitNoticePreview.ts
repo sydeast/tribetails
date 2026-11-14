@@ -44,7 +44,12 @@ export async function previewHouseholdNotice(
   const res = await call<
     { familyId: string; key: HouseholdNoticeKey; sessionId?: string },
     { willNotify?: unknown; reason?: unknown; name?: unknown; channels?: unknown }
-  >('previewVisitNotification', { familyId, key, ...(sessionId !== undefined && sessionId !== '' ? { sessionId } : {}) });
+  >('previewVisitNotification', {
+    // A row naming no household asks by its visit alone; the server reads the household off it.
+    ...(familyId.trim() !== '' ? { familyId } : {}),
+    key,
+    ...(sessionId !== undefined && sessionId !== '' ? { sessionId } : {}),
+  } as { familyId: string; key: HouseholdNoticeKey; sessionId?: string });
   if (typeof res?.willNotify !== 'boolean' || !Array.isArray(res.channels)) {
     throw new Error('previewVisitNotification: no answer for this notice');
   }

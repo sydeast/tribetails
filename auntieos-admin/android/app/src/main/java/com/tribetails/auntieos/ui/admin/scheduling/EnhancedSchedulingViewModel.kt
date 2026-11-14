@@ -1216,7 +1216,11 @@ class EnhancedSchedulingViewModel(
      *   household "KinCare booking confirmed" when the control is on. A draft
      *   sends nothing and books nothing, as before.
      */
+    /** #1841: the New Booking confirmation choice, held while a conflict question is open. */
+    private var pendingNotifyHousehold: Boolean = false
+
     fun createBooking(booking: EnhancedBooking, internalNote: String = "", notifyHousehold: Boolean = false) {
+        pendingNotifyHousehold = notifyHousehold
         if (_state.value.isLoading) return
         _state.value = _state.value.copy(isLoading = true)
         viewModelScope.launch {
@@ -1605,7 +1609,12 @@ class EnhancedSchedulingViewModel(
         readAuntieSignedIn()
         val familyId = booking.kinfolkId.trim()
         if (familyId.isEmpty()) return HouseholdNoticePreview.Unknown
-        val sessionId = findLinkedSessionIds(booking.id).getOrNull()?.singleOrNull()
+        val linked = findLinkedSessionIds(booking.id).getOrElse { return HouseholdNoticePreview.Unknown }
+        // Not exactly one linked visit: the cancel or move addresses no booking
+        // record, so nobody is told, and the confirm says so rather than
+        // answering for the household alone (the bridge sends nothing then).
+        val sessionId = linked.singleOrNull()
+            ?: return HouseholdNoticePreview.Ready(false, "session_has_no_routing_ids", null, emptyList())
         return runCatching { householdPreviewer(familyId, key, sessionId).getOrThrow() }
             .getOrElse { HouseholdNoticePreview.Unknown }
     }
@@ -1682,10 +1691,13 @@ class EnhancedSchedulingViewModel(
             // answer, read from the session bridge that made it.
             bridgeCancellationToSession(booking, reason)
                 .onSuccess { notice ->
-                    val auntie = readAuntieSignedIn()
-                    _state.value = _state.value.copy(
-                        bookingActionMessage = withHouseholdLine(done, householdNoticeResultLine(notice, booking.kinfolkName, auntie)),
-                    )
+                    // A request turned down (DRAFT) was never a visit anyone was told about.
+                    if (booking.status != BookingStatus.DRAFT) {
+                        val auntie = readAuntieSignedIn()
+                        _state.value = _state.value.copy(
+                            bookingActionMessage = withHouseholdLine(done, householdNoticeResultLine(notice, booking.kinfolkName, auntie)),
+                        )
+                    }
                 }
                 .onFailure { e ->
                     _state.value = _state.value.copy(
@@ -3117,7 +3129,14 @@ class EnhancedSchedulingViewModel(
                         targetId         = targetId,
                         targetCollection = "enhanced_bookings",
                     )
-                    loadBookingsForDateRange()
+                    // #1841: a New Booking confirmed at once, forced past a
+                    // conflict, is booked the way the plain save books it, with
+                    // the household's confirmation the admin chose.
+                    if (!isUpdate && booking.status == BookingStatus.ACCEPTED && targetId.isNotBlank()) {
+                        approveBooking(booking.copy(id = targetId), notifyHousehold = pendingNotifyHousehold)
+                    } else {
+                        loadBookingsForDateRange()
+                    }
                 } else {
                     _state.value = _state.value.copy(
                         errorMessage = "Failed to force-${if (isUpdate) "update" else "create"} booking: ${result.exceptionOrNull()?.message}"
@@ -3176,7 +3195,9 @@ class EnhancedSchedulingViewModel(
     private suspend fun bridgeCancellationToSession(booking: EnhancedBooking, reason: String): Result<HouseholdNoticeDto?> {
         val sessionIds = findLinkedSessionIds(booking.id).getOrElse { return Result.failure(it) }
         // #1838: no linked visit, nothing told: the server addresses no household.
-        if (sessionIds.isEmpty()) return Result.success(null)
+        if (sessionIds.isEmpty()) {
+            return Result.success(HouseholdNoticeDto(told = false, reason = "session_has_no_routing_ids", name = null, channels = emptyList()))
+        }
 
         var notice: HouseholdNoticeDto? = null
         sessionIds.forEach { sessionId ->

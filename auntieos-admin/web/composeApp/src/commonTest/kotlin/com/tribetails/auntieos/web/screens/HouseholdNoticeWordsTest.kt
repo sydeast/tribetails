@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.screens
 
 import com.tribetails.auntieos.web.screens.kintales.kinTaleComposeSentMessage
 import com.tribetails.auntieos.web.screens.kintales.kinTaleSendConfirmText
+import com.tribetails.auntieos.web.screens.schedule.moveConfirmText
 import com.tribetails.auntieos.web.screens.schedule.newVisitSummary
 import com.tribetails.auntieos.web.screens.schedule.noteSavedToast
 import com.tribetails.auntieos.web.screens.schedule.rescheduledToast
@@ -83,5 +84,11 @@ class HouseholdNoticeWordsTest {
         assertEquals("KinTale sent. Still checking whether The Wrens was told. The Activity Log will show it.", kinTaleComposeSentMessage(null, "The Wrens"))
         assertEquals("Send to The Wrens. Dre East will get an email. This cannot be undone.", kinTaleSendConfirmText("The Wrens", "Dre East will get an email."))
         assertEquals("Send to The Wrens. This cannot be undone.", kinTaleSendConfirmText("The Wrens", null))
+    }
+
+    @Test fun theDragQuestionNamesTheNewTimeOnTheBusinessClock() {
+        val chicago = kotlinx.datetime.TimeZone.of("America/Chicago")
+        assertEquals("The Wrens's visit moves to Tue, Nov 17 at 13:30.", moveConfirmText("The Wrens", "2026-11-17T19:30:00Z", chicago))
+        assertEquals("Unnamed's visit moves to a new time.", moveConfirmText("", "soon", chicago))
     }
 }

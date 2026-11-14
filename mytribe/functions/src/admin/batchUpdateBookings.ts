@@ -271,8 +271,22 @@ export async function batchUpdateBookingsHandler(
           { merge: true },
         );
       }
+      // Mirror onto kin_care_sessions the same way manageBookingSeries's own
+      // CANCEL path already does: only when the paired session doc exists (a
+      // still-pending request that was never approved has none, and the
+      // deterministic id is `vis_{visitId}`, minted by approveBookingSeriesCore).
+      const sessionRef = db().collection('kin_care_sessions').doc(hit.sessionId);
+      const sessionSnap = await sessionRef.get();
+      if (sessionSnap.exists) {
+        await sessionRef.set(
+          { status: sessionMirrorWanted, updatedAt: FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+      }
+      // #1838: after both copies moved, so a failed read here cannot skip the mirror.
       if (envelope !== null && householdNotices !== null && officeNoticeStamp !== null) {
-        const visit = ((await hit.ref.get()).data() ?? {}) as Record<string, unknown>;
+        // A failed read leaves the notice without the visit's time, never the cancel uncounted.
+        const visit = ((await hit.ref.get().then((d) => d.data(), () => undefined)) ?? {}) as Record<string, unknown>;
         notices.push({
           id,
           notice: await householdNotices.sendVisitHouseholdNotice({
@@ -286,18 +300,6 @@ export async function batchUpdateBookingsHandler(
             caller: 'batchUpdateBookings',
           }),
         });
-      }
-      // Mirror onto kin_care_sessions the same way manageBookingSeries's own
-      // CANCEL path already does: only when the paired session doc exists (a
-      // still-pending request that was never approved has none, and the
-      // deterministic id is `vis_{visitId}`, minted by approveBookingSeriesCore).
-      const sessionRef = db().collection('kin_care_sessions').doc(hit.sessionId);
-      const sessionSnap = await sessionRef.get();
-      if (sessionSnap.exists) {
-        await sessionRef.set(
-          { status: sessionMirrorWanted, updatedAt: FieldValue.serverTimestamp() },
-          { merge: true },
-        );
       }
       updated += 1;
     } catch (err) {

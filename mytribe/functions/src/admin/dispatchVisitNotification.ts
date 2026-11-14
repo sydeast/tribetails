@@ -362,11 +362,14 @@ export async function dispatchVisitNotificationCore(
     extra: { key, familyId: args.familyId, batchId, visitId, dispatchCount: dispatchIds.length, reason },
   });
 
-  const { householdNoticeFromOutcome, householdNoticeName } = await import('../notifications/householdNotice.js');
+  const { householdNoticeFromOutcome, householdNoticeName, householdReach } = await import(
+    '../notifications/householdNotice.js'
+  );
   const notice = householdNoticeFromOutcome(
     enqueued,
     recipientUid,
     await householdNoticeName(args.familyId, recipientUid),
+    await householdReach(recipientUid),
   );
   return { ok: true, dispatchIds, suppressed: dispatchIds.length === 0, reason, notice };
 }

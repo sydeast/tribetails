@@ -56,7 +56,7 @@ function household(extra: Record<string, Record<string, unknown> | null> = {}) {
   return {
     'kinfolk/kf1': { uid: 'kinUid', kinfolkName: 'The Easts' },
     'families/kf1/members/kinUid': { status: 'ACTIVE', role: 'PRIMARY' },
-    'clients/kinUid': { displayName: 'Dre East', kinfolkIds: ['kf1'] },
+    'clients/kinUid': { displayName: 'Dre East', email: 'catch@hanasamku.com', kinfolkIds: ['kf1'] },
     ...extra,
   };
 }

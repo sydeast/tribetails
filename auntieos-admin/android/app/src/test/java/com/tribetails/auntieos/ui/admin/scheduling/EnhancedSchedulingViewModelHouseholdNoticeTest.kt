@@ -166,6 +166,22 @@ class EnhancedSchedulingViewModelHouseholdNoticeTest {
         assertEquals("The Wrens's visit is cancelled.", vm.state.value.bookingActionMessage)
     }
 
+    @Test
+    fun `NEGATIVE a booking with no linked visit says nobody will be told, and nobody was`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(emptyList())
+        val vm = vm()
+        vm.requestCancel(booking())
+        assertEquals(
+            "Nobody will be told: this visit is not linked to a booking.",
+            householdNoticeConfirmLine(vm.state.value.cancelPreview, "The Wrens"),
+        )
+        assertEquals(0, previewCalls.size)
+        vm.confirmCancel()
+        assertEquals(
+            "The Wrens's visit is cancelled. Nobody was told: this visit is not linked to a booking.",
+            vm.state.value.bookingActionMessage,
+        )
+    }
     // ── #2027: drag and move ─────────────────────────────────────────────────
 
     @Test
@@ -235,6 +251,30 @@ class EnhancedSchedulingViewModelHouseholdNoticeTest {
         assertEquals("The Wrens's visit is scheduled. Dre East was sent an email.", vm.state.value.bookingActionMessage)
     }
 
+    @Test
+    fun `NEGATIVE Confirm immediately forced past a conflict still books it with the chosen confirmation`() = runTest(testDispatcher) {
+        coEvery { auntieRepo.getBusinessSettings() } returns Result.success(BusinessSettings(enableConflictDetection = true))
+        coEvery { bookingRepo.evaluateAvailability(any()) } returns Result.success(
+            com.tribetails.auntieos.data.model.BookingAvailabilityResult(isAvailable = false, conflictingBookings = listOf(booking())),
+        )
+        coEvery { bookingRepo.createBooking(any(), any()) } returns Result.success("b1")
+        coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(emptyList())
+        coEvery {
+            kinCareRepo.createKinCareSession(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns Result.success("vis_enh_b1")
+        every { kinCareRepo.lastCreatedVisitNotice } returns null
+        val vm = vm()
+        vm.createBooking(booking().copy(id = ""), notifyHousehold = false)
+        assertEquals(true, vm.state.value.showConflictDialog)
+        vm.resolveConflict(forceCreate = true)
+        coVerify(exactly = 1) {
+            kinCareRepo.createKinCareSession(
+                kinfolkId = "kf1", kinIds = any(), serviceType = any(), startTime = any(), endTime = any(),
+                serviceDurationMinutes = any(), notes = any(), recordAsCompleted = any(),
+                notifyHousehold = false, enhancedBookingId = "b1",
+            )
+        }
+    }
     @Test
     fun `SAD a draft books nothing and sends nothing`() = runTest(testDispatcher) {
         coEvery { bookingRepo.createBooking(any(), any()) } returns Result.success("b2")

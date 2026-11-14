@@ -344,14 +344,37 @@ export async function createKinCareSessionHandler(
   // #1841: after the write, so a confirmation names a visit that exists.
   const householdNotices = await import('../notifications/householdNotice.js');
   let notice: HouseholdNotice;
-  if (args.notifyHousehold === true && !backdated) {
-    const { bookingConfirmData } = await import('./approveBookingSeriesCore.js');
-    const { data } = await bookingConfirmData({
-      kinfolkId: args.kinfolkId,
-      batchId,
-      envelope: record.envelope as Record<string, unknown>,
-      householdNote: '',
-    });
+  // The visit is written by now: a failed read of the confirmation's payload
+  // is "could not be sent", never a refusal the admin would retry into a
+  // second visit.
+  const confirmData =
+    args.notifyHousehold === true && !backdated
+      ? await import('./approveBookingSeriesCore.js')
+          .then(({ bookingConfirmData }) =>
+            bookingConfirmData({
+              kinfolkId: args.kinfolkId,
+              batchId,
+              envelope: record.envelope as Record<string, unknown>,
+              householdNote: '',
+            }),
+          )
+          .then(({ data }) => data)
+          .catch((err: unknown) => {
+            logEvent({
+              severity: 'warn',
+              function: 'createKinCareSession',
+              event: 'household.notice.payload.failed',
+              uid,
+              extra: { sessionId: ref.id, kinfolkId: args.kinfolkId },
+              errorMessage: (err as Error)?.message,
+            });
+            return null;
+          })
+      : null;
+  if (args.notifyHousehold === true && !backdated && confirmData === null) {
+    notice = await householdNotices.householdNoticeNotSent(args.kinfolkId, 'dispatch_failed');
+  } else if (confirmData !== null) {
+    const data = confirmData;
     notice = await householdNotices.sendHouseholdNotice(
       args.kinfolkId,
       {

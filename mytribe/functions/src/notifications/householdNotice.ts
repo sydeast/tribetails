@@ -100,6 +100,36 @@ export async function householdNoticeName(familyId: string, recipientUid: string
   }
 }
 
+/**
+ * Which channels the login can be reached on at all. The email and SMS senders
+ * skip a login with no address on file (`senders/emailChannel.ts`
+ * `recipient_no_email`, `senders/smsChannel.ts`), so a channel the prefs leave
+ * on is not a send without one. Push stays: its tokens live on devices, and
+ * the record in the notifications list is written either way.
+ */
+export interface HouseholdReach {
+  email: boolean;
+  sms: boolean;
+}
+
+export async function householdReach(recipientUid: string | null): Promise<HouseholdReach> {
+  if (recipientUid === null) return { email: false, sms: false };
+  try {
+    const client = (await db().collection('clients').doc(recipientUid).get()).data() as
+      | Record<string, unknown>
+      | undefined;
+    return { email: words(client?.['email']) !== '', sms: words(client?.['phone']) !== '' };
+  } catch {
+    // Unreadable: say what the prefs say rather than invent a missing address.
+    return { email: true, sms: true };
+  }
+}
+
+/** PURE. The channels a copy really goes out on: the prefs' list, less one with no address. */
+export function reachableChannels<C extends string>(channels: readonly C[], reach: HouseholdReach): C[] {
+  return channels.filter((c) => (c === 'email' ? reach.email : c === 'sms' ? reach.sms : true));
+}
+
 /** True when [key] can reach a household at all. Unknown keys throw, as the dispatcher does. */
 export function isHouseholdKey(key: string): boolean {
   const def = getNotificationDef(key);
@@ -130,7 +160,12 @@ export async function previewHouseholdNotice(familyId: string, key: string): Pro
     case 'gate':
       return { willNotify: false, reason: 'household_notices_off', name, channels: [] };
     case 'send':
-      return { willNotify: true, reason: null, name, channels: copy.channels };
+      return {
+        willNotify: true,
+        reason: null,
+        name,
+        channels: reachableChannels(copy.channels, await householdReach(recipientUid)),
+      };
   }
 }
 
@@ -143,10 +178,12 @@ export function householdNoticeFromOutcome(
   outcome: Pick<EnqueueOutcome, 'written' | 'suppressed' | 'channelsByRecipient'>,
   recipientUid: string | null,
   name: string | null,
+  /** Which channels the login has an address for (`householdReach`); all of them when not given. */
+  reach: HouseholdReach = { email: true, sms: true },
 ): HouseholdNotice {
   if (recipientUid === null) return { told: false, reason: 'household_has_no_portal_account', name, channels: [] };
   const channels = outcome.channelsByRecipient?.[recipientUid];
-  if (channels !== undefined) return { told: true, reason: null, name, channels: [...channels] };
+  if (channels !== undefined) return { told: true, reason: null, name, channels: reachableChannels(channels, reach) };
   const held = outcome.suppressed.find((s) => s.recipientUid === recipientUid);
   if (held?.reason === 'gate') return { told: false, reason: 'household_notices_off', name, channels: [] };
   if (held?.reason === 'prefs') return { told: false, reason: 'household_prefs_suppressed', name, channels: [] };
@@ -192,7 +229,7 @@ export async function sendHouseholdNotice(
     recipientUid = await resolveKinfolkUid(familyId);
     name = await householdNoticeName(familyId, recipientUid);
     const outcome = await enqueueNotificationDetailed({ ...args, recipientUid: recipientUid ?? '' });
-    return householdNoticeFromOutcome(outcome, recipientUid, name);
+    return householdNoticeFromOutcome(outcome, recipientUid, name, await householdReach(recipientUid));
   } catch (err) {
     const noOne = (err as { name?: unknown } | null)?.name === 'NoRecipientsError';
     logEvent({

@@ -29,7 +29,7 @@ function claimed(extra: Docs = {}): Docs {
   return {
     'kinfolk/fam1': { uid: 'kinUid', kinfolkName: 'The Easts' },
     'families/fam1/members/kinUid': { status: 'ACTIVE', role: 'PRIMARY' },
-    'clients/kinUid': { displayName: 'Dre East' },
+    'clients/kinUid': { displayName: 'Dre East', email: 'catch@hanasamku.com' },
     ...extra,
   };
 }
@@ -65,12 +65,32 @@ describe('preview and send agree on who is told and how', () => {
   });
 
   it('HAPPY: the channels the household chose are the channels named', async () => {
-    const prefs = { 'clients/kinUid': { displayName: 'Dre East', notificationPrefs: { byKey: { 'kincare.booking.cancel': { email: true, sms: true, push: true } } } } };
+    const prefs = {
+      'clients/kinUid': {
+        displayName: 'Dre East',
+        email: 'catch@hanasamku.com',
+        phone: '+15555550100',
+        notificationPrefs: { byKey: { 'kincare.booking.cancel': { email: true, sms: true, push: true } } },
+      },
+    };
     const { preview, result } = await both(claimed(prefs));
     expect(preview.channels).toEqual(result.channels);
     expect(result.channels).toEqual(['email', 'sms', 'push']);
   });
 
+  it('SAD: a channel with no address on file is not claimed, on either side (the senders skip it)', async () => {
+    const noAddress = {
+      'clients/kinUid': {
+        displayName: 'Dre East',
+        notificationPrefs: { byKey: { 'kincare.booking.cancel': { email: true, sms: true, push: false } } },
+      },
+    };
+    const { preview, result, householdRecords } = await both(claimed(noAddress));
+    expect(preview).toEqual({ willNotify: true, reason: null, name: 'Dre East', channels: [] });
+    expect(result).toEqual({ told: true, reason: null, name: 'Dre East', channels: [] });
+    // The record in their notifications list is still written.
+    expect(householdRecords).toHaveLength(1);
+  });
   it('SAD: household notices off in Settings: nobody will be told, and nobody was', async () => {
     const { preview, result, householdRecords } = await both(
       claimed({ [HOUSEHOLD_GATE_SETTINGS_PATH]: { householdNotificationsLive: false } }),

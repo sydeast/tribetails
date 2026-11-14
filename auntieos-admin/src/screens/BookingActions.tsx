@@ -222,7 +222,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
   // the household notice will reach. Asked before the guard below, so the
   // hooks run in the same order on every render.
   const auntie = useIsAuntie();
-  const familyId = (entry?.kinfolkId ?? '').trim() === '' ? null : (entry?.kinfolkId ?? null);
+  const familyId = (entry?.kinfolkId ?? '').trim();
   const cancelPreview = useHouseholdNoticePreview(
     mode.kind === 'confirm' && mode.action.kind === 'cancel' ? familyId : null,
     'kincare.booking.cancel',
@@ -532,7 +532,7 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
   // #1838: the cancel question asks the server who the household notice will
   // reach, for this visit, and the toast reports what the cancel did.
-  const statusFamilyId = (entry.kinfolkId ?? '').trim() === '' ? null : (entry.kinfolkId ?? null);
+  const statusFamilyId = (entry.kinfolkId ?? '').trim();
   const statusCancelPreview = useHouseholdNoticePreview(
     confirming?.kind === 'cancel' ? statusFamilyId : null,
     'kincare.booking.cancel',

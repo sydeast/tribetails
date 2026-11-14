@@ -324,7 +324,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
   const [confirmDrop, setConfirmDrop] = useState<{ drop: ScheduleDrop; startTime: string } | null>(null);
   const { showToast } = useToast();
   const auntie = useIsAuntie();
-  const dropFamilyId = confirmDrop === null ? null : str(confirmDrop.drop.session.kinfolkId).trim() || null;
+  const dropFamilyId = confirmDrop === null ? null : str(confirmDrop.drop.session.kinfolkId).trim();
   const dropPreview = useHouseholdNoticePreview(dropFamilyId, 'kincare.changed', confirmDrop?.drop.session._id);
 
   // ── unblock (#574) ─────────────────────────────────────────────────────────

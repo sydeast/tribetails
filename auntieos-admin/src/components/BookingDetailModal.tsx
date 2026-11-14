@@ -544,7 +544,7 @@ function ReschedulePanel({ entry, durationMinutes, businessZone, household, aunt
   // #2027: before the move, the form says who the household notice reaches.
   const familyId = str(entry.kinfolkId).trim();
   const movePreview = useHouseholdNoticePreview(
-    canReschedule && familyId !== '' ? familyId : null,
+    canReschedule ? familyId : null,
     'kincare.changed',
     entry._id,
   );

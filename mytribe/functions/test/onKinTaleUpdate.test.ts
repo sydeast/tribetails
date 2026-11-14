@@ -156,7 +156,7 @@ describe('onKinTaleUpdate trigger: the send outcome the web composer waits for (
   }
 
   it('HAPPY: a told household is recorded with who and how', async () => {
-    const fake = buildDbMock({ docs: { 'clients/uid_kinfolk': { displayName: 'Dre East' } } });
+    const fake = buildDbMock({ docs: { 'clients/uid_kinfolk': { displayName: 'Dre East', email: 'catch@hanasamku.com' } } });
     mocks.dbFn.mockReturnValue(fake.db);
     await onKinTaleUpdateHandler(sentEvent());
     expect(noticeWrite(fake.writes)?.data).toMatchObject({

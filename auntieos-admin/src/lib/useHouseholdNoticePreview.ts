@@ -9,8 +9,9 @@ import { type HouseholdNoticeKey, type HouseholdNoticePreview } from './househol
  * Asked fresh every time, never cached: a household can accept its invite, or
  * the owner can flip the switch, between two confirms (the #1840 rule).
  *
- * @param familyId the household, or `null` when there is nothing to ask (no
- *        confirm open, or a visit with no household).
+ * @param familyId the household, or `null` when no confirm is open. `''` (a
+ *        row naming no household) asks by [sessionId] alone when there is one,
+ *        and otherwise says nothing, never "checking" forever.
  * @returns `checking` until the answer lands, `unknown` when the call failed.
  */
 export function useHouseholdNoticePreview(
@@ -22,8 +23,12 @@ export function useHouseholdNoticePreview(
   const [preview, setPreview] = useState<HouseholdNoticePreview>({ status: 'checking' });
 
   useEffect(() => {
-    if (familyId === null || familyId.trim() === '') {
+    if (familyId === null) {
       setPreview({ status: 'checking' });
+      return;
+    }
+    if (familyId.trim() === '' && (sessionId === undefined || sessionId.trim() === '')) {
+      setPreview({ status: 'unknown' });
       return;
     }
     let live = true;
