@@ -9,7 +9,7 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import { isSessionCancelled, isSessionClaimed } from './sessionInvoicing';
 import { businessCalendarDate } from './bookingTimeBlocks';
 import { FALLBACK_BUSINESS_TIME_ZONE } from './businessHours';
-import { quoteDecisionOf } from './quoteDecision';
+import { isQuoteDraft, quoteDecisionOf } from './quoteDecision';
 
 /**
  * #1901 / #1970 / #2091: ONE place that sets and clears a visit's billed link.
@@ -403,7 +403,9 @@ async function otherInvoices(
     const rawStatus = data['status'] ?? data['invoiceStatus'];
     holders.set(ids[i], {
       number: typeof n === 'string' && n.trim() !== '' ? n.trim() : '',
-      quote: typeof rawStatus === 'string' && rawStatus.trim().toLowerCase() === 'quote',
+      // A quote saved unsent (#2087) is a draft carrying the quote mark, and
+      // is still a quote to the office reading the refusal.
+      quote: (typeof rawStatus === 'string' && rawStatus.trim().toLowerCase() === 'quote') || isQuoteDraft(data),
     });
   });
   return holders;
@@ -439,6 +441,32 @@ async function nameHolders(
 /** "is billed on invoice 1042", or "is on quote 1042": a quote holds a visit without billing it. */
 function heldWords(holder: OtherInvoice | undefined): string {
   return holder?.quote === true ? `is on ${invoiceWordsFor(holder)}` : `is billed on ${invoiceWordsFor(holder)}`;
+}
+
+/** What a refusal says about the invoice or quote that holds a visit, read outside a transaction. */
+export interface HolderWords {
+  /** "is billed on invoice 1042", "is on quote 1042", "is on another quote": never an id. */
+  held: string;
+  /** True when it is a quote, which holds a visit without billing it. */
+  quote: boolean;
+}
+
+/**
+ * #2196: the words for each invoice or quote that holds a visit, keyed by its
+ * id, read by number the same way New invoice's refusal names them (#2156).
+ * For a caller outside a transaction (`setSessionDoNotInvoice`).
+ */
+export async function holderWordsFor(
+  firestore: Firestore,
+  invoiceIds: readonly string[],
+): Promise<Map<string, HolderWords>> {
+  const holders = await otherInvoices((ref) => ref.get(), firestore, invoiceIds);
+  const out = new Map<string, HolderWords>();
+  for (const id of new Set(invoiceIds)) {
+    const holder = holders.get(id);
+    out.set(id, { held: heldWords(holder), quote: holder?.quote === true });
+  }
+  return out;
 }
 
 // ── #2168 review: a draft is sent only when every visit its lines bill is its own ──

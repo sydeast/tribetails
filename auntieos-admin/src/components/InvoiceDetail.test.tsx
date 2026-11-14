@@ -3626,6 +3626,38 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
     expect(screen.queryByText(/No collection actions/)).toBeNull();
   });
 
+  it('#2092 a quote is titled as a quote, its lines read "What is quoted", and the tab says Quote', () => {
+    const lines = [{ description: 'Dog walk', qty: 1, unitCents: 1200 }];
+    for (const quote of [sentQuote(), quoteDraft()]) {
+      const { unmount } = render(
+        <InvoiceDetail invoice={{ ...quote, invoiceNumber: '1026', lineItems: lines, total: 12 }} onClose={vi.fn()} />,
+      );
+      expect(screen.getByRole('heading', { name: 'Quote #1026' })).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: /Invoice #/ })).toBeNull();
+      expect(screen.getByText('What is quoted')).toBeInTheDocument();
+      expect(screen.queryByText('What was billed')).toBeNull();
+      expect(document.title).toBe('Quote #1026 · AuntieOS');
+      unmount();
+    }
+  });
+
+  it('#2092 an archived quote says it has nothing owed, not "a quote invoice"', () => {
+    render(<InvoiceDetail invoice={{ ...sentQuote(), archivedAt: fakeTs('2026-11-01T12:00:00Z') }} onClose={vi.fn()} />);
+    expect(screen.getByText('A quote has no collection actions: nothing is owed on it.')).toBeInTheDocument();
+    expect(screen.queryByText(/quote invoice/i)).toBeNull();
+  });
+
+  it('#2092 an ordinary invoice keeps "Invoice #" and "What was billed"', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({ invoiceNumber: '1042', lineItems: [{ description: 'Dog walk', qty: 1, unitCents: 1200 }] })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('heading', { name: 'Invoice #1042' })).toBeInTheDocument();
+    expect(screen.getByText('What was billed')).toBeInTheDocument();
+  });
+
   it('#2088 the quote saved unsent can be turned or withdrawn too', () => {
     render(<InvoiceDetail invoice={quoteDraft()} onClose={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'Turn into invoice' })).toBeInTheDocument();

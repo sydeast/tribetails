@@ -15,7 +15,17 @@ import {
   partPaidSummary,
   quoteActorLabel,
   shortDateLabel,
+  documentNoun,
 } from './invoiceFormat';
+
+describe('documentNoun (#2092)', () => {
+  it('a quote is a Quote, answered or not; every other state is an Invoice', () => {
+    expect(documentNoun({ status: 'quote' })).toBe('Quote');
+    for (const status of ['open', 'paid', 'draft', 'zero', 'cancelled', 'credit', 'redeemed'] as const) {
+      expect(documentNoun({ status })).toBe('Invoice');
+    }
+  });
+});
 
 describe('formatUsd', () => {
   it('formats positive amounts with two decimals', () => {

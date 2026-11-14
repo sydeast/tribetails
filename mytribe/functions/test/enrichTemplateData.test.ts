@@ -530,6 +530,8 @@ describe('TEMPLATE_FIELDS mirrors the on-disk seed tokens (drift guard)', () => 
       while ((m = re.exec(raw)) !== null) {
         const token = m[1];
         if (token === 'this' || token.startsWith('this.')) continue;
+        // `{{else}}` is part of an `if` block, not a field (#2092: invoice.new).
+        if (token === 'else') continue;
         found.add(token);
       }
     }

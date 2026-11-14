@@ -888,12 +888,23 @@ class AdminDataViewModel(
                 }
                 loadInvoices() // Refresh the list
             }.onFailure { throwable ->
+                if (throwable is com.tribetails.auntieos.domain.QuoteSavedNotSentException) {
+                    // #2087: the quote exists, as a draft. Its key is spent, the
+                    // list shows it, and the server's sentence says to press Send
+                    // quote on it. Not an error: nothing failed to be created.
+                    releaseInvoiceCreateKey()
+                    _invoiceActionMessage.value = throwable.message
+                    loadInvoices()
+                    return@onFailure
+                }
                 _error.value = throwable.message
                     ?: if (request.kind == InvoiceCreateKind.QUOTE) "Failed to create quote" else "Failed to create invoice"
                 _isLoading.value = false
             }
             // The caller wants the id to land on; the send flag is this screen's to say.
-            onResult(result.map { it.invoiceId })
+            // #2087: a quote saved but not sent lands on that draft, like a create does.
+            val saved = (result.exceptionOrNull() as? com.tribetails.auntieos.domain.QuoteSavedNotSentException)?.invoiceId
+            onResult(if (saved != null) Result.success(saved) else result.map { it.invoiceId })
         }
     }
 

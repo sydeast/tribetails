@@ -292,7 +292,31 @@ class NewInvoiceDialogTest {
         mount(initialKinfolkId = "kf1", initialKind = InvoiceCreateKind.QUOTE, loaded = result(scanned = 0L))
         rule.onNodeWithText("New quote").assertExists()
         rule.onNodeWithText("Create quote").assertExists()
-        rule.onNodeWithText("Send to kinfolk").assertExists()
+        rule.onNodeWithText("Send to Kinfolk now").assertExists()
+    }
+
+    @Test
+    fun `2092 the New quote form calls its work and its total a quote's, and offers no Do not invoice`() {
+        mount(
+            initialKinfolkId = "kf1",
+            initialKind = InvoiceCreateKind.QUOTE,
+            loaded = result(sessions = listOf(session("s1")), scanned = 1L),
+        )
+        rule.onNodeWithText("1 of 1 unbilled visit selected for Jamie Halbrook.").assertExists()
+        rule.onNodeWithText(
+            "This quote will be created for $25.00, worked out from the work it covers. There is nowhere to " +
+                "type a total, so it can never say a different number from the work it lists.",
+        ).assertExists()
+        rule.onNodeWithText("Do not invoice this visit").assertDoesNotExist()
+        rule.onNodeWithText("Do not invoice").assertDoesNotExist()
+        rule.onNodeWithText("Create quote for 1 visit").assertExists()
+    }
+
+    @Test
+    fun `2092 a quote with no work offers a blank quote, not a blank invoice`() {
+        mount(initialKinfolkId = "kf1", initialKind = InvoiceCreateKind.QUOTE, loaded = result(scanned = 0L))
+        rule.onNodeWithText("Write a blank quote instead").assertExists()
+        rule.onNodeWithText("Write a blank invoice instead").assertDoesNotExist()
     }
 
     @Test

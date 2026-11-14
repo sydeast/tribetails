@@ -350,6 +350,8 @@ fun composerBlockedReason(
     draftCount: Int,
     money: ComposerMoney?,
     totalText: String,
+    /** #2092: the composer is making a quote, and says so. */
+    quote: Boolean = false,
 ): String? {
     if (kinfolkId.isBlank()) return "Pick a household first."
     if (date.isNotBlank() && !isValidNewInvoiceIsoDate(date)) return "Date must be a real YYYY-MM-DD date"
@@ -364,7 +366,8 @@ fun composerBlockedReason(
     }
     return when (path) {
         InvoiceCreatePath.WORK -> when {
-            selectedCount == 0 && draftCount == 0 -> "Tick the work this invoice covers, or add a line of your own."
+            selectedCount == 0 && draftCount == 0 ->
+                "Tick the work this ${if (quote) "quote" else "invoice"} covers, or add a line of your own."
             money?.error != null -> money.error
             else -> null
         }
@@ -379,10 +382,17 @@ fun composerCreateLabel(isQuote: Boolean, visitCount: Int): String {
     return "$verb for $visitCount visit${if (visitCount == 1) "" else "s"}"
 }
 
-/** What the due-date field is doing. */
-fun composerTermsNote(termsCode: InvoiceTermsCode, due: DueDateResolution, invoiceDate: String): String = when {
+/** What the due-date field is doing. #2092: a quote is not a bill, so a past date does not make it overdue. */
+fun composerTermsNote(
+    termsCode: InvoiceTermsCode,
+    due: DueDateResolution,
+    invoiceDate: String,
+    quote: Boolean = false,
+): String = when {
     termsCode == InvoiceTermsCode.CUSTOM -> "These terms leave the due date to you."
     due.dueDate == null -> due.problem.orEmpty()
+    due.isPast && quote ->
+        "Worked out from the terms, counting from ${due.basisDay ?: invoiceDate}. That date has already passed."
     due.isPast ->
         "Worked out from the terms, counting from ${due.basisDay ?: invoiceDate}. That date has already " +
             "passed, so this invoice is overdue the moment it goes out."
@@ -397,12 +407,15 @@ fun uninvoicedScopeLine(
     scanned: Long,
     narrowedFrom: String?,
     narrowedTo: String?,
+    /** #2092: on a quote the work is "unbilled"; "un-invoiced" is an invoice's word. */
+    quote: Boolean = false,
 ): String {
     val window = if (narrowedFrom != null && narrowedTo != null) " between $narrowedFrom and $narrowedTo" else ""
+    val open = if (quote) "unbilled" else "un-invoiced"
     return if (total == 0) {
-        "No un-invoiced completed visits for $householdLabel$window. $scanned visits were checked."
+        "No $open completed visits for $householdLabel$window. $scanned visits were checked."
     } else {
-        "$selectedCount of $total un-invoiced visit${if (total == 1) "" else "s"} selected for $householdLabel$window."
+        "$selectedCount of $total $open visit${if (total == 1) "" else "s"} selected for $householdLabel$window."
     }
 }
 
@@ -414,13 +427,13 @@ fun doNotInvoiceLabel(count: Int): String = when (count) {
 }
 
 /** What happened after the queue changed. Counts CHANGED visits, not requested ones. */
-fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean): String {
+fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean, quote: Boolean = false): String {
     val subject = if (changedCount == 1) "1 visit is" else "$changedCount visits are"
     return if (doNotInvoice) {
         val obj = if (changedCount == 1) "it" else "them"
         "$subject marked do not invoice, and off this list until you put $obj back."
     } else {
-        "$subject back in this household's un-invoiced work."
+        "$subject back in this household's ${if (quote) "unbilled" else "un-invoiced"} work."
     }
 }
 

@@ -487,9 +487,22 @@ fun InvoicesScreen(
                 )
             }
             composerSubmitting = false
-            when (r) {
-                is WriteResult.Err -> composerError = r.message
-                is WriteResult.Ok -> {
+            val savedQuoteId = (r as? WriteResult.Err)?.let { quoteSavedNotSentId(it.code, it.details) }
+            when {
+                // #2087: the quote was saved as a draft and only its send
+                // failed. Close onto that draft, as admin web does, with the
+                // server's sentence: a retry is Send quote on it, never a second
+                // press here that would make a second quote.
+                request.isQuote && savedQuoteId != null -> {
+                    quoteSubmission = null
+                    actionError = null
+                    actionNotice = (r as WriteResult.Err).message
+                    appOnlyNotice = null
+                    closeComposers()
+                    onInvoiceClick?.invoke(savedQuoteId)
+                }
+                r is WriteResult.Err -> composerError = r.message
+                r is WriteResult.Ok -> {
                     // #825: the held key goes once the document exists, so a
                     // deliberate second invoice with identical fields is not a replay.
                     if (request.isQuote) quoteSubmission = null else invoiceSubmission = null

@@ -479,6 +479,17 @@ describe('InvoiceDetail: answering a quote', () => {
     acceptQuote.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv-open-1', status: 'open' });
     denyQuote.mockReset().mockResolvedValue({ ok: true, invoiceId: 'inv-open-1', status: 'quote' });
   });
+  it('#2092: the page names a quote as a quote, in its heading and beside its chip', async () => {
+    await renderWith(QUOTE);
+    expect(await screen.findByRole('heading', { level: 1, name: /^Quote for/ })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1, name: /^Invoice for/ })).toBeNull();
+    expect(screen.getAllByText(`Quote ${QUOTE.id}`).length).toBe(2);
+    expect(screen.queryByText(`Invoice ${QUOTE.id}`)).toBeNull();
+  });
+  it('#2092: an accepted quote is an open invoice, and is named as one', async () => {
+    await renderWith({ ...QUOTE, status: 'open', quoteDecision: 'accepted' });
+    expect(await screen.findByRole('heading', { level: 1, name: /^Invoice for/ })).toBeInTheDocument();
+  });
   it('offers both answers on an unanswered quote, and names no "good through" date (#2088: quotes do not expire)', async () => {
     await renderWith(QUOTE);
     expect(await screen.findByRole('button', { name: 'Accept quote' })).toBeInTheDocument();

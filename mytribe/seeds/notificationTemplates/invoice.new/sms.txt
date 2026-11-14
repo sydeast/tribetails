@@ -1,1 +1,1 @@
-It's Auntie. Your invoice {{invoiceNumber}} for {{amount}} is ready, due {{dueDate}}.
+{{#if isQuote}}It's Auntie. Your quote {{invoiceNumber}} for {{amount}} is ready for your answer.{{else}}It's Auntie. Your invoice {{invoiceNumber}} for {{amount}} is ready, due {{dueDate}}.{{/if}}

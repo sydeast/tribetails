@@ -70,6 +70,27 @@ describe('sendSmsChannel', () => {
     });
   });
 
+  it('#2093: a quote with no Kin still reads whole in an SMS template stored before re-import', async () => {
+    const send = async (text: string) => {
+      const ctx = buildDbMock({ docs: { 'smsTemplates/t.k': { text }, 'clients/u1': { phone: '+15555551111' } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.messagesCreate.mockReset();
+      mocks.messagesCreate.mockResolvedValue({ sid: 'SM_q' });
+      await sendSmsChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data: { actorName: 'Jamie', kinName: '', quoteHouseholdKinNames: 'Rex, Mo' },
+      });
+      return (mocks.messagesCreate.mock.calls[0][0] as { body: string }).body;
+    };
+    expect(await send('{{actorName}} accepted the quote for {{kinName}}, woohoo!')).toBe(
+      'Jamie accepted the quote for Rex, Mo, woohoo!',
+    );
+    expect(await send('{{actorName}} accepted the quote{{#if kinName}} for {{kinName}}{{/if}}, woohoo!')).toBe(
+      'Jamie accepted the quote, woohoo!',
+    );
+  });
+
   it('SKIPS rather than throwing when the template is not authored yet', async () => {
     // Operator ruling 2026-08-23: SMS gets no generic fallback, because a
     // segment costs money and "there's an update, sign in" is not worth paying

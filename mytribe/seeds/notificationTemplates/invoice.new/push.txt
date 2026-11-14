@@ -1,1 +1,1 @@
-Your invoice is ready. Invoice {{invoiceNumber}} for {{amount}} is due {{dueDate}}. Tap to view.
+{{#if isQuote}}Your quote is ready{{else}}Your invoice is ready{{/if}}. {{#if isQuote}}Quote {{invoiceNumber}} for {{amount}} is waiting for your answer{{else}}Invoice {{invoiceNumber}} for {{amount}} is due {{dueDate}}{{/if}}. Tap to view.

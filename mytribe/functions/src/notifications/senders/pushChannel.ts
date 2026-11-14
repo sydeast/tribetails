@@ -1,7 +1,7 @@
 import Handlebars from 'handlebars';
 import { getAdmin, db } from '../../lib/firestoreAdmin';
 import { logEvent } from '../../lib/logger';
-import { stripUnresolvedTokens } from '../templateParsers';
+import { kinForStoredTemplate, stripUnresolvedTokens } from '../templateParsers';
 import { fallbackPush } from '../fallbackTemplate';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
@@ -65,7 +65,8 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
     throw new Error(`pushChannel(${def.key}): recipient ${recipientUid} has no registered fcm tokens`);
   }
 
-  const renderCtx = { ...data, recipientUid, notificationKey: def.key };
+  // #2093: a template stored before the quote wording changed still reads whole.
+  const renderCtx = { ...kinForStoredTemplate(data, [tpl.title, tpl.body]), recipientUid, notificationKey: def.key };
   const title = stripUnresolvedTokens(Handlebars.compile(tpl.title)(renderCtx));
   const body = stripUnresolvedTokens(Handlebars.compile(tpl.body)(renderCtx));
   const dataRoute = tpl.dataRoute
