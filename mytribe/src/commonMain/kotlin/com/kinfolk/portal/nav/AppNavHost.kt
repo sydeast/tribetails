@@ -470,6 +470,10 @@ fun AppNavHost(
                             onOpenSchedule = { navController.navigate(ScheduleRoute) { launchSingleTop = true } },
                             onOpenInvoice = { invoiceId -> navController.navigate(InvoiceDetailRoute(invoiceId)) },
                             onOpenKinTale = { taleId -> navController.navigate(KinTalesRoute(taleId)) { launchSingleTop = true } },
+                            onOpenKinTales = { navController.navigate(KinTalesRoute()) { launchSingleTop = true } },
+                            onOpenKin = { id -> navController.navigate(KinDetailRoute(id)) },
+                            onOpenKinList = { navController.navigate(KinRoute) { launchSingleTop = true } },
+                            onOpenTribe = { navController.navigate(TribeRoute) { launchSingleTop = true } },
                             // #1874: a reply from the office opens Messages, the way every entry point does.
                             onOpenMessages = { openMessages() },
                             onUnreadCount = onUnreadNotificationsChanged,

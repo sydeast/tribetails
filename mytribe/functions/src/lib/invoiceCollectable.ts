@@ -62,5 +62,7 @@ export function collectableForAutoApply(doc: CollectableDoc | undefined): boolea
     return false;
   }
   if (status === 'paid' || status === 'redeemed') return false;
+  // #2090: the owner wrote off what was left; credit is never drawn against it.
+  if (status === 'written_off') return false;
   return amountDueCentsOf(doc, null) > 0;
 }

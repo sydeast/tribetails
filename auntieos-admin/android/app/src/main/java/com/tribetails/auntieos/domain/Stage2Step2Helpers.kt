@@ -30,13 +30,17 @@ internal fun isoDatePrefixOrNull(date: String): String? =
  * no parseable date are skipped (never fabricate an ordering). The latest date
  * per kinfolk wins via lexical comparison on the fixed YYYY-MM-DD form.
  */
-fun lastVisitByKinfolk(sessions: List<KinCareSession>): Map<String, String> {
+fun lastVisitByKinfolk(
+    sessions: List<KinCareSession>,
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+): Map<String, String> {
     val out = HashMap<String, String>()
     for (s in sessions) {
         if (s.status.uppercase() != "COMPLETED") continue
         if (s.kinfolkId.isBlank()) continue
         val stamp = s.completedAt.orEmpty().ifBlank { s.startTime }
-        val date = isoDatePrefixOrNull(stamp) ?: continue
+        // #2095: the business day, not the UTC date of an instant.
+        val date = isoDatePrefixOrNull(storedBusinessDay(stamp, zone)) ?: continue
         val prev = out[s.kinfolkId]
         if (prev == null || date > prev) out[s.kinfolkId] = date
     }
@@ -118,7 +122,21 @@ fun kinAvatarsForSession(
  * nothing still owed. Mirrors InvoicesScreen.invoiceIsPaid + the web invoiceIsPaid.
  */
 internal fun invoiceIsPaidForRevenue(i: Invoice): Boolean =
-    !i.status.equals("draft", ignoreCase = true) && i.amountDue <= 0.0 && i.total > 0.0
+    !i.status.equals("draft", ignoreCase = true) &&
+        // #2090: written off owes nothing, but the part given up was never paid.
+        !i.status.equals("written_off", ignoreCase = true) &&
+        i.amountDue <= 0.0 && i.total > 0.0
+/**
+ * What one invoice adds to revenue, in dollars: its total when paid, and for a
+ * written-off one (#2090) only what came in before the rest was written off.
+ * Mirrors the web's `revenueOf`.
+ */
+internal fun invoiceRevenueOf(i: Invoice): Double {
+    if (invoiceIsPaidForRevenue(i)) return i.total
+    if (!i.status.equals("written_off", ignoreCase = true)) return 0.0
+    val writtenOff = if (i.writtenOffCents > 0L) i.writtenOffCents else 0L
+    return maxOf(0L, Math.round(i.total * 100.0) - writtenOff) / 100.0
+}
 
 /**
  * Sum the totals of PAID invoices whose invoice date falls within the current
@@ -145,13 +163,41 @@ fun weeklyRevenue(invoices: List<Invoice>, weekStartIso: String, nowIso: String)
         // web would go on being counted into this tile, so Android would report a
         // week's revenue the web says has been written off.
         if (invoiceIsArchived(inv)) continue
-        if (!invoiceIsPaidForRevenue(inv)) continue
+        val earned = invoiceRevenueOf(inv)
+        if (earned <= 0.0) continue
         val date = isoDatePrefixOrNull(inv.date) ?: continue
-        if (date in start..end) sum += inv.total
+        if (date in start..end) sum += earned
     }
     return sum
 }
 
+// ── Home: Cash Flow outstanding (home.cashFlow) ────────────────────────────────
+/** What the Cash Flow card says is still owed, and across how many invoices. */
+data class CashFlowOutstanding(val total: Double, val count: Int)
+/**
+ * #2000: what households have been asked to pay and have not. The SAME rule as
+ * the Invoices screen's Outstanding tile (`InvoicesScreen.invoiceIsOutstanding`
+ * over the non-archived list), so Home and Invoices agree: stored state OPEN,
+ * a balance above zero, not archived.
+ *
+ * A POSITIVE test on the stamp. An unsent draft has gone to nobody and a quote
+ * is not a bill, so neither is owed; the card used to count every invoice with
+ * a balance and read an unsent draft as money unpaid. An archived invoice has
+ * been written off, as in [weeklyRevenue]. The web's `outstandingTotals` and
+ * the desktop console's twin of this function read the same rule.
+ */
+fun cashFlowOutstanding(invoices: List<Invoice>): CashFlowOutstanding {
+    var total = 0.0
+    var count = 0
+    for (inv in invoices) {
+        if (invoiceIsArchived(inv)) continue
+        if (invoiceStateOrNull(inv) != InvoiceState.OPEN) continue
+        if (!(inv.amountDue > 0.0)) continue
+        total += inv.amountDue
+        count += 1
+    }
+    return CashFlowOutstanding(total, count)
+}
 // ── Schedule: reschedule arg mapping (schedule.dragReschedule) ─────────────────
 
 /** The (startTime, endTime) args a reschedule maps to for rescheduleBooking. */
@@ -193,12 +239,23 @@ fun rescheduleArgsForDrop(
     return RescheduleArgs(sessionId = session.id, startTime = start, endTime = end)
 }
 
-/** Original visit duration in minutes: explicit field, else start->end span, else 30. */
-internal fun resolveDurationMinutes(session: KinCareSession): Int {
+/**
+ * Original visit duration in minutes: explicit field, else start->end span, else 30.
+ * #2095: the span is measured between the two moments, in either stored shape.
+ * Reading hours and minutes off the text made a visit that crossed midnight
+ * (UTC midnight is 6 PM in Chicago in winter) look negative, and it fell to 30.
+ */
+internal fun resolveDurationMinutes(
+    session: KinCareSession,
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+): Int {
     if (session.serviceDurationMinutes > 0) return session.serviceDurationMinutes
-    val startM = isoMinuteOfDayOrNull(session.startTime)
-    val endM = isoMinuteOfDayOrNull(session.endTime)
-    if (startM != null && endM != null && endM > startM) return endM - startM
+    val start = storedBusinessInstant(session.startTime, zone)
+    val end = storedBusinessInstant(session.endTime, zone)
+    if (start != null && end != null) {
+        val minutes = java.time.Duration.between(start, end).toMinutes()
+        if (minutes in 1..1439) return minutes.toInt()
+    }
     return 30
 }
 
@@ -206,15 +263,6 @@ private fun hhmm(minuteOfDay: Int): String {
     val h = (minuteOfDay / 60).coerceIn(0, 23)
     val m = (minuteOfDay % 60).coerceIn(0, 59)
     return "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
-}
-
-/** Positional minutes-of-day from an ISO "...THH:MM..." string, or null. */
-private fun isoMinuteOfDayOrNull(iso: String): Int? {
-    if (iso.length < 16 || iso[10] != 'T') return null
-    val hour = iso.substring(11, 13).toIntOrNull() ?: return null
-    val minute = iso.substring(14, 16).toIntOrNull() ?: return null
-    if (hour !in 0..23 || minute !in 0..59) return null
-    return hour * 60 + minute
 }
 
 /**

@@ -4,6 +4,8 @@ import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -138,11 +140,63 @@ class Stage2Step2HelpersTest {
         assertEquals(30.0, weeklyRevenue(invoices, "2026-06-01", "2026-06-07"))
     }
 
+    @Test fun `weeklyRevenue counts only what was collected on a written-off invoice (#2090)`() {
+        // $50 billed, $20 paid, $30 written off: $20 came in, never the $50
+        // total that a zero balance alone would read as paid.
+        val invoices = listOf(
+            Invoice(
+                _id = "w1", status = "written_off", amountDue = 0.0, total = 50.0, date = "2026-06-03",
+                writtenOffCents = JsonPrimitive(3000),
+            ),
+            // Written off in full: nothing came in.
+            Invoice(
+                _id = "w2", status = "written_off", amountDue = 0.0, total = 9.0, date = "2026-06-04",
+                writtenOffCents = JsonPrimitive(900),
+            ),
+            Invoice(_id = "p1", status = "paid", amountDue = 0.0, total = 100.0, date = "2026-06-02"),
+        )
+        assertEquals(120.0, weeklyRevenue(invoices, "2026-06-01", "2026-06-07"))
+    }
+
     @Test fun `weeklyRevenue skips invoices with unparseable dates`() {
         val invoices = listOf(
             Invoice(_id = "a", status = "paid", amountDue = 0.0, total = 40.0, date = "garbage"),
         )
         assertEquals(0.0, weeklyRevenue(invoices, "2026-06-01", "2026-06-07"))
+    }
+
+    // ── cashFlowOutstanding (#2000) ─────────────────────────────────────────────
+
+    @Test fun `cashFlowOutstanding counts only sent open balances, as Invoices does`() {
+        // The walk: two open invoices beside an unsent $28 draft. Home added
+        // the draft into Outstanding and the unpaid count; Invoices did not.
+        val invoices = listOf(
+            Invoice(_id = "o1", status = "open", amountDue = 78.5, total = 78.5),
+            Invoice(_id = "o2", status = "open", amountDue = 127.5, total = 127.5),
+            Invoice(_id = "d1", status = "draft", amountDue = 28.0, total = 28.0),
+            Invoice(_id = "q1", status = "quote", amountDue = 40.0, total = 40.0),
+        )
+        assertEquals(CashFlowOutstanding(206.0, 2), cashFlowOutstanding(invoices))
+    }
+
+    @Test fun `cashFlowOutstanding skips archived, cancelled, unstamped and settled invoices`() {
+        val invoices = listOf(
+            Invoice(_id = "a", status = "open", amountDue = 60.0, archivedAt = JsonPrimitive("2026-11-06T09:00:00Z")),
+            Invoice(_id = "c", status = "cancelled", amountDue = 30.0),
+            Invoice(_id = "u", status = "outstanding", amountDue = 12.0),
+            Invoice(_id = "z", status = "open", amountDue = 0.0),
+            Invoice(_id = "n", status = "open", amountDue = 5.0, archivedAt = JsonNull),
+            Invoice(_id = "o", status = " Open ", amountDue = 15.0),
+        )
+        assertEquals(CashFlowOutstanding(20.0, 2), cashFlowOutstanding(invoices))
+    }
+
+    @Test fun `cashFlowOutstanding is zero over nothing owed`() {
+        assertEquals(CashFlowOutstanding(0.0, 0), cashFlowOutstanding(emptyList()))
+        assertEquals(
+            CashFlowOutstanding(0.0, 0),
+            cashFlowOutstanding(listOf(Invoice(_id = "d", status = "draft", amountDue = 28.0))),
+        )
     }
 
     // ── rescheduleArgsForDrop ───────────────────────────────────────────────────

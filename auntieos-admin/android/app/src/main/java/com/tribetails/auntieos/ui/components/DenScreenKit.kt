@@ -640,11 +640,17 @@ fun statusLabel(status: String): String = when (status.uppercase()) {
     else -> "scheduled"
 }
 
-/** Formats an ISO timestamp to a compact "h:mma/p" local-ish time, or echoes input. */
-fun formatTime(iso: String): String = runCatching {
+/**
+ * Formats a stored visit time to a compact "h:mma/p" on the BUSINESS clock, or
+ * echoes input. #2095: an instant used to print its UTC hour (an 11:30 PM
+ * Chicago visit read "5:30a"); it is now read in [zone]. A zone-less value is
+ * already business time and prints as stored.
+ */
+fun formatTime(iso: String, zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null)): String = runCatching {
     if (iso.length < 16) return iso
-    val hour = iso.substring(11, 13).toInt()
-    val minute = iso.substring(14, 16)
+    val local = com.tribetails.auntieos.domain.storedBusinessLocal(iso, zone)
+    val hour = local?.hour ?: iso.substring(11, 13).toInt()
+    val minute = local?.minute?.toString()?.padStart(2, '0') ?: iso.substring(14, 16)
     val ampm = if (hour >= 12) "p" else "a"
     val hour12 = when (hour % 12) { 0 -> 12; else -> hour % 12 }
     "$hour12:$minute$ampm"

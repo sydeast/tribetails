@@ -66,6 +66,7 @@ import com.tribetails.auntieos.web.ui.components.GhostButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.util.nowIso
+import com.tribetails.auntieos.web.util.businessTodayIso
 
 /**
  * Activity log (hash-chain audit trail) in the Den aesthetic. Reads the
@@ -291,7 +292,7 @@ private fun LogPanel(
         // Stable insertion-ordered grouping; capped list is already newest-first.
         // Days are the BUSINESS's (#1585): a 9:34 pm Chicago event stamped 02:34Z belongs
         // to the day before, and "Today" is Chicago's today.
-        val todayKey = activityWhen(nowIso(), zone)?.dayKey ?: nowIso().take(10)
+        val todayKey = activityWhen(nowIso(), zone)?.dayKey ?: businessTodayIso()
         val yesterdayKey = isoDateMinusOneDay(todayKey)
         val grouped = visible.groupBy { activityWhen(it.timestamp, zone)?.dayKey ?: it.timestamp.take(10) }
 

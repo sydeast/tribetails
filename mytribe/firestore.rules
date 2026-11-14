@@ -88,10 +88,11 @@ service cloud.firestore {
  // lands. `syncKinfolkClaim` mints `role: 'kinfolk'` plus `kinfolkId` for any
  // account holding exactly one id, and it keeps every other claim, so an
  // Auntie assigned one tribe would carry both. Every household grant she needs
- // is already on an `isStaff()` branch; the one thing the kinfolk branch adds
- // for her is the household's invoices (`match /invoices`), which is money.
- // So the role wins and the kinfolk branch never fires for her, however many
- // tribes she holds. `test/rules/auntieAccess.test.ts` pins it.
+ // is already on an `isStaff()` branch, and a kinfolk branch can only add
+ // household things she is not meant to have (the invoices, before #1906 took
+ // their kinfolk branch away). So the role wins and the kinfolk branch never
+ // fires for her, however many tribes she holds.
+ // `test/rules/auntieAccess.test.ts` pins it.
     function isKinfolk() {
       return request.auth != null && request.auth.token.role == 'kinfolk'
              && request.auth.token.kinfolkId != null
@@ -119,18 +120,10 @@ service cloud.firestore {
       return isPrimary(fid) || (activeMember(fid) && memberDoc(fid).permissions[p] == true);
     }
 
- // #1005, BILLING ACCESS for a caller holding the kinfolk claim on household
- // `fid` (operator ruling 2026-09-27): the PRIMARY, or a SECONDARY the PRIMARY
- // granted `billing_full`. A caller with NO member doc passes: that is a
- // legacy primary who predates the member model, the same anti-lockout
- // `hasKinfolkPerm` makes server-side. It is safe only because every use sits
- // behind `isKinfolk() && ... == request.auth.token.kinfolkId`, and the claim
- // is minted by the server from `clients/{uid}.kinfolkIds`, which no client
- // can write. An Auntie never reaches it: `isKinfolk()` is false for her.
-    function kinfolkBillingAccess(fid) {
-      return !exists(/databases/$(database)/documents/families/$(fid)/members/$(request.auth.uid))
-        || hasPerm(fid, 'billing_full');
-    }
+ // #1906: `kinfolkBillingAccess(fid)` lived here. Its one use was the kinfolk
+ // branch on `match /invoices/{invoiceId}`, which is gone (see there), and the
+ // billing-access rule it carried is the callables' own (`requireBillingAccess`
+ // in functions/src/lib/memberGate.ts).
 
     function invoiceKeys() {
       return ['payment', 'invoiceStatus', 'paymentStatus', 'amountMinor', 'currency', 'invoiceId'];
@@ -742,15 +735,28 @@ service cloud.firestore {
     }
 
     match /invoices/{invoiceId} {
- // #1005: the kinfolk branch used to admit ANY holder of the household's claim,
- // and `syncKinfolkClaim` mints that claim for a SECONDARY too, so a member
- // without billing access could read every bill and amount. The member lookup
- // keys off the claim, which the clause before it has just pinned equal to the
- // document's `kinfolkId`, so a `where('kinfolkId', '==', ...)` list query can
- // still be proven.
+ // #1906: HOUSEHOLD READS MATCH WHAT THE PORTAL SHOWS. Operator ruling
+ // 2026-11-11: an invoice the office has not sent is not listed, counted or
+ // openable for the Kinfolk. The household's bills come from `getMyInvoices`
+ // (functions/src/portal/getMyInvoices.ts), which leaves out every unsent draft
+ // and every archived quote (`hiddenFromHousehold` in lib/quoteDecision.ts),
+ // and asks for billing access (#1005) before it reads anything.
+ //
+ // There is NO KINFOLK BRANCH HERE, and its absence is the rule. A rule cannot
+ // apply that filter: rules are not filters, so a status condition would
+ // refuse the household's `where('kinfolkId', '==', ...)` list outright while
+ // still serving single documents by id, and a document's state may sit only
+ // in the legacy `invoiceStatus` spelling. Neither portal client reads this
+ // collection directly (guard tests: web/src/lib/householdDirectReads.test.ts
+ // and DirectHouseholdReadTest.kt), so the callable is the one way in. If the
+ // portal ever reads invoices directly, give it a household copy that carries
+ // only what `getMyInvoices` ships, as #602 did for KinTales.
+ //
+ // The branch this replaces read
+ //   || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId
+ //       && <billing access>)
+ // The owner and the Stage-0I test admin read exactly as before.
       allow read: if isOwner()
-                  || (isKinfolk() && resource.data.kinfolkId == request.auth.token.kinfolkId
-                      && kinfolkBillingAccess(request.auth.token.kinfolkId))
                   || testOwnsExisting();
       // Callable-only writes (ADR-0002): every invoice write, production and
       // TestMode sandbox alike, goes through a callable so the Invoice State
@@ -1160,16 +1166,22 @@ service cloud.firestore {
  // isAuntie() update branch is the AuntieOS write-back path that lands
  // visitProgress, auntieDisplayName, sourceBookingId, sessionId, etc.
         match /kinCares/{visitId} {
- // D-2026-09-28-VISIT-PRICES-ARE-BILLING (#1037): this document carries
- // `priceCents`, and rules gate a document, never a field. So the read needs
- // billing access (the PRIMARY, or a SECONDARY granted `billing_full`), the
- // same move #1005 made on `families/{fid}`. No portal client reads this
- // document directly: both portals get visits through `getMyBookings`, which
- // never projects a price, so a member without billing loses nothing. If the
- // portal ever takes direct reads of visits (accepted, not yet built), split
- // the price out of this document first. The envelope above carries no amount
- // and stays readable by every active member.
-          allow read: if hasPerm(fid, 'billing_full') || isStaff();
+ // #1906: HOUSEHOLD READS MATCH WHAT THE PORTAL SHOWS. This document is the
+ // office's working copy of a visit: it carries `priceCents` (#1037) and the
+ // office's own bookkeeping, and rules gate a document, never a field. No
+ // portal client reads it directly: both portals get visits through
+ // `getMyBookings` (functions/src/portal/getMyBookings.ts), which projects
+ // what a household sees and asks billing access before it shows a price or
+ // an invoice link. So the read is staff only, the same move #602 made on
+ // `kin_care_reports`; guard tests in both clients
+ // (web/src/lib/householdDirectReads.test.ts, DirectHouseholdReadTest.kt) keep
+ // it unused. If the portal ever takes direct reads of visits (accepted, not yet
+ // built), give it a household copy first.
+ //
+ // Writes below are unchanged: a household member may still move a visit it
+ // may move, and a rules write does not need the read. The envelope above
+ // carries no amount and stays readable by every active member.
+          allow read: if isStaff();
           allow create: if activeMember(fid)
             && request.resource.data.familyId == fid
             && request.resource.data.targetType in ['KIN','KINFOLK']
@@ -1263,9 +1275,13 @@ service cloud.firestore {
  // Every invoice reference in auntieos-admin/src, auntieos-admin/android,
  // mytribe/web/src and mytribe/functions/src targets the flat collection.
  // test/rules/auntieAccess.test.ts pins the denial so it cannot reopen quietly.
+ //
+ // #1906: household reads match what the portal shows. These are copies of
+ // bills, drafts possibly among them, and the household's bills come from
+ // `getMyInvoices` alone, exactly as on the flat path. Owner read stays, so
+ // whatever is down here remains inspectable until the backfill reports zero.
       match /invoices/{id} {
-        // #1005: still a bill, so billing access, like the flat path.
-        allow read: if hasPerm(fid, 'billing_full') || isOwner();
+        allow read: if isOwner();
         allow create, update, delete: if false;
       }
 

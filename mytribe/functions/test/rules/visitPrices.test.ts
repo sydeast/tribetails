@@ -14,6 +14,11 @@ import { getEnv, cleanup, shutdown, seedFamily, asUser } from './setup';
  * The envelope `families/{fid}/bookings/{batchId}` carries no amount and stays
  * readable by every active member; it is pinned here so it does not tighten by
  * accident.
+ *
+ * #1906: household reads match what the portal shows. The visit document is
+ * the office's working copy, and both portals read visits through
+ * `getMyBookings`, so no household member reads it directly any more, billing
+ * access or not. Writes a member may make are unchanged.
  */
 type Env = Awaited<ReturnType<typeof getEnv>>;
 const asOwner = (env: Env) => env.authenticatedContext('owner-1', { admin: true });
@@ -42,18 +47,36 @@ async function household() {
   for (const col of PRICED_CATALOG) await seed(`${col}/doc1`, { name: 'Walk', priceCents: 2500 });
   await seed('business_hours/doc1', { open: '08:00' });
 }
-describe('rules: #1037 a visit document carries its price', () => {
+describe('rules: #1037 / #1906 a visit document is read by staff only', () => {
   afterEach(async () => cleanup());
   afterAll(async () => shutdown());
-  it('the PRIMARY reads the visit', async () => {
+  it('the PRIMARY does not read the visit directly, and still reads the envelope', async () => {
     const env = await getEnv();
     await household();
-    await assertSucceeds(asUser(env, 'u-prim').firestore().doc(VISIT).get());
+    const fs = asUser(env, 'u-prim').firestore();
+    await assertFails(fs.doc(VISIT).get());
+    await assertSucceeds(fs.doc(ENVELOPE).get());
   });
-  it('a SECONDARY granted billing reads the visit', async () => {
+  it('a SECONDARY granted billing does not read the visit directly either', async () => {
     const env = await getEnv();
     await household();
-    await assertSucceeds(asUser(env, 'u-sk-bill').firestore().doc(VISIT).get());
+    await assertFails(asUser(env, 'u-sk-bill').firestore().doc(VISIT).get());
+  });
+  it('the household claim does not open it: no member lists the visits', async () => {
+    const env = await getEnv();
+    await household();
+    for (const uid of ['u-prim', 'u-sk-bill']) {
+      const fs = asUser(env, uid, { role: 'kinfolk', kinfolkId: 'f1' }).firestore();
+      await assertFails(fs.doc(VISIT).get());
+      await assertFails(fs.collection(`${ENVELOPE}/kinCares`).get());
+    }
+  });
+  it('the PRIMARY can still move a visit it may move (writes do not need the read)', async () => {
+    const env = await getEnv();
+    await household();
+    await assertSucceeds(
+      asUser(env, 'u-prim').firestore().doc(VISIT).update({ notes: 'Back door', updatedAt: new Date() }),
+    );
   });
   it('a SECONDARY without billing is refused the visit, and still reads the envelope', async () => {
     const env = await getEnv();

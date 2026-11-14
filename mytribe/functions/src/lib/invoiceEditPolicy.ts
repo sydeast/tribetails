@@ -38,6 +38,11 @@ export const INVOICE_STATES = [
   'paid',
   'zero',
   'open',
+  // #2090: the owner wrote off what was left (`writeOffInvoice` in `admin/archiveInvoice.ts`). The
+  // balance is zero and nobody is asked for it again, but it was NOT paid, so it
+  // cannot share the `paid` label: revenue, receipts and the household's own
+  // screen would all say money arrived that never did.
+  'written_off',
 ] as const;
 
 export type InvoiceState = (typeof INVOICE_STATES)[number];
@@ -102,6 +107,10 @@ export function invoiceStateOf(doc: InvoiceStateDoc, paidCents: number | null = 
   if (status === 'quote') return 'quote';
   if (status === 'draft') return 'draft';
   if (status === 'cancelled') return 'cancelled';
+  // #2090: a positive read of the write-off's own label, ahead of the money
+  // branches, because the write-off zeroes the balance and the money alone
+  // would then read `paid`.
+  if (status === 'written_off') return 'written_off';
   // `redeemed` joined the positive reads on 2026-07-28, when the state stamp
   // (`lib/invoiceStateStamp.ts`, ADR-0002) started writing this module's OUTPUT
   // back into `status`. Every output must classify to itself, or stamping a doc
@@ -182,10 +191,12 @@ export function paymentStandingOf(totalCents: number, paidCents: number): Invoic
  * 'quote'`, so it is indistinguishable from one still awaiting an answer.
  * `quoteDecision` is the only field that tells the three apart.
  *
- * NOT A NINTH STATE, and deliberately not. The eight `INVOICE_STATES` are
+ * NOT A STATE OF ITS OWN, and deliberately not. The `INVOICE_STATES` are
  * generated into both web clients and into Kotlin, and the portal's
- * `isPayable` is a total predicate over them (#470); a ninth entry would fork
- * "can this be paid" as the price of answering "can this be edited". The
+ * `isPayable` is a total predicate over them (#470); another entry for the
+ * answer would fork "can this be paid" as the price of answering "can this be
+ * edited". (`written_off`, #2090, is a different case: it IS a different
+ * answer to "can this be paid", so it is a state, and every client decodes it.) The
  * acceptance is a separate dimension of the same doc, exactly as the payment
  * standing is, and it is passed alongside rather than folded in.
  */
@@ -264,7 +275,7 @@ export function quoteAcceptanceOf(doc: InvoiceStateDoc): QuoteAcceptance {
  * household accepted. The lock protects an agreed figure; it must not create a
  * second unrepairable invoice.
  *
- * TOTAL BY CONSTRUCTION: the switch enumerates all eight states with no
+ * TOTAL BY CONSTRUCTION: the switch enumerates every state with no
  * `default`, so a ninth state is a compile error here rather than a silent
  * "editable" (or a silent "frozen") at runtime. `acceptance` is a REQUIRED
  * argument for the same reason: a call site that has not decided what the
@@ -289,6 +300,7 @@ export function invoiceEditScope(
       case 'cancelled':
       case 'credit':
       case 'redeemed':
+      case 'written_off':
         return 'none';
     }
   })();
@@ -314,6 +326,8 @@ function frozenBecause(state: InvoiceState): string {
       return 'This is a credit owed to the household, so it can no longer be edited. Redeeming it is its own flow.';
     case 'redeemed':
       return 'This credit has been redeemed, so it can no longer be edited.';
+    case 'written_off':
+      return 'The balance on this invoice was written off, so it can no longer be edited.';
     case 'draft':
     case 'quote':
     case 'open':

@@ -34,12 +34,22 @@ export type NotificationTarget =
   | { kind: 'schedule' }
   | { kind: 'invoice'; invoiceId: string }
   | { kind: 'tale'; taleId: string }
+  /** #1898: comments across several tales open the KinTales list. */
+  | { kind: 'tales' }
+  /** #1913: a notice about one Kin opens it; one about a Kin no longer listed opens the Kin list. */
+  | { kind: 'kin'; kinId: string }
+  | { kind: 'kinList' }
+  /** The household's own profile, on Tribe. */
+  | { kind: 'household' }
   /** #1874: a reply from the office opens Messages. */
   | { kind: 'messages' }
   | { kind: 'none' };
 
 /**
- * The thing a row is about, read off the dispatcher's `targetType`.
+ * The thing a row is about, read off the row's `targetType`. The server
+ * (`householdNoticeTarget`) decides it per key, old rows included: `kin` for a
+ * Kin notice (an empty id is a Kin no longer listed), `household` for the
+ * profile, and `kintale` with no id for comments across several tales.
  *
  * A booking row's `targetId` is a VISIT for per-visit events and a BATCH for
  * whole-request events (the request itself, its approval, a decline), and the
@@ -60,7 +70,11 @@ export function notificationTarget(
     case 'invoice':
       return id ? { kind: 'invoice', invoiceId: id } : { kind: 'none' };
     case 'kintale':
-      return id ? { kind: 'tale', taleId: id } : { kind: 'none' };
+      return id ? { kind: 'tale', taleId: id } : { kind: 'tales' };
+    case 'kin':
+      return id ? { kind: 'kin', kinId: id } : { kind: 'kinList' };
+    case 'household':
+      return { kind: 'household' };
     case 'conversation':
       return { kind: 'messages' };
     default:

@@ -53,6 +53,7 @@ class InvoiceDetailStatusTest {
             "credit" to Triple("CREDIT", AuntieStatusTone.Teal, "credit owed to the household"),
             "redeemed" to Triple("REDEEMED", AuntieStatusTone.Muted, "credit redeemed"),
             "zero" to Triple("ZERO", AuntieStatusTone.Muted, "nothing billed"),
+            "written_off" to Triple("WRITTEN OFF", AuntieStatusTone.Muted, "balance written off"),
         )
         for ((status, triple) in expected) {
             val b = invoiceDetailBadgeFor(inv(status, amountDue = 40.0), today)

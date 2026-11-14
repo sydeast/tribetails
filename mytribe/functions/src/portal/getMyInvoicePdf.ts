@@ -79,9 +79,8 @@ export async function getMyInvoicePdfHandler(
     // The invoice belongs to a different household: refuse (no cross-tenant read).
     throw new HttpsError('permission-denied', 'You do not have access to this invoice.');
   }
-  // #2087 / #2195: a quote the household may not see (saved unsent, turned
-  // into an invoice not sent yet, archived, or withdrawn) is answered as a
-  // missing one.
+  // #1906 / #2087 / #2195: an invoice the household may not see (any unsent
+  // draft, an archived quote, or a withdrawn one) is answered as a missing one.
   if (hiddenFromHousehold(data)) {
     throw new HttpsError('not-found', NOT_AVAILABLE);
   }

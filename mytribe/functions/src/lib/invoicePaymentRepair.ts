@@ -48,6 +48,7 @@ import {
   type PaymentAmount,
 } from './invoiceMath';
 import { invoiceStateStampOf } from './invoiceStateStamp';
+import { isWrittenOff } from './invoiceArchive';
 
 /** The fields the detector reads off a raw `invoices/{id}` doc. All optional: real docs are missing keys. */
 export interface RepairInvoiceDoc {
@@ -59,6 +60,7 @@ export interface RepairInvoiceDoc {
   totalCents?: unknown;
   invoiceNumber?: unknown;
   kinfolkId?: unknown;
+  writtenOffAt?: unknown;
 }
 
 /** Why a scanned invoice was left alone. Reported, so a detect run is never a silent "nothing here". */
@@ -67,7 +69,10 @@ export type RepairSkipReason =
   | 'payments_cover_total'
   | 'no_total'
   | 'balance_already_correct'
-  | 'would_lower_balance';
+  | 'would_lower_balance'
+  // #2090: the owner wrote off what the payments left. Its zero balance is the
+  // decision, not an understatement, so it is never reopened here.
+  | 'written_off';
 
 export interface RepairFinding {
   invoiceId: string;
@@ -135,6 +140,7 @@ export function repairPlanFor(
   // into the ROOT `payments` collection, not this one) or a hand-flipped status,
   // and re-opening it would invent a debt the household may not owe. Left alone,
   // deliberately.
+  if (isWrittenOff(doc)) return { skipped: 'written_off' };
   if (payments.length === 0) return { skipped: 'no_payments' };
 
   const paidCents = paidCentsFromPayments(payments);

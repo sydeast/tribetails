@@ -21,6 +21,8 @@ import {
   longDateLabelFromMs,
   offersPayment,
   partPaidSummary,
+  paidDollarsOf,
+  NOTHING_TO_PAY,
   quoteActorLabel,
 } from '../lib/invoiceFormat';
 import { useAuth, useSignOut } from '../lib/auth';
@@ -273,7 +275,9 @@ export function InvoiceDetail() {
   // "Paid" row on every historical receipt. It can never override a real
   // figure: on every invoice the pre-2026-07-25 write touched it would report
   // the whole total as collected.
-  const paidAmount = inv.paidCents > 0 ? inv.paidCents / 100 : Math.max(0, inv.total - inv.amountDue);
+  // #2090: on a written-off invoice only the recorded payments (`paidDollarsOf`).
+  const paidAmount = paidDollarsOf(inv);
+  const writtenOff = inv.status === 'written_off';
   // Same rule as the list row: only an `open` invoice with a balance takes a
   // payment. Spelled positively rather than as the old not-credit/not-
   // cancelled/not-paid negation, which — now that the enum carries all eight
@@ -451,10 +455,16 @@ export function InvoiceDetail() {
                           <b>{formatUsd(paidAmount)}</b>
                         </div>
                       )}
-                      {inv.status === 'cancelled' ? (
+                      {writtenOff && inv.writtenOffCents !== null && inv.writtenOffCents > 0 && (
+                        <div className="row" data-testid="written-off-row">
+                          <span>Written off</span>
+                          <b>{formatCentsUsd(inv.writtenOffCents)}</b>
+                        </div>
+                      )}
+                      {inv.status === 'cancelled' || writtenOff ? (
                         <div className="row">
                           <span>Amount Due</span>
-                          <b>No charge</b>
+                          <b>{writtenOff ? NOTHING_TO_PAY : 'No charge'}</b>
                         </div>
                       ) : (
                         inv.amountDue > 0 && (

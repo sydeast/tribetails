@@ -5,7 +5,7 @@ import { logEvent } from '../lib/logger';
 import { captureFunctionError } from '../lib/sentry';
 import { resolveActor, type ResolvedActor } from '../lib/resolveActor';
 import { fillBusinessPlaceholders, loadBusinessName } from '../lib/businessName';
-import { buildNotificationDetail } from './buildNotificationDetail';
+import { buildNotificationDetail, householdNoticeLine } from './buildNotificationDetail';
 import { visitTimesForStream } from './visitDates';
 import { getNotificationDef } from './catalog';
 import {
@@ -718,27 +718,29 @@ async function writeOnce(
 /**
  * #2093: the title and the line under it stored on one copy of a notice. The
  * household's copy reads the catalog's `householdTitle` ("A quote was
- * accepted") and `householdDescription`, the words its Notification settings
- * row already shows (#1372, #1359); every other copy keeps the operator's
- * `label` ("Kinfolk accepted a quote") and `description`. A `{business}`
- * placeholder is filled the way `getNotificationCatalog` fills it, and only
- * copy that carries one pays for the settings read.
+ * accepted"); every other copy keeps the operator's `label` ("Kinfolk accepted
+ * a quote") and `description`. A `{business}` placeholder is filled the way
+ * `getNotificationCatalog` fills it, and only a title that carries one pays for
+ * the settings read.
+ *
+ * #1831: the household's description is '' here. Its line is built from the
+ * copy's own facts by `householdNoticeLine` once the detail is resolved; the
+ * Notification settings sentence (`householdDescription`) describes a KIND of
+ * notice and is never the line under one.
  */
 export async function noticeCopyFor(
-  def: Pick<NotificationDef, 'label' | 'description' | 'householdTitle' | 'householdDescription'>,
+  def: Pick<NotificationDef, 'label' | 'description' | 'householdTitle'>,
   stream: AudienceStream,
 ): Promise<{ title: string; description: string }> {
   if (stream !== 'kinfolk') return { title: def.label, description: def.description };
   const title = def.householdTitle?.trim() || def.label;
-  const description = def.householdDescription?.trim() || def.description;
-  if (!/\{business/i.test(title) && !/\{business/i.test(description)) return { title, description };
+  if (!/\{business/i.test(title)) return { title, description: '' };
   const name = await loadBusinessName('dispatcher');
-  return { title: fillBusinessPlaceholders(title, name), description: fillBusinessPlaceholders(description, name) };
+  return { title: fillBusinessPlaceholders(title, name), description: '' };
 }
-
 /** The title half of {@link noticeCopyFor}. */
 export async function noticeTitleFor(
-  def: Pick<NotificationDef, 'label' | 'householdTitle'> & Partial<Pick<NotificationDef, 'description' | 'householdDescription'>>,
+  def: Pick<NotificationDef, 'label' | 'householdTitle'> & Partial<Pick<NotificationDef, 'description'>>,
   stream: AudienceStream,
 ): Promise<string> {
   return (await noticeCopyFor({ description: '', ...def }, stream)).title;
@@ -792,6 +794,14 @@ async function routeByDeliveryMode(
    */
   // #2093: the household's own copy is worded to its reader (#1372).
   const copy = await noticeCopyFor(def, stream);
+  // #1831: under the household's title goes what happened, from this copy's own
+  // facts (which Kin, which KinCare, when; the KinTale; the Kin), never the
+  // Notification settings sentence that describes the kind of notice. '' when
+  // there is nothing to add, and the list shows the title alone.
+  const description =
+    stream === 'kinfolk'
+      ? householdNoticeLine({ key: def.key, recipientUid, detail, data: args.data })
+      : copy.description;
   const content = {
     key: def.key,
     category: def.category,
@@ -801,7 +811,11 @@ async function routeByDeliveryMode(
     // from the catalog def) + the resolved actor identity, so a client renders
     // "<title> — <actorName>" with an avatar instead of a bare key.
     title: copy.title,
-    description: copy.description,
+    description,
+    // #1831: marks the household's copy as carrying a line built from its
+    // facts. The notifications list shows this field and never an older row's
+    // `description`, which holds the operator's or the settings wording.
+    ...(stream === 'kinfolk' ? { householdLine: description } : {}),
     actorName: actor.actorName,
     actorPhotoUrl: actor.actorPhotoUrl,
     data: args.data,
@@ -824,7 +838,9 @@ async function routeByDeliveryMode(
    * later. So they legitimately carry `status`/`mode`/`channels` alongside the
    * content the sweep will hand on. This is the base for all three.
    */
-  const queueDoc = { ...content, channels: activeChannels };
+  // `stream` lets the batch sweep word a digest for its reader (#1898). The
+  // promotion copies named fields only, so it never reaches the notification.
+  const queueDoc = { ...content, channels: activeChannels, stream };
 
   switch (def.deliveryMode) {
     case 'trigger': {

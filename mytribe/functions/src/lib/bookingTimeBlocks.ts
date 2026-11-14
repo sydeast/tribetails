@@ -638,3 +638,54 @@ export function containmentIsInert(policy: BookingPolicy, timeZone: string): boo
   // and "not an IANA name Intl knows" are both covered, and neither is guessed at.
   return zonedNow(Date.now(), timeZone) === null;
 }
+/**
+ * #2094: WHERE A STORED VISIT START FALLS ON THE BUSINESS CLOCK.
+ *
+ * `kin_care_sessions.startTime` is stored two ways: a UTC instant
+ * (`2026-11-12T04:30:00.000Z`, the web, the server's own writers) and the
+ * business's wall clock with no zone (`2026-11-11T22:30:00`, Android's
+ * reschedule and older desktop writes). A zone-less value already IS the
+ * business clock, so it keeps its own date and time. An instant is read in
+ * `timeZone`. So an 11:30 PM Chicago visit is on the 11th either way, and a day
+ * cut on the stored text (UTC midnight, 6 or 7 PM Chicago) is never the answer.
+ * Null when the value is neither shape.
+ */
+const STORED_WALL_CLOCK = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/;
+export function businessClockOfStoredStart(
+  raw: unknown,
+  timeZone: string,
+): { dateIso: string; minutes: number } | null {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (s === '') return null;
+  const wall = STORED_WALL_CLOCK.exec(s);
+  if (wall) return { dateIso: wall[1], minutes: Number(wall[2]) * 60 + Number(wall[3]) };
+  const ms = Date.parse(s);
+  if (!Number.isFinite(ms)) return null;
+  const local = zonedNow(ms, timeZone) ?? zonedNow(ms, FALLBACK_BUSINESS_TIME_ZONE);
+  if (local === null) return null;
+  const [h, m] = local.timeHHmm.split(':').map(Number);
+  return { dateIso: local.dateIso, minutes: (h ?? 0) * 60 + (m ?? 0) };
+}
+/** The business day (`YYYY-MM-DD`) a stored visit start falls on, or null. */
+export function businessDayOfStoredStart(raw: unknown, timeZone: string): string | null {
+  return businessClockOfStoredStart(raw, timeZone)?.dateIso ?? null;
+}
+/** `YYYY-MM-DD` shifted by whole days, on the calendar alone. */
+function shiftDay(dayIso: string, days: number): string {
+  const d = new Date(`${dayIso}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+/**
+ * #2094: the lexical `startTime` bounds that reach every visit of the business
+ * days `fromDay`..`toDay` (inclusive), in both stored shapes, for any zone: one
+ * calendar day wider on each side. `toExclusive` is a bare day, which sorts
+ * before every time on it. The rows still have to be kept by
+ * `businessDayOfStoredStart`; these bounds only make sure none is missed.
+ */
+export function storedStartBoundsForBusinessDays(
+  fromDay: string,
+  toDay: string,
+): { from: string; toExclusive: string } {
+  return { from: shiftDay(fromDay, -1), toExclusive: shiftDay(toDay, 2) };
+}

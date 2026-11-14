@@ -5,6 +5,7 @@ import { wrapScheduled } from '../lib/wrapScheduled';
 import { promoteQueuedNotification } from '../notifications/promoteQueued';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { getNotificationDef, NOTIFICATION_CATALOG } from '../notifications/catalog';
+import { householdNoticeLine, householdNoticeTarget } from '../notifications/buildNotificationDetail';
 import { FULL_CPU_SERIAL, SCHEDULE_RETRY_FREQUENT } from '../lib/runtimeOptions';
 
 /**
@@ -115,6 +116,11 @@ interface BucketSummary {
    */
   title: string;
   description: string;
+  /**
+   * #1898: the stream the queued row was written for ('kinfolk' for a
+   * household's copy). '' on a row queued before rows carried it.
+   */
+  stream: string;
   items: BatchItem[];
 }
 
@@ -211,6 +217,7 @@ export async function runNotificationBatchSweep(
             channels: (data.channels as string[] | undefined) ?? [],
             title: typeof data.title === 'string' ? data.title.trim() : '',
             description: typeof data.description === 'string' ? data.description.trim() : '',
+            stream: typeof data.stream === 'string' ? data.stream : '',
             items: [],
           };
           grouped.set(groupId, entry);
@@ -260,6 +267,40 @@ export async function runNotificationBatchSweep(
     const chunk = bucket.items.slice(0, MAX_ITEMS_PER_DIGEST);
     const deferred = bucket.items.length - chunk.length;
 
+    const items = chunk.map((i) => ({ itemId: i.itemId, ...i.data, createdAtMs: i.createdAtMs }));
+    // #1898: the ids every item shares, lifted to the top, where the enricher
+    // reads them: the household (so the email and push name its Kin instead
+    // of rendering "on 's KinTale") and the tale, when there is one.
+    const shared = (field: string): Record<string, string> => {
+      const values = [...new Set(items.map((i) => (i as Record<string, unknown>)[field]))];
+      return values.length === 1 && typeof values[0] === 'string' && values[0] !== '' ? { [field]: values[0] } : {};
+    };
+    const digestData = {
+      ...shared('kinfolkId'),
+      ...shared('taleId'),
+      ...shared('taleTitle'),
+      items,
+      itemCount: chunk.length,
+      batchKey: bucket.batchKey,
+      windowMs,
+    };
+    // #1898: a household's digest says who commented on which KinTale, and
+    // opens that tale (or the KinTales list when the comments span several).
+    // The office's copy keeps its own words, and opens the tale when there is one.
+    // A row queued before rows carried `stream` is the household's when it
+    // carries the household's title (#2093 put it there).
+    const household =
+      bucket.stream === 'kinfolk' ||
+      (bucket.stream === '' && bucket.title !== '' && bucket.title === digestDef.householdTitle?.trim());
+    const noticeRow = { key: bucket.catalogKey, recipientUid: bucket.uid, data: digestData };
+    const target = householdNoticeTarget(noticeRow);
+    const description = household
+      ? householdNoticeLine(noticeRow)
+      : bucket.description || digestDef.description;
+    // The office's copy is left as it was: its clients never had a target for it.
+    const householdFields = household
+      ? { householdLine: description, targetType: target.targetType, targetId: target.targetId }
+      : {};
     try {
       await db().runTransaction(async (tx) => {
         // Deletes only, no reads: deleting an already-deleted doc is a no-op,
@@ -279,20 +320,14 @@ export async function runNotificationBatchSweep(
             recipientUid: bucket.uid,
             actorUid: null,
             title: bucket.title || digestDef.label,
-            description: bucket.description || digestDef.description,
+            description,
             channels: bucket.channels,
+            ...householdFields,
           },
           {
             mode: 'batched-promoted',
             origin: { originBatchKey: bucket.batchKey },
-            overrides: {
-              data: {
-                items: chunk.map((i) => ({ itemId: i.itemId, ...i.data, createdAtMs: i.createdAtMs })),
-                itemCount: chunk.length,
-                batchKey: bucket.batchKey,
-                windowMs,
-              },
-            },
+            overrides: { data: digestData },
           },
         );
       });

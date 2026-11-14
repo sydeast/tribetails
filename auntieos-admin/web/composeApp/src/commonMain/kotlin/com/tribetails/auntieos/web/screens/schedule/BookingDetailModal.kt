@@ -449,7 +449,12 @@ fun BookingDetailModal(
                                 label = if (rescheduling) "Rescheduling" else "Reschedule visit",
                                 enabled = !rescheduling && reschedDate.length == 10 && reschedTime.length == 5,
                                 onClick = {
-                                    val times = buildRescheduleTimes(reschedDate, reschedTime, session.serviceDurationMinutes, localZone)
+                                    // #1866: a visit booked with no stored length keeps the
+                                    // window it holds, not a 30-minute default.
+                                    val times = buildRescheduleTimes(
+                                        reschedDate, reschedTime,
+                                        com.tribetails.auntieos.web.screens.resolveDurationMinutes(session, localZone), localZone,
+                                    )
                                     val pastRefusal = times?.let {
                                         rescheduleIntoPastRefusal(it.first, localZone, Clock.System.now().toEpochMilliseconds())
                                     }

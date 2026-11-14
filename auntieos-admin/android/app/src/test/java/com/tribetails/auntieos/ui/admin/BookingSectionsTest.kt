@@ -112,4 +112,15 @@ class BookingSectionsTest {
         assertEquals(2, sections.section(BookingSectionKey.SCHEDULED).rows.size)
         assertEquals(3, sections.section(BookingSectionKey.HISTORY).rows.size)
     }
+
+    @Test fun `#1868 the month grid and week strip mark a day with live bookings only`() {
+        val rows = listOf(
+            booking("d", BookingStatus.DRAFT),
+            booking("a", BookingStatus.ACCEPTED),
+            booking("c", BookingStatus.COMPLETED),
+            booking("r", BookingStatus.REJECTED),
+        )
+        assertEquals(listOf("d", "a", "c"), liveGridBookings(rows).map { it.id })
+        assertEquals(emptyList<EnhancedBooking>(), liveGridBookings(listOf(booking("r", BookingStatus.REJECTED))))
+    }
 }

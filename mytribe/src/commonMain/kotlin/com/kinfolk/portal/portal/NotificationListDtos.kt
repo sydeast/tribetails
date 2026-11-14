@@ -23,10 +23,18 @@ data class NotificationItem(
     val key: String,
     val category: String,
     val title: String,
+    /**
+     * #1831: what happened, from the notice's own facts ("Drop-in visit for
+     * Rex on Tue, Nov 17 at 9:00 AM"). Blank when the row holds none: the row
+     * then shows its title alone.
+     */
     val description: String,
     val actorName: String,
     val actorPhotoUrl: String,
-    /** 'booking' | 'invoice' | 'kintale' | 'kinfolk' | 'conversation' | '' as the dispatcher resolved it. */
+    /**
+     * What a tap opens, as the server decided it for this key:
+     * 'booking' | 'invoice' | 'kintale' | 'kin' | 'household' | 'conversation' | ''.
+     */
     val targetType: String,
     val targetId: String,
     /**
@@ -66,13 +74,23 @@ sealed interface NotificationTarget {
     data object Schedule : NotificationTarget
     data class Invoice(val invoiceId: String) : NotificationTarget
     data class KinTale(val taleId: String) : NotificationTarget
+    /** #1898: comments across several tales open the KinTales tab. */
+    data object KinTales : NotificationTarget
+    /** #1913: a notice about one Kin opens it; one about a Kin no longer listed opens the Kin tab. */
+    data class Kin(val kinId: String) : NotificationTarget
+    data object KinList : NotificationTarget
+    /** The household's own profile, on Tribe. */
+    data object Household : NotificationTarget
     /** #1874: a reply from the office opens Messages. */
     data object Messages : NotificationTarget
     data object None : NotificationTarget
 }
 
 /**
- * The thing a row is about, read off the dispatcher's `targetType`.
+ * The thing a row is about, read off the row's `targetType`. The server
+ * (`householdNoticeTarget`) decides it per key, old rows included: `kin` for a
+ * Kin notice (an empty id is a Kin no longer listed), `household` for the
+ * profile, and `kintale` with no id for comments across several tales.
  *
  * A booking row's `targetId` is a VISIT for per-visit events and a BATCH for
  * whole-request events (the request, its approval, a decline), and the id
@@ -94,7 +112,9 @@ fun notificationTargetOf(item: NotificationItem): NotificationTarget {
             }
         }
         "invoice" -> if (id.isEmpty()) NotificationTarget.None else NotificationTarget.Invoice(id)
-        "kintale" -> if (id.isEmpty()) NotificationTarget.None else NotificationTarget.KinTale(id)
+        "kintale" -> if (id.isEmpty()) NotificationTarget.KinTales else NotificationTarget.KinTale(id)
+        "kin" -> if (id.isEmpty()) NotificationTarget.KinList else NotificationTarget.Kin(id)
+        "household" -> NotificationTarget.Household
         "conversation" -> NotificationTarget.Messages
         else -> NotificationTarget.None
     }

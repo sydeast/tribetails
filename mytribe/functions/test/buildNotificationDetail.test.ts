@@ -306,9 +306,11 @@ describe('buildNotificationDetail withholds staff-only fields from a household c
     expect([...STAFF_ONLY_DETAIL_FIELDS]).toEqual(['notes']);
     expect([...cardDetailFieldsFor('staff')]).toEqual([...CARD_DETAIL_FIELDS]);
     expect([...cardDetailFieldsFor('business')]).toEqual([...CARD_DETAIL_FIELDS]);
-    expect([...cardDetailFieldsFor('kinfolk')]).toEqual(
-      CARD_DETAIL_FIELDS.filter((f) => f !== 'notes'),
-    );
+    // #1831: plus the request's dates, which only the household's line reads.
+    expect([...cardDetailFieldsFor('kinfolk')]).toEqual([
+      ...CARD_DETAIL_FIELDS.filter((f) => f !== 'notes'),
+      'bookingDates',
+    ]);
   });
 });
 describe('the card names the KinCare, not its stored key (#1749)', () => {

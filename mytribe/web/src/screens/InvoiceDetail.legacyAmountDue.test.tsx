@@ -103,6 +103,7 @@ const LEGACY_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,
+  writtenOffCents: null,
   payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
 };
 

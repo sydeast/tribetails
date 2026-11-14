@@ -2,6 +2,8 @@ import { threadHouseholdName, threadPreviewText } from './inboxFormat';
 import { sessionState, sessionDayKey, sessionHousehold, shiftDayIso } from './sessionFormat';
 import { formatCentsUsd, isoDatePrefixOrNull } from './invoiceFormat';
 import { str, arr } from './coerce';
+import { businessInstantMs } from './businessZoneTime';
+import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 import { isKinInCare } from '../api/directory';
 import {
   draftBody,
@@ -10,7 +12,7 @@ import {
   draftStatusAsKinTaleStatus,
   draftTypeLabel,
 } from './kinTaleList';
-import { isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
+import { invoiceStamp, isArchivedInvoice, type InvoiceEntry } from '../api/invoices';
 import type { GeneratedDraftRow } from '../api/drafts';
 import type { ConversationSummary } from '../api/inbox';
 import type { SessionEntry } from '../api/sessions';
@@ -81,26 +83,33 @@ export function unreadClientMessageCount(rows: readonly ConversationSummary[]): 
 /**
  * The single NEXT upcoming visit for the "Key & Code Safebox" widget (AO-36 /
  * W3), which surfaces the access notes for that visit's household only. Keeps a
- * session whose start is now or later ([nowIso] is a full ISO instant, and start
- * times compare lexicographically for the `...Z` writes, the same string-compare
- * the sessions list already relies on) and whose state is neither cancelled nor
- * completed (the positive `sessionState` enum, never a status-string negation),
- * then returns the earliest such start. `null` when nothing is coming up.
+ * session whose start is now or later ([nowIso] is a full ISO instant) and whose
+ * state is neither cancelled nor completed (the positive `sessionState` enum,
+ * never a status-string negation), then returns the earliest such start. `null`
+ * when nothing is coming up.
+ *
+ * #2095: compared as moments, as the Android and desktop twins do. A start is
+ * stored as a UTC instant or as the business's wall clock with no zone, and a
+ * string compare set the two shapes five or six hours apart. A zone-less start
+ * is read on the business clock in `businessZone`.
  */
 export function nextUpcomingSession(
   sessions: readonly SessionEntry[],
   nowIso: string,
+  businessZone: string = DEFAULT_BUSINESS_TIME_ZONE,
 ): SessionEntry | null {
+  const nowMs = businessInstantMs(nowIso, businessZone);
+  if (nowMs === null) return null;
   let best: SessionEntry | null = null;
-  let bestStart = '';
+  let bestMs = 0;
   for (const s of sessions) {
     const state = sessionState(str(s.status));
     if (state === 'cancelled' || state === 'completed') continue;
-    const start = str(s.startTime);
-    if (start === '' || start < nowIso) continue;
-    if (best === null || start < bestStart) {
+    const startMs = businessInstantMs(str(s.startTime), businessZone);
+    if (startMs === null || startMs < nowMs) continue;
+    if (best === null || startMs < bestMs) {
       best = s;
-      bestStart = start;
+      bestMs = startMs;
     }
   }
   return best;
@@ -683,7 +692,21 @@ export function householdVisitGaps(
 export function invoiceIsPaidForRevenue(
   row: Pick<InvoiceEntry, 'status' | 'amountDue' | 'total'>,
 ): boolean {
-  return str(row.status).trim().toLowerCase() !== 'draft' && row.amountDue <= 0 && row.total > 0;
+  const status = str(row.status).trim().toLowerCase();
+  // #2090: a written-off invoice owes nothing, but nobody paid the part given
+  // up, so it is never counted whole. `revenueOf` counts what did come in.
+  return status !== 'draft' && status !== 'written_off' && row.amountDue <= 0 && row.total > 0;
+}
+/**
+ * What one invoice adds to revenue, in dollars: its total when it is paid, and
+ * for a written-off one (#2090) only what was collected before the rest was
+ * written off. Nothing for anything else.
+ */
+export function revenueOf(row: Pick<InvoiceEntry, 'status' | 'amountDue' | 'total' | 'writtenOffCents'>): number {
+  if (invoiceIsPaidForRevenue(row)) return row.total;
+  if (str(row.status).trim().toLowerCase() !== 'written_off') return 0;
+  const writtenOff = typeof row.writtenOffCents === 'number' && row.writtenOffCents > 0 ? row.writtenOffCents : 0;
+  return Math.max(0, Math.round(row.total * 100) - writtenOff) / 100;
 }
 /**
  * Money collected in the week window [weekStartIso]..[nowIso], both inclusive
@@ -706,10 +729,11 @@ export function weeklyRevenue(
   let sum = 0;
   for (const inv of invoices) {
     if (isArchivedInvoice(inv)) continue;
-    if (!invoiceIsPaidForRevenue(inv)) continue;
+    const earned = revenueOf(inv);
+    if (earned <= 0) continue;
     const date = isoDatePrefixOrNull(str(inv.date));
     if (date === null) continue;
-    if (date >= start && date <= end) sum += inv.total;
+    if (date >= start && date <= end) sum += earned;
   }
   return sum;
 }
@@ -719,16 +743,24 @@ export interface OutstandingTotals {
   count: number;
 }
 /**
- * The Cash Flow card's second row: every non-archived invoice with a positive
- * `amountDue`, summed. Android reads `invoices.filter { it.amountDue > 0.0 }`;
- * the archive guard is the same one `weeklyRevenue` applies, because an invoice
- * that has been written off is not money anyone is waiting on.
+ * The Cash Flow card's second row: what households have been asked to pay and
+ * have not, summed.
+ *
+ * #2000: THE SAME RULE AS THE INVOICES SCREEN'S OUTSTANDING CARD, so Home and
+ * Invoices agree. A POSITIVE test on the stored stamp (ADR-0002): `open`, a
+ * balance above zero, and not archived. An unsent draft has gone to nobody and
+ * a quote is not a bill, so neither is owed; this card used to count every
+ * invoice with a balance, and read an unsent $28.00 draft as money unpaid. The
+ * archive guard is the one `weeklyRevenue` applies: an invoice that has been
+ * written off is not money anyone is waiting on. Android and the desktop
+ * console read the same rule (`cashFlowOutstanding`).
  */
 export function outstandingTotals(invoices: readonly InvoiceEntry[]): OutstandingTotals {
   let total = 0;
   let count = 0;
   for (const inv of invoices) {
     if (isArchivedInvoice(inv)) continue;
+    if (invoiceStamp(inv).state !== 'open') continue;
     if (!(inv.amountDue > 0)) continue;
     total += inv.amountDue;
     count += 1;

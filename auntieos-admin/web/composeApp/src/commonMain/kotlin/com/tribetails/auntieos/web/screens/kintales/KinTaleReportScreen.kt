@@ -74,6 +74,8 @@ import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ServicePill
+import com.tribetails.auntieos.web.util.businessTimeZone
+import com.tribetails.auntieos.web.screens.sessions.businessShortDateTime
 
 /**
  * KinTale report screen (Den redesign).
@@ -906,12 +908,12 @@ private fun VisitMetaPanel(report: KinCareReport) {
                 AuntieKeyValueRow(label = "Visit date", value = report.visitDate, valueMono = true)
             }
             if (report.arrivedAt.isNotBlank()) {
-                AuntieKeyValueRow(label = "Arrived", value = report.arrivedAt, valueMono = true)
+                AuntieKeyValueRow(label = "Arrived", value = businessShortDateTime(report.arrivedAt, businessTimeZone()), valueMono = true)
             }
             if (report.departedAt.isNotBlank()) {
                 AuntieKeyValueRow(
                     label = "Departed",
-                    value = report.departedAt,
+                    value = businessShortDateTime(report.departedAt, businessTimeZone()),
                     valueMono = true,
                     showDivider = false,
                 )

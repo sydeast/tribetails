@@ -82,9 +82,9 @@ class InvoiceQuoteTest {
         assertEquals("Quote withdrawn. The household no longer sees it.", quoteWithdrawnMessage(0))
         assertEquals(
             "Quote archived. The household no longer sees it. Its visit is back on the un-invoiced list.",
-            archiveSuccessMessage(restoring = false, force = false, released = 1, quote = true),
+            archiveSuccessMessage(restoring = false, released = 1, quote = true),
         )
-        assertEquals("Invoice archived.", archiveSuccessMessage(restoring = false, force = false))
+        assertEquals("Invoice archived.", archiveSuccessMessage(restoring = false))
     }
 
     @Test
@@ -102,11 +102,11 @@ class InvoiceQuoteTest {
         assertFalse(declined.contains("takes back the visits"))
         assertEquals(
             "Quote restored as a draft. The household cannot see it until you send it.",
-            archiveSuccessMessage(restoring = true, force = false, quote = true, quoteDraft = true),
+            archiveSuccessMessage(restoring = true, quote = true, quoteDraft = true),
         )
         assertEquals(
             "Quote restored. The household can see it again.",
-            archiveSuccessMessage(restoring = true, force = false, quote = true),
+            archiveSuccessMessage(restoring = true, quote = true),
         )
     }
 

@@ -15,6 +15,7 @@ import { validateResponse } from '../lib/callableResponse';
 import { sanitizeRichText } from '../lib/richText';
 import { isAuntieClaim } from '../lib/staffGate';
 import { IdempotencyKeyArg, lookupIdempotentEnvelope } from '../lib/bookingIdempotency';
+import { kinCareLengthForVisit } from '../lib/serviceDisplayName';
 
 /**
  * AO-25: admin-side multi-date / recurring booking request.
@@ -176,6 +177,21 @@ function staffNoteOf(
   const body = sanitizeRichText(raw);
   return body.trim() === '' ? null : { body, authorUid, authorRole };
 }
+/** `business_settings`, or undefined when it cannot be read: a visit then keeps the end it was sent. */
+async function readBusinessSettings(): Promise<Record<string, unknown> | undefined> {
+  try {
+    const snap = await db().collection('business_settings').doc('business_settings').get();
+    return snap.data() as Record<string, unknown> | undefined;
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'createMultiDateBookingRequest',
+      event: 'business_settings.read.failed',
+      errorMessage: (err as Error)?.message,
+    });
+    return undefined;
+  }
+}
 export async function createMultiDateBookingRequestHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof Result>> {
@@ -221,9 +237,20 @@ export async function createMultiDateBookingRequestHandler(
       throw new HttpsError('invalid-argument', 'endTime must be after startTime.');
     }
   });
+  // #1866: every visit is stored with its end. The wizard on all three clients
+  // sends a KinCare by name with no id and no end, and that visit used to be
+  // approved into a session with a length of 0 and no end on Auntie Time. An
+  // end the admin did send is kept; otherwise the KinCare's length decides it,
+  // and the busy and holiday guards below check that whole window.
+  const settings = await readBusinessSettings();
+  const visits = args.visits.map((v) => {
+    if (v.endTimeMs) return v;
+    const minutes = kinCareLengthForVisit(v.serviceId ?? null, v.serviceName, settings);
+    return minutes == null ? v : { ...v, endTimeMs: v.startTimeMs + minutes * 60_000 };
+  });
   await guardBookingBusyConflict({
     firestore: db(),
-    visits: args.visits,
+    visits,
     actorUid: uid,
     actorRole: 'AUNTIE',
     override: args.overrideBusyConflict,
@@ -231,7 +258,7 @@ export async function createMultiDateBookingRequestHandler(
   });
   // A closed day always refuses the request, admin-created or not -- no
   // override. See companyHolidayConflict.ts's header for why.
-  await guardCompanyHolidayConflict({ firestore: db(), visits: args.visits });
+  await guardCompanyHolidayConflict({ firestore: db(), visits });
 
   const pattern = args.pattern ?? 'individual';
   // resolveService: the catalog wins for name + price; a client priceCents is
@@ -242,7 +269,7 @@ export async function createMultiDateBookingRequestHandler(
   // instead of missing into a null price.
   const priceBook = await loadServicePriceBook();
   const normalized: NormalizedVisit[] = await Promise.all(
-    args.visits.map(async (v) => {
+    visits.map(async (v) => {
       const resolved = await resolveService(v.serviceId ?? null, v.serviceName, priceBook);
       return {
         startTimeMs: v.startTimeMs,

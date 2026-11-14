@@ -89,7 +89,7 @@ data class InvoiceDto(
     val total: Double,
     val amountDue: Double,
     val isPaid: Boolean,
-    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`, `written_off`. `""` when the payload omits it. */
     val status: String,
     /** One of `all`, `metadataOnly`, `none`, or null when the payload omits it. */
     val editScope: String?,
@@ -111,6 +111,7 @@ data class InvoiceDto(
     /** Always `accountBalance` on the wire. */
     val creditTarget: String?,
     val creditRedeemedAtMs: Double?,
+    val writtenOffCents: Long?,
     /** Null when the payload omits the key. */
     val lineItems: List<InvoiceLineItemDto>? = null,
     val payMethods: List<InvoiceDtoPayMethod>,
@@ -148,6 +149,7 @@ internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
         creditAmountCents = (raw?.get("creditAmountCents") as? Number)?.toLong(),
         creditTarget = raw?.get("creditTarget") as? String,
         creditRedeemedAtMs = (raw?.get("creditRedeemedAtMs") as? Number)?.toDouble(),
+        writtenOffCents = (raw?.get("writtenOffCents") as? Number)?.toLong(),
         lineItems = (raw?.get("lineItems") as? List<*>)?.mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceLineItemDto(nested) } },
         payMethods = (raw?.get("payMethods") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayMethod(nested) } },
     )
@@ -174,7 +176,7 @@ data class AcceptQuoteArgs(
 data class AcceptQuoteResult(
     val ok: Boolean,
     val invoiceId: String,
-    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`, `written_off`. `""` when the payload omits it. */
     val status: String,
 )
 
@@ -466,7 +468,7 @@ data class DenyQuoteArgs(
 data class DenyQuoteResult(
     val ok: Boolean,
     val invoiceId: String,
-    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`, `written_off`. `""` when the payload omits it. */
     val status: String,
 )
 
@@ -592,6 +594,27 @@ internal fun decodeGetInvoiceLedgerResultPayment(raw: Map<String, Any?>?): GetIn
     )
 
 /** Nested in the `getInvoiceLedger` contract. */
+data class GetInvoiceLedgerResultWriteOff(
+    val writeOffId: String,
+    val amountCents: Long,
+    val writtenOffAtMs: Double?,
+    val writtenOffBy: String?,
+)
+
+/**
+ * Fail-soft decode of `GetInvoiceLedgerResultWriteOff` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetInvoiceLedgerResultWriteOff(raw: Map<String, Any?>?): GetInvoiceLedgerResultWriteOff =
+    GetInvoiceLedgerResultWriteOff(
+        writeOffId = (raw?.get("writeOffId") as? String).orEmpty(),
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        writtenOffAtMs = (raw?.get("writtenOffAtMs") as? Number)?.toDouble(),
+        writtenOffBy = raw?.get("writtenOffBy") as? String,
+    )
+
+/** Nested in the `getInvoiceLedger` contract. */
 data class GetInvoiceLedgerResultLedgerPayment(
     val paymentId: String,
     val amountCents: Long,
@@ -675,6 +698,8 @@ data class GetInvoiceLedgerResult(
     val paidCents: Long,
     val totalCents: Long,
     val amountDueCents: Long,
+    val writeOffs: List<GetInvoiceLedgerResultWriteOff>,
+    val writtenOffCents: Long,
     val ledgerPayments: List<GetInvoiceLedgerResultLedgerPayment>,
     val unlinkedKinfolkPayments: List<GetInvoiceLedgerResultLedgerPayment>,
     val unresolvedAmountCount: Long,
@@ -696,6 +721,8 @@ internal fun decodeGetInvoiceLedgerResult(raw: Map<String, Any?>?): GetInvoiceLe
         paidCents = (raw?.get("paidCents") as? Number)?.toLong() ?: 0L,
         totalCents = (raw?.get("totalCents") as? Number)?.toLong() ?: 0L,
         amountDueCents = (raw?.get("amountDueCents") as? Number)?.toLong() ?: 0L,
+        writeOffs = (raw?.get("writeOffs") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultWriteOff(nested) } },
+        writtenOffCents = (raw?.get("writtenOffCents") as? Number)?.toLong() ?: 0L,
         ledgerPayments = (raw?.get("ledgerPayments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultLedgerPayment(nested) } },
         unlinkedKinfolkPayments = (raw?.get("unlinkedKinfolkPayments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetInvoiceLedgerResultLedgerPayment(nested) } },
         unresolvedAmountCount = (raw?.get("unresolvedAmountCount") as? Number)?.toLong() ?: 0L,
@@ -793,7 +820,7 @@ data class LinkInvoiceSessionsResult(
     val added: List<String>,
     val removed: List<String>,
     val linkedWithoutLine: List<String>,
-    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`, `written_off`. `""` when the payload omits it. */
     val status: String,
     /** One of `all`, `metadataOnly`, `none`. `""` when the payload omits it. */
     val editScope: String,
@@ -1545,7 +1572,7 @@ data class RepairInvoicePaymentsResult(
     val scanned: Long,
     val findings: List<RepairInvoicePaymentsResultFinding>,
     val repaired: Long,
-    /** Keys: `no_payments`, `payments_cover_total`, `no_total`, `balance_already_correct`, `would_lower_balance`. */
+    /** Keys: `no_payments`, `payments_cover_total`, `no_total`, `balance_already_correct`, `would_lower_balance`, `written_off`. */
     val skipped: Map<String, Long>,
     val nextCursor: String?,
 )
@@ -1980,7 +2007,7 @@ data class ResendQuoteArgs(
 data class ResendQuoteResult(
     val ok: Boolean,
     val invoiceId: String,
-    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`, `written_off`. `""` when the payload omits it. */
     val status: String,
     /** Null when the payload omits the key. */
     val appOnly: Boolean? = null,
@@ -2018,7 +2045,7 @@ data class ConvertQuoteToInvoiceArgs(
 data class ConvertQuoteToInvoiceResult(
     val ok: Boolean,
     val invoiceId: String,
-    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`, `written_off`. `""` when the payload omits it. */
     val status: String,
 )
 
@@ -2053,7 +2080,7 @@ data class WithdrawQuoteArgs(
 data class WithdrawQuoteResult(
     val ok: Boolean,
     val invoiceId: String,
-    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`, `written_off`. `""` when the payload omits it. */
     val status: String,
     val releasedSessionIds: List<String>,
 )
@@ -2341,6 +2368,44 @@ internal fun decodeUnarchiveInvoiceResult(raw: Map<String, Any?>?): UnarchiveInv
         reclaimedSessionIds = (raw?.get("reclaimedSessionIds") as? List<*>).orEmpty().mapNotNull { it as? String },
         notReclaimed = (raw?.get("notReclaimed") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeUnarchiveInvoiceResultNotReclaimed(nested) } },
         notice = (raw?.get("notice") as? String).orEmpty(),
+    )
+
+// ---------- writeOffInvoice ----------
+
+/** Request payload for the `writeOffInvoice` callable. */
+data class WriteOffInvoiceArgs(
+    val invoiceId: String,
+    val amountCents: Long,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+        put("amountCents", amountCents)
+    }
+}
+
+/** Response from the `writeOffInvoice` callable. */
+data class WriteOffInvoiceResult(
+    val ok: Boolean,
+    val invoiceId: String,
+    val writeOffId: String,
+    val writtenOffCents: Long,
+)
+
+/**
+ * Fail-soft decode of `WriteOffInvoiceResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeWriteOffInvoiceResult(raw: Map<String, Any?>?): WriteOffInvoiceResult =
+    WriteOffInvoiceResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        writeOffId = (raw?.get("writeOffId") as? String).orEmpty(),
+        writtenOffCents = (raw?.get("writtenOffCents") as? Number)?.toLong() ?: 0L,
     )
 
 // ---------- updateInvoice ----------

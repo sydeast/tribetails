@@ -303,10 +303,18 @@ export interface NotificationItemDto {
   key: string;
   category: string;
   title: string;
+  /**
+   * #1831: what happened, from the notice's own facts ("Drop-in visit for Rex
+   * on Tue, Nov 17 at 9:00 AM"). '' when the row holds none: the row then shows
+   * its title alone.
+   */
   description: string;
   actorName: string;
   actorPhotoUrl: string;
-  /** 'booking' | 'invoice' | 'kintale' | 'kinfolk' | 'conversation' | '' as the dispatcher resolved it. */
+  /**
+   * What a tap opens, as the server decided it for this key:
+   * 'booking' | 'invoice' | 'kintale' | 'kin' | 'household' | 'conversation' | ''.
+   */
   targetType: string;
   targetId: string;
   /**

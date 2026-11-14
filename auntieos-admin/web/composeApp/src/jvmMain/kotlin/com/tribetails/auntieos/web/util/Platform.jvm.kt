@@ -3,16 +3,25 @@ package com.tribetails.auntieos.web.util
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 
 actual fun openInMaps(address: String): Unit = throw UnsupportedOperationException("JVM stub")
-// Real impl: render paths (e.g. the Auntie Time day-of filter) call nowIso() during
-// composition, so it must return a usable ISO-8601 timestamp, not throw. Seconds precision.
-//
-// #1155: zone-less, so a reader takes it as the BUSINESS's wall clock (the zone
-// `JvmFirestoreRest.timestampValueOf` reads it in, and the one the server reads
-// every zone-less time in). So it is stamped on that clock too, not the
-// machine's: on a machine in another zone, "now" would otherwise be sent as an
-// instant hours off.
+
+// #2095: a real UTC instant with a `Z`, whole seconds, as web and Android
+// stamp. It used to be the business's wall clock with no zone (#1155), which
+// every reader then had to guess the zone of: the server's notice key read it
+// as UTC (#2238), the Directory refused it as an instant. A zone-less value the
+// console wrote before this still reads (`visitNoticeAtMs`, `timestampValueOf`).
 actual fun nowIso(): String =
-    java.time.LocalDateTime.now(com.tribetails.auntieos.web.data.businessZoneId()).withNano(0).toString()
+    java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString()
+
+// The business's wall clock, for "today" and "this hour" on the console's
+// screens (render paths call it during composition, so it must not throw).
+// Formatted with the seconds always written: LocalDateTime.toString() drops
+// them on a whole minute ("16:00"), which is not the documented shape.
+actual fun businessNowLocalIso(): String =
+    java.time.LocalDateTime.now(com.tribetails.auntieos.web.data.businessZoneId())
+        .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
+
+actual fun businessTimeZoneId(): String = com.tribetails.auntieos.web.data.businessZoneId().id
+
 // Desktop (JVM): open the URL in the system browser via AWT Desktop (mirrors
 // platform/Launcher.jvm.kt). Fail-loud to stderr; headless/test JVMs without a
 // Desktop log rather than crash, since this is a user-initiated convenience.
