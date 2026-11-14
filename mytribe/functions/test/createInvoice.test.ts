@@ -613,17 +613,59 @@ describe('createInvoice structured terms', () => {
     });
     expect(ctx.writes.find((w) => w.path.startsWith('invoices/'))).toBeUndefined();
   });
-  it('REFUSES service-relative terms on an invoice with no visits, rather than inventing a date', async () => {
+  it('#1966: makes visit-relative terms on an invoice with no visits due on receipt, and says so', async () => {
     const ctx = buildDbMock({});
     mocks.dbFn.mockReturnValue(ctx.db);
-    await expect(
-      createInvoiceHandler(
-        req({ ...validPayload, sessionIds: [], termsCode: 'net_14_after_last_visit', dueDate: '' }),
-      ),
-    ).rejects.toMatchObject({
-      code: 'failed-precondition',
-      message: expect.stringContaining('no visits on this invoice yet'),
+    await createInvoiceHandler(
+      req({ ...validPayload, sessionIds: [], termsCode: 'net_14_after_last_visit', dueDate: '' }),
+    );
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.dueDate).toBe('2026-06-01');
+    expect(written?.data.termsCode).toBe('due_on_receipt');
+    expect(written?.data.terms).toBe('Due on receipt');
+  });
+  it('#1966: counts an evening visit on its Chicago day, not its UTC day', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        // 7 PM on Nov 30 in Chicago.
+        'kin_care_sessions/s1': session('2026-12-01T01:00:00.000Z'),
+      },
     });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({ ...validPayload, date: '2026-12-01', sessionIds: ['s1'], termsCode: 'net_14_after_last_visit', dueDate: '' }),
+    );
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.dueDate).toBe('2026-12-14');
+  });
+  it('#1966: counts visit days on the zone the business set', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'business_settings/business_settings': { timeZone: 'Asia/Tokyo' },
+        'kin_care_sessions/s1': session('2026-12-01T01:00:00.000Z'),
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({ ...validPayload, date: '2026-12-01', sessionIds: ['s1'], termsCode: 'due_on_last_visit', dueDate: '' }),
+    );
+    expect(ctx.writes.find((w) => w.path.startsWith('invoices/'))?.data.dueDate).toBe('2026-12-01');
+  });
+  it('#1966: counts before-first-visit terms back from the first visit, even before the invoice date', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'kin_care_sessions/s1': session('2026-06-04T14:00:00.000Z'),
+        'kin_care_sessions/s2': session('2026-06-09T14:00:00.000Z'),
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(
+      req({ ...validPayload, sessionIds: ['s1', 's2'], termsCode: 'net_7_before_first_visit', dueDate: '' }),
+    );
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    // 7 days before Jun 4. Structured terms are not judged against the invoice date.
+    expect(written?.data.dueDate).toBe('2026-05-28');
+    expect(written?.data.terms).toBe('Due 7 days before the first visit');
   });
   it('lets custom terms keep the operator typed date', async () => {
     const ctx = buildDbMock({});
@@ -643,6 +685,54 @@ describe('createInvoice structured terms', () => {
     expect(written?.data.terms).toBe('Net 30');
     expect(written?.data.dueDate).toBe('2026-07-01');
     expect(written?.data.termsCode).toBeUndefined();
+  });
+});
+
+/**
+ * #1966: a caller that names no terms, no code and no due date gets the
+ * business's Payment terms setting, so no new invoice is born without a date.
+ */
+describe('createInvoice payment terms setting', () => {
+  const session = (startTime: string) => ({ kinfolkId: 'fam1', status: 'COMPLETED', startTime });
+  const bare = { ...validPayload, terms: '', dueDate: '' };
+  it('is due on receipt when the business has not set one', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req(bare));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.termsCode).toBe('due_on_receipt');
+    expect(written?.data.dueDate).toBe('2026-06-01');
+  });
+  it('uses the stored setting, counted from the visits', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'business_settings/business_settings': { invoicePaymentTerms: 'net_14_after_last_visit' },
+        'kin_care_sessions/s1': session('2026-06-02T14:00:00.000Z'),
+        'kin_care_sessions/s2': session('2026-06-09T14:00:00.000Z'),
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req({ ...bare, sessionIds: ['s1', 's2'] }));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.termsCode).toBe('net_14_after_last_visit');
+    expect(written?.data.terms).toBe('Due 14 days after the last visit');
+    expect(written?.data.dueDate).toBe('2026-06-23');
+  });
+  it('reads a stored value that is not a setting option as due on receipt', async () => {
+    const ctx = buildDbMock({ docs: { 'business_settings/business_settings': { invoicePaymentTerms: 'custom' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req(bare));
+    expect(ctx.writes.find((w) => w.path.startsWith('invoices/'))?.data.termsCode).toBe('due_on_receipt');
+  });
+  it('never overrides a code the composer sent', async () => {
+    const ctx = buildDbMock({
+      docs: { 'business_settings/business_settings': { invoicePaymentTerms: 'net_30_after_last_visit' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req({ ...bare, termsCode: 'custom', dueDate: '2026-06-20' }));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.termsCode).toBe('custom');
+    expect(written?.data.dueDate).toBe('2026-06-20');
   });
 });
 /** #408: a line drawn from a visit stays bound to it. */

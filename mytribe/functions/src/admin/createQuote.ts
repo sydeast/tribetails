@@ -20,7 +20,12 @@ import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 import { InvoiceDayArg } from '../lib/invoiceDay';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
-import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
+import {
+  businessToday,
+  readInvoiceTermsSettings,
+  resolveStructuredTerms,
+  serviceDaysForSessions,
+} from '../lib/invoiceCreateFields';
 import { invoiceNumberTaken, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
 import { QuoteIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { boundSessionIds, readSessionLinks, stageSessionLinks } from '../lib/invoiceSessionLinks';
@@ -220,15 +225,22 @@ export async function createQuoteHandler(
   // Terms and the number: the same two rules `createInvoice` applies, from the
   // same module, so a quote and the invoice it becomes cannot date themselves
   // differently or number themselves out of two sequences.
+  // #1966: a caller naming no terms and no due date gets the business's
+  // Payment terms setting, as `createInvoice` does.
   let termsFields: Record<string, unknown> = { terms: args.terms, dueDate: args.dueDate };
-  if (args.termsCode !== undefined) {
+  const termsSettings = await readInvoiceTermsSettings(firestore);
+  const termsCode =
+    args.termsCode ??
+    (args.terms.trim() === '' && args.dueDate.trim() === '' ? termsSettings.paymentTerms : undefined);
+  if (termsCode !== undefined) {
     const serviceDates = await serviceDaysForSessions(firestore, sessionIds);
     const outcome = resolveStructuredTerms({
-      termsCode: args.termsCode,
+      termsCode,
       date: args.date,
       dueDate: args.dueDate,
       serviceDates,
-      now: new Date().toISOString().slice(0, 10),
+      now: businessToday(termsSettings.timeZone),
+      timeZone: termsSettings.timeZone,
     });
     if (!outcome.ok) {
       throw new HttpsError('failed-precondition', outcome.message, { code: outcome.code });

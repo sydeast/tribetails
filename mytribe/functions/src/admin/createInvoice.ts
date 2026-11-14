@@ -20,7 +20,12 @@ import {
 } from '../lib/invoiceMath';
 import { DUE_BEFORE_INVOICE_DATE_CODE, InvoiceDayArg, dueDateOrderProblem } from '../lib/invoiceDay';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
-import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
+import {
+  businessToday,
+  readInvoiceTermsSettings,
+  resolveStructuredTerms,
+  serviceDaysForSessions,
+} from '../lib/invoiceCreateFields';
 import { invoiceNumberTaken, mintInvoiceNumberInTransaction } from '../lib/invoiceNumber';
 import { InvoiceIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
@@ -250,26 +255,35 @@ export async function createInvoiceHandler(
   // TERMS, AND THE DUE DATE THEY DECIDE (#408). Structured terms make the
   // server the authority on when this invoice is due, resolved from the visits
   // it is actually linking, not from anything the caller asserts. Without a
-  // `termsCode` both fields are stored verbatim, exactly as they always were.
+  // `termsCode`, terms or a due date the caller typed are stored verbatim,
+  // exactly as they always were. #1966: a caller that names none of the three
+  // gets the business's Payment terms setting (due on receipt when unset), so
+  // no new invoice is born without a due date. Visit days are counted on the
+  // business's clock.
   let termsFields: Record<string, unknown> = { terms: args.terms, dueDate: args.dueDate };
-  if (args.termsCode !== undefined) {
+  const termsSettings = await readInvoiceTermsSettings(firestore);
+  const termsCode =
+    args.termsCode ??
+    (args.terms.trim() === '' && args.dueDate.trim() === '' ? termsSettings.paymentTerms : undefined);
+  if (termsCode !== undefined) {
     const serviceDates = await serviceDaysForSessions(firestore, sessionIds);
     const outcome = resolveStructuredTerms({
-      termsCode: args.termsCode,
+      termsCode,
       date: args.date,
       dueDate: args.dueDate,
       serviceDates,
-      // The UTC day. It decides nothing that is written here (the resolver only
-      // uses it to report a due date already in the past, which is the
-      // client's to say out loud), so a zone offset cannot move a stored date.
-      now: new Date().toISOString().slice(0, 10),
+      // It decides nothing that is written here (the resolver only uses it to
+      // report a due date already in the past, which is the client's to say
+      // out loud), so it cannot move a stored date.
+      now: businessToday(termsSettings.timeZone),
+      timeZone: termsSettings.timeZone,
     });
     if (!outcome.ok) {
       throw new HttpsError('failed-precondition', outcome.message, { code: outcome.code });
     }
     termsFields = outcome.fields;
   }
-  const dueOrder = dueDateOrderProblem(args.date, termsFields['dueDate'], args.termsCode);
+  const dueOrder = dueDateOrderProblem(args.date, termsFields['dueDate'], termsCode);
   if (dueOrder) {
     throw new HttpsError('invalid-argument', dueOrder, { code: DUE_BEFORE_INVOICE_DATE_CODE, field: 'dueDate' });
   }

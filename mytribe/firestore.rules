@@ -456,6 +456,7 @@ service cloud.firestore {
              && bsString('defaultBookingMode')
              && bsString('defaultCalendarView')
              && bsString('trackingAccuracy')
+             && bsString('invoicePaymentTerms')
              && bsBool('allowTimeBlockBooking')
              && bsBool('allowSpecificTimeBooking')
              && bsBool('enableConflictDetection')

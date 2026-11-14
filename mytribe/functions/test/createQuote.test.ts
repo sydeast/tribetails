@@ -114,6 +114,17 @@ describe('createQuote zod validation', () => {
     expect(written?.data.terms).toBe('Due 14 days after the invoice date');
     expect(written?.data.dueDate).toBe('2026-06-15');
   });
+  it('#1966: takes the business Payment terms setting when the caller names no terms', async () => {
+    const ctx = buildDbMock({
+      docs: { 'business_settings/business_settings': { invoicePaymentTerms: 'net_3_before_first_visit' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createQuoteHandler(req({ ...validPayload, sessionIds: [], terms: '', dueDate: '' }));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    // No visits on it, so due on receipt: the quote's own date.
+    expect(written?.data.termsCode).toBe('due_on_receipt');
+    expect(written?.data.dueDate).toBe(validPayload.date);
+  });
 
   it('rejects negative total', async () => {
     const ctx = buildDbMock({});

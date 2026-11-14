@@ -18,9 +18,11 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import {
   invoiceTermsWords,
+  paymentTermsSettingOf,
   resolveDueDate,
   type InvoiceTermsCode,
 } from './invoiceTerms';
+import { BUSINESS_SETTINGS_DOC, FALLBACK_BUSINESS_TIME_ZONE, zonedNow } from './businessHours';
 
 /** How many visits a new invoice's terms may be resolved from. */
 export const MAX_TERMS_SESSIONS = 100;
@@ -62,6 +64,11 @@ export interface StructuredTermsInput {
   serviceDates: readonly string[];
   /** Today, `YYYY-MM-DD`. Passed in so this stays testable and timezone-free. */
   now: string;
+  /**
+   * #1966: the business's zone, so a visit's instant is counted on the
+   * business's day. Omitted reads as America/Chicago.
+   */
+  timeZone?: string;
 }
 
 export type StructuredTermsOutcome =
@@ -81,8 +88,12 @@ export function resolveStructuredTerms(input: StructuredTermsInput): StructuredT
     { code: input.termsCode, invoiceDate: input.date },
     input.serviceDates,
     input.now,
+    input.timeZone,
   );
-  const words = invoiceTermsWords(input.termsCode);
+  // #1966: a visit rule on an invoice with no visits is due on receipt, and the
+  // invoice says so: it stores the rule that decided the date.
+  const applied = resolution.appliedCode;
+  const words = invoiceTermsWords(applied);
   const sent = input.dueDate.trim();
 
   // Custom terms resolve to nothing by design: the operator's typed date IS the
@@ -110,6 +121,48 @@ export function resolveStructuredTerms(input: StructuredTermsInput): StructuredT
 
   return {
     ok: true,
-    fields: { terms: words, termsCode: input.termsCode, dueDate: resolution.dueDate },
+    fields: { terms: words, termsCode: applied, dueDate: resolution.dueDate },
   };
+}
+
+/** #1966: what a new invoice's terms need from `business_settings`. */
+export interface InvoiceTermsSettings {
+  /** The business's zone, resolved as every server reader resolves it (#1109). */
+  timeZone: string;
+  /** Settings > Invoices > Payment terms; absent reads as due on receipt. */
+  paymentTerms: InvoiceTermsCode;
+}
+
+/**
+ * #1966: the business's payment terms and zone, from one settings read.
+ * Fail-soft: an unreadable document gives the defaults (due on receipt,
+ * America/Chicago), which is what an unset business has.
+ */
+export async function readInvoiceTermsSettings(firestore: Firestore): Promise<InvoiceTermsSettings> {
+  let data: unknown;
+  try {
+    data = (await firestore.doc(BUSINESS_SETTINGS_DOC).get()).data();
+  } catch {
+    data = undefined;
+  }
+  return invoiceTermsSettingsOf(data);
+}
+
+/** The pure half of {@link readInvoiceTermsSettings}, on a settings document already in hand. */
+export function invoiceTermsSettingsOf(settings: unknown): InvoiceTermsSettings {
+  const doc = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>;
+  const stored = typeof doc['timeZone'] === 'string' ? (doc['timeZone'] as string).trim() : '';
+  return {
+    timeZone: stored !== '' && zonedNow(0, stored) !== null ? stored : FALLBACK_BUSINESS_TIME_ZONE,
+    paymentTerms: paymentTermsSettingOf(doc['invoicePaymentTerms']),
+  };
+}
+
+/** Today on the business's clock, `YYYY-MM-DD`. */
+export function businessToday(timeZone: string, nowMs: number = Date.now()): string {
+  return (
+    zonedNow(nowMs, timeZone)?.dateIso ??
+    zonedNow(nowMs, FALLBACK_BUSINESS_TIME_ZONE)?.dateIso ??
+    new Date(nowMs).toISOString().slice(0, 10)
+  );
 }
