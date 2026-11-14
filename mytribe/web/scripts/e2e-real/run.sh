@@ -35,6 +35,12 @@ ADMIN_E2E_DIR="$(cd "$MYTRIBE_DIR/../auntieos-admin/scripts/e2e-real" && pwd)"
 REAL_DIR="$WEB_DIR/cypress/.real"
 LOG="$REAL_DIR/emulators.log"
 STRIPE_LOG="$REAL_DIR/stripe-listen.log"
+# What `stripe listen` writes while it runs. The CLI prints its webhook signing
+# value on its "Ready!" line, and stripe-listen.log is uploaded with the job's
+# artifacts, so the CLI writes here and on_exit copies it to $STRIPE_LOG with
+# that value masked, then deletes this file. The upload step names its files
+# one by one and does not name this one.
+STRIPE_RAW_LOG="$REAL_DIR/stripe-listen.raw.log"
 RESULTS="$REAL_DIR/results.json"
 VERDICT="$REAL_DIR/verdict.json"
 
@@ -64,6 +70,19 @@ on_exit() {
   fi
   if [ -n "$STRIPE_PID" ]; then
     kill "$STRIPE_PID" 2>/dev/null || true
+    # Up to 5s for it to stop, so its last lines are in the file before the
+    # copy below. Bounded: a CLI that will not stop cannot hold the run open.
+    for _ in $(seq 1 50); do
+      kill -0 "$STRIPE_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+  # The Stripe CLI log as it is uploaded: the webhook signing value masked.
+  # The copy is made once the CLI has stopped, never by editing the file it
+  # had open. The unmasked file is deleted whether or not the copy worked.
+  if [ -n "${STRIPE_RAW_LOG:-}" ] && [ -f "$STRIPE_RAW_LOG" ]; then
+    sed 's/whsec_[A-Za-z0-9]*/whsec_[masked]/g' "$STRIPE_RAW_LOG" > "$STRIPE_LOG"
+    rm -f "$STRIPE_RAW_LOG"
   fi
   # Only a file an e2e-real preflight wrote. The preflight refuses to replace
   # any other.
@@ -74,6 +93,8 @@ on_exit() {
 }
 
 mkdir -p "$REAL_DIR"
+# An earlier run's Stripe CLI log goes too, in either form.
+rm -f "$STRIPE_LOG" "$STRIPE_RAW_LOG"
 # A results or verdict file from an earlier run must never be read as this one's.
 rm -f "$RESULTS" "$VERDICT"
 trap on_exit EXIT
@@ -121,24 +142,24 @@ else
       ;;
   esac
   echo "== e2e-real (portal): stripe listen -> $WEBHOOK_URL"
-  : > "$STRIPE_LOG"
+  : > "$STRIPE_RAW_LOG"
   # The key goes in the environment, not on the command line, so it is not in
   # the process list. Only the two events stripeWebhook settles a card payment
   # from are forwarded.
   STRIPE_API_KEY="$KEY" stripe listen \
     --events checkout.session.completed,payment_intent.succeeded \
-    --forward-to "$WEBHOOK_URL" >"$STRIPE_LOG" 2>&1 &
+    --forward-to "$WEBHOOK_URL" >"$STRIPE_RAW_LOG" 2>&1 &
   STRIPE_PID=$!
   secret=""
   for _ in $(seq 1 30); do
-    secret="$(grep -o 'whsec_[A-Za-z0-9]*' "$STRIPE_LOG" | head -1 || true)"
+    secret="$(grep -o 'whsec_[A-Za-z0-9]*' "$STRIPE_RAW_LOG" | head -1 || true)"
     [ -n "$secret" ] && break
     if ! kill -0 "$STRIPE_PID" 2>/dev/null; then break; fi
     sleep 1
   done
   if [ -z "$secret" ]; then
     echo "stripe listen did not print a signing secret within 30s. Its output:" >&2
-    cat "$STRIPE_LOG" >&2
+    sed 's/whsec_[A-Za-z0-9]*/whsec_[masked]/g' "$STRIPE_RAW_LOG" >&2
     exit 1
   fi
   export STRIPE_TEST_WEBHOOK_SECRET="$secret"
