@@ -30,7 +30,7 @@ class InvoiceFilterTest {
     @Test
     fun tabsAreTheWebSetInOrder() {
         assertEquals(
-            listOf("All", "Open", "Overdue", "Paid", "Draft", "Quote", "Credit", "Written off"),
+            listOf("All", "Open", "Overdue", "Paid", "Draft", "Quote", "Credit"),
             InvoiceFilter.entries.map { it.label },
         )
     }

@@ -345,8 +345,6 @@ enum class InvoiceFilter(val label: String) {
     Draft("Draft"),
     Quote("Quote"),
     Credit("Credit"),
-    // #2090: closed by a write-off, never folded into Paid. Same as web and Android.
-    WrittenOff("Written off"),
 }
 /**
  * Tab membership, each a POSITIVE test against the STORED state stamp (or the
@@ -364,7 +362,6 @@ fun invoiceMatchesFilter(invoice: Invoice, filter: InvoiceFilter, todayIso: Stri
         InvoiceFilter.Draft -> state == InvoiceState.DRAFT
         InvoiceFilter.Quote -> state == InvoiceState.QUOTE
         InvoiceFilter.Credit -> state == InvoiceState.CREDIT || state == InvoiceState.REDEEMED
-        InvoiceFilter.WrittenOff -> state == InvoiceState.WRITTEN_OFF
     }
 }
 

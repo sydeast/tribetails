@@ -53,7 +53,7 @@ class InvoiceWriteOffTest {
         assertEquals("\$30.00 written off", badge.amountTrend)
         assertEquals("Written off", invoiceChipLabel(inv, "2026-11-13"))
         assertEquals(emptyList(), invoiceActionsFor(invoiceStateOrNull(inv)))
-        assertEquals(listOf("i1"), listOf(inv).filter { invoiceMatchesFilter(it, InvoiceFilter.WrittenOff, "2026-11-13") }.map { it._id })
+        assertEquals(listOf("i1"), listOf(inv).filter { invoiceMatchesFilter(it, InvoiceFilter.All, "2026-11-13") }.map { it._id })
         assertEquals(emptyList(), listOf(inv).filter { invoiceMatchesFilter(it, InvoiceFilter.Paid, "2026-11-13") })
     }
 

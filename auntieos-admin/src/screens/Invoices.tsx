@@ -63,7 +63,7 @@ import './Invoices.css';
  * ADR-0002; fail-soft). Such a row matches only "All", positively via its
  * always-true test — an unknown state is never claimed for any bucket.
  */
-type FilterKey = 'all' | 'open' | 'overdue' | 'paid' | 'draft' | 'quote' | 'credit' | 'writtenOff';
+type FilterKey = 'all' | 'open' | 'overdue' | 'paid' | 'draft' | 'quote' | 'credit';
 
 interface FilterDef {
   key: FilterKey;
@@ -79,8 +79,6 @@ const FILTERS: readonly FilterDef[] = [
   { key: 'draft', label: 'Draft', test: (s) => s === 'draft' },
   { key: 'quote', label: 'Quote', test: (s) => s === 'quote' },
   { key: 'credit', label: 'Credit', test: (s) => s === 'credit' || s === 'redeemed' },
-  // #2090: closed by a write-off. Its own filter, never folded into Paid.
-  { key: 'writtenOff', label: 'Written off', test: (s) => s === 'written_off' },
 ];
 
 /**
