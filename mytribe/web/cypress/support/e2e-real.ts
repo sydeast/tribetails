@@ -37,6 +37,28 @@ const EXPECTED_CONSOLE_ERRORS = [
   /WebChannelConnection RPC .* transport errored/,
 ] as const;
 
+/**
+ * `Notification.permission` reads 'default' in the app under test (#2304), the
+ * same baseline `e2e.ts` sets for the PR-time suite.
+ *
+ * The Cypress browser reports 'granted' on its own, and a granted browser makes
+ * the portal sign the device up for push when Home opens (#1787). This run has
+ * no service worker, so that sign-up fails and logs `[push] enable failed`,
+ * which the console condition below then counts against whichever test was on
+ * Home when it settled. `signInReal` only passes through Home, so it was a
+ * race: green on 2026-11-10, red in run 43625464056. A kinfolk's first visit
+ * reads 'default', where nothing signs up until they tap Enable. No real spec
+ * covers push; the day one does, it gets `e2e.ts`'s
+ * `cy.setNotificationPermission()` rather than an allowlist entry here.
+ */
+Cypress.on('window:before:load', (win) => {
+  if (typeof win.Notification === 'undefined') return;
+  Object.defineProperty(win.Notification, 'permission', {
+    configurable: true,
+    get: (): NotificationPermission => 'default',
+  });
+});
+
 Cypress.on('window:before:load', (win) => {
   const original = win.console.error.bind(win.console);
   win.console.error = (...args: unknown[]) => {
