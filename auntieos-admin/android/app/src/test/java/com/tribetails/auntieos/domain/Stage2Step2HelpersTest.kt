@@ -129,6 +129,39 @@ class Stage2Step2HelpersTest {
         assertEquals(30.0, weeklyRevenue(invoices, "2026-06-01", "2026-06-05"), 0.0)
     }
 
+    // ── home.cashFlow outstanding (#2000) ─────────────────────────────────────
+
+    @Test fun cashFlowOutstanding_countsOnlySentOpenBalances_likeInvoices() {
+        // The walk: two open invoices beside an unsent $28 draft. Home added
+        // the draft into Outstanding and the unpaid count; Invoices did not.
+        val invoices = listOf(
+            Invoice(id = "o1", status = "open", total = 78.5, amountDue = 78.5),
+            Invoice(id = "o2", status = "open", total = 127.5, amountDue = 127.5),
+            Invoice(id = "d1", status = "draft", total = 28.0, amountDue = 28.0),
+            Invoice(id = "q1", status = "quote", total = 40.0, amountDue = 40.0),
+        )
+        assertEquals(CashFlowOutstanding(206.0, 2), cashFlowOutstanding(invoices))
+    }
+
+    @Test fun cashFlowOutstanding_skipsArchivedCancelledUnstampedAndSettled() {
+        val invoices = listOf(
+            Invoice(id = "a", status = "open", amountDue = 60.0, archivedAt = "2026-11-06"),
+            Invoice(id = "c", status = "cancelled", amountDue = 30.0),
+            Invoice(id = "u", status = "sent", amountDue = 12.0),
+            Invoice(id = "z", status = "open", amountDue = 0.0),
+            Invoice(id = "o", status = " Open ", amountDue = 15.0),
+        )
+        assertEquals(CashFlowOutstanding(15.0, 1), cashFlowOutstanding(invoices))
+    }
+
+    @Test fun cashFlowOutstanding_isZeroOverNothingOwed() {
+        assertEquals(CashFlowOutstanding(0.0, 0), cashFlowOutstanding(emptyList()))
+        assertEquals(
+            CashFlowOutstanding(0.0, 0),
+            cashFlowOutstanding(listOf(Invoice(id = "d", status = "draft", amountDue = 28.0))),
+        )
+    }
+
     // ── schedule.dragReschedule (arg mapping) ─────────────────────────────────
 
     @Test fun rescheduleArgs_snapsAndPreservesDuration() {

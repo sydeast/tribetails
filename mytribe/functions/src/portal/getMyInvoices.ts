@@ -313,7 +313,10 @@ export const Result = z
  * How the eight stamped states land in the three buckets:
  *
  *   open      → open     a real balance is owed, payable
- *   draft     → open     visible, not payable (unchanged: "Not sent yet")
+ *   draft     → (none)   never sent, so the household is not shown it at all
+ *                        (#1906, operator ruling 2026-11-11). Dropped before
+ *                        bucketing by `hiddenFromHousehold`, and left out of
+ *                        the open bucket below as well.
  *   quote     → open     a PROPOSAL, not yet money owed. Previously the
  *                        5-state fallback misread quotes as `open`, which put
  *                        a Pay button on an unaccepted quote. It stays in the
@@ -401,10 +404,11 @@ export async function getMyInvoicesHandler(
   const boundLinesByInvoice = new Map<string, StoredLineItem[]>();
   const unstampedIds: string[] = [];
 
-  // #2087 / #2195: a quote saved unsent, a quote turned into an invoice not
-  // sent yet, and an archived quote are the office's alone. Left out here,
-  // before anything else, so they are not listed, not counted in any bucket
-  // or total, and not openable (both portals open an invoice from this list).
+  // #1906 / #2087 / #2195: every unsent draft (quote drafts and converted
+  // quotes among them) and an archived quote are the office's alone. Left out
+  // here, before anything else, so they are not listed, not counted in any
+  // bucket or total, and not openable (both portals open an invoice, and any
+  // deep link to one, from this list).
   const visible = invoiceSnap.docs.filter((d) => !hiddenFromHousehold(d.data() as Record<string, unknown>));
   const all: InvoiceDto[] = visible.map((d) => {
     const data = d.data() as Record<string, unknown>;
@@ -573,9 +577,10 @@ export async function getMyInvoicesHandler(
   }
 
   // The 8→3 bucket map, decided FROM the stored status alone. See the handler
-  // doc comment for the per-state reasoning; `cancelled` lands in no bucket.
+  // doc comment for the per-state reasoning; `cancelled` and `draft` land in
+  // no bucket.
   const open = all
-    .filter((i) => i.status === 'open' || i.status === 'draft' || i.status === 'quote' || i.status === 'zero')
+    .filter((i) => i.status === 'open' || i.status === 'quote' || i.status === 'zero')
     .sort((a, b) => sortDay(a.dueDate).localeCompare(sortDay(b.dueDate)));
   const paid = all
     .filter((i) => i.status === 'paid')

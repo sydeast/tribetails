@@ -68,6 +68,7 @@ import com.tribetails.auntieos.web.data.RouteResult
 import com.tribetails.auntieos.web.data.SupplySummary
 import com.tribetails.auntieos.web.screens.invoices.formatMoney
 import com.tribetails.auntieos.web.screens.sessions.overdueOnAuntieTime
+import com.tribetails.auntieos.web.screens.cashFlowOutstanding
 import com.tribetails.auntieos.web.screens.weeklyRevenue
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -199,9 +200,9 @@ fun HomeScreen(
     val invoices = (invoicesState as? FirestoreResult.Data)?.value.orEmpty()
     val weekStartKey = remember { localWeekStartIso() }
     val weekRevenue = weeklyRevenue(invoices, weekStartKey, todayKey)
-    // Cash Flow widget: invoices still owed (grouped by amountDue per the model).
-    val outstandingInvoices = invoices.filter { it.amountDue > 0.0 }
-    val outstandingTotal = outstandingInvoices.sumOf { it.amountDue }
+    // Cash Flow widget: sent invoices still owed, the Invoices rule (#2000).
+    val outstanding = cashFlowOutstanding(invoices)
+    val outstandingTotal = outstanding.total
     // Gatekeeper widget: households with the longest gap since their last visit.
     val visitGaps = householdVisitGaps(sessions, todayKey, limit = 5)
 
@@ -504,7 +505,7 @@ fun HomeScreen(
                                             if (outstandingTotal > 0.0) AuntieStatusTone.Orange else AuntieStatusTone.Success,
                                         )
                                         Text(
-                                            "${outstandingInvoices.size} unpaid invoice${if (outstandingInvoices.size == 1) "" else "s"}",
+                                            "${outstanding.count} unpaid invoice${if (outstanding.count == 1) "" else "s"}",
                                             style = AuntieTheme.typography.bodySmall,
                                             color = AuntieTheme.colors.textDim,
                                         )

@@ -369,8 +369,8 @@ class HomeViewModel(
                     weekStartIso = localWeekStartIso(bs.timeZone),
                     nowIso = businessTodayIso(bs.timeZone),
                 )
-                // Cash Flow: invoices still owed (amountDue > 0 per the model).
-                val outstanding = invoices.filter { it.amountDue > 0.0 }
+                // Cash Flow: sent invoices still owed, the Invoices screen's rule (#2000).
+                val outstanding = com.tribetails.auntieos.domain.cashFlowOutstanding(invoices)
                 // Gatekeeper: rank households by days since their last completed visit.
                 var gapsLoaded = true
                 val allSessions = allSessionsDef.await().getOrElse { e ->
@@ -473,8 +473,8 @@ class HomeViewModel(
                     businessSettings  = bs,
                     arrivalRule       = arrivalRule,
                     weeklyRevenue     = weekRevenue,
-                    outstandingTotal  = outstanding.sumOf { it.amountDue },
-                    outstandingCount  = outstanding.size,
+                    outstandingTotal  = outstanding.total,
+                    outstandingCount  = outstanding.count,
                     invoicesLoaded    = invoicesLoaded,
                     visitGaps         = visitGaps,
                     gapsLoaded        = gapsLoaded,

@@ -15,9 +15,10 @@ import './widgets.css';
  * The two amounts come from separate rules on purpose, both in
  * `lib/dashboardInsights.ts`. "Earned this week" is the canonical PAID test
  * (`invoiceIsPaidForRevenue`) over invoices DATED in the Monday-to-today
- * window; "Outstanding" is every invoice with a live balance, whatever week it
- * belongs to. Archived invoices count towards neither: written off is neither
- * earned nor owed.
+ * window; "Outstanding" is every SENT invoice still owed (stored state `open`,
+ * a balance above zero, #2000), whatever week it belongs to, the Invoices
+ * screen's rule. Archived invoices count towards neither: written off is
+ * neither earned nor owed.
  *
  * Amounts render with cents (`formatUsd`), unlike the stat tile's rounded
  * `formatRevenue`. Android draws the same distinction between its `formatMoney`
