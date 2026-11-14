@@ -322,7 +322,8 @@ private fun DraftEditorAndActions(vm: KinTaleReportViewModel, report: KinCareRep
             )
             PrimaryButton(
                 label = if (vm.isSending) "Sending..." else "Send to kinfolk",
-                onClick = { vm.send(report, session) },
+                // #1816: Send asks first, with who the household notice reaches.
+                onClick = { vm.requestSend(session) },
                 enabled = !vm.isSending && !vm.isDeleting,
                 loading = vm.isSending,
                 modifier = Modifier.weight(1f),
@@ -337,6 +338,25 @@ private fun DraftEditorAndActions(vm: KinTaleReportViewModel, report: KinCareRep
                     }
                 },
             )
+        }
+        AuntieDialog(
+            visible = vm.sendConfirmOpen,
+            title = "Send this KinTale?",
+            onDismiss = { vm.cancelSendConfirm() },
+            footer = {
+                GhostButton(label = "Cancel", onClick = { vm.cancelSendConfirm() })
+                PrimaryButton(label = "Send KinTale", onClick = { vm.send(report, session) })
+            },
+        ) {
+            Text(
+                kinTaleSendConfirmText(
+                    session?.kinfolkName.orEmpty(),
+                    com.tribetails.auntieos.web.screens.householdNoticeConfirmLine(vm.sendPreview, session?.kinfolkName.orEmpty()),
+                ),
+                style = AuntieTheme.typography.bodyMedium,
+                color = AuntieTheme.colors.textPrimary,
+            )
+
         }
     }
 }
@@ -369,7 +389,7 @@ private fun SentReportView(
                 icon = Lucide.CircleCheckBig,
                 body = {
                     Text(
-                        justSentBannerText(),
+                        vm.sentMessage,
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textPrimary,
                     )
@@ -1110,3 +1130,14 @@ internal fun deleteDraftConfirmText(recipient: String): String =
 
 /** #2123: the sent banner on this screen, about the KinTale alone. */
 internal fun justSentBannerText(): String = KINTALE_SENT_MESSAGE
+
+/**
+ * #1816: the send question's sentence, as web's: who it goes to, the server's
+ * line about the household when there is one, and that it cannot be undone.
+ */
+internal fun kinTaleSendConfirmText(recipient: String, householdLine: String?): String =
+    listOfNotNull(
+        if (recipient.isBlank()) "Send KinTale." else "Send to $recipient.",
+        householdLine,
+        "This cannot be undone.",
+    ).joinToString(" ")

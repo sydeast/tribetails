@@ -51,6 +51,16 @@ export interface CancelRequestDto {
   requestedAtMs: number | null;
 }
 
+/**
+ * `HouseholdNoticeDto`, shared across callables.
+ */
+export interface HouseholdNoticeDto {
+  told: boolean;
+  reason: 'not_a_household_notice' | 'household_has_no_portal_account' | 'household_prefs_suppressed' | 'household_notices_off' | 'already_notified' | 'session_has_no_routing_ids' | 'not_requested' | 'dispatch_failed' | 'no_recipient' | null;
+  name: string | null;
+  channels: ('email' | 'sms' | 'push')[];
+}
+
 // ---------- addBookingNote ----------
 
 /**
@@ -71,6 +81,7 @@ export interface AddBookingNoteArgs {
  */
 export interface AddBookingNoteResult {
   noteId: string;
+  notice?: HouseholdNoticeDto;
 }
 
 // ---------- getBookingNotes ----------
@@ -194,6 +205,14 @@ export interface BatchUpdateBookingsResultFailed {
 }
 
 /**
+ * Nested in the `batchUpdateBookings` contract.
+ */
+export interface BatchUpdateBookingsResultNotice {
+  id: string;
+  notice: HouseholdNoticeDto;
+}
+
+/**
  * Response from the `batchUpdateBookings` callable.
  */
 export interface BatchUpdateBookingsResult {
@@ -201,6 +220,7 @@ export interface BatchUpdateBookingsResult {
   action: 'APPROVE' | 'REJECT' | 'CANCEL';
   updated: number;
   failed: BatchUpdateBookingsResultFailed[];
+  notices?: BatchUpdateBookingsResultNotice[];
 }
 
 // ---------- createMultiDateBookingRequest ----------
@@ -494,6 +514,7 @@ export interface RescheduleBookingArgs {
 export interface RescheduleBookingResult {
   ok: true;
   sessionId: string;
+  notice?: HouseholdNoticeDto;
 }
 
 // ---------- resolveBookingRescheduleRequest ----------

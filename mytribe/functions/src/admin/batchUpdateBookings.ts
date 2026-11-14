@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
+import { HouseholdNoticeSchema, type HouseholdNotice } from './dispatchVisitNotification';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { approveBookingSeriesCore, linkedSessionId, toIso } from './approveBookingSeriesCore';
@@ -78,6 +79,8 @@ export const Result = z
     action: z.enum(['APPROVE', 'REJECT', 'CANCEL']),
     updated: z.number().int().nonnegative(),
     failed: z.array(z.object({ id: z.string().min(1), error: z.string() }).strict()),
+    /** #1838: on CANCEL, what each household was told about its visit, by visit id. */
+    notices: z.array(z.object({ id: z.string().min(1), notice: HouseholdNoticeSchema }).strict()).optional(),
   })
   .strict();
 
@@ -193,6 +196,7 @@ export async function batchUpdateBookingsHandler(
   let enhancedResolved = 0;
   let kinCareResolved = 0;
   const failed: Array<{ id: string; error: string }> = [];
+  const notices: Array<{ id: string; notice: HouseholdNotice }> = [];
   // #1099: envelope visits to approve, grouped by their request.
   const approveGroups = new Map<string, { kinfolkId: string; batchId: string; ids: string[] }>();
 
@@ -251,9 +255,19 @@ export async function batchUpdateBookingsHandler(
       }
     }
     try {
+      // #1838: a CANCEL tells the household from here, so the admin hears who
+      // was told; the stamp keeps `onBookingsWrite` from sending it twice.
+      const envelope = args.action === 'CANCEL' && hit.status !== kinCareWanted ? envelopeOf(hit.ref.path) : null;
+      const householdNotices = envelope !== null ? await import('../notifications/householdNotice.js') : null;
+      const officeNoticeStamp = householdNotices?.freshOfficeNoticeStamp() ?? null;
       if (hit.status !== kinCareWanted) {
         await hit.ref.set(
-          { status: kinCareWanted, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid },
+          {
+            status: kinCareWanted,
+            ...(officeNoticeStamp !== null ? { officeNoticeStamp } : {}),
+            updatedAt: FieldValue.serverTimestamp(),
+            updatedBy: uid,
+          },
           { merge: true },
         );
       }
@@ -268,6 +282,24 @@ export async function batchUpdateBookingsHandler(
           { status: sessionMirrorWanted, updatedAt: FieldValue.serverTimestamp() },
           { merge: true },
         );
+      }
+      // #1838: after both copies moved, so a failed read here cannot skip the mirror.
+      if (envelope !== null && householdNotices !== null && officeNoticeStamp !== null) {
+        // A failed read leaves the notice without the visit's time, never the cancel uncounted.
+        const visit = ((await hit.ref.get().then((d) => d.data(), () => undefined)) ?? {}) as Record<string, unknown>;
+        notices.push({
+          id,
+          notice: await householdNotices.sendVisitHouseholdNotice({
+            key: 'kincare.booking.cancel',
+            kinfolkId: envelope.kinfolkId,
+            batchId: envelope.batchId,
+            visitId: id,
+            visit,
+            officeNoticeStamp,
+            actorUid: uid,
+            caller: 'batchUpdateBookings',
+          }),
+        });
       }
       updated += 1;
     } catch (err) {
@@ -347,7 +379,13 @@ export async function batchUpdateBookingsHandler(
     extra: { action: args.action, requested: requestedIds.length, updated, failed: failed.length },
   });
 
-  return validateResponse('batchUpdateBookings', Result, { ok: true, action: args.action, updated, failed });
+  return validateResponse('batchUpdateBookings', Result, {
+    ok: true,
+    action: args.action,
+    updated,
+    failed,
+    ...(args.action === 'CANCEL' ? { notices } : {}),
+  });
 }
 
 export const batchUpdateBookings = onCall(

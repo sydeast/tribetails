@@ -144,6 +144,12 @@ describe('a KinTale send notifies the household exactly once', () => {
       auth: { uid: 'uid_auntie', token: { name: 'TiTi' } },
     } as any);
 
-    expect(res).toEqual({ ok: true, dispatchIds: ['disp_1'], suppressed: false, reason: null });
+    expect(res).toEqual({
+      ok: true,
+      dispatchIds: ['disp_1'],
+      suppressed: false,
+      reason: null,
+      notice: expect.objectContaining({ told: expect.any(Boolean) }),
+    });
   });
 });

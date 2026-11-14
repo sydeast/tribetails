@@ -150,11 +150,17 @@ class BookingViewModel(
             is WriteResult.Err -> errorMessage = "Reject failed: ${r.message}"
         }
     }
+    /** #1838: what the last cancel's household was told, for the toast. Null from an older server. */
+    var lastCancelNotice: com.tribetails.auntieos.web.screens.HouseholdNotice? by androidx.compose.runtime.mutableStateOf(null)
+        private set
+
     suspend fun cancelBooking(bookingId: String, visitId: String? = null) {
         approveConflict = null
-        when (val r = dataSource.cancelBooking(bookingId, visitId)) {
+        lastCancelNotice = null
+        when (val r = dataSource.cancelBookingNotice(bookingId, visitId)) {
             is WriteResult.Ok  -> {
                 errorMessage = null
+                lastCancelNotice = r.value
                 // #1145: its own event. Cancel used to log as REJECT_BOOKING, which made calling off a promised
                 // visit read the same as turning down a request nobody had approved.
                 audit("CANCEL_BOOKING", "Cancelled booking $bookingId", bookingId)

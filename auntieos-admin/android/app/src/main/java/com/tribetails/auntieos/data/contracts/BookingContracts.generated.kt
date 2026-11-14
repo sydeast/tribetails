@@ -103,6 +103,28 @@ internal fun decodeCancelRequestDto(raw: Map<String, Any?>?): CancelRequestDto =
         requestedAtMs = (raw?.get("requestedAtMs") as? Number)?.toLong(),
     )
 
+/** `HouseholdNoticeDto`, shared across callables. */
+data class HouseholdNoticeDto(
+    val told: Boolean,
+    /** One of `not_a_household_notice`, `household_has_no_portal_account`, `household_prefs_suppressed`, `household_notices_off`, `already_notified`, `session_has_no_routing_ids`, `not_requested`, `dispatch_failed`, `no_recipient`, or null when the payload omits it. */
+    val reason: String?,
+    val name: String?,
+    val channels: List<String>,
+)
+
+/**
+ * Fail-soft decode of `HouseholdNoticeDto` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeHouseholdNoticeDto(raw: Map<String, Any?>?): HouseholdNoticeDto =
+    HouseholdNoticeDto(
+        told = raw?.get("told") as? Boolean ?: false,
+        reason = raw?.get("reason") as? String,
+        name = raw?.get("name") as? String,
+        channels = (raw?.get("channels") as? List<*>).orEmpty().mapNotNull { it as? String },
+    )
+
 // ---------- addBookingNote ----------
 
 /**
@@ -137,6 +159,8 @@ data class AddBookingNoteArgs(
 /** Response from the `addBookingNote` callable. */
 data class AddBookingNoteResult(
     val noteId: String,
+    /** Null when the payload omits the key. */
+    val notice: HouseholdNoticeDto? = null,
 )
 
 /**
@@ -147,6 +171,7 @@ data class AddBookingNoteResult(
 internal fun decodeAddBookingNoteResult(raw: Map<String, Any?>?): AddBookingNoteResult =
     AddBookingNoteResult(
         noteId = (raw?.get("noteId") as? String).orEmpty(),
+        notice = contractRawMap(raw?.get("notice"))?.let { nested -> decodeHouseholdNoticeDto(nested) },
     )
 
 // ---------- getBookingNotes ----------
@@ -405,6 +430,23 @@ internal fun decodeBatchUpdateBookingsResultFailed(raw: Map<String, Any?>?): Bat
         error = (raw?.get("error") as? String).orEmpty(),
     )
 
+/** Nested in the `batchUpdateBookings` contract. */
+data class BatchUpdateBookingsResultNotice(
+    val id: String,
+    val notice: HouseholdNoticeDto,
+)
+
+/**
+ * Fail-soft decode of `BatchUpdateBookingsResultNotice` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeBatchUpdateBookingsResultNotice(raw: Map<String, Any?>?): BatchUpdateBookingsResultNotice =
+    BatchUpdateBookingsResultNotice(
+        id = (raw?.get("id") as? String).orEmpty(),
+        notice = decodeHouseholdNoticeDto(contractRawMap(raw?.get("notice"))),
+    )
+
 /** Response from the `batchUpdateBookings` callable. */
 data class BatchUpdateBookingsResult(
     val ok: Boolean,
@@ -412,6 +454,8 @@ data class BatchUpdateBookingsResult(
     val action: String,
     val updated: Long,
     val failed: List<BatchUpdateBookingsResultFailed>,
+    /** Null when the payload omits the key. */
+    val notices: List<BatchUpdateBookingsResultNotice>? = null,
 )
 
 /**
@@ -425,6 +469,7 @@ internal fun decodeBatchUpdateBookingsResult(raw: Map<String, Any?>?): BatchUpda
         action = (raw?.get("action") as? String).orEmpty(),
         updated = (raw?.get("updated") as? Number)?.toLong() ?: 0L,
         failed = (raw?.get("failed") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeBatchUpdateBookingsResultFailed(nested) } },
+        notices = (raw?.get("notices") as? List<*>)?.mapNotNull { contractRawMap(it)?.let { nested -> decodeBatchUpdateBookingsResultNotice(nested) } },
     )
 
 // ---------- createMultiDateBookingRequest ----------
@@ -1034,6 +1079,8 @@ data class RescheduleBookingArgs(
 data class RescheduleBookingResult(
     val ok: Boolean,
     val sessionId: String,
+    /** Null when the payload omits the key. */
+    val notice: HouseholdNoticeDto? = null,
 )
 
 /**
@@ -1045,6 +1092,7 @@ internal fun decodeRescheduleBookingResult(raw: Map<String, Any?>?): RescheduleB
     RescheduleBookingResult(
         ok = raw?.get("ok") as? Boolean ?: false,
         sessionId = (raw?.get("sessionId") as? String).orEmpty(),
+        notice = contractRawMap(raw?.get("notice"))?.let { nested -> decodeHouseholdNoticeDto(nested) },
     )
 
 // ---------- resolveBookingRescheduleRequest ----------

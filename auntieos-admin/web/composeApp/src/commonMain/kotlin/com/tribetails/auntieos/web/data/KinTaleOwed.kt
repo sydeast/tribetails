@@ -40,5 +40,9 @@ fun kinTaleOwed(session: KinCareSession): Boolean =
         session.kinTaleDue &&
         !kinTaleSent(session)
 
-/** What the console says once a KinTale has been sent. Same words as admin web. */
-const val KINTALE_SENT_MESSAGE = "KinTale sent. Kinfolk will hear from you soon."
+/**
+ * What the console says once a KinTale has been sent, before the server's line
+ * about the household (#1816). It used to add "Kinfolk will hear from you soon",
+ * a promise made whether or not anyone could be told.
+ */
+const val KINTALE_SENT_MESSAGE = "KinTale sent."
