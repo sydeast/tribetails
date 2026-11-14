@@ -152,9 +152,9 @@ class InvoiceComposerTest {
         assertEquals("Due date must be a real YYYY-MM-DD date", blocked(termsCode = InvoiceTermsCode.CUSTOM, customDueDate = "soon"))
         assertNull(blocked(termsCode = InvoiceTermsCode.CUSTOM, customDueDate = "2026-11-01"))
         assertTrue(blocked(selected = setOf("s3"))!!.contains("has no rate on file"))
-        assertTrue(
-            blocked(termsCode = InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, selected = emptySet(), drafts = listOf(ComposerDraftLine("M", "1", "4")))!!
-                .startsWith("These terms count from the last visit"),
+        // #1966: visit terms with no visit ticked are due on receipt, so nothing blocks.
+        assertNull(
+            blocked(termsCode = InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, selected = emptySet(), drafts = listOf(ComposerDraftLine("M", "1", "4"))),
         )
         val badTotal = "Enter the total as dollars, zero or more, like 120.00."
         assertEquals(badTotal, blocked(path = InvoiceCreatePath.BLANK, totalText = ""))
