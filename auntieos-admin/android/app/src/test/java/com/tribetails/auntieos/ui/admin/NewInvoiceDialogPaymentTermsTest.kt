@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.admin
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -49,13 +50,14 @@ class NewInvoiceDialogPaymentTermsTest {
         termsSetting: InvoiceTermsSettingState,
         onConfirm: (NewInvoiceRequest) -> Unit = {},
         onRetry: () -> Unit = {},
+        todayIso: String = "2026-12-01",
     ) {
         rule.setContent {
             AuntieOSTheme {
                 NewInvoiceDialog(
                     visible = true,
                     kinfolk = listOf(Kinfolk(id = "kf1", firstName = "Jamie", lastName = "Halbrook")),
-                    todayIso = "2026-12-01",
+                    todayIso = todayIso,
                     initialKinfolkId = "kf1",
                     onDismiss = {},
                     onConfirm = onConfirm,
@@ -107,8 +109,12 @@ class NewInvoiceDialogPaymentTermsTest {
             // 7 PM on Nov 30 in Chicago, 01:00 on Dec 1 in UTC.
             sessions = listOf(session("s1", "2026-12-01T01:00:00.000Z")),
             termsSetting = InvoiceTermsSettingState(paymentTerms = InvoiceTermsCode.DUE_ON_LAST_VISIT),
+            // Dated Nov 30, so the answer is not held to the invoice date.
+            todayIso = "2026-11-30",
         )
-        rule.onNodeWithText("2026-11-30").assertExists()
+        // The invoice date and the due date both read Nov 30; the UTC day would make the due date Dec 1.
+        rule.onAllNodesWithText("2026-11-30").assertCountEquals(2)
+        rule.onAllNodesWithText("2026-12-01").assertCountEquals(0)
     }
 
     @Test

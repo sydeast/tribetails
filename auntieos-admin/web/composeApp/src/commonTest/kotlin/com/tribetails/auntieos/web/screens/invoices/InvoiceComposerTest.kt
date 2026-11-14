@@ -226,12 +226,13 @@ class InvoiceComposerTest {
         totalText: String = "",
         sendToKinfolk: Boolean = false,
     ): NewInvoiceBuild {
-        val date = "2026-10-20"
+        // Dated on the last visit, so the counts are not held to the invoice date (#1966 review).
+        val date = "2026-10-09"
         val due = resolveDueDate(
             termsCode,
             date,
             if (path == InvoiceCreatePath.WORK) all.filter { it.sessionId in selected }.map { it.startTime } else emptyList(),
-            "2026-10-20",
+            "2026-10-09",
         )
         val money = if (path == InvoiceCreatePath.WORK) composerMoney(all, selected, emptyMap(), emptyList(), "") else null
         return buildNewInvoiceRequest(
@@ -247,7 +248,7 @@ class InvoiceComposerTest {
         assertEquals("", r.invoice.invoiceNumber, "the server assigns the number")
         assertEquals("Ada Wren", r.invoice.client)
         assertEquals("kf1", r.invoice.kinfolkId)
-        assertEquals("2026-10-20", r.invoice.date)
+        assertEquals("2026-10-09", r.invoice.date)
         // Last ticked visit 2026-10-09, plus 7.
         assertEquals("2026-10-16", r.invoice.dueDate)
         assertEquals("net_7_after_last_visit", r.termsCode)
@@ -296,7 +297,8 @@ class InvoiceComposerTest {
         assertNull(r.invoiceDiscountCents)
         assertEquals(40.0, r.invoice.total)
         assertEquals(40.0, r.invoice.amountDue)
-        assertEquals("2026-11-03", r.invoice.dueDate)
+        // 14 days after the Oct 9 invoice date.
+        assertEquals("2026-10-23", r.invoice.dueDate)
         assertTrue(r.invoice.sessionIds.isEmpty())
     }
 

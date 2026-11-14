@@ -245,7 +245,7 @@ class InvoiceTermsTest {
 
     @Test
     fun basisDayIsReported() {
-        val out = resolveDueDate(InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, "2026-08-19", listOf("2026-08-11", "2026-08-02"), "2026-08-19")
+        val out = resolveDueDate(InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, "2026-08-12", listOf("2026-08-11", "2026-08-02"), "2026-08-12")
         assertEquals("2026-08-11", out.basisDay)
         assertEquals("2026-08-18", out.dueDate)
         val first = resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-08-01", listOf("2026-08-11", "2026-08-05"), "2026-08-01")

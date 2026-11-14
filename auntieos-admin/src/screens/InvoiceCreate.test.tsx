@@ -473,6 +473,8 @@ describe('InvoiceCreate terms and due date', () => {
 
   it('sends the resolved date and the code, so the server can check its own working', async () => {
     await pick();
+    // Dated on the visit day, so the count is not held to the invoice date.
+    fireEvent.change(screen.getByLabelText('Invoice date'), { target: { value: '2026-07-10' } });
     await userEvent.selectOptions(screen.getByLabelText('Terms'), 'net_14_after_last_visit');
     await userEvent.click(screen.getByRole('button', { name: /create invoice for 1 visit/i }));
     await waitFor(() => expect(createInvoice).toHaveBeenCalled());
@@ -484,11 +486,27 @@ describe('InvoiceCreate terms and due date', () => {
 
   it('SAYS a service-relative due date has already passed rather than moving it', async () => {
     await pick();
+    // Dated back on the visit day: due that day, which is behind today.
+    fireEvent.change(screen.getByLabelText('Invoice date'), { target: { value: '2026-07-10' } });
     await userEvent.selectOptions(screen.getByLabelText('Terms'), 'due_on_last_visit');
     expect(await screen.findByText(/that date has already passed/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Invoice due date')).toHaveValue('2026-07-10');
     // And it still creates: an overdue invoice for old work is the truth, not
     // an error to block on.
     expect(screen.getByRole('button', { name: /create invoice for 1 visit/i })).toBeEnabled();
+  });
+
+  it('#1966 review: terms that land before the invoice date make it due on receipt, and say why', async () => {
+    await pick();
+    await userEvent.selectOptions(screen.getByLabelText('Terms'), 'due_on_last_visit');
+    expect(
+      await screen.findByText('These terms work out to a day before the invoice date, so it is due on receipt.'),
+    ).toBeInTheDocument();
+    // The only visit was Jul 10; the invoice is dated today.
+    expect(screen.getByLabelText('Invoice due date')).toHaveValue(todayIso());
+    await userEvent.click(screen.getByRole('button', { name: /create invoice for 1 visit/i }));
+    await waitFor(() => expect(createInvoice).toHaveBeenCalled());
+    expect(createInvoice.mock.calls[0]?.[0]).toMatchObject({ termsCode: 'due_on_last_visit', dueDate: todayIso() });
   });
 
   it('#1966: makes visit terms with no visit ticked due on receipt, and says why', async () => {

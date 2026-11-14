@@ -136,6 +136,8 @@ describe('New invoice: Payment terms from Settings (#1966)', () => {
     // 7 PM on Nov 30 in Chicago, 01:00 on Dec 1 in UTC.
     listUninvoicedSessions.mockResolvedValue(work({ sessions: [session({ startTime: '2026-12-01T01:00:00.000Z' })] }));
     await openWithVisits();
+    // Dated Nov 30, so the answer is not held to the invoice date.
+    fireEvent.change(screen.getByLabelText('Invoice date'), { target: { value: '2026-11-30' } });
     expect(screen.getByLabelText('Invoice due date')).toHaveValue('2026-11-30');
   });
 

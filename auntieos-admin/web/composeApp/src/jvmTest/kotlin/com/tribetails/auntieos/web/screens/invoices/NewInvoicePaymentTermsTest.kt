@@ -38,13 +38,14 @@ class NewInvoicePaymentTermsTest {
         termsSetting: InvoiceTermsSettingState,
         onConfirm: (NewInvoiceRequest) -> Unit = {},
         onRetry: () -> Unit = {},
+        todayIso: String = "2026-12-01",
     ) {
         setContent {
             AuntieAppTheme(themeMode = ThemeMode.DARK) {
                 NewInvoiceDialogContent(
                     visible = true,
                     picks = picks,
-                    todayIso = "2026-12-01",
+                    todayIso = todayIso,
                     onDismiss = {},
                     onConfirm = onConfirm,
                     loadUninvoiced = { _, _, _ -> WriteResult.Ok(result(sessions)) },
@@ -86,6 +87,8 @@ class NewInvoicePaymentTermsTest {
             sessions = listOf(UninvoicedSession("s1", "kf1", "Dog walk", 30.0, "2026-12-01T01:00:00.000Z", 2500L)),
             termsSetting = InvoiceTermsSettingState(paymentTerms = InvoiceTermsCode.DUE_ON_LAST_VISIT),
             onConfirm = { confirmed = it },
+            // Dated Nov 30, so the answer is not held to the invoice date.
+            todayIso = "2026-11-30",
         )
         waitUntil(timeoutMillis = 10_000) {
             onAllNodesWithText("Create invoice for 1 visit", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
