@@ -134,10 +134,18 @@ export const PAYMENT_APPLIED_OWNER_AT_FIELD = 'paymentAppliedNoticeOwnerAtMs';
  * slow network with room to spare, and is far short of the days-later unrelated
  * payment that must not claim (the P3 case).
  *
- * #2281 review: past this window a call with no id can still take a settlement
- * that is waiting for its ledger row, when its row covers the settled amount
- * (`markInvoicePaidSettlementOf`, and the note in `recordPayment`). That ends
- * when the sweep finishes the settlement, so the days-later case stays refused.
+ * #2281 review: past this window a call with no id can still take the CLAIM of
+ * a settlement that is waiting for its ledger row, when its row covers the
+ * settled amount (`markInvoicePaidSettlementOf`, and the note in
+ * `recordPayment`). That ends when the sweep finishes the settlement, about
+ * SETTLEMENT_LEDGER_SWEEP_GRACE_MS after the payoff.
+ *
+ * #2300: once the sweep has written the settlement's ledger row, a call with
+ * no id claims nothing and replaces nothing, however soon or late it comes. It
+ * is written as its own payment, and the owner is warned when it is large
+ * enough to be the same payoff recorded twice. Before #2300 such a row replaced
+ * the sweep's row with no time limit, so the days-later unrelated payment was
+ * refused the claim and still erased the earlier payment's ledger row.
  */
 export const OLD_CLIENT_CLAIM_WINDOW_MS = 5 * 60 * 1000;
 
@@ -177,9 +185,11 @@ export const SETTLEMENT_LEDGER_PENDING_AT_FIELD = 'settlementLedgerPendingAtMs';
 /**
  * How old a pending settlement must be before the sweep finishes it. Twice
  * OLD_CLIENT_CLAIM_WINDOW_MS, so an older client's own second call, which may
- * claim for that long, normally gets there first. One that arrives later still
- * leaves a single ledger row (#2281 review): it takes the claim before the
- * sweep, or replaces the sweep's row after it.
+ * claim for that long, normally gets there first. One that arrives later and
+ * before the sweep still leaves a single ledger row (#2281 review): it takes
+ * the claim, and the sweep writes nothing. After the sweep, only a call that
+ * names the settlement replaces the sweep's row; one with no id is written
+ * beside it as its own payment (#2300).
  */
 export const SETTLEMENT_LEDGER_SWEEP_GRACE_MS = 2 * OLD_CLIENT_CLAIM_WINDOW_MS;
 
@@ -187,7 +197,7 @@ export const SETTLEMENT_LEDGER_SWEEP_GRACE_MS = 2 * OLD_CLIENT_CLAIM_WINDOW_MS;
 export function settlementLedgerRowId(settlementPaymentId: string): string {
   return `settle_${settlementPaymentId}`;
 }
-/** `recordedByServer` on a ledger row the sweep wrote. Only such a row is ever replaced. */
+/** `recordedByServer` on a ledger row the sweep wrote. Only such a row is ever replaced, and only by a call naming its settlement. */
 export const SETTLEMENT_LEDGER_SWEEP_WRITER = 'settlementLedgerSweep';
 const MARK_INVOICE_PAID_OWNER_PREFIX = 'markInvoicePaid:';
 /**
@@ -204,7 +214,9 @@ const MARK_INVOICE_PAID_OWNER_PREFIX = 'markInvoicePaid:';
  * stop at a claim. `recordPayment` uses it for the two cases that function
  * refuses: a call that arrives after the sweep, and a row with no settlement
  * id that arrives after OLD_CLIENT_CLAIM_WINDOW_MS. Both are then decided on
- * documents read in the same transaction, not on the clock.
+ * documents read in the same transaction, not on the clock. What each may do
+ * is `recordPayment`'s rule, not this function's: after the sweep only a call
+ * that names the settlement replaces the sweep's row (#2300).
  */
 export function markInvoicePaidSettlementOf(
   invoice: Record<string, unknown> | undefined,

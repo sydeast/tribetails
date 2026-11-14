@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { type ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Timestamp } from 'firebase/firestore';
 import { type InvoiceEntry } from '../api/invoices';
@@ -134,6 +134,7 @@ vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: { 'Long walk': '45' }, serviceDurations: { 'Long walk': '45' }, timeBlocks: [] }),
 }));
 import {
+  BLANK_AMOUNT_BALANCE_UNKNOWN,
   InvoiceDetail,
   archiveNoticeText,
   paymentSplit,
@@ -1806,21 +1807,123 @@ describe('recording a payment is one call that writes the settlement and the led
     );
     expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
   });
-  it('a blank amount applies the balance the ledger shows, not a guess', async () => {
-    // Leaving the field blank means "settle the rest", and the rest is what the
-    // recorded payments leave, read off the ledger the panel already loaded.
-    getInvoiceLedger.mockResolvedValue(
-      ledgerResult({ paidCents: 1500, amountDueCents: 2500 }),
-    );
-    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
-    await screen.findByText(/Collected|No payment has been recorded/i);
+  // #2299: A BLANK AMOUNT IS "PAY WHAT IS OWED", AND THE SERVER DECIDES WHAT
+  // THAT IS. The panel sends the intent and only what was typed, never a
+  // balance it worked out itself.
+  const blankApply = { invoiceId: 'inv1', invoiceNumber: '1042', amount: 0, settleBalance: true };
+  async function openBlankForm(invoice = entry({ amountDue: 40, total: 40 })) {
+    render(<InvoiceDetail invoice={invoice} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.clear(screen.getByLabelText(/amount collected/i));
-    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+  }
+  const pressRecord = () => userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+  it('a blank amount sends the intent to pay what is owed, not a figure from the panel', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ paidCents: 1500, amountDueCents: 2500 }));
+    recordPayment.mockResolvedValue(paymentResult({ appliedCents: 2500, paidCents: 4000 }));
+    await openBlankForm();
+    await screen.findByText(/\$25\.00 to this invoice/i);
+    await pressRecord();
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    expect(recordPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 25, apply: expect.objectContaining({ amount: 25 }) }),
+    const sent = recordPayment.mock.calls[0]![0];
+    expect(sent).toMatchObject({ amount: 0, tip: 0, creditToAccountCents: 0, apply: blankApply });
+    expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
+  });
+  it('the payments never loaded and the invoice has only the old dollar balance: still the intent, never $0', async () => {
+    // The #2299 case. The ledger read fails, and the doc carries no cents.
+    getInvoiceLedger.mockRejectedValue(new Error('unavailable'));
+    recordPayment.mockResolvedValue(paymentResult({ appliedCents: 2500, paidCents: 4000 }));
+    await openBlankForm(entry({ amountDue: 0, total: 40 }));
+    // No figure is made up from the old balance while it waits.
+    expect(await screen.findByText(BLANK_AMOUNT_BALANCE_UNKNOWN)).toBeInTheDocument();
+    expect(screen.queryByText(/\$0\.00 to this invoice/i)).toBeNull();
+    await pressRecord();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment.mock.calls[0]![0]).toMatchObject({ amount: 0, tip: 0, apply: blankApply });
+    expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
+  });
+  it('a blank amount with a typed tip, payment amount and credit sends those as typed and nothing derived', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ amountDueCents: 4000 }));
+    recordPayment.mockResolvedValue(paymentResult({ appliedCents: 4000 }, { creditedToAccountCents: 300 }));
+    await openBlankForm();
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '50');
+    await userEvent.type(screen.getByLabelText(/leave as account credit/i), '3');
+    await pressRecord();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    // The tip box is blank, so 0 goes and the server takes the rest as tip.
+    expect(recordPayment.mock.calls[0]![0]).toMatchObject({
+      amount: 50,
+      tip: 0,
+      autoApply: true,
+      creditToAccountCents: 300,
+      apply: blankApply,
+    });
+  });
+  it('a blank amount that the balance on screen cannot support is refused before it is sent', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ amountDueCents: 4000 }));
+    await openBlankForm();
+    await screen.findByText(/\$40\.00 to this invoice/i);
+    await userEvent.type(screen.getByLabelText(/total payment amount/i), '30');
+    await pressRecord();
+    // Said in the split line as she types, and again as the refusal.
+    await waitFor(() =>
+      expect(screen.getAllByText(/A payment of \$30\.00 does not cover the \$40\.00 applied/i)).toHaveLength(2),
     );
+    expect(recordPayment).not.toHaveBeenCalled();
+  });
+  it('says so when the server found a different balance than the one shown', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ amountDueCents: 4000 }));
+    recordPayment.mockResolvedValue(paymentResult({ appliedCents: 2500, paidCents: 4000 }));
+    await openBlankForm();
+    await screen.findByText(/\$40\.00 to this invoice/i);
+    await pressRecord();
+    expect(
+      await screen.findByText(/This invoice owed \$25\.00, not the \$40\.00 shown here, so \$25\.00 was applied to it\./i),
+    ).toBeInTheDocument();
+  });
+  it('a refusal that names the balance shows it straight away and reads the payments again', async () => {
+    // The panel loaded $40 owed. Another payment landed; $25 is owed now.
+    getInvoiceLedger.mockResolvedValueOnce(ledgerResult({ amountDueCents: 4000 }));
+    let releaseReload: (v: unknown) => void = () => {};
+    getInvoiceLedger.mockImplementationOnce(() => new Promise((resolve) => { releaseReload = resolve; }));
+    recordPayment.mockRejectedValueOnce(
+      Object.assign(
+        new Error('$40.00 is more than the $25.00 still owed on this invoice. Apply $25.00 and record the rest of the payment as tip.'),
+        { code: 'functions/failed-precondition', details: { code: 'invoice_amount_exceeds_balance', amountDueCents: 2500 } },
+      ),
+    );
+    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await screen.findByText(/\$40\.00 to this invoice/i);
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '40');
+    await pressRecord();
+    // The server's sentence says what is owed now.
+    expect(await screen.findByText(/\$25\.00 still owed on this invoice/i)).toBeInTheDocument();
+    // Before the reload answers, the form already works from the $25.00.
+    expect(screen.getByRole('status', { name: /where this payment goes/i })).toHaveTextContent(
+      /\$25\.00 to this invoice, \$15\.00 tip/i,
+    );
+    expect(screen.getByLabelText(/amount collected/i)).toHaveAttribute('placeholder', '25.00');
+    expect(getInvoiceLedger).toHaveBeenCalledTimes(2);
+    // The reload's own figure then takes over.
+    await act(async () => {
+      releaseReload(ledgerResult({ paidCents: 2000, amountDueCents: 2000 }));
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('status', { name: /where this payment goes/i })).toHaveTextContent(
+        /\$20\.00 to this invoice/i,
+      ),
+    );
+  });
+  it('a refusal with no balance in it still reads the payments again', async () => {
+    recordPayment.mockRejectedValueOnce(new Error('Invoice is already settled.'));
+    getInvoiceLedger.mockResolvedValueOnce(ledgerResult({ amountDueCents: 4000 }));
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ paidCents: 4000, amountDueCents: 0 }));
+    await recordTwenty();
+    expect(await screen.findByText(/Could not save: Invoice is already settled\./i)).toBeInTheDocument();
+    await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/This invoice owes nothing/i)).toBeInTheDocument();
   });
   it('a refusal records nothing and says why: no payment happened', async () => {
     recordPayment.mockRejectedValueOnce(new Error('Invoice is already settled.'));

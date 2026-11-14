@@ -35,16 +35,20 @@
  * logged; the ledger row stays.
  *
  * A SECOND CALL THAT COMES AFTER ALL (#2281 review). The row this pass writes
- * is a stand-in: it has no tip, fee or credit. `recordPayment` therefore never
- * writes a second row beside it:
+ * is a stand-in: it has no tip, fee or credit.
  *
- *   - a call naming the settlement (`settledByInvoicePaymentId`) that finds
+ *   - A call naming the settlement (`settledByInvoicePaymentId`) that finds
  *     this pass's row deletes it and writes its own in the same transaction,
- *     keeping the notice stamps, so nobody is told twice;
- *   - a row with no settlement id that is linked to the invoice and covers the
- *     settled amount (a row added by hand, or a pre-#866 build's second call)
- *     does the same after this pass, and before it takes the claim, so this
- *     pass finds the settlement claimed and writes nothing.
+ *     keeping the notice stamps, so nobody is told twice. The id proves both
+ *     rows are one payment.
+ *   - A row with no settlement id (added by hand, or a pre-#866 build's second
+ *     call) never deletes or replaces this pass's row (#2300). Before this
+ *     pass, when it is linked to the invoice and covers the settled amount, it
+ *     takes the claim, so this pass finds the settlement claimed and writes
+ *     nothing. After this pass it is written beside this pass's row as its own
+ *     payment, and when it covers the settled amount the owner gets an
+ *     Activity Log warning to check for a duplicate. So an old build's second
+ *     call that arrives after this pass leaves two rows and that warning.
  *
  * Both writers read and write the invoice doc in their transaction, and this
  * pass's row sits at an id made from the invoice's own owner stamp, so
@@ -57,9 +61,9 @@
  *
  * WHAT IT CANNOT CATCH. A settlement that left a balance (a partial) stamps
  * nothing, because nothing is owed to anyone until it is paid off and an
- * unticked partial tells nobody. And a row added by hand with no link to the
- * invoice, or for less than the settled amount, cannot be told from a
- * different payment, so it is left beside this pass's row.
+ * unticked partial tells nobody. And a row with no settlement id cannot be told
+ * from a different payment once this pass has run, so it is always left beside
+ * this pass's row.
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';

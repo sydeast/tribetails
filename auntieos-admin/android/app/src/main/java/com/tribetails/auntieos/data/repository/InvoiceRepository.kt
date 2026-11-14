@@ -946,9 +946,9 @@ class InvoiceRepository(
             val raw = functions.getHttpsCallable("recordPayment")
                 .call(args.toPayload())
                 .awaitCallable().data as? Map<String, Any?>
-                ?: error("recordPayment: non-map payload")
+                ?: throw PaymentAnswerUnreadable("recordPayment: non-map payload")
             val result = decodeRecordPaymentResult(raw)
-            result.paymentId.ifBlank { error("recordPayment: missing paymentId") }
+            result.paymentId.ifBlank { throw PaymentAnswerUnreadable("recordPayment: missing paymentId") }
             result
         }.onFailure { AuntieLog.e("Failed to record payment", it) }
     /**
@@ -1283,6 +1283,27 @@ internal fun recordPaymentOnInvoiceArgs(
     ),
 )
 
+/**
+ * #2298: the server answered `recordPayment` and the answer could not be read.
+ * The call itself went through, so the payment may well be recorded: this is
+ * not "nothing happened". [message] is the sentence the admin is shown;
+ * [developerDetail] goes to the log only.
+ */
+class PaymentAnswerUnreadable(val developerDetail: String) : Exception(PAYMENT_ANSWER_UNREADABLE_MESSAGE)
+/** #2298: plain words, and no claim that the payment failed. */
+const val PAYMENT_ANSWER_UNREADABLE_MESSAGE: String =
+    "The payment could not be confirmed. Check the invoice before recording it again."
+/**
+ * #2299: the balance a refused payment ran into, in integer cents, from the
+ * refusal's `details` (`amountDueCents`). Null when the server sent none.
+ * Pure; unit-tested.
+ */
+internal fun refusalAmountDueCents(details: Any?): Long? {
+    val raw = (details as? Map<*, *>)?.get("amountDueCents") as? Number ?: return null
+    val asDouble = raw.toDouble()
+    if (asDouble.isNaN() || asDouble < 0.0 || asDouble != Math.floor(asDouble)) return null
+    return raw.toLong()
+}
 /**
  * The invoiceId `sendInvoiceReminder` echoed, falling back to the one we asked
  * about.

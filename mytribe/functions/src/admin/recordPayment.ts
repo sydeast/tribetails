@@ -18,18 +18,20 @@ import {
 } from '../lib/invoiceResponseSchema';
 import { TIP_BASES, dollarsToCents, paymentMoneyOf } from '../lib/paymentMoney';
 import {
+  balanceToSettle,
   planApply,
   readInvoiceForApplyInTransaction,
+  type InvoiceForApply,
   stageApply,
   type ApplyOutcome,
   type ApplyStep,
 } from '../lib/paymentApply';
 import { creditAccount } from '../lib/accountCredit';
-import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { centsToDollars, formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
-import { deliverListedCopy, enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { deliverListedCopy, enqueueNotificationDetailed, type ListedCopyDelivery } from '../notifications/dispatcher';
 import { reachedAppOnly } from '../notifications/appOnly';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import {
@@ -212,8 +214,39 @@ export const Args = z.object({
       invoiceId: z.string().min(1).max(200),
       /** Denormalized for display. Blank is fine; the invoice doc is the authority. */
       invoiceNumber: z.string().max(200).default(''),
-      /** DOLLARS applied to that invoice. */
+      /** DOLLARS applied to that invoice. Sent as 0 with `settleBalance`. */
       amount: z.number().min(0).max(10_000_000),
+      /**
+       * #2299: "PAY WHAT IS OWED". The admin left the Amount box blank, so the
+       * applied part is the invoice's balance AS THIS CALL'S TRANSACTION READS
+       * IT, not a figure the screen worked out from an older read. Before
+       * #2281 a blank Amount meant exactly this (`markInvoicePaid` with no
+       * amount settled the rest). The one-call panel then sent its own figure,
+       * which could be $0 or an out-of-date smaller sum when the payments
+       * list had not loaded.
+       *
+       * The screen cannot add up a payment whose applied part it does not
+       * know, so with this intent it sends only what was typed and the server
+       * finishes the sum. With B the balance read, and the credit as entered:
+       *
+       *   `amount` 0 (Payment amount blank)   the payment is B + tip + credit
+       *   `amount` typed, `tip` 0             the tip is the rest:
+       *                                       amount - B - credit (ruling
+       *                                       2026-09-27, the extra is tip)
+       *   both typed                          they must add up to
+       *                                       B + tip + credit, or the call is
+       *                                       refused. A typed tip is never
+       *                                       rewritten.
+       *
+       * A payment that does not cover B is refused, never booked as a part
+       * payment: blank means the whole balance. Every refusal carries
+       * `amountDueCents`, so the screen can show what is owed now. The row,
+       * the audit entry and the answer hold the figures as resolved.
+       *
+       * `amount` above must be 0 with it. A number and "whatever is owed" are
+       * two different instructions, and a call carrying both is refused.
+       */
+      settleBalance: z.boolean().optional(),
     })
     .optional(),
   /**
@@ -287,6 +320,8 @@ export const Args = z.object({
    *
    * #2281 review: when the sweep has already written the ledger row for that
    * settlement (`payments/settle_<id>`), this call's row takes its place.
+   * #2300: only a call that sends this id does that. A row without it never
+   * deletes or replaces a ledger row.
    *
    * OPTIONAL, like every addition here. A client that does not send it gets the
    * household confirmation it ticked, and the office is not told for its
@@ -474,28 +509,44 @@ export async function recordPaymentHandler(
   // carries are the collection's legacy shape and are still stored verbatim
   // below; nothing downstream re-derives cents from them, so no two readers can
   // round the same dollar differently.
-  const amountCents = dollarsToCents(args.amount);
-  const tipCents = dollarsToCents(args.tip);
+  // #2299: with `apply.settleBalance` the applied part, and with it the whole
+  // amount or the tip, is not known until the transaction has read the
+  // invoice. These four are then provisional here and resolved in the
+  // transaction (`resolveSettleBalance`), before anything is staged.
+  const settleBalance = args.apply?.settleBalance === true;
+  if (settleBalance && dollarsToCents(args.apply?.amount ?? 0) !== 0) {
+    throw new HttpsError(
+      'invalid-argument',
+      'This payment asks to pay what the invoice owes and also names an amount. Send one or the other.',
+      { code: 'settle_balance_with_amount' },
+    );
+  }
+  let amountCents = dollarsToCents(args.amount);
+  let tipCents = dollarsToCents(args.tip);
   const feeCents = dollarsToCents(args.fee);
   // #977: in the two-step admin flow the applied part was put on the invoice by
   // `markInvoicePaid`, not by this call, so it is read off the settlement row
   // this call names. See `twoStepAppliedCents`.
   const twoStep = args.apply ? null : await twoStepAppliedCents(args);
-  const appliedCents = args.apply ? dollarsToCents(args.apply.amount) : (twoStep?.appliedCents ?? 0);
-  const money = paymentMoneyOf({
-    amountCents,
-    tipCents,
-    feeCents,
-    appliedCents,
-    // Stamped, not inferred: this server writes gross tips and says so, which
-    // is the whole point of the field.
-    tipBasis: 'gross',
-  });
+  let appliedCents = args.apply ? dollarsToCents(args.apply.amount) : (twoStep?.appliedCents ?? 0);
+  const moneyOf = () =>
+    paymentMoneyOf({
+      amountCents,
+      tipCents,
+      feeCents,
+      appliedCents,
+      // Stamped, not inferred: this server writes gross tips and says so, which
+      // is the whole point of the field.
+      tipBasis: 'gross',
+    });
+  let money = moneyOf();
   // A TIP LARGER THAN THE PAYMENT is refused up front rather than stored as a
   // negative unapplied balance. It is a keying slip (the tip typed into the
   // amount box, or dollars mistaken for cents), and every later reader of the
   // row would have to decide what a payment that is more tip than money means.
-  if (tipCents > amountCents) {
+  // #2299: not checked here for a "pay what is owed" call, whose amount may be
+  // blank until the transaction fills it in; the sum is checked there.
+  if (!settleBalance && tipCents > amountCents) {
     throw new HttpsError(
       'invalid-argument',
       `A tip of ${dollars(tipCents)} does not fit inside a payment of ${dollars(amountCents)}. ` +
@@ -551,7 +602,9 @@ export async function recordPaymentHandler(
         { code: 'credit_leftover_unknown' },
       );
     }
-    if (chosenCreditCents > money.unappliedCents) {
+    // #2299: a "pay what is owed" call has no leftover to check yet. Its sum
+    // is made to add up, credit included, in the transaction.
+    if (!settleBalance && chosenCreditCents > money.unappliedCents) {
       throw new HttpsError(
         'invalid-argument',
         `Account credit of ${dollars(chosenCreditCents)} is more than the ${dollars(Math.max(0, money.unappliedCents))} ` +
@@ -610,6 +663,7 @@ export async function recordPaymentHandler(
           application: null as ApplyOutcome | null,
           settlesInvoice: false,
           replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
+          possibleDuplicateOf: null as string | null,
         };
       }
     }
@@ -637,6 +691,22 @@ export async function recordPaymentHandler(
       // admin client reads, before the general "not payable" refusal can.
       if (invoice.doc !== null && isWrittenOff(invoice.doc as Record<string, unknown>)) {
         throw new HttpsError('failed-precondition', WRITTEN_OFF_PAYMENT_REFUSAL, { code: INVOICE_WRITTEN_OFF_CODE });
+      }
+      if (settleBalance) {
+        // #2299: the applied part is the balance this transaction just read.
+        // A re-run after a competing payment reads the new balance and
+        // resolves again, so the figures always belong to the commit.
+        const resolved = resolveSettleBalance({
+          invoice,
+          kinfolkId,
+          typedAmountCents: dollarsToCents(args.amount),
+          typedTipCents: dollarsToCents(args.tip),
+          creditCents: chosenCreditCents,
+        });
+        amountCents = resolved.amountCents;
+        tipCents = resolved.tipCents;
+        appliedCents = resolved.appliedCents;
+        money = moneyOf();
       }
       const plan = planApply({
         invoice,
@@ -669,24 +739,34 @@ export async function recordPaymentHandler(
     // THERE FIRST. `settlementLedgerSweep` finishes a settlement whose second
     // call never came by writing `payments/settle_<id>` and taking the claim.
     // A second call that then does come (the operator pressing Record again
-    // after a lost reply, or a row added by hand for the invoice) found the
-    // claim taken and wrote its own row beside the sweep's: one payment, two
-    // ledger rows.
+    // after a lost reply) found the claim taken and wrote its own row beside
+    // the sweep's: one payment, two ledger rows.
     //
-    // THIS CALL'S ROW IS THE TRUE ONE. It carries the tip, the fee and any
-    // credit the admin entered; the sweep's row is a stand-in built from the
-    // settlement alone (`tipBasis: 'unknown'`). So this call deletes the
-    // sweep's row and writes its own in the same commit, and keeps the sweep
-    // row's notice stamps so the copies it already sent are not sent again.
+    // A CALL THAT NAMES THE SETTLEMENT REPLACES THE SWEEP'S ROW, AND ONLY SUCH
+    // A CALL. Its row is the true one: it carries the tip, the fee and any
+    // credit the admin entered, and the sweep's row is a stand-in built from
+    // the settlement alone (`tipBasis: 'unknown'`). So it deletes the sweep's
+    // row and writes its own in the same commit, and keeps the sweep row's
+    // notice stamps so the copies it already sent are not sent again. The
+    // settlement id is the proof that both rows are one payment.
     //
-    // WHICH CALLS. One that names the settlement replaces its sweep row
-    // outright. One with no settlement id (a hand-added row, a pre-#866 build)
-    // must be linked to the invoice, for the same household, and cover the
-    // settled amount with its non-tip money; a later, smaller row (a tip sent
-    // the next day) is a different payment and is left alone. Before the
-    // sweep has run, that same test lets a row with no settlement id take the
-    // claim after OLD_CLIENT_CLAIM_WINDOW_MS, so the sweep finds the
-    // settlement claimed and writes nothing.
+    // A ROW WITH NO SETTLEMENT ID NEVER DELETES OR REPLACES A LEDGER ROW
+    // (#2300, lead ruling 2026-11-14). It is a row added by hand or a
+    // pre-#866 build's second call, and nothing on it says which payment it
+    // is. Until this change one that covered the settled amount replaced the
+    // sweep's row with no time limit, so a household that paid the same $40
+    // twice, months apart, lost the first payment's ledger row.
+    //   - AFTER THE SWEEP it is written as its own payment and the sweep's row
+    //     is left exactly as it is. When it covers the settled amount it may
+    //     be that same payment recorded twice, so the owner gets one Activity
+    //     Log warning (`possibleDuplicateOf` below). A smaller row (a tip sent
+    //     the next day) gets none.
+    //   - BEFORE THE SWEEP, past OLD_CLIENT_CLAIM_WINDOW_MS, a row that covers
+    //     the settled amount still takes the claim, so the sweep finds the
+    //     settlement claimed and writes nothing. That writes one row where
+    //     there would be two, and deletes nothing. It ends when the sweep
+    //     finishes the settlement, about SETTLEMENT_LEDGER_SWEEP_GRACE_MS
+    //     after the payoff.
     //
     // WHY THIS IS SAFE AGAINST THE SWEEP RUNNING AT THE SAME MOMENT. Both
     // transactions read the invoice doc and write it (the claim), and the
@@ -694,6 +774,7 @@ export async function recordPaymentHandler(
     // here by id. Whichever commits second re-runs and sees the other's write.
     // No query is involved, so there is no row for either to miss.
     let replacedSweepRow: { id: string; data: Record<string, unknown> } | null = null;
+    let possibleDuplicateOf: string | null = null;
     const settlement =
       claimedOwner === null ? markInvoicePaidSettlementOf(linkedInvoice, kinfolkId, args.settledByInvoicePaymentId) : null;
     if (settlement !== null && linkedInvoiceRef) {
@@ -704,14 +785,15 @@ export async function recordPaymentHandler(
         const sweepRowSnap = await tx.get(sweepRowRef);
         const sweepRow = (sweepRowSnap.data() ?? {}) as Record<string, unknown>;
         const settledCents = storedCents(sweepRow, 'amountCents');
-        if (
+        const isSweepRow =
           sweepRowSnap.exists &&
           sweepRow['recordedByServer'] === SETTLEMENT_LEDGER_SWEEP_WRITER &&
           sweepRow['invoiceId'] === args.invoiceId &&
-          sweepRow['kinfolkId'] === kinfolkId &&
-          (named || (settledCents > 0 && coverCents >= settledCents))
-        ) {
+          sweepRow['kinfolkId'] === kinfolkId;
+        if (isSweepRow && named) {
           replacedSweepRow = { id: sweepRowRef.id, data: sweepRow };
+        } else if (isSweepRow && settledCents > 0 && coverCents >= settledCents) {
+          possibleDuplicateOf = sweepRowRef.id;
         }
       } else if (!named && settlement.pending) {
         const settlementSnap = await tx.get(linkedInvoiceRef.collection('payments').doc(settlement.settlementId));
@@ -782,8 +864,11 @@ export async function recordPaymentHandler(
       paymentMethod: args.paymentMethod,
       referenceNumber: args.referenceNumber,
       email: args.email,
-      amount: args.amount,
-      tip: args.tip,
+      // #2299: for a "pay what is owed" call the request's own figures may be
+      // blank, so the row holds the resolved ones, from the same cents as the
+      // fields below. Every other call stores what it sent, as before.
+      amount: settleBalance ? centsToDollars(amountCents) : args.amount,
+      tip: settleBalance ? centsToDollars(tipCents) : args.tip,
       notes: args.notes,
       invoiceId: args.invoiceId,
       invoiceNumber: args.invoiceNumber,
@@ -903,7 +988,7 @@ export async function recordPaymentHandler(
     // A keyless call keeps `set`: its id is server-minted and cannot collide.
     if (args.idempotencyKey !== undefined) tx.create(ref, row);
     else tx.set(ref, row);
-    return { replayed: null, application: staged, settlesInvoice, replacedSweepRow };
+    return { replayed: null, application: staged, settlesInvoice, replacedSweepRow, possibleDuplicateOf };
   });
 
   if (committed.replayed !== null) {
@@ -928,24 +1013,50 @@ export async function recordPaymentHandler(
     });
   }
 
+  // #2300: this row has no settlement id and landed beside the sweep's row for
+  // a payoff it is large enough to be. Both rows are kept. The payment's one
+  // Activity Log line is a warning in plain words, so the owner can check
+  // whether the same payment was recorded twice.
+  const possibleDuplicateOf = committed.possibleDuplicateOf;
+  // Loaded only on this path, as every other writer loads its words, so the
+  // entrypoint's cold start does not pay for the module.
+  const duplicateWords =
+    possibleDuplicateOf !== null
+      ? (await import('../lib/activityWords.js')).paymentPossibleDuplicateWords(args.invoiceNumber)
+      : null;
+  if (possibleDuplicateOf !== null) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordPayment',
+      event: 'settlement.ledger.possible_duplicate',
+      uid: actor.uid,
+      extra: { paymentId: ref.id, settlementPaymentId: possibleDuplicateOf, kinfolkId, invoiceId: args.invoiceId },
+    });
+  }
   await writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_PAYMENT_RECORDED,
-    severity: 'info',
+    severity: possibleDuplicateOf !== null ? 'warn' : 'info',
     actorRole: 'AUNTIE',
     actorUid: actor.uid,
     targetUid: ref.id,
     targetCollection: 'payments',
     familyId: kinfolkId || undefined,
-    description: args.invoiceId
-      ? `Payment row recorded against invoice ${args.invoiceNumber || args.invoiceId}`
-      : 'Standalone payment row recorded',
+    description:
+      duplicateWords !== null
+        ? duplicateWords
+        : args.invoiceId
+          ? `Payment row recorded against invoice ${args.invoiceNumber || args.invoiceId}`
+          : 'Standalone payment row recorded',
     payload: {
       paymentId: ref.id,
       kinfolkId,
       invoiceId: args.invoiceId,
-      amount: args.amount,
-      tip: args.tip,
+      amount: settleBalance ? centsToDollars(amountCents) : args.amount,
+      tip: settleBalance ? centsToDollars(tipCents) : args.tip,
+      // #2299: the admin left Amount blank and the server applied the balance
+      // it read. The figures above are the resolved ones.
+      ...(settleBalance ? { applySettledBalance: true } : {}),
       // THE FEE IS IN THE AUDIT TRAIL, not only on the doc. The whole defect
       // being fixed is a fee that existed and was written down nowhere.
       fee: args.fee,
@@ -970,6 +1081,9 @@ export async function recordPaymentHandler(
       // second payment from a second attempt at one payment is the trail that
       // would have had to answer #825 after the fact.
       idempotencyKey: args.idempotencyKey ?? null,
+      // #2300: the ledger row already recorded for this invoice's payoff, which
+      // this row may repeat. Both are in `payments`.
+      ...(possibleDuplicateOf !== null ? { possibleDuplicateOfPaymentId: possibleDuplicateOf } : {}),
       // #2281 review: the sweep's stand-in row this one took the place of, kept
       // here because the row itself is gone from `payments`.
       ...(replacedSweepRow !== null
@@ -1190,6 +1304,58 @@ function dollars(cents: number): string {
   return formatUsdCents(cents);
 }
 
+/**
+ * #2299: THE FIGURES OF A "PAY WHAT IS OWED" PAYMENT, from the balance the
+ * transaction read. The rules are on `Args.apply.settleBalance`. Throws the
+ * refusal; every one that read a balance carries it as `amountDueCents`.
+ *
+ * The result always satisfies `amount = applied + tip + credit`, so nothing is
+ * left over that is neither tip nor credit, and the credit is exactly what the
+ * admin entered.
+ */
+function resolveSettleBalance(input: {
+  invoice: InvoiceForApply;
+  kinfolkId: string;
+  typedAmountCents: number;
+  typedTipCents: number;
+  creditCents: number;
+}): { amountCents: number; tipCents: number; appliedCents: number } {
+  const balance = balanceToSettle(input.invoice, input.kinfolkId);
+  if (!balance.ok) {
+    throw new HttpsError('failed-precondition', balance.refusal.message, {
+      code: balance.refusal.code,
+      ...(balance.refusal.amountDueCents !== undefined ? { amountDueCents: balance.refusal.amountDueCents } : {}),
+    });
+  }
+  const due = balance.amountDueCents;
+  const { typedAmountCents, typedTipCents, creditCents } = input;
+  if (typedAmountCents === 0) {
+    return { amountCents: due + typedTipCents + creditCents, tipCents: typedTipCents, appliedCents: due };
+  }
+  const creditNote = creditCents > 0 ? ` plus ${dollars(creditCents)} of account credit` : '';
+  if (typedTipCents === 0) {
+    const restCents = typedAmountCents - due - creditCents;
+    if (restCents < 0) {
+      throw new HttpsError(
+        'failed-precondition',
+        `A payment of ${dollars(typedAmountCents)} does not cover the ${dollars(due)} this invoice still owes${creditNote}. ` +
+          `Raise the payment amount, or enter the part being paid under Amount collected.`,
+        { code: 'settle_payment_short', amountDueCents: due },
+      );
+    }
+    return { amountCents: typedAmountCents, tipCents: restCents, appliedCents: due };
+  }
+  if (due + typedTipCents + creditCents !== typedAmountCents) {
+    throw new HttpsError(
+      'failed-precondition',
+      `This invoice still owes ${dollars(due)}. With a ${dollars(typedTipCents)} tip${creditNote} that comes to ` +
+        `${dollars(due + typedTipCents + creditCents)}, not the ${dollars(typedAmountCents)} paid. ` +
+        `Change the tip or the payment amount, or leave the tip blank to take the rest.`,
+      { code: 'settle_split_mismatch', amountDueCents: due },
+    );
+  }
+  return { amountCents: typedAmountCents, tipCents: typedTipCents, appliedCents: due };
+}
 /** A stored number, or 0. Absent reads as zero, never as a guess. */
 function storedCents(stored: Record<string, unknown>, field: string): number {
   const v = stored[field];
@@ -1324,8 +1490,13 @@ async function replayWithConfirmation(
         });
       });
     }
+    // The row's own `confirmationAppOnly` stamp is not this answer's: it records
+    // that the listed copy exists, and what the answer says about it is worked
+    // out afresh above, as on the first attempt.
+    const { confirmationAppOnly: _storedAppOnly, ...rest } = answer;
+    void _storedAppOnly;
     return {
-      ...answer,
+      ...rest,
       confirmationEmailSent: after.confirmationEmailSent,
       ...(after.confirmationEmailSent || after.confirmationAppOnly ? { confirmationAppOnly: after.confirmationAppOnly } : {}),
       householdNoPortalAccount: after.sent.noPortalAccount,
@@ -1653,6 +1824,18 @@ export async function sendPaymentConfirmation(input: {
  *
  * A send that fails leaves the stamps as they were, and the next same-key
  * retry tries again. The answer never says both "emailed" and "list only".
+ *
+ * WHAT THE ANSWER SAYS WHEN THE TICKED EMAIL DID NOT GO. Every admin client
+ * prints `confirmationAppOnly: true` as "reached the household in the app
+ * only. Email and text are off for this household." That is true for one
+ * reason only: the household's own settings have every channel off. For every
+ * other reason (the operator switched this notification off, the household
+ * send gate is shut, the billing member has changed since the sweep listed
+ * the payoff so the listed copy is someone else's, the household has no
+ * portal account now, or the send failed) the answer leaves it out, and the
+ * clients say the confirmation email did not go out. The ROW keeps
+ * `confirmationAppOnly: true` in each of those cases: the listed copy exists,
+ * and that stamp is what lets a same-key retry try the email again.
  */
 async function sendAfterSweepRow(input: {
   stamps: Record<string, unknown>;
@@ -1688,15 +1871,19 @@ async function sendAfterSweepRow(input: {
   let emailed =
     input.stamps['confirmationEmailSent'] === true || (sent.household && !duplicate && !sent.householdAppOnly);
   let deliveredNow = false;
+  let delivery: ListedPayoffDelivery | null = null;
   if (input.ticked && !emailed && (listedBefore || duplicate)) {
-    deliveredNow = await deliverListedPayoff(input);
+    delivery = await deliverListedPayoff(input);
+    deliveredNow = delivery === 'sent' || delivery === 'already';
     emailed = deliveredNow;
   }
   const listed = listedBefore || sent.household;
   return {
     sent,
     confirmationEmailSent: emailed,
-    confirmationAppOnly: listed && !emailed,
+    // "App only" is said only when it is the household's own settings that kept
+    // the email back, or when no email was asked for. See the note above.
+    confirmationAppOnly: listed && !emailed && (delivery === null || delivery === 'no-channels'),
     stamps: {
       ...(emailed ? { confirmationEmailSent: true, confirmationAppOnly: false } : listed ? { confirmationAppOnly: true } : {}),
       ...(sent.office ? { officeNoticeSentAt: FieldValue.serverTimestamp() } : {}),
@@ -1706,19 +1893,31 @@ async function sendAfterSweepRow(input: {
   };
 }
 /**
- * Sends the household's listed payoff copy on their own channels. True when a
- * channel carries it now (or already did). NEVER THROWS: the payment is
- * recorded, and a failure here is retried by the next same-key call.
+ * What became of the ticked email for a payoff the sweep only listed: the
+ * dispatcher's own outcome, or `no-recipient` (the household has no portal
+ * account now) or `failed` (the lookup or the send threw).
+ */
+type ListedPayoffDelivery = ListedCopyDelivery | 'no-recipient' | 'failed';
+/**
+ * Sends the household's listed payoff copy on their own channels. `sent` and
+ * `already` mean a channel carries it. NEVER THROWS: the payment is recorded,
+ * and a failure here is retried by the next same-key call.
+ *
+ * The copy is looked up for the household's billing member AS OF NOW. When
+ * that is not the member the sweep listed it for, there is no listed copy of
+ * theirs to send (`no-record`) and nothing goes out: this never writes a new
+ * list entry, and never emails a member a copy that sits on another member's
+ * list.
  */
 async function deliverListedPayoff(input: {
   kinfolkId: string;
   invoiceId: string;
   noticePaymentId: string;
   uid: string;
-}): Promise<boolean> {
+}): Promise<ListedPayoffDelivery> {
   try {
     const recipientUid = await resolveBillingRecipientUid(input.kinfolkId);
-    if (recipientUid === null) return false;
+    if (recipientUid === null) return 'no-recipient';
     const { outcome } = await deliverListedCopy({
       key: 'invoice.payment.applied',
       recipientUid,
@@ -1732,7 +1931,7 @@ async function deliverListedPayoff(input: {
       uid: input.uid,
       extra: { kinfolkId: input.kinfolkId, paymentId: input.noticePaymentId, outcome },
     });
-    return outcome === 'sent' || outcome === 'already';
+    return outcome;
   } catch (err) {
     logEvent({
       severity: 'warn',
@@ -1741,7 +1940,7 @@ async function deliverListedPayoff(input: {
       uid: input.uid,
       extra: { kinfolkId: input.kinfolkId, paymentId: input.noticePaymentId, err: (err as Error)?.message },
     });
-    return false;
+    return 'failed';
   }
 }
 export const recordPayment = onCall(

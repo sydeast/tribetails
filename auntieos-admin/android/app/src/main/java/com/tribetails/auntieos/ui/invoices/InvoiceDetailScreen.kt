@@ -1946,7 +1946,9 @@ private fun RecordPaymentDialog(
     val canSave = split is PaymentSplit.Ok && method.isNotBlank() && tipValue != null &&
         feeValue != null && !creditNeedsHousehold
     AuntieModal(
-        onDismissRequest = onDismiss,
+        // #2298: the form stays while the payment is being recorded, so a call
+        // that then fails still has a form to correct.
+        onDismissRequest = { if (!submitting) onDismiss() },
         title = "Record payment",
         confirmButton = {
             PrimaryButton(
@@ -1969,7 +1971,7 @@ private fun RecordPaymentDialog(
                 enabled = canSave && !submitting,
             )
         },
-        dismissButton = { GhostButton(label = "Cancel", onClick = onDismiss) },
+        dismissButton = { GhostButton(label = "Cancel", onClick = onDismiss, enabled = !submitting) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AuntieField(value = amount, onValueChange = { amount = it }, label = "Amount *", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())

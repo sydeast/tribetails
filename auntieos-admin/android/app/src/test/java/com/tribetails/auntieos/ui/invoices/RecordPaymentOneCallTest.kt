@@ -8,7 +8,12 @@ import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.google.firebase.functions.FirebaseFunctionsException
+import com.tribetails.auntieos.data.repository.PaymentAnswerUnreadable
 import com.tribetails.auntieos.data.repository.recordPaymentArgs
+import com.tribetails.auntieos.data.repository.refusalAmountDueCents
+import io.mockk.every
+import kotlinx.coroutines.CompletableDeferred
 import com.tribetails.auntieos.data.repository.recordPaymentOnInvoiceArgs
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -250,6 +255,165 @@ class RecordPaymentOneCallTest {
             coVerify(exactly = 0) { repo.logActivity(any()) }
         }
 
+    // ── #2299: a refusal refreshes the balance the form works from ──────────
+    @Test
+    fun `the balance a refusal names is read from its details, and nothing else is`() {
+        assertEquals(2_500L, refusalAmountDueCents(mapOf("code" to "invoice_amount_exceeds_balance", "amountDueCents" to 2_500)))
+        assertEquals(0L, refusalAmountDueCents(mapOf("amountDueCents" to 0L)))
+        assertEquals(2_500L, refusalAmountDueCents(mapOf("amountDueCents" to 2500.0)))
+        assertEquals(null, refusalAmountDueCents(mapOf("code" to "invoice_already_settled")))
+        assertEquals(null, refusalAmountDueCents(mapOf("amountDueCents" to "2500")))
+        assertEquals(null, refusalAmountDueCents(mapOf("amountDueCents" to -1)))
+        assertEquals(null, refusalAmountDueCents(mapOf("amountDueCents" to 25.5)))
+        assertEquals(null, refusalAmountDueCents(null))
+        assertEquals(null, refusalAmountDueCents("amountDueCents"))
+    }
+    private fun overBalanceRefusal(dueCents: Int): FirebaseFunctionsException {
+        val refused = mockk<FirebaseFunctionsException>(relaxed = true)
+        every { refused.message } returns
+            "\$127.50 is more than the \$25.00 still owed on this invoice. Apply \$25.00 and record the rest of the payment as tip."
+        every { refused.details } returns mapOf("code" to "invoice_amount_exceeds_balance", "amountDueCents" to dueCents)
+        return refused
+    }
+    @Test
+    fun `a refusal reads the invoice and its payments again, and the form works from the new balance`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.getInvoiceLedger("inv1") } returnsMany listOf(
+                Result.success(TestFixtures.emptyInvoiceLedger("inv1").copy(amountDueCents = 12_750L)),
+                Result.success(TestFixtures.emptyInvoiceLedger("inv1").copy(amountDueCents = 2_000L)),
+            )
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns
+                Result.failure(overBalanceRefusal(2_500))
+            val vm = loaded()
+            advanceUntilIdle()
+            assertEquals(12_750L, vm.uiState.value.ledgerAmountDueCents)
+            vm.openRecordPayment()
+            vm.recordPayment(dialog(), 127.5)
+            advanceUntilIdle()
+            val state = vm.uiState.value
+            // The reload's own figure is what the form caps against now.
+            assertEquals(2_000L, state.ledgerAmountDueCents)
+            coVerify(exactly = 2) { invoiceRepo.getInvoiceLedger("inv1") }
+            coVerify(exactly = 2) { invoiceRepo.getInvoiceById("inv1") }
+            // The form is still open and the server's sentence says what is owed now.
+            assertTrue(state.showRecordPayment)
+            assertFalse(state.recordingPayment)
+            assertTrue(state.toastIsError)
+            assertTrue(state.toastMessage.orEmpty().contains("\$25.00 still owed on this invoice"))
+            coVerify(exactly = 0) { repo.logActivity(any()) }
+        }
+    @Test
+    fun `when that reload fails, the balance the refusal named stands and its message is not replaced`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.getInvoiceLedger("inv1") } returnsMany listOf(
+                Result.success(TestFixtures.emptyInvoiceLedger("inv1").copy(amountDueCents = 12_750L)),
+                Result.failure(RuntimeException("unavailable")),
+            )
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns
+                Result.failure(overBalanceRefusal(2_500))
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.openRecordPayment()
+            vm.recordPayment(dialog(), 127.5)
+            advanceUntilIdle()
+            val state = vm.uiState.value
+            assertEquals(2_500L, state.ledgerAmountDueCents)
+            assertTrue(state.toastMessage.orEmpty().startsWith("Couldn't record payment: "))
+            assertFalse(state.toastMessage.orEmpty().contains("load payments"))
+        }
+    @Test
+    fun `a refusal that names no balance keeps the one on screen until the reload answers`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.getInvoiceLedger("inv1") } returnsMany listOf(
+                Result.success(TestFixtures.emptyInvoiceLedger("inv1").copy(amountDueCents = 12_750L)),
+                Result.failure(RuntimeException("unavailable")),
+            )
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns
+                Result.failure(RuntimeException("The payments recorded against this invoice already cover it in full."))
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.recordPayment(dialog(), 127.5)
+            advanceUntilIdle()
+            assertEquals(12_750L, vm.uiState.value.ledgerAmountDueCents)
+            coVerify(exactly = 2) { invoiceRepo.getInvoiceLedger("inv1") }
+        }
+    // ── #2298: an answer that cannot be read, and Cancel while it runs ───────
+    @Test
+    fun `an answer that cannot be read is told in plain words, and never as not recorded`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns
+                Result.failure(PaymentAnswerUnreadable("recordPayment: non-map payload"))
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.openRecordPayment()
+            vm.recordPayment(dialog(), 127.5)
+            advanceUntilIdle()
+            val state = vm.uiState.value
+            assertEquals(
+                "The payment could not be confirmed. Check the invoice before recording it again.",
+                state.toastMessage,
+            )
+            assertFalse(state.toastMessage.orEmpty().contains("recordPayment"))
+            assertFalse(state.toastMessage.orEmpty().contains("payload"))
+            assertFalse(state.toastMessage.orEmpty().contains("Couldn't record"))
+            assertTrue(state.toastIsError)
+            // The form stays, and what the invoice shows is read again so she can check.
+            assertTrue(state.showRecordPayment)
+            coVerify(exactly = 2) { invoiceRepo.getInvoiceLedger("inv1") }
+            coVerify(exactly = 2) { invoiceRepo.getInvoiceById("inv1") }
+        }
+    @Test
+    fun `pressing Record again after an unreadable answer sends the same key, so one payment is recorded`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returnsMany listOf(
+                Result.failure(PaymentAnswerUnreadable("recordPayment: missing paymentId")),
+                answer("settled"),
+            )
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.recordPayment(dialog(), 127.5)
+            advanceUntilIdle()
+            vm.recordPayment(dialog(), 127.5)
+            advanceUntilIdle()
+            val keys = mutableListOf<String?>()
+            coVerify(exactly = 2) { invoiceRepo.recordPaymentOnInvoice(any(), any(), captureNullable(keys)) }
+            assertEquals(2, keys.size)
+            assertTrue(keys[0].orEmpty().startsWith("pay_"))
+            assertEquals(keys[0], keys[1])
+            assertEquals("Payment recorded. The invoice is paid in full.", vm.uiState.value.toastMessage)
+        }
+    @Test
+    fun `the unreadable-answer sentences carry no developer wording`() {
+        assertEquals(
+            "The payment could not be confirmed. Check the invoice before recording it again.",
+            recordPaymentFailureToast(PaymentAnswerUnreadable("recordPayment: non-map payload")),
+        )
+        assertEquals(
+            "The payment could not be confirmed. Check the invoice before recording it again.",
+            PaymentAnswerUnreadable("recordPayment: missing paymentId").message,
+        )
+        assertEquals("Couldn't record payment: no network", recordPaymentFailureToast(RuntimeException("no network")))
+    }
+    @Test
+    fun `Cancel does nothing while the payment is being recorded, and works again once it has failed`() =
+        runTest(testDispatcher) {
+            val gate = CompletableDeferred<Result<RecordPaymentResult>>()
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } coAnswers { gate.await() }
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.openRecordPayment()
+            vm.recordPayment(dialog(), 127.5)
+            assertTrue(vm.uiState.value.recordingPayment)
+            vm.closeRecordPayment()
+            assertTrue(vm.uiState.value.showRecordPayment)
+            gate.complete(Result.failure(RuntimeException("no network")))
+            advanceUntilIdle()
+            // The call failed, and the form is still there to correct.
+            assertTrue(vm.uiState.value.showRecordPayment)
+            assertFalse(vm.uiState.value.recordingPayment)
+            vm.closeRecordPayment()
+            assertFalse(vm.uiState.value.showRecordPayment)
+        }
     @Test
     fun `the old ledger-row request older builds send is unchanged and carries no apply`() {
         val payload = recordPaymentArgs(dialog(), "pay_1759000000000_abc123", "ipay-1").toPayload()

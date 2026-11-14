@@ -14,6 +14,7 @@ import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.mintPaymentIdempotencyKey
+import com.tribetails.auntieos.data.repository.refusalAmountDueCents
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.dollarsToCents
@@ -338,7 +339,14 @@ class InvoiceDetailViewModel(
     }
 
     fun openRecordPayment() { _uiState.value = _uiState.value.copy(showRecordPayment = true) }
-    fun closeRecordPayment() { _uiState.value = _uiState.value.copy(showRecordPayment = false) }
+    /**
+     * #2298: does nothing while a payment is being recorded. Closing the form
+     * mid-call left nothing to correct when the call then failed.
+     */
+    fun closeRecordPayment() {
+        if (_uiState.value.recordingPayment) return
+        _uiState.value = _uiState.value.copy(showRecordPayment = false)
+    }
 
     /**
      * Record a payment against this invoice.
@@ -388,14 +396,27 @@ class InvoiceDetailViewModel(
                 appliedAmount = appliedAmount,
                 idempotencyKey = key,
             ).getOrElse { err ->
-                // Nothing was recorded. The key is kept: the next press of the
-                // same entry is a retry of this one.
+                // The key is kept: the next press of the same entry is a retry
+                // of this one, and the server answers a retry from the row the
+                // first attempt wrote, if it wrote one.
+                //
+                // #2299: a refusal may mean the balance moved since the form
+                // loaded. The figure the server refused against is shown
+                // straight away, and the invoice and its payments are read
+                // again, so the same entry is not refused twice against an old
+                // balance.
+                val dueNow = refusalAmountDueCents(
+                    (err as? com.google.firebase.functions.FirebaseFunctionsException)?.details,
+                )
                 _uiState.value = _uiState.value.copy(
                     recordingPayment = false,
-                    toastMessage = "Couldn't record payment: ${err.message}",
+                    ledgerAmountDueCents = dueNow ?: _uiState.value.ledgerAmountDueCents,
+                    toastMessage = recordPaymentFailureToast(err),
                     toastVisible = true,
                     toastIsError = true,
                 )
+                reloadBalanceQuietly(invoiceId)
+                reloadInvoiceQuietly(invoiceId)
                 return@launch
             }
             // #825: the server answered, so this submission is done and the key
@@ -1263,6 +1284,25 @@ class InvoiceDetailViewModel(
         return sendOutcomeAfterSilence(action, SEND_BUDGET_SECONDS, before, after)
     }
     /** Re-fetch the invoice into state without flipping the loading shimmer. */
+    /**
+     * #2299: the payments and the balance again, after a payment that did not
+     * go through. Quiet: the failed payment's own message is on screen, and a
+     * second toast about this read would replace it. A failed read leaves what
+     * is shown as it was.
+     */
+    private fun reloadBalanceQuietly(invoiceId: String) {
+        viewModelScope.launch {
+            invoiceRepository.getInvoiceLedger(invoiceId)
+                .onSuccess { ledger ->
+                    _uiState.value = _uiState.value.copy(
+                        linkedPayments = ledger.ledgerPayments,
+                        clientPayments = ledger.unlinkedKinfolkPayments,
+                        ledgerAmountDueCents = ledger.amountDueCents,
+                    )
+                }
+                .onFailure { AuntieLog.e("Quiet balance reload failed for invoice $invoiceId", it) }
+        }
+    }
     private fun reloadInvoiceQuietly(invoiceId: String) {
         viewModelScope.launch {
             invoiceRepository.getInvoiceById(invoiceId)
@@ -1523,6 +1563,21 @@ internal fun archiveSuccessMessage(
  * "paid in full": that is the very claim the 2026-07-25 fix exists to stop the
  * app making on its own.
  */
+/**
+ * What the admin is told when Record payment did not come back with an answer
+ * the app could use. Pure; unit-tested.
+ *
+ * A refusal or a failed call recorded nothing, and the server's own sentence
+ * says why. #2298: an answer that could not be read is different. The call
+ * went through, so the toast must not say the payment was not recorded, and it
+ * carries no developer wording.
+ */
+internal fun recordPaymentFailureToast(err: Throwable): String =
+    if (err is com.tribetails.auntieos.data.repository.PaymentAnswerUnreadable) {
+        com.tribetails.auntieos.data.repository.PAYMENT_ANSWER_UNREADABLE_MESSAGE
+    } else {
+        "Couldn't record payment: ${err.message}"
+    }
 internal fun recordPaymentToast(settlement: MarkInvoicePaidResult): String =
     recordPaymentToast(settlement.state, settlement.amountDueCents, settlement.overpaidCents)
 

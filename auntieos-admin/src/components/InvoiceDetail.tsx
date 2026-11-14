@@ -493,6 +493,23 @@ export function paymentSplit(input: {
   }
   return { ok: true, paidCents, appliedCents, tipCents, creditCents, overCents };
 }
+/**
+ * #2299: the balance a refused payment ran into, in integer cents, when the
+ * server sent one (`details.amountDueCents`). Null for every other failure.
+ */
+export function refusalAmountDueCents(caught: unknown): number | null {
+  const details = (caught as { details?: unknown } | null)?.details;
+  if (details === null || typeof details !== 'object') return null;
+  const cents = (details as { amountDueCents?: unknown }).amountDueCents;
+  return typeof cents === 'number' && Number.isInteger(cents) && cents >= 0 ? cents : null;
+}
+/**
+ * #2299: shown where the split would be, when Amount is blank and the panel
+ * holds no balance it can trust (the payments have not loaded, or failed to).
+ * The server applies what is owed when the payment is recorded.
+ */
+export const BLANK_AMOUNT_BALANCE_UNKNOWN =
+  'The balance has not loaded. A blank amount pays what this invoice owes when you record it.';
 type PendingAction = InvoiceAction;
 
 interface ActionMeta {
@@ -956,6 +973,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const [ledgerError, setLedgerError] = useState<string | null>(null);
   // Bumped to re-run the load. A counter rather than a boolean so two reloads in
   // a row (record a payment, then record another) both actually fire.
+  // #2299: what a refused payment said is owed now. Used as the balance until
+  // the reload that refusal started comes back with the ledger's own figure.
+  const [refusedDueCents, setRefusedDueCents] = useState<number | null>(null);
   const [ledgerNonce, setLedgerNonce] = useState(0);
   const reloadLedger = useCallback(() => setLedgerNonce((n) => n + 1), []);
 
@@ -1083,7 +1103,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // then the cents the server stamped on the invoice. Never the dollar
   // `amountDue` alone: on an invoice the old partial write touched it reads 0
   // while money is owed, and capping at that would make the whole payment tip.
-  const balanceDueCents: number | null = ledger?.amountDueCents ?? invoice.amountDueCents ?? null;
+  // #2299: after a refusal, the balance the server refused against comes first.
+  const balanceDueCents: number | null =
+    refusedDueCents ?? ledger?.amountDueCents ?? invoice.amountDueCents ?? null;
+  // #2299: Amount left blank means "pay what is owed", and the server works
+  // that out. With no balance here to show, the split line says so instead of
+  // adding up a figure from the invoice's older dollar balance.
+  const blankAmountNoBalance = paidAmount.trim() === '' && balanceDueCents === null;
   const split = paymentSplit({
     paymentTotal: paidTotal,
     applied: paidAmount,
@@ -1118,6 +1144,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       .then((res) => {
         if (stale) return;
         setLedger(res);
+        setRefusedDueCents(null);
         setLedgerLoading(false);
       })
       .catch((caught: unknown) => {
@@ -1595,28 +1622,50 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         }
         // #988: WHERE THE MONEY GOES, checked before anything is written, so the
         // panel refuses a split that does not add up before sending it.
-        const checked = paymentSplit({
-          paymentTotal: paidTotal,
-          applied: typed,
-          tip: paidTip,
-          credit: paidCredit,
-          fallbackApplied: invoice.amountDue,
-          amountDueCents: balanceDueCents,
-        });
-        if (checked === null || !checked.ok) {
+        // #2299: AMOUNT LEFT BLANK MEANS "PAY WHAT IS OWED", AND THE SERVER
+        // DECIDES WHAT THAT IS. The panel sends the intent and only what she
+        // typed; the server applies the balance its own transaction reads and
+        // finishes the sum (a blank payment amount is applied + tip + credit,
+        // a blank tip is the rest). Until #2281 a blank Amount meant this, and
+        // the one-call panel then sent its own figure, which was $0 or an old
+        // smaller sum when the payments had not loaded.
+        const settleBalance = typed === '';
+        // The split is checked against the balance on screen when there is
+        // one, so a sum that does not add up is refused before it is sent.
+        // With no balance here there is nothing to check a blank Amount
+        // against, and the server's refusal says what is owed.
+        const checked =
+          settleBalance && balanceDueCents === null
+            ? null
+            : paymentSplit({
+                paymentTotal: paidTotal,
+                applied: typed,
+                tip: paidTip,
+                credit: paidCredit,
+                fallbackApplied: invoice.amountDue,
+                amountDueCents: balanceDueCents,
+              });
+        if (checked !== null && !checked.ok) {
           setBusy(false);
-          setActionError(checked === null ? 'One of the amounts cannot be read.' : checked.error);
+          setActionError(checked.error);
           return;
         }
-        if (checked.creditCents > 0 && !invoice.kinfolkId) {
+        if (checked === null && !settleBalance) {
+          setBusy(false);
+          setActionError('One of the amounts cannot be read.');
+          return;
+        }
+        const creditCents = checked !== null ? checked.creditCents : Math.round(credit * 100);
+        if (creditCents > 0 && !invoice.kinfolkId) {
           setBusy(false);
           setActionError('Account credit needs a household, and this invoice is not linked to one.');
           return;
         }
-        // The tip that is sent: typed, or the rest of the payment when blank,
-        // plus (#1566) whatever of the amount collected was over the balance.
-        const tipToSend = checked.tipCents / 100;
-        const creditCents = checked.creditCents;
+        // The tip that is sent. Amount typed: the split's tip, which is what
+        // she typed, or the rest of the payment when blank, plus (#1566)
+        // whatever of the amount collected was over the balance. Amount
+        // blank: only the tip she typed, and 0 lets the server take the rest.
+        const tipToSend = settleBalance ? tip : (checked?.tipCents ?? 0) / 100;
         // #1566: the invoice takes what it owes and no more. A typed amount over
         // the balance is applied at the balance; the rest went to the tip above.
 
@@ -1630,11 +1679,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // ledger row and nobody told, and a refusal or failure now means
         // nothing at all was recorded.
         //
-        // The applied part is what the panel showed as owed, or what she
-        // typed, capped at the balance by `paymentSplit`. If the balance moved
-        // since the panel loaded, the server refuses with what is owed now.
+        // The applied part is what she typed, capped at the balance by
+        // `paymentSplit`, or (#2299) "what is owed" when she left it blank. If
+        // the balance moved since the panel loaded, a typed amount over it is
+        // refused with what is owed now, and the panel shows that figure.
         ledgerKey.current ??= mintPaymentIdempotencyKey();
-        const appliedCents = checked.appliedCents;
+        const appliedCents = checked?.appliedCents ?? 0;
         const ledgerRow = await recordPayment({
           kinfolkId: invoice.kinfolkId,
           kinfolkName: invoice.kinfolkName,
@@ -1644,7 +1694,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           referenceNumber: reference,
           // THE WHOLE SUM THE CLIENT PAID, tip and any leftover included. The
           // invoice takes the applied part; this row is the transaction.
-          amount: typedTotal > 0 ? typedTotal : checked.paidCents / 100,
+          // #2299: with Amount blank the panel does not know the applied part,
+          // so a blank payment amount goes as 0 and the server adds it up.
+          amount: typedTotal > 0 ? typedTotal : settleBalance ? 0 : (checked?.paidCents ?? 0) / 100,
           tip: tipToSend,
           fee,
           notes: paidNotes.trim(),
@@ -1655,11 +1707,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           sendConfirmationEmail: paidSendConfirmation,
           invoiceId: invoice._id,
           invoiceNumber: invoice.invoiceNumber,
-          apply: {
-            invoiceId: invoice._id,
-            invoiceNumber: invoice.invoiceNumber,
-            amount: appliedCents / 100,
-          },
+          apply: settleBalance
+            ? { invoiceId: invoice._id, invoiceNumber: invoice.invoiceNumber, amount: 0, settleBalance: true }
+            : { invoiceId: invoice._id, invoiceNumber: invoice.invoiceNumber, amount: appliedCents / 100 },
           idempotencyKey: ledgerKey.current,
         });
         const res = ledgerRow.application;
@@ -1692,6 +1742,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // whole defect this change fixes was a UI that reported "paid" for a
         // payment that paid off half the invoice.
         if (res === null) incomplete = true;
+        // #2299: a blank Amount paid what the server found owing. When that is
+        // not the figure this panel was showing, the sentence says how much
+        // was recorded, so a different sum is never booked without a word.
+        if (settleBalance && res !== null && balanceDueCents !== null && res.appliedCents !== balanceDueCents) {
+          incomplete = true;
+          ledgerNote += ` This invoice owed ${formatUsd(res.appliedCents / 100)}, not the ${formatUsd(balanceDueCents / 100)} shown here, so ${formatUsd(res.appliedCents / 100)} was applied to it.`;
+        }
         outcome =
           (res === null
             ? 'Payment recorded. Open the invoice again to check what is still owed.'
@@ -1726,6 +1783,14 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       }
       setBusy(false);
       setActionError(invoiceActionError(caught, meta.callableName));
+      if (meta.key === 'markPaid') {
+        // #2299: a refused or failed payment may mean the balance moved since
+        // the panel loaded. The server's figure is shown straight away when it
+        // sent one, and the payments are read again either way, so the same
+        // entry is not refused twice against an old figure.
+        setRefusedDueCents(refusalAmountDueCents(caught));
+        reloadLedger();
+      }
     }
   }
 
@@ -2272,7 +2337,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     className="invoice-detail__field-input"
                     value={paidAmount}
                     onChange={(e) => setPaidAmount(e.target.value)}
-                    placeholder={String(invoice.amountDue)}
+                    placeholder={
+                      balanceDueCents !== null ? (balanceDueCents / 100).toFixed(2) : 'what this invoice owes'
+                    }
                     inputMode="decimal"
                     disabled={busy}
                     aria-label="Amount collected in dollars"
@@ -2365,7 +2432,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     what is left after the applied part and any credit she
                     chose; the fee comes out of the tip, not out of the bill. */}
                 <p className="invoice-detail__unapplied" role="status" aria-label="Where this payment goes">
-                  {split === null ? (
+                  {blankAmountNoBalance ? (
+                    <span className="invoice-detail__unapplied-unknown">{BLANK_AMOUNT_BALANCE_UNKNOWN}</span>
+                  ) : split === null ? (
                     <span className="invoice-detail__unapplied-unknown">
                       Not yet: one of the amounts above cannot be read.
                     </span>
