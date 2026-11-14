@@ -161,7 +161,12 @@ export default defineConfig({
     setupNodeEvents(on) {
       on('after:run', (results) => {
         writeRunResults(results);
-        reportStripeConsole();
+        // Reading the browser log can never change the run's result.
+        try {
+          reportStripeConsole();
+        } catch (error) {
+          console.log(`== e2e-real (portal): Stripe page console: could not be read (${String(error)})`);
+        }
       });
       // Chrome only: Electron ignores the flags, and no other browser runs here.
       on('before:browser:launch', (browser, launchOptions) => {
