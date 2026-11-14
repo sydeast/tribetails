@@ -39,7 +39,10 @@ function seed(
   for (const [invoiceId, payments] of Object.entries(paymentsByInvoice)) {
     queryDocs[`invoices/${invoiceId}/payments`] = payments;
   }
-  return buildDbMock({ queryDocs });
+  // #2269: repair mode re-reads each candidate by id inside its own
+  // transaction, so every invoice the page query returns is also a document.
+  const docs = Object.fromEntries(invoices.map((inv) => [`invoices/${inv.id}`, inv.data]));
+  return buildDbMock({ docs, queryDocs });
 }
 
 describe('repairInvoicePayments: detect mode', () => {

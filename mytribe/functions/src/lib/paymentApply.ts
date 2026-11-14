@@ -44,7 +44,7 @@
  * settling another's bill, and no screen would ever show why.
  */
 import { FieldValue } from 'firebase-admin/firestore';
-import type { Firestore } from 'firebase-admin/firestore';
+import type { Firestore, Transaction } from 'firebase-admin/firestore';
 
 import type { StagedWriter } from './moneyIdempotency';
 
@@ -225,7 +225,11 @@ export function planApply(input: {
   };
 }
 
-/** Reads the invoice a plan needs, with its payment subcollection. */
+/**
+ * Reads the invoice a plan needs, with its payment subcollection, OUTSIDE any
+ * transaction. Fine for a plan that is only reported; a plan that is staged is
+ * read with [readInvoiceForApplyInTransaction] (#2269).
+ */
 export async function readInvoiceForApply(
   firestore: Firestore,
   invoiceId: string,
@@ -234,6 +238,36 @@ export async function readInvoiceForApply(
   const snap = await ref.get();
   if (!snap.exists) return { invoiceId, doc: null, existingPayments: [] };
   const paymentsSnap = await ref.collection('payments').get();
+  return {
+    invoiceId,
+    doc: (snap.data() ?? {}) as InvoiceDoc,
+    existingPayments: paymentsSnap.docs.map((d) => d.data() as PaymentAmount),
+  };
+}
+
+/**
+ * #2269: the same read, inside a transaction. THE ONE TO PLAN FROM whenever the
+ * plan is then staged.
+ *
+ * `stageApply` writes the new balance from the plan's `after`, and `after` is
+ * the stored payments plus this one. Planned from a read taken outside the
+ * transaction, a second payment landing in between is left out of the sum, and
+ * the invoice ends up saying more is owed than its payments leave. Read here,
+ * the invoice doc is in the transaction's read set and its write set, so two
+ * payments on one invoice commit one after the other, and the second re-plans
+ * against what the first wrote.
+ *
+ * Both reads come before any write, which Firestore requires.
+ */
+export async function readInvoiceForApplyInTransaction(
+  firestore: Firestore,
+  tx: Transaction,
+  invoiceId: string,
+): Promise<InvoiceForApply> {
+  const ref = firestore.collection('invoices').doc(invoiceId);
+  const snap = await tx.get(ref);
+  if (!snap.exists) return { invoiceId, doc: null, existingPayments: [] };
+  const paymentsSnap = await tx.get(ref.collection('payments'));
   return {
     invoiceId,
     doc: (snap.data() ?? {}) as InvoiceDoc,

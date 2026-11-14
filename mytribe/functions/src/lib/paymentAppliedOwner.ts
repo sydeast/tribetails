@@ -145,6 +145,38 @@ export const OLD_CLIENT_CLAIM_WINDOW_MS = 5 * 60 * 1000;
 export const OLD_CLIENT_CLAIM_CLOCK_SKEW_MS = 5 * 1000;
 
 /**
+ * #2230: A `markInvoicePaid` SETTLEMENT STILL OWED ITS LEDGER ROW AND NOTICE.
+ *
+ * Older installed admin clients record a payment as two calls: `markInvoicePaid`
+ * pays the bill, then `recordPayment` writes the root `payments` ledger row and
+ * sends `invoice.payment.applied`. A reload or a closed app between the two left
+ * a paid invoice with no ledger row and nobody told.
+ *
+ * So the settling `markInvoicePaid` write stamps PENDING with its owner
+ * (`markInvoicePaid:<paymentId>`) and PENDING_AT, in the same commit as the
+ * money. The `recordPayment` that claims that settlement clears PENDING to ''
+ * in the same transaction as its claim. One still pending after
+ * SETTLEMENT_LEDGER_SWEEP_GRACE_MS had no second call, and
+ * `notificationScheduledSweep` finishes it (`lib/settlementLedgerSweep.ts`).
+ *
+ * Finished, PENDING is '' and PENDING_AT is null. A null never matches the
+ * sweep's numeric range filter, so a finished settlement is never fetched again.
+ *
+ * Their own fields, not `paymentAppliedNoticePending*`: the credit notice sweep
+ * reads those oldest first and skips every owner that is not a credit draw, so
+ * these would sit at the front of its query for good.
+ */
+export const SETTLEMENT_LEDGER_PENDING_FIELD = 'settlementLedgerPending';
+export const SETTLEMENT_LEDGER_PENDING_AT_FIELD = 'settlementLedgerPendingAtMs';
+
+/**
+ * How old a pending settlement must be before the sweep finishes it. Twice
+ * OLD_CLIENT_CLAIM_WINDOW_MS, so an older client's own second call, which may
+ * claim for that long, always gets there first.
+ */
+export const SETTLEMENT_LEDGER_SWEEP_GRACE_MS = 2 * OLD_CLIENT_CLAIM_WINDOW_MS;
+
+/**
  * The `markInvoicePaid` owner stamp a `recordPayment` for `kinfolkId` may claim
  * on this invoice, or null. Claimable means: the invoice is paid, belongs to that
  * household, was paid off by `markInvoicePaid`, nobody has claimed that stamp,
