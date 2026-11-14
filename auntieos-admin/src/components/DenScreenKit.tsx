@@ -149,45 +149,12 @@ function popoverSupported(): boolean {
 }
 
 /**
- * The info affordance that replaced the subtitle line.
- *
- * 153 call sites across 75 files filled `subtitle`, so every panel and every
- * page heading in the admin carried a sentence of explanation and the screens
- * read as busy: "at most they can be tool tips, otherwise they are making the
- * ui too busy with unneccessary text" (operator, 2026-09-11). The sentence is
- * still worth having the first time you meet a screen, so it moves behind a
- * hairline "i": hover or focus the button and it appears, leaving, blurring or
- * Escape puts it away.
- *
- * The text is NEVER unmounted. `aria-describedby` on the title resolves only
- * against an element that exists, and the accessible-description computation
- * reads a hidden node when it is referenced directly, so a screen reader is
- * handed the sentence without anyone hovering anything. A tip that rendered
- * only while open would be a description that exists only for sighted mouse
- * users, which is how this change would have quietly cost more than it saved.
- *
- * `bodyClassName` carries `.den-panel-subtitle` / `.den-heading-subtitle`
- * through to the tip body: screen stylesheets target those names, and what
- * changed here is where the text sits, not what it is.
- *
- * #1596: an open tip is shown as a manual popover, in the browser's top layer.
- * Positioned in place it sat inside whatever stacking context its panel made
- * (the entrance animations leave a transform), so the next panel's text and
- * chips painted over it, and it could run off the right edge of the window.
- * In the top layer it is above everything, placed from the button's rect and
- * kept inside the window. It stays in the same DOM spot, so `aria-describedby`
- * and the tests that find it inside its panel are unchanged. Without popover
- * support it falls back to the old absolute placement.
+ * The open state, placement and closing rules of one tip, for whatever opens
+ * it: the "i" button below, and a held button that says why it is held
+ * (`HeldButton`, #2199). One copy, so both tips sit in the top layer, stay
+ * inside the window and close the same way.
  */
-function KitTooltip({
-  id,
-  text,
-  bodyClassName,
-}: {
-  id: string;
-  text: string;
-  bodyClassName: string;
-}) {
+export function useKitTip() {
   const [open, setOpen] = useState(false);
   const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -244,6 +211,56 @@ function KitTooltip({
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [open]);
+
+  return { open, setOpen, place, buttonRef, bodyRef };
+}
+
+/** What the tip body's `popover` attribute takes. See `popoverSupported`. */
+export function kitTipPopover(): 'manual' | undefined {
+  return popoverSupported() ? 'manual' : undefined;
+}
+
+/**
+ * The info affordance that replaced the subtitle line.
+ *
+ * 153 call sites across 75 files filled `subtitle`, so every panel and every
+ * page heading in the admin carried a sentence of explanation and the screens
+ * read as busy: "at most they can be tool tips, otherwise they are making the
+ * ui too busy with unneccessary text" (operator, 2026-09-11). The sentence is
+ * still worth having the first time you meet a screen, so it moves behind a
+ * hairline "i": hover or focus the button and it appears, leaving, blurring or
+ * Escape puts it away.
+ *
+ * The text is NEVER unmounted. `aria-describedby` on the title resolves only
+ * against an element that exists, and the accessible-description computation
+ * reads a hidden node when it is referenced directly, so a screen reader is
+ * handed the sentence without anyone hovering anything. A tip that rendered
+ * only while open would be a description that exists only for sighted mouse
+ * users, which is how this change would have quietly cost more than it saved.
+ *
+ * `bodyClassName` carries `.den-panel-subtitle` / `.den-heading-subtitle`
+ * through to the tip body: screen stylesheets target those names, and what
+ * changed here is where the text sits, not what it is.
+ *
+ * #1596: an open tip is shown as a manual popover, in the browser's top layer.
+ * Positioned in place it sat inside whatever stacking context its panel made
+ * (the entrance animations leave a transform), so the next panel's text and
+ * chips painted over it, and it could run off the right edge of the window.
+ * In the top layer it is above everything, placed from the button's rect and
+ * kept inside the window. It stays in the same DOM spot, so `aria-describedby`
+ * and the tests that find it inside its panel are unchanged. Without popover
+ * support it falls back to the old absolute placement.
+ */
+function KitTooltip({
+  id,
+  text,
+  bodyClassName,
+}: {
+  id: string;
+  text: string;
+  bodyClassName: string;
+}) {
+  const { open, setOpen, place, buttonRef, bodyRef } = useKitTip();
 
   return (
     <span className="kit-tip">

@@ -14,7 +14,8 @@
  *   - the status suffix is dropped;
  *   - "<name> validation failed", an empty message, or the SDK's stand-in text
  *     for a code ("internal", "Backend error status: ...") becomes a plain
- *     sentence for that code;
+ *     sentence for that code; on web so does the staff gate's "Admin claim
+ *     required." (#2199, see `STAFF_GATE_TEXT`);
  *   - any other server message is already written for the operator ("Pick a
  *     date in 2025 or later") and is kept, so are the machine tokens screens
  *     match on (`no_recipients`, `recipient_opted_out`).
@@ -54,6 +55,15 @@ const CODE_NAMES = new Set([
 const VALIDATION_FAILED = /^[a-z][A-Za-z0-9]*( [a-z][A-Za-z0-9]*)? validation failed\.?$/;
 const STATUS_SUFFIX = /\s*\[\d{3}\]\s*$/;
 const SDK_STATUS_TEXT = /^(Unknown backend error status|Backend error status):/;
+/**
+ * #2199: what the staff gate says to an account it does not let through
+ * (`functions/src/lib/wrapAdminCallable.ts`, and the two gates beside it). An
+ * Auntie read "Admin claim required." under a Complete she was refused. It
+ * names a token field, so it is developer wording and takes the sentence for
+ * its code. Web only: neither Android nor the desktop console lets an Auntie
+ * sign in.
+ */
+const STAFF_GATE_TEXT = /^admin claim required\b/i;
 
 /**
  * The operator's sentence for a callable error. `code` is the SDK's code, with
@@ -63,7 +73,11 @@ export function plainCallableMessage(code: string, message: string): string {
   const bare = code.replace(/^functions\//, '');
   const text = message.replace(STATUS_SUFFIX, '').trim();
   const forDeveloper =
-    text === '' || VALIDATION_FAILED.test(text) || SDK_STATUS_TEXT.test(text) || CODE_NAMES.has(text.toLowerCase());
+    text === '' ||
+    VALIDATION_FAILED.test(text) ||
+    SDK_STATUS_TEXT.test(text) ||
+    STAFF_GATE_TEXT.test(text) ||
+    CODE_NAMES.has(text.toLowerCase());
   if (!forDeveloper) return text;
   return PLAIN_BY_CODE[bare] ?? CALLABLE_FALLBACK_TEXT;
 }

@@ -51,6 +51,18 @@ export function missingVisitSteps(session: VisitStamps): Array<'arrival' | 'depa
 }
 
 /**
+ * #2199, operator ruling 2026-11-14: completing a visit is the owner's. For an
+ * Auntie the Complete button "is disabled but visible", and this is the reason
+ * it carries. It is also what she reads if a Complete of hers ever reaches the
+ * server (`api/bookingsWrite.ts#transitionBookingStatus`), in place of the
+ * gate's own text.
+ *
+ * Here, not in `api/bookingsWrite.ts`: the screens' tests replace that module
+ * whole, and a sentence exported from it would read `undefined` in them.
+ */
+export const COMPLETE_OWNER_ONLY = 'Only the owner can complete a visit.';
+
+/**
  * The server's refusal, word for word, so both places read the same.
  *
  * `auntie` (#2185): an Auntie never sees Settings (ruling 2026-11-13), so her

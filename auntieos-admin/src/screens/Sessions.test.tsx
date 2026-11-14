@@ -758,26 +758,103 @@ describe('Auntie Time: the card runs the visit', () => {
     useArrivalRule.mockReturnValue(null);
   });
 
-  // #2185: an Auntie never sees Settings, so her refusal keeps only the remedy
-  // she can do herself. The owner's line above still names the Settings switch.
-  it('#2185: under an Auntie sign-in the refusal names no Settings screen', async () => {
-    invalidateSharedLoad();
-    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
-    useArrivalRule.mockReturnValue(true);
-    mount({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
-    await waitFor(() => expect(currentSessionSeat).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByText(WORK_SETTINGS_LOADING)).not.toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: /^Complete$/ }));
-    // The card's alert opens "Couldn't complete this visit." and then gives the reason.
-    const auntieLine =
-      'This visit has no arrival and departure recorded, and the business requires both before a visit can be ' +
-      'marked complete. Mark it on the visit card first.';
-    await waitFor(() =>
-      expect(screen.getAllByRole('alert').some((el) => (el.textContent ?? '').includes(auntieLine))).toBe(true),
+  // #2199, operator ruling 2026-11-14 ("the button is disabled but visible"):
+  // completing a visit is the owner's. An Auntie's card keeps Complete in its
+  // place, held, with the reason on it. This replaces the #2185 case that had
+  // her press it and read the arrival rule: she no longer gets that far.
+  describe('#2199 Complete under an Auntie sign-in', () => {
+    const OWNER_ONLY = 'Only the owner can complete a visit.';
+    async function mountAsAuntie(over: Partial<SessionEntry>) {
+      invalidateSharedLoad();
+      currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+      mount(over);
+      await waitFor(() => expect(screen.queryByText(WORK_SETTINGS_LOADING)).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /^Complete$/ })).toHaveAttribute('aria-disabled', 'true'),
+      );
+      return screen.getByRole('button', { name: /^Complete$/ });
+    }
+
+    it.each(['SCHEDULED', 'ON_MY_WAY', 'DEPARTED'])(
+      'HAPPY: a %s card shows Complete, held, with the reason as its description',
+      async (status) => {
+        const button = await mountAsAuntie({ status, startTime: at(0, 9) });
+        expect(button).toHaveAccessibleDescription(OWNER_ONLY);
+        // Reachable by keyboard: held, never natively disabled.
+        expect(button).not.toHaveAttribute('disabled');
+        button.focus();
+        expect(button).toHaveFocus();
+        expect(await screen.findByRole('tooltip')).toHaveTextContent(OWNER_ONLY);
+      },
     );
-    expect(screen.queryByText(/in Settings/)).toBeNull();
+
+    it('NEGATIVE: pressing it asks nothing and sends nothing', async () => {
+      const button = await mountAsAuntie({ status: 'ON_MY_WAY', startTime: at(0, 9) });
+      await user.click(button);
+      await user.keyboard('{Enter}');
+      await user.keyboard(' ');
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /yes, mark it completed/i })).not.toBeInTheDocument();
+      expect(transitionBookingStatus).not.toHaveBeenCalled();
+      expect(screen.queryByText(/Admin claim/i)).not.toBeInTheDocument();
+    });
+
+    it('NEGATIVE: with the arrival rule on she is still held, and is not told to mark steps', async () => {
+      useArrivalRule.mockReturnValue(true);
+      const button = await mountAsAuntie({ status: 'ON_MY_WAY', startTime: at(0, 9), arrivedAt: '', departedAt: '' });
+      await user.click(button);
+      expect(screen.queryByText(/has no arrival and departure recorded/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/in Settings/)).toBeNull();
+      expect(transitionBookingStatus).not.toHaveBeenCalled();
+      useArrivalRule.mockReturnValue(null);
+    });
+
+    it('her clock steps beside it are untouched', async () => {
+      await mountAsAuntie({ status: 'SCHEDULED', startTime: at(1) });
+      for (const name of [/^OMW$/, /^Arrived$/]) {
+        const step = screen.getByRole('button', { name });
+        expect(step).not.toHaveAttribute('aria-disabled');
+        expect(step).toBeEnabled();
+      }
+    });
+
+    it('ERROR: a Complete of hers that reaches the server reads who can, never the gate text', async () => {
+      // The role is read after first paint, so a fast tap can get in. The owner
+      // seat here stands for that moment; the refusal is the one
+      // `api/bookingsWrite.ts` gives a COMPLETE the staff gate refused.
+      transitionBookingStatus.mockRejectedValue(
+        Object.assign(new Error(OWNER_ONLY), { code: 'functions/permission-denied' }),
+      );
+      mount({ status: 'ON_MY_WAY', startTime: at(0, 9) });
+      await act(/^Complete$/, /yes, mark it completed/i);
+      const alert = await screen.findByText(/Couldn.t complete this visit\. Only the owner can complete a visit\./);
+      expect(alert).toBeInTheDocument();
+      expect(screen.queryByText(/Admin claim/i)).not.toBeInTheDocument();
+    });
+  });
+
+  // #2199: the route hands the board who is signed in, resolved before it
+  // draws. The seat read answers "owner" here, so only the flag holds the
+  // button: it is held the first time it is drawn and is never an ordinary one.
+  it('#2199: told by the route that an Auntie is signed in, Complete is held without the token read', async () => {
+    usePagedCollection.mockReturnValue(paged([entry({ status: 'ON_MY_WAY', startTime: at(0, 9) })]));
+    renderBoard({ isAuntie: true });
+    const first = screen.queryByRole('button', { name: /^Complete$/ });
+    if (first !== null) expect(first).toHaveAttribute('aria-disabled', 'true');
+    const button = await screen.findByRole('button', { name: /^Complete$/ });
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button).toHaveAccessibleDescription('Only the owner can complete a visit.');
+    await user.click(button);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(transitionBookingStatus).not.toHaveBeenCalled();
-    useArrivalRule.mockReturnValue(null);
+  });
+  it('#2199: the owner\'s Complete is an ordinary button with no held reason', async () => {
+    mount({ status: 'ON_MY_WAY', startTime: at(0, 9) });
+    await waitFor(() => expect(currentSessionSeat).toHaveBeenCalled());
+    const button = screen.getByRole('button', { name: /^Complete$/ });
+    expect(button).not.toHaveAttribute('aria-disabled');
+    expect(button).toBeEnabled();
+    expect(screen.queryByText('Only the owner can complete a visit.')).not.toBeInTheDocument();
   });
 
   it('#2185: the owner refusal names the Settings switch, word for word', async () => {

@@ -468,7 +468,7 @@ const scheduleRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'schedule',
   staticData: { title: navTitle('schedule') },
-  component: lazyRouteComponent(() => import('./screens/Schedule'), 'Schedule'),
+  component: lazyRouteComponent(() => import('./routes/ScheduleView'), 'ScheduleView'),
 });
 
 const inboxRoute = createRoute({
