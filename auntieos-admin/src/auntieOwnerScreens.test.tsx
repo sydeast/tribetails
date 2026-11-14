@@ -82,6 +82,13 @@ vi.mock('./screens/MarketingBlasts', () => ({
   MarketingBlasts: () => <div>MARKETING BLASTS SCREEN</div>,
 }));
 
+// #2187: the real route adapter over a stand-in screen that says which flag it
+// was handed, so the test reads what the router's own access produced.
+vi.mock('./screens/Bookings', () => ({
+  Bookings: ({ isAuntie }: { isAuntie?: boolean }) => (
+    <div>{isAuntie ? 'BOOKINGS WITHOUT NEW BOOKING' : 'BOOKINGS WITH NEW BOOKING'}</div>
+  ),
+}));
 const USER = { uid: 'uid-staff', email: 'e2e-admin@tribetails.com', displayName: 'Auntie' };
 const OWNER_CLAIMS = { admin: true };
 const AUNTIE_CLAIMS = { staffRole: 'auntie' };
@@ -382,6 +389,42 @@ describe('#2200 / #2201 every owner-only nav entry is guarded in the router', ()
       await boot(`/${e.slug}`, AUNTIE_CLAIMS);
       await waitFor(() => expect(window.location.pathname).toBe('/home'));
       expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    });
+  }
+});
+/**
+ * #2187, operator ruling 2026-11-14: "No, only I can". Making a booking is the
+ * owner's alone. Bookings itself stays hers (she works the visits on it), so
+ * the route is not guarded; the screen is told who is signed in and draws her
+ * no New booking. The form has no address of its own: it opens from that one
+ * button, so an address typed for it finds no screen.
+ */
+describe('#2187 an Auntie gets Bookings without New booking', () => {
+  it('tells the Bookings screen an Auntie is signed in', async () => {
+    await boot('/bookings', AUNTIE_CLAIMS);
+    expect(await screen.findByText('BOOKINGS WITHOUT NEW BOOKING')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/bookings');
+  });
+  it('treats a double-claimed account as the Auntie', async () => {
+    await boot('/bookings', DOUBLE_CLAIMS);
+    expect(await screen.findByText('BOOKINGS WITHOUT NEW BOOKING')).toBeInTheDocument();
+  });
+  for (const [who, claims] of [['the owner', OWNER_CLAIMS], ['the test admin', TEST_ADMIN_CLAIMS]] as const) {
+    it(`leaves New booking with ${who}`, async () => {
+      await boot('/bookings', claims);
+      expect(await screen.findByText('BOOKINGS WITH NEW BOOKING')).toBeInTheDocument();
+    });
+  }
+  for (const address of ['/bookings/new', '/bookings?new=1', '/new-booking']) {
+    it(`opens no booking form for an Auntie who types ${address}`, async () => {
+      await boot(address, AUNTIE_CLAIMS);
+      if (address.startsWith('/bookings?')) {
+        expect(await screen.findByText('BOOKINGS WITHOUT NEW BOOKING')).toBeInTheDocument();
+      } else {
+        expect(await screen.findByRole('heading', { name: 'We can’t find that page.' })).toBeInTheDocument();
+        expect(screen.queryByText(/^BOOKINGS/)).toBeNull();
+      }
+      expect(screen.queryByRole('dialog')).toBeNull();
     });
   }
 });
