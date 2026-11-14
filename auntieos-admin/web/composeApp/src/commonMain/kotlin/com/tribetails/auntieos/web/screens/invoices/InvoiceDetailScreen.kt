@@ -93,8 +93,10 @@ import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatCard
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
-import com.tribetails.auntieos.web.util.nowIso
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.util.businessTimeZone
+import com.tribetails.auntieos.web.screens.sessions.businessDayOf
+import com.tribetails.auntieos.web.util.businessTodayIso
 
 // The header Receipt / Send-reminder actions and the Payments panel's Record
 // payment (real generateReceipt / sendInvoiceReminder / recordPayment callables)
@@ -184,7 +186,7 @@ private fun InvoiceDetailBody(
     onOpenVisit: ((String) -> Unit)?,
 ) {
     val c = AuntieTheme.colors
-    val todayKey = nowIso().take(10)
+    val todayKey = businessTodayIso()
     // #1199: the STORED stamp (ADR-0002), as web and Android read it. Never
     // amountDue: a credit is not paid and a draft is not outstanding.
     val badge = invoiceDetailBadgeFor(invoice, todayKey)
@@ -1145,7 +1147,7 @@ private fun RecordPaymentDialog(
     var fee       by remember(invoice._id, visible) { mutableStateOf("") }
     var method    by remember(invoice._id, visible) { mutableStateOf("") }
     var reference by remember(invoice._id, visible) { mutableStateOf("") }
-    var date      by remember(invoice._id, visible) { mutableStateOf(nowIso().take(10)) }
+    var date      by remember(invoice._id, visible) { mutableStateOf(businessTodayIso()) }
     var notes     by remember(invoice._id, visible) { mutableStateOf("") }
     // #988: "Leave as account credit", an amount, blank for none. It replaced the
     // auto-apply tick: a leftover is tip unless she enters a credit here.
@@ -1302,8 +1304,9 @@ private fun LinkSessionsDialog(
                         verticalArrangement   = Arrangement.spacedBy(8.dp),
                     ) {
                         s.value.forEach { session ->
-                            val dateLabel = session.completedAt.take(10)
-                                .ifBlank { session.startTime.take(10) }
+                            // #2095: business days, not the stored UTC dates.
+                            val dateLabel = businessDayOf(session.completedAt, businessTimeZone())
+                                .ifBlank { businessDayOf(session.startTime, businessTimeZone()) }
                                 .ifBlank { "-" }
                             // #1254: shown, not hidden, and not tickable:
                             // another invoice already bills it.
@@ -1413,7 +1416,8 @@ private fun LinkedSessionRow(session: KinCareSession, showDivider: Boolean) {
     val c = AuntieTheme.colors
     val hairline = AuntieTheme.dims.borderHairline
     val ruleColor = c.borderSoft
-    val dateLabel = session.completedAt.take(10).ifBlank { session.startTime.take(10) }.ifBlank { "-" }
+    val zone = businessTimeZone()
+    val dateLabel = businessDayOf(session.completedAt, zone).ifBlank { businessDayOf(session.startTime, zone) }.ifBlank { "-" }
     val statusLabel = session.status.lowercase().replace('_', ' ')
     Row(
         modifier = Modifier

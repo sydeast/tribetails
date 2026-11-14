@@ -82,6 +82,15 @@ class DenScreenKitTest {
     }
 
     @Test
+    fun formatTime_reads_an_instant_on_the_business_clock() {
+        val chicago = java.time.ZoneId.of("America/Chicago")
+        // #2095: 11:30 PM Chicago on Nov 11 is 05:30 UTC on Nov 12.
+        assertEquals("11:30p", formatTime("2026-11-12T05:30:00.000Z", chicago))
+        assertEquals("11:30p", formatTime("2026-11-11T23:30:00", chicago))
+        // The night clocks go forward: 00:30 CST on Mar 8 is 06:30 UTC.
+        assertEquals("12:30a", formatTime("2026-03-08T06:30:00Z", chicago))
+    }
+    @Test
     fun formatTime_echoes_unparsable_input() {
         assertEquals("", formatTime(""))
         assertEquals("not-a-date", formatTime("not-a-date"))

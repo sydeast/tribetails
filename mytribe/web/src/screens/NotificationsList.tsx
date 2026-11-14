@@ -33,7 +33,8 @@ const PAGE_SIZE = 50;
  * row read optimistically (the row and the bell count change at once, the
  * server is told, and `getMyHome` is re-read afterwards so the badge carries
  * the server's number), then opens the thing the row is about: a visit, an
- * invoice, a tale, or Schedule for a row about a whole booking request. A row
+ * invoice, a tale (or KinTales), a Kin (or the Kin list), Tribe, Messages, or
+ * Schedule for a row about a whole booking request. A row
  * about nothing openable is only marked read.
  *
  * The list is fetched when this screen opens and never from the nav: the bell
@@ -98,6 +99,18 @@ export function NotificationsList() {
         break;
       case 'tale':
         void navigate({ to: '/kintales', search: { tale: target.taleId } });
+        break;
+      case 'tales':
+        void navigate({ to: '/kintales', search: {} });
+        break;
+      case 'kin':
+        void navigate({ to: '/kin/$kinId', params: { kinId: target.kinId } });
+        break;
+      case 'kinList':
+        void navigate({ to: '/kin' });
+        break;
+      case 'household':
+        void navigate({ to: '/tribe' });
         break;
       case 'messages':
         void navigate({ to: '/messages' });

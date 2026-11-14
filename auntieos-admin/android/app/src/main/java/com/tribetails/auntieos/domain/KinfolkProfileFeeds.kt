@@ -36,6 +36,12 @@ fun horizonIso(now: Instant, days: Long = UPCOMING_HORIZON_DAYS): String =
  * mock heads this card "next 7 days", so the profile passes a bound and the card
  * says what the bound is; the web twin takes the same argument for the same
  * reason. Left null, this behaves exactly as it always has.
+ *
+ * #2095: compared as moments, never as text. A start is stored as a UTC
+ * instant or as the business's wall clock with no zone, and [nowIso] is an
+ * instant, so a string compare set the two shapes five or six hours apart: a
+ * 9 AM visit stored zone-less dropped off the card from 3 AM Chicago time. A
+ * zone-less start is read on the business clock in [zone].
  */
 fun upcomingVisitsFor(
     sessions: List<KinCareSession>,
@@ -43,15 +49,20 @@ fun upcomingVisitsFor(
     nowIso: String,
     throughIso: String? = null,
     limit: Int = 5,
-): List<KinCareSession> =
-    sessions.asSequence()
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+): List<KinCareSession> {
+    val now = storedBusinessInstant(nowIso, zone) ?: return emptyList()
+    val through = throughIso?.let { storedBusinessInstant(it, zone) }
+    return sessions.asSequence()
         .filter { it.kinfolkId == kinfolkId }
         .filter { it.status.equals("scheduled", ignoreCase = true) || it.status.equals("confirmed", ignoreCase = true) }
-        .filter { it.startTime.isNotBlank() && it.startTime >= nowIso }
-        .filter { throughIso == null || it.startTime <= throughIso }
-        .sortedBy { it.startTime }
+        .mapNotNull { s -> storedBusinessInstant(s.startTime, zone)?.let { s to it } }
+        .filter { (_, at) -> !at.isBefore(now) && (through == null || !at.isAfter(through)) }
+        .sortedBy { (_, at) -> at }
+        .map { (s, _) -> s }
         .take(limit)
         .toList()
+}
 
 /**
  * Whether a row that names the pets it covers ([kinIds] on a session or a

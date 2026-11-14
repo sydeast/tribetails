@@ -197,6 +197,16 @@ class NotificationsListPortalApiTest {
     }
 
     @Test
+    fun `a Kin row opens the Kin, or the Kin tab when it names none (1913)`() {
+        assertEquals(NotificationTarget.Kin("kin-2"), notificationTargetOf(item("kin", targetId = "kin-2")))
+        assertEquals(NotificationTarget.KinList, notificationTargetOf(item("kin", targetId = " ")))
+    }
+    @Test
+    fun `a KinTale row with no id opens the KinTales tab, and a profile row opens Tribe (1898)`() {
+        assertEquals(NotificationTarget.KinTales, notificationTargetOf(item("kintale", targetId = "")))
+        assertEquals(NotificationTarget.Household, notificationTargetOf(item("household", targetId = "")))
+    }
+    @Test
     fun `reads the office note off the card detail, and none when it wrote none (2030)`() {
         val withNote = buildJsonObject {
             row("n1").forEach { (k, v) -> put(k, v) }

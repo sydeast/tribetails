@@ -49,10 +49,26 @@ export interface GetMyInvoicesRequest {
   kinfolkId?: string;
 }
 
+/**
+ * #1906 (operator ruling 2026-11-11): an invoice the office has not sent is
+ * not listed, counted or openable here. The server already leaves every unsent
+ * draft out of `getMyInvoices` (`functions/src/lib/quoteDecision.ts`,
+ * `hiddenFromHousehold`). This is the same line held on the way in, so a
+ * server still running the earlier rule cannot put one back on screen: every
+ * reader of the answer (the list, the open total, the detail page and a deep
+ * link to it, the warm-up cache) goes through `getMyInvoices` below.
+ */
+export function withoutUnsentDrafts(res: GetMyInvoicesResult): GetMyInvoicesResult {
+  // A bucket that is not a list is handed on as it came: this filter takes a
+  // draft out and never reshapes an answer.
+  const sent = <T extends { status: string }>(rows: T[]): T[] =>
+    Array.isArray(rows) ? rows.filter((i) => i.status !== 'draft') : rows;
+  return { ...res, open: sent(res.open), paid: sent(res.paid), credits: sent(res.credits) };
+}
 /** The signed-in kinfolk's invoices, bucketed open/paid/credits + account balance. */
-export function getMyInvoices(kinfolkId?: string, options?: CallOptions): Promise<GetMyInvoicesResult> {
+export async function getMyInvoices(kinfolkId?: string, options?: CallOptions): Promise<GetMyInvoicesResult> {
   const payload: GetMyInvoicesRequest = kinfolkId !== undefined ? { kinfolkId } : {};
-  return call<GetMyInvoicesRequest, GetMyInvoicesResult>('getMyInvoices', payload, options);
+  return withoutUnsentDrafts(await call<GetMyInvoicesRequest, GetMyInvoicesResult>('getMyInvoices', payload, options));
 }
 
 // ── getMyInvoicePdf (functions/src/portal/getMyInvoicePdf.ts) ───────────────

@@ -60,6 +60,7 @@ import com.tribetails.auntieos.web.data.appliesToSchemaIds
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinCareReport
+import com.tribetails.auntieos.web.data.orderVisitReports
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.KinTaleMediaConfig
 import com.tribetails.auntieos.web.data.KinTaleTemplate
@@ -67,7 +68,6 @@ import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.canDeleteAsDraft
 import com.tribetails.auntieos.web.data.responseKey
-import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.screens.sessions.RouteMap
 import com.tribetails.auntieos.web.screens.LocalServiceCatalog
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -106,6 +106,8 @@ import com.tribetails.auntieos.web.util.openUrl
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.datetime.TimeZone
+import com.tribetails.auntieos.web.util.businessTimeZone
 
 /**
  * KinTale composer, opens after a Kin Care is "DEPARTED" and lets Auntie write
@@ -167,6 +169,22 @@ fun KinTaleComposeScreen(
         ?: flowOf(DefaultKinTaleTemplate.template))
         .collectAsState(initial = DefaultKinTaleTemplate.template)
 
+    // #2040: "Send the KinTale" names only the visit. A visit that already has a
+    // saved draft reopens it ([newestSavedDraft]); a blank tale here is how a
+    // second draft for one visit was written. The answer is taken ONCE, from the
+    // first read that lands: the draft this screen then saves shows up in the
+    // same stream, and re-deciding on it would throw away whatever was typed
+    // since. A failed read is not "no draft": it shows its error and Retry.
+    val reportsReload = rememberReloadableRead()
+    val visitReports by remember(sessionId, reportsReload.generation) {
+        client.reportsForSessionStream(sessionId).settlesRetry(reportsReload)
+    }.collectAsState(initial = FirestoreResult.Loading)
+    var resume by remember(sessionId) { mutableStateOf<DraftResume?>(null) }
+    LaunchedEffect(visitReports) {
+        val data = visitReports as? FirestoreResult.Data ?: return@LaunchedEffect
+        if (resume == null) resume = DraftResume(newestSavedDraft(data.value, sessionId))
+    }
+
     if (session == null) {
         ScreenScaffold {
             // #867: a failed read shows its error, not a shimmer that never ends.
@@ -190,6 +208,27 @@ fun KinTaleComposeScreen(
         return
     }
 
+    val decided = resume
+    if (decided == null) {
+        ScreenScaffold {
+            (visitReports as? FirestoreResult.Error)?.let {
+                SectionHeader(title = "KinTale", subtitle = "", icon = Lucide.ClipboardList, onBack = onClose)
+                LoadErrorBanner(
+                    "Couldn't check this visit for a saved draft",
+                    it.message,
+                    onRetry = reportsReload::retry,
+                    retrying = reportsReload.retrying,
+                )
+                return@ScreenScaffold
+            }
+            SectionHeader(title = "Loading…", subtitle = "Looking for a saved draft", icon = Lucide.ClipboardList)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                repeat(3) { ShimmerCard(height = 100.dp) }
+            }
+        }
+        return
+    }
+
     KinTaleComposerBody(
         session  = session,
         kinfolk  = kinfolk,
@@ -198,7 +237,26 @@ fun KinTaleComposeScreen(
         client   = client,
         onClose  = onClose,
         onEditTemplate = { editingTemplate = true },
+        resumeFrom = decided.draft,
     )
+}
+
+/** #2040: what the first reports read decided. [draft] null means start a new tale. */
+private data class DraftResume(val draft: KinCareReport?)
+
+/**
+ * #2040: the saved draft "Send the KinTale" reopens for this visit, or null.
+ *
+ * Only a report that is positively a DRAFT, was never sent, and belongs to this
+ * visit counts. If two were ever saved, the NEWEST wins, in [orderVisitReports]'
+ * order for drafts: latest `updatedAt`, then `createdAt`, then id. The web
+ * composer (`savedDraftForVisit`) and Android (`newestSavedDraft`) use the same
+ * rule. Pure; unit-tested.
+ */
+internal fun newestSavedDraft(reports: List<KinCareReport>, sessionId: String): KinCareReport? {
+    if (sessionId.isBlank()) return null
+    return orderVisitReports(reports, sessionId)
+        .firstOrNull { it.status.trim().uppercase() == "DRAFT" && it.sentAt.isBlank() }
 }
 
 // -----------------------------------------------------------------------------
@@ -215,6 +273,8 @@ private fun KinTaleComposerBody(
     client: FirestoreClient,
     onClose: () -> Unit,
     onEditTemplate: () -> Unit,
+    /** #2040: the visit's saved draft to reopen, or null to start a new tale. */
+    resumeFrom: KinCareReport? = null,
 ) {
     val c = AuntieTheme.colors
     val scope = rememberReportingScope()
@@ -225,14 +285,18 @@ private fun KinTaleComposerBody(
     val routeToast = LocalRouteToast.current
 
     // Scaffold the in-memory draft. `_id` blank → first save creates the doc.
-    var report by remember(session._id, template._id) {
-        mutableStateOf(scaffoldReport(session, template))
+    // #2040: a reopened draft is keyed by its own id, not the template: it keeps
+    // the template it was written under, and a template read landing late must
+    // not swap it for a blank scaffold.
+    val identity = resumeFrom?._id ?: template._id
+    var report by remember(session._id, identity) {
+        mutableStateOf(resumeFrom ?: scaffoldReport(session, template))
     }
     // #994: the report as this screen last wrote it: the diff baseline for every
     // update, so a save sends only what changed since. Null until the first
     // create answers; `report._id` is blank until then too, so no update runs
-    // without it.
-    var written by remember(session._id, template._id) { mutableStateOf<KinCareReport?>(null) }
+    // without it. #2040: a reopened draft's baseline is the draft as read.
+    var written by remember(session._id, identity) { mutableStateOf(resumeFrom) }
     var bodyCopy by remember(report._id) { mutableStateOf(report.bodyCopy) }
     // Auntie-authored headline for the cover. Blank uses composerTitle(...) ONLY
     // as placeholder; we never write the derived value back onto the report.
@@ -814,7 +878,7 @@ private fun CoverHero(
                 text = listOfNotNull(
                     "Visit",
                     session.serviceType.takeIf { it.isNotBlank() }?.let { LocalServiceCatalog.current.nameOf(it) },
-                    sessionWindow(session),
+                    kinTaleSessionWindow(session),
                 ).joinToString(" · "),
                 style = AuntieTheme.typography.labelSmall,
                 color = c.background.copy(alpha = 0.9f),
@@ -1276,27 +1340,11 @@ private fun hasContent(report: KinCareReport): Boolean =
         // custom-fields-only tale still persists + sends.
         report.formValues.values.any { it.isNotBlank() }
 
-private fun sessionWindow(s: KinCareSession): String {
-    val start = shortIso(s.startTime)
-    val end   = shortIsoTimeOnly(s.endTime)
-    return when {
-        start.isBlank() && end.isBlank() -> "Time TBD"
-        end.isBlank()                    -> start
-        else                             -> "$start to $end"
-    }
-}
-
-private fun shortIso(iso: String): String =
-    runCatchingCancellable {
-        if (iso.length < 16) return@runCatchingCancellable iso
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time  = iso.substring(11, 16)
-        "$month $day · $time"
-    }.getOrDefault(iso)
-
-private fun shortIsoTimeOnly(iso: String): String =
-    runCatchingCancellable { if (iso.length >= 16) iso.substring(11, 16) else iso }
-        .getOrDefault(iso)
-
-private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+/**
+ * #2095: the visit's window on the BUSINESS's clock, Auntie Time's own
+ * [com.tribetails.auntieos.web.screens.sessions.sessionWindow]. This screen kept
+ * a copy that printed the stored characters, so a visit stored as an instant
+ * read its UTC day and hour ("Nov 12 · 05:30" for 11:30 PM on Nov 11).
+ */
+internal fun kinTaleSessionWindow(s: KinCareSession, zone: TimeZone = businessTimeZone()): String =
+    com.tribetails.auntieos.web.screens.sessions.sessionWindow(s, zone)

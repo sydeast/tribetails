@@ -17,8 +17,9 @@ class ListDateYearTest {
     fun `inbox and visit rows omit this year and name another`() {
         assertEquals("Jul 2 · 14:02", shortDateTime("2026-07-02T14:02:00Z", 2026))
         assertEquals("Jul 2, 2025 · 14:02", shortDateTime("2025-07-02T14:02:00Z", 2026))
-        assertEquals("Jul 2 · 14:02", shortIso("2026-07-02T14:02:00Z", 2026))
-        assertEquals("Jul 2, 2025 · 14:02", shortIso("2025-07-02T14:02:00Z", 2026))
+        // #2095: a visit time reads on the business clock; UTC here keeps this test about the year.
+        assertEquals("Jul 2 · 14:02", shortIso("2026-07-02T14:02:00Z", 2026, TimeZone.UTC))
+        assertEquals("Jul 2, 2025 · 14:02", shortIso("2025-07-02T14:02:00Z", 2026, TimeZone.UTC))
     }
     @Test
     fun `an unreadable stamp is shown as stored`() {

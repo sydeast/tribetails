@@ -975,9 +975,11 @@ class HomeViewModelTest {
     fun `cash flow outstanding and gatekeeper gaps computed from loaded data`() = runTest(testDispatcher) {
         coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(
             listOf(
-                com.tribetails.auntieos.data.model.Invoice(id = "i1", status = "unpaid", total = 120.0, amountDue = 120.0, date = "2026-06-01"),
-                com.tribetails.auntieos.data.model.Invoice(id = "i2", status = "unpaid", total = 30.5, amountDue = 30.5, date = "2026-06-02"),
+                com.tribetails.auntieos.data.model.Invoice(id = "i1", status = "open", total = 120.0, amountDue = 120.0, date = "2026-06-01"),
+                com.tribetails.auntieos.data.model.Invoice(id = "i2", status = "open", total = 30.5, amountDue = 30.5, date = "2026-06-02"),
                 com.tribetails.auntieos.data.model.Invoice(id = "i3", status = "paid", total = 99.0, amountDue = 0.0, date = "2026-06-02"),
+                // #2000: an unsent draft has gone to nobody, so it is not owed.
+                com.tribetails.auntieos.data.model.Invoice(id = "i4", status = "draft", total = 28.0, amountDue = 28.0, date = "2026-06-02"),
             ),
         )
         // The business's today, not the JVM's: HomeViewModel counts from the

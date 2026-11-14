@@ -216,3 +216,50 @@ describe('NotificationsList tap (#1316)', () => {
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/kintales', search: { tale: 'tale-2' } });
   });
 });
+describe('#1831, #1898, #1913: each notice says what happened and opens what it is about', () => {
+  const NOTICES = [
+    item({ id: 'n-arrived', key: 'kincare.auntie.arrived', category: 'visit', title: 'Your Auntie has arrived', description: 'Drop-in visit for Rex on Tue, Nov 17 at 9:00 AM', targetType: 'booking', targetId: 'v7', visitId: 'v7', batchId: 'b7' }),
+    item({ id: 'n-comments', key: 'kintale.comment.added', category: 'kintale', title: 'New comment on your KinTale', description: 'Jamie and Sam commented on 2 KinTales', targetType: 'kintale', targetId: '' }),
+    item({ id: 'n-kin', key: 'kin.removal.declined', category: 'account', title: 'Your Kin removal request was declined', description: 'Mochi is staying on your profile', targetType: 'kin', targetId: 'kin-2', detail: { householdNote: 'Mochi still has a visit booked.' } }),
+    item({ id: 'n-gone', key: 'kin.removal.archived', category: 'account', title: 'A Kin you asked to remove was removed', description: 'Pip is no longer on your profile', targetType: 'kin', targetId: '' }),
+    item({ id: 'n-profile', key: 'profile.updated', category: 'account', title: 'Your profile was updated', description: '', targetType: 'household', targetId: '' }),
+  ];
+  async function tap(name: RegExp) {
+    mocks.list.mockResolvedValue(page(NOTICES));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    await userEvent.click(screen.getByRole('button', { name }));
+  }
+  it('draws the content line under each title, and a row with no facts as its title alone', async () => {
+    mocks.list.mockResolvedValue(page(NOTICES));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    const row = (name: RegExp) => screen.getByRole('button', { name });
+    expect(row(/has arrived/).querySelector('.nl-row__desc')?.textContent).toBe('Drop-in visit for Rex on Tue, Nov 17 at 9:00 AM');
+    expect(row(/removal request was declined/).querySelector('.nl-row__desc')?.textContent).toBe('Mochi is staying on your profile');
+    expect(row(/removal request was declined/).querySelector('.nl-row__note')?.textContent).toBe('Mochi still has a visit booked.');
+    expect(row(/profile was updated/).querySelector('.nl-row__desc')).toBeNull();
+  });
+  it('opens the visit the Auntie arrived for', async () => {
+    await tap(/has arrived/);
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/schedule/$visitId', params: { visitId: 'v7' } });
+  });
+  it('#1898: comments across tales open the KinTales list', async () => {
+    await tap(/New comment on your KinTale/);
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/kintales', search: {} });
+  });
+  it('#1913: the declined removal opens that Kin', async () => {
+    await tap(/removal request was declined/);
+    expect(mocks.markRead).toHaveBeenCalledWith('n-kin');
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/kin/$kinId', params: { kinId: 'kin-2' } });
+  });
+  it('a Kin that was removed opens the Kin list', async () => {
+    await tap(/asked to remove was removed/);
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/kin' });
+  });
+  it('a profile change opens Tribe', async () => {
+    await tap(/profile was updated/);
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/tribe' });
+  });
+});
+

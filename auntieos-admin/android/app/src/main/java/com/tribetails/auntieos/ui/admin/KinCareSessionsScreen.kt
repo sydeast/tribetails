@@ -57,6 +57,7 @@ import com.tribetails.auntieos.data.repository.BookingNotesRepository
 import com.tribetails.auntieos.location.LocationTrackingService
 import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.domain.VisitNoticeReach
+import com.tribetails.auntieos.domain.ClockStep
 import com.tribetails.auntieos.domain.visitNoticeConfirmLine
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
@@ -962,6 +963,9 @@ private fun ActionRow(
     onPreviewNotice: ((VisitNoticeReach) -> Unit) -> Unit = {},
 ) {
     var showOMWDialog by remember { mutableStateOf(false) }
+    // #2039: an Arrived that does not fit the booking asks first.
+    var arrivalWarning by remember(session.id) { mutableStateOf<String?>(null) }
+    val clockZone = LocalBusinessZone.current
     // #1840: asked fresh each time the confirm opens. "Checking" until it lands.
     var omwReach by remember(session.id) { mutableStateOf<VisitNoticeReach>(VisitNoticeReach.Checking) }
     // Which opening of the confirm an answer belongs to, so a slow answer to an
@@ -972,6 +976,14 @@ private fun ActionRow(
     var officeNoteSending by remember(session.id) { mutableStateOf(false) }
     var officeNoteError by remember(session.id) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    // The Arrived write, unchanged: run straight from the tap, or after the
+    // #2039 warning is confirmed.
+    fun arrive() {
+        startGpsTracking(context, session.id, session.kinfolkId)
+        // #1794: tells the household, as Home's Arrived does.
+        val at = nowIso()
+        onClock(mapOf("status" to "ARRIVED", "arrivedAt" to at), VisitNotifier.Event.ARRIVED, at, "Arrived.")
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -996,10 +1008,8 @@ private fun ActionRow(
                 PrimaryButton(
                     label = "Arrived",
                     onClick = {
-                        startGpsTracking(context, session.id, session.kinfolkId)
-                        // #1794: tells the household, as Home's Arrived does.
-                        val at = nowIso()
-                        onClock(mapOf("status" to "ARRIVED", "arrivedAt" to at), VisitNotifier.Event.ARRIVED, at, "Arrived.")
+                        val warning = clockStepWarningFor(ClockStep.ARRIVED, session, clockZone)
+                        if (warning == null) arrive() else arrivalWarning = warning
                     },
                     modifier = Modifier.fillMaxWidth(),
                     leading = { Icon(Lucide.MapPin, contentDescription = null, modifier = Modifier.size(16.dp)) },
@@ -1068,6 +1078,17 @@ private fun ActionRow(
         }
     }
 
+    arrivalWarning?.let { warning ->
+        ClockStepWarningDialog(
+            step = ClockStep.ARRIVED,
+            warning = warning,
+            onConfirm = {
+                arrivalWarning = null
+                arrive()
+            },
+            onDismiss = { arrivalWarning = null },
+        )
+    }
     if (showOMWDialog) {
         AuntieModal(
             onDismissRequest = { showOMWDialog = false },

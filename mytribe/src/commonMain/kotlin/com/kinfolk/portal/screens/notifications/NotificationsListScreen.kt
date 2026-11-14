@@ -73,6 +73,13 @@ fun NotificationsListScreen(
     onOpenSchedule: () -> Unit = {},
     onOpenInvoice: (invoiceId: String) -> Unit = {},
     onOpenKinTale: (taleId: String) -> Unit = {},
+    /** #1898: comments across several tales. */
+    onOpenKinTales: () -> Unit = {},
+    /** #1913: the Kin a notice is about, or the Kin tab when it is no longer listed. */
+    onOpenKin: (kinId: String) -> Unit = {},
+    onOpenKinList: () -> Unit = {},
+    /** The household's own profile. */
+    onOpenTribe: () -> Unit = {},
     /** #1874: a reply from the office. */
     onOpenMessages: () -> Unit = {},
     /** The bell's count: the server's number on load, one less per tap. */
@@ -129,6 +136,10 @@ fun NotificationsListScreen(
             NotificationTarget.Schedule -> onOpenSchedule()
             is NotificationTarget.Invoice -> onOpenInvoice(target.invoiceId)
             is NotificationTarget.KinTale -> onOpenKinTale(target.taleId)
+            NotificationTarget.KinTales -> onOpenKinTales()
+            is NotificationTarget.Kin -> onOpenKin(target.kinId)
+            NotificationTarget.KinList -> onOpenKinList()
+            NotificationTarget.Household -> onOpenTribe()
             NotificationTarget.Messages -> onOpenMessages()
             NotificationTarget.None -> Unit
         }
@@ -222,7 +233,11 @@ private fun NotificationRow(item: NotificationItem, nowMs: Long, onClick: () -> 
                 ),
             )
             if (item.description.isNotBlank()) {
-                Text(item.description, style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
+                Text(
+                    item.description,
+                    style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
+                    modifier = Modifier.testTag("notificationLine-${item.id}"),
+                )
             }
             // #2030: the office's note on its answer, as written.
             item.householdNote?.let { note ->

@@ -12,6 +12,7 @@ import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
 import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
+import { hiddenFromHousehold } from '../lib/quoteDecision';
 
 export const Args = z.object({
   invoiceId: z.string().min(1),
@@ -93,6 +94,10 @@ export async function redeemCreditHandler(req: CallableRequest<unknown>): Promis
   const invKinfolkId = typeof inv['kinfolkId'] === 'string' ? (inv['kinfolkId'] as string) : null;
   if (!invKinfolkId) throw new HttpsError('failed-precondition', 'Invoice not linked to a tribe.');
   if (!allowed.includes(invKinfolkId)) throw new HttpsError('permission-denied', 'No access.');
+  // #1906: an invoice the household may not see (an unsent draft, or an
+  // archived quote) is answered exactly as a missing one. Asked again inside
+  // the transaction below, on the copy the claim is made from.
+  if (hiddenFromHousehold(inv)) throw new HttpsError('not-found', 'Invoice not found.');
   // D-2026-09-28-BILLING-ACCESS-PAYS: using credit is billing access, not
   // primary-only. `creditRedeemedByUid` below records whoever redeemed.
   await requireBillingActor(uid, invKinfolkId, req.auth?.token?.admin === true, 'redeemCredit');
@@ -106,6 +111,7 @@ export async function redeemCreditHandler(req: CallableRequest<unknown>): Promis
     const snap = await tx.get(invoiceRef);
     if (!snap.exists) throw new HttpsError('not-found', 'Invoice not found.');
     const txInv = snap.data() as Record<string, unknown>;
+    if (hiddenFromHousehold(txInv)) throw new HttpsError('not-found', 'Invoice not found.');
 
     // `status` is canonical; `invoiceStatus` is the legacy spelling still written
     // by the sandbox seed, so it is read as a fallback.

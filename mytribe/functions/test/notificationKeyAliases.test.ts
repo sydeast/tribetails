@@ -124,10 +124,11 @@ describe('notification key aliases: dispatch', () => {
     const written = ctx.writes.find((w) => w.path.startsWith('notifications/'));
     expect(written).toBeTruthy();
     expect(written!.data.key).toBe(CANONICAL);
-    // #2093: the household's copy carries the household title (#1372) and
-    // the household's line under it, not the operator's.
+    // #2093: the household's copy carries the household title (#1372). #1831:
+    // the line under it is the tale's own facts, and this fixture holds no
+    // tale, so there is none; never the operator's or the settings wording.
     expect(written!.data.title).toBe('Your KinTale is ready');
-    expect(written!.data.description).toBe('When your Auntie posts the KinTale from a KinCare visit.');
+    expect(written!.data.description).toBe('');
   });
 
   /**

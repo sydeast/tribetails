@@ -577,8 +577,10 @@ describe('rules: #984 an Auntie assigned a tribe is still not kinfolk', () => {
    * Operator ruling 2026-09-27: an Auntie may be assigned tribes through
    * `clients/{uid}.kinfolkIds`. With exactly one, `syncKinfolkClaim` mints
    * `role: 'kinfolk'` and `kinfolkId` on top of her `staffRole`. Without the
-   * `!hasAuntieRole()` conjunct in `isKinfolk()`, that token reads the
+   * `!hasAuntieRole()` conjunct in `isKinfolk()`, that token read the
    * household's invoices through the kinfolk branch of `match /invoices`.
+   * #1906 removed that branch (household reads match what the portal shows),
+   * so the refusal below now holds twice over.
    */
   it('refuses her the assigned household invoices', async () => {
     const env = await getEnv();
@@ -598,11 +600,11 @@ describe('rules: #984 an Auntie assigned a tribe is still not kinfolk', () => {
     await assertSucceeds(db.doc('kinfolk/k1').get());
     await assertSucceeds(db.doc('kin/kin1').get());
   });
-  it('leaves a real kinfolk reading their own invoices', async () => {
+  it('#1906 a real kinfolk reads their bills through getMyInvoices, not the document', async () => {
     const env = await getEnv();
     await seed('invoices/inv1', { kinfolkId: 'k1', amountMinor: 5000 });
     const db = env.authenticatedContext('u-kin', { role: 'kinfolk', kinfolkId: 'k1' }).firestore();
-    await assertSucceeds(db.doc('invoices/inv1').get());
+    await assertFails(db.doc('invoices/inv1').get());
   });
 });
 /**

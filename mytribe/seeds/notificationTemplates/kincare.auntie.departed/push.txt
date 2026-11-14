@@ -1,1 +1,1 @@
-Visit complete. All wrapped up with your {{serviceType}} and everyone's settled. Tap for details.
+Visit complete. All wrapped up with your {{serviceType}}{{#if kinName}} for {{kinName}}{{/if}} and everyone's settled. Tap for details.

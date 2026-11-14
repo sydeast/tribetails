@@ -4,6 +4,8 @@ import type { InvoiceEntry } from '../api/invoices';
 import { formatJoinDate } from './joinDate';
 import { str } from './coerce';
 import { parseFlexibleDate } from './bookingFormat';
+import { businessInstantMs } from './businessZoneTime';
+import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 
 /**
  * The three feed joins on the household profile: Recent KinTales, Upcoming
@@ -69,6 +71,11 @@ function taleSortKey(r: KinTaleEntry): string {
  * mock heads this card "next 7 days", so the profile passes a bound and the card
  * says what the bound is; a caller that wants everything ahead passes null and
  * gets the Kotlin's original behaviour unchanged.
+ *
+ * #2095: compared as moments, never as text. A start is stored as a UTC
+ * instant or as the business's wall clock with no zone, and `nowIso` is an
+ * instant, so a string compare set the two shapes five or six hours apart. A
+ * zone-less start is read on the business clock in `businessZone`.
  */
 export function upcomingVisitsFor(
   sessions: readonly SessionEntry[],
@@ -76,20 +83,24 @@ export function upcomingVisitsFor(
   nowIso: string,
   throughIso: string | null = null,
   limit: number = PROFILE_FEED_LIMIT,
+  businessZone: string = DEFAULT_BUSINESS_TIME_ZONE,
 ): SessionEntry[] {
+  const nowMs = businessInstantMs(nowIso, businessZone);
+  if (nowMs === null) return [];
+  const throughMs = throughIso === null ? null : businessInstantMs(throughIso, businessZone);
   return sessions
     .filter((s) => str(s.kinfolkId) === kinfolkId)
     .filter((s) => {
       const state = str(s.status).toLowerCase();
       return state === 'scheduled' || state === 'confirmed';
     })
-    .filter((s) => {
-      const start = str(s.startTime);
-      if (start === '' || start < nowIso) return false;
-      return throughIso === null || start <= throughIso;
+    .map((s) => ({ s, at: businessInstantMs(str(s.startTime), businessZone) }))
+    .filter((row): row is { s: SessionEntry; at: number } => {
+      if (row.at === null || row.at < nowMs) return false;
+      return throughMs === null || row.at <= throughMs;
     })
-    .slice()
-    .sort((a, b) => str(a.startTime).localeCompare(str(b.startTime)))
+    .sort((a, b) => a.at - b.at)
+    .map((row) => row.s)
     .slice(0, limit);
 }
 

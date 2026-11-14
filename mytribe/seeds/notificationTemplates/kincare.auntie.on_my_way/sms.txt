@@ -1,1 +1,1 @@
-It's Auntie, on my way over for your {{serviceType}} now. See you shortly!
+It's Auntie, on my way over for your {{serviceType}}{{#if kinName}} with {{kinName}}{{/if}}{{#if etaMinutes}}, about {{etaMinutes}} minutes out{{/if}}. See you shortly!

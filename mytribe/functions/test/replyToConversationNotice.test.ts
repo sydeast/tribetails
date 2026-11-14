@@ -78,9 +78,10 @@ describe('#1874 a reply from the office tells the household', () => {
       targetType: 'conversation',
       targetId: 'kf1',
       // The row the household reads on their notifications list: the
-      // catalog's household words (#2093), "your Auntie" with no business name set.
+      // catalog's household title (#2093), "your Auntie" with no business name
+      // set, over the first words of the reply itself (#1831).
       title: 'New message from your Auntie',
-      description: 'When your Auntie writes to you in Messages.',
+      description: 'Thanks, see you Tuesday!',
     });
   });
 

@@ -348,6 +348,18 @@ describe('weeklyRevenue and outstandingTotals', () => {
     expect(weeklyRevenue(rows, '2026-07-20', '2026-07-22')).toBe(30);
     expect(outstandingTotals(rows)).toEqual({ total: 9, count: 1 });
   });
+  it('#2000 owes nothing on an unsent draft or an unanswered quote: only a sent, open balance', () => {
+    const rows = [
+      inv({ _id: 'o', status: 'open', amountDue: 19.5 }),
+      inv({ _id: 'd', status: 'draft', amountDue: 28 }),
+      inv({ _id: 'q', status: 'quote', amountDue: 40 }),
+      inv({ _id: 'c', status: 'cancelled', amountDue: 30 }),
+      // No readable stamp: never guessed into money owed.
+      inv({ _id: 'u', status: 'OPEN' as InvoiceEntry['status'], amountDue: 12 }),
+      inv({ _id: 'z', status: 'open', amountDue: 0 }),
+    ];
+    expect(outstandingTotals(rows)).toEqual({ total: 19.5, count: 1 });
+  });
   it('skips an invoice whose date cannot be placed in a week', () => {
     expect(weeklyRevenue([inv({ date: 'Net 14' })], '2026-07-20', '2026-07-22')).toBe(0);
   });

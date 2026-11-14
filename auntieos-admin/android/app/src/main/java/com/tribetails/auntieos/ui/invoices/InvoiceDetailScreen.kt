@@ -1576,7 +1576,11 @@ private fun LinkedSessionRow(
     val c = AuntieTheme.colors
     val hairline = AuntieTheme.dims.borderHairline
     val ruleColor = c.borderSoft
-    val dateLabel = session.completedAt.orEmpty().take(10).ifBlank { session.startTime.take(10) }.ifBlank { "-" }
+    // #2095: the business day, never the stored instant's UTC day.
+    val dayZone = com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current
+    val dateLabel = com.tribetails.auntieos.domain.storedBusinessDay(session.completedAt, dayZone)
+        .ifBlank { com.tribetails.auntieos.domain.storedBusinessDay(session.startTime, dayZone) }
+        .ifBlank { "-" }
     val statusText = session.status.lowercase().replace('_', ' ')
     Row(
         modifier = Modifier
@@ -2150,6 +2154,7 @@ private fun LinkSessionsDialog(
     catalog: com.tribetails.auntieos.ui.admin.ServiceCatalog = com.tribetails.auntieos.ui.admin.rememberServiceCatalog(),
 ) {
     val c = AuntieTheme.colors
+    val pickerZone = com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current
     AuntieModal(
         onDismissRequest = onDismiss,
         title = "Link Sessions",
@@ -2198,8 +2203,9 @@ private fun LinkSessionsDialog(
                 verticalArrangement   = Arrangement.spacedBy(8.dp),
             ) {
                 available.forEach { session ->
-                    val dateLabel = session.completedAt.orEmpty().take(10)
-                        .ifBlank { session.startTime.take(10) }
+                    // #2095: the business day, never the stored instant's UTC day.
+                    val dateLabel = com.tribetails.auntieos.domain.storedBusinessDay(session.completedAt, pickerZone)
+                        .ifBlank { com.tribetails.auntieos.domain.storedBusinessDay(session.startTime, pickerZone) }
                         .ifBlank { "-" }
                     // #1254: shown, not hidden, and not tickable: another
                     // invoice already bills it.

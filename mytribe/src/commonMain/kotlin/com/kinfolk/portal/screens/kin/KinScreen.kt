@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -256,6 +257,33 @@ fun KinDetailHost(
     onBack: () -> Unit,
     onEdit: (String) -> Unit,
 ) {
+    // The roster is read by the Kin tab. Opened from somewhere else first (a
+    // notice, Tribe, the Gallery), nothing has read it yet, and "Kin not found"
+    // would be said about a Kin that is there: read it here, and wait visibly.
+    LaunchedEffect(kinId) {
+        if (controller.data == null) controller.reload()
+    }
+    val data = controller.data
+    val error = controller.error
+    if (data == null) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
+        ) {
+            ScreenHeader(title = "The Kin")
+            if (error != null) {
+                EmptyState(title = "Couldn't load Kin", message = error)
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(KinfolkSpacing.l).testTag("kinDetailLoading"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    KinSpinner()
+                }
+            }
+        }
+        return
+    }
     val kin = controller.find(kinId)
     if (kin == null) {
         Column(
