@@ -100,6 +100,8 @@ import {
   scaffoldKinTaleDraft,
   draftFromKinTaleEntry,
   pickableSessions,
+  savedDraftForVisit,
+  sentKinTaleEditNote,
 } from './KinTaleCompose';
 
 function report(over: Partial<KinTaleEntry> = {}): KinTaleEntry {
@@ -1047,5 +1049,165 @@ describe('KinTaleCompose: Delete draft (#1631)', () => {
     render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
     await screen.findByLabelText(/headline/i);
     expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+  });
+});
+describe('savedDraftForVisit (pure, #2040)', () => {
+  it('finds the saved draft of this visit', () => {
+    const draft = report({ _id: 'd1', sessionId: 'sess1' });
+    expect(savedDraftForVisit([report({ _id: 'other', sessionId: 'sess2' }), draft], 'sess1')).toBe(draft);
+  });
+  it('ignores a sent tale, a tale with a send stamp, and a row of no known status', () => {
+    const rows = [
+      report({ _id: 'sent', status: 'SENT', sentAt: '2026-07-16T16:00:00.000Z' }),
+      report({ _id: 'stamped', status: 'DRAFT', sentAt: '2026-07-16T16:00:00.000Z' }),
+      report({ _id: 'blank', status: '' }),
+      report({ _id: 'failed', status: 'FAILED' }),
+    ];
+    expect(savedDraftForVisit(rows, 'sess1')).toBeNull();
+  });
+  it('picks the newest of two drafts: latest updatedAt, then createdAt, then id', () => {
+    const older = report({ _id: 'a', updatedAt: '2026-07-16T15:00:00.000Z', createdAt: '2026-07-16T15:00:00.000Z' });
+    const newer = report({ _id: 'b', updatedAt: '2026-07-16T17:00:00.000Z', createdAt: '2026-07-16T14:00:00.000Z' });
+    expect(savedDraftForVisit([older, newer], 'sess1')?._id).toBe('b');
+    const tieA = report({ _id: 'a', updatedAt: '', createdAt: '2026-07-16T15:00:00.000Z' });
+    const tieB = report({ _id: 'b', updatedAt: '', createdAt: '2026-07-16T13:00:00.000Z' });
+    expect(savedDraftForVisit([tieB, tieA], 'sess1')?._id).toBe('a');
+    const sameA = report({ _id: 'a', updatedAt: 'x', createdAt: 'x' });
+    const sameB = report({ _id: 'b', updatedAt: 'x', createdAt: 'x' });
+    expect(savedDraftForVisit([sameA, sameB], 'sess1')?._id).toBe('b');
+  });
+  it('a blank visit id matches nothing', () => {
+    expect(savedDraftForVisit([report({ sessionId: '' })], '')).toBeNull();
+  });
+});
+describe('KinTaleCompose: "Send the KinTale" reopens the saved draft (#2040)', () => {
+  it('opens the visit\'s saved draft, words and all, as an edit of it', async () => {
+    mockStreams({
+      sessions: { status: 'ready', data: [session({})] },
+      reports: { status: 'ready', data: [report({ title: 'Park day', bodyCopy: 'Biscuit found a stick.' })] },
+    });
+    saveKinTaleDraft.mockResolvedValue('tale1');
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    expect(await screen.findByDisplayValue('Park day')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Biscuit found a stick.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Edit tale' })).toBeInTheDocument();
+    // Saving writes to the same draft, diffed against it as read: no second draft.
+    await user.type(screen.getByDisplayValue('Park day'), '!');
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledTimes(1));
+    expect(saveKinTaleDraft.mock.calls[0]![0]).toEqual(expect.objectContaining({ _id: 'tale1', title: 'Park day!' }));
+    expect(saveKinTaleDraft.mock.calls[0]![1]).toEqual(expect.objectContaining({ _id: 'tale1', title: 'Park day' }));
+  });
+  it('opens the newest when the visit has two saved drafts', async () => {
+    mockStreams({
+      sessions: { status: 'ready', data: [session({})] },
+      reports: {
+        status: 'ready',
+        data: [
+          report({ _id: 'old', title: 'First go', updatedAt: '2026-07-16T15:00:00.000Z' }),
+          report({ _id: 'new', title: 'Second go', updatedAt: '2026-07-16T16:30:00.000Z' }),
+        ],
+      },
+    });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    expect(await screen.findByDisplayValue('Second go')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('First go')).toBeNull();
+  });
+  it('starts a new tale when the only KinTale of the visit is another visit\'s or already sent', async () => {
+    mockStreams({
+      sessions: { status: 'ready', data: [session({})] },
+      reports: {
+        status: 'ready',
+        data: [
+          report({ _id: 'elsewhere', sessionId: 'sess2', title: 'Other visit' }),
+          report({ _id: 'gone', status: 'SENT', sentAt: '2026-07-16T16:00:00.000Z', title: 'Already home' }),
+        ],
+      },
+    });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    const headline = await screen.findByLabelText(/headline/i);
+    expect(headline).toHaveValue('');
+    expect(screen.getByRole('heading', { name: 'New tale' })).toBeInTheDocument();
+  });
+  it('a failed look for the saved draft shows its error, never a blank tale', async () => {
+    mockStreams({
+      sessions: { status: 'ready', data: [session({})] },
+      reports: { status: 'error', message: 'permission-denied' },
+    });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    expect(await screen.findByText(/couldn.t load this visit's saved draft/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/headline/i)).toBeNull();
+  });
+  it('waits for the look to answer before offering a composer', async () => {
+    mockStreams({ sessions: { status: 'ready', data: [session({})] }, reports: { status: 'loading' } });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    expect(await screen.findByText(/loading this visit's saved draft/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/headline/i)).toBeNull();
+  });
+});
+describe('KinTaleCompose: editing a sent KinTale (#1940)', () => {
+  const sent = () =>
+    report({ title: 'Park day', status: 'SENT', sentAt: '2026-07-16T16:00:00.000Z', sentVia: 'pending' });
+  it('opens it as sent: Sent pill, the sent note, and Save changes as the only action', async () => {
+    mockStreams({ reports: { status: 'ready', data: [sent()] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByDisplayValue('Park day');
+    expect(screen.getByText('Sent')).toBeInTheDocument();
+    expect(screen.queryByText('Draft')).toBeNull();
+    expect(screen.getByText(sentKinTaleEditNote('The Whitfields'))).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /save draft/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /send/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+  });
+  it('saves only the changed fields, never a status or send stamp, and never sends', async () => {
+    mockStreams({ reports: { status: 'ready', data: [sent()] } });
+    saveKinTaleDraft.mockResolvedValue('tale1');
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.type(await screen.findByDisplayValue('Park day'), '!');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledTimes(1));
+    const [written, baseline] = saveKinTaleDraft.mock.calls[0]! as [KinTaleDraft, KinTaleDraft];
+    expect(written).toEqual(expect.objectContaining({ _id: 'tale1', title: 'Park day!' }));
+    expect(baseline).toEqual(expect.objectContaining({ _id: 'tale1', title: 'Park day' }));
+    expect(written).not.toHaveProperty('status');
+    expect(written).not.toHaveProperty('sentAt');
+    expect(await screen.findByText('Changes saved.')).toBeInTheDocument();
+    expect(sendKinTale).not.toHaveBeenCalled();
+  });
+  it('says what went wrong when the save fails, and still sends nothing', async () => {
+    mockStreams({ reports: { status: 'ready', data: [sent()] } });
+    saveKinTaleDraft.mockRejectedValue(new Error('offline'));
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByDisplayValue('Park day');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText(/couldn't save your changes: offline/i)).toBeInTheDocument();
+    expect(sendKinTale).not.toHaveBeenCalled();
+  });
+  it('cannot save a sent tale emptied out', async () => {
+    mockStreams({ reports: { status: 'ready', data: [sent()] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.clear(await screen.findByDisplayValue('Park day'));
+    await user.clear(screen.getByDisplayValue('Biscuit had a wonderful time at the park today.'));
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+  });
+  it('a draft still opens as a draft, with Save draft and Send', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ title: 'Park day' })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await screen.findByDisplayValue('Park day');
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+    expect(screen.queryByText(/this kintale has been sent/i)).toBeNull();
+    expect(screen.getByRole('button', { name: /save draft/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send to the whitfields/i })).toBeInTheDocument();
+  });
+});
+describe('sentKinTaleEditNote (pure, #1940)', () => {
+  it('names the household and says when a notice goes out', () => {
+    expect(sentKinTaleEditNote('The Whitfields')).toBe(
+      'This KinTale has been sent. The Whitfields will see your changes once you save them. New words or a new photo also send them a notice that you added to it, at most one a minute.',
+    );
+  });
+  it('falls back to "The household" for a blank name', () => {
+    expect(sentKinTaleEditNote('  ')).toMatch(/^This KinTale has been sent\. The household will see/);
   });
 });
