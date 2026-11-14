@@ -161,6 +161,15 @@ internal fun groupBookingsByStatus(rows: List<EnhancedBooking>): List<BookingSec
 internal fun List<BookingSection>.section(key: BookingSectionKey): BookingSection =
     first { it.key == key }
 
+/**
+ * #1868: the bookings the month grid and the week strip mark a day with. A
+ * cancelled one (`REJECTED`) no longer holds the day, so it neither adds a dot
+ * nor counts toward a cell's "+N"; the day's agenda still lists it, faded.
+ * Pure; tested in `BookingSectionsTest`.
+ */
+internal fun liveGridBookings(rows: List<EnhancedBooking>): List<EnhancedBooking> =
+    rows.filter { it.status != BookingStatus.REJECTED }
+
 enum class CalendarViewType(val displayName: String) {
     DAY("Day"),
     WEEK("Week"),
@@ -774,7 +783,7 @@ private fun ScheduleViewScreenContent(
                     if (state.viewMode == CalendarViewMode.MONTH) {
                         EnhancedMonthView(
                             currentDate     = state.selectedDate,
-                            bookings        = filteredBookings,
+                            bookings        = liveGridBookings(filteredBookings),
                             timeSlots       = state.timeSlots,
                             catalog         = serviceCatalog,
                             onBookingClick  = { viewModel.selectBooking(it) },
@@ -795,7 +804,7 @@ private fun ScheduleViewScreenContent(
                             days         = weekDays,
                             selectedDate = state.selectedDate,
                             hasItems     = { day ->
-                                filteredBookings.any { booking ->
+                                liveGridBookings(filteredBookings).any { booking ->
                                     parseIsoDateTimeOrNull(booking.startDateTime)?.toLocalDate() == day
                                 }
                             },

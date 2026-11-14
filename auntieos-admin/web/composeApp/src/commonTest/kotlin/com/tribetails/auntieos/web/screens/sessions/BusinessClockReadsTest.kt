@@ -12,6 +12,7 @@ import com.tribetails.auntieos.web.screens.invoices.visitLineDescription
 import com.tribetails.auntieos.web.screens.kintales.kinTaleSessionWindow
 import com.tribetails.auntieos.web.screens.schedule.canonicalVisitStatus
 import com.tribetails.auntieos.web.screens.schedule.isCancelledVisitStatus
+import com.tribetails.auntieos.web.screens.schedule.liveVisitsOn
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -118,6 +119,20 @@ class BusinessClockReadsTest {
         assertFalse(isCancelledVisitStatus("SCHEDULED"))
         assertEquals("CANCELLED", canonicalVisitStatus("canceled"))
         assertEquals("ARRIVED", canonicalVisitStatus("arrived"))
+    }
+    @Test
+    fun `the week and month grids draw and count live visits only`() {
+        val day = "2026-11-12"
+        val byDate = mapOf(
+            day to listOf(
+                visit("live", "2026-11-12T18:30:00"),
+                visit("two-l", "2026-11-12T19:00:00", status = "CANCELLED"),
+                visit("one-l", "2026-11-12T19:30:00", status = "CANCELED"),
+                visit("lower", "2026-11-12T20:00:00", status = "cancelled"),
+            ),
+        )
+        assertEquals(listOf("live"), liveVisitsOn(byDate, day).map { it._id })
+        assertEquals(emptyList(), liveVisitsOn(byDate, "2026-11-13"))
     }
 
     @Test

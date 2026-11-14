@@ -127,6 +127,9 @@ vi.mock('../api/householdData', async (orig) => ({
 vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: {}, serviceDurations: {}, timeBlocks: [] }),
 }));
+// #2095: the Upcoming KinCare panel reads the business zone (a business_settings
+// read). Chicago, as the hook's own default.
+vi.mock('../lib/useBusinessZone', () => ({ useBusinessZone: () => 'America/Chicago' }));
 
 import { KinfolkProfile } from './KinfolkProfile';
 import { mergeKinfolkProfile } from '../api/kinfolkProfile';

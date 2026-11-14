@@ -167,9 +167,11 @@ fun NewInvoiceDialog(
     /** The lines this invoice would carry, and the live total under them. */
     // #1744: each visit line names its KinCare, never the stored `visit_60`.
     val catalog = rememberServiceCatalog()
+    // #2095: each line's day on the STORED business zone, the one the due date
+    // above is counted in, rather than the screen's Chicago default.
+    val invoiceZone = com.tribetails.auntieos.data.model.businessZone(termsSetting.timeZone)
     val money = if (onWork) composerMoney(
-        sessions, selected, prices, extraLines, invoiceDiscountText, catalog,
-        com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current,
+        sessions, selected, prices, extraLines, invoiceDiscountText, catalog, invoiceZone,
     ) else null
 
     val blocked = if (termsSetting.loading) TERMS_LOADING else composerBlockedReason(
@@ -337,23 +339,28 @@ fun NewInvoiceDialog(
                 color = c.textDim,
             )
 
-            onWork -> UninvoicedVisitsPicker(
-                kinfolkId = pick.id,
-                householdLabel = householdLabel,
-                todayIso = todayIso,
-                selected = selected,
-                onSelectedChange = { selected = it },
-                prices = prices,
-                onPriceChange = { id, text -> prices = prices + (id to text) },
-                onSessionsLoaded = { sessions = it },
-                onWriteBlankInvoice = { path = InvoiceCreatePath.BLANK },
-                onOpenVisit = onOpenVisit,
-                load = loadUninvoiced,
-                setDoNotInvoice = setDoNotInvoice,
-                disabled = submitting,
-                catalog = catalog,
-                forQuote = isQuote,
-            )
+            onWork -> androidx.compose.runtime.CompositionLocalProvider(
+                // #2095: the picker's day labels on the same stored zone as the lines.
+                com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone provides invoiceZone,
+            ) {
+                UninvoicedVisitsPicker(
+                    kinfolkId = pick.id,
+                    householdLabel = householdLabel,
+                    todayIso = todayIso,
+                    selected = selected,
+                    onSelectedChange = { selected = it },
+                    prices = prices,
+                    onPriceChange = { id, text -> prices = prices + (id to text) },
+                    onSessionsLoaded = { sessions = it },
+                    onWriteBlankInvoice = { path = InvoiceCreatePath.BLANK },
+                    onOpenVisit = onOpenVisit,
+                    load = loadUninvoiced,
+                    setDoNotInvoice = setDoNotInvoice,
+                    disabled = submitting,
+                    catalog = catalog,
+                    forQuote = isQuote,
+                )
+            }
 
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(

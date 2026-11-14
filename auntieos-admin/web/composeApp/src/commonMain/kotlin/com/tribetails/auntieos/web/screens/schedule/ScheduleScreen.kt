@@ -352,7 +352,7 @@ fun ScheduleScreen() {
                             anchor = selected ?: today,
                             weeks = 5,
                             selected = selected,
-                            countFor = { day -> sessionsByDate[day.toString()].orEmpty().count { !isCancelledVisitStatus(it.status) } },
+                            countFor = { day -> liveVisitsOn(sessionsByDate, day.toString()).size },
                             onSelect = { selected = it },
                         )
                     }
@@ -361,7 +361,7 @@ fun ScheduleScreen() {
                             anchor = selected ?: today,
                             weeks = 6,
                             selected = selected,
-                            countFor = { day -> sessionsByDate[day.toString()].orEmpty().count { !isCancelledVisitStatus(it.status) } },
+                            countFor = { day -> liveVisitsOn(sessionsByDate, day.toString()).size },
                             onSelect = { selected = it },
                         )
                     }
@@ -589,7 +589,7 @@ private fun WeekCalendar(
     // A 6:30 visit used to sit behind a footer line that did not name the day.
     val gridWindow = weekGridWindow(
         days.flatMap { day ->
-            sessionsByDate[day.toString()].orEmpty().filterNot { isCancelledVisitStatus(it.status) }.mapNotNull { sess ->
+            liveVisitsOn(sessionsByDate, day.toString()).mapNotNull { sess ->
                 val start = localMinutesOfDay(sess.startTime, localZone) ?: return@mapNotNull null
                 start to visitEndMinute(sess, start, localZone)
             }
@@ -601,7 +601,7 @@ private fun WeekCalendar(
     var offWindowCount = 0
     var placeableCount = 0
     days.forEach { day ->
-        sessionsByDate[day.toString()].orEmpty().filterNot { isCancelledVisitStatus(it.status) }.forEach { sess ->
+        liveVisitsOn(sessionsByDate, day.toString()).forEach { sess ->
             val m = localMinutesOfDay(sess.startTime, localZone)
             if (m == null || m < windowStart || m >= windowEnd) offWindowCount++ else placeableCount++
         }
@@ -697,7 +697,8 @@ private fun WeekCalendar(
 
                 days.forEach { day ->
                     val isToday = day == today
-                    val daySessions = sessionsByDate[day.toString()].orEmpty()
+                    // #1868: only live visits are drawn; a cancelled one stays on the day agenda.
+                    val daySessions = liveVisitsOn(sessionsByDate, day.toString())
                     val dayBusy = busySlotsByDate[day.toString()].orEmpty()
                     Box(
                         modifier = Modifier
@@ -1291,6 +1292,14 @@ internal fun isCancelledVisitStatus(status: String): Boolean =
 /** The status in upper case, with the one-L spelling read as CANCELLED. */
 internal fun canonicalVisitStatus(status: String): String =
     if (isCancelledVisitStatus(status)) "CANCELLED" else status.trim().uppercase()
+
+/**
+ * #1868: the visits the week and month grids draw and count for [dayIso]. A
+ * cancelled one, in any stored spelling, is left out (it no longer holds the
+ * hour, and a faded block could still be dragged); the day agenda keeps it.
+ */
+internal fun liveVisitsOn(sessionsByDate: Map<String, List<KinCareSession>>, dayIso: String): List<KinCareSession> =
+    sessionsByDate[dayIso].orEmpty().filterNot { isCancelledVisitStatus(it.status) }
 
 private fun scheduleSubtitle(session: KinCareSession): String {
     val who = session.kinfolkName.ifBlank { "Kinfolk" }

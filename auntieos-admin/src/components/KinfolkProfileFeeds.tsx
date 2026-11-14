@@ -4,6 +4,7 @@ import { DenPanel, EmptyHint, ServicePill, StatusPill, bookingServiceTone, type 
 import { useCollection } from '../lib/firestore';
 import { bookingServiceName } from '../lib/bookingFormat';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
+import { useBusinessZone } from '../lib/useBusinessZone';
 import { str, arr } from '../lib/coerce';
 import {
   kinTalesForKinfolkQuery,
@@ -159,6 +160,8 @@ export function UpcomingVisitsPanel({
   now?: Date;
 }) {
   const state = useCollection<SessionEntry>(sessionsForKinfolkQuery(kinfolkId));
+  // #2095: a zone-less start is read on the stored business clock.
+  const businessZone = useBusinessZone();
   const clock = now ?? new Date();
   const nowIso = clock.toISOString();
   const through = horizonIso(clock, UPCOMING_HORIZON_DAYS);
@@ -166,7 +169,7 @@ export function UpcomingVisitsPanel({
   const inScope = (s: SessionEntry) => kin === undefined || coversKin(s.kinIds, kin.kinId);
   const rows =
     state.status === 'ready'
-      ? upcomingVisitsFor(state.data.filter(inScope), kinfolkId, nowIso, through)
+      ? upcomingVisitsFor(state.data.filter(inScope), kinfolkId, nowIso, through, undefined, businessZone)
       : [];
   const who = kin === undefined ? 'this household' : kin.kinName;
   // #1592: the pill names the KinCare, and the dot wears that name's tone.
