@@ -15,16 +15,98 @@ import com.tribetails.auntieos.web.data.FormSectionSpec
 private val SCHEMA_ID_REGEX = Regex("^[a-zA-Z][a-zA-Z0-9_.\\-]*$")
 private val FIELD_KEY_REGEX = Regex("^[a-zA-Z][a-zA-Z0-9_]*$")
 
-// Plaintext contract, mirrors the backend PLAINTEXT_RE in saveFormSchema.ts,
-// which rejects angle brackets, ampersand, and control chars in every free-text
-// string (name, description, section title/description, field label/helper/
-// placeholder/default). We enforce it client-side too so Save is never enabled
-// then bounced server-side with an opaque invalid-argument (audit parity gap).
-private val PLAINTEXT_BANNED_CHARS = setOf('<', '>', '&')
+/**
+ * #2074: the text rules `saveFormSchema` enforces, so the editor refuses on
+ * screen exactly what the server refuses on save. Same limits and the same
+ * sentences as the server's `describeFormSchemaIssue`, the web admin's
+ * `lib/formSchemaRules.ts` and the Android `FormSchemaTextRules`; the tests on
+ * all of them share the walk's strings.
+ *
+ * Two things this used to get wrong: it checked no lengths (a 330-character
+ * label passed), and it refused every C1 control character and every line
+ * break, where the server refuses only C0 controls and DEL and allows line
+ * breaks and tabs in the two descriptions.
+ */
+object FormSchemaTextRules {
+    const val ID = 80
+    const val NAME = 200
+    const val DESCRIPTION = 2000
+    const val SECTIONS = 50
+    const val SECTION_TITLE = 200
+    const val SECTION_DESCRIPTION = 2000
+    const val FIELDS = 200
+    const val KEY = 80
+    const val LABEL = 200
+    const val HELPER_TEXT = 500
+    const val PLACEHOLDER = 200
+    const val OPTIONS = 100
+    const val OPTION = 200
+    const val DEFAULT_VALUE = 2000
+    const val GROUP = 80
 
-/** True when [s] contains a banned char or any C0/C1 control character. */
-private fun violatesPlaintext(s: String): Boolean =
-    s.any { it in PLAINTEXT_BANNED_CHARS || it.isISOControl() }
+    private fun isHidden(c: Char, multiline: Boolean): Boolean {
+        val code = c.code
+        if (code == 0x7F) return true
+        if (code > 0x1F) return false
+        return !(multiline && (code == 0x09 || code == 0x0A || code == 0x0D))
+    }
+
+    /** Why [value] cannot be saved as [thing], or null. [plain] false is Group, held to length only. */
+    fun textProblem(
+        thing: String,
+        value: String?,
+        max: Int,
+        multiline: Boolean = false,
+        plain: Boolean = true,
+    ): String? {
+        val v = value.orEmpty()
+        if (v.length > max) return "$thing is ${v.length} characters long. The limit is $max."
+        if (!plain) return null
+        if (v.any { it == '<' || it == '>' || it == '&' }) return "$thing cannot contain <, > or &."
+        if (v.any { isHidden(it, multiline) }) {
+            return "$thing cannot contain a tab, a line break or another hidden character."
+        }
+        return null
+    }
+}
+
+/** One field-level refusal from `saveFormSchema`, placed on its section and field (null for the schema). */
+data class FormSchemaRefusal(val sectionIndex: Int?, val fieldIndex: Int?, val text: String)
+
+/**
+ * Pure: the refusals in a failed save's `details` JSON (#2074). Empty for any
+ * other failure and for a server that predates the sentences.
+ */
+fun formSchemaRefusalsFromDetails(details: String?): List<FormSchemaRefusal> {
+    if (details.isNullOrBlank()) return emptyList()
+    val obj = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(details) as? kotlinx.serialization.json.JsonObject }
+        .getOrNull() ?: return emptyList()
+    val reason = (obj["reason"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+    if (reason != "form-schema-refused") return emptyList()
+    val list = obj["validationErrors"] as? kotlinx.serialization.json.JsonArray ?: return emptyList()
+    return list.mapNotNull { el ->
+        val e = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+        val textPrim = e["text"] as? kotlinx.serialization.json.JsonPrimitive ?: return@mapNotNull null
+        if (!textPrim.isString || textPrim.content.isBlank()) return@mapNotNull null
+        fun index(key: String): Int? = (e[key] as? kotlinx.serialization.json.JsonPrimitive)
+            ?.takeIf { !it.isString }?.content?.toIntOrNull()
+        FormSchemaRefusal(index("sectionIndex"), index("fieldIndex"), textPrim.content)
+    }
+}
+
+/** A report with the server's refusals added where they belong, so the cards show them inline. */
+fun FormSchemaValidationReport.withRefusals(refusals: List<FormSchemaRefusal>): FormSchemaValidationReport {
+    if (refusals.isEmpty()) return this
+    val sections = sectionErrors.mapValues { it.value.toMutableList() }.toMutableMap()
+    val fields = fieldErrors.mapValues { it.value.toMutableList() }.toMutableMap()
+    for (r in refusals) {
+        val s = r.sectionIndex
+        val f = r.fieldIndex
+        if (s != null && f != null) fields.getOrPut(s to f) { mutableListOf() }.add(r.text)
+        else sections.getOrPut(s ?: -1) { mutableListOf() }.add(r.text)
+    }
+    return FormSchemaValidationReport(sections.mapValues { it.value.toList() }, fields.mapValues { it.value.toList() })
+}
 
 /** Per-section validation errors. Section indices are stable across calls. */
 data class FormSchemaValidationReport(
@@ -48,38 +130,41 @@ data class FormSchemaValidationReport(
  *  - schema has at least one section (Zod SchemaInputSchema.sections.min(1)),
  *  - each section has a non-blank title and at least one field (SectionSchema.fields.min(1)),
  *  - field key/label non-blank, key matches the key regex, key uniqueness within a section,
- *  - field type ∈ [FormSchema.SUPPORTED_TYPES],
- *  - `options` non-empty when type ∈ {select, multiselect},
- *  - no plaintext-banned chars (<, >, &, control chars) in any free-text string.
+ *  - field type in [FormSchema.SUPPORTED_TYPES],
+ *  - `options` non-empty when type in {select, multiselect}, each option plain text,
+ *  - [FormSchemaTextRules] on every free-text string: no `<`, `>`, `&`, no
+ *    hidden characters (line breaks allowed in descriptions), and the
+ *    server's length limits (#2074).
  *
  * Surfacing inline beats a 400/invalid-argument round-trip the operator can't act on.
  */
 fun validateFormSchema(schema: FormSchema): FormSchemaValidationReport {
     val sectionErrors = mutableMapOf<Int, MutableList<String>>()
     val fieldErrors = mutableMapOf<Pair<Int, Int>, MutableList<String>>()
+    val r = FormSchemaTextRules
 
     // -1 is the "schema-level" bucket the screen renders as a top banner.
     val topErrs = sectionErrors.getOrPut(-1) { mutableListOf() }
+    fun MutableList<String>.addIf(problem: String?) { if (problem != null) add(problem) }
 
     if (schema.name.isBlank()) {
         topErrs.add("Schema name is required.")
     }
-    if (schema.id.isNotBlank() && !SCHEMA_ID_REGEX.matches(schema.id)) {
+    if (schema.id.length > r.ID) {
+        topErrs.add("Schema id is ${schema.id.length} characters long. The limit is ${r.ID}.")
+    } else if (schema.id.isNotBlank() && !SCHEMA_ID_REGEX.matches(schema.id)) {
         topErrs.add(
             "Schema id '${schema.id}' must start with a letter and contain only letters, numbers, underscores, dots, or hyphens.",
         )
     }
-    if (violatesPlaintext(schema.name)) {
-        topErrs.add("Schema name cannot contain < > & or control characters.")
-    }
-    if (violatesPlaintext(schema.description.orEmpty())) {
-        topErrs.add("Schema description cannot contain < > & or control characters.")
-    }
+    topErrs.addIf(r.textProblem("Name", schema.name, r.NAME))
+    topErrs.addIf(r.textProblem("Description", schema.description, r.DESCRIPTION, multiline = true))
     // Backend SchemaInputSchema requires at least one section. Client parity so
     // a fresh "New schema" with zero sections cannot reach an enabled Save.
     if (schema.sections.isEmpty()) {
         topErrs.add("Add at least one section before saving.")
     }
+    if (schema.sections.size > r.SECTIONS) topErrs.add("A form can have at most ${r.SECTIONS} sections.")
 
     schema.sections.forEachIndexed { sIdx, section ->
         val secErrs = sectionErrors.getOrPut(sIdx) { mutableListOf() }
@@ -87,16 +172,13 @@ fun validateFormSchema(schema: FormSchema): FormSchemaValidationReport {
         if (section.title.isBlank()) {
             secErrs.add("Section title is required.")
         }
-        if (violatesPlaintext(section.title)) {
-            secErrs.add("Section title cannot contain < > & or control characters.")
-        }
-        if (violatesPlaintext(section.description.orEmpty())) {
-            secErrs.add("Section description cannot contain < > & or control characters.")
-        }
+        secErrs.addIf(r.textProblem("Section title", section.title, r.SECTION_TITLE))
+        secErrs.addIf(r.textProblem("Section description", section.description, r.SECTION_DESCRIPTION, multiline = true))
         // Backend SectionSchema requires at least one field per section.
         if (section.fields.isEmpty()) {
             secErrs.add("Add at least one field to this section before saving.")
         }
+        if (section.fields.size > r.FIELDS) secErrs.add("A section can have at most ${r.FIELDS} fields.")
 
         // Track keys seen so far to flag duplicates inline on the second+ occurrence.
         val seenKeys = mutableMapOf<String, Int>()
@@ -107,7 +189,9 @@ fun validateFormSchema(schema: FormSchema): FormSchemaValidationReport {
             if (field.key.isBlank()) errs.add("Field key is required.")
             if (field.label.isBlank()) errs.add("Field label is required.")
 
-            if (field.key.isNotBlank() && !FIELD_KEY_REGEX.matches(field.key)) {
+            if (field.key.length > r.KEY) {
+                errs.add("Key is ${field.key.length} characters long. The limit is ${r.KEY}.")
+            } else if (field.key.isNotBlank() && !FIELD_KEY_REGEX.matches(field.key)) {
                 errs.add(
                     "Field key '${field.key}' must start with a letter and contain only letters, numbers, and underscores.",
                 )
@@ -118,25 +202,22 @@ fun validateFormSchema(schema: FormSchema): FormSchemaValidationReport {
             }
 
             if (FormSchema.typeRequiresOptions(field.type)) {
-                val opts = field.options.orEmpty().filter { it.isNotBlank() }
+                val all = field.options.orEmpty()
+                val opts = all.filter { it.isNotBlank() }
                 if (opts.isEmpty()) {
                     errs.add("Options required for ${field.type} fields.")
                 }
+                if (all.size > r.OPTIONS) errs.add("A field can have at most ${r.OPTIONS} options.")
+                all.forEachIndexed { i, o ->
+                    errs.addIf(if (o.isEmpty()) "Option ${i + 1} is empty." else r.textProblem("Option ${i + 1}", o, r.OPTION))
+                }
             }
 
-            // Plaintext parity on every free-text field string.
-            if (violatesPlaintext(field.label)) {
-                errs.add("Field label cannot contain < > & or control characters.")
-            }
-            if (violatesPlaintext(field.helperText.orEmpty())) {
-                errs.add("Helper text cannot contain < > & or control characters.")
-            }
-            if (violatesPlaintext(field.placeholder.orEmpty())) {
-                errs.add("Placeholder cannot contain < > & or control characters.")
-            }
-            if (violatesPlaintext(field.defaultValue.orEmpty())) {
-                errs.add("Default value cannot contain < > & or control characters.")
-            }
+            errs.addIf(r.textProblem("Label", field.label, r.LABEL))
+            errs.addIf(r.textProblem("Helper text", field.helperText, r.HELPER_TEXT))
+            errs.addIf(r.textProblem("Placeholder", field.placeholder, r.PLACEHOLDER))
+            errs.addIf(r.textProblem("Default value", field.defaultValue, r.DEFAULT_VALUE))
+            errs.addIf(r.textProblem("Group", field.group, r.GROUP, plain = false))
 
             if (field.key.isNotBlank()) {
                 val firstIdx = seenKeys[field.key]

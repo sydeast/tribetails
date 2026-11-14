@@ -74,17 +74,15 @@ describe('the chip tables', () => {
     expect(noRecipient.sort()).toEqual(['blog_post', 'social_post'].sort());
   });
 
-  it('marks the three types this screen can actually deliver, and how', () => {
+  it('marks the four types this screen can actually deliver, and how', () => {
     expect(messageTypeDef('sms').deliverable).toBe('sms');
     expect(messageTypeDef('email').deliverable).toBe('email');
     // #1563: a KinTale goes to the household's portal through
     // publishGeneratedDraft. It was `false`, and approving one reached nobody.
     expect(messageTypeDef('visit_report').deliverable).toBe('kintale');
-    // Push is a copy FORMAT here. sendExternalMessage speaks email and sms only
-    // and there is no 1:1 push callable, so approving a push draft promotes and
-    // audits it and sends nothing. Claiming otherwise would be a button that
-    // cannot deliver.
-    expect(messageTypeDef('push').deliverable).toBe(false);
+    // #2061: a Push goes to the household's devices through sendHouseholdPush.
+    // It was `false`: approving one said it "delivers elsewhere", and nothing did.
+    expect(messageTypeDef('push').deliverable).toBe('push');
     expect(messageTypeDef('blog_post').deliverable).toBe(false);
     expect(messageTypeDef('social_post').deliverable).toBe(false);
     expect(messageTypeDef('general').deliverable).toBe(false);
@@ -233,6 +231,16 @@ describe('approveBlocker', () => {
     );
   });
 
+  it('#2061: lets a Push through with no phone or email, and refuses one with no household', () => {
+    expect(approveBlocker(form({ messageType: 'push' }), kf({ email: '', phoneNumber: '' }), 'd1', 'copy')).toBeNull();
+    expect(approveBlocker(form({ messageType: 'push', recipientId: '' }), undefined, 'd1', 'copy')).toBe(
+      'This push is not addressed to a household. Choose one before sending.',
+    );
+    expect(approveBlocker(form({ messageType: 'push' }), kf(), 'd1', 'x'.repeat(1001))).toBe(
+      'A push can be at most 1000 characters. This one is 1001.',
+    );
+    expect(approveBlocker(form({ messageType: 'push' }), kf(), 'd1', 'x'.repeat(1000))).toBeNull();
+  });
   it('passes a deliverable email with a subject and an address', () => {
     expect(approveBlocker(form({ messageType: 'email', subject: 'Nova and Otis' }), kf(), 'd1', 'copy')).toBeNull();
   });
@@ -258,7 +266,7 @@ describe('buildGeneratePayload', () => {
       expect('kinfolk_id' in p).toBe(false);
     }
   });
-  it('still sends the household for a push, which is written FOR someone even though it sends elsewhere', () => {
+  it('still sends the household for a push, which is written FOR that household and sent to it', () => {
     const p = buildGeneratePayload(form({ messageType: 'push' }), kf({ _id: 'real-id' }), null);
     expect(p.kinfolk_id).toBe('real-id');
   });

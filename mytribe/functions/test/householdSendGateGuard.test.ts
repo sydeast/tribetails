@@ -110,6 +110,11 @@ const ALLOWED = new Map<string, string>([
     'the push transport, driven only by a gated work order',
   ],
   ['mytribe/functions/src/lib/email.ts', 'the email primitive itself; it addresses nobody on its own'],
+  [
+    'mytribe/functions/src/admin/sendHouseholdPush.ts',
+    'GATED (#2061): one approved Communicate push to one household. Reads loadHouseholdSendGate ' +
+      'before it writes the notice or pushes, and the household message.reply push setting after.',
+  ],
   ['mytribe/functions/src/lib/firestoreAdmin.ts', 'the admin SDK shim; exposes messaging(), sends nothing'],
 
   // ── 2. not a send ──────────────────────────────────────────────────────────

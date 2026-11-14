@@ -28,6 +28,12 @@ vi.mock('../api/communicateApprove', async (orig) => ({
 
 const { sendExternalMessage } = vi.hoisted(() => ({ sendExternalMessage: vi.fn() }));
 vi.mock('../api/externalSend', () => ({ sendExternalMessage, suppressExternalRecipient: vi.fn() }));
+// #2061: only the wire is stubbed; the sentences are the real ones.
+const { sendHouseholdPush } = vi.hoisted(() => ({ sendHouseholdPush: vi.fn() }));
+vi.mock('../api/householdPush', async (orig) => ({
+  ...(await orig<typeof import('../api/householdPush')>()),
+  sendHouseholdPush,
+}));
 
 // Stubbed rather than exercised: RecipientContextPanel has its own full test
 // file. This file proves only the WIRING, that the panel is mounted for the
@@ -621,5 +627,101 @@ describe('#1563 opening a stored draft', () => {
     await user.click(screen.getByRole('button', { name: 'Delete' }));
     expect(await screen.findByText('Admin claim required.')).toBeInTheDocument();
     expect(screen.queryByText('Draft deleted.')).toBeNull();
+  });
+});
+/**
+ * #2061: an approved Push draft for one household is sent through
+ * sendHouseholdPush, and the result says what reached the household. Before
+ * this the screen said "Nothing was sent, this message type delivers
+ * elsewhere" and offered nothing to send it with.
+ */
+describe('a Push draft (#2061)', () => {
+  function pushSetup() {
+    const user = setup();
+    sendHouseholdPush.mockReset();
+    // The real approve runs the deliver step after its write; the stub does the same.
+    approveGeneratedDraft.mockImplementation(async (a: { deliver?: () => Promise<string | null> }) => {
+      const providerId = a.deliver ? await a.deliver() : null;
+      return { ok: true, auditWarning: null, providerId, delivered: a.deliver !== undefined };
+    });
+    return user;
+  }
+  async function pushDraftReady(user: ReturnType<typeof userEvent.setup>) {
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'push', generated_copy: 'Nova says hi from the park.' }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'Push' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+  }
+  it('offers Approve and send, confirms, and pushes the edited line to the household', async () => {
+    const user = pushSetup();
+    sendHouseholdPush.mockResolvedValue({ outcome: 'sent', reason: null });
+    await pushDraftReady(user);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    expect(await screen.findByText(/Push, to their phone and their notifications list/)).toBeInTheDocument();
+    expect(sendHouseholdPush).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    await waitFor(() => expect(sendHouseholdPush).toHaveBeenCalledTimes(1));
+    expect(sendHouseholdPush).toHaveBeenCalledWith({ kinfolkId: 'kf1', draftId: 'd1', body: 'Nova says hi from the park.' });
+    expect(await screen.findByText("Sent to Dana Halbrook's phone. It is on their notifications list too.")).toBeInTheDocument();
+    expect(screen.queryByText(/delivers elsewhere/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Approve and send' })).toBeNull();
+  });
+  it('says plainly when the send gate held it, and sends it once household notices are on', async () => {
+    const user = pushSetup();
+    sendHouseholdPush
+      .mockResolvedValueOnce({ outcome: 'held', reason: 'household_notices_off' })
+      .mockResolvedValueOnce({ outcome: 'sent', reason: null });
+    await pushDraftReady(user);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    expect(await screen.findByText('Not sent')).toBeInTheDocument();
+    expect(screen.getByText(/Notices to households are switched off\. Switch on "Send notices to households" in Settings/)).toBeInTheDocument();
+    expect(screen.queryByText(/Sent to Dana Halbrook's phone/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(sendHouseholdPush).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Sent to Dana Halbrook's phone. It is on their notifications list too.")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+  it('says it is on their list and no push went out when their settings keep push off', async () => {
+    const user = pushSetup();
+    sendHouseholdPush.mockResolvedValue({ outcome: 'listed', reason: 'household_push_off' });
+    await pushDraftReady(user);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    expect(await screen.findByText(/No push went to their phone, because their settings keep pushes for your messages off\./)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+  it('names a household nobody has signed in to, and never claims a send', async () => {
+    const user = pushSetup();
+    sendHouseholdPush.mockResolvedValue({ outcome: 'held', reason: 'household_has_no_portal_account' });
+    await pushDraftReady(user);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    expect(await screen.findByText(/Nobody in the household has signed in to the portal yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/Approved and sent/)).toBeNull();
+  });
+  it('reports a failed send call and leaves the send button live', async () => {
+    const user = setup();
+    sendHouseholdPush.mockReset();
+    approveGeneratedDraft.mockRejectedValue(new Error('The draft is approved, but the send failed: unavailable'));
+    await pushDraftReady(user);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    expect(await screen.findByText(/the send failed/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve and send' })).toBeEnabled();
+  });
+  it('a General note still sends nothing, and says so without "delivers elsewhere"', async () => {
+    const user = setup();
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'general' }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'General' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Approve draft' }));
+    expect(await screen.findByText(/Nothing was sent: Social, Blog and General drafts are not sent from here/)).toBeInTheDocument();
+    expect(sendHouseholdPush).not.toHaveBeenCalled();
   });
 });

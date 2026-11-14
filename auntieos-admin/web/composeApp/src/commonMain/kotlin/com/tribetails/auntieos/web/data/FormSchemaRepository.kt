@@ -148,7 +148,9 @@ class CloudFormSchemaRepository(
             put("schema", encodeSchema(schema))
         }
         return when (val r = invoke("saveFormSchema", json.encodeToString(JsonObject.serializer(), payload))) {
-            is WriteResult.Err -> WriteResult.Err(r.message)
+            // Whole, not rebuilt from the message: `details` carries the
+            // field-level refusal the editor marks on screen (#2074).
+            is WriteResult.Err -> r
             is WriteResult.Ok  -> runCatchingCancellable {
                 val obj = json.parseToJsonElement(r.value).jsonObject
                 val id = obj["id"]?.jsonPrimitive?.contentOrNull.orEmpty()

@@ -7,6 +7,9 @@ import {
   plannedWriteCountWithTicks,
   tickableTemplateIds,
   channelNoteText,
+  channelComparison,
+  wordingOrBlank,
+  type TemplateImportChannelRow,
   type TemplateImportReport,
   type TemplateImportRow,
 } from '../api/templateImport';
@@ -203,6 +206,44 @@ export function TemplateImport({ onClose, onImported }: TemplateImportProps) {
   );
 }
 
+/**
+ * #1936: the stored wording beside the repo wording, drawn under the channel
+ * and above the tick, so "Replace the stored copy" is a choice made with both
+ * in view. Only the parts that differ are drawn. Each column keeps its line
+ * breaks; nothing here is markup, the server sends readable text.
+ */
+function ChannelComparison({ channel, templateId }: { channel: TemplateImportChannelRow; templateId: string }) {
+  const comparison = channelComparison(channel);
+  if (comparison === null) return null;
+  if (comparison.kind === 'missing') {
+    return (
+      <p className="template-import__compare-missing">
+        The two wordings could not be shown. Open this template in Templates to read your stored copy before you tick it.
+      </p>
+    );
+  }
+  return (
+    <div className="template-import__compare" data-testid={`compare-${templateId}-${channel.channel}`}>
+      {comparison.differences.map((d) => (
+        <div key={d.field} className="template-import__compare-part">
+          <span className="template-import__compare-label">{d.label}</span>
+          {d.note !== undefined && <p className="template-import__compare-note">{d.note}</p>}
+          <div className="template-import__compare-cols">
+            <figure className="template-import__compare-col">
+              <figcaption>Your stored copy</figcaption>
+              <p className="template-import__compare-text">{wordingOrBlank(d.stored)}</p>
+            </figure>
+            <figure className="template-import__compare-col">
+              <figcaption>Repo copy</figcaption>
+              <p className="template-import__compare-text">{wordingOrBlank(d.repo)}</p>
+            </figure>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ImportRow({
   row,
   checked,
@@ -248,6 +289,7 @@ function ImportRow({
             {c.notes.length > 0 && (
               <span className="template-import__notes">{channelNoteText(c, checked)}</span>
             )}
+            <ChannelComparison channel={c} templateId={row.templateId} />
           </li>
         ))}
       </ul>

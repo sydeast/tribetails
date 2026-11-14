@@ -331,6 +331,88 @@ class FormSchemaValidatorTest {
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
+    // ── #2074: the server's text rules, same strings as the functions test ──
+
+    private fun walkSchema(title: String, label: String) = baseSchema().copy(
+        id = "qaR1Schema",
+        name = "QA-R1 schema",
+        sections = listOf(
+            FormSchemaSection(
+                title = title,
+                fields = listOf(
+                    FormSchemaField(key = "qaField", label = label, type = "select", options = listOf("One", "Two")),
+                ),
+            ),
+        ),
+    )
+
+    @Test fun `the walk section title and label are refused on screen, naming the characters`() {
+        val errors = FormSchemaValidator.validate(
+            walkSchema("QA-R1 section <b>x</b> ' \" & %", "QA-R1 field <b>x</b> ' \" & %"),
+        )
+        assertEquals(
+            listOf(
+                FormSchemaValidationError(0, null, "Section title cannot contain <, > or &."),
+                FormSchemaValidationError(0, 0, "Label cannot contain <, > or &."),
+            ),
+            errors,
+        )
+    }
+
+    @Test fun `quotes percent emoji and a description line break all pass`() {
+        val schema = walkSchema("QA-R1 section ' \" %", "QA-R1 field ' \" %").copy(
+            name = "QA-R1 schema 🐾",
+            description = "Line one\nLine two",
+        )
+        assertEquals(emptyList<FormSchemaValidationError>(), FormSchemaValidator.validate(schema))
+    }
+
+    @Test fun `a tab, an over-long label and an option with an ampersand are each named`() {
+        val r = FormSchemaTextRules
+        assertEquals(
+            "Label cannot contain a tab, a line break or another hidden character.",
+            r.textProblem("Label", "Family\tname", r.LABEL),
+        )
+        assertEquals("Label is 330 characters long. The limit is 200.", r.textProblem("Label", "x".repeat(330), r.LABEL))
+        assertEquals(null, r.textProblem("Section description", "First\r\nSecond", r.SECTION_DESCRIPTION, multiline = true))
+        assertEquals(null, r.textProblem("Group", "a & b", r.GROUP, plain = false))
+        val errors = FormSchemaValidator.validate(
+            walkSchema("S", "L").let { s ->
+                s.copy(sections = listOf(s.sections[0].copy(fields = listOf(s.sections[0].fields[0].copy(options = listOf("One", "Salt & pepper"))))))
+            },
+        )
+        assertEquals(listOf(FormSchemaValidationError(0, 0, "Option 2 cannot contain <, > or &.")), errors)
+    }
+
+    @Test fun `a section with no fields is refused, as the server refuses it`() {
+        val schema = baseSchema().copy(sections = listOf(FormSchemaSection(title = "Empty")))
+        assertTrue(FormSchemaValidator.validate(schema).contains(FormSchemaValidationError(0, null, "Add at least one field to this section.")))
+    }
+
+    @Test fun `server refusals are read off details and placed on their card`() {
+        val details = mapOf(
+            "reason" to "form-schema-refused",
+            "validationErrors" to listOf(
+                mapOf("path" to "schema.name", "message" to "x", "text" to "Name cannot contain <, > or &.", "sectionIndex" to null, "fieldIndex" to null),
+                mapOf("path" to "schema.sections.0.fields.1.label", "message" to "x", "text" to "Section 1, Field 2: Label cannot contain <, > or &.", "sectionIndex" to 0, "fieldIndex" to 1),
+            ),
+        )
+        assertEquals(
+            listOf(
+                FormSchemaValidationError(-1, null, "Name cannot contain <, > or &."),
+                FormSchemaValidationError(0, 1, "Section 1, Field 2: Label cannot contain <, > or &."),
+            ),
+            formSchemaRefusalsFromDetails(details),
+        )
+        // Any other refusal, or a server that sends no sentences, reads as nothing.
+        assertEquals(emptyList<FormSchemaValidationError>(), formSchemaRefusalsFromDetails(mapOf("reason" to "other")))
+        assertEquals(
+            emptyList<FormSchemaValidationError>(),
+            formSchemaRefusalsFromDetails(mapOf("reason" to "form-schema-refused", "validationErrors" to listOf(mapOf("path" to "a")))),
+        )
+        assertEquals(emptyList<FormSchemaValidationError>(), formSchemaRefusalsFromDetails(null))
+    }
+
     private fun baseSchema() = FormSchema(
         id = "tribeProfile",
         name = "Tribe Profile",

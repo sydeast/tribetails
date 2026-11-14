@@ -201,6 +201,53 @@ class FormSchemaEditorViewModelTest {
         assertTrue("expected fail-loud save error, got $msg", msg.contains("Save failed") && msg.contains("boom"))
     }
 
+    @Test fun `save refused field by field puts the server sentences on their cards (#2074)`() = runTest(testDispatcher) {
+        val refused = io.mockk.mockk<com.google.firebase.functions.FirebaseFunctionsException>(relaxed = true)
+        io.mockk.every { refused.details } returns mapOf(
+            "reason" to "form-schema-refused",
+            "validationErrors" to listOf(
+                mapOf("text" to "Section 1, Field 1: Label cannot contain <, > or &.", "sectionIndex" to 0, "fieldIndex" to 0),
+            ),
+        )
+        coEvery { mockRepo.saveFormSchema(any()) } returns Result.failure(refused)
+        val v = vm()
+        v.load(null)
+        v.updateId("x")
+        v.updateName("X")
+        v.updateSectionTitle(0, "S")
+        v.addField(0)
+        v.updateFieldKey(0, 0, "k")
+        v.updateFieldLabel(0, 0, "L")
+
+        v.save()
+        advanceUntilIdle()
+
+        assertEquals(SaveStatus.VALIDATION_FAILED, v.state.value.saveStatus)
+        assertEquals("One entry was not accepted. It is marked below.", v.state.value.errorMessage)
+        assertEquals(
+            listOf(FormSchemaValidationError(0, 0, "Section 1, Field 1: Label cannot contain <, > or &.")),
+            v.state.value.validationErrors,
+        )
+    }
+
+    @Test fun `save with an ampersand in a label never calls the server (#2074)`() = runTest(testDispatcher) {
+        val v = vm()
+        v.load(null)
+        v.updateId("qaR1Schema")
+        v.updateName("QA-R1 schema")
+        v.updateSectionTitle(0, "QA-R1 section")
+        v.addField(0)
+        v.updateFieldKey(0, 0, "qaField")
+        v.updateFieldLabel(0, 0, "QA-R1 field <b>x</b> ' \" & %")
+
+        v.save()
+        advanceUntilIdle()
+
+        assertEquals(SaveStatus.VALIDATION_FAILED, v.state.value.saveStatus)
+        assertTrue(v.state.value.validationErrors.any { it.message == "Label cannot contain <, > or &." })
+        coVerify(exactly = 0) { mockRepo.saveFormSchema(any()) }
+    }
+
     @Test fun `save payload preserves original version`() = runTest(testDispatcher) {
         coEvery { mockRepo.getFormSchema("foo") } returns Result.success(
             FormSchema(

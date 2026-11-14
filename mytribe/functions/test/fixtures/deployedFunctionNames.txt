@@ -271,6 +271,7 @@ scheduleDigestCron
 scheduleMarketingBlast
 screenCallAction
 sendExternalMessage
+sendHouseholdPush
 sendInvoiceReminder
 sendKinfolkMessage
 setActiveTribe

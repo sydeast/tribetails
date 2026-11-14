@@ -591,6 +591,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // in the triggers block below.
   syncVisitToGoogleCalendar: () => require('./admin/googleCalendar/syncVisitToGoogleCalendar'),
   sendExternalMessage: () => require('./admin/sendExternalMessage'),
+  // #2061: the push an approved Communicate Push draft sends to its household,
+  // behind the household send gate and the household's own push setting.
+  sendHouseholdPush: () => require('./admin/conversations'),
   suppressExternalRecipient: () => require('./admin/sendExternalMessage'),
   listMessageSuppressions: () => require('./admin/messageSuppressions'),
   clearMessageSuppression: () => require('./admin/messageSuppressions'),

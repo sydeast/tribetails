@@ -104,6 +104,25 @@ internal fun importChannelNote(channel: TemplateRepository.ImportChannel, ticked
     } else {
         channel.notes.joinToString(" ")
     }
+/** What a differing channel shows before the tick (#1936). Pure; mirrors the web `channelComparison`. */
+internal sealed class ImportComparison {
+    data class Shown(val differences: List<TemplateRepository.ImportDifference>) : ImportComparison()
+
+    /** The channel differs and the server sent no wordings: say so, never draw a blank comparison. */
+    data object Missing : ImportComparison()
+}
+
+internal fun importChannelComparison(channel: TemplateRepository.ImportChannel): ImportComparison? {
+    if (channel.outcome != "skipped" && channel.outcome != "overwrite") return null
+    return if (channel.differences.isNotEmpty()) ImportComparison.Shown(channel.differences) else ImportComparison.Missing
+}
+
+/** An empty wording reads as a word, so a blank column is never mistaken for a load failure. */
+internal fun wordingOrBlank(text: String): String = if (text.isBlank()) "Empty" else text
+
+internal const val IMPORT_COMPARISON_MISSING =
+    "The two wordings could not be shown. Open this template in Templates to read your stored copy before you tick it."
+
 /** One line summarising a template for the report list. Pure; mirrors the web copy. */
 internal fun importRowSummary(row: TemplateRepository.ImportRow, ticked: Boolean = false): String {
     if (row.blocked) return "Refused"
@@ -351,6 +370,34 @@ fun TemplateImportBody(
     }
 }
 
+/**
+ * #1936: the stored wording above the repo wording, under the channel line and
+ * before the tick, so replacing it is a choice made with both in view. Stacked
+ * rather than side by side: a phone has no room for two readable columns.
+ */
+@Composable
+private fun ImportChannelComparison(channel: TemplateRepository.ImportChannel) {
+    val c = AuntieTheme.colors
+    when (val comparison = importChannelComparison(channel)) {
+        null -> Unit
+        ImportComparison.Missing ->
+            Text(IMPORT_COMPARISON_MISSING, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        is ImportComparison.Shown -> Column(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, bottom = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            comparison.differences.forEach { d ->
+                Text(d.label, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                d.note?.let { Text(it, style = AuntieTheme.typography.bodySmall, color = c.textDim) }
+                Text("Your stored copy", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                Text(wordingOrBlank(d.stored), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                Text("Repo copy", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                Text(wordingOrBlank(d.repo), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            }
+        }
+    }
+}
+
 @Composable
 private fun ImportRowCard(
     row: TemplateRepository.ImportRow,
@@ -402,6 +449,7 @@ private fun ImportRowCard(
                 style = AuntieTheme.typography.bodySmall,
                 color = if (channel.outcome == "blocked") c.error else c.textDim,
             )
+            ImportChannelComparison(channel)
         }
 
         if (offersOverwriteChoice(row)) {

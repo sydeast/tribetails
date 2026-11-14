@@ -156,7 +156,20 @@ class FormSchemaEditorViewModel(
                 )
             }
             is WriteResult.Err -> _state.update {
-                it.copy(saveStatus = SaveStatus.Error("Save failed: ${r.message}"))
+                // #2074: a field-level refusal goes onto the card it is about,
+                // in the server's words. The next edit revalidates and clears it.
+                val refused = formSchemaRefusalsFromDetails(r.details)
+                if (refused.isNotEmpty()) {
+                    it.copy(
+                        validation = it.validation.withRefusals(refused),
+                        saveStatus = SaveStatus.Error(
+                            (if (refused.size == 1) "One entry was not accepted: " else "${refused.size} entries were not accepted: ") +
+                                refused.joinToString(" ") { e -> e.text },
+                        ),
+                    )
+                } else {
+                    it.copy(saveStatus = SaveStatus.Error("Save failed: ${r.message}"))
+                }
             }
         }
     }
