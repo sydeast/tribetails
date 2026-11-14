@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   applicableNotificationActions,
+  notificationRequestRoute,
   notificationOpenRoute,
   notificationQuoteRoute,
   notificationTargetRoute,
@@ -11,6 +12,13 @@ import { type NotificationEntry } from '../api/notifications';
 function entry(over: Partial<NotificationEntry> = {}): NotificationEntry {
   return { _id: 'n1', ...over };
 }
+
+/**
+ * #2069: the live queue of waiting booking requests. A request row is offered
+ * as waiting only when this holds its household and batch, so the cases below
+ * that mean "a request still waiting" pass one.
+ */
+const WAITING = new Set(['kf1/b1', 'kf1/req_1', 'k9/b1', 'k9/req_1']);
 
 describe('notificationTargetRoute', () => {
   it('routes an invoice notification to the Invoices detail', () => {
@@ -124,7 +132,9 @@ describe('applicableNotificationActions', () => {
     ])('key %s + targetType %s -> bookingId %j', (key, targetType, targetId, expected) => {
       // Every request row names its household (onBookingEnvelopeCreate writes data.kinfolkId).
       const data = { kinfolkId: 'kf1' };
-      expect(applicableNotificationActions(entry({ key, targetType, targetId, data })).bookingId).toBe(expected);
+      expect(
+        applicableNotificationActions(entry({ key, targetType, targetId, data }), { pendingRequests: WAITING }).bookingId,
+      ).toBe(expected);
     });
     // #1675: Approve/Deny answer the request through manageBookingSeries, which
     // needs the household as well as the request id.
@@ -143,6 +153,7 @@ describe('applicableNotificationActions', () => {
         expect(
           applicableNotificationActions(
             entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' }, requestResolution }),
+            { pendingRequests: WAITING },
           ).bookingId,
         ).toBe('');
       },
@@ -151,6 +162,7 @@ describe('applicableNotificationActions', () => {
       expect(
         applicableNotificationActions(
           entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' }, requestResolution: ' ' }),
+          { pendingRequests: WAITING },
         ).bookingId,
       ).toBe('req_1');
     });
@@ -180,7 +192,9 @@ describe('applicableNotificationActions', () => {
       ['assignment.changed', 'kinfolk', 'k9', undefined, false],
       ['kincare.booking.confirm', 'booking', 'b1', { kinfolkId: 'k9' }, false],
     ])('key %s + targetType %s -> quote offered: %s', (key, targetType, targetId, data, offered) => {
-      const actions = applicableNotificationActions(entry({ key, targetType, targetId, data }));
+      const actions = applicableNotificationActions(entry({ key, targetType, targetId, data }), {
+        pendingRequests: WAITING,
+      });
       if (offered) {
         expect(actions.quote).toEqual({ to: '/invoices', search: { composeQuoteForKinfolkId: 'k9' } });
       } else {
@@ -330,11 +344,12 @@ describe('applicableNotificationActions for an Auntie (#2200 / #2201)', () => {
   });
 
   it('gives her no Create quote on a fresh request, and keeps her Approve / Deny and Open', () => {
-    const forHer = applicableNotificationActions(request, { isAuntie: true });
+    const forHer = applicableNotificationActions(request, { isAuntie: true, pendingRequests: WAITING });
     expect(forHer.quote).toBeNull();
     expect(forHer.bookingId).toBe('req_1');
-    expect(forHer.open).toEqual({ to: '/bookings', search: { bookingId: 'vis_req_1' } });
-    expect(applicableNotificationActions(request).quote).toEqual({
+    // #2028: Open lands on the request's card, which is hers to answer.
+    expect(forHer.open).toEqual({ to: '/bookings', search: { requestId: 'req_1', requestKinfolkId: 'kf1' } });
+    expect(applicableNotificationActions(request, { pendingRequests: WAITING }).quote).toEqual({
       to: '/invoices',
       search: { composeQuoteForKinfolkId: 'kf1' },
     });
@@ -390,6 +405,94 @@ describe('applicableNotificationActions: the payment decision notice for an Aunt
     expect(applicableNotificationActions(e, { isAuntie: true }).open).toEqual({
       to: '/directory/$kinfolkId',
       params: { kinfolkId: 'kf1' },
+    });
+  });
+});
+
+/**
+ * #2069: the walk's August rows offered Approve and Deny three months after
+ * their visits were booked, because #1647 read "no stamp" as "still waiting"
+ * and rows from before the stamp never got one. "Needs a decision" read 19
+ * against Bookings' 5. Pendency now needs the live queue to hold the request.
+ */
+describe('a request is waiting only when the live queue holds it (#2069)', () => {
+  const august = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_old', data: { kinfolkId: 'kf1' } });
+  const fresh = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } });
+
+  it('offers no Approve, Deny or Create quote on an unstamped row the queue does not hold', () => {
+    const a = applicableNotificationActions(august, { pendingRequests: WAITING });
+    expect(a.bookingId).toBe('');
+    expect(a.quote).toBeNull();
+    expect(a.outcome).toBe('Answered');
+    expect(a.open).not.toBeNull();
+  });
+
+  it('offers them on the request the queue holds', () => {
+    const a = applicableNotificationActions(fresh, { pendingRequests: WAITING });
+    expect(a.bookingId).toBe('req_1');
+    expect(a.outcome).toBeNull();
+    expect(a.awaitingQueue).toBe(false);
+  });
+
+  it('matches on the household too: the same batch id in another household is not this request', () => {
+    const other = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf2' } });
+    expect(applicableNotificationActions(other, { pendingRequests: WAITING }).bookingId).toBe('');
+  });
+
+  it('offers nothing as waiting while the queue has not read, and says it is checking', () => {
+    for (const ctx of [{}, { pendingRequests: null }]) {
+      const a = applicableNotificationActions(fresh, ctx);
+      expect(a.bookingId).toBe('');
+      expect(a.quote).toBeNull();
+      expect(a.outcome).toBeNull();
+      expect(a.awaitingQueue).toBe(true);
+      // Open still goes to the request's card, where it can be answered.
+      expect(a.open).toEqual(notificationRequestRoute('kf1', 'req_1'));
+    }
+  });
+
+  it('keeps the server stamp as the outcome, queue or not', () => {
+    const booked = entry({ ...fresh, requestResolution: 'booked' });
+    expect(applicableNotificationActions(booked, { pendingRequests: WAITING }).outcome).toBe('Booked');
+    expect(applicableNotificationActions(booked).outcome).toBe('Booked');
+    expect(applicableNotificationActions(booked).awaitingQueue).toBe(false);
+  });
+
+  it('gives a stale request the same Open it had: an old row may carry a visit id', () => {
+    expect(applicableNotificationActions(august, { pendingRequests: WAITING }).open).toEqual({
+      to: '/bookings',
+      search: { bookingId: 'vis_req_old' },
+    });
+  });
+});
+
+/**
+ * #2028: Open on a "Kinfolk requested a KinCare visit" row went to
+ * `/bookings?bookingId=vis_{batchId}`, a session that does not exist until the
+ * request is booked, and showed "Booking unavailable".
+ */
+describe('Open on a booking request goes to its card (#2028)', () => {
+  const fresh = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } });
+
+  it('routes a waiting request to its card, by household and request', () => {
+    expect(applicableNotificationActions(fresh, { pendingRequests: WAITING }).open).toEqual({
+      to: '/bookings',
+      search: { requestId: 'req_1', requestKinfolkId: 'kf1' },
+    });
+  });
+
+  it('routes a stamped request there too, where the queue says it is no longer waiting', () => {
+    const declined = entry({ ...fresh, requestResolution: 'declined' });
+    expect(applicableNotificationActions(declined, { pendingRequests: WAITING }).open).toEqual(
+      notificationRequestRoute('kf1', 'req_1'),
+    );
+  });
+
+  it('keeps the target table for a row that names no household', () => {
+    const anon = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1' });
+    expect(applicableNotificationActions(anon, { pendingRequests: WAITING }).open).toEqual({
+      to: '/bookings',
+      search: { bookingId: 'vis_req_1' },
     });
   });
 });

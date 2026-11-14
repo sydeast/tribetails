@@ -154,3 +154,12 @@ fun groupIncomingBySeries(
             )
         }
         .sortedBy { series -> series.visits.firstOrNull()?.let { it.startTime.ifBlank { it.requestedDate } } ?: "" }
+
+/**
+ * #2069 / #2028: one request's identity across screens, its household and its
+ * envelope. A batch id is only unique inside its household, so both are kept.
+ */
+fun incomingRequestKey(kinfolkId: String, batchId: String): String = "${kinfolkId.trim()}/${batchId.trim()}"
+
+/** This request's [incomingRequestKey]. */
+val IncomingSeries.requestKey: String get() = incomingRequestKey(kinfolkId, batchId)

@@ -1,6 +1,7 @@
 import {
   applicableNotificationActions,
   type NotificationRoute,
+  type PendingRequestSet,
 } from '../lib/notificationActions';
 import { type NotificationEntry } from '../api/notifications';
 import { GhostButton, PrimaryButton } from './Buttons';
@@ -55,7 +56,19 @@ export interface NotificationQuickActionsProps {
   onRestore: () => void;
   /** Handed a route from the pure table; the router performs the navigation. */
   onNavigate: (route: NotificationRoute) => void;
+  /**
+   * #1875: asks for the decision. The screen opens the confirm step that names
+   * the household and the dates and says who will be told; nothing is sent
+   * from this press alone.
+   */
   onBookingAction: (bookingId: string, action: BatchBookingAction) => void;
+  /**
+   * #2069: the booking requests still waiting, or null while that read is in
+   * flight or failed. Approve and Deny appear only on a request it holds.
+   */
+  pendingRequests?: PendingRequestSet;
+  /** #2069: the waiting-requests read is in flight, so a request row says it is checking. */
+  pendingRequestsLoading?: boolean;
   /**
    * #2200 / #2201: the signed-in account is an Auntie, so no Open or Create
    * quote into an owner-only screen is drawn. Absent means the owner.
@@ -74,8 +87,10 @@ export function NotificationQuickActions({
   onNavigate,
   onBookingAction,
   isAuntie = false,
+  pendingRequests = null,
+  pendingRequestsLoading = false,
 }: NotificationQuickActionsProps) {
-  const actions = applicableNotificationActions(entry, { isAuntie });
+  const actions = applicableNotificationActions(entry, { isAuntie, pendingRequests });
   const bookingPending = pending.has('booking');
   const readPending = pending.has('read');
   const archivePending = pending.has('archive');
@@ -102,6 +117,14 @@ export function NotificationQuickActions({
             leading={bookingPending ? <span className="notif-row__pending" aria-hidden="true" /> : undefined}
           />
         </>
+      ) : null}
+
+      {/* #2069: while the waiting queue reads, a request row says so rather
+          than offering a decision it cannot vouch for. */}
+      {actions.awaitingQueue && pendingRequestsLoading ? (
+        <span className="notif-row__outcome" role="status">
+          <span className="notif-row__pending" aria-hidden="true" /> Checking
+        </span>
       ) : null}
 
       {/* #1647: an answered request says how it ended instead of offering a

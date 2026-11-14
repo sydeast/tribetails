@@ -214,7 +214,10 @@ export async function requestBookingRescheduleHandler(
     { merge: true },
   );
 
-  await writeAuditEntry({
+  // #1919: the audit line and the read-back the reply carries are independent
+  // reads and writes after the one write that matters, so they run side by
+  // side rather than one after the other while the household watches "Sending".
+  const audit = writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.BOOKING_BATCH_ACTION,
     severity: 'info',
@@ -248,12 +251,13 @@ export async function requestBookingRescheduleHandler(
     uid,
     extra: { kinfolkId, batchId: args.batchId, visitId: args.visitId },
   });
+  const [visit] = await Promise.all([readVisitDto(db(), kinfolkId, args.batchId, args.visitId), audit]);
   return validateResponse('requestBookingReschedule', Result, {
     ok: true,
     visitId: args.visitId,
     proposedStartTimeMs: args.proposedStartTimeMs,
     proposedEndTimeMs: proposedEndMs,
-    visit: await readVisitDto(db(), kinfolkId, args.batchId, args.visitId),
+    visit,
   });
 }
 

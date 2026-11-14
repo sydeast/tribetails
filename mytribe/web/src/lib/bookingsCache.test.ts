@@ -13,7 +13,7 @@ function visit(id: string, startTimeMs: number, overrides: Partial<GetMyBookings
     timeBlockEndTime: null, kinIds: [], kinNames: [], auntieDisplayName: null,
     auntieAvatarUrl: null, notes: null, requestedByUid: null, createdAtMs: null, updatedAtMs: null, visitProgress: null,
     sourceBookingId: null, sessionId: null, cancelRequested: false, cancelRequestStatus: null, cancelRequestReason: null,
-    cancelResponseNote: null, rescheduleRequestStatus: null, rescheduleRequestedStartTimeMs: null,
+    cancelResponseNote: null, requestDeclinedAtMs: null, rescheduleRequestStatus: null, rescheduleRequestedStartTimeMs: null,
     rescheduleRequestedEndTimeMs: null, rescheduleRequestedTimeBlockLabel: null, rescheduleRequestedTimeBlockStartTime: null, rescheduleRequestedTimeBlockEndTime: null, rescheduleRequestReason: null, rescheduleResponseNote: null, address: null, kinTaleId: null, invoiceId: null, ...overrides,
   };
 }

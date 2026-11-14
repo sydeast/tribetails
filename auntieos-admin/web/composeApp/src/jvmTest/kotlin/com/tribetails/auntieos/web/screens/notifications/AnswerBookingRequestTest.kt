@@ -64,6 +64,16 @@ class AnswerBookingRequestTest {
         assertEquals("Request declined.", answer.notice)
     }
 
+    // #1875: the confirm step's note goes with the answer, trimmed; a blank one sends none.
+    @Test
+    fun theConfirmStepsNoteRidesTheAnswer() = runBlocking {
+        JvmFirestoreFixtures.callableResponses =
+            mapOf("manageBookingSeries" to """{"ok":true,"action":"CANCEL","batchId":"req_b1","affectedVisits":1,"failedVisits":0}""")
+        answerBookingRequest(FirestoreClient(), row, approve = false, note = "  We are full that week.  ")
+        assertEquals("We are full that week.", lastCall().second["note"]!!.jsonPrimitive.content)
+        answerBookingRequest(FirestoreClient(), row, approve = true, note = "   ")
+        assertNull(lastCall().second["note"])
+    }
     @Test
     fun aPartialApprovalIsAFailureNotASuccess() = runBlocking {
         JvmFirestoreFixtures.callableResponses =
