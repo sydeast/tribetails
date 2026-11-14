@@ -995,6 +995,43 @@ export interface ResendQuoteResult {
   appOnly?: boolean;
 }
 
+// ---------- convertQuoteToInvoice ----------
+
+/**
+ * Request payload for the `convertQuoteToInvoice` callable.
+ */
+export interface ConvertQuoteToInvoiceArgs {
+  invoiceId: string;
+}
+
+/**
+ * Response from the `convertQuoteToInvoice` callable.
+ */
+export interface ConvertQuoteToInvoiceResult {
+  ok: true;
+  invoiceId: string;
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+}
+
+// ---------- withdrawQuote ----------
+
+/**
+ * Request payload for the `withdrawQuote` callable.
+ */
+export interface WithdrawQuoteArgs {
+  invoiceId: string;
+}
+
+/**
+ * Response from the `withdrawQuote` callable.
+ */
+export interface WithdrawQuoteResult {
+  ok: true;
+  invoiceId: string;
+  status: 'quote' | 'draft' | 'cancelled' | 'credit' | 'redeemed' | 'paid' | 'zero' | 'open';
+  releasedSessionIds: string[];
+}
+
 // ---------- reviewAndSendDraftInvoice ----------
 
 /**

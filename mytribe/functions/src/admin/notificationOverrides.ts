@@ -22,7 +22,7 @@ import {
   type EmitterDescriptor,
   type UngatedSend,
 } from '../notifications/provenance';
-import { readBusinessAdmins } from '../lib/businessAdmins';
+import { businessNoticeUids, readBusinessAdmins } from '../lib/businessAdmins';
 import { readTemplateBindings } from '../lib/sendFromTemplate';
 import type { BusinessNotificationOverride } from '../notifications/types';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -261,7 +261,11 @@ export async function getBusinessNotificationOverridesHandler(
   // business mail. An unresolvable roster is reported as unknown, never as zero.
   let businessAdminCount: number | null;
   try {
-    businessAdminCount = (await readBusinessAdmins()).uids.length;
+    // #2223: an Auntie or household account on the list receives nothing, so
+    // she is not counted. Same read-only filter the dispatch path applies.
+    businessAdminCount = (
+      await businessNoticeUids((await readBusinessAdmins()).uids, 'notificationOverrides')
+    ).length;
   } catch {
     businessAdminCount = null;
   }

@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.web.ui.components
 
+import com.tribetails.auntieos.web.data.BusinessSettings
 import com.tribetails.auntieos.web.data.DEFAULT_TAG_COLOR
+import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.TagDef
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -220,6 +222,24 @@ class ProfileTagsSectionTest {
         assertEquals(listOf("VIP", "Reactive", "On meds"), next.vocab.map { it.name })
         assertNull(next.revertVocab)
         assertNull(next.saveError)
+    }
+
+    @Test
+    fun promoteVocabSucceeded_showsTheListTheServerHolds_tagsAddedElsewhereIncluded() {
+        // #2205: the server added the one name to the list as stored, which since
+        // this panel loaded also gained "Gate code" and lost "Reactive".
+        val stored = listOf(TagDef(name = "VIP"), TagDef(name = "Gate code"), TagDef(name = "On meds"))
+        val next = state().beginPromoteVocab("On meds").promoteVocabSucceeded(stored)
+        assertEquals(listOf("VIP", "Gate code", "On meds"), next.vocab.map { it.name })
+        assertNull(next.revertVocab)
+    }
+
+    @Test
+    fun addToYourTags_isOfferedOnlyOnceTheListHasLoaded() {
+        // #2204: before the list loads, and after a failed read, no offer.
+        assertEquals(false, vocabAddOffered(FirestoreResult.Loading))
+        assertEquals(false, vocabAddOffered(FirestoreResult.Error("offline")))
+        assertEquals(true, vocabAddOffered(FirestoreResult.Data(BusinessSettings())))
     }
 
     @Test

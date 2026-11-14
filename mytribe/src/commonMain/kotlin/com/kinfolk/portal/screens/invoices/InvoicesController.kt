@@ -289,8 +289,8 @@ class InvoicesController internal constructor(
      * open bill server-side, and the screens read this controller's copy.
      *
      * The failure is kept as [quoteError] rather than folded into [error]: the
-     * refusals here are sentences about THIS quote ("already declined", "only
-     * good through the 12th") and belong beside the buttons that caused them.
+     * refusals here are sentences about THIS quote ("already declined", "not open
+     * for an answer right now") and belong beside the buttons that caused them.
      */
     fun startQuoteDecision(invoice: Invoice, accept: Boolean) {
         if (decidingQuote != null) return

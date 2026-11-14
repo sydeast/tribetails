@@ -1,109 +1,103 @@
 package com.tribetails.auntieos.ui.directory
 
-import com.tribetails.auntieos.data.model.BusinessSettings
+import com.tribetails.auntieos.data.model.TagChange
 import com.tribetails.auntieos.data.model.TagColor
 import com.tribetails.auntieos.data.model.TagDef
+import com.tribetails.auntieos.data.model.TagListsAfterChange
 import com.tribetails.auntieos.data.model.TagScope
-import com.tribetails.auntieos.data.model.encodeTagDefs
+import com.tribetails.auntieos.data.model.paletteColor
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The inline tag promotion on a profile writes ONE vocabulary key.
+ * #2204 / #2205: "add to your tags" on a profile sends the ONE name.
  *
- * This save re-reads the settings doc before writing, which made the stale
- * window small - but not zero, and it still sent all ~46 fields of the union.
- * With the diff it sends the one vocabulary the operator actually grew, so the
- * OTHER vocabulary, the calendar id and the payment handles are untouched no
- * matter what landed between the read and the write.
+ * It used to re-read the settings and write the panel's whole list back. A
+ * panel whose list had not loaded (or had failed to load) sent a list of one
+ * and wiped every other tag; a panel left open put back a tag deleted
+ * elsewhere and dropped one added elsewhere. Now the name goes to
+ * `changeBusinessTags`, which adds it to the list as stored.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TagVocabSaveTest {
 
-    private val vip = TagDef(
-        name = "VIP",
-        color = TagColor(token = "accent", css = "var(--color-accent)"),
-        icon = "*",
-    )
-    private val slowPay = TagDef(
-        name = "Slow pay",
-        color = TagColor(token = "warn", css = "var(--color-warn)"),
-        icon = "",
-    )
-
-    private val stored = BusinessSettings(
-        calendarSyncId = "old@group.calendar.google.com",
-        venmoHandle = "@old-venmo",
-        householdTags = encodeTagDefs(listOf(vip)),
-        petTags = encodeTagDefs(listOf(slowPay)),
-    )
+    private val vip = TagDef(name = "VIP", color = TagColor(token = "accent", css = "var(--color-accent)"), icon = "*")
+    private val slowPay = TagDef(name = "Slow pay", color = TagColor(token = "warn", css = "var(--color-warn)"), icon = "")
+    private val winter = TagDef(name = "Winter", color = paletteColor("teal"), icon = "")
 
     @Test
-    fun `promoting a household tag writes only the household vocabulary`() = runTest {
+    fun `adding a household tag sends one add for that name, never a list`() = runTest {
         val repo = mockk<AuntieRepository>()
-        coEvery { repo.getBusinessSettings() } returns Result.success(stored)
-        val changes = slot<Map<String, Any?>>()
-        coEvery { repo.updateBusinessSettingsFields(capture(changes), any()) } returns Result.success(Unit)
+        val sent = slot<List<TagChange>>()
+        coEvery { repo.changeBusinessTags(capture(sent)) } returns
+            Result.success(TagListsAfterChange(listOf(vip, winter), listOf(slowPay)))
 
-        val grown = listOf(vip, TagDef(name = "Winter", color = TagColor("info", "var(--color-info)"), icon = ""))
-        saveTagVocab(repo, TagScope.HOUSEHOLD, grown)
+        val stored = addTagToVocab(repo, TagScope.HOUSEHOLD, "Winter")
 
-        assertEquals(setOf("householdTags"), changes.captured.keys)
-        assertEquals(encodeTagDefs(grown), changes.captured["householdTags"])
-        assertFalse(
-            "the pet vocabulary belongs to the other panel: ${changes.captured}",
-            changes.captured.containsKey("petTags"),
-        )
+        assertEquals(listOf(TagChange(TagChange.ADD, TagScope.HOUSEHOLD, "Winter", paletteColor("teal"), "")), sent.captured)
+        assertEquals(listOf(vip, winter), stored)
+        coVerify(exactly = 0) { repo.updateBusinessSettingsFields(any(), any()) }
+        coVerify(exactly = 0) { repo.getBusinessSettings() }
     }
 
     /**
-     * The concurrent case: a payment handle changed on the React admin between
-     * this screen's last read and this write. A vocabulary save must not carry it.
+     * #2204: the panel's list never had to load for this to be safe. Even if it
+     * shows nothing, only the name travels and the server keeps every stored tag.
      */
     @Test
-    fun `promoting a tag does not revert a payment handle edited on the web`() = runTest {
+    fun `an add made on a panel that never loaded cannot replace the list`() = runTest {
         val repo = mockk<AuntieRepository>()
-        coEvery { repo.getBusinessSettings() } returns Result.success(stored)
-        val changes = slot<Map<String, Any?>>()
-        coEvery { repo.updateBusinessSettingsFields(capture(changes), any()) } returns Result.success(Unit)
+        val sent = slot<List<TagChange>>()
+        coEvery { repo.changeBusinessTags(capture(sent)) } returns
+            Result.success(TagListsAfterChange(emptyList(), listOf(slowPay, vip, winter)))
 
-        saveTagVocab(repo, TagScope.PET, listOf(slowPay, vip))
+        val stored = addTagToVocab(repo, TagScope.PET, "Winter")
 
-        assertEquals(setOf("petTags"), changes.captured.keys)
+        assertEquals(1, sent.captured.size)
+        assertEquals(TagScope.PET, sent.captured.single().scope)
+        assertEquals(listOf(slowPay, vip, winter), stored)
+    }
+
+    @Test
+    fun `the answer is that scope's list as stored, tags added elsewhere included`() = runTest {
+        val repo = mockk<AuntieRepository>()
+        coEvery { repo.changeBusinessTags(any()) } returns
+            Result.success(TagListsAfterChange(listOf(vip, slowPay, winter), emptyList()))
+        assertEquals(listOf("VIP", "Slow pay", "Winter"), addTagToVocab(repo, TagScope.HOUSEHOLD, "Winter").map { it.name })
     }
 
     /**
      * Fail-loud is the existing contract: `ProfileTagsSection` turns the throw
-     * into a reverted chip plus a banner. The message is asserted, not just the
+     * into a reverted list plus a banner. The message is asserted, not just the
      * type, so this cannot pass on an incidental mock or framework exception.
      */
     @Test
-    fun `a rejected vocabulary write still throws the server's reason`() = runTest {
+    fun `a refused add throws the server's reason`() = runTest {
         val repo = mockk<AuntieRepository>()
-        coEvery { repo.getBusinessSettings() } returns Result.success(stored)
-        coEvery { repo.updateBusinessSettingsFields(any(), any()) } returns
-            Result.failure(RuntimeException("permission denied"))
+        coEvery { repo.changeBusinessTags(any()) } returns
+            Result.failure(RuntimeException("A \"VIP\" tag already exists."))
 
-        val thrown = runCatching { saveTagVocab(repo, TagScope.HOUSEHOLD, listOf(vip, slowPay)) }
-            .exceptionOrNull()
-        assertEquals("permission denied", thrown?.message)
+        val thrown = runCatching { addTagToVocab(repo, TagScope.HOUSEHOLD, "vip") }.exceptionOrNull()
+        assertEquals("A \"VIP\" tag already exists.", thrown?.message)
     }
 
-    /** Re-saving the same vocabulary changes nothing, so nothing is written. */
     @Test
-    fun `saving an unchanged vocabulary writes nothing`() = runTest {
+    fun `only the owner may add to the tag list, and an unknown answer is a no`() = runTest {
         val repo = mockk<AuntieRepository>()
-        coEvery { repo.getBusinessSettings() } returns Result.success(stored)
-
-        // No stub for updateBusinessSettingsFields: a call would fail the test as
-        // an unmocked invocation, which is exactly the assertion.
-        saveTagVocab(repo, TagScope.HOUSEHOLD, listOf(vip))
+        coEvery { repo.isCurrentUserOwner() } returns Result.success(true)
+        assertTrue(canAddToTagVocab(repo))
+        coEvery { repo.isCurrentUserOwner() } returns Result.success(false)
+        assertFalse(canAddToTagVocab(repo))
+        coEvery { repo.isCurrentUserOwner() } returns Result.failure(IllegalStateException("no token"))
+        assertFalse(canAddToTagVocab(repo))
     }
 }

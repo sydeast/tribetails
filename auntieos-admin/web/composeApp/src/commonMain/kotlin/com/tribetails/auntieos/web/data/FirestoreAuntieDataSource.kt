@@ -52,8 +52,8 @@ class FirestoreAuntieDataSource(
             idempotencyKey = idempotencyKey,
         )
     override fun incomingKinCaresStream(): Flow<FirestoreResult<List<KinCareVisit>>> = client.incomingKinCaresStream()
-    override suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String): WriteResult<ManageSeriesResult> =
-        client.manageBookingSeries(action, kinfolkId, batchId)
+    override suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String, note: String?): WriteResult<ManageSeriesResult> =
+        client.manageBookingSeries(action, kinfolkId, batchId, note)
     override fun mediaStream(entityId: String, entityType: String): Flow<FirestoreResult<List<MediaFile>>> = client.mediaStream(entityId, entityType)
     override suspend fun uploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String): WriteResult<MediaFile> = client.uploadMedia(entityId, entityType, bytes, mimeType)
     override suspend fun deleteMedia(mediaId: String, entityId: String): WriteResult<Unit> = client.deleteMedia(mediaId, entityId)

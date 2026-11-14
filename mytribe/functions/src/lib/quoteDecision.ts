@@ -1,14 +1,14 @@
 /**
- * What a household's answer to a quote is made of: the decision vocabulary, the
- * expiry arithmetic, and the business's own calendar day to measure it against.
+ * What a household's answer to a quote is made of: the decision vocabulary,
+ * the mark on a quote saved unsent, which quotes the household may see, and
+ * the business's own calendar day (the reminder cron's, since quotes stopped
+ * expiring).
  *
- * Pure apart from `businessTodayIso`, which reads one settings doc. The two
- * pure halves live here rather than inside the callable because an off-by-one
- * day in the expiry check is invisible in an integration test and obvious in a
- * unit test.
+ * Pure apart from `businessTodayIso`, which reads one settings doc.
  */
 import type { Firestore } from 'firebase-admin/firestore';
 import { FALLBACK_BUSINESS_TIME_ZONE, loadBusinessHoursSettings, zonedNow } from './businessHours';
+import { isArchived } from './invoiceArchive';
 
 export { FALLBACK_BUSINESS_TIME_ZONE };
 
@@ -22,30 +22,60 @@ export function quoteDecisionOf(raw: unknown): QuoteDecision | null {
   return raw === 'accepted' || raw === 'denied' ? raw : null;
 }
 
-/** The `YYYY-MM-DD` shape `lib/invoiceDay.ts` pins `date`/`dueDate` to. */
-const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * #2088, operator ruling 2026-11-12: A QUOTE DOES NOT EXPIRE. It is an invoice
+ * status, and it stays a quote until the Kinfolk accepts or declines it or the
+ * office changes it (sends it, turns it into an invoice, withdraws it). Its
+ * `dueDate` is the date the invoice it becomes is due, never a "good through"
+ * date, so nothing here measures a quote against the calendar any more.
+ */
 
 /**
- * Whether a quote's `dueDate` has passed, given the business's local day.
- *
- * A QUOTE IS GOOD THROUGH ITS DUE DATE, not up to it: a quote due 2026-08-18
- * can still be accepted all day on the 18th and is expired on the 19th. Both
- * strings are zero-padded `YYYY-MM-DD`, which sorts lexically exactly as it
- * sorts chronologically (the whole reason `invoiceDay.ts` enforces that shape),
- * so this is a string comparison and needs no date parsing.
- *
- * NEVER GUESSES. A blank due date means the quote does not expire — most quotes
- * in this collection carry none, and inventing a deadline for them would refuse
- * an acceptance on a rule nobody wrote down. A due date in any other format,
- * and a blank `todayIso` (an unreadable business time zone), both read as "no
- * evidence of expiry" for the same reason.
+ * #2087: THE MARK ON A QUOTE SAVED WITH "SEND TO KINFOLK NOW" OFF. Operator
+ * ruling 2026-11-13: such a quote is a Draft only the office sees. It is stored
+ * as a draft (`status` and `invoiceStatus` both 'draft', so every rule that
+ * keeps a draft away from the household and from collection applies to it) and
+ * carries `quoteDraft: true`, so sending it makes it a Quote rather than a bill.
+ * Sending, turning it into an invoice or withdrawing it removes the mark. A
+ * positive mark, never an absence: a quote made before this rule carries no
+ * mark and stays the sent quote it always was.
  */
-export function quoteHasExpired(dueDate: unknown, todayIso: string): boolean {
-  if (typeof dueDate !== 'string') return false;
-  const due = dueDate.trim();
-  if (!DAY_RE.test(due)) return false;
-  if (!DAY_RE.test(todayIso)) return false;
-  return todayIso > due;
+export const QUOTE_DRAFT_FIELD = 'quoteDraft';
+
+function statusOf(doc: Record<string, unknown>): string {
+  const raw = doc['status'] ?? doc['invoiceStatus'];
+  return typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+}
+
+/** A quote saved unsent: a draft carrying the quote mark. */
+export function isQuoteDraft(doc: Record<string, unknown>): boolean {
+  return statusOf(doc) === 'draft' && doc[QUOTE_DRAFT_FIELD] === true;
+}
+
+/** A quote the household has been sent (answered or not): `status` 'quote'. */
+export function isSentQuote(doc: Record<string, unknown>): boolean {
+  return statusOf(doc) === 'quote';
+}
+
+/**
+ * Whether MyTribe keeps this invoice away from the household altogether: not
+ * listed, not counted, not openable, not answerable.
+ *
+ *   - #2087: a quote saved unsent (`isQuoteDraft`);
+ *   - #2088: a quote the office turned into an invoice that has not been sent
+ *     yet. It is a draft invoice now, and the household hears about it when the
+ *     office sends it, exactly as for any other draft;
+ *   - #2195: an archived quote. Archiving a quote works like archiving a draft:
+ *     the household stops seeing it and its visits go back on the list.
+ *
+ * A withdrawn quote is `cancelled`, which MyTribe already shows no one.
+ * Ordinary drafts are #1906's, and are not decided here.
+ */
+export function hiddenFromHousehold(doc: Record<string, unknown>): boolean {
+  if (isQuoteDraft(doc)) return true;
+  const status = statusOf(doc);
+  if (status === 'draft' && doc['quoteConvertedAt'] !== undefined && doc['quoteConvertedAt'] !== null) return true;
+  return status === 'quote' && isArchived(doc);
 }
 
 /**
@@ -54,7 +84,7 @@ export function quoteHasExpired(dueDate: unknown, todayIso: string): boolean {
  *
  * This function runs in `us-central1` on a UTC machine, so "today" here is
  * five or six hours ahead of the operator's for part of every evening. Reading
- * the UTC day would expire a quote at 6pm Central on its last valid day, which
+ * the UTC day would put an evening reminder on the wrong day, which
  * is exactly the sort of quiet wrongness `businessHours.ts` was written about.
  */
 export async function businessTodayIso(firestore: Firestore, nowMs: number): Promise<string> {
@@ -62,8 +92,8 @@ export async function businessTodayIso(firestore: Firestore, nowMs: number): Pro
   const stored = typeof settings?.timeZone === 'string' ? settings.timeZone.trim() : '';
   const zone = stored !== '' ? stored : FALLBACK_BUSINESS_TIME_ZONE;
   // A stored zone `Intl` cannot parse falls back to the ruled zone rather than
-  // to UTC, and only a failure of BOTH yields '' (which switches the expiry
-  // check off; see `quoteHasExpired`).
+  // to UTC, and only a failure of BOTH yields '' (and the caller skips
+  // its day check rather than guessing one).
   const now = zonedNow(nowMs, zone) ?? zonedNow(nowMs, FALLBACK_BUSINESS_TIME_ZONE);
   return now?.dateIso ?? '';
 }

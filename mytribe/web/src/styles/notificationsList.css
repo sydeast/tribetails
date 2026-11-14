@@ -16,6 +16,8 @@
 .nl-row__title { font-weight: 500; color: var(--navy); }
 .nl-row--unread .nl-row__title { font-weight: 600; }
 .nl-row__desc { color: var(--navy-muted); font-size: 13px; }
+/* #2030: the office's own note on an answer, kept as written. */
+.nl-row__note { color: var(--navy); font-size: 13px; white-space: pre-wrap; }
 .nl-row__when { font-family: var(--mono); font-size: 11px; letter-spacing: .04em; color: var(--navy-muted);
   white-space: nowrap; margin-top: 3px; }
 .nl-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

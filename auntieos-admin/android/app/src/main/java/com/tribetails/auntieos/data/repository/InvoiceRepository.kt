@@ -45,6 +45,12 @@ import com.tribetails.auntieos.data.contracts.PostInvoiceEventArgsPayload
 import com.tribetails.auntieos.data.contracts.RecordPaymentArgs
 import com.tribetails.auntieos.data.contracts.RecordPaymentResult
 import com.tribetails.auntieos.data.contracts.ResendQuoteArgs
+import com.tribetails.auntieos.data.contracts.ConvertQuoteToInvoiceArgs
+import com.tribetails.auntieos.data.contracts.ConvertQuoteToInvoiceResult
+import com.tribetails.auntieos.data.contracts.decodeConvertQuoteToInvoiceResult
+import com.tribetails.auntieos.data.contracts.WithdrawQuoteArgs
+import com.tribetails.auntieos.data.contracts.WithdrawQuoteResult
+import com.tribetails.auntieos.data.contracts.decodeWithdrawQuoteResult
 import com.tribetails.auntieos.data.contracts.SendInvoiceReminderArgs
 import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceArgs
 import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceResult
@@ -612,9 +618,9 @@ class InvoiceRepository(
      *
      * Fail-loud. The server refuses an ACCEPTED quote (it is a bill now and its
      * figures are agreed), one still WAITING for an answer (send a reminder
-     * instead), and one whose due date has PASSED (the household could only
-     * decline it again). Every refusal names what to do next, so the message
-     * surfaces verbatim rather than being replaced with a generic sentence.
+     * instead), and an ARCHIVED one (restore it first). A quote does not expire
+     * (#2088). Every refusal names what to do next, so the message surfaces
+     * verbatim rather than being replaced with a generic sentence.
      *
      * Returns the server's answer: the stamped state the resend left behind
      * (always 'quote') and, since #1507, `appOnly`, true when the quote reached
@@ -631,6 +637,39 @@ class InvoiceRepository(
             .awaitCallable().data as? Map<String, Any?>
         decodeResendQuoteResult(raw)
     }.onFailure { AuntieLog.e("resendQuote failed for $invoiceId", it) }
+
+    /**
+     * #2088: the quote becomes a DRAFT INVOICE that keeps its number, lines and
+     * visits; any answer on it is cleared. The household hears about the bill
+     * when the draft is sent, and sees nothing until then. Fail-loud: the
+     * server refuses an accepted, archived or non-quote invoice, and a quote
+     * whose line's visit is billed elsewhere, by name, and that sentence is
+     * shown as written.
+     */
+    suspend fun convertQuoteToInvoice(invoiceId: String): Result<ConvertQuoteToInvoiceResult> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(invoiceId.isNotBlank()) { "convertQuoteToInvoice requires an invoice id" }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("convertQuoteToInvoice")
+            .call(ConvertQuoteToInvoiceArgs(invoiceId = invoiceId).toPayload())
+            .awaitCallable().data as? Map<String, Any?>
+        decodeConvertQuoteToInvoiceResult(raw)
+    }.onFailure { AuntieLog.e("convertQuoteToInvoice failed for $invoiceId", it) }
+
+    /**
+     * #2088: the quote is withdrawn (cancelled), the household no longer sees
+     * it, and its visits go back on the not-yet-invoiced list, as on a decline.
+     * The answer carries those visits.
+     */
+    suspend fun withdrawQuote(invoiceId: String): Result<WithdrawQuoteResult> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(invoiceId.isNotBlank()) { "withdrawQuote requires an invoice id" }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("withdrawQuote")
+            .call(WithdrawQuoteArgs(invoiceId = invoiceId).toPayload())
+            .awaitCallable().data as? Map<String, Any?>
+        decodeWithdrawQuoteResult(raw)
+    }.onFailure { AuntieLog.e("withdrawQuote failed for $invoiceId", it) }
 
     /**
      * W2-2 of ADR-0002: sets the invoice's session set via the

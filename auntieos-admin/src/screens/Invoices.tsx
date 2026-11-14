@@ -5,6 +5,7 @@ import {
   invoiceMatchesSearch,
   invoicesPageQuery,
   invoiceQuoteDecision,
+  isQuoteDraft,
   invoiceStamp,
   invoiceWithinWindow,
   isArchivedInvoice,
@@ -527,8 +528,13 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
   // #1609: BILLED MEANS SENT. A draft has gone to nobody and a quote is an
   // estimate the household has not agreed to, so neither is money billed; the
   // walk's Billed total counted an unsent draft. Both still list below.
-  const billedRows = useMemo(() => inScope.filter((r) => !isUnbilledState(r.state)), [inScope]);
-  const unbilledCount = inScope.length - billedRows.length;
+  // #2088: a withdrawn quote is cancelled, and a cancelled invoice is not money
+  // billed either. It is not "unsent", so it is not in the count below.
+  const billedRows = useMemo(
+    () => inScope.filter((r) => !isUnbilledState(r.state) && r.state !== 'cancelled'),
+    [inScope],
+  );
+  const unbilledCount = useMemo(() => inScope.filter((r) => isUnbilledState(r.state)).length, [inScope]);
   const billedTotal = asyncScalar(rows, () => billedRows.reduce((sum, r) => sum + r.entry.total, 0));
   const overdueCount = asyncScalar(rows, () => overdueRows.length);
   // #1570: open invoices whose due date names no day. Each could be overdue
@@ -869,7 +875,9 @@ export function Invoices({ initialInvoiceId, composeQuoteForKinfolkId }: Invoice
             // is a draft and sends nothing (#1513): `invoice.new` goes out from
             // reviewAndSendDraftInvoice, so `appOnly` is never set for a draft.
             setCreatedNotice(
-              sent.quote && sent.appOnly ? `Quote created and sent in the app only. ${APP_ONLY_NOTE}` : null,
+              // #2087: saved as a draft, but the send failed: the server's sentence.
+              sent.notSent ??
+                (sent.quote && sent.appOnly ? `Quote created and sent in the app only. ${APP_ONLY_NOTE}` : null),
             );
           }}
           onClose={() => setCreating(null)}
@@ -931,6 +939,9 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
   // different fact), so without this marker a dead quote sits in the Quote
   // filter looking exactly like one still waiting for an answer.
   const declinedQuote = state === 'quote' && invoiceQuoteDecision(entry) === 'denied';
+  // #2087: a quote saved unsent is a draft whose send makes it a Quote. The row
+  // says it is a quote, and its send is named for what it does.
+  const quoteDraft = isQuoteDraft(entry);
   const action = rowActionFor(state, archived);
   // OPEN disputes only. See the chip below for why a won one is not marked.
   const disputed = invoiceDispute(entry)?.open === true;
@@ -1007,6 +1018,9 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
             ARCHIVED and DISPUTED sit beside theirs: the doc really is still a
             quote, and re-labelling the row would be classifying. */}
         {declinedQuote ? <span className="invoices__chip invoices__chip--declined">DECLINED</span> : null}
+        {/* #2087: BESIDE the DRAFT chip, for the same reason: it really is a
+            draft, which the household cannot see, and it goes out as a quote. */}
+        {quoteDraft ? <span className="invoices__chip invoices__chip--quote">QUOTE</span> : null}
       </span>
     </>
   );
@@ -1021,7 +1035,7 @@ function InvoiceRow({ view, todayIso, onSelect, onAction }: InvoiceRowProps) {
       {action ? (
         <div className="invoices__row-action">
           <GhostButton
-            label={ROW_ACTION_LABELS[action]}
+            label={quoteDraft && action === 'reviewSend' ? 'Send quote' : ROW_ACTION_LABELS[action]}
             onClick={() => onAction(entry._id, action)}
           />
         </div>

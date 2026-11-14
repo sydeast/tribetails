@@ -188,7 +188,6 @@ fun InvoiceDetailScreen(
 
         if (awaitingDecision) {
             QuoteDecisionPanel(
-                dueDate = invoice.dueDate,
                 deciding = decidingQuote,
                 error = quoteError,
                 onDecision = onQuoteDecision,
@@ -268,12 +267,12 @@ fun InvoiceDetailScreen(
  *
  * Both buttons go dead together while an answer is in flight, so a second tap
  * cannot send a second answer, and the refusal printed underneath is the
- * SERVER'S sentence, because it is the side that knows whether this quote expired or
- * was already answered from the web portal.
+ * SERVER'S sentence, because it is the side that knows whether this quote was
+ * already answered from the web portal, archived or withdrawn by the office.
+ * #2088: a quote has no expiry, so the panel names no "good through" date.
  */
 @Composable
 private fun QuoteDecisionPanel(
-    dueDate: String?,
     deciding: Boolean,
     error: String?,
     onDecision: (Boolean) -> Unit,
@@ -287,8 +286,7 @@ private fun QuoteDecisionPanel(
             Text("This is a quote", style = type.heritageTitle)
             Text(
                 "Nothing has been billed yet. Accept it and it becomes an invoice you can pay. " +
-                    "Decline it and your Auntie will know you have passed on it." +
-                    if (!dueDate.isNullOrBlank()) " This quote is good through $dueDate." else "",
+                    "Decline it and your Auntie will know you have passed on it.",
                 style = type.sansBody,
             )
             KinButton(

@@ -20,6 +20,8 @@ object ActivityWords {
     const val DRAFT_APPROVED = "Approved an Auntie AI draft"
     const val KINTALE_DRAFT_SENT = "Sent a KinTale draft"
     const val KINTALE_DRAFT_DELETED = "Deleted a KinTale draft"
+    /** #1839: a look at a household stored before the server wrote it in words. */
+    const val HOUSEHOLD_OPENED = "Opened a household"
 }
 
 /** The stored shapes, in full: the path, any ids after it, the household in brackets. */
@@ -164,6 +166,9 @@ private val ID_SHAPES: List<Pair<Regex, (List<String>) -> String>> = listOf(
         { g -> "An invite was sent, but the Auntie notice was not: ${g[1]}" },
     Regex("""^Payment notification for invoice \S+ was not delivered after (\d+) retries$""") to
         { g -> "A payment notification was not delivered after ${g[1]} retries" },
+    // #1839: a look at a household stored as its bare key and ids. Same words as
+    // the web and the desktop console.
+    Regex("""^OPERATOR_CROSSTENANT_ACCESS(?: uid=\S+)?(?: target=\S+)?$""") to { _ -> ActivityWords.HOUSEHOLD_OPENED },
 )
 
 /** A stored description as the operator reads it. Text with no id or path passes through. */

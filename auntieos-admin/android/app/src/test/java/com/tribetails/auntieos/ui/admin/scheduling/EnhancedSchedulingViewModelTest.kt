@@ -349,6 +349,33 @@ class EnhancedSchedulingViewModelTest {
         assertNull(vm.state.value.incomingError)
     }
 
+    // #2030: the note for the household rides the approval and the decline.
+    @Test
+    fun `approveSeries sends the household note, trimmed`() = runTest(testDispatcher) {
+        seedIncomingSeries()
+        coEvery { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", note = "See you Friday.") } returns
+            Result.success(com.tribetails.auntieos.data.repository.ManageSeriesResult(affectedVisits = 1))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.approveSeries(vm.state.value.incomingSeries.single(), "  See you Friday.  ")
+        advanceUntilIdle()
+        coVerify(exactly = 1) { auntieRepo.manageBookingSeries("APPROVE", "kf1", "b1", note = "See you Friday.") }
+        assertNull(vm.state.value.incomingError)
+    }
+    @Test
+    fun `cancelSeries sends the household note, and a blank one sends none`() = runTest(testDispatcher) {
+        seedIncomingSeries()
+        coEvery { auntieRepo.manageBookingSeries(any(), any(), any(), any(), any(), any(), any()) } returns
+            Result.success(com.tribetails.auntieos.data.repository.ManageSeriesResult(affectedVisits = 1, householdNotified = true))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.cancelSeries(vm.state.value.incomingSeries.single(), "We are full that week.")
+        advanceUntilIdle()
+        coVerify(exactly = 1) { auntieRepo.manageBookingSeries("CANCEL", "kf1", "b1", note = "We are full that week.") }
+        vm.cancelSeries(vm.state.value.incomingSeries.single(), "   ")
+        advanceUntilIdle()
+        coVerify(exactly = 1) { auntieRepo.manageBookingSeries("CANCEL", "kf1", "b1", note = null) }
+    }
     @Test
     fun `approveSeries surfaces fail-loud error on failure`() = runTest(testDispatcher) {
         seedIncomingSeries()

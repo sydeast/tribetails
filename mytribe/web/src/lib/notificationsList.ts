@@ -118,3 +118,13 @@ export function markReadInPages(
     pages: pages.map((page, i) => (i === 0 ? { ...page, unreadCount: Math.max(0, page.unreadCount - 1) } : page)),
   };
 }
+/**
+ * #2030: the office's own words to the household on this notice (the note it
+ * wrote when it booked or turned down their request), or null when it wrote
+ * none. The dispatcher puts it on the card as `detail.householdNote` for the
+ * answer keys only; any other shape reads as none.
+ */
+export function householdNoteOf(item: Pick<NotificationItemDto, 'detail'>): string | null {
+  const raw = item.detail?.['householdNote'];
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}

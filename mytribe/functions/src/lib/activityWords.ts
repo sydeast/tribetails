@@ -201,6 +201,12 @@ export function invoiceSentence(invoiceNumber: unknown, rest: string): string {
   return `${capitalised(invoiceWords(invoiceNumber))} ${rest}`;
 }
 
+/** `Quote 1026 sent to the household`, or `A quote ...` when it has no number. Never its id. */
+export function quoteSentence(invoiceNumber: unknown, rest: string): string {
+  const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
+  return `${n === '' ? 'A quote' : `Quote ${n}`} ${rest}`;
+}
+
 /** `updateKinCareSession`'s field names as the operator reads them. */
 const SESSION_FIELD_WORDS: Record<string, string> = {
   serviceType: 'service',
@@ -285,4 +291,19 @@ export function quoteRevisedWords(invoiceNumber: unknown): string {
   return n === ''
     ? 'A declined quote revised and sent again'
     : `Declined quote ${n} revised and sent again`;
+}
+/**
+ * #1839: an Auntie's look at a household, `Jane Rivers looked at Kinfolk Dre
+ * East`. The owner's own looks write no line at all (operator ruling
+ * 2026-11-12). One line stands for every read in a short window (one screen
+ * open fires several), so it names the household and not which part of it she
+ * read. "An Auntie" when she has no name on record (an email is never used as a
+ * name), "a Kinfolk household" when the household has none.
+ */
+export function auntieHouseholdLookWords(auntieName: unknown, householdName: unknown): string {
+  const raw = typeof auntieName === 'string' ? auntieName.trim() : '';
+  const who = raw === '' || raw.includes('@') ? 'An Auntie' : raw;
+  const name = typeof householdName === 'string' ? householdName.trim() : '';
+  const household = name === '' ? 'a Kinfolk household' : `Kinfolk ${name}`;
+  return `${who} looked at ${household}`;
 }

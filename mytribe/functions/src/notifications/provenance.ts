@@ -521,11 +521,6 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       dataKeys: ['kinfolkId', 'invoiceId'],
     },
     {
-      trigger: 'An admin issues a quote. A quote goes out on this same notification and says it is a quote.',
-      source: 'src/admin/createQuote.ts',
-      dataKeys: ['kinfolkId', 'invoiceId', 'isQuote'],
-    },
-    {
       trigger:
         'An admin revises a declined quote and sends it back out. It goes out on the same notification that issued it, because it is the same quote, marked as sent again.',
       source: 'src/admin/resendQuote.ts',
@@ -536,9 +531,15 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       // dispatch `invoice.new` itself, for an invoice its arbitrary merge had
       // just created; it no longer creates invoices, and its one remaining
       // payload delegates the draft send to this handler.
-      trigger: 'An admin reviews a draft invoice and sends it.',
+      //
+      // #2087: a quote goes out here too. It is saved as a draft only the
+      // office sees, and sending it (later, or at once when it was made with
+      // "Send to kinfolk now" on, which createQuote routes through this same
+      // handler) issues it on this notification, marked as a quote.
+      trigger:
+        'An admin reviews a draft invoice and sends it, or sends a quote. A quote goes out on this same notification and says it is a quote.',
       source: 'src/admin/reviewAndSendDraftInvoice.ts',
-      dataKeys: ['kinfolkId', 'invoiceId'],
+      dataKeys: ['kinfolkId', 'invoiceId', 'isQuote'],
     },
   ],
   'invoice.receipt': [

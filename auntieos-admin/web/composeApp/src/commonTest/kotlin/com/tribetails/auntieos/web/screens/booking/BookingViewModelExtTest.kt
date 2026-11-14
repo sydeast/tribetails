@@ -241,6 +241,18 @@ class BookingViewModelExtTest {
         assertNull(vm.seriesActionBatchId, "in-flight lock must clear after the call")
     }
 
+    // #2030: the operator's note for the household rides the answer, trimmed;
+    // a blank one is not sent at all.
+    @Test
+    fun approveAndDecline_carryTheHouseholdNote_andBlankSendsNone() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = BookingViewModel(ds)
+        vm.approveSeries(kinfolkId = "kf1", batchId = "b1", note = "  Booked. Bring the spare key.  ")
+        vm.cancelSeries(kinfolkId = "kf1", batchId = "b2", note = "We are full that week.")
+        vm.approveSeries(kinfolkId = "kf1", batchId = "b3", note = "   ")
+        assertEquals(listOf("APPROVE", "CANCEL", "APPROVE"), ds.seriesCalls.map { it.first })
+        assertEquals(listOf("Booked. Bring the spare key.", "We are full that week.", null), ds.seriesNotes)
+    }
     @Test
     fun cancelSeries_failure_setsErrorMessage() = runTest {
         val ds = FakeAuntieDataSource()

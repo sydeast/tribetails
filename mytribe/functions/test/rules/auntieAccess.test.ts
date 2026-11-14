@@ -196,6 +196,31 @@ describe('rules: #944 an Auntie and money', () => {
     await assertSucceeds(owner.doc('business_settings/business_settings').get());
     await assertSucceeds(owner.doc('businessSettings/notifications').get());
   });
+  /**
+   * #2223: business notices go to the uids on `businessSettings/admins`. A
+   * direct client write is how an Auntie or a household could put herself on
+   * it without going through the owner-only callables; the rules refuse it.
+   */
+  it('cannot read or write the business admin list directly', async () => {
+    const env = await getEnv();
+    await seed('businessSettings/admins', { uids: ['owner-1'] });
+    const household = env.authenticatedContext('kinfolk-1', { role: 'kinfolk', kinfolkId: 'k1' });
+    for (const [uid, db] of [
+      ['auntie-1', asAuntie(env).firestore()],
+      ['confused-1', asDoubleClaimed(env).firestore()],
+      ['kinfolk-1', household.firestore()],
+    ] as const) {
+      const ref = db.doc('businessSettings/admins');
+      await assertFails(ref.get());
+      await assertFails(ref.set({ uids: ['owner-1', uid] }));
+      await assertFails(ref.set({ uids: ['owner-1', uid] }, { merge: true }));
+      await assertFails(ref.update({ uids: ['owner-1', uid] }));
+      await assertFails(ref.delete());
+    }
+    const owner = asOwner(env).firestore();
+    await assertSucceeds(owner.doc('businessSettings/admins').get());
+    await assertSucceeds(owner.doc('businessSettings/admins').update({ updatedAt: 'x' }));
+  });
   /** #947's own run-marker collection is closed to everyone; confirm for a caretaker. */
   it('cannot touch scheduled_runs, the cron double-send guard', async () => {
     const env = await getEnv();

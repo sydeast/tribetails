@@ -3,6 +3,8 @@ import { useRecordTitle } from '../lib/pageTitle';
 import { type ScheduleSessionEntry } from '../api/schedule';
 import {
   type BookingNoteEntry,
+  type VisitAnswerFields,
+  answerNoteEntries,
   bookingNotesQuery,
   noteAuthorLabel,
   noteBody,
@@ -16,7 +18,7 @@ import {
 } from '../api/bookingsWrite';
 import { listStaff, staffLabel, type StaffMember } from '../api/staff';
 import { getKinfolkProfile } from '../api/kinfolkProfile';
-import { useCollection } from '../lib/firestore';
+import { useCollection, useDocById } from '../lib/firestore';
 import { arr, str } from '../lib/coerce';
 import {
   bookingWhenLabel,
@@ -623,9 +625,14 @@ interface NotesPanelProps {
 function NotesPanel({ kinfolkId, batchId, visitId, locked }: NotesPanelProps) {
   // #1607: a staff note names its writer, not a role.
   const staffNames = useStaffNames();
-  const state = useCollection<BookingNoteEntry>(
+  const thread = useCollection<BookingNoteEntry>(
     bookingNotesQuery(kinfolkId, batchId, visitId, false),
   );
+  // #2030: the notes the operator wrote on Accept or Decline live on the visit
+  // doc, not in the thread. A failed read of it leaves the thread as it is.
+  const visitDoc = useDocById<VisitAnswerFields>(`families/${kinfolkId}/bookings/${batchId}/kinCares`, visitId);
+  const answers = visitDoc.status === 'ready' ? answerNoteEntries(visitDoc.data) : [];
+  const state = thread.status === 'ready' ? { ...thread, data: [...answers, ...thread.data] } : thread;
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

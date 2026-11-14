@@ -247,3 +247,73 @@ fun removeAssigned(already: List<String>, name: String): List<String> {
  */
 fun canonicalTagName(name: String, vocab: List<TagDef>): String =
     vocab.firstOrNull { sameName(it.name, name) }?.name ?: normalizeTagName(name)
+
+// ----- Named changes (#2204, #2205) -----
+
+/**
+ * One named change to a tag list, the unit the `changeBusinessTags` callable
+ * takes. No client sends a whole list: the server applies each change to the
+ * list AS STORED, so a tag added on another device is never lost and a deleted
+ * one never comes back, and an add made before this phone has read the list
+ * cannot replace it (#2204). Deleting is `removeBusinessTag`, not a change here.
+ *
+ * [action] is "add" (a new name) or "style" (the colour and emoji of a name
+ * already on the list). Mirrors `TagChange` in the React admin's
+ * `lib/tags/model.ts`.
+ */
+data class TagChange(
+    val action: String,
+    val scope: TagScope,
+    val name: String,
+    val color: TagColor,
+    val icon: String,
+) {
+    /** The callable payload row, under the wire names the server's zod schema reads. */
+    fun toWire(): Map<String, Any> = mapOf(
+        "action" to action,
+        "scope" to scope.wire,
+        "name" to name,
+        "color" to mapOf("token" to color.token, "css" to color.css),
+        "icon" to icon,
+    )
+
+    companion object {
+        const val ADD = "add"
+        const val STYLE = "style"
+
+        /** Add one name typed on a profile, default-coloured and with no emoji. */
+        fun addFromProfile(scope: TagScope, name: String): TagChange =
+            TagChange(ADD, scope, normalizeTagName(name), DEFAULT_TAG_COLOR, "")
+    }
+}
+
+/**
+ * The changes that turn [baseline] (the list as the screen loaded it) into
+ * [draft] (the list on screen): an add for each name the baseline lacks, a style
+ * for each name whose colour or emoji differs. A name only the baseline has is
+ * left alone (deleting goes through `removeBusinessTag`), and order is not sent.
+ * Pure; the same rule as `tagListChanges` in the React admin.
+ */
+fun tagListChanges(scope: TagScope, baseline: List<TagDef>, draft: List<TagDef>): List<TagChange> =
+    draft.mapNotNull { t ->
+        val was = baseline.firstOrNull { sameName(it.name, t.name) }
+        when {
+            was == null -> TagChange(TagChange.ADD, scope, t.name, t.color, t.icon)
+            was.color.token != t.color.token || was.color.css != t.color.css || was.icon != t.icon ->
+                TagChange(TagChange.STYLE, scope, t.name, t.color, t.icon)
+            else -> null
+        }
+    }
+
+/**
+ * #2205: what the screen says when `changeBusinessTags` answered without its
+ * lists. The change may well have saved, so the sentence sends the owner to
+ * look again rather than to try again (a retried add would read as a duplicate).
+ */
+const val TAG_LISTS_NOT_RETURNED: String =
+    "The tags may have saved, but the updated list did not come back. Reopen this screen to check."
+
+/** Both tag lists as the server stored them after a `changeBusinessTags` write. */
+data class TagListsAfterChange(val household: List<TagDef>, val pet: List<TagDef>) {
+    fun forScope(scope: TagScope): List<TagDef> = if (scope == TagScope.HOUSEHOLD) household else pet
+}

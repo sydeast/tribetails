@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.*
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -557,8 +558,8 @@ private fun ScheduleViewScreenContent(
                                     actionsLocked = state.seriesActionBatchId != null,
                                     startTimes = state.seriesStartTimes,
                                     onSetStartTime = { visitId, time -> viewModel.setSeriesStartTime(series, visitId, time) },
-                                    onApprove = { viewModel.approveSeries(series) },
-                                    onCancel = { viewModel.cancelSeries(series) },
+                                    onApprove = { note -> viewModel.approveSeries(series, note) },
+                                    onCancel = { note -> viewModel.cancelSeries(series, note) },
                                     loadNotes = { viewModel.loadRequestNotes(series) },
                                     catalog = serviceCatalog,
                                 )
@@ -3259,6 +3260,8 @@ private fun visitRequestTime(ms: Long?, zone: ZoneId): String {
  * with every visit and the household's notes, and both Approve and Cancel go
  * through a confirm step titled with the household.
  */
+/** #2030: the server takes up to 500 characters of note (`manageBookingSeries`). */
+internal const val HOUSEHOLD_NOTE_MAX = 500
 @Composable
 internal fun IncomingSeriesRow(
     series: IncomingSeries,
@@ -3266,8 +3269,9 @@ internal fun IncomingSeriesRow(
     actionsLocked: Boolean,
     startTimes: Map<String, LocalTime>,
     onSetStartTime: (visitId: String, time: LocalTime) -> Unit,
-    onApprove: () -> Unit,
-    onCancel: () -> Unit,
+    /** #2030: [note] is the operator's note for the household, blank when they left none. */
+    onApprove: (note: String) -> Unit,
+    onCancel: (note: String) -> Unit,
     loadNotes: suspend () -> Result<String> = { Result.success("") },
     /** #1744: the request names its KinCare, never a stored key. */
     catalog: ServiceCatalog = ServiceCatalog(),
@@ -3279,6 +3283,10 @@ internal fun IncomingSeriesRow(
     val seriesKey = seriesNightKey(series, "")
     var confirming by remember(seriesKey) { mutableStateOf<String?>(null) }
     var detailOpen by remember(seriesKey) { mutableStateOf(false) }
+    // #2030: what the operator writes the household with the answer. The
+    // household reads it on the booking and in the answer's notice. Cleared on
+    // every new confirm, so a note meant for a decline never rides an approval.
+    var householdNote by remember(seriesKey) { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Column(
             modifier = Modifier
@@ -3341,12 +3349,12 @@ internal fun IncomingSeriesRow(
                     !ready -> "Set the start times first"
                     else -> "Approve series"
                 },
-                onClick = { confirming = "approve" },
+                onClick = { householdNote = ""; confirming = "approve" },
                 enabled = !actionsLocked && ready,
             )
             GhostButton(
                 label = "Cancel",
-                onClick = { confirming = "cancel" },
+                onClick = { householdNote = ""; confirming = "cancel" },
                 enabled = !actionsLocked,
             )
         }
@@ -3361,8 +3369,10 @@ internal fun IncomingSeriesRow(
                 label = if (confirming == "cancel") "Turn it down" else "Book it",
                 onClick = {
                     val decision = confirming
+                    val note = householdNote.trim()
                     confirming = null
-                    if (decision == "cancel") onCancel() else onApprove()
+                    householdNote = ""
+                    if (decision == "cancel") onCancel(note) else onApprove(note)
                 },
                 enabled = !actionsLocked,
             )
@@ -3379,6 +3389,17 @@ internal fun IncomingSeriesRow(
             style = AuntieTheme.typography.bodyMedium,
             color = c.textPrimary,
         )
+        // #2030: the same two labels as the web's dialog.
+        AuntieField(
+            value = householdNote,
+            onValueChange = { householdNote = it.take(HOUSEHOLD_NOTE_MAX) },
+            label = if (confirming == "cancel") "Anything to add for the household (optional)" else "Note for the household (optional)",
+            singleLine = false,
+            minLines = 3,
+            enabled = !actionsLocked,
+            modifier = Modifier.fillMaxWidth(),
+            fieldModifier = Modifier.testTag("householdNote"),
+        )
     }
     if (detailOpen) {
         var notes by remember(seriesKey) { mutableStateOf<Result<String>?>(null) }
@@ -3393,6 +3414,7 @@ internal fun IncomingSeriesRow(
                     label = "Cancel",
                     onClick = {
                         detailOpen = false
+                        householdNote = ""
                         confirming = "cancel"
                     },
                     enabled = !actionsLocked,
@@ -3401,6 +3423,7 @@ internal fun IncomingSeriesRow(
                     label = "Approve",
                     onClick = {
                         detailOpen = false
+                        householdNote = ""
                         confirming = "approve"
                     },
                     enabled = !actionsLocked && ready,

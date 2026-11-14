@@ -30,7 +30,6 @@ import { acceptQuoteHandler, denyQuoteHandler, quoteDecisionRefusal } from '../s
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 import { logEvent } from '../src/lib/logger';
 import { BILLING_ACTION_REFUSAL } from '../src/lib/memberGate';
-import { quoteHasExpired } from '../src/lib/quoteDecision';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -63,8 +62,8 @@ function quoteDoc(over: Record<string, unknown> = {}): Record<string, unknown> {
     editScope: 'all',
     total: 240,
     amountDue: 240,
-    // Deliberately far in the future: the expiry guard is exercised on its own
-    // below, and every other case here would otherwise depend on today's date.
+    // Far in the future, from when quotes expired (#2088 ended that); kept so
+    // the fixture is a quote with an ordinary due date.
     dueDate: '2999-12-31',
     ...over,
   };
@@ -225,18 +224,19 @@ describe('the guards', () => {
     expect(ctx.writes).toHaveLength(0);
   });
 
-  it('REFUSES accepting a quote whose due date has passed', async () => {
+  // #2088 (operator ruling 2026-11-12): a quote has no expiry and no "good
+  // through". Its due date is when the invoice it becomes is due.
+  it('#2088 ACCEPTS a quote whose due date has passed: a quote does not expire', async () => {
     const ctx = ctxFor(quoteDoc({ dueDate: '2020-01-01' }));
     mocks.dbFn.mockReturnValue(ctx.db);
 
-    await expect(acceptQuoteHandler(req({ invoiceId: 'q1' }))).rejects.toMatchObject({
-      code: 'failed-precondition',
-      message: expect.stringContaining('2020-01-01'),
-    });
-    expect(ctx.writes).toHaveLength(0);
+    const res = await acceptQuoteHandler(req({ invoiceId: 'q1' }));
+
+    expect(res.status).toBe('open');
+    expect(quoteWrite(ctx).quoteDecision).toBe('accepted');
   });
 
-  it('ALLOWS declining an expired quote, so the household is not stuck with it', async () => {
+  it('ALLOWS declining a quote whose due date has passed', async () => {
     const ctx = ctxFor(quoteDoc({ dueDate: '2020-01-01' }));
     mocks.dbFn.mockReturnValue(ctx.db);
 
@@ -347,39 +347,36 @@ describe('the notifications issue #385 is about', () => {
   });
 });
 
-describe('quoteHasExpired', () => {
-  it('is good THROUGH the due day and expired the day after', () => {
-    expect(quoteHasExpired('2026-08-18', '2026-08-17')).toBe(false);
-    expect(quoteHasExpired('2026-08-18', '2026-08-18')).toBe(false);
-    expect(quoteHasExpired('2026-08-18', '2026-08-19')).toBe(true);
-  });
-
-  it('never expires on evidence it does not have', () => {
-    // No due date at all: most quotes in this collection.
-    expect(quoteHasExpired('', '2026-08-19')).toBe(false);
-    expect(quoteHasExpired(undefined, '2026-08-19')).toBe(false);
-    // Free text left over from before `invoiceDay.ts` pinned the shape.
-    expect(quoteHasExpired('Aug 18, 2026', '2026-08-19')).toBe(false);
-    // An unreadable business time zone: skip the check rather than guess.
-    expect(quoteHasExpired('2026-08-18', '')).toBe(false);
-  });
-});
-
 describe('quoteDecisionRefusal', () => {
   it('reports the already-decided refusal before the not-a-quote one', () => {
     // An accepted quote is no longer in QUOTE status, so checking the status
     // first would tell the household "this is an invoice, not a quote" when the
     // true answer is "you accepted this already".
-    const refusal = quoteDecisionRefusal(
-      { status: 'open', quoteDecision: 'accepted' },
-      'accepted',
-      '2026-08-18',
-    );
+    const refusal = quoteDecisionRefusal({ status: 'open', quoteDecision: 'accepted' });
     expect(refusal?.code).toBe('quote_already_decided');
   });
 
-  it('passes a fresh, in-date quote', () => {
-    expect(quoteDecisionRefusal({ status: 'quote', dueDate: '2026-08-18' }, 'accepted', '2026-08-18')).toBeNull();
+  it('passes a sent quote waiting for an answer, whatever its due date', () => {
+    expect(quoteDecisionRefusal({ status: 'quote', dueDate: '2020-01-01' })).toBeNull();
+  });
+
+  it('#2087 a quote saved unsent, or turned into an invoice not sent yet, reads as missing', () => {
+    expect(quoteDecisionRefusal({ status: 'draft', quoteDraft: true })).toEqual({
+      code: 'quote_not_found',
+      message: 'Quote not found.',
+    });
+    expect(quoteDecisionRefusal({ status: 'draft', quoteConvertedAt: '__TS__' })?.code).toBe('quote_not_found');
+  });
+
+  it('#2195 an archived quote cannot be answered, in words the household reads', () => {
+    expect(quoteDecisionRefusal({ status: 'quote', archivedAt: '__TS__' })).toEqual({
+      code: 'quote_archived',
+      message: 'This quote is not open for an answer right now. Ask your Auntie about it.',
+    });
+  });
+
+  it('#2088 a withdrawn quote has nothing left to answer', () => {
+    expect(quoteDecisionRefusal({ status: 'cancelled', quoteWithdrawnAt: '__TS__' })?.code).toBe('quote_withdrawn');
   });
 });
 

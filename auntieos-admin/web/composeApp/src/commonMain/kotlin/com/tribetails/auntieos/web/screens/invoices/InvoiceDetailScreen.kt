@@ -297,6 +297,31 @@ private fun InvoiceDetailBody(
         }
     }
 
+    // #2088: turn the quote into a draft invoice ("convert") or withdraw it
+    // ("withdraw"). One callable each, one transaction server-side; the
+    // server's refusal is the toast, verbatim.
+    var quotePrompt   by remember(invoice._id) { mutableStateOf<String?>(null) }
+    var changingQuote by remember(invoice._id) { mutableStateOf(false) }
+    fun quoteActionNow(action: String) {
+        if (changingQuote) return
+        changingQuote = true
+        scope.launch {
+            if (action == "convert") {
+                when (val r = client.convertQuoteToInvoice(invoice._id)) {
+                    is WriteResult.Err -> showToast("Couldn't turn it into an invoice: ${r.message}", true)
+                    is WriteResult.Ok  -> showToast(QUOTE_CONVERTED_TEXT, false)
+                }
+            } else {
+                when (val r = client.withdrawQuote(invoice._id)) {
+                    is WriteResult.Err -> showToast("Couldn't withdraw it: ${r.message}", true)
+                    is WriteResult.Ok  -> showToast(quoteWithdrawnText(r.value), false)
+                }
+            }
+            changingQuote = false
+            quotePrompt = null
+        }
+    }
+
     // #1197: the server's refusal, shown inside the Link Sessions dialog, which
     // stays open with the operator's picks intact so they can correct and retry.
     var linkSessionsError by remember(invoice._id) { mutableStateOf<String?>(null) }
@@ -462,21 +487,57 @@ private fun InvoiceDetailBody(
                 Text(notice, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
             }
         }
+        // #2195: an archived quote is hidden from the household, and says so.
+        val archivedQuote = isArchivedQuote(invoice)
         if (archived) {
             AuntieBanner(tone = AuntieBannerTone.Info, title = "Archived") {
-                Text(ARCHIVED_INVOICE_TEXT, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                Text(
+                    if (archivedQuote) archivedQuoteText(invoice) else ARCHIVED_INVOICE_TEXT,
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
             }
         }
         AuntieDialog(
             visible   = askRestore,
-            title     = "Restore this invoice?",
+            title     = if (archivedQuote) "Restore this quote?" else "Restore this invoice?",
             onDismiss = { askRestore = false },
             footer    = {
                 GhostButton(label = "Cancel", onClick = { askRestore = false })
-                PrimaryButton(label = "Restore invoice", onClick = { restoreNow() })
+                PrimaryButton(label = if (archivedQuote) "Restore quote" else "Restore invoice", onClick = { restoreNow() })
             },
         ) {
-            Text(RESTORE_CONFIRM_TEXT, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+            Text(
+                if (archivedQuote) restoreQuoteConfirmText(invoice) else RESTORE_CONFIRM_TEXT,
+                style = AuntieTheme.typography.bodySmall,
+                color = AuntieTheme.colors.textDim,
+            )
+        }
+        // #2088: turn the quote into an invoice, or withdraw it, behind a confirm.
+        quotePrompt?.let { action ->
+            AuntieDialog(
+                visible   = true,
+                title     = if (action == "convert") "Turn this quote into an invoice?" else "Withdraw this quote?",
+                onDismiss = { if (!changingQuote) quotePrompt = null },
+                footer    = {
+                    GhostButton(label = "Cancel", onClick = { if (!changingQuote) quotePrompt = null })
+                    PrimaryButton(
+                        label   = when {
+                            changingQuote -> "Working..."
+                            action == "convert" -> "Turn into invoice"
+                            else -> "Withdraw quote"
+                        },
+                        onClick = { quoteActionNow(action) },
+                        enabled = !changingQuote,
+                    )
+                },
+            ) {
+                Text(
+                    if (action == "convert") CONVERT_QUOTE_CONFIRM_TEXT else WITHDRAW_QUOTE_CONFIRM_TEXT,
+                    style = AuntieTheme.typography.bodySmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+            }
         }
 
         // ── Header status badge (accent-tinted full-width bar) ─────────────────
@@ -640,6 +701,20 @@ private fun InvoiceDetailBody(
                 enabled = !pdfLoading,
                 leading = { Icon(Lucide.FileText, contentDescription = null, modifier = Modifier.size(14.dp)) },
             )
+            // #2088: once a quote exists the office can turn it into an invoice
+            // or withdraw it, while it is not accepted and not archived.
+            if (quoteIsChangeable(invoice)) {
+                GhostButton(
+                    label   = "Turn into invoice",
+                    onClick = { quotePrompt = "convert" },
+                    enabled = !changingQuote,
+                )
+                GhostButton(
+                    label   = "Withdraw quote",
+                    onClick = { quotePrompt = "withdraw" },
+                    enabled = !changingQuote,
+                )
+            }
             // #2168: the way back from read-only. The console has no Archive
             // of its own; an invoice archived on web or Android is restored here.
             if (archived) GhostButton(

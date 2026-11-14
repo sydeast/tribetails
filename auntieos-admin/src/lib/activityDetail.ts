@@ -189,6 +189,8 @@ export function activityMatchesQuery(
   if (q === '') return true;
   const haystack = [
     str(entry.actionType),
+    // #1839: the plain title the row shows in place of the key.
+    activityTitle(str(entry.actionType)),
     str(entry.description),
     // #1747: the words the row shows, so a search for them finds a stored path's row.
     activityDescriptionWords(str(entry.description)),
@@ -299,6 +301,33 @@ export function activityMatchesCategory(entry: ActivityLogEntry, category: Activ
 export function humanizeAction(actionType: string): string {
   const lower = actionType.toLowerCase().replace(/_/g, ' ').trim();
   return lower === '' ? 'Event' : lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+/**
+ * #1839: the stored key of a look at a household. Since operator ruling
+ * 2026-11-12 only an Auntie's looks write it; rows stored before then carry the
+ * owner's looks too. It is a routine look, never a warning.
+ */
+export const HOUSEHOLD_LOOK_ACTION = 'OPERATOR_CROSSTENANT_ACCESS';
+export const HOUSEHOLD_LOOK_TITLE = 'Household opened';
+
+/** Is this entry a look at a household (#1839)? */
+export function activityIsHouseholdLook(entry: ActivityLogEntry): boolean {
+  return str(entry.actionType).trim().toUpperCase() === HOUSEHOLD_LOOK_ACTION;
+}
+
+/**
+ * The row's bold line. A kind with a plain title (#1839) shows that title and no
+ * stored key beside it; every other kind keeps the humanized key and its code.
+ * Same rule as Android and the desktop console (`activityTitle`).
+ */
+export function activityTitle(actionType: string): string {
+  return actionType.trim().toUpperCase() === HOUSEHOLD_LOOK_ACTION ? HOUSEHOLD_LOOK_TITLE : humanizeAction(actionType);
+}
+
+/** Whether the row prints the stored key beside its title. False for a kind with a plain title. */
+export function activityShowsCode(actionType: string): boolean {
+  return actionType.trim() !== '' && activityTitle(actionType) === humanizeAction(actionType);
 }
 
 /** True when the wire status is a failure, in either spelling the writers have used. */

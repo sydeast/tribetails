@@ -28,10 +28,17 @@ export const Args = z.object({
   kinfolkId: z.string().min(1).max(120),
   batchId: z.string().min(1).max(120),
   /**
-   * Why the office could not take a request, shown to the household beside the
-   * decision (#533). Only reaches them when CANCEL is DECLINING a request that
-   * was never confirmed; cancelling an already-approved series is a different
-   * event and carries no note.
+   * The office's words to the household with its answer, shown to them on the
+   * booking and in the answer's notice.
+   *
+   * CANCEL (#533): why the office could not take a request. Only reaches them
+   * when CANCEL is DECLINING a request that was never confirmed; cancelling an
+   * already-approved series is a different event and carries no note.
+   *
+   * APPROVE (#2030): what the office adds when it books the request. Stamped on
+   * each visit this approval newly confirms (`requestAcceptNote`) and carried
+   * on the one confirmation. Before #2030 the admin's "Note for the household"
+   * box was dropped on the client and never sent.
    */
   note: z.string().trim().max(500).optional(),
   /**
@@ -109,6 +116,7 @@ export async function manageBookingSeriesHandler(
       startTimes: args.startTimes,
       overrideBusyConflict: args.overrideBusyConflict,
       overrideVisitConflict: args.overrideVisitConflict,
+      householdNote: args.note,
     });
     if (!r.found) {
       throw new HttpsError('not-found', `Booking series '${args.batchId}' not found.`);
@@ -180,6 +188,9 @@ export async function manageBookingSeriesHandler(
             ? {
                 requestDeclinedAt: FieldValue.serverTimestamp(),
                 requestDeclineNote: args.note ?? null,
+                // #2030: who answered, so the household's booking page can
+                // say who the note is from (by staff display name, never an email).
+                requestDeclinedBy: uid,
               }
             : {}),
         },

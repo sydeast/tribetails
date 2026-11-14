@@ -162,7 +162,10 @@ function serializeTransactions(ctx: ReturnType<typeof buildDbMock>) {
 }
 
 async function makeQuote(ctx: ReturnType<typeof buildDbMock>, sessionIds: string[], key = 'quot_1700000002156_a') {
-  const { invoiceId } = await createQuoteHandler(admin({ ...composerQuote(sessionIds), idempotencyKey: key }));
+  // Sent, so the household can answer it (#2087: an unsent quote is the office's alone).
+  const { invoiceId } = await createQuoteHandler(
+    admin({ ...composerQuote(sessionIds), idempotencyKey: key, sendToKinfolk: true }),
+  );
   return invoiceId;
 }
 
@@ -172,7 +175,11 @@ describe('#2156 createQuote holds its visits from the start', () => {
   it('marks every visit as held by the quote, so it leaves the not-yet-invoiced list at once', async () => {
     const ctx = world();
     expect(isSessionBillable(await docOf(ctx, 'kin_care_sessions/s1'))).toBe(true);
-    const quoteId = await makeQuote(ctx, ['s1', 's2']);
+    // #2087: saved with "Send to kinfolk now" off, a draft only the office
+    // sees, and it holds its visits all the same.
+    const { invoiceId: quoteId } = await createQuoteHandler(
+      admin({ ...composerQuote(['s1', 's2']), idempotencyKey: 'quot_1700000002156_a' }),
+    );
 
     for (const sid of ['s1', 's2']) {
       const v = await docOf(ctx, `kin_care_sessions/${sid}`);
@@ -181,7 +188,8 @@ describe('#2156 createQuote holds its visits from the start', () => {
       expect(isSessionBillable(v)).toBe(false);
     }
     const q = await docOf(ctx, `invoices/${quoteId}`);
-    expect(q['status']).toBe('quote');
+    expect(q['status']).toBe('draft');
+    expect(q['quoteDraft']).toBe(true);
     expect(q['sessionIds']).toEqual(['s1', 's2']);
     // One transaction: the quote and its holds land together or not at all.
     expect(ctx.db.runTransaction).toHaveBeenCalledTimes(1);
@@ -600,15 +608,20 @@ describe('#2156 sending a declined quote back out takes its visits back', () => 
 
 // ── archive ─────────────────────────────────────────────────────────────────
 
-describe('#2156 archiving a quote keeps its visits held', () => {
-  it('the Kinfolk can still answer it, so nothing goes back on the list until they decline', async () => {
+describe('#2195 archiving a quote lets go of its visits, as archiving a draft does', () => {
+  // Superseded #2156's "archiving keeps them held": the lead ruling of
+  // 2026-11-13 hides an archived quote from the household, so nothing can
+  // answer it and its visits go back on the list. test/quoteLifecycle.test.ts
+  // covers the rest (restore, races, MyTribe).
+  it('the visits go back on the list in the archive transaction, and the Kinfolk can no longer answer it', async () => {
     const ctx = world();
     const quoteId = await makeQuote(ctx, ['s1']);
     const archived = await archiveInvoiceHandler(admin({ invoiceId: quoteId }));
-    expect(archived.releasedSessionIds).toEqual([]);
-    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(quoteId);
-
-    await denyQuoteHandler(kinfolk({ invoiceId: quoteId }));
+    expect(archived.releasedSessionIds).toEqual(['s1']);
     expect(isSessionBillable(await docOf(ctx, 'kin_care_sessions/s1'))).toBe(true);
+
+    await expect(denyQuoteHandler(kinfolk({ invoiceId: quoteId }))).rejects.toMatchObject({
+      details: { code: 'quote_archived' },
+    });
   });
 });

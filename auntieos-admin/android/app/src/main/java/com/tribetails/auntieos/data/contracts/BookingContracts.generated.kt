@@ -188,10 +188,35 @@ internal fun decodeGetBookingNotesResultNote(raw: Map<String, Any?>?): GetBookin
         createdAtMs = (raw?.get("createdAtMs") as? Number)?.toLong(),
     )
 
+/** Nested in the `getBookingNotes` contract. */
+data class GetBookingNotesResultFromBusiness(
+    val id: String,
+    /** One of `requestAccepted`, `requestDeclined`, `visitNote`. `""` when the payload omits it. */
+    val kind: String,
+    val body: String,
+    val createdAtMs: Long?,
+    val authorName: String?,
+)
+
+/**
+ * Fail-soft decode of `GetBookingNotesResultFromBusiness` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetBookingNotesResultFromBusiness(raw: Map<String, Any?>?): GetBookingNotesResultFromBusiness =
+    GetBookingNotesResultFromBusiness(
+        id = (raw?.get("id") as? String).orEmpty(),
+        kind = (raw?.get("kind") as? String).orEmpty(),
+        body = (raw?.get("body") as? String).orEmpty(),
+        createdAtMs = (raw?.get("createdAtMs") as? Number)?.toLong(),
+        authorName = raw?.get("authorName") as? String,
+    )
+
 /** Response from the `getBookingNotes` callable. */
 data class GetBookingNotesResult(
     val bookingNote: String?,
     val notes: List<GetBookingNotesResultNote>,
+    val fromBusiness: List<GetBookingNotesResultFromBusiness>,
 )
 
 /**
@@ -203,6 +228,7 @@ internal fun decodeGetBookingNotesResult(raw: Map<String, Any?>?): GetBookingNot
     GetBookingNotesResult(
         bookingNote = raw?.get("bookingNote") as? String,
         notes = (raw?.get("notes") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetBookingNotesResultNote(nested) } },
+        fromBusiness = (raw?.get("fromBusiness") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetBookingNotesResultFromBusiness(nested) } },
     )
 
 // ---------- addInternalBookingNote ----------

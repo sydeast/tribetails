@@ -72,6 +72,18 @@ export const AUDIT_EVENTS = {
    * no to it.
    */
   BILLING_QUOTE_RESENT: 'BILLING_QUOTE_RESENT',
+  /**
+   * #2087: a quote saved with "Send to kinfolk now" off (a draft only the
+   * office sees) was sent to the household, who can answer it from then on.
+   */
+  BILLING_QUOTE_SENT: 'BILLING_QUOTE_SENT',
+  /**
+   * #2088: the office turned a quote into a draft invoice. The household hears
+   * about the invoice when the office sends it.
+   */
+  BILLING_QUOTE_CONVERTED: 'BILLING_QUOTE_CONVERTED',
+  /** #2088: the office withdrew a quote. It is cancelled and its visits went back on the list. */
+  BILLING_QUOTE_WITHDRAWN: 'BILLING_QUOTE_WITHDRAWN',
   BILLING_INVOICE_PAID: 'BILLING_INVOICE_PAID',
   BILLING_INVOICE_FAILED: 'BILLING_INVOICE_FAILED',
   // #884: an account credit payment notification was retried
@@ -267,6 +279,10 @@ export const AUDIT_EVENTS = {
   // held the tag is gone the moment the batch commits. The payload carries the
   // record ids so the trail can answer that.
   BUSINESS_TAG_REMOVED: 'BUSINESS_TAG_REMOVED',
+  // #2205: tags added to, or recoloured on, a business_settings tag list
+  // through changeBusinessTags, one named tag at a time. Payload lists each
+  // change as { action, scope, name }.
+  BUSINESS_TAGS_CHANGED: 'BUSINESS_TAGS_CHANGED',
   // #1593: Settings saved through saveBusinessSettings. Payload names the
   // top-level fields the save changed, never their values.
   BUSINESS_SETTINGS_UPDATED: 'BUSINESS_SETTINGS_UPDATED',
@@ -466,11 +482,16 @@ export const AUDIT_EVENTS = {
 
   // RULING O-6 (docs/RULING_O-6_OPERATOR_TRUST_2026-07-13.md) hardening 2:
   // staff cross-tenant power is total (any kinfolkId, any household), so the
-  // audit trail is the compensating control. Emitted by resolveKinfolkAccess
-  // whenever a staff caller resolves a kinfolkId NOT in their own
-  // clients/{uid}.kinfolkIds — i.e. every genuine cross-household access,
-  // not every staff call (a staff member acting on their own linked
-  // household, if any, is not "cross-tenant").
+  // audit trail is the compensating control.
+  //
+  // #1839, operator ruling 2026-11-12 (reverses O-6 for the owner only): an
+  // AUNTIE's look at a household. resolveKinfolkAccess is the one writer; it
+  // writes the line, with her name and the household's in the description,
+  // when she resolves a household (her assigned tribes included), at most once
+  // per household per ten-minute window, so one screen open is one line. The
+  // owner's own looks write nothing on any path. Rows stored before the ruling
+  // carry the owner's looks too, under the same key; the admin clients show
+  // every row of this kind as "Household opened" in plain words.
   OPERATOR_CROSSTENANT_ACCESS: 'OPERATOR_CROSSTENANT_ACCESS',
 
   // Dashboard-widget ops (AO-39/40/41): admin-only quick-log + tracker writes.
@@ -649,9 +670,12 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.BILLING_PAYMENT_RECORDED,
   AUDIT_EVENTS.BILLING_PAYMENT_UNAPPLIED,
   AUDIT_EVENTS.BILLING_QUOTE_ACCEPTED,
+  AUDIT_EVENTS.BILLING_QUOTE_CONVERTED,
   AUDIT_EVENTS.BILLING_QUOTE_CREATED,
   AUDIT_EVENTS.BILLING_QUOTE_DENIED,
   AUDIT_EVENTS.BILLING_QUOTE_RESENT,
+  AUDIT_EVENTS.BILLING_QUOTE_SENT,
+  AUDIT_EVENTS.BILLING_QUOTE_WITHDRAWN,
   AUDIT_EVENTS.BILLING_RECEIPT_ISSUED,
   AUDIT_EVENTS.BILLING_REMINDER_SENT,
   AUDIT_EVENTS.BILLING_SESSION_DO_NOT_INVOICE_CLEARED,
@@ -743,6 +767,7 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.BRANDING_ASSET_UPDATED,
   AUDIT_EVENTS.BUSINESS_SETTINGS_UPDATED,
   AUDIT_EVENTS.BUSINESS_TAG_REMOVED,
+  AUDIT_EVENTS.BUSINESS_TAGS_CHANGED,
   AUDIT_EVENTS.EMAIL_FRAME_UPDATED,
   AUDIT_EVENTS.THEME_BRAND_TOKENS_UPDATED,
   AUDIT_EVENTS.THEME_KINFOLK_OVERRIDES_UPDATED,

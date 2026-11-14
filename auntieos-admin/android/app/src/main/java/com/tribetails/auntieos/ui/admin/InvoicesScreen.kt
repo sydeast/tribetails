@@ -145,7 +145,8 @@ internal fun invoiceListSubtitle(
 internal fun invoiceBilledTotal(invoices: List<Invoice>): Double =
     invoices.filter {
         val state = invoiceStateOrNull(it)
-        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE
+        // #2088: a withdrawn quote is CANCELLED, and a cancelled invoice is not money billed either.
+        state != InvoiceState.DRAFT && state != InvoiceState.QUOTE && state != InvoiceState.CANCELLED
     }.sumOf { it.total }
 /**
  * Den filter tabs. The same seven tabs, labels and order as the admin web
@@ -510,14 +511,23 @@ fun InvoicesScreen(
         LaunchedEffect(invoice.id, action) {
             preview = viewModel.invoiceNoticePreviewSentence(invoice.id, action)
         }
+        val quoteSend = action != "reminder" && com.tribetails.auntieos.domain.isQuoteDraft(invoice)
         com.tribetails.auntieos.ui.components.AuntieDialog(
             visible   = true,
-            title     = if (action == "reminder") "Send a payment reminder?" else "Send this draft?",
+            title     = when {
+                action == "reminder" -> "Send a payment reminder?"
+                quoteSend -> "Send this quote?"
+                else -> "Send this draft?"
+            },
             onDismiss = { rowSendConfirm = null },
             footer = {
                 GhostButton(label = "Cancel", onClick = { rowSendConfirm = null })
                 PrimaryButton(
-                    label   = if (action == "reminder") "Send reminder" else "Review and send",
+                    label   = when {
+                        action == "reminder" -> "Send reminder"
+                        quoteSend -> "Send quote"
+                        else -> "Review and send"
+                    },
                     onClick = {
                         rowSendConfirm = null
                         if (action == "reminder") viewModel.sendInvoiceReminder(invoice.id)
@@ -903,6 +913,12 @@ private fun InvoiceRow(
             if (invoiceDisputeOrNull(invoice)?.open == true) {
                 AuntieStatusPill(label = "Disputed", tone = AuntieStatusTone.Error, mono = true)
             }
+            // #2087: BESIDE the Draft pill, for the same reason: it really is a
+            // draft the household cannot see, and it goes out as a quote.
+            val quoteDraft = com.tribetails.auntieos.domain.isQuoteDraft(invoice)
+            if (quoteDraft) {
+                AuntieStatusPill(label = "Quote", tone = AuntieStatusTone.Purple, mono = true)
+            }
             Spacer(Modifier.weight(1f))
             RowAction(
                 // #2168: an archived draft's row offers no Review & send.
@@ -911,6 +927,7 @@ private fun InvoiceRow(
                 onSendReminder = { onSendReminder(invoice) },
                 onSendDraft = { onSendDraft(invoice) },
                 reminding = reminding,
+                quoteDraft = quoteDraft,
             )
         }
     }
@@ -940,11 +957,13 @@ private fun RowAction(
     onSendReminder: () -> Unit,
     onSendDraft: () -> Unit,
     reminding: Boolean = false,
+    /** #2087: a quote saved unsent, whose send makes it a Quote. */
+    quoteDraft: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     when {
         InvoiceAction.REVIEW_AND_SEND in actions ->
-            PrimaryButton(label = "Review & send", onClick = onSendDraft)
+            PrimaryButton(label = if (quoteDraft) "Send quote" else "Review & send", onClick = onSendDraft)
         // Pessimistic (#832): busy and disabled until the server answers.
         InvoiceAction.SEND_REMINDER in actions -> PrimaryButton(
             label = if (reminding) "Sending…" else "Send reminder",

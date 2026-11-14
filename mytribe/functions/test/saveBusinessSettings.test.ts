@@ -38,6 +38,7 @@ import {
   priceProblem,
   venmoHandleProblem,
   type CheckContext,
+  TAGS_SAVE_ONE_AT_A_TIME,
 } from '../src/lib/businessSettingsChecks';
 import { wrapAdminCallable } from '../src/lib/wrapAdminCallable';
 import { AUNTIE_ALLOWED_CALLABLES } from '../src/lib/auntieAccess';
@@ -349,14 +350,17 @@ describe('field checks: the 2026-11-05 QA walk', () => {
     expect(one('mytribePortal', { logoUrl: LOGO, logoRemovedAt: '' })).toBeNull();
     expect(one('mytribePortal', { flavor: 'x' })).toBe('"flavor" is not a portal setting.');
   });
-  it('tags and the calendar id', () => {
-    expect(
-      one('householdTags', [{ name: 'VIP', color: { token: 'teal', css: '#0aa' }, icon: null }]),
-    ).toBeNull();
-    expect(one('householdTags', [{ name: ' ' }])).toBe('A tag name is required.');
-    expect(one('petTags', [{ name: 'Meds' }, { name: 'meds' }])).toBe(
-      'A "meds" tag already exists.',
+  it('tags (#2205: only the list as stored passes) and the calendar id', () => {
+    const vip = { name: 'VIP', color: { token: 'teal', css: '#0aa' }, icon: '' };
+    const storedVip = { ...CTX, stored: { householdTags: [vip] } };
+    expect(one('householdTags', [vip], storedVip)).toBeNull();
+    expect(one('householdTags', [])).toBeNull();
+    expect(one('householdTags', [vip])).toBe(TAGS_SAVE_ONE_AT_A_TIME);
+    expect(one('householdTags', [], storedVip)).toBe(TAGS_SAVE_ONE_AT_A_TIME);
+    expect(one('householdTags', [vip, { ...vip, name: 'Slow pay' }], storedVip)).toBe(
+      TAGS_SAVE_ONE_AT_A_TIME,
     );
+    expect(one('petTags', [vip], storedVip)).toBe(TAGS_SAVE_ONE_AT_A_TIME);
     expect(one('calendarSyncId', '')).toBeNull();
     expect(one('calendarSyncId', 'primary')).toMatch(/"primary"/);
     expect(one('calendarSyncId', 'ops@group.calendar.google.com')).toBeNull();

@@ -10,7 +10,11 @@ vi.mock('../api/settings', async (orig) => ({
   getBusinessSettings: () => getBusinessSettings(),
 }));
 const saveBusinessSettings = vi.fn();
-vi.mock('../api/settingsWrite', () => ({ saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch) }));
+const changeBusinessTags = vi.fn();
+vi.mock('../api/settingsWrite', () => ({
+  saveBusinessSettings: (patch: unknown) => saveBusinessSettings(patch),
+  changeBusinessTags: (changes: unknown) => changeBusinessTags(changes),
+}));
 // #2186: who is signed in, and the transport the Auntie's staff read goes over.
 // Only these two are stood in; the api modules between them are the real ones.
 const { currentSessionSeat, call } = vi.hoisted(() => ({ currentSessionSeat: vi.fn(), call: vi.fn() }));
@@ -34,6 +38,8 @@ beforeEach(() => {
   getBusinessSettings.mockResolvedValue(settings([], []));
   saveBusinessSettings.mockReset();
   saveBusinessSettings.mockResolvedValue({ updatedAt: 'now', updatedBy: 'auntie' });
+  changeBusinessTags.mockReset();
+  changeBusinessTags.mockResolvedValue({ householdTags: [], petTags: [] });
   currentSessionSeat.mockReset().mockResolvedValue(OWNER_SEAT);
   call.mockReset().mockImplementation(staffOnlyCall);
 });
@@ -60,26 +66,60 @@ describe('ProfileTagsSection', () => {
     await waitFor(() => expect(onSaveTags).toHaveBeenCalledWith([]));
   });
 
-  it('promotes a new name to the vocabulary (saveBusinessSettings) and assigns it', async () => {
+  it('promotes a new name to the vocabulary (one add, never the list) and assigns it', async () => {
     const onSaveTags = vi.fn().mockResolvedValue(undefined);
     render(<ProfileTagsSection scope="household" initialTags={[]} onSaveTags={onSaveTags} />);
     await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Grooming');
     await userEvent.click(await screen.findByRole('button', { name: /add .*grooming.* to your tags/i }));
 
-    await waitFor(() => expect(saveBusinessSettings).toHaveBeenCalledTimes(1));
-    expect(saveBusinessSettings.mock.calls[0]![0]).toEqual({
-      householdTags: [{ name: 'Grooming', color: DEFAULT_TAG_COLOR, icon: '' }],
-    });
+    await waitFor(() => expect(changeBusinessTags).toHaveBeenCalledTimes(1));
+    expect(changeBusinessTags.mock.calls[0]![0]).toEqual([
+      { action: 'add', scope: 'household', name: 'Grooming', color: DEFAULT_TAG_COLOR, icon: '' },
+    ]);
+    expect(saveBusinessSettings).not.toHaveBeenCalled();
     expect(onSaveTags).toHaveBeenCalledWith(['Grooming']);
   });
 
-  it('targets the pet vocabulary field when scope is pet', async () => {
+  it('targets the pet vocabulary when scope is pet', async () => {
     const onSaveTags = vi.fn().mockResolvedValue(undefined);
     render(<ProfileTagsSection scope="pet" initialTags={[]} onSaveTags={onSaveTags} />);
     await userEvent.type(screen.getByLabelText(/add a pet tag/i), 'Grooming');
     await userEvent.click(await screen.findByRole('button', { name: /add .*grooming.* to your tags/i }));
-    await waitFor(() => expect(saveBusinessSettings).toHaveBeenCalledTimes(1));
-    expect(Object.keys(saveBusinessSettings.mock.calls[0]![0])).toEqual(['petTags']);
+    await waitFor(() => expect(changeBusinessTags).toHaveBeenCalledTimes(1));
+    expect(changeBusinessTags.mock.calls[0]![0]).toMatchObject([{ action: 'add', scope: 'pet', name: 'Grooming' }]);
+  });
+
+  it('#2205: after an add the suggestions are the list as stored, tags added elsewhere included', async () => {
+    getBusinessSettings.mockResolvedValue(settings([{ name: 'VIP', color: orange, icon: '' }], []));
+    // Since this panel loaded, another device added "Gate code"; the server keeps it.
+    changeBusinessTags.mockResolvedValue({
+      householdTags: [
+        { name: 'VIP', color: orange, icon: '' },
+        { name: 'Gate code', color: DEFAULT_TAG_COLOR, icon: '' },
+        { name: 'Grooming', color: DEFAULT_TAG_COLOR, icon: '' },
+      ],
+      petTags: [],
+    });
+    render(<ProfileTagsSection scope="household" initialTags={[]} onSaveTags={vi.fn().mockResolvedValue(undefined)} />);
+    await waitFor(() => expect(screen.queryByText(TAG_SUGGESTIONS_LOADING)).toBeNull());
+    await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Grooming');
+    await userEvent.click(await screen.findByRole('button', { name: /add .*grooming.* to your tags/i }));
+    await waitFor(() => expect(changeBusinessTags).toHaveBeenCalledTimes(1));
+
+    await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Gate');
+    expect(await screen.findByRole('button', { name: 'Gate code' })).toBeInTheDocument();
+  });
+
+  it('#2205: a refused add (a duplicate added elsewhere) says so in plain words and keeps the assignment', async () => {
+    changeBusinessTags.mockRejectedValue(new Error('A "Grooming" tag already exists.'));
+    const onSaveTags = vi.fn().mockResolvedValue(undefined);
+    render(<ProfileTagsSection scope="household" initialTags={[]} onSaveTags={onSaveTags} />);
+    await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Grooming');
+    await userEvent.click(await screen.findByRole('button', { name: /add .*grooming.* to your tags/i }));
+    expect(
+      await screen.findByText(`Couldn't add that tag to your list: A "Grooming" tag already exists.`),
+    ).toBeInTheDocument();
+    expect(onSaveTags).toHaveBeenCalledWith(['Grooming']);
   });
 
   it('reverts the chip and surfaces the error fail-loud when a save fails', async () => {
@@ -165,7 +205,7 @@ describe('ProfileTagsSection', () => {
     render(<ProfileTagsSection scope="household" initialTags={[]} onSaveTags={vi.fn().mockResolvedValue(undefined)} />);
     expect(await screen.findByText(TAG_SUGGESTIONS_LOADING)).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText(/add a household tag/i), 'Grooming');
-    // The save replaces the whole list, so promoting before it loads would wipe it.
+    // Before the list loads the field cannot tell a new name from one already on it.
     expect(screen.queryByRole('button', { name: /to your tags/i })).toBeNull();
 
     land(settings([{ name: 'VIP', color: orange, icon: '⭐' }], []));

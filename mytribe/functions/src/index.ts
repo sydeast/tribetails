@@ -396,6 +396,10 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // The decline is a step in a conversation, not a dead end; this is the step
   // that answers it.
   resendQuote: () => require('./admin/resendQuote'),
+  // #2088: once a quote exists the office can turn it into a draft invoice or
+  // withdraw it. One module, two callables, like acceptQuote / denyQuote.
+  convertQuoteToInvoice: () => require('./admin/quoteActions'),
+  withdrawQuote: () => require('./admin/quoteActions'),
   sendInvoiceReminder: () => require('./admin/sendInvoiceReminder'),
   generateReceipt: () => require('./admin/generateReceipt'),
   markInvoicePaid: () => require('./admin/markInvoicePaid'),
@@ -615,6 +619,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   setMediaProfilePhoto: () => require('./admin/setMediaProfilePhoto'),
   saveMediaTags: () => require('./admin/saveMediaTags'),
   removeBusinessTag: () => require('./admin/removeBusinessTag'),
+  // #2205: adds and recolours one named tag at a time against the stored list,
+  // so no client can lose or bring back a tag by sending a stale list.
+  changeBusinessTags: () => require('./admin/changeBusinessTags'),
   // #1593: the one Settings save. The rules deny business_settings/business_settings
   // to every client, so this is the only way the three admin clients write it.
   saveBusinessSettings: () => require('./admin/saveBusinessSettings'),

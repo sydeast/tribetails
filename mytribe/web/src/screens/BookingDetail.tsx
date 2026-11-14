@@ -37,6 +37,7 @@ import {
   visitWhenLine,
   rescheduleAskWhen,
   noteWrittenAt,
+  businessNoteHeading,
 } from '../lib/portalFormat';
 import '../styles/bookingdetail.css';
 import { SettingsBusinessFootnote, useBusinessName } from '../components/BusinessFootnote';
@@ -384,6 +385,22 @@ export function BookingDetail() {
               </section>
             )}
 
+            {/* #2030: what the office told the household about this visit: the note
+                with its Accept, the note with its Decline, and a kinfolk-facing visit
+                note. Not behind `canAct`, because a declined request is exactly the
+                page that needs its answer, and its notes are read all the same. */}
+            {(savedNotes.data?.fromBusiness ?? []).length > 0 && (
+              <section className="glass card d3" data-testid="business-notes">
+                <div className="sectlabel">From {businessLabel(businessName)}</div>
+                {(savedNotes.data?.fromBusiness ?? []).map((n) => (
+                  <p className="info-line" style={{ whiteSpace: 'pre-wrap' }} key={n.id} data-testid="business-note">
+                    <b>{businessNoteHeading(n, businessName)}</b>
+                    <br />
+                    {n.body}
+                  </p>
+                ))}
+              </section>
+            )}
             {canAct && (
               <section className="glass card d3" data-testid="saved-notes">
                 <div className="sectlabel">Your notes to {auntieLabel}</div>

@@ -259,6 +259,13 @@ export interface NotificationDetail {
    * kinfolk copy therefore means "withheld", not "none was written".
    */
   notes?: string;
+  /**
+   * #2030: what the office wrote TO the household with its answer to their
+   * request (the accept or decline note). Unlike `notes` it is on every copy,
+   * because it was written for the household to read. Only keys in
+   * `HOUSEHOLD_NOTE_KEYS` carry it, and only from the emitter's `data.note`.
+   */
+  householdNote?: string;
   /** Invoice number, for invoice-class notifications. */
   invoiceNumber?: string;
   /** Invoice amount, pre-formatted ("$120.00"). */

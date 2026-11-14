@@ -1627,9 +1627,23 @@ class PortalApi(
             val body = o["body"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
             BookingNote(id = id, body = body, createdAtMs = o["createdAtMs"]?.jsonPrimitive?.longOrNull)
         }.orEmpty()
+        // #2030: the office's notes, in their own list. A row with no body or id is dropped.
+        val fromBusiness = (raw["fromBusiness"] as? JsonArray)?.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val id = o["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val body = o["body"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            BusinessNote(
+                id = id,
+                kind = o["kind"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                body = body,
+                createdAtMs = o["createdAtMs"]?.jsonPrimitive?.longOrNull,
+                authorName = o["authorName"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+            )
+        }.orEmpty()
         return BookingNotes(
             bookingNote = raw["bookingNote"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
             notes = notes,
+            fromBusiness = fromBusiness,
         )
     }
     /**
