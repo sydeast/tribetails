@@ -16,6 +16,7 @@ vi.mock('firebase-admin/firestore', async () => {
 });
 
 import { sendHouseholdPushHandler, householdPushNoticeId } from '../src/admin/sendHouseholdPush';
+import { toNotificationListItem } from '../src/portal/listMyNotifications';
 
 /**
  * #2061: an approved Push draft for one household is sent, or the screen is
@@ -65,13 +66,14 @@ describe('sendHouseholdPush (#2061)', () => {
     expect(mocks.multicast).toHaveBeenCalledWith({
       tokens: ['tok-1'],
       notification: { title: 'The Office', body: 'Biscuit had a great walk today.' },
-      data: { notificationKey: 'message.reply' },
+      data: { notificationKey: 'message.reply', route: '/notifications' },
     });
     const notice = ctx.writes.find((w) => w.path === noticePath);
     expect(notice?.data).toMatchObject({
       key: 'message.reply',
       recipientUid: 'uid_kin',
       description: 'Biscuit had a great walk today.',
+      householdLine: 'Biscuit had a great walk today.',
       targetType: 'kinfolk',
       targetId: 'fam1',
     });
@@ -162,6 +164,30 @@ describe('sendHouseholdPush (#2061)', () => {
     // And a third attempt, after it went out, sends nothing new.
     expect((await sendHouseholdPushHandler(req())).outcome).toBe('already_sent');
     expect(mocks.multicast).toHaveBeenCalledTimes(1);
+  });
+  it('HAPPY: the household reads the words on their notifications list, push on or off', async () => {
+    // The list draws a household row through `toNotificationListItem`. A
+    // `message.reply` row with no line of its own showed the title alone.
+    const ctx = seed({ ...HOUSEHOLD, 'business_settings/business_settings': { householdNotificationsLive: true, businessName: 'The Office' } });
+    const res = await sendHouseholdPushHandler(req());
+    expect(res).toEqual({ ok: true, outcome: 'listed', reason: 'household_push_off' });
+    const notice = ctx.writes.find((w) => w.path === noticePath);
+    const row = toNotificationListItem(householdPushNoticeId('draft1'), notice!.data as Record<string, unknown>, 'The Office');
+    expect(row.title).toBe('New message from The Office');
+    expect(row.description).toBe('Biscuit had a great walk today.');
+  });
+  it('HAPPY: a long message is pushed short, opens the notifications list, and is whole on that list', async () => {
+    const long = `${'Biscuit had a great walk today. '.repeat(20)}See you Friday.`;
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, 'business_settings/business_settings': { householdNotificationsLive: true } });
+    const res = await sendHouseholdPushHandler(req({ body: long }));
+    expect(res.outcome).toBe('sent');
+    const sent = mocks.multicast.mock.calls[0]![0];
+    expect(sent.notification.body.length).toBe(200);
+    expect(sent.notification.body.endsWith('…')).toBe(true);
+    expect(long.startsWith(sent.notification.body.slice(0, -1))).toBe(true);
+    expect(sent.data.route).toBe('/notifications');
+    const notice = ctx.writes.find((w) => w.path === noticePath);
+    expect((notice!.data as Record<string, unknown>)['householdLine']).toBe(long);
   });
   it('NEGATIVE: markup never reaches the lock screen', async () => {
     seed({ ...HOUSEHOLD, ...PUSH_ON });
