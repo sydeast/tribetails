@@ -509,6 +509,19 @@ describe('InvoiceCreate terms and due date', () => {
     expect(createInvoice.mock.calls[0]?.[0]).toMatchObject({ termsCode: 'due_on_last_visit', dueDate: todayIso() });
   });
 
+  it('#1966 review: a backdated invoice held to its own date still says it goes out overdue', async () => {
+    await pick();
+    // The visit was Jul 10; dated Jul 11, which is behind today.
+    fireEvent.change(screen.getByLabelText('Invoice date'), { target: { value: '2026-07-11' } });
+    await userEvent.selectOptions(screen.getByLabelText('Terms'), 'due_on_last_visit');
+    expect(
+      await screen.findByText(
+        'These terms work out to a day before the invoice date, so it is due on receipt. The invoice date has already passed, so this invoice is overdue the moment it goes out.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Invoice due date')).toHaveValue('2026-07-11');
+  });
+
   it('#1966: makes visit terms with no visit ticked due on receipt, and says why', async () => {
     await pick();
     fireEvent.change(screen.getByLabelText('Invoice date'), { target: { value: '2026-08-19' } });

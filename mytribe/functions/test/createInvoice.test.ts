@@ -688,14 +688,28 @@ describe('createInvoice structured terms', () => {
     // What the overdue cron reads on the day the bill goes out: not past due.
     expect(daysPastDue(invoiceDueDayOf(written?.data ?? {}), '2026-06-01')).toBeNull();
   });
-  it('#1966 review: refuses a stale preview of a date before the invoice date', async () => {
+  it('#1966 review: an older client that previews the earlier day still saves, on the invoice date', async () => {
+    const ctx = buildDbMock({
+      docs: { 'kin_care_sessions/s1': session('2026-05-20T14:00:00.000Z') },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    // An installed build from before the floor sends May 27 for 7 days after a May 20 visit.
+    await createInvoiceHandler(
+      req({ ...validPayload, sessionIds: ['s1'], termsCode: 'net_7_after_last_visit', dueDate: '2026-05-27' }),
+    );
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.dueDate).toBe('2026-06-01');
+    expect(written?.data.termsCode).toBe('due_on_receipt');
+  });
+  it('#1966 review: still refuses a sent date the terms do not work out to', async () => {
     const ctx = buildDbMock({
       docs: { 'kin_care_sessions/s1': session('2026-06-04T14:00:00.000Z') },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
+    // Floored to Jun 1; a LATER day is a real disagreement, not an old preview.
     await expect(
       createInvoiceHandler(
-        req({ ...validPayload, sessionIds: ['s1'], termsCode: 'net_7_before_first_visit', dueDate: '2026-05-28' }),
+        req({ ...validPayload, sessionIds: ['s1'], termsCode: 'net_7_before_first_visit', dueDate: '2026-06-05' }),
       ),
     ).rejects.toMatchObject({ code: 'failed-precondition' });
     expect(ctx.writes.find((w) => w.path.startsWith('invoices/'))).toBeUndefined();

@@ -420,6 +420,8 @@ fun composerTermsNote(termsCode: InvoiceTermsCode, due: DueDateResolution, invoi
     termsCode == InvoiceTermsCode.CUSTOM -> "These terms leave the due date to you."
     due.dueDate == null -> due.problem.orEmpty()
     // #1966 review: a bill is never due before its own date.
+    due.beforeInvoiceDate && due.isPast -> "$TERMS_BEFORE_INVOICE_DATE The invoice date has already passed, " +
+        "so this invoice is overdue the moment it goes out."
     due.beforeInvoiceDate -> TERMS_BEFORE_INVOICE_DATE
     // #1966: a visit rule on an invoice with no visits is due on receipt.
     due.appliedCode != termsCode -> NO_VISITS_DUE_ON_RECEIPT

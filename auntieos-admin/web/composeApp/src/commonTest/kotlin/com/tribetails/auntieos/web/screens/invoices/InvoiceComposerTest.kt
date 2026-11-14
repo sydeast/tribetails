@@ -327,5 +327,10 @@ class InvoiceComposerTest {
         assertEquals(TERMS_BEFORE_INVOICE_DATE, composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, due, "2026-11-13"))
         val none = resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-13", emptyList(), "2026-11-13")
         assertEquals(NO_VISITS_DUE_ON_RECEIPT, composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, none, "2026-11-13"))
+        // Dated Nov 13 and written up on Nov 20: held to Nov 13, which has passed, and it still says so.
+        val backdated = resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-13", listOf("2026-11-14"), "2026-11-20")
+        val note = composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, backdated, "2026-11-13")
+        assertTrue(note.startsWith(TERMS_BEFORE_INVOICE_DATE))
+        assertTrue(note.contains("overdue the moment it goes out"))
     }
 }

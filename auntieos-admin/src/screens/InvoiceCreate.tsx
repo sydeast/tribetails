@@ -575,7 +575,9 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
       : due.dueDate === null
         ? due.problem
         : due.beforeInvoiceDate
-          ? 'These terms work out to a day before the invoice date, so it is due on receipt.'
+          ? due.isPast
+            ? 'These terms work out to a day before the invoice date, so it is due on receipt. The invoice date has already passed, so this invoice is overdue the moment it goes out.'
+            : 'These terms work out to a day before the invoice date, so it is due on receipt.'
           : due.appliedCode !== termsCode
           ? 'There are no visits on this invoice, so it is due on receipt.'
           : due.isPast

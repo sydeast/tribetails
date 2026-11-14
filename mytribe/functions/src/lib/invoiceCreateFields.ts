@@ -18,6 +18,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import {
   invoiceTermsWords,
+  isCalendarDay,
   paymentTermsSettingOf,
   resolveDueDate,
   type InvoiceTermsCode,
@@ -111,7 +112,13 @@ export function resolveStructuredTerms(input: StructuredTermsInput): StructuredT
     };
   }
 
-  if (sent !== '' && sent !== resolution.dueDate) {
+  // #1966 review: an installed client from before the invoice-date floor
+  // previews the earlier day these terms used to work out to. That preview is
+  // stale, not a disagreement: the server's own date (the invoice date) is the
+  // one stored, so the older Android build and a cached web bundle still save.
+  const staleEarlierPreview =
+    resolution.beforeInvoiceDate && isCalendarDay(sent) && resolution.dueDate !== null && sent < resolution.dueDate;
+  if (sent !== '' && sent !== resolution.dueDate && !staleEarlierPreview) {
     return {
       ok: false,
       code: 'invoice_due_date_mismatch',
