@@ -276,8 +276,15 @@ const ALLOWED_EAGER_PACKAGES = [
  * imports (the session-link helper, the state stamp, the archive guard,
  * `lib/quoteDecision.ts`) are already resident, and its words load with
  * `await import()` inside the handlers.
+ *
+ * 456 since #2037 (on top of #2088's 455):
+ * `triggers/onKinCareSessionLifecycle.ts`, the trigger that sends each clock
+ * step's household notice and Activity Log line from the committed write. Its
+ * rules, `lib/visitStepNotice.ts`, load with `await import()` inside the
+ * handler (and inside `setVisitLifecycle`), so the entry is the only module it
+ * adds.
  */
-const MAX_OWN_EAGER_MODULES = 455;
+const MAX_OWN_EAGER_MODULES = 456;
 
 interface Edge {
   spec: string;

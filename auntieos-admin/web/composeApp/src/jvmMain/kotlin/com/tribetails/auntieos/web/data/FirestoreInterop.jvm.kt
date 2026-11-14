@@ -292,6 +292,8 @@ internal actual fun platformInvoicesStream(): Flow<FirestoreResult<List<Invoice>
 // screen says it cannot tell, which is the honest answer there too.
 internal actual suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject? =
     if (JvmFirestoreFixtures.invoices != null) null else JvmFirestoreRest.getDocPlain("invoices", invoiceId)
+internal actual suspend fun platformVisitStepNoticeDoc(noticeId: String): kotlinx.serialization.json.JsonObject? =
+    if (JvmFirestoreFixtures.sessions != null) null else JvmFirestoreRest.getDocPlain("visit_step_notices", noticeId)
 internal actual fun platformActivityStream(): Flow<FirestoreResult<List<ActivityLogEntry>>> =
     JvmFirestoreFixtures.activity?.let { fixtureFlow(it) }
         ?: JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<ActivityLogEntry>("activity_log") }

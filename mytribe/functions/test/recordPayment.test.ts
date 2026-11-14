@@ -525,15 +525,28 @@ describe('recordPayment: the Send Confirmation Email toggle', () => {
     expect(mocks.resolveKinfolkUid).not.toHaveBeenCalled();
     expect(mocks.enqueueNotification).not.toHaveBeenCalled();
   });
-  it('unticked, but this payment paid the invoice off: the office copy alone goes out', async () => {
+  it('#1973 unticked, but this payment paid the invoice off: the office copy, and the household on their list only', async () => {
+    // The form says "the household is only notified once it is paid off". The
+    // household's copy has every channel off: nothing is emailed for an
+    // unticked payment, and the payoff is on their notifications list.
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
-    await recordPaymentHandler(req({ ...feeArgs, invoiceId: '', apply: { invoiceId: 'inv1', amount: 127.5 } }));
-    expect(mocks.resolveKinfolkUid).not.toHaveBeenCalled();
+    const res = await recordPaymentHandler(req({ ...feeArgs, invoiceId: '', apply: { invoiceId: 'inv1', amount: 127.5 } }));
     expect(mocks.enqueueNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'invoice.payment.applied', recipientUid: 'kin-uid-1', listOnlyFor: ['kin-uid-1'] }),
+    );
+    expect(res.confirmationEmailSent).toBe(false);
+  });
+  it('#1973 unticked payoff for a household with no portal account: the office alone, and no "not sent" warning', async () => {
+    mocks.resolveKinfolkUid.mockResolvedValue(null);
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await recordPaymentHandler(req({ ...feeArgs, invoiceId: '', apply: { invoiceId: 'inv1', amount: 127.5 } }));
     expect(mocks.enqueueNotification).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'invoice.payment.applied', recipientUid: '' }),
     );
+    expect(res.householdNoPortalAccount).toBe(false);
   });
   it('sends no office copy for a standalone payment that names no invoice', async () => {
     const ctx = seed();

@@ -181,6 +181,8 @@ class NotificationsListPortalApiTest {
     @Test
     fun `a booking row this client cannot place lands on Schedule rather than a visit that says not found`() {
         assertEquals(NotificationTarget.Schedule, notificationTargetOf(item("booking", targetId = "something")))
+        // #1874: a reply from the office opens Messages.
+        assertEquals(NotificationTarget.Messages, notificationTargetOf(item("conversation", targetId = "fam1")))
         assertEquals(NotificationTarget.Schedule, notificationTargetOf(item("booking", targetId = "x", visitId = "  ")))
     }
 

@@ -1,11 +1,8 @@
-import { doc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { updateDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
 import { call } from '../lib/fns';
-import { logActivity } from './activityLog';
-import { visitTransitionWords } from '../lib/activityWords';
 import {
-  auditActionTypeFor,
   evaluateVisitLifecycle,
   illegalLifecycleMessage,
   lifecyclePatchFor,
@@ -42,30 +39,21 @@ import {
  *      it. A field tap on "Arrived" waited out that cold start for a write
  *      Android has always done directly.
  *
- * SO THE SPLIT IS ANDROID'S NOW, TRANSCRIBED: the status patch goes straight to
- * the document, and the two things the callable also did follow it, AFTER the
- * write and never in front of it --
+ * SO THE STATUS PATCH GOES STRAIGHT TO THE DOCUMENT, as Android's does.
  *
- *   the audit entry     the `logActivity` callable (`AuditLog.fire`)
- *   the household push  `dispatchVisitNotification` (`VisitNotifier`)
- *
- * NEITHER CAN FAIL THE TAP. Android wraps both in `runCatching` for the same
- * reason: losing the operational fact (the Auntie IS at the door) because a
- * push could not be enqueued is the worse outcome. What web adds is that the
- * notification's outcome is REPORTED rather than silently dropped, so the
- * screen can say "clocked in, but the household was not notified" instead of
- * implying both.
- *
- * THE AUDIT IS STILL CHAINED. `logActivity` is what Android has routed through
- * since 2026-05-26 precisely so a client-origin entry still lands inside
- * `writeAuditEntry`'s SHA-256 hash chain, and it trusts `req.auth.uid` over any
- * client-supplied actor.
+ * #2037: AND THE SERVER DOES THE REST FROM THAT WRITE. This module used to
+ * follow its patch with two calls of its own, the `logActivity` line and the
+ * `dispatchVisitNotification` push. A reload in the second between the patch
+ * and those calls kept the step and lost both: the household was never told
+ * and the Activity Log had no "Visit arrived" line. Both now come from
+ * `functions/src/triggers/onKinCareSessionLifecycle.ts`, driven by the
+ * committed write, once per step. The server records what the household was
+ * told at `visit_step_notices/{id}`, and this module only reads that record
+ * for the sentence on the card (`awaitStepNotice`). Nothing it does after the
+ * write can lose the notice or the line, and nothing it does can fail the tap.
  *
  * WHAT IS GIVEN UP, in full, so the next reader is not left to discover it:
  *
- *   THE ENTRY IS NO LONGER WRITTEN BY THE FLOW THAT WRITES THE DOCUMENT, so a
- *   tab closed in between loses it. That is Android's exposure, now shared, and
- *   it is the price of the eight seconds.
  *   REFUSALS ARE NO LONGER AUDITED. The callable's `auditRefusal` wrote a
  *   `VISIT_LIFECYCLE_REFUSED` row on every illegal action, unreadable status
  *   and missing session. A client that refuses before writing has nothing to
@@ -186,61 +174,98 @@ export interface PatchVisitLifecycleResult {
 const SESSIONS_COLLECTION = 'kin_care_sessions';
 
 /**
- * Tell the household, best-effort, through the callable Android calls.
- *
- * ROUTING IS `VisitNotifier`'s, TRANSCRIBED (and it is the same list the server
- * handler's `notifyHousehold` used): prefer the envelope pair
- * (`kinCareBatchId` + `kinCareVisitId`), fall back to the legacy flat
- * `sourceBookingId`, and when a session carries neither there is nothing to
- * route to at all -- an AuntieOS-native visit predating the kinCare envelope.
- * Android `error()`s there and swallows it in `runCatching`; here every dead end
- * is a NAMED skip reason, because a screen that cannot say why nobody was told
- * will imply somebody was.
+ * #2037: how long a card waits for the server's answer about the household
+ * before it says it is still checking. The trigger answers in a second or two
+ * once it is warm, and a cold start has been measured near nine.
  */
-async function notifyHousehold(args: {
+export const VISIT_NOTICE_WAIT_MS = 30_000;
+
+/** Where the server records what the household was told about one clock step. */
+export const VISIT_STEP_NOTICES_COLLECTION = 'visit_step_notices';
+
+/**
+ * The id of one step's outcome. The server builds the same string
+ * (`functions/src/lib/visitStepNotice.ts#visitStepNoticeId`), and so do
+ * Android (`VisitNotifier.stepNoticeId`) and the desktop console
+ * (`FirestoreClient.visitStepNoticeId`).
+ */
+export function visitStepNoticeId(sessionId: string, event: string, atMs: number): string {
+  return `${sessionId}__${event}__${atMs}`;
+}
+
+/**
+ * #2037: what the household was told, as the SERVER records it.
+ *
+ * THIS MODULE NO LONGER TELLS THE HOUSEHOLD. It used to call
+ * `dispatchVisitNotification` (and `logActivity`) after its own write, so a
+ * reload in the second between the two left the visit ARRIVED with no notice
+ * and no "Visit arrived" line. The server now does both from the committed
+ * write (`functions/src/triggers/onKinCareSessionLifecycle.ts`) and records
+ * the outcome at `visit_step_notices/{id}`. This only waits for that record,
+ * so leaving the page loses nothing but the sentence on the card.
+ *
+ * A row with nothing to route to is named from the row, at once; the server
+ * records the same reason. Never rejects. After {@link VISIT_NOTICE_WAIT_MS}
+ * with no record it answers `notice_pending`, which the card says as "still
+ * checking", never as "not told".
+ */
+export function awaitStepNotice(args: {
   action: VisitLifecycleAction;
-  session: VisitLifecycleSession;
-  etaMinutes: number | undefined;
-  /**
-   * The time this step was stamped (ms epoch). The server names the household
-   * notification by it, so a re-arrival after an undo is a new message while a
-   * retry of this tap is not (#832).
-   */
+  session: Pick<VisitLifecycleSession, '_id' | 'kinfolkId' | 'kinCareBatchId' | 'kinCareVisitId' | 'sourceBookingId'>;
+  /** The time this step was stamped (ms epoch): it names the record. */
   eventAtMs: number | undefined;
+  waitMs?: number;
 }): Promise<VisitNotifyOutcome> {
   const event = notificationEventFor(args.action);
-  if (event === null) return { notified: false, notifySkipped: 'no_event_for_action' };
-
-  const familyId = (args.session.kinfolkId ?? '').trim();
-  if (familyId === '') return { notified: false, notifySkipped: 'session_has_no_kinfolk' };
-
-  const batchId = (args.session.kinCareBatchId ?? '').trim();
-  const visitId = (args.session.kinCareVisitId ?? '').trim();
-  const bookingId = (args.session.sourceBookingId ?? '').trim();
-  const useEnvelope = batchId !== '' && visitId !== '';
-  if (!useEnvelope && bookingId === '') {
-    return { notified: false, notifySkipped: 'session_has_no_routing_ids' };
+  if (event === null) return Promise.resolve({ notified: false, notifySkipped: 'no_event_for_action' });
+  if ((args.session.kinfolkId ?? '').trim() === '') {
+    return Promise.resolve({ notified: false, notifySkipped: 'session_has_no_kinfolk' });
   }
-
-  try {
-    const res = await call<
-      Record<string, unknown>,
-      { dispatchIds?: string[]; suppressed?: boolean; reason?: string | null }
-    >('dispatchVisitNotification', {
-      familyId,
-      ...(useEnvelope ? { batchId, visitId } : { bookingId }),
-      event,
-      ...(args.etaMinutes !== undefined ? { etaMinutes: args.etaMinutes } : {}),
-      ...(args.eventAtMs !== undefined ? { eventAtMs: args.eventAtMs } : {}),
-    });
-    return visitNotifyOutcomeOf(res);
-  } catch (err) {
-    // Logged, not thrown, and not surfaced as an error state: the visit is
-    // already clocked. The operator learns the household was not told from
-    // `notifySkipped`, which is the honest half of the sentence.
-    console.warn('[visitLifecycle] household notification failed', err);
-    return { notified: false, notifySkipped: 'dispatch_failed' };
+  const envelope =
+    (args.session.kinCareBatchId ?? '').trim() !== '' && (args.session.kinCareVisitId ?? '').trim() !== '';
+  if (!envelope && (args.session.sourceBookingId ?? '').trim() === '') {
+    return Promise.resolve({ notified: false, notifySkipped: 'session_has_no_routing_ids' });
   }
+  if (args.eventAtMs === undefined) return Promise.resolve({ notified: false, notifySkipped: 'notice_pending' });
+
+  const ref = doc(db, VISIT_STEP_NOTICES_COLLECTION, visitStepNoticeId(args.session._id, event, args.eventAtMs));
+  return new Promise<VisitNotifyOutcome>((resolve) => {
+    let done = false;
+    let unsubscribe: (() => void) | null = null;
+    const finish = (outcome: VisitNotifyOutcome): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (unsubscribe !== null) unsubscribe();
+      resolve(outcome);
+    };
+    const timer = setTimeout(
+      () => finish({ notified: false, notifySkipped: 'notice_pending' }),
+      args.waitMs ?? VISIT_NOTICE_WAIT_MS,
+    );
+    const stop = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) return;
+        finish(visitStepRecordOutcome(snap.data() as { notified?: unknown; reason?: unknown }));
+      },
+      (err) => {
+        // A read the network or the rules refused says nothing about the
+        // household: the notice is the server's either way.
+        console.warn('[visitLifecycle] could not read what the household was told', err);
+        finish({ notified: false, notifySkipped: 'notice_pending' });
+      },
+    );
+    if (done) stop();
+    else unsubscribe = stop;
+  });
+}
+
+/** PURE. The server's record of one step as an outcome. */
+export function visitStepRecordOutcome(data: { notified?: unknown; reason?: unknown }): VisitNotifyOutcome {
+  if (data.notified === true) return { notified: true, notifySkipped: null };
+  const reason = typeof data.reason === 'string' && data.reason.trim() !== '' ? data.reason : 'not_sent';
+  return { notified: false, notifySkipped: reason };
 }
 
 /**
@@ -267,45 +292,14 @@ export function visitNotifyOutcomeOf(res: {
 }
 
 /**
- * Write the audit entry for one in-visit action, through the same `logActivity`
- * callable Android uses, and swallow every failure.
- *
- * SWALLOWING IS THE CONTRACT, not a shortcut, and `AuditLog.fire`'s own KDoc is
- * the precedent: "Failures are swallowed at the call site - callers must not
- * block their UI on the audit write". The console warning is the dev-log
- * equivalent of Android's `AuntieLog.e`, so a dropped audit is never silent to
- * a developer even though it is invisible to the operator.
- */
-async function fireLifecycleAudit(args: {
-  action: VisitLifecycleAction;
-  sessionId: string;
-  from: string;
-  to: string;
-}): Promise<void> {
-  try {
-    await logActivity({
-      actionType: auditActionTypeFor(args.action),
-      description: visitTransitionWords(args.action, args.from, args.to),
-      status: 'SUCCESS',
-      targetId: args.sessionId,
-      targetCollection: SESSIONS_COLLECTION,
-      // #1820: the facts behind the sentence, so the opened line is not empty.
-      payload: { visitId: args.sessionId, action: args.action, from: args.from, to: args.to },
-    });
-  } catch (err) {
-    console.warn('[visitLifecycle] audit entry failed', err);
-  }
-}
-
-/**
  * THE FIELD TAP: On my way / Arrived / Departed / Undo arrival, written STRAIGHT
- * TO FIRESTORE, then audited and announced behind it.
+ * TO FIRESTORE. The server audits and announces it from the write (#2037).
  *
  * WHY THIS REPLACED THE CALLABLE ON THE TAP PATH is the module header. What
  * matters when reading the code: the four transitions this writes are exactly
  * the ones `firestore.rules` lets an admin write, the field set is
- * `lib/visitLifecyclePatch.ts`'s and is Android's field for field, and the two
- * things behind the `await` cannot reach back and fail it.
+ * `lib/visitLifecyclePatch.ts`'s and is Android's field for field, and the
+ * wait for the household's outcome behind the `await` cannot fail it.
  *
  * IT DECIDES AGAINST THE SNAPSHOT THE SCREEN IS HOLDING, which is the one thing
  * given up. The server read the document inside the same flow that wrote it, so
@@ -376,28 +370,20 @@ export async function patchVisitLifecycle(
     }),
   );
 
-  // BOTH OF THESE START AFTER THE WRITE HAS ACKED AND NEITHER IS AWAITED HERE.
-  // `void` on the audit is not carelessness: it is the same fire-and-forget
-  // `AuditLog.fire` launches into `viewModelScope`, and `fireLifecycleAudit`
-  // already swallows its own failure, so there is no rejection to leak.
-  void fireLifecycleAudit({
-    action,
-    sessionId: session._id,
-    from: decision.from,
-    to: decision.to,
-  });
-
+  // #2037: nothing else is sent from here. The Activity Log line and the
+  // household notice come from the server, driven by the write that just
+  // landed; `notification` only waits for the server's record of it.
   return {
     sessionId: session._id,
     action,
     from: decision.from,
     status: decision.to,
     changed: true,
-    notification: notifyHousehold({
+    notification: awaitStepNotice({
       action,
       session,
-      etaMinutes: options.etaMinutes,
-      // The same instant that was just written to the session.
+      // The same instant that was just written to the session, which is how
+      // the server names its record of this step.
       eventAtMs: Number.isFinite(Date.parse(options.nowIso)) ? Date.parse(options.nowIso) : undefined,
     }),
   };

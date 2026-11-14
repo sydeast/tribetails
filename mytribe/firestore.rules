@@ -811,6 +811,15 @@ service cloud.firestore {
       }
     }
 
+ // #2037: what the household was told about one clock step, written by the
+ // server from the committed session write (`lib/visitStepNotice.ts`). The
+ // admin clients read it for the sentence on the visit card. Staff only: a
+ // household never reads why a notice to it was or was not sent.
+    match /visit_step_notices/{noticeId} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
     match /kin_care_sessions/{sessionId} {
  // A3: the four OPERATOR status transitions on this collection
  // (Approve / Reject / Cancel / Mark Completed) moved server-side to the

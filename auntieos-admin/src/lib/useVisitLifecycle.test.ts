@@ -168,7 +168,7 @@ describe('the sentence never claims a notification it has not seen', () => {
     // The write has acked; the push has NOT. The household must not be in the
     // sentence yet, in either direction.
     await waitFor(() =>
-      expect(result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED.' }),
+      expect(result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED. Checking whether the Wrens was told.' }),
     );
 
     await act(async () => {
@@ -233,12 +233,12 @@ describe('the sentence never claims a notification it has not seen', () => {
     act(() => first.result.current.ask(actionNamed('ARRIVED')));
     act(() => first.result.current.confirm());
     await waitFor(() =>
-      expect(first.result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED.' }),
+      expect(first.result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED. Checking whether Dre East was told.' }),
     );
     first.unmount();
 
     const second = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
-    expect(second.result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED.' });
+    expect(second.result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED. Checking whether Dre East was told.' });
     await act(async () => {
       settle({ notified: false, notifySkipped: 'household_notices_off' });
     });

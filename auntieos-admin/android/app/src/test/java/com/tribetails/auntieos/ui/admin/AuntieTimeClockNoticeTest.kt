@@ -98,20 +98,20 @@ class AuntieTimeClockNoticeTest {
 
     @Test
     fun `On The Way patches, then tells the household with the stamped time`() = runTest(testDispatcher) {
-        coEvery { notifier.notify(any(), any(), any(), any(), any(), any()) } returns
+        coEvery { notifier.awaitStepNotice(any(), any(), any(), any()) } returns
             Result.success(VisitNotifier.DispatchResult(listOf("n1"), suppressed = false))
         val seen = vm().omw()
         advanceUntilIdle()
 
         coVerify(exactly = 1) { kinCareRepo.patchKinCareSession("dre1", omwPatch) }
-        coVerify(exactly = 1) { notifier.notify(VisitNotifier.Event.ON_MY_WAY, session, any(), any(), AT, any()) }
+        coVerify(exactly = 1) { notifier.awaitStepNotice(session.id, VisitNotifier.Event.ON_MY_WAY, AT, any()) }
         assertNull(seen.written)
         assertEquals("Dre East was notified.", seen.sentence)
     }
 
     @Test
     fun `the Nov 10 case reads no portal account, and the tap still landed`() = runTest(testDispatcher) {
-        coEvery { notifier.notify(any(), any(), any(), any(), any(), any()) } returns Result.success(
+        coEvery { notifier.awaitStepNotice(any(), any(), any(), any()) } returns Result.success(
             VisitNotifier.DispatchResult(emptyList(), suppressed = true, reason = "household_has_no_portal_account"),
         )
         val seen = vm().omw()
@@ -130,7 +130,7 @@ class AuntieTimeClockNoticeTest {
 
         assertEquals("denied", seen.written?.message)
         assertNull(seen.sentence)
-        coVerify(exactly = 0) { notifier.notify(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notifier.awaitStepNotice(any(), any(), any(), any()) }
     }
 
     @Test
@@ -138,7 +138,7 @@ class AuntieTimeClockNoticeTest {
         val seen = vm().omw(session.copy(kinCareBatchId = null, kinCareVisitId = null))
         advanceUntilIdle()
 
-        coVerify(exactly = 0) { notifier.notify(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { notifier.awaitStepNotice(any(), any(), any(), any()) }
         assertEquals("Dre East was not notified, because this visit is not linked to a booking.", seen.sentence)
     }
 

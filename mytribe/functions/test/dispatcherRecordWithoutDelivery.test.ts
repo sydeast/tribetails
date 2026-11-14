@@ -360,3 +360,52 @@ describe('notificationDisabledFor: the two reasons that still write nothing', ()
     ).toBeNull();
   });
 });
+/**
+ * #1973: `listOnlyFor` makes one recipient's copy of one send a list record
+ * only, whatever their own settings say. `recordPayment` uses it for an
+ * unticked payment that pays an invoice off.
+ */
+describe('#1973 listOnlyFor: a notifications-list record only, for this send', () => {
+  const ALL_ON = { email: true, sms: true, push: true };
+  it('writes the record and no work order, even with every channel on in their settings', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/kinUid': { notificationPrefs: { byKey: { [KEY]: ALL_ON } } } },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const outcome = await enqueueNotificationDetailed({
+      key: KEY,
+      recipientUid: 'kinUid',
+      data: { bookingId: 'b1' },
+      listOnlyFor: ['kinUid'],
+    });
+    expect(outcome.written).toHaveLength(1);
+    expect(outcome.appOnly).toEqual(['kinUid']);
+    expect(records(ctx.writes)).toHaveLength(1);
+    expect(workOrders(ctx.writes)).toEqual([]);
+  });
+  it('leaves every other recipient, and every other send, alone', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/kinUid': { notificationPrefs: { byKey: { [KEY]: ALL_ON } } } },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await enqueueNotificationDetailed({ key: KEY, recipientUid: 'kinUid', data: { bookingId: 'b2' }, listOnlyFor: ['someoneElse'] });
+    expect(workOrders(ctx.writes)).toHaveLength(1);
+  });
+  it('still stops at the household send gate', async () => {
+    const ctx = buildDbMock({
+      docs: { [HOUSEHOLD_GATE_SETTINGS_PATH]: { householdNotificationsLive: false } },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const outcome = await enqueueNotificationDetailed({
+      key: KEY,
+      recipientUid: 'kinUid',
+      data: { bookingId: 'b3' },
+      listOnlyFor: ['kinUid'],
+    });
+    expect(outcome.written).toEqual([]);
+    expect(records(ctx.writes)).toEqual([]);
+  });
+});

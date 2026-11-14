@@ -191,6 +191,7 @@ onInvoicesWrite
 onKinCareRollup
 onKinCareSessionCalendarSync
 onKinCareSessionDeparted
+onKinCareSessionLifecycle
 onKinTaleCommentCreate
 onKinTaleCreate
 onKinTaleUpdate
