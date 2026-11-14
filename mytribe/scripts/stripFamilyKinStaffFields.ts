@@ -1,10 +1,12 @@
 /**
  * stripFamilyKinStaffFields.ts (#1335)
  *
- * Deletes the staff-only pet fields (officeNotes, reactive, routine,
- * trainingCommands, feedingBrand, vaccinations, medicationHealthNotes, tags:
- * functions/src/lib/kinStaffFields.ts) from every FAMILY kin doc,
- * `families/{fid}/kin/{kinId}`.
+ * Deletes the staff-only pet fields (officeNotes, reactive,
+ * medicationHealthNotes, tags: functions/src/lib/kinStaffFields.ts) from every
+ * FAMILY kin doc, `families/{fid}/kin/{kinId}`. Since #1908 (owner ruling
+ * 2026-11-11) routine, training commands, food brand and vaccinations are the
+ * household's to fill too, so they are no longer on that list and this never
+ * deletes them.
  *
  * WHY. Every active household member can read that document with the client
  * SDK, and a Firestore rule gates a document, never a field. Until #1335 the

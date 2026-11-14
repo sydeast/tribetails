@@ -1114,17 +1114,22 @@ service cloud.firestore {
         // functions/src/triggers/kinMirror.ts HOUSEHOLD_SHARED_FIELDS).
         // #1912: `legacyKinId` is not on the list. The mirror makes the tie to
         // the admin record (functions/src/lib/kinLink.ts).
+        // #1908 (owner ruling 2026-11-11): Stays as, Routine, Training and
+        // commands, Food and brand and Vaccinations are the household's to fill
+        // too, and a Kin's own vet (`ownVetClinicId`) is set on either side.
         allow update: if familyKinMeasuresOkOnUpdate() && ((hasPerm(fid, 'kin_edit') && diffOnly([
             'name','species','breed','ageYears','photoUrl','status',
             'feedingInstructions','walkingInstructions','sitterNotes',
             'emergencyNotes','medications','allergies',
             'sex','weight','colorMarkings','spayedNeutered','vetInfo',
+            'staysAs','routine','trainingCommands','feedingBrand','vaccinations','ownVetClinicId',
             'updatedAt','updatedByUid'
           ]))
           || (activeMember(fid) && diffOnly([
             'feedingInstructions','walkingInstructions','sitterNotes',
             'emergencyNotes','medications','allergies',
             'sex','weight','colorMarkings','spayedNeutered','vetInfo',
+            'staysAs','routine','trainingCommands','feedingBrand','vaccinations','ownVetClinicId',
             'updatedAt'
           ])));
       }

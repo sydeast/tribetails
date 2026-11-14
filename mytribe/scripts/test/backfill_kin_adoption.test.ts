@@ -16,8 +16,7 @@ import {
 import {
   MIRROR_ORIGIN_FAMILY,
   MIRROR_ORIGIN_FLAT,
-  PARENT_OWNED_FIELDS,
-  STAFF_EDITABLE_FIELDS,
+  FLAT_MIRROR_FIELDS,
 } from '../../functions/src/triggers/kinMirror';
 import {
   buildFamilyProvisionDoc,
@@ -149,12 +148,11 @@ describe('buildFamilyKinDoc — full flat doc mapping', () => {
     // #1335: staff-only fields never land on the household-readable family doc.
     expect(doc).not.toHaveProperty('reactive');
     expect(doc).not.toHaveProperty('officeNotes');
-    expect(doc).not.toHaveProperty('routine');
-    // Not staff-editable / not parent-owned -> never copied.
+    expect(doc).not.toHaveProperty('medicationHealthNotes');
+    // Not shared / not household-owned -> never copied.
     expect(doc).not.toHaveProperty('ownerEmail');
     expect(doc).not.toHaveProperty('ownerPhone');
     expect(doc).not.toHaveProperty('checklist');
-    expect(doc).not.toHaveProperty('staysAs');
   });
 
   it('copies parent-owned care fields when the flat doc has them', () => {
@@ -166,7 +164,7 @@ describe('buildFamilyKinDoc — full flat doc mapping', () => {
     expect(withCare.feedingInstructions).toBe('One cup at 7am');
     expect(withCare.allergies).toBe('Chicken');
     // Absent care fields are omitted, not written as null/''.
-    expect(withCare).not.toHaveProperty('medications');
+    expect(withCare).not.toHaveProperty('walkingInstructions');
   });
 
   it('stamps status, links, mirror origin, and provenance', () => {
@@ -192,20 +190,30 @@ describe('buildFamilyKinDoc — full flat doc mapping', () => {
     expect(d).not.toHaveProperty('ageYears');
   });
 
-  it('prefers a numeric ageYears already on the flat doc over the age string', () => {
+  it('prefers the age the admin typed over a stale ageYears copy on the flat doc (#1907)', () => {
     const d = buildFamilyKinDoc('f1', '6', 'adopted-f1', {
       ...fullFlatDoc(),
       ageYears: 9,
       age: '4 years',
     });
-    expect(d.ageYears).toBe(9);
+    expect(d.ageYears).toBe(4);
+  });
+  it('#1908: carries the care facts the household now fills, and Medication / health notes as Medications', () => {
+    const d = buildFamilyKinDoc('f1', '6', 'adopted-f1', {
+      ...fullFlatDoc(),
+      routine: 'Walk at 7',
+      staysAs: 'Crate',
+      medicationHealthNotes: 'Thyroid tablet',
+    });
+    expect(d).toMatchObject({ routine: 'Walk at 7', staysAs: 'Crate', medications: 'Thyroid tablet' });
+    expect(d).not.toHaveProperty('medicationHealthNotes');
   });
 
   it('never emits keys outside the mirror ownership lists + known doc scaffolding', () => {
     const allowed = new Set<string>([
-      ...PARENT_OWNED_FIELDS,
-      ...STAFF_EDITABLE_FIELDS,
+      ...FLAT_MIRROR_FIELDS,
       'status',
+      '_mirrorWriteId',
       'kinfolkId',
       'legacyKinId',
       'familyKinPath',
@@ -227,6 +235,7 @@ describe('buildFlatStamp', () => {
       familyKinPath: 'families/6/kin/adopted-flat-abc',
       legacyKinId: 'flat-abc',
       _mirrorOrigin: MIRROR_ORIGIN_FAMILY,
+      _mirrorWriteId: 'adopt:flat-abc',
     });
   });
 });

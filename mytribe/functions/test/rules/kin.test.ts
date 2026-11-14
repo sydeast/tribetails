@@ -103,9 +103,26 @@ describe('rules: /families/{fid}/kin/{kinId}', () => {
       await ctx.firestore().doc('families/f1/kin/k1').set({ name: 'Kai', officeNotes: 'staff', reactive: false });
     });
     for (const uid of ['u-sec', 'u-prim']) {
-      for (const field of [{ officeNotes: 'edited' }, { reactive: true }, { routine: 'x' }, { vaccinations: 'x' }, { tags: ['x'] }]) {
+      for (const field of [{ officeNotes: 'edited' }, { reactive: true }, { medicationHealthNotes: 'x' }, { tags: ['x'] }]) {
         await assertFails(asUser(env, uid).firestore().doc('families/f1/kin/k1').update(field));
       }
+    }
+  });
+  it('#1908: a kin_edit holder writes the care facts the household now fills, and a Kin vet', async () => {
+    const env = await getEnv();
+    await seedFamily({ fid: 'f1', primaryUid: 'u-prim', secondaries: [{ uid: 'u-sec', perms: { kin_edit: true } }] });
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.firestore().doc('families/f1/kin/k1').set({ name: 'Kai' });
+    });
+    for (const field of [
+      { staysAs: 'Crate at night' },
+      { routine: 'Walk at 7' },
+      { trainingCommands: 'Sit, stay' },
+      { feedingBrand: 'Acme kibble' },
+      { vaccinations: 'Rabies 2027' },
+      { ownVetClinicId: 'clinic-1' },
+    ]) {
+      await assertSucceeds(asUser(env, 'u-sec').firestore().doc('families/f1/kin/k1').update(field));
     }
   });
 
@@ -189,7 +206,7 @@ describe('rules: staff-only pet fields are unreadable by the household (#1335, #
     kinfolkId: 'f1',
     familyKinPath: 'families/f1/kin/k1',
     name: 'Kai',
-    officeNotes: 'bit the last sitter',
+    officeNotes: 'bit the last Auntie',
     reactive: true,
     routine: 'morning walk',
     vaccinations: 'Rabies 2027',

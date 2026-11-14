@@ -68,6 +68,7 @@ describe('WARNING-27: onFamilyKinWrite pets.updated suppression', () => {
       ...before,
       vetInfo: 'Riverside Animal Hospital',
       _mirrorOrigin: MIRROR_ORIGIN_FLAT,
+      _mirrorWriteId: 'w-new',
     };
     await (onFamilyKinWrite as any).run(makeEvent(before, after));
 
@@ -87,8 +88,8 @@ describe('WARNING-27: onFamilyKinWrite pets.updated suppression', () => {
       familyKinPath: `families/${KINFOLK}/kin/${KIN_ID}`,
       status: 'active',
     };
-    // A non-parent-owned field changed (no _mirrorOrigin), parent sees nothing new.
-    const after = { ...before, routine: 'out at 7' };
+    // A field the mirror does not carry changed (no _mirrorOrigin), the office sees nothing new.
+    const after = { ...before, updatedByUid: 'u-other' };
     await (onFamilyKinWrite as any).run(makeEvent(before, after));
 
     expect(
@@ -115,6 +116,24 @@ describe('WARNING-27: onFamilyKinWrite pets.updated suppression', () => {
     ).toBe(true);
   });
 
+  it('STILL dispatches pets.updated for a household edit on a doc a reverse mirror wrote earlier', async () => {
+    const ctx = dbMock();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { onFamilyKinWrite } = await import('../src/triggers/onFamilyKinWrite');
+    // The flag and write id are left over from an earlier staff edit; this
+    // write leaves them as they were, so it is the household's own change.
+    const before = {
+      name: 'Rex',
+      legacyKinId: 'flat1',
+      familyKinPath: `families/${KINFOLK}/kin/${KIN_ID}`,
+      status: 'active',
+      _mirrorOrigin: MIRROR_ORIGIN_FLAT,
+      _mirrorWriteId: 'w-old',
+    };
+    const after = { ...before, allergies: 'Chicken' };
+    await (onFamilyKinWrite as any).run(makeEvent(before, after));
+    expect(mocks.enqueue.mock.calls.some((c) => c[0]?.key === 'pets.updated')).toBe(true);
+  });
   it('still dispatches pet.marked.inactive on inactive transition (unaffected by the guard)', async () => {
     const ctx = dbMock();
     mocks.dbFn.mockReturnValue(ctx.db);

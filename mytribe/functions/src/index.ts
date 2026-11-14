@@ -290,6 +290,8 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   getFormSchema: () => require('./portal/getFormSchema'),
   getMyTribeProfile: () => require('./portal/getMyTribeProfile'),
   saveTribeProfile: () => require('./portal/saveTribeProfile'),
+  // #1917: the household vet, saved the moment it is picked (one store for both apps).
+  setHouseholdVet: () => require('./portal/saveTribeProfile'),
   saveHomeAccess: () => require('./portal/saveHomeAccess'),
   getMyNotificationPrefs: () => require('./portal/notificationPrefs'),
   saveMyNotificationPrefs: () => require('./portal/notificationPrefs'),

@@ -47,10 +47,11 @@ describe('stripFamilyKinStaffFields: staffKeysPresent', () => {
         legacyKinId: 'flat1',
         officeNotes: 'bites',
         reactive: false,
+        // #1908: routine is the household's to fill now, so it stays.
         routine: null,
         tags: [],
       }),
-    ).toEqual(['officeNotes', 'reactive', 'routine', 'tags']);
+    ).toEqual(['officeNotes', 'reactive', 'tags']);
   });
   it('returns nothing for a clean doc', () => {
     expect(staffKeysPresent({ name: 'Kai', sex: 'Male', weight: '50 lbs' })).toEqual([]);

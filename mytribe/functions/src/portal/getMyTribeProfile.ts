@@ -2,6 +2,7 @@ import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
 import { Timestamp } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
+import { readHouseholdVetClinicId, resolveVetClinicSummary, withCanonicalVetRow } from '../lib/vetClinicCatalog';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
@@ -35,9 +36,9 @@ interface HomeAccessDto {
 }
 
 /**
- * #1325: the household's chosen vet clinic, resolved from the `vetClinicId` row
- * in the family's profile fields, so no client has to show (or look up) a
- * database id. Read straight from `vet_clinics/{id}`, NOT through the picker
+ * #1325: the household's chosen vet clinic, resolved from the household's vet
+ * (`the household vet section of lib/vetClinicCatalog.ts`, #1908: the store the admin reads too), so no
+ * client has to show (or look up) a database id. Read straight from `vet_clinics/{id}`, NOT through the picker
  * catalog: the picker hides archived clinics and unapproved submissions, but a
  * household already linked to one still has to read its name, address and phone.
  * Null when no clinic is chosen, or the linked row is gone or has no name.
@@ -78,7 +79,12 @@ export async function getMyTribeProfileHandler(
     canReadEmergencyContacts(firestore, uid, kinfolkId, isAdmin, 'getMyTribeProfile'),
   ]);
   const fam = (familySnap.data() ?? {}) as Record<string, unknown>;
-  const storedFields = parseCustomFields(fam['customFields']);
+  // #1908 kin-vet: the household's vet is read from the one store both apps
+  // share (the household vet section of lib/vetClinicCatalog.ts). The legacy `vetClinicId` row is served
+  // saying the same, so an old client that echoes it back on Save cannot put
+  // an older vet over the office's choice.
+  const householdVetClinicId = await readHouseholdVetClinicId(firestore, kinfolkId);
+  const storedFields = withCanonicalVetRow(parseCustomFields(fam['customFields']), householdVetClinicId);
   const profile: TribeProfileDto = {
     kinfolkId,
     displayName: typeof fam['displayName'] === 'string' ? (fam['displayName'] as string) : `Tribe ${kinfolkId}`,
@@ -125,27 +131,12 @@ export async function getMyTribeProfileHandler(
     updatedAtMs: canSeeHome ? tsMillis(acc['updatedAt']) : null,
   };
 
-  const vetClinic = await resolveVetClinic(firestore, storedFields);
+  const vetClinic = await resolveVetClinicSummary(firestore, householdVetClinicId);
   await bookkeeping;
   logEvent({ severity: 'info', function: 'getMyTribeProfile', event: 'portal.tribe.resolved', uid, extra: { kinfolkId } });
   return { profile, vetClinic, homeAccess, canEditHomeDetails: canSeeHome };
 }
 
-async function resolveVetClinic(
-  firestore: ReturnType<typeof db>,
-  fields: CustomField[],
-): Promise<VetClinicSummaryDto | null> {
-  const id = fields.find((f) => f.key === 'vetClinicId')?.value.trim() ?? '';
-  // A clinic id is a single document id; a slash would read some other path.
-  if (id === '' || id.includes('/')) return null;
-  const snap = await firestore.doc(`vet_clinics/${id}`).get();
-  if (!snap.exists) return null;
-  const data = (snap.data() ?? {}) as Record<string, unknown>;
-  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
-  const name = str(data['name']);
-  if (name === '') return null;
-  return { id, name, phone: str(data['phone']), address: str(data['address']), isEmergency: data['isEmergency'] === true };
-}
 function parseCustomFields(v: unknown): CustomField[] {
   if (!Array.isArray(v)) return [];
   return v
