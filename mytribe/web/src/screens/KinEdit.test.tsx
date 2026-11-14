@@ -24,6 +24,9 @@ const mocks = vi.hoisted(() => ({
   search: {} as { photo?: 'failed' },
   signKinPhotoUpload: vi.fn(),
   confirmKinPhotoUpload: vi.fn(),
+  // #1908 kin-vet: the household vet and the area vet list.
+  getMyTribeProfile: vi.fn(),
+  getVetClinics: vi.fn(),
 }));
 
 vi.mock('../api/portal', () => ({
@@ -43,6 +46,11 @@ vi.mock('../api/kinPhotoApi', async (orig) => ({
   signKinPhotoUpload: (kinId: string, kinfolkId?: string) => mocks.signKinPhotoUpload(kinId, kinfolkId),
   confirmKinPhotoUpload: (kinId: string, secureUrl: string, kinfolkId?: string) =>
     mocks.confirmKinPhotoUpload(kinId, secureUrl, kinfolkId),
+}));
+vi.mock('../api/tribeApi', async (orig) => ({
+  ...(await orig<typeof import('../api/tribeApi')>()),
+  getMyTribeProfile: () => mocks.getMyTribeProfile(),
+  getVetClinics: () => mocks.getVetClinics(),
 }));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
 vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOut: false }) }));
@@ -74,10 +82,20 @@ function kin(overrides: Partial<KinDto> = {}): KinDto {
     colorMarkings: null,
     spayedNeutered: false,
     vetInfo: null,
+    staysAs: null,
+    routine: null,
+    trainingCommands: null,
+    feedingBrand: null,
+    vaccinations: null,
+    ownVetClinicId: '',
+    vet: null,
     ...overrides,
   };
 }
 
+const HOME_VET = { id: 'home', name: 'Cedar Animal Care', phone: '', address: '1 Main St', isEmergency: false };
+const CLINIC_HOME = { ...HOME_VET, website: '', googleMapsUrl: '' };
+const CLINIC_OWN = { id: 'own', name: 'Riverside Vets', phone: '', address: '2 River Rd', isEmergency: false, website: '', googleMapsUrl: '' };
 function renderScreen() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -148,6 +166,10 @@ beforeEach(() => {
   mocks.navigate.mockReset();
   mocks.getMyKin.mockResolvedValue({ kin: [kin()] });
   mocks.updateKin.mockResolvedValue({ ok: true });
+  mocks.getMyTribeProfile.mockReset();
+  mocks.getMyTribeProfile.mockResolvedValue({ profile: { kinfolkId: 'fam1', displayName: 'X', customFields: [] }, vetClinic: HOME_VET, homeAccess: {} });
+  mocks.getVetClinics.mockReset();
+  mocks.getVetClinics.mockResolvedValue({ clinics: [CLINIC_HOME, CLINIC_OWN] });
   mocks.archiveKin.mockResolvedValue({ ok: true });
   // Default: history on file, so the delete row is absent and the #1311 tests
   // see the memorial row alone.
@@ -188,7 +210,7 @@ describe('KinEdit', () => {
   });
   it('shows the shared facts from the kin and saves only the one that changed (#1310)', async () => {
     mocks.getMyKin.mockResolvedValue({
-      kin: [kin({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', spayedNeutered: true, vetInfo: 'Dr A' })],
+      kin: [kin({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', spayedNeutered: true })],
     });
     const user = userEvent.setup();
     renderScreen();
@@ -196,7 +218,6 @@ describe('KinEdit', () => {
     expect((screen.getByLabelText('Weight') as HTMLInputElement).value).toBe('52 lbs');
     expect((screen.getByLabelText('Color / markings') as HTMLInputElement).value).toBe('Black');
     expect((screen.getByLabelText(/Spayed \/ neutered/) as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText('Vet') as HTMLTextAreaElement).value).toBe('Dr A');
 
     const weight = screen.getByLabelText('Weight');
     await user.clear(weight);
@@ -206,21 +227,96 @@ describe('KinEdit', () => {
     expect(mocks.updateKin).toHaveBeenCalledWith('k1', { weight: '55 lbs' }, 'fam1');
   });
 
-  it('edits sex, the fixed flag and the vet, and clears a field with an empty string (#1310)', async () => {
+  it('edits sex and the fixed flag, and clears a field with an empty string (#1310)', async () => {
     mocks.getMyKin.mockResolvedValue({ kin: [kin({ weight: '52 lbs' })] });
     const user = userEvent.setup();
     renderScreen();
     await user.selectOptions(await screen.findByLabelText('Sex'), 'Male');
     await user.click(screen.getByLabelText(/Spayed \/ neutered/));
-    await user.type(screen.getByLabelText('Vet'), 'Riverside Animal Hospital');
     await user.clear(screen.getByLabelText('Weight'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
     await waitFor(() => expect(mocks.updateKin).toHaveBeenCalledTimes(1));
-    expect(mocks.updateKin).toHaveBeenCalledWith(
-      'k1',
-      { sex: 'Male', weight: '', vetInfo: 'Riverside Animal Hospital', spayedNeutered: true },
-      'fam1',
-    );
+    expect(mocks.updateKin).toHaveBeenCalledWith('k1', { sex: 'Male', weight: '', spayedNeutered: true }, 'fam1');
+  });
+  describe('#1908: the care facts the household now fills', () => {
+    const FIELDS = [
+      ['staysAs', 'Stays as'],
+      ['routine', 'Routine'],
+      ['trainingCommands', 'Training / commands'],
+      ['feedingBrand', 'Food / brand'],
+      ['vaccinations', 'Vaccinations'],
+    ] as const;
+    for (const [key, label] of FIELDS) {
+      it(`${label}: shows the office's value and saves only that field when it changes`, async () => {
+        mocks.getMyKin.mockResolvedValue({ kin: [kin({ [key]: 'From the office' })] });
+        const user = userEvent.setup();
+        renderScreen();
+        const box = (await screen.findByLabelText(label)) as HTMLTextAreaElement;
+        expect(box.value).toBe('From the office');
+        await user.clear(box);
+        await user.type(box, 'From home');
+        await user.click(screen.getByRole('button', { name: /Save/i }));
+        await waitFor(() => expect(mocks.updateKin).toHaveBeenCalledTimes(1));
+        expect(mocks.updateKin).toHaveBeenCalledWith('k1', { [key]: 'From home' }, 'fam1');
+      });
+    }
+    it('labels the one shared medications field and the notes for the Auntie in brand words', async () => {
+      renderScreen();
+      expect(await screen.findByLabelText('Medications / health notes')).toBeInTheDocument();
+      expect(screen.getByLabelText('Notes for your Auntie')).toBeInTheDocument();
+      expect(screen.queryByText(/sitter/i)).toBeNull();
+    });
+  });
+  describe('#1908 kin-vet: the Kin vet', () => {
+    it('no free-text Vet box; the household vet shows read only, the box unticked', async () => {
+      renderScreen();
+      expect(await screen.findByText('From your Tribe Profile: Cedar Animal Care · 1 Main St')).toBeInTheDocument();
+      expect((screen.getByLabelText('Different vet for this Kin') as HTMLInputElement).checked).toBe(false);
+      expect(screen.queryByRole('textbox', { name: 'Vet' })).toBeNull();
+      expect(screen.queryByLabelText(/this Kin.s vet/)).toBeNull();
+    });
+    it('says when the Tribe Profile has no vet yet', async () => {
+      mocks.getMyTribeProfile.mockResolvedValue({ profile: { kinfolkId: 'fam1', displayName: 'X', customFields: [] }, vetClinic: null, homeAccess: {} });
+      renderScreen();
+      expect(await screen.findByText('No vet on your Tribe Profile yet.')).toBeInTheDocument();
+    });
+    it('ticking opens the whole area list on focus, and a pick saves as the Kin vet', async () => {
+      const user = userEvent.setup();
+      renderScreen();
+      await user.click(await screen.findByLabelText('Different vet for this Kin'));
+      // Ticked with nothing chosen cannot be saved.
+      expect(screen.getByRole('button', { name: /Save/i })).toBeDisabled();
+      await user.click(screen.getByLabelText(/this Kin.s vet/));
+      const list = screen.getByRole('listbox');
+      expect(within(list).getByText('Cedar Animal Care')).toBeInTheDocument();
+      await user.click(within(list).getByText('Riverside Vets'));
+      await user.click(screen.getByRole('button', { name: /Save/i }));
+      await waitFor(() => expect(mocks.updateKin).toHaveBeenCalledTimes(1));
+      expect(mocks.updateKin).toHaveBeenCalledWith('k1', { ownVetClinicId: 'own' }, 'fam1');
+    });
+    it('a Kin with its own vet starts ticked; unticking saves "" (back to the household vet)', async () => {
+      mocks.getMyKin.mockResolvedValue({ kin: [kin({ ownVetClinicId: 'own' })] });
+      const user = userEvent.setup();
+      renderScreen();
+      const box = (await screen.findByLabelText('Different vet for this Kin')) as HTMLInputElement;
+      expect(box.checked).toBe(true);
+      expect(await screen.findByText('Riverside Vets · 2 River Rd')).toBeInTheDocument();
+      await user.click(box);
+      await user.click(screen.getByRole('button', { name: /Save/i }));
+      await waitFor(() => expect(mocks.updateKin).toHaveBeenCalledTimes(1));
+      expect(mocks.updateKin).toHaveBeenCalledWith('k1', { ownVetClinicId: '' }, 'fam1');
+    });
+    it('a clinic the server refuses shows its words and stays on the form', async () => {
+      mocks.updateKin.mockRejectedValue(new Error('That vet is not on the list.'));
+      const user = userEvent.setup();
+      renderScreen();
+      await user.click(await screen.findByLabelText('Different vet for this Kin'));
+      await user.click(screen.getByLabelText(/this Kin.s vet/));
+      await user.click(within(screen.getByRole('listbox')).getByText('Riverside Vets'));
+      await user.click(screen.getByRole('button', { name: /Save/i }));
+      expect(await screen.findByText(/That vet is not on the list\./)).toBeInTheDocument();
+      expect(mocks.navigate).not.toHaveBeenCalled();
+    });
   });
 
   it('keeps a legacy sex value the admin wrote (F) selectable instead of rewriting it (#1310)', async () => {
