@@ -1,6 +1,9 @@
 import { FieldValue } from 'firebase-admin/firestore';
-import { db } from './firestoreAdmin';
+import { db, getAdmin } from './firestoreAdmin';
 import { logEvent } from './logger';
+import { isAuntieOperator } from './operatorAllowlist';
+import { isAuntieClaim, isOwnerClaim } from './staffGate';
+import { STAFF_ROLE_AUNTIE } from './auntieAccess';
 
 /**
  * Who the business-facing notifications go to, and who a visit is assigned to
@@ -68,6 +71,10 @@ import { logEvent } from './logger';
  *      details, inbound customer messages, ratings. The cap bounds how far a
  *      mistaken or malicious add can spread that.
  *
+ * Add and set also refuse, before the transaction, any submitted uid that is
+ * not an owner account, and every recipient read skips an Auntie or household
+ * account already on the list (#2223, "Only the owner's accounts" below).
+ *
  * ## AUNTIE_OPERATOR_UIDS is a Secret Manager secret
  *
  * It is NOT in `functions/.env`, so it only resolves inside a function that
@@ -103,8 +110,19 @@ export interface RosterChange {
   defaultAssigneeCleared: boolean;
 }
 
-/** Why a roster mutation was refused. Each maps to one invariant above. */
-export type RosterRefusal = 'empty-roster' | 'self-removal' | 'roster-too-large';
+/**
+ * Why a roster mutation was refused. The first three map to the invariants
+ * above; the last four are the owner-only rule (#2223, see "Only the owner's
+ * accounts" below).
+ */
+export type RosterRefusal =
+  | 'empty-roster'
+  | 'self-removal'
+  | 'roster-too-large'
+  | 'auntie-account'
+  | 'household-account'
+  | 'not-owner-account'
+  | 'account-check-failed';
 
 /**
  * The caller asked for something the roster contract refuses. Callables map
@@ -163,6 +181,210 @@ function envOperatorUids(): string[] {
 
 function adminsRef() {
   return db().collection(DOC_PATH.collection).doc(DOC_PATH.doc);
+}
+
+/*
+ * ## Only the owner's accounts (#2223)
+ *
+ * Business notices (payments, invoices and the rest of the office stream) are
+ * the owner's. An Auntie never sees money, and a household never sees the
+ * business's mail. Two halves keep it that way:
+ *
+ *   - WRITE: `addBusinessAdminUids` and `setBusinessAdminUids` refuse any
+ *     submitted uid whose sign-in account is not an owner, before anything is
+ *     written. Strict on purpose: only an owner may be put on the list.
+ *   - SEND: every resolver of business recipients skips a uid whose account is
+ *     positively an Auntie or a household, so a list written before this rule
+ *     cannot reach her. Lenient on purpose: a uid with no claims, no login, or
+ *     an account that could not be read is kept unless its staff record says
+ *     Auntie, because dropping the owner over a lookup blip is the outage this
+ *     module exists to prevent.
+ *
+ * Precedence matches `staffRoles.ts`: the Auntie role first (a double-claimed
+ * account included, as `isOwnerClaim` and the rules' `isOwner()` treat it),
+ * then the owner claim or the operator allowlist, then a household login.
+ */
+
+/** What a uid's sign-in account says about receiving business notices. */
+export type RosterAccount =
+  /** The owner claim, or the operator allowlist. */
+  | 'owner'
+  /** The Auntie staff role, a double-claimed account included. */
+  | 'auntie'
+  /** A household login (`role: 'kinfolk'`) with no owner claim. */
+  | 'household'
+  /** A login with neither claim, or no login at all. */
+  | 'other'
+  /** The sign-in account could not be read. */
+  | 'unchecked';
+
+/** `getUsers` takes at most 100 identifiers per call. */
+const AUTH_BATCH = 100;
+
+/** Pure half. `claims` is null when no sign-in account exists for the uid. */
+export function rosterAccountOf(
+  uid: string,
+  claims: Record<string, unknown> | null,
+): Exclude<RosterAccount, 'unchecked'> {
+  if (claims && isAuntieClaim(claims)) return 'auntie';
+  if (claims && isOwnerClaim(claims)) return 'owner';
+  if (isAuntieOperator(uid)) return 'owner';
+  if (claims && claims['role'] === 'kinfolk') return 'household';
+  return 'other';
+}
+
+/** Reads each uid's custom claims through the Admin SDK and classifies it. */
+async function readRosterAccounts(
+  uids: readonly string[],
+  context: string,
+): Promise<Map<string, RosterAccount>> {
+  const out = new Map<string, RosterAccount>();
+  const unique = [...new Set(uids)];
+  for (let i = 0; i < unique.length; i += AUTH_BATCH) {
+    const batch = unique.slice(i, i + AUTH_BATCH);
+    try {
+      const res = await getAdmin().auth().getUsers(batch.map((uid) => ({ uid })));
+      const found = new Map(res.users.map((u) => [u.uid, (u.customClaims ?? {}) as Record<string, unknown>]));
+      for (const uid of batch) out.set(uid, rosterAccountOf(uid, found.get(uid) ?? null));
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'businessAdmins',
+        event: 'businessAdmins.accountLookupFailed',
+        errorMessage: err instanceof Error ? err.message : String(err),
+        extra: { context, count: batch.length },
+      });
+      for (const uid of batch) out.set(uid, 'unchecked');
+    }
+  }
+  return out;
+}
+
+const NOT_CHANGED = 'Nothing was changed.';
+
+/**
+ * The write half: refuse unless every submitted uid is an owner account. The
+ * messages are read by the operator, so they name no account, path or
+ * function. Exported so a callable can run it ahead of its own checks and give
+ * this answer rather than a less specific one.
+ */
+export async function assertOwnerAccounts(uids: readonly string[], reason: string): Promise<void> {
+  const wanted = dedupe(uids);
+  if (wanted.length === 0) return;
+  const accounts = await readRosterAccounts(wanted, reason);
+  const kinds = new Set(wanted.map((uid) => accounts.get(uid)));
+  if (kinds.has('auntie')) {
+    throw new BusinessAdminRosterError(
+      'auntie-account',
+      'An Auntie cannot be on the business admin list. Business notices, including payments '
+        + `and invoices, go only to the owner. ${NOT_CHANGED}`,
+    );
+  }
+  if (kinds.has('household')) {
+    throw new BusinessAdminRosterError(
+      'household-account',
+      'A household account cannot be on the business admin list. Business notices go only to '
+        + `the owner. ${NOT_CHANGED}`,
+    );
+  }
+  if (kinds.has('unchecked')) {
+    throw new BusinessAdminRosterError(
+      'account-check-failed',
+      `That account could not be checked just now. ${NOT_CHANGED} Try again in a moment.`,
+    );
+  }
+  if (kinds.has('other')) {
+    throw new BusinessAdminRosterError(
+      'not-owner-account',
+      `Only the owner's accounts can be on the business admin list. ${NOT_CHANGED}`,
+    );
+  }
+}
+
+/**
+ * The send half: `uids` minus every Auntie and household account, order kept
+ * (`uids[0]` is the implicit assignee elsewhere). Reads only. A skip is logged
+ * at `warn`, so a stale list shows up in the logs rather than staying silent.
+ *
+ * When the claims do not settle it (the sign-in accounts could not be read,
+ * or a login has neither claim, or none at all), the `staff/{uid}` record's
+ * `staffRole` answers, as it does in `staffRoles.ts`. Claims can be wiped while
+ * the staff record stays: deleting a `clients/{uid}` doc clears every claim on
+ * that login (`onClientsWrite`). An owner or household the claims already
+ * name is never looked up. When that read fails, every uid is kept.
+ */
+export async function businessNoticeUids(uids: readonly string[], context: string): Promise<string[]> {
+  const list = dedupe(uids);
+  if (list.length === 0) return [];
+  const accounts = await readRosterAccounts(list, context);
+
+  const unchecked = list.filter((uid) => {
+    const account = accounts.get(uid);
+    return account === 'unchecked' || account === 'other';
+  });
+  if (unchecked.length > 0) {
+    try {
+      const firestore = db();
+      const snaps = await firestore.getAll(...unchecked.map((uid) => firestore.collection('staff').doc(uid)));
+      unchecked.forEach((uid, i) => {
+        if (snaps[i]?.data()?.['staffRole'] === STAFF_ROLE_AUNTIE) accounts.set(uid, 'auntie');
+      });
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'businessAdmins',
+        event: 'businessAdmins.staffRecordFallbackFailed',
+        errorMessage: err instanceof Error ? err.message : String(err),
+        extra: { context, count: unchecked.length, note: 'accounts could not be checked; every uid was kept' },
+      });
+    }
+  }
+
+  const skipped = list
+    .filter((uid) => accounts.get(uid) === 'auntie' || accounts.get(uid) === 'household')
+    .map((uid) => ({ uid, account: accounts.get(uid) }));
+  if (skipped.length > 0) {
+    logEvent({
+      severity: 'warn',
+      function: 'businessAdmins',
+      event: 'businessAdmins.roster.skipped',
+      extra: {
+        context,
+        skipped,
+        note: 'business notices go only to the owner; remove these accounts from the business admin list',
+      },
+    });
+  }
+  const drop = new Set(skipped.map((s) => s.uid));
+  return list.filter((uid) => !drop.has(uid));
+}
+
+/** Who business notices reach right now, and which arm of the recipient order answered. */
+export interface BusinessNoticeRecipients {
+  uids: string[];
+  source: 'roster' | 'operatorAllowlist' | 'none';
+}
+
+/**
+ * The recipient order with the owner-only filter applied, READ ONLY. The
+ * stored list wins when anybody on it may receive; otherwise the operator
+ * allowlist answers (filtered the same way); otherwise nobody. A stored list
+ * that holds only an Auntie therefore falls through to the allowlist rather
+ * than reaching her.
+ *
+ * `resolveBusinessAdminUidsFrom` is this plus the self-heal write and the
+ * throw. Settings screens call this directly so that reading them never edits
+ * who receives business mail.
+ */
+export async function businessNoticeRecipients(
+  settings: BusinessAdminsSettings,
+  context: string,
+): Promise<BusinessNoticeRecipients> {
+  const fromRoster = await businessNoticeUids(settings.uids, context);
+  if (fromRoster.length > 0) return { uids: fromRoster, source: 'roster' };
+  const fromEnv = await businessNoticeUids(envOperatorUids(), context);
+  if (fromEnv.length > 0) return { uids: fromEnv, source: 'operatorAllowlist' };
+  return { uids: [], source: 'none' };
 }
 
 /**
@@ -276,6 +498,7 @@ export async function addBusinessAdminUids(
   uids: string[],
   opts: { defaultAssigneeUid?: string | undefined; reason: string },
 ): Promise<string[]> {
+  await assertOwnerAccounts(uids, opts.reason);
   const change = await mutateRoster({
     reason: opts.reason,
     // An add can never drop anybody, so there is nobody to protect from it.
@@ -297,6 +520,9 @@ export async function setBusinessAdminUids(
   uids: string[],
   opts: { actorUid: string; reason: string },
 ): Promise<RosterChange> {
+  // Every submitted uid, a stored one included: keeping an Auntie who is
+  // already on the list is still putting her on it.
+  await assertOwnerAccounts(uids, opts.reason);
   return mutateRoster({
     reason: opts.reason,
     actorUid: opts.actorUid,
@@ -344,10 +570,14 @@ export async function resolveBusinessAdminUidsFrom(
   settings: BusinessAdminsSettings,
   context: string,
 ): Promise<string[]> {
-  if (settings.uids.length > 0) return settings.uids;
+  // #2223: an Auntie or household account on the list is skipped here, so a
+  // list written before the owner-only rule cannot send her business notices.
+  const answer = await businessNoticeRecipients(settings, context);
+  if (answer.source === 'roster') return answer.uids;
 
-  const fromEnv = envOperatorUids();
-  if (fromEnv.length > 0) {
+  const fromEnv = answer.uids;
+  if (answer.source === 'operatorAllowlist') {
+    const storedEmpty = settings.uids.length === 0;
     logEvent({
       severity: 'warn',
       function: 'businessAdmins',
@@ -355,9 +585,14 @@ export async function resolveBusinessAdminUidsFrom(
       extra: {
         context,
         count: fromEnv.length,
-        note: 'businessSettings/admins was empty; resolved from AUNTIE_OPERATOR_UIDS',
+        note: storedEmpty
+          ? 'businessSettings/admins was empty; resolved from AUNTIE_OPERATOR_UIDS'
+          : 'nobody on businessSettings/admins may receive business notices; resolved from AUNTIE_OPERATOR_UIDS',
       },
     });
+    // The write-back only fills an EMPTY list, as before, so a uid revoked
+    // from a non-empty list is never written back by a dispatch.
+    if (!storedEmpty) return fromEnv;
     try {
       await addBusinessAdminUids(fromEnv, { reason: `self-heal:${context}` });
     } catch (err) {
@@ -376,13 +611,17 @@ export async function resolveBusinessAdminUidsFrom(
     return fromEnv;
   }
 
+  // #2223: a list holding only Auntie or household accounts is nobody too.
+  const onlySkipped = settings.uids.length > 0;
   logEvent({
     severity: 'error',
     function: 'businessAdmins',
     event: 'businessAdmins.roster.missing',
     extra: {
       context,
-      note: 'businessSettings/admins.uids is empty and AUNTIE_OPERATOR_UIDS is unset in this function',
+      note: onlySkipped
+        ? 'nobody on businessSettings/admins.uids may receive business notices and AUNTIE_OPERATOR_UIDS has no owner'
+        : 'businessSettings/admins.uids is empty and AUNTIE_OPERATOR_UIDS is unset in this function',
     },
   });
   // #866: nobody by definition, not a failed read, so the dispatcher treats this
@@ -392,7 +631,9 @@ export async function resolveBusinessAdminUidsFrom(
   // tree.
   throw Object.assign(
     new Error(
-      `${context}: businessSettings/admins.uids is empty, so this business notification has no recipient. `
+      (onlySkipped
+        ? `${context}: businessSettings/admins.uids holds no owner account, so this business notification has no recipient. `
+        : `${context}: businessSettings/admins.uids is empty, so this business notification has no recipient. `)
         + 'Seed the roster by calling the provisionBusinessAdmins callable as an operator, '
         + 'or bind AUNTIE_OPERATOR_UIDS on this function to let it self-heal.',
     ),
