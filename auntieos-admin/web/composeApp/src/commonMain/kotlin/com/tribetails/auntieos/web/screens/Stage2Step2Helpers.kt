@@ -124,7 +124,8 @@ data class CashFlowOutstanding(val total: Double, val count: Int)
  * #2000: what households have been asked to pay and have not. Stored state
  * OPEN, a balance above zero, not archived: the rule the web Invoices screen's
  * Outstanding card and Android's Invoices tile both read, so Home agrees with
- * them.
+ * them. This console's own Invoices Outstanding tile calls this function too
+ * (`screens/invoices/InvoicesScreen.kt#SummaryStrip`).
  *
  * A POSITIVE test on the stamp. An unsent draft has gone to nobody and a quote
  * is not a bill, so neither is owed; this card used to count every invoice with
