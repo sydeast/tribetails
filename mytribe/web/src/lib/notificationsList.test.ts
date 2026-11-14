@@ -84,6 +84,16 @@ describe('notificationTarget', () => {
     expect(notificationTarget(item({ targetType: 'kintale', targetId: 'tale-2' }))).toEqual({ kind: 'tale', taleId: 'tale-2' });
   });
 
+  it('#1898: a KinTale row with no id opens the KinTales list', () => {
+    expect(notificationTarget(item({ targetType: 'kintale', targetId: '' }))).toEqual({ kind: 'tales' });
+  });
+  it('#1913: a Kin row opens the Kin, or the Kin list when it names none', () => {
+    expect(notificationTarget(item({ targetType: 'kin', targetId: 'kin-2' }))).toEqual({ kind: 'kin', kinId: 'kin-2' });
+    expect(notificationTarget(item({ targetType: 'kin', targetId: ' ' }))).toEqual({ kind: 'kinList' });
+  });
+  it('a household profile row opens Tribe', () => {
+    expect(notificationTarget(item({ targetType: 'household', targetId: '' }))).toEqual({ kind: 'household' });
+  });
   it('#1874: opens Messages for a reply from the office', () => {
     expect(notificationTarget(item({ targetType: 'conversation', targetId: 'fam1' }))).toEqual({ kind: 'messages' });
   });

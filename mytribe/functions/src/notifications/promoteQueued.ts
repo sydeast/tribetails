@@ -36,6 +36,8 @@ interface QueuedNotification {
   actorUid?: unknown;
   title?: unknown;
   description?: unknown;
+  /** #1831: the household's content line, on a household copy only. */
+  householdLine?: unknown;
   actorName?: unknown;
   actorPhotoUrl?: unknown;
   data?: unknown;
@@ -104,6 +106,7 @@ export function promoteQueuedNotification(
     actorUid: pick('actorUid') ?? null,
     title: s(pick('title')),
     description: s(pick('description')),
+    ...(typeof pick('householdLine') === 'string' ? { householdLine: pick('householdLine') } : {}),
     actorName: s(pick('actorName')),
     actorPhotoUrl: s(pick('actorPhotoUrl')),
     data,

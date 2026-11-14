@@ -83,4 +83,47 @@ describe('onKinTaleCommentCreate trigger', () => {
 
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
+
+  describe('#1898: the notice names who commented and on which KinTale', () => {
+    async function dataFor(comment: Record<string, unknown>, docs: Record<string, Record<string, unknown>> = {}) {
+      const ctx = buildDbMock({
+        docs: { 'kin_care_reports/r1': { kinfolkId: 'fam3', title: 'Park day' }, ...docs },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.resolveUid.mockResolvedValue('uid_kinfolk');
+      await onKinTaleCommentCreateHandler({
+        params: { reportId: 'r1', commentId: 'c1' },
+        data: { data: () => comment },
+      } as any);
+      return (mocks.enqueue.mock.calls[0]![0] as { data: Record<string, unknown> }).data;
+    }
+    it('a guest by the name they typed, and the tale by its title', async () => {
+      const data = await dataFor({ guestName: 'Grandma Jo', body: 'So cute!' });
+      expect(data.authorName).toBe('Grandma Jo');
+      expect(data.taleTitle).toBe('Park day');
+    });
+    it('an Auntie as "Auntie" and her staff name', async () => {
+      const data = await dataFor(
+        { authorUid: 'admin1', authorRole: 'admin', body: 'Thank you!' },
+        { 'staff/admin1': { displayName: 'Sam', email: 'e2e-admin@tribetails.com' } },
+      );
+      expect(data.authorName).toBe('Auntie Sam');
+    });
+    it('a household member by first name, never by email', async () => {
+      const data = await dataFor(
+        { authorUid: 'kinUid', authorRole: 'kinfolk', body: 'thanks!' },
+        { 'families/fam3/members/kinUid': { displayName: 'Dana Ruiz', email: 'pawsome@hanasamku.com' } },
+      );
+      expect(data.authorName).toBe('Dana');
+      expect(JSON.stringify(data)).not.toContain('@');
+    });
+    it('an author nothing names is left unnamed, and the tale with no title has none', async () => {
+      const data = await dataFor(
+        { authorUid: 'ghost', authorRole: 'kinfolk', body: 'hi' },
+        { 'kin_care_reports/r1': { kinfolkId: 'fam3' } },
+      );
+      expect(data.authorName).toBe('');
+      expect(data.taleTitle).toBe('');
+    });
+  });
 });

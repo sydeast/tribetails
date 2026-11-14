@@ -266,6 +266,16 @@ export interface NotificationDetail {
    * `HOUSEHOLD_NOTE_KEYS` carry it, and only from the emitter's `data.note`.
    */
   householdNote?: string;
+  /**
+   * #1831: HOUSEHOLD COPIES ONLY. Facts the household's content line reads
+   * (`householdNoticeLine`) and no admin card shows: a whole request's dates in
+   * one phrase, a KinTale's title and the Kin on its visit, and when an account
+   * was locked on the business clock.
+   */
+  bookingDates?: string;
+  taleTitle?: string;
+  taleKinNames?: string;
+  lockedAt?: string;
   /** Invoice number, for invoice-class notifications. */
   invoiceNumber?: string;
   /** Invoice amount, pre-formatted ("$120.00"). */

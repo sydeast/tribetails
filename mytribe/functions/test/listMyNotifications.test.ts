@@ -278,8 +278,10 @@ describe('listMyNotifications rows', () => {
       id: 'n-visit',
       key: 'kincare.booking.confirm',
       category: 'visit',
-      title: 'Visit confirmed',
-      description: 'Your visit is on the calendar.',
+      // #1831: the household's title for the key. A row stored before the
+      // household line existed shows its title alone, never its stored words.
+      title: 'Your booking is confirmed',
+      description: '',
       actorName: 'Auntie Sam',
       actorPhotoUrl: 'https://cdn/sam.jpg',
       targetType: 'booking',

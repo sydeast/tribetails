@@ -1,5 +1,14 @@
+import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { businessTimeZone } from '../lib/bookingTimeBlocks';
+import { canonicalNotificationKey } from './catalog';
 import { enrichTemplateData, SERVICE_FALLBACK_WORD } from './enrichTemplateData';
+import {
+  START_TIME_TO_BE_SET,
+  formatBookingDate,
+  formatBookingTime,
+  requestedDateNoonUtcMs,
+} from './visitDates';
 import type { AudienceStream, NotificationDetail } from './types';
 
 /**
@@ -90,6 +99,12 @@ export const STAFF_ONLY_DETAIL_FIELDS: readonly string[] = ['notes'];
 export const HOUSEHOLD_NOTE_KEYS: ReadonlySet<string> = new Set([
   'kincare.booking.confirm',
   'kincare.request.declined',
+  // #1913: the office's reason, typed when it answers a household's request to
+  // remove a Kin or cancel a visit. Each already reaches the household in the
+  // text message (`{{note}}`) and on the Kin's own screen.
+  'kincare.cancel.declined',
+  'kin.removal.declined',
+  'kin.removal.archived',
 ]);
 /**
  * The detail fields to resolve for one copy, given the audience stream that copy
@@ -104,8 +119,14 @@ export const HOUSEHOLD_NOTE_KEYS: ReadonlySet<string> = new Set([
  */
 export function cardDetailFieldsFor(stream: AudienceStream): readonly string[] {
   if (stream !== 'kinfolk') return CARD_DETAIL_FIELDS;
-  return CARD_DETAIL_FIELDS.filter((f) => !STAFF_ONLY_DETAIL_FIELDS.includes(f));
+  return [...CARD_DETAIL_FIELDS.filter((f) => !STAFF_ONLY_DETAIL_FIELDS.includes(f)), ...HOUSEHOLD_ONLY_DETAIL_FIELDS];
 }
+/**
+ * #1831: tokens only a household's copy asks for, because only its content
+ * line uses them. `bookingDates` is a whole request's dates in one phrase
+ * ("4 visits, Sep 4 to Sep 7"), for the answer to a request.
+ */
+export const HOUSEHOLD_ONLY_DETAIL_FIELDS: readonly string[] = ['bookingDates'];
 
 /** A resolved, non-blank string, or undefined. Blank is never a value here. */
 function present(v: unknown): string | undefined {
@@ -190,6 +211,438 @@ export async function buildNotificationDetail(
   // no actor, and then the card shows no requester rather than "System", which
   // would be a claim about a person nobody made.
   assign('requestedBy', present(actorName));
+  // #1831: the facts only the household's content line reads.
+  if (!staffSide) {
+    assign('bookingDates', present(ctx.bookingDates));
+    const extra = await householdOnlyFacts(key, data ?? {});
+    assign('taleTitle', extra.taleTitle);
+    assign('taleKinNames', extra.taleKinNames);
+    assign('lockedAt', extra.lockedAt);
+  }
 
   return Object.keys(detail).length > 0 ? detail : undefined;
+}
+
+/** The KinTale keys whose line names the tale itself. */
+const TALE_KEYS: ReadonlySet<string> = new Set(['kintale.published', 'kintale.note.added']);
+
+/**
+ * #1831: facts the enricher has no token for, read only for a household's copy
+ * and only for the keys whose line uses them. Never throws: a failed read
+ * leaves the fact out, and the line says less.
+ *
+ * - A KinTale's own title, and the Kin on the visit it is about. The enricher's
+ *   `kinName` for a tale is the household's whole roster, which is not who the
+ *   tale is about, so the line reads the tale's visit instead.
+ * - When an account was locked, on the business clock.
+ */
+async function householdOnlyFacts(
+  key: string,
+  data: Record<string, unknown>,
+): Promise<{ taleTitle?: string; taleKinNames?: string; lockedAt?: string }> {
+  try {
+    if (TALE_KEYS.has(key)) {
+      const taleId = present(data.taleId) ?? present(data.reportId);
+      if (!taleId) return {};
+      const tale = (await db().doc(`kin_care_reports/${taleId}`).get()).data() as Record<string, unknown> | undefined;
+      const out: { taleTitle?: string; taleKinNames?: string } = { taleTitle: present(tale?.title) };
+      const sessionId = present(tale?.sessionId);
+      if (sessionId) {
+        const session = (await db().doc(`kin_care_sessions/${sessionId}`).get()).data() as
+          | Record<string, unknown>
+          | undefined;
+        const names = Array.isArray(session?.kinNames)
+          ? session.kinNames.map((n) => present(n)).filter((n): n is string => n !== undefined)
+          : [];
+        if (names.length > 0) out.taleKinNames = names.join(', ');
+      }
+      return out;
+    }
+    if (key === 'auth.account.locked' && typeof data.lockStartedAtMs === 'number') {
+      const settings = (await db().doc('business_settings/business_settings').get()).data();
+      const tz = businessTimeZone(settings);
+      const ms = data.lockStartedAtMs;
+      return { lockedAt: `${formatBookingDate(ms, tz)} at ${formatBookingTime(ms, tz)}` };
+    }
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'buildNotificationDetail',
+      event: 'detail.household_facts.failed',
+      extra: { key, err: (err as Error)?.message ?? String(err) },
+    });
+  }
+  return {};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE HOUSEHOLD'S CONTENT LINE AND WHERE A TAP GOES (#1831, #1898, #1913)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The line under a household notice's title used to be words about the
+// notification itself: the operator's description ("Auntie en route to KinCare
+// (optional ETA).") and, since #2239, the household's Notification settings
+// wording ("When your Auntie arrives for a KinCare visit."). Neither said which
+// Kin, which KinCare or when. The line is now built from the notice's own facts,
+// the ones `buildNotificationDetail` already writes on the copy and the ids the
+// emitter put in `data`. It is a pure function of the stored row, so the
+// notifications list builds it again on read, and an old row with no facts
+// shows its title alone instead of the words it was stored with.
+//
+// One table, keyed by catalog key, holds the line and the target for every key
+// a household can receive (`HOUSEHOLD_NOTICE_RULES`). A test walks the catalog
+// and fails on a household key with no entry.
+
+/** What a tapped household notice opens. */
+export type HouseholdNoticeTarget =
+  /** The visit (`targetType: 'booking'`, with `visitId` on the row). */
+  | 'visit'
+  /** A whole booking request (`booking`, with `batchId` and no `visitId`). */
+  | 'request'
+  /** The KinTale, or the KinTales list when the notice spans several. */
+  | 'kintale'
+  /** The Kin, or the Kin list when the Kin is gone. */
+  | 'kin'
+  | 'kinList'
+  | 'invoice'
+  | 'messages'
+  /** The household's own profile (Tribe). */
+  | 'household'
+  /** Nothing to open: the line says it all. */
+  | 'none';
+
+/** The stored row, as far as the line and the target read it. */
+export interface HouseholdNoticeRow {
+  key: string;
+  recipientUid?: string;
+  /** The stored description: the line only for a broadcast, whose body it is. */
+  description?: string;
+  /** `NotificationDetail` on a fresh copy; whatever an older row stored, read loosely. */
+  detail?: object;
+  data?: Record<string, unknown>;
+  targetType?: string;
+  targetId?: string;
+}
+
+interface Facts {
+  key: string;
+  recipientUid: string;
+  description: string;
+  detail: Record<string, unknown>;
+  data: Record<string, unknown>;
+}
+
+interface HouseholdNoticeRule {
+  line: (f: Facts) => string;
+  target: HouseholdNoticeTarget;
+  /**
+   * Never written to the notifications list: the key is sent straight to its
+   * channel and no `notifications/{id}` row exists for it.
+   */
+  neverListed?: true;
+}
+
+function text(v: unknown): string {
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/** "Rex", "Rex and Mochi", "Rex, Mochi and Pip" from a comma-joined or listed set of names. */
+export function joinKinNames(v: unknown): string {
+  const names = (Array.isArray(v) ? v.map(text) : text(v).split(','))
+    .map((n) => n.trim())
+    .filter((n, i, all) => n !== '' && all.indexOf(n) === i);
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+function capitalize(s: string): string {
+  return s === '' ? s : s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** "Tue, Nov 17 at 9:00 AM", "Tue, Nov 17 at Midday (11 AM to 3 PM)", or the date alone. */
+function whenOf(date: string, time: string): string {
+  if (date === '') return '';
+  if (time === '') return date;
+  return time === START_TIME_TO_BE_SET ? `${date}, ${time}` : `${date} at ${time}`;
+}
+
+/** "Drop-in visit for Rex", or whichever half is known. */
+function visitSubject(f: Facts): string {
+  const service = text(f.detail.serviceType);
+  const kin = joinKinNames(f.detail.kinName);
+  if (service && kin) return `${service} for ${kin}`;
+  return service || kin;
+}
+
+/** One visit: "Drop-in visit for Rex on Tue, Nov 17 at 9:00 AM". */
+function visitLine(f: Facts): string {
+  const subject = visitSubject(f);
+  const when = whenOf(text(f.detail.bookingDate), text(f.detail.bookingTime));
+  if (subject && when) return `${subject} on ${when}`;
+  return subject || (when ? `On ${when}` : '');
+}
+
+/** The confirmation: one visit as above, several as a count and the first. */
+function confirmLine(f: Facts): string {
+  const count = typeof f.data.visitCount === 'number' ? f.data.visitCount : 0;
+  const next = (f.data.nextVisit ?? null) as Record<string, unknown> | null;
+  if (count > 1 && next) {
+    const day = [text(next.weekday), text(next.date)].filter((s) => s !== '').join(', ');
+    const when = whenOf(day, text(next.time));
+    const subject = visitSubject(f);
+    const tail = when ? `${count} visits starting ${when}` : `${count} visits`;
+    return subject ? `${subject}, ${tail}` : capitalize(tail);
+  }
+  return visitLine(f);
+}
+
+/** The answer to a request: its dates in one phrase ("4 visits, Sep 4 to Sep 7"). */
+function requestLine(f: Facts): string {
+  const subject = visitSubject(f);
+  const dates = text(f.detail.bookingDates);
+  if (!dates) return visitLine(f);
+  const joiner = /^\d/.test(dates) ? ', ' : ' on ';
+  return subject ? `${subject}${joiner}${dates}` : capitalize(dates);
+}
+
+function onMyWayLine(f: Facts): string {
+  const base = visitLine(f);
+  const eta = typeof f.data.etaMinutes === 'number' && f.data.etaMinutes > 0 ? Math.round(f.data.etaMinutes) : 0;
+  if (eta === 0) return base;
+  const away = `about ${eta} ${eta === 1 ? 'minute' : 'minutes'} away`;
+  return base ? `${base}, ${away}` : capitalize(away);
+}
+
+/** "“A sunny walk” about Rex", or whichever half is known. */
+function taleLine(f: Facts): string {
+  const title = text(f.detail.taleTitle);
+  const kin = joinKinNames(f.detail.taleKinNames);
+  if (title && kin) return `“${title}” about ${kin}`;
+  if (title) return `“${title}”`;
+  return kin ? `About ${kin}` : '';
+}
+
+/**
+ * #1898: who commented and on which KinTale. A digest carries one item per
+ * comment (`data.items`); a single comment carries its own fields on `data`.
+ */
+function commentLine(f: Facts): string {
+  const items = Array.isArray(f.data.items)
+    ? (f.data.items as unknown[]).filter((i): i is Record<string, unknown> => typeof i === 'object' && i !== null)
+    : [f.data];
+  if (items.length === 0) return '';
+  const who = joinKinNames(
+    items.map((i) => (f.recipientUid !== '' && text(i.authorUid) === f.recipientUid ? 'You' : text(i.authorName))),
+  );
+  const taleIds = [...new Set(items.map((i) => text(i.taleId)).filter((id) => id !== ''))];
+  const titles = [...new Set(items.map((i) => text(i.taleTitle)).filter((t) => t !== ''))];
+  let onWhat = 'your KinTale';
+  if (taleIds.length > 1) onWhat = `${taleIds.length} KinTales`;
+  else if (titles.length === 1) onWhat = `“${titles[0]}”`;
+  if (who) return `${who} commented on ${onWhat}`;
+  return `${items.length} new ${items.length === 1 ? 'comment' : 'comments'} on ${onWhat}`;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** An invoice's stored `YYYY-MM-DD` day as "Nov 20, 2026"; any other spelling as written. */
+function invoiceDay(v: unknown): string {
+  const raw = text(v);
+  const ms = requestedDateNoonUtcMs(raw);
+  if (ms == null) return raw;
+  const d = new Date(ms);
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+}
+
+/**
+ * "Invoice 1042 for $120.00, due Nov 20, 2026". A zero amount is left out: on a
+ * paid invoice the enricher reads the balance, and "$0.00" is not what it was for.
+ */
+function invoiceLine(f: Facts, opts: { due?: 'due' | 'was due' } = {}): string {
+  const quote = f.key.startsWith('quote.') || f.data.isQuote === true;
+  const number = text(f.detail.invoiceNumber).replace(/^#/, '');
+  const amount = text(f.detail.amount);
+  const ref = number ? `${quote ? 'Quote' : 'Invoice'} ${number}` : '';
+  let line = ref;
+  if (amount && !/^\$?0(\.00)?$/.test(amount)) line = ref ? `${ref} for ${amount}` : amount;
+  const due = opts.due && !quote ? invoiceDay(f.detail.dueDate) : '';
+  if (due) line = line ? `${line}, ${opts.due} ${due}` : capitalize(`${opts.due} ${due}`);
+  return line;
+}
+
+/** The first words of a message, on one line. */
+function previewLine(v: unknown, max = 140): string {
+  const flat = text(v).replace(/\s+/g, ' ');
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
+}
+
+function kinOf(f: Facts): string {
+  return joinKinNames(text(f.data.kinName) || f.detail.kinName);
+}
+
+/**
+ * Every key a household can receive. Kept beside the detail it reads so a fact
+ * added there is one screen away from the line that uses it.
+ */
+export const HOUSEHOLD_NOTICE_RULES: Readonly<Record<string, HouseholdNoticeRule>> = {
+  'kincare.booking.confirm': { line: confirmLine, target: 'request' },
+  'kincare.booking.cancel': { line: visitLine, target: 'visit' },
+  'kincare.auntie.on_my_way': { line: onMyWayLine, target: 'visit' },
+  'kincare.auntie.arrived': { line: visitLine, target: 'visit' },
+  'kincare.auntie.departed': { line: visitLine, target: 'visit' },
+  'kincare.unavailable': { line: visitLine, target: 'visit' },
+  'kincare.changed': { line: visitLine, target: 'visit' },
+  'kincare.cancel.declined': { line: visitLine, target: 'visit' },
+  'kincare.request.declined': { line: requestLine, target: 'request' },
+  'kincare.upcoming.reminder': { line: visitLine, target: 'visit' },
+  'kintale.published': { line: taleLine, target: 'kintale' },
+  'kintale.comment.added': { line: commentLine, target: 'kintale' },
+  'kintale.note.added': { line: taleLine, target: 'kintale' },
+  'invoice.new': { line: (f) => invoiceLine(f, { due: 'due' }), target: 'invoice' },
+  'invoice.updated': { line: (f) => invoiceLine(f), target: 'invoice' },
+  'invoice.receipt': { line: (f) => invoiceLine(f), target: 'invoice' },
+  'invoice.reminder': { line: (f) => invoiceLine(f, { due: 'due' }), target: 'invoice' },
+  'invoice.overdue': { line: (f) => invoiceLine(f, { due: 'was due' }), target: 'invoice' },
+  'invoice.charge.failed': { line: (f) => invoiceLine(f), target: 'invoice' },
+  // The number only: the stored amount is the payment's or the balance's
+  // depending on the emitter, and "for $X" would claim it was the invoice's.
+  'invoice.payment.applied': {
+    line: (f) => {
+      const number = text(f.detail.invoiceNumber).replace(/^#/, '');
+      return number ? `Invoice ${number}` : '';
+    },
+    target: 'invoice',
+  },
+  'quote.accepted': { line: (f) => invoiceLine(f), target: 'invoice' },
+  'message.reply': { line: (f) => previewLine(f.data.preview), target: 'messages' },
+  // The broadcast writes its own row: the subject is its title and the body,
+  // as the office wrote it, is its line.
+  'broadcast.message': { line: (f) => f.description, target: 'none' },
+  'pets.updated': {
+    line: (f) => {
+      const kin = kinOf(f);
+      return kin ? `Changes to ${kin}'s profile` : '';
+    },
+    target: 'kin',
+  },
+  'profile.updated': {
+    line: (f) => {
+      const household = text(f.detail.kinfolkName);
+      return household ? `Household profile for ${household}` : '';
+    },
+    target: 'household',
+  },
+  'account.welcome.kinfolk': {
+    line: (f) => {
+      const household = text(f.detail.kinfolkName);
+      return household ? `Your MyTribe account for ${household} is ready` : '';
+    },
+    target: 'household',
+  },
+  'auth.password.reset': { line: () => '', target: 'none', neverListed: true },
+  'auth.failedLogin.attempts': {
+    line: (f) => {
+      const n = typeof f.data.attemptsInWindow === 'number' ? f.data.attemptsInWindow : 0;
+      return n > 0 ? `${n} failed sign-in ${n === 1 ? 'attempt' : 'attempts'} on your account` : '';
+    },
+    target: 'none',
+  },
+  'auth.account.locked': {
+    line: (f) => {
+      const at = text(f.detail.lockedAt);
+      return at ? `Locked on ${at}` : '';
+    },
+    target: 'none',
+  },
+  'kin.removal.archived': {
+    line: (f) => {
+      const kin = kinOf(f);
+      return kin ? `${kin} is no longer on your profile` : '';
+    },
+    target: 'kinList',
+  },
+  'kin.removal.declined': {
+    line: (f) => {
+      const kin = kinOf(f);
+      return kin ? `${kin} is staying on your profile` : '';
+    },
+    target: 'kin',
+  },
+  // A blast's own headline, when the office wrote one.
+  'newsletter.announcement': { line: (f) => previewLine(f.data.headline), target: 'none' },
+  'survey.event': { line: (f) => previewLine(f.data.headline), target: 'none' },
+  'marketing.optin': { line: (f) => previewLine(f.data.headline), target: 'none' },
+};
+
+/**
+ * The rule for a stored key. A row kept under a retired alias
+ * (`kincare.report.sent`) reads its canonical key's rule.
+ */
+export function householdNoticeRuleFor(key: string): HouseholdNoticeRule | undefined {
+  return HOUSEHOLD_NOTICE_RULES[canonicalNotificationKey(key)];
+}
+function factsOf(row: HouseholdNoticeRow): Facts {
+  const obj = (v: unknown): Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  return {
+    key: canonicalNotificationKey(row.key),
+    recipientUid: text(row.recipientUid),
+    description: text(row.description),
+    detail: obj(row.detail),
+    data: obj(row.data),
+  };
+}
+
+/**
+ * The line under a household notice's title, from the row's own facts, or ''
+ * when it has none (the row then shows its title alone). Never the settings
+ * wording, never a template's description, never an id or an email: every
+ * fragment is a name, a date, a time, an amount or words someone wrote for
+ * the household.
+ */
+export function householdNoticeLine(row: HouseholdNoticeRow): string {
+  const rule = householdNoticeRuleFor(row.key);
+  if (!rule) return '';
+  return rule.line(factsOf(row)).trim();
+}
+
+/**
+ * The `{ targetType, targetId }` a household client opens for this row, from
+ * the key's rule and the ids the row carries. Rows written before a key had a
+ * target (the comment digest, a Kin notice) open the right thing too.
+ *
+ * Two values are new to the clients: `kin` (the Kin, or the Kin list when
+ * `targetId` is '') and `household` (the Tribe page). `kintale` with an empty
+ * id opens the KinTales list.
+ */
+export function householdNoticeTarget(row: HouseholdNoticeRow): { targetType: string; targetId: string } {
+  const rule = householdNoticeRuleFor(row.key);
+  const storedType = text(row.targetType);
+  const storedId = text(row.targetId);
+  if (!rule) return { targetType: storedType, targetId: storedId };
+  const data = factsOf(row).data;
+  switch (rule.target) {
+    case 'visit':
+    case 'request':
+      return { targetType: 'booking', targetId: storedType === 'booking' ? storedId : '' };
+    case 'invoice': {
+      const id = storedType === 'invoice' && storedId !== '' ? storedId : text(data.invoiceId);
+      return id ? { targetType: 'invoice', targetId: id } : { targetType: '', targetId: '' };
+    }
+    case 'kintale': {
+      if (storedType === 'kintale' && storedId !== '') return { targetType: 'kintale', targetId: storedId };
+      const items = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : [data];
+      const ids = [...new Set(items.map((i) => text(i?.taleId) || text(i?.reportId)).filter((id) => id !== ''))];
+      return { targetType: 'kintale', targetId: ids.length === 1 ? ids[0]! : '' };
+    }
+    case 'kin':
+      return { targetType: 'kin', targetId: text(data.kinId) };
+    case 'kinList':
+      return { targetType: 'kin', targetId: '' };
+    case 'messages':
+      return { targetType: 'conversation', targetId: storedId };
+    case 'household':
+      return { targetType: 'household', targetId: '' };
+    case 'none':
+      return { targetType: '', targetId: '' };
+  }
 }
