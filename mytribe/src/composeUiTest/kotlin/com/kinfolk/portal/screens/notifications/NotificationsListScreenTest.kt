@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -427,6 +428,37 @@ class NotificationsListScreenTest {
         onNodeWithTag("notificationRow-n-tale").assertExists()
         // The older page is already on screen, so there is nothing more to offer.
         onNodeWithTag("notificationsOlder").assertDoesNotExist()
+    }
+    @Test
+    fun aReloadOnTheFirstPageTakesTheFreshCursor_andShowOlderListsNoRowTwice() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        val arrived = row("n-omw", "Your Auntie is on the way", minutesAgo = 0)
+        fake.stubSequence(
+            "listMyNotifications",
+            // A full first page: n-visit, n-batch, and more behind them.
+            page(listOf(rows[0], rows[1]), hasMore = true, nextBefore = 1_700_000_000_200L),
+            // A notice arrived: it pushes n-batch off the newest page, and the
+            // cursor now sits at n-visit.
+            page(listOf(arrived, rows[0]), hasMore = true, nextBefore = 1_700_000_000_300L),
+            // "Show older" from that cursor starts at n-batch.
+            page(listOf(rows[1], rows[3])),
+        )
+        var revision by androidx.compose.runtime.mutableStateOf(0)
+        setThemedContent {
+            NotificationsListScreen(kinfolkId = "fam-1", portalApi = PortalApi(fake), liveRevision = revision, nowMs = { now })
+        }
+        waitForIdle()
+        revision = 1
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-omw").assertExists()
+        onNodeWithTag("notificationsOlder").performClick()
+        waitForIdle()
+        val asked = fake.calls.filter { it.first == "listMyNotifications" }
+        assertEquals(3, asked.size)
+        assertEquals(1_700_000_000_300L, asked[2].second?.get("before")?.jsonPrimitive?.content?.toLong())
+        assertEquals(1, onAllNodesWithTag("notificationRow-n-batch").fetchSemanticsNodes().size)
+        onNodeWithTag("notificationRow-n-visit").assertExists()
+        onNodeWithTag("notificationRow-n-tale").assertExists()
     }
     @Test
     fun aFailedQuietReloadKeepsTheRowsOnScreen_andShowsNoError() = runComposeUiTest {

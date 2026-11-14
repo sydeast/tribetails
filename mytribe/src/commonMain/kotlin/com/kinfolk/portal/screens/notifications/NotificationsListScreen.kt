@@ -138,14 +138,22 @@ fun NotificationsListScreen(
     LaunchedEffect(liveRevision) {
         if (liveRevision == seenRevision) return@LaunchedEffect
         seenRevision = liveRevision
-        val shown = items ?: return@LaunchedEffect
+        if (items == null) return@LaunchedEffect
         try {
             val page = portalApi.listMyNotifications(kinfolkId = kinfolkId, limit = PAGE_SIZE, before = null)
-            val merged = mergeNewestPage(shown, page.items)
-            items = merged
-            // Only a list still on its first page takes the new cursor; one
-            // that has paged further keeps the cursor of its oldest row.
-            if (!pagedOlder) {
+            // Read what is on screen now, not what was there before the call:
+            // "Show older" may have added a page while this one was in flight.
+            val shown = items ?: return@LaunchedEffect
+            if (pagedOlder || loadingMore) {
+                // The older pages stay underneath (or are on their way, asked
+                // for with the cursor already held), and the cursor stays with
+                // the oldest row on screen.
+                items = mergeNewestPage(shown, page.items)
+            } else {
+                // Still on the first page: the fresh page replaces it whole and
+                // brings its own cursor. Keeping the row the new notice pushed
+                // off the page would list it twice after "Show older".
+                items = page.items
                 hasMore = page.hasMore
                 nextBefore = page.nextBefore
             }
