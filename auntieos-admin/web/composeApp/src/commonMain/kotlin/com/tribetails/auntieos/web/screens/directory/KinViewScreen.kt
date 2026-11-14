@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -16,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.web.data.FirestoreClient
+import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
@@ -62,6 +66,14 @@ fun KinViewScreen(
     // #1271: a tag add or remove is a write the server has not answered yet.
     // Back and Edit are held until it settles; the Tags panel shows "Saving…".
     var tagsSaving by remember { mutableStateOf(false) }
+    // #1908 kin-vet: the household's vet (`household_data.primaryVetClinicId`)
+    // and the area vet list, so the Vet row names the clinic the Kin goes to.
+    var householdVetClinicId by remember(kinfolkId) { mutableStateOf("") }
+    LaunchedEffect(kinfolkId) {
+        (client.getHouseholdData(kinfolkId) as? WriteResult.Ok)?.value?.let { householdVetClinicId = it.primaryVetClinicId }
+    }
+    val clinicsState by remember { client.vetClinicsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val clinics = (clinicsState as? FirestoreResult.Data)?.value.orEmpty()
 
     ScreenScaffold {
         Column(
@@ -131,12 +143,19 @@ fun KinViewScreen(
 
                     DenPanel(title = "Care") {
                         ViewRow("Stays as", kin.staysAs)
+                        ViewRow("Food / brand", kin.feedingBrand)
+                        ViewRow("Feeding instructions", kin.feedingInstructions)
+                        ViewRow("Walking instructions", kin.walkingInstructions)
                         ViewRow("Routine", kin.routine)
-                        ViewRow("Training & commands", kin.trainingCommands)
-                        ViewRow("Feeding", kin.feedingBrand)
+                        ViewRow("Training / commands", kin.trainingCommands)
+                        ViewRow("Notes for the Auntie", kin.sitterNotes)
+                    }
+                    DenPanel(title = "Health") {
+                        ViewRow("Medications / health notes", kin.medicationHealthNotes)
+                        ViewRow("Allergies", kin.allergies)
                         ViewRow("Vaccinations", kin.vaccinations)
-                        ViewRow("Medication & health", kin.medicationHealthNotes)
-                        ViewRow("Vet", kin.vetInfo)
+                        ViewRow("Emergency notes", kin.emergencyNotes)
+                        KinVetRows(kin, householdVetClinicId, clinics)
                     }
 
                     if (kin.officeNotes.isNotBlank()) {

@@ -12,6 +12,9 @@ import com.tribetails.auntieos.data.model.Kin411
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.data.model.BusinessSettings
+import com.tribetails.auntieos.data.model.HouseholdData
+import com.tribetails.auntieos.data.model.VetClinic
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import com.tribetails.auntieos.data.repository.KinRemovalRequestRepository
@@ -87,7 +90,12 @@ class KinDetailScreenTest {
         checklist = "Fresh water\nWipe paws",
         officeNotes = "Obsessed with sticks.",
         reactive = true,
-        tags = listOf("littermate"),
+        tags = listOf("littermate", "Chicken/Poultry"),
+        feedingInstructions = "One cup at 7a",
+        walkingInstructions = "Cedar St loop",
+        allergies = "Chicken",
+        emergencyNotes = "Call the vet first",
+        sitterNotes = "Leash hangs by the back door",
     )
 
     private val bareKin = Kin(id = "k1", kinfolkId = "kf1", name = "Biscuit", species = "Dog")
@@ -103,7 +111,18 @@ class KinDetailScreenTest {
         coEvery { kinCareRepo.getAllKinCareReports() } returns Result.success(emptyList())
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { removalRepo.list(any()) } returns Result.success(emptyList())
+        coEvery { repo.getHouseholdData(any()) } returns Result.success(null)
+        coEvery { repo.getVetClinicsOnce() } returns Result.success(listOf(cedar, river))
+        coEvery { repo.getBusinessSettings() } returns Result.success(
+            BusinessSettings(
+                petTags = listOf(
+                    mapOf("name" to "Chicken/Poultry", "color" to mapOf("token" to "coral", "css" to "var(--color-coral)"), "icon" to "ALLERGY"),
+                ),
+            ),
+        )
     }
+    private val cedar = VetClinic(id = "c1", name = "Cedar Animal Care", phone = "555 0142")
+    private val river = VetClinic(id = "c2", name = "Riverside Vets", phone = "555 0199")
 
     @After
     fun tearDown() = Dispatchers.resetMain()
@@ -189,9 +208,52 @@ class KinDetailScreenTest {
     fun `the pet's tags are pills in the band`() {
         show()
 
-        // The kit renders every mono pill uppercase (`AuntieStatusPill`).
-        rule.onNodeWithText("LITTERMATE").assertIsDisplayed()
+        // The same chip as the Tags panel, by name as the tag is spelled.
+        rule.onNodeWithText("littermate").assertIsDisplayed()
         rule.onNodeWithText("Edit tags").assertIsDisplayed()
+    }
+    /**
+     * #2015: a tag in the band says what it is. An allergy tag reads with its
+     * icon beside the food, as the Tags panel chip does, not as the food alone.
+     */
+    @Test
+    fun `an allergy tag in the band carries its icon beside the name`() {
+        show()
+        rule.onNodeWithText("Chicken/Poultry").assertIsDisplayed()
+        rule.onNodeWithText("ALLERGY").assertIsDisplayed()
+        rule.onAllNodesWithText("CHICKEN/POULTRY").assertCountEquals(0)
+    }
+    /** #1908: the household's care block shows on the admin Kin page too. */
+    @Test
+    fun `the household care block shows on the Kin page`() {
+        show()
+        rule.onNodeWithText("One cup at 7a").assertIsDisplayed()
+        rule.onNodeWithText("Cedar St loop").assertIsDisplayed()
+        rule.onNodeWithText("Chicken").assertIsDisplayed()
+        rule.onNodeWithText("Call the vet first").assertIsDisplayed()
+        rule.onNodeWithText("Leash hangs by the back door").assertIsDisplayed()
+        rule.onNodeWithText("NOTES FOR THE AUNTIE").assertIsDisplayed()
+        rule.onNodeWithText("MEDICATIONS / HEALTH NOTES").assertIsDisplayed()
+    }
+    /** #1908 kin-vet: no vet of its own, the household's vet, said so. */
+    @Test
+    fun `a Kin with no vet of its own shows the household vet`() {
+        coEvery { repo.getHouseholdData(any()) } returns Result.success(HouseholdData(primaryVetClinicId = "c1"))
+        show()
+        rule.onNodeWithText("VET (HOUSEHOLD)").assertIsDisplayed()
+        rule.onNodeWithText("Cedar Animal Care · 555 0142").assertIsDisplayed()
+        // A clinic resolves, so the old free-text note is not shown.
+        rule.onAllNodesWithText("Riverside Animal Hospital").assertCountEquals(0)
+    }
+    /** #1908 kin-vet: its own vet wins over the household's. */
+    @Test
+    fun `a Kin with its own vet shows that one`() {
+        coEvery { repo.getHouseholdData(any()) } returns Result.success(HouseholdData(primaryVetClinicId = "c1"))
+        coEvery { repo.getKinByIds(any()) } returns Result.success(mapOf("k1" to fullKin.copy(ownVetClinicId = "c2")))
+        show()
+        rule.onNodeWithText("VET FOR BISCUIT").assertIsDisplayed()
+        rule.onNodeWithText("Riverside Vets · 555 0199").assertIsDisplayed()
+        rule.onAllNodesWithText("Cedar Animal Care · 555 0142").assertCountEquals(0)
     }
 
     /** #690: under the band, not among the tags and not a page banner. */
@@ -252,12 +314,14 @@ class KinDetailScreenTest {
      */
     @Test
     fun `medical carries the vaccinations, the meds and the legacy vet line`() {
+        // No household vet and none of its own: the old note is all there is.
         show()
 
         rule.onNodeWithText("Medical").assertIsDisplayed()
         rule.onNodeWithText("Rabies, exp 2027").assertIsDisplayed()
         rule.onNodeWithText("Glucosamine daily").assertIsDisplayed()
         rule.onNodeWithText("Riverside Animal Hospital").assertIsDisplayed()
+        rule.onNodeWithText("VET NOTES ON FILE").assertIsDisplayed()
     }
 
     @Test

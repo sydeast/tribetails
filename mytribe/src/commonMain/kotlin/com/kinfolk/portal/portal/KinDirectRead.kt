@@ -56,6 +56,15 @@ fun kinFromDocument(id: String, fields: Map<String, Any?>): Kin? {
         colorMarkings = stringOrNull(fields["colorMarkings"]),
         spayedNeutered = fields["spayedNeutered"] == true,
         vetInfo = stringOrNull(fields["vetInfo"]),
+        staysAs = stringOrNull(fields["staysAs"]),
+        routine = stringOrNull(fields["routine"]),
+        trainingCommands = stringOrNull(fields["trainingCommands"]),
+        feedingBrand = stringOrNull(fields["feedingBrand"]),
+        vaccinations = stringOrNull(fields["vaccinations"]),
+        ownVetClinicId = (fields["ownVetClinicId"] as? String)?.trim().orEmpty(),
+        // The household's vet lives on a staff-only document, so this read
+        // cannot resolve it; resolveKinVet does, from the Tribe Profile.
+        vet = null,
     )
 }
 

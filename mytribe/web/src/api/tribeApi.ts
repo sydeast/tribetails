@@ -87,6 +87,25 @@ export function saveTribeProfile(req: SaveTribeProfileRequest): Promise<SaveTrib
   return call<SaveTribeProfileRequest, SaveTribeProfileResult>('saveTribeProfile', req);
 }
 
+// ── setHouseholdVet (functions/src/portal/saveTribeProfile.ts, #1908 / #1917) ─
+export interface SetHouseholdVetRequest {
+  kinfolkId?: string;
+  /** A `vet_clinics` id, or '' to take the household's vet off. */
+  clinicId: string;
+}
+export interface SetHouseholdVetResult {
+  ok: true;
+  /** The household's vet now, resolved for display; null when it has none. */
+  vetClinic: VetClinicSummaryDto | null;
+}
+/**
+ * Sets the household's vet the moment it is picked (#1917), in the one store
+ * the office reads too (#1908 kin-vet). The page's Save Changes no longer
+ * carries it.
+ */
+export function setHouseholdVet(req: SetHouseholdVetRequest): Promise<SetHouseholdVetResult> {
+  return call<SetHouseholdVetRequest, SetHouseholdVetResult>('setHouseholdVet', req);
+}
 // ── saveHomeAccess (functions/src/portal/saveHomeAccess.ts) ─────────────────
 
 export interface SaveHomeAccessRequest {

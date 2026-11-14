@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import coil3.compose.SubcomposeAsyncImage
 import com.kinfolk.portal.components.KinButton
@@ -57,6 +59,10 @@ import com.kinfolk.portal.portal.KinRemovalRequest
 import com.kinfolk.portal.portal.kinRemovalOption
 import com.kinfolk.portal.portal.removalDateLabel
 import com.kinfolk.portal.portal.KinStatus
+import com.kinfolk.portal.portal.VetClinic
+import com.kinfolk.portal.portal.VetClinicSummary
+import com.kinfolk.portal.screens.tribe.clinicTitle
+import com.kinfolk.portal.screens.tribe.vetClinicChoices
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
@@ -98,6 +104,16 @@ fun AddEditKinDialog(
      * open on its pending state); failure carries the sentence to show inline.
      */
     onRequestRemoval: (suspend (reason: String) -> Result<KinRemovalRequest>)? = null,
+    /**
+     * #1908 kin-vet. The household's vet (Tribe Profile), shown read-only as
+     * the vet this Kin goes to unless "Different vet for this Kin" is ticked;
+     * [vetClinics] is the area list that box opens. [vetsLoading] shows the
+     * wait, [vetsError] a list that would not load.
+     */
+    householdVet: VetClinicSummary? = null,
+    vetClinics: List<VetClinic> = emptyList(),
+    vetsLoading: Boolean = false,
+    vetsError: String? = null,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -161,7 +177,16 @@ fun AddEditKinDialog(
     val weightProblem = validateKinWeight(weight, initial?.weight)
     var markings by remember { mutableStateOf(initial?.colorMarkings.orEmpty()) }
     var fixed by remember { mutableStateOf(initial?.spayedNeutered ?: false) }
-    var vet by remember { mutableStateOf(initial?.vetInfo.orEmpty()) }
+    // #1908 (owner ruling 2026-11-11): the care facts the admin always kept.
+    var staysAs by remember { mutableStateOf(initial?.staysAs.orEmpty()) }
+    var routine by remember { mutableStateOf(initial?.routine.orEmpty()) }
+    var training by remember { mutableStateOf(initial?.trainingCommands.orEmpty()) }
+    var foodBrand by remember { mutableStateOf(initial?.feedingBrand.orEmpty()) }
+    var vaccinations by remember { mutableStateOf(initial?.vaccinations.orEmpty()) }
+    // #1908 kin-vet: the household's vet unless this box is ticked.
+    var ownVetTicked by remember { mutableStateOf(initial?.ownVetClinicId.orEmpty().isNotBlank()) }
+    var ownVetId by remember { mutableStateOf(initial?.ownVetClinicId.orEmpty()) }
+    val medsProblem = medicationsProblem(meds)
 
     // Photo: picked locally, uploaded by the controller after the kin write
     // succeeds (add needs the new kinId before the Storage path exists).
@@ -329,10 +354,11 @@ fun AddEditKinDialog(
                     KinFieldProblem(ageProblem)
                     KinField(value = feed, onValueChange = { feed = it }, label = "Feeding Instructions", singleLine = false)
                     KinField(value = walk, onValueChange = { walk = it }, label = "Walking Instructions", singleLine = false)
-                    KinField(value = meds, onValueChange = { meds = it }, label = "Medications", singleLine = false)
+                    KinField(value = meds, onValueChange = { meds = it }, label = "Medications / health notes", singleLine = false, isError = medsProblem != null)
+                    KinFieldProblem(medsProblem)
                     KinField(value = allergies, onValueChange = { allergies = it }, label = "Allergies", singleLine = false)
                     KinField(value = emergency, onValueChange = { emergency = it }, label = "Emergency Notes", singleLine = false)
-                    KinField(value = sitter, onValueChange = { sitter = it }, label = "Sitter Notes", singleLine = false)
+                    KinField(value = sitter, onValueChange = { sitter = it }, label = "Notes for your Auntie", singleLine = false)
                 }
                 // The facts shared with the admin (#1310). Outside the schema branch so a
                 // schema-driven form still carries them.
@@ -351,7 +377,26 @@ fun AddEditKinDialog(
                     )
                     Text("Spayed / neutered", style = type.sansBody)
                 }
-                KinField(value = vet, onValueChange = { vet = it }, label = "Vet", singleLine = false)
+                // #1908: the care facts the household now fills, outside the
+                // schema branch for the same reason as the facts above.
+                KinField(value = staysAs, onValueChange = { staysAs = it }, label = "Stays as", singleLine = false, fieldTestTag = "kin-staysAs")
+                KinField(value = routine, onValueChange = { routine = it }, label = "Routine", singleLine = false, fieldTestTag = "kin-routine")
+                KinField(value = training, onValueChange = { training = it }, label = "Training / commands", singleLine = false, fieldTestTag = "kin-training")
+                KinField(value = foodBrand, onValueChange = { foodBrand = it }, label = "Food / brand", singleLine = false, fieldTestTag = "kin-foodBrand")
+                KinField(value = vaccinations, onValueChange = { vaccinations = it }, label = "Vaccinations", singleLine = false, fieldTestTag = "kin-vaccinations")
+                // #1908 kin-vet: no free-text vet box. The household's vet, read
+                // only, unless this Kin goes to a different one from the list.
+                KinVetPicker(
+                    householdVet = householdVet,
+                    clinics = vetClinics,
+                    loading = vetsLoading,
+                    error = vetsError,
+                    ticked = ownVetTicked,
+                    onTickedChange = { ownVetTicked = it },
+                    selectedId = ownVetId,
+                    onSelect = { ownVetId = it },
+                    enabled = !busy,
+                )
                 submitError?.let { problem ->
                     Text(text = problem, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
                 }
@@ -499,14 +544,28 @@ fun AddEditKinDialog(
                         weight = weight,
                         markings = markings,
                         fixed = fixed,
-                        vet = vet,
+                    )
+                    val care = careFactsPayload(
+                        initial = initial,
+                        staysAs = staysAs,
+                        routine = routine,
+                        training = training,
+                        foodBrand = foodBrand,
+                        vaccinations = vaccinations,
+                        ownVetTicked = ownVetTicked,
+                        ownVetId = ownVetId,
                     )
                     val finalPayload = payload.copy(
                         sex = facts.sex,
                         weight = facts.weight,
                         colorMarkings = facts.colorMarkings,
                         spayedNeutered = facts.spayedNeutered,
-                        vetInfo = facts.vetInfo,
+                        staysAs = care.staysAs,
+                        routine = care.routine,
+                        trainingCommands = care.trainingCommands,
+                        feedingBrand = care.feedingBrand,
+                        vaccinations = care.vaccinations,
+                        ownVetClinicId = care.ownVetClinicId,
                     )
                     scope.launch {
                         saving = true
@@ -525,7 +584,7 @@ fun AddEditKinDialog(
                     else -> "Save"
                 },
                 onClick = submit,
-                enabled = name.isNotBlank() && ageProblem == null && weightProblem == null && !busy,
+                enabled = name.isNotBlank() && ageProblem == null && weightProblem == null && medsProblem == null && !busy,
             )
         },
         dismissButton = { TextButton(onClick = { if (!busy) onClose() }) { Text("Cancel") } },
@@ -812,13 +871,16 @@ internal fun kinCareFieldsPayload(
     )
 }
 
-/** What the dialog sends for the five shared facts: null = leave alone, "" = clear. */
+/**
+ * What the dialog sends for the shared descriptive facts: null = leave alone,
+ * "" = clear. The old free-text vet note is not one of them any more (#1908
+ * kin-vet): it is never an input, so a save never sends it.
+ */
 internal data class SharedFacts(
     val sex: String?,
     val weight: String?,
     val colorMarkings: String?,
     val spayedNeutered: Boolean?,
-    val vetInfo: String?,
 )
 
 /**
@@ -833,7 +895,6 @@ internal fun sharedFactsPayload(
     weight: String,
     markings: String,
     fixed: Boolean,
-    vet: String,
 ): SharedFacts {
     fun text(now: String, before: String?): String? {
         val next = now.trim()
@@ -845,8 +906,144 @@ internal fun sharedFactsPayload(
         weight = text(weight, initial?.weight),
         colorMarkings = text(markings, initial?.colorMarkings),
         spayedNeutered = if (fixed == (initial?.spayedNeutered ?: false)) null else fixed,
-        vetInfo = text(vet, initial?.vetInfo),
     )
+}
+/** #1908: what the dialog sends for the care facts the household now fills, and the Kin's own vet. */
+internal data class CareFacts(
+    val staysAs: String?,
+    val routine: String?,
+    val trainingCommands: String?,
+    val feedingBrand: String?,
+    val vaccinations: String?,
+    val ownVetClinicId: String?,
+)
+/**
+ * #1908. Diffed against the loaded Kin like [sharedFactsPayload]: untouched
+ * sends null, emptied sends "" (the server refuses null for these, the admin
+ * models read text as never null).
+ *
+ * The Kin's own vet is the picked clinic while "Different vet for this Kin" is
+ * ticked, and "" (the household's vet) when it is not, or ticked with nothing
+ * picked. Sent only when that differs from what the Kin had.
+ */
+internal fun careFactsPayload(
+    initial: com.kinfolk.portal.portal.Kin?,
+    staysAs: String,
+    routine: String,
+    training: String,
+    foodBrand: String,
+    vaccinations: String,
+    ownVetTicked: Boolean,
+    ownVetId: String,
+): CareFacts {
+    fun text(now: String, before: String?): String? {
+        val next = now.trim()
+        return if (next == before.orEmpty().trim()) null else next
+    }
+    val vetNow = if (ownVetTicked) ownVetId.trim() else ""
+    return CareFacts(
+        staysAs = text(staysAs, initial?.staysAs),
+        routine = text(routine, initial?.routine),
+        trainingCommands = text(training, initial?.trainingCommands),
+        feedingBrand = text(foodBrand, initial?.feedingBrand),
+        vaccinations = text(vaccinations, initial?.vaccinations),
+        ownVetClinicId = if (vetNow == initial?.ownVetClinicId.orEmpty().trim()) null else vetNow,
+    )
+}
+/** #1908 kin-meds: Medications is one field with the office's notes, and the server takes up to this many characters. */
+internal const val KIN_MEDICATIONS_MAX = 4000
+/** The inline problem for a Medications text the server would refuse, else null. */
+internal fun medicationsProblem(meds: String): String? =
+    if (meds.trim().length > KIN_MEDICATIONS_MAX) "Keep this under $KIN_MEDICATIONS_MAX characters." else null
+/**
+ * #1908 kin-vet. The Kin's vet in the form: the household's vet read only
+ * ("From your Tribe Profile"), and a "Different vet for this Kin" box
+ * (unticked by default) that opens the area vet list, all of it, narrowed by
+ * typing.
+ */
+@Composable
+private fun KinVetPicker(
+    householdVet: VetClinicSummary?,
+    clinics: List<VetClinic>,
+    loading: Boolean,
+    error: String?,
+    ticked: Boolean,
+    onTickedChange: (Boolean) -> Unit,
+    selectedId: String,
+    onSelect: (String) -> Unit,
+    enabled: Boolean,
+) {
+    val type = LocalKinfolkTypography.current
+    var query by remember { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs)) {
+        Text("VET", style = type.sansMeta)
+        Text(
+            text = when {
+                loading && householdVet == null -> "Loading your Tribe Profile vet…"
+                householdVet != null -> "From your Tribe Profile: ${clinicTitle(householdVet.name, householdVet.isEmergency)}"
+                else -> "No vet on your Tribe Profile yet."
+            },
+            style = type.sansBody,
+            modifier = Modifier.testTag("kin-vet-household"),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled) { onTickedChange(!ticked) }
+                .testTag("kin-vet-own-toggle"),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Checkbox(
+                checked = ticked,
+                onCheckedChange = if (enabled) onTickedChange else null,
+                colors = CheckboxDefaults.colors(checkedColor = KinfolkBrand.KinfolkOrange),
+            )
+            Text("Different vet for this Kin", style = type.sansBody)
+        }
+        if (ticked) {
+            val chosen = clinics.firstOrNull { it.id == selectedId }
+            when {
+                chosen != null -> Text(
+                    "This Kin goes to: ${clinicTitle(chosen.name, chosen.isEmergency)}",
+                    style = type.sansBody,
+                    modifier = Modifier.testTag("kin-vet-own-chosen"),
+                )
+                selectedId.isNotBlank() && !loading -> Text(
+                    "The vet on file for this Kin is no longer on the list. Pick another.",
+                    style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
+                    modifier = Modifier.testTag("kin-vet-own-missing"),
+                )
+                else -> Text("Pick this Kin's vet from the list.", style = type.sansMeta)
+            }
+            if (loading) {
+                Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(color = KinfolkBrand.KinfolkOrange, modifier = Modifier.size(16.dp))
+                    Text("Loading vets…", style = type.sansMeta)
+                }
+            }
+            error?.let { Text(it, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral), modifier = Modifier.testTag("kin-vet-error")) }
+            KinField(value = query, onValueChange = { query = it }, label = "Search vets", fieldTestTag = "kin-vet-search")
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
+            ) {
+                vetClinicChoices(query, clinics).forEach { c ->
+                    val selected = c.id == selectedId
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (selected) KinfolkBrand.KinfolkOrange.copy(alpha = 0.12f) else Color.Transparent)
+                            .clickable(enabled = enabled) { onSelect(c.id) }
+                            .padding(vertical = KinfolkSpacing.xs, horizontal = KinfolkSpacing.xs)
+                            .testTag("kin-vet-option-${c.id}"),
+                    ) {
+                        Text(clinicTitle(c.name, c.isEmergency), style = type.sansBody)
+                        if (c.address.isNotBlank()) Text(c.address, style = type.sansMeta)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

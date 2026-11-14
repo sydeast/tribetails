@@ -35,8 +35,24 @@ export interface KinEditForm {
   sex: string;
   weight: string;
   colorMarkings: string;
-  vetInfo: string;
   spayedNeutered: boolean;
+  /**
+   * #1908 (owner ruling 2026-11-11): the care facts the admin always kept, now
+   * the household's to fill too. Text, '' when unset, never sent as null.
+   */
+  staysAs: string;
+  routine: string;
+  trainingCommands: string;
+  feedingBrand: string;
+  vaccinations: string;
+  /**
+   * #1908 kin-vet. The Kin goes to the household's vet unless "Different vet
+   * for this Kin" is ticked (`differentVet`) and a clinic is picked
+   * (`ownVetClinicId`). Unticked always saves ''. The old free-text `vetInfo`
+   * is no longer an input.
+   */
+  differentVet: boolean;
+  ownVetClinicId: string;
 }
 
 /**
@@ -56,7 +72,7 @@ export function speciesChoice(species: string): string {
   return listed ?? SPECIES_OTHER;
 }
 /** The form fields backed by a text box (everything but the spayed / neutered checkbox). */
-export type KinTextKey = Exclude<keyof KinEditForm, 'spayedNeutered'>;
+export type KinTextKey = Exclude<keyof KinEditForm, 'spayedNeutered' | 'differentVet' | 'ownVetClinicId'>;
 
 /** Options for the Sex picker; same three the admin offers (KinEditScreen GENDER_OPTIONS). */
 export const KIN_SEX_OPTIONS = ['Male', 'Female', 'Unknown'] as const;
@@ -67,12 +83,14 @@ export const KIN_MAX = {
   species: 40,
   breed: 80,
   longText: 2000,
+  /** #1908 kin-meds: Medications holds both sides' notes, so it has twice the room. */
+  medications: 4000,
   sex: 40,
   weight: 40,
   colorMarkings: 200,
 } as const;
 
-/** The six free-text care/notes fields that share the 2000-char cap. */
+/** The free-text care/notes fields the household always kept; null clears them. */
 const LONG_TEXT_FIELDS = [
   'feedingInstructions',
   'walkingInstructions',
@@ -82,11 +100,20 @@ const LONG_TEXT_FIELDS = [
   'sitterNotes',
 ] as const;
 
+/** #1908: the care facts shared with the admin, capped like the care block. */
+const CARE_FACT_FIELDS = ['staysAs', 'routine', 'trainingCommands', 'feedingBrand', 'vaccinations'] as const;
+
 /**
- * The shared text facts. Unlike the six above they are never sent as null: the
- * server takes '' to clear (kinWrites.ts), so the diff compares against '' too.
+ * The shared text facts. Unlike the care block above they are never sent as
+ * null: the server takes '' to clear (kinWrites.ts), so the diff compares
+ * against '' too.
  */
-const SHARED_TEXT_FIELDS = ['sex', 'weight', 'colorMarkings', 'vetInfo'] as const;
+const SHARED_TEXT_FIELDS = ['sex', 'weight', 'colorMarkings', ...CARE_FACT_FIELDS] as const;
+
+/** The Kin's own vet as it will be saved: '' (the household's vet) unless the box is ticked. */
+export function ownVetToSave(form: Pick<KinEditForm, 'differentVet' | 'ownVetClinicId'>): string {
+  return form.differentVet ? form.ownVetClinicId.trim() : '';
+}
 
 /** A blank form for the Add New Kin screen (KinAdd.tsx) — every field starts empty. */
 export function emptyKinForm(): KinEditForm {
@@ -104,8 +131,14 @@ export function emptyKinForm(): KinEditForm {
     sex: '',
     weight: '',
     colorMarkings: '',
-    vetInfo: '',
     spayedNeutered: false,
+    staysAs: '',
+    routine: '',
+    trainingCommands: '',
+    feedingBrand: '',
+    vaccinations: '',
+    differentVet: false,
+    ownVetClinicId: '',
   };
 }
 
@@ -125,8 +158,14 @@ export function kinFormFromDto(kin: KinDto): KinEditForm {
     sex: kin.sex ?? '',
     weight: kin.weight ?? '',
     colorMarkings: kin.colorMarkings ?? '',
-    vetInfo: kin.vetInfo ?? '',
     spayedNeutered: kin.spayedNeutered === true,
+    staysAs: kin.staysAs ?? '',
+    routine: kin.routine ?? '',
+    trainingCommands: kin.trainingCommands ?? '',
+    feedingBrand: kin.feedingBrand ?? '',
+    vaccinations: kin.vaccinations ?? '',
+    differentVet: (kin.ownVetClinicId ?? '') !== '',
+    ownVetClinicId: kin.ownVetClinicId ?? '',
   };
 }
 
@@ -160,8 +199,9 @@ export function validateKinForm(form: KinEditForm, kin?: Pick<KinDto, 'weight'>)
   if (parseAge(form.ageYears) === 'invalid') errors.ageYears = `Age must be a number of years, 0 to ${KIN_AGE_MAX_YEARS}.`;
 
 
-  for (const key of LONG_TEXT_FIELDS) {
-    if (form[key].trim().length > KIN_MAX.longText) errors[key] = `Keep this to ${KIN_MAX.longText} characters or fewer.`;
+  for (const key of [...LONG_TEXT_FIELDS, ...CARE_FACT_FIELDS]) {
+    const max = key === 'medications' ? KIN_MAX.medications : KIN_MAX.longText;
+    if (form[key].trim().length > max) errors[key] = `Keep this to ${max} characters or fewer.`;
   }
 
   if (form.sex.trim().length > KIN_MAX.sex) errors.sex = `Sex must be ${KIN_MAX.sex} characters or fewer.`;
@@ -172,8 +212,10 @@ export function validateKinForm(form: KinEditForm, kin?: Pick<KinDto, 'weight'>)
     const weightProblem = validateKinWeight(form.weight, kin?.weight ?? '');
     if (weightProblem !== null) errors.weight = weightProblem;
   }
+  if (form.differentVet && form.ownVetClinicId.trim() === '') {
+    errors.ownVetClinicId = 'Choose a vet for this Kin, or untick the box to use your Tribe Profile vet.';
+  }
   if (form.colorMarkings.trim().length > KIN_MAX.colorMarkings) errors.colorMarkings = `Keep this to ${KIN_MAX.colorMarkings} characters or fewer.`;
-  if (form.vetInfo.trim().length > KIN_MAX.longText) errors.vetInfo = `Keep this to ${KIN_MAX.longText} characters or fewer.`;
 
   return errors;
 }
@@ -217,6 +259,11 @@ export function buildKinChanges(kin: KinDto, form: KinEditForm): KinPayloadParti
   }
   if (form.spayedNeutered !== (kin.spayedNeutered === true)) changes.spayedNeutered = form.spayedNeutered;
 
+  // #1908 kin-vet: unticked always means the household's vet, so a clinic the
+  // form still remembers from before the untick is never sent.
+  const ownVet = ownVetToSave(form);
+  if (ownVet !== (kin.ownVetClinicId ?? '')) changes.ownVetClinicId = ownVet;
+
   return changes;
 }
 
@@ -244,7 +291,8 @@ export function buildNewKinPayload(form: KinEditForm): AddKinRequest['kin'] {
     ...(form.sex.trim() ? { sex: form.sex.trim() } : {}),
     ...(form.weight.trim() ? { weight: form.weight.trim() } : {}),
     ...(form.colorMarkings.trim() ? { colorMarkings: form.colorMarkings.trim() } : {}),
-    ...(form.vetInfo.trim() ? { vetInfo: form.vetInfo.trim() } : {}),
     ...(form.spayedNeutered ? { spayedNeutered: true } : {}),
+    ...Object.fromEntries(CARE_FACT_FIELDS.filter((k) => form[k].trim() !== '').map((k) => [k, form[k].trim()])),
+    ...(ownVetToSave(form) !== '' ? { ownVetClinicId: ownVetToSave(form) } : {}),
   };
 }

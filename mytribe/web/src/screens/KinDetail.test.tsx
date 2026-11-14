@@ -7,8 +7,15 @@ import { KinDetail } from './KinDetail';
 import type { GetMyKinResult, KinDto } from '../api/types';
 const mocks = vi.hoisted(() => ({
   getMyKin: vi.fn<() => Promise<GetMyKinResult>>(),
+  getMyTribeProfile: vi.fn(),
+  getVetClinics: vi.fn(),
 }));
 vi.mock('../api/portal', () => ({ getMyKin: () => mocks.getMyKin() }));
+vi.mock('../api/tribeApi', async (orig) => ({
+  ...(await orig<typeof import('../api/tribeApi')>()),
+  getMyTribeProfile: () => mocks.getMyTribeProfile(),
+  getVetClinics: () => mocks.getVetClinics(),
+}));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
 vi.mock('../lib/auth', () => ({ useSignOut: () => ({ signOut: vi.fn(), signingOut: false }) }));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
@@ -36,6 +43,13 @@ function kin(overrides: Partial<KinDto> = {}): KinDto {
     colorMarkings: null,
     spayedNeutered: false,
     vetInfo: null,
+    staysAs: null,
+    routine: null,
+    trainingCommands: null,
+    feedingBrand: null,
+    vaccinations: null,
+    ownVetClinicId: '',
+    vet: null,
     ...overrides,
   };
 }
@@ -58,13 +72,13 @@ describe('KinDetail browser tab (#2007)', () => {
   });
 });
 describe('KinDetail shared facts (#1310)', () => {
-  it('shows sex, weight, markings, fixed flag and vet', async () => {
+  it('shows sex, weight, markings and the fixed flag', async () => {
     mocks.getMyKin.mockResolvedValue({
-      kin: [kin({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', spayedNeutered: true, vetInfo: 'Riverside Animal Hospital' })],
+      kin: [kin({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', spayedNeutered: true })],
     });
     renderScreen();
-    expect(await screen.findByText('Riverside Animal Hospital')).toBeInTheDocument();
-    for (const text of ['Female', '52 lbs', 'Black', 'Yes']) expect(screen.getByText(text)).toBeInTheDocument();
+    expect(await screen.findByText('Female')).toBeInTheDocument();
+    for (const text of ['52 lbs', 'Black', 'Yes']) expect(screen.getByText(text)).toBeInTheDocument();
   });
   it('shows Not set for the ones nobody filled in', async () => {
     mocks.getMyKin.mockResolvedValue({ kin: [kin()] });
@@ -91,5 +105,48 @@ describe('KinDetail memorial (#1311)', () => {
     expect(await screen.findByText(/In our hearts/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Restore as Active/ })).toBeNull();
     expect(screen.queryByText('Memorial')).toBeNull();
+  });
+});
+describe('KinDetail #1908: the care facts and the one medications field', () => {
+  it('shows each care fact the office or the household filled in, under the shared labels', async () => {
+    mocks.getMyKin.mockResolvedValue({
+      kin: [kin({ staysAs: 'Crate at night', routine: 'Walk at 7', trainingCommands: 'Sit, stay', feedingBrand: 'Acme kibble', vaccinations: 'Rabies 2027', medications: 'Thyroid tablet', sitterNotes: 'Leash by the door' })],
+    });
+    renderScreen();
+    for (const text of ['Crate at night', 'Walk at 7', 'Sit, stay', 'Acme kibble', 'Rabies 2027', 'Thyroid tablet', 'Leash by the door']) {
+      expect(await screen.findByText(text)).toBeInTheDocument();
+    }
+    for (const label of ['Stays as', 'Routine', 'Training / commands', 'Food / brand', 'Vaccinations', 'Medications / health notes', 'Notes for your Auntie']) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    expect(screen.queryByText(/sitter/i)).toBeNull();
+  });
+});
+describe('KinDetail #1908 kin-vet: the vet the Kin goes to', () => {
+  const HOME = { id: 'home', name: 'Cedar Animal Care', phone: '', address: '1 Main St', isEmergency: false };
+  const OWN = { id: 'own', name: 'Riverside Vets', phone: '', address: '2 River Rd', isEmergency: false };
+  it('the household vet, marked as from the Tribe Profile', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [kin({ vet: { clinic: HOME, fromHousehold: true } })] });
+    renderScreen();
+    expect(await screen.findByTestId('kin-vet')).toHaveTextContent('Cedar Animal Care · 1 Main St (your Tribe Profile vet)');
+  });
+  it('a vet of its own, not marked', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [kin({ ownVetClinicId: 'own', vet: { clinic: OWN, fromHousehold: false } })] });
+    renderScreen();
+    expect(await screen.findByTestId('kin-vet')).toHaveTextContent(/^Riverside Vets · 2 River Rd$/);
+  });
+  it('the old free-text note only when no clinic resolves', async () => {
+    mocks.getMyKin.mockResolvedValue({ kin: [kin({ vet: null, vetInfo: 'Dr A, 555 0100' })] });
+    renderScreen();
+    expect(await screen.findByTestId('kin-vet')).toHaveTextContent('On file: Dr A, 555 0100');
+  });
+  it('a roster read straight from Firestore resolves the household vet from the Tribe Profile', async () => {
+    const direct = { ...kin() } as Partial<KinDto>;
+    delete direct.vet;
+    mocks.getMyKin.mockResolvedValue({ kin: [direct as KinDto] });
+    mocks.getMyTribeProfile.mockResolvedValue({ profile: { kinfolkId: 'fam1', displayName: 'X', customFields: [] }, vetClinic: HOME, homeAccess: {} });
+    mocks.getVetClinics.mockResolvedValue({ clinics: [] });
+    renderScreen();
+    expect(await screen.findByText('Cedar Animal Care · 1 Main St (your Tribe Profile vet)')).toBeInTheDocument();
   });
 });

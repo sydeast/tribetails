@@ -14,6 +14,7 @@ import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
 import { useAdminAccess } from '../lib/access';
 import { validateKinAge, validateKinWeight } from '../lib/kinMeasures';
+import { KinVetField } from '../components/KinVetField';
 import './KinEdit.css';
 
 interface KinEditProps {
@@ -46,9 +47,19 @@ const CARE_FIELDS = [
   ['routine', 'Routine'],
   ['trainingCommands', 'Training / commands'],
   ['feedingBrand', 'Food / brand'],
+  // #1908 (owner ruling 2026-11-11): the household's care block gets a box
+  // here too. Both sides edit the same values (kinMirror.ts field table).
+  ['feedingInstructions', 'Feeding instructions'],
+  ['walkingInstructions', 'Walking instructions'],
+  // The household's own notes for whoever visits. Not "Auntie's notes"
+  // (officeNotes) below, which the household never sees.
+  ['sitterNotes', 'Notes for the Auntie'],
 ] as const;
 /**
- * NO `vetInfo` ENTRY HERE, and this is a rule, not an oversight. Fix-backlog
+ * NO `vetInfo` ENTRY HERE, and this is a rule, not an oversight. #1908 kin-vet
+ * (owner ruling 2026-11-12) made it so on both sides: the Kin's vet is the
+ * household's, shown read-only by `KinVetField`, unless "Different vet for
+ * this Kin" picks one from the area vet list (`ownVetClinicId`). Fix-backlog
  * item 5.4 (AuntieOS_Fix_Backlog_2026-06-02.md:90): "Remove vet info box from
  * the pet (Kin). Vets attach to the Kinfolk (owner), not the Kin. Stop adding
  * an add/edit vet info box to the pet profile. It may be shown READ-ONLY on the
@@ -80,7 +91,10 @@ const CARE_FIELDS = [
  */
 const HEALTH_FIELDS = [
   ['vaccinations', 'Vaccinations'],
-  ['medicationHealthNotes', 'Medication / health notes'],
+  // #1908 kin-meds: ONE field with the household's Medications, both sides see it.
+  ['medicationHealthNotes', 'Medications / health notes'],
+  ['allergies', 'Allergies'],
+  ['emergencyNotes', 'Emergency notes'],
 ] as const;
 
 type FormState = Pick<
@@ -88,7 +102,8 @@ type FormState = Pick<
   | 'name' | 'species' | 'breed' | 'age' | 'sex' | 'weight' | 'colorMarkings'
   | 'spayedNeutered' | 'reactive' | 'staysAs' | 'routine' | 'trainingCommands'
   | 'feedingBrand' | 'vaccinations' | 'medicationHealthNotes'
-  | 'officeNotes' | 'status'
+  | 'feedingInstructions' | 'walkingInstructions' | 'allergies' | 'emergencyNotes' | 'sitterNotes'
+  | 'ownVetClinicId' | 'officeNotes' | 'status'
 >;
 
 /**
@@ -137,6 +152,10 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
   // the Kin back, and Archive is there to undo it.
   const [askArchive, setAskArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #1908 kin-vet: "Different vet for this Kin", unticked unless the Kin
+  // already has a vet of its own. Unticked, a save sends it back to the
+  // household's vet.
+  const [differentVet, setDifferentVet] = useState(false);
   // The seeded dog / cat breed bank behind the Breed dropdown. A failure here is
   // NOT fatal and NOT silent: banks come back empty, breed degrades to the free
   // text it already was, and BreedField's note says so.
@@ -158,6 +177,7 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
         if (live) {
           setLoaded({ status: 'ready', data });
           setForm(toForm(data));
+          setDifferentVet(data.ownVetClinicId.trim() !== '');
         }
       } catch (err) {
         if (live) {
@@ -215,6 +235,13 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
         feedingBrand: form.feedingBrand,
         vaccinations: form.vaccinations,
         medicationHealthNotes: form.medicationHealthNotes,
+        feedingInstructions: form.feedingInstructions,
+        walkingInstructions: form.walkingInstructions,
+        allergies: form.allergies,
+        emergencyNotes: form.emergencyNotes,
+        sitterNotes: form.sitterNotes,
+        // #1908 kin-vet: unticked is the household's vet ('').
+        ownVetClinicId: differentVet ? form.ownVetClinicId : '',
         // No `vetInfo`: see the HEALTH_FIELDS note. `updateKin` patches through
         // `updateDoc`, a merge, so omitting the key preserves the stored value
         // for KinView's read-only row instead of blanking it.
@@ -401,6 +428,16 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                       />
                     </label>
                   ))}
+                  {loaded.status === 'ready' && (
+                    <KinVetField
+                      kinfolkId={loaded.data.kinfolkId}
+                      value={form.ownVetClinicId}
+                      different={differentVet}
+                      onDifferentChange={setDifferentVet}
+                      onChange={(id) => set('ownVetClinicId', id)}
+                      disabled={busy}
+                    />
+                  )}
                 </fieldset>
               </DenPanel>
 

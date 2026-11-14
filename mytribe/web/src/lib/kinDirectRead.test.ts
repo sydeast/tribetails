@@ -58,7 +58,27 @@ describe('kinDtoFromDoc', () => {
       colorMarkings: null,
       spayedNeutered: true,
       vetInfo: null,
+      staysAs: null,
+      routine: null,
+      trainingCommands: null,
+      feedingBrand: null,
+      vaccinations: null,
+      ownVetClinicId: '',
     });
+  });
+  it('#1908: carries the care facts the household now fills and the Kin vet, and no resolved vet', () => {
+    const dto = kinDtoFromDoc('k1', {
+      name: 'Biscuit',
+      staysAs: 'Crate',
+      routine: 'Walk at 7',
+      trainingCommands: 'Sit',
+      feedingBrand: 'Acme',
+      vaccinations: 'Rabies 2027',
+      ownVetClinicId: ' c2 ',
+    });
+    expect(dto).toMatchObject({ staysAs: 'Crate', routine: 'Walk at 7', trainingCommands: 'Sit', feedingBrand: 'Acme', vaccinations: 'Rabies 2027', ownVetClinicId: 'c2' });
+    // The household vet is on a staff-only doc: the screen resolves it (lib/kinVet.ts).
+    expect(dto).not.toHaveProperty('vet');
   });
 
   it('never forwards a field the callable does not project', () => {

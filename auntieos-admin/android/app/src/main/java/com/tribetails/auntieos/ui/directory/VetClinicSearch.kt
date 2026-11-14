@@ -3,24 +3,27 @@ package com.tribetails.auntieos.ui.directory
 import com.tribetails.auntieos.data.model.VetClinic
 
 /**
- * Pure filter for the vet-clinic search box. Prefix matches rank first, then substring
- * matches, capped at [limit] so a 100+ clinic catalog stays a short, scannable dropdown.
- * A blank query returns nothing: the box is a search field, not a full-catalog dump.
- * Mirrors the web helper of the same name.
+ * Pure filter for the vet-clinic picker.
+ *
+ * #1908 kin-vet (owner ruling 2026-11-12): "Vet is a dropdown field preloaded
+ * with all vets in the entire area". So a blank query is the WHOLE pickable
+ * list, by name, the moment the picker opens; typing narrows it, prefix
+ * matches first, then substring matches. No cap by default: a cap hid every
+ * clinic past the eighth. A retired clinic and a submission still waiting for
+ * the office are never offered. Mirrors the web helper of the same name.
  */
-fun vetClinicSuggestions(query: String, clinics: List<VetClinic>, limit: Int = 8): List<VetClinic> {
+fun vetClinicSuggestions(query: String, clinics: List<VetClinic>, limit: Int = Int.MAX_VALUE): List<VetClinic> {
     val q = query.trim().lowercase()
-    if (q.isEmpty()) return emptyList()
     // Retired clinics drop out of what can be PICKED, which is what retiring one
     // is for. A household already on an archived clinic is unaffected: it keeps
     // its own stored name, phone and address, so its field still shows what is
     // on file. The row simply stops being offered to anyone choosing from now on.
-    val live = clinics.filter { !it.archived }
+    val live = clinics.filter { !it.archived && it.verified && it.name.isNotBlank() }
+    if (q.isEmpty()) return live.sortedBy { it.name.trim().lowercase() }.take(limit)
     val starts = live.filter { it.name.lowercase().startsWith(q) }
     val contains = live.filter { !it.name.lowercase().startsWith(q) && it.name.lowercase().contains(q) }
     return (starts + contains).take(limit)
 }
-
 /**
  * The 24 hour clinics, for the household's EMERGENCY vet field. Filtering is
  * kept out of [vetClinicSuggestions] so one ranking rule serves both pickers and

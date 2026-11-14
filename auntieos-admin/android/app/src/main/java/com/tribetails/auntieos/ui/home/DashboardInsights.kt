@@ -307,8 +307,8 @@ fun careFlags(
                     }
                 }
                 if (kin.reactive) emit("reactive", "Reactive, handle with care")
-                if (kin.medicationHealthNotes.isNotBlank()) emit("medication", kin.medicationHealthNotes.trim())
-                if (kin.feedingBrand.isNotBlank()) emit("feeding", kin.feedingBrand.trim())
+                if (!kin.medicationHealthNotes.isNullOrBlank()) emit("medication", kin.medicationHealthNotes.orEmpty().trim())
+                if (!kin.feedingBrand.isNullOrBlank()) emit("feeding", kin.feedingBrand.orEmpty().trim())
             }
         }
     return out.sortedBy { CARE_FLAG_ORDER[it.kind] ?: Int.MAX_VALUE }

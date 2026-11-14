@@ -86,3 +86,9 @@
   color: var(--color-text-primary);
   margin: 0;
 }
+/* #1908 kin-vet: the household's vet, shown read-only above the checkbox. */
+.kedit__readonly {
+  margin: 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+}

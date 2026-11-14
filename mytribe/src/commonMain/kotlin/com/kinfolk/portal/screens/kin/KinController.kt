@@ -10,6 +10,10 @@ import com.kinfolk.portal.portal.BreedsResult
 import com.kinfolk.portal.portal.FormSchema
 import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.KinResult
+import com.kinfolk.portal.portal.KinVet
+import com.kinfolk.portal.portal.VetClinic
+import com.kinfolk.portal.portal.VetClinicSummary
+import com.kinfolk.portal.portal.resolveKinVet
 import com.kinfolk.portal.portal.KinPayload
 import com.kinfolk.portal.portal.KinRemovalOptions
 import com.kinfolk.portal.portal.KinRemovalRequest
@@ -51,6 +55,42 @@ class KinController internal constructor(
         private set
 
     fun find(kinId: String): Kin? = data?.kin?.firstOrNull { it.id == kinId }
+    /**
+     * #1908 kin-vet: the household's vet (from the Tribe Profile) and the area
+     * vet list, for the Kin vet line and its "Different vet for this Kin"
+     * dropdown. [vetsLoaded] false until the first [loadVets] finishes, so the
+     * dialog can show the wait; [vetsError] says when the list would not load.
+     */
+    var householdVet by mutableStateOf<VetClinicSummary?>(null)
+        private set
+    var vetClinics by mutableStateOf<List<VetClinic>>(emptyList())
+        private set
+    var vetsLoaded by mutableStateOf(false)
+        private set
+    var vetsError by mutableStateOf<String?>(null)
+        private set
+    /** The vet [kin] goes to, for display ([resolveKinVet]). */
+    fun vetFor(kin: Kin): KinVet? = resolveKinVet(kin, householdVet, vetClinics)
+    /** Loads the household vet and the area list. Either can fail without failing the other. */
+    suspend fun loadVets() {
+        var problem: String? = null
+        try {
+            vetClinics = portalApi.getVetClinics()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            problem = "Could not load the vet list: ${t.message ?: "try again later"}"
+        }
+        try {
+            householdVet = portalApi.getMyTribeProfile(kinfolkId).vetClinic
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            problem = problem ?: "Could not load your Tribe Profile vet: ${t.message ?: "try again later"}"
+        }
+        vetsError = problem
+        vetsLoaded = true
+    }
 
     suspend fun reload() {
         try {

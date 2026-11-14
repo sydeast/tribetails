@@ -245,14 +245,14 @@ fun EditKinScreen(
                             AuntieField(
                                 value = state.staysAs,
                                 onValueChange = viewModel::updateEditKinStaysAs,
-                                label = "Stays As (confinement)",
+                                label = "Stays as",
                                 modifier = Modifier.fillMaxWidth(),
                             )
 
                             AuntieField(
                                 value = state.routine,
                                 onValueChange = viewModel::updateEditKinRoutine,
-                                label = "Daily Routine",
+                                label = "Routine",
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = false,
                                 minLines = 2,
@@ -261,7 +261,24 @@ fun EditKinScreen(
                             AuntieField(
                                 value = state.trainingCommands,
                                 onValueChange = viewModel::updateEditKinTrainingCommands,
-                                label = "Training Commands",
+                                label = "Training / commands",
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = false,
+                                minLines = 2,
+                            )
+                            // #1908: the household's care block, the admin's to edit too.
+                            AuntieField(
+                                value = state.feedingInstructions,
+                                onValueChange = viewModel::updateEditKinFeedingInstructions,
+                                label = "Feeding instructions",
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = false,
+                                minLines = 2,
+                            )
+                            AuntieField(
+                                value = state.walkingInstructions,
+                                onValueChange = viewModel::updateEditKinWalkingInstructions,
+                                label = "Walking instructions",
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = false,
                                 minLines = 2,
@@ -286,10 +303,18 @@ fun EditKinScreen(
                             AuntieField(
                                 value = state.feedingBrand,
                                 onValueChange = viewModel::updateEditKinFeedingBrand,
-                                label = "Food Brand & Instructions",
+                                label = "Food / brand",
                                 modifier = Modifier.fillMaxWidth(),
                             )
 
+                            AuntieField(
+                                value = state.allergies,
+                                onValueChange = viewModel::updateEditKinAllergies,
+                                label = "Allergies",
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = false,
+                                minLines = 2,
+                            )
                             AuntieField(
                                 value = state.vaccinations,
                                 onValueChange = viewModel::updateEditKinVaccinations,
@@ -302,24 +327,27 @@ fun EditKinScreen(
                             AuntieField(
                                 value = state.medicationHealthNotes,
                                 onValueChange = viewModel::updateEditKinMedicationHealthNotes,
-                                label = "Medication & Health Notes",
+                                label = "Medications / health notes",
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = false,
                                 minLines = 2,
                             )
 
-                            // Vet is read-only here: authored once on the owning Kinfolk
-                            // (household) and inherited. Edit it on the Kinfolk, not per-kin.
-                            val vetLine = listOf(
-                                state.householdVetName,
-                                state.householdVetPhone,
-                                state.householdVetAddress,
-                            ).filter { it.isNotBlank() }.joinToString(" · ")
-                            AuntieFieldLabel(text = "Vet (from ${state.householdName.ifBlank { "household" }})")
-                            Text(
-                                text = vetLine.ifBlank { "No household vet on file yet" },
-                                style = AuntieTheme.typography.bodyMedium,
-                                color = if (vetLine.isBlank()) AuntieTheme.colors.textDim else AuntieTheme.colors.textPrimary,
+                            // #1908 kin-vet: the household's vet, read-only, unless
+                            // "Different vet for this Kin" is ticked (unticked by default).
+                            KinVetEditor(
+                                householdName = state.householdName,
+                                householdVetLine = listOf(
+                                    state.householdVetName,
+                                    state.householdVetPhone,
+                                    state.householdVetAddress,
+                                ).filter { it.isNotBlank() }.joinToString(" · "),
+                                differentVet = state.differentVet,
+                                ownVetClinicId = state.ownVetClinicId,
+                                clinics = state.vetClinicOptions,
+                                onDifferentVetChange = viewModel::updateEditKinDifferentVet,
+                                onPick = viewModel::updateEditKinOwnVetClinic,
+                                enabled = !state.isSaving,
                             )
                         }
                     }
@@ -368,6 +396,23 @@ fun EditKinScreen(
                                 )
                             }
 
+                            AuntieField(
+                                value = state.emergencyNotes,
+                                onValueChange = viewModel::updateEditKinEmergencyNotes,
+                                label = "Emergency notes",
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = false,
+                                minLines = 2,
+                            )
+                            // The household's notes. NOT the office's own below.
+                            AuntieField(
+                                value = state.sitterNotes,
+                                onValueChange = viewModel::updateEditKinSitterNotes,
+                                label = "Notes for the Auntie",
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = false,
+                                minLines = 2,
+                            )
                             AuntieField(
                                 value = state.officeNotes,
                                 onValueChange = viewModel::updateEditKinOfficeNotes,
@@ -467,4 +512,52 @@ fun EditKinScreen(
             }
         }
     }
+}
+/**
+ * #1908 kin-vet (owner ruling 2026-11-12). The Kin's vet is the household's,
+ * shown read-only, unless "Different vet for this Kin" is ticked; then it is a
+ * dropdown of the area vet list, every clinic listed as soon as it opens.
+ * Unticking goes back to the household's vet when the Kin is saved.
+ */
+@Composable
+internal fun KinVetEditor(
+    householdName: String,
+    householdVetLine: String,
+    differentVet: Boolean,
+    ownVetClinicId: String,
+    clinics: List<com.tribetails.auntieos.data.model.VetClinic>,
+    onDifferentVetChange: (Boolean) -> Unit,
+    onPick: (String) -> Unit,
+    enabled: Boolean = true,
+) {
+    AuntieFieldLabel(text = "Vet (from ${householdName.ifBlank { "household" }})")
+    Text(
+        text = householdVetLine.ifBlank { "No household vet on file yet" },
+        style = AuntieTheme.typography.bodyMedium,
+        color = if (householdVetLine.isBlank()) AuntieTheme.colors.textDim else AuntieTheme.colors.textPrimary,
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        AuntieCheckbox(checked = differentVet, onCheckedChange = onDifferentVetChange, enabled = enabled)
+        Spacer(Modifier.width(8.dp))
+        Text("Different vet for this Kin")
+    }
+    if (differentVet) {
+        // "" is the no-pick row; a picked id that left the list still shows as itself.
+        val options = listOf("") + clinics.map { it.id } +
+            listOfNotNull(ownVetClinicId.takeIf { it.isNotBlank() && clinics.none { c -> c.id == it } })
+        AuntieSelectField(
+            label = "Vet for this Kin",
+            options = options,
+            selected = ownVetClinicId,
+            onSelect = onPick,
+            optionLabel = { id -> kinVetOptionLabel(id, clinics) },
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+/** A dropdown row: the clinic's name, "Choose a vet" for none, and a plain note for a clinic no longer listed. */
+internal fun kinVetOptionLabel(id: String, clinics: List<com.tribetails.auntieos.data.model.VetClinic>): String = when {
+    id.isBlank() -> "Choose a vet"
+    else -> clinics.firstOrNull { it.id == id }?.name?.trim()?.ifBlank { null } ?: "A vet no longer on the list"
 }

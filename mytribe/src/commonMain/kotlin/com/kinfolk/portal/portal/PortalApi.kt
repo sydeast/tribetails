@@ -786,6 +786,15 @@ class PortalApi(
                 colorMarkings = o["colorMarkings"]?.jsonPrimitive?.contentOrNull,
                 spayedNeutered = o["spayedNeutered"]?.jsonPrimitive?.booleanOrNull ?: false,
                 vetInfo = o["vetInfo"]?.jsonPrimitive?.contentOrNull,
+                staysAs = o["staysAs"]?.jsonPrimitive?.contentOrNull,
+                routine = o["routine"]?.jsonPrimitive?.contentOrNull,
+                trainingCommands = o["trainingCommands"]?.jsonPrimitive?.contentOrNull,
+                feedingBrand = o["feedingBrand"]?.jsonPrimitive?.contentOrNull,
+                vaccinations = o["vaccinations"]?.jsonPrimitive?.contentOrNull,
+                ownVetClinicId = o["ownVetClinicId"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty(),
+                vet = (o["vet"] as? JsonObject)?.let { v ->
+                    (v["clinic"] as? JsonObject)?.let { c -> KinVet(decodeVetClinicSummary(c), v["fromHousehold"]?.jsonPrimitive?.booleanOrNull ?: false) }
+                },
             )
         }.orEmpty()
         return KinResult(kin = list)
@@ -970,16 +979,28 @@ class PortalApi(
             // #843. Absent from an older backend: allowed, and the server still enforces it.
             canEditHomeDetails = raw["canEditHomeDetails"]?.jsonPrimitive?.booleanOrNull ?: true,
             // #1325. Null (JSON null, or absent from an older backend) means no clinic chosen.
-            vetClinic = (raw["vetClinic"] as? JsonObject)?.let { v ->
-                VetClinicSummary(
-                    id = v["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    name = v["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    phone = v["phone"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    address = v["address"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    isEmergency = v["isEmergency"]?.jsonPrimitive?.booleanOrNull ?: false,
-                )
-            },
+            vetClinic = (raw["vetClinic"] as? JsonObject)?.let(::decodeVetClinicSummary),
         )
+    }
+    private fun decodeVetClinicSummary(v: JsonObject): VetClinicSummary = VetClinicSummary(
+        id = v["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        name = v["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        phone = v["phone"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        address = v["address"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        isEmergency = v["isEmergency"]?.jsonPrimitive?.booleanOrNull ?: false,
+    )
+    /**
+     * #1908 kin-vet, #1917. Sets the household's vet the moment it is picked
+     * ([clinicId] "" takes it off), in the one store both apps read. Returns the
+     * household's vet now, or null when it has none. The server refuses a clinic
+     * that is not on the area list.
+     */
+    suspend fun setHouseholdVet(kinfolkId: String? = null, clinicId: String): VetClinicSummary? {
+        val raw = fns.call("setHouseholdVet", buildJsonObject {
+            kinfolkId?.let { put("kinfolkId", it) }
+            put("clinicId", clinicId.trim())
+        })
+        return (raw["vetClinic"] as? JsonObject)?.let(::decodeVetClinicSummary)
     }
 
     suspend fun saveTribeProfile(
@@ -1359,6 +1380,12 @@ class PortalApi(
         p.colorMarkings?.let { put("colorMarkings", it) }
         p.spayedNeutered?.let { put("spayedNeutered", it) }
         p.vetInfo?.let { put("vetInfo", it) }
+        p.staysAs?.let { put("staysAs", it) }
+        p.routine?.let { put("routine", it) }
+        p.trainingCommands?.let { put("trainingCommands", it) }
+        p.feedingBrand?.let { put("feedingBrand", it) }
+        p.vaccinations?.let { put("vaccinations", it) }
+        p.ownVetClinicId?.let { put("ownVetClinicId", it) }
     }
 
     // -- Invite a secondary kinfolk to the portal (the primary only) --

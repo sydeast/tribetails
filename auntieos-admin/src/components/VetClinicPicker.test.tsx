@@ -50,7 +50,7 @@ beforeEach(() => {
 describe('VetClinicPicker: search', () => {
   it('names the catalog size in the placeholder, so the operator knows there is one', () => {
     mount();
-    expect(searchBox()).toHaveAttribute('placeholder', 'Type to search 3 clinics');
+    expect(searchBox()).toHaveAttribute('placeholder', 'Pick or type to search 3 clinics');
   });
 
   it('says so plainly when the catalog is empty rather than promising a search', () => {
@@ -198,9 +198,17 @@ describe('VetClinicPicker: the pinned create button', () => {
     ).toBeInTheDocument();
   });
 
-  it('is not offered before anything is typed', () => {
+  it('is not offered before anything is typed', async () => {
     mount();
     expect(screen.queryByText(/as a new vet clinic/)).not.toBeInTheDocument();
+    // Not even with the list open on focus: there is no name to create yet.
+    await userEvent.click(searchBox());
+    expect(screen.queryByText(/as a new vet clinic/)).not.toBeInTheDocument();
+  });
+  it('#1908 kin-vet: opens on focus with every clinic, before anything is typed', async () => {
+    mount();
+    await userEvent.click(searchBox());
+    expect(screen.getAllByTestId('vetpick-option')).toHaveLength(CATALOG.length);
   });
 });
 

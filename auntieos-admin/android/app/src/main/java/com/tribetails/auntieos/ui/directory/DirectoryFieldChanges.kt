@@ -123,7 +123,9 @@ internal val KIN_DIFF_FIELDS: Map<String, (Kin) -> Any> = linkedMapOf(
     "name" to { it: Kin -> it.name },
     "species" to { it: Kin -> it.species },
     "breed" to { it: Kin -> it.breed },
-    "age" to { it: Kin -> it.age },
+    // Text that may be null on an older doc is compared as "" (#1370): a null
+    // the form shows as blank and leaves blank is not a change.
+    "age" to { it: Kin -> it.age.orEmpty() },
     "sex" to { it: Kin -> it.sex },
     "weight" to { it: Kin -> it.weight },
     // No editor renders the photo list, and that is precisely why it is diffed:
@@ -137,15 +139,22 @@ internal val KIN_DIFF_FIELDS: Map<String, (Kin) -> Any> = linkedMapOf(
     "profilePictureUrl" to { it: Kin -> it.profilePictureUrl },
     "colorMarkings" to { it: Kin -> it.colorMarkings },
     "spayedNeutered" to { it: Kin -> it.spayedNeutered },
-    "staysAs" to { it: Kin -> it.staysAs },
-    "routine" to { it: Kin -> it.routine },
-    "trainingCommands" to { it: Kin -> it.trainingCommands },
-    "feedingBrand" to { it: Kin -> it.feedingBrand },
-    "vaccinations" to { it: Kin -> it.vaccinations },
-    "medicationHealthNotes" to { it: Kin -> it.medicationHealthNotes },
-    // Read-only on the pet since the vet moved to `household_data` (ruling
+    "staysAs" to { it: Kin -> it.staysAs.orEmpty() },
+    "routine" to { it: Kin -> it.routine.orEmpty() },
+    "trainingCommands" to { it: Kin -> it.trainingCommands.orEmpty() },
+    "feedingBrand" to { it: Kin -> it.feedingBrand.orEmpty() },
+    "vaccinations" to { it: Kin -> it.vaccinations.orEmpty() },
+    "medicationHealthNotes" to { it: Kin -> it.medicationHealthNotes.orEmpty() },
+    // Read-only on the Kin since the vet moved to `household_data` (ruling
     // 2026-08-01). Still diffed so the legacy value survives until migration.
-    "vetInfo" to { it: Kin -> it.vetInfo },
+    "vetInfo" to { it: Kin -> it.vetInfo.orEmpty() },
+    // #1908: the household's care block, edited here too, and the Kin's own vet.
+    "feedingInstructions" to { it: Kin -> it.feedingInstructions.orEmpty() },
+    "walkingInstructions" to { it: Kin -> it.walkingInstructions.orEmpty() },
+    "allergies" to { it: Kin -> it.allergies.orEmpty() },
+    "emergencyNotes" to { it: Kin -> it.emergencyNotes.orEmpty() },
+    "sitterNotes" to { it: Kin -> it.sitterNotes.orEmpty() },
+    "ownVetClinicId" to { it: Kin -> it.ownVetClinicId.orEmpty() },
     "checklist" to { it: Kin -> it.checklist },
     "reactive" to { it: Kin -> it.reactive },
     "officeNotes" to { it: Kin -> it.officeNotes },

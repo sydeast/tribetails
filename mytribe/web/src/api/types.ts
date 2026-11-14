@@ -204,7 +204,28 @@ export interface KinDto {
   weight: string | null;
   colorMarkings: string | null;
   spayedNeutered: boolean;
+  /** Legacy free-text vet note. No longer an input (#1908); shown only when no clinic resolves. */
   vetInfo: string | null;
+  /** #1908 (owner ruling 2026-11-11): the care facts the admin always kept, the household's to fill too. */
+  staysAs: string | null;
+  routine: string | null;
+  trainingCommands: string | null;
+  feedingBrand: string | null;
+  vaccinations: string | null;
+  /** #1908 kin-vet: a clinic for this Kin alone; '' when it goes to the household's vet. */
+  ownVetClinicId: string;
+  /**
+   * The vet this Kin goes to, resolved by getMyKin. Absent when the roster came
+   * from the direct read (lib/kinDirectRead.ts): lib/kinVet.ts resolves it then.
+   */
+  vet?: KinVetDto | null;
+}
+
+/** getMyKin's resolved vet for one Kin (functions/src/portal/getMyKin.ts). */
+export interface KinVetDto {
+  clinic: { id: string; name: string; phone: string; address: string; isEmergency: boolean };
+  /** True when it is the household's vet (the Kin has none of its own). */
+  fromHousehold: boolean;
 }
 
 export interface GetMyKinResult {
@@ -300,6 +321,14 @@ export interface KinPayloadPartial {
   colorMarkings?: string;
   spayedNeutered?: boolean;
   vetInfo?: string;
+  /** #1908: shared with the admin. Not nullable; '' clears. */
+  staysAs?: string;
+  routine?: string;
+  trainingCommands?: string;
+  feedingBrand?: string;
+  vaccinations?: string;
+  /** #1908 kin-vet: a clinic on the area vet list, or '' for the household's vet. */
+  ownVetClinicId?: string;
 }
 
 export interface UpdateKinRequest {
