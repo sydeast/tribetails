@@ -367,27 +367,92 @@ describe('notificationBatchSweep: promotion', () => {
     );
   });
 
-  it("#2093: a household's digest keeps the household's words the queued rows carry", async () => {
-    const household = (id: string, at: number): Row => {
-      const r = item('u1', 'kintale-comments', id, at);
-      return {
-        ...r,
-        data: {
-          ...r.data,
-          title: 'New comment on your KinTale',
-          description: 'When someone comments on one of your KinTales.',
-        },
-      };
+  /** A household's queued comment, as the dispatcher writes it since #1898. */
+  const household = (id: string, at: number, extra: Record<string, unknown> = {}, stream = 'kinfolk'): Row => {
+    const r = item('u1', 'kintale-comments', id, at, extra);
+    return {
+      ...r,
+      data: {
+        ...r.data,
+        title: 'New comment on your KinTale',
+        description: '',
+        ...(stream ? { stream } : {}),
+      },
     };
+  };
+  it("#1898: a household's digest says who commented on which KinTale, and opens it", async () => {
     const ctx = buildBatchDb({
-      'kintale-comments': [household('c-a', NOW - 30 * MIN), household('c-b', NOW - 20 * MIN)],
+      'kintale-comments': [
+        household('c-a', NOW - 30 * MIN, { authorName: 'Jamie', taleTitle: 'Park day', kinfolkId: 'fam1' }),
+        household('c-b', NOW - 20 * MIN, { authorName: 'Sam', taleTitle: 'Park day', kinfolkId: 'fam1' }),
+      ],
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     await runNotificationBatchSweep(NOW);
     const digest = ctx.sink.writes.find((w) => w.path.startsWith('notifications/'));
+    // #2093: the household's title, never the operator's label.
     expect(digest!.data.title).toBe('New comment on your KinTale');
-    expect(digest!.data.description).toBe('When someone comments on one of your KinTales.');
     expect(String(digest!.data.title)).not.toMatch(/comment box/);
+    expect(digest!.data.description).toBe('Jamie and Sam commented on “Park day”');
+    expect(digest!.data.householdLine).toBe('Jamie and Sam commented on “Park day”');
+    expect(digest!.data.targetType).toBe('kintale');
+    expect(digest!.data.targetId).toBe('t1');
+    // The ids every comment shares ride at the top, where the email and push
+    // enricher reads them.
+    expect(digest!.data.data).toMatchObject({ kinfolkId: 'fam1', taleId: 't1', taleTitle: 'Park day' });
+  });
+  it('#1898: a digest across two tales opens the KinTales list', async () => {
+    const ctx = buildBatchDb({
+      'kintale-comments': [
+        household('c-a', NOW - 30 * MIN, { authorName: 'Jamie' }),
+        household('c-b', NOW - 20 * MIN, { authorName: 'Jamie', taleId: 't2' }),
+      ],
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await runNotificationBatchSweep(NOW);
+    const digest = ctx.sink.writes.find((w) => w.path.startsWith('notifications/'));
+    expect(digest!.data.description).toBe('Jamie commented on 2 KinTales');
+    expect(digest!.data.targetType).toBe('kintale');
+    expect(digest!.data.targetId).toBe('');
+    expect(digest!.data.data).not.toHaveProperty('taleId');
+  });
+  it('#1898: a household row queued before rows carried a stream is still worded for the household', async () => {
+    const ctx = buildBatchDb({
+      'kintale-comments': [
+        {
+          ...household('c-a', NOW - 30 * MIN, {}, ''),
+          data: {
+            ...household('c-a', NOW - 30 * MIN, {}, '').data,
+            description: 'When someone comments on one of your KinTales. New comments arrive together in one message.',
+          },
+        },
+      ],
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await runNotificationBatchSweep(NOW);
+    const digest = ctx.sink.writes.find((w) => w.path.startsWith('notifications/'));
+    expect(digest!.data.description).toBe('1 new comment on your KinTale');
+  });
+  it("the office's digest keeps the office's words and its target as they were", async () => {
+    const ctx = buildBatchDb({
+      'kintale-comments': [
+        {
+          ...item('u1', 'kintale-comments', 'c-a', NOW - 30 * MIN, { authorName: 'Jamie' }),
+          data: {
+            ...item('u1', 'kintale-comments', 'c-a', NOW - 30 * MIN, { authorName: 'Jamie' }).data,
+            title: 'New comment on a KinTale (comment box)',
+            description: 'Someone posted in the comment box under a KinTale.',
+            stream: 'staff',
+          },
+        },
+      ],
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await runNotificationBatchSweep(NOW);
+    const digest = ctx.sink.writes.find((w) => w.path.startsWith('notifications/'));
+    expect(digest!.data.description).toBe('Someone posted in the comment box under a KinTale.');
+    expect(digest!.data.targetType).toBe('');
+    expect(digest!.data).not.toHaveProperty('householdLine');
   });
 
   it('holds a bucket whose oldest item is still inside the window', async () => {

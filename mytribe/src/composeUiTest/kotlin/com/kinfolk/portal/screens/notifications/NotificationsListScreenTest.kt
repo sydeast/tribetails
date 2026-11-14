@@ -85,6 +85,10 @@ class NotificationsListScreenTest {
         var schedule = 0
         var invoice: String? = null
         var tale: String? = null
+        var tales = 0
+        var kin: String? = null
+        var kinList = 0
+        var tribe = 0
         val counts = mutableListOf<Int>()
     }
 
@@ -98,6 +102,10 @@ class NotificationsListScreenTest {
             onOpenSchedule = { opened.schedule += 1 },
             onOpenInvoice = { opened.invoice = it },
             onOpenKinTale = { opened.tale = it },
+            onOpenKinTales = { opened.tales += 1 },
+            onOpenKin = { opened.kin = it },
+            onOpenKinList = { opened.kinList += 1 },
+            onOpenTribe = { opened.tribe += 1 },
             onUnreadCount = { opened.counts += it },
             nowMs = { now },
         )
@@ -252,5 +260,66 @@ class NotificationsListScreenTest {
         assertEquals("1700000000000", second.second!!["before"]!!.jsonPrimitive.content)
         onNodeWithText("New KinTale").assertExists()
         onNodeWithTag("notificationsOlder").assertDoesNotExist()
+    }
+    // #1831, #1898, #1913: each notice says what happened and opens what it is about.
+    private val notices = listOf(
+        row("n-arrived", "Your Auntie has arrived", "Drop-in visit for Rex on Tue, Nov 17 at 9:00 AM", targetType = "booking", targetId = "v7", visitId = "v7", batchId = "b7", minutesAgo = 1),
+        row("n-comments", "New comment on your KinTale", "Jamie and Sam commented on 2 KinTales", targetType = "kintale", targetId = "", minutesAgo = 3),
+        row("n-kin", "Your Kin removal request was declined", "Mochi is staying on your profile", targetType = "kin", targetId = "kin-2", minutesAgo = 7),
+        row("n-gone", "A Kin you asked to remove was removed", "Pip is no longer on your profile", targetType = "kin", targetId = "", minutesAgo = 9),
+        row("n-profile", "Your profile was updated", "", targetType = "household", targetId = "", minutesAgo = 11),
+    )
+    private fun stubbedNotices(): FakeFunctionsClient {
+        val fake = FakeFunctionsClient()
+        fake.stub("listMyNotifications", page(notices))
+        fake.stub("markNotificationRead", buildJsonObject { put("ok", true) })
+        return fake
+    }
+    @Test
+    fun eachNoticeShowsItsContentLine_andARowWithNoFactsShowsItsTitleAlone() = runComposeUiTest {
+        setThemedContent { Screen(stubbedNotices(), Opened()) }
+        waitForIdle()
+        onNodeWithText("Drop-in visit for Rex on Tue, Nov 17 at 9:00 AM").assertIsDisplayed()
+        onNodeWithText("Mochi is staying on your profile").assertIsDisplayed()
+        onNodeWithText("Your profile was updated").assertIsDisplayed()
+        // The row is one clickable node, so its parts sit in the unmerged tree.
+        onNodeWithTag("notificationLine-n-arrived", useUnmergedTree = true).assertIsDisplayed()
+        onNodeWithTag("notificationLine-n-profile", useUnmergedTree = true).assertDoesNotExist()
+    }
+    @Test
+    fun aKinNoticeOpensThatKin_andARemovedKinOpensTheKinTab() = runComposeUiTest {
+        val opened = Opened()
+        setThemedContent { Screen(stubbedNotices(), opened) }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-kin").performClick()
+        waitForIdle()
+        assertEquals("kin-2", opened.kin)
+        onNodeWithTag("notificationRow-n-gone").performClick()
+        waitForIdle()
+        assertEquals(1, opened.kinList)
+    }
+    @Test
+    fun commentsAcrossTalesOpenTheKinTalesTab_andAProfileChangeOpensTribe() = runComposeUiTest {
+        val opened = Opened()
+        val fake = stubbedNotices()
+        setThemedContent { Screen(fake, opened) }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-comments").performClick()
+        waitForIdle()
+        assertEquals(1, opened.tales)
+        assertNull(opened.tale)
+        onNodeWithTag("notificationRow-n-profile").performClick()
+        waitForIdle()
+        assertEquals(1, opened.tribe)
+        assertEquals(2, fake.calls.count { it.first == "markNotificationRead" })
+    }
+    @Test
+    fun theArrivalNoticeOpensItsVisit() = runComposeUiTest {
+        val opened = Opened()
+        setThemedContent { Screen(stubbedNotices(), opened) }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-arrived").performClick()
+        waitForIdle()
+        assertEquals("v7" to "b7", opened.visit)
     }
 }

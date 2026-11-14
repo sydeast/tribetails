@@ -103,9 +103,11 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'invoice.receipt': ['amount', 'invoiceNumber', 'kinfolkName'],
   'invoice.reminder': ['amount', 'invoiceNumber', 'kinName'],
   'invoice.updated': ['invoiceNumber', 'kinName'],
-  'kincare.auntie.arrived': ['serviceType'],
-  'kincare.auntie.departed': ['serviceType'],
-  'kincare.auntie.on_my_way': ['serviceType'],
+  // #1831: the visit steps name the Kin (the enricher reads them off the visit)
+  // and, on the way, the arrival estimate the Auntie gave (emitter-supplied).
+  'kincare.auntie.arrived': ['kinName', 'serviceType'],
+  'kincare.auntie.departed': ['kinName', 'serviceType'],
+  'kincare.auntie.on_my_way': ['etaMinutes', 'kinName', 'serviceType'],
   'kincare.booking.cancel': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
   // #536: the confirmation is about a REQUEST, not a visit, so it enumerates the
   // whole envelope. `visits` / `visitCount` / `nextVisit.*` / `portalUrl` are

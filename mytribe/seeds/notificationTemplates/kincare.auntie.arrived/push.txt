@@ -1,1 +1,1 @@
-Auntie has arrived. I'm here and starting your {{serviceType}}. Tap to follow along.
+Auntie has arrived. I'm here and starting your {{serviceType}}{{#if kinName}} with {{kinName}}{{/if}}. Tap to follow along.

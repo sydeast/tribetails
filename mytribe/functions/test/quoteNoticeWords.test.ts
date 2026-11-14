@@ -60,30 +60,31 @@ describe('#2093 the title on each copy of a notice', () => {
     expect(await noticeTitleFor(def, 'staff')).toBe('Kinfolk accepted a quote');
   });
 
-  it('the line under the title is the household\'s on its copy and the operator\'s on the office\'s', async () => {
+  it('the office\'s copy keeps the operator\'s line; the household\'s line is built from its facts, never the settings words', async () => {
     const def = getNotificationDef('quote.accepted')!;
+    // #1831: '' here. The dispatcher builds the household's line from the
+    // copy's own facts (householdNoticeLine), not from `householdDescription`.
     expect(await noticeCopyFor(def, 'kinfolk')).toEqual({
       title: 'A quote was accepted',
-      description: 'Confirmation that your household accepted a quote.',
+      description: '',
     });
     expect(await noticeCopyFor(def, 'business')).toEqual({
       title: 'Kinfolk accepted a quote',
       description: 'Quote accepted confirmation.',
     });
     const pets = getNotificationDef('pets.updated')!;
-    expect((await noticeCopyFor(pets, 'kinfolk')).description).toBe('When a Kin in your household is added or changed.');
+    expect((await noticeCopyFor(pets, 'kinfolk')).description).toBe('');
     expect((await noticeCopyFor(pets, 'staff')).description).toBe(pets.description);
   });
-  it('every household copy reads whole: a title and a line, no placeholder, no operator wording', async () => {
+  it('every household copy has a whole title, no placeholder, no operator wording, and no settings line', async () => {
     world([]);
     for (const def of Object.values(NOTIFICATION_CATALOG)) {
       if (!def.audiences?.kinfolk) continue;
       const copy = await noticeCopyFor(def, 'kinfolk');
-      for (const text of [copy.title, copy.description]) {
-        expect(text.trim().length, def.key).toBeGreaterThan(5);
-        expect(text, def.key).not.toMatch(/[{}]/);
-        expect(text, def.key).not.toMatch(/debounce|\(comment box\)|Kinfolk\/Auntie|\bthe household\b|\bpets?\b/i);
-      }
+      expect(copy.title.trim().length, def.key).toBeGreaterThan(5);
+      expect(copy.title, def.key).not.toMatch(/[{}]/);
+      expect(copy.title, def.key).not.toMatch(/debounce|\(comment box\)|Kinfolk\/Auntie|\bthe household\b|\bpets?\b/i);
+      expect(copy.description, def.key).toBe('');
     }
   });
   it('a key with no household title keeps its label on the household copy', async () => {
