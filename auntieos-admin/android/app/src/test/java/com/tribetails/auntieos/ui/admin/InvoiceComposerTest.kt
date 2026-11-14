@@ -392,16 +392,24 @@ class InvoiceComposerTest {
 
     @Test
     fun `the terms note says where the date came from and never moves a past one`() {
+        // Dated Jul 21 and sent later: due Jul 27, already behind Aug 19.
         val past = resolveDueDate(
-            InvoiceTermsCode.DUE_ON_LAST_VISIT,
-            "2026-08-19",
-            listOf("2026-08-11"),
+            InvoiceTermsCode.NET_7_AFTER_LAST_VISIT,
+            "2026-07-21",
+            listOf("2026-07-20"),
             "2026-08-19",
         )
-        val note = composerTermsNote(InvoiceTermsCode.DUE_ON_LAST_VISIT, past, "2026-08-19")
-        assertTrue(note.contains("counting from 2026-08-11"))
+        val note = composerTermsNote(InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, past, "2026-07-21")
+        assertTrue(note.contains("counting from 2026-07-20"))
         assertTrue(note.contains("already"))
         assertTrue(note.contains("overdue the moment it goes out"))
+    }
+
+    @Test
+    fun `#1966 review terms that land before the invoice date say it is due on receipt`() {
+        val due = resolveDueDate(InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-08-19", listOf("2026-08-11"), "2026-08-19")
+        assertEquals("2026-08-19", due.dueDate)
+        assertEquals(TERMS_BEFORE_INVOICE_DATE, composerTermsNote(InvoiceTermsCode.DUE_ON_LAST_VISIT, due, "2026-08-19"))
     }
 
     @Test

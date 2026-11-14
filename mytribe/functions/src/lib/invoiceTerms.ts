@@ -15,13 +15,20 @@
  * and a day plus a timezone is how "due the 14th" becomes "overdue since the
  * 13th" for a household one zone west.
  *
- * A DATE ALREADY IN THE PAST IS RESOLVED, REPORTED, AND NEVER MOVED. Terms
- * counted from the last visit routinely land behind today: work finished three
- * weeks ago on 14-day terms was due a week ago, and that is a true fact about
- * the money. Quietly bumping it to today would forgive a debt the household
- * already owes and would make the invoice disagree with its own stated rule.
- * `resolveDueDate` returns the real day plus `isPast`, and the surfaces say so
- * out loud.
+ * A DATE ALREADY IN THE PAST IS RESOLVED, REPORTED, AND NEVER MOVED TO TODAY.
+ * `resolveDueDate` returns the day plus `isPast`, and the surfaces say so out
+ * loud (an invoice dated last week is due from last week, whenever it is sent).
+ *
+ * A BILL IS NEVER DUE BEFORE ITS OWN DATE (#1966 review, the #1593 and #1977
+ * rule). Visit-relative terms can work out to a day before the invoice date:
+ * "3 days before the first visit" on an invoice raised the day before that
+ * visit, or "due on the last visit" on an invoice for work already done. Sent
+ * as it stood, such an invoice is open with its due day already behind it,
+ * and the overdue cron chases the household at its next daily scan, the day
+ * the bill arrived. So the invoice date is the floor: the invoice is due on
+ * receipt, `appliedCode` says `due_on_receipt` (the stored words match the
+ * date), and `beforeInvoiceDate` tells the composer why. An invoice with no
+ * date has no floor.
  *
  * VISIT-RELATIVE TERMS WITH NO VISITS ARE DUE ON RECEIPT (#1966, operator
  * ruling 2026-11-12). There is no visit to count from, so the rule that applies
@@ -478,6 +485,12 @@ export interface DueDateResolution {
    */
   appliedCode: InvoiceTermsCode;
   /**
+   * True when the terms worked out to a day before the invoice date, so the
+   * invoice is due on receipt instead (#1966 review). `appliedCode` is then
+   * `due_on_receipt` and `basisDay` the invoice date.
+   */
+  beforeInvoiceDate: boolean;
+  /**
    * Why there is no date, as operator-facing text, or null when there is one.
    * Names what is missing and what to do, never a bare "invalid".
    */
@@ -505,6 +518,7 @@ export function resolveDueDate(
       isPast: false,
       basisDay: null,
       appliedCode: def.code,
+      beforeInvoiceDate: false,
       problem: 'These terms let you pick the due date, so there is nothing to work out. Choose the date yourself.',
     };
   }
@@ -526,18 +540,32 @@ export function resolveDueDate(
       isPast: false,
       basisDay: null,
       appliedCode: applied.code,
+      beforeInvoiceDate: false,
       problem:
         'These terms count from the invoice date, and this invoice has no date on it yet. Set the date, or pick the date yourself.',
     };
   }
 
-  const dueDate = addDays(basisDay, applied.days);
+  const counted = addDays(basisDay, applied.days);
+  // #1966 review: a bill is never due before its own date. Visit-relative
+  // terms that land there make the invoice due on receipt (see the header).
+  if (applied.basis !== 'invoice' && invoiceDay !== null && counted < invoiceDay) {
+    return {
+      dueDate: invoiceDay,
+      isPast: isCalendarDay(now) && invoiceDay < now,
+      basisDay: invoiceDay,
+      appliedCode: 'due_on_receipt',
+      beforeInvoiceDate: true,
+      problem: null,
+    };
+  }
   return {
-    dueDate,
+    dueDate: counted,
     // Strictly before: due today is due, not overdue.
-    isPast: isCalendarDay(now) && dueDate < now,
+    isPast: isCalendarDay(now) && counted < now,
     basisDay,
     appliedCode: applied.code,
+    beforeInvoiceDate: false,
     problem: null,
   };
 }

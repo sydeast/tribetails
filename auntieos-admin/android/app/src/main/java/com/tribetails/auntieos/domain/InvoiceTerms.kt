@@ -22,13 +22,14 @@ import java.time.format.DateTimeParseException
  * a day plus a timezone is how "due the 14th" becomes "overdue since the 13th"
  * for a household one zone west.
  *
- * A DATE ALREADY IN THE PAST IS RESOLVED, REPORTED, AND NEVER MOVED. Terms
- * counted from the last visit routinely land behind today: work finished three
- * weeks ago on 14-day terms was due a week ago, and that is a true fact about
- * the money. Quietly bumping it to today would forgive a debt the household
- * already owes and would make the invoice disagree with its own stated rule.
- * [resolveDueDate] returns the real day plus [DueDateResolution.isPast], and the
+ * A DATE ALREADY IN THE PAST IS RESOLVED, REPORTED, AND NEVER MOVED TO TODAY.
+ * [resolveDueDate] returns the day plus [DueDateResolution.isPast], and the
  * composer says so out loud.
+ *
+ * A BILL IS NEVER DUE BEFORE ITS OWN DATE (#1966 review, the #1593 and #1977
+ * rule). Visit-relative terms that work out to a day before the invoice date
+ * would be chased as overdue the day the bill arrives, so the invoice is due on
+ * receipt instead and [DueDateResolution.beforeInvoiceDate] says why.
  *
  * VISIT-RELATIVE TERMS WITH NO VISITS ARE DUE ON RECEIPT (#1966, operator
  * ruling 2026-11-12), and [DueDateResolution.appliedCode] says so. Visit days are
@@ -419,6 +420,12 @@ data class DueDateResolution(
     val basisDay: String?,
     val problem: String?,
     val appliedCode: InvoiceTermsCode,
+    /**
+     * True when the terms worked out to a day before the invoice date, so the
+     * invoice is due on receipt instead (#1966 review). [appliedCode] is then
+     * due on receipt and [basisDay] the invoice date.
+     */
+    val beforeInvoiceDate: Boolean = false,
 )
 
 /**
@@ -453,11 +460,8 @@ fun resolveDueDate(
     }
     // A visit-relative code with no visits to count from is due on receipt.
     val applied = if (code.basis != InvoiceTermsBasis.INVOICE && visitDay == null) InvoiceTermsCode.DUE_ON_RECEIPT else code
-    val basisDay = if (applied.basis == InvoiceTermsBasis.INVOICE) {
-        invoiceDate.trim().takeIf { isCalendarDay(it) }
-    } else {
-        visitDay
-    }
+    val invoiceDay = invoiceDate.trim().takeIf { isCalendarDay(it) }
+    val basisDay = if (applied.basis == InvoiceTermsBasis.INVOICE) invoiceDay else visitDay
 
     if (basisDay == null) {
         return DueDateResolution(
@@ -471,6 +475,18 @@ fun resolveDueDate(
     }
 
     val dueDate = addDays(basisDay, applied.days)
+    // #1966 review: a bill is never due before its own date. Visit-relative
+    // terms that land there make the invoice due on receipt.
+    if (applied.basis != InvoiceTermsBasis.INVOICE && invoiceDay != null && dueDate < invoiceDay) {
+        return DueDateResolution(
+            dueDate = invoiceDay,
+            isPast = isCalendarDay(now) && invoiceDay < now,
+            basisDay = invoiceDay,
+            problem = null,
+            appliedCode = InvoiceTermsCode.DUE_ON_RECEIPT,
+            beforeInvoiceDate = true,
+        )
+    }
     return DueDateResolution(
         dueDate = dueDate,
         // Strictly before: due today is due, not overdue.

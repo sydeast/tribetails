@@ -317,4 +317,13 @@ class InvoiceComposerTest {
         assertNull(parseQty("0"))
         assertEquals(2.5, parseQty("2.5"))
     }
+
+    @Test
+    fun `#1966 review terms that land before the invoice date say it is due on receipt`() {
+        val due = resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-13", listOf("2026-11-14"), "2026-11-13")
+        assertEquals("2026-11-13", due.dueDate)
+        assertEquals(TERMS_BEFORE_INVOICE_DATE, composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, due, "2026-11-13"))
+        val none = resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-13", emptyList(), "2026-11-13")
+        assertEquals(NO_VISITS_DUE_ON_RECEIPT, composerTermsNote(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, none, "2026-11-13"))
+    }
 }

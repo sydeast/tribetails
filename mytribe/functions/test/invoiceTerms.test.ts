@@ -99,12 +99,12 @@ const CASES: readonly Case[] = [
   {
     what: 'due on the last visit is that visit day',
     code: 'due_on_last_visit',
-    invoiceDate: '2026-08-19',
-    serviceDates: ['2026-08-02', '2026-08-11'],
-    now: '2026-08-19',
+    invoiceDate: '2026-08-01',
     // Already behind today, and reported as such rather than moved.
+    serviceDates: ['2026-08-02', '2026-08-11'],
+    now: '2026-08-01',
     dueDate: '2026-08-11',
-    isPast: true,
+    isPast: false,
     appliedCode: 'due_on_last_visit',
   },
   {
@@ -178,24 +178,24 @@ const CASES: readonly Case[] = [
     appliedCode: 'net_30_before_first_visit',
   },
   {
-    what: 'a before-first-visit date already behind today is reported, not moved',
+    what: 'a before-first-visit date before the invoice date is due on receipt',
     code: 'net_7_before_first_visit',
     invoiceDate: '2026-11-13',
     serviceDates: ['2026-11-15'],
     now: '2026-11-13',
-    dueDate: '2026-11-08',
-    isPast: true,
-    appliedCode: 'net_7_before_first_visit',
+    dueDate: '2026-11-13',
+    isPast: false,
+    appliedCode: 'due_on_receipt',
   },
   {
     what: 'an evening visit in Chicago is counted on its Chicago day, not the UTC day',
     code: 'due_on_last_visit',
-    invoiceDate: '2026-12-01',
+    invoiceDate: '2026-11-30',
     // 7 PM on Nov 30 in Chicago is 01:00 on Dec 1 in UTC.
     serviceDates: ['2026-11-28T15:00:00.000Z', '2026-12-01T01:00:00.000Z'],
-    now: '2026-12-01',
+    now: '2026-11-30',
     dueDate: '2026-11-30',
-    isPast: true,
+    isPast: false,
     appliedCode: 'due_on_last_visit',
   },
   {
@@ -222,7 +222,7 @@ const CASES: readonly Case[] = [
   {
     what: 'the day after the clocks go forward: 04:30Z is Mar 8 in Chicago',
     code: 'due_on_last_visit',
-    invoiceDate: '2026-03-09',
+    invoiceDate: '2026-03-08',
     serviceDates: ['2026-03-09T04:30:00.000Z'],
     now: '2026-03-08',
     dueDate: '2026-03-08',
@@ -242,21 +242,21 @@ const CASES: readonly Case[] = [
   {
     what: 'a time with an offset is read on the Chicago clock',
     code: 'due_on_last_visit',
-    invoiceDate: '2026-12-01',
+    invoiceDate: '2026-11-30',
     serviceDates: ['2026-11-30T23:30:00-06:00'],
-    now: '2026-12-01',
+    now: '2026-11-30',
     dueDate: '2026-11-30',
-    isPast: true,
+    isPast: false,
     appliedCode: 'due_on_last_visit',
   },
   {
     what: 'a time with no zone is already the business clock and keeps its own date',
     code: 'due_on_last_visit',
-    invoiceDate: '2026-12-01',
+    invoiceDate: '2026-11-30',
     serviceDates: ['2026-11-30T23:30:00'],
-    now: '2026-12-01',
+    now: '2026-11-30',
     dueDate: '2026-11-30',
-    isPast: true,
+    isPast: false,
     appliedCode: 'due_on_last_visit',
   },
   {
@@ -319,6 +319,56 @@ const CASES: readonly Case[] = [
     isPast: false,
     appliedCode: 'custom',
   },
+  {
+    what: 'due on the last visit, invoiced after it, is due on receipt',
+    code: 'due_on_last_visit',
+    invoiceDate: '2026-08-19',
+    serviceDates: ['2026-08-02', '2026-08-11'],
+    now: '2026-08-19',
+    dueDate: '2026-08-19',
+    isPast: false,
+    appliedCode: 'due_on_receipt',
+  },
+  {
+    what: 'after-last-visit terms already behind today are reported, not moved',
+    code: 'net_7_after_last_visit',
+    invoiceDate: '2026-07-21',
+    serviceDates: ['2026-07-20'],
+    now: '2026-08-19',
+    dueDate: '2026-07-27',
+    isPast: true,
+    appliedCode: 'net_7_after_last_visit',
+  },
+  {
+    what: 'a backdated invoice held to its own date is still reported as past',
+    code: 'net_3_before_first_visit',
+    invoiceDate: '2026-11-10',
+    serviceDates: ['2026-11-12'],
+    now: '2026-11-13',
+    dueDate: '2026-11-10',
+    isPast: true,
+    appliedCode: 'due_on_receipt',
+  },
+  {
+    what: 'before-first-visit terms that land on the invoice date are kept',
+    code: 'net_2_before_first_visit',
+    invoiceDate: '2026-11-13',
+    serviceDates: ['2026-11-15'],
+    now: '2026-11-13',
+    dueDate: '2026-11-13',
+    isPast: false,
+    appliedCode: 'net_2_before_first_visit',
+  },
+  {
+    what: 'with no invoice date there is nothing to hold the due date to',
+    code: 'net_7_before_first_visit',
+    invoiceDate: '',
+    serviceDates: ['2026-11-15'],
+    now: '2026-11-13',
+    dueDate: '2026-11-08',
+    isPast: true,
+    appliedCode: 'net_7_before_first_visit',
+  },
 ];
 
 describe('resolveDueDate fixture table', () => {
@@ -343,18 +393,18 @@ describe('resolveDueDate fixture table', () => {
 describe('resolveDueDate reads visit days on the business clock', () => {
   it('defaults to America/Chicago when no zone is given', () => {
     const out = resolveDueDate(
-      { code: 'due_on_last_visit', invoiceDate: '2026-12-01' },
+      { code: 'due_on_last_visit', invoiceDate: '2026-11-30' },
       ['2026-12-01T01:00:00.000Z'],
-      '2026-12-01',
+      '2026-11-30',
     );
     expect(out.dueDate).toBe('2026-11-30');
   });
 
   it('uses the zone it is given', () => {
     const out = resolveDueDate(
-      { code: 'due_on_last_visit', invoiceDate: '2026-12-01' },
+      { code: 'due_on_last_visit', invoiceDate: '2026-11-30' },
       ['2026-12-01T01:00:00.000Z'],
-      '2026-12-01',
+      '2026-11-30',
       'Asia/Tokyo',
     );
     expect(out.dueDate).toBe('2026-12-01');
@@ -362,6 +412,28 @@ describe('resolveDueDate reads visit days on the business clock', () => {
 
   it('falls back to America/Chicago for a zone it cannot read', () => {
     expect(serviceDayOf('2026-12-01T01:00:00.000Z', 'Not/AZone')).toBe('2026-11-30');
+  });
+});
+
+describe('resolveDueDate never makes a bill due before its own date (#1966 review)', () => {
+  it('says why when the floor decided the date', () => {
+    const out = resolveDueDate(
+      { code: 'net_3_before_first_visit', invoiceDate: '2026-11-13' },
+      ['2026-11-14'],
+      '2026-11-13',
+    );
+    expect(out.dueDate).toBe('2026-11-13');
+    expect(out.appliedCode).toBe('due_on_receipt');
+    expect(out.beforeInvoiceDate).toBe(true);
+  });
+
+  it('does not say it for no visits, or for terms that land on or after the invoice date', () => {
+    expect(resolveDueDate({ code: 'net_3_before_first_visit', invoiceDate: '2026-11-13' }, [], '2026-11-13').beforeInvoiceDate).toBe(false);
+    expect(
+      resolveDueDate({ code: 'net_3_before_first_visit', invoiceDate: '2026-11-13' }, ['2026-11-16'], '2026-11-13')
+        .beforeInvoiceDate,
+    ).toBe(false);
+    expect(resolveDueDate({ code: 'net_14', invoiceDate: '2026-11-13' }, [], '2026-11-13').beforeInvoiceDate).toBe(false);
   });
 });
 

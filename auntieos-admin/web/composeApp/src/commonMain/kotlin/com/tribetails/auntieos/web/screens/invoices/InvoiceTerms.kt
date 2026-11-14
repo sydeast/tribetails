@@ -22,7 +22,9 @@ import kotlinx.datetime.toLocalDateTime
  * Pure: it reads no clock. Every date is a `YYYY-MM-DD` calendar day, never a
  * timestamp; a visit's instant is read as its business day first (#1966), and
  * visit-relative terms with no visits are due on receipt. A due date already in the past is reported through
- * [DueDateResolution.isPast] and never moved to today.
+ * [DueDateResolution.isPast] and never moved to today. A bill is never due
+ * before its own date (#1966 review): visit-relative terms that land there are
+ * due on receipt, and [DueDateResolution.beforeInvoiceDate] says why.
  */
 
 /** What a terms code counts from. */
@@ -249,6 +251,12 @@ data class DueDateResolution(
     val basisDay: String?,
     val problem: String?,
     val appliedCode: InvoiceTermsCode,
+    /**
+     * True when the terms worked out to a day before the invoice date, so the
+     * invoice is due on receipt instead (#1966 review). [appliedCode] is then
+     * due on receipt and [basisDay] the invoice date.
+     */
+    val beforeInvoiceDate: Boolean = false,
 )
 
 /** The due date these terms mean, given the invoice date, the work on it, today and the business zone. */
@@ -277,11 +285,8 @@ fun resolveDueDate(
     }
     // A visit-relative code with no visits to count from is due on receipt.
     val applied = if (code.basis != InvoiceTermsBasis.INVOICE && visitDay == null) InvoiceTermsCode.DUE_ON_RECEIPT else code
-    val basisDay = if (applied.basis == InvoiceTermsBasis.INVOICE) {
-        invoiceDate.trim().takeIf { isCalendarDay(it) }
-    } else {
-        visitDay
-    }
+    val invoiceDay = invoiceDate.trim().takeIf { isCalendarDay(it) }
+    val basisDay = if (applied.basis == InvoiceTermsBasis.INVOICE) invoiceDay else visitDay
 
     if (basisDay == null) {
         return DueDateResolution(
@@ -295,6 +300,18 @@ fun resolveDueDate(
     }
 
     val dueDate = addDays(basisDay, applied.days)
+    // #1966 review: a bill is never due before its own date. Visit-relative
+    // terms that land there make the invoice due on receipt.
+    if (applied.basis != InvoiceTermsBasis.INVOICE && invoiceDay != null && dueDate < invoiceDay) {
+        return DueDateResolution(
+            dueDate = invoiceDay,
+            isPast = isCalendarDay(now) && invoiceDay < now,
+            basisDay = invoiceDay,
+            problem = null,
+            appliedCode = InvoiceTermsCode.DUE_ON_RECEIPT,
+            beforeInvoiceDate = true,
+        )
+    }
     return DueDateResolution(
         dueDate = dueDate,
         // Strictly before: due today is due, not overdue.

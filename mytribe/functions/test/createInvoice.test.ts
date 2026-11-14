@@ -34,6 +34,7 @@ vi.mock('firebase-admin/firestore', async () => {
 import { createInvoiceHandler } from '../src/admin/createInvoice';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 import { invoiceStateStampOf } from '../src/lib/invoiceStateStamp';
+import { daysPastDue, invoiceDueDayOf } from '../src/lib/invoiceChase';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -651,11 +652,11 @@ describe('createInvoice structured terms', () => {
     );
     expect(ctx.writes.find((w) => w.path.startsWith('invoices/'))?.data.dueDate).toBe('2026-12-01');
   });
-  it('#1966: counts before-first-visit terms back from the first visit, even before the invoice date', async () => {
+  it('#1966: counts before-first-visit terms back from the first visit', async () => {
     const ctx = buildDbMock({
       docs: {
-        'kin_care_sessions/s1': session('2026-06-04T14:00:00.000Z'),
-        'kin_care_sessions/s2': session('2026-06-09T14:00:00.000Z'),
+        'kin_care_sessions/s1': session('2026-06-20T14:00:00.000Z'),
+        'kin_care_sessions/s2': session('2026-06-24T14:00:00.000Z'),
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -663,9 +664,41 @@ describe('createInvoice structured terms', () => {
       req({ ...validPayload, sessionIds: ['s1', 's2'], termsCode: 'net_7_before_first_visit', dueDate: '' }),
     );
     const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
-    // 7 days before Jun 4. Structured terms are not judged against the invoice date.
-    expect(written?.data.dueDate).toBe('2026-05-28');
+    expect(written?.data.dueDate).toBe('2026-06-13');
+    expect(written?.data.termsCode).toBe('net_7_before_first_visit');
     expect(written?.data.terms).toBe('Due 7 days before the first visit');
+  });
+  it('#1966 review: terms that land before the invoice date make it due on receipt, so it is not overdue on arrival', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'kin_care_sessions/s1': session('2026-06-04T14:00:00.000Z'),
+        'kin_care_sessions/s2': session('2026-06-09T14:00:00.000Z'),
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    // The composer previews the same resolver, so it sends the floored date.
+    await createInvoiceHandler(
+      req({ ...validPayload, sessionIds: ['s1', 's2'], termsCode: 'net_7_before_first_visit', dueDate: '2026-06-01' }),
+    );
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    // 7 days before Jun 4 is May 28, before the Jun 1 invoice date.
+    expect(written?.data.dueDate).toBe('2026-06-01');
+    expect(written?.data.termsCode).toBe('due_on_receipt');
+    expect(written?.data.terms).toBe('Due on receipt');
+    // What the overdue cron reads on the day the bill goes out: not past due.
+    expect(daysPastDue(invoiceDueDayOf(written?.data ?? {}), '2026-06-01')).toBeNull();
+  });
+  it('#1966 review: refuses a stale preview of a date before the invoice date', async () => {
+    const ctx = buildDbMock({
+      docs: { 'kin_care_sessions/s1': session('2026-06-04T14:00:00.000Z') },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      createInvoiceHandler(
+        req({ ...validPayload, sessionIds: ['s1'], termsCode: 'net_7_before_first_visit', dueDate: '2026-05-28' }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes.find((w) => w.path.startsWith('invoices/'))).toBeUndefined();
   });
   it('lets custom terms keep the operator typed date', async () => {
     const ctx = buildDbMock({});

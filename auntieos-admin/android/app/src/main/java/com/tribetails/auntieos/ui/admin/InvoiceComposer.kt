@@ -497,6 +497,8 @@ fun composerCreateLabel(kind: InvoiceCreateKind, visitCount: Int): String {
 /** #1966: said beside Terms when visit-relative terms have no visits to count from. */
 const val NO_VISITS_DUE_ON_RECEIPT = "There are no visits on this invoice, so it is due on receipt."
 
+/** #1966 review: said beside Terms when the terms work out to a day before the invoice date. */
+const val TERMS_BEFORE_INVOICE_DATE = "These terms work out to a day before the invoice date, so it is due on receipt."
 /** #1966: said beside Terms, and as the button's reason, while the Payment terms setting loads. */
 const val TERMS_LOADING = "Loading your payment terms…"
 
@@ -519,6 +521,8 @@ data class InvoiceTermsSettingState(
 fun composerTermsNote(termsCode: InvoiceTermsCode, due: DueDateResolution, invoiceDate: String): String = when {
     termsCode == InvoiceTermsCode.CUSTOM -> "These terms leave the due date to you."
     due.dueDate == null -> due.problem.orEmpty()
+    // #1966 review: a bill is never due before its own date.
+    due.beforeInvoiceDate -> TERMS_BEFORE_INVOICE_DATE
     // #1966: a visit rule on an invoice with no visits is due on receipt.
     due.appliedCode != termsCode -> NO_VISITS_DUE_ON_RECEIPT
     due.isPast ->

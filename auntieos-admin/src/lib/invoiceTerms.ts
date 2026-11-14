@@ -22,8 +22,9 @@
  * It carries everything the server file does EXCEPT `InvoiceTermsCodeArg`, the
  * zod request schema, which is a server-side argument rule and not arithmetic.
  *
- * The rules themselves, and why a past due date is reported rather than moved,
- * are documented once on the authority. Read that header first.
+ * The rules themselves, why a past due date is reported rather than moved, and
+ * why a bill is never due before its own date, are documented once on the
+ * authority. Read that header first.
  */
 
 /**
@@ -445,6 +446,12 @@ export interface DueDateResolution {
    */
   appliedCode: InvoiceTermsCode;
   /**
+   * True when the terms worked out to a day before the invoice date, so the
+   * invoice is due on receipt instead (#1966 review). `appliedCode` is then
+   * `due_on_receipt` and `basisDay` the invoice date.
+   */
+  beforeInvoiceDate: boolean;
+  /**
    * Why there is no date, as operator-facing text, or null when there is one.
    * Names what is missing and what to do, never a bare "invalid".
    */
@@ -472,6 +479,7 @@ export function resolveDueDate(
       isPast: false,
       basisDay: null,
       appliedCode: def.code,
+      beforeInvoiceDate: false,
       problem: 'These terms let you pick the due date, so there is nothing to work out. Choose the date yourself.',
     };
   }
@@ -493,18 +501,32 @@ export function resolveDueDate(
       isPast: false,
       basisDay: null,
       appliedCode: applied.code,
+      beforeInvoiceDate: false,
       problem:
         'These terms count from the invoice date, and this invoice has no date on it yet. Set the date, or pick the date yourself.',
     };
   }
 
-  const dueDate = addDays(basisDay, applied.days);
+  const counted = addDays(basisDay, applied.days);
+  // #1966 review: a bill is never due before its own date. Visit-relative
+  // terms that land there make the invoice due on receipt (see the header).
+  if (applied.basis !== 'invoice' && invoiceDay !== null && counted < invoiceDay) {
+    return {
+      dueDate: invoiceDay,
+      isPast: isCalendarDay(now) && invoiceDay < now,
+      basisDay: invoiceDay,
+      appliedCode: 'due_on_receipt',
+      beforeInvoiceDate: true,
+      problem: null,
+    };
+  }
   return {
-    dueDate,
+    dueDate: counted,
     // Strictly before: due today is due, not overdue.
-    isPast: isCalendarDay(now) && dueDate < now,
+    isPast: isCalendarDay(now) && counted < now,
     basisDay,
     appliedCode: applied.code,
+    beforeInvoiceDate: false,
     problem: null,
   };
 }

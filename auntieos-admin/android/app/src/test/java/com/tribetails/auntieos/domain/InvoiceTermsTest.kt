@@ -61,8 +61,8 @@ class InvoiceTermsTest {
         ),
         Case(
             "due on the last visit is that visit day",
-            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-08-19", listOf("2026-08-02", "2026-08-11"),
-            "2026-08-19", "2026-08-11", true, InvoiceTermsCode.DUE_ON_LAST_VISIT,
+            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-08-01", listOf("2026-08-02", "2026-08-11"),
+            "2026-08-01", "2026-08-11", false, InvoiceTermsCode.DUE_ON_LAST_VISIT,
         ),
         Case(
             "due on the first visit is the earliest visit day",
@@ -100,14 +100,14 @@ class InvoiceTermsTest {
             "2026-02-01", "2026-02-13", false, InvoiceTermsCode.NET_30_BEFORE_FIRST_VISIT,
         ),
         Case(
-            "a before-first-visit date already behind today is reported, not moved",
+            "a before-first-visit date before the invoice date is due on receipt",
             InvoiceTermsCode.NET_7_BEFORE_FIRST_VISIT, "2026-11-13", listOf("2026-11-15"),
-            "2026-11-13", "2026-11-08", true, InvoiceTermsCode.NET_7_BEFORE_FIRST_VISIT,
+            "2026-11-13", "2026-11-13", false, InvoiceTermsCode.DUE_ON_RECEIPT,
         ),
         Case(
             "an evening visit in Chicago is counted on its Chicago day, not the UTC day",
-            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-12-01", listOf("2026-11-28T15:00:00.000Z", "2026-12-01T01:00:00.000Z"),
-            "2026-12-01", "2026-11-30", true, InvoiceTermsCode.DUE_ON_LAST_VISIT,
+            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-11-30", listOf("2026-11-28T15:00:00.000Z", "2026-12-01T01:00:00.000Z"),
+            "2026-11-30", "2026-11-30", false, InvoiceTermsCode.DUE_ON_LAST_VISIT,
         ),
         Case(
             "an evening first visit is counted on its Chicago day before the count runs back",
@@ -121,7 +121,7 @@ class InvoiceTermsTest {
         ),
         Case(
             "the day after the clocks go forward: 04:30Z is Mar 8 in Chicago",
-            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-03-09", listOf("2026-03-09T04:30:00.000Z"),
+            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-03-08", listOf("2026-03-09T04:30:00.000Z"),
             "2026-03-08", "2026-03-08", false, InvoiceTermsCode.DUE_ON_LAST_VISIT,
         ),
         Case(
@@ -131,13 +131,13 @@ class InvoiceTermsTest {
         ),
         Case(
             "a time with an offset is read on the Chicago clock",
-            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-12-01", listOf("2026-11-30T23:30:00-06:00"),
-            "2026-12-01", "2026-11-30", true, InvoiceTermsCode.DUE_ON_LAST_VISIT,
+            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-11-30", listOf("2026-11-30T23:30:00-06:00"),
+            "2026-11-30", "2026-11-30", false, InvoiceTermsCode.DUE_ON_LAST_VISIT,
         ),
         Case(
             "a time with no zone is already the business clock and keeps its own date",
-            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-12-01", listOf("2026-11-30T23:30:00"),
-            "2026-12-01", "2026-11-30", true, InvoiceTermsCode.DUE_ON_LAST_VISIT,
+            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-11-30", listOf("2026-11-30T23:30:00"),
+            "2026-11-30", "2026-11-30", false, InvoiceTermsCode.DUE_ON_LAST_VISIT,
         ),
         Case(
             "after-last-visit terms with no visits are due on receipt",
@@ -169,6 +169,31 @@ class InvoiceTermsTest {
             InvoiceTermsCode.CUSTOM, "2026-08-19", listOf("2026-08-11"),
             "2026-08-19", null, false, InvoiceTermsCode.CUSTOM,
         ),
+        Case(
+            "due on the last visit, invoiced after it, is due on receipt",
+            InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-08-19", listOf("2026-08-02", "2026-08-11"),
+            "2026-08-19", "2026-08-19", false, InvoiceTermsCode.DUE_ON_RECEIPT,
+        ),
+        Case(
+            "after-last-visit terms already behind today are reported, not moved",
+            InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, "2026-07-21", listOf("2026-07-20"),
+            "2026-08-19", "2026-07-27", true, InvoiceTermsCode.NET_7_AFTER_LAST_VISIT,
+        ),
+        Case(
+            "a backdated invoice held to its own date is still reported as past",
+            InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-10", listOf("2026-11-12"),
+            "2026-11-13", "2026-11-10", true, InvoiceTermsCode.DUE_ON_RECEIPT,
+        ),
+        Case(
+            "before-first-visit terms that land on the invoice date are kept",
+            InvoiceTermsCode.NET_2_BEFORE_FIRST_VISIT, "2026-11-13", listOf("2026-11-15"),
+            "2026-11-13", "2026-11-13", false, InvoiceTermsCode.NET_2_BEFORE_FIRST_VISIT,
+        ),
+        Case(
+            "with no invoice date there is nothing to hold the due date to",
+            InvoiceTermsCode.NET_7_BEFORE_FIRST_VISIT, "", listOf("2026-11-15"),
+            "2026-11-13", "2026-11-08", true, InvoiceTermsCode.NET_7_BEFORE_FIRST_VISIT,
+        ),
     )
 
     @Test
@@ -186,19 +211,32 @@ class InvoiceTermsTest {
 
     @Test
     fun `the fixture table is the shared one, case for case`() {
-        assertEquals(28, cases.size)
+        assertEquals(33, cases.size)
+    }
+
+    @Test
+    fun `a bill is never due before its own date, and the resolution says why`() {
+        val floored = resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-13", listOf("2026-11-14"), "2026-11-13")
+        assertEquals("2026-11-13", floored.dueDate)
+        assertEquals(InvoiceTermsCode.DUE_ON_RECEIPT, floored.appliedCode)
+        assertTrue(floored.beforeInvoiceDate)
+        assertFalse(resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-13", emptyList(), "2026-11-13").beforeInvoiceDate)
+        assertFalse(
+            resolveDueDate(InvoiceTermsCode.NET_3_BEFORE_FIRST_VISIT, "2026-11-13", listOf("2026-11-16"), "2026-11-13").beforeInvoiceDate,
+        )
+        assertFalse(resolveDueDate(InvoiceTermsCode.NET_14, "2026-11-13", emptyList(), "2026-11-13").beforeInvoiceDate)
     }
 
     @Test
     fun `visit days default to Chicago, follow the zone given, and fall back to Chicago`() {
         assertEquals(
             "2026-11-30",
-            resolveDueDate(InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-12-01", listOf("2026-12-01T01:00:00.000Z"), "2026-12-01").dueDate,
+            resolveDueDate(InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-11-30", listOf("2026-12-01T01:00:00.000Z"), "2026-11-30").dueDate,
         )
         assertEquals(
             "2026-12-01",
             resolveDueDate(
-                InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-12-01", listOf("2026-12-01T01:00:00.000Z"), "2026-12-01", "Asia/Tokyo",
+                InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-11-30", listOf("2026-12-01T01:00:00.000Z"), "2026-11-30", "Asia/Tokyo",
             ).dueDate,
         )
         assertEquals("2026-11-30", serviceDayOf("2026-12-01T01:00:00.000Z", "Not/AZone"))
