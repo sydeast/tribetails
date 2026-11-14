@@ -227,6 +227,60 @@ export function templateForDraft(
 }
 
 /**
+ * #2058 (operator ruling 2026-11-12, stamp at send): the checklist a SENT
+ * KinTale carries as its own copy, `careTasks` on the `kin_care_reports` doc,
+ * written by the server when the tale is sent
+ * (`mytribe/functions/src/lib/careTaskStamp.ts`). `items` is every task the
+ * template offered, with its scope, order and conditions, so the composer can
+ * rebuild exactly the checklist the tale was sent against.
+ *
+ * Null when the value is absent or not a copy this code understands (a newer
+ * version), so the caller falls back to the template the way it always has.
+ */
+export interface CareTaskCopy {
+  templateId: string;
+  templateName: string;
+  checklistEnabled: boolean;
+  items: ChecklistItem[];
+}
+export function decodeCareTaskCopy(raw: unknown): CareTaskCopy | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (o['v'] !== 1 || !Array.isArray(o['items']) || !Array.isArray(o['done'])) return null;
+  return {
+    templateId: readString(o, 'templateId'),
+    templateName: readString(o, 'templateName'),
+    checklistEnabled: readBool(o, 'checklistEnabled', true),
+    items: readArray(o, 'items')
+      .map(decodeChecklistItem)
+      .filter((i) => i.key !== '' && i.text.trim() !== ''),
+  };
+}
+/**
+ * The template a KinTale is shown against. A SENT tale that carries its own
+ * copy of the care tasks is shown against that copy and nothing else: its
+ * checklist, labels and conditions come off the tale, so editing or deleting
+ * the template afterwards cannot reach it. The template (or the built-in)
+ * still supplies the other sections' switches, which are not part of the copy.
+ *
+ * A draft, and a tale sent before the copy existed, resolve as
+ * {@link templateForDraft} always has.
+ */
+export function templateForKinTale(
+  list: readonly KinTaleTemplate[],
+  templateId: string,
+  sentCopy: CareTaskCopy | null,
+): KinTaleTemplate {
+  const base = templateForDraft(list, templateId);
+  if (sentCopy === null) return base;
+  return {
+    ...base,
+    name: sentCopy.templateName || base.name,
+    checklistEnabled: sentCopy.checklistEnabled,
+    checklistItems: sentCopy.items,
+  };
+}
+/**
  * The value to STAMP on a report's `templateId` for a resolved template: the
  * doc id, or `''` for the built-in default. Mirrors
  * `template._id.takeUnless { it == DefaultKinTaleTemplate.ID }.orEmpty()`

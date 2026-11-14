@@ -18,6 +18,9 @@ vi.mock('./bookingsWrite', () => ({ transitionBookingStatus }));
 
 const { getAuthState } = vi.hoisted(() => ({ getAuthState: vi.fn() }));
 vi.mock('../lib/auth', () => ({ getAuthState }));
+// #2058: the send is the `sendKinTaleReport` callable.
+const { call } = vi.hoisted(() => ({ call: vi.fn() }));
+vi.mock('../lib/fns', () => ({ call }));
 
 import {
   saveKinTaleDraft,
@@ -53,6 +56,7 @@ beforeEach(() => {
   transitionBookingStatus.mockReset();
   collection.mockReset().mockReturnValue('collRef');
   writeBatch.mockReset();
+  call.mockReset().mockResolvedValue({ ok: true, reportId: 'r1', alreadySent: false });
   arrayUnion.mockClear();
   increment.mockClear();
   getAuthState.mockReset().mockReturnValue({
@@ -177,45 +181,21 @@ describe('sendKinTale', () => {
     await expect(sendKinTale({ reportId: 'r1', sessionId: '' })).rejects.toThrow(/sessionId/);
   });
 
-  it('commits one batch: flips the report SENT and updates the parent session atomically', async () => {
-    const update = vi.fn();
-    const commit = vi.fn().mockResolvedValue(undefined);
-    writeBatch.mockReturnValue({ update, commit });
-
+  it('#2058: sends through the sendKinTaleReport callable, which stamps the care tasks in the same write', async () => {
     await sendKinTale({ reportId: 'r1', sessionId: 's1' });
-
-    expect(writeBatch).toHaveBeenCalledTimes(1);
-    expect(update).toHaveBeenCalledTimes(2);
-
-    expect(update).toHaveBeenNthCalledWith(
-      1,
-      'docRef',
-      expect.objectContaining({
-        status: 'SENT',
-        sentVia: 'pending',
-        deliveryReceiptId: '',
-      }),
-    );
-    expect(update).toHaveBeenNthCalledWith(
-      2,
-      'docRef',
-      expect.objectContaining({
-        reportIds: { __op: 'arrayUnion', v: 'r1' },
-        sentReportCount: { __op: 'increment', n: 1 },
-        autoCompleteEligible: true,
-        // #2123: the visit leaves the Auntie's "KinTales to send" list.
-        kinTaleDue: false,
-      }),
-    );
-    expect(commit).toHaveBeenCalledOnce();
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith('sendKinTaleReport', { reportId: 'r1', sentVia: 'pending' });
+    // The client no longer writes the flip, or the visit's totals, itself.
+    expect(writeBatch).not.toHaveBeenCalled();
+    expect(setDoc).not.toHaveBeenCalled();
   });
-
-  it('never commits a half transition: a batch failure rejects, and the caller can tell', async () => {
-    const update = vi.fn();
-    const commit = vi.fn().mockRejectedValue(new Error('unavailable'));
-    writeBatch.mockReturnValue({ update, commit });
-
+  it('a refused send rejects, and the caller can tell', async () => {
+    call.mockRejectedValue(new Error('unavailable'));
     await expect(sendKinTale({ reportId: 'r1', sessionId: 's1' })).rejects.toThrow('unavailable');
+  });
+  it('a blank id never reaches the server', async () => {
+    await expect(sendKinTale({ reportId: ' ', sessionId: 's1' })).rejects.toThrow(/reportId/);
+    expect(call).not.toHaveBeenCalled();
   });
 });
 /**
@@ -290,12 +270,10 @@ describe('templateId and fieldResponses reach the document', () => {
  * server), so nothing here reads the session back or calls the callable.
  */
 describe('a send does not decide completion', () => {
-  it('reads nothing back and asks the server for nothing after the commit', async () => {
-    const update = vi.fn();
-    const commit = vi.fn().mockResolvedValue(undefined);
-    writeBatch.mockReturnValue({ update, commit });
+  it('reads nothing back and asks the server for nothing after the send', async () => {
     await sendKinTale({ reportId: 'r1', sessionId: 's1' });
     expect(getDoc).not.toHaveBeenCalled();
     expect(transitionBookingStatus).not.toHaveBeenCalled();
+    expect(call).toHaveBeenCalledTimes(1);
   });
 });

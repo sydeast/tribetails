@@ -46,6 +46,7 @@ import com.tribetails.auntieos.web.data.DefaultKinTaleTemplate
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.SentChecklistItem
+import com.tribetails.auntieos.web.data.forKinTale
 import com.tribetails.auntieos.web.data.resolveSentChecklist
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareReport
@@ -1014,16 +1015,18 @@ private fun ChecklistSections(report: KinCareReport, kinById: Map<String, Kin>) 
     val c = AuntieTheme.colors
     if (report.fieldResponses.isEmpty()) return
 
-    // Render off the REAL template the visit used (custom item labels + custom
-    // keys), not the built-in default, and honor conditions - so the sent report
-    // never shows an item a condition excludes and never drops a custom item.
-    // Streams the best-fit active template for the report's service type (same
-    // selection the composer used); falls back to the built-in default until it
-    // resolves. Matches the Android report (which already uses the real template).
+    // #2058 (operator ruling 2026-11-12, stamp at send): a sent tale renders off
+    // its OWN copy of the care tasks (labels, keys, conditions), so a template
+    // edited or deleted afterwards never changes it. Only a tale sent before
+    // the copy existed still streams the best-fit active template for its
+    // service type, falling back to the built-in default until that resolves,
+    // and honors conditions either way - so the sent report never shows an item
+    // a condition excludes and never drops a custom item. Matches Android.
     val client = remember { FirestoreClient() }
-    val template by remember(report.serviceType) {
+    val streamed by remember(report.serviceType) {
         client.activeTemplateForService(report.serviceType)
     }.collectAsState(initial = DefaultKinTaleTemplate.template)
+    val template = streamed.forKinTale(report)
 
     // The household the visit belongs to, for the KINFOLK_* conditions. Without
     // it those rules evaluate against an empty household and silently hide

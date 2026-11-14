@@ -8,10 +8,15 @@ import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.WriteBatch
+import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.HttpsCallableReference
+import com.google.firebase.functions.HttpsCallableResult
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -288,65 +293,55 @@ class KinCareReportReconcileMergeTest {
 
     // ── the site that was already safe ────────────────────────────────────────
 
-    @Test
-    fun `markReportSent patches named fields and never issues a document set`() {
-        // The write MODE here was always correct: `update(map)` touches only the
-        // keys it names, so it could not reach `reconcileStatus`. Pinned so a
-        // later "simplify" back to set() has to fail a test to land. Batching the
-        // two writes (#552) does not change that - `WriteBatch.update` carries the
-        // same named-field semantics - and the atomicity itself is pinned by the
-        // test below.
-        val batch = stubBatch()
-        val repo = KinCareRepository(
-            authGate = AuthGate { auth },
-            functionsProvider = { mockk() },
-            firestoreProvider = { firestore },
-            authProvider = { auth },
-        )
-
-        runBlocking { repo.markReportSent("rep-1", "sess-1", "sms", "SM123") }.getOrThrow()
-
-        assertNull("markReportSent must not overwrite the document", recorded)
-        assertTrue(batch.patched.isNotEmpty())
-        assertTrue(batch.patched.none { "reconcileStatus" in it.keys })
-        assertEquals("SENT", batch.patched.first()["status"])
-    }
-
     /**
-     * #552: the send transition is ONE commit, not two round trips.
-     *
-     * The report flipping to SENT and the session counting the send are halves of
-     * one fact. Split across two `await()`ed updates, a failure between them left
-     * a KinTale announced as sent whose session never counted it - and
-     * `sentReportCount` is what `autoCompleteEligible` is derived from, so the
-     * visit quietly stopped being auto-completable with nothing raised anywhere.
-     * The web client (`api/kinTalesWrite.ts#sendKinTale`) has always used one
-     * `writeBatch` over the same two documents; this is that guarantee on Android.
+     * #2058: the send is the `sendKinTaleReport` callable, which marks the
+     * KinTale SENT, stamps its own copy of the care tasks and records the send
+     * on the visit in ONE server transaction (operator ruling 2026-11-12, stamp
+     * at send). This app writes neither document itself any more, so nothing it
+     * sends can reach `reconcileStatus`, and nothing is half-committed (#552).
      */
     @Test
-    fun `markReportSent commits the report flip and the session bump as one batch`() {
+    fun `markReportSent sends through the callable and writes no document itself`() {
         val batch = stubBatch()
+        val functions = mockk<FirebaseFunctions>()
+        val ref = mockk<HttpsCallableReference>()
+        val payload = slot<Any>()
+        every { ref.call(capture(payload)) } returns Tasks.forResult(mockk<HttpsCallableResult>(relaxed = true))
+        every { functions.getHttpsCallable("sendKinTaleReport") } returns ref
         val repo = KinCareRepository(
             authGate = AuthGate { auth },
-            functionsProvider = { mockk() },
+            functionsProvider = { functions },
             firestoreProvider = { firestore },
             authProvider = { auth },
         )
-
-        runBlocking { repo.markReportSent("rep-1", "sess-1", "sms", "SM123") }.getOrThrow()
-
-        // Both documents, inside the batch, then exactly one commit.
-        assertEquals(2, batch.patched.size)
-        assertEquals(1, batch.commits)
-        assertEquals("SENT", batch.patched[0]["status"])
-        assertTrue("the session side must ride the same commit", batch.patched[1].containsKey("sentReportCount"))
-        assertEquals(true, batch.patched[1]["autoCompleteEligible"])
-        // #2123: the send settles the "Send the KinTale" task in the same commit.
-        assertEquals(false, batch.patched[1]["kinTaleDue"])
-        // Nothing was written outside the batch on the way there.
+        runBlocking { repo.markReportSent("rep-1", "sess-1", "catalog", "disp-9") }.getOrThrow()
+        verify(exactly = 1) { functions.getHttpsCallable("sendKinTaleReport") }
+        assertEquals(
+            mapOf("reportId" to "rep-1", "sentVia" to "catalog", "deliveryReceiptId" to "disp-9"),
+            payload.captured,
+        )
+        assertNull("markReportSent must not overwrite the document", recorded)
+        assertTrue("no client batch any more", batch.patched.isEmpty())
+        assertEquals(0, batch.commits)
         assertEquals(0, looseUpdates.size)
     }
-
+    @Test
+    fun `markReportSent fails loud when the server refuses, and on a blank id`() {
+        stubBatch()
+        val functions = mockk<FirebaseFunctions>()
+        val ref = mockk<HttpsCallableReference>()
+        every { ref.call(any()) } returns Tasks.forException(RuntimeException("unavailable"))
+        every { functions.getHttpsCallable("sendKinTaleReport") } returns ref
+        val repo = KinCareRepository(
+            authGate = AuthGate { auth },
+            functionsProvider = { functions },
+            firestoreProvider = { firestore },
+            authProvider = { auth },
+        )
+        assertTrue(runBlocking { repo.markReportSent("rep-1", "sess-1", "catalog", "") }.isFailure)
+        assertTrue(runBlocking { repo.markReportSent("", "sess-1", "catalog", "") }.isFailure)
+        verify(exactly = 1) { functions.getHttpsCallable("sendKinTaleReport") }
+    }
     /** Named-field updates issued straight on a DocumentReference, outside any batch. */
     private val looseUpdates = mutableListOf<Map<String, Any>>()
 

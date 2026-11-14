@@ -144,6 +144,10 @@ export async function getMyKinTalesHandler(
   const sessionIdByIndex: (string | null)[] = [];
   const templateIdByIndex: (string | null)[] = [];
   const checkedKeysByIndex: string[][] = [];
+  // #2058: the tale's own copy of its care tasks, when it carries one. A
+  // stamped tale is never resolved against a template.
+  const { readCareTaskStamp, checklistFromStamp, CARE_TASKS_FIELD } = await import('../lib/careTaskStamp.js');
+  const stampedChecklistByIndex: (ChecklistItemDto[] | null)[] = [];
 
   const tales: KinTaleDto[] = docs.map((d, taleIndex) => {
     const data = d.data() as Record<string, unknown>;
@@ -155,6 +159,8 @@ export async function getMyKinTalesHandler(
 
     const templateIdRaw = data['templateId'];
     templateIdByIndex.push(typeof templateIdRaw === 'string' && templateIdRaw.length > 0 ? templateIdRaw : null);
+    const stamp = readCareTaskStamp(data[CARE_TASKS_FIELD]);
+    stampedChecklistByIndex.push(stamp ? checklistFromStamp(stamp) : null);
 
     // `fieldResponses`: a map keyed "kinId|fieldKey" -> { fieldKey, kinId,
     // boolValue, ... }, written by the live operator Android app's checklist
@@ -240,7 +246,7 @@ export async function getMyKinTalesHandler(
 
   await resolveFallbackThumbs(firestore, tales, fallbackIndices);
   await resolveVisitTimes(firestore, tales, sessionIdByIndex);
-  await resolveChecklists(firestore, tales, checkedKeysByIndex, templateIdByIndex);
+  await resolveChecklists(firestore, tales, checkedKeysByIndex, templateIdByIndex, stampedChecklistByIndex);
 
   logEvent({
     severity: 'info',
@@ -388,19 +394,34 @@ const DEFAULT_TEMPLATE_CHECKLIST_ITEMS: TemplateChecklistItem[] = [
  * matching the one existing sent-report renderer, `SentChecklistResolver.kt:46`
  * (`checked = report.fieldResponses.values.filter { it.boolValue == true }`).
  *
- * Labels/order come from the report's own `templateId` (or the built-in
- * default when blank) — a checked key that isn't in THAT template (wrong
- * template, or the template/key has since changed) cannot be labeled, so it
- * is dropped rather than shown with a fabricated or blank label.
+ * #2058 (operator ruling 2026-11-12, stamp at send): a tale carrying
+ * `careTasks` is answered from that copy and nothing else. Only a tale sent
+ * before the copy existed, and not yet backfilled
+ * (`mytribe/scripts/backfillKinTaleCareTasks.ts`), still goes the old way
+ * below.
+ *
+ * The old way: labels/order come from the report's own `templateId` (or the
+ * built-in default when blank) — a checked key that isn't in THAT template
+ * (wrong template, or the template/key has since changed) cannot be labeled,
+ * so it is dropped rather than shown with a fabricated or blank label.
  */
 async function resolveChecklists(
   firestore: FirebaseFirestore.Firestore,
   tales: KinTaleDto[],
   checkedKeysByIndex: string[][],
   templateIdByIndex: (string | null)[],
+  stampedChecklistByIndex: (ChecklistItemDto[] | null)[],
 ): Promise<void> {
+  // #2058: a tale that carries its own copy is answered from it, and its
+  // template is not even read, so editing or deleting that template cannot
+  // reach it. An empty copy is still an answer: nothing was done that visit.
+  tales.forEach((tale, taleIndex) => {
+    const stamped = stampedChecklistByIndex[taleIndex];
+    if (stamped && stamped.length > 0) tale.checklist = stamped;
+  });
+  const unstamped = (taleIndex: number) => !stampedChecklistByIndex[taleIndex];
   const uniqueTemplateIds = Array.from(
-    new Set(templateIdByIndex.filter((id): id is string => id !== null)),
+    new Set(templateIdByIndex.filter((id, i): id is string => id !== null && unstamped(i))),
   );
 
   const itemsByTemplateId = new Map<string, TemplateChecklistItem[]>();
@@ -416,6 +437,7 @@ async function resolveChecklists(
   }
 
   tales.forEach((tale, taleIndex) => {
+    if (!unstamped(taleIndex)) return;
     const checkedKeys = checkedKeysByIndex[taleIndex] ?? [];
     if (checkedKeys.length === 0) return;
 
