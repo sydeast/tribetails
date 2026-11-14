@@ -428,6 +428,19 @@ describe('Notifications feed context (issue #20)', () => {
     expect(screen.getByText('A KinCare visit was confirmed.')).toBeInTheDocument();
   });
 
+  it('#2321: a row shows punctuation and typed markup as characters, never as codes or as markup', () => {
+    const title = "O'Malley & Sue's visit";
+    const description = 'Bob & Sue said "<b>bold</b> &amp; <img src=x onerror=alert(1)>"';
+    mockStreams({ status: 'ready', data: [entry({ title, description })] });
+    const { container } = render(<Notifications />);
+    expect(screen.getByText(title)).toBeInTheDocument();
+    const line = screen.getByText(description);
+    // The words are one text node: nothing typed became an element.
+    expect(line.children).toHaveLength(0);
+    expect(line.textContent).toBe(description);
+    expect(container.querySelector('.notif-row__desc b, .notif-row__desc img')).toBeNull();
+    expect(container.querySelector('img[src="x"]')).toBeNull();
+  });
   it('groups the feed under day separators, newest day first', () => {
     mockStreams({
       status: 'ready',
