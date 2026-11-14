@@ -298,10 +298,25 @@ class FormSchemaEditorViewModel(
                     )
                 }
                 .onFailure { err ->
-                    _state.value = _state.value.copy(
-                        saveStatus = SaveStatus.FAILED,
-                        errorMessage = "Save failed: ${err.message ?: err::class.simpleName}",
-                    )
+                    // #2074: a field-level refusal is placed on the card it is
+                    // about, in the server's words, rather than one general line.
+                    val refused = formSchemaRefusalsOf(err)
+                    _state.value = if (refused.isNotEmpty()) {
+                        _state.value.copy(
+                            validationErrors = refused,
+                            saveStatus = SaveStatus.VALIDATION_FAILED,
+                            errorMessage = if (refused.size == 1) {
+                                "One entry was not accepted. It is marked below."
+                            } else {
+                                "${refused.size} entries were not accepted. They are marked below."
+                            },
+                        )
+                    } else {
+                        _state.value.copy(
+                            saveStatus = SaveStatus.FAILED,
+                            errorMessage = "Save failed: ${err.message ?: err::class.simpleName}",
+                        )
+                    }
                 }
         }
     }

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,6 +89,61 @@ describe('portal run.sh on_exit', () => {
   });
 });
 
+describe('portal run.sh on_exit and the Stripe CLI log', () => {
+  /** run.sh's real `on_exit` with a Stripe CLI log on disk, as the forwarder leaves it. */
+  function runOnExitWithCliLog(raw) {
+    const src = readFileSync(join(HERE, 'run.sh'), 'utf8');
+    const fn = src.match(/^on_exit\(\) \{[\s\S]*?^\}$/m)?.[0];
+    expect(fn, 'on_exit in run.sh').toBeTruthy();
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-real-portal-clilog-'));
+    const rawLog = join(dir, 'stripe-listen.raw.log');
+    const log = join(dir, 'stripe-listen.log');
+    writeFileSync(rawLog, raw);
+    // A verdict already on disk, so on_exit does not call the classifier here.
+    writeFileSync(join(dir, 'verdict.json'), '{}');
+    const script = [
+      'set -euo pipefail',
+      `ADMIN_E2E_DIR=${JSON.stringify(ADMIN_E2E_DIR)}`,
+      `REAL_DIR=${JSON.stringify(dir)}`,
+      `VERDICT=${JSON.stringify(join(dir, 'verdict.json'))}`,
+      `RESULTS=${JSON.stringify(join(dir, 'results.json'))}`,
+      `LOG=${JSON.stringify(join(dir, 'emulators.log'))}`,
+      `SECRETS_FILE=${JSON.stringify(join(dir, 'none'))}`,
+      `STRIPE_LOG=${JSON.stringify(log)}`,
+      `STRIPE_RAW_LOG=${JSON.stringify(rawLog)}`,
+      'STRIPE_PID=""',
+      fn,
+      'trap on_exit EXIT',
+      'exit 1',
+    ].join('\n');
+    const r = spawnSync('bash', ['-c', script], { encoding: 'utf8' });
+    return { ...r, dir, rawLog, log };
+  }
+  it('writes the uploaded log with the signing value masked, and removes the file the CLI wrote', () => {
+    const value = `whsec_${'a1B2c3D4'.repeat(4)}`;
+    const r = runOnExitWithCliLog(
+      `Getting ready...\nReady! Your webhook signing secret is ${value} (^C to quit)\n2026-11-14 --> checkout.session.completed [evt_1]\n`,
+    );
+    expect(r.status).toBe(1);
+    const uploaded = readFileSync(r.log, 'utf8');
+    expect(uploaded).not.toContain(value);
+    expect(uploaded).toContain('Your webhook signing secret is whsec_[masked] (^C to quit)');
+    // The forwarded-event lines are what the log is kept for.
+    expect(uploaded).toContain('--> checkout.session.completed [evt_1]');
+    expect(existsSync(r.rawLog)).toBe(false);
+    rmSync(r.dir, { recursive: true, force: true });
+  });
+  it('the forwarder writes only to the file that is never uploaded', () => {
+    const src = readFileSync(join(HERE, 'run.sh'), 'utf8');
+    expect(src).toContain('--forward-to "$WEBHOOK_URL" >"$STRIPE_RAW_LOG" 2>&1 &');
+    expect(src).not.toMatch(/>\s*"\$STRIPE_LOG" 2>&1 &/);
+    const workflow = readFileSync(join(HERE, '../../../../.github/workflows/e2e-real.yml'), 'utf8');
+    expect(workflow).toContain('mytribe/web/cypress/.real/stripe-listen.log');
+    expect(workflow).not.toContain('stripe-listen.raw.log');
+    // No path in the upload list is the whole .real directory.
+    expect(workflow).not.toMatch(/cypress\/\.real\/?\s*$/m);
+  });
+});
 describe('portal run.sh calls the classifier after Cypress', () => {
   it('names the admin classifier, the portal results and log, and exits with its code', () => {
     const src = readFileSync(join(HERE, 'run.sh'), 'utf8');

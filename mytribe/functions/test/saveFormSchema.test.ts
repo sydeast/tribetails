@@ -392,3 +392,101 @@ describe('saveFormSchema', () => {
     expect(writtenVersions).toEqual([1, 2]);
   });
 });
+
+/**
+ * #2074: a refusal names the input, in the operator's words, and the server
+ * accepts exactly what the clients' on-screen checks accept. The strings below
+ * are repeated verbatim in the web, Android and desktop validator tests, so a
+ * rule that changes here and not there fails somewhere.
+ */
+describe('saveFormSchema refusals (#2074)', () => {
+  async function refusal(schema: unknown): Promise<{ reason: string; validationErrors: any[] }> {
+    mocks.dbFn.mockReturnValue(buildDbMock().db);
+    try {
+      await saveFormSchemaHandler(req({ schema }));
+    } catch (err: any) {
+      expect(err.code).toBe('invalid-argument');
+      return err.details;
+    }
+    throw new Error('expected a refusal');
+  }
+
+  it('SAD: the walk schema is refused naming the section title and the label', async () => {
+    const schema = validSchema({ id: 'qaR1Schema', name: 'QA-R1 schema' });
+    (schema.sections[0] as any).title = 'QA-R1 section <b>x</b> \' " & %';
+    const f = schema.sections[0].fields[0] as any;
+    f.key = 'qaField';
+    f.label = 'QA-R1 field <b>x</b> \' " & %';
+    f.type = 'select';
+    f.options = ['One', 'Two'];
+    const details = await refusal(schema);
+    expect(details.reason).toBe('form-schema-refused');
+    expect(details.validationErrors.map((e) => e.text)).toEqual([
+      'Section 1: Section title cannot contain <, > or &.',
+      'Section 1, Field 1: Label cannot contain <, > or &.',
+    ]);
+    expect(details.validationErrors[1]).toMatchObject({ sectionIndex: 0, fieldIndex: 0 });
+    expect(details.validationErrors[0]).toMatchObject({ sectionIndex: 0, fieldIndex: null });
+  });
+
+  it('HAPPY: quotes, percent and emoji are plain text and save', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const schema = validSchema({ name: 'QA-R1 schema \u{1F43E}' });
+    (schema.sections[0] as any).title = 'QA-R1 section \' " %';
+    (schema.sections[0].fields[0] as any).label = 'QA-R1 field \' " %';
+    const res = await saveFormSchemaHandler(req({ schema }));
+    expect(res.ok).toBe(true);
+  });
+
+  it('HAPPY: a line break in either description saves', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const schema = validSchema({ description: 'Line one\nLine two' });
+    (schema.sections[0] as any).description = 'First\r\nSecond';
+    const res = await saveFormSchemaHandler(req({ schema }));
+    expect(res.ok).toBe(true);
+  });
+
+  it('SAD: a tab in a label is refused as a hidden character', async () => {
+    const schema = validSchema();
+    (schema.sections[0].fields[0] as any).label = 'Family\tname';
+    const details = await refusal(schema);
+    expect(details.validationErrors.map((e) => e.text)).toEqual([
+      'Section 1, Field 1: Label cannot contain a tab, a line break or another hidden character.',
+    ]);
+  });
+
+  it('SAD: an over-long label names its length and the limit', async () => {
+    const schema = validSchema();
+    (schema.sections[0].fields[0] as any).label = 'x'.repeat(330);
+    const details = await refusal(schema);
+    expect(details.validationErrors.map((e) => e.text)).toEqual([
+      'Section 1, Field 1: Label is 330 characters long. The limit is 200.',
+    ]);
+  });
+
+  it('SAD: an option with & names the option', async () => {
+    const schema = validSchema();
+    const f = schema.sections[0].fields[0] as any;
+    f.type = 'select';
+    f.options = ['One', 'Salt & pepper'];
+    const details = await refusal(schema);
+    expect(details.validationErrors.map((e) => e.text)).toEqual([
+      'Section 1, Field 1: Option 2 cannot contain <, > or &.',
+    ]);
+  });
+
+  it('SAD: schema-level and duplicate-key refusals read as sentences', async () => {
+    const schema = validSchema({ id: '9bad', name: 'A <b> name' });
+    schema.sections[0].fields.push({ ...schema.sections[0].fields[0] });
+    const details = await refusal(schema);
+    const texts = details.validationErrors.map((e) => e.text);
+    expect(texts).toContain(
+      'Schema id must start with a letter and use only letters, numbers, underscores, periods or hyphens.',
+    );
+    expect(texts).toContain('Name cannot contain <, > or &.');
+    expect(texts).toContain('Section 1, Field 2: Another field in this section already uses this key.');
+    for (const t of texts) expect(t).not.toMatch(/schema\.|sections\.\d|Must be plaintext/);
+  });
+});

@@ -234,6 +234,18 @@ export const replyToConversation = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   wrapAdminCallable('replyToConversation', replyToConversationHandler),
 );
+/**
+ * #2061: the push an approved Communicate Push draft sends to one household.
+ * The handler, its gate and its settings checks live in
+ * `admin/sendHouseholdPush.ts`, loaded here only when the call arrives.
+ */
+export const sendHouseholdPush = onCall(
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  wrapAdminCallable('sendHouseholdPush', async (req: CallableRequest<unknown>) => {
+    const { sendHouseholdPushHandler } = await import('./sendHouseholdPush.js');
+    return sendHouseholdPushHandler(req);
+  }),
+);
 
 // ---------------------------------------------------------------------------
 

@@ -1,6 +1,7 @@
 import { defineConfig } from 'cypress';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import seed, { remove, upsert } from './cypress/seed';
+import { confirmCheckoutByCli } from './scripts/e2e-real/stripe-confirm.mjs';
 
 /**
  * Cypress config for the portal's REAL-SERVICES run (#1194, operator ruling D3,
@@ -105,6 +106,13 @@ export default defineConfig({
     // `chromeWebSecurity` on or off); on, Stripe's page renders its copy. It
     // also strips Subresource Integrity from rewritten scripts, which matters
     // only to this test run, never to the app.
+    //
+    // STILL NEEDED AFTER #2304. With it on, Stripe's `/g/pay/` page draws the
+    // business, the invoice line and the amount, which the pay spec reads. It
+    // does not draw the card form for an automated browser, in Electron 146
+    // (run 43629608013) or in Chrome 157 (run 43632254872), so the spec pays
+    // through the `stripeConfirmCheckout` task below instead. The browser is
+    // `cypress run`'s default again: Chrome changed nothing.
     experimentalModifyObstructiveThirdPartyCode: true,
     // A real callable cold-starts inside the emulator on its first call, which
     // the PR-time stubs never had to wait for.
@@ -155,6 +163,19 @@ export default defineConfig({
         /** Our functions' structured error lines since [since]. */
         serverErrorsSince({ since }: { since: number }) {
           return structuredErrors(serverLogSince(since));
+        },
+        /**
+         * Pays a test-mode Checkout Session through the Stripe CLI, with
+         * Stripe's test card token, because Stripe's hosted form does not draw
+         * for an automated browser (#2304). `scripts/e2e-real/stripe-confirm.mjs`
+         * has the three requests, the refusals and the caveat. Stripe then
+         * sends its own signed events to `stripe listen`; nothing here touches
+         * `stripeWebhook`. The line printed names the steps and nothing else.
+         */
+        stripeConfirmCheckout(input: { sessionId: string; amountCents: number; email: string; name: string }) {
+          const steps = confirmCheckoutByCli(input);
+          console.log(`== e2e-real (portal): Stripe test payment confirmed through the CLI (${steps.join(', ')})`);
+          return steps;
         },
       });
     },

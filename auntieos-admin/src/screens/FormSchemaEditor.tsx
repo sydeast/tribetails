@@ -17,6 +17,7 @@ import { GhostButton, IconButton } from '../components/Buttons';
 import { Banner } from '../components/Banner';
 import { useToast } from '../components/Toast';
 import { appliesToLabel } from '../lib/formSchemaFormat';
+import { FORM_SCHEMA_LIMITS, formSchemaRefusals, textProblem, type FormSchemaRefusal } from '../lib/formSchemaRules';
 import './FormSchemaEditor.css';
 
 /**
@@ -123,33 +124,64 @@ export interface FieldValidation {
   keyError: string | null;
   labelError: string | null;
   optionsError: string | null;
+  /** #2074: the four optional inputs, held to the server's text rules too. */
+  helperTextError: string | null;
+  placeholderError: string | null;
+  defaultValueError: string | null;
+  groupError: string | null;
 }
 
-/** Per-field validation, ported from saveFormSchema.ts's FieldSchema + its superRefine. */
+/** True when any input on the field card has a problem. */
+export function fieldHasError(v: FieldValidation): boolean {
+  return Object.values(v).some((e) => e !== null);
+}
+
+/**
+ * Per-field validation, ported from saveFormSchema.ts's FieldSchema + its
+ * superRefine, text rules included (#2074): no `<`, `>` or `&`, no hidden
+ * characters, and the server's length limits.
+ */
 export function validateField(field: FormField, seenKeys: ReadonlySet<string>): FieldValidation {
+  const L = FORM_SCHEMA_LIMITS;
   let keyError: string | null = null;
   const trimmedKey = field.key.trim();
   if (!trimmedKey) {
     keyError = 'Key is required.';
+  } else if (trimmedKey.length > L.key) {
+    keyError = `Key is ${trimmedKey.length} characters long. The limit is ${L.key}.`;
   } else if (!KEY_RE.test(trimmedKey)) {
     keyError = 'Key must start with a letter and contain only letters, numbers, or underscore.';
   } else if (seenKeys.has(trimmedKey)) {
     keyError = `Duplicate key "${trimmedKey}".`;
   }
-
-  const labelError = field.label.trim() ? null : 'Label is required.';
-
+  const labelError = field.label.trim() ? textProblem('Label', field.label, L.label) : 'Label is required.';
   const needsOptions = field.type === 'select' || field.type === 'multiselect';
-  const optionsError =
-    needsOptions && (!field.options || field.options.length === 0)
-      ? 'At least one option is required for this field type.'
-      : null;
-
-  return { keyError, labelError, optionsError };
+  let optionsError: string | null = null;
+  if (needsOptions) {
+    const options = field.options ?? [];
+    if (options.length === 0) {
+      optionsError = 'At least one option is required for this field type.';
+    } else if (options.length > L.options) {
+      optionsError = `A field can have at most ${L.options} options.`;
+    } else {
+      for (let i = 0; i < options.length && optionsError === null; i++) {
+        optionsError = textProblem(`Option ${i + 1}`, options[i], L.option);
+      }
+    }
+  }
+  return {
+    keyError,
+    labelError,
+    optionsError,
+    helperTextError: textProblem('Helper text', field.helperText, L.helperText),
+    placeholderError: textProblem('Placeholder', field.placeholder, L.placeholder),
+    defaultValueError: textProblem('Default value', field.defaultValue, L.defaultValue),
+    groupError: textProblem('Group', field.group, L.group, { plain: false }),
+  };
 }
 
 /**
- * The schema's own identity problems: id and name.
+ * The schema's own identity problems: id, name and description.
  *
  * Split from the section-list half so the wizard can report each problem ON
  * THE STEP THAT OWNS THE FIELD, and so the rail can flag that step. A single
@@ -157,16 +189,39 @@ export function validateField(field: FormField, seenKeys: ReadonlySet<string>): 
  * and it meant an operator scrolled past the broken field to find out it was
  * broken.
  */
-export function schemaMetaErrors(input: { id: string; name: string }): string[] {
+export function schemaMetaErrors(input: { id: string; name: string; description?: string }): string[] {
+  const L = FORM_SCHEMA_LIMITS;
   const errors: string[] = [];
   const trimmedId = input.id.trim();
   if (!trimmedId) {
     errors.push('Schema id is required.');
+  } else if (trimmedId.length > L.id) {
+    errors.push(`Schema id is ${trimmedId.length} characters long. The limit is ${L.id}.`);
   } else if (!ID_RE.test(trimmedId)) {
     errors.push('Schema id must start with a letter and contain only letters, numbers, underscore, period, or hyphen.');
   }
-  if (!input.name.trim()) errors.push('Schema name is required.');
+  if (!input.name.trim()) {
+    errors.push('Schema name is required.');
+  } else {
+    const nameProblem = textProblem('Name', input.name, L.name);
+    if (nameProblem) errors.push(nameProblem);
+  }
+  const descriptionProblem = textProblem('Description', input.description, L.description, { multiline: true });
+  if (descriptionProblem) errors.push(descriptionProblem);
   return errors;
+}
+
+/** A section's title and description problems, without the "Section n:" prefix. */
+export function sectionTextErrors(section: FormSection): { titleError: string | null; descriptionError: string | null } {
+  const L = FORM_SCHEMA_LIMITS;
+  return {
+    titleError: section.title.trim()
+      ? textProblem('Section title', section.title, L.sectionTitle)
+      : 'Section title is required.',
+    descriptionError: textProblem('Section description', section.description, L.sectionDescription, {
+      multiline: true,
+    }),
+  };
 }
 
 /**
@@ -178,15 +233,19 @@ export function schemaMetaErrors(input: { id: string; name: string }): string[] 
  */
 export function sectionErrors(section: FormSection, sectionNumber: number): string[] {
   const errors: string[] = [];
-  if (!section.title.trim()) errors.push(`Section ${sectionNumber}: Section title is required.`);
+  const { titleError, descriptionError } = sectionTextErrors(section);
+  if (titleError) errors.push(`Section ${sectionNumber}: ${titleError}`);
+  if (descriptionError) errors.push(`Section ${sectionNumber}: ${descriptionError}`);
   if (section.fields.length === 0) errors.push(`Section ${sectionNumber}: At least one field is required.`);
-
+  if (section.fields.length > FORM_SCHEMA_LIMITS.fields) {
+    errors.push(`Section ${sectionNumber}: A section can have at most ${FORM_SCHEMA_LIMITS.fields} fields.`);
+  }
   const seen = new Set<string>();
   section.fields.forEach((field, i) => {
     const v = validateField(field, seen);
-    if (v.keyError) errors.push(`Section ${sectionNumber}, Field ${i + 1}: ${v.keyError}`);
-    if (v.labelError) errors.push(`Section ${sectionNumber}, Field ${i + 1}: ${v.labelError}`);
-    if (v.optionsError) errors.push(`Section ${sectionNumber}, Field ${i + 1}: ${v.optionsError}`);
+    for (const e of Object.values(v)) {
+      if (e) errors.push(`Section ${sectionNumber}, Field ${i + 1}: ${e}`);
+    }
     const trimmedKey = field.key.trim();
     if (trimmedKey) seen.add(trimmedKey);
   });
@@ -197,12 +256,15 @@ export function sectionErrors(section: FormSection, sectionNumber: number): stri
 export function sectionListErrors(sections: readonly FormSection[]): string[] {
   const errors: string[] = [];
   if (sections.length === 0) errors.push('At least one section is required.');
+  if (sections.length > FORM_SCHEMA_LIMITS.sections) {
+    errors.push(`A form can have at most ${FORM_SCHEMA_LIMITS.sections} sections.`);
+  }
   sections.forEach((section, i) => errors.push(...sectionErrors(section, i + 1)));
   return errors;
 }
 
 /** Whole-schema validation: id/name/section invariants, ported from saveFormSchema.ts's SchemaInputSchema + SectionSchema. */
-export function validateSchema(input: { id: string; name: string; sections: FormSection[] }): string[] {
+export function validateSchema(input: { id: string; name: string; description?: string; sections: FormSection[] }): string[] {
   return [...schemaMetaErrors(input), ...sectionListErrors(input.sections)];
 }
 
@@ -339,6 +401,12 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /**
+   * #2074: the inputs the server refused on the last save, by step. Cleared by
+   * the next edit and by the next save, so a refusal never outlives the input
+   * it was about.
+   */
+  const [refusals, setRefusals] = useState<FormSchemaRefusal[]>([]);
 
   useEffect(() => {
     if (creating) return;
@@ -398,11 +466,14 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
    */
   function touch() {
     setDirty(true);
+    setRefusals([]);
     setTouchedSteps((prev) => (prev.has(step) ? prev : new Set(prev).add(step)));
   }
 
-  const metaErrors = schemaMetaErrors({ id, name });
+  const metaErrors = schemaMetaErrors({ id, name, description });
   const sectionErrorsAll = sectionListErrors(sections);
+  const refusedSchema = refusals.filter((r) => r.sectionIndex === null).map((r) => r.text);
+  const refusedSections = refusals.filter((r) => r.sectionIndex !== null).map((r) => r.text);
   const canSave = metaErrors.length === 0 && sectionErrorsAll.length === 0 && !saving && !loading;
   /**
    * Only a schema being CREATED starts quiet. A loaded one that is already
@@ -456,6 +527,7 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
     if (!canSave) return;
     setSaving(true);
     setSaveError(null);
+    setRefusals([]);
     const schema: FormSchemaDetail = {
       id: id.trim(),
       name,
@@ -476,6 +548,22 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       onSaved(res.id);
     } catch (err) {
       setSaving(false);
+      const refused = formSchemaRefusals(err);
+      if (refused.length > 0) {
+        // Field-level: each refusal is listed on the step that owns the input,
+        // which flags that step on the rail.
+        setRefusals(refused);
+        setStep(refused.some((r) => r.sectionIndex === null) ? 'schema' : 'sections');
+        const steps = [
+          refused.some((r) => r.sectionIndex === null) ? 'Schema' : null,
+          refused.some((r) => r.sectionIndex !== null) ? 'Sections' : null,
+        ].filter((x): x is string => x !== null);
+        setSaveError(
+          `${refused.length === 1 ? 'One entry was' : `${refused.length} entries were`} not accepted. ` +
+            `See the ${steps.join(' and ')} step${steps.length > 1 ? 's' : ''}.`,
+        );
+        return;
+      }
       setSaveError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
     }
   }
@@ -513,8 +601,8 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       key: 'schema',
       label: 'Schema',
       heading: 'Schema',
-      errors: metaErrors,
-      pristine: untouched('schema'),
+      errors: [...metaErrors, ...refusedSchema],
+      pristine: untouched('schema') && refusedSchema.length === 0,
       body: (
         <div className="fse__grid">
           <label className="fse__field">
@@ -603,8 +691,8 @@ export function FormSchemaEditor({ schemaId, onSaved, onCancel }: FormSchemaEdit
       key: 'sections',
       label: 'Sections',
       heading: 'Sections',
-      errors: sectionErrorsAll,
-      pristine: untouched('sections'),
+      errors: [...sectionErrorsAll, ...refusedSections],
+      pristine: untouched('sections') && refusedSections.length === 0,
       body: (
         <>
           {/* The mock's `.secbar`: "Add section" sits at the head of the list,
@@ -800,7 +888,10 @@ function SectionCard({
   // checking is scoped to THIS section only (see `sectionErrors` above), so a
   // key shared with a different section must not light up here either.
   const seenKeys = new Set<string>();
-  const titleError = section.title.trim() ? null : 'Section title is required.';
+  const { titleError: titleProblem, descriptionError } = sectionTextErrors(section);
+  // "Required" waits for the step to be touched; a character or length problem
+  // is about something already typed, so it shows at once (#2074).
+  const titleError = section.title.trim() || showTitleError ? titleProblem : null;
 
   return (
     <li className="fse__section-card">
@@ -839,21 +930,25 @@ function SectionCard({
             className="fse__input"
             value={section.title}
             onChange={(e) => onTitleChange(e.target.value)}
-            aria-invalid={showTitleError && titleError ? true : undefined}
+            aria-invalid={titleError ? true : undefined}
           />
         </label>
-        {showTitleError && titleError && <span className="fse__error">{titleError}</span>}
+        {titleError && <span className="fse__error">{titleError}</span>}
       </div>
 
-      <label className="fse__field">
-        <span className="fse__label">Section description</span>
-        <input
-          type="text"
-          className="fse__input"
-          value={section.description ?? ''}
-          onChange={(e) => onDescriptionChange(e.target.value)}
-        />
-      </label>
+      <div className="fse__field">
+        <label className="fse__field-label">
+          <span className="fse__label">Section description</span>
+          <input
+            type="text"
+            className="fse__input"
+            value={section.description ?? ''}
+            onChange={(e) => onDescriptionChange(e.target.value)}
+            aria-invalid={descriptionError ? true : undefined}
+          />
+        </label>
+        {descriptionError && <span className="fse__error">{descriptionError}</span>}
+      </div>
 
       {/* The mock's `.fldsbar`: the count on the left, "Add field" as a ghost
           with a plus on the right, over the field cards. */}
@@ -876,7 +971,7 @@ function SectionCard({
               <li
                 key={idx}
                 className={
-                  v.keyError || v.labelError || v.optionsError
+                  fieldHasError(v)
                     ? 'fse__field-card fse__field-card--invalid'
                     : 'fse__field-card'
                 }
@@ -1004,48 +1099,64 @@ function SectionCard({
                     `<details>Advanced</details>`; see the file header for the
                     ruling that took it out. */}
                 <div className="fse__stack">
-                  <label className="fse__field">
-                    <span className="fse__label">Helper text</span>
-                    <input
-                      type="text"
-                      className="fse__input"
-                      value={field.helperText ?? ''}
-                      onChange={(e) =>
-                        onUpdateField(idx, (f) => ({ ...f, helperText: e.target.value || null }))
-                      }
-                    />
-                  </label>
-                  <label className="fse__field">
-                    <span className="fse__label">Placeholder</span>
-                    <input
-                      type="text"
-                      className="fse__input"
-                      value={field.placeholder ?? ''}
-                      onChange={(e) =>
-                        onUpdateField(idx, (f) => ({ ...f, placeholder: e.target.value || null }))
-                      }
-                    />
-                  </label>
-                  <label className="fse__field">
-                    <span className="fse__label">Default value</span>
-                    <input
-                      type="text"
-                      className="fse__input"
-                      value={field.defaultValue ?? ''}
-                      onChange={(e) =>
-                        onUpdateField(idx, (f) => ({ ...f, defaultValue: e.target.value || null }))
-                      }
-                    />
-                  </label>
-                  <label className="fse__field">
-                    <span className="fse__label">Group</span>
-                    <input
-                      type="text"
-                      className="fse__input"
-                      value={field.group ?? ''}
-                      onChange={(e) => onUpdateField(idx, (f) => ({ ...f, group: e.target.value || null }))}
-                    />
-                  </label>
+                  <div className="fse__field">
+                    <label className="fse__field-label">
+                      <span className="fse__label">Helper text</span>
+                      <input
+                        type="text"
+                        className="fse__input"
+                        value={field.helperText ?? ''}
+                        onChange={(e) =>
+                          onUpdateField(idx, (f) => ({ ...f, helperText: e.target.value || null }))
+                        }
+                        aria-invalid={v.helperTextError ? true : undefined}
+                      />
+                    </label>
+                    {v.helperTextError && <span className="fse__error">{v.helperTextError}</span>}
+                  </div>
+                  <div className="fse__field">
+                    <label className="fse__field-label">
+                      <span className="fse__label">Placeholder</span>
+                      <input
+                        type="text"
+                        className="fse__input"
+                        value={field.placeholder ?? ''}
+                        onChange={(e) =>
+                          onUpdateField(idx, (f) => ({ ...f, placeholder: e.target.value || null }))
+                        }
+                        aria-invalid={v.placeholderError ? true : undefined}
+                      />
+                    </label>
+                    {v.placeholderError && <span className="fse__error">{v.placeholderError}</span>}
+                  </div>
+                  <div className="fse__field">
+                    <label className="fse__field-label">
+                      <span className="fse__label">Default value</span>
+                      <input
+                        type="text"
+                        className="fse__input"
+                        value={field.defaultValue ?? ''}
+                        onChange={(e) =>
+                          onUpdateField(idx, (f) => ({ ...f, defaultValue: e.target.value || null }))
+                        }
+                        aria-invalid={v.defaultValueError ? true : undefined}
+                      />
+                    </label>
+                    {v.defaultValueError && <span className="fse__error">{v.defaultValueError}</span>}
+                  </div>
+                  <div className="fse__field">
+                    <label className="fse__field-label">
+                      <span className="fse__label">Group</span>
+                      <input
+                        type="text"
+                        className="fse__input"
+                        value={field.group ?? ''}
+                        onChange={(e) => onUpdateField(idx, (f) => ({ ...f, group: e.target.value || null }))}
+                        aria-invalid={v.groupError ? true : undefined}
+                      />
+                    </label>
+                    {v.groupError && <span className="fse__error">{v.groupError}</span>}
+                  </div>
 
                   {/* The mock's `.reqrow`: "Required" with a Yes / No segmented
                       picker, the chosen half cream on navy, never a checkbox. */}

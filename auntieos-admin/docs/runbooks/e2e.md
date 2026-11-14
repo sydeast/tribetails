@@ -703,7 +703,10 @@ In CI the two jobs are on separate runners.
    `STRIPE_TEST_WEBHOOK_SECRET` before the preflight, which writes it to
    `.secret.local` as `STRIPE_WEBHOOK_SECRET`;
 3. stops the forwarder when the run ends. Its output is
-   `cypress/.real/stripe-listen.log`.
+   `cypress/.real/stripe-listen.log`, written at that point with the webhook
+   signing value masked. During the run the CLI writes to
+   `stripe-listen.raw.log` beside it, which is deleted when the run ends and
+   is not in the job's artifacts.
 
 A key that is not a test key is refused before the CLI ever sees it. The
 preflight then reports one more flag, `stripeWebhook`, which is true only with
@@ -715,7 +718,7 @@ and names the missing piece. CI installs Stripe CLI 1.55.1, checksum-pinned.
 | Spec | What it proves |
 |---|---|
 | `invoice-open.cy.ts` | The seeded kinfolk signs in through the real access chain (`getMyAccess`, `getMyHome`, `setActiveTribe`), and the real `getMyInvoices` shows a spec-written invoice as PENDING with its amount due and the card checkout button. Needs no vendor keys, so it runs every time |
-| `pay-invoice-stripe.cy.ts` | The kinfolk presses Pay with Credit Card, the real `payInvoice` opens a Stripe test Checkout, the spec pays with `4242 4242 4242 4242` on Stripe's page (`cy.origin`), and after the redirect the invoice reads PAID with no amount due and no pay button, once the forwarded webhook lands. Reloads every 3s for up to 60s. Skips without Stripe keys or the CLI |
+| `pay-invoice-stripe.cy.ts` | The kinfolk presses Pay with Credit Card, the real `payInvoice` opens a Stripe test Checkout, the browser lands on Stripe's page and the spec checks it shows that invoice and $42.00 (`cy.origin`), Stripe takes a test card payment for that session through the Stripe CLI (see "How the pay spec pays" below), and the invoice then reads PAID with no amount due and no pay button, once the forwarded webhook lands. Reloads every 3s for up to 60s. Skips without Stripe keys or the CLI |
 
 The portal seed also writes the household's PRIMARY `members` row, the shape
 `acceptInvite` writes, so the real billing gates see a member and not the
@@ -734,6 +737,43 @@ which lets Stripe's page render in the runner. A local Cypress run showed the
 difference: with the flag off, a Checkout URL rendered nothing; with it on,
 Stripe's page text appeared. The admin real config does not set it, because no
 admin spec goes to Stripe's page.
+
+### How the pay spec pays (#2304)
+
+Since 2026-11-14 Stripe serves the session at `/g/pay/` with its card form in
+a frame, and for an automated browser (`navigator.webdriver` true) that frame
+stays 2 px tall: no field and no button on the page, with the flag on. Electron
+146 (run 43629608013) and Chrome 157 (run 43632254872) behaved the same, with
+no console error and nothing blocked, so the run is back on `cypress run`'s
+default browser. The page does still draw the business, the invoice line and
+the amount.
+
+So the spec does not type a card. It reads the session id from Stripe's page
+address and calls the `stripeConfirmCheckout` task, which runs
+`stripe fixtures` (`mytribe/web/scripts/e2e-real/stripe-confirm.mjs`) with the
+three requests the CLI's own `stripe trigger checkout.session.completed` makes,
+against the session `payInvoice` created:
+
+1. `GET /v1/payment_pages/{session}`;
+2. `POST /v1/payment_methods` with the test token `tok_visa`;
+3. `POST /v1/payment_pages/{session}/confirm` with that payment method and the
+   expected amount in cents.
+
+Stripe then completes the session in test mode and sends its own signed
+`checkout.session.completed` and `payment_intent.succeeded`, which
+`stripe listen` forwards to the real `stripeWebhook`. The task refuses a key
+that is not a test key and a session id that does not start `cs_test_`, and
+prints neither.
+
+What this leaves untested: Stripe's hosted card form, and Stripe sending the
+browser back to `payInvoice`'s success URL (the spec opens the invoice itself).
+And a caveat: `/v1/payment_pages` is the endpoint Stripe's CLI uses, not one in
+Stripe's public API reference. If Stripe changes it, the task fails with
+Stripe's answer in the spec's error, and the fix starts from the current
+`checkout.session.completed.json` in the stripe-cli repository. A green run
+prints `Stripe test payment confirmed through the CLI (payment_page,
+payment_method, payment_page_confirm)`. If Stripe's form draws for Cypress
+again, typing the card there is the better test; PR #1273 has that spec.
 
 ## Pointing a Cypress run at a deployed host (added 2026-08-30)
 

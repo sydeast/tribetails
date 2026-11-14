@@ -33,6 +33,22 @@ const TAG = `Cuddly ${STAMP}`;
 const KIN_NAME = 'h1.den-heading-title';
 const KIN_LOAD = { timeout: 15_000 } as const;
 
+/**
+ * The row of tags next to the Kin's name, once the Kin has been read.
+ *
+ * The row is drawn from the loaded record (it also holds Edit tags), so getting
+ * it waits for `getKin`, and an absence read off it is read off the record.
+ * The tag is matched by its text in the row, not by the class of the thing that
+ * draws it: since #2015 a tag is a `.tag-chip` with its icon and colour once
+ * the pet tag list has loaded, and the plain `.den-statuspill` only while that
+ * list is loading or when it will not load. Matching `.den-statuspill` alone
+ * (#2302) failed every presence check here, and passed every absence check
+ * whether or not the tag was there.
+ */
+function headingTags() {
+  return cy.get('.den-heading-badges', KIN_LOAD);
+}
+
 /** Opens KinView from the Directory's Kin tab, by the pet's name. */
 function openKinFromDirectory(petName: string) {
   cy.visit('/directory');
@@ -61,7 +77,7 @@ describe('kin view tags (real triggers)', () => {
   it('#686 a pet tag survives the server side: on the pet after a full reload, and gone after removal', () => {
     cy.signIn();
     openKinFromDirectory('Biscuit');
-    cy.contains('.den-heading-badges .den-statuspill', TAG).should('not.exist');
+    headingTags().should('not.contain.text', TAG);
 
     cy.contains('button', 'Edit tags', KIN_LOAD).click();
     cy.get('[aria-label="Add a pet tag"]').type(`${TAG}{enter}`);
@@ -70,26 +86,24 @@ describe('kin view tags (real triggers)', () => {
     cy.contains('button', 'Done', KIN_LOAD).click();
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
     // The band repaints from the saved list without a re-read.
-    cy.contains('.den-heading-badges .den-statuspill', TAG).should('exist');
+    headingTags().should('contain.text', TAG);
 
     reopenInApp('Biscuit');
-    cy.contains('.den-heading-badges .den-statuspill', TAG, KIN_LOAD).should('exist');
+    headingTags().should('contain.text', TAG);
 
     // A full page load: no SDK cache, no pending write, only what the server holds.
     openKinFromDirectory('Biscuit');
-    cy.contains('.den-heading-badges .den-statuspill', TAG, KIN_LOAD).should('exist');
+    headingTags().should('contain.text', TAG);
 
     cy.contains('button', 'Edit tags').click();
     cy.get(`[aria-label="Remove ${TAG} tag"]`).click();
     cy.contains('.tag-chip__name', TAG).should('not.exist');
     cy.contains('button', 'Done', KIN_LOAD).click();
-    cy.contains('.den-heading-badges .den-statuspill', TAG).should('not.exist');
+    headingTags().should('not.contain.text', TAG);
 
     reopenInApp('Biscuit');
-    cy.contains('.den-heading-badges .den-statuspill', TAG).should('not.exist');
+    headingTags().should('not.contain.text', TAG);
     openKinFromDirectory('Biscuit');
-    // Edit tags renders once `getKin` has answered, so the absence below is read off the record.
-    cy.contains('button', 'Edit tags', KIN_LOAD).should('exist');
-    cy.contains('.den-heading-badges .den-statuspill', TAG).should('not.exist');
+    headingTags().should('not.contain.text', TAG);
   });
 });

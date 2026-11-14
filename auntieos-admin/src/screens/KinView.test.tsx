@@ -281,6 +281,64 @@ describe('KinView: hero', () => {
     mount({ tags: ['Chicken/Poultry'] });
     expect(await screen.findByText('Chicken/Poultry')).toHaveClass('den-statuspill');
   });
+
+  /**
+   * #2302: which element draws a heading tag depends on the pet tag list read.
+   * Both Cypress kin-view specs matched `.den-heading-badges .den-statuspill`,
+   * the class the tag has only before that read answers. These three pin the
+   * states the specs met, by the selector they used.
+   */
+  const OLD_SPEC_SELECTOR = '.den-heading-badges .den-statuspill';
+  const pillsNamed = (name: string) =>
+    Array.from(document.querySelectorAll(OLD_SPEC_SELECTOR)).filter((el) => el.textContent?.includes(name));
+  const chipsNamed = (name: string) =>
+    Array.from(document.querySelectorAll('.den-heading-badges .tag-chip__name')).filter((el) => el.textContent === name);
+
+  it('#2302: draws a heading tag as the plain pill only while the tag list is in flight, then as a chip', async () => {
+    let answer: (settings: { householdTags: never[]; petTags: never[] }) => void = () => undefined;
+    getBusinessSettings.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    mount({ tags: ['Cuddly'] });
+    // The Kin read has answered and the tag list has not: the window the PR-time spec had to land in.
+    await waitFor(() => expect(pillsNamed('Cuddly')).toHaveLength(1));
+    expect(chipsNamed('Cuddly')).toHaveLength(0);
+
+    answer({ householdTags: [], petTags: [] });
+    await waitFor(() => expect(chipsNamed('Cuddly')).toHaveLength(1));
+    expect(pillsNamed('Cuddly')).toHaveLength(0);
+    // Either way the tag is in the badge row by name, which is what the specs read now.
+    expect(document.querySelector('.den-heading-badges')).toHaveTextContent('Cuddly');
+  });
+
+  it('#2302: a tag added through Edit tags lands in the heading as a chip, never the plain pill', async () => {
+    mount({ tags: [] });
+    await userEvent.click(await screen.findByRole('button', { name: /edit tags/i }));
+    await userEvent.type(await screen.findByLabelText(/add a pet tag/i), 'Cuddly{Enter}');
+    await waitFor(() => expect(updateKinTags).toHaveBeenCalledWith('p1', ['Cuddly']));
+    await userEvent.click(await screen.findByRole('button', { name: 'Done' }));
+    expect(screen.queryByLabelText(/add a pet tag/i)).toBeNull();
+
+    // The real-services spec's failing line: the tag list loaded before Done, so
+    // the saved tag is a chip from the first paint and no plain pill ever carries it.
+    await waitFor(() => expect(chipsNamed('Cuddly')).toHaveLength(1));
+    expect(pillsNamed('Cuddly')).toHaveLength(0);
+    expect(document.querySelector('.den-heading-badges')).toHaveTextContent('Cuddly');
+  });
+
+  it('#2302: a removed tag is off the badge row by name, whichever way it was drawn', async () => {
+    mount({ tags: ['Cuddly'] });
+    await waitFor(() => expect(chipsNamed('Cuddly')).toHaveLength(1));
+    await userEvent.click(screen.getByRole('button', { name: /edit tags/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove Cuddly tag' }));
+    await waitFor(() => expect(updateKinTags).toHaveBeenCalledWith('p1', []));
+    await userEvent.click(await screen.findByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(document.querySelector('.den-heading-badges')).not.toHaveTextContent('Cuddly'));
+  });
+
   it('says nothing about status for an active pet, and pills any other status', async () => {
     const { unmount } = mount();
     await screen.findByText('Care checklist');

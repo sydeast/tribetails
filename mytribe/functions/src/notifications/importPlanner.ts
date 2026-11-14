@@ -17,6 +17,7 @@ import {
   templateIdIssue,
   visualEmailTemplateIssues,
 } from '../lib/templateValidation';
+import { sanitizePlainText } from '../lib/richText';
 import { parsePushTxt } from './templateParsers';
 import type { SeedCorpusEntry } from './seedCorpus.generated';
 
@@ -48,6 +49,37 @@ export interface ChannelPlan {
   content?: Record<string, string | null>;
   /** Why it is blocked, or what differs. One sentence per entry, operator facing. */
   notes: string[];
+  /**
+   * #1936: what differs, for a `skipped` or `overwrite` channel. Absent on
+   * every other outcome. See [ChannelDifference].
+   */
+  differences?: ChannelDifference[];
+}
+
+/**
+ * One wording that differs between the stored copy and the repo copy, both
+ * as an operator reads them (#1936).
+ *
+ * Before this the import screen said "the stored sms copy differs from the
+ * repo copy" and showed neither, so ticking "replace" was a blind choice.
+ *
+ * `stored` and `repo` are READABLE text, never markup: an email's message
+ * is HTML in both places and is shown with its paragraphs and line breaks
+ * kept and its tags dropped. An empty string means that copy has no wording
+ * there. Only parts whose readable text differs are listed; when the stored
+ * copy differs only in its formatting or in the older email format, the list
+ * has one entry with `stored === repo` and a `note` saying so, so a client
+ * never draws an empty comparison that reads as "identical".
+ */
+export interface ChannelDifference {
+  /** The stored field the wording sits in: subject, headline, content, text, title, body. */
+  field: string;
+  /** The operator's name for it: "Subject", "Message", "Text message", "Title"... */
+  label: string;
+  stored: string;
+  repo: string;
+  /** Set only when the wording matches and something else about the copy differs. */
+  note?: string;
 }
 
 export interface TemplatePlan {
@@ -153,6 +185,81 @@ function matchesStored(
   });
 }
 
+/**
+ * An email body as a person reads it: paragraphs and line breaks kept, tags
+ * dropped, entities decoded once. Used only to SHOW a difference, never to
+ * decide one (that stays `matchesStored`, field by field).
+ */
+export function readableEmailText(html: string): string {
+  const withBreaks = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote)>/gi, '\n\n')
+    .replace(/<li[^>]*>/gi, '- ');
+  return sanitizePlainText(withBreaks)
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+const asText = (v: unknown): string => (typeof v === 'string' ? v : '');
+
+/**
+ * The readable parts of one channel's copy, keyed by stored field. An old
+ * format email keeps its wording in `html` (or `body`) rather than `content`;
+ * either is read as the message so the comparison is of wording, not format.
+ */
+function readableParts(
+  channel: TemplateChannel,
+  doc: Record<string, unknown>,
+): Array<{ field: string; label: string; text: string }> {
+  if (channel === 'email') {
+    const message = asText(doc['content']) || asText(doc['html']) || asText(doc['body']);
+    return [
+      { field: 'subject', label: 'Subject', text: asText(doc['subject']).trim() },
+      { field: 'headline', label: 'Headline', text: asText(doc['headline']).trim() },
+      { field: 'content', label: 'Message', text: readableEmailText(message) },
+    ];
+  }
+  if (channel === 'sms') return [{ field: 'text', label: 'Text message', text: asText(doc['text']).trim() }];
+  return [
+    { field: 'title', label: 'Title', text: asText(doc['title']).trim() },
+    { field: 'body', label: 'Message', text: asText(doc['body']).trim() },
+  ];
+}
+
+/** PURE. What differs between a stored copy and the repo copy, as [ChannelDifference]s (#1936). */
+export function channelDifferences(
+  channel: TemplateChannel,
+  repoContent: Record<string, string | null>,
+  stored: Record<string, unknown>,
+): ChannelDifference[] {
+  const repo = readableParts(channel, repoContent);
+  const mine = readableParts(channel, stored);
+  const out: ChannelDifference[] = [];
+  repo.forEach((r, i) => {
+    const s = mine[i]!;
+    if (s.text !== r.text) out.push({ field: r.field, label: r.label, stored: s.text, repo: r.text });
+  });
+  if (out.length > 0) return out;
+  // The wording matches and the copy still differs: show the wording once,
+  // and say what else is different.
+  const oldFormat = channel === 'email' && asText(stored['format']) !== 'visual';
+  const main = repo[repo.length - 1]!;
+  return [
+    {
+      field: main.field,
+      label: main.label,
+      stored: main.text,
+      repo: main.text,
+      note: oldFormat
+        ? 'The wording is the same. Your stored copy uses the older email format, and importing moves it to the current one.'
+        : 'The wording is the same. Only the formatting differs, such as bold text or spacing.',
+    },
+  ];
+}
+
 const EMPTY_COUNTS = (): Record<ImportOutcome, number> => ({
   create: 0,
   overwrite: 0,
@@ -203,6 +310,7 @@ export function planImport(input: PlanInput): ImportPlan {
 
       differsFromRepo = true;
       const differs = `The stored ${channel} copy differs from the repo copy.`;
+      const differences = channelDifferences(channel, content, stored);
       if (overwrite.has(entry.key)) {
         channels.push({
           channel,
@@ -210,6 +318,7 @@ export function planImport(input: PlanInput): ImportPlan {
           outcome: 'overwrite',
           content,
           notes: [`${differs} Importing replaces your stored copy with the repo wording.`],
+          differences,
         });
       } else {
         channels.push({
@@ -220,6 +329,7 @@ export function planImport(input: PlanInput): ImportPlan {
             `${differs} Your stored copy stays as it is. ` +
               `Tick this template to replace it with the repo wording.`,
           ],
+          differences,
         });
       }
     }

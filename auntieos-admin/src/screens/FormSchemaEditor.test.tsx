@@ -117,7 +117,15 @@ describe('validateField (pure)', () => {
   });
   it('passes a fully valid field clean', () => {
     const v = validateField(field(), new Set());
-    expect(v).toEqual({ keyError: null, labelError: null, optionsError: null });
+    expect(v).toEqual({
+      keyError: null,
+      labelError: null,
+      optionsError: null,
+      helperTextError: null,
+      placeholderError: null,
+      defaultValueError: null,
+      groupError: null,
+    });
   });
 });
 
@@ -1056,5 +1064,105 @@ describe('FormSchemaEditor: live preview', () => {
     getFormSchema.mockReturnValue(new Promise(() => {}));
     render(<FormSchemaEditor schemaId="tribeProfile" onSaved={vi.fn()} onCancel={vi.fn()} />);
     expect(screen.queryByRole('region', { name: 'Live preview' })).toBeNull();
+  });
+});
+/**
+ * #2074: a schema that passes every on-screen check is one the server takes,
+ * and a refusal names the input. The walk's exact strings, shared with the
+ * functions test and both Kotlin validator tests.
+ */
+describe('FormSchemaEditor: on-screen checks match the server (#2074)', () => {
+  const WALK_TITLE = 'QA-R1 section <b>x</b> \' " & %';
+  const WALK_LABEL = 'QA-R1 field <b>x</b> \' " & %';
+  it('refuses the walk section title and label on screen, so Save never runs', () => {
+    const walk = section({
+      title: WALK_TITLE,
+      fields: [field({ key: 'qaField', label: WALK_LABEL, type: 'select', options: ['One', 'Two'] })],
+    });
+    expect(sectionErrors(walk, 1)).toEqual([
+      'Section 1: Section title cannot contain <, > or &.',
+      'Section 1, Field 1: Label cannot contain <, > or &.',
+    ]);
+  });
+  it('accepts quotes, percent and emoji, and a line break in the description', () => {
+    expect(
+      validateSchema({
+        id: 'qaR1Plain',
+        name: 'QA-R1 schema \u{1F43E}',
+        description: 'Line one\nLine two',
+        sections: [section({ title: 'QA-R1 section \' " %', fields: [field({ label: 'QA-R1 field \' " %' })] })],
+      }),
+    ).toEqual([]);
+  });
+  it('holds every optional input and each option to the same rules', () => {
+    const v = validateField(
+      field({
+        type: 'select',
+        options: ['One', 'Salt & pepper'],
+        helperText: 'a <b>',
+        placeholder: 'p'.repeat(201),
+        defaultValue: 'tab\there',
+        group: 'g'.repeat(81),
+      }),
+      new Set(),
+    );
+    expect(v.optionsError).toBe('Option 2 cannot contain <, > or &.');
+    expect(v.helperTextError).toBe('Helper text cannot contain <, > or &.');
+    expect(v.placeholderError).toBe('Placeholder is 201 characters long. The limit is 200.');
+    expect(v.defaultValueError).toBe('Default value cannot contain a tab, a line break or another hidden character.');
+    expect(v.groupError).toBe('Group is 81 characters long. The limit is 80.');
+    expect(validateField(field({ label: 'x'.repeat(330) }), new Set()).labelError).toBe(
+      'Label is 330 characters long. The limit is 200.',
+    );
+    expect(schemaMetaErrors({ id: 'ok', name: 'A <b> name' })).toEqual(['Name cannot contain <, > or &.']);
+  });
+  it('marks the label input and keeps Save off while the label holds <b>', async () => {
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/schema id/i), 'qaR1Schema');
+    await userEvent.type(screen.getByLabelText(/^name$/i), 'QA-R1 schema');
+    await goToStep('Sections');
+    await userEvent.type(screen.getByLabelText(/section title/i), 'QA-R1 section');
+    await userEvent.click(screen.getByRole('button', { name: /add field/i }));
+    await userEvent.type(screen.getByLabelText(/^key$/i), 'qaField');
+    await userEvent.type(screen.getByLabelText(/^label$/i), 'QA-R1 field <b>x</b>');
+    expect(screen.getByLabelText(/^label$/i)).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getAllByText('Label cannot contain <, > or &.').length).toBeGreaterThan(0);
+    await goToStep('Review');
+    expect(screen.getByRole('button', { name: /save schema/i })).toBeDisabled();
+    expect(saveFormSchema).not.toHaveBeenCalled();
+  });
+  it('lists a server refusal on the step that owns it, then clears it on the next edit', async () => {
+    saveFormSchema.mockRejectedValueOnce(
+      Object.assign(new Error('Something in this form was not accepted. Check what you entered and try again.'), {
+        details: {
+          reason: 'form-schema-refused',
+          validationErrors: [
+            { path: 'schema.sections.0.fields.0.label', message: 'Must be plaintext', text: 'Section 1, Field 1: Label cannot contain <, > or &.', sectionIndex: 0, fieldIndex: 0 },
+          ],
+        },
+      }),
+    );
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await fillValidSchema();
+    await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
+    expect(await screen.findByText('One entry was not accepted. See the Sections step.')).toBeInTheDocument();
+    // The editor lands on the Sections step, with the server's sentence listed there.
+    expect(await screen.findByText('Section 1, Field 1: Label cannot contain <, > or &.')).toBeInTheDocument();
+    expect(screen.queryByText(/Something in this form/)).toBeNull();
+    await userEvent.type(screen.getByLabelText(/^label$/i), 's');
+    expect(screen.queryByText('Section 1, Field 1: Label cannot contain <, > or &.')).toBeNull();
+  });
+  it('clears the previous refusal banner when the next save starts', async () => {
+    let finish: (v: unknown) => void = () => {};
+    saveFormSchema
+      .mockRejectedValueOnce(new Error('Something in this form was not accepted. Check what you entered and try again.'))
+      .mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    render(<FormSchemaEditor onSaved={vi.fn()} onCancel={vi.fn()} />);
+    await fillValidSchema();
+    await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
+    await screen.findByText(/Could not save/i);
+    await userEvent.click(screen.getByRole('button', { name: /save schema/i }));
+    expect(screen.queryByText(/Could not save/i)).toBeNull();
+    finish({ id: 'newSchema', version: 1 });
   });
 });

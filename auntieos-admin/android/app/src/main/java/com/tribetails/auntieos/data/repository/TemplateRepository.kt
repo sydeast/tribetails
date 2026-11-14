@@ -56,6 +56,22 @@ class TemplateRepository(
         val channel: String,
         val outcome: String,
         val notes: List<String>,
+        /**
+         * #1936: the stored and the repo wording, readable, on a skipped or
+         * overwrite channel. Empty from a server older than #1936.
+         */
+        val differences: List<ImportDifference> = emptyList(),
+    )
+
+    /** One differing wording (`importPlanner.ts` ChannelDifference). */
+    data class ImportDifference(
+        val field: String,
+        /** "Subject", "Headline", "Message", "Text message", "Title". */
+        val label: String,
+        val stored: String,
+        val repo: String,
+        /** Set when the wording matches and something else about the copy differs. */
+        val note: String? = null,
     )
     /** One template's line of the import report. */
     data class ImportRow(
@@ -466,6 +482,16 @@ internal fun decodeImportReport(raw: Map<String, Any?>): TemplateRepository.Impo
                     channel = cm["channel"] as? String ?: return@mapNotNull null,
                     outcome = cm["outcome"] as? String ?: "unknown",
                     notes = (cm["notes"] as? List<*>).orEmpty().mapNotNull { it as? String },
+                    differences = (cm["differences"] as? List<*>).orEmpty().mapNotNull { d ->
+                        val dm = d as? Map<*, *> ?: return@mapNotNull null
+                        TemplateRepository.ImportDifference(
+                            field = dm["field"] as? String ?: return@mapNotNull null,
+                            label = dm["label"] as? String ?: return@mapNotNull null,
+                            stored = dm["stored"] as? String ?: return@mapNotNull null,
+                            repo = dm["repo"] as? String ?: return@mapNotNull null,
+                            note = dm["note"] as? String,
+                        )
+                    },
                 )
             },
             differsFromRepo = m["differsFromRepo"] as? Boolean ?: false,

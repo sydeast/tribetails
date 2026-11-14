@@ -115,6 +115,92 @@ data class FormSchemaValidationError(
     val message: String,
 )
 
+/**
+ * #2074: the text rules `saveFormSchema` enforces, so the editor refuses on
+ * screen exactly what the server refuses on save. Same limits and the same
+ * sentences as the server's `describeFormSchemaIssue` and the web admin's
+ * `lib/formSchemaRules.ts`; the tests on all three share the walk's strings.
+ *
+ * Before this the validator checked presence and the two identifier shapes
+ * only, so a label holding `<b>x</b>`, an option with `&` or a 330-character
+ * label passed every on-screen check and came back as "Save failed".
+ */
+object FormSchemaTextRules {
+    const val ID = 80
+    const val NAME = 200
+    const val DESCRIPTION = 2000
+    const val SECTIONS = 50
+    const val SECTION_TITLE = 200
+    const val SECTION_DESCRIPTION = 2000
+    const val FIELDS = 200
+    const val KEY = 80
+    const val LABEL = 200
+    const val HELPER_TEXT = 500
+    const val PLACEHOLDER = 200
+    const val OPTIONS = 100
+    const val OPTION = 200
+    const val DEFAULT_VALUE = 2000
+    const val GROUP = 80
+
+    private fun isHidden(c: Char, multiline: Boolean): Boolean {
+        val code = c.code
+        if (code == 0x7F) return true
+        if (code > 0x1F) return false
+        // Descriptions may hold tab, line feed and carriage return.
+        return !(multiline && (code == 0x09 || code == 0x0A || code == 0x0D))
+    }
+
+    /**
+     * Why [value] cannot be saved as [thing], or null. Emptiness is the
+     * caller's check. [plain] false is Group, which the server holds to its
+     * length only.
+     */
+    fun textProblem(
+        thing: String,
+        value: String?,
+        max: Int,
+        multiline: Boolean = false,
+        plain: Boolean = true,
+    ): String? {
+        val v = value.orEmpty()
+        if (v.length > max) return "$thing is ${v.length} characters long. The limit is $max."
+        if (!plain) return null
+        if (v.any { it == '<' || it == '>' || it == '&' }) return "$thing cannot contain <, > or &."
+        if (v.any { isHidden(it, multiline) }) {
+            return "$thing cannot contain a tab, a line break or another hidden character."
+        }
+        return null
+    }
+}
+
+/** The token `saveFormSchema` puts on a field-level refusal's `details`. */
+const val FORM_SCHEMA_REFUSAL = "form-schema-refused"
+
+/**
+ * Pure: the server's field-level refusals out of a failed save's `details`,
+ * placed on the section and field they belong to (-1 for the schema itself).
+ * Empty for any other failure and for a server that predates #2074, which sent
+ * no `text`; the screen then keeps its general failure line.
+ */
+fun formSchemaRefusalsFromDetails(details: Any?): List<FormSchemaValidationError> {
+    val map = details as? Map<*, *> ?: return emptyList()
+    if (map["reason"] != FORM_SCHEMA_REFUSAL) return emptyList()
+    val list = map["validationErrors"] as? List<*> ?: return emptyList()
+    return list.mapNotNull { raw ->
+        val e = raw as? Map<*, *> ?: return@mapNotNull null
+        val text = (e["text"] as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        FormSchemaValidationError(
+            sectionIndex = (e["sectionIndex"] as? Number)?.toInt() ?: -1,
+            fieldIndex = (e["fieldIndex"] as? Number)?.toInt(),
+            message = text,
+        )
+    }
+}
+
+/** The refusals a failed save carries, or empty. */
+fun formSchemaRefusalsOf(t: Throwable?): List<FormSchemaValidationError> =
+    formSchemaRefusalsFromDetails((t as? com.google.firebase.functions.FirebaseFunctionsException)?.details)
+
 object FormSchemaValidator {
 
     /**
@@ -149,16 +235,31 @@ object FormSchemaValidator {
                 "Schema id \"${schema.id}\" is invalid: must start with a letter and contain only letters, digits, underscore, dot, or hyphen",
             )
         }
+        val r = FormSchemaTextRules
+        fun add(section: Int, field: Int?, problem: String?) {
+            if (problem != null) errors += FormSchemaValidationError(section, field, problem)
+        }
+        if (schema.id.length > r.ID) add(-1, null, "Schema id is ${schema.id.length} characters long. The limit is ${r.ID}.")
         if (schema.name.isBlank()) {
             errors += FormSchemaValidationError(-1, null, "Schema name is required")
+        } else {
+            add(-1, null, r.textProblem("Name", schema.name, r.NAME))
         }
+        add(-1, null, r.textProblem("Description", schema.description, r.DESCRIPTION, multiline = true))
         if (schema.sections.isEmpty()) {
             errors += FormSchemaValidationError(-1, null, "Schema must have at least one section")
         }
+        if (schema.sections.size > r.SECTIONS) add(-1, null, "A form can have at most ${r.SECTIONS} sections.")
         schema.sections.forEachIndexed { sIdx, section ->
             if (section.title.isBlank()) {
                 errors += FormSchemaValidationError(sIdx, null, "Section title is required")
+            } else {
+                add(sIdx, null, r.textProblem("Section title", section.title, r.SECTION_TITLE))
             }
+            add(sIdx, null, r.textProblem("Section description", section.description, r.SECTION_DESCRIPTION, multiline = true))
+            // The server refuses a section with no fields; so does the editor (#2074).
+            if (section.fields.isEmpty()) add(sIdx, null, "Add at least one field to this section.")
+            if (section.fields.size > r.FIELDS) add(sIdx, null, "A section can have at most ${r.FIELDS} fields.")
             val seenKeys = mutableSetOf<String>()
             section.fields.forEachIndexed { fIdx, field ->
                 errors += validateField(sIdx, fIdx, field, seenKeys)
@@ -187,8 +288,26 @@ object FormSchemaValidator {
                 "Duplicate key \"${field.key}\" in this section",
             )
         }
+        val r = FormSchemaTextRules
+        fun add(problem: String?) {
+            if (problem != null) errs += FormSchemaValidationError(sectionIdx, fieldIdx, problem)
+        }
+        if (field.key.length > r.KEY) add("Key is ${field.key.length} characters long. The limit is ${r.KEY}.")
         if (field.label.isBlank()) {
             errs += FormSchemaValidationError(sectionIdx, fieldIdx, "Field label is required")
+        } else {
+            add(r.textProblem("Label", field.label, r.LABEL))
+        }
+        add(r.textProblem("Helper text", field.helperText, r.HELPER_TEXT))
+        add(r.textProblem("Placeholder", field.placeholder, r.PLACEHOLDER))
+        add(r.textProblem("Default value", field.defaultValue, r.DEFAULT_VALUE))
+        add(r.textProblem("Group", field.group, r.GROUP, plain = false))
+        if (FormSchemaFieldType.requiresOptions(field.type)) {
+            val opts = field.options.orEmpty()
+            if (opts.size > r.OPTIONS) add("A field can have at most ${r.OPTIONS} options.")
+            opts.forEachIndexed { i, o ->
+                add(if (o.isEmpty()) "Option ${i + 1} is empty." else r.textProblem("Option ${i + 1}", o, r.OPTION))
+            }
         }
         if (FormSchemaFieldType.fromWire(field.type) == null) {
             errs += FormSchemaValidationError(

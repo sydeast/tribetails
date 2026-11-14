@@ -15,7 +15,8 @@ import type { GenerateCommunicationType, GenerateDraftArgs } from '../api/commun
  * ── MESSAGE TYPE IS A COPY FORMAT, NOT A DELIVERY CHANNEL ───────────────────
  * This is the axis that caused the most confusion, so it is worth being blunt:
  * every entry in the table below describes HOW THE TEXT IS WRITTEN, not how it
- * travels. `push` asks for a notification-shelf line and delivers nothing.
+ * travels. `push` asks for a notification-shelf line, and since #2061 the
+ * approved line is pushed to the household through `sendHouseholdPush`.
  * `email` asks for a warm opener and a closing, and happens also to be
  * deliverable from this screen. The two facts are tracked separately, on
  * `key` and on `deliverable`.
@@ -54,10 +55,13 @@ export interface PersonalizeMessageType {
    * approving only promotes the draft and writes the audit entry.
    *
    * Email and sms go out through `sendExternalMessage`, which speaks those two
-   * and nothing else. `push` in this table is a COPY FORMAT, not a delivery
-   * route: there is no 1:1 push callable, so a push draft is written here and
-   * carried elsewhere. A Blog, Social or General post has no single destination
+   * and nothing else. A Blog, Social or General post has no single destination
    * at all.
+   *
+   * `push` (#2061): the approved line goes to the household's devices through
+   * the `sendHouseholdPush` callable, behind the household send gate and the
+   * household's own push setting. Before #2061 this type was `false`: approving
+   * a Push draft said it "delivers elsewhere" and nothing delivered it.
    *
    * `kintale` (#1563): a KinTale draft is sent to its household's portal by the
    * `publishGeneratedDraft` callable, which writes the SENT `kin_care_reports`
@@ -65,7 +69,7 @@ export interface PersonalizeMessageType {
    * type was `false`, so approving a KinTale stamped the draft and reached
    * nobody.
    */
-  deliverable: false | 'email' | 'sms' | 'kintale';
+  deliverable: false | 'email' | 'sms' | 'kintale' | 'push';
   /**
    * Whether to spend the second model call on a title.
    *
@@ -102,7 +106,7 @@ export interface PersonalizeMessageType {
 export const PERSONALIZE_MESSAGE_TYPES: readonly PersonalizeMessageType[] = [
   { key: 'email', label: 'Email', needsRecipient: true, deliverable: 'email', wantsTitle: true },
   { key: 'sms', label: 'SMS', needsRecipient: true, deliverable: 'sms', wantsTitle: false },
-  { key: 'push', label: 'Push', needsRecipient: true, deliverable: false, wantsTitle: false },
+  { key: 'push', label: 'Push', needsRecipient: true, deliverable: 'push', wantsTitle: false },
   { key: 'social_post', label: 'Social', needsRecipient: false, deliverable: false, wantsTitle: false },
   { key: 'blog_post', label: 'Blog', needsRecipient: false, deliverable: false, wantsTitle: true },
   { key: 'general', label: 'General', needsRecipient: true, deliverable: false, wantsTitle: false },
@@ -209,9 +213,13 @@ export function generateBlocker(s: PersonalizeFormState): string | null {
  * The contact-method and subject rules only apply to a type that sends over
  * that channel. A KinTale goes to the household's portal (#1563), so it needs a
  * household and nothing else; demanding a phone number for it would block a
- * send on a fact the send does not use. Push, Social, Blog and General send
- * nothing from here and need nothing.
+ * send on a fact the send does not use. A Push goes to the household's
+ * devices, so it needs a household and nothing else (#2061). Social, Blog and
+ * General send nothing from here and need nothing.
  */
+/** The longest push line `sendHouseholdPush` accepts (#2061). */
+export const PUSH_MAX = 1000;
+
 export function approveBlocker(
   s: PersonalizeFormState,
   kf: Kinfolk | undefined,
@@ -232,6 +240,12 @@ export function approveBlocker(
   // nothing else: no phone, no email, no subject.
   if (def.deliverable === 'kintale') {
     return kf ? null : 'This KinTale is not addressed to a household. Choose one before sending.';
+  }
+  if (def.deliverable === 'push') {
+    if (!kf) return 'This push is not addressed to a household. Choose one before sending.';
+    // The server's cap (`HOUSEHOLD_PUSH_BODY_MAX` in sendHouseholdPush.ts).
+    const length = draftText.trim().length;
+    return length > PUSH_MAX ? `A push can be at most ${PUSH_MAX} characters. This one is ${length}.` : null;
   }
   const name = kf ? kinfolkDisplayName(kf) : 'This household';
   if (def.deliverable === 'email' && str(kf?.email).trim() === '') {
