@@ -390,3 +390,104 @@ describe('TemplateImport: tick all (#1060)', () => {
     expect(screen.getByRole('button', { name: 'Import 0 documents' })).toBeDisabled();
   });
 });
+/**
+ * #1936: a row whose stored copy differs shows both wordings before the tick,
+ * so replacing it is never a blind choice.
+ */
+describe('TemplateImport: both wordings, before the tick (#1936)', () => {
+  const smsDiffers = report({
+    counts: { create: 2, overwrite: 0, skipped: 1, unchanged: 0, blocked: 0 },
+    rows: [
+      {
+        templateId: 'kincare.request.declined',
+        aliasOf: null,
+        channels: [
+          channel('email', 'create'),
+          {
+            channel: 'sms',
+            outcome: 'skipped',
+            notes: ['The stored sms copy differs from the repo copy.'],
+            differences: [
+              { field: 'text', label: 'Text message', stored: 'Sorry, we cannot make that visit.', repo: '{{business}}: we cannot make that visit.' },
+            ],
+          } as never,
+          channel('push', 'create'),
+        ],
+        differsFromRepo: true,
+        blocked: false,
+      },
+    ],
+    needsOverwriteChoice: ['kincare.request.declined'],
+  });
+  it('draws the stored and the repo wording side by side, above the tick', async () => {
+    planSeedTemplateImport.mockResolvedValue(smsDiffers);
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    const compare = await screen.findByTestId('compare-kincare.request.declined-sms');
+    expect(compare).toHaveTextContent('Text message');
+    expect(compare).toHaveTextContent('Your stored copySorry, we cannot make that visit.');
+    expect(compare).toHaveTextContent('Repo copy{{business}}: we cannot make that visit.');
+    const tick = screen.getByLabelText('Replace the stored copy of kincare.request.declined');
+    // Document order: the comparison comes before the box it informs.
+    expect(compare.compareDocumentPosition(tick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  it('keeps the comparison on screen once the row is ticked', async () => {
+    planSeedTemplateImport.mockResolvedValue(smsDiffers);
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    await userEvent.click(await screen.findByLabelText('Replace the stored copy of kincare.request.declined'));
+    expect(screen.getByTestId('compare-kincare.request.declined-sms')).toHaveTextContent('Sorry, we cannot make that visit.');
+  });
+  it('says the wordings could not be shown when the server sent none, never a blank comparison', async () => {
+    planSeedTemplateImport.mockResolvedValue(
+      report({
+        rows: [
+          {
+            templateId: 'kincare.request.declined',
+            aliasOf: null,
+            channels: [channel('email', 'skipped', ['The stored email copy differs from the repo copy.'])],
+            differsFromRepo: true,
+            blocked: false,
+          },
+        ],
+      }),
+    );
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    expect(
+      await screen.findByText(/The two wordings could not be shown\. Open this template in Templates/),
+    ).toBeInTheDocument();
+  });
+  it('draws nothing to compare on a created or unchanged channel', async () => {
+    planSeedTemplateImport.mockResolvedValue(report());
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    await screen.findByText('kincare.reschedule.requested');
+    expect(screen.queryByTestId(/^compare-/)).toBeNull();
+    expect(screen.queryByText(/could not be shown/)).toBeNull();
+  });
+  it('shows the note, and the shared wording once, when only the format differs', async () => {
+    planSeedTemplateImport.mockResolvedValue(
+      report({
+        rows: [
+          {
+            templateId: 'quote.denied',
+            aliasOf: null,
+            channels: [
+              {
+                channel: 'email',
+                outcome: 'skipped',
+                notes: ['The stored email copy differs from the repo copy.'],
+                differences: [
+                  { field: 'content', label: 'Message', stored: 'Same words', repo: 'Same words', note: 'The wording is the same. Your stored copy uses the older email format, and importing moves it to the current one.' },
+                ],
+              } as never,
+              channel('sms', 'unchanged'),
+              channel('push', 'unchanged'),
+            ],
+            differsFromRepo: true,
+            blocked: false,
+          },
+        ],
+      }),
+    );
+    render(<TemplateImport onClose={vi.fn()} onImported={vi.fn()} />);
+    expect(await screen.findByText(/uses the older email format/)).toBeInTheDocument();
+  });
+});

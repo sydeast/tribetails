@@ -3,6 +3,9 @@ package com.tribetails.auntieos.web
 import com.tribetails.auntieos.web.data.FormFieldSpec
 import com.tribetails.auntieos.web.data.FormSchema
 import com.tribetails.auntieos.web.data.FormSectionSpec
+import com.tribetails.auntieos.web.screens.admin.formschemas.FormSchemaRefusal
+import com.tribetails.auntieos.web.screens.admin.formschemas.FormSchemaTextRules
+import com.tribetails.auntieos.web.screens.admin.formschemas.formSchemaRefusalsFromDetails
 import com.tribetails.auntieos.web.screens.admin.formschemas.validateFormSchema
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -236,5 +239,72 @@ class FormSchemaValidatorTest {
         val dupErrs = r.fieldErrors[0 to 1].orEmpty()
         assertTrue(dupErrs.any { it.contains("Duplicate") })
         assertTrue(dupErrs.any { it.contains("Options required") })
+    }
+
+    // ---- #2074: the server's text rules, same strings as the functions test ----
+
+    @Test
+    fun walkSchema_titleAndLabelRefused_namingTheCharacters() {
+        val walk = FormSchema(
+            id = "qaR1Schema",
+            name = "QA-R1 schema",
+            sections = listOf(
+                FormSectionSpec(
+                    title = "QA-R1 section <b>x</b> ' \" & %",
+                    fields = listOf(field(key = "qaField", label = "QA-R1 field <b>x</b> ' \" & %", type = "select", options = listOf("One", "Two"))),
+                ),
+            ),
+        )
+        val r = validateFormSchema(walk)
+        assertEquals(listOf("Section title cannot contain <, > or &."), r.sectionErrors[0])
+        assertEquals(listOf("Label cannot contain <, > or &."), r.fieldErrors[0 to 0])
+    }
+
+    @Test
+    fun quotesPercentEmojiAndDescriptionLineBreaks_pass() {
+        val ok = FormSchema(
+            id = "qaR1Plain",
+            name = "QA-R1 schema 🐾",
+            description = "Line one\nLine two",
+            sections = listOf(
+                FormSectionSpec(
+                    title = "QA-R1 section ' \" %",
+                    description = "First\r\nSecond",
+                    fields = listOf(field(label = "QA-R1 field ' \" %")),
+                ),
+            ),
+        )
+        assertTrue(validateFormSchema(ok).isValid, validateFormSchema(ok).allErrors.toString())
+    }
+
+    @Test
+    fun tabLengthAndOptionAmpersand_eachNamed() {
+        val rules = FormSchemaTextRules
+        assertEquals(
+            "Label cannot contain a tab, a line break or another hidden character.",
+            rules.textProblem("Label", "Family\tname", rules.LABEL),
+        )
+        assertEquals("Label is 330 characters long. The limit is 200.", rules.textProblem("Label", "x".repeat(330), rules.LABEL))
+        assertEquals(null, rules.textProblem("Group", "a & b", rules.GROUP, plain = false))
+        val r = validateFormSchema(schema(field(type = "select", options = listOf("One", "Salt & pepper"))))
+        assertEquals(listOf("Option 2 cannot contain <, > or &."), r.fieldErrors[0 to 0])
+    }
+
+    @Test
+    fun serverRefusals_readFromDetailsJson() {
+        val details = """{"reason":"form-schema-refused","validationErrors":[""" +
+            """{"path":"schema.name","message":"x","text":"Name cannot contain <, > or &.","sectionIndex":null,"fieldIndex":null},""" +
+            """{"path":"schema.sections.0.title","message":"x","text":"Section 1: Section title cannot contain <, > or &.","sectionIndex":0,"fieldIndex":null}]}"""
+        assertEquals(
+            listOf(
+                FormSchemaRefusal(null, null, "Name cannot contain <, > or &."),
+                FormSchemaRefusal(0, null, "Section 1: Section title cannot contain <, > or &."),
+            ),
+            formSchemaRefusalsFromDetails(details),
+        )
+        assertEquals(emptyList(), formSchemaRefusalsFromDetails("""{"reason":"other"}"""))
+        assertEquals(emptyList(), formSchemaRefusalsFromDetails("""{"reason":"form-schema-refused","validationErrors":[{"path":"a"}]}"""))
+        assertEquals(emptyList(), formSchemaRefusalsFromDetails(null))
+        assertEquals(emptyList(), formSchemaRefusalsFromDetails("not json"))
     }
 }

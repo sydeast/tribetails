@@ -123,6 +123,29 @@ describe('importSeedTemplates: overwriting is an explicit choice', () => {
     expect(ctx.writes.map((w) => w.path)).not.toContain(`emailTemplates/${RESCHEDULE}`);
   });
 
+  it('HAPPY: the dry run row shows the stored and the repo wording side by side (#1936)', async () => {
+    const ctx = buildDbMock({ docs: EDITED });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await importSeedTemplatesHandler(req({ dryRun: true, onlyIds: [RESCHEDULE] }));
+
+    const email = res.rows[0].channels.find((c) => c.channel === 'email')!;
+    const subject = email.differences?.find((d) => d.field === 'subject');
+    expect(subject).toEqual({
+      field: 'subject',
+      label: 'Subject',
+      stored: 'Wording the operator typed in the Template Bank',
+      repo: corpusEntry(RESCHEDULE).emailSubject,
+    });
+    const message = email.differences?.find((d) => d.field === 'content');
+    expect(message?.stored).toBe('Also theirs.');
+    expect(message?.repo).not.toMatch(/<[a-z]/i);
+    // A channel that is created or unchanged carries no comparison at all.
+    for (const c of res.rows[0].channels.filter((x) => x.outcome !== 'skipped' && x.outcome !== 'overwrite')) {
+      expect(c.differences).toBeUndefined();
+    }
+  });
+
   it('HAPPY: overwrites only when the id is named in overwriteIds', async () => {
     const ctx = buildDbMock({ docs: EDITED });
     mocks.dbFn.mockReturnValue(ctx.db);

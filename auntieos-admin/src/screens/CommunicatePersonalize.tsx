@@ -25,6 +25,12 @@ import {
 import { generateDraft, draftOpening, type GenerateDraftResult } from '../api/communicateGenerate';
 import { approveGeneratedDraft, type ApproveDraftResult } from '../api/communicateApprove';
 import { sendExternalMessage } from '../api/externalSend';
+import {
+  sendHouseholdPush,
+  householdPushResultText,
+  householdPushRetryable,
+  type HouseholdPushResult,
+} from '../api/householdPush';
 import { DenPanel, EmptyHint, StatusPill } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
@@ -64,6 +70,15 @@ const SUBJECT_MAX = 500;
  * `sendExternalMessage`, while a KinTale report and a Blog post are promoted and
  * recorded but sent by nothing. A deliverable approve gets a confirm dialog
  * first, because it reaches a real household and is not undoable.
+ *
+ * ── A PUSH IS SENT BY THE SERVER, OR SAYS WHY NOT (#2061) ───────────────────
+ * A Push draft's approved line goes to the household through
+ * `sendHouseholdPush`, after the approve write, as the deliver step. The
+ * server applies the household send gate and the household's own settings and
+ * answers with what happened; the banner says exactly that. Before #2061 it
+ * said "Nothing was sent, this message type delivers elsewhere" and offered no
+ * way to send. A push the gate held can be tried again from the banner once
+ * household notices are switched on.
  *
  * ── A KINTALE IS SENT BY THE SERVER (#1563) ─────────────────────────────────
  * A KinTale draft (`visit_report`) goes to the household's portal through the
@@ -120,6 +135,9 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
   const [approved, setApproved] = useState<ApproveDraftResult | null>(null);
   // #1563: the KinTale a send produced, or the one an opened draft was already sent as.
   const [published, setPublished] = useState<{ reportId: string; alreadyPublished: boolean } | null>(null);
+  // #2061: what the push send answered, for a Push draft.
+  const [pushResult, setPushResult] = useState<HouseholdPushResult | null>(null);
+  const [retryingPush, setRetryingPush] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -137,7 +155,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
   const draftId = useId();
 
   const def = messageTypeDef(form.messageType);
-  const busy = generating || approving || deleting;
+  const busy = generating || approving || deleting || retryingPush;
   useEffect(() => {
     if (stored.status !== 'ready' || stored.data === null) return;
     const row = stored.data;
@@ -163,6 +181,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     });
     setDraftText(body);
     setApproved(null);
+    setPushResult(null);
     setApproveError(null);
     setFormError(null);
     setDeleted(false);
@@ -181,6 +200,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     setDraftText('');
     setApproved(null);
     setPublished(null);
+    setPushResult(null);
     setApproveError(null);
     setFormError(null);
   }
@@ -195,6 +215,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     setFormError(null);
     setApproved(null);
     setPublished(null);
+    setPushResult(null);
     setApproveError(null);
     setDeleted(false);
     setGenerating(true);
@@ -234,11 +255,24 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
         setConfirmOpen(false);
         return;
       }
+      // #2061: the push's answer, read after the approve. `delivered` only says
+      // the call returned; what reached the household is in this result.
+      let pushAnswer: HouseholdPushResult | null = null;
+      const pushTo = draft?.kinfolk_id ?? (form.recipientId !== '' ? form.recipientId : '');
       // The deliver step exists only for a type that actually sends. Passing an
       // always-present callback that sometimes no-ops would make `delivered`
       // claim a send that never happened.
       const deliver =
-        (def.deliverable === 'email' || def.deliverable === 'sms') && kf !== undefined
+        def.deliverable === 'push' && pushTo !== ''
+          ? async () => {
+              pushAnswer = await sendHouseholdPush({
+                kinfolkId: pushTo,
+                draftId: draft?.draft_id ?? '',
+                body: draftText,
+              });
+              return null;
+            }
+          : (def.deliverable === 'email' || def.deliverable === 'sms') && kf !== undefined
           ? async () => {
               const res = await sendExternalMessage({
                 channel: def.deliverable === 'email' ? 'email' : 'sms',
@@ -259,12 +293,28 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
         ...(deliver ? { deliver } : {}),
       });
       setApproved(result);
+      setPushResult(pushAnswer);
       setConfirmOpen(false);
     } catch (err) {
       setApproveError(err instanceof Error ? err.message : 'Approve failed.');
       setConfirmOpen(false);
     } finally {
       setApproving(false);
+    }
+  }
+
+  /** #2061: send a held push again, once its cause is fixed. The draft is already approved. */
+  async function retryPush() {
+    const kinfolkId = draft?.kinfolk_id ?? (form.recipientId !== '' ? form.recipientId : '');
+    if (busy || kinfolkId === '' || !draft?.draft_id) return;
+    setRetryingPush(true);
+    setApproveError(null);
+    try {
+      setPushResult(await sendHouseholdPush({ kinfolkId, draftId: draft.draft_id, body: draftText }));
+    } catch (err) {
+      setApproveError(err instanceof Error ? err.message : 'The push could not be sent.');
+    } finally {
+      setRetryingPush(false);
     }
   }
 
@@ -590,13 +640,39 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       )}
                     </Banner>
                   )}
-                  {approved !== null && (
+                  {approved !== null && pushResult !== null && (() => {
+                    // #2061: the push's own answer, never a generic "sent".
+                    const words = householdPushResultText(pushResult, household);
+                    const tone = pushResult.outcome === 'held' ? 'warning' : 'success';
+                    return (
+                      <Banner tone={tone} title={words.title}>
+                        {words.body}
+                        {approved.auditWarning !== null
+                          ? ` The audit entry could not be written: ${approved.auditWarning}`
+                          : ''}
+                        {householdPushRetryable(pushResult) && (
+                          <>
+                            {' '}
+                            <button
+                              type="button"
+                              className="async-retry"
+                              disabled={busy}
+                              onClick={() => void retryPush()}
+                            >
+                              {retryingPush ? 'Trying again…' : 'Try again'}
+                            </button>
+                          </>
+                        )}
+                      </Banner>
+                    );
+                  })()}
+                  {approved !== null && pushResult === null && (
                     <Banner tone="success" title="Draft approved">
                       {approved.delivered
                         ? // #1592: no provider message id; it is a support trace, not
                           // something the operator reads.
                           'Approved and sent.'
-                        : 'Approved and logged to the audit trail. Nothing was sent, this message type delivers elsewhere.'}
+                        : 'Approved and saved. Nothing was sent: Social, Blog and General drafts are not sent from here, so copy the text to where it goes.'}
                       {approved.auditWarning !== null
                         ? ` The audit entry could not be written: ${approved.auditWarning}`
                         : ''}
@@ -655,7 +731,16 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                   </>
                 }
               >
-                {def.deliverable === 'kintale' ? (
+                {def.deliverable === 'push' ? (
+                  <>
+                    <p className="personalize__confirm-line">
+                      <strong>To:</strong> {kf ? kinfolkDisplayName(kf) : 'nobody'}
+                    </p>
+                    <p className="personalize__confirm-line">
+                      <strong>Channel:</strong> Push, to their phone and their notifications list
+                    </p>
+                  </>
+                ) : def.deliverable === 'kintale' ? (
                   <>
                     <p className="personalize__confirm-line">
                       <strong>To:</strong> {kf ? kinfolkDisplayName(kf) : 'nobody'}

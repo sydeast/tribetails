@@ -497,6 +497,8 @@ private fun ComposePanel(
                 // own confirm (requestApprove).
                 val approveChannel = approveDeliveryChannel(state.commType)
                 val isKinTale = state.commType == "visit_report"
+                // #2061: approving a Push sends it to the household's devices.
+                val isPush = isPushType(state.commType)
                 val sent = state.publishedReportId != null
                 var confirmSend by remember { mutableStateOf(false) }
                 var confirmDelete by remember { mutableStateOf(false) }
@@ -512,7 +514,7 @@ private fun ComposePanel(
                         label = when {
                             sent -> "Sent"
                             state.savedDraftId != null -> "Approved"
-                            isKinTale || approveChannel != null -> "Approve and send"
+                            isKinTale || approveChannel != null || isPush -> "Approve and send"
                             else -> "Approve draft"
                         },
                         onClick = { if (isKinTale) confirmSend = true else viewModel.requestApprove() },
@@ -535,6 +537,7 @@ private fun ComposePanel(
                                     (if (approveChannel == ExternalChannel.Email) "email" else "text") +
                                     ". Nothing sends unless the save lands."
                             isKinTale -> "Approving sends this KinTale to the household's portal."
+                            isPush -> "Approving saves the draft, logs it, then pushes it to the household. The line below says what reached them."
                             else -> "Approving saves the draft and logs it to the audit trail. This type sends nothing from here."
                         },
                         style = AuntieTheme.typography.bodySmall,
@@ -600,10 +603,74 @@ private fun ComposePanel(
                 if (state.approveConfirmOpen && approveChannel != null) {
                     ApproveSendConfirm(state = state, channel = approveChannel, viewModel = viewModel)
                 }
+                if (state.approveConfirmOpen && isPush) {
+                    PushSendConfirm(state = state, viewModel = viewModel)
+                }
+                state.pushNotice?.let { notice ->
+                    HouseholdPushNoticeBlock(notice = notice, retrying = state.isRetryingPush, onRetry = viewModel::retryHouseholdPush)
+                }
             }
 
             // ── External send (one-off email/SMS to a non-kinfolk recipient) ─────
             ExternalSendSection(state = state, viewModel = viewModel)
+        }
+    }
+}
+
+/**
+ * #2061: the confirm before a Push approve, which reaches a real household's
+ * phone. Names who gets it and how, as the web admin's confirm does.
+ */
+@Composable
+private fun PushSendConfirm(state: CommunicateUiState, viewModel: CommunicateViewModel) {
+    val c = AuntieTheme.colors
+    val kf = state.kinfolkList.firstOrNull { state.kinfolkId != null && it.id == state.kinfolkId } ?: state.selectedKinfolk
+    AuntieModal(
+        onDismissRequest = viewModel::cancelApproveConfirm,
+        title = "Send this push?",
+        confirmButton = {
+            PrimaryButton(
+                label = if (state.isSaving) "Sending…" else "Approve and send",
+                onClick = viewModel::approveDraft,
+                enabled = !state.isSaving,
+                loading = state.isSaving,
+            )
+        },
+        dismissButton = { GhostButton(label = "Cancel", onClick = viewModel::cancelApproveConfirm) },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                "To: ${kf?.displayName ?: state.generatedKinfolkName.ifBlank { "This household" }}",
+                style = AuntieTheme.typography.bodyMedium,
+                color = c.textPrimary,
+            )
+            Text(
+                "Channel: Push, to their phone and their notifications list",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+            Text(
+                "This reaches a real household right now. It is not undoable.",
+                style = AuntieTheme.typography.bodySmall,
+                color = c.textDim,
+            )
+        }
+    }
+}
+
+/** #2061: what the push send answered, with a way to try a held push again. */
+@Composable
+private fun HouseholdPushNoticeBlock(notice: HouseholdPushNotice, retrying: Boolean, onRetry: () -> Unit) {
+    val c = AuntieTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(notice.title, style = AuntieTheme.typography.bodyMedium, color = if (notice.retryable) c.error else c.textPrimary)
+        Text(notice.body, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        if (notice.retryable) {
+            GhostButton(
+                label = if (retrying) "Trying again…" else "Try again",
+                onClick = onRetry,
+                enabled = !retrying,
+            )
         }
     }
 }

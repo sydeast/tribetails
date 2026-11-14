@@ -53,3 +53,56 @@ describe('import planner, what each differing row says will happen (#1060)', () 
     );
   });
 });
+/**
+ * #1936: a differing row carries both wordings, readable, so the operator can
+ * decide before ticking the overwrite. Before this the row said the copies
+ * differed and showed neither.
+ */
+describe('import planner, what a differing row shows (#1936)', () => {
+  const channelOf = (existing: Record<string, Record<string, unknown>>, channel: 'email' | 'sms' | 'push', overwriteIds?: string[]) =>
+    planImport({ corpus: [entry], existing, overwriteIds }).templates[0]!.channels.find((c) => c.channel === channel)!;
+  it('a skipped sms row carries the stored text and the repo text', () => {
+    const c = channelOf({ 'smsTemplates/k': { text: 'Hi from the office, your visit moved.' } }, 'sms');
+    expect(c.outcome).toBe('skipped');
+    expect(c.differences).toEqual([
+      { field: 'text', label: 'Text message', stored: 'Hi from the office, your visit moved.', repo: 'sms' },
+    ]);
+  });
+  it('a ticked row carries the same comparison, so the choice can be checked before Import', () => {
+    const c = channelOf({ 'smsTemplates/k': { text: 'Old wording' } }, 'sms', ['k']);
+    expect(c.outcome).toBe('overwrite');
+    expect(c.differences?.[0]).toMatchObject({ stored: 'Old wording', repo: 'sms' });
+  });
+  it('an email lists only the parts that differ, the message as readable text', () => {
+    const c = channelOf(
+      { 'emailTemplates/k': { subject: 'S', headline: 'Mine', content: '<p>Line one<br>line two</p><p>Second &amp; last</p>', format: 'visual', body: null, html: null } },
+      'email',
+    );
+    expect(c.differences).toEqual([
+      { field: 'headline', label: 'Headline', stored: 'Mine', repo: 'H' },
+      { field: 'content', label: 'Message', stored: 'Line one\nline two\n\nSecond & last', repo: 'x' },
+    ]);
+  });
+  it('an old-format email is read from its html, and a wording match says what else differs', () => {
+    const c = channelOf({ 'emailTemplates/k': { subject: 'S', headline: 'H', html: '<p>x</p>', body: 'x' } }, 'email');
+    expect(c.outcome).toBe('skipped');
+    expect(c.differences).toEqual([
+      {
+        field: 'content',
+        label: 'Message',
+        stored: 'x',
+        repo: 'x',
+        note: 'The wording is the same. Your stored copy uses the older email format, and importing moves it to the current one.',
+      },
+    ]);
+  });
+  it('a push row compares title and message', () => {
+    const c = channelOf({ 'pushTemplates/k': { title: 'Title', body: 'mine' } }, 'push');
+    expect(c.differences).toEqual([{ field: 'body', label: 'Message', stored: 'mine', repo: 'body' }]);
+  });
+  it('a row with nothing to compare carries no differences', () => {
+    const created = channelOf({}, 'sms');
+    expect(created.outcome).toBe('create');
+    expect(created.differences).toBeUndefined();
+  });
+});
