@@ -31,7 +31,7 @@ import { projectRoute } from '@tribetails/geo';
 import { sessionState } from '../lib/sessionFormat';
 import { useCollection } from '../lib/firestore';
 import { DenScreenHeading, DenPanel, EmptyHint, ServicePill, StatusPill } from '../components/DenScreenKit';
-import { kinTaleWhen } from '../lib/kinTaleFormat';
+import { kinTaleState, kinTaleWhen } from '../lib/kinTaleFormat';
 import { AsyncRegion } from '../components/AsyncRegion';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { DeleteKinTaleDraftButton } from '../components/DeleteKinTaleDraftButton';
@@ -73,7 +73,8 @@ import './KinTaleCompose.css';
  *  - NEW: `sessionId` given (or picked inline, see `SessionPicker` below).
  *    Scaffolds a blank draft off the parent `kin_care_sessions` row and the
  *    template that session's service type resolves to, mirroring the wasm's
- *    `scaffoldReport(session, template)`. A template supplies the checklist and
+ *    `scaffoldReport(session, template)`, UNLESS the visit already has a saved
+ *    draft, which reopens instead (#2040, `savedDraftForVisit`). A template supplies the checklist and
  *    the section flags, never the words: neither Kotlin composer prefills title
  *    or body from one, and a template's `defaultEmailMessage` is preview-only
  *    there (`KinTaleComposeScreen.kt:1051`), so both start blank here too.
@@ -208,6 +209,37 @@ export function draftFromKinTaleEntry(report: KinTaleEntry): KinTaleDraft {
     templateId: report.templateId ?? '',
     fieldResponses: decodeFieldResponses(report.fieldResponses),
   };
+}
+
+/** Descending string order; a missing value sorts last. */
+function newestFirst(a: string | undefined, b: string | undefined): number {
+  const x = a ?? '';
+  const y = b ?? '';
+  return x === y ? 0 : x < y ? 1 : -1;
+}
+
+/**
+ * #2040: the saved draft a visit's "Send the KinTale" reopens, or null when the
+ * visit has none and the composer should start a new one.
+ *
+ * Only a row that is positively a DRAFT, was never sent, and belongs to this
+ * visit counts. A visit is meant to hold one draft; if two were ever saved (two
+ * tabs, or a phone and a desk), the NEWEST wins: latest `updatedAt`, then
+ * `createdAt`, then id. That is the order the desktop console already opens a
+ * visit's drafts in (`orderVisitReports`), and Android uses the same rule.
+ */
+export function savedDraftForVisit(reports: readonly KinTaleEntry[], sessionId: string): KinTaleEntry | null {
+  if (sessionId.trim() === '') return null;
+  const drafts = reports.filter(
+    (r) =>
+      (r.sessionId ?? '') === sessionId &&
+      kinTaleState(r.status ?? '') === 'draft' &&
+      (r.sentAt ?? '').trim() === '',
+  );
+  drafts.sort(
+    (a, b) => newestFirst(a.updatedAt, b.updatedAt) || newestFirst(a.createdAt, b.createdAt) || newestFirst(a._id, b._id),
+  );
+  return drafts[0] ?? null;
 }
 
 /**
@@ -348,6 +380,8 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    */
   const [loadedDraft, setLoadedDraft] = useState<KinTaleDraft | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  /** #2040: the visit's saved draft was reopened rather than a new tale started. */
+  const [resumedDraft, setResumedDraft] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [confirmSend, setConfirmSend] = useState(false);
@@ -369,6 +403,17 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
   );
   const checklistCtx = useChecklistContext(draft);
   const attachedMedia = useAttachedMedia(draft?.mediaFileIds ?? []);
+  // #1631: the stored row behind this draft, once it has been saved.
+  const storedRow =
+    draft?._id && reports.status === 'ready' ? reports.data.find((r) => r._id === draft._id) : undefined;
+  /**
+   * #1940: this tale has already gone home. Read off the STORED row's status,
+   * never off how the screen was opened: KinTales' Edit opens drafts and sent
+   * tales alike. A sent tale is edited in place: the household already has it
+   * (the portal serves the live document), so there is nothing to send again
+   * and nothing to delete, only changes to save.
+   */
+  const isSent = storedRow !== undefined && kinTaleState(storedRow.status ?? '') === 'sent';
   /**
    * Fold a generated draft into the form.
    *
@@ -410,6 +455,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     setDraft(null);
     setLoadedDraft(null);
     setHydrated(false);
+    setResumedDraft(false);
     setBanner(null);
   }, [kinTaleId, effectiveSessionId]);
 
@@ -433,6 +479,23 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     }
     if (effectiveSessionId) {
       if (sessions.status !== 'ready') return;
+      // #2040: a visit that already has a saved draft reopens it. Waiting for
+      // the reports read to ANSWER is the point: starting a blank tale before
+      // it does, or after it fails, is how a second draft for one visit was
+      // made. A failed read renders its error and Retry below, never a blank
+      // composer. The read is the same bounded stream (newest 200 by
+      // `createdAt`) the edit mode already holds, so a draft is found unless
+      // 200 newer KinTales were written after it.
+      if (reports.status !== 'ready') return;
+      const saved = savedDraftForVisit(reports.data, effectiveSessionId);
+      if (saved) {
+        const read = draftFromKinTaleEntry(saved);
+        setDraft(read);
+        setLoadedDraft(read);
+        setResumedDraft(true);
+        setHydrated(true);
+        return;
+      }
       // Scaffolding waits for the template list to SETTLE, because the
       // `templateId` it stamps is written to Firestore on the first save and
       // never re-derived afterwards. Scaffolding against a still-loading list
@@ -468,7 +531,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
         ? { ...d, mediaFileIds: [...d.mediaFileIds, mediaFileId] }
         : d,
     );
-    showToast('Photo attached. Save the draft to keep it.');
+    showToast(isSent ? 'Photo attached. Save your changes to keep it.' : 'Photo attached. Save the draft to keep it.');
   }
 
   /**
@@ -496,15 +559,19 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
       if (id !== draft._id) setDraft({ ...draft, _id: id });
       setLoadedDraft({ ...draft, _id: id });
       setBanner(null);
-      showToast('Draft saved.');
+      showToast(isSent ? 'Changes saved.' : 'Draft saved.');
     } catch (err) {
       setIsSaving(false);
-      setBanner({ tone: 'error', text: `Couldn't save draft: ${err instanceof Error ? err.message : 'unknown error'}` });
+      const what = isSent ? 'your changes' : 'draft';
+      setBanner({ tone: 'error', text: `Couldn't save ${what}: ${err instanceof Error ? err.message : 'unknown error'}` });
     }
   }
 
   async function handleConfirmSend() {
-    if (!draft || isSending) return;
+    // #1940: a sent tale is never sent again. A second send would restamp
+    // `sentAt` and count the visit's KinTales twice; the screen offers no Send
+    // on one, and this is the guard behind that.
+    if (!draft || isSending || isSent) return;
     setIsSending(true);
     setBanner(null);
     try {
@@ -549,7 +616,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    * is typed in the panel below: the kit band takes a string title, and the
    * mock's cover input is the one thing the band cannot be.
    */
-  const page = kinTaleId ? 'Edit tale' : 'New tale';
+  const page = kinTaleId || resumedDraft ? 'Edit tale' : 'New tale';
   const visitLine =
     draft !== null
       ? [
@@ -568,7 +635,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
       subtitle="The recap that goes home after a visit."
       badges={
         draft !== null ? (
-          <StatusPill label="Draft" tone="orange" />
+          isSent ? <StatusPill label="Sent" tone="success" /> : <StatusPill label="Draft" tone="orange" />
         ) : undefined
       }
       trailing={<GhostButton label="Close" onClick={onClose} />}
@@ -602,10 +669,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    * not contain. Scaffolding is gated for the same reason in the hydration
    * effect above; this closes the read side of it.
    */
-  // #1631: the stored row behind this draft, once it has been saved. Delete is
-  // offered only for a saved, unsent draft the server would let go.
-  const storedRow =
-    draft?._id && reports.status === 'ready' ? reports.data.find((r) => r._id === draft._id) : undefined;
+  // #1631: Delete is offered only for a saved, unsent draft the server would let go.
   const deleteTarget =
     storedRow !== undefined && canDeleteKinTaleDraft(storedRow)
       ? { reportId: storedRow._id, household: storedRow.kinfolkName ?? draft?.kinfolkName ?? '' }
@@ -636,6 +700,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
         onConfirmSend: () => void handleConfirmSend(),
         deleteTarget,
         onDeleted: onClose,
+        isSent,
       }
     : null;
 
@@ -690,13 +755,22 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
             if (!found) {
               return <EmptyHint>No KinCare session found with id &ldquo;{effectiveSessionId}&rdquo;.</EmptyHint>;
             }
-            return formProps ? (
-              <>
-                <ComposeForm {...formProps} />
-                {uploadDialog}
-              </>
-            ) : (
-              <p className="kintale-compose__hint">Loading…</p>
+            // #2040: the composer opens only once the visit's saved draft has
+            // been looked for. A failed look shows its error and Retry here;
+            // a blank tale in its place would become a second draft.
+            return (
+              <AsyncRegion state={reports} what="this visit's saved draft" isEmpty={() => false} empty={null}>
+                {() =>
+                  formProps ? (
+                    <>
+                      <ComposeForm {...formProps} />
+                      {uploadDialog}
+                    </>
+                  ) : (
+                    <p className="kintale-compose__hint">Loading…</p>
+                  )
+                }
+              </AsyncRegion>
             );
           }}
         </AsyncRegion>
@@ -821,6 +895,20 @@ interface ComposeFormProps {
   /** #1631: the saved, unsent draft Delete removes, or null when there is none to offer. */
   deleteTarget: { reportId: string; household: string } | null;
   onDeleted: () => void;
+  /** #1940: the tale has been sent; the form saves changes to it and offers no Send. */
+  isSent: boolean;
+}
+
+/**
+ * #1940: what saving an edit to a SENT tale does, in the household's terms.
+ * Matches the server, not a hope: the portal serves the live KinTale, so every
+ * saved change shows, and `onKinTaleUpdate` sends the household its "Your
+ * Auntie added to a KinTale" notice only when the words change or a photo is
+ * added. A new headline, a ticked moment or a removed photo shows without one.
+ */
+export function sentKinTaleEditNote(household: string): string {
+  const who = household.trim() === '' ? 'The household' : household.trim();
+  return `This KinTale has been sent. ${who} will see your changes once you save them. New words or a new photo also send them a notice that you added to it, at most one a minute.`;
 }
 
 function ComposeForm({
@@ -846,6 +934,7 @@ function ComposeForm({
   onConfirmSend,
   deleteTarget,
   onDeleted,
+  isSent,
 }: ComposeFormProps) {
   const contentReady = hasKinTaleContent(draft);
   const sendLabel = kinTaleSendLabel(draft.kinfolkName);
@@ -921,6 +1010,7 @@ function ComposeForm({
       {/* The mock's editor column, in its order: the tale, the photos, the
           route, the moments, then the actions. */}
       <div className="kintale-compose__col">
+        {isSent && <Banner tone="success">{sentKinTaleEditNote(draft.kinfolkName)}</Banner>}
         <DenPanel title="The tale">
           <label className="kintale-compose__field">
             <span className="kintale-compose__label">Headline</span>
@@ -999,8 +1089,20 @@ function ComposeForm({
         {banner && <Banner tone={banner.tone}>{banner.text}</Banner>}
 
         <div className="kintale-compose__actions">
-          <GhostButton label={isSaving ? 'Saving…' : 'Save draft'} onClick={onSaveDraft} disabled={isSaving || isSending} />
-          {deleteTarget !== null && (
+          {isSent ? (
+            // #1940: the one action a sent tale has. Primary, because it is the
+            // outward-facing one here, and off while the tale is emptied out:
+            // the household's copy cannot be blanked from this screen.
+            <PrimaryButton
+              label={isSaving ? 'Saving…' : 'Save changes'}
+              onClick={onSaveDraft}
+              disabled={!contentReady || hasErrors || isSaving}
+              busy={isSaving}
+            />
+          ) : (
+            <GhostButton label={isSaving ? 'Saving…' : 'Save draft'} onClick={onSaveDraft} disabled={isSaving || isSending} />
+          )}
+          {!isSent && deleteTarget !== null && (
             <DeleteKinTaleDraftButton
               reportId={deleteTarget.reportId}
               household={deleteTarget.household}
@@ -1008,12 +1110,14 @@ function ComposeForm({
               disabled={isSaving || isSending}
             />
           )}
-          <PrimaryButton
-            label={isSending ? 'Sending…' : sendLabel}
-            onClick={onOpenSendConfirm}
-            disabled={!contentReady || hasErrors || isSaving || isSending}
-            busy={isSending}
-          />
+          {!isSent && (
+            <PrimaryButton
+              label={isSending ? 'Sending…' : sendLabel}
+              onClick={onOpenSendConfirm}
+              disabled={!contentReady || hasErrors || isSaving || isSending}
+              busy={isSending}
+            />
+          )}
         </div>
       </div>
 
@@ -1021,7 +1125,7 @@ function ComposeForm({
         {goesTo}
       </aside>
 
-      {confirmSend && (
+      {confirmSend && !isSent && (
         <Dialog
           title="Send this KinTale?"
           onClose={() => {

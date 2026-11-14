@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.ui.kintales
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -60,7 +61,6 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.MediaFile
 import com.tribetails.auntieos.data.model.MoodOption
-import com.tribetails.auntieos.data.model.ReportStatus
 import com.tribetails.auntieos.data.model.canDeleteAsDraft
 import com.tribetails.auntieos.data.repository.KinTaleCommentsRepository
 import com.tribetails.auntieos.ui.admin.rememberServiceCatalog
@@ -156,15 +156,25 @@ fun KinTaleReportScreen(
         }
     }
 
-    val isSent = state.report.status == ReportStatus.SENT.name
+    val isSent = state.report.isSentReport()
     var confirmDelete by remember { mutableStateOf(false) }
+    // #1940: leaving a sent tale with changes not saved asks first. A draft saves
+    // itself on the way out; a sent tale never does (see the view model's
+    // `persistDraft`), so a silent Back would drop the edits without a word.
+    var confirmLeave by remember { mutableStateOf(false) }
+    val leave: () -> Unit = {
+        if (isSent && state.hasUnsavedChanges) {
+            confirmLeave = true
+        } else {
+            viewModel.persistDraft()
+            onBack()
+        }
+    }
+    BackHandler(enabled = isSent && state.hasUnsavedChanges) { confirmLeave = true }
 
     AuntieScreenScaffold(
         title = "KinTale Update",
-        onBack = {
-            viewModel.persistDraft()
-            onBack()
-        },
+        onBack = leave,
         imePaddingEnabled = true,
     ) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -218,10 +228,7 @@ fun KinTaleReportScreen(
                     DenScreenHeading(
                         kicker = "The Den · KinTales",
                         crumbs = listOf(
-                            DenCrumb("KinTales") {
-                                viewModel.persistDraft()
-                                onBack()
-                            },
+                            DenCrumb("KinTales", leave),
                             DenCrumb(if (isSent) "KinTale" else "New tale"),
                         ),
                         title = "KinTale",
@@ -237,10 +244,7 @@ fun KinTaleReportScreen(
                         trailing = {
                             GhostButton(
                                 label = "Back",
-                                onClick = {
-                                    viewModel.persistDraft()
-                                    onBack()
-                                },
+                                onClick = leave,
                                 leading = {
                                     Icon(
                                         Lucide.ArrowLeft,
@@ -255,10 +259,12 @@ fun KinTaleReportScreen(
 
                     // ── The report mock's `.sentbanner`, its words verbatim from
                     // the source screen's SentBanner(). ──
+                    // #1940: and what saving a change to it does, said where the
+                    // operator reads it before typing rather than after.
                     if (isSent) {
                         AuntieBanner(tone = AuntieBannerTone.Success, icon = Lucide.Check) {
                             Text(
-                                "This KinTale has been sent.",
+                                sentKinTaleEditNote(state.session?.kinfolkName.orEmpty().ifBlank { state.report.kinfolkName }),
                                 style = AuntieTheme.typography.bodyMedium,
                                 color = AuntieTheme.colors.textPrimary,
                             )
@@ -433,13 +439,61 @@ fun KinTaleReportScreen(
                     color = autosaveColor,
                 )
             }
-            Row(
+            // #1940: a sent tale saves only on the button, so the line says
+            // whether there is anything waiting to go, never "Saves as you write".
+            if (isSent) {
+                val savedAt = state.lastSavedAtMillis
+                val sentLine = when {
+                    state.isSaving -> "Saving..." to AuntieTheme.colors.kinfolkOrange
+                    state.saveStatus == SaveStatus.ERROR -> "Not saved." to AuntieTheme.colors.error
+                    state.hasUnsavedChanges -> "Unsaved changes" to AuntieTheme.colors.textDim
+                    savedAt != null -> "Saved ${formatSavedAt(savedAt)}" to AuntieTheme.colors.success
+                    else -> null
+                }
+                sentLine?.let { (label, color) ->
+                    Text(label, style = AuntieTheme.typography.labelSmall, color = color)
+                }
+                PrimaryButton(
+                    label = if (state.isSaving) "Saving..." else "Save changes",
+                    onClick = { viewModel.saveChanges() },
+                    modifier = Modifier.fillMaxWidth(),
+                    // Off with nothing to save, with a rule broken, or with the
+                    // tale emptied out: the household's copy is never blanked here.
+                    enabled = !state.isSaving && state.hasUnsavedChanges &&
+                        state.validationError == null && state.report.hasKinTaleContent(),
+                    loading = state.isSaving,
+                )
+                state.validationError?.let { problem ->
+                    Text(problem, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.error)
+                }
+            }
+            AuntieDialog(
+                visible = confirmLeave,
+                title = "Leave without saving?",
+                onDismiss = { confirmLeave = false },
+                footer = {
+                    GhostButton(label = "Keep editing", onClick = { confirmLeave = false })
+                    PrimaryButton(
+                        label = "Leave",
+                        onClick = {
+                            confirmLeave = false
+                            onBack()
+                        },
+                    )
+                },
+            ) {
+                Text(
+                    text = "Your changes to this sent KinTale are not saved. The household keeps the copy they have.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+            }
+            if (!isSent) Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 GhostButton(
                     label = when {
-                        isSent -> "Saved"
                         state.hasUnsavedChanges || state.saveStatus == SaveStatus.ERROR -> "Save now"
                         state.saveStatus == SaveStatus.SAVED && !state.isSaving -> "Draft saved"
                         else -> "Save Draft"
@@ -455,7 +509,7 @@ fun KinTaleReportScreen(
                     // #552: Save stays live while a rule is broken, Send does not.
                     // A draft with a dash in it is still a draft; what it is not is
                     // something the kinfolk should receive.
-                    enabled = !state.isSending && !isSent && state.sendBlocker == null,
+                    enabled = !state.isSending && state.sendBlocker == null,
                     loading = state.isSending,
                     leading = { Icon(Lucide.Send, contentDescription = null, modifier = Modifier.size(18.dp)) }
                 )

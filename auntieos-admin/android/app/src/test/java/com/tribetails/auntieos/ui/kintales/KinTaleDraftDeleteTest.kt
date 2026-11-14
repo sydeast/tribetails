@@ -44,6 +44,8 @@ class KinTaleDraftDeleteTest {
         Dispatchers.setMain(testDispatcher)
         repo = mockk()
         kinCareRepo = mockk()
+        // #2040: a new KinTale first looks for the visit's saved draft. None here.
+        coEvery { kinCareRepo.getReportsForVisit(any()) } returns Result.success(emptyList())
     }
 
     @After

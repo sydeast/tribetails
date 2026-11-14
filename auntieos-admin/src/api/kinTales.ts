@@ -160,6 +160,12 @@ export interface KinTaleEntry {
    * `'live'` and says why that is sound.
    */
   createdAtSource?: string | undefined;
+  /**
+   * #2040: when this report was last written, same free-text ISO caveat as
+   * `createdAt`. Read only to pick the newest saved draft of a visit
+   * (`screens/KinTaleCompose.tsx#savedDraftForVisit`).
+   */
+  updatedAt?: string | undefined;
 }
 
 /**
