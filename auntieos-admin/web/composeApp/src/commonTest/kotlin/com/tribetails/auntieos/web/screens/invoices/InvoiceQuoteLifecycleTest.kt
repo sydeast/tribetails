@@ -44,6 +44,7 @@ class InvoiceQuoteLifecycleTest {
             "2 of 3 un-invoiced visits selected for Ada Wren.",
             uninvoicedScopeLine("Ada Wren", 3, 2, 3L, null, null),
         )
+        assertEquals("1 visit is back in this household's unbilled work.", exclusionNotice(1, false, quote = true))
     }
 
     @Test

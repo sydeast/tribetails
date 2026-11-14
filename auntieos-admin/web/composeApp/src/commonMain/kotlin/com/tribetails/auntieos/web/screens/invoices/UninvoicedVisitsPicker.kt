@@ -144,7 +144,7 @@ internal fun UninvoicedVisitsPicker(
                     excludeBusy = false
                     excluding = false
                     excludeReason = ""
-                    notice = exclusionNotice(r.value.changed.size, doNotInvoice)
+                    notice = exclusionNotice(r.value.changed.size, doNotInvoice, quote = forQuote)
                     runLoad(narrowedFrom, narrowedTo)
                 }
                 is WriteResult.Err -> {
@@ -207,7 +207,7 @@ internal fun UninvoicedVisitsPicker(
             if (loaded.truncated) {
                 AuntieBanner(tone = AuntieBannerTone.Warning, title = "More visits than fit") {
                     Text(
-                        "This household has more un-invoiced visits than one page holds. Narrow the dates " +
+                        "This household has more ${if (forQuote) "unbilled" else "un-invoiced"} visits than one page holds. Narrow the dates " +
                             "to see them all.",
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,

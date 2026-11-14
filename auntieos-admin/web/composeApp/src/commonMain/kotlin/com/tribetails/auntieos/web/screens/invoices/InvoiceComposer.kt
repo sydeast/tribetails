@@ -427,13 +427,13 @@ fun doNotInvoiceLabel(count: Int): String = when (count) {
 }
 
 /** What happened after the queue changed. Counts CHANGED visits, not requested ones. */
-fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean): String {
+fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean, quote: Boolean = false): String {
     val subject = if (changedCount == 1) "1 visit is" else "$changedCount visits are"
     return if (doNotInvoice) {
         val obj = if (changedCount == 1) "it" else "them"
         "$subject marked do not invoice, and off this list until you put $obj back."
     } else {
-        "$subject back in this household's un-invoiced work."
+        "$subject back in this household's ${if (quote) "unbilled" else "un-invoiced"} work."
     }
 }
 

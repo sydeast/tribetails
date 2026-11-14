@@ -250,7 +250,7 @@ export function UninvoicedVisitsPicker({
       setNotice(
         doNotInvoice
           ? `${count === 1 ? '1 visit is' : `${String(count)} visits are`} marked do not invoice, and off this list until you put ${count === 1 ? 'it' : 'them'} back.`
-          : `${count === 1 ? '1 visit is' : `${String(count)} visits are`} back in this household's un-invoiced work.`,
+          : `${count === 1 ? '1 visit is' : `${String(count)} visits are`} back in this household's ${openWord} work.`,
       );
       await load(narrowed);
     } catch (caught) {
@@ -304,7 +304,7 @@ export function UninvoicedVisitsPicker({
 
           {result.truncated && (
             <Banner tone="warning" title="More visits than fit">
-              This household has more un-invoiced visits than one page holds, so the list below may
+              This household has more {openWord} visits than one page holds, so the list below may
               not be all of them. Narrow the dates to be sure you are seeing everything.
             </Banner>
           )}

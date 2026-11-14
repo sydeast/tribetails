@@ -577,13 +577,13 @@ fun doNotInvoiceLabel(count: Int): String = when (count) {
  * ones: re-marking a visit somebody already marked is a no-op, and reporting it
  * as a change would make the confirmation lie.
  */
-fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean): String {
+fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean, quote: Boolean = false): String {
     val subject = if (changedCount == 1) "1 visit is" else "$changedCount visits are"
     return if (doNotInvoice) {
         val obj = if (changedCount == 1) "it" else "them"
         "$subject marked do not invoice, and off this list until you put $obj back."
     } else {
-        "$subject back in this household's un-invoiced work."
+        "$subject back in this household's ${if (quote) "unbilled" else "un-invoiced"} work."
     }
 }
 

@@ -417,6 +417,8 @@ class InvoiceComposerTest {
             "Totals are worked out from the work this quote covers. Tick a visit above, or add a line of your own.",
             composerTotalSentence(true, null, ""),
         )
+        assertEquals("1 visit is back in this household's unbilled work.", exclusionNotice(1, false, quote = true))
+        assertEquals("2 visits are back in this household's un-invoiced work.", exclusionNotice(2, false))
     }
 
     @Test
