@@ -438,7 +438,8 @@ and the `payments` SUBCOLLECTION):
 Who stamps: `createInvoice`, `createQuote`, `updateInvoice`, `markInvoicePaid`,
 `postInvoiceEvent` (since #906 only through the `reviewAndSendDraftInvoice`
 handler it delegates to), `reviewAndSendDraftInvoice`, `repairInvoicePayments`
-(repair mode), `redeemCredit`, `stripeWebhook` (paid events). Who deliberately
+(repair mode), `redeemCredit`, `stripeWebhook` (paid events), `writeOffInvoice`
+(#2090, `written_off`/`none`). Who deliberately
 does NOT: `archiveInvoice`/`unarchiveInvoice` (`archivedAt` is not a classifier
 input), `sendInvoiceReminder`, `generateReceipt`, `payInvoice` (their writes
 cannot change state; a writer that cannot change state does not stamp). Pure

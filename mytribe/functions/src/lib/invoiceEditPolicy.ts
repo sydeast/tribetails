@@ -191,10 +191,12 @@ export function paymentStandingOf(totalCents: number, paidCents: number): Invoic
  * 'quote'`, so it is indistinguishable from one still awaiting an answer.
  * `quoteDecision` is the only field that tells the three apart.
  *
- * NOT A NINTH STATE, and deliberately not. The eight `INVOICE_STATES` are
+ * NOT A STATE OF ITS OWN, and deliberately not. The `INVOICE_STATES` are
  * generated into both web clients and into Kotlin, and the portal's
- * `isPayable` is a total predicate over them (#470); a ninth entry would fork
- * "can this be paid" as the price of answering "can this be edited". The
+ * `isPayable` is a total predicate over them (#470); another entry for the
+ * answer would fork "can this be paid" as the price of answering "can this be
+ * edited". (`written_off`, #2090, is a different case: it IS a different
+ * answer to "can this be paid", so it is a state, and every client decodes it.) The
  * acceptance is a separate dimension of the same doc, exactly as the payment
  * standing is, and it is passed alongside rather than folded in.
  */
@@ -273,7 +275,7 @@ export function quoteAcceptanceOf(doc: InvoiceStateDoc): QuoteAcceptance {
  * household accepted. The lock protects an agreed figure; it must not create a
  * second unrepairable invoice.
  *
- * TOTAL BY CONSTRUCTION: the switch enumerates all eight states with no
+ * TOTAL BY CONSTRUCTION: the switch enumerates every state with no
  * `default`, so a ninth state is a compile error here rather than a silent
  * "editable" (or a silent "frozen") at runtime. `acceptance` is a REQUIRED
  * argument for the same reason: a call site that has not decided what the

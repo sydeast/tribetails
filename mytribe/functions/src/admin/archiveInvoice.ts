@@ -10,13 +10,12 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateOf } from '../lib/invoiceEditPolicy';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
-import { amountDueCentsOf } from '../lib/amountDueRule';
+import { amountDueCentsOf, statesNoBalance } from '../lib/amountDueRule';
 import { centsToDollars, formatUsdCents, invoiceTotalCentsOf, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import {
   INVOICE_STILL_OWING_CODE,
   WRITE_OFFS_SUBCOLLECTION,
   WRITTEN_OFF_STATUS,
-  amountStillOwed,
   formatOwed,
   isArchived,
   isWrittenOff,
@@ -134,16 +133,28 @@ export async function archiveInvoiceHandler(
       });
     }
 
-    const state = invoiceStateOf(data);
-    const owed = amountStillOwed(data);
+    // #2090: WHAT IS OWED IS THE SHARED RULE'S ANSWER (`amountDueCentsOf`), the
+    // same one the household's screen, `payInvoice` and the write-off read. A
+    // migrated bill with a `total` and no stated balance is owed in full there,
+    // so it is owed here too, unless its own payment rows say it was paid off:
+    // those are read, as `payInvoice` reads them, only for a doc that states no
+    // balance, and before any write.
+    let paidCents: number | null = null;
+    if (statesNoBalance(data)) {
+      const rows = await tx.get(ref.collection('payments'));
+      paidCents = paidCentsFromPayments(rows.docs.map((d) => d.data() as PaymentAmount));
+    }
+    const state = invoiceStateOf(data, paidCents);
+    const owedCents = amountDueCentsOf(data, paidCents);
+    const owed = owedCents / 100;
     const exempt = state === 'draft' || state === 'quote' || state === 'cancelled';
 
     // `force` is not read: archiving is tidying and never touches money (#2090).
     // A written-off invoice owes nothing, so it passes here.
-    if (!exempt && owed > 0) {
+    if (!exempt && owedCents > 0) {
       throw new HttpsError('failed-precondition', stillOwingArchiveRefusal(formatOwed(owed)), {
         code: INVOICE_STILL_OWING_CODE,
-        owedCents: Math.round(owed * 100),
+        owedCents,
       });
     }
 

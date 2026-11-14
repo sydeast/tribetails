@@ -28,6 +28,7 @@ vi.mock('firebase-admin/firestore', async () => {
 
 import { archiveInvoiceHandler, writeOffInvoiceHandler } from '../src/admin/archiveInvoice';
 import { markInvoicePaidHandler, refusedLifecycle } from '../src/admin/markInvoicePaid';
+import { recordPaymentHandler } from '../src/admin/recordPayment';
 import { wrapAdminCallable } from '../src/lib/wrapAdminCallable';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
 import { SERVER_ONLY_AUDIT_EVENTS, AUDIT_EVENTS } from '../src/lib/auditEvents';
@@ -214,7 +215,63 @@ describe('#2090: archive refuses money owed; write off, then archive', () => {
   });
 });
 
+describe('#2090: archive reads what is owed by the shared rule, as the household screen does', () => {
+  it('refuses a migrated bill that states no balance, which the household is shown as owed in full', async () => {
+    const ctx = seed({ kinfolkId: 'fam1', invoiceNumber: '1027', status: 'open', total: 40 });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(archiveInvoiceHandler(req({ invoiceId: 'inv1' }))).rejects.toMatchObject({
+      details: { code: 'invoice_still_owing', owedCents: 4000 },
+    });
+    expect(ctx.writes).toEqual([]);
+  });
+
+  it('archives the same bill once its own payment rows cover the total', async () => {
+    const ctx = seed({ kinfolkId: 'fam1', invoiceNumber: '1027', status: 'open', total: 40 }, [
+      { amountCents: 2500 },
+      { amountCents: 1500 },
+    ]);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(archiveInvoiceHandler(req({ invoiceId: 'inv1' }))).resolves.toMatchObject({ ok: true });
+  });
+});
+
 describe('#2090: one winner when a payment lands during the write-off', () => {
+  it('a recorded payment applying to the invoice is refused in its own transaction once the write-off commits', async () => {
+    // recordPayment plans the apply on a read outside its transaction (#825)
+    // and `stageApply` writes the balance from that plan, so it re-reads the
+    // invoice inside the transaction. The write-off lands in between here.
+    const ctx = seed(OPEN, [], true);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const realTx = ctx.db.runTransaction;
+    let interleaved = false;
+    ctx.db.runTransaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+      if (!interleaved) {
+        interleaved = true;
+        ctx.db.runTransaction = realTx;
+        await writeOffInvoiceHandler(req({ invoiceId: 'inv1', amountCents: 900 }));
+      }
+      return realTx(fn);
+    });
+
+    await expect(
+      recordPaymentHandler(
+        req({
+          kinfolkId: 'fam1',
+          amount: 9,
+          paymentMethod: 'venmo',
+          referenceNumber: 'VN-1027',
+          invoiceId: 'inv1',
+          invoiceNumber: '1027',
+          apply: { invoiceId: 'inv1', invoiceNumber: '1027', amount: 9 },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: 'invoice_written_off' } });
+
+    expect(interleaved).toBe(true);
+    expect((await ctx.db.doc('invoices/inv1').get()).data()).toMatchObject({ status: 'written_off', amountDueCents: 0 });
+    expect(ctx.writes.filter((w) => w.path.startsWith('invoices/inv1/payments/') || w.path.startsWith('payments/'))).toEqual([]);
+  });
+
   it('a payment that read the invoice before the write-off committed is refused in its own transaction', async () => {
     // markInvoicePaid decides on a read taken OUTSIDE its transaction. The
     // write-off commits between that read and the transaction, which is the

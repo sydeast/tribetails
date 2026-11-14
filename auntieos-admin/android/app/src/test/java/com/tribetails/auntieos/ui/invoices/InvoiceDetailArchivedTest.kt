@@ -161,9 +161,12 @@ class InvoiceActionsOfferedTest {
     }
 
     @Test
-    fun `archiving leaves the collection actions as the state gives them`() {
+    fun `archiving leaves recording a payment as the state gives it and drops Send reminder (#2090)`() {
         (InvoiceState.values().toList() + listOf(null)).forEach { s ->
-            assertEquals(invoiceActionsFor(s) - InvoiceAction.REVIEW_AND_SEND, invoiceActionsOffered(s, archived = true))
+            assertEquals(
+                invoiceActionsFor(s) - InvoiceAction.REVIEW_AND_SEND - InvoiceAction.SEND_REMINDER,
+                invoiceActionsOffered(s, archived = true),
+            )
         }
     }
 }

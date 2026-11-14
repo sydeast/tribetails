@@ -85,6 +85,8 @@ class InvoiceQuoteLifecycleTest {
                 paidCents = 0L,
                 totalCents = 24000L,
                 amountDueCents = 24000L,
+                writeOffs = emptyList(),
+                writtenOffCents = 0L,
                 ledgerPayments = emptyList(),
                 unlinkedKinfolkPayments = emptyList(),
                 unresolvedAmountCount = 0L,

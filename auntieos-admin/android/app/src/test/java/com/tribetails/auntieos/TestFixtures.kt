@@ -201,6 +201,8 @@ object TestFixtures {
         paidCents = 0L,
         totalCents = 0L,
         amountDueCents = 0L,
+        writeOffs = emptyList(),
+        writtenOffCents = 0L,
         ledgerPayments = emptyList(),
         unlinkedKinfolkPayments = emptyList(),
         unresolvedAmountCount = 0L,

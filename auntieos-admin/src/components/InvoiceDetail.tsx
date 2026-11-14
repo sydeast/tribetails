@@ -1875,7 +1875,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             <p
               className="invoice-detail__checkout"
               data-checkout-links="closed"
-              title="Stripe payment links that were still open when this invoice was paid"
+              title={state === 'written_off' ? 'Stripe payment links that were still open when the balance was written off' : 'Stripe payment links that were still open when this invoice was paid'}
             >
               {`Open payment links closed (${checkoutClosure.closedCount})`}
             </p>
