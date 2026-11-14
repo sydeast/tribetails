@@ -41,9 +41,10 @@ function req(data: Record<string, unknown> = {}, uid: string | null = 'uid_admin
 }
 
 function seed(docs: Record<string, Record<string, unknown> | null>, queryDocs: Record<string, any[]> = TOKENS) {
-  const ctx = buildDbMock({ docs: { ...docs }, queryDocs, writeThrough: true });
+  const store: Record<string, Record<string, unknown> | null> = { ...docs };
+  const ctx = buildDbMock({ docs: store, queryDocs, writeThrough: true });
   mocks.dbFn.mockReturnValue(ctx.db);
-  return ctx;
+  return { ...ctx, docs: store };
 }
 
 const noticePath = `notifications/${householdPushNoticeId('draft1')}`;
@@ -116,7 +117,8 @@ describe('sendHouseholdPush (#2061)', () => {
     const res = await sendHouseholdPushHandler(req());
     expect(res).toEqual({ ok: true, outcome: 'listed', reason: 'household_push_off' });
     expect(mocks.multicast).not.toHaveBeenCalled();
-    expect(ctx.writes.map((w) => w.path)).toEqual([noticePath]);
+    // The notice, then its pushOutcome stamp: nothing else is written.
+    expect([...new Set(ctx.writes.map((w) => w.path))]).toEqual([noticePath]);
   });
 
   it('SAD: no device signed in for push, so it is listed and not pushed', async () => {
@@ -148,6 +150,19 @@ describe('sendHouseholdPush (#2061)', () => {
     expect(mocks.multicast).toHaveBeenCalledTimes(1);
   });
 
+  it('NEGATIVE: a push that did not go out is tried again on the next attempt, with no second notice', async () => {
+    const ctx = seed({ ...HOUSEHOLD });
+    expect(await sendHouseholdPushHandler(req())).toEqual({ ok: true, outcome: 'listed', reason: 'household_push_off' });
+    expect(ctx.docs[noticePath]).toMatchObject({ pushOutcome: 'listed', pushReason: 'household_push_off' });
+    // The household turns pushes on; the operator tries again.
+    ctx.docs['clients/uid_kin'] = PUSH_ON['clients/uid_kin'];
+    expect(await sendHouseholdPushHandler(req())).toEqual({ ok: true, outcome: 'sent', reason: null });
+    expect(mocks.multicast).toHaveBeenCalledTimes(1);
+    expect(ctx.writes.filter((w) => w.path === noticePath && w.merge === false)).toHaveLength(1);
+    // And a third attempt, after it went out, sends nothing new.
+    expect((await sendHouseholdPushHandler(req())).outcome).toBe('already_sent');
+    expect(mocks.multicast).toHaveBeenCalledTimes(1);
+  });
   it('NEGATIVE: markup never reaches the lock screen', async () => {
     seed({ ...HOUSEHOLD, ...PUSH_ON });
     await sendHouseholdPushHandler(req({ body: '<b>Hi</b> there' }));

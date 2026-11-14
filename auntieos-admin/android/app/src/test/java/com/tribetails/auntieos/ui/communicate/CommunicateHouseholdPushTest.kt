@@ -142,6 +142,15 @@ class CommunicateHouseholdPushTest {
         )
     }
 
+    @Test fun `a push needs a household and fits the server's length`() {
+        assertEquals(
+            "This push is not addressed to a household. Choose one before sending.",
+            pushApproveBlocker("push", null, "Hi"),
+        )
+        assertEquals("A push can be at most 1000 characters. This one is 1001.", pushApproveBlocker("push", "kf1", "x".repeat(1001)))
+        assertNull(pushApproveBlocker("push", "kf1", "x".repeat(1000)))
+        assertNull(pushApproveBlocker("email", null, "x".repeat(5000)))
+    }
     @Test fun `an answer this client cannot read is never a send`() {
         assertEquals("held", decodeHouseholdPushResult(null).outcome)
         assertEquals("held", decodeHouseholdPushResult(mapOf("outcome" to "bogus")).outcome)

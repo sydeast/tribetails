@@ -511,11 +511,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         }
         val channel = approveDeliveryChannel(state.commType)
         val blocker = approveSendBlocker(channel, approveRecipient(state), state.subject, state.generatedCopy)
-            ?: if (isPushType(state.commType) && state.kinfolkId.isNullOrBlank()) {
-                "This push is not addressed to a household. Choose one before sending."
-            } else {
-                null
-            }
+            ?: pushApproveBlocker(state.commType, state.kinfolkId, state.generatedCopy)
         if (blocker != null) {
             _uiState.value = state.copy(error = blocker)
             return

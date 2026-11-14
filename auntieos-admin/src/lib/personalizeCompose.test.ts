@@ -236,6 +236,10 @@ describe('approveBlocker', () => {
     expect(approveBlocker(form({ messageType: 'push', recipientId: '' }), undefined, 'd1', 'copy')).toBe(
       'This push is not addressed to a household. Choose one before sending.',
     );
+    expect(approveBlocker(form({ messageType: 'push' }), kf(), 'd1', 'x'.repeat(1001))).toBe(
+      'A push can be at most 1000 characters. This one is 1001.',
+    );
+    expect(approveBlocker(form({ messageType: 'push' }), kf(), 'd1', 'x'.repeat(1000))).toBeNull();
   });
   it('passes a deliverable email with a subject and an address', () => {
     expect(approveBlocker(form({ messageType: 'email', subject: 'Nova and Otis' }), kf(), 'd1', 'copy')).toBeNull();

@@ -217,6 +217,9 @@ export function generateBlocker(s: PersonalizeFormState): string | null {
  * devices, so it needs a household and nothing else (#2061). Social, Blog and
  * General send nothing from here and need nothing.
  */
+/** The longest push line `sendHouseholdPush` accepts (#2061). */
+export const PUSH_MAX = 1000;
+
 export function approveBlocker(
   s: PersonalizeFormState,
   kf: Kinfolk | undefined,
@@ -239,7 +242,10 @@ export function approveBlocker(
     return kf ? null : 'This KinTale is not addressed to a household. Choose one before sending.';
   }
   if (def.deliverable === 'push') {
-    return kf ? null : 'This push is not addressed to a household. Choose one before sending.';
+    if (!kf) return 'This push is not addressed to a household. Choose one before sending.';
+    // The server's cap (`HOUSEHOLD_PUSH_BODY_MAX` in sendHouseholdPush.ts).
+    const length = draftText.trim().length;
+    return length > PUSH_MAX ? `A push can be at most ${PUSH_MAX} characters. This one is ${length}.` : null;
   }
   const name = kf ? kinfolkDisplayName(kf) : 'This household';
   if (def.deliverable === 'email' && str(kf?.email).trim() === '') {

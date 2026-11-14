@@ -43,8 +43,11 @@ import { loadBusinessOverride, loadUserPrefs, notificationDisabledFor, resolveCh
  * catalog row, so no new template and no import.
  *
  * ── ONCE PER DRAFT ───────────────────────────────────────────────────────────
- * The notice's id is derived from the draft, and it is CREATED, so a retry of a
- * reply that was lost cannot push twice. A held send writes nothing, so trying
+ * The notice's id is derived from the draft, and it is CREATED, so a retry
+ * never puts a second notice on their list. The notice records whether the
+ * push went out (`pushOutcome`): a retry after a push that went out sends
+ * nothing and says so; a retry after one that did not (push off, no device, a
+ * refused send) tries the push again. A held send writes nothing, so trying
  * again after the operator switches household notices on goes through.
  *
  * Owner-only (not on the Auntie list): Communicate sends are the owner's.
@@ -163,8 +166,11 @@ export async function sendHouseholdPushHandler(req: CallableRequest<unknown>): P
   const businessName = await loadBusinessName('sendHouseholdPush');
   const title = (args.title ?? '').trim() || businessName;
 
-  // The notice on their list, created once per draft. A second attempt at the
-  // same draft finds it and sends nothing new.
+  // The notice on their list, created once per draft. Its `pushOutcome` stamp
+  // says whether the push itself went out, so a second attempt at the same
+  // draft answers truthfully: a push that went out is not sent again, and one
+  // that did not (their settings kept push off, no device, a refused send) is
+  // tried again without a second notice.
   const noticeRef = db().collection('notifications').doc(householdPushNoticeId(args.draftId));
   try {
     await noticeRef.create({
@@ -181,67 +187,86 @@ export async function sendHouseholdPushHandler(req: CallableRequest<unknown>): P
       createdAt: FieldValue.serverTimestamp(),
     });
   } catch (err) {
-    // ALREADY_EXISTS: this draft was pushed before.
-    if ((err as { code?: unknown })?.code === 6 || /already exists/i.test((err as Error)?.message ?? '')) {
+    // ALREADY_EXISTS: this draft reached their list before.
+    if ((err as { code?: unknown })?.code !== 6 && !/already exists/i.test((err as Error)?.message ?? '')) throw err;
+    const prior = (await noticeRef.get()).data() as { pushOutcome?: unknown } | undefined;
+    if (prior?.pushOutcome === 'sent') {
       log('household.push.duplicate', { draftId: args.draftId });
       return { ok: true, outcome: 'already_sent', reason: null };
     }
-    throw err;
+    log('household.push.retry', { draftId: args.draftId });
   }
 
-  if (!channels.push) {
-    log('household.push.listed', { reason: 'household_push_off' });
-    return { ok: true, outcome: 'listed', reason: 'household_push_off' };
-  }
-
-  const tokensSnap = await db().collection('fcm_tokens').where('uid', '==', recipientUid).get();
-  const tokens = tokensSnap.docs.map((d) => d.id);
-  if (tokens.length === 0) {
-    log('household.push.listed', { reason: 'no_device' });
-    return { ok: true, outcome: 'listed', reason: 'no_device' };
-  }
-
+  const result = await attemptPush();
   try {
-    const resp = await getAdmin()
-      .messaging()
-      .sendEachForMulticast({
-        tokens,
-        notification: { title: title || undefined, body },
-        data: { notificationKey: def.key },
-      });
-    const stale: Promise<unknown>[] = [];
-    resp.responses.forEach((r, i) => {
-      const code = r.error?.code;
-      if (
-        !r.success &&
-        (code === 'messaging/registration-token-not-registered' || code === 'messaging/invalid-registration-token')
-      ) {
-        stale.push(db().collection('fcm_tokens').doc(tokens[i]!).delete());
-      }
+    await noticeRef.set({ pushOutcome: result.outcome, pushReason: result.reason }, { merge: true });
+  } catch (err) {
+    // The stamp only steers a later retry; the answer below is already true.
+    logEvent({
+      severity: 'warn',
+      function: 'sendHouseholdPush',
+      event: 'household.push.stamp.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
     });
-    if (stale.length > 0) await Promise.allSettled(stale);
-    if (resp.successCount === 0) {
+  }
+  return result;
+
+  async function attemptPush(): Promise<SendHouseholdPushResult> {
+    if (!channels.push) {
+      log('household.push.listed', { reason: 'household_push_off' });
+      return { ok: true, outcome: 'listed', reason: 'household_push_off' };
+    }
+
+    const tokensSnap = await db().collection('fcm_tokens').where('uid', '==', recipientUid).get();
+    const tokens = tokensSnap.docs.map((d) => d.id);
+    if (tokens.length === 0) {
+      log('household.push.listed', { reason: 'no_device' });
+      return { ok: true, outcome: 'listed', reason: 'no_device' };
+    }
+
+    try {
+      const resp = await getAdmin()
+        .messaging()
+        .sendEachForMulticast({
+          tokens,
+          notification: { title: title || undefined, body },
+          data: { notificationKey: def.key },
+        });
+      const stale: Promise<unknown>[] = [];
+      resp.responses.forEach((r, i) => {
+        const code = r.error?.code;
+        if (
+          !r.success &&
+          (code === 'messaging/registration-token-not-registered' || code === 'messaging/invalid-registration-token')
+        ) {
+          stale.push(db().collection('fcm_tokens').doc(tokens[i]!).delete());
+        }
+      });
+      if (stale.length > 0) await Promise.allSettled(stale);
+      if (resp.successCount === 0) {
+        logEvent({
+          severity: 'warn',
+          function: 'sendHouseholdPush',
+          event: 'household.push.failed',
+          uid,
+          extra: { kinfolkId: args.kinfolkId, devices: tokens.length, firstError: resp.responses.find((r) => !r.success)?.error?.code },
+        });
+        return { ok: true, outcome: 'listed', reason: 'push_failed' };
+      }
+    } catch (err) {
       logEvent({
         severity: 'warn',
         function: 'sendHouseholdPush',
         event: 'household.push.failed',
         uid,
-        extra: { kinfolkId: args.kinfolkId, devices: tokens.length, firstError: resp.responses.find((r) => !r.success)?.error?.code },
+        errorMessage: (err as Error)?.message,
+        extra: { kinfolkId: args.kinfolkId },
       });
       return { ok: true, outcome: 'listed', reason: 'push_failed' };
     }
-  } catch (err) {
-    logEvent({
-      severity: 'warn',
-      function: 'sendHouseholdPush',
-      event: 'household.push.failed',
-      uid,
-      errorMessage: (err as Error)?.message,
-      extra: { kinfolkId: args.kinfolkId },
-    });
-    return { ok: true, outcome: 'listed', reason: 'push_failed' };
-  }
 
-  log('household.push.sent', { devices: tokens.length });
-  return { ok: true, outcome: 'sent', reason: null };
+    log('household.push.sent', { devices: tokens.length });
+    return { ok: true, outcome: 'sent', reason: null };
+  }
 }

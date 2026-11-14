@@ -20,6 +20,17 @@ data class HouseholdPushResult(
 /** Whether [commType] is the Push copy format, which approving now sends. */
 internal fun isPushType(commType: String): Boolean = commType == "push"
 
+/** The longest push line `sendHouseholdPush` accepts. */
+internal const val PUSH_MAX = 1000
+
+/** Pure: why a Push approve cannot go ahead, or null. Mirrors the web admin's `approveBlocker`. */
+internal fun pushApproveBlocker(commType: String, kinfolkId: String?, copy: String): String? {
+    if (!isPushType(commType)) return null
+    if (kinfolkId.isNullOrBlank()) return "This push is not addressed to a household. Choose one before sending."
+    val length = copy.trim().length
+    return if (length > PUSH_MAX) "A push can be at most $PUSH_MAX characters. This one is $length." else null
+}
+
 /** Pure: the callable's answer. An answer this client cannot read is never a send. */
 internal fun decodeHouseholdPushResult(raw: Map<String, Any?>?): HouseholdPushResult {
     val outcome = (raw?.get("outcome") as? String)?.takeIf { it in setOf("sent", "listed", "held", "already_sent") } ?: "held"
