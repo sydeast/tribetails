@@ -84,6 +84,9 @@ describe('notificationTarget', () => {
     expect(notificationTarget(item({ targetType: 'kintale', targetId: 'tale-2' }))).toEqual({ kind: 'tale', taleId: 'tale-2' });
   });
 
+  it('#1874: opens Messages for a reply from the office', () => {
+    expect(notificationTarget(item({ targetType: 'conversation', targetId: 'fam1' }))).toEqual({ kind: 'messages' });
+  });
   it('opens nothing for a household row, an unresolved row, or a row with no id', () => {
     expect(notificationTarget(item({ targetType: 'kinfolk', targetId: 'fam1' }))).toEqual({ kind: 'none' });
     expect(notificationTarget(item({ targetType: '', targetId: '' }))).toEqual({ kind: 'none' });

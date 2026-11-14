@@ -3,6 +3,7 @@ package com.kinfolk.portal.portal
 import kotlin.time.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -25,7 +26,7 @@ data class NotificationItem(
     val description: String,
     val actorName: String,
     val actorPhotoUrl: String,
-    /** 'booking' | 'invoice' | 'kintale' | 'kinfolk' | '' as the dispatcher resolved it. */
+    /** 'booking' | 'invoice' | 'kintale' | 'kinfolk' | 'conversation' | '' as the dispatcher resolved it. */
     val targetType: String,
     val targetId: String,
     /**
@@ -39,6 +40,12 @@ data class NotificationItem(
     val createdAtMs: Long?,
     /** When it was read, null while unread. */
     val readAtMs: Long?,
+    /**
+     * #2030: the office's own words to the household on this notice (the note
+     * it wrote when it booked or turned down their request), off the card's
+     * `detail.householdNote`. Null when it wrote none.
+     */
+    val householdNote: String? = null,
 ) {
     val unread: Boolean get() = readAtMs == null
 }
@@ -59,6 +66,8 @@ sealed interface NotificationTarget {
     data object Schedule : NotificationTarget
     data class Invoice(val invoiceId: String) : NotificationTarget
     data class KinTale(val taleId: String) : NotificationTarget
+    /** #1874: a reply from the office opens Messages. */
+    data object Messages : NotificationTarget
     data object None : NotificationTarget
 }
 
@@ -86,6 +95,7 @@ fun notificationTargetOf(item: NotificationItem): NotificationTarget {
         }
         "invoice" -> if (id.isEmpty()) NotificationTarget.None else NotificationTarget.Invoice(id)
         "kintale" -> if (id.isEmpty()) NotificationTarget.None else NotificationTarget.KinTale(id)
+        "conversation" -> NotificationTarget.Messages
         else -> NotificationTarget.None
     }
 }
@@ -115,6 +125,8 @@ fun decodeNotificationItem(o: JsonObject): NotificationItem? {
         batchId = strOrNull("batchId"),
         createdAtMs = isoToEpochMs(o["createdAt"]?.jsonPrimitive?.contentOrNull),
         readAtMs = isoToEpochMs(o["readAt"]?.jsonPrimitive?.contentOrNull),
+        householdNote = ((o["detail"] as? JsonObject)?.get("householdNote") as? JsonPrimitive)
+            ?.takeIf { it.isString }?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
     )
 }
 

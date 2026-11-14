@@ -119,6 +119,20 @@ describe('NotificationsList rows (#1316)', () => {
     expect(buttons[2]?.querySelector('.nl-row__when')?.textContent).toBe('3h ago');
   });
 
+  it("#2030: shows the office's note on the answer to a request, and nothing on a row without one", async () => {
+    mocks.list.mockResolvedValue(
+      page([
+        item({ id: 'n-ok', key: 'kincare.booking.confirm', title: 'Booking confirmed', detail: { householdNote: '  Booked. Bring the spare key.  ' } }),
+        item({ id: 'n-no', key: 'kincare.request.declined', title: 'Request declined', detail: { householdNote: 'We are full that week.' } }),
+        item({ id: 'n-plain', key: 'kincare.booking.confirm', title: 'Plain', detail: { kinName: 'Rex' } }),
+      ]),
+    );
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    const notes = screen.getAllByTestId('notification-household-note').map((n) => n.textContent);
+    expect(notes).toEqual(['Booked. Bring the spare key.', 'We are full that week.']);
+    expect(screen.getByRole('button', { name: /Plain/ }).querySelector('.nl-row__note')).toBeNull();
+  });
   it('marks unread rows and leaves read rows plain', async () => {
     mocks.list.mockResolvedValue(page(ROWS));
     renderScreen();

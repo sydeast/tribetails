@@ -101,7 +101,7 @@ class DirectoryViewModelPhotoTest {
     fun `saveKinChanges never writes profilePictureUrl it did not change`() = runTest(testDispatcher) {
         advanceUntilIdle()
         val captured: CapturingSlot<Map<String, Any>> = slot()
-        coEvery { repository.updateKinFields(any(), any(), capture(captured)) } returns Result.success(Unit)
+        coEvery { repository.updateKinFields(any(), any(), capture(captured), any()) } returns Result.success(Unit)
         // loadKinForEdit resolves the household vet from household_data through
         // the clinic catalog now; a relaxed mock cannot answer either usefully.
         coEvery { repository.getHouseholdData(any()) } returns Result.success(null)

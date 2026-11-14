@@ -68,7 +68,7 @@ export interface NotificationListItem {
   description: string;
   actorName: string;
   actorPhotoUrl: string;
-  /** 'booking' | 'invoice' | 'kintale' | 'kinfolk' | '' as the dispatcher resolved it. */
+  /** 'booking' | 'invoice' | 'kintale' | 'kinfolk' | 'conversation' | '' as the dispatcher resolved it. */
   targetType: string;
   targetId: string;
   /** The visit, when the row is about one visit. Null for a whole-request event. */

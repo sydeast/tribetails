@@ -69,12 +69,24 @@ const SCREAMING_SNAKE = /^[A-Z][A-Z0-9_]*$/;
  *
  * To add one: a line here, and a test in `test/logActivity.test.ts`.
  */
-export const AUNTIE_LOGGABLE_EVENTS: ReadonlySet<string> = new Set<string>([
-  // The in-visit clock (web sessionsWrite, Android HomeViewModel, desktop sessions).
+/**
+ * #2037 review: the four clock-step kinds an Auntie's installed apps DID send
+ * until #2037 (web Auntie Time, Android Home, the desktop console). They are
+ * server-only now, and the copy an older build still sends after its write is
+ * a line the server already wrote, not a failure: refused, logged at warn, and
+ * no failure line for the daily error digest, from an Auntie as from the owner.
+ */
+const FORMER_CLIENT_CLOCK_LINES: ReadonlySet<string> = new Set<string>([
   'VISIT_ON_MY_WAY',
   'VISIT_ARRIVED',
   'VISIT_DEPARTED',
   'VISIT_UNDO_ARRIVAL',
+]);
+
+export const AUNTIE_LOGGABLE_EVENTS: ReadonlySet<string> = new Set<string>([
+  // The in-visit clock. Its four steps (VISIT_ON_MY_WAY, VISIT_ARRIVED,
+  // VISIT_DEPARTED, VISIT_UNDO_ARRIVAL) are server-only since #2037: the
+  // server writes them from the committed session write.
   'VISIT_COMPLETED',
   'KINCARE_ARRIVED',
   'GPS_START',
@@ -168,8 +180,8 @@ export async function logActivityHandler(
     // older installed build still sends one after a form schema save, a visit
     // move or a series answer. Nothing failed, so it writes no failure line for
     // the daily error digest. An Auntie's apps never sent one, so hers keeps
-    // the failure line.
-    throw caretaker ? refusal : unauditedRefusal(refusal);
+    // the failure line, except the clock steps her apps did send (#2037).
+    throw caretaker && !FORMER_CLIENT_CLOCK_LINES.has(args.actionType) ? refusal : unauditedRefusal(refusal);
   }
   const actor = await resolveAuditActor(req.auth, 'logActivity', args.familyId || undefined);
   if (actor.staffRole !== null && !auntieMayLog(args.actionType)) {

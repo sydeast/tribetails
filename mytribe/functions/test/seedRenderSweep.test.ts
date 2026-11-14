@@ -66,7 +66,8 @@ describe('every seed renders for real, end to end', () => {
     });
   }
 
-  it('there are 57 seeds, all covered above', () => {
-    expect(SEED_CORPUS.length).toBe(57);
+  // 58 since #1874 (`message.reply`).
+  it('there are 58 seeds, all covered above', () => {
+    expect(SEED_CORPUS.length).toBe(58);
   });
 });

@@ -8,6 +8,7 @@ import {
   type NewKinfolkStatus,
 } from '../api/directoryWrite';
 import {
+  EMERGENCY_CONTACT_PHONE_SHAPE,
   EMERGENCY_CONTACT_WHO_GETS_CALLED,
   saveEmergencyContacts,
   toDrafts,
@@ -26,6 +27,7 @@ import {
   type PendingAddKinfolk,
 } from '../lib/pendingAddKinfolk';
 import { OfflineCallError } from '../lib/offlineWrite';
+import { emailOkOrBlank, isValidPhone, phoneOkOrBlank } from '../lib/kinfolkEditSchema';
 import { AddressAutofillField } from './AddressAutofillField';
 import { TitleWithTip } from './DenScreenKit';
 import { Dialog } from './Dialog';
@@ -69,6 +71,19 @@ interface AddKinfolkDialogProps {
 
 /** #907 review item 2: the server's answer when the household was deleted under a pending Add. */
 export const HOUSEHOLD_NO_LONGER_EXISTS = 'That household no longer exists.';
+
+/** #1951: the Edit form's own words (`lib/kinfolkEditSchema.ts`), so both doors say the same thing. */
+export const ADD_KINFOLK_PHONE_INVALID = 'Enter a 10 digit phone number, or 11 starting with 1.';
+export const ADD_KINFOLK_EMAIL_INVALID = "That email address doesn't look right.";
+
+/**
+ * #1951: the Emergency Contact's phone, checked before the household is
+ * created. Only a filled-in phone: a blank one is `validateEmergencyContactDrafts`'s
+ * "needs a phone number".
+ */
+function contactPhoneShapeError(drafts: EmergencyContactDraft[]): string | null {
+  return drafts.some((d) => d.phone.trim() !== '' && !isValidPhone(d.phone)) ? EMERGENCY_CONTACT_PHONE_SHAPE : null;
+}
 
 function isNotFound(err: unknown): boolean {
   return !!err && typeof err === 'object' && (err as { code?: unknown }).code === 'functions/not-found';
@@ -126,17 +141,23 @@ export function AddKinfolkDialog({
   // the operator LEAVES it blank (onBlur), not only after a save attempt. Save
   // still marks every field touched, so clicking Add on an empty form reveals
   // all errors at once (the wasm form gated everything on save alone).
-  const [touched, setTouched] = useState<{ firstName: boolean; lastName: boolean }>({
+  const [touched, setTouched] = useState<{ firstName: boolean; lastName: boolean; phoneNumber: boolean; email: boolean }>({
     firstName: false,
     lastName: false,
+    phoneNumber: false,
+    email: false,
   });
   const [saveError, setSaveError] = useState<string | null>(null);
   const { showToast } = useToast();
 
   const firstNameError = touched.firstName && firstName.trim() === '' ? "First name can't be blank." : null;
   const lastNameError = touched.lastName && lastName.trim() === '' ? "Last name can't be blank." : null;
+  // #1951: beside the field, the moment the operator leaves it holding something
+  // that is not a phone or an email, and on every press of Add.
+  const phoneError = touched.phoneNumber && !phoneOkOrBlank(phoneNumber) ? ADD_KINFOLK_PHONE_INVALID : null;
+  const emailError = touched.email && !emailOkOrBlank(email) ? ADD_KINFOLK_EMAIL_INVALID : null;
 
-  function markTouched(field: 'firstName' | 'lastName') {
+  function markTouched(field: 'firstName' | 'lastName' | 'phoneNumber' | 'email') {
     setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
   }
 
@@ -218,7 +239,7 @@ export function AddKinfolkDialog({
   }
 
   async function handleSave() {
-    setTouched({ firstName: true, lastName: true });
+    setTouched({ firstName: true, lastName: true, phoneNumber: true, email: true });
     if (saving) return;
     if (createdId !== null) {
       // Retry path: the household already exists, so `createKinfolk` never
@@ -228,10 +249,11 @@ export function AddKinfolkDialog({
       // the household's own phone before pressing this button. The same gate
       // the first-save path runs, so a bad retry is refused with the plain
       // spec message instead of a round trip to the callable.
-      const retryEcError = validateEmergencyContactDrafts(ecDrafts, {
-        names: [`${firstName} ${lastName}`],
-        phones: [phoneNumber],
-      });
+      const retryEcError =
+        validateEmergencyContactDrafts(ecDrafts, {
+          names: [`${firstName} ${lastName}`],
+          phones: [phoneNumber],
+        }) ?? contactPhoneShapeError(ecDrafts);
       if (retryEcError) {
         setSaveError(retryEcError);
         return;
@@ -241,21 +263,21 @@ export function AddKinfolkDialog({
       await saveContact(createdId);
       return;
     }
-    if (firstName.trim() === '' || lastName.trim() === '') return;
-    // #829, ruling 2026-09-27: the primary's contact info is required. Checked
-    // before the Emergency Contact so the household's own fields are fixed first.
-    if (!hasPrimaryContact({ phoneNumber, email })) {
-      setSaveError(PRIMARY_CONTACT_REQUIRED);
-      return;
-    }
-    const ecError = validateEmergencyContactDrafts(ecDrafts, {
-      names: [`${firstName} ${lastName}`],
-      phones: [phoneNumber],
-    });
-    if (ecError) {
-      setSaveError(ecError);
-      return;
-    }
+    // #1951: the whole form is checked on one press, and nothing is created
+    // until all of it passes. The names, phone and email say so beside their
+    // fields (every one is marked touched above); the banner names the first
+    // problem the fields cannot show: the primary's missing contact (#829,
+    // ruling 2026-09-27), then the Emergency Contact.
+    const fieldsOk =
+      firstName.trim() !== '' && lastName.trim() !== '' && phoneOkOrBlank(phoneNumber) && emailOkOrBlank(email);
+    const bannerError = !hasPrimaryContact({ phoneNumber, email })
+      ? PRIMARY_CONTACT_REQUIRED
+      : (validateEmergencyContactDrafts(ecDrafts, {
+          names: [`${firstName} ${lastName}`],
+          phones: [phoneNumber],
+        }) ?? contactPhoneShapeError(ecDrafts));
+    setSaveError(bannerError);
+    if (!fieldsOk || bannerError !== null) return;
     setSaving(true);
     setSaveError(null);
     let id: string;
@@ -418,7 +440,15 @@ export function AddKinfolkDialog({
               className="add-kinfolk__input"
               value={phoneNumber}
               onChange={(e) => setPhoneNumber(e.target.value)}
+              onBlur={() => markTouched('phoneNumber')}
+              aria-invalid={phoneError !== null}
+              aria-describedby={phoneError !== null ? 'add-kinfolk-phone-error' : undefined}
             />
+            {phoneError !== null && (
+              <span id="add-kinfolk-phone-error" className="add-kinfolk__error" role="alert">
+                {phoneError}
+              </span>
+            )}
           </div>
           <div className="add-kinfolk__field">
             <label className="add-kinfolk__label" htmlFor="add-kinfolk-email">
@@ -430,7 +460,15 @@ export function AddKinfolkDialog({
               className="add-kinfolk__input"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              onBlur={() => markTouched('email')}
+              aria-invalid={emailError !== null}
+              aria-describedby={emailError !== null ? 'add-kinfolk-email-error' : undefined}
             />
+            {emailError !== null && (
+              <span id="add-kinfolk-email-error" className="add-kinfolk__error" role="alert">
+                {emailError}
+              </span>
+            )}
           </div>
         </div>
 

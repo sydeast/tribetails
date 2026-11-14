@@ -238,12 +238,25 @@ export async function archiveKinfolk(kinfolkId: string, reason: string): Promise
 }
 
 /**
- * Restore an archived household: back to `active`, the three archive fields
- * cleared. #2161: through the same owner-only callable, which writes the
- * `RESTORE_KINFOLK` Activity Log line.
+ * Restore an archived household, the archive fields cleared. #2161: through
+ * the same owner-only callable, which writes the `RESTORE_KINFOLK` Activity
+ * Log line. #1958: the household goes back to the status it held before the
+ * archive (active, prospect or inactive), which the answer's `status` names;
+ * one archived before that status was kept goes back to `active`.
  */
 export async function unarchiveKinfolk(kinfolkId: string): Promise<SetKinfolkArchivedResult> {
   const id = kinfolkId.trim();
   if (id === '') throw new Error('unarchiveKinfolk requires a kinfolk id');
   return setKinfolkArchived(id, false);
+}
+
+/**
+ * #1958: the confirmation a restore shows, naming the status the household
+ * came back as. Active keeps the words it always had.
+ */
+export function kinfolkRestoredMessage(name: string, status: string): string {
+  const s = status.trim().toLowerCase();
+  if (s === 'prospect') return `${name} is restored as a Prospect.`;
+  if (s === 'inactive') return `${name} is restored as Inactive.`;
+  return `${name} is active again.`;
 }

@@ -120,7 +120,33 @@ data class BookingNote(
 data class BookingNotes(
     val bookingNote: String?,
     val notes: List<BookingNote>,
+    /** #2030: what the office told the household about this visit, oldest first. Empty from an older server. */
+    val fromBusiness: List<BusinessNote> = emptyList(),
 )
+/**
+ * #2030: one thing the office said to the household about a visit: the note
+ * with its Accept ([kind] `requestAccepted`), the note with its Decline
+ * (`requestDeclined`), or a kinfolk-facing visit note (`visitNote`). The
+ * server resolves [authorName] to a staff display name, never an email, and
+ * sends null when there is none fit to show; the screen then names the business.
+ */
+data class BusinessNote(
+    val id: String,
+    val kind: String,
+    val body: String,
+    val createdAtMs: Long?,
+    val authorName: String?,
+)
+/** #2030: "Booked · Syd · Nov 1, 3:05 PM", the line above one note from the office. Mirrors the web's `businessNoteHeading`. */
+fun BusinessNote.heading(businessName: String?, written: (Long?) -> String): String {
+    val what = when (kind) {
+        "requestAccepted" -> "Booked"
+        "requestDeclined" -> "Not booked"
+        else -> "Note"
+    }
+    val who = authorName?.trim()?.takeIf { it.isNotEmpty() } ?: com.kinfolk.portal.components.businessLabel(businessName)
+    return listOf(what, who, written(createdAtMs)).filter { it.isNotEmpty() }.joinToString(" · ")
+}
 /** True once the visit is over (completed or cancelled): nobody is left to read a note. */
 fun Booking.isFinished(): Boolean = stage().let { it == VisitStage.Completed || it == VisitStage.Cancelled }
 

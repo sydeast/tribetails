@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import type { KinDetail } from '../api/kinView';
@@ -180,15 +180,63 @@ describe('KinEdit', () => {
     expect(updateKin).not.toHaveBeenCalled();
   });
 
-  it('archives the pet via setKinArchived, then signals done', async () => {
+  /** #2017: Archive opens a confirm; its own Archive button is the one that acts. */
+  async function confirmArchive() {
+    await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /^archive$/i }));
+  }
+
+  it('archives the pet via setKinArchived after the confirm, then signals done', async () => {
     getKin.mockResolvedValue(kin({ status: 'active' }));
     setKinArchived.mockResolvedValue(undefined);
     const onDone = vi.fn();
     render(<KinEdit kinId="p1" kinName="Willow" onDone={onDone} onCancel={vi.fn()} />);
     await screen.findByText('Name');
-    await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
+    await confirmArchive();
     await waitFor(() => expect(setKinArchived).toHaveBeenCalledWith('p1', true));
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+  });
+
+  // #2017: the walk pressed Archive and the Kin was archived at once.
+  it('#2017: Archive asks first, naming the Kin and saying how to bring it back, and writes nothing yet', async () => {
+    getKin.mockResolvedValue(kin({ status: 'active' }));
+    const onDone = vi.fn();
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={onDone} onCancel={vi.fn()} />);
+    await screen.findByText('Name');
+    await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Archive this Kin')).toBeInTheDocument();
+    expect(dialog).toHaveTextContent(/Archive Willow\?/);
+    expect(dialog).toHaveTextContent(/choose Archived under Show/);
+    expect(dialog).toHaveTextContent(/press Restore/);
+    expect(dialog.textContent).not.toMatch(/—/);
+    expect(setKinArchived).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('#2017: Cancel on the confirm archives nothing and closes it', async () => {
+    getKin.mockResolvedValue(kin({ status: 'active' }));
+    const onDone = vi.fn();
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={onDone} onCancel={vi.fn()} />);
+    await screen.findByText('Name');
+    await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /cancel/i }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(setKinArchived).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('#2017: a refused archive closes the confirm and shows why, and does not signal done', async () => {
+    getKin.mockResolvedValue(kin({ status: 'active' }));
+    setKinArchived.mockRejectedValue(new Error('Only the owner can archive a Kin.'));
+    const onDone = vi.fn();
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={onDone} onCancel={vi.fn()} />);
+    await screen.findByText('Name');
+    await confirmArchive();
+    expect(await screen.findByText('Could not save: Only the owner can archive a Kin.')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(onDone).not.toHaveBeenCalled();
   });
 
   // #1013: archive/restore showed no confirmation either. Wording matches
@@ -198,7 +246,7 @@ describe('KinEdit', () => {
     setKinArchived.mockResolvedValue(undefined);
     render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
     await screen.findByText('Name');
-    await userEvent.click(screen.getByRole('button', { name: /^archive$/i }));
+    await confirmArchive();
     expect(await screen.findByText('Willow is archived.')).toBeInTheDocument();
   });
 

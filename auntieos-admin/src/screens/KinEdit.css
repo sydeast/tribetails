@@ -79,3 +79,10 @@
   color: var(--color-error);
   font-size: var(--type-body-sm-size);
 }
+
+/* #2017: the Archive confirm. */
+.kedit__confirm {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-primary);
+  margin: 0;
+}

@@ -402,17 +402,18 @@ internal fun AuntieTimeListScreen(
                                     GpsEffect.Stop  -> stopGpsFor(id)
                                     GpsEffect.None  -> Unit
                                 }
-                                showToast(successMsg, ToastKind.Success)
-                                // #1840: a clock step tells the household, and the
-                                // toast then says what the server answered: told,
-                                // or not told and why. These buttons used to patch
-                                // the visit and call nothing.
+                                // #1840: the toast says what the household was told,
+                                // or why not. #2037: the server tells them from the
+                                // saved step; this reads the server's record of it,
+                                // and says it is checking while it waits.
                                 val session = s.value.firstOrNull { it._id == id }
                                 val notice = (write as? KinCareWrite.Patch)?.let { visitNoticeEventOf(it.fields) }
+                                val checking = if (session != null && notice != null) visitNoticeCheckingSentence(session) else ""
+                                showToast(if (checking.isBlank()) successMsg else "$successMsg $checking", ToastKind.Success)
                                 if (session != null && notice != null) {
                                     val said = visitNoticeOutcomeSentence(
                                         clockNoticeOutcome(session, notice) { event, atMs ->
-                                            client.dispatchVisitClockNotice(session, event, atMs)
+                                            client.visitClockNoticeRecord(session, event, atMs)
                                         },
                                         visitNoticeHousehold(session),
                                     )

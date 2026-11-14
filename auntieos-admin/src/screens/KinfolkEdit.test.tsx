@@ -567,6 +567,24 @@ describe('KinfolkEdit: archive', () => {
     await waitFor(() => expect(onDone).toHaveBeenCalledOnce());
   });
 
+  // #1958: the walk restored a Prospect and was told it was active again.
+  it('a restore that brings a Prospect back says so, not "active again"', async () => {
+    unarchiveKinfolk.mockResolvedValue({ ok: true, archived: false, status: 'prospect', changed: true });
+    mount({ status: 'archived' });
+    await screen.findByLabelText('First name');
+    await userEvent.click(screen.getByRole('button', { name: /restore/i }));
+    expect(await screen.findByText('Jamie Halbrook is restored as a Prospect.')).toBeInTheDocument();
+    expect(screen.queryByText(/active again/)).not.toBeInTheDocument();
+  });
+
+  it('a restore that brings an Active household back reads "active again"', async () => {
+    unarchiveKinfolk.mockResolvedValue({ ok: true, archived: false, status: 'active', changed: true });
+    mount({ status: 'archived' });
+    await screen.findByLabelText('First name');
+    await userEvent.click(screen.getByRole('button', { name: /restore/i }));
+    expect(await screen.findByText('Jamie Halbrook is active again.')).toBeInTheDocument();
+  });
+
   it('fails loud when an archive rejects', async () => {
     archiveKinfolk.mockRejectedValue(new Error('permission-denied'));
     const { onDone } = mount();

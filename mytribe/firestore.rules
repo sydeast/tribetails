@@ -578,6 +578,41 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
     }
 
+ // #1951: a household's phone and email are checked on every direct update,
+ // the same shapes `createKinfolk` checks on create (functions
+ // `lib/contactShape.ts`) and every admin form checks before it sends: a phone
+ // is digits and the usual separators, 10 digits or 11 with a leading 1; an
+ // email is name@domain.tld with no doubled dot. Blank is allowed (both are
+ // optional apart from create's "a phone or an email"). Only a CHANGED value is
+ // checked, so a household saved before #1951 with a bad value stays editable
+ // in every other field, the same way #1584 holds `joinDate`.
+    function contactPhoneShapeOk(v) {
+      return v is string
+          && (v.trim() == ''
+              || (v.trim().matches('[+0-9(). -]+')
+                  && (v.replace('[^0-9]', '').size() == 10
+                      || (v.replace('[^0-9]', '').size() == 11 && v.replace('[^0-9]', '').matches('1[0-9]*')))));
+    }
+
+    function contactEmailShapeOk(v) {
+      return v is string
+          && (v.trim() == ''
+              || (v.trim().size() <= 254
+                  && v.trim().matches('[A-Za-z0-9]([A-Za-z0-9._%+-]*[A-Za-z0-9])?@[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?[.][A-Za-z]{2,}')
+                  && !v.trim().matches('.*[.][.].*')));
+    }
+
+    function kinfolkFieldUnchanged(key) {
+      return request.resource.data.get(key, '') == resource.data.get(key, '');
+    }
+
+    function kinfolkContactShapesOk() {
+      return (kinfolkFieldUnchanged('phoneNumber') || contactPhoneShapeOk(request.resource.data.get('phoneNumber', '')))
+          && (kinfolkFieldUnchanged('secondaryPhone') || contactPhoneShapeOk(request.resource.data.get('secondaryPhone', '')))
+          && (kinfolkFieldUnchanged('email') || contactEmailShapeOk(request.resource.data.get('email', '')))
+          && (kinfolkFieldUnchanged('secondaryEmail') || contactEmailShapeOk(request.resource.data.get('secondaryEmail', '')));
+    }
+
  // #2161, operator ruling 2026-11-13: only the owner archives or restores a
  // household, and every archive and restore writes its Activity Log line. The
  // owner-only `setKinfolkArchived` callable (Admin SDK, rules bypassed) is the
@@ -588,8 +623,10 @@ service cloud.firestore {
  //
  // `.get(key, '')` because a household created before the archive fields
  // existed has no such keys, and reading a missing key is an error that denies.
+    // #1958: `statusBeforeArchive` is the status a restore gives back, kept by
+    // the same callable, so it is held the same way.
     function kinfolkArchiveKeys() {
-      return ['archivedAt', 'archivedReason', 'archivedBy'];
+      return ['archivedAt', 'archivedReason', 'archivedBy', 'statusBeforeArchive'];
     }
 
     // Any spelling of archived counts: the admin clients read the status
@@ -657,7 +694,8 @@ service cloud.firestore {
       // rule that cannot be written.
       // #1584: every branch holds a changed `joinDate` to 2025 through today.
       // #2161: and no branch archives or restores; `setKinfolkArchived` does.
-      allow update: if joinDateOkOnUpdate() && kinfolkArchiveUntouched() && (
+      // #1951: and every branch holds a changed phone or email to its shape.
+      allow update: if joinDateOkOnUpdate() && kinfolkArchiveUntouched() && kinfolkContactShapesOk() && (
                        ((isOwner() || (isTestAdmin() && kinfolkId == testScope()))
                         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(emergencyContactKeys()))
                     || (isCaretaker()
@@ -772,6 +810,15 @@ service cloud.firestore {
  // Write stays closed for every client, test admin included.
         allow write: if false;
       }
+    }
+
+ // #2037: what the household was told about one clock step, written by the
+ // server from the committed session write (`lib/visitStepNotice.ts`). The
+ // admin clients read it for the sentence on the visit card. Staff only: a
+ // household never reads why a notice to it was or was not sent.
+    match /visit_step_notices/{noticeId} {
+      allow read: if isStaff();
+      allow write: if false;
     }
 
     match /kin_care_sessions/{sessionId} {

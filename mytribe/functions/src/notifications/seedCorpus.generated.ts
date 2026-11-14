@@ -354,6 +354,14 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     pushTxt: "New message. {{kinfolkName}} wrote to you. Tap to read and reply.\n",
   },
   {
+    key: "message.reply",
+    emailSubject: "New message from {{Business}}",
+    emailHeadline: "New message from {{Business}}",
+    emailContent: "<p>{{Business}} sent you a message:</p><p>\"{{preview}}\"</p><p>Open Messages to read it and reply.</p><p><a class=\"button\" href=\"https://kinfolk.tribetails.com\">Open Messages</a></p>",
+    smsTxt: "{{Business}}: new message for you: \"{{preview}}\". Reply in Messages.\n",
+    pushTxt: "New message. {{Business}} wrote to you. Tap to read and reply.\n",
+  },
+  {
     key: "newsletter.announcement",
     emailSubject: "A little news from {{business}}",
     emailHeadline: "A little news from {{business}}",

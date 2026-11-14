@@ -100,6 +100,9 @@ describe('rules: #2161 no client archives a Kinfolk household directly', () => {
     await assertFails(ref.update({ archivedAt: '2026-11-13T10:00:00.000Z' }));
     await assertFails(ref.update({ archivedReason: 'moved away' }));
     await assertFails(ref.update({ archivedBy: 'auntie-1' }));
+    // #1958: the status a restore gives back is held the same way.
+    await assertFails(ref.update({ statusBeforeArchive: 'prospect' }));
+    await assertFails(asOwner(env).firestore().doc('kinfolk/kf1').update({ statusBeforeArchive: 'prospect' }));
   });
 
   it('an account carrying both claims cannot archive', async () => {
@@ -225,7 +228,7 @@ describe('rules: #2161 every other household edit still works', () => {
   it('a household still writes its own contact fields while archived', async () => {
     const env = await getEnv();
     await seed('kf1', ARCHIVED);
-    await assertSucceeds(asKinfolk(env).firestore().doc('kinfolk/kf1').update({ secondaryPhone: '555-0100' }));
+    await assertSucceeds(asKinfolk(env).firestore().doc('kinfolk/kf1').update({ secondaryPhone: '(805) 555-0100' }));
   });
 
   it('a household with no archive keys on file still takes an ordinary edit', async () => {

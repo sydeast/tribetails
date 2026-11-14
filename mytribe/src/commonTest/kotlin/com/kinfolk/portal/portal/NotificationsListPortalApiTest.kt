@@ -181,6 +181,8 @@ class NotificationsListPortalApiTest {
     @Test
     fun `a booking row this client cannot place lands on Schedule rather than a visit that says not found`() {
         assertEquals(NotificationTarget.Schedule, notificationTargetOf(item("booking", targetId = "something")))
+        // #1874: a reply from the office opens Messages.
+        assertEquals(NotificationTarget.Messages, notificationTargetOf(item("conversation", targetId = "fam1")))
         assertEquals(NotificationTarget.Schedule, notificationTargetOf(item("booking", targetId = "x", visitId = "  ")))
     }
 
@@ -192,5 +194,20 @@ class NotificationsListPortalApiTest {
         assertEquals(NotificationTarget.None, notificationTargetOf(item("", targetId = "")))
         assertEquals(NotificationTarget.None, notificationTargetOf(item("invoice", targetId = "")))
         assertEquals(NotificationTarget.None, notificationTargetOf(item("something-new", targetId = "z")))
+    }
+
+    @Test
+    fun `reads the office note off the card detail, and none when it wrote none (2030)`() {
+        val withNote = buildJsonObject {
+            row("n1").forEach { (k, v) -> put(k, v) }
+            put("detail", buildJsonObject { put("householdNote", "  Booked. Bring the spare key.  "); put("kinName", "Rex") })
+        }
+        assertEquals("Booked. Bring the spare key.", decodeNotificationItem(withNote)?.householdNote)
+        val blank = buildJsonObject {
+            row("n2").forEach { (k, v) -> put(k, v) }
+            put("detail", buildJsonObject { put("householdNote", "   ") })
+        }
+        assertNull(decodeNotificationItem(blank)?.householdNote)
+        assertNull(decodeNotificationItem(row("n3"))?.householdNote)
     }
 }

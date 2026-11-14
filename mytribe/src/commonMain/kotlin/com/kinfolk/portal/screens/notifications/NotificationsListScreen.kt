@@ -73,6 +73,8 @@ fun NotificationsListScreen(
     onOpenSchedule: () -> Unit = {},
     onOpenInvoice: (invoiceId: String) -> Unit = {},
     onOpenKinTale: (taleId: String) -> Unit = {},
+    /** #1874: a reply from the office. */
+    onOpenMessages: () -> Unit = {},
     /** The bell's count: the server's number on load, one less per tap. */
     onUnreadCount: (Int) -> Unit = {},
     nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
@@ -127,6 +129,7 @@ fun NotificationsListScreen(
             NotificationTarget.Schedule -> onOpenSchedule()
             is NotificationTarget.Invoice -> onOpenInvoice(target.invoiceId)
             is NotificationTarget.KinTale -> onOpenKinTale(target.taleId)
+            NotificationTarget.Messages -> onOpenMessages()
             NotificationTarget.None -> Unit
         }
     }
@@ -220,6 +223,14 @@ private fun NotificationRow(item: NotificationItem, nowMs: Long, onClick: () -> 
             )
             if (item.description.isNotBlank()) {
                 Text(item.description, style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
+            }
+            // #2030: the office's note on its answer, as written.
+            item.householdNote?.let { note ->
+                Text(
+                    note,
+                    style = type.sansMeta.copy(color = KinfolkBrand.Navy),
+                    modifier = Modifier.testTag("householdNote-${item.id}"),
+                )
             }
         }
         Spacer(Modifier.width(KinfolkSpacing.s))

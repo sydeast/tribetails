@@ -377,6 +377,8 @@ const V2_ARG_STYLE: Record<string, 'optsOrHandler' | 'optsHandler' | 'scheduleOp
   onDocumentCreated: 'optsHandler',
   onDocumentUpdated: 'optsHandler',
   onDocumentWritten: 'optsHandler',
+  // #2037: the same (opts, handler) shape, with the writer's identity on the event.
+  onDocumentWrittenWithAuthContext: 'optsHandler',
   onDocumentDeleted: 'optsHandler',
   onSchedule: 'scheduleOptsHandler',
 };

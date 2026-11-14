@@ -365,5 +365,56 @@ class BookingReschedulePortalApiTest {
         val res = PortalApi(fake).getBookingNotes("batch-1", "v1")
         assertNull(res.bookingNote)
         assertTrue(res.notes.isEmpty())
+        // #2030: an older server sends no office list; that reads as none.
+        assertTrue(res.fromBusiness.isEmpty())
+    }
+    // -- #2030: what the office told the household --
+    @Test
+    fun `getBookingNotes decodes the office accept, decline and visit notes apart from the household notes`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getBookingNotes", buildJsonObject {
+            put("bookingNote", JsonNull)
+            put("notes", buildJsonArray {
+                add(buildJsonObject { put("id", "n1"); put("body", "Thanks!"); put("createdAtMs", 4_000L) })
+            })
+            put("fromBusiness", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "request-declined"); put("kind", "requestDeclined"); put("body", "We are full that week.")
+                    put("createdAtMs", 1_000L); put("authorName", "Syd")
+                })
+                add(buildJsonObject {
+                    put("id", "n9"); put("kind", "visitNote"); put("body", "Treats are on the shelf.")
+                    put("createdAtMs", 2_000L); put("authorName", JsonNull)
+                })
+                add(buildJsonObject {
+                    put("id", "request-accepted"); put("kind", "requestAccepted"); put("body", "Booked. Bring the spare key.")
+                    put("createdAtMs", 3_000L); put("authorName", "Syd")
+                })
+                add(buildJsonObject { put("id", "blank"); put("kind", "visitNote"); put("body", "  ") })
+            })
+        })
+        val res = PortalApi(fake).getBookingNotes("batch-1", "v1", "fam-1")
+        assertEquals(listOf(BookingNote("n1", "Thanks!", 4_000L)), res.notes)
+        assertEquals(
+            listOf(
+                BusinessNote("request-declined", "requestDeclined", "We are full that week.", 1_000L, "Syd"),
+                BusinessNote("n9", "visitNote", "Treats are on the shelf.", 2_000L, null),
+                BusinessNote("request-accepted", "requestAccepted", "Booked. Bring the spare key.", 3_000L, "Syd"),
+            ),
+            res.fromBusiness,
+        )
+    }
+    @Test
+    fun `an office note is headed by what it was, who wrote it, else the business, and when`() {
+        val written: (Long?) -> String = { ms -> if (ms == null) "" else "Nov 1, 3:05 PM" }
+        assertEquals(
+            "Booked · Syd · Nov 1, 3:05 PM",
+            BusinessNote("a", "requestAccepted", "x", 1L, "Syd").heading("Test Business", written),
+        )
+        assertEquals(
+            "Not booked · Test Business · Nov 1, 3:05 PM",
+            BusinessNote("d", "requestDeclined", "x", 1L, null).heading("Test Business", written),
+        )
+        assertEquals("Note · Test Business", BusinessNote("n", "visitNote", "x", null, "  ").heading("Test Business", written))
     }
 }

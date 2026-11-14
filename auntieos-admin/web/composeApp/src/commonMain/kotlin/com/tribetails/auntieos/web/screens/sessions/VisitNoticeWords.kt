@@ -4,6 +4,7 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import kotlin.time.Instant
+import kotlinx.datetime.toInstant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -87,10 +88,20 @@ internal fun visitNotifyOutcomeOf(result: WriteResult<String>): VisitNotifyOutco
     }
 }
 
-/** The stamp as epoch milliseconds, or null when it does not parse. */
+/**
+ * The stamp as epoch milliseconds, or null when it does not parse.
+ *
+ * #2037: this console's `nowIso()` stamps the business's wall clock with no
+ * offset (`2026-11-10T16:00:00`), which [Instant.parse] refuses. Such a stamp
+ * is read as UTC, as the server does (`functions/src/lib/visitStepNotice.ts#stampMs`),
+ * so the two name the step's record alike. The value only names the record.
+ */
 @OptIn(kotlin.time.ExperimentalTime::class)
 internal fun visitNoticeAtMs(atIso: String): Long? =
     runCatchingCancellable { Instant.parse(atIso).toEpochMilliseconds() }.getOrNull()
+        ?: runCatchingCancellable {
+            kotlinx.datetime.LocalDateTime.parse(atIso).toInstant(kotlinx.datetime.TimeZone.UTC).toEpochMilliseconds()
+        }.getOrNull()
 
 /**
  * What the household was told about one clock step: named from the row when
@@ -125,8 +136,22 @@ internal fun visitNoticeOutcomeSentence(outcome: VisitNotifyOutcome, household: 
         "session_has_no_kinfolk" -> "No household was notified, because this visit is not linked to one."
         "session_has_no_routing_ids" -> "$name was not notified, because this visit is not linked to a booking."
         "dispatch_failed" -> "The notice to $household could not be sent."
+        // #2037: the server sends from the saved step; the console only stopped waiting.
+        "notice_pending" -> if (household.isBlank()) "Still checking who was told." else "Still checking whether $household was told."
         else -> "$name was not notified."
     }
+}
+
+/**
+ * #2037: what the toast says while the console waits for the server's record
+ * of a clock step (up to 30 seconds on a cold start), so the wait is never a
+ * silent one. Empty when the visit cannot be routed to a household at all:
+ * that is said at once from the row.
+ */
+internal fun visitNoticeCheckingSentence(session: KinCareSession): String {
+    if (visitRoutingSkip(session) != null) return ""
+    val household = session.kinfolkName.trim()
+    return if (household.isBlank()) "Checking who was told." else "Checking whether $household was told."
 }
 
 /** The household's name as the sentences use it. */

@@ -4,8 +4,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import com.tribetails.auntieos.data.contracts.CancelRequestDto
 import com.tribetails.auntieos.data.contracts.RescheduleRequestDto
 import com.tribetails.auntieos.data.repository.IncomingKinCare
@@ -166,5 +168,50 @@ class VisitRequestCardsTest {
         rule.onNodeWithText("Book it").performClick()
         rule.waitForIdle()
         assertEquals(1, approved)
+    }
+
+    // #2030: the confirm step takes a note for the household and hands it over.
+    @Test
+    fun theConfirmStepCarriesTheNoteForTheHousehold() {
+        val series = groupIncomingBySeries(
+            listOf(
+                IncomingKinCare(
+                    familyId = "kf1", batchId = "b1", visitId = "v1", kinfolkId = "kf1",
+                    kinfolkName = "The Rowans", serviceType = "Dog Walk",
+                    startTime = "2026-12-03T15:00:00Z", status = "requested", kinNames = listOf("Rex"),
+                ),
+            ),
+        ).single()
+        val approved = mutableListOf<String>()
+        val declined = mutableListOf<String>()
+        rule.setContent {
+            AuntieOSTheme {
+                CompositionLocalProvider(LocalBusinessZone provides zone) {
+                    IncomingSeriesRow(
+                        series = series,
+                        inFlight = false,
+                        actionsLocked = false,
+                        startTimes = emptyMap(),
+                        onSetStartTime = { _, _ -> },
+                        onApprove = { approved += it },
+                        onCancel = { declined += it },
+                    )
+                }
+            }
+        }
+        rule.onNodeWithText("Approve series").performClick()
+        rule.onNodeWithText("NOTE FOR THE HOUSEHOLD (OPTIONAL)").assertExists()
+        rule.onNodeWithTag("householdNote").performTextInput("  Booked. Bring the spare key.  ")
+        rule.onNodeWithText("Book it").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Booked. Bring the spare key."), approved)
+        // A fresh confirm starts blank: the approval's note never rides a decline.
+        rule.onNodeWithText("Cancel").performClick()
+        rule.onNodeWithText("ANYTHING TO ADD FOR THE HOUSEHOLD (OPTIONAL)").assertExists()
+        rule.onNodeWithText("Booked. Bring the spare key.").assertDoesNotExist()
+        rule.onNodeWithTag("householdNote").performTextInput("We are full that week.")
+        rule.onNodeWithText("Turn it down").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("We are full that week."), declined)
     }
 }
