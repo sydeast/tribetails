@@ -207,7 +207,7 @@ export function describeFormSchemaIssue(
   const path = issue.path[0] === 'schema' ? issue.path.slice(1) : issue.path;
   let sectionIndex: number | null = null;
   let fieldIndex: number | null = null;
-  let thing = 'This form';
+  let thing: string;
   let optionNumber: number | null = null;
   if (path[0] === 'sections' && typeof path[1] === 'number') {
     sectionIndex = path[1];
