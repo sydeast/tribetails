@@ -102,11 +102,13 @@ class DirectoryViewModelExtTest {
         coEvery { mockRepo.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.updateFirstName("New")
-        vm.updatePhoneNumber("555-9999")
+        vm.updatePhoneNumber("(805) 555-9999")
         vm.saveKinfolk()
         advanceUntilIdle()
 
         assertNotNull(vm.addKinfolkState.value.error)
+        // #1951: the refusal is the write's, not the phone check's.
+        coVerify(exactly = 1) { mockRepo.createKinfolkComplete(any(), any()) }
     }
 
     @Test
@@ -119,7 +121,7 @@ class DirectoryViewModelExtTest {
         coEvery { mockRepo.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
         vm.updateAddEmergencyContact(0, EmergencyContactDraft("Rae Halbrook", "5125550190"))
         vm.updateFirstName("New")
-        vm.updatePhoneNumber("555-9999")
+        vm.updatePhoneNumber("(805) 555-9999")
         vm.saveKinfolk()
         advanceUntilIdle()
 
@@ -254,7 +256,7 @@ class DirectoryViewModelExtTest {
 
         // First name is blank; phone is present
         vm.updateFirstName("")
-        vm.updatePhoneNumber("555-1111")
+        vm.updatePhoneNumber("(805) 555-1111")
         vm.saveKinfolk()
         advanceUntilIdle()
 

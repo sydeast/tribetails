@@ -81,6 +81,8 @@ class KinArchiveCallableTest {
         }
         waitForIdle()
         onNodeWithText("Archive").performScrollTo().performClick()
+        // #2017: the confirm's own button is the one that archives.
+        onNodeWithText("Archive Willow").performScrollTo().performClick()
         waitUntil(timeoutMillis = 5_000) { archivedCalled }
         assertEquals("setKinArchived", JvmFirestoreFixtures.lastCallableName)
         assertEquals(true, payload()["archived"]?.jsonPrimitive?.booleanOrNull)
@@ -119,12 +121,60 @@ class KinArchiveCallableTest {
         }
         waitForIdle()
         onNodeWithText("Archive").performScrollTo().performClick()
+        onNodeWithText("Archive Willow").performScrollTo().performClick()
         waitUntil(timeoutMillis = 5_000) { JvmFirestoreFixtures.lastCallableName == "setKinArchived" }
         waitForIdle()
         onNodeWithText("Only the owner can archive a Kin.").assertExists()
         assertTrue(!archivedCalled)
         // The button is back for a retry.
         onNodeWithText("Archive").assertExists()
+    }
+    // #2017: the walk pressed Archive and the Kin was archived at once.
+    @Test
+    fun archiveAsksFirstNamingTheKinAndCallsNothingYet() = runDesktopComposeUiTest {
+        noCustomFields()
+        JvmFirestoreFixtures.kinByKinfolk = mapOf("kf1" to listOf(kin("active")))
+        var archivedCalled = false
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                KinEditScreen(kinfolkId = "kf1", kinId = "k1", onBack = {}, onSaved = {}, onArchived = { archivedCalled = true })
+            }
+        }
+        waitForIdle()
+        onNodeWithText("Archive").performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText(kinArchiveConfirmText("Willow")).assertExists()
+        onNodeWithText("Archive Willow").assertExists()
+        assertNull(JvmFirestoreFixtures.lastCallableName?.takeIf { it == "setKinArchived" })
+        assertTrue(!archivedCalled)
+    }
+    @Test
+    fun cancelOnTheConfirmArchivesNothingAndOffersArchiveAgain() = runDesktopComposeUiTest {
+        noCustomFields()
+        JvmFirestoreFixtures.kinByKinfolk = mapOf("kf1" to listOf(kin("active")))
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                KinEditScreen(kinfolkId = "kf1", kinId = "k1", onBack = {}, onSaved = {}, onArchived = {})
+            }
+        }
+        waitForIdle()
+        onNodeWithText("Archive").performScrollTo().performClick()
+        // The screen has its own Cancel too; the confirm's is the last one, at the foot.
+        val cancels = onAllNodesWithText("Cancel")
+        cancels[cancels.fetchSemanticsNodes().size - 1].performScrollTo().performClick()
+        waitForIdle()
+        onNodeWithText("Archive Willow").assertDoesNotExist()
+        onNodeWithText("Archive").assertExists()
+        assertTrue(JvmFirestoreFixtures.callablePayloads.none { it.first == "setKinArchived" })
+    }
+    @Test
+    fun theConfirmWordsNameTheKinAndTheWayBack() {
+        assertEquals(
+            "Archive Willow? Willow leaves the Kin list and the household's roster. " +
+                "To bring Willow back, choose Archived under Show on the Directory's Kin tab, open Willow, and press Restore.",
+            kinArchiveConfirmText(" Willow "),
+        )
+        assertTrue('\u2014' !in kinArchiveConfirmText("Willow"))
     }
     private fun androidx.compose.ui.test.ComposeUiTest.onAllNodesWithTextCount(t: String): Int =
         onAllNodesWithText(t).fetchSemanticsNodes().size

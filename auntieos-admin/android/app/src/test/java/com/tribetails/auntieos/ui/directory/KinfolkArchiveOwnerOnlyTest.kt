@@ -207,7 +207,7 @@ class KinfolkArchiveOwnerOnlyTest {
     fun `after a restore the next save does not send the status again`() = runTest(testDispatcher) {
         open("archived")
         advanceUntilIdle()
-        coEvery { repository.unarchiveKinfolk(any()) } returns Result.success(Unit)
+        coEvery { repository.unarchiveKinfolk(any()) } returns Result.success("active")
         viewModel.unarchiveKinfolk()
         advanceUntilIdle()
         assertEquals("active", viewModel.editKinfolkState.value.status)

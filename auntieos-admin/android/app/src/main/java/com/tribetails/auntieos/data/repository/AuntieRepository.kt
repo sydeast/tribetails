@@ -28,6 +28,8 @@ import com.tribetails.auntieos.domain.kinfolkScopeFilter
 import com.tribetails.auntieos.domain.scopedKinfolkId
 import com.tribetails.auntieos.ui.admin.scheduling.CalendarSyncRun
 import com.tribetails.auntieos.ui.admin.scheduling.calendarSyncRunFrom
+import com.tribetails.auntieos.ui.directory.familyKinPathStamp
+import com.tribetails.auntieos.ui.directory.restoredKinfolkStatusFrom
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.voice.VoiceAccessToken
 import kotlinx.coroutines.async
@@ -653,18 +655,19 @@ class AuntieRepository(
     }.onFailure { AuntieLog.e("AuntieRepository.saveEmergencyContacts failed", it) }
 
     /**
-     * Restore an archived household: back to active, the three archive fields
-     * cleared. #2161: through the same owner-only callable, which writes the
-     * RESTORE_KINFOLK Activity Log line.
+     * Restore an archived household, the archive fields cleared. #2161: through
+     * the same owner-only callable, which writes the RESTORE_KINFOLK Activity
+     * Log line. #1958: returns the status the household came back as, the one it
+     * held before the archive (`active` for one archived before that was kept).
      */
-    suspend fun unarchiveKinfolk(kinfolkId: String): Result<Unit> = runCatchingCancellable {
+    suspend fun unarchiveKinfolk(kinfolkId: String): Result<String> = runCatchingCancellable {
         AuntieLog.i("Unarchiving kinfolk: $kinfolkId")
         authGate.ensureAuthenticated()
         require(kinfolkId.isNotBlank()) { "unarchiveKinfolk needs a kinfolk document id" }
-        functions.getHttpsCallable("setKinfolkArchived")
+        val raw = functions.getHttpsCallable("setKinfolkArchived")
             .call(mapOf("kinfolkId" to kinfolkId.trim(), "archived" to false))
-            .awaitCallable()
-        Unit
+            .awaitCallable().data as? Map<*, *>
+        restoredKinfolkStatusFrom(raw)
     }.onFailure { AuntieLog.e("Failed to unarchive kinfolk $kinfolkId", it) }
 
     suspend fun getKinfolkById(kinfolkId: String): Result<Kinfolk?> = runCatchingCancellable {
@@ -728,14 +731,21 @@ class AuntieRepository(
      * [com.tribetails.auntieos.ui.directory.KIN_DIFF_FIELDS] names what may be
      * written.
      *
-     * [kinfolkId] is passed separately from [changes] because the mirror FK has
-     * to be stamped on EVERY save, not only the ones that reassigned the pet:
-     * `familyKinPath` is derived, not edited, so it never appears in a diff.
+     * #2115: the link to the household's copy (`familyKinPath`) is left as it
+     * is. It used to be re-stamped on EVERY save as
+     * `families/{kinfolkId}/kin/{this id}`, which is right only for a Kin the
+     * office made first. A Kin the household added in the portal has its copy
+     * under another id, so one save re-pointed it at a copy that does not exist.
+     * [familyKinPath] is the link the Kin was loaded with: it is written only
+     * when that is blank, or when this save moves the Kin to another household
+     * (`kinfolkId` in [changes]); null (not known) writes nothing.
+     * [familyKinPathStamp] decides.
      */
     suspend fun updateKinFields(
         documentId: String,
         kinfolkId: String,
         changes: Map<String, Any>,
+        familyKinPath: String?,
     ): Result<Unit> = runCatchingCancellable {
         require(documentId.isNotBlank()) { "updateKinFields needs a kin document id" }
         require(changes.isNotEmpty()) { "updateKinFields called with no changed fields" }
@@ -744,10 +754,15 @@ class AuntieRepository(
         val payload: Map<String, Any> = changes + mapOf("updatedAt" to FieldValue.serverTimestamp())
         firestore.collection("kin").document(documentId)
             .set(payload, com.google.firebase.firestore.SetOptions.merge()).await()
-        // Additive FK for the MyTribe pet mirror (onFlatKinWrite). Same fields as
-        // createKin; re-stamped on edit in case the pet was reassigned to a
-        // kinfolk. Leaves the field writes above untouched.
-        stampFamilyKinPath(kinId = documentId, kinfolkId = kinfolkId)
+        // Additive FK for the MyTribe pet mirror (onFlatKinWrite), only where the
+        // Kin has no link yet or has just moved household (#2115). Leaves the
+        // field writes above untouched.
+        familyKinPathStamp(
+            kinId = documentId,
+            kinfolkId = kinfolkId,
+            existingFamilyKinPath = familyKinPath,
+            movedHousehold = "kinfolkId" in changes,
+        )?.let { stamp -> writeFamilyKinPathStamp(documentId, stamp) }
         AuntieLog.d("Update successful for kin: $documentId")
         Unit
     }.onFailure { AuntieLog.e("Failed to update kin $documentId", it) }
@@ -776,17 +791,20 @@ class AuntieRepository(
     /**
      * Additively stamps the MyTribe mirror FK (kinfolkId + familyKinPath) onto a
      * flat kin/{kinId} doc. No-op when the pet has no known kinfolk. Used by
-     * createKin/updateKin so onFlatKinWrite can mirror staff pets into the family
-     * tree. SetOptions.merge() so only these two fields are written.
+     * createKin, whose new Kin has no household copy yet, so onFlatKinWrite can
+     * mirror staff pets into the family tree. SetOptions.merge() so only these
+     * two fields are written. An update goes through [familyKinPathStamp] first
+     * (#2115).
      */
     private suspend fun stampFamilyKinPath(kinId: String, kinfolkId: String) {
-        if (kinId.isBlank() || kinfolkId.isBlank()) return
+        familyKinPathStamp(kinId, kinfolkId, existingFamilyKinPath = "", movedHousehold = false)
+            ?.let { writeFamilyKinPathStamp(kinId, it) }
+    }
+
+    private suspend fun writeFamilyKinPathStamp(kinId: String, stamp: Map<String, String>) {
         runCatchingCancellable {
             firestore.collection("kin").document(kinId).set(
-                mapOf(
-                    "kinfolkId" to kinfolkId,
-                    "familyKinPath" to "families/$kinfolkId/kin/$kinId",
-                ),
+                stamp,
                 com.google.firebase.firestore.SetOptions.merge(),
             ).await()
         }.onFailure { AuntieLog.e("Failed to stamp familyKinPath on kin $kinId", it) }

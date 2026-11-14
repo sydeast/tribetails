@@ -25,6 +25,13 @@ export const EMERGENCY_CONTACT_PHONE_TOO_LONG = `An Emergency Contact's phone nu
 export const EMERGENCY_CONTACT_RELATIONSHIP_TOO_LONG = `A relationship can be at most ${EMERGENCY_CONTACT_RELATIONSHIP_MAX} characters.`;
 export const EMERGENCY_CONTACTS_TOO_MANY = 'A household can have only one Emergency Contact.';
 /**
+ * #1951: Add kinfolk checks the Emergency Contact's phone shape before the
+ * household is created, so "xyz" is refused before anything is saved. The
+ * server's own check (libphonenumber) is stricter, so a number shaped right can
+ * still be refused by it after the create; that case keeps its own message.
+ */
+export const EMERGENCY_CONTACT_PHONE_SHAPE = "An Emergency Contact's phone needs 10 digits, or 11 starting with 1.";
+/**
  * Shown above the contacts when a household still has two on file from before
  * the 2026-09-27 ruling. Both stay until the admin removes one; nothing deletes
  * the second on its own.

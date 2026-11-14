@@ -177,8 +177,64 @@ describe('AddKinfolkDialog', () => {
     render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
 
-    expect(await screen.findAllByRole('alert')).toHaveLength(2);
+    // #1951: both names, and the missing contact, on the same press.
+    expect(await screen.findByText("First name can't be blank.")).toBeInTheDocument();
+    expect(screen.getByText("Last name can't be blank.")).toBeInTheDocument();
+    expect(screen.getByText('The primary kinfolk needs a phone number or an email.')).toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(3);
     expect(createKinfolk).not.toHaveBeenCalled();
+  });
+
+  // #1951: the walk saved "abc" as a phone and a word with no @ sign as an email,
+  // and only then heard about the Emergency Contact's "xyz".
+  it('#1951: letters for a phone and an email with no @ are refused beside their fields, and nothing is created', async () => {
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText('First name'), 'Jamie');
+    await userEvent.type(screen.getByLabelText('Last name'), 'Halbrook');
+    await userEvent.type(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' }), 'abc');
+    await userEvent.type(screen.getByLabelText('Email'), 'catch');
+    await fillContact('Rae Halbrook', 'xyz');
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+
+    expect(await screen.findByText('Enter a 10 digit phone number, or 11 starting with 1.')).toBeInTheDocument();
+    expect(screen.getByText("That email address doesn't look right.")).toBeInTheDocument();
+    expect(screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' })).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Email')).toHaveAttribute('aria-describedby', 'add-kinfolk-email-error');
+    // The Emergency Contact's phone is named on the same press, not after a create.
+    expect(screen.getByText("An Emergency Contact's phone needs 10 digits, or 11 starting with 1.")).toBeInTheDocument();
+    expect(createKinfolk).not.toHaveBeenCalled();
+    expect(saveEmergencyContacts).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /^add kinfolk$/i })).toBeEnabled();
+  });
+
+  it('#1951: an Emergency Contact phone of letters alone is refused before the household is created', async () => {
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await fillHousehold();
+    await fillContact('Rae Halbrook', 'xyz');
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    expect(await screen.findByText("An Emergency Contact's phone needs 10 digits, or 11 starting with 1.")).toBeInTheDocument();
+    expect(createKinfolk).not.toHaveBeenCalled();
+  });
+
+  it('#1951: a bad phone says so as soon as the field is left, and clears once it is fixed', async () => {
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    const phone = screen.getByLabelText('Phone', { selector: '#add-kinfolk-phone' });
+    await userEvent.type(phone, '555-01');
+    await userEvent.tab();
+    expect(await screen.findByText('Enter a 10 digit phone number, or 11 starting with 1.')).toBeInTheDocument();
+    await userEvent.clear(phone);
+    await userEvent.type(phone, '(805) 555-0134');
+    expect(screen.queryByText('Enter a 10 digit phone number, or 11 starting with 1.')).toBeNull();
+  });
+
+  it('#1951: a blank email is fine when a phone is given, and a fixed form creates', async () => {
+    createKinfolk.mockResolvedValue({ kinfolkId: 'new-kf-9', duplicateOf: null });
+    render(<AddKinfolkDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+    await fillHousehold();
+    await fillContact();
+    await userEvent.click(screen.getByRole('button', { name: /^add kinfolk$/i }));
+    await waitFor(() => expect(createKinfolk).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("That email address doesn't look right.")).toBeNull();
   });
 
   it('surfaces a required-field error on blur alone, before any save attempt (AO-44)', async () => {

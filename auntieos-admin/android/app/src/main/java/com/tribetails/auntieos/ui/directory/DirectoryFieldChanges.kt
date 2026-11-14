@@ -159,11 +159,38 @@ internal val KIN_DIFF_FIELDS: Map<String, (Kin) -> Any> = linkedMapOf(
  *
  * - `id`             the document id (`@DocumentId`)
  * - `updatedAt`      stamped at write time by the repository
- * - `familyKinPath`  the MyTribe mirror FK, owned by
- *                    `AuntieRepository.stampFamilyKinPath`, which re-derives it
- *                    from the kin and kinfolk ids on every write
+ * - `familyKinPath`  the MyTribe mirror FK, owned by the repository, which
+ *                    writes it only through [familyKinPathStamp] (#2115)
  */
 internal val KIN_SERVER_OWNED = setOf("id", "updatedAt", "familyKinPath")
+
+/**
+ * #2115: the link to the household's copy of a Kin that a save writes, or null
+ * for none.
+ *
+ * The link used to be re-derived as `families/{kinfolkId}/kin/{kinId}` on every
+ * save. That is right only for a Kin the office made first, where the two ids
+ * are the same. A Kin the household added in the portal has its household copy
+ * under a different id, so one admin Android save re-pointed its link at a copy
+ * that does not exist, and the next shared fact the Admin changed made a second,
+ * nameless Kin on the household's roster.
+ *
+ * So the link is written only when the Kin has none ([existingFamilyKinPath]
+ * blank: a Kin just created, or one from before the link existed), or when the
+ * save moves the Kin to another household ([movedHousehold]). A null
+ * [existingFamilyKinPath] means the caller does not know the link, and nothing
+ * is written: leaving a link alone is always safe, re-pointing one is not.
+ */
+internal fun familyKinPathStamp(
+    kinId: String,
+    kinfolkId: String,
+    existingFamilyKinPath: String?,
+    movedHousehold: Boolean,
+): Map<String, String>? {
+    if (kinId.isBlank() || kinfolkId.isBlank() || existingFamilyKinPath == null) return null
+    if (existingFamilyKinPath.isNotBlank() && !movedHousehold) return null
+    return mapOf("kinfolkId" to kinfolkId, "familyKinPath" to "families/$kinfolkId/kin/$kinId")
+}
 
 /**
  * The fields [edited] changes relative to [loaded], keyed by Firestore field

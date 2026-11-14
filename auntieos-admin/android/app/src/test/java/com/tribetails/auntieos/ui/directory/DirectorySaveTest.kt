@@ -96,7 +96,7 @@ class DirectorySaveTest {
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { invoiceRepo.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repo.updateKinfolkFields(any(), any()) } returns Result.success(Unit)
-        coEvery { repo.updateKinFields(any(), any(), any()) } returns Result.success(Unit)
+        coEvery { repo.updateKinFields(any(), any(), any(), any()) } returns Result.success(Unit)
         // The cold-arrival reads: the by-id pet fetch the editor falls back to
         // when no household profile has been opened, and the owner behind it.
         coEvery { repo.getKinByIds(any()) } returns Result.success(mapOf(storedKin.id to storedKin))
@@ -116,7 +116,7 @@ class DirectorySaveTest {
 
     private fun captureKinChanges(): CapturingSlot<Map<String, Any>> {
         val changes = slot<Map<String, Any>>()
-        coEvery { repo.updateKinFields(any(), any(), capture(changes)) } returns Result.success(Unit)
+        coEvery { repo.updateKinFields(any(), any(), capture(changes), any()) } returns Result.success(Unit)
         return changes
     }
 
@@ -327,9 +327,12 @@ class DirectorySaveTest {
         }
     }
 
-    /** The mirror FK is derived, so it is re-stamped on every save, never diffed. */
+    /**
+     * #2115: the mirror FK is never diffed, and the save hands the repository
+     * the link the Kin was loaded with, so it is left as it is.
+     */
     @Test
-    fun `a pet save re-stamps the mirror FK and never diffs it`() = runTest(testDispatcher) {
+    fun `a pet save passes the loaded mirror FK and never diffs it`() = runTest(testDispatcher) {
         val changes = captureKinChanges()
         val vm = kinEditor()
 
@@ -337,8 +340,31 @@ class DirectorySaveTest {
         vm.saveKinChanges()
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { repo.updateKinFields("k1", "kf1", any()) }
+        coVerify(exactly = 1) { repo.updateKinFields("k1", "kf1", any(), "families/kf1/kin/k1") }
         assertFalse(changes.captured.containsKey("familyKinPath"))
+    }
+
+    /**
+     * #2115: a Kin the household added in the portal has its household copy
+     * under another id. A save from admin Android passes that link through
+     * untouched, and [familyKinPathStamp] then writes nothing over it.
+     */
+    @Test
+    fun `saving a Kin the household added keeps its link to the household copy`() = runTest(testDispatcher) {
+        val portalAdded = storedKin.copy(familyKinPath = "families/kf1/kin/portal-7")
+        coEvery { repo.getAllKin() } returns Result.success(listOf(portalAdded))
+        coEvery { repo.getKin(any()) } returns Result.success(listOf(portalAdded))
+        coEvery { repo.getKinByIds(any()) } returns Result.success(mapOf(portalAdded.id to portalAdded))
+        val links = mutableListOf<String?>()
+        coEvery { repo.updateKinFields(any(), any(), any(), captureNullable(links)) } returns Result.success(Unit)
+        val vm = kinEditor()
+
+        vm.updateEditKinBreed("Pembroke Corgi")
+        vm.saveKinChanges()
+        advanceUntilIdle()
+
+        assertEquals(listOf<String?>("families/kf1/kin/portal-7"), links)
+        assertEquals(null, familyKinPathStamp("k1", "kf1", links.single(), movedHousehold = false))
     }
 
     @Test
@@ -348,7 +374,7 @@ class DirectorySaveTest {
         vm.saveKinChanges()
         advanceUntilIdle()
 
-        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any()) }
+        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any(), any()) }
         assertTrue(vm.editKinState.value.isSuccess)
     }
 
@@ -399,7 +425,7 @@ class DirectorySaveTest {
         vm.setKinArchived(false)
         advanceUntilIdle()
         coVerify(exactly = 1) { repo.setKinArchived("k1", false) }
-        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any()) }
+        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any(), any()) }
         assertTrue(vm.editKinState.value.isSuccess)
     }
     @Test
@@ -410,7 +436,7 @@ class DirectorySaveTest {
         vm.setKinArchived(true)
         advanceUntilIdle()
         coVerify(exactly = 1) { repo.setKinArchived("k1", true) }
-        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any()) }
+        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any(), any()) }
     }
     /**
      * #1493: the `setKinArchived` callable writes the ARCHIVE_KIN / RESTORE_KIN
@@ -434,7 +460,7 @@ class DirectorySaveTest {
         vm.setKinArchived(true)
         advanceUntilIdle()
         coVerify(exactly = 0) { repo.setKinArchived(any(), any()) }
-        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any()) }
+        coVerify(exactly = 0) { repo.updateKinFields(any(), any(), any(), any()) }
     }
     /**
      * A rejected status write keeps the operator's pending edit and SAYS SO,

@@ -261,6 +261,30 @@ export function isKinInCare(kin: { status?: string | undefined }): boolean {
   const s = (kin.status ?? '').trim().toLowerCase();
   return s !== 'inactive' && s !== 'archived';
 }
+
+/** An archived Kin, any spelling: the one status the Kin tab hides unless asked. */
+export function isKinArchived(kin: { status?: string | undefined }): boolean {
+  return (kin.status ?? '').trim().toLowerCase() === 'archived';
+}
+
+/**
+ * #1902: what the Kin tab's Show picker lists. "All kin" is every Kin that is
+ * not archived, "In care" narrows that to `isKinInCare`, and "Archived" lists
+ * only the archived ones, which is the one way back to a Kin's Restore.
+ */
+export type KinShow = 'all' | 'inCare' | 'archived';
+
+export const KIN_SHOW_OPTIONS: readonly { value: KinShow; label: string }[] = [
+  { value: 'all', label: 'All kin' },
+  { value: 'inCare', label: 'In care' },
+  { value: 'archived', label: 'Archived' },
+];
+
+export function kinMatchesShow(kin: { status?: string | undefined }, show: KinShow): boolean {
+  if (show === 'archived') return isKinArchived(kin);
+  if (show === 'inCare') return isKinInCare(kin);
+  return !isKinArchived(kin);
+}
 export interface Kin {
   _id: string;
   kinfolkId?: string | undefined;
@@ -703,19 +727,22 @@ export function filterSortKinfolk(
 }
 
 /**
- * Search-filter and tag-filter (excluding archived) then sort Kin, ports the Kin-tab branch
- * of DirectoryScreen.kt's `when (activeTab)`. `createdAt` always resolves to
- * ''  no Kin doc has one  so `recently_created` on Kin is a stable no-op
- * (see KIN_SORT_OPTIONS, which does not expose it as a choice).
+ * Show-filter, search-filter and tag-filter then sort Kin, ports the Kin-tab branch
+ * of DirectoryScreen.kt's `when (activeTab)`. `show` defaults to "All kin",
+ * which leaves archived Kin out; "Archived" lists only them (#1902).
+ * `createdAt` always resolves to ''  no Kin doc has one  so
+ * `recently_created` on Kin is a stable no-op (see KIN_SORT_OPTIONS, which
+ * does not expose it as a choice).
  */
 export function filterSortKin(
   rows: Kin[],
   query: string,
   sort: SortOption,
   tag: string = TAG_FILTER_ALL,
+  show: KinShow = 'all',
 ): Kin[] {
   const filtered = rows.filter(
-    (k) => k.status !== 'archived' && matchesKin(k, query) && matchesTag(k, tag),
+    (k) => kinMatchesShow(k, show) && matchesKin(k, query) && matchesTag(k, tag),
   );
   return sortByOption(
     filtered,

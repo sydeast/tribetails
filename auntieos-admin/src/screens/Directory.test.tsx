@@ -482,6 +482,50 @@ describe('Directory screen, Kin tab', () => {
     expect(screen.queryByText('Sandbox Bird')).toBeNull();
     expect(screen.getByRole('combobox', { name: 'Filter kin by status' })).toHaveValue('inCare');
   });
+
+  // #1902: an archived Kin was on no list, so its Restore could not be reached.
+  const withArchived = [
+    kinRow({ _id: 'a', name: 'Biscuit', status: 'active' }),
+    kinRow({ _id: 'b', name: 'Gravy', status: 'archived' }),
+    kinRow({ _id: 'c', name: 'Pepper', status: ' Archived ' }),
+  ];
+  it('#1902: Show offers All kin, In care and Archived', async () => {
+    kinAsync = { status: 'ready', data: withArchived };
+    render(<Directory />);
+    await openKinTab();
+    const show = screen.getByRole('combobox', { name: 'Filter kin by status' });
+    expect([...show.querySelectorAll('option')].map((o) => o.textContent)).toEqual(['All kin', 'In care', 'Archived']);
+  });
+  it('#1902: Archived lists only the archived kin, any spelling, and search works inside it', async () => {
+    kinAsync = { status: 'ready', data: withArchived };
+    render(<Directory />);
+    await openKinTab();
+    expect(screen.queryByText('Gravy')).toBeNull();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Filter kin by status' }), 'archived');
+    expect(screen.getByText('Gravy')).toBeInTheDocument();
+    expect(screen.getByText('Pepper')).toBeInTheDocument();
+    expect(screen.queryByText('Biscuit')).toBeNull();
+    await userEvent.type(screen.getByRole('searchbox'), 'grav');
+    expect(screen.getByText('Gravy')).toBeInTheDocument();
+    expect(screen.queryByText('Pepper')).toBeNull();
+  });
+  it('#1902: an archived kin card opens, so Edit and Restore can be reached', async () => {
+    kinAsync = { status: 'ready', data: withArchived };
+    const onSelectKin = vi.fn();
+    render(<Directory onSelectKin={onSelectKin} />);
+    await openKinTab();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Filter kin by status' }), 'archived');
+    await userEvent.click(screen.getByText('Gravy'));
+    expect(onSelectKin).toHaveBeenCalledWith('b');
+  });
+  it('#1902: Archived with nothing archived says so, not "No matches"', async () => {
+    kinAsync = { status: 'ready', data: [kinRow({ _id: 'a', name: 'Biscuit', status: 'active' })] };
+    render(<Directory />);
+    await openKinTab();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Filter kin by status' }), 'archived');
+    expect(screen.getByText('No archived kin.')).toBeInTheDocument();
+    expect(screen.queryByText(/No matches/)).toBeNull();
+  });
   it('search filters kin by species or breed', async () => {
     kinAsync = {
       status: 'ready',
