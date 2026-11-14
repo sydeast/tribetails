@@ -10,9 +10,11 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 /**
- * AO-39 Expiration Countdown (dashboard widget). Admin-only `expirations`
- * collection: gate codes, vet records, cards, licenses and the like that lapse
- * on a date. listExpirations returns every row sorted by dateIso ascending (the
+ * AO-39 Expiration Countdown (dashboard widget). The `expirations` collection
+ * is read by the owner and, since #2208 (ruling 2026-11-14), an Auntie
+ * (listExpirations); upsertExpiration stays the owner's. It holds gate codes,
+ * vet records, cards, licenses and the like that lapse on a date, and no money
+ * field. listExpirations returns every row sorted by dateIso ascending (the
  * widget filters to the near-term window client-side); upsertExpiration
  * creates or updates one. Fail loud: no fabricated dates.
  */

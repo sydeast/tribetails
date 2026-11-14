@@ -61,6 +61,26 @@ describe('listExpirationsHandler', () => {
   });
 });
 
+// #2208: an Auntie reads the expirations list. No money reaches her.
+describe('#2208 expirations for an Auntie', () => {
+  it('lists the rows for her, and each row carries only the five expiration fields', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        expirations: [
+          // amountCents is not a field this collection has; a stray one must not travel.
+          { id: 'a', data: { label: 'Side gate code', dateIso: '2026-12-01', kind: 'gateCode', kinfolkId: 'kf1', amountCents: 500, updatedBy: 'owner-1' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const auntie = { data: {}, auth: { uid: 'auntie-9', token: { staffRole: 'auntie' } } } as unknown as CallableRequest<unknown>;
+    const res = await listExpirationsHandler(auntie);
+    expect(res.expirations).toEqual([
+      { _id: 'a', label: 'Side gate code', dateIso: '2026-12-01', kind: 'gateCode', kinfolkId: 'kf1' },
+    ]);
+  });
+});
+
 describe('upsertExpirationHandler', () => {
   it('creates a new expiration when no expirationId given', async () => {
     const ctx = buildDbMock();
