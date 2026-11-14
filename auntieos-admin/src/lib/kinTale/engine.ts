@@ -267,7 +267,7 @@ export interface ConditionAttribute {
  * reads as blank. Ported verbatim from the Kotlin `conditionAttributeCatalog`.
  */
 export const conditionAttributeCatalog: readonly ConditionAttribute[] = [
-  { key: 'medicationHealthNotes', label: 'Medication / health notes' },
+  { key: 'medicationHealthNotes', label: 'Medications / health notes' },
   { key: 'vaccinations', label: 'Vaccinations' },
   { key: 'vetInfo', label: 'Vet info' },
   { key: 'feedingBrand', label: 'Feeding brand' },

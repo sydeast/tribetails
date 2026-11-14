@@ -29,6 +29,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.model.Kin
+import com.tribetails.auntieos.data.model.TagDef
 import com.tribetails.auntieos.data.model.TagScope
 import com.tribetails.auntieos.domain.UPCOMING_HORIZON_DAYS
 import com.tribetails.auntieos.domain.feedCountMeta
@@ -48,6 +49,7 @@ import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.components.AuntieKeyValueRow
 import com.tribetails.auntieos.ui.components.LoadingScreen
 import com.tribetails.auntieos.ui.components.ProfileTagsSection
+import com.tribetails.auntieos.ui.components.TagChip
 import com.tribetails.auntieos.ui.components.hasDynamicFieldValues
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 
@@ -62,7 +64,7 @@ import com.tribetails.auntieos.ui.theme.AuntieTheme
  */
 internal fun kinHeroLine(k: Kin): String = listOf(
     k.breed.trim().ifBlank { k.species },
-    k.age.trim().takeIf { it.isNotBlank() }?.let { "$it yrs" }.orEmpty(),
+    k.age.orEmpty().trim().takeIf { it.isNotBlank() }?.let { "$it yrs" }.orEmpty(),
     sexLine(k.sex, k.spayedNeutered),
     k.weight,
     k.colorMarkings,
@@ -90,7 +92,7 @@ internal fun checklistLines(checklist: String): List<String> =
     checklist.split("\r\n", "\n").map { it.trim() }.filter { it.isNotBlank() }
 
 /** True when any of [values] carries something to show. */
-private fun any(vararg values: String): Boolean = values.any { it.isNotBlank() }
+private fun any(vararg values: String?): Boolean = values.any { !it.isNullOrBlank() }
 
 /**
  * Kin (pet) detail: the screen `ui-ideas/auntieos-kin-detail-2026-05-27.html`
@@ -166,6 +168,7 @@ fun KinDetailScreen(
                 item {
                     KinHero(
                         kin = kin,
+                        tagVocab = state.tagVocab,
                         householdName = state.householdName,
                         householdId = state.householdId,
                         tagsOpen = tagsOpen,
@@ -249,7 +252,7 @@ fun KinDetailScreen(
                 }
 
                 item { CareChecklistPanel(kin, state) }
-                item { MedicalPanel(kin) }
+                item { MedicalPanel(kin, state.kinVet) }
                 item { AuntieNotesOnKinPanel(kin) }
                 item { The411Panel(kin, state) }
 
@@ -285,6 +288,7 @@ fun KinDetailScreen(
 @Composable
 private fun KinHero(
     kin: Kin,
+    tagVocab: List<TagDef>,
     householdName: String,
     householdId: String,
     tagsOpen: Boolean,
@@ -327,8 +331,11 @@ private fun KinHero(
             if (status.isNotBlank() && status != "active") {
                 AuntieStatusPill(label = status, tone = AuntieStatusTone.Neutral, mono = true)
             }
+            // #2015: the same chip the Tags panel draws, resolved against the
+            // pet tag vocabulary, so a tag says what it is (an allergy reads
+            // with its icon and colour), never a bare grey name.
             kin.tagNames().forEach { tag ->
-                AuntieStatusPill(label = tag, tone = AuntieStatusTone.Teal, mono = true)
+                TagChip(name = tag, vocab = tagVocab)
             }
             GhostButton(label = if (tagsOpen) "Done" else "Edit tags", onClick = onToggleTags)
         },
@@ -366,16 +373,22 @@ private fun KinHero(
 @Composable
 private fun CareChecklistPanel(kin: Kin, state: KinDetailUiState) {
     val lines = checklistLines(kin.checklist)
-    val hasCare = any(kin.staysAs, kin.routine, kin.trainingCommands, kin.feedingBrand)
+    val hasCare = any(
+        kin.staysAs, kin.routine, kin.trainingCommands, kin.feedingBrand,
+        kin.feedingInstructions, kin.walkingInstructions, kin.sitterNotes,
+    )
     val hasStructured = hasDynamicFieldValues(state.kinSchemas, kin.formValues)
     DenPanel(title = "Care checklist", meta = "per visit") {
         Column {
             if (hasCare) {
                 FieldRows(
-                    Field("Stays as", kin.staysAs),
-                    Field("Routine", kin.routine),
-                    Field("Training / commands", kin.trainingCommands),
-                    Field("Food / brand", kin.feedingBrand),
+                    Field("Stays as", kin.staysAs.orEmpty()),
+                    Field("Routine", kin.routine.orEmpty()),
+                    Field("Training / commands", kin.trainingCommands.orEmpty()),
+                    Field("Food / brand", kin.feedingBrand.orEmpty()),
+                    Field("Feeding instructions", kin.feedingInstructions.orEmpty()),
+                    Field("Walking instructions", kin.walkingInstructions.orEmpty()),
+                    Field("Notes for the Auntie", kin.sitterNotes.orEmpty()),
                 )
             }
             if (hasStructured) {
@@ -402,28 +415,41 @@ private fun CareChecklistPanel(kin: Kin, state: KinDetailUiState) {
 }
 
 /**
- * Vaccinations, medication and the legacy vet line.
+ * Allergies, vaccinations, medication, emergency notes and the vet.
  *
- * `vetInfo` is READ-ONLY here and authored nowhere on the pet: the canonical vet
- * is the household's (`household_data.primaryVetClinicId`, operator ruling
- * 2026-08-01). Legacy pet docs still carry real text in this field, so it is
- * shown and never written, exactly as the React twin's Medical panel does.
+ * #1908 kin-vet: the vet is the one this Kin goes to, its own when it has one,
+ * else the household's (`household_data.primaryVetClinicId`), and it is said
+ * which. The legacy free-text `vetInfo` is no longer an input anywhere; legacy
+ * docs still carry real text in it, so it is shown, labelled, only when no
+ * clinic resolves for the Kin.
  */
 @Composable
-private fun MedicalPanel(kin: Kin) {
+private fun MedicalPanel(kin: Kin, kinVet: KinVet?) {
+    val vet = kinVet?.vet
+    val vetValue = when {
+        vet == null -> ""
+        vet.dangling -> "A vet no longer on the list"
+        else -> vetLine(vet)
+    }
+    val vetLabel = if (kinVet?.fromHousehold == false) "Vet for ${kin.name.ifBlank { "this Kin" }}" else "Vet (household)"
+    val legacyNote = kinVet == null || showLegacyVetNote(kinVet, kin.vetInfo)
     DenPanel(title = "Medical", meta = "${kin.name} only") {
-        if (any(kin.vaccinations, kin.medicationHealthNotes, kin.vetInfo)) {
+        if (any(kin.allergies, kin.vaccinations, kin.medicationHealthNotes, kin.emergencyNotes, vetValue) ||
+            (legacyNote && !kin.vetInfo.isNullOrBlank())
+        ) {
             FieldRows(
-                Field("Vaccinations", kin.vaccinations),
-                Field("Medication / health notes", kin.medicationHealthNotes),
-                Field("Vet info", kin.vetInfo),
+                Field("Allergies", kin.allergies.orEmpty()),
+                Field("Vaccinations", kin.vaccinations.orEmpty()),
+                Field("Medications / health notes", kin.medicationHealthNotes.orEmpty()),
+                Field("Emergency notes", kin.emergencyNotes.orEmpty()),
+                Field(vetLabel, vetValue),
+                Field("Vet notes on file", if (legacyNote) kin.vetInfo.orEmpty() else ""),
             )
         } else {
             EmptyHint("No medical notes for ${kin.name} yet.")
         }
     }
 }
-
 /**
  * The pet's `officeNotes`, titled "Auntie's notes" (#1598, operator ruling
  * 2026-11-05 docket): every staff role reads it (`kin/{docId}` read is

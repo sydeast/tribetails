@@ -232,7 +232,7 @@ describe('updateKinHandler', () => {
       updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { spayedNeutered: 'yes' } }, auth: { uid: 'u1' } } as any),
     ).rejects.toThrow();
   });
-  it('silently drops staff-only keys a client sends (officeNotes, reactive, routine...): they never reach the doc', async () => {
+  it('silently drops staff-only keys a client sends (officeNotes, reactive, tags...): they never reach the doc', async () => {
     const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { updateKinHandler } = await import('../src/portal/kinWrites');
@@ -240,16 +240,76 @@ describe('updateKinHandler', () => {
       data: {
         kinfolkId: '3',
         kinId: 'k1',
-        kin: { sex: 'Male', officeNotes: 'x', reactive: true, routine: 'x', vaccinations: 'x', tags: ['Microchipped'] },
+        kin: { sex: 'Male', officeNotes: 'x', reactive: true, medicationHealthNotes: 'x', tags: ['Microchipped'] },
       },
       auth: { uid: 'u1' },
     } as any);
     const data = ctx.writes.find((w) => w.path === 'families/3/kin/k1')!.data;
     expect(data.sex).toBe('Male');
-    for (const k of ['officeNotes', 'reactive', 'routine', 'vaccinations', 'tags']) expect(data).not.toHaveProperty(k);
+    for (const k of ['officeNotes', 'reactive', 'medicationHealthNotes', 'tags']) expect(data).not.toHaveProperty(k);
+  });
+  it('#1908: writes the care facts the household now fills (Stays as, Routine, Training, Food, Vaccinations)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { updateKinHandler } = await import('../src/portal/kinWrites');
+    const kin = { staysAs: 'Crate', routine: 'Walk at 7', trainingCommands: 'Sit', feedingBrand: 'Acme', vaccinations: 'Rabies 2027' };
+    await updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin }, auth: { uid: 'u1' } } as any);
+    expect(ctx.writes.find((w) => w.path === 'families/3/kin/k1')!.data).toMatchObject(kin);
+  });
+  it('#1908: refuses a null for a new care fact (the admin models read text as never null)', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { updateKinHandler } = await import('../src/portal/kinWrites');
+    await expect(
+      updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { routine: null } }, auth: { uid: 'u1' } } as any),
+    ).rejects.toBeTruthy();
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('#1908 kin-meds: the joined Medications may be longer than either note was alone, up to 4000', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { updateKinHandler } = await import('../src/portal/kinWrites');
+    await updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { medications: 'm'.repeat(3500) } }, auth: { uid: 'u1' } } as any);
+    await expect(
+      updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { medications: 'm'.repeat(4001) } }, auth: { uid: 'u1' } } as any),
+    ).rejects.toBeTruthy();
+  });
+  describe('#1908 kin-vet: a Kin vet of its own', () => {
+    it('takes a clinic on the area vet list', async () => {
+      const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'vet_clinics/c1': { name: 'Cedar Animal Care' } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { updateKinHandler } = await import('../src/portal/kinWrites');
+      await updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { ownVetClinicId: 'c1' } }, auth: { uid: 'u1' } } as any);
+      expect(ctx.writes.find((w) => w.path === 'families/3/kin/k1')!.data.ownVetClinicId).toBe('c1');
+    });
+    it('takes "" to go back to the household vet', async () => {
+      const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { updateKinHandler } = await import('../src/portal/kinWrites');
+      await updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { ownVetClinicId: '' } }, auth: { uid: 'u1' } } as any);
+      expect(ctx.writes.find((w) => w.path === 'families/3/kin/k1')!.data.ownVetClinicId).toBe('');
+    });
+    for (const [label, docs] of [
+      ['missing', {}],
+      ['archived', { 'vet_clinics/c1': { name: 'Old', archived: true } }],
+      ['waiting for the office', { 'vet_clinics/c1': { name: 'New', verified: false } }],
+    ] as const) {
+      it(`refuses a clinic that is ${label}, and writes nothing`, async () => {
+        const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] }, ...docs } });
+        mocks.dbFn.mockReturnValue(ctx.db);
+        const { updateKinHandler, addKinHandler } = await import('../src/portal/kinWrites');
+        await expect(
+          updateKinHandler({ data: { kinfolkId: '3', kinId: 'k1', kin: { ownVetClinicId: 'c1' } }, auth: { uid: 'u1' } } as any),
+        ).rejects.toMatchObject({ code: 'invalid-argument', message: 'That vet is not on the list.' });
+        await expect(
+          addKinHandler({ data: { kinfolkId: '3', kin: { name: 'Bo', ownVetClinicId: 'c1' } }, auth: { uid: 'u1' } } as any),
+        ).rejects.toMatchObject({ code: 'invalid-argument' });
+        expect(ctx.writes).toHaveLength(0);
+        expect(ctx.adds ?? []).toHaveLength(0);
+      });
+    }
   });
 });
-
 /**
  * #1314. A household deletes a Kin itself only when nothing references it.
  * `k1` is the family doc id, `flat1` its AuntieOS mirror id; admin-written rows

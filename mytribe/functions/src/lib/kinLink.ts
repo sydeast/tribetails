@@ -4,7 +4,7 @@ import { logEvent } from './logger';
 import { isInactiveKinStatus } from './kinStatus';
 import { isFamilyKinPath } from './kinArchive';
 import { KIN_REMOVAL_REQUESTS, kinRemovalRequestId } from './kinRemovalRequest';
-import { MIRROR_ORIGIN_FAMILY } from '../triggers/kinMirror';
+import { MIRROR_ORIGIN_FAMILY, mirrorStamp } from '../triggers/kinMirror';
 
 /**
  * #1912. Which admin record (`kin/{id}`, the flat doc) is a household Kin's own.
@@ -243,7 +243,7 @@ export async function healKinLink(kinfolkId: string, flatId: string): Promise<Ki
       familyKinPath: path,
       legacyKinId: newRef.id,
       status: flatStatusOf(other.data['status']),
-      _mirrorOrigin: MIRROR_ORIGIN_FAMILY,
+      ...mirrorStamp(MIRROR_ORIGIN_FAMILY),
       updatedAt: FieldValue.serverTimestamp(),
     });
     batch.set(firestore.doc(path), { legacyKinId: newRef.id, familyKinPath: path }, { merge: true });
@@ -263,7 +263,7 @@ export async function healKinLink(kinfolkId: string, flatId: string): Promise<Ki
         kinfolkId,
         familyKinPath: ownerPath,
         legacyKinId: flatId,
-        _mirrorOrigin: MIRROR_ORIGIN_FAMILY,
+        ...mirrorStamp(MIRROR_ORIGIN_FAMILY),
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -271,7 +271,7 @@ export async function healKinLink(kinfolkId: string, flatId: string): Promise<Ki
   } else {
     batch.set(
       flatRef,
-      { familyKinPath: FieldValue.delete(), _mirrorOrigin: MIRROR_ORIGIN_FAMILY, updatedAt: FieldValue.serverTimestamp() },
+      { familyKinPath: FieldValue.delete(), ...mirrorStamp(MIRROR_ORIGIN_FAMILY), updatedAt: FieldValue.serverTimestamp() },
       { merge: true },
     );
   }
@@ -334,7 +334,7 @@ export async function adoptUnlinkedFlatKinByName(kinfolkId: string, kinId: strin
       const snap = await tx.get(flatRef);
       const current = (snap.data() ?? {}) as Data;
       if (!snap.exists || isInactiveKinStatus(current['status']) || text(current['familyKinPath']) !== pointer) return false;
-      tx.set(flatRef, { kinfolkId, familyKinPath: path, legacyKinId: candidate.id, _mirrorOrigin: MIRROR_ORIGIN_FAMILY }, { merge: true });
+      tx.set(flatRef, { kinfolkId, familyKinPath: path, legacyKinId: candidate.id, ...mirrorStamp(MIRROR_ORIGIN_FAMILY) }, { merge: true });
       return true;
     });
     if (adopted) return candidate.id;

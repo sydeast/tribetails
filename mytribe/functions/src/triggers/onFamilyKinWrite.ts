@@ -9,8 +9,11 @@ import {
   MIRROR_ORIGIN_FAMILY,
   MIRROR_ORIGIN_FLAT,
   FLAT_MIRROR_FIELDS,
-  pickDefined,
+  changedKeys,
+  isMirrorEcho,
+  mirrorStamp,
   projectChanged,
+  toFlatFields,
 } from './kinMirror';
 import { isInactiveKinStatus } from '../lib/kinStatus';
 import { adoptUnlinkedFlatKinByName, healKinLink, resolveKinLink } from '../lib/kinLink';
@@ -28,6 +31,8 @@ type KinDoc = {
   allergies?: string;
   emergencyNotes?: string;
   sitterNotes?: string;
+  /** which write of a mirror this is; new on every mirror write (kinMirror.ts). */
+  _mirrorWriteId?: string;
   /** flat mirror doc id, stamped by this trigger (symmetric link). */
   legacyKinId?: string;
   /** family doc path string, stamped by this trigger (symmetric link). */
@@ -67,29 +72,33 @@ export function isOfficeStatusWrite(before: KinDoc | undefined, after: KinDoc): 
     && after.officeStatusWriteId !== ''
     && after.officeStatusWriteId !== before?.officeStatusWriteId;
 }
-/** #1370: flat-doc fields the admin `Kin` models decode as non-null `String`. */
-export const FLAT_NON_NULL_TEXT_FIELDS: readonly string[] = ['name', 'species', 'breed'];
-
+export { FLAT_NON_NULL_TEXT_FIELDS } from './kinMirror';
 /**
- * Builds the flat `kin/{docId}` payload from a family kin doc. Only the
- * parent-owned fields are projected here, minus `status`, which the paths below
- * translate into the flat vocabulary explicitly. Staff-owned data (AuntieOS
- * `the_411` AI summary, plus AuntieOS-only flat-doc fields like `routine`,
- * `vetInfo`) is NEVER written by this trigger. One writer per field.
+ * Builds the WHOLE flat `kin/{docId}` payload from a family kin doc: every
+ * field the forward mirror carries, translated to the admin's keys
+ * (kinMirror.ts field table), minus `status`, which the paths below translate
+ * into the flat vocabulary explicitly. For a new admin record (the create path
+ * and `healKinLink`). An update carries only what changed:
+ * `buildFlatMirrorChanges`. Staff-only data (the_411 summary, officeNotes,
+ * reactive, tags) is NEVER written by this trigger.
+ *
+ * #1370: the portal clears text with null on the family doc (updateKin's zod
+ * is `.nullable()`), but the admin Android and desktop `Kin` models declare
+ * text non-null, and Firestore's mapper hands a null to the Kotlin setter. The
+ * flat doc gets "", the value those models already read as "none". The family
+ * doc keeps its null.
  */
 export function buildFlatMirrorPayload(after: KinDoc): Record<string, unknown> {
-  const out = pickDefined(after as Record<string, unknown>, FLAT_MIRROR_FIELDS);
-  // #1370: the portal clears these with null on the family doc (updateKin's
-  // zod is `.nullable()`), but the admin Android and desktop `Kin` models
-  // declare them non-null `String`, and Firestore's mapper hands a null to the
-  // Kotlin setter. The flat doc gets "", the value those models already read
-  // as "none". The family doc keeps its null.
-  for (const k of FLAT_NON_NULL_TEXT_FIELDS) {
-    if (out[k] === null) out[k] = '';
-  }
-  return out;
+  return toFlatFields(after as Record<string, unknown>, FLAT_MIRROR_FIELDS);
 }
-
+/**
+ * The flat fields a household write changed, translated. Only these travel,
+ * so an edit to one field never carries a stale copy of another across.
+ */
+export function buildFlatMirrorChanges(before: KinDoc | undefined, after: KinDoc): Record<string, unknown> {
+  const a = after as Record<string, unknown>;
+  return toFlatFields(a, changedKeys(before as Record<string, unknown> | undefined, a, FLAT_MIRROR_FIELDS));
+}
 /**
  * #1291. Every AuntieOS reader of a pet's picture (admin web Directory and
  * KinView, admin Android, the desktop console) reads the flat doc's
@@ -132,7 +141,15 @@ export async function mirrorFamilyKinToFlat(
 ): Promise<{ action: 'created' | 'updated' | 'archived' | 'skipped'; flatDocId: string | null }> {
   const firestore = db();
   const familyKinPath = `families/${kinfolkId}/kin/${kinId}`;
-  const flatPayload = { ...buildFlatMirrorPayload(after), ...buildAdminPortraitStamp(before, after) };
+  // The reverse mirror's own write coming back: it carried the admin's change
+  // here, so there is nothing to carry back. Checked by the write id, never by
+  // a flag left over from an earlier write (kinMirror.ts, ECHOES).
+  if (isMirrorEcho(before as Record<string, unknown> | undefined, after as Record<string, unknown>, MIRROR_ORIGIN_FLAT)) {
+    return { action: 'skipped', flatDocId: typeof after.legacyKinId === 'string' ? after.legacyKinId : null };
+  }
+  const portrait = buildAdminPortraitStamp(before, after);
+  const flatPayload = { ...buildFlatMirrorPayload(after), ...portrait };
+  const flatChanges = { ...buildFlatMirrorChanges(before, after), ...portrait };
 
   const afterInactive = isInactiveKinStatus(after.status);
   const beforeInactive = isInactiveKinStatus(before?.status);
@@ -198,7 +215,7 @@ export async function mirrorFamilyKinToFlat(
         familyKinPath,
         legacyKinId: flatDocId,
         status: afterInactive ? 'inactive' : 'active',
-        _mirrorOrigin: MIRROR_ORIGIN_FAMILY,
+        ...mirrorStamp(MIRROR_ORIGIN_FAMILY),
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -233,7 +250,7 @@ export async function mirrorFamilyKinToFlat(
         status: after.status === 'archived' ? 'archived' : 'inactive',
         familyKinPath,
         legacyKinId: flatDocId,
-        _mirrorOrigin: MIRROR_ORIGIN_FAMILY,
+        ...mirrorStamp(MIRROR_ORIGIN_FAMILY),
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -255,12 +272,12 @@ export async function mirrorFamilyKinToFlat(
 
   await flatRef.set(
     {
-      ...flatPayload,
+      ...flatChanges,
       kinfolkId,
       familyKinPath,
       legacyKinId: flatDocId,
       ...(restored ? { status: 'active' } : {}),
-      _mirrorOrigin: MIRROR_ORIGIN_FAMILY,
+      ...mirrorStamp(MIRROR_ORIGIN_FAMILY),
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true },
@@ -380,7 +397,7 @@ export const onFamilyKinWrite = onDocumentWritten(
     // flat -> family carrying `_mirrorOrigin = flat`), nor when nothing the
     // parent can actually see changed. Only a real change to a parent-visible
     // field should notify the kinfolk.
-    if (after._mirrorOrigin === MIRROR_ORIGIN_FLAT) {
+    if (isMirrorEcho(before as Record<string, unknown> | undefined, after as Record<string, unknown>, MIRROR_ORIGIN_FLAT)) {
       logEvent({
         severity: 'debug',
         function: 'onFamilyKinWrite',

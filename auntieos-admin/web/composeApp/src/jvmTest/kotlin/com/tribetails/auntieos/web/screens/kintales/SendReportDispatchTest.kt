@@ -223,6 +223,19 @@ class SendReportDispatchTest {
             "No dispatch was invoked: check that callableResponses is set before calling sendReport"
         }
     ).jsonObject
+    /** #1816: the send answers with what the dispatch says the household was told. */
+    @Test
+    fun aSendAnswersWithTheHouseholdNotice() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "dispatchVisitNotification" to """{"ok":true,"dispatchIds":[],"suppressed":true,"reason":"household_notices_off","notice":{"told":false,"reason":"household_notices_off","name":"Dre East","channels":[]}}""",
+            "sendKinTaleReport" to """{"ok":true,"reportId":"report-1","alreadySent":false}""",
+        )
+        val r = FirestoreClient().sendReport(report(), session())
+        assertEquals(
+            WriteResult.Ok(com.tribetails.auntieos.web.screens.HouseholdNotice(false, "household_notices_off", "Dre East", emptyList())),
+            r,
+        )
+    }
     /** #2058: a dispatched send is then marked SENT by the server, with the dispatch id as its receipt. */
     @Test
     fun aDispatchedSendIsMarkedSentThroughTheCallableAsCatalog() = runBlocking {
@@ -231,7 +244,8 @@ class SendReportDispatchTest {
             "sendKinTaleReport" to """{"ok":true,"reportId":"report-1","alreadySent":false}""",
         )
         val r = FirestoreClient().sendReport(report(), session())
-        assertEquals(WriteResult.Ok(Unit), r)
+        // #1816: the send answers with the household's notice; this server sent none.
+        assertEquals(WriteResult.Ok(null), r)
         assertEquals(
             listOf("dispatchVisitNotification", "sendKinTaleReport"),
             JvmFirestoreFixtures.callablePayloads.map { it.first },

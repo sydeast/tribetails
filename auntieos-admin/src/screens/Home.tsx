@@ -277,9 +277,9 @@ export function Home() {
   // the board is the standard one rather than the operator's, so drawing it is
   // disclosed rather than guessed. Only the not-yet-known case holds the board.
   const stillLoading = layout === null && loadError === null;
-  // #2208: an Auntie is never shown the owner's cards (Cash Flow, Expense
-  // quick-log, Supplies, Expirations), on the board or under Hidden cards, so
-  // none of their reads is started. Filtered here, where the board is derived,
+  // #2208: an Auntie is never shown the owner's money cards (Cash Flow and
+  // Expense quick-log), on the board or under Hidden cards, so neither of their
+  // reads is started. Supplies and Expirations are hers too (ruling 2026-11-14). Filtered here, where the board is derived,
   // so the default board, a save's reconcile and a failed save's revert all
   // pass through it. The owner, the test admin and the #812 offline session
   // (access null) are not the Auntie and see every card.

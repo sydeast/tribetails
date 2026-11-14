@@ -14,6 +14,7 @@ beforeEach(() => mocks.dbFn.mockReset());
 import {
   mirrorFamilyKinToFlat,
   buildFlatMirrorPayload,
+  buildFlatMirrorChanges,
   onFamilyKinWrite,
 } from '../src/triggers/onFamilyKinWrite';
 import { MIRROR_ORIGIN_FAMILY } from '../src/triggers/kinMirror';
@@ -29,7 +30,7 @@ describe('onFamilyKinWrite: exports', () => {
 });
 
 describe('buildFlatMirrorPayload: projects parent-owned and household-shared fields only', () => {
-  it('copies the household-shared descriptive fields (#1310) and nothing else staff keeps', () => {
+  it('copies the household-shared fields (#1310, #1908) and nothing staff keeps alone', () => {
     const payload = buildFlatMirrorPayload({
       name: 'Rex',
       sex: 'Male',
@@ -37,11 +38,12 @@ describe('buildFlatMirrorPayload: projects parent-owned and household-shared fie
       colorMarkings: 'Yellow',
       spayedNeutered: true,
       vetInfo: 'Riverside Animal Hospital',
-      // staff-only, mirrored onto the family doc by the reverse trigger; must not bounce back:
-      officeNotes: 'bites',
-      reactive: true,
       routine: 'morning walk',
       vaccinations: 'Rabies 2027',
+      // staff-only, must never come from the family doc:
+      officeNotes: 'bites',
+      reactive: true,
+      tags: ['VIP'],
     } as any);
     expect(payload).toEqual({
       name: 'Rex',
@@ -50,6 +52,8 @@ describe('buildFlatMirrorPayload: projects parent-owned and household-shared fie
       colorMarkings: 'Yellow',
       spayedNeutered: true,
       vetInfo: 'Riverside Animal Hospital',
+      routine: 'morning walk',
+      vaccinations: 'Rabies 2027',
     });
   });
   it('copies name/species/breed/photoUrl + care instructions, drops staff fields', () => {
@@ -60,7 +64,6 @@ describe('buildFlatMirrorPayload: projects parent-owned and household-shared fie
       photoUrl: 'https://cdn/rex.jpg',
       feedingInstructions: 'twice daily',
       // staff-owned / non-projected fields must NOT appear:
-      routine: 'morning walk',
       officeNotes: 'staff only',
       status: 'active',
     } as any);
@@ -71,20 +74,29 @@ describe('buildFlatMirrorPayload: projects parent-owned and household-shared fie
       photoUrl: 'https://cdn/rex.jpg',
       feedingInstructions: 'twice daily',
     });
-    expect(payload).not.toHaveProperty('routine');
     expect(payload).not.toHaveProperty('officeNotes');
     expect(payload).not.toHaveProperty('status');
   });
+  it('#1908 kin-meds and #1907: Medications and age reach the admin under the admin keys', () => {
+    const payload = buildFlatMirrorPayload({ name: 'Rex', medications: 'Thyroid tablet', ageYears: 0.5 } as any);
+    expect(payload).toEqual({ name: 'Rex', medicationHealthNotes: 'Thyroid tablet', age: '0.5' });
+  });
 });
-
+describe('buildFlatMirrorChanges: only what the household changed travels', () => {
+  it('carries the changed field alone, never a stale copy of the rest', () => {
+    const before = { name: 'Rex', medications: 'old', feedingInstructions: 'twice daily' };
+    const after = { name: 'Rex', medications: 'old', feedingInstructions: 'three times' };
+    expect(buildFlatMirrorChanges(before as any, after as any)).toEqual({ feedingInstructions: 'three times' });
+  });
+});
 describe('buildFlatMirrorPayload: a cleared field the admin decodes as non-null (#1370)', () => {
   it('writes "" for a null species or breed, so the admin Kin decode never sees null', () => {
     const payload = buildFlatMirrorPayload({ name: 'Rex', species: null, breed: null } as any);
     expect(payload).toEqual({ name: 'Rex', species: '', breed: '' });
   });
-  it('keeps null for the cleared fields the admin model does not declare', () => {
-    const payload = buildFlatMirrorPayload({ name: 'Rex', medications: null, ageYears: null } as any);
-    expect(payload).toEqual({ name: 'Rex', medications: null, ageYears: null });
+  it('writes "" for every cleared text field and age, so no admin decoder meets a null', () => {
+    const payload = buildFlatMirrorPayload({ name: 'Rex', medications: null, ageYears: null, allergies: null } as any);
+    expect(payload).toEqual({ name: 'Rex', medicationHealthNotes: '', age: '', allergies: '' });
   });
   it('leaves an absent field absent', () => {
     expect(buildFlatMirrorPayload({ name: 'Rex' } as any)).toEqual({ name: 'Rex' });
@@ -182,7 +194,7 @@ describe('mirrorFamilyKinToFlat: UPDATE merges parent fields into existing flat 
       legacyKinId: FLAT_ID,
       familyKinPath: FAMILY_PATH,
       status: 'active',
-      _mirrorOrigin: 'flat',
+      updatedByUid: 'u1',
     };
     const res = await mirrorFamilyKinToFlat(KINFOLK, KIN_ID, before as any, after as any);
     expect(res.action).toBe('skipped');
@@ -190,6 +202,30 @@ describe('mirrorFamilyKinToFlat: UPDATE merges parent fields into existing flat 
   });
 });
 
+describe('mirrorFamilyKinToFlat: echoes (kinMirror.ts ECHOES)', () => {
+  const FLAT_ID = 'flat1';
+  it('SKIPS the reverse mirror own write: a flat origin with a write id new on this write', async () => {
+    const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK }, [FAMILY_PATH]: { name: 'Rex' } }, queryDocs: { kin: [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const before = { name: 'Rex', legacyKinId: FLAT_ID, weight: '40', status: 'active', _mirrorWriteId: 'a' };
+    const after = { ...before, weight: '45', _mirrorOrigin: 'flat', _mirrorWriteId: 'b' };
+    const res = await mirrorFamilyKinToFlat(KINFOLK, KIN_ID, before as any, after as any);
+    expect(res.action).toBe('skipped');
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('MIRRORS a household edit made after a reverse mirror write: the left-over flag is not an echo', async () => {
+    const ctx = buildDbMock({ docs: { 'kin/flat1': { kinfolkId: KINFOLK }, [FAMILY_PATH]: { name: 'Rex' } }, queryDocs: { kin: [] } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const before = { name: 'Rex', legacyKinId: FLAT_ID, weight: '40', status: 'active', _mirrorOrigin: 'flat', _mirrorWriteId: 'a' };
+    const after = { ...before, weight: '45' };
+    const res = await mirrorFamilyKinToFlat(KINFOLK, KIN_ID, before as any, after as any);
+    expect(res.action).toBe('updated');
+    const flatWrite = ctx.writes.find((w) => w.path === `kin/${FLAT_ID}`)!;
+    expect(flatWrite.data.weight).toBe('45');
+    expect(flatWrite.data).not.toHaveProperty('name');
+    expect(typeof flatWrite.data._mirrorWriteId).toBe('string');
+  });
+});
 describe('mirrorFamilyKinToFlat: ARCHIVE soft-marks the flat mirror', () => {
   it('sets status inactive on the flat doc (no hard delete, no field clobber)', async () => {
     const FLAT_ID = 'flat1';

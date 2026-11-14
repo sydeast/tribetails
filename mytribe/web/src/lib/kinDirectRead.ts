@@ -22,8 +22,7 @@ import type { GetMyKinResult, KinDto } from '../api/types';
  * projects every field the documents hold that a household should see, and
  * the kin documents carry no admin-only fields: the_411 and dossiers live in
  * their own collections, and #1335 / #1344 keep the staff-only pet fields
- * (officeNotes, reactive, routine...) off this document by mirror and
- * backfill. The mapping below is a field-for-field copy of
+ * (officeNotes, reactive, tags) off this document by mirror and backfill. The mapping below is a field-for-field copy of
  * `functions/src/portal/getMyKin.ts`, including its two quiet rules: legacy
  * admin statuses (`inactive`, `archived`) are dropped, and anything that is
  * not `noLongerWithUs` reads as `active`.
@@ -70,6 +69,14 @@ export function kinDtoFromDoc(id: string, data: Record<string, unknown>): KinDto
     colorMarkings: stringOrNull(data['colorMarkings']),
     spayedNeutered: data['spayedNeutered'] === true,
     vetInfo: stringOrNull(data['vetInfo']),
+    staysAs: stringOrNull(data['staysAs']),
+    routine: stringOrNull(data['routine']),
+    trainingCommands: stringOrNull(data['trainingCommands']),
+    feedingBrand: stringOrNull(data['feedingBrand']),
+    vaccinations: stringOrNull(data['vaccinations']),
+    ownVetClinicId: typeof data['ownVetClinicId'] === 'string' ? data['ownVetClinicId'].trim() : '',
+    // No `vet`: the household's vet is not on this document (household_data
+    // is staff-only), so lib/kinVet.ts resolves it on the screen.
   };
 }
 

@@ -21,6 +21,16 @@ data class KinPayload(
     val colorMarkings: String? = null,
     val spayedNeutered: Boolean? = null,
     val vetInfo: String? = null,
+    // #1908: the care facts the household now fills. Same rule as the five
+    // shared facts: null leaves the stored value alone, "" clears it (the
+    // server refuses null; the admin models read text as never null).
+    val staysAs: String? = null,
+    val routine: String? = null,
+    val trainingCommands: String? = null,
+    val feedingBrand: String? = null,
+    val vaccinations: String? = null,
+    /** #1908 kin-vet: a clinic for this Kin alone, "" back to the household's vet, null leaves it. */
+    val ownVetClinicId: String? = null,
     /**
      * #1336. Keys of the nullable fields above to send as an explicit JSON
      * `null`, which `updateKin` stores as a clear. A null property alone means

@@ -1,5 +1,5 @@
 import { Link, useNavigate } from '@tanstack/react-router';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { addKin } from '../api/portal';
 import { getActiveKinfolkId } from '../lib/activeTribe';
@@ -14,6 +14,9 @@ import { SignedImageUpload } from '../components/SignedImageUpload';
 import { uploadKinPhotoSigned, validateKinPhotoFile } from '../api/kinPhotoApi';
 import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
+import { getMyTribeProfile, getVetClinics } from '../api/tribeApi';
+import { tribeProfileKey, vetClinicsKey } from '../lib/portalQueryKeys';
+import { KinVetField } from '../components/KinVetField';
 
 /**
  * Add New Kin (B3, punchlist item): the create counterpart to KinEdit.tsx.
@@ -43,6 +46,9 @@ export function KinAdd() {
   // #1504: the form is open the moment this screen is (it reads nothing first),
   // so the save's instance is woken now and Add lands on a running one.
   useWarmOnOpen('addKin');
+  // #1908 kin-vet: the household's vet (read only) and the area vet list.
+  const tribeProfile = useQuery({ queryKey: tribeProfileKey(kinfolkId), queryFn: () => getMyTribeProfile(kinfolkId) });
+  const vetClinics = useQuery({ queryKey: vetClinicsKey(), queryFn: () => getVetClinics() });
   useEffect(() => {
     if (!photoFile) {
       setPhotoPreview('');
@@ -188,9 +194,29 @@ export function KinAdd() {
             <div className="grid2">
               {textField('feedingInstructions', 'Feeding Instructions', { full: true, area: true })}
               {textField('walkingInstructions', 'Walking Instructions', { full: true, area: true })}
-              {textField('medications', 'Medications', { full: true, area: true })}
+              {textField('medications', 'Medications / health notes', { full: true, area: true })}
               {textField('allergies', 'Allergies', { full: true, area: true })}
-              {textField('vetInfo', 'Vet', { full: true, area: true })}
+              {textField('staysAs', 'Stays as', { full: true, area: true })}
+              {textField('routine', 'Routine', { full: true, area: true })}
+              {textField('trainingCommands', 'Training / commands', { full: true, area: true })}
+              {textField('feedingBrand', 'Food / brand', { full: true, area: true })}
+              {textField('vaccinations', 'Vaccinations', { full: true, area: true })}
+              <KinVetField
+                idPrefix="kin-new"
+                householdVet={tribeProfile.data?.vetClinic ?? null}
+                householdVetLoading={tribeProfile.isLoading}
+                clinics={vetClinics.data?.clinics ?? []}
+                clinicsLoading={vetClinics.isLoading}
+                clinicsFailed={vetClinics.isError}
+                differentVet={form.differentVet}
+                ownVetClinicId={form.ownVetClinicId}
+                onDifferentChange={(v) => {
+                  touch('ownVetClinicId');
+                  setForm((f) => ({ ...f, differentVet: v }));
+                }}
+                onPick={(id) => setForm((f) => ({ ...f, ownVetClinicId: id }))}
+                error={errors.ownVetClinicId}
+              />
             </div>
           </section>
 
@@ -203,7 +229,7 @@ export function KinAdd() {
               </div>
             </div>
             <div className="grid2">
-              {textField('sitterNotes', 'Sitter Notes', { full: true, area: true })}
+              {textField('sitterNotes', 'Notes for your Auntie', { full: true, area: true })}
               {textField('emergencyNotes', 'Emergency Notes', { full: true, area: true })}
             </div>
           </section>

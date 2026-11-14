@@ -51,7 +51,13 @@ class VisitNotifier(
      *   `household_prefs_suppressed`, `already_notified`). Null when someone was
      *   told, and from a server that predates the field.
      */
-    data class DispatchResult(val dispatchIds: List<String>, val suppressed: Boolean, val reason: String? = null)
+    data class DispatchResult(
+        val dispatchIds: List<String>,
+        val suppressed: Boolean,
+        val reason: String? = null,
+        /** #1816: the household's copy, who and how, for the KinTale send's message. Null from an older server. */
+        val notice: com.tribetails.auntieos.data.contracts.HouseholdNoticeDto? = null,
+    )
 
     /**
      * #1840: what `previewVisitNotification` answered for one household.
@@ -83,7 +89,45 @@ class VisitNotifier(
         PreviewResult(willNotify = willNotify, reason = (raw["reason"] as? String)?.takeIf { it.isNotBlank() })
     }.onFailure { AuntieLog.e("VisitNotifier: preview failed", it) }
 
+    /**
+     * #1816, #1838, #2027, #1841: who an admin action's household notice will
+     * reach, and how, from the dispatcher's own dry run. [sessionId] (a cancel
+     * or a move) runs that visit's checks too. Fails when the call fails or a
+     * server from before the key answers without channels: the confirm then
+     * says nothing about the household.
+     */
+    suspend fun previewHousehold(
+        familyId: String,
+        key: String,
+        sessionId: String? = null,
+    ): Result<com.tribetails.auntieos.domain.HouseholdNoticePreview.Ready> = runCatching {
+        if (familyId.isBlank()) error("VisitNotifier: familyId is blank - nothing to preview")
+        val payload = buildMap<String, Any> {
+            put("familyId", familyId)
+            put("key", key)
+            sessionId?.takeIf { it.isNotBlank() }?.let { put("sessionId", it) }
+        }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions
+            .getHttpsCallable("previewVisitNotification")
+            .call(payload)
+            .awaitCallable()
+            .data as? Map<String, Any?>
+            ?: error("VisitNotifier: preview returned non-map payload")
+        householdPreviewOf(raw) ?: error("VisitNotifier: preview carried no answer for this notice")
+    }.onFailure { AuntieLog.e("VisitNotifier: household preview failed", it) }
     companion object {
+        /** PURE. A `previewVisitNotification` answer with a key, or null when it is not one. */
+        fun householdPreviewOf(raw: Map<String, Any?>): com.tribetails.auntieos.domain.HouseholdNoticePreview.Ready? {
+            val willNotify = raw["willNotify"] as? Boolean ?: return null
+            val channels = raw["channels"] as? List<*> ?: return null
+            return com.tribetails.auntieos.domain.HouseholdNoticePreview.Ready(
+                willNotify = willNotify,
+                reason = (raw["reason"] as? String)?.takeIf { it.isNotBlank() },
+                name = (raw["name"] as? String)?.takeIf { it.isNotBlank() },
+                channels = channels.mapNotNull { it as? String },
+            )
+        }
         /** The stamped ISO instant as epoch millis, or null when absent or unparseable (never a guess). */
         fun epochMillisOrNull(iso: String?): Long? =
             iso?.takeIf { it.isNotBlank() }?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
@@ -224,6 +268,11 @@ class VisitNotifier(
         val dispatchIds = (raw["dispatchIds"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
         val suppressed = (raw["suppressed"] as? Boolean) ?: dispatchIds.isEmpty()
         val reason = (raw["reason"] as? String)?.takeIf { it.isNotBlank() }
-        DispatchResult(dispatchIds = dispatchIds, suppressed = suppressed, reason = reason)
+        DispatchResult(
+            dispatchIds = dispatchIds,
+            suppressed = suppressed,
+            reason = reason,
+            notice = com.tribetails.auntieos.domain.householdNoticeOf(raw["notice"]),
+        )
     }.onFailure { AuntieLog.e("VisitNotifier: dispatch ${event.wire} failed", it) }
 }

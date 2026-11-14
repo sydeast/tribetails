@@ -159,7 +159,8 @@ describe('#648 rescheduleBooking moves both copies of the visit', () => {
 
     const visit = writeTo(ctx, VISIT)[0]!;
     expect(visit.merge).toBe(true);
-    expect(Object.keys(visit.data).sort()).toEqual(['endTime', 'startTime', 'updatedAt']);
+    // #2027: plus the office notice stamp, because this call tells the household itself.
+    expect(Object.keys(visit.data).sort()).toEqual(['endTime', 'officeNoticeStamp', 'startTime', 'updatedAt']);
     // No parent rollup. resolveBookingRescheduleRequest does not write
     // firstStartTime/lastStartTime either, and matching it is deliberate.
     expect(ctx.writes.some((w) => w.path === 'families/kf1/bookings/req_1')).toBe(false);

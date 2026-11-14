@@ -8,6 +8,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -956,7 +958,7 @@ internal fun VetClinicPickerField(
                     onValueChange = { query = it },
                     enabled = enabled,
                     placeholder = if (clinics.isEmpty()) "No clinics in the catalog yet"
-                                  else "Type to search ${clinics.size} clinics",
+                                  else "Pick or type to search ${clinics.size} clinics",
                     modifier = Modifier.fillMaxWidth(),
                     fieldModifier = Modifier.semantics { contentDescription = label },
                 )
@@ -971,6 +973,10 @@ internal fun VetClinicPickerField(
                             .clip(shape)
                             .background(c.surface2)
                             .border(AuntieTheme.dims.borderHairline, SolidColor(c.border), shape)
+                            // #1908: the whole list shows on open, so it scrolls
+                            // inside its own box rather than running the page long.
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState())
                             .padding(vertical = 4.dp),
                     ) {
                         matches.forEach { clinic ->

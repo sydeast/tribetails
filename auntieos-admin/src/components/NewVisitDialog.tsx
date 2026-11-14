@@ -11,6 +11,13 @@ import { Dialog } from './Dialog';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { useIsAuntie } from '../lib/useIsAuntie';
+import { useHouseholdNoticePreview } from '../lib/useHouseholdNoticePreview';
+import {
+  householdNoticeConfirmLine,
+  householdNoticeOf,
+  householdNoticeResultLine,
+  withHouseholdLine,
+} from '../lib/householdNoticeWords';
 import './NewVisitDialog.css';
 
 export interface HouseholdOption {
@@ -31,7 +38,11 @@ interface NewVisitDialogProps {
   businessZone: string;
   onClose: () => void;
   /** Fired once the visit is really written. `kin_care_sessions` is a live stream, so the caller only has to close. */
-  onCreated: (sessionId: string) => void;
+  /**
+   * The visit was written. [summary] is the sentence to show the operator:
+   * what was written and, from the server, who was told (#1841).
+   */
+  onCreated: (sessionId: string, summary: string) => void;
 }
 
 /**
@@ -96,6 +107,10 @@ export function NewVisitDialog({
   const [time, setTime] = useState('09:00');
   const [durationText, setDurationText] = useState('30');
   const [notes, setNotes] = useState('');
+  // #1841 (operator ruling 2026-11-12): the admin chooses whether the household
+  // hears "KinCare booking confirmed". On by default; never offered for a past
+  // visit recorded as completed, which is never announced.
+  const [sendConfirmation, setSendConfirmation] = useState(true);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,6 +123,19 @@ export function NewVisitDialog({
   // window crosses into the past. `null` while the date or time is incomplete.
   const draftTimes = durationOk ? buildRescheduleTimes(date.trim(), time.trim(), durationMinutes, businessZone) : null;
   const timing = draftTimes === null ? null : timingOf(draftTimes, Date.now());
+  const confirmationOffered = timing !== 'ended';
+  // #1841: the form says what will happen, from the server's dry run.
+  const confirmPreview = useHouseholdNoticePreview(
+    confirmationOffered && sendConfirmation && kinfolkId !== '' ? kinfolkId : null,
+    'kincare.booking.confirm',
+  );
+  const householdLabel = households.find((h) => h.id === kinfolkId)?.label ?? '';
+  const confirmationLine =
+    kinfolkId === '' || !confirmationOffered
+      ? null
+      : sendConfirmation
+        ? householdNoticeConfirmLine(confirmPreview, householdLabel, auntie)
+        : 'Nobody will be told about this visit.';
   const canSave =
     kinfolkId !== '' &&
     serviceType !== '' &&
@@ -155,9 +183,15 @@ export function NewVisitDialog({
         ...(override === 'visit' && { overrideVisitConflict: true }),
         ...(override === 'busy' && { overrideBusyConflict: true }),
         ...(sendTiming === 'ended' && { recordAsCompleted: true }),
+        // #1841: the household's confirmation, only for a visit still ahead.
+        notifyHousehold: sendTiming !== 'ended' && sendConfirmation,
       });
       setSaving(false);
-      onCreated(res.sessionId);
+      const done = sendTiming === 'ended' ? 'Visit recorded as completed.' : 'Visit scheduled.';
+      // A recorded visit is never announced, so its summary claims nothing about the household.
+      const line =
+        sendTiming === 'ended' ? '' : householdNoticeResultLine(householdNoticeOf(res.notice), householdLabel, auntie);
+      onCreated(res.sessionId, withHouseholdLine(done, line));
     } catch (err) {
       setSaving(false);
       if (override !== null) setOverrode(true);
@@ -307,6 +341,23 @@ export function NewVisitDialog({
             onChange={(e) => setNotes(e.target.value)}
           />
         </div>
+        {confirmationOffered && (
+          <div className="new-visit__field">
+            <label className="new-visit__check">
+              <input
+                type="checkbox"
+                checked={sendConfirmation}
+                onChange={(e) => setSendConfirmation(e.target.checked)}
+              />
+              <span>Send the household a confirmation</span>
+            </label>
+            {confirmationLine !== null && (
+              <p className="new-visit__notice" data-testid="new-visit-notice-line">
+                {confirmationLine}
+              </p>
+            )}
+          </div>
+        )}
       </fieldset>
 
       {timing === 'ended' && (

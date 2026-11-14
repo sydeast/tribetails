@@ -52,7 +52,7 @@ class AddEnhancedBookingDialogServiceTest {
                     bookingMode = BookingMode.SPECIFIC_TIME,
                     initialDate = initialDate,
                     onDismiss = {},
-                    onSave = { booking, _ -> saved = booking },
+                    onSave = { booking, _, _ -> saved = booking },
                     onRecordCompleted = { recorded = it },
                     now = { LocalDateTime.of(today, java.time.LocalTime.of(12, 0)) },
                 )

@@ -270,6 +270,73 @@ export interface EnqueueOutcome {
    * outcome in a test still type-checks; the dispatcher always sets it.
    */
   appOnly?: string[];
+  /**
+   * #1816/#1838: the delivery channels of each copy in `written`, by
+   * recipient uid (empty for an `appOnly` one). A caller that tells an admin
+   * "Dre East was sent an email" reads this. Optional for the same reason as
+   * `appOnly`; the dispatcher always sets it.
+   */
+  channelsByRecipient?: Record<string, Channel[]>;
+}
+
+/**
+ * The prefs half of one copy's fate, decided once and shared by the dispatch
+ * loop and the dry run below, so a confirm and the send never ask two
+ * different questions (#1816: the KinTale confirm promised a notice the send
+ * path could not deliver).
+ */
+interface CopyDecision {
+  stream: AudienceStream;
+  /** Non-null when the notification is off as a whole for this copy. */
+  disabled: ReturnType<typeof notificationDisabledFor>;
+  channels: ResolvedChannels;
+}
+
+async function copyDecision(
+  def: NotificationDef,
+  recipient: { uid: string; collection: 'clients' | 'staff' },
+): Promise<CopyDecision> {
+  const [userPrefs, businessOverride] = await Promise.all([
+    loadUserPrefs(recipient.uid, recipient.collection),
+    loadBusinessOverride(def.key),
+  ]);
+  const stream = streamForRecipient(def, recipient.collection);
+  return {
+    stream,
+    disabled: notificationDisabledFor(def, userPrefs, businessOverride, stream),
+    channels: resolveChannels(def, userPrefs, businessOverride, stream),
+  };
+}
+
+/** What the dispatcher WOULD do with a household's copy of [key], without writing anything. */
+export type HouseholdCopyPreview =
+  /** The key has no household audience: the household is never sent it. */
+  | { kind: 'not_household' }
+  /** The notification is off for this household (`prefs` in the dispatch). */
+  | { kind: 'prefs' }
+  /** The household send gate is shut (`gate` in the dispatch). */
+  | { kind: 'gate' }
+  /** A record would be written, delivered on these channels (none: the notifications list only). */
+  | { kind: 'send'; channels: Channel[] };
+
+/**
+ * #1816/#1838/#2027/#1841: a dry run of `enqueueNotificationDetailed` for ONE
+ * household login, in the same order and through the same helpers: the
+ * household audience, `copyDecision` (prefs, then channels), then the send
+ * gate. It cannot predict a duplicate (that needs the content), and it does
+ * not resolve the login: the caller passes the one the dispatch would get
+ * (`resolveKinfolkUid`).
+ */
+export async function previewHouseholdCopy(key: string, recipientUid: string): Promise<HouseholdCopyPreview> {
+  const def = getNotificationDef(key);
+  if (def.external === true || def.audiences.kinfolk !== true) return { kind: 'not_household' };
+  const resolvers = [def.recipientResolver, def.secondaryResolver];
+  if (!resolvers.includes('kinfolkAcct') && !resolvers.includes('specificUid')) return { kind: 'not_household' };
+  const decision = await copyDecision(def, { uid: recipientUid, collection: 'clients' });
+  if (decision.disabled !== null) return { kind: 'prefs' };
+  const gate = await loadHouseholdSendGate(db());
+  if (!gate.live) return { kind: 'gate' };
+  return { kind: 'send', channels: activeChannelList(decision.channels) };
 }
 
 /**
@@ -438,7 +505,7 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
   // written NotificationEntry can render who caused it with an avatar.
   const actor = await resolveActor(args.actorUid);
 
-  const outcome: EnqueueOutcome = { written: [], suppressed: [], unresolved, appOnly: [] };
+  const outcome: EnqueueOutcome = { written: [], suppressed: [], unresolved, appOnly: [], channelsByRecipient: {} };
   /**
    * THE PRE-LAUNCH HOUSEHOLD GATE, read at most once per enqueue and only when
    * a household copy is actually about to be written.
@@ -458,15 +525,14 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
   /** The state the gate reported when it last held a copy back, for the summary line. */
   let gateSuppressedState: HouseholdSendGateState = 'absent';
   for (const recipient of recipients) {
-    const [userPrefs, businessOverride] = await Promise.all([
-      loadUserPrefs(recipient.uid, recipient.collection),
-      loadBusinessOverride(def.key),
-    ]);
     // Audience revamp 2026-07: each copy gates through its own stream view
     // (clients -> kinfolk; staff -> staff when the key serves staff, else business).
     // The same per-copy answer also decides what the card detail may say, so it
     // is resolved once here and threaded down rather than re-derived (#380).
-    const stream = streamForRecipient(def, recipient.collection);
+    // #1816/#1838: the prefs read and the two prefs answers below are
+    // `copyDecision`, which the dry run `previewHouseholdCopy` calls too.
+    const decision = await copyDecision(def, recipient);
+    const { stream } = decision;
 
     /**
      * THE PREFS CHECK, and since #1505 it asks a narrower question than "is
@@ -483,7 +549,7 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
      * which writes the record and no work order: nothing is sent, and the
      * alert is still there when they open the list.
      */
-    const disabled = notificationDisabledFor(def, userPrefs, businessOverride, stream);
+    const { disabled } = decision;
     if (disabled !== null) {
       logEvent({
         severity: 'info',
@@ -499,7 +565,7 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
       continue;
     }
 
-    let channels = resolveChannels(def, userPrefs, businessOverride, stream);
+    let channels = decision.channels;
     /**
      * ONE BUSINESS EMAIL PER EVENT (#1564). Operator ruling, 2026-11-05 docket:
      * every business email goes to the business contact email in settings, so
@@ -589,6 +655,8 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
       // copy logged `record-only` above and then wrote nothing, and a duplicate
       // wrote nothing new. Both are already in `suppressed`.
       if (recordOnly) outcome.appOnly?.push(recipient.uid);
+      // #1816/#1838: how this copy goes out, for an admin told who heard and how.
+      if (outcome.channelsByRecipient) outcome.channelsByRecipient[recipient.uid] = activeChannelList(channels);
     } else {
       logEvent({
         severity: 'info',

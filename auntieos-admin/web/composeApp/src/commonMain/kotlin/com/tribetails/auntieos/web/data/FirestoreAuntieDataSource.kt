@@ -32,6 +32,7 @@ class FirestoreAuntieDataSource(
         client.approveBooking(bookingId, visitId, override)
     override suspend fun rejectBooking(bookingId: String, visitId: String?): WriteResult<Unit> = client.rejectBooking(bookingId, visitId)
     override suspend fun cancelBooking(bookingId: String, visitId: String?): WriteResult<Unit> = client.cancelBooking(bookingId, visitId)
+    override suspend fun cancelBookingNotice(bookingId: String, visitId: String?) = client.cancelBookingNotice(bookingId, visitId)
     override suspend fun createBooking(booking: KinCareSession): WriteResult<String> = client.createBookingRequest(booking)
 
     override suspend fun createMultiDateBookingRequest(
@@ -60,7 +61,8 @@ class FirestoreAuntieDataSource(
     override fun reportForSessionStream(sessionId: String): Flow<FirestoreResult<KinCareReport?>> = client.reportForSessionStream(sessionId)
     override fun reportsForSessionStream(sessionId: String): Flow<FirestoreResult<List<KinCareReport>>> = client.reportsForSessionStream(sessionId)
     override suspend fun saveReport(loaded: KinCareReport, edited: KinCareReport): WriteResult<String> = client.saveReport(loaded, edited)
-    override suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit> = client.sendReport(report, session)
+    override suspend fun sendReport(report: KinCareReport, session: KinCareSession) = client.sendReport(report, session)
+    override suspend fun previewHouseholdNotice(familyId: String, key: String, sessionId: String?) = client.previewHouseholdNotice(familyId, key, sessionId)
     override suspend fun deleteReportDraft(reportId: String): WriteResult<Unit> = client.deleteKinTaleReportDraft(reportId)
     override fun trainingDocsStream(): Flow<FirestoreResult<List<TrainingDocument>>> = client.trainingDocsStream()
     override fun bookingNotesStream(kinfolkId: String, bookingId: String): Flow<FirestoreResult<List<BookingNote>>> =

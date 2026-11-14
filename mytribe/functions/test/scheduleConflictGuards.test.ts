@@ -265,7 +265,8 @@ describe('rescheduleBooking: dropping a visit onto a busy one', () => {
         endTime: '2026-08-24T10:15:00.000Z',
       }),
     );
-    expect(res).toEqual({ ok: true, sessionId: 'moving' });
+    // #2027: plus what the household was told, which these fixtures leave unlinked.
+    expect(res).toMatchObject({ ok: true, sessionId: 'moving' });
     expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/moving')?.data).toMatchObject({
       startTime: '2026-08-24T09:15:00.000Z',
       endTime: '2026-08-24T10:15:00.000Z',

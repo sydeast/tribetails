@@ -17,6 +17,19 @@ vi.mock('../lib/sessionSeat', async (orig) => ({
 }));
 import { NewVisitDialog } from './NewVisitDialog';
 
+// #1838/#2027/#1841: the confirms ask the server who a household notice reaches.
+const { previewHouseholdNotice } = vi.hoisted(() => ({ previewHouseholdNotice: vi.fn() }));
+vi.mock('../api/visitNoticePreview', async (orig) => ({
+  ...(await orig<typeof import('../api/visitNoticePreview')>()),
+  previewHouseholdNotice,
+}));
+beforeEach(() => {
+  previewHouseholdNotice
+    .mockReset()
+    .mockResolvedValue({ willNotify: true, reason: null, name: 'Dre East', channels: ['email'] });
+});
+
+
 // #1574: the fixtures here are fixed 2026 dates, and a visit is never moved
 // into the past (nor a New visit scheduled there). The clock is pinned before
 // the earliest of them; only Date is faked, so userEvent's timers run as normal.
@@ -158,7 +171,7 @@ describe('NewVisitDialog', () => {
     expect(args.startTime).toBe('2026-07-16T14:00:00.000Z');
     expect(args.endTime).toBe('2026-07-16T20:00:00.000Z');
     expect(args.serviceDurationMinutes).toBe(360);
-    expect(onCreated).toHaveBeenCalledWith('sess-9');
+    expect(onCreated).toHaveBeenCalledWith('sess-9', expect.any(String));
   });
 
   it('will not submit without a household and a service', async () => {
@@ -230,7 +243,7 @@ describe('NewVisitDialog, a window in the past (#1574)', () => {
       endTime: '2026-05-20T14:30:00.000Z',
       recordAsCompleted: true,
     });
-    expect(onCreated).toHaveBeenCalledWith('sess-9');
+    expect(onCreated).toHaveBeenCalledWith('sess-9', expect.any(String));
   });
 
   it('a window still ahead is scheduled and never carries the flag', async () => {
@@ -251,5 +264,63 @@ describe('NewVisitDialog, a window in the past (#1574)', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('That visit would already be under way.');
     expect(screen.getByRole('button', { name: 'Schedule visit' })).toBeDisabled();
     expect(createKinCareSession).not.toHaveBeenCalled();
+  });
+});
+/**
+ * #1841 (operator ruling 2026-11-12): New visit has a per-visit "Send the
+ * household a confirmation" control, on by default, never offered for a past
+ * visit recorded as completed, and the form says what will happen. Before
+ * this the form said nothing and the household was sent nothing.
+ */
+describe('NewVisitDialog, the household confirmation (#1841)', () => {
+  it('HAPPY: on by default, the form names who will get what, and the summary says who was told', async () => {
+    createKinCareSession.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-9',
+      notice: { told: true, reason: null, name: 'Dre East', channels: ['email'] },
+    });
+    open();
+    await fillHouseholdAndService();
+    expect(screen.getByRole('checkbox', { name: 'Send the household a confirmation' })).toBeChecked();
+    expect(await screen.findByText('Dre East will get an email.')).toBeInTheDocument();
+    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.booking.confirm');
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    expect(createKinCareSession.mock.calls[0]![0]).toMatchObject({ notifyHousehold: true });
+    expect(onCreated).toHaveBeenCalledWith('sess-9', 'Visit scheduled. Dre East was sent an email.');
+  });
+  it('SAD: turned off, the form says nobody will be told and the server is asked to send nothing', async () => {
+    createKinCareSession.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-9',
+      notice: { told: false, reason: 'not_requested', name: 'Ada Lovelace', channels: [] },
+    });
+    open();
+    await fillHouseholdAndService();
+    await user.click(screen.getByRole('checkbox', { name: 'Send the household a confirmation' }));
+    expect(screen.getByText('Nobody will be told about this visit.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    expect(createKinCareSession.mock.calls[0]![0]).toMatchObject({ notifyHousehold: false });
+    expect(onCreated).toHaveBeenCalledWith('sess-9', 'Visit scheduled. No confirmation was sent.');
+  });
+  it('NEGATIVE: never offered for a past visit recorded as completed, and nothing is asked for', async () => {
+    open({ initialDate: '2026-05-20' });
+    await fillHouseholdAndService();
+    expect(screen.queryByRole('checkbox', { name: 'Send the household a confirmation' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Record completed visit' }));
+    expect(createKinCareSession.mock.calls[0]![0]).toMatchObject({ recordAsCompleted: true, notifyHousehold: false });
+    expect(onCreated).toHaveBeenCalledWith('sess-9', 'Visit recorded as completed.');
+  });
+  it('NEGATIVE: household notices off: the form says nobody will be told, before the visit is written', async () => {
+    previewHouseholdNotice.mockResolvedValue({ willNotify: false, reason: 'household_notices_off', name: 'Dre East', channels: [] });
+    open();
+    await fillHouseholdAndService();
+    expect(await screen.findByText('Nobody will be told: notices to households are off in Settings.')).toBeInTheDocument();
+  });
+  it('ERROR: an older server answers with no notice: the summary claims nothing about the household', async () => {
+    createKinCareSession.mockResolvedValue({ ok: true, sessionId: 'sess-9' });
+    open();
+    await fillHouseholdAndService();
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    expect(onCreated).toHaveBeenCalledWith('sess-9', 'Visit scheduled.');
   });
 });

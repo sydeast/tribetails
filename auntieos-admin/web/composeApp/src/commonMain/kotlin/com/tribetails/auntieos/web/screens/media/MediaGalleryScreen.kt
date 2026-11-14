@@ -474,6 +474,7 @@ private class FirestoreClientMediaDataSource(
         client.approveBooking(bookingId, visitId, override)
     override suspend fun rejectBooking(bookingId: String, visitId: String?)  = client.rejectBooking(bookingId, visitId)
     override suspend fun cancelBooking(bookingId: String, visitId: String?)  = client.cancelBooking(bookingId, visitId)
+    override suspend fun cancelBookingNotice(bookingId: String, visitId: String?) = client.cancelBookingNotice(bookingId, visitId)
     override suspend fun createBooking(booking: KinCareSession) = client.createBookingRequest(booking)
     override fun mediaStream(entityId: String, entityType: String) = client.mediaStream(entityId, entityType)
     override suspend fun uploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String) =
@@ -486,6 +487,7 @@ private class FirestoreClientMediaDataSource(
     override fun reportForSessionStream(sessionId: String) = client.reportForSessionStream(sessionId)
     override suspend fun saveReport(loaded: KinCareReport, edited: KinCareReport) = client.saveReport(loaded, edited)
     override suspend fun sendReport(report: com.tribetails.auntieos.web.data.KinCareReport, session: com.tribetails.auntieos.web.data.KinCareSession) = client.sendReport(report, session)
+    override suspend fun previewHouseholdNotice(familyId: String, key: String, sessionId: String?) = client.previewHouseholdNotice(familyId, key, sessionId)
     override fun trainingDocsStream() = client.trainingDocsStream()
     override fun bookingNotesStream(kinfolkId: String, bookingId: String) =
         client.bookingNotesStream(kinfolkId, bookingId, internal = false)

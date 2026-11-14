@@ -119,12 +119,12 @@ object KinTaleTemplateEngine {
     }
 
     private fun readAttribute(kin: Kin, key: String): String = when (key) {
-        "medicationHealthNotes" -> kin.medicationHealthNotes
-        "vaccinations"          -> kin.vaccinations
-        "vetInfo"               -> kin.vetInfo
-        "feedingBrand"          -> kin.feedingBrand
-        "trainingCommands"      -> kin.trainingCommands
-        "routine"               -> kin.routine
+        "medicationHealthNotes" -> kin.medicationHealthNotes.orEmpty()
+        "vaccinations"          -> kin.vaccinations.orEmpty()
+        "vetInfo"               -> kin.vetInfo.orEmpty()
+        "feedingBrand"          -> kin.feedingBrand.orEmpty()
+        "trainingCommands"      -> kin.trainingCommands.orEmpty()
+        "routine"               -> kin.routine.orEmpty()
         "checklist"             -> kin.checklist
         "reactive"              -> kin.reactive.toString()
         "spayedNeutered"        -> kin.spayedNeutered.toString()

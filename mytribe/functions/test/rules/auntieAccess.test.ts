@@ -531,6 +531,128 @@ describe('rules: #942 the retired nested invoice path', () => {
   });
 });
 
+/**
+ * #2208, operator ruling 2026-11-14: an Auntie sees and works Supplies and
+ * Expirations on Home. Both reads open to her; `expenses`, which shares their
+ * rules block, is money and stays shut. Writes stay closed to every client:
+ * her +1 restock goes through adjustSupply.
+ */
+describe('rules: #2208 an Auntie reads supplies and expirations', () => {
+  afterEach(async () => cleanup());
+  afterAll(async () => shutdown());
+
+  it('reads a supply and an expiration, one at a time and as a list', async () => {
+    const env = await getEnv();
+    await seed('supplies/s1', { name: 'Waste bags', onHand: 2, par: 10, unit: 'rolls' });
+    await seed('expirations/x1', { label: 'Side gate code', dateIso: '2026-12-01', kind: 'gateCode', kinfolkId: 'k1' });
+    const db = asAuntie(env).firestore();
+    await assertSucceeds(db.doc('supplies/s1').get());
+    await assertSucceeds(db.doc('expirations/x1').get());
+    await assertSucceeds(db.collection('supplies').get());
+    await assertSucceeds(db.collection('expirations').get());
+  });
+
+  it('still cannot read an expense, the money collection in the same block', async () => {
+    const env = await getEnv();
+    await seed('expenses/e1', { kind: 'gas', amountCents: 4200 });
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc('expenses/e1').get());
+    await assertFails(db.collection('expenses').get());
+  });
+
+  it('cannot write either collection directly: no create, update or delete', async () => {
+    const env = await getEnv();
+    await seed('supplies/s1', { name: 'Waste bags', onHand: 2, par: 10, unit: 'rolls' });
+    await seed('expirations/x1', { label: 'Side gate code', dateIso: '2026-12-01', kind: 'gateCode' });
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc('supplies/s1').update({ onHand: 999 }));
+    await assertFails(db.doc('supplies/s2').set({ name: 'Towels', onHand: 1, par: 1, unit: 'each' }));
+    await assertFails(db.doc('supplies/s1').delete());
+    await assertFails(db.doc('expirations/x1').update({ dateIso: '2099-01-01' }));
+    await assertFails(db.doc('expirations/x2').set({ label: 'x', dateIso: '2026-12-01', kind: 'other' }));
+    await assertFails(db.doc('expirations/x1').delete());
+  });
+
+  it('the owner still reads both, and still cannot write either directly', async () => {
+    const env = await getEnv();
+    await seed('supplies/s1', { name: 'Waste bags', onHand: 2, par: 10, unit: 'rolls' });
+    await seed('expirations/x1', { label: 'Side gate code', dateIso: '2026-12-01', kind: 'gateCode' });
+    const db = asOwner(env).firestore();
+    await assertSucceeds(db.doc('supplies/s1').get());
+    await assertSucceeds(db.doc('expirations/x1').get());
+    await assertFails(db.doc('supplies/s1').update({ onHand: 999 }));
+    await assertFails(db.doc('expirations/x1').update({ dateIso: '2099-01-01' }));
+  });
+
+  it('nobody else reads them: not a household, not an unknown staff role, not a signed-out caller', async () => {
+    const env = await getEnv();
+    await seed('supplies/s1', { name: 'Waste bags', onHand: 2, par: 10, unit: 'rolls' });
+    await seed('expirations/x1', { label: 'Side gate code', dateIso: '2026-12-01', kind: 'gateCode', kinfolkId: 'k1' });
+    const kinfolk = env.authenticatedContext('u-kin', { role: 'kinfolk', kinfolkId: 'k1' }).firestore();
+    const unknown = env.authenticatedContext('future-1', { staffRole: 'bookkeeper' }).firestore();
+    const signedOut = env.unauthenticatedContext().firestore();
+    for (const db of [kinfolk, unknown, signedOut]) {
+      await assertFails(db.doc('supplies/s1').get());
+      await assertFails(db.doc('expirations/x1').get());
+    }
+  });
+});
+
+/**
+ * #2215: an Auntie's Home layout lives on her own user record. She reads that
+ * one record and no other, and writes none from a client (her layout save is
+ * the saveDashboardLayout callable).
+ */
+describe('rules: #2215 an Auntie reads her own user record only', () => {
+  afterEach(async () => cleanup());
+  afterAll(async () => shutdown());
+
+  it('reads her own record, and one that does not exist yet', async () => {
+    const env = await getEnv();
+    await seed('users/auntie-1', { displayName: 'A', dashboardWidgets: ['stats:wide', 'supplies:compact'] });
+    await assertSucceeds(asAuntie(env).firestore().doc('users/auntie-1').get());
+    await assertSucceeds(asAuntie(env, 'auntie-new').firestore().doc('users/auntie-new').get());
+  });
+
+  it('cannot read the owner\'s record, another Auntie\'s, or the list of them', async () => {
+    const env = await getEnv();
+    await seed('users/owner-1', { displayName: 'O', dashboardWidgets: ['cashFlow:wide'] });
+    await seed('users/auntie-2', { displayName: 'B' });
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc('users/owner-1').get());
+    await assertFails(db.doc('users/auntie-2').get());
+    await assertFails(db.collection('users').get());
+  });
+
+  it('cannot write her own record or anyone else\'s from a client', async () => {
+    const env = await getEnv();
+    await seed('users/auntie-1', { displayName: 'A' });
+    await seed('users/owner-1', { displayName: 'O' });
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc('users/auntie-1').set({ dashboardWidgets: ['cashFlow:wide'] }, { merge: true }));
+    await assertFails(db.doc('users/auntie-1').delete());
+    await assertFails(db.doc('users/owner-1').set({ displayName: 'x' }, { merge: true }));
+  });
+
+  it('the owner still reads and writes user records', async () => {
+    const env = await getEnv();
+    await seed('users/owner-1', { displayName: 'O' });
+    await seed('users/auntie-1', { displayName: 'A' });
+    const db = asOwner(env).firestore();
+    await assertSucceeds(db.doc('users/owner-1').get());
+    await assertSucceeds(db.doc('users/auntie-1').get());
+    await assertSucceeds(db.doc('users/owner-1').set({ displayName: 'O2' }, { merge: true }));
+  });
+
+  it('a household and a signed-out caller still read no user record, their own included', async () => {
+    const env = await getEnv();
+    await seed('users/u-kin', { displayName: 'K' });
+    const kinfolk = env.authenticatedContext('u-kin', { role: 'kinfolk', kinfolkId: 'k1' }).firestore();
+    await assertFails(kinfolk.doc('users/u-kin').get());
+    await assertFails(env.unauthenticatedContext().firestore().doc('users/u-kin').get());
+  });
+});
+
 describe('rules: #944 claim-shape edge cases', () => {
   afterEach(async () => cleanup());
   afterAll(async () => shutdown());

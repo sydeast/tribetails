@@ -26,9 +26,12 @@ export function vetClinicSuggestions(
   limit = VET_CLINIC_SUGGESTION_CAP,
 ): VetClinic[] {
   const q = query.trim().toLowerCase();
-  if (q === '') return [];
-
   const named = clinics.filter((c) => clinicName(c) !== '');
+  // #1908 kin-vet (owner ruling 2026-11-12): "a dropdown field preloaded with
+  // all vets in the entire area". Nothing typed yet is the whole list, in the
+  // order it was given (A to Z from useVetClinics), so the field works as a
+  // dropdown before any search; typing narrows it.
+  if (q === '') return named;
   const starts = named.filter((c) => clinicName(c).toLowerCase().startsWith(q));
   const contains = named.filter(
     (c) => !clinicName(c).toLowerCase().startsWith(q) && clinicName(c).toLowerCase().includes(q),
