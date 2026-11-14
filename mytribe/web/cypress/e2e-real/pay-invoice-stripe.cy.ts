@@ -36,6 +36,12 @@ import { vendorConfigured } from '../support/e2e-real';
  * page's field ids (`#cardNumber` and the rest) are Stripe's, not ours; if
  * Stripe changes them this spec fails at the card step, inside `cy.origin`,
  * which names the field.
+ *
+ * OPEN (#2304): in run 43625464056 (2026-11-14) Stripe served the session at
+ * `/g/pay/` and its form never painted inside the Cypress frame, with the flag
+ * on. The session itself was created and Stripe showed its amount. The wait
+ * for `#email` now reports what the page held when it gives up; the cause is
+ * not known until a run from main prints that.
  */
 
 const STAMP = Date.now().toString(36);
@@ -117,10 +123,51 @@ describe('paying an invoice by card (real payInvoice, Stripe test mode, real web
         // origin alone, so the portal keeps the default. An error with a real
         // message still fails, and the payment still has to land and read
         // PAID below.
-        Cypress.on('uncaught:exception', (err) =>
-          /(^|\n)\s*(>\s*)?Script error\.\s*(\n|$)/.test(err.message) ? false : undefined,
-        );
-        cy.get('#email', { timeout: budget }).type(email);
+        let opaqueScriptErrors = 0;
+        Cypress.on('uncaught:exception', (err) => {
+          if (!/(^|\n)\s*(>\s*)?Script error\.\s*(\n|$)/.test(err.message)) return undefined;
+          opaqueScriptErrors += 1;
+          return false;
+        });
+
+        // A RED RUN HERE SAYS WHAT STRIPE'S PAGE HELD (#2304). Run 43625464056
+        // reached a real session at `/g/pay/` (it was `/c/pay/` in October),
+        // drew the business and the amount, and left the form half as grey
+        // placeholders for the whole budget. "Never found #email" could not
+        // tell a renamed field from a form that never painted, and the Stripe
+        // keys only exist on a dispatch from main, so every guess costs a
+        // merge. The wait is the same one, for the same field and the same
+        // budget; only its failure message changed. It carries page facts
+        // only: the path without the session id, the fields and frames by
+        // name, the first visible words, and how many opaque script errors
+        // the handler above let through.
+        const pageFacts = (doc: Document): string => {
+          const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}...` : text);
+          const fields = Array.from(doc.querySelectorAll('input, select, button')).map((el) => {
+            const label = el.id || el.getAttribute('name') || el.getAttribute('aria-label') || clip((el.textContent ?? '').trim(), 24);
+            return `${el.tagName.toLowerCase()}:${label}`;
+          });
+          const frames = Array.from(doc.querySelectorAll('iframe')).map((frame) => {
+            const box = frame.getBoundingClientRect();
+            const file = (frame.getAttribute('src') ?? '').replace(/[?#].*$/, '').split('/').pop() ?? '';
+            return `${frame.getAttribute('name') ?? ''}|${clip(file, 48)}|${Math.round(box.width)}x${Math.round(box.height)}`;
+          });
+          const path = (doc.location?.pathname ?? '').split('/').slice(0, 3).join('/');
+          const words = clip((doc.body?.innerText ?? '').replace(/\s+/g, ' ').trim(), 300);
+          return [
+            `path ${path}`,
+            `${fields.length} fields [${clip(fields.join(', '), 600)}]`,
+            `${frames.length} frames [${clip(frames.join(', '), 900)}]`,
+            `opaque script errors let through: ${opaqueScriptErrors}`,
+            `visible text: "${words}"`,
+          ].join('; ');
+        };
+        cy.document({ timeout: budget }).should((doc) => {
+          if (doc.querySelector('#email') === null) {
+            throw new Error(`Stripe's checkout page has no #email field. ${pageFacts(doc)}`);
+          }
+        });
+        cy.get('#email').type(email);
         cy.get('#cardNumber').type(card.number);
         cy.get('#cardExpiry').type(card.expiry);
         cy.get('#cardCvc').type(card.cvc);
