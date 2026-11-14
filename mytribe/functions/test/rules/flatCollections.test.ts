@@ -324,7 +324,9 @@ describe('rules: flat top-level collections', () => {
   // Their own comment said mutations flow through logExpense / adjustSupply /
   // upsertSupply / upsertExpiration so the audit entry is bound to the
   // mutation - and then allowed a direct admin-client write that produces no
-  // activity_log entry at all. Read stays admin-scoped so the widgets can list.
+  // activity_log entry at all. Read stays staff-scoped so the widgets can list
+  // (expenses: the owner only; supplies and expirations: an Auntie too, #2208,
+  // pinned in auntieAccess.test.ts).
 
   it('expenses / supplies / expirations: operator reads OK, direct writes denied', async () => {
     const env = await getEnv();

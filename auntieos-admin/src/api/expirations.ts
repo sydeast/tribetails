@@ -1,8 +1,9 @@
 import { call } from '../lib/fns';
 
 /**
- * AO-39 Expiration Countdown. Admin-gated MyTribe callables over the new
- * top-level `expirations` collection (admin-only read+write in firestore.rules).
+ * AO-39 Expiration Countdown. Staff MyTribe callables over the top-level
+ * `expirations` collection (read by the owner and an Auntie, #2208; no client
+ * writes it).
  * Shapes are fixed by WIDGET_FANOUT_SPEC.md so all three platforms match.
  *
  * `dateIso` is a plain `YYYY-MM-DD` calendar date (not an instant), the day the
@@ -35,7 +36,7 @@ export interface ExpirationRow {
 }
 
 /**
- * `listExpirations` (admin-gated): every tracked expiry, server-sorted by
+ * `listExpirations` (the owner or an Auntie): every tracked expiry, server-sorted by
  * `dateIso` ascending. Throws (via `lib/fns.call`) on failure, surfaced
  * fail-loud by the widget rather than swallowed to an empty list.
  */
@@ -56,7 +57,7 @@ export interface UpsertExpirationInput {
   kinfolkId?: string;
 }
 
-/** `upsertExpiration` (admin-gated): create or update an expiry, returns its id. */
+/** `upsertExpiration` (the owner only): create or update an expiry, returns its id. */
 export async function upsertExpiration(input: UpsertExpirationInput): Promise<{ id: string }> {
   const res = await call<UpsertExpirationInput, { id: string }>('upsertExpiration', input);
   return { id: res.id };

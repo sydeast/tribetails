@@ -59,6 +59,66 @@ describe('listSuppliesHandler', () => {
   });
 });
 
+/** An Auntie's request: the staffRole claim and no admin claim. */
+function auntieReq(data: unknown): CallableRequest<unknown> {
+  return { data, auth: { uid: 'auntie-9', token: { staffRole: 'auntie' } } } as unknown as CallableRequest<unknown>;
+}
+
+// #2208: an Auntie reads and restocks supplies. No money reaches her.
+describe('#2208 supplies for an Auntie', () => {
+  it('lists the same rows for her, and each row carries only the five supply fields', async () => {
+    const ctx = buildDbMock({
+      queryDocs: {
+        supplies: [
+          // costCents is not a field this collection has; a stray one must not travel.
+          { id: 's1', data: { name: 'Bags', onHand: 1, par: 5, unit: 'rolls', costCents: 1299, updatedBy: 'owner-1' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await listSuppliesHandler(auntieReq({}));
+    expect(res.lowCount).toBe(1);
+    expect(Object.keys(res.supplies[0]!).sort()).toEqual(['_id', 'name', 'onHand', 'par', 'unit']);
+    expect(Object.keys(res).sort()).toEqual(['lowCount', 'supplies']);
+  });
+
+  it('restocks for her and writes the Activity Log row as the Auntie', async () => {
+    const ctx = buildDbMock({ docs: { 'supplies/s1': { name: 'Bags', onHand: 4, par: 5, unit: 'rolls' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await adjustSupplyHandler(auntieReq({ supplyId: 's1', delta: 1 }));
+    expect(res).toEqual({ onHand: 5 });
+    const write = ctx.writes.find((w) => w.path === 'supplies/s1');
+    expect(write?.data).toMatchObject({ onHand: 5, updatedBy: 'auntie-9' });
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'SUPPLY_ADJUSTED',
+        actorUid: 'auntie-9',
+        payload: { supplyId: 's1', delta: 1, onHand: 5, admin: false, staffRole: 'auntie' },
+      }),
+    );
+  });
+
+  it('writes the owner\'s restock row as the owner', async () => {
+    const ctx = buildDbMock({ docs: { 'supplies/s1': { name: 'Bags', onHand: 4, par: 5, unit: 'rolls' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await adjustSupplyHandler(req({ supplyId: 's1', delta: 1 }));
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: { supplyId: 's1', delta: 1, onHand: 5, admin: true, staffRole: null },
+      }),
+    );
+  });
+
+  it('refuses her a bad restock the way it refuses the owner, and writes nothing', async () => {
+    const ctx = buildDbMock({ docs: { 'supplies/s1': { name: 'Bags', onHand: 4, par: 5, unit: 'rolls' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(adjustSupplyHandler(auntieReq({ supplyId: 's1', delta: 0.5 }))).rejects.toMatchObject({ code: 'invalid-argument' });
+    await expect(adjustSupplyHandler(auntieReq({ supplyId: 'ghost', delta: 1 }))).rejects.toMatchObject({ code: 'not-found' });
+    expect(ctx.writes).toEqual([]);
+    expect(writeAuditEntry).not.toHaveBeenCalled();
+  });
+});
+
 describe('adjustSupplyHandler', () => {
   it('adds delta and returns new onHand', async () => {
     const ctx = buildDbMock({ docs: { 'supplies/s1': { name: 'Bags', onHand: 4, par: 5, unit: 'rolls' } } });
