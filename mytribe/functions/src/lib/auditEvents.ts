@@ -34,6 +34,13 @@ export const AUDIT_EVENTS = {
   PERM_REVOKED: 'PERM_REVOKED',
   PERM_BILLING_GRANTED: 'PERM_BILLING_GRANTED',
   PERM_BILLING_REVOKED: 'PERM_BILLING_REVOKED',
+  /**
+   * #2228: an Auntie's staff role ended (`grant-staff-role.mjs --role none`, or
+   * her `clients/{uid}` doc deleted), so she left the business admin list and
+   * her work devices were unregistered from business notices in the same step.
+   * Written by `lib/staffAccessEnd.ts`, only when something changed.
+   */
+  PERM_STAFF_ROLE_REMOVED: 'PERM_STAFF_ROLE_REMOVED',
 
   SECRETS_TRIBEPIN_SET: 'SECRETS_TRIBEPIN_SET',
   SECRETS_TRIBEPIN_CHANGE_REQUESTED: 'SECRETS_TRIBEPIN_CHANGE_REQUESTED',
@@ -645,6 +652,7 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.PERM_BILLING_REVOKED,
   AUDIT_EVENTS.PERM_GRANTED,
   AUDIT_EVENTS.PERM_REVOKED,
+  AUDIT_EVENTS.PERM_STAFF_ROLE_REMOVED,
   AUDIT_EVENTS.SECRETS_TRIBEPIN_SET,
   AUDIT_EVENTS.SECRETS_TRIBEPIN_VALIDATED,
   AUDIT_EVENTS.OPERATOR_CROSSTENANT_ACCESS,
