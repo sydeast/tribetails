@@ -104,9 +104,17 @@ fun buttonTarget(block: EmailBlock.TextBlock): String? {
     return find(block.inlines)?.href
 }
 
-/** True when [text] holds `{{` or `}}` that is not part of a whole merge field. */
+/**
+ * A whole block-helper tag: `{{#if isQuote}}`, `{{else}}`, `{{/if}}`. Complete,
+ * so not a broken merge field. #2092: invoice.new's subject says "quote" on a
+ * quote through one of these, and Save must stay open on it.
+ */
+private val WHOLE_BLOCK_TAG =
+    Regex("""\{\{\s*(?:[#^]\s*(?:if|unless|each|with)\s+[A-Za-z_][A-Za-z0-9_.]*|/\s*(?:if|unless|each|with)|else)\s*\}\}""")
+
+/** True when [text] holds `{{` or `}}` that is not part of a whole merge field or block tag. */
 fun hasBrokenMergeField(text: String): Boolean {
-    val rest = EMAIL_MERGE_TOKEN.replace(text, "")
+    val rest = EMAIL_MERGE_TOKEN.replace(WHOLE_BLOCK_TAG.replace(text, ""), "")
     return "{{" in rest || "}}" in rest
 }
 

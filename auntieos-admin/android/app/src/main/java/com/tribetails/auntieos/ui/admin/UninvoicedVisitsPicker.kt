@@ -90,6 +90,12 @@ fun UninvoicedVisitsPicker(
     disabled: Boolean = false,
     /** #1744: each row names the KinCare, never the stored `visit_60`. */
     catalog: ServiceCatalog = rememberServiceCatalog(),
+    /**
+     * #2092: the composer is making a QUOTE. The work is "unbilled", the blank
+     * path is a blank quote, and Do not invoice is not offered: it is a billing
+     * decision, and a quote bills nothing.
+     */
+    forQuote: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     val scope = rememberCoroutineScope()
@@ -191,7 +197,7 @@ fun UninvoicedVisitsPicker(
     ) {
         if (loading) {
             Text(
-                "Looking for un-invoiced work for $householdLabel.",
+                "Looking for ${if (forQuote) "unbilled" else "un-invoiced"} work for $householdLabel.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -340,6 +346,7 @@ fun UninvoicedVisitsPicker(
                     scanned = loaded.scanned,
                     narrowedFrom = narrowedFrom,
                     narrowedTo = narrowedTo,
+                    quote = forQuote,
                 ),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
@@ -347,7 +354,7 @@ fun UninvoicedVisitsPicker(
 
             if (sessions.isEmpty()) {
                 GhostButton(
-                    label = "Write a blank invoice instead",
+                    label = if (forQuote) "Write a blank quote instead" else "Write a blank invoice instead",
                     onClick = onWriteBlankInvoice,
                     enabled = !disabled,
                 )
@@ -452,7 +459,9 @@ fun UninvoicedVisitsPicker(
                     }
                 }
 
-                if (excluding) {
+                if (forQuote) {
+                    // No Do not invoice on a quote (#2092).
+                } else if (excluding) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             if (selectedSessions.size == 1) {

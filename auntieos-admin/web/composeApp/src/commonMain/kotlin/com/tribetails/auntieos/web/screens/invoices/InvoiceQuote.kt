@@ -22,6 +22,32 @@ fun isQuoteDraft(invoice: Invoice): Boolean =
 fun quoteIsChangeable(invoice: Invoice): Boolean =
     !invoiceIsArchived(invoice) && (isQuoteDraft(invoice) || invoice.status.trim().lowercase() == "quote")
 
+/**
+ * #2092: the detail screen's heading. A quote, sent or saved unsent, is named
+ * as one; an accepted quote is an open invoice now and is named as an invoice.
+ */
+fun invoiceDocTitle(invoice: Invoice): String {
+    val quote = isQuoteDraft(invoice) || invoice.status.trim().lowercase() == "quote"
+    return "${if (quote) "Quote" else "Invoice"} #${invoice.invoiceNumber.ifBlank { "-" }}"
+}
+
+/** `details.code` when `createQuote` saved the quote as a draft but could not send it (#2087). */
+const val QUOTE_SAVED_NOT_SENT_CODE: String = "quote_saved_not_sent"
+
+/**
+ * The saved quote's id from a refused `createQuote`, or null when the refusal is
+ * anything else. The quote exists (a draft only the office sees), so the
+ * composer closes onto it, as admin web's does, and a retry is Send quote on
+ * that draft rather than a second press that would make a second quote. Pure.
+ */
+fun quoteSavedNotSentId(code: String?, details: String?): String? {
+    if (code != QUOTE_SAVED_NOT_SENT_CODE || details.isNullOrBlank()) return null
+    return runCatching {
+        val obj = kotlinx.serialization.json.Json.parseToJsonElement(details) as? kotlinx.serialization.json.JsonObject
+        (obj?.get("invoiceId") as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+}
+
 /** #2195: an archived quote, which the household cannot see until it is restored. */
 fun isArchivedQuote(invoice: Invoice): Boolean =
     invoiceIsArchived(invoice) && (isQuoteDraft(invoice) || invoice.status.trim().lowercase() == "quote")

@@ -619,6 +619,35 @@ class AdminDataViewModelTest {
     }
 
     @Test
+    fun `#2087 a quote saved but not sent lands on the saved draft with the server's sentence, and the next press is a new key`() =
+        runTest(testDispatcher) {
+            val sentence =
+                "The quote was saved as a draft, but it could not be sent to the household. Open it and press Send quote to try again."
+            val keys = mutableListOf<String?>()
+            coEvery {
+                mockInvoiceRepo.createQuote(any(), any(), any(), any(), any(), captureNullable(keys))
+            } returns Result.failure(com.tribetails.auntieos.domain.QuoteSavedNotSentException("q-saved", sentence))
+            coEvery { mockInvoiceRepo.getInvoices() } returns Result.success(emptyList())
+
+            val vm = buildViewModel()
+            val request = NewInvoiceRequest(kind = InvoiceCreateKind.QUOTE, invoice = TestFixtures.invoice1, sendToKinfolk = true)
+            var handed: Result<String>? = null
+            vm.composeInvoice(request) { handed = it }
+            advanceUntilIdle()
+
+            assertEquals("q-saved", handed!!.getOrNull())
+            assertEquals(sentence, vm.invoiceActionMessage.value)
+            assertNull(vm.error.value)
+            coVerify(atLeast = 1) { mockInvoiceRepo.getInvoices() }
+
+            // The key is spent: the quote exists, so pressing again is a new submission.
+            vm.composeInvoice(request) {}
+            advanceUntilIdle()
+            assertEquals(2, keys.size)
+            assertTrue(keys[0] != keys[1])
+        }
+
+    @Test
     fun `#1511 composeInvoice says when the sent quote reached the household in the app only, and still hands back the id`() =
         runTest(testDispatcher) {
             coEvery {

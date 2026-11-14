@@ -448,6 +448,8 @@ fun composerBlockedReason(
     draftCount: Int,
     money: ComposerMoney?,
     totalText: String,
+    /** #2092: the composer is making a quote, and says so. */
+    quote: Boolean = false,
 ): String? {
     if (kinfolkId.isBlank()) return "Pick a household first."
     if (date.isNotBlank() && !isValidNewInvoiceIsoDate(date)) {
@@ -465,7 +467,7 @@ fun composerBlockedReason(
     return when (path) {
         InvoiceCreatePath.WORK -> when {
             selectedCount == 0 && draftCount == 0 ->
-                "Tick the work this invoice covers, or add a line of your own."
+                "Tick the work this ${if (quote) "quote" else "invoice"} covers, or add a line of your own."
             money?.error != null -> money.error
             else -> null
         }
@@ -495,9 +497,17 @@ fun composerCreateLabel(kind: InvoiceCreateKind, visitCount: Int): String {
 }
 
 /** What the due-date field is doing, and why it is not typeable. Said once. */
-fun composerTermsNote(termsCode: InvoiceTermsCode, due: DueDateResolution, invoiceDate: String): String = when {
+fun composerTermsNote(
+    termsCode: InvoiceTermsCode,
+    due: DueDateResolution,
+    invoiceDate: String,
+    /** #2092: a quote is not a bill, so a past date does not make it overdue. */
+    quote: Boolean = false,
+): String = when {
     termsCode == InvoiceTermsCode.CUSTOM -> "These terms leave the due date to you."
     due.dueDate == null -> due.problem.orEmpty()
+    due.isPast && quote ->
+        "Worked out from the terms, counting from ${due.basisDay ?: invoiceDate}. That date has already passed."
     due.isPast ->
         "Worked out from the terms, counting from ${due.basisDay ?: invoiceDate}. That date has already " +
             "passed, so this invoice is overdue the moment it goes out."
@@ -521,13 +531,31 @@ fun uninvoicedScopeLine(
     scanned: Long,
     narrowedFrom: String?,
     narrowedTo: String?,
+    /** #2092: on a quote the work is "unbilled"; "un-invoiced" is an invoice's word. */
+    quote: Boolean = false,
 ): String {
     val window = if (narrowedFrom != null && narrowedTo != null) " between $narrowedFrom and $narrowedTo" else ""
+    val open = if (quote) "unbilled" else "un-invoiced"
     return if (total == 0) {
-        "No un-invoiced completed visits for $householdLabel$window. $scanned visits were checked."
+        "No $open completed visits for $householdLabel$window. $scanned visits were checked."
     } else {
-        "$selectedCount of $total un-invoiced visit${if (total == 1) "" else "s"} selected for " +
+        "$selectedCount of $total $open visit${if (total == 1) "" else "s"} selected for " +
             "$householdLabel$window."
+    }
+}
+
+/**
+ * #2092: the line under the visits, stating the figure the work adds up to, in
+ * the word for what is being made. Null [totalCents] means nothing is on it
+ * yet, which is a different fact from a $0.00 total and must not read like one.
+ */
+fun composerTotalSentence(quote: Boolean, totalCents: Long?, formatted: String): String {
+    val noun = if (quote) "quote" else "invoice"
+    return if (totalCents != null) {
+        "This $noun will be created for $formatted, worked out from the work it covers. There is nowhere to " +
+            "type a total, so it can never say a different number from the work it lists."
+    } else {
+        "Totals are worked out from the work this $noun covers. Tick a visit above, or add a line of your own."
     }
 }
 

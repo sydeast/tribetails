@@ -109,6 +109,10 @@ class EmailBlockEditTest {
         assertTrue(hasBrokenMergeField("Hi {{na"))
         assertTrue(hasBrokenMergeField("Hi name}}"))
         assertFalse(hasBrokenMergeField("Hi {{name}} and {{ link }}"))
+        // #2092: a whole block tag is complete, so invoice.new's quote subject saves.
+        assertFalse(hasBrokenMergeField("{{#if isQuote}}Your quote is ready{{else}}Your invoice is ready{{/if}}"))
+        assertTrue(hasBrokenMergeField("{{#if isQuote}}Your quote is ready{{/if"))
+        assertTrue(hasBrokenMergeField("{{#if}}x{{/if}}"))
     }
 
     @Test fun aButtonLabelChangesAndItsTargetDoesNot() {

@@ -1906,7 +1906,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             </p>
           ) : (
             <InvoiceLineItemsTable
-              caption={isQuote ? 'What is quoted' : undefined}
+              {...(isQuote ? { caption: 'What is quoted' } : {})}
               lines={storedLines}
               invoiceDiscountCents={invoice.invoiceDiscountCents ?? 0}
             />

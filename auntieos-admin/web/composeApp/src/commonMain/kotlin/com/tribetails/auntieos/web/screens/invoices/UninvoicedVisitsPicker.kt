@@ -60,6 +60,12 @@ internal fun UninvoicedVisitsPicker(
     load: suspend (String, String?, String?) -> WriteResult<UninvoicedSessionsResult>,
     setDoNotInvoice: suspend (List<String>, Boolean, String) -> WriteResult<DoNotInvoiceResult>,
     disabled: Boolean = false,
+    /**
+     * #2092: the composer is making a QUOTE. The work is "unbilled", the blank
+     * path is a blank quote, and Do not invoice is not offered: it is a billing
+     * decision, and a quote bills nothing.
+     */
+    forQuote: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     val scope = rememberCoroutineScope()
@@ -154,7 +160,7 @@ internal fun UninvoicedVisitsPicker(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 AuntieSpinner(modifier = Modifier.size(16.dp))
                 Text(
-                    "Looking for un-invoiced work for $householdLabel.",
+                    "Looking for ${if (forQuote) "unbilled" else "un-invoiced"} work for $householdLabel.",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )
@@ -287,13 +293,18 @@ internal fun UninvoicedVisitsPicker(
                     scanned = loaded.scanned,
                     narrowedFrom = narrowedFrom,
                     narrowedTo = narrowedTo,
+                    quote = forQuote,
                 ),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
 
             if (sessions.isEmpty()) {
-                GhostButton(label = "Write a blank invoice instead", onClick = onWriteBlankInvoice, enabled = !disabled)
+                GhostButton(
+                    label = if (forQuote) "Write a blank quote instead" else "Write a blank invoice instead",
+                    onClick = onWriteBlankInvoice,
+                    enabled = !disabled,
+                )
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GhostButton(
@@ -379,7 +390,9 @@ internal fun UninvoicedVisitsPicker(
                     }
                 }
 
-                if (excluding) {
+                if (forQuote) {
+                    // No Do not invoice on a quote (#2092).
+                } else if (excluding) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             if (selectedSessions.size == 1) {

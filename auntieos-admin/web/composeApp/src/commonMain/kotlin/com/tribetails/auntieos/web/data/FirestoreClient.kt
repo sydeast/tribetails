@@ -1856,7 +1856,8 @@ class FirestoreClient {
             idempotencyKey = idempotencyKey,
         )
         return when (val r = platformInvokeCallable("createQuote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
-            is WriteResult.Err -> WriteResult.Err(r.message)
+            // #2087: code and details kept, so a quote saved but not sent is told apart.
+            is WriteResult.Err -> r
             // #1511: the id and whether the household's copy reached them in the app only.
             is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeCreatedInvoice(r.value)) }
                 .getOrElse { WriteResult.Err(it.message ?: "decode failed") }

@@ -276,8 +276,17 @@ class InvoiceRepository(
             idempotencyKey = idempotencyKey,
         )
         @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("createQuote").call(args.toPayload()).awaitCallable().data as? Map<String, Any?>
-            ?: error("createQuote: non-map payload")
+        val raw = try {
+            functions.getHttpsCallable("createQuote").call(args.toPayload()).awaitCallable().data as? Map<String, Any?>
+        } catch (e: com.google.firebase.functions.FirebaseFunctionsException) {
+            // #2087: saved, not sent. Translated here so the composer can land
+            // on the saved draft instead of offering a retry that makes another.
+            val savedId = com.tribetails.auntieos.domain.quoteSavedNotSentId(e.details)
+            if (savedId != null) {
+                throw com.tribetails.auntieos.domain.QuoteSavedNotSentException(savedId, e.message ?: "")
+            }
+            throw e
+        } ?: error("createQuote: non-map payload")
         val decoded = decodeCreateQuoteResult(raw)
         CreatedInvoice(
             invoiceId = decoded.invoiceId.ifBlank { error("createQuote: missing invoiceId") },
