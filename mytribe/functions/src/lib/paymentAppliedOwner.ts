@@ -133,6 +133,11 @@ export const PAYMENT_APPLIED_OWNER_AT_FIELD = 'paymentAppliedNoticeOwnerAtMs';
  * their step 2 lands seconds after step 1; 5 minutes covers a cold start and a
  * slow network with room to spare, and is far short of the days-later unrelated
  * payment that must not claim (the P3 case).
+ *
+ * #2281 review: past this window a call with no id can still take a settlement
+ * that is waiting for its ledger row, when its row covers the settled amount
+ * (`markInvoicePaidSettlementOf`, and the note in `recordPayment`). That ends
+ * when the sweep finishes the settlement, so the days-later case stays refused.
  */
 export const OLD_CLIENT_CLAIM_WINDOW_MS = 5 * 60 * 1000;
 
@@ -172,7 +177,9 @@ export const SETTLEMENT_LEDGER_PENDING_AT_FIELD = 'settlementLedgerPendingAtMs';
 /**
  * How old a pending settlement must be before the sweep finishes it. Twice
  * OLD_CLIENT_CLAIM_WINDOW_MS, so an older client's own second call, which may
- * claim for that long, always gets there first.
+ * claim for that long, normally gets there first. One that arrives later still
+ * leaves a single ledger row (#2281 review): it takes the claim before the
+ * sweep, or replaces the sweep's row after it.
  */
 export const SETTLEMENT_LEDGER_SWEEP_GRACE_MS = 2 * OLD_CLIENT_CLAIM_WINDOW_MS;
 

@@ -648,6 +648,25 @@ describe('#2281 review: a second call that arrives after the sweep', () => {
     expect(hooks.enqueue).toHaveBeenCalledTimes(2);
     expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
   });
+  it('a late retry whose own send fails finishes it on the next retry, still under the settlement\'s identity', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    // Neither the sweep's send nor the late retry's own gets out.
+    hooks.enqueue.mockRejectedValueOnce(Object.assign(new Error('UNAVAILABLE'), { code: 'unavailable' }));
+    hooks.enqueue.mockRejectedValueOnce(Object.assign(new Error('UNAVAILABLE'), { code: 'unavailable' }));
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(0);
+    const first = await step2(settled.paymentId);
+    expect(first).toMatchObject({ confirmationEmailSent: false, officeNoticePending: true });
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ noticePaymentId: settleRow, confirmationEmailSent: false });
+    const second = await step2(settled.paymentId);
+    expect(hooks.enqueue).toHaveBeenCalledTimes(3);
+    expect(hooks.enqueue.mock.calls[2]![0]).toMatchObject({ data: { invoiceId: 'inv1', paymentId: settleRow } });
+    expect(second.confirmationEmailSent).toBe(true);
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ confirmationEmailSent: true, officeNoticeSentAt: '__TS__' });
+    await step2(settled.paymentId);
+    expect(hooks.enqueue).toHaveBeenCalledTimes(3);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+  });
   it('the sweep writes nothing after a row was added by hand for the settlement', async () => {
     installOptimisticTransactions(ctx.db, docs);
     await step1();
@@ -675,9 +694,14 @@ describe('#2281 review: a second call that arrives after the sweep', () => {
     expect(docs[`payments/${pay(2)}`]).toMatchObject({
       amountCents: 4500,
       tipCents: 500,
+      tipBasis: 'gross',
       settlesInvoice: true,
       confirmationAppOnly: true,
       replacedSettlementLedgerRowId: settleRow,
+      // As for every row with no settlement id: the applied part is not read,
+      // so the row itself says nothing was applied. The invoice holds the money.
+      appliedCents: 0,
+      settledByInvoicePaymentId: '',
     });
     expect(hooks.enqueue).toHaveBeenCalledTimes(1);
   });

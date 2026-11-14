@@ -279,8 +279,13 @@ export const Args = z.object({
    * It is how this call learns that its own first step paid the invoice off, so
    * the office is told "paid" exactly once, under this payment. The server
    * claims the invoice's `markInvoicePaid:<id>` owner stamp only when it matches
-   * this id; a call without it never claims, so a later, unrelated payment
-   * linked to the same invoice cannot.
+   * this id. A call without it claims only its own settlement of the last few
+   * minutes, or one still waiting for its ledger row that this row covers
+   * (#2281 review), so a later, unrelated payment linked to the same invoice
+   * cannot.
+   *
+   * #2281 review: when the sweep has already written the ledger row for that
+   * settlement (`payments/settle_<id>`), this call's row takes its place.
    *
    * OPTIONAL, like every addition here. A client that does not send it gets the
    * household confirmation it ticked, and the office is not told for its
@@ -612,10 +617,11 @@ export async function recordPaymentHandler(
     // the invoice as a display link, passing the payment id that step returned.
     // The office is told only for a payment that paid the bill off, so this call
     // claims THAT settlement's owner stamp (`markInvoicePaid:<id>`), in the same
-    // transaction, and only once. A call without the id never claims.
+    // transaction, and only once.
     // An older installed client sends no id; it may still claim a settlement
     // stamped within the last few minutes, which is its own step 1 landing just
     // before this (OLD_CLIENT_CLAIM_WINDOW_MS in lib/paymentAppliedOwner.ts).
+    // Past that window see the #2281 review note below.
     // #2269: THE APPLY, PLANNED FROM THIS TRANSACTION'S OWN READ of the invoice
     // and every payment on it. `stageApply` writes the new balance from this
     // plan, so the plan and the payments it is summed from must be one
