@@ -5,6 +5,7 @@ import {
   type UploadStage,
 } from './mediaUpload';
 import { saveUserPhotoUrl } from './accountWrite';
+import { setMediaProfilePhoto } from './mediaWrite';
 import { MAX_UPLOAD_BYTES, formatMegabytes } from '../lib/mediaUploadLimits';
 
 /**
@@ -27,6 +28,32 @@ export async function uploadUserPhoto(
   file: File,
   onStage?: (stage: UploadStage) => void,
 ): Promise<string> {
+  return uploadPhoto(uid, file, onStage, (id, _mediaFileId, url) => saveUserPhotoUrl(id, url));
+}
+/**
+ * #2287: an Auntie's own profile photo.
+ *
+ * The same sign, upload and media record as `uploadUserPhoto`. Only the last
+ * step differs. The rules refuse her a client write to `users/{uid}`, so the
+ * photo is put on her record by the server, through the `setMediaProfilePhoto`
+ * callable the gallery already uses for a household's or a Kin's photo. It
+ * takes the media record just written and stamps its URL on her own record.
+ */
+export async function uploadMyStaffPhoto(
+  uid: string,
+  file: File,
+  onStage?: (stage: UploadStage) => void,
+): Promise<string> {
+  return uploadPhoto(uid, file, onStage, async (id, mediaFileId) => {
+    await setMediaProfilePhoto(mediaFileId, 'USER', id);
+  });
+}
+async function uploadPhoto(
+  uid: string,
+  file: File,
+  onStage: ((stage: UploadStage) => void) | undefined,
+  savePhoto: (uid: string, mediaFileId: string, url: string) => Promise<void>,
+): Promise<string> {
   const id = uid.trim();
   if (id === '') throw new Error('uploadUserPhoto requires a uid');
   if (!file.type.startsWith('image/')) {
@@ -45,13 +72,13 @@ export async function uploadUserPhoto(
   const cloud = await uploadToCloudinary(file, sign);
 
   onStage?.('saving');
-  await writeMediaFileDoc({
+  const mediaFileId = await writeMediaFileDoc({
     entityId: id,
     entityType: 'USER',
     originalFileName: file.name,
     cloud,
     cloudName: sign.cloudName,
   });
-  await saveUserPhotoUrl(id, cloud.secureUrl);
+  await savePhoto(id, mediaFileId, cloud.secureUrl);
   return cloud.secureUrl;
 }

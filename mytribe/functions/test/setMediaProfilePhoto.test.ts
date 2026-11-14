@@ -171,3 +171,99 @@ describe('setMediaProfilePhoto effects', () => {
     );
   });
 });
+/**
+ * #2287: an Auntie changes her Account photo through this callable. A staff
+ * photo change applies only to the caller's own profile; the owner keeps the
+ * reach he had.
+ */
+describe('#2287 setMediaProfilePhoto: a staff photo change applies to the caller own profile', () => {
+  function staffReq(data: unknown, auth: { uid: string; token: Record<string, unknown> }) {
+    return { data, auth, rawRequest: {}, acceptsStreaming: false } as unknown as CallableRequest<unknown>;
+  }
+  const auntie = { uid: 'auntie-1', token: { staffRole: 'auntie' } };
+  it('HAPPY: an Auntie sets her own photo, and the line says she is the Auntie', async () => {
+    const ctx = ctxFor({
+      chosen: { storageUrl: 'https://cdn/me.jpg', entityId: 'auntie-1', entityType: 'USER' },
+      siblings: [{ id: 'm0', data: { entityId: 'auntie-1', entityType: 'USER', isProfilePhoto: true } }],
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await setMediaProfilePhotoHandler(
+      staffReq({ mediaFileId: 'm1', entityType: 'USER', entityId: 'auntie-1' }, auntie),
+    );
+    expect(res.photoUrl).toBe('https://cdn/me.jpg');
+    expect(ctx.writes.find((w) => w.path === 'users/auntie-1')!.data.photoUrl).toBe('https://cdn/me.jpg');
+    expect(ctx.writes.find((w) => w.path === 'media_files/m0')!.data.isProfilePhoto).toBe(false);
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'PROFILE_UPDATED',
+        actorUid: 'auntie-1',
+        payload: expect.objectContaining({ entityType: 'USER', entityId: 'auntie-1', admin: false, staffRole: 'auntie' }),
+      }),
+    );
+  });
+  it('NEGATIVE: an Auntie naming another user record is refused before anything is read or written', async () => {
+    const ctx = ctxFor({
+      chosen: { storageUrl: 'https://cdn/x.jpg', entityId: 'owner-1', entityType: 'USER' },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    for (const entityType of ['USER', 'user', 'User']) {
+      await expect(
+        setMediaProfilePhotoHandler(staffReq({ mediaFileId: 'm1', entityType, entityId: 'owner-1' }, auntie)),
+      ).rejects.toMatchObject({
+        code: 'permission-denied',
+        message: 'You can change only your own account photo.',
+      });
+    }
+    expect(ctx.writes).toHaveLength(0);
+    expect(writeAuditEntry).not.toHaveBeenCalled();
+  });
+  it('NEGATIVE: an account carrying both claims is held to the same rule', async () => {
+    const ctx = ctxFor({
+      chosen: { storageUrl: 'https://cdn/x.jpg', entityId: 'owner-1', entityType: 'USER' },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const both = { uid: 'confused-1', token: { admin: true, staffRole: 'auntie' } };
+    await expect(
+      setMediaProfilePhotoHandler(staffReq({ mediaFileId: 'm1', entityType: 'USER', entityId: 'owner-1' }, both)),
+    ).rejects.toMatchObject({ code: 'permission-denied' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('HAPPY: an Auntie still sets a household and a Kin photo', async () => {
+    const household = ctxFor({});
+    mocks.dbFn.mockReturnValue(household.db);
+    await setMediaProfilePhotoHandler(
+      staffReq({ mediaFileId: 'm1', entityType: 'KINFOLK', entityId: 'fam1' }, auntie),
+    );
+    expect(household.writes.find((w) => w.path === 'kinfolk/fam1')!.data.profilePictureUrl).toBe('https://cdn/full.jpg');
+    const kin = ctxFor({ chosen: { storageUrl: 'https://cdn/pet.jpg', entityId: 'pet1', entityType: 'KIN' } });
+    mocks.dbFn.mockReturnValue(kin.db);
+    await setMediaProfilePhotoHandler(staffReq({ mediaFileId: 'm1', entityType: 'KIN', entityId: 'pet1' }, auntie));
+    expect(kin.writes.find((w) => w.path === 'kin/pet1')!.data.profilePictureUrl).toBe('https://cdn/pet.jpg');
+  });
+  it('HAPPY: the owner sets a photo on a staff record that is not his own, as before', async () => {
+    const ctx = ctxFor({
+      chosen: { storageUrl: 'https://cdn/a.jpg', entityId: 'auntie-1', entityType: 'USER' },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await setMediaProfilePhotoHandler(
+      staffReq({ mediaFileId: 'm1', entityType: 'USER', entityId: 'auntie-1' }, { uid: 'owner-1', token: { admin: true } }),
+    );
+    expect(ctx.writes.find((w) => w.path === 'users/auntie-1')!.data.photoUrl).toBe('https://cdn/a.jpg');
+    expect(writeAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ admin: true, staffRole: null }) }),
+    );
+  });
+  it('ERROR: a failed write surfaces and leaves no Activity Log line', async () => {
+    const ctx = ctxFor({
+      chosen: { storageUrl: 'https://cdn/me.jpg', entityId: 'auntie-1', entityType: 'USER' },
+    });
+    const commit = vi.fn().mockRejectedValue(new Error('firestore unavailable'));
+    const realBatch = ctx.db.batch.bind(ctx.db);
+    (ctx.db as { batch: unknown }).batch = () => ({ ...realBatch(), commit });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      setMediaProfilePhotoHandler(staffReq({ mediaFileId: 'm1', entityType: 'USER', entityId: 'auntie-1' }, auntie)),
+    ).rejects.toThrow('firestore unavailable');
+    expect(writeAuditEntry).not.toHaveBeenCalled();
+  });
+});

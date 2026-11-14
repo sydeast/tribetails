@@ -683,6 +683,8 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   upsertExpiration: () => require('./admin/expirations'),
   // 17.3 Home dashboard layout: the operator's own widget order/sizes.
   saveDashboardLayout: () => require('./admin/saveDashboardLayout'),
+  // #2287: a staff member's own Account profile (name, phone, title, bio).
+  saveMyStaffProfile: () => require('./admin/saveMyStaffProfile'),
   getBusinessNotificationOverrides: () => require('./admin/notificationOverrides'),
   saveBusinessNotificationOverride: () => require('./admin/notificationOverrides'),
   deleteBusinessNotificationOverride: () => require('./admin/notificationOverrides'),
