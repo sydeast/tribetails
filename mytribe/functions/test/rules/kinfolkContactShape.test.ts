@@ -95,6 +95,26 @@ describe('rules: #1951 household phone and email shapes on update', () => {
     await assertSucceeds(asOwner(env).firestore().doc('kinfolk/kf1').set({ ...GOOD, phoneNumber: 'abc', email: 'catch', entryNotes: 'Side door' }));
   });
 
+  it('every legacy contact field, secondary ones included, re-sent unchanged by an Auntie still saves', async () => {
+    const env = await getEnv();
+    const LEGACY = { ...GOOD, phoneNumber: '555-0134 ext 2', secondaryPhone: 'call me', email: 'catch', secondaryEmail: 'pawsome' };
+    await seed(LEGACY);
+    const ref = asAuntie(env).firestore().doc('kinfolk/kf1');
+    await assertSucceeds(ref.update({ ...LEGACY, gateCode: '4321' }));
+    // A changed legacy value is checked: to another bad one fails, to a good one saves.
+    await assertFails(ref.update({ secondaryPhone: 'call me later' }));
+    await assertFails(ref.update({ secondaryEmail: 'pawsome2' }));
+    await assertSucceeds(ref.update({ secondaryPhone: '(805) 555-0139', secondaryEmail: 'pawsome@hanasamku.com' }));
+  });
+
+  it('a household with no contact keys on file, or null ones, still takes an ordinary edit', async () => {
+    const env = await getEnv();
+    await seed({ firstName: 'Dre', lastName: 'East', status: 'active', phoneNumber: null });
+    const ref = asOwner(env).firestore().doc('kinfolk/kf1');
+    await assertSucceeds(ref.update({ entryNotes: 'Side door' }));
+    await assertSucceeds(ref.update({ secondaryEmail: '' }));
+  });
+
   it('the household is held to the same shapes on its own contact fields', async () => {
     const env = await getEnv();
     await seed(GOOD);
