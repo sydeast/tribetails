@@ -206,23 +206,48 @@ export async function repairInvoicePaymentsHandler(
       continue;
     }
 
-    findings.push(outcome.finding);
-
-    if (args.mode === 'repair') {
-      await doc.ref.set(outcome.update, { merge: true });
-      repaired += 1;
-      logEvent({
-        severity: 'info',
-        function: 'repairInvoicePayments',
-        event: 'admin.invoice.partial.repaired',
-        uid,
-        extra: {
-          invoiceId: outcome.finding.invoiceId,
-          restoredCents: outcome.finding.correctAmountDueCents,
-          understatedCents: outcome.finding.understatedCents,
-        },
-      });
+    if (args.mode !== 'repair') {
+      findings.push(outcome.finding);
+      continue;
     }
+
+    // #2269: THE WRITE IS DECIDED ON A READ INSIDE ITS OWN TRANSACTION. The page
+    // read above is only how this invoice became a candidate. Writing its plan
+    // straight back would set the balance from that read, so a payment, a
+    // credit draw or a write-off committing in between would be overwritten
+    // with the older figure. The invoice and its payments are read again here
+    // and the plan is made from them; an invoice that no longer needs fixing is
+    // skipped for the reason it now gives.
+    const fixed = await firestore.runTransaction(async (tx) => {
+      const fresh = await tx.get(doc.ref);
+      if (!fresh.exists) return null;
+      const freshPayments = await tx.get(doc.ref.collection('payments'));
+      const plan = repairPlanFor(
+        doc.id,
+        (fresh.data() ?? {}) as RepairInvoiceDoc,
+        freshPayments.docs.map((p) => p.data() as PaymentAmount),
+      );
+      if (isRepairPlan(plan)) tx.set(doc.ref, plan.update, { merge: true });
+      return plan;
+    });
+    if (fixed === null) continue;
+    if (!isRepairPlan(fixed)) {
+      skipped[fixed.skipped] += 1;
+      continue;
+    }
+    findings.push(fixed.finding);
+    repaired += 1;
+    logEvent({
+      severity: 'info',
+      function: 'repairInvoicePayments',
+      event: 'admin.invoice.partial.repaired',
+      uid,
+      extra: {
+        invoiceId: fixed.finding.invoiceId,
+        restoredCents: fixed.finding.correctAmountDueCents,
+        understatedCents: fixed.finding.understatedCents,
+      },
+    });
   }
 
   // A short page means the collection is exhausted. Reporting the cursor as null

@@ -197,6 +197,10 @@ export async function generateReceipt(invoiceId: string): Promise<SendOutcome> {
 }
 
 /**
+ * #2269/#2230: NO LONGER CALLED BY THE INVOICE PANEL, which records a payment
+ * with one `recordPayment` call carrying an `apply` (below). Kept, unchanged,
+ * because the callable stays deployed for the admin builds already installed.
+ *
  * markInvoicePaid (admin): records a payment, WHICH MAY BE PARTIAL, and writes a
  * `payments` subcollection entry (amount/method/reference/paidAt/recordedBy) in
  * the SAME batch as the invoice's money fields, so a manual payment is never
@@ -256,12 +260,15 @@ export async function markInvoicePaid(
  * the settlement arithmetic never reads, which is precisely why the two cannot
  * double-count each other.
  *
- * THE ORDER IS LOAD-BEARING when both are wanted. Call `markInvoicePaid` FIRST
- * and treat its failure as fatal (nothing is written and no payment happened),
- * then call this one BEST-EFFORT: a display row that fails to write loses a
- * line on a list, while a settlement that fails loses the balance. That is the
- * sequence `InvoiceDetailViewModel.recordPayment` has run on Android since
- * W2-2, and this app now runs the same one.
+ * #2269/#2230: WITH `apply` IT IS THE WHOLE PAYMENT, IN ONE CALL. The server
+ * puts the applied part on the invoice, writes the `invoices/{id}/payments`
+ * row and this ledger row, gives any account credit and sends the
+ * confirmation, from one transaction that reads the invoice and its payments
+ * itself. The invoice panel records a payment this way, as the desktop console
+ * already did. It replaced `markInvoicePaid` then this call without `apply`:
+ * a reload between those two left a paid invoice with no ledger row and no
+ * notice, and the balance was worked out from a read the server took before
+ * its transaction.
  *
  * BLANK IS NOT OMITTED HERE, unlike `markInvoicePaid`. Every string on this
  * request has a `.default('')`, so an empty method or reference is a valid
@@ -283,9 +290,9 @@ export async function markInvoicePaid(
  * business banks, not off what the household owed.
  *
  * `apply` MOVES AN INVOICE BALANCE and nothing else here does. `invoiceId`
- * stays a display link. THIS PANEL DOES NOT SEND IT: it calls `markInvoicePaid`
- * first, which has already settled the invoice, so an apply here would collect
- * the same money twice. One payment applies to one invoice; there is no split.
+ * stays a display link. Never send `apply` after a `markInvoicePaid` for the
+ * same payment: that would collect the same money twice. One payment applies to
+ * one invoice; there is no split.
  *
  * `autoApply` puts the leftover into `families/{id}.accountBalanceCents`, the
  * EXISTING account credit the portal already shows, and the invoice trigger

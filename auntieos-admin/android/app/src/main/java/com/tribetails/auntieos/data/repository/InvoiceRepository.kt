@@ -3,6 +3,7 @@ package com.tribetails.auntieos.data.repository
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.data.contracts.ArchiveInvoiceArgs
+import com.tribetails.auntieos.data.contracts.RecordPaymentArgsApply
 import com.tribetails.auntieos.data.contracts.decodeArchiveInvoiceResult
 import com.tribetails.auntieos.data.contracts.decodeUnarchiveInvoiceResult
 import com.tribetails.auntieos.data.contracts.PreviewInvoiceNoticeArgs
@@ -487,6 +488,11 @@ class InvoiceRepository(
      * Records a payment against an invoice via the `markInvoicePaid` callable,
      * and returns WHERE THE INVOICE STANDS AFTERWARDS.
      *
+     * #2269: NO LONGER CALLED BY THE RECORD PAYMENT DIALOG, which makes one
+     * [recordPaymentOnInvoice] call instead. Kept, with the callable on the
+     * server, because admin builds already installed still record a payment as
+     * this call followed by [recordInvoicePayment].
+     *
      * THE SERVER DECIDES, from the sum of every payment recorded against the
      * invoice, not from the amount sent here. A payment that does not cover the
      * total leaves the invoice OPEN with a real remaining balance and comes back
@@ -910,17 +916,41 @@ class InvoiceRepository(
          * this id, so no later payment linked to the invoice can claim it.
          */
         settledByInvoicePaymentId: String? = null,
-    ): Result<RecordPaymentResult> = runCatchingCancellable {
-        authGate.ensureAuthenticated()
-        @Suppress("UNCHECKED_CAST")
-        val raw = functions.getHttpsCallable("recordPayment")
-            .call(recordPaymentArgs(payment, idempotencyKey, settledByInvoicePaymentId).toPayload())
-            .awaitCallable().data as? Map<String, Any?>
-            ?: error("recordPayment: non-map payload")
-        val result = decodeRecordPaymentResult(raw)
-        result.paymentId.ifBlank { error("recordPayment: missing paymentId") }
-        result
-    }.onFailure { AuntieLog.e("Failed to record payment", it) }
+    ): Result<RecordPaymentResult> =
+        callRecordPayment(recordPaymentArgs(payment, idempotencyKey, settledByInvoicePaymentId))
+
+    /**
+     * #2269/#2230: RECORD PAYMENT, AS ONE CALL. `recordPayment` with an `apply`
+     * of [appliedAmount] dollars on [Payment.invoiceId]: the server puts that
+     * part on the invoice (deriving the balance inside its own transaction from
+     * every payment recorded on it), writes the ledger row for the whole
+     * [payment], takes any account credit she entered and sends the
+     * confirmation, all from one transaction. Refused (a draft, a written-off
+     * invoice, more than is still owed) it records nothing at all.
+     *
+     * [idempotencyKey] is the `pay_` key of this submission: a retry of the same
+     * submission is answered from the row the first attempt wrote. The desktop
+     * console sends the same request (`recordPaymentPayload`, #881).
+     */
+    suspend fun recordPaymentOnInvoice(
+        payment: Payment,
+        appliedAmount: Double,
+        idempotencyKey: String?,
+    ): Result<RecordPaymentResult> =
+        callRecordPayment(recordPaymentOnInvoiceArgs(payment, appliedAmount, idempotencyKey))
+
+    private suspend fun callRecordPayment(args: RecordPaymentArgs): Result<RecordPaymentResult> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            @Suppress("UNCHECKED_CAST")
+            val raw = functions.getHttpsCallable("recordPayment")
+                .call(args.toPayload())
+                .awaitCallable().data as? Map<String, Any?>
+                ?: error("recordPayment: non-map payload")
+            val result = decodeRecordPaymentResult(raw)
+            result.paymentId.ifBlank { error("recordPayment: missing paymentId") }
+            result
+        }.onFailure { AuntieLog.e("Failed to record payment", it) }
     /**
      * Q6 (operator ruling 2026-09-27): give a household account credit, with a
      * reason. [idempotencyKey] is REQUIRED and becomes the credit's id, so a
@@ -1226,11 +1256,31 @@ internal fun recordPaymentArgs(
     // replay sends nothing, so the household does not get a second receipt for
     // one payment.
     idempotencyKey = idempotencyKey,
-    // NO `apply`, DELIBERATELY. `InvoiceDetailViewModel.recordPayment` calls
-    // `markInvoicePaid` FIRST, which has already settled the invoice by the time
-    // this row is written; sending an apply here would put the same money
-    // against the same bill a second time. `invoiceId` above stays what it has
-    // always been: the display link the Payments screens join on.
+    // NO `apply` HERE. This is the ledger row alone: a standalone payment, or
+    // the second of the two calls older builds make after `markInvoicePaid` has
+    // already settled the invoice, where an apply would put the same money
+    // against the same bill a second time. The Record payment dialog sends its
+    // apply through [recordPaymentOnInvoiceArgs]. `invoiceId` above stays what
+    // it has always been: the display link the Payments screens join on.
+)
+
+/**
+ * #2269: the one `recordPayment` request the Record payment dialog sends. The
+ * ledger row for the whole [payment] (tip, fee, credit and confirmation
+ * included), plus an `apply` of [appliedAmount] dollars on the invoice it is
+ * linked to. Never a `settledByInvoicePaymentId`: no `markInvoicePaid` step
+ * came first.
+ */
+internal fun recordPaymentOnInvoiceArgs(
+    payment: Payment,
+    appliedAmount: Double,
+    idempotencyKey: String? = null,
+): RecordPaymentArgs = recordPaymentArgs(payment, idempotencyKey).copy(
+    apply = RecordPaymentArgsApply(
+        invoiceId = payment.invoiceId,
+        invoiceNumber = payment.invoiceNumber,
+        amount = appliedAmount,
+    ),
 )
 
 /**

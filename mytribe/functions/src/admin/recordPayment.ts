@@ -19,7 +19,7 @@ import {
 import { TIP_BASES, dollarsToCents, paymentMoneyOf } from '../lib/paymentMoney';
 import {
   planApply,
-  readInvoiceForApply,
+  readInvoiceForApplyInTransaction,
   stageApply,
   type ApplyOutcome,
   type ApplyStep,
@@ -32,7 +32,12 @@ import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { reachedAppOnly } from '../notifications/appOnly';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
-import { PAYMENT_APPLIED_CLAIM_FIELD, claimableMarkInvoicePaidOwner } from '../lib/paymentAppliedOwner';
+import {
+  PAYMENT_APPLIED_CLAIM_FIELD,
+  SETTLEMENT_LEDGER_PENDING_AT_FIELD,
+  SETTLEMENT_LEDGER_PENDING_FIELD,
+  claimableMarkInvoicePaidOwner,
+} from '../lib/paymentAppliedOwner';
 import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
 
 /**
@@ -490,32 +495,16 @@ export async function recordPaymentHandler(
     );
   }
   const paidAtIso = new Date().toISOString();
-  // THE APPLY, PLANNED BEFORE ANYTHING IS WRITTEN. Refusing here means no
-  // payment row either: an operator who mis-keyed the Apply box gets the whole
-  // form back to correct, not a stored payment whose apply silently did not
-  // happen.
+  // THE APPLY IS PLANNED INSIDE THE TRANSACTION BELOW (#2269). Refusing there
+  // still means no payment row either: an operator who mis-keyed the Apply box
+  // gets the whole form back to correct, not a stored payment whose apply
+  // silently did not happen.
   //
-  // The plan is still read and refused OUTSIDE the transaction (#825). These
-  // are reads of an invoice this call does not own, the refusal they produce is
-  // about the request rather than about the stored state, and pulling them in
-  // would make every transaction retry re-read the whole subcollection.
-  let plannedStep: ApplyStep | null = null;
-  if (args.apply) {
-    const plan = planApply({
-      invoice: await readInvoiceForApply(db(), args.apply.invoiceId),
-      appliedCents,
-      kinfolkId,
-      // What the payment has to give: everything except the gross tip. The tip
-      // is the operator's, never the household's bill.
-      spendableCents: amountCents - tipCents,
-    });
-    if (!plan.ok) {
-      throw new HttpsError('failed-precondition', plan.refusal.message, {
-        code: plan.refusal.code,
-      });
-    }
-    plannedStep = plan.step;
-  }
+  // It used to be planned here, from a read of the invoice and its payments
+  // taken outside the transaction (#825), and `stageApply` wrote the new
+  // balance from that plan. Two payments on one invoice at the same moment
+  // then both planned from the same "before", and the second to commit wrote
+  // a balance that left the first one out.
   // ── ACCOUNT CREDIT: EXACTLY THE AMOUNT THE ADMIN ENTERED (#988) ─────────
   //
   // Operator ruling, 2026-09-27: "any overpayment made by the kinfolk, it is
@@ -619,20 +608,42 @@ export async function recordPaymentHandler(
     // An older installed client sends no id; it may still claim a settlement
     // stamped within the last few minutes, which is its own step 1 landing just
     // before this (OLD_CLIENT_CLAIM_WINDOW_MS in lib/paymentAppliedOwner.ts).
+    // #2269: THE APPLY, PLANNED FROM THIS TRANSACTION'S OWN READ of the invoice
+    // and every payment on it. `stageApply` writes the new balance from this
+    // plan, so the plan and the payments it is summed from must be one
+    // snapshot. The invoice doc is read here and written by `stageApply`, so a
+    // second payment (or credit draw, or write-off) on the same invoice
+    // committing first makes this attempt re-run and re-plan against it, and
+    // its guards (already settled, over the balance) run on the new figures.
+    let plannedStep: ApplyStep | null = null;
+    if (args.apply) {
+      const invoice = await readInvoiceForApplyInTransaction(db(), tx, args.apply.invoiceId);
+      // #2090: a written-off invoice refuses with its own code, the one every
+      // admin client reads, before the general "not payable" refusal can.
+      if (invoice.doc !== null && isWrittenOff(invoice.doc as Record<string, unknown>)) {
+        throw new HttpsError('failed-precondition', WRITTEN_OFF_PAYMENT_REFUSAL, { code: INVOICE_WRITTEN_OFF_CODE });
+      }
+      const plan = planApply({
+        invoice,
+        appliedCents,
+        kinfolkId,
+        // What the payment has to give: everything except the gross tip. The
+        // tip is the operator's, never the household's bill.
+        spendableCents: amountCents - tipCents,
+      });
+      if (!plan.ok) {
+        throw new HttpsError('failed-precondition', plan.refusal.message, {
+          code: plan.refusal.code,
+          // #1566: the balance an over-balance apply ran into, so a client can
+          // say what is still owed now, not what the dialog loaded.
+          ...(plan.refusal.amountDueCents !== undefined ? { amountDueCents: plan.refusal.amountDueCents } : {}),
+        });
+      }
+      plannedStep = plan.step;
+    }
     const linkedInvoiceRef =
       !plannedStep && args.invoiceId !== '' ? db().collection('invoices').doc(args.invoiceId) : null;
     const linkedInvoiceSnap = linkedInvoiceRef ? await tx.get(linkedInvoiceRef) : null;
-    // #2090: THE INVOICE BEING SETTLED, AGAIN, INSIDE THE TRANSACTION. The plan
-    // was read outside it (#825), and `stageApply` writes the balance from that
-    // read, so a write-off committing in between would be overwritten with the
-    // old balance. Reading the doc here puts it in this transaction's read set,
-    // so the two serialise, and a written-off invoice refuses the payment.
-    if (plannedStep) {
-      const fresh = await tx.get(db().collection('invoices').doc(plannedStep.invoiceId));
-      if (isWrittenOff((fresh.data() ?? {}) as Record<string, unknown>)) {
-        throw new HttpsError('failed-precondition', WRITTEN_OFF_PAYMENT_REFUSAL, { code: INVOICE_WRITTEN_OFF_CODE });
-      }
-    }
     const claimedOwner = linkedInvoiceSnap?.exists
       ? claimableMarkInvoicePaidOwner(
           (linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>,
@@ -747,7 +758,21 @@ export async function recordPaymentHandler(
       : claimedOwner !== null;
     row['settlesInvoice'] = settlesInvoice;
     if (linkedInvoiceRef && claimedOwner !== null) {
-      tx.set(linkedInvoiceRef, { [PAYMENT_APPLIED_CLAIM_FIELD]: claimedOwner }, { merge: true });
+      const linked = (linkedInvoiceSnap?.data() ?? {}) as Record<string, unknown>;
+      tx.set(
+        linkedInvoiceRef,
+        {
+          [PAYMENT_APPLIED_CLAIM_FIELD]: claimedOwner,
+          // #2230: this is the second call that settlement was waiting for, so
+          // the ledger row and the notice are this call's now, and the sweep
+          // that finishes an abandoned settlement stands down. Cleared only
+          // when it names this settlement, never a later one.
+          ...(linked[SETTLEMENT_LEDGER_PENDING_FIELD] === claimedOwner
+            ? { [SETTLEMENT_LEDGER_PENDING_FIELD]: '', [SETTLEMENT_LEDGER_PENDING_AT_FIELD]: null }
+            : {}),
+        },
+        { merge: true },
+      );
     }
     // `create` WHEN THERE IS A KEY, so two attempts that somehow reach the
     // write together are refereed by the server rather than by the read above.
@@ -1024,7 +1049,7 @@ export const PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
  * copy for a retry: the record exists, and sending again would not add a
  * channel the household has turned off.
  */
-function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown> {
+export function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown> {
   return {
     ...(sent.household && !sent.householdAppOnly ? { confirmationEmailSent: true } : {}),
     ...(sent.household && sent.householdAppOnly ? { confirmationAppOnly: true } : {}),
@@ -1192,7 +1217,7 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
  *     household uid writes only the office copy, the shape the Stripe webhook
  *     uses. An unticked partial, or a payment that paid nothing off, tells nobody.
  */
-interface ConfirmationOutcome {
+export interface ConfirmationOutcome {
   /**
    * The household copy was written (#1511: read off the dispatcher's outcome,
    * not assumed from the uid). A copy the ledger deduped counts, because the
@@ -1223,7 +1248,7 @@ interface ConfirmationOutcome {
   officePending: boolean;
 }
 
-async function sendPaymentConfirmation(input: {
+export async function sendPaymentConfirmation(input: {
   kinfolkId: string;
   invoiceId: string;
   paymentId: string;

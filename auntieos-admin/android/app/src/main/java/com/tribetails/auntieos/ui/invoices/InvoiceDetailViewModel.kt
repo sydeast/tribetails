@@ -6,13 +6,13 @@ import com.tribetails.auntieos.AuntieOSApp
 import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
 import com.tribetails.auntieos.data.contracts.LinkInvoiceSessionsResult
 import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
+import com.tribetails.auntieos.data.contracts.RecordPaymentResultApplication
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
-import com.tribetails.auntieos.data.repository.mintInvoicePaymentIdempotencyKey
 import com.tribetails.auntieos.data.repository.mintPaymentIdempotencyKey
 import com.tribetails.auntieos.domain.InvoiceState
 import com.tribetails.auntieos.domain.formatCentsUsd
@@ -102,7 +102,7 @@ data class InvoiceDetailUiState(
     val paymentsError: String? = null,
     /**
      * #1566: what the invoice still owes, from `getInvoiceLedger` (summed from
-     * the recorded payments, the figure `markInvoicePaid` refuses against).
+     * the recorded payments, the figure the server refuses an apply against).
      * The Record Payment dialog stops the applied part here and puts the rest
      * in the tip. Null until the ledger answers, and after it fails: then the
      * dialog caps nothing and the server's refusal says what is owed.
@@ -181,27 +181,24 @@ class InvoiceDetailViewModel(
     val uiState: StateFlow<InvoiceDetailUiState> = _uiState.asStateFlow()
 
     /**
-     * #825: the two keys that make pressing Record twice safe.
+     * #825: the key that makes pressing Record twice safe.
      *
-     * TWO KEYS, ONE SUBMISSION, BECAUSE [recordPayment] IS TWO CALLABLES. The
-     * operator fills in one dialog and presses one button; behind it
-     * `markInvoicePaid` writes the audit-grade row into the invoice's `payments`
-     * subcollection and `recordPayment` writes the display row. They are two
-     * documents in two collections with two key shapes (`ipay_` and `pay_`), and
-     * they are ONE thing the operator did. So they are minted together, held
-     * together, and released together: a retry has to name BOTH rows the first
-     * attempt made, or the half that gets a fresh key is the half that
-     * duplicates.
+     * #2269: ONE KEY, BECAUSE [recordPayment] IS ONE CALLABLE. Record payment
+     * used to be two calls (`markInvoicePaid`, then `recordPayment`) with a key
+     * each. It is now one `recordPayment` call carrying an `apply`, which pays
+     * the invoice, writes the ledger row and sends the notice in one server
+     * transaction, so one `pay_` key names everything the press did.
      *
      * Minted on the first attempt at a payment and held for every retry of it,
      * which here means the operator pressing Record again after seeing the
      * error toast. That press is the dangerous one: the SDK reports `INTERNAL`
      * for a request that never arrived AND for a write that committed with a
      * lost reply, so the retry that repairs the first case is the retry that
-     * puts the same money against the same bill twice in the second — settling
-     * or overpaying an invoice on money nobody collected, and, on the display
-     * row, crediting `accountBalanceCents` a second time with money this
-     * business has no refund mechanism to take back.
+     * puts the same money against the same bill twice in the second, settling
+     * or overpaying an invoice on money nobody collected and crediting
+     * `accountBalanceCents` a second time with money this business has no
+     * refund mechanism to take back. With the key, the server answers the
+     * retry from the first attempt's row.
      *
      * Re-minted the moment the payment being submitted changes, compared at
      * submit time via [paymentSignature] rather than tracked through the
@@ -211,12 +208,11 @@ class InvoiceDetailViewModel(
      *
      * The signature deliberately reads the invoice ID AND THE PAYMENT ONLY, and
      * nothing off [InvoiceDetailUiState.invoice]. That invoice's `amountDue`
-     * moves the instant `markInvoicePaid` settles it and the quiet reload lands,
-     * so folding it in would make the successful first attempt look like an edit
-     * to the retry that follows a partial failure.
+     * moves the instant the payment lands and the quiet reload arrives, so
+     * folding it in would make a landed first attempt look like an edit to the
+     * retry that follows a lost reply.
      */
     private var paymentSubmissionKey: String? = null
-    private var invoicePaymentSubmissionKey: String? = null
     private var paymentSubmissionSignature: String? = null
 
     /**
@@ -347,64 +343,53 @@ class InvoiceDetailViewModel(
     /**
      * Record a payment against this invoice.
      *
-     * TWO WRITES, IN THIS ORDER, AND THE ORDER IS THE POINT.
+     * #2269/#2230: ONE CALL. `recordPayment` with an `apply` puts the applied
+     * part on the invoice (the invoice's own `payments` subcollection, the
+     * balance derived from the sum of every recorded payment, read inside the
+     * server's transaction so two payments at once both count), writes the
+     * ledger row this screen's payments list reads, takes any account credit
+     * she entered, and sends the household's confirmation, all from one server
+     * transaction. It used to be two calls, `markInvoicePaid` and then
+     * `recordPayment`, and an app closed between them left a paid invoice with
+     * no ledger row and nobody told. The desktop console has made this one call
+     * since #881.
      *
-     * FIRST the `markInvoicePaid` callable, which is what actually moves the
-     * invoice's money: it writes the audit-grade entry into the invoice's own
-     * `payments` SUBCOLLECTION and derives the invoice's state from the SUM of
-     * everything recorded there. A partial leaves the invoice OPEN with a real
-     * remaining balance, so it stays in Outstanding and the rest can still be
-     * collected. Before this, Android recorded payments ONLY into the legacy
-     * top-level `payments` collection and never touched the invoice at all, so
-     * an invoice paid on the phone stayed fully open forever.
-     *
-     * THEN the legacy top-level `payments` doc, because this screen's payments
-     * list ([InvoiceDetailUiState.linkedPayments], joined on
-     * [Payment.invoiceId]) reads that collection and nothing else. It is a
-     * display record: the server's arithmetic never reads it, so the two cannot
-     * double-count.
-     *
-     * If the callable fails, NOTHING is written anywhere and the operator is
-     * told. A legacy row written against a payment the server refused would be a
-     * record of money the books do not believe was collected.
+     * If the call fails, NOTHING was recorded and the operator is told. The
+     * dialog stays open and the key is held, so pressing Record again is a
+     * retry the server answers from the first attempt's row if it did land.
      *
      * #982: TWO FIGURES, NOT ONE. [appliedAmount] is the dialog's Amount box,
-     * the part of the payment that goes on this invoice, and it is the only
-     * figure `markInvoicePaid` gets. [payment] is the whole transaction (Amount
-     * plus tip, or the Payment amount box), and only the ledger row gets it.
-     * Sending `payment.amount` to `markInvoicePaid` put the tip and any leftover
-     * on the invoice as an overpayment. Admin web makes the same split
-     * (`InvoiceDetail.tsx`, Mark paid). There is deliberately no default: no
-     * figure on [payment] can say what was applied once a Payment amount box
-     * is filled in.
+     * the part of the payment that goes on this invoice, and it travels as
+     * `apply.amount`. [payment] is the whole transaction (Amount plus tip, or
+     * the Payment amount box), and travels as `amount`. There is deliberately
+     * no default: no figure on [payment] can say what was applied once a
+     * Payment amount box is filled in.
      */
     fun recordPayment(payment: Payment, appliedAmount: Double) {
         val invoiceId = _uiState.value.invoice?.id ?: return
         _uiState.value = _uiState.value.copy(recordingPayment = true)
-        // #825: one pair of keys per payment, re-minted only when the payment
-        // itself has changed since they were minted. Minted HERE, outside the
-        // coroutine, so that a second press while the first attempt is still in
-        // flight reads the same held pair: a nine-second cold start is long
-        // enough for an operator to press again, and two attempts overlapping is
-        // the ordinary case this protects, not the exotic one.
+        // #825: one key per payment, re-minted only when the payment itself has
+        // changed since it was minted. Minted HERE, outside the coroutine, so
+        // that a second press while the first attempt is still in flight reads
+        // the same key: a nine-second cold start is long enough for an operator
+        // to press again, and two attempts overlapping is the ordinary case this
+        // protects, not the exotic one.
         val signature = paymentSignature(invoiceId, payment, appliedAmount)
         if (paymentSubmissionKey == null || paymentSubmissionSignature != signature) {
             paymentSubmissionKey = mintPaymentIdempotencyKey()
-            invoicePaymentSubmissionKey = mintInvoicePaymentIdempotencyKey()
             paymentSubmissionSignature = signature
         }
-        val ledgerKey = invoicePaymentSubmissionKey
-        val displayKey = paymentSubmissionKey
+        val key = paymentSubmissionKey
         viewModelScope.launch {
-            val settlement = invoiceRepository.markInvoicePaid(
-                invoiceId = invoiceId,
+            val recorded = invoiceRepository.recordPaymentOnInvoice(
+                payment = payment,
                 // #982: the applied part only. The tip is tip and the leftover
                 // is leftover; neither is invoice money.
-                amount = appliedAmount,
-                method = payment.paymentMethod,
-                reference = payment.referenceNumber,
-                idempotencyKey = ledgerKey,
+                appliedAmount = appliedAmount,
+                idempotencyKey = key,
             ).getOrElse { err ->
+                // Nothing was recorded. The key is kept: the next press of the
+                // same entry is a retry of this one.
                 _uiState.value = _uiState.value.copy(
                     recordingPayment = false,
                     toastMessage = "Couldn't record payment: ${err.message}",
@@ -413,49 +398,24 @@ class InvoiceDetailViewModel(
                 )
                 return@launch
             }
-
-            // #825: the money callable answered, so this submission is done and
-            // both keys are released. The NEXT press of Record is a second
-            // payment the operator meant to make, not a retry of this one, and
-            // holding a key across it would have the server hand back the first
-            // payment and report it as though the second had landed.
-            //
-            // RELEASED HERE EVEN THOUGH THE DISPLAY WRITE BELOW MAY STILL FAIL,
-            // deliberately. That write is best-effort by design: this flow
-            // reports success and closes the dialog whatever it does, so there
-            // is no retry surface behind which a held `pay_` key could be of any
-            // use. A payment re-entered afterwards is a new intent, and a stale
-            // key would make it a replay of this one.
+            // #825: the server answered, so this submission is done and the key
+            // is released. The NEXT press of Record is a second payment the
+            // operator meant to make, not a retry of this one, and holding a key
+            // across it would have the server hand back the first payment and
+            // report it as though the second had landed.
             paymentSubmissionKey = null
-            invoicePaymentSubmissionKey = null
             paymentSubmissionSignature = null
-
-            // Best-effort: the money has already landed server-side, so a failure
-            // here costs this screen's list row, not the payment. Logged, never
-            // swallowed.
-            // #866: `settlement.paymentId` is the row `markInvoicePaid` just wrote.
-            // The server claims that settlement, and tells the office "paid", only
-            // for this id, so no later payment linked to the invoice can claim it.
-            val ledgerRow = invoiceRepository.recordInvoicePayment(
-                payment,
-                idempotencyKey = displayKey,
-                settledByInvoicePaymentId = settlement.paymentId.ifBlank { null },
-            )
-                .onFailure { AuntieLog.e("Legacy payment row failed for invoice $invoiceId", it) }
-            // #866: this call is the household confirmation's only sender, so a
-            // confirmation she asked for and did not get is said in the toast.
             // #1511: the server's word that the confirmation reached the household
             // in the app only. Read only when she asked for one.
             val confirmationAppOnly =
-                payment.sendConfirmationEmail && ledgerRow.getOrNull()?.confirmationAppOnly == true
+                payment.sendConfirmationEmail && recorded.confirmationAppOnly == true
             val confirmationNote = recordPaymentConfirmationNote(
                 requested = payment.sendConfirmationEmail,
-                confirmationSent = ledgerRow.getOrNull()?.confirmationEmailSent,
-                householdNoPortalAccount = ledgerRow.getOrNull()?.householdNoPortalAccount == true,
-                officeNoticePending = ledgerRow.getOrNull()?.officeNoticePending == true,
+                confirmationSent = recorded.confirmationEmailSent,
+                householdNoPortalAccount = recorded.householdNoPortalAccount,
+                officeNoticePending = recorded.officeNoticePending,
                 confirmationAppOnly = confirmationAppOnly,
             )
-
             com.tribetails.auntieos.data.admin.AuditLog.fire(
                 scope            = viewModelScope,
                 repository       = repository,
@@ -463,12 +423,11 @@ class InvoiceDetailViewModel(
                 description      = recordPaymentAuditDescription(
                     payment.amount,
                     payment.invoiceNumber.ifBlank { "with no number" },
-                    settlement,
+                    recorded.application,
                 ),
                 targetId         = invoiceId,
                 targetCollection = "invoices",
             )
-
             loadPaymentsForInvoice(invoiceId)
             // Re-read the invoice so the balance and the chip show what the
             // server actually decided, not what the dialog assumed.
@@ -477,8 +436,8 @@ class InvoiceDetailViewModel(
                 recordingPayment = false,
                 showRecordPayment = false,
                 // #982: the credit the SERVER says it gave, in web's words.
-                toastMessage = recordPaymentToast(settlement) + confirmationNote +
-                    recordPaymentCreditNote(ledgerRow.getOrNull()?.creditedToAccountCents),
+                toastMessage = recordPaymentToast(recorded.application) + confirmationNote +
+                    recordPaymentCreditNote(recorded.creditedToAccountCents),
                 toastVisible = true,
                 // #1511: an app-only confirmation is not the green toast. The words
                 // say no email or text went out, and the tone agrees with them.
@@ -486,7 +445,6 @@ class InvoiceDetailViewModel(
             )
         }
     }
-
     /**
      * Everything that decides WHAT is being paid, against WHICH invoice (#825).
      *
@@ -1478,10 +1436,10 @@ internal fun buildInvoicePayment(
     date = date.trim(),
     paymentMethod = paymentMethod.trim(),
     referenceNumber = referenceNumber.trim(),
-    // THE TRANSACTION, not the settlement. `markInvoicePaid` settles the invoice
-    // with [amount], which the caller passes to `recordPayment` separately
-    // (#982); this row records what the client actually paid, which is larger
-    // whenever there was a tip or money left over.
+    // THE TRANSACTION, not the settlement. The invoice takes [amount], which the
+    // caller sends separately as `apply.amount` (#982); this row records what
+    // the client actually paid, which is larger whenever there was a tip or
+    // money left over.
     amount = if (paymentTotal > 0.0) paymentTotal else amount + tip + creditToAccount,
     tip = tip,
     fee = fee,
@@ -1565,11 +1523,22 @@ internal fun archiveSuccessMessage(
  * "paid in full": that is the very claim the 2026-07-25 fix exists to stop the
  * app making on its own.
  */
-internal fun recordPaymentToast(settlement: MarkInvoicePaidResult): String = when (settlement.state) {
+internal fun recordPaymentToast(settlement: MarkInvoicePaidResult): String =
+    recordPaymentToast(settlement.state, settlement.amountDueCents, settlement.overpaidCents)
+
+/**
+ * #2269: the same sentences, from the `application` of the one `recordPayment`
+ * call Record payment now makes. A response with no `application` reads as the
+ * blank state: the server did not say where the invoice stands.
+ */
+internal fun recordPaymentToast(application: RecordPaymentResultApplication?): String =
+    recordPaymentToast(application?.state.orEmpty(), application?.amountDueCents ?: 0L, application?.overpaidCents ?: 0L)
+
+private fun recordPaymentToast(state: String, amountDueCents: Long, overpaidCents: Long): String = when (state) {
     "partial" ->
-        "Partial payment recorded. ${formatCentsUsd(settlement.amountDueCents)} is still owed, and the invoice stays open."
+        "Partial payment recorded. ${formatCentsUsd(amountDueCents)} is still owed, and the invoice stays open."
     "overpaid" ->
-        "Payment recorded and the invoice is settled. It was overpaid by ${formatCentsUsd(settlement.overpaidCents)}, which has not been turned into a credit."
+        "Payment recorded and the invoice is settled. It was overpaid by ${formatCentsUsd(overpaidCents)}, which has not been turned into a credit."
     "" ->
         "Payment recorded. The server did not report where the invoice now stands, so open it to check what is still owed."
     else -> "Payment recorded. The invoice is paid in full."
@@ -1648,9 +1617,28 @@ internal fun recordPaymentAuditDescription(
     amount: Double,
     invoiceLabel: String,
     settlement: MarkInvoicePaidResult,
-): String = when (settlement.state) {
+): String = recordPaymentAuditDescription(amount, invoiceLabel, settlement.state, settlement.amountDueCents)
+
+/** #2269: the same line, from the one `recordPayment` call's `application`. */
+internal fun recordPaymentAuditDescription(
+    amount: Double,
+    invoiceLabel: String,
+    application: RecordPaymentResultApplication?,
+): String = recordPaymentAuditDescription(
+    amount,
+    invoiceLabel,
+    application?.state.orEmpty(),
+    application?.amountDueCents ?: 0L,
+)
+
+private fun recordPaymentAuditDescription(
+    amount: Double,
+    invoiceLabel: String,
+    state: String,
+    amountDueCents: Long,
+): String = when (state) {
     "partial" ->
-        "Recorded partial payment of $amount against invoice $invoiceLabel; ${formatCentsUsd(settlement.amountDueCents)} still owed"
+        "Recorded partial payment of $amount against invoice $invoiceLabel; ${formatCentsUsd(amountDueCents)} still owed"
     "" ->
         "Recorded payment of $amount against invoice $invoiceLabel; the server did not report the resulting balance"
     else -> "Recorded payment of $amount against invoice $invoiceLabel; invoice settled"
