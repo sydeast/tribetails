@@ -376,19 +376,10 @@ internal fun NewInvoiceDialogContent(
         )
         Text(termsNote, style = AuntieTheme.typography.bodySmall, color = c.textDim)
         if (termsSetting.failed) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    TERMS_LOAD_FAILED,
-                    style = AuntieTheme.typography.bodySmall,
-                    color = c.error,
-                    modifier = Modifier.weight(1f),
-                )
-                GhostButton(label = "Try again", onClick = onRetryTermsSetting, enabled = !submitting)
-            }
+            // Stacked, not side by side: beside a weighted sentence the button
+            // measured a few pixels wide and could not be tapped.
+            Text(TERMS_LOAD_FAILED, style = AuntieTheme.typography.bodySmall, color = c.error)
+            GhostButton(label = "Try again", onClick = onRetryTermsSetting, enabled = !submitting)
         }
 
         if (quoteMode) {

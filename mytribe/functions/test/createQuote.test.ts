@@ -125,6 +125,14 @@ describe('createQuote zod validation', () => {
     expect(written?.data.termsCode).toBe('due_on_receipt');
     expect(written?.data.dueDate).toBe(validPayload.date);
   });
+  it('#1966: still stores an undated quote with blanks, rather than refusing it', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createQuoteHandler(req({ ...validPayload, sessionIds: [], date: '', terms: '', dueDate: '' }));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.dueDate).toBe('');
+    expect(written?.data.termsCode).toBeUndefined();
+  });
 
   it('rejects negative total', async () => {
     const ctx = buildDbMock({});

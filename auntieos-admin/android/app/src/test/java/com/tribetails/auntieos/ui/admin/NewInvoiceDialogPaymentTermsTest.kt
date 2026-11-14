@@ -152,6 +152,8 @@ class NewInvoiceDialogPaymentTermsTest {
         )
         rule.onNodeWithText("Due on receipt").assertExists()
         rule.onNodeWithText(TERMS_LOAD_FAILED).assertExists()
+        // Below the visit list, so the harness reports the node clipped; clicked through its
+        // semantics, as NewInvoiceDialogTest clicks "Select none".
         rule.onNodeWithText("Try again").performSemanticsAction(SemanticsActions.OnClick)
         rule.waitForIdle()
         assertEquals(1, retries)

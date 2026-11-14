@@ -703,6 +703,22 @@ describe('createInvoice payment terms setting', () => {
     expect(written?.data.termsCode).toBe('due_on_receipt');
     expect(written?.data.dueDate).toBe('2026-06-01');
   });
+  it('still stores an undated draft with blanks, rather than refusing it', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createInvoiceHandler(req({ ...bare, date: '' }));
+    const written = ctx.writes.find((w) => w.path.startsWith('invoices/'));
+    expect(written?.data.date).toBe('');
+    expect(written?.data.dueDate).toBe('');
+    expect(written?.data.termsCode).toBeUndefined();
+  });
+  it('still refuses a code the caller sent that cannot date an undated invoice', async () => {
+    const ctx = buildDbMock({});
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(createInvoiceHandler(req({ ...bare, date: '', termsCode: 'net_14' }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+  });
   it('uses the stored setting, counted from the visits', async () => {
     const ctx = buildDbMock({
       docs: {

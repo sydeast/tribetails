@@ -242,10 +242,13 @@ export async function createQuoteHandler(
       now: businessToday(termsSettings.timeZone),
       timeZone: termsSettings.timeZone,
     });
-    if (!outcome.ok) {
+    if (outcome.ok) {
+      termsFields = outcome.fields;
+    } else if (args.termsCode !== undefined) {
       throw new HttpsError('failed-precondition', outcome.message, { code: outcome.code });
     }
-    termsFields = outcome.fields;
+    // A setting the invoice cannot use (no invoice date to be due on) leaves
+    // the blanks as they were: the caller did not ask for terms.
   }
   const ref =
     args.idempotencyKey !== undefined

@@ -121,6 +121,8 @@ class NewInvoicePaymentTermsTest {
         waitUntil(timeoutMillis = 10_000) {
             onAllNodesWithText(TERMS_LOAD_FAILED, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
+        // Below the visit list, so the harness reports the node clipped; clicked through its
+        // semantics, as NewInvoiceDialogTest clicks "Select none".
         onNodeWithText("Try again").performSemanticsAction(SemanticsActions.OnClick)
         waitForIdle()
         assertEquals(1, retries)
