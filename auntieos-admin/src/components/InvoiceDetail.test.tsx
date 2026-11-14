@@ -167,15 +167,48 @@ function fakeTs(iso: string): Timestamp {
   return { toDate: () => new Date(iso) } as unknown as Timestamp;
 }
 
-/** A settling markInvoicePaid response, the common case. */
+/**
+ * #2269: what `recordPayment`'s `application` says about the invoice after a
+ * settling apply, the common case. The panel's one call answers with it.
+ */
 function settledResult() {
   return {
-    paymentId: 'pay1',
+    invoiceId: 'inv1',
+    invoiceNumber: '',
+    paymentId: 'sub1',
+    appliedCents: 4000,
     state: 'settled' as const,
     totalCents: 4000,
     paidCents: 4000,
     amountDueCents: 0,
     overpaidCents: 0,
+  };
+}
+type Application = ReturnType<typeof settledResult>;
+/** A whole `recordPayment` answer carrying [application], or none. */
+function paymentResult(
+  application: (Partial<Omit<Application, 'state'>> & { state?: string }) | null = settledResult(),
+  over: Record<string, unknown> = {},
+) {
+  return {
+    ok: true,
+    paymentId: 'led1',
+    kinfolkId: 'kf1',
+    amountCents: 4000,
+    tipCents: 0,
+    feeCents: 0,
+    tipBasis: 'gross',
+    appliedCents: application === null ? 0 : (application.appliedCents ?? 4000),
+    unappliedCents: 0,
+    proceedsCents: 4000,
+    tipNetCents: 0,
+    autoApply: false,
+    application: application === null ? null : { ...settledResult(), ...application },
+    creditedToAccountCents: 0,
+    confirmationEmailSent: false,
+    householdNoPortalAccount: false,
+    officeNoticePending: false,
+    ...over,
   };
 }
 
@@ -341,23 +374,8 @@ beforeEach(() => {
   getInvoiceLedger.mockReset().mockResolvedValue(ledgerResult());
   linkInvoiceSessions.mockReset();
   useCollection.mockReset().mockReturnValue({ status: 'ready', data: [] });
-  recordPayment.mockReset().mockResolvedValue({
-    ok: true,
-    paymentId: 'led1',
-    kinfolkId: 'kf1',
-    amountCents: 4000,
-    tipCents: 0,
-    feeCents: 0,
-    tipBasis: 'gross',
-    appliedCents: 0,
-    unappliedCents: 4000,
-    proceedsCents: 4000,
-    tipNetCents: 0,
-    autoApply: false,
-    application: null,
-    creditedToAccountCents: 0,
-    confirmationEmailSent: false,
-  });
+  // #2269: the panel's one call. Its answer carries the settlement.
+  recordPayment.mockReset().mockResolvedValue(paymentResult());
 });
 
 /**
@@ -767,41 +785,52 @@ describe('InvoiceDetail', () => {
   });
 
   it('sends the full outstanding balance when the prefilled amount is left as-is', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     render(<InvoiceDetail invoice={entry({ _id: 'inv7', kinfolkId: 'kf7' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    await waitFor(() =>
-      expect(markInvoicePaid).toHaveBeenCalledWith('inv7', {
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    // #2269: ONE call. The apply puts the money on the invoice; the old first
+    // step is never made.
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        invoiceId: 'inv7',
         amount: 40,
+        apply: expect.objectContaining({ invoiceId: 'inv7', amount: 40 }),
         // #825: the panel mints one key per submission and holds it across a
         // re-press, so a retry lands on the row the first press wrote.
-        idempotencyKey: expect.stringMatching(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/),
+        idempotencyKey: expect.stringMatching(/^pay_\d{10,16}_[a-z0-9]{1,16}$/),
       }),
     );
+    expect(recordPayment.mock.calls[0]![0]).not.toHaveProperty('settledByInvoicePaymentId');
+    expect(markInvoicePaid).not.toHaveBeenCalled();
     expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
   });
 
   /**
    * Mark 10 of the 2026-08-17 walk: "why green box when there was a failure".
-   * `markInvoicePaid` had settled the invoice, `recordPayment` had answered 400,
-   * and the sentence saying so was appended to a banner still rendering green
-   * under the title "Done". The words were right and the colour was not, and
-   * the colour is what gets read first.
+   * Since #2269 a refused call records nothing at all, so it is an error, never
+   * a "Done" banner in any colour.
    */
-  it('turns the banner to a warning when the ledger row did not save', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
+  it('a refused call records nothing and shows an error, not a success', async () => {
     recordPayment.mockRejectedValue(new Error('recordPayment validation failed'));
     render(<InvoiceDetail invoice={entry({ _id: 'inv7', kinfolkId: 'kf7' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    expect(await screen.findByText(/payment ledger row did not save/i)).toBeInTheDocument();
-    const banner = screen.getByText(/payment ledger row did not save/i).closest('[data-tone]');
-    expect(banner).toHaveAttribute('data-tone', 'warning');
+    expect(await screen.findByText(/could not save: recordPayment validation failed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/payment recorded/i)).toBeNull();
     expect(screen.queryByText(/^Done$/)).toBeNull();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+  });
+  it('turns the banner to a warning when the server does not say where the invoice stands', async () => {
+    recordPayment.mockResolvedValue(paymentResult(null));
+    render(<InvoiceDetail invoice={entry({ _id: 'inv7', kinfolkId: 'kf7' })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const text = await screen.findByText(/open the invoice again to check what is still owed/i);
+    expect(text.closest('[data-tone]')).toHaveAttribute('data-tone', 'warning');
+    expect(screen.queryByText(/paid in full/i)).toBeNull();
   });
   it('stays green when everything landed, so the warning tone keeps meaning something', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     render(<InvoiceDetail invoice={entry({ _id: 'inv7', kinfolkId: 'kf7' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
@@ -811,14 +840,9 @@ describe('InvoiceDetail', () => {
   it('records a PARTIAL amount and reports the balance still owed rather than claiming paid', async () => {
     // The defect this whole change exists to fix: the panel used to report
     // "Invoice marked paid." for a payment that covered half the invoice.
-    markInvoicePaid.mockResolvedValue({
-      paymentId: 'pay1',
-      state: 'partial' as const,
-      totalCents: 4000,
-      paidCents: 2000,
-      amountDueCents: 2000,
-      overpaidCents: 0,
-    });
+    recordPayment.mockResolvedValue(
+      paymentResult({ appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 }),
+    );
     render(<InvoiceDetail invoice={entry({ _id: 'inv7' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     const amount = screen.getByRole('textbox', { name: /amount collected/i });
@@ -827,24 +851,23 @@ describe('InvoiceDetail', () => {
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
 
     await waitFor(() =>
-      expect(markInvoicePaid).toHaveBeenCalledWith('inv7', {
-        amount: 20,
-        idempotencyKey: expect.stringMatching(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/),
-      }),
+      expect(recordPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoiceId: 'inv7',
+          amount: 20,
+          apply: expect.objectContaining({ invoiceId: 'inv7', amount: 20 }),
+          idempotencyKey: expect.stringMatching(/^pay_\d{10,16}_[a-z0-9]{1,16}$/),
+        }),
+      ),
     );
     expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
     expect(screen.queryByText(/paid in full/i)).toBeNull();
   });
 
   it('reports an overpayment as one, and says it was not turned into a credit', async () => {
-    markInvoicePaid.mockResolvedValue({
-      paymentId: 'pay1',
-      state: 'overpaid' as const,
-      totalCents: 3950,
-      paidCents: 4000,
-      amountDueCents: 0,
-      overpaidCents: 50,
-    });
+    recordPayment.mockResolvedValue(
+      paymentResult({ state: 'overpaid', totalCents: 3950, paidCents: 4000, amountDueCents: 0, overpaidCents: 50 }),
+    );
     render(<InvoiceDetail invoice={entry({ _id: 'inv7' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
@@ -860,23 +883,28 @@ describe('InvoiceDetail', () => {
     await userEvent.type(amount, 'twenty');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect(await screen.findByText(/is not an amount/i)).toBeInTheDocument();
+    expect(recordPayment).not.toHaveBeenCalled();
     expect(markInvoicePaid).not.toHaveBeenCalled();
   });
 
   it('passes the entered method and reference alongside the amount', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     render(<InvoiceDetail invoice={entry({ _id: 'inv8', kinfolkId: 'kf8' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.type(screen.getByRole('textbox', { name: /payment method/i }), 'check');
     await userEvent.type(screen.getByRole('textbox', { name: /payment reference/i }), 'CK-100');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await waitFor(() =>
-      expect(markInvoicePaid).toHaveBeenCalledWith('inv8', {
-        amount: 40,
-        method: 'check',
-        reference: 'CK-100',
-        idempotencyKey: expect.stringMatching(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/),
-      }),
+      expect(recordPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoiceId: 'inv8',
+          kinfolkId: 'kf8',
+          amount: 40,
+          paymentMethod: 'check',
+          referenceNumber: 'CK-100',
+          apply: expect.objectContaining({ invoiceId: 'inv8', amount: 40 }),
+          idempotencyKey: expect.stringMatching(/^pay_\d{10,16}_[a-z0-9]{1,16}$/),
+        }),
+      ),
     );
     expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
   });
@@ -1684,9 +1712,11 @@ describe('the linked visits panel', () => {
 /**
  * A1, second half: this app called ONLY `markInvoicePaid`, so a payment taken
  * through the web admin never reached the root `payments` ledger the Payments
- * screens read, while Android's identical action wrote both.
+ * screens read. #2269/#2230: the panel now makes ONE `recordPayment` call with
+ * an `apply`, which pays the invoice and writes the ledger row together on the
+ * server, so a reload can no longer leave one without the other.
  */
-describe('recording a payment writes both the settlement and the ledger row', () => {
+describe('recording a payment is one call that writes the settlement and the ledger row', () => {
   async function recordTwenty(invoice = entry({ amountDue: 40, total: 40 })) {
     render(<InvoiceDetail invoice={invoice} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
@@ -1711,16 +1741,11 @@ describe('recording a payment writes both the settlement and the ledger row', ()
     // Two failures, so the dialog is still open for the third press. That is
     // the real shape of this defect: the operator only presses again because
     // the first press reported something.
-    markInvoicePaid.mockRejectedValueOnce(new Error('internal'));
-    markInvoicePaid.mockRejectedValueOnce(new Error('internal'));
-    markInvoicePaid.mockResolvedValue({
-      paymentId: 'pay1',
-      state: 'partial' as const,
-      totalCents: 4000,
-      paidCents: 2000,
-      amountDueCents: 2000,
-      overpaidCents: 0,
-    });
+    recordPayment.mockRejectedValueOnce(new Error('internal'));
+    recordPayment.mockRejectedValueOnce(new Error('internal'));
+    recordPayment.mockResolvedValue(
+      paymentResult({ appliedCents: 2500, state: 'partial', paidCents: 2500, amountDueCents: 1500 }),
+    );
     render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     const amount = screen.getByLabelText(/amount collected/i);
@@ -1728,49 +1753,31 @@ describe('recording a payment writes both the settlement and the ledger row', ()
     await userEvent.type(amount, '20');
     // First press: fails in a way that cannot say whether the money moved.
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
     // Second press, NOTHING TOUCHED in between. Same submission, same key.
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledTimes(2));
-    const firstKey = markInvoicePaid.mock.calls[0]![1].idempotencyKey;
-    const secondKey = markInvoicePaid.mock.calls[1]![1].idempotencyKey;
-    expect(firstKey).toMatch(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/);
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(2));
+    const firstKey = recordPayment.mock.calls[0]![0].idempotencyKey;
+    const secondKey = recordPayment.mock.calls[1]![0].idempotencyKey;
+    expect(firstKey).toMatch(/^pay_\d{10,16}_[a-z0-9]{1,16}$/);
     expect(secondKey).toBe(firstKey);
     // A CHANGED FIGURE IS A DIFFERENT PAYMENT, so the held key is dropped.
     await userEvent.clear(screen.getByLabelText(/amount collected/i));
     await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledTimes(3));
-    const thirdKey = markInvoicePaid.mock.calls[2]![1].idempotencyKey;
-    expect(thirdKey).toMatch(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/);
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(3));
+    const thirdKey = recordPayment.mock.calls[2]![0].idempotencyKey;
+    expect(thirdKey).toMatch(/^pay_\d{10,16}_[a-z0-9]{1,16}$/);
     expect(thirdKey).not.toBe(firstKey);
-    // The ledger row's own key is held by the same rule and shaped for its own
-    // collection, so a flow whose step 1 landed and whose step 2 failed is
-    // finished by pressing again rather than by re-entering the payment.
-    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    expect(recordPayment.mock.calls[0]![0].idempotencyKey).toMatch(
-      /^pay_\d{10,16}_[a-z0-9]{1,16}$/,
-    );
+    expect(recordPayment.mock.calls[2]![0].apply).toMatchObject({ amount: 25 });
+    expect(markInvoicePaid).not.toHaveBeenCalled();
   });
-  it('calls markInvoicePaid FIRST, then recordPayment with this payment amount', async () => {
-    markInvoicePaid.mockResolvedValue({
-      paymentId: 'pay1',
-      state: 'partial' as const,
-      totalCents: 4000,
-      paidCents: 2000,
-      amountDueCents: 2000,
-      overpaidCents: 0,
-    });
+  it('sends the applied part on the apply and the whole sum as the payment, in one call', async () => {
+    recordPayment.mockResolvedValue(
+      paymentResult({ appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 }),
+    );
     await recordTwenty();
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    expect(markInvoicePaid).toHaveBeenCalledWith('inv1', {
-      amount: 20,
-      method: 'check',
-      reference: '#881',
-      idempotencyKey: expect.stringMatching(/^ipay_\d{10,16}_[a-z0-9]{1,16}$/),
-    });
-    // $20, NOT the $20.00 cumulative figure that happens to match here by
-    // coincidence. See the second-payment case below for the one that bites.
     expect(recordPayment).toHaveBeenCalledWith(
       expect.objectContaining({
         amount: 20,
@@ -1779,80 +1786,51 @@ describe('recording a payment writes both the settlement and the ledger row', ()
         kinfolkId: 'kf1',
         paymentMethod: 'check',
         referenceNumber: '#881',
+        apply: { invoiceId: 'inv1', invoiceNumber: '1042', amount: 20 },
+        idempotencyKey: expect.stringMatching(/^pay_\d{10,16}_[a-z0-9]{1,16}$/),
       }),
     );
+    expect(recordPayment.mock.calls[0]![0]).not.toHaveProperty('settledByInvoicePaymentId');
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+    expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
   });
-  it('records THIS payment, not everything ever collected on the invoice', async () => {
-    // The trap. markInvoicePaid's `paidCents` is cumulative, so a second $20
-    // against a part-paid invoice answers 4000, and writing that to the ledger
-    // would book a $40 row for a $20 payment.
-    markInvoicePaid.mockResolvedValue({
-      paymentId: 'pay2',
-      state: 'settled' as const,
-      totalCents: 4000,
-      paidCents: 4000,
-      amountDueCents: 0,
-      overpaidCents: 0,
-    });
+  it('applies THIS payment, not everything ever collected on the invoice', async () => {
+    // The answer's `paidCents` is cumulative: a second $20 against a part-paid
+    // invoice settles it at 4000. What is sent is still the $20 she typed.
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ paidCents: 2000, amountDueCents: 2000 }));
+    recordPayment.mockResolvedValue(paymentResult({ appliedCents: 2000 }));
     await recordTwenty();
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    expect(recordPayment).toHaveBeenCalledWith(expect.objectContaining({ amount: 20 }));
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 20, apply: expect.objectContaining({ amount: 20 }) }),
+    );
+    expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
   });
-  it('derives an omitted amount from the ledger it already read, not from a guess', async () => {
-    // Leaving the field blank means "settle the rest". markInvoicePaid's answer
-    // is cumulative, so the payment's own size is the difference against the
-    // cumulative figure the panel had already loaded. Both come from the same
-    // subcollection, so they cannot disagree.
+  it('a blank amount applies the balance the ledger shows, not a guess', async () => {
+    // Leaving the field blank means "settle the rest", and the rest is what the
+    // recorded payments leave, read off the ledger the panel already loaded.
     getInvoiceLedger.mockResolvedValue(
       ledgerResult({ paidCents: 1500, amountDueCents: 2500 }),
     );
-    markInvoicePaid.mockResolvedValue({
-      paymentId: 'pay2',
-      state: 'settled' as const,
-      totalCents: 4000,
-      paidCents: 4000,
-      amountDueCents: 0,
-      overpaidCents: 0,
-    });
     render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
     await screen.findByText(/Collected|No payment has been recorded/i);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.clear(screen.getByLabelText(/amount collected/i));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    expect(recordPayment).toHaveBeenCalledWith(expect.objectContaining({ amount: 25 }));
+    expect(recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 25, apply: expect.objectContaining({ amount: 25 }) }),
+    );
   });
-  it('writes NO ledger row when the amount cannot be stated exactly, and says so', async () => {
-    // Blank amount AND an unreadable ledger. A guessed figure on a payment
-    // record is worse than a missing one.
-    getInvoiceLedger.mockRejectedValue(new Error('unavailable'));
-    markInvoicePaid.mockResolvedValue(settledResult());
-    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
-    await screen.findByText(/Could not load/i);
-    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    await userEvent.clear(screen.getByLabelText(/amount collected/i));
-    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    expect(await screen.findByText(/No row was added to the payment ledger/i)).toBeInTheDocument();
-    expect(recordPayment).not.toHaveBeenCalled();
-  });
-  it('does NOT fail the action when only the ledger row fails, and says what is missing', async () => {
-    // The money has already moved. Throwing here would offer a retry that
-    // collects a second time.
-    markInvoicePaid.mockResolvedValue(settledResult());
-    recordPayment.mockRejectedValueOnce(new Error('unavailable'));
-    await recordTwenty();
-    expect(await screen.findByText(/paid in full/i)).toBeInTheDocument();
-    expect(screen.getByText(/payment ledger row did not save/i)).toBeInTheDocument();
-    expect(screen.getByText(/The invoice itself is correct/i)).toBeInTheDocument();
-  });
-  it('does NOT call recordPayment when markInvoicePaid refused: no payment happened', async () => {
-    markInvoicePaid.mockRejectedValueOnce(new Error('Invoice is already settled.'));
+  it('a refusal records nothing and says why: no payment happened', async () => {
+    recordPayment.mockRejectedValueOnce(new Error('Invoice is already settled.'));
     await recordTwenty();
     expect(await screen.findByText(/Could not save: Invoice is already settled\./i)).toBeInTheDocument();
-    expect(recordPayment).not.toHaveBeenCalled();
+    expect(recordPayment).toHaveBeenCalledTimes(1);
+    expect(markInvoicePaid).not.toHaveBeenCalled();
+    expect(screen.queryByText(/payment recorded/i)).toBeNull();
   });
   it('reloads the ledger after a payment, so the panel is not describing the invoice as it was', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     await recordTwenty();
     // Once on mount, once after the write.
     await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(2));
@@ -1985,14 +1963,9 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
     expect(screen.getByLabelText(/send a confirmation email/i)).toBeInTheDocument();
   });
   it('records invoice #1029: the gross tip and the fee, on top of what settled the bill', async () => {
-    markInvoicePaid.mockResolvedValue({
-      paymentId: 'pay1',
-      state: 'settled' as const,
-      totalCents: 12750,
-      paidCents: 12750,
-      amountDueCents: 0,
-      overpaidCents: 0,
-    });
+    recordPayment.mockResolvedValue(
+      paymentResult({ appliedCents: 12750, totalCents: 12750, paidCents: 12750 }),
+    );
     await openForm();
     await userEvent.clear(screen.getByLabelText(/amount collected/i));
     await userEvent.type(screen.getByLabelText(/amount collected/i), '127.50');
@@ -2000,35 +1973,31 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
     await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '2.71');
     await submit();
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    // The invoice is settled by the APPLIED part alone.
-    expect(markInvoicePaid).toHaveBeenCalledWith('inv1', expect.objectContaining({ amount: 127.5 }));
-    // The ledger row is the whole TRANSACTION: $137.50, tip included.
+    // ONE call: the invoice takes the APPLIED part alone, and the row is the
+    // whole TRANSACTION, $137.50 with the tip.
     expect(recordPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 137.5, tip: 10, fee: 2.71 }),
+      expect.objectContaining({
+        amount: 137.5,
+        tip: 10,
+        fee: 2.71,
+        apply: expect.objectContaining({ invoiceId: 'inv1', amount: 127.5 }),
+      }),
     );
+    expect(markInvoicePaid).not.toHaveBeenCalled();
   });
-  it('NEVER sends an apply, because markInvoicePaid already settled the invoice', async () => {
-    // Sending one would put the same money against the same bill twice.
-    markInvoicePaid.mockResolvedValue(settledResult());
+  it('sends ONE apply for the applied part, and no settlement id from an earlier step', async () => {
+    // #2269: the server applies it in the same transaction that writes the
+    // row. There is no earlier `markInvoicePaid` step whose settlement this
+    // call would have to name, so it names none.
     await openForm();
     await submit();
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    expect(recordPayment.mock.calls[0]![0]).not.toHaveProperty('apply');
-  });
-  it('passes the settlement row markInvoicePaid returned, so only this payment can claim it (#866)', async () => {
-    // The server tells the office "paid" for a markInvoicePaid settlement only
-    // when step 2 names that settlement's payment id. Without it, any later
-    // payment linked to the invoice could claim it.
-    markInvoicePaid.mockResolvedValue(settledResult());
-    await openForm();
-    await submit();
-    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    expect(recordPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ invoiceId: 'inv1', settledByInvoicePaymentId: 'pay1' }),
-    );
+    const sent = recordPayment.mock.calls[0]![0];
+    expect(sent.apply).toEqual({ invoiceId: 'inv1', invoiceNumber: '1042', amount: 127.5 });
+    expect(sent).not.toHaveProperty('settledByInvoicePaymentId');
+    expect(markInvoicePaid).not.toHaveBeenCalled();
   });
   it('sends zero for an untouched tip and fee, which is what a blank box means', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     await openForm();
     await submit();
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
@@ -2037,7 +2006,6 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
   it('sends the switches OFF unless she turned them on', async () => {
     // A confirmation is a message to a real household. It goes out because she
     // ticked the box, never because the panel assumed she meant to.
-    markInvoicePaid.mockResolvedValue(settledResult());
     await openForm();
     await submit();
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
@@ -2046,7 +2014,6 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
     );
   });
   it('#988: sends the credit she entered, in cents, and the rest of the leftover as tip', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     await openForm();
     await userEvent.type(screen.getByLabelText(/total payment amount/i), '200');
     await userEvent.type(screen.getByLabelText(/leave as account credit/i), '20');
@@ -2064,7 +2031,6 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
     );
   });
   it('sends the staff notes, trimmed', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     await openForm();
     await userEvent.type(screen.getByLabelText(/staff-only notes/i), '  took the fee out of the tip  ');
     await submit();
@@ -2076,7 +2042,6 @@ describe('the record-payment form: fee, gross tip, notes and the two switches', 
   it('clears every new field between one payment and the next', async () => {
     // A tip left in the box from the last household is a tip recorded against
     // the wrong one.
-    markInvoicePaid.mockResolvedValue(settledResult());
     await openForm();
     await userEvent.type(screen.getByLabelText(/tip in dollars/i), '10');
     await userEvent.type(screen.getByLabelText(/leave as account credit/i), '5');
@@ -2104,7 +2069,6 @@ describe('the record-payment form: refusals it makes before any money moves', ()
     await userEvent.type(screen.getByLabelText(/tip in dollars/i), 'abc');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect(await screen.findByText(/"abc" is not a tip/i)).toBeInTheDocument();
-    expect(markInvoicePaid).not.toHaveBeenCalled();
     expect(recordPayment).not.toHaveBeenCalled();
   });
   it('refuses an unreadable fee the same way', async () => {
@@ -2112,18 +2076,18 @@ describe('the record-payment form: refusals it makes before any money moves', ()
     await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), 'lots');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect(await screen.findByText(/"lots" is not a fee/i)).toBeInTheDocument();
-    expect(markInvoicePaid).not.toHaveBeenCalled();
+    expect(recordPayment).not.toHaveBeenCalled();
   });
   it('refuses a negative fee, which is not a fee', async () => {
     await openForm();
     await userEvent.type(screen.getByLabelText(/processor fee in dollars/i), '-2.71');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect(await screen.findByText(/is not a fee/i)).toBeInTheDocument();
-    expect(markInvoicePaid).not.toHaveBeenCalled();
+    expect(recordPayment).not.toHaveBeenCalled();
   });
   it('refuses a payment that does not cover what is applied plus the tip', async () => {
     // The mis-key the Unapplied Balance exists to catch, refused BEFORE
-    // markInvoicePaid runs rather than after it has already collected.
+    // the payment is sent, so nothing is recorded.
     await openForm();
     await userEvent.clear(screen.getByLabelText(/amount collected/i));
     await userEvent.type(screen.getByLabelText(/amount collected/i), '127.50');
@@ -2131,7 +2095,7 @@ describe('the record-payment form: refusals it makes before any money moves', ()
     await userEvent.type(screen.getByLabelText(/total payment amount/i), '100');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect((await screen.findAllByText(/does not cover/i)).length).toBeGreaterThan(0);
-    expect(markInvoicePaid).not.toHaveBeenCalled();
+    expect(recordPayment).not.toHaveBeenCalled();
   });
   it('#988: refuses a credit larger than what is left after the applied part', async () => {
     await openForm();
@@ -2139,7 +2103,6 @@ describe('the record-payment form: refusals it makes before any money moves', ()
     await userEvent.type(screen.getByLabelText(/leave as account credit/i), '72.51');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect((await screen.findAllByText(/more than the \$72\.50 left/i)).length).toBeGreaterThan(0);
-    expect(markInvoicePaid).not.toHaveBeenCalled();
     expect(recordPayment).not.toHaveBeenCalled();
   });
   it('#988: refuses a typed tip and credit that do not add up to the payment', async () => {
@@ -2149,14 +2112,14 @@ describe('the record-payment form: refusals it makes before any money moves', ()
     await userEvent.type(screen.getByLabelText(/leave as account credit/i), '20');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect((await screen.findAllByText(/add up to \$157\.50, not the \$200\.00 paid/i)).length).toBeGreaterThan(0);
-    expect(markInvoicePaid).not.toHaveBeenCalled();
+    expect(recordPayment).not.toHaveBeenCalled();
   });
   it('#988: refuses an unreadable credit instead of recording none', async () => {
     await openForm();
     await userEvent.type(screen.getByLabelText(/leave as account credit/i), 'some');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect(await screen.findByText(/"some" is not an amount of account credit/i)).toBeInTheDocument();
-    expect(markInvoicePaid).not.toHaveBeenCalled();
+    expect(recordPayment).not.toHaveBeenCalled();
   });
   it('#988: refuses credit on an invoice with no household', async () => {
     render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5, kinfolkId: '' })} onClose={vi.fn()} />);
@@ -2165,7 +2128,7 @@ describe('the record-payment form: refusals it makes before any money moves', ()
     await userEvent.type(screen.getByLabelText(/leave as account credit/i), '20');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     expect(await screen.findByText(/account credit needs a household/i)).toBeInTheDocument();
-    expect(markInvoicePaid).not.toHaveBeenCalled();
+    expect(recordPayment).not.toHaveBeenCalled();
   });
 });
 describe('#988 where the payment goes, shown before Save', () => {
@@ -2378,20 +2341,28 @@ describe('#1566 the record-payment dialog on a $78.50 balance', () => {
     expect(line()).toHaveTextContent('The invoice owes $78.50, so the $21.50 over it is tip.');
   });
   it('settles with $78.50 and books the $21.50 as gross tip with the $2 fee', async () => {
-    markInvoicePaid.mockResolvedValue({ ...settledResult(), totalCents: 7850, paidCents: 7850 });
+    recordPayment.mockResolvedValue(
+      paymentResult({ appliedCents: 7850, totalCents: 7850, paidCents: 7850 }),
+    );
     await openAndType();
     await userEvent.type(screen.getByLabelText(/payment method/i), 'venmo');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    expect(markInvoicePaid).toHaveBeenCalledWith('inv1', expect.objectContaining({ amount: 78.5 }));
     expect(recordPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 100, tip: 21.5, fee: 2, creditToAccountCents: 0, autoApply: false }),
+      expect.objectContaining({
+        amount: 100,
+        tip: 21.5,
+        fee: 2,
+        creditToAccountCents: 0,
+        autoApply: false,
+        apply: expect.objectContaining({ amount: 78.5 }),
+      }),
     );
+    expect(markInvoicePaid).not.toHaveBeenCalled();
   });
 });
 describe('what the operator is told after the payment lands', () => {
   it('says where the leftover went when it became account credit', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     recordPayment.mockResolvedValue({
       ok: true,
       paymentId: 'led1',
@@ -2405,7 +2376,7 @@ describe('what the operator is told after the payment lands', () => {
       proceedsCents: 30000,
       tipNetCents: 0,
       autoApply: true,
-      application: null,
+      application: settledResult(),
       creditedToAccountCents: 17250,
       confirmationEmailSent: false,
     });
@@ -2415,7 +2386,6 @@ describe('what the operator is told after the payment lands', () => {
     expect(await screen.findByText(/added to the household's account credit/i)).toBeInTheDocument();
   });
   it('#988: says nothing about account credit when the server credited none', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     recordPayment.mockResolvedValue({
       ok: true,
       paymentId: 'led1',
@@ -2429,7 +2399,7 @@ describe('what the operator is told after the payment lands', () => {
       proceedsCents: 20000,
       tipNetCents: 7250,
       autoApply: false,
-      application: null,
+      application: settledResult(),
       creditedToAccountCents: 0,
       confirmationEmailSent: false,
     });
@@ -2441,7 +2411,6 @@ describe('what the operator is told after the payment lands', () => {
     expect(screen.queryByText(/added to the household's account credit/i)).toBeNull();
   });
   it('says the confirmation did NOT go out rather than letting her assume it did', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     recordPayment.mockResolvedValue({
       ok: true,
       paymentId: 'led1',
@@ -2455,7 +2424,7 @@ describe('what the operator is told after the payment lands', () => {
       proceedsCents: 12750,
       tipNetCents: 0,
       autoApply: false,
-      application: null,
+      application: settledResult(),
       creditedToAccountCents: 0,
       confirmationEmailSent: false,
       householdNoPortalAccount: true,
@@ -2472,7 +2441,6 @@ describe('what the operator is told after the payment lands', () => {
     expect(screen.queryByText(/office copy of the payment notice/i)).not.toBeInTheDocument();
   });
   it('#1511: a confirmation that reached the household in the app only is said so, in a warning, never as "did not go out"', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     recordPayment.mockResolvedValue({
       ok: true,
       paymentId: 'led1',
@@ -2486,7 +2454,7 @@ describe('what the operator is told after the payment lands', () => {
       proceedsCents: 12750,
       tipNetCents: 0,
       autoApply: false,
-      application: null,
+      application: settledResult(),
       creditedToAccountCents: 0,
       // The server's word: the record exists, no channel carried it.
       confirmationEmailSent: false,
@@ -2507,7 +2475,6 @@ describe('what the operator is told after the payment lands', () => {
     expect(screen.getByText('Done, but not all of it')).toBeInTheDocument();
   });
   it('#1511: an app-only flag is only read when a confirmation was asked for', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     recordPayment.mockResolvedValue({
       ok: true,
       paymentId: 'led1',
@@ -2521,7 +2488,7 @@ describe('what the operator is told after the payment lands', () => {
       proceedsCents: 12750,
       tipNetCents: 0,
       autoApply: false,
-      application: null,
+      application: settledResult(),
       creditedToAccountCents: 0,
       confirmationEmailSent: false,
       confirmationAppOnly: true,
@@ -2538,7 +2505,6 @@ describe('what the operator is told after the payment lands', () => {
   // #866 fourth review: the two reasons are not the same, and the note used to
   // blame a missing portal account for both.
   it('says the OFFICE copy did not go out when the roster could not be read, without blaming the household', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
     recordPayment.mockResolvedValue({
       ok: true,
       paymentId: 'led1',
@@ -2552,7 +2518,7 @@ describe('what the operator is told after the payment lands', () => {
       proceedsCents: 12750,
       tipNetCents: 0,
       autoApply: false,
-      application: null,
+      application: settledResult(),
       creditedToAccountCents: 0,
       confirmationEmailSent: true,
       householdNoPortalAccount: false,
@@ -2568,25 +2534,20 @@ describe('what the operator is told after the payment lands', () => {
     expect(screen.queryByText(/portal account/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/confirmation email did not go out/i)).not.toBeInTheDocument();
   });
-  // #866: the ledger step is now the only sender of the household's
-  // confirmation, so when it fails the operator must hear about both losses.
-  it('says the confirmation did not go out when the ledger step itself failed', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
+  // #2269: one call records the payment and sends the confirmation, so a
+  // failed call means neither happened, and the panel says the call failed
+  // rather than claiming any part of it landed.
+  it('a failed call with the confirmation ticked shows an error, and claims nothing was recorded or sent', async () => {
     recordPayment.mockRejectedValue(new Error('internal'));
     render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.click(screen.getByLabelText(/send a confirmation email/i));
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    expect(await screen.findByText(/confirmation email did not go out either/i)).toBeInTheDocument();
-  });
-  it('says nothing about a confirmation nobody asked for when the ledger step failed', async () => {
-    markInvoicePaid.mockResolvedValue(settledResult());
-    recordPayment.mockRejectedValue(new Error('internal'));
-    render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
-    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
-    expect(await screen.findByText(/payment ledger row did not save/i)).toBeInTheDocument();
-    expect(screen.queryByText(/confirmation email did not go out/i)).not.toBeInTheDocument();
+    expect(await screen.findByText(/internal/i)).toBeInTheDocument();
+    expect(screen.queryByText(/payment recorded/i)).toBeNull();
+    expect(screen.queryByText(/confirmation email did not go out/i)).toBeNull();
+    expect(screen.queryByText(/payment ledger row did not save/i)).toBeNull();
+    expect(markInvoicePaid).not.toHaveBeenCalled();
   });
 });
 /**
@@ -3311,14 +3272,15 @@ describe('InvoiceDetail and a quote the household has answered (issue #448)', ()
 });
 
 /**
- * #977: MARK PAID WITH AUTO-APPLY TICKED.
+ * #977: RECORD PAYMENT WITH A CREDIT.
  *
- * The server reads the part `markInvoicePaid` applied off the settlement row
- * this call names, so the payload has to carry that id and the WHOLE
- * transaction, and must carry no `apply` (the invoice is already settled). The
- * note after the payment repeats only the credit the server says it gave.
+ * Since #2269 the payment is one call: the WHOLE transaction as `amount`, the
+ * applied part as `apply`, and no settlement id from an earlier step. The
+ * server checks the credit against `amount - applied - tip` from that same
+ * request. The note after the payment repeats only the credit the server says
+ * it gave.
  */
-describe('#977 and #988 Mark paid, two-step, with and without a chosen credit', () => {
+describe('#977 and #988 Record payment, one call, with and without a chosen credit', () => {
   // #1566: the ledger agrees with the $127.50 invoice these cases open, since
   // the applied part now stops at the ledger's balance.
   beforeEach(() => {
@@ -3337,13 +3299,12 @@ describe('#977 and #988 Mark paid, two-step, with and without a chosen credit', 
     proceedsCents: amountCents - 271,
     tipNetCents: 729,
     autoApply: true,
-    application: null,
+    application: { ...settledResult(), appliedCents: 12750, totalCents: 12750, paidCents: 12750 },
     creditedToAccountCents,
     confirmationEmailSent: false,
   });
 
   async function payWithAutoApply(total?: string, credit?: string) {
-    markInvoicePaid.mockResolvedValue({ ...settledResult(), totalCents: 12750, paidCents: 12750 });
     render(<InvoiceDetail invoice={entry({ amountDue: 127.5, total: 127.5 })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await userEvent.clear(screen.getByLabelText(/amount collected/i));
@@ -3356,13 +3317,10 @@ describe('#977 and #988 Mark paid, two-step, with and without a chosen credit', 
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
   }
 
-  it('settles with the applied part, then sends the exact two-step ledger payload', async () => {
+  it('sends the exact one-call payload: the whole sum, and the applied part as the apply', async () => {
     recordPayment.mockResolvedValue(ledgerAnswer(0, 13750));
     await payWithAutoApply();
-    expect(markInvoicePaid).toHaveBeenCalledWith(
-      'inv1',
-      expect.objectContaining({ amount: 127.5 }),
-    );
+    expect(markInvoicePaid).not.toHaveBeenCalled();
     const sent = recordPayment.mock.calls[0]![0];
     const { idempotencyKey, date, paymentMethod, referenceNumber, ...rest } = sent;
     expect(idempotencyKey).toMatch(/^pay_\d+_[a-z0-9]+$/);
@@ -3383,7 +3341,7 @@ describe('#977 and #988 Mark paid, two-step, with and without a chosen credit', 
       sendConfirmationEmail: false,
       invoiceId: 'inv1',
       invoiceNumber: '1042',
-      settledByInvoicePaymentId: 'pay1',
+      apply: { invoiceId: 'inv1', invoiceNumber: '1042', amount: 127.5 },
     });
   });
 

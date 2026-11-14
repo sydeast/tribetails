@@ -2,6 +2,8 @@ package com.tribetails.auntieos.ui.invoices
 
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.repository.recordPaymentArgs
+import com.tribetails.auntieos.data.repository.recordPaymentOnInvoiceArgs
+import com.tribetails.auntieos.data.contracts.RecordPaymentArgsApply
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -126,14 +128,22 @@ class RecordPaymentFormTest {
 
     @Test
     fun `the invoice link is still a DISPLAY link and never an apply`() {
-        // `markInvoicePaid` runs first and has already settled the invoice by
-        // the time this row is written. Sending an apply would put the same
-        // money against the same bill a second time.
+        // The ledger-row-only request older builds send after their own
+        // `markInvoicePaid` step, which has already settled the invoice. An
+        // apply here would put the same money against the same bill twice.
         val args = recordPaymentArgs(buildInvoicePayment(invoice(), 127.5, "cash", "", "", ""))
         assertEquals("inv1", args.invoiceId)
         assertEquals("1029", args.invoiceNumber)
         assertNull(args.apply)
         assertFalse(args.toPayload().containsKey("apply"))
+    }
+
+    @Test
+    fun `#2269 the Record payment request adds the apply, on the invoice it is linked to`() {
+        val args = recordPaymentOnInvoiceArgs(buildInvoicePayment(invoice(), 127.5, "cash", "", "", ""), 127.5)
+        assertEquals("inv1", args.invoiceId)
+        assertEquals(RecordPaymentArgsApply(invoiceId = "inv1", invoiceNumber = "1029", amount = 127.5), args.apply)
+        assertNull(args.settledByInvoicePaymentId)
     }
 
     @Test
