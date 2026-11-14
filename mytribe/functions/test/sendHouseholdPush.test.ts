@@ -195,6 +195,15 @@ describe('sendHouseholdPush (#2061)', () => {
     expect(mocks.multicast.mock.calls[0]![0].notification.body).toBe('Hi there');
   });
 
+  it("#2321: an apostrophe, an ampersand and a quote mark reach the phone and the list as typed", async () => {
+    const typed = `O'Malley & Sue said "see you Friday"`;
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, 'business_settings/business_settings': { householdNotificationsLive: true } });
+    const res = await sendHouseholdPushHandler(req({ body: typed, title: "Bob & Sue's Auntie" }));
+    expect(res.outcome).toBe('sent');
+    expect(mocks.multicast.mock.calls[0]![0].notification).toEqual({ title: "Bob & Sue's Auntie", body: typed });
+    const notice = ctx.writes.find((w) => w.path === noticePath);
+    expect((notice!.data as Record<string, unknown>)['householdLine']).toBe(typed);
+  });
   it('NEGATIVE: refuses an unsigned caller, an empty line and a malformed draft id', async () => {
     seed({ ...HOUSEHOLD, ...PUSH_ON });
     await expect(sendHouseholdPushHandler(req({}, null))).rejects.toMatchObject({ code: 'unauthenticated' });

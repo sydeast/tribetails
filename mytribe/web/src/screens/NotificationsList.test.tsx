@@ -119,6 +119,19 @@ describe('NotificationsList rows (#1316)', () => {
     expect(buttons[2]?.querySelector('.nl-row__when')?.textContent).toBe('3h ago');
   });
 
+  it('#2321: a row shows punctuation and typed markup as characters, never as codes or as markup', async () => {
+    const title = "O'Malley & Sue's visit";
+    const description = 'Bob & Sue said "<b>bold</b> &amp; <img src=x onerror=alert(1)>"';
+    mocks.list.mockResolvedValue(page([item({ title, description })]));
+    const { container } = renderScreen();
+    const list = await screen.findByTestId('notifications-list');
+    expect(list.querySelector('.nl-row__title')?.textContent).toBe(`Unread: ${title}`);
+    const line = list.querySelector('.nl-row__desc');
+    // The words are one text node: nothing typed became an element.
+    expect(line?.textContent).toBe(description);
+    expect(line?.children).toHaveLength(0);
+    expect(container.querySelector('img[src="x"]')).toBeNull();
+  });
   it("#2030: shows the office's note on the answer to a request, and nothing on a row without one", async () => {
     mocks.list.mockResolvedValue(
       page([

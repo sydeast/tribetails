@@ -1,11 +1,10 @@
-import Handlebars from 'handlebars';
 import { getAdmin, db } from '../../lib/firestoreAdmin';
 import { logEvent } from '../../lib/logger';
 import {
   HOUSEHOLD_NOTICE_ROUTE,
   householdPushShelfLine,
   kinForStoredTemplate,
-  stripUnresolvedTokens,
+  renderPlainText,
 } from '../templateParsers';
 import { fallbackPush } from '../fallbackTemplate';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
@@ -77,11 +76,13 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
 
   // #2093: a template stored before the quote wording changed still reads whole.
   const renderCtx = { ...kinForStoredTemplate(data, [tpl.title, tpl.body]), recipientUid, notificationKey: def.key };
-  const title = stripUnresolvedTokens(Handlebars.compile(tpl.title)(renderCtx));
-  const renderedBody = stripUnresolvedTokens(Handlebars.compile(tpl.body)(renderCtx));
-  const templateRoute = tpl.dataRoute
-    ? stripUnresolvedTokens(Handlebars.compile(tpl.dataRoute)(renderCtx))
-    : undefined;
+  // #2321: a push is plain text and its route is a path, so nothing is escaped
+  // for a web page.
+  // Both are set by here: a template missing either was swapped for the
+  // generic wording above.
+  const title = renderPlainText(tpl.title ?? '', renderCtx);
+  const renderedBody = renderPlainText(tpl.body ?? '', renderCtx);
+  const templateRoute = tpl.dataRoute ? renderPlainText(tpl.dataRoute, renderCtx) : undefined;
   // #2280: a household's push is a short line, and a tap on it opens MyTribe
   // where the whole message is: the template's own route when it has one, else
   // the notifications list. Staff and business copies are sent as written.

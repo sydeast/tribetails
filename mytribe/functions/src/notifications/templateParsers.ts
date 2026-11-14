@@ -2,6 +2,7 @@
  * Pure parsers for on-disk notification template files.
  * No I/O, no Firestore. Tested in isolation under functions vitest config.
  */
+import Handlebars from 'handlebars';
 
 export interface EmailTxtParsed {
   subject: string;
@@ -37,6 +38,31 @@ export function stripUnresolvedTokens(rendered: string): string {
   return rendered.replace(/\{\{[^}]*\}\}/g, '');
 }
 
+/**
+ * Renders a stored template for a PLAIN-TEXT channel: a text message, a push
+ * title or body, a push route (#2321). PURE.
+ *
+ * Handlebars escapes every `{{value}}` for a web page unless told otherwise:
+ * an apostrophe becomes `&#x27;`, `&` becomes `&amp;`, `=` becomes `&#x3D;`.
+ * A phone prints those codes as they are, so a Kin called O'Malley arrived as
+ * `O&#x27;Malley`. Nothing here is a web page, so nothing is escaped, the same
+ * as the email's subject and text part (`lib/email.ts`).
+ *
+ * NEVER USE THE RESULT AS HTML. It holds whatever was typed, `<` included. The
+ * email's html part is rendered by `lib/email.ts`, which keeps the escaping.
+ *
+ * NO ENTITY IS DECODED HERE. A merge value reaches a sender as the text typed:
+ * a stored message body (kept as entities since #2144) is turned back into
+ * text once, where the notice is raised (`messagePreview`). Decoding again
+ * here would turn a typed `&lt;` into `<`.
+ *
+ * It lives in this file, which both senders already load, because a module of
+ * its own would be one more on every function's cold start
+ * (`test/coldStartImportGraph.test.ts`).
+ */
+export function renderPlainText(template: string, data: Record<string, unknown>): string {
+  return stripUnresolvedTokens(Handlebars.compile(template, { noEscape: true })(data));
+}
 export interface PushTxtParsed {
   title: string;
   body: string;

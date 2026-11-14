@@ -1,9 +1,8 @@
-import Handlebars from 'handlebars';
 import { db } from '../../lib/firestoreAdmin';
 import { getTwilio, getTwilioFromNumber } from '../../lib/twilio';
 import { describeProviderFailure } from '../../lib/providerFailure';
 import { redactRecipient } from '../../lib/suppressions';
-import { householdSmsText, kinForStoredTemplate, stripUnresolvedTokens } from '../templateParsers';
+import { householdSmsText, kinForStoredTemplate, renderPlainText } from '../templateParsers';
 import { PORTAL_URL } from '../visitDates';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
@@ -76,10 +75,13 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
     return { skipped: true, skipReason: 'recipient_no_phone' };
   }
 
-  const rendered = stripUnresolvedTokens(
-    // #2093: a template stored before the quote wording changed still reads whole.
-    Handlebars.compile(tpl.text)({ ...kinForStoredTemplate(data, [tpl.text]), recipientUid, notificationKey: def.key }),
-  );
+  // #2321: a text message is plain text, so nothing is escaped for a web page.
+  // #2093: a template stored before the quote wording changed still reads whole.
+  const rendered = renderPlainText(tpl.text, {
+    ...kinForStoredTemplate(data, [tpl.text]),
+    recipientUid,
+    notificationKey: def.key,
+  });
   // #2280: a household's text message is short and links into MyTribe, where
   // the whole message is. Staff and business copies are sent as written.
   const body = stream === 'kinfolk' ? householdSmsText(rendered, PORTAL_URL) : rendered;
