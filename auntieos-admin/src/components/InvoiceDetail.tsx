@@ -14,6 +14,7 @@ import {
   quoteIsChangeable,
   type InvoiceDispute,
   type InvoiceEntry,
+  type InvoiceState,
 } from '../api/invoices';
 import {
   formatUsd,
@@ -40,6 +41,9 @@ import {
   updateInvoice,
   archiveInvoice,
   unarchiveInvoice,
+  writeOffInvoice,
+  refusalCodeOf,
+  refusalOwedCentsOf,
   retryInvoiceCheckoutClose,
   previewInvoiceNotice,
   convertQuoteToInvoice,
@@ -655,14 +659,9 @@ interface EditDraft {
  * go of its visits, and the message says they are back on the un-invoiced list.
  * Same words as Android.
  */
-export function archiveNoticeText(force: boolean, released: number, kind: 'invoice' | 'quote' = 'invoice'): string {
+export function archiveNoticeText(released: number, kind: 'invoice' | 'quote' = 'invoice'): string {
   // #2195: a quote is archived like a draft, and named as what it is.
-  const base =
-    kind === 'quote'
-      ? 'Quote archived. The household no longer sees it.'
-      : force
-        ? 'Invoice archived, and the balance written off the outstanding total.'
-        : 'Invoice archived.';
+  const base = kind === 'quote' ? 'Quote archived. The household no longer sees it.' : 'Invoice archived.';
   if (released === 0) return base;
   return released === 1
     ? `${base} Its visit is back on the un-invoiced list.`
@@ -746,11 +745,47 @@ export function withdrawNoticeText(released: number): string {
     : `Quote withdrawn. The household no longer sees it, and its ${String(released)} visits are back on the not yet invoiced list.`;
 }
 
-/** Which way the archive confirm is pointing, and whether money is at stake. */
+/**
+ * Which way the archive confirm is pointing. #2090: `owedCents` is set when the
+ * invoice still has money owed, which archiving never touches: the prompt then
+ * says why it cannot be archived and offers the write-off instead.
+ */
 interface ArchivePrompt {
   direction: 'archive' | 'restore';
-  /** Set after the server refuses an archive because money is still owed. */
-  forceOffered: boolean;
+  owedCents: number | null;
+}
+/**
+ * #2090: the cents an invoice still owes that the owner could write off, or
+ * null when there is nothing to write off: anything but a stamped `open`
+ * invoice with a balance (a draft, a quote, a paid or written-off one), or an
+ * archived one, which is restored first. The server decides again on its own
+ * read; this only keeps a button off an invoice the server would refuse.
+ */
+export function writeOffOwedCents(
+  invoice: Pick<InvoiceEntry, 'amountDue' | 'amountDueCents' | 'archivedAt'>,
+  state: InvoiceState | null,
+): number | null {
+  if (state !== 'open' || isArchivedInvoice(invoice as InvoiceEntry)) return null;
+  const cents =
+    typeof invoice.amountDueCents === 'number' && Number.isInteger(invoice.amountDueCents)
+      ? invoice.amountDueCents
+      : Number.isFinite(invoice.amountDue)
+        ? Math.round(invoice.amountDue * 100)
+        : 0;
+  return cents > 0 ? cents : null;
+}
+/** #2090: the archive prompt on an invoice with money owed. Same words as the server, Android and the desktop console. */
+export function cannotArchiveOwedText(owedCents: number): string {
+  return `This invoice still has ${formatCentsUsd(owedCents)} owing, so it cannot be archived. Record the payment, or write off the balance first.`;
+}
+/** #2090: the write-off confirm, naming the household, the invoice and the amount. Same words on every admin client. */
+export function writeOffConfirmText(household: string, invoiceNumber: string, owedCents: number): string {
+  const which = invoiceNumber.trim() === '' ? 'this invoice' : `invoice ${invoiceNumber.trim()}`;
+  return `Write off ${formatCentsUsd(owedCents)} on ${which} for ${household}? The household will no longer be asked to pay it, and it stops counting as outstanding. It is not recorded as a payment or as account credit, and it cannot be undone.`;
+}
+/** #2090: the notice once the balance is written off. */
+export function writeOffNoticeText(writtenOffCents: number): string {
+  return `Balance of ${formatCentsUsd(writtenOffCents)} written off. The household is no longer asked to pay it, and the invoice can be archived now.`;
 }
 
 /**
@@ -912,6 +947,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const [resendPrompt, setResendPrompt] = useState(false);
   /** #2088: the confirm for turning a quote into an invoice, or withdrawing it. */
   const [quotePrompt, setQuotePrompt] = useState<'convert' | 'withdraw' | null>(null);
+  /** #2090: the write-off confirm, holding the balance it names. Separate from `pending` like the others. */
+  const [writeOffPrompt, setWriteOffPrompt] = useState<number | null>(null);
 
   // THE LEDGER: what was paid against this invoice, and which visits it bills.
   //
@@ -977,6 +1014,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // an open invoice now and is named as an invoice.
   const isQuote = state === 'quote' || quoteDraft;
   const docNoun = isQuote ? 'Quote' : 'Invoice';
+  // #2090: what is left to write off, and what was written off already.
+  const owedCents = writeOffOwedCents(invoice, state);
+  const writtenOffCents =
+    state === 'written_off' && typeof invoice.writtenOffCents === 'number' && invoice.writtenOffCents > 0
+      ? invoice.writtenOffCents
+      : null;
 
   // `allowed.includes` is the guard on an ARMED action (see `initialAction`).
   // The list derives its row button from this same function, but the live
@@ -1251,7 +1294,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     }
   }
 
-  async function confirmArchive(force: boolean) {
+  async function confirmArchive() {
     if (!archivePrompt || busy) return;
     setBusy(true);
     setActionError(null);
@@ -1263,23 +1306,21 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         setNoticeIncomplete(notice !== '');
         setNotice(restoreNoticeText(notice));
       } else {
-        const { releasedSessionIds } = await archiveInvoice(invoice._id, force);
+        const { releasedSessionIds } = await archiveInvoice(invoice._id);
         setNoticeIncomplete(false);
-        setNotice(archiveNoticeText(force, releasedSessionIds.length, changeableQuote ? 'quote' : 'invoice'));
+        setNotice(archiveNoticeText(releasedSessionIds.length, changeableQuote ? 'quote' : 'invoice'));
       }
       setBusy(false);
       setArchivePrompt(null);
     } catch (caught) {
       setBusy(false);
       const message = caught instanceof Error ? caught.message : 'Action failed';
-      // The server refuses an archive that would drop real money out of the
-      // outstanding total. That is not an error to bounce off; it is a decision
-      // to put back to the operator, so the prompt re-renders offering the
-      // write-off explicitly rather than just reporting a failure.
-      const stillOwing = /still has \$/.test(message) || /owing/i.test(message);
-      if (stillOwing && archivePrompt.direction === 'archive') {
-        setArchivePrompt({ direction: 'archive', forceOffered: true });
-        setActionError(message);
+      // #2090: money is still owed (the list was behind the server). Not a
+      // failure: the prompt says why it cannot be archived and offers the
+      // write-off. Decided on the refusal's code, never on its sentence.
+      const owed = refusalOwedCentsOf(caught);
+      if (refusalCodeOf(caught) === 'invoice_still_owing' && archivePrompt.direction === 'archive' && owed !== null) {
+        setArchivePrompt({ direction: 'archive', owedCents: owed });
       } else {
         setArchivePrompt(null);
         setActionError(
@@ -1289,6 +1330,36 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     }
   }
 
+  /**
+   * #2090: write off what is left. The confirm named the household, the
+   * invoice and this amount, and the server refuses if the balance has moved
+   * since, naming the new figure, which the confirm then shows instead.
+   */
+  async function confirmWriteOff() {
+    if (writeOffPrompt === null || busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      const res = await writeOffInvoice(invoice._id, writeOffPrompt);
+      setBusy(false);
+      setWriteOffPrompt(null);
+      setArchivePrompt(null);
+      setNoticeIncomplete(false);
+      setNotice(writeOffNoticeText(res.writtenOffCents));
+      reloadLedger();
+    } catch (caught) {
+      setBusy(false);
+      const message = caught instanceof Error ? caught.message : 'Write off failed';
+      const owed = refusalOwedCentsOf(caught);
+      if (refusalCodeOf(caught) === 'write_off_amount_changed' && owed !== null && owed > 0) {
+        setWriteOffPrompt(owed);
+        setActionError(message);
+      } else {
+        setWriteOffPrompt(null);
+        setActionError(message);
+      }
+    }
+  }
   /**
    * "Try again" on the open-payment-links line (#1113). Moves no money: it asks
    * Stripe to expire the sessions it refused to expire the first time. The
@@ -1750,6 +1821,18 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               <dd>{formatUsd(partial.paidCents / 100)}</dd>
             </div>
           )}
+          {writtenOffCents !== null && typeof invoice.paidCents === 'number' && invoice.paidCents > 0 && (
+            <div className="invoice-detail__fact">
+              <dt>Paid</dt>
+              <dd>{formatCentsUsd(invoice.paidCents)}</dd>
+            </div>
+          )}
+          {writtenOffCents !== null && (
+            <div className="invoice-detail__fact" data-testid="written-off-fact">
+              <dt>Written off</dt>
+              <dd>{formatCentsUsd(writtenOffCents)}</dd>
+            </div>
+          )}
           <div className="invoice-detail__fact">
             <dt>{partial ? 'Still owed' : 'Amount due'}</dt>
             <dd>{formatUsd(invoice.amountDue)}</dd>
@@ -1850,7 +1933,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         {archived && !notice && (
           <Banner tone="info" title="Archived" dismissible>
             {archivedQuoteBannerText(invoice) ??
-              'This invoice is out of the working list and out of the outstanding and billed totals. It has not been deleted or cancelled, and the household can still see it and still pay it.'}
+              'This invoice is out of the working list and out of the outstanding and billed totals. It has not been deleted or cancelled, and the household can still see it.'}
           </Banner>
         )}
 
@@ -2165,6 +2248,38 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               />
             </div>
           </div>
+        ) : writeOffPrompt !== null ? (
+          <div className="invoice-detail__confirm" data-testid="write-off-confirm">
+            <p className="invoice-detail__confirm-copy">
+              {writeOffConfirmText(household, invoice.invoiceNumber, writeOffPrompt)}
+            </p>
+            <div className="invoice-detail__confirm-actions">
+              <GhostButton label="Cancel" onClick={() => !busy && setWriteOffPrompt(null)} disabled={busy} />
+              <PrimaryButton
+                label={busy ? 'Writing off…' : `Write off ${formatCentsUsd(writeOffPrompt)}`}
+                onClick={() => void confirmWriteOff()}
+                disabled={busy}
+                busy={busy}
+              />
+            </div>
+          </div>
+        ) : archivePrompt && archivePrompt.direction === 'archive' && archivePrompt.owedCents !== null ? (
+          /* #2090: archiving is tidying, and this invoice still has money owed.
+             Not a failure: the reason, and the two ways forward. */
+          <div className="invoice-detail__confirm" data-testid="archive-owed">
+            <p className="invoice-detail__confirm-copy">{cannotArchiveOwedText(archivePrompt.owedCents)}</p>
+            <div className="invoice-detail__confirm-actions">
+              <GhostButton label="Close" onClick={() => setArchivePrompt(null)} disabled={busy} />
+              <PrimaryButton
+                label="Write off balance"
+                onClick={() => {
+                  setWriteOffPrompt(archivePrompt.owedCents);
+                  setArchivePrompt(null);
+                }}
+                disabled={busy}
+              />
+            </div>
+          </div>
         ) : archivePrompt ? (
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">
@@ -2173,14 +2288,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   'This puts the invoice back into the working list and back into the outstanding and billed totals. Continue?')
                 : changeableQuote
                   ? 'This takes the quote out of the working list. The household no longer sees it and cannot answer it, and the visits it holds go back on the not yet invoiced list. It is not deleted, and Restore brings it back. Continue?'
-                  : 'This takes the invoice out of the working list and out of the outstanding and billed totals. It does NOT delete it, cancel it, or forgive what is owed, and the household can still see it and still pay it. Continue?'}
+                  : 'This takes the invoice out of the working list and out of the billed totals. It is not deleted or cancelled, and Restore brings it back. Continue?'}
             </p>
-            {archivePrompt.forceOffered && (
-              <p className="invoice-detail__confirm-copy">
-                Archiving it anyway writes that balance off the outstanding total, so nothing will
-                remind you to collect it. That choice is recorded separately in the audit trail.
-              </p>
-            )}
             <div className="invoice-detail__confirm-actions">
               <GhostButton
                 label="Cancel"
@@ -2189,15 +2298,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               />
               <PrimaryButton
                 label={
-                  busy
-                    ? 'Working…'
-                    : archivePrompt.direction === 'restore'
-                      ? 'Restore invoice'
-                      : archivePrompt.forceOffered
-                        ? 'Archive anyway'
-                        : 'Archive invoice'
+                  busy ? 'Working…' : archivePrompt.direction === 'restore' ? 'Restore invoice' : 'Archive invoice'
                 }
-                onClick={() => void confirmArchive(archivePrompt.forceOffered)}
+                onClick={() => void confirmArchive()}
                 disabled={busy}
                 busy={busy}
               />
@@ -2422,12 +2525,16 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                 matrix. That matrix answers "what can be done about the money",
                 and archiving is orthogonal to it: an invoice in any state can be
                 taken out of the working list. */}
+            {/* #2090: the owner gives up what is left, behind its own confirm. */}
+            {owedCents !== null && (
+              <GhostButton label="Write off balance" onClick={() => setWriteOffPrompt(owedCents)} />
+            )}
             <GhostButton
               label={archived ? 'Restore' : 'Archive'}
               onClick={() =>
                 setArchivePrompt({
                   direction: archived ? 'restore' : 'archive',
-                  forceOffered: false,
+                  owedCents: archived ? null : owedCents,
                 })
               }
             />

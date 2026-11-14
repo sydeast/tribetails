@@ -118,7 +118,7 @@ class InvoiceDetailArchivedTest {
         val vm = mount(draft(archivedAt = "2026-07-25T00:00:00Z"), draft())
 
         vm.promptArchive()
-        vm.confirmArchive(false)
+        vm.confirmArchive()
         rule.waitForIdle()
 
         val text = "Invoice restored to the working list. $notice"
@@ -142,7 +142,7 @@ class InvoiceDetailArchivedTest {
         val vm = mount(draft(archivedAt = "2026-07-25T00:00:00Z"), draft())
 
         vm.promptArchive()
-        vm.confirmArchive(false)
+        vm.confirmArchive()
         rule.waitForIdle()
 
         assertEquals(null, vm.uiState.value.restoreNotice)

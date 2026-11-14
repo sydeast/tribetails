@@ -306,6 +306,11 @@
   background: var(--color-surface-2);
   color: var(--color-text-faint);
 }
+/* #2090: closed, nothing owed, but not paid. Muted like zero, never the paid green. */
+.invoices__chip--written-off {
+  background: var(--color-surface-2);
+  color: var(--color-text-faint);
+}
 .invoices__chip--cancelled {
   background: var(--color-surface-2);
   color: var(--color-text-faint);

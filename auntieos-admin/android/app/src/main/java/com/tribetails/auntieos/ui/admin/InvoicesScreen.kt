@@ -162,6 +162,8 @@ internal enum class InvoiceFilter(val label: String) {
     Draft("Draft"),
     Quote("Quote"),
     Credit("Credit"),
+    // #2090: closed by a write-off, never folded into Paid. Same as web.
+    WrittenOff("Written off"),
 }
 
 // ── invoice facets, all reads of the STORED state stamp (ADR-0002) ───────────
@@ -282,6 +284,7 @@ internal fun matchesFilter(i: Invoice, filter: InvoiceFilter, todayIso: String):
     InvoiceFilter.Quote -> invoiceIsQuote(i)
     // Credit also takes `redeemed`, as on web.
     InvoiceFilter.Credit -> invoiceStateOrNull(i).let { it == InvoiceState.CREDIT || it == InvoiceState.REDEEMED }
+    InvoiceFilter.WrittenOff -> invoiceStateOrNull(i) == InvoiceState.WRITTEN_OFF
 }
 private fun matchesQuery(i: Invoice, query: String): Boolean {
     if (query.isBlank()) return true
@@ -801,6 +804,7 @@ private fun InvoiceRow(
             InvoiceState.CREDIT -> "Credit" to AuntieStatusTone.Teal
             InvoiceState.REDEEMED -> "Redeemed" to AuntieStatusTone.Muted
             InvoiceState.ZERO -> "Zero" to AuntieStatusTone.Muted
+            InvoiceState.WRITTEN_OFF -> "Written off" to AuntieStatusTone.Muted
             InvoiceState.OPEN -> "Open" to AuntieStatusTone.Orange
             InvoiceState.PAID -> "Paid" to AuntieStatusTone.Success
             null -> invoice.status.trim().ifBlank { "No status" } to AuntieStatusTone.Muted

@@ -49,6 +49,8 @@ const STATE_FIXTURES: Record<string, Record<string, unknown>> = {
   redeemed: { kinfolkId: '3', status: 'redeemed', amountDue: -25, total: -25, creditRedeemedAt: 'ts' },
   paid: { kinfolkId: '3', status: 'paid', amountDue: 0, total: 40 },
   zero: { kinfolkId: '3', status: 'open', amountDue: 0, total: 0 },
+  // #2090: written off. Never a paid transition, so it sends nothing.
+  written_off: { kinfolkId: '3', status: 'written_off', amountDue: 0, amountDueCents: 0, total: 40 },
   open: { kinfolkId: '3', status: 'open', amountDue: 40, total: 40 },
 };
 

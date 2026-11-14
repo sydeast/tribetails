@@ -112,6 +112,16 @@ class Stage2Step2HelpersTest {
         assertEquals(150.0, weeklyRevenue(invoices, "2026-06-01", "2026-06-05"), 0.0)
     }
 
+    @Test fun weeklyRevenue_writtenOffCountsOnlyWhatWasCollected_2090() {
+        val invoices = listOf(
+            // $100 bill, $30 came in, $70 written off.
+            Invoice(id = "w", status = "written_off", total = 100.0, amountDue = 0.0, date = "2026-06-02", writtenOffCents = 7000L),
+            // Written off whole.
+            Invoice(id = "x", status = "written_off", total = 40.0, amountDue = 0.0, date = "2026-06-02", writtenOffCents = 4000L),
+        )
+        assertFalse(invoiceIsPaidForRevenue(invoices[0]))
+        assertEquals(30.0, weeklyRevenue(invoices, "2026-06-01", "2026-06-05"), 0.0)
+    }
     @Test fun weeklyRevenue_skipsUnparseableDate() {
         val invoices = listOf(
             Invoice(id = "i1", status = "paid", total = 100.0, amountDue = 0.0, date = ""),

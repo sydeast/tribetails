@@ -52,6 +52,9 @@ export function invoiceStateInfo(state: InvoiceState): InvoiceStateInfo {
       return { label: 'Zero balance', chipLabel: 'ZERO', cssClass: 'zero' };
     case 'open':
       return { label: 'Open', chipLabel: 'OPEN', cssClass: 'open' };
+    // #2090: the owner wrote off what was left. Not "Paid": nobody paid it.
+    case 'written_off':
+      return { label: 'Written off', chipLabel: 'WRITTEN OFF', cssClass: 'written-off' };
   }
 }
 
@@ -134,6 +137,10 @@ export function invoiceActionsFor(state: InvoiceState): readonly InvoiceAction[]
     // claim than "someone paid".
     case 'zero':
       return [];
+    // #2090: the balance was written off. Nothing to collect or remind about,
+    // and no receipt: a receipt says money arrived.
+    case 'written_off':
+      return [];
   }
 }
 
@@ -141,12 +148,17 @@ export function invoiceActionsFor(state: InvoiceState): readonly InvoiceAction[]
  * #2168: what an invoice is offered once archiving is counted in. An archived
  * invoice is read-only until it is restored: the server refuses to send, edit
  * or link one (`invoice_archived`), so Review and send is never offered on it,
- * from the list row or from the detail panel. The collection actions are left
- * as the state gives them: archiving does not stop a household paying.
+ * from the list row or from the detail panel.
+ *
+ * #2090: nor Send reminder. The server refuses a reminder on an archived
+ * invoice (`lib/invoiceChase.ts`), and since #2090 only an invoice with nothing
+ * owed can be archived at all, so there is nothing to remind anyone about. The
+ * walk saw archived rows offering it. Recording a payment stays as the state
+ * gives it: archiving does not stop a household paying.
  */
 export function invoiceActionsOffered(state: InvoiceState, archived: boolean): readonly InvoiceAction[] {
   const actions = invoiceActionsFor(state);
-  return archived ? actions.filter((a) => a !== 'reviewSend') : actions;
+  return archived ? actions.filter((a) => a !== 'reviewSend' && a !== 'reminder') : actions;
 }
 
 const USD_DIGITS = new Intl.NumberFormat('en-US', {

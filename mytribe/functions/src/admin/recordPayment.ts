@@ -33,6 +33,7 @@ import { enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { reachedAppOnly } from '../notifications/appOnly';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import { PAYMENT_APPLIED_CLAIM_FIELD, claimableMarkInvoicePaidOwner } from '../lib/paymentAppliedOwner';
+import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
 
 /**
  * Creates a row in the ROOT `payments` collection. W2-1 of ADR-0002
@@ -621,6 +622,17 @@ export async function recordPaymentHandler(
     const linkedInvoiceRef =
       !plannedStep && args.invoiceId !== '' ? db().collection('invoices').doc(args.invoiceId) : null;
     const linkedInvoiceSnap = linkedInvoiceRef ? await tx.get(linkedInvoiceRef) : null;
+    // #2090: THE INVOICE BEING SETTLED, AGAIN, INSIDE THE TRANSACTION. The plan
+    // was read outside it (#825), and `stageApply` writes the balance from that
+    // read, so a write-off committing in between would be overwritten with the
+    // old balance. Reading the doc here puts it in this transaction's read set,
+    // so the two serialise, and a written-off invoice refuses the payment.
+    if (plannedStep) {
+      const fresh = await tx.get(db().collection('invoices').doc(plannedStep.invoiceId));
+      if (isWrittenOff((fresh.data() ?? {}) as Record<string, unknown>)) {
+        throw new HttpsError('failed-precondition', WRITTEN_OFF_PAYMENT_REFUSAL, { code: INVOICE_WRITTEN_OFF_CODE });
+      }
+    }
     const claimedOwner = linkedInvoiceSnap?.exists
       ? claimableMarkInvoicePaidOwner(
           (linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>,

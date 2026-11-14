@@ -26,12 +26,14 @@
  * Pure: the trigger does the reads and the Stripe calls.
  */
 import { invoiceIsPaid, type InvoicePaidDoc } from './invoicePaidGate';
+import { isWrittenOff } from './invoiceArchive';
 
 export const OPEN_CHECKOUT_SESSIONS_FIELD = 'openCheckoutSessionIds';
 export const CLOSED_CHECKOUT_SESSIONS_FIELD = 'closedCheckoutSessionIds';
 
 export interface SweepDoc extends InvoicePaidDoc {
   pendingCheckoutSessionId?: unknown;
+  writtenOffAt?: unknown;
   [OPEN_CHECKOUT_SESSIONS_FIELD]?: unknown;
   [CLOSED_CHECKOUT_SESSIONS_FIELD]?: unknown;
 }
@@ -51,7 +53,9 @@ function oneId(v: unknown): string[] {
  * invoice unpaid closes nothing: those sessions are the household's way to pay.
  */
 export function sessionsToClose(before: SweepDoc | undefined, after: SweepDoc | undefined): string[] {
-  if (!after || !invoiceIsPaid(after)) return [];
+  // #2090: a written-off invoice owes nothing either, so a checkout the
+  // household opened before the write-off is closed the same way.
+  if (!after || !(invoiceIsPaid(after) || isWrittenOff(after))) return [];
   const closed = new Set(idList(after[CLOSED_CHECKOUT_SESSIONS_FIELD]));
   const all = [
     ...idList(after[OPEN_CHECKOUT_SESSIONS_FIELD]),

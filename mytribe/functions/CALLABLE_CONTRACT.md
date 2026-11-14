@@ -985,11 +985,13 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   and NOT cancellation: every field survives, and the kinfolk portal is unaffected.
   It means the operator has stopped working the invoice, so it drops out of the
   admin's default list and out of the outstanding / billed totals.
-- `failed-precondition` / `invoice_still_owing` when a SENT invoice still has a
-  balance, because archiving it removes it from the total that would remind anyone
-  to collect it. `draft` and `quote` are exempt (neither was ever claimed from
-  anyone). `force: true` overrides and is audited at `warn` with `forced: true`,
-  since it is a decision to write off real money.
+- #2090 (operator ruling 2026-11-12, "archive is only tidying"):
+  `failed-precondition` / `invoice_still_owing` (with `details.owedCents`) when a
+  SENT invoice still has a balance, ALWAYS. `force` is still accepted so an older
+  client is refused in words rather than by validation, and it changes nothing.
+  `draft`, `quote` and `cancelled` are exempt (never claimed from anyone). Giving
+  the balance up is `writeOffInvoice`; a written-off invoice owes nothing and
+  archives like a settled one.
 - `failed-precondition` / `invoice_already_archived` rather than restamping.
 - #2168: ARCHIVING A DRAFT LETS GO OF ITS VISITS. One transaction: every visit
   the draft names (`sessionIds`, its lines' `sessionId`) whose `invoiceId` is this
@@ -1002,7 +1004,34 @@ handler until ADR-0001 codegen replaces the hand-mirror).
   quote and the Kinfolk can still accept it, so its visits stay held for that
   answer; a decline is what lets them go.
 
-### unarchiveInvoice
+### writeOffInvoice
+- req `{ invoiceId: string /* 1..200 */, amountCents: int > 0 }`
+- res `{ ok: true, invoiceId: string, writeOffId: string, writtenOffCents: int }`
+- #2090. OWNER ONLY (not on the Auntie list). One transaction, every read first:
+  the invoice and its `payments` subcollection. Writes the entry
+  `invoices/{id}/writeOffs/{writeOffId}` (`amountCents`, `paidCents`,
+  `totalCents`, `writtenOffAt`, `writtenOffBy`): its own ledger, NOT a payment
+  (never in `payments`, so `paidCents` stays what was collected), NOT account
+  credit, NOT a refund. Stamps the invoice `status: 'written_off'` (a classifier
+  state of its own), `editScope: 'none'`, `amountDue: 0`, `amountDueCents: 0`,
+  `writtenOffCents`, `writtenOffAt`, `writtenOffBy`, `writeOffId`.
+- From that commit nothing asks the household for it: reminders and overdue
+  notices (`chaseRefusalOf` passes only `open`), Outstanding and Home's Balance
+  due (zero balance), the portal's Pay now and `payInvoice`, auto-apply and the
+  credit draw, and `repairInvoicePayments` (skipped as `written_off`). Open
+  checkout links are closed by `onInvoicePaidExpireCheckouts`; a card payment
+  from one that completes anyway lands as an unapplied payment for the owner.
+- Refused (`failed-precondition`, `details.code`): `invoice_archived`,
+  `write_off_draft`, `write_off_quote`, `write_off_cancelled`,
+  `write_off_credit`, `write_off_already`, `write_off_paid` (nothing owed), and
+  `write_off_amount_changed` (with `details.owedCents`) when the balance is not
+  the `amountCents` the confirm showed, so a payment landing first is never
+  written off unseen. A payment arriving after is refused by `markInvoicePaid`,
+  `recordPayment` and the credit draw with `invoice_written_off`, each re-reading
+  the invoice inside its own transaction.
+- Audit `BILLING_INVOICE_WRITTEN_OFF` (server only, `warn`). No household notice:
+  archiving sent none and invoice edits are silent; the invoice reads Written off
+  with nothing to pay.
 - req `{ invoiceId: string /* 1..200 */ }`
 - res `{ ok: true, invoiceId: string, reclaimedSessionIds: string[], notReclaimed: { sessionId: string, reason: 'on_other_invoice'|'cancelled'|'not_found', invoiceNumber: string }[], notice: string }`
 - Writes `archivedAt: null`, `archivedBy: null`. `failed-precondition` /

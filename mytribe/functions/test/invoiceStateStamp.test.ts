@@ -27,6 +27,8 @@ const STATE_FIXTURES: Record<string, { doc: InvoiceStampDoc; paidCents: number }
   },
   paid: { doc: { status: 'paid', amountDue: 0, total: 40, totalCents: 4000 }, paidCents: 4000 },
   zero: { doc: { status: '', amountDue: 0, total: 0 }, paidCents: 0 },
+  // #2090: part paid, then the rest written off.
+  written_off: { doc: { status: 'written_off', amountDue: 0, amountDueCents: 0, total: 40 }, paidCents: 1000 },
   open: { doc: { status: 'open', amountDue: 40, total: 40, totalCents: 4000 }, paidCents: 0 },
 };
 

@@ -38,6 +38,11 @@ export const INVOICE_STATES = [
   'paid',
   'zero',
   'open',
+  // #2090: the owner wrote off what was left (`writeOffInvoice` in `admin/archiveInvoice.ts`). The
+  // balance is zero and nobody is asked for it again, but it was NOT paid, so it
+  // cannot share the `paid` label: revenue, receipts and the household's own
+  // screen would all say money arrived that never did.
+  'written_off',
 ] as const;
 
 export type InvoiceState = (typeof INVOICE_STATES)[number];
@@ -102,6 +107,10 @@ export function invoiceStateOf(doc: InvoiceStateDoc, paidCents: number | null = 
   if (status === 'quote') return 'quote';
   if (status === 'draft') return 'draft';
   if (status === 'cancelled') return 'cancelled';
+  // #2090: a positive read of the write-off's own label, ahead of the money
+  // branches, because the write-off zeroes the balance and the money alone
+  // would then read `paid`.
+  if (status === 'written_off') return 'written_off';
   // `redeemed` joined the positive reads on 2026-07-28, when the state stamp
   // (`lib/invoiceStateStamp.ts`, ADR-0002) started writing this module's OUTPUT
   // back into `status`. Every output must classify to itself, or stamping a doc
@@ -289,6 +298,7 @@ export function invoiceEditScope(
       case 'cancelled':
       case 'credit':
       case 'redeemed':
+      case 'written_off':
         return 'none';
     }
   })();
@@ -314,6 +324,8 @@ function frozenBecause(state: InvoiceState): string {
       return 'This is a credit owed to the household, so it can no longer be edited. Redeeming it is its own flow.';
     case 'redeemed':
       return 'This credit has been redeemed, so it can no longer be edited.';
+    case 'written_off':
+      return 'The balance on this invoice was written off, so it can no longer be edited.';
     case 'draft':
     case 'quote':
     case 'open':
