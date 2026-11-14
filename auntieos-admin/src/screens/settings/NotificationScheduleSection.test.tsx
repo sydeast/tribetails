@@ -138,14 +138,14 @@ describe('scheduleNote', () => {
     expect(note).not.toMatch(/none will go out/i);
   });
 
-  it('with a send time and sends off, says automatic notices are held back', () => {
+  it('with a send time and sends off, says they are held back', () => {
     const note = scheduleNote({
       householdNotificationsLive: false,
       householdNotificationHour: '9',
       scheduleDigestHour: '',
     });
     expect(note).toBe(SCHEDULE_NOTE_OFF_WITH_HOUR);
-    // A broadcast, a single message, an invite and a reset still go.
+    // A broadcast, a single email or text, an invite and a reset still go.
     expect(note).not.toMatch(/nothing reaches/i);
   });
 
@@ -329,8 +329,8 @@ describe('the panel', () => {
     });
 
     it('the switch tooltip says what off holds back and what still goes', () => {
-      expect(HOUSEHOLD_SWITCH_TIP).toContain('automatic notices to households are held back');
-      expect(HOUSEHOLD_SWITCH_TIP).toContain('a broadcast, a single message, an invite, a password reset');
+      expect(HOUSEHOLD_SWITCH_TIP).toContain('notices to households are held back, a KinTale or an invoice you send included');
+      expect(HOUSEHOLD_SWITCH_TIP).toContain('Four things still go: a broadcast, a single email or text message you write, an invite, a password reset');
       expect(HOUSEHOLD_SWITCH_TIP).not.toMatch(/nothing is sent/i);
     });
 

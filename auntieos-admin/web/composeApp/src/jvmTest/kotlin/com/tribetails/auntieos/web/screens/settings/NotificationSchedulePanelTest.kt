@@ -110,10 +110,10 @@ class NotificationSchedulePanelTest {
     }
 
     @Test
-    fun `with a send time and sends off the note says automatic notices are held back`() {
+    fun `with a send time and sends off the note says they are held back`() {
         val note = notificationScheduleNote(live = false, hour = 9)
         assertEquals(SCHEDULE_NOTE_OFF_WITH_HOUR, note)
-        // A broadcast, a single message, an invite and a reset still go.
+        // A broadcast, a single email or text, an invite and a reset still go.
         assertFalse(note!!.contains("nothing reaches", ignoreCase = true))
     }
 
@@ -141,8 +141,8 @@ class NotificationSchedulePanelTest {
 
     @Test
     fun `the switch line says what off holds back and what still goes`() {
-        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("automatic notices to households are held back"))
-        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("a broadcast, a single message, an invite, a password reset"))
+        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("notices to households are held back, a KinTale or an invoice you send included"))
+        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("Four things still go: a broadcast, a single email or text message you write, an invite, a password reset"))
         assertFalse(HOUSEHOLD_SWITCH_TIP.contains("nothing is sent", ignoreCase = true))
     }
 
