@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
 import { useOneShot } from '../../lib/useOneShot';
 import { optimizeRoute } from '../../api/route';
-import { localDateIso } from '../../lib/invoiceFormat';
+import { businessTodayIso } from '../../lib/businessZoneTime';
+import { useBusinessZone } from '../../lib/useBusinessZone';
 import { formatMiles, formatDuration } from '../../lib/dashboardInsights';
 import { DenPanel, EmptyHint } from '../../components/DenScreenKit';
 import { LoadingRow } from '../../components/LoadingRow';
@@ -18,8 +18,10 @@ import './widgets.css';
  * failed callable (AsyncRegion keeps them apart).
  */
 export function RouteOptimizerWidget() {
-  // A LOCAL calendar date: route TODAY, the operator's day, not a UTC day.
-  const today = useMemo(() => localDateIso(new Date()), []);
+  // #2094: TODAY on the business's calendar, not the device's and not UTC, so
+  // the route a phone in another zone asks for is the business's day.
+  const zone = useBusinessZone();
+  const today = businessTodayIso(zone);
   const plan = useOneShot(() => optimizeRoute(today), `optimizeRoute:${today}`);
 
   return (

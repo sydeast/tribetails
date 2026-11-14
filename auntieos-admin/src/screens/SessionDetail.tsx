@@ -50,6 +50,7 @@ import { LoadingRow } from '../components/LoadingRow';
 import { AsyncLoading } from '../components/AsyncRegion';
 import { Dialog } from '../components/Dialog';
 import { RouteMap } from '../components/RouteMap';
+import { ClockStepWarningLine } from '../components/ClockStepWarningLine';
 import './SessionDetail.css';
 
 interface SessionDetailProps {
@@ -907,6 +908,7 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                       already pressed once: the BookingActions confirm-copy
                       rule, and the walk it came from. */}
                   <p>{clock.pending.confirmBody(household)}</p>
+                  <ClockStepWarningLine action={clock.pending.action} session={entry} businessZone={noteZone} />
                   {noticeLine !== null && <p role="status">{noticeLine}</p>}
                 </Dialog>
               )}
