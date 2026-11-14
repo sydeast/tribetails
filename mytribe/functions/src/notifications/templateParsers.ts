@@ -89,3 +89,99 @@ export function kinForStoredTemplate(
   if (!all.some((t) => KIN_TOKEN.test(t)) || all.some((t) => KIN_GUARD.test(t))) return data;
   return { ...data, kinName: roster };
 }
+
+/**
+ * #2280, operator ruling 2026-11-14: "sms and push notifications are to be kept
+ * short with links to the full message in app/site". A HOUSEHOLD's text message
+ * and push are a short line and a way in; the whole message is on their
+ * notifications list in MyTribe (and in the email, the one default channel).
+ *
+ * WHY THIS IS DECIDED AT SEND TIME AND NOT ONLY IN THE TEMPLATE TEXT. How long
+ * a message comes out depends on what is merged into it (the office's note runs
+ * to 500 characters, a household can have many Kin), and prod sends the STORED
+ * templates, which the operator writes and which change only on an import. The
+ * senders apply the rule to what was actually rendered, so it holds for every
+ * template, stored or new.
+ *
+ * Staff and business copies are not touched: the ruling is about households.
+ */
+/** Where a household reads the whole message: the notifications list in MyTribe. */
+export const HOUSEHOLD_NOTICE_ROUTE = '/notifications';
+/**
+ * The longest line a household push or text message carries before it is cut.
+ * The length `message.reply` already cuts its preview to (#2061).
+ */
+export const HOUSEHOLD_SHORT_LINE_MAX = 200;
+/**
+ * A household push's own line: the whole message when it is short, else its
+ * opening and an ellipsis. PURE.
+ */
+export function householdPushShelfLine(body: string): string {
+  const flat = body.replace(/\s+/g, ' ').trim();
+  return flat.length <= HOUSEHOLD_SHORT_LINE_MAX
+    ? flat
+    : `${cutWhole(flat, HOUSEHOLD_SHORT_LINE_MAX - 1).trimEnd()}\u2026`;
+}
+/**
+ * The first `max` characters of `text`, never ending on half of a two-part
+ * character. An emoji is stored as a pair; a cut between the two halves sends
+ * a broken character that the phone shows as a box. PURE.
+ */
+function cutWhole(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const last = text.charCodeAt(max - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
+}
+/** The longest unfinished word the cut steps back over, so one long run of letters is not all lost. */
+const SHORT_LINE_WORD_BACKOFF = 30;
+/**
+ * `text` cut to at most `max` characters at the end of a word. A word the cut
+ * landed inside is dropped, and a web address it landed inside is always
+ * dropped, however long: half an address reads as a link and opens nothing. PURE.
+ */
+function cutAtWord(text: string, max: number): string {
+  const head = cutWhole(text, max);
+  if (head.length === text.length || text.charAt(head.length) === ' ') return head.trimEnd();
+  const lastSpace = head.lastIndexOf(' ');
+  if (lastSpace <= 0) return head;
+  const unfinished = head.slice(lastSpace + 1);
+  const isAddress = /:\/\/|^www\./i.test(unfinished);
+  return isAddress || unfinished.length <= SHORT_LINE_WORD_BACKOFF ? head.slice(0, lastSpace).trimEnd() : head;
+}
+/** What comes before the link a text message did not already carry. */
+export const HOUSEHOLD_SMS_LINK_LABEL = 'More in MyTribe:';
+/** The longest text message a household is sent, link included. */
+export function householdSmsMax(portalUrl: string): number {
+  return HOUSEHOLD_SHORT_LINE_MAX + 1 + householdSmsLink(portalUrl).length;
+}
+function householdSmsLink(portalUrl: string): string {
+  return `${HOUSEHOLD_SMS_LINK_LABEL} ${portalUrl}${HOUSEHOLD_NOTICE_ROUTE}`;
+}
+/**
+ * A household's text message, as sent: short, and always with a link into
+ * MyTribe. PURE.
+ *
+ *   - A message that already links to MyTribe and fits is sent as written (the
+ *     confirmation's "Every date: {{portalUrl}}").
+ *   - Any other message is cut to `HOUSEHOLD_SHORT_LINE_MAX` and the link to the
+ *     notifications list is put after it. A MyTribe link is taken out first,
+ *     and the cut steps back to the end of a word, so the message never ends
+ *     in half an address (the household's own, or one typed into a note) or
+ *     half an emoji.
+ *
+ * The cut ends in three plain dots, not the ellipsis character: one character
+ * outside the basic text-message alphabet makes the carrier send the whole
+ * message in the costlier 70-character encoding.
+ */
+export function householdSmsText(rendered: string, portalUrl: string): string {
+  const flat = rendered.replace(/\s+/g, ' ').trim();
+  // Nothing rendered: not this function's to dress up as a message.
+  if (flat === '') return flat;
+  if (flat.includes(portalUrl) && flat.length <= householdSmsMax(portalUrl)) return flat;
+  const words = flat.split(' ').filter((w) => !w.includes(portalUrl)).join(' ');
+  const line =
+    words.length <= HOUSEHOLD_SHORT_LINE_MAX
+      ? words
+      : `${cutAtWord(words, HOUSEHOLD_SHORT_LINE_MAX - 3)}...`;
+  return `${line} ${householdSmsLink(portalUrl)}`;
+}

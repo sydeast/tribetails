@@ -1,7 +1,12 @@
 import Handlebars from 'handlebars';
 import { getAdmin, db } from '../../lib/firestoreAdmin';
 import { logEvent } from '../../lib/logger';
-import { kinForStoredTemplate, stripUnresolvedTokens } from '../templateParsers';
+import {
+  HOUSEHOLD_NOTICE_ROUTE,
+  householdPushShelfLine,
+  kinForStoredTemplate,
+  stripUnresolvedTokens,
+} from '../templateParsers';
 import { fallbackPush } from '../fallbackTemplate';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
@@ -17,6 +22,11 @@ interface PushTemplate {
  * `fcm_tokens` for all device tokens owned by recipientUid, multicasts via
  * `messaging().sendEachForMulticast`, and prunes tokens FCM reports as invalid.
  *
+ * A HOUSEHOLD'S COPY IS SHORT AND OPENS MYTRIBE (#2280, operator ruling
+ * 2026-11-14): the body is cut to `HOUSEHOLD_SHORT_LINE_MAX` and the payload
+ * always carries a `route`, the notifications list when the template names no
+ * other. The web portal's service worker opens that route on a tap.
+ *
  * Returns the message id of the first successful send, or throws if every
  * token failed (fail-loud per project policy).
  *
@@ -24,7 +34,7 @@ interface PushTemplate {
  * or `messaging/invalid-registration-token` is deleted to keep `fcm_tokens` clean.
  */
 export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSendResult> {
-  const { def, recipientUid, data } = args;
+  const { def, recipientUid, data, stream } = args;
   const templateId = def.templates.push;
   if (!templateId) {
     throw new Error(`pushChannel(${def.key}): catalog has no push template id`);
@@ -68,10 +78,16 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
   // #2093: a template stored before the quote wording changed still reads whole.
   const renderCtx = { ...kinForStoredTemplate(data, [tpl.title, tpl.body]), recipientUid, notificationKey: def.key };
   const title = stripUnresolvedTokens(Handlebars.compile(tpl.title)(renderCtx));
-  const body = stripUnresolvedTokens(Handlebars.compile(tpl.body)(renderCtx));
-  const dataRoute = tpl.dataRoute
+  const renderedBody = stripUnresolvedTokens(Handlebars.compile(tpl.body)(renderCtx));
+  const templateRoute = tpl.dataRoute
     ? stripUnresolvedTokens(Handlebars.compile(tpl.dataRoute)(renderCtx))
     : undefined;
+  // #2280: a household's push is a short line, and a tap on it opens MyTribe
+  // where the whole message is: the template's own route when it has one, else
+  // the notifications list. Staff and business copies are sent as written.
+  const household = stream === 'kinfolk';
+  const body = household ? householdPushShelfLine(renderedBody) : renderedBody;
+  const dataRoute = templateRoute || (household ? HOUSEHOLD_NOTICE_ROUTE : undefined);
 
   const dataPayload: Record<string, string> = {
     notificationKey: def.key,

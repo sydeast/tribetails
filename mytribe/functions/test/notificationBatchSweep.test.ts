@@ -400,6 +400,8 @@ describe('notificationBatchSweep: promotion', () => {
     // The ids every comment shares ride at the top, where the email and push
     // enricher reads them.
     expect(digest!.data.data).toMatchObject({ kinfolkId: 'fam1', taleId: 't1', taleTitle: 'Park day' });
+    // #2280: the digest's work order is the household's, so its text and push stay short.
+    expect(ctx.sink.writes.find((w) => w.path.startsWith('notificationDispatch/'))!.data.stream).toBe('kinfolk');
   });
   it('#1898: a digest across two tales opens the KinTales list', async () => {
     const ctx = buildBatchDb({
@@ -432,6 +434,7 @@ describe('notificationBatchSweep: promotion', () => {
     await runNotificationBatchSweep(NOW);
     const digest = ctx.sink.writes.find((w) => w.path.startsWith('notifications/'));
     expect(digest!.data.description).toBe('1 new comment on your KinTale');
+    expect(ctx.sink.writes.find((w) => w.path.startsWith('notificationDispatch/'))!.data.stream).toBe('kinfolk');
   });
   it("the office's digest keeps the office's words and its target as they were", async () => {
     const ctx = buildBatchDb({
@@ -453,6 +456,7 @@ describe('notificationBatchSweep: promotion', () => {
     expect(digest!.data.description).toBe('Someone posted in the comment box under a KinTale.');
     expect(digest!.data.targetType).toBe('');
     expect(digest!.data).not.toHaveProperty('householdLine');
+    expect(ctx.sink.writes.find((w) => w.path.startsWith('notificationDispatch/'))!.data.stream).toBe('staff');
   });
 
   it('holds a bucket whose oldest item is still inside the window', async () => {

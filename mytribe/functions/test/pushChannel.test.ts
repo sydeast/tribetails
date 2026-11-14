@@ -236,4 +236,56 @@ describe('sendPushChannel', () => {
     expect(res.usedFallback).toBeUndefined();
     expect(mocks.multicast.mock.calls[0]![0].notification).toEqual({ title: 'Hi', body: 'there' });
   });
+  describe('#2280: a household push is short and opens MyTribe', () => {
+    const ok = { successCount: 1, failureCount: 0, responses: [{ success: true, messageId: 'm1' }] };
+    const sent = () => mocks.multicast.mock.calls[0]![0] as { notification: { title: string; body: string }; data: Record<string, string> };
+    const longNote = 'Please leave the side gate unlatched. '.repeat(14).trim();
+    it('cuts a long line to 200 characters with an ellipsis and carries the notifications route', async () => {
+      const ctx = buildPushDbMock({ template: { title: 'Care request declined', body: 'We could not take it. {{note}}' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({ def: def(), recipientUid: 'u1', data: { note: longNote }, stream: 'kinfolk' });
+      const { notification, data } = sent();
+      expect(longNote.length).toBeGreaterThan(400);
+      expect(notification.body.length).toBeLessThanOrEqual(200);
+      expect(notification.body.endsWith('…')).toBe(true);
+      expect(notification.body.startsWith('We could not take it. Please leave the side gate')).toBe(true);
+      expect(data).toEqual({ notificationKey: 't.k', route: '/notifications' });
+    });
+    it('leaves a short line as written and still carries the route', async () => {
+      const ctx = buildPushDbMock({ template: { title: 'Visit coming up', body: 'Tap for details.' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({ def: def(), recipientUid: 'u1', data: {}, stream: 'kinfolk' });
+      expect(sent().notification).toEqual({ title: 'Visit coming up', body: 'Tap for details.' });
+      expect(sent().data['route']).toBe('/notifications');
+    });
+    it("keeps the template's own route when it names one", async () => {
+      const ctx = buildPushDbMock({ template: { title: 'A', body: 'B', dataRoute: '/kincare/{{id}}' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({ def: def(), recipientUid: 'u1', data: { id: 'v9' }, stream: 'kinfolk' });
+      expect(sent().data['route']).toBe('/kincare/v9');
+    });
+    it('the generic wording for a missing template carries the route too', async () => {
+      const ctx = buildPushDbMock({ template: null, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({ def: def(), recipientUid: 'u1', data: {}, stream: 'kinfolk' });
+      expect(sent().data['route']).toBe('/notifications');
+    });
+    it.each(['business', 'staff', undefined] as const)('a %s copy is sent as written, with no route added', async (stream) => {
+      const ctx = buildPushDbMock({ template: { title: 'Care request', body: '{{note}}' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({
+        def: def({ audience: 'both', audiences: { kinfolk: true, business: true } }),
+        recipientUid: 'u1',
+        data: { note: longNote },
+        ...(stream ? { stream } : {}),
+      });
+      expect(sent().notification.body).toBe(longNote);
+      expect(sent().data).toEqual({ notificationKey: 't.k' });
+    });
+  });
 });

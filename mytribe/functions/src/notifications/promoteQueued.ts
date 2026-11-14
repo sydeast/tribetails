@@ -45,6 +45,8 @@ interface QueuedNotification {
   targetType?: unknown;
   targetId?: unknown;
   channels?: unknown;
+  /** The audience stream the dispatcher queued this copy for (#1898, #2280). */
+  stream?: unknown;
 }
 
 export interface PromoteQueuedOptions {
@@ -133,6 +135,9 @@ export function promoteQueuedNotification(
     data,
     mode: opts.mode,
     channels,
+    // #2280: the queued row's own stream, so the senders keep a household's
+    // text message and push short. A row queued before #1898 carries none.
+    ...(typeof pick('stream') === 'string' ? { stream: pick('stream') } : {}),
     status: 'pending',
     ...(opts.origin ?? {}),
     createdAt: FieldValue.serverTimestamp(),

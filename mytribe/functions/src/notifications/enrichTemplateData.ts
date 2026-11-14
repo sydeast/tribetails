@@ -116,12 +116,16 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // `bookingDate` / `bookingTime` pair left the seed along with the summarising
   // wording it belonged to; both emitters still SEND them so the previously
   // imported Firestore template keeps rendering until the operator re-imports.
+  // #2280: `note` is the office's note to the household with its yes (#2030),
+  // emitter-supplied by the approve core, like the decline's below. The email
+  // prints it inside `{{#if note}}`, so a confirmation without one has no line.
   'kincare.booking.confirm': [
     'kinfolkName',
     'kinName',
     'nextVisit.date',
     'nextVisit.time',
     'nextVisit.weekday',
+    'note',
     'portalUrl',
     'serviceType',
     'visitCount',

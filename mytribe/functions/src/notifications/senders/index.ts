@@ -1,4 +1,4 @@
-import type { Channel, NotificationDef } from '../types';
+import type { AudienceStream, Channel, NotificationDef } from '../types';
 import { sendEmailChannel } from './emailChannel';
 import { sendSmsChannel } from './smsChannel';
 import { sendPushChannel } from './pushChannel';
@@ -7,6 +7,14 @@ export interface ChannelSendArgs {
   def: NotificationDef;
   recipientUid: string;
   data: Record<string, unknown>;
+  /**
+   * #2280: who this copy is addressed to, as the dispatcher classified it and
+   * stamped it on the work order. A household's (`kinfolk`) text message and
+   * push are kept short with a link into MyTribe; a staff or business copy is
+   * sent as written. Absent on a work order written before the stamp existed,
+   * which is then sent as written too.
+   */
+  stream?: AudienceStream;
 }
 
 export interface ChannelSendResult {

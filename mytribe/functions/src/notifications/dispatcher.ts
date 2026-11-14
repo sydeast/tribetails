@@ -937,6 +937,8 @@ async function routeByDeliveryMode(
           data: args.data,
           mode: 'trigger',
           channels: activeChannels,
+          // #2280: the senders keep a household's text message and push short.
+          stream,
           status: 'pending',
           createdAt: FieldValue.serverTimestamp(),
         });
