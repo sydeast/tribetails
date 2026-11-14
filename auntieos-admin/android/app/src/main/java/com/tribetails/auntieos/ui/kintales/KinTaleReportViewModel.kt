@@ -1052,7 +1052,7 @@ internal fun KinCareReport.isSentReport(): Boolean = status.trim().uppercase() =
 internal fun sentKinTaleEditNote(household: String): String {
     val who = household.trim().ifBlank { "The household" }
     return "This KinTale has been sent. $who will see your changes once you save them. " +
-        "New words or a new photo also send them a notice that you added to it."
+        "New words or a new photo also send them a notice that you added to it, at most one a minute."
 }
 
 /** Whether a KinTale has anything in it worth saving or sending. The screen reads it too (#1940). */

@@ -1,7 +1,11 @@
 package com.tribetails.auntieos.ui.kintales
 
+import android.content.Context
+import android.net.Uri
 import com.tribetails.auntieos.TestFixtures
+import com.tribetails.auntieos.data.model.GenerateResponse
 import com.tribetails.auntieos.data.model.KinCareReport
+import com.tribetails.auntieos.data.model.MediaFile
 import com.tribetails.auntieos.data.model.ReportStatus
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
@@ -247,6 +251,35 @@ class KinTaleDraftLifecycleTest {
     }
 
     @Test
+    fun `no toggle, mood, photo or generated draft writes a sent tale until Save changes`() = runTest(testDispatcher) {
+        coEvery { uploader.uploadMedia(any(), any(), any(), any(), any(), any()) } returns
+            Result.success(MediaFile(id = "media-new", storageUrl = "https://res.cloudinary.com/demo/image/upload/new.jpg"))
+        coEvery { repo.generate(any(), any()) } returns
+            Result.success(GenerateResponse(generatedCopy = "Biscuit found a stick, then a friend."))
+        val vm = openSent()
+        advanceUntilIdle()
+
+        vm.setChecklistResponse("fed", "", true)
+        vm.setBoolField("walked", "kin1", true)
+        vm.setIntField("treats", "kin1", 2)
+        vm.setStringField("note", "kin1", "Napped by the window")
+        vm.setMoodForKin("kin1", "happy")
+        vm.updateFormValue("gate", "Locked")
+        vm.addMedia(mockk<Context>(relaxed = true), mockk<Uri>(relaxed = true))
+        advanceUntilIdle()
+        vm.removeMedia("media-new")
+        vm.generateDraft()
+        advanceTimeBy(KinTaleReportViewModel.AUTOSAVE_DEBOUNCE_MS * 3)
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { kinCareRepo.updateKinCareReportFields(any(), any()) }
+        coVerify(exactly = 0) { kinCareRepo.createKinCareReport(any()) }
+        assertTrue(vm.uiState.value.hasUnsavedChanges)
+        assertEquals("Biscuit found a stick, then a friend.", vm.uiState.value.report.bodyCopy)
+        assertEquals(ReportStatus.SENT.name, vm.uiState.value.report.status)
+    }
+
+    @Test
     fun `Save changes writes only the changed field, never a status or send stamp, and sends nothing`() = runTest(testDispatcher) {
         val changes = slot<Map<String, Any?>>()
         coEvery { kinCareRepo.updateKinCareReportFields("rep-sent", capture(changes)) } returns Result.success(Unit)
@@ -313,7 +346,7 @@ class KinTaleDraftLifecycleTest {
     fun `the sent note names the household and when a notice goes out`() {
         assertEquals(
             "This KinTale has been sent. Rosa Parks will see your changes once you save them. " +
-                "New words or a new photo also send them a notice that you added to it.",
+                "New words or a new photo also send them a notice that you added to it, at most one a minute.",
             sentKinTaleEditNote("Rosa Parks"),
         )
         assertTrue(sentKinTaleEditNote(" ").startsWith("This KinTale has been sent. The household will see"))

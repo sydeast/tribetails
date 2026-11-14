@@ -908,7 +908,7 @@ interface ComposeFormProps {
  */
 export function sentKinTaleEditNote(household: string): string {
   const who = household.trim() === '' ? 'The household' : household.trim();
-  return `This KinTale has been sent. ${who} will see your changes once you save them. New words or a new photo also send them a notice that you added to it.`;
+  return `This KinTale has been sent. ${who} will see your changes once you save them. New words or a new photo also send them a notice that you added to it, at most one a minute.`;
 }
 
 function ComposeForm({

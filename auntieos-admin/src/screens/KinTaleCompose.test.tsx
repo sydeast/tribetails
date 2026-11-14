@@ -1204,7 +1204,7 @@ describe('KinTaleCompose: editing a sent KinTale (#1940)', () => {
 describe('sentKinTaleEditNote (pure, #1940)', () => {
   it('names the household and says when a notice goes out', () => {
     expect(sentKinTaleEditNote('The Whitfields')).toBe(
-      'This KinTale has been sent. The Whitfields will see your changes once you save them. New words or a new photo also send them a notice that you added to it.',
+      'This KinTale has been sent. The Whitfields will see your changes once you save them. New words or a new photo also send them a notice that you added to it, at most one a minute.',
     );
   });
   it('falls back to "The household" for a blank name', () => {
