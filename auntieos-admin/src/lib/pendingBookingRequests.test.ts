@@ -9,6 +9,8 @@ import { renderHook, waitFor } from '@testing-library/react';
 const mocks = vi.hoisted(() => ({ list: vi.fn(), signal: { value: 0 } }));
 vi.mock('../api/bookingRequests', () => ({ listPendingBookingRequests: () => mocks.list() }));
 vi.mock('./visitRequestSignal', () => ({ useVisitRequestSignal: () => mocks.signal.value }));
+const scope = vi.hoisted(() => ({ current: null as string | null }));
+vi.mock('./testScope', () => ({ getTestScope: () => scope.current }));
 
 import { usePendingBookingRequests } from './pendingBookingRequests';
 
@@ -17,6 +19,7 @@ const request = (kinfolkId: string, batchId: string) => ({ kinfolkId, batchId, k
 beforeEach(() => {
   mocks.list.mockReset();
   mocks.signal.value = 0;
+  scope.current = null;
 });
 
 describe('usePendingBookingRequests (#2069)', () => {
@@ -45,5 +48,13 @@ describe('usePendingBookingRequests (#2069)', () => {
     rerender();
     await waitFor(() => expect(result.current.status === 'ready' && result.current.data.size).toBe(0));
     expect(mocks.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads as an empty queue for a sandbox test admin, whose read is refused', async () => {
+    scope.current = 'tribe-test';
+    mocks.list.mockRejectedValue(new Error('permission-denied'));
+    const { result } = renderHook(() => usePendingBookingRequests());
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(result.current.status === 'ready' && result.current.data.size).toBe(0);
   });
 });

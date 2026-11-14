@@ -120,7 +120,8 @@ export function actionableNotificationCount(
   pendingRequests: PendingRequestSet = null,
 ): number {
   // #2069: one per waiting REQUEST, not per row. Two notices about one request
-  // are one decision, and the number is the one Bookings shows as waiting.
+  // are one decision. These are the new requests Bookings lists as waiting
+  // (its count also holds move and cancellation asks, which are answered there).
   const waiting = new Set<string>();
   for (const r of activeNotifications(rows)) {
     const { bookingId } = applicableNotificationActions(r, { pendingRequests });

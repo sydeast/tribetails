@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { listPendingBookingRequests, type PendingBookingRequestDto } from '../api/bookingRequests';
 import type { Async } from './async';
 import { pendingRequestKey } from './notificationActions';
+import { getTestScope } from './testScope';
 import { useRefreshingLoad } from './useOneShot';
 import { useVisitRequestSignal, type RequestQueueKind } from './visitRequestSignal';
 
@@ -37,8 +38,16 @@ export function usePollTick(ms: number = VISIT_REQUESTS_REFRESH_MS): number {
 const NEW_REQUESTS: readonly RequestQueueKind[] = ['newBooking'];
 
 async function loadPending(): Promise<ReadonlyMap<string, PendingBookingRequestDto>> {
-  const { requests } = await listPendingBookingRequests();
-  return new Map(requests.map((r) => [pendingRequestKey(r.kinfolkId, r.batchId), r]));
+  try {
+    const { requests } = await listPendingBookingRequests();
+    return new Map(requests.map((r) => [pendingRequestKey(r.kinfolkId, r.batchId), r]));
+  } catch (err) {
+    // A sandbox test admin may not read across households, so the queue is
+    // refused for her on every visit. For her that is an empty queue, the
+    // rule Android's Bookings applies to the same read, not a warning banner.
+    if (getTestScope() !== null) return new Map();
+    throw err;
+  }
 }
 
 /**

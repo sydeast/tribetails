@@ -374,8 +374,8 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
   // whole reason StatCard exists; see the note on it in DenScreenKit.tsx.
   const totalCount = asyncScalar(rows, () => inScope.length);
   const unreadStat = asyncScalar(rows, () => unreadNotificationCount(inScope));
-  // #2069: counted against the live queue, so it is the number Bookings shows
-  // as waiting; while that read is out the tile waits too.
+  // #2069: counted against the live queue of new requests, the same read
+  // Bookings > Review lists; while that read is out the tile waits too.
   const actionableStat =
     rows.status === 'ready' && pending.status !== 'ready'
       ? asyncScalar(pending, () => 0)

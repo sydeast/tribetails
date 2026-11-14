@@ -374,7 +374,7 @@ describe('call, the per-callable budget (#1567)', () => {
     const err = (await call('reviewAndSendDraftInvoice', {}).catch((e: unknown) => e)) as Error;
     expect(err).toBeInstanceOf(CallableTimeoutError);
     // #1919: the name is kept for logs, never put in the sentence on screen.
-    expect((err as CallableTimeoutError).callableName).toBe('reviewAndSendDraftInvoice');
+    expect((err as InstanceType<typeof CallableTimeoutError>).callableName).toBe('reviewAndSendDraftInvoice');
     expect(err.message).not.toContain('reviewAndSendDraftInvoice');
     expect(err.message).not.toContain('Tribe Tails');
     expect(err.message).toContain('70 seconds');
