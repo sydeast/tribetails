@@ -814,8 +814,8 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'kinfolkAcct',
     templates: { email: 'pets.updated', push: 'pets.updated' },
     description: 'Kinfolk/Auntie updated or added Pets (30-min inactive debounce).',
-    householdTitle: 'Your pets were updated',
-    householdDescription: 'When a pet on your household is added or changed.',
+    householdTitle: 'Your Kin were updated',
+    householdDescription: 'When a Kin in your household is added or changed.',
   },
   {
     key: 'profile.updated',

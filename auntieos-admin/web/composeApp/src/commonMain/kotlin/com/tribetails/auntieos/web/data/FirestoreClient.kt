@@ -1595,12 +1595,6 @@ class FirestoreClient {
     }
 
     /**
-     * #2168: restores an archived invoice (`unarchiveInvoice`), the one way back
-     * from read-only. Answers the server's `notice`, its sentence about visits a
-     * restored draft could not take back ('' when every visit came back, or from
-     * a server too old to send one). A refusal is returned verbatim.
-     */
-    /**
      * #2088: the quote becomes a DRAFT INVOICE that keeps its number, lines and
      * visits; the household hears about the bill when it is sent. Fail-loud:
      * the server's refusal (accepted, archived, not a quote, a line's visit
@@ -1627,6 +1621,12 @@ class FirestoreClient {
         }
     }
 
+    /**
+     * #2168: restores an archived invoice (`unarchiveInvoice`), the one way back
+     * from read-only. Answers the server's `notice`, its sentence about visits a
+     * restored draft could not take back ('' when every visit came back, or from
+     * a server too old to send one). A refusal is returned verbatim.
+     */
     suspend fun unarchiveInvoice(invoiceId: String): WriteResult<String> {
         val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
         return when (val r = platformInvokeCallable("unarchiveInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {

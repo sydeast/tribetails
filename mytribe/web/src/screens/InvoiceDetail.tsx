@@ -15,6 +15,7 @@ import {
   creditTargetLabel,
   formatCentsUsd,
   formatUsd,
+  documentNoun,
   invoiceRowStatusInfo,
   longDateLabel,
   longDateLabelFromMs,
@@ -326,9 +327,11 @@ export function InvoiceDetail() {
         </Link>
 
         <header className="hero-greet">
-          <div className="kick">Invoice {inv.id}</div>
+          <div className="kick">
+            {documentNoun(inv)} {inv.id}
+          </div>
           <h1>
-            Invoice for <span>{inv.client ?? 'your tribe'}</span>
+            {documentNoun(inv)} for <span>{inv.client ?? 'your tribe'}</span>
           </h1>
         </header>
 
@@ -365,7 +368,9 @@ export function InvoiceDetail() {
                     <div className="lbl">Status</div>
                     <span className={`chip big ${status.cssClass}`}>{status.chipLabel}</span>
                     {partPaid && <div className="num">{partPaid}</div>}
-                    <div className="num">Invoice {inv.id}</div>
+                    <div className="num">
+                      {documentNoun(inv)} {inv.id}
+                    </div>
                   </div>
                 </div>
 

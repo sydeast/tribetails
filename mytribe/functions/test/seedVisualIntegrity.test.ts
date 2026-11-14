@@ -20,6 +20,8 @@ describe('every seed is a valid visual template', () => {
           // field TEMPLATE_FIELDS describes -- same exclusion enrichTemplateData
           // .test.ts's drift guard makes for the same reason.
           if (m[1] === 'this' || m[1].startsWith('this.')) continue;
+          // `{{else}}` belongs to an `{{#if}}` block, not to the context (invoice.new, #2092).
+          if (m[1] === 'else') continue;
           expect(fields, `${s.key} uses {{${m[1]}}}`).toContain(m[1]);
         }
       }

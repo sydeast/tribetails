@@ -87,7 +87,7 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // enricher never runs on it. Every token is supplied by the sender.
   'invite.verify-email': ['claimUrl', 'invitedEmail', 'verifyUrl'],
   'invoice.charge.failed': ['invoiceNumber', 'kinfolkName'],
-  'invoice.new': ['amount', 'dueDate', 'invoiceNumber', 'kinfolkName', 'kinName'],
+  'invoice.new': ['amount', 'dueDate', 'invoiceNumber', 'isQuote', 'kinfolkName', 'kinName'],
   'invoice.overdue': ['bookingDate', 'kinfolkName', 'kinName'],
   'invoice.payment.applied': ['invoiceNumber'],
   // `disputeAmount` / `disputeReason` / `disputeStatus` are emitter-supplied by
@@ -237,6 +237,11 @@ function usd(n: number): string {
 function joinNames(v: unknown): string {
   if (!Array.isArray(v)) return '';
   return v.map((x) => str(x)).filter((s) => s.length > 0).join(', ');
+}
+
+/** #2093: a notice about a quote: its answer (`quote.*`), or `invoice.new` sending one (`isQuote`). */
+function isQuoteNotice(key: string, data: Record<string, unknown>): boolean {
+  return key.startsWith('quote.') || data.isQuote === true;
 }
 
 /**
@@ -475,6 +480,35 @@ export async function enrichTemplateData(
     const fromBooking = joinNames(b?.kinNames);
     if (fromBooking) return fromBooking;
     return loadFamilyPetsName();
+  }
+
+  /**
+   * #2093: the Kin a QUOTE is for, read from the visits it holds and from
+   * nothing else. A quote is for particular work; the household's whole
+   * roster is not what it covers, and a quote with no visit on it names no
+   * Kin at all ('' here, and no Kin line on the card).
+   */
+  async function loadQuoteKinNames(): Promise<string> {
+    const inv = await loadInvoice();
+    const raw = inv?.sessionIds;
+    const ids = Array.isArray(raw)
+      ? Array.from(new Set(raw.map((x) => str(x)).filter((x) => x.length > 0)))
+      : [];
+    const names: string[] = [];
+    for (const id of ids) {
+      try {
+        const snap = await firestore.doc(`kin_care_sessions/${id}`).get();
+        const kin = snap.exists ? (snap.data() as Doc)?.kinNames : undefined;
+        if (Array.isArray(kin)) {
+          for (const n of kin.map((x) => str(x)).filter((x) => x.length > 0)) {
+            if (!names.includes(n)) names.push(n);
+          }
+        }
+      } catch (err) {
+        logErr('quoteSession', id, err);
+      }
+    }
+    return names.join(', ');
   }
 
   async function loadFamilyPetsName(): Promise<string> {
@@ -802,7 +836,9 @@ export async function enrichTemplateData(
 
   if (want.has('kinName')) {
     let v = str(data.kinName) || joinNames(data.kinNames);
-    if (!v) v = await loadKinName();
+    // #2093: a quote's notice (its answer, or `invoice.new` sending it) names
+    // the Kin on the quote, never the household's roster.
+    if (!v) v = isQuoteNotice(key, data) ? await loadQuoteKinNames() : await loadKinName();
     fill('kinName', v);
   }
 

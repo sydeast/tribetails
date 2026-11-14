@@ -4,6 +4,7 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { captureFunctionError } from '../lib/sentry';
 import { resolveActor, type ResolvedActor } from '../lib/resolveActor';
+import { fillBusinessPlaceholders, loadBusinessName } from '../lib/businessName';
 import { buildNotificationDetail } from './buildNotificationDetail';
 import { visitTimesForStream } from './visitDates';
 import { getNotificationDef } from './catalog';
@@ -710,6 +711,25 @@ async function writeOnce(
   });
 }
 
+/**
+ * #2093: the title stored on one copy of a notice. The household's copy reads
+ * the catalog's `householdTitle` ("You accepted a quote"), the title its
+ * Notification settings row already shows (#1372); every other copy keeps the
+ * operator's `label` ("Kinfolk accepted a quote"). A `{business}` placeholder
+ * is filled the way `getNotificationCatalog` fills it, and only a title that
+ * carries one pays for the settings read.
+ */
+export async function noticeTitleFor(
+  def: Pick<NotificationDef, 'label' | 'householdTitle'>,
+  stream: AudienceStream,
+): Promise<string> {
+  if (stream !== 'kinfolk') return def.label;
+  const title = def.householdTitle?.trim() ?? '';
+  if (title === '') return def.label;
+  if (!/\{business/i.test(title)) return title;
+  return fillBusinessPlaceholders(title, await loadBusinessName('dispatcher'));
+}
+
 function hasAnyChannel(c: ResolvedChannels): boolean {
   return c.email || c.sms || c.push;
 }
@@ -764,7 +784,8 @@ async function routeByDeliveryMode(
     // AO-28: human-renderable content on the entry itself (title + description
     // from the catalog def) + the resolved actor identity, so a client renders
     // "<title> — <actorName>" with an avatar instead of a bare key.
-    title: def.label,
+    // #2093: the household's own copy is titled to its reader (#1372).
+    title: await noticeTitleFor(def, stream),
     description: def.description,
     actorName: actor.actorName,
     actorPhotoUrl: actor.actorPhotoUrl,

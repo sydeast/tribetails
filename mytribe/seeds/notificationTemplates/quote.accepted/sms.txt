@@ -1,1 +1,1 @@
-It's Auntie. {{actorName}} accepted the quote for {{kinName}}, woohoo! I'll follow up with next steps.
+It's Auntie. {{actorName}} accepted the quote{{#if kinName}} for {{kinName}}{{/if}}, woohoo! I'll follow up with next steps.

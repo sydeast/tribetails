@@ -69,6 +69,12 @@ interface UninvoicedVisitsPickerProps {
   disabled?: boolean;
   /** Offered when this household has nothing to bill from. */
   onWriteBlankInvoice: () => void;
+  /**
+   * #2092: the composer is making a QUOTE. The list says "unbilled" rather than
+   * "un-invoiced", the blank path is a blank quote, and Do not invoice is not
+   * offered: it is a billing decision, and a quote bills nothing.
+   */
+  forQuote?: boolean;
 }
 
 /** Today and 30 days ago as YYYY-MM-DD: the narrowing window's opening values. */
@@ -136,7 +142,10 @@ export function UninvoicedVisitsPicker({
   onSessionsLoaded,
   disabled = false,
   onWriteBlankInvoice,
+  forQuote = false,
 }: UninvoicedVisitsPickerProps) {
+  /** "un-invoiced" on an invoice, "unbilled" on a quote, which is not an invoice. */
+  const openWord = forQuote ? 'unbilled' : 'un-invoiced';
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ListUninvoicedSessionsResult | null>(null);
@@ -258,7 +267,7 @@ export function UninvoicedVisitsPicker({
     <div className="visit-picker">
       {loading && (
         <p className="visit-picker__scope" role="status">
-          Looking for un-invoiced work for {householdLabel}…
+          Looking for {openWord} work for {householdLabel}…
         </p>
       )}
 
@@ -366,14 +375,14 @@ export function UninvoicedVisitsPicker({
 
           <p className="visit-picker__scope" role="status">
             {sessions.length === 0
-              ? `No un-invoiced completed visits for ${householdLabel}${narrowed ? ` between ${narrowed.from} and ${narrowed.to}` : ''}. ${String(result.scanned)} visits were checked.`
-              : `${String(selectedSessions.length)} of ${String(sessions.length)} un-invoiced visit${sessions.length === 1 ? '' : 's'} selected for ${householdLabel}${narrowed ? ` between ${narrowed.from} and ${narrowed.to}` : ''}.`}
+              ? `No ${openWord} completed visits for ${householdLabel}${narrowed ? ` between ${narrowed.from} and ${narrowed.to}` : ''}. ${String(result.scanned)} visits were checked.`
+              : `${String(selectedSessions.length)} of ${String(sessions.length)} ${openWord} visit${sessions.length === 1 ? '' : 's'} selected for ${householdLabel}${narrowed ? ` between ${narrowed.from} and ${narrowed.to}` : ''}.`}
           </p>
 
           {sessions.length === 0 ? (
             <div className="visit-picker__actions">
               <GhostButton
-                label="Write a blank invoice instead"
+                label={forQuote ? 'Write a blank quote instead' : 'Write a blank invoice instead'}
                 onClick={onWriteBlankInvoice}
                 disabled={disabled}
               />
@@ -405,7 +414,7 @@ export function UninvoicedVisitsPicker({
                           checked={isSelected}
                           onChange={() => toggle(s.sessionId)}
                           disabled={disabled}
-                          aria-label={`Bill ${ariaService(s.serviceType)} on ${s.startTime.slice(0, 10)}`}
+                          aria-label={`${forQuote ? 'Quote' : 'Bill'} ${ariaService(s.serviceType)} on ${s.startTime.slice(0, 10)}`}
                         />
                         <span className="visit-picker__row-main">
                           <span className="visit-picker__row-service">{serviceName(s.serviceType)}</span>
@@ -469,7 +478,7 @@ export function UninvoicedVisitsPicker({
                 })}
               </ul>
 
-              {excluding ? (
+              {forQuote ? null : excluding ? (
                 <div className="visit-picker__exclude">
                   <p className="visit-picker__scope">
                     {selectedSessions.length === 1

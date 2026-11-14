@@ -124,7 +124,8 @@ describe('notification key aliases: dispatch', () => {
     const written = ctx.writes.find((w) => w.path.startsWith('notifications/'));
     expect(written).toBeTruthy();
     expect(written!.data.key).toBe(CANONICAL);
-    expect(written!.data.title).toBe('KinTale (visit report) published');
+    // #2093: the household's copy carries the household title (#1372).
+    expect(written!.data.title).toBe('Your KinTale is ready');
   });
 
   /**

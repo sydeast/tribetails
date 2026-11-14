@@ -16,6 +16,9 @@ import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 import { FULL_CPU } from '../lib/runtimeOptions';
 
+/** The household's sentence for an invoice or quote it cannot open. */
+const NOT_AVAILABLE = 'That invoice or quote is no longer available.';
+
 /**
  * Stage 3 / 16.2 - kinfolk-portal invoice PDF download ("Download PDF" on the
  * MyTribe InvoiceDetailScreen). Portal callable (any signed-in kinfolk), scoped
@@ -67,8 +70,9 @@ export async function getMyInvoicePdfHandler(
   // #1005: a bill is money. Billing access, asked after the household resolves.
   await requireBillingAccess(uid, kinfolkId, hasAdminClaim, 'getMyInvoicePdf');
   const snap = await db().collection('invoices').doc(args.invoiceId).get();
+  // MyTribe Android prints this sentence, so it names no id (#2092 sweep).
   if (!snap.exists) {
-    throw new HttpsError('not-found', `Invoice ${args.invoiceId} does not exist.`);
+    throw new HttpsError('not-found', NOT_AVAILABLE);
   }
   const data = snap.data() as Record<string, unknown>;
   if (data.kinfolkId !== kinfolkId) {
@@ -76,9 +80,10 @@ export async function getMyInvoicePdfHandler(
     throw new HttpsError('permission-denied', 'You do not have access to this invoice.');
   }
   // #2087 / #2195: a quote the household may not see (saved unsent, turned
-  // into an invoice not sent yet, or archived) is answered as a missing one.
+  // into an invoice not sent yet, archived, or withdrawn) is answered as a
+  // missing one.
   if (hiddenFromHousehold(data)) {
-    throw new HttpsError('not-found', `Invoice ${args.invoiceId} does not exist.`);
+    throw new HttpsError('not-found', NOT_AVAILABLE);
   }
 
   let pdfUrl: string;

@@ -8,6 +8,7 @@ import {
   declinedRowLabel,
   formatCentsUsd,
   formatUsd,
+  documentNoun,
   invoiceRowStatusInfo,
   invoiceStatusInfo,
   longDateLabel,
@@ -247,7 +248,7 @@ export function Invoices() {
 }
 
 function invoiceTitle(inv: InvoiceDto): string {
-  return inv.client ?? `Invoice #${inv.id}`;
+  return inv.client ?? `${documentNoun(inv)} #${inv.id}`;
 }
 
 function OpenRow(props: {
@@ -298,7 +299,7 @@ function OpenRow(props: {
         <div className="info">
           <b>{invoiceTitle(inv)}</b>
           <small className="id">
-            {inv.client ? `Invoice #${inv.id}` : dueLabel}
+            {inv.client ? `${documentNoun(inv)} #${inv.id}` : dueLabel}
             {inv.client ? ` · ${dueLabel}` : ''}
           </small>
         </div>
@@ -349,7 +350,7 @@ function PaidRow(props: { invoice: InvoiceDto; divider: boolean }) {
       <div className="info">
         <b>{invoiceTitle(inv)}</b>
         <small className="id">
-          {inv.client ? `Invoice #${inv.id} · ${paidLabel}` : paidLabel}
+          {inv.client ? `${documentNoun(inv)} #${inv.id} · ${paidLabel}` : paidLabel}
         </small>
       </div>
       <div className="amt">

@@ -185,8 +185,8 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
         keys = listOf(
             NotificationKey(
                 key = "pets.updated",
-                title = "Your pets were updated",
-                description = "When a pet on your household is added or changed.",
+                title = "Your Kin were updated",
+                description = "When a Kin in your household is added or changed.",
                 allowedChannels = EMAIL_PUSH,
             ),
             NotificationKey(
