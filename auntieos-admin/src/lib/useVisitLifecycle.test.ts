@@ -18,16 +18,34 @@ import { renderHook, act, waitFor } from '@testing-library/react';
  * file's subject has been warned about since #703.
  */
 
-const { patchVisitLifecycle, beginVisitTracking, endVisitTracking, stopVisitTracking } = vi.hoisted(
-  () => ({
-    patchVisitLifecycle: vi.fn(),
-    beginVisitTracking: vi.fn(),
-    endVisitTracking: vi.fn(),
-    stopVisitTracking: vi.fn(),
-  }),
-);
-vi.mock('../api/sessionsWrite', () => ({ patchVisitLifecycle }));
+const {
+  patchVisitLifecycle,
+  startVisitWithRangeCheck,
+  verifyVisitArrival,
+  beginVisitTracking,
+  endVisitTracking,
+  stopVisitTracking,
+  useArrivalRule,
+  requestStartFix,
+} = vi.hoisted(() => ({
+  patchVisitLifecycle: vi.fn(),
+  startVisitWithRangeCheck: vi.fn(),
+  verifyVisitArrival: vi.fn(),
+  beginVisitTracking: vi.fn(),
+  endVisitTracking: vi.fn(),
+  stopVisitTracking: vi.fn(),
+  useArrivalRule: vi.fn(),
+  requestStartFix: vi.fn(),
+}));
+vi.mock('../api/sessionsWrite', () => ({ patchVisitLifecycle, startVisitWithRangeCheck, verifyVisitArrival }));
 vi.mock('./visitTracking', () => ({ beginVisitTracking, endVisitTracking, stopVisitTracking }));
+// #2279: the arrival rule and the position are the two inputs the start gate
+// adds. Everything else in `visitStartRange` is the real thing.
+vi.mock('./useArrivalRule', () => ({ useArrivalRule }));
+vi.mock('./visitStartRange', async (orig) => ({
+  ...(await orig<typeof import('./visitStartRange')>()),
+  requestStartFix,
+}));
 
 import { useVisitLifecycle } from './useVisitLifecycle';
 import { lifecycleActionsFor } from './sessionLifecycle';
@@ -62,6 +80,10 @@ function accepted(status: string, from = 'ON_MY_WAY', notified = true) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  // The rule is off unless a test turns it on, which is every test that
+  // predates #2279.
+  useArrivalRule.mockReturnValue(false);
+  requestStartFix.mockResolvedValue(null);
 });
 
 describe('useVisitLifecycle hands the clock to the browser tracker', () => {
@@ -306,5 +328,248 @@ describe('the sentence never claims a notification it has not seen', () => {
     // `Z` format, not a millisecond one the two apps would disagree about.
     const options = patchVisitLifecycle.mock.calls[0]?.[2] as { nowIso: string };
     expect(options.nowIso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+});
+
+/**
+ * #2279, operator ruling 2026-11-14: "cant start visit until within range of
+ * the property ... only admin auntie can complete visits outside of ranges".
+ *
+ * With "Verify arrival and departure" on, an Auntie's On my way and Arrived go
+ * to the server with her position, and the server's refusal is what she reads.
+ * The owner keeps the direct write, and an arrival outside the range is said
+ * to be recorded.
+ */
+describe('an Auntie starting a visit while arrival verification is on', () => {
+  const SCHEDULED = { _id: 's1', status: 'SCHEDULED', kinfolkId: 'fam1' };
+  const FAR = { lat: 34.09, lng: -118.3, accuracyMeters: 10 };
+  const REFUSAL =
+    'You are 2.3 km from this household. You need to be at the property to start this visit. ' +
+    'The owner can start it if you cannot get there.';
+
+  beforeEach(() => {
+    useArrivalRule.mockReturnValue(true);
+    requestStartFix.mockResolvedValue(FAR);
+  });
+
+  it.each(['ON_MY_WAY', 'ARRIVED'] as const)(
+    '%s goes to the server with her position, never straight to Firestore',
+    async (action) => {
+      startVisitWithRangeCheck.mockResolvedValue(accepted(action, 'SCHEDULED'));
+      const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens', undefined, true));
+      act(() => result.current.ask(actionNamed(action)));
+      act(() => result.current.confirm());
+      // Asked inside the confirm click, before anything resolves.
+      expect(requestStartFix).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(result.current.write.status).toBe('done'));
+      expect(startVisitWithRangeCheck).toHaveBeenCalledWith(SCHEDULED, action, expect.objectContaining({ fix: FAR }));
+      expect(patchVisitLifecycle).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['ON_MY_WAY', 'ARRIVED'] as const)(
+    '%s refused outside the range shows the server sentence as it is',
+    async (action) => {
+      startVisitWithRangeCheck.mockRejectedValue(
+        Object.assign(new Error(REFUSAL), { details: { code: 'visit_start_outside_range' } }),
+      );
+      const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens', undefined, true));
+      act(() => result.current.ask(actionNamed(action)));
+      act(() => result.current.confirm());
+      await waitFor(() => expect(result.current.write).toEqual({ status: 'error', message: REFUSAL }));
+      expect(patchVisitLifecycle).not.toHaveBeenCalled();
+    },
+  );
+
+  it('a refused arrival starts no tracking', async () => {
+    startVisitWithRangeCheck.mockRejectedValue(new Error(REFUSAL));
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('ARRIVED')));
+    act(() => result.current.confirm());
+    await expect(beginVisitTracking.mock.calls[0]?.[1]).resolves.toBe(false);
+  });
+
+  it('a tap with no position still goes to the server, which answers in its own words', async () => {
+    requestStartFix.mockResolvedValue(null);
+    startVisitWithRangeCheck.mockRejectedValue(new Error('We could not get your location.'));
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('ARRIVED')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('error'));
+    expect(startVisitWithRangeCheck).toHaveBeenCalledWith(SCHEDULED, 'ARRIVED', expect.objectContaining({ fix: null }));
+    expect(result.current.write).toEqual({ status: 'error', message: 'We could not get your location.' });
+  });
+
+  it('inside the range it works, and says what the household was told', async () => {
+    startVisitWithRangeCheck.mockResolvedValue(accepted('ARRIVED', 'SCHEDULED'));
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('ARRIVED')));
+    act(() => result.current.confirm());
+    await waitFor(() =>
+      expect(result.current.write).toEqual({
+        status: 'done',
+        message: 'SCHEDULED \u2192 ARRIVED. The Wrens was notified.',
+      }),
+    );
+    // The server measured it on the way in; no second measurement is sent.
+    expect(verifyVisitArrival).not.toHaveBeenCalled();
+  });
+
+  it('the rule still loading (unknown) is treated as on: the server decides', async () => {
+    useArrivalRule.mockReturnValue(null);
+    startVisitWithRangeCheck.mockResolvedValue(accepted('ON_MY_WAY', 'SCHEDULED'));
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('ON_MY_WAY')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('done'));
+    expect(startVisitWithRangeCheck).toHaveBeenCalledTimes(1);
+    expect(patchVisitLifecycle).not.toHaveBeenCalled();
+  });
+
+  it('Departed and Undo arrival stay direct writes with no position asked for', async () => {
+    patchVisitLifecycle.mockResolvedValue(accepted('DEPARTED', 'ARRIVED'));
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('DEPARTED')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('done'));
+    expect(patchVisitLifecycle).toHaveBeenCalledTimes(1);
+    expect(startVisitWithRangeCheck).not.toHaveBeenCalled();
+    expect(requestStartFix).not.toHaveBeenCalled();
+  });
+});
+
+describe('an Auntie starting a visit while arrival verification is off', () => {
+  const SCHEDULED = { _id: 's1', status: 'SCHEDULED', kinfolkId: 'fam1' };
+
+  it.each(['ON_MY_WAY', 'ARRIVED'] as const)('%s is the direct write it always was', async (action) => {
+    patchVisitLifecycle.mockResolvedValue(accepted(action, 'SCHEDULED'));
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed(action)));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('done'));
+    expect(patchVisitLifecycle).toHaveBeenCalledTimes(1);
+    expect(startVisitWithRangeCheck).not.toHaveBeenCalled();
+    expect(requestStartFix).not.toHaveBeenCalled();
+  });
+
+  it('a start the rules refuse reads as plain words, and her next tap goes to the server', async () => {
+    // The owner switched the rule on after this screen last read it.
+    patchVisitLifecycle.mockRejectedValue(
+      Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }),
+    );
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('ARRIVED')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('error'));
+    expect(result.current.write).toEqual({
+      status: 'error',
+      message:
+        'You need to be at the property to start this visit. Tap again and allow location when asked. ' +
+        'The owner can also start it.',
+    });
+
+    startVisitWithRangeCheck.mockResolvedValue(accepted('ARRIVED', 'SCHEDULED'));
+    act(() => result.current.ask(actionNamed('ARRIVED')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(startVisitWithRangeCheck).toHaveBeenCalledTimes(1));
+  });
+
+  it('a rules refusal on Departed is not dressed up as a range refusal', async () => {
+    patchVisitLifecycle.mockRejectedValue(
+      Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }),
+    );
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('DEPARTED')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('error'));
+    expect(result.current.write).toEqual({ status: 'error', message: 'Missing or insufficient permissions.' });
+  });
+});
+
+describe('the owner starting a visit while arrival verification is on', () => {
+  const SCHEDULED = { _id: 's1', status: 'SCHEDULED', kinfolkId: 'fam1' };
+  const FAR = { lat: 34.09, lng: -118.3, accuracyMeters: 10 };
+
+  beforeEach(() => {
+    useArrivalRule.mockReturnValue(true);
+    requestStartFix.mockResolvedValue(FAR);
+  });
+
+  it.each(['ON_MY_WAY', 'ARRIVED'] as const)('%s is a direct write from anywhere', async (action) => {
+    patchVisitLifecycle.mockResolvedValue(accepted(action, 'SCHEDULED'));
+    verifyVisitArrival.mockResolvedValue({ status: 'within', distanceMeters: 20, radiusMeters: 150, verificationRequired: true });
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens'));
+    act(() => result.current.ask(actionNamed(action)));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('done'));
+    expect(patchVisitLifecycle).toHaveBeenCalledTimes(1);
+    expect(startVisitWithRangeCheck).not.toHaveBeenCalled();
+  });
+
+  it('an arrival outside the range is measured after it lands, and the card says it was recorded', async () => {
+    patchVisitLifecycle.mockResolvedValue(accepted('ARRIVED', 'SCHEDULED'));
+    verifyVisitArrival.mockResolvedValue({
+      status: 'outside',
+      distanceMeters: 2300,
+      radiusMeters: 150,
+      verificationRequired: true,
+    });
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens'));
+    act(() => result.current.ask(actionNamed('ARRIVED')));
+    act(() => result.current.confirm());
+    await waitFor(() =>
+      expect(result.current.write).toEqual({
+        status: 'done',
+        message:
+          'SCHEDULED \u2192 ARRIVED. The Wrens was notified. You arrived 2.3 km from this household, ' +
+          'outside the range. That is recorded on the visit and in the Activity Log.',
+      }),
+    );
+    expect(verifyVisitArrival).toHaveBeenCalledWith('s1', FAR);
+  });
+
+  it('an arrival inside the range adds nothing to the sentence', async () => {
+    patchVisitLifecycle.mockResolvedValue(accepted('ARRIVED', 'SCHEDULED'));
+    verifyVisitArrival.mockResolvedValue({ status: 'within', distanceMeters: 20, radiusMeters: 150, verificationRequired: true });
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens'));
+    act(() => result.current.ask(actionNamed('ARRIVED')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(verifyVisitArrival).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(result.current.write).toEqual({ status: 'done', message: 'SCHEDULED \u2192 ARRIVED. The Wrens was notified.' }),
+    );
+  });
+
+  it('a measurement that fails leaves the arrival standing and says nothing', async () => {
+    patchVisitLifecycle.mockResolvedValue(accepted('ARRIVED', 'SCHEDULED'));
+    verifyVisitArrival.mockRejectedValue(new Error('The server could not be reached.'));
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens'));
+    act(() => result.current.ask(actionNamed('ARRIVED')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(verifyVisitArrival).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(result.current.write).toEqual({ status: 'done', message: 'SCHEDULED \u2192 ARRIVED. The Wrens was notified.' }),
+    );
+  });
+
+  it('with no position there is nothing to measure, and the arrival still lands', async () => {
+    requestStartFix.mockResolvedValue(null);
+    patchVisitLifecycle.mockResolvedValue(accepted('ARRIVED', 'SCHEDULED'));
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens'));
+    act(() => result.current.ask(actionNamed('ARRIVED')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('done'));
+    expect(verifyVisitArrival).not.toHaveBeenCalled();
+  });
+
+  it('with the rule off the owner is asked for no position and nothing is measured', async () => {
+    useArrivalRule.mockReturnValue(false);
+    patchVisitLifecycle.mockResolvedValue(accepted('ARRIVED', 'SCHEDULED'));
+    const { result } = renderHook(() => useVisitLifecycle(SCHEDULED, 'the Wrens'));
+    act(() => result.current.ask(actionNamed('ARRIVED')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('done'));
+    expect(requestStartFix).not.toHaveBeenCalled();
+    expect(verifyVisitArrival).not.toHaveBeenCalled();
   });
 });

@@ -130,6 +130,18 @@ interface SetVisitLifecycleArgs {
   action: VisitLifecycleAction;
   atIso?: string;
   etaMinutes?: number;
+  lat?: number;
+  lng?: number;
+  accuracyMeters?: number;
+}
+/**
+ * #2279: the device's position at a start tap. Sent to the server, measured
+ * against the household there, and dropped. Never written anywhere from here.
+ */
+export interface StartFix {
+  lat: number;
+  lng: number;
+  accuracyMeters?: number | undefined;
 }
 
 /**
@@ -425,14 +437,113 @@ export async function patchVisitLifecycle(
 export async function setVisitLifecycle(
   sessionId: string,
   action: VisitLifecycleAction,
-  options: { atIso?: string; etaMinutes?: number } = {},
+  options: { atIso?: string; etaMinutes?: number; fix?: StartFix | null } = {},
 ): Promise<SetVisitLifecycleResult> {
+  const fix = options.fix ?? null;
   return call<SetVisitLifecycleArgs, SetVisitLifecycleResult>('setVisitLifecycle', {
     sessionId,
     action,
     ...(options.atIso !== undefined ? { atIso: options.atIso } : {}),
     ...(options.etaMinutes !== undefined ? { etaMinutes: options.etaMinutes } : {}),
+    ...(fix !== null ? { lat: fix.lat, lng: fix.lng } : {}),
+    ...(fix !== null && fix.accuracyMeters !== undefined ? { accuracyMeters: fix.accuracyMeters } : {}),
   });
+}
+/**
+ * #2279, operator ruling 2026-11-14: AN AUNTIE'S START GOES THROUGH THE SERVER
+ * while "Verify arrival and departure" is on. On my way and Arrived are
+ * measured against the household there and refused outside the range; only
+ * the owner can start from further away.
+ *
+ * This is the one field tap that is NOT the direct write above, and the cold
+ * start that write was built to avoid is paid here on purpose: a distance
+ * cannot be checked by a write the browser makes itself, and `firestore.rules`
+ * refuses an Auntie that write while the rule is on. It needs a connection for
+ * the same reason. The owner, and an Auntie with the rule off, keep the direct
+ * write and its offline queue.
+ *
+ * Decides against the row the screen holds first, exactly as
+ * `patchVisitLifecycle` does, so a double tap or a wrong-state tap reads the
+ * same on both paths and costs no round trip.
+ *
+ * THROWS with the sentence she reads already in `err.message`. The server
+ * writes it (`functions/src/lib/visitStartRange.ts`): how far away she is,
+ * that she has to be at the property, and that the owner can start it.
+ *
+ * @param fix her position at the tap, or null when the browser gave none. Null
+ *            is still sent on: the server refuses it in its own words.
+ */
+export async function startVisitWithRangeCheck(
+  session: VisitLifecycleSession,
+  action: 'ON_MY_WAY' | 'ARRIVED',
+  options: { nowIso: string; fix: StartFix | null },
+): Promise<PatchVisitLifecycleResult> {
+  const decision = evaluateVisitLifecycle({
+    status: session.status,
+    action,
+    onMyWayAt: session.onMyWayAt,
+  });
+  if (decision.kind === 'unreachable') {
+    throw new Error(unreachableLifecycleMessage(action, decision.raw));
+  }
+  if (decision.kind === 'illegal') {
+    throw Object.assign(
+      new Error(illegalLifecycleMessage(action, decision.from, decision.allowedFrom)),
+      { details: { code: VISIT_LIFECYCLE_ILLEGAL_CODE } },
+    );
+  }
+  if (decision.kind === 'noop') {
+    return {
+      sessionId: session._id,
+      action,
+      from: decision.at,
+      status: decision.at,
+      changed: false,
+      notification: Promise.resolve({ notified: false, notifySkipped: 'already_in_this_state' }),
+    };
+  }
+  const res = await setVisitLifecycle(session._id, action, { atIso: options.nowIso, fix: options.fix });
+  return {
+    sessionId: res.sessionId,
+    action,
+    from: res.from,
+    status: res.status,
+    changed: res.changed,
+    // The callable answers with what the household was told, so there is
+    // nothing left to wait for.
+    notification: Promise.resolve({ notified: res.notified, notifySkipped: res.notifySkipped }),
+  };
+}
+/** What `verifyVisitArrival` answers. Mirrors the server's `Result`. */
+export interface ArrivalCheckResult {
+  ok: true;
+  sessionId: string;
+  status: 'within' | 'outside' | 'unverified' | 'household_location_unknown';
+  distanceMeters: number | null;
+  radiusMeters: number;
+  verificationRequired: boolean;
+  reason: string | null;
+}
+/**
+ * `verifyVisitArrival` (admin callable): measure an arrival that has already
+ * landed against the household, and stamp the distance on the visit.
+ *
+ * #2279: admin web never called this. Android Home has since #582, so an
+ * owner's arrival from the browser left no measurement and nothing for the
+ * Activity Log to say. The owner may start a visit from outside the range, and
+ * this is what records that it was. Best effort beside the write, never before
+ * it: it cannot fail or undo an arrival.
+ */
+export async function verifyVisitArrival(sessionId: string, fix: StartFix): Promise<ArrivalCheckResult> {
+  return call<{ sessionId: string; lat: number; lng: number; accuracyMeters?: number }, ArrivalCheckResult>(
+    'verifyVisitArrival',
+    {
+      sessionId,
+      lat: fix.lat,
+      lng: fix.lng,
+      ...(fix.accuracyMeters !== undefined ? { accuracyMeters: fix.accuracyMeters } : {}),
+    },
+  );
 }
 
 /**

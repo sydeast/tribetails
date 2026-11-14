@@ -310,6 +310,11 @@ fun KinCareSessionsScreen(
      */
     val clockFn: (KinCareSession, Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
         { session, patch, event, eventAtIso, msg ->
+            // #2279: the household sentence and the range sentence land at
+            // different times. Each re-says the whole toast from what is known
+            // so far, so neither erases the other.
+            var householdSentence = ""
+            var rangeSentence = ""
             viewModel.clockAndNotify(
                 session = session,
                 patch = patch,
@@ -333,10 +338,21 @@ fun KinCareSessionsScreen(
                 onNotified = { outcome, sentence ->
                     scope.launch {
                         if (sentence.isNotBlank()) {
-                            toastMessage = "$msg $sentence"
-                            toastKind = if (outcome.notified) ToastKind.Success else ToastKind.Info
+                            householdSentence = sentence
+                            toastMessage = listOf(msg, householdSentence, rangeSentence)
+                                .filter { it.isNotBlank() }.joinToString(" ")
+                            toastKind = if (outcome.notified && rangeSentence.isBlank()) ToastKind.Success else ToastKind.Info
                             toastVisible = true
                         }
+                    }
+                },
+                onArrivalChecked = { sentence ->
+                    scope.launch {
+                        rangeSentence = sentence
+                        toastMessage = listOf(msg, householdSentence, rangeSentence)
+                            .filter { it.isNotBlank() }.joinToString(" ")
+                        toastKind = ToastKind.Info
+                        toastVisible = true
                     }
                 },
             )

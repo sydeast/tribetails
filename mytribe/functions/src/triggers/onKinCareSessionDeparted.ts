@@ -9,6 +9,8 @@ import { AUDIT_EVENTS, type AuditEvent } from '../lib/auditEvents';
 import {
   ARRIVAL_RADIUS_CODE,
   ARRIVAL_VERIFICATION_CODE,
+  COMPLETED_OUTSIDE_RANGE_FIELD,
+  arrivalCheckedByOwner,
   missingVisitSteps,
   readArrivalEvidence,
   readArrivalSettings,
@@ -82,7 +84,12 @@ export function departedNow(before: SessionData | undefined, after: SessionData 
 }
 
 export type DepartureCompletion =
-  | { kind: 'completed'; kinTaleDue: boolean }
+  | {
+      kind: 'completed';
+      kinTaleDue: boolean;
+      /** #2279: the owner's arrival was measured outside the range. Allowed, and recorded. */
+      outsideRange?: { distanceMeters: number; radiusMeters: number };
+    }
   | { kind: 'skipped'; status: string }
   | { kind: 'refused'; code: string; description: string };
 
@@ -99,7 +106,7 @@ export async function completeDepartedSession(
   // see coldStartImportGraph.test.ts.
   const [
     { kinTaleDueAtCompletion, kinTaleRequiredFrom },
-    { visitMissingStepsWords, visitOutsideRadiusWords, visitTransitionWords },
+    { visitMissingStepsWords, visitOutsideRadiusWords, visitTransitionWords, visitCompletedOutsideRangeWords },
   ] = await Promise.all([import('../lib/kinTaleRequirement.js'), import('../lib/activityWords.js')]);
   const arrival = await readArrivalSettings(firestore);
   const sessionRef = firestore.doc(`kin_care_sessions/${sessionId}`);
@@ -118,6 +125,7 @@ export async function completeDepartedSession(
     // (`triggers/onBusinessSettingsWrite.ts`), or it reads the switch as off.
     const settingsSnap = await tx.get(firestore.doc('business_settings/business_settings'));
     const kinTaleRequired = kinTaleRequiredFrom(settingsSnap.data() as Record<string, unknown> | undefined);
+    let outsideRange: { distanceMeters: number; radiusMeters: number } | undefined;
 
     if (arrival.required) {
       const missing = missingVisitSteps(session);
@@ -130,7 +138,19 @@ export async function completeDepartedSession(
         accuracyMeters: evidence.accuracyMeters,
         radiusMeters: arrival.radiusMeters,
       });
-      if (arrivalLocationVerdict === 'outside') {
+      // #2279, operator ruling 2026-11-14: the owner may start and complete a
+      // visit outside the range, and it is recorded. Nobody calls this
+      // trigger, so who measured the arrival is read off the session
+      // (`ARRIVAL_CHECKED_BY_OWNER_FIELD`, server-written only). An Auntie can
+      // no longer start outside the range at all, so any other outside
+      // arrival is an old one or a stray: it stays Departed, as before, for
+      // the owner to complete from the card.
+      if (arrivalLocationVerdict === 'outside' && arrivalCheckedByOwner(session)) {
+        outsideRange = {
+          distanceMeters: Math.round(evidence.distanceMeters ?? 0),
+          radiusMeters: arrival.radiusMeters,
+        };
+      } else if (arrivalLocationVerdict === 'outside') {
         return {
           kind: 'refused',
           code: ARRIVAL_RADIUS_CODE,
@@ -160,6 +180,7 @@ export async function completeDepartedSession(
         completedAt: departedAt !== '' ? departedAt : nowIso,
         updatedAt: FieldValue.serverTimestamp(),
         ...(due ? { kinTaleDue: true } : {}),
+        ...(outsideRange !== undefined ? { [COMPLETED_OUTSIDE_RANGE_FIELD]: true } : {}),
       },
       { merge: true },
     );
@@ -167,7 +188,7 @@ export async function completeDepartedSession(
       tx.set(visitRef, { status: 'completed', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
       mirrored = 'completed';
     }
-    return { kind: 'completed', kinTaleDue: due };
+    return { kind: 'completed', kinTaleDue: due, ...(outsideRange !== undefined ? { outsideRange } : {}) };
   });
 
   if (outcome.kind === 'refused') {
@@ -189,10 +210,17 @@ export async function completeDepartedSession(
   } else if (outcome.kind === 'completed') {
     await audit({
       event: AUDIT_EVENTS.BOOKING_STATUS_TRANSITION,
-      severity: 'info',
+      severity: outcome.outsideRange !== undefined ? 'warn' : 'info',
       status: 'SUCCESS',
       sessionId,
-      description: visitTransitionWords('COMPLETE', 'DEPARTED', 'COMPLETED'),
+      description:
+        outcome.outsideRange !== undefined
+          ? visitCompletedOutsideRangeWords(
+              'DEPARTED',
+              outcome.outsideRange.distanceMeters,
+              outcome.outsideRange.radiusMeters,
+            )
+          : visitTransitionWords('COMPLETE', 'DEPARTED', 'COMPLETED'),
       payload: {
         sessionId,
         action: 'COMPLETE',
@@ -203,6 +231,7 @@ export async function completeDepartedSession(
         visitMirrored: mirrored,
         kinTaleDue: outcome.kinTaleDue,
         arrivalLocationVerdict,
+        ...(outcome.outsideRange !== undefined ? { completedOutsideRange: true, ...outcome.outsideRange } : {}),
       },
     });
   }

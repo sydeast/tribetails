@@ -260,12 +260,53 @@ describe('transitionBookingStatus COMPLETE honours the arrival radius', () => {
     mocks.writeAuditEntryFn.mockReset().mockResolvedValue('audit-1');
   });
 
-  it('REFUSES a visit whose arrival was recorded well outside the radius', async () => {
+  /** A caller who is not the owner. The wrapper refuses an Auntie before the handler; this is the handler's own line. */
+  function auntieReq(data: unknown): CallableRequest<unknown> {
+    return { ...req(data), auth: { uid: 'auntie1', token: { staffRole: 'auntie' } } } as unknown as CallableRequest<unknown>;
+  }
+  // #2279, operator ruling 2026-11-14: "only admin auntie can complete visits
+  // outside of ranges". This test used to pin a refusal for every caller.
+  it('the OWNER completes a visit whose arrival was recorded well outside the radius, and it is flagged', async () => {
+    const ctx = seed(
+      { requireArrivalDepartureVerification: true, arrivalRadiusMeters: 150 },
+      { ...stamped, arrivalDistanceMeters: 2400, arrivalAccuracyMeters: 10 },
+    );
+    const res = await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));
+    expect(res).toMatchObject({ status: 'COMPLETED' });
+    const write = ctx.writes.find((w) => w.path === 'kin_care_sessions/s1');
+    expect(write?.data).toMatchObject({ status: 'COMPLETED', completedOutsideRange: true });
+    const success = mocks.writeAuditEntryFn.mock.calls.find(
+      (c) => c[0]?.event === 'BOOKING_STATUS_TRANSITION',
+    );
+    expect(success?.[0]).toMatchObject({
+      severity: 'warn',
+      status: 'SUCCESS',
+      description:
+        'Completed the visit outside the range: departed to completed, arrival 2400m from the household (range 150m)',
+    });
+    expect(success?.[0]?.payload).toMatchObject({
+      arrivalLocationVerdict: 'outside',
+      completedOutsideRange: true,
+      distanceMeters: 2400,
+      radiusMeters: 150,
+    });
+  });
+  it('a completion inside the radius carries no outside-range flag', async () => {
+    const ctx = seed(
+      { requireArrivalDepartureVerification: true, arrivalRadiusMeters: 150 },
+      { ...stamped, arrivalDistanceMeters: 30, arrivalAccuracyMeters: 8 },
+    );
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));
+    expect(ctx.writes.find((w) => w.path === 'kin_care_sessions/s1')?.data).not.toHaveProperty(
+      'completedOutsideRange',
+    );
+  });
+  it('REFUSES the same visit to a caller who is not the owner', async () => {
     seed(
       { requireArrivalDepartureVerification: true, arrivalRadiusMeters: 150 },
       { ...stamped, arrivalDistanceMeters: 2400, arrivalAccuracyMeters: 10 },
     );
-    await expect(transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' })))
+    await expect(transitionBookingStatusHandler(auntieReq({ sessionId: 's1', action: 'COMPLETE' })))
       .rejects.toMatchObject({
         code: 'failed-precondition',
         details: { code: ARRIVAL_RADIUS_CODE, distanceMeters: 2400, radiusMeters: 150 },
@@ -354,7 +395,7 @@ describe('transitionBookingStatus COMPLETE honours the arrival radius', () => {
       { ...stamped, arrivalDistanceMeters: 2400, arrivalAccuracyMeters: 10 },
     );
     await expect(
-      transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' })),
+      transitionBookingStatusHandler(auntieReq({ sessionId: 's1', action: 'COMPLETE' })),
     ).rejects.toThrow();
     const refusal = mocks.writeAuditEntryFn.mock.calls.find(
       (c) => c[0]?.payload?.refusalCode === ARRIVAL_RADIUS_CODE,

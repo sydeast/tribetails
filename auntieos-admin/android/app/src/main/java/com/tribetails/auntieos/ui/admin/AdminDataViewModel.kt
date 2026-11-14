@@ -84,6 +84,11 @@ class AdminDataViewModel(
     // `AuntieOSApp.instance`.
     private val visitNotifier: () -> com.tribetails.auntieos.notifications.VisitNotifier =
         { AuntieOSApp.instance.visitNotifier },
+    // #2279: the position behind an Auntie Time arrival, so it is measured
+    // against the household as Home's has been since #582. A provider for the
+    // same reason as the notifier above.
+    private val arrivalFixes: () -> com.tribetails.auntieos.location.ArrivalFixProvider =
+        { com.tribetails.auntieos.location.FusedArrivalFixProvider(AuntieOSApp.instance.applicationContext) },
 ) : ViewModel() {
 
     private val _isLoading = MutableStateFlow(false)
@@ -718,6 +723,7 @@ class AdminDataViewModel(
         household: String,
         onWritten: (Throwable?) -> Unit,
         onNotified: (com.tribetails.auntieos.domain.VisitNotifyOutcome, String) -> Unit,
+        onArrivalChecked: (String) -> Unit = {},
     ) {
         viewModelScope.launch {
             val written = kinCareRepository.patchKinCareSession(session.id, patch)
@@ -728,6 +734,20 @@ class AdminDataViewModel(
             }
             loadKinCareSessions()
             onWritten(null)
+            // #2279: measure the arrival that just landed, as Home does. Auntie
+            // Time never did, so an owner's arrival outside the range from this
+            // screen left nothing on the visit or in the Activity Log. After
+            // the write and beside the household notice: it cannot fail or undo
+            // the arrival, and no fix or a failed call says nothing.
+            if (event == com.tribetails.auntieos.notifications.VisitNotifier.Event.ARRIVED) {
+                launch {
+                    val fix = arrivalFixes().currentFix() ?: return@launch
+                    val outcome = kinCareRepository
+                        .verifyVisitArrival(session.id, fix.lat, fix.lng, fix.accuracyMeters)
+                        .getOrNull()
+                    com.tribetails.auntieos.domain.arrivalCheckNotice(outcome)?.let(onArrivalChecked)
+                }
+            }
             val outcome = com.tribetails.auntieos.domain.visitRoutingSkip(session)
                 ?.let { com.tribetails.auntieos.domain.VisitNotifyOutcome(notified = false, notifySkipped = it) }
                 ?: try {

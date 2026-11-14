@@ -7,7 +7,12 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { clearedArrivalEvidence } from '../lib/arrivalVerification';
+import {
+  ARRIVAL_CHECKED_BY_OWNER_FIELD,
+  clearedArrivalEvidence,
+  readArrivalSettings,
+} from '../lib/arrivalVerification';
+import { isOwner, isOwnerClaim } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { BOOKING_STATUS_UNKNOWN_CODE, unknownStatusMessage } from '../lib/bookingTransitions';
@@ -111,7 +116,20 @@ export const Args = z.object({
    * none and its Home card sends one, so this is optional here too.
    */
   etaMinutes: z.number().int().min(0).max(24 * 60).optional(),
+  /**
+   * #2279: the device's position at the tap, for ON_MY_WAY and ARRIVED. With
+   * "Verify arrival and departure" on, an Auntie's start is measured against
+   * the household and refused outside the operator's range; a start that sends
+   * no position is refused too. The owner may send one or not. Measured and
+   * dropped, exactly as in `verifyVisitArrival`: never stored, logged or
+   * audited. Same bounds as that callable's.
+   */
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+  accuracyMeters: z.number().min(0).max(100_000).optional(),
 });
+
+const MAPBOX_ACCESS_TOKEN = 'MAPBOX_ACCESS_TOKEN';
 
 export const Result = z
   .object({
@@ -153,6 +171,7 @@ async function auditRefusal(args: {
   code: string;
   from: string;
   description: string;
+  extra?: Record<string, unknown>;
 }): Promise<void> {
   await writeAuditEntry({
     event: AUDIT_EVENTS.VISIT_LIFECYCLE_REFUSED,
@@ -168,6 +187,7 @@ async function auditRefusal(args: {
       action: args.action,
       refusalCode: args.code,
       from: args.from,
+      ...(args.extra ?? {}),
     },
   }).catch((err) => {
     logEvent({
@@ -309,11 +329,86 @@ export async function setVisitLifecycleHandler(
     });
   }
 
+  // #2279, operator ruling 2026-11-14: with "Verify arrival and departure" on,
+  // an Auntie cannot start a visit (On my way, Arrived) from outside the range
+  // of the household. Only the owner can. Checked AFTER the machine has ruled
+  // the move legal, so a wrong-state tap still reports the wrong state, and
+  // after the no-op branch, so a second tap on a started visit is not measured.
+  //
+  // The role is the token's, read the way `staffBypass` reads it. It is never
+  // an argument. `firestore.rules` refuses an Auntie's own direct write of
+  // these two statuses while the rule is on, so this callable is her only way
+  // to start, and this is the check on it.
+  let arrivalEvidence: Record<string, unknown> | null = null;
+  let startUnchecked = false;
+  if (args.action === 'ON_MY_WAY' || args.action === 'ARRIVED') {
+    const arrivalSettings = await readArrivalSettings(db());
+    if (arrivalSettings.required) {
+      const owner = isOwner(uid, isOwnerClaim(req.auth?.token), 'setVisitLifecycle');
+      const { measureArrival, auntieStartDecision } = await import('../lib/visitStartRange.js');
+      const fix =
+        args.lat !== undefined && args.lng !== undefined
+          ? { lat: args.lat, lng: args.lng, accuracyMeters: args.accuracyMeters }
+          : null;
+      const finding =
+        fix === null
+          ? ({ status: 'no_fix' } as const)
+          : await measureArrival(db(), {
+              kinfolkId: typeof prev.kinfolkId === 'string' ? prev.kinfolkId : '',
+              fix,
+              radiusMeters: arrivalSettings.radiusMeters,
+              mapboxToken: (process.env[MAPBOX_ACCESS_TOKEN] ?? '').trim(),
+            });
+
+      if (!owner) {
+        const start = auntieStartDecision(finding);
+        if (!start.allow) {
+          await auditRefusal({
+            uid,
+            sessionId: args.sessionId,
+            action: args.action,
+            code: start.code,
+            from: decision.from,
+            description: (await import('../lib/activityWords.js')).auntieStartRefusedWords(
+              args.action,
+              start.why,
+            ),
+            // A distance, never the position that produced it.
+            extra:
+              finding.status === 'outside'
+                ? { distanceMeters: finding.distanceMeters, radiusMeters: arrivalSettings.radiusMeters }
+                : {},
+          });
+          throw new HttpsError('failed-precondition', start.message, {
+            code: start.code,
+            sessionId: args.sessionId,
+            ...(finding.status === 'outside' ? { distanceMeters: finding.distanceMeters } : {}),
+          });
+        }
+        startUnchecked = start.unchecked;
+      }
+
+      // An arrival's measurement goes on the visit, in the same three fields
+      // `verifyVisitArrival` writes, so COMPLETE and the departure trigger read
+      // one kind of evidence whichever path recorded it. On my way is not an
+      // arrival and stamps none.
+      if (args.action === 'ARRIVED' && finding.status !== 'no_fix') {
+        arrivalEvidence = {
+          arrivalDistanceMeters: finding.distanceMeters,
+          arrivalAccuracyMeters: finding.distanceMeters === null ? null : (args.accuracyMeters ?? null),
+          arrivalLocationCheckedAt: new Date().toISOString(),
+          [ARRIVAL_CHECKED_BY_OWNER_FIELD]: owner,
+        };
+      }
+    }
+  }
+
   const stampedAt = args.atIso ?? new Date().toISOString();
   const patch: Record<string, unknown> = {
     status: decision.to,
     updatedAt: FieldValue.serverTimestamp(),
     updatedBy: uid,
+    ...(arrivalEvidence ?? {}),
   };
 
   if (args.action === 'UNDO_ARRIVAL') {
@@ -389,6 +484,34 @@ export async function setVisitLifecycleHandler(
       notifySkipped = 'dispatch_failed';
     }
   }
+  if (startUnchecked) {
+    // #2279: she started with no range to check against. Said in the Activity
+    // Log so the owner can find the household whose address needs fixing.
+    await writeAuditEntry({
+      event: AUDIT_EVENTS.VISIT_ARRIVAL_LOCATION_CHECK,
+      severity: 'warn',
+      status: 'SUCCESS',
+      actorRole: 'AUNTIE',
+      actorUid: uid,
+      targetUid: args.sessionId,
+      targetCollection: 'kin_care_sessions',
+      description: (await import('../lib/activityWords.js')).auntieStartUncheckedWords(args.action),
+      payload: {
+        sessionId: args.sessionId,
+        action: args.action,
+        checkStatus: 'household_location_unknown',
+        verificationRequired: true,
+      },
+    }).catch((err) => {
+      logEvent({
+        severity: 'warn',
+        function: 'setVisitLifecycle',
+        event: 'audit.write.failed',
+        uid,
+        errorMessage: (err as Error)?.message,
+      });
+    });
+  }
   logEvent({
     severity: 'info',
     function: 'setVisitLifecycle',
@@ -416,6 +539,7 @@ export async function setVisitLifecycleHandler(
 }
 
 export const setVisitLifecycle = onCall(
-  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  // #2279: the start gate geocodes a household that has no coordinate yet.
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', MAPBOX_ACCESS_TOKEN] },
   wrapAdminCallable('setVisitLifecycle', setVisitLifecycleHandler),
 );

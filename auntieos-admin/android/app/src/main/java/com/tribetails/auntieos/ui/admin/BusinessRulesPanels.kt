@@ -268,10 +268,12 @@ internal const val VISIT_REMINDER_TOGGLE_DESCRIPTION = "Turning this off stops i
 
 /** ISSUE #1612: names the switch it depends on, rather than "the switch above". */
 internal const val ARRIVAL_RADIUS_NOTE =
-    "Only applies while Verify arrival and departure by location is on. Marking Arrived checks " +
-        "where you are against the household's address; further away than this and the visit " +
-        "cannot be marked complete. If your phone cannot get a fix, you are offline, or we cannot " +
-        "place the address on the map, the visit still goes through and is recorded as unverified."
+    "Only applies while Verify arrival and departure by location is on. An Auntie cannot start " +
+        "a visit, with On my way or Arrived, from further than this from the household, or without " +
+        "sharing her location. You can start from anywhere, and an arrival of yours further away " +
+        "than this is recorded on the visit and in the Activity Log. If your phone cannot get a " +
+        "fix, you are offline, or we cannot place the address on the map, the visit still goes " +
+        "through and is recorded as unverified."
 
 /** The Notifications panel's line about visit reminders, built on [VISIT_REMINDER_TIMING]. */
 internal const val VISIT_REMINDER_NOTE =
