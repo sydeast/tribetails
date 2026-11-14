@@ -46,12 +46,16 @@ import { normalizeBookingStatus, type BookingStatus } from './bookingTransitions
  * `bookingTransitions.ts#evaluateTransition` already made for its own actions.
  */
 
-/** The four in-visit actions this machine governs. */
+/**
+ * The in-visit actions this machine governs. The first four are the clock;
+ * UNDO_DEPARTED (#2250) takes back a wrong Departed tap.
+ */
 export const VISIT_LIFECYCLE_ACTIONS = [
   'ON_MY_WAY',
   'ARRIVED',
   'DEPARTED',
   'UNDO_ARRIVAL',
+  'UNDO_DEPARTED',
 ] as const;
 
 export type VisitLifecycleAction = (typeof VISIT_LIFECYCLE_ACTIONS)[number];
@@ -65,6 +69,10 @@ const ALLOWED_FROM: Readonly<Record<VisitLifecycleAction, readonly BookingStatus
   ARRIVED: ['SCHEDULED', 'ON_MY_WAY'],
   DEPARTED: ['ARRIVED'],
   UNDO_ARRIVAL: ['ARRIVED', 'DEPARTED'],
+  // #2250: COMPLETED is here because a departure completes the visit at once
+  // (#2123). DEPARTED is the visit whose completion the arrival rule refused,
+  // or the moment before the departure trigger has run.
+  UNDO_DEPARTED: ['DEPARTED', 'COMPLETED'],
 };
 
 /**
@@ -83,6 +91,8 @@ const NOOP_AT: Readonly<Record<VisitLifecycleAction, readonly BookingStatus[]>> 
   ARRIVED: ['ARRIVED'],
   DEPARTED: ['DEPARTED'],
   UNDO_ARRIVAL: ['SCHEDULED', 'ON_MY_WAY'],
+  // A second tap on "Undo departed" finds the visit Arrived already.
+  UNDO_DEPARTED: ['ARRIVED'],
 };
 
 export function allowedFromForLifecycle(
@@ -155,8 +165,12 @@ export function evaluateVisitLifecycle(args: {
     return { kind: 'illegal', from: current, action: args.action, allowedFrom };
   }
 
-  const to =
-    args.action === 'UNDO_ARRIVAL' ? undoArrivalTarget(args.onMyWayAt) : args.action;
+  const to: BookingStatus =
+    args.action === 'UNDO_ARRIVAL'
+      ? undoArrivalTarget(args.onMyWayAt)
+      : args.action === 'UNDO_DEPARTED'
+        ? 'ARRIVED'
+        : args.action;
   return { kind: 'apply', from: current, to };
 }
 
@@ -169,6 +183,7 @@ const ACTION_PHRASE: Readonly<Record<VisitLifecycleAction, string>> = {
   ARRIVED: 'clock in to this visit',
   DEPARTED: 'clock out of this visit',
   UNDO_ARRIVAL: 'undo the arrival on this visit',
+  UNDO_DEPARTED: 'undo the departure on this visit',
 };
 
 /**
@@ -181,6 +196,7 @@ export function illegalLifecycleMessage(
   from: BookingStatus,
   allowedFrom: readonly BookingStatus[],
 ): string {
+  if (action === 'UNDO_DEPARTED') return UNDO_DEPARTED_NOT_DEPARTED_MESSAGE;
   return `Cannot ${ACTION_PHRASE[action]} while it is ${from}. Allowed from: ${allowedFrom.join(', ')}.`;
 }
 
@@ -206,5 +222,63 @@ export function notificationEventFor(
       return 'departed';
     case 'UNDO_ARRIVAL':
       return null;
+    // #2250, operator ruling 2026-11-14: "the household is not told".
+    case 'UNDO_DEPARTED':
+      return null;
   }
 }
+
+/**
+ * #2250, operator ruling 2026-11-14: "A short Undo departed. For a few minutes
+ * after Departed, Undo departed puts the visit back to Arrived; the household
+ * is not told."
+ *
+ * HOW LONG "a few minutes" IS. Five, a constant here and nowhere else: it is
+ * not a business setting. No client carries the number. The departure trigger
+ * stamps the moment the window closes on the visit
+ * ({@link UNDO_DEPARTED_UNTIL_FIELD}), every client shows the button until
+ * then, and `lib/undoDeparted.ts` refuses after it.
+ */
+export const UNDO_DEPARTED_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * When this visit's "Undo departed" stops being offered, as an ISO instant in
+ * UTC. Written by `triggers/onKinCareSessionDeparted.ts` when the departure
+ * reaches the server, and cleared by the undo.
+ *
+ * WHY THE SERVER'S CLOCK AND NOT `departedAt`. `departedAt` is the tapping
+ * device's own clock: a phone's, a browser's, or the desktop console's wall
+ * time with no zone on it (`lib/visitStepNotice.ts#stampMs`), and an Android
+ * tap made offline lands whenever the phone next finds a signal. The window is
+ * measured from when the server saw the departure, completed the visit and
+ * told the household, because that is the thing being taken back.
+ */
+export const UNDO_DEPARTED_UNTIL_FIELD = 'undoDepartedUntil';
+
+/**
+ * What the household's copy of the visit read before the departure completed
+ * it (`confirmed`, `approved`, ...), kept so the undo can put it back. Written
+ * and cleared beside {@link UNDO_DEPARTED_UNTIL_FIELD}.
+ */
+export const HOUSEHOLD_STATUS_BEFORE_COMPLETION_FIELD = 'householdStatusBeforeCompletion';
+
+/** Refusal codes of "Undo departed", read by every admin client. */
+export const UNDO_DEPARTED_WINDOW_CODE = 'undo_departed_window_passed';
+export const UNDO_DEPARTED_NO_ARRIVAL_CODE = 'undo_departed_no_arrival';
+
+/** The window in whole minutes, for a sentence. */
+export function undoDepartedWindowMinutes(): number {
+  return Math.round(UNDO_DEPARTED_WINDOW_MS / 60_000);
+}
+
+/** Said when the button is pressed after the window has closed. */
+export function undoDepartedWindowMessage(): string {
+  return `Undo departed is only there for ${undoDepartedWindowMinutes()} minutes after Departed. That time has passed.`;
+}
+
+/** Said when the visit carries no arrival to go back to. */
+export const UNDO_DEPARTED_NO_ARRIVAL_MESSAGE =
+  'This visit has no arrival on record, so it cannot go back to Arrived.';
+
+/** Said when the visit is not Departed or Completed at all. */
+export const UNDO_DEPARTED_NOT_DEPARTED_MESSAGE = 'This visit has no departure to undo.';

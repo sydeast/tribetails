@@ -95,6 +95,7 @@ const ACTION_WORDS: Record<string, { done: string; attempt: string }> = {
   ARRIVED: { done: 'Marked the arrival', attempt: 'mark the arrival' },
   DEPARTED: { done: 'Marked the departure', attempt: 'mark the departure' },
   UNDO_ARRIVAL: { done: 'Undid the arrival', attempt: 'undo the arrival' },
+  UNDO_DEPARTED: { done: 'Undid the departure', attempt: 'undo the departure' },
 };
 const done = (a: string): string => ACTION_WORDS[a]?.done ?? humanizeKey(a);
 const attempt = (a: string): string => ACTION_WORDS[a]?.attempt ?? lowerWords(a);

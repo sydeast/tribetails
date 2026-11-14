@@ -2921,6 +2921,37 @@ from the field app, and `firestore.rules` still permits it. That app is
 regularly offline mid-visit, and Firestore's offline write queue is what makes
 those writes land at all.
 
+**Undo departed (#2250, operator ruling 2026-11-14).** `setVisitLifecycle`
+takes a fifth action, `UNDO_DEPARTED`: `{ sessionId, action: 'UNDO_DEPARTED' }`,
+for the owner and for an Auntie. It puts a `DEPARTED` or `COMPLETED` visit back
+to `ARRIVED` and is the only way to: `firestore.rules` refuses that move to
+every client.
+
+- **The window** is `UNDO_DEPARTED_WINDOW_MS` (5 minutes) in
+  `lib/visitLifecycle.ts`, a code constant and not a business setting. The
+  departure trigger stamps `undoDepartedUntil` (ISO, UTC, this server's clock)
+  on the visit when the departure lands. Clients show "Undo departed" while
+  that moment is ahead and carry no number of their own.
+- **What it writes**, in one transaction: `status: 'ARRIVED'`, `departedAt: ''`,
+  and `completedAt`, `kinTaleDue`, `completedOutsideRange`, `undoDepartedUntil`
+  and `householdStatusBeforeCompletion` removed. The household's copy
+  (`kinCares/{visitId}`) goes from `completed` back to the status the trigger
+  kept in `householdStatusBeforeCompletion` (`confirmed` when none was kept),
+  with a fresh `officeNoticeStamp` so `onBookingsWrite` sends no confirmation.
+- **What it leaves**: the arrival (`arrivedAt`, the measured distance,
+  `arrivalCheckedByOwner`) and `invoiceId`. No position is accepted.
+- **The household is not told.** No notice is sent and none is recalled.
+  Result: `notified: false`, `notifySkipped: 'no_event_for_action'`.
+- **Refusals** (`failed-precondition`, message is plain words for the screen):
+  `details.code: 'undo_departed_window_passed'` after the window or with no
+  window on the visit; `'undo_departed_no_arrival'` when `arrivedAt` is blank;
+  `'visit_lifecycle_illegal'` when the visit never departed. Each is audited
+  as `VISIT_LIFECYCLE_REFUSED`.
+- **A second tap** finds the visit `ARRIVED` and answers `changed: false`,
+  having written nothing.
+- **Activity Log**: one `VISIT_UNDO_DEPARTED` line ("Undid the departure:
+  completed to arrived"), fixed id per departure.
+
 ## Booking notes (admin + kinfolk)
 
 Two threads on one visit, at
