@@ -145,6 +145,9 @@ const INVOICE_LEDGERS: Readonly<Record<string, GetInvoiceLedgerResult>> = {
     paidCents: 6000,
     totalCents: 24000,
     amountDueCents: 18000,
+    // #2090: nothing written off on this invoice.
+    writeOffs: [],
+    writtenOffCents: 0,
     ledgerPayments: [],
     // Empty for the same reason as `ledgerPayments` above, plus one of its own:
     // this list is household money NO invoice claims, and the React panel does
