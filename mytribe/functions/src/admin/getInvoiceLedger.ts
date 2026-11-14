@@ -13,6 +13,7 @@ import {
   type PaymentAmount,
 } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
+import { WRITE_OFFS_SUBCOLLECTION } from '../lib/invoiceArchive';
 import { CentsSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import {
   TIP_BASES,
@@ -249,6 +250,21 @@ const InvoiceSessionSchema = z
   .strict();
 
 /**
+ * #2090: one entry of `invoices/{id}/writeOffs`. Its own list, never merged
+ * into `payments`: what was written off was given up, not collected, and
+ * `paidCents` must keep saying what came in.
+ */
+const WriteOffEntrySchema = z
+  .object({
+    writeOffId: z.string().min(1),
+    amountCents: CentsSchema,
+    /** Epoch millis of the write-off, or null when the stamp is unreadable. */
+    writtenOffAtMs: z.number().nullable(),
+    /** The owner's uid. Never shown raw: clients say who by their own lookup, or nothing. */
+    writtenOffBy: z.string().nullable(),
+  })
+  .strict();
+/**
  * The RESPONSE shape (ADR-0001 step W3-1), and the source of the TS types below.
  *
  * NO `ok` FIELD, matching `listUninvoicedSessions`, the other pure read on this
@@ -264,8 +280,15 @@ export const Result = z
     paidCents: CentsSchema,
     /** What the invoice is worth, in cents, as the classifier reads it. */
     totalCents: CentsSchema,
-    /** What is still owed. Clamped at 0, like every balance on this surface. */
+    /**
+     * What is still owed. Clamped at 0, like every balance on this surface, and
+     * less whatever was written off (#2090), so a written-off invoice reads 0.
+     */
     amountDueCents: CentsSchema,
+    /** #2090: the write-off entries, newest first. Counted in NOTHING above except `amountDueCents`. */
+    writeOffs: z.array(WriteOffEntrySchema),
+    /** #2090: their sum. */
+    writtenOffCents: CentsSchema,
     /** ROOT `payments` rows naming this invoice. Counted in NOTHING above. */
     ledgerPayments: z.array(LedgerPaymentSchema),
     /**
@@ -383,6 +406,23 @@ export async function getInvoiceLedgerHandler(
   const paidCents = paidCentsFromPayments(paymentDocs.map((p) => p.data));
   const totalCents = invoiceTotalCentsOf(invoice);
   const settlement = settleInvoice(totalCents, paidCents);
+  // #2090: the write-off entries. Read beside the payments, never summed into them.
+  const writeOffSnap = await invRef.collection(WRITE_OFFS_SUBCOLLECTION).get();
+  const writeOffs = writeOffSnap.docs
+    .map((d) => {
+      const raw = (d.data() ?? {}) as Record<string, unknown>;
+      const at = raw['writtenOffAt'] as { toMillis?: () => number } | number | undefined;
+      const writtenOffAtMs =
+        typeof at === 'number' ? at : at && typeof at.toMillis === 'function' ? at.toMillis() : null;
+      return {
+        writeOffId: d.id,
+        amountCents: centsOr(raw['amountCents'], undefined),
+        writtenOffAtMs,
+        writtenOffBy: strOrNull(raw['writtenOffBy']),
+      };
+    })
+    .sort((a, b) => (b.writtenOffAtMs ?? 0) - (a.writtenOffAtMs ?? 0));
+  const writtenOffCents = writeOffs.reduce((sum, w) => sum + w.amountCents, 0);
 
   const payments = paymentDocs
     .map(({ id, data }) => {
@@ -590,7 +630,9 @@ export async function getInvoiceLedgerHandler(
     payments,
     paidCents,
     totalCents: settlement.totalCents,
-    amountDueCents: settlement.amountDueCents,
+    amountDueCents: Math.max(0, settlement.amountDueCents - writtenOffCents),
+    writeOffs,
+    writtenOffCents,
     ledgerPayments,
     unlinkedKinfolkPayments,
     unresolvedAmountCount: unresolvedLedgerAmounts,

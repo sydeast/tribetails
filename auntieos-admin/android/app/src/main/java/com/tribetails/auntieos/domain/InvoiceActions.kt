@@ -48,6 +48,8 @@ enum class InvoiceState {
     PAID,
     ZERO,
     OPEN,
+    /** #2090: the owner wrote off what was left. Nothing owed, and not paid. */
+    WRITTEN_OFF,
 }
 
 /**
@@ -74,6 +76,7 @@ fun invoiceStateOrNull(invoice: Invoice): InvoiceState? = when (invoice.status.t
     "paid" -> InvoiceState.PAID
     "zero" -> InvoiceState.ZERO
     "open" -> InvoiceState.OPEN
+    "written_off" -> InvoiceState.WRITTEN_OFF
     else -> null
 }
 
@@ -251,6 +254,9 @@ fun invoiceActionsFor(state: InvoiceState?): List<InvoiceAction> = when (state) 
     InvoiceState.REDEEMED -> emptyList()
     // Nothing was ever billed, so nothing to collect and nothing to receipt.
     InvoiceState.ZERO -> emptyList()
+    // #2090: written off. Nothing to collect or remind about, and no receipt:
+    // a receipt says money arrived.
+    InvoiceState.WRITTEN_OFF -> emptyList()
     // No recognizable stamp: no affordance is fabricated for a doc this app
     // does not claim to understand.
     null -> emptyList()
@@ -260,11 +266,55 @@ fun invoiceActionsFor(state: InvoiceState?): List<InvoiceAction> = when (state) 
  * #2168: what an invoice is offered once archiving is counted in. An archived
  * invoice is read-only until restored (the server refuses to send, edit or
  * link one, `invoice_archived`), so REVIEW_AND_SEND is never offered on it,
- * from the list row or the detail screen. The collection actions are left as
- * the state gives them: archiving does not stop a household paying.
+ * from the list row or the detail screen.
+ *
+ * #2090: nor SEND_REMINDER. The server refuses a reminder on an archived
+ * invoice, and only an invoice with nothing owed can be archived now. Recording
+ * a payment stays as the state gives it: archiving does not stop a household
+ * paying. Same rule as web and the desktop console.
  */
 fun invoiceActionsOffered(state: InvoiceState?, archived: Boolean): List<InvoiceAction> =
-    invoiceActionsFor(state).let { if (archived) it - InvoiceAction.REVIEW_AND_SEND else it }
+    invoiceActionsFor(state).let {
+        if (archived) it - InvoiceAction.REVIEW_AND_SEND - InvoiceAction.SEND_REMINDER else it
+    }
+
+/**
+ * #2090: the cents an invoice still owes that the owner could write off, or
+ * null when there is nothing to write off: anything but a stamped OPEN invoice
+ * with a balance, or an archived one (restored first). The server decides
+ * again on its own read; this only keeps the button off an invoice it would
+ * refuse. Mirrors web's `writeOffOwedCents`.
+ */
+fun invoiceWriteOffOwedCents(invoice: Invoice): Long? {
+    if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return null
+    if (invoiceIsArchived(invoice)) return null
+    val cents = if (invoice.amountDueCents > 0L) {
+        invoice.amountDueCents
+    } else if (invoice.amountDue.isFinite()) {
+        Math.round(invoice.amountDue * 100.0)
+    } else {
+        0L
+    }
+    return cents.takeIf { it > 0L }
+}
+
+/** #2090: the archive prompt on an invoice with money owed. Same words as the server, web and desktop. */
+fun cannotArchiveOwedText(owedCents: Long): String =
+    "This invoice still has ${formatUsdCents(owedCents)} owing, so it cannot be archived. " +
+        "Record the payment, or write off the balance first."
+
+/** #2090: the write-off confirm, naming the household, the invoice and the amount. Same words on every admin client. */
+fun writeOffConfirmText(household: String, invoiceNumber: String, owedCents: Long): String {
+    val which = if (invoiceNumber.isBlank()) "this invoice" else "invoice ${invoiceNumber.trim()}"
+    return "Write off ${formatUsdCents(owedCents)} on $which for $household? The household will no longer be " +
+        "asked to pay it, and it stops counting as outstanding. It is not recorded as a payment or as account " +
+        "credit, and it cannot be undone."
+}
+
+/** #2090: the notice once the balance is written off. */
+fun writeOffNoticeText(writtenOffCents: Long): String =
+    "Balance of ${formatUsdCents(writtenOffCents)} written off. The household is no longer asked to pay it, " +
+        "and the invoice can be archived now."
 
 /**
  * What has been collected against an invoice, and what is left, in integer

@@ -125,6 +125,13 @@ fun invoiceDetailBadgeFor(invoice: Invoice, todayKey: String): InvoiceDetailBadg
         InvoiceState.CREDIT -> badge("CREDIT", AuntieStatusTone.Teal, "credit owed to the household")
         InvoiceState.REDEEMED -> badge("REDEEMED", AuntieStatusTone.Muted, "credit redeemed")
         InvoiceState.ZERO -> badge("ZERO", AuntieStatusTone.Muted, "nothing billed")
+        // #2090: closed by the owner. The trend names what was given up.
+        InvoiceState.WRITTEN_OFF -> badge(
+            "WRITTEN OFF",
+            AuntieStatusTone.Muted,
+            invoiceWrittenOffCentsOf(invoice)?.let { "${com.tribetails.auntieos.web.util.formatUsdCents(it)} written off" }
+                ?: "balance written off",
+        )
         null -> badge(
             invoice.status.trim().uppercase().ifBlank { "NO STATUS" },
             AuntieStatusTone.Muted,

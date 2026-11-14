@@ -996,6 +996,85 @@ describe('L20 · per-item checklist', () => {
     expect(screen.getByRole('button', { name: /send to the whitfields/i })).toBeEnabled();
   });
 });
+/**
+ * #2058, operator ruling 2026-11-12 (stamp at send): a sent tale is shown
+ * against its OWN copy of the care tasks, so deleting or editing the template
+ * afterwards changes nothing on it. A draft still follows its template.
+ */
+describe('#2058 · a sent tale keeps its own copy of the care tasks', () => {
+  const copy = {
+    v: 1,
+    stampedAt: '2026-07-16T16:00:00.000Z',
+    stampedBy: 'send',
+    templateId: 'tpl_walk',
+    templateName: 'Dog Walk recap',
+    source: 'template',
+    checklistEnabled: true,
+    items: [
+      { key: 'fed', text: 'Fed breakfast', scope: 'PER_PET', order: 0, conditions: [] },
+      { key: 'gate_locked', text: 'Gate locked', scope: 'PER_VISIT', order: 1, conditions: [] },
+    ],
+    done: [{ key: 'fed', kinId: 'pet1', text: 'Fed breakfast', note: '' }],
+  };
+  const sent = (over: Partial<KinTaleEntry> = {}) =>
+    report({
+      title: 'Park day',
+      status: 'SENT',
+      sentAt: '2026-07-16T16:00:00.000Z',
+      sentVia: 'pending',
+      templateId: 'tpl_walk',
+      fieldResponses: { 'pet1|fed': { fieldKey: 'fed', kinId: 'pet1', boolValue: true } },
+      careTasks: copy,
+      ...over,
+    });
+  it('shows the tasks the tale was sent with after the template is deleted for good', async () => {
+    mockStreams({ reports: { status: 'ready', data: [sent()] }, templates: { status: 'ready', data: [] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByRole('checkbox', { name: /fed breakfast/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /gate locked/i })).not.toBeChecked();
+    expect(screen.getByText('Dog Walk recap')).toBeInTheDocument();
+  });
+  it('keeps the labels it was sent with when the template is edited afterwards', async () => {
+    mockStreams({
+      reports: { status: 'ready', data: [sent()] },
+      templates: {
+        status: 'ready',
+        data: [templateDoc({ checklistItems: [{ key: 'fed', text: 'Renamed later', scope: 'PER_PET', order: 0 }] })],
+      },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByRole('checkbox', { name: /fed breakfast/i })).toBeChecked();
+    expect(screen.queryByRole('checkbox', { name: /renamed later/i })).toBeNull();
+  });
+  it('a draft still follows its template, even if it somehow carries a copy', async () => {
+    mockStreams({
+      reports: { status: 'ready', data: [sent({ status: 'DRAFT', sentAt: '', sentVia: '' })] },
+      templates: { status: 'ready', data: [templateDoc()] },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByRole('checkbox', { name: /^fed$/i })).toBeChecked();
+    expect(screen.queryByRole('checkbox', { name: /fed breakfast/i })).toBeNull();
+  });
+  it('a tale sent before the copy existed still reads its template', async () => {
+    mockStreams({
+      reports: { status: 'ready', data: [sent({ careTasks: undefined })] },
+      templates: { status: 'ready', data: [templateDoc()] },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByRole('checkbox', { name: /^fed$/i })).toBeChecked();
+  });
+  it('a tick changed on the sent tale is saved as a change to the answers only', async () => {
+    saveKinTaleDraft.mockResolvedValue('tale1');
+    mockStreams({ reports: { status: 'ready', data: [sent()] }, templates: { status: 'ready', data: [] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('checkbox', { name: /gate locked/i }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalled());
+    const saved = saveKinTaleDraft.mock.calls[0]?.[0] as KinTaleDraft;
+    expect(saved.fieldResponses['gate_locked']).toMatchObject({ fieldKey: 'gate_locked', boolValue: true });
+    expect(saved).not.toHaveProperty('careTasks');
+  });
+});
 describe('L20 · photos', () => {
   it('attaches an uploaded photo to the tale and sends its id', async () => {
     uploadMediaFile.mockResolvedValue('media9');

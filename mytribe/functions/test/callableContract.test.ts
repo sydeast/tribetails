@@ -21,6 +21,7 @@ import { Args as AssignTemplateArgs } from '../src/admin/assignTemplate';
 import { Args as UpdateInvoiceArgs } from '../src/admin/updateInvoice';
 import { Args as ArchiveInvoiceArgs } from '../src/admin/archiveInvoice';
 import { Args as UnarchiveInvoiceArgs } from '../src/admin/unarchiveInvoice';
+import { WriteOffArgs as WriteOffInvoiceArgs } from '../src/admin/archiveInvoice';
 import { Args as RetryInvoiceCheckoutCloseArgs } from '../src/admin/retryInvoiceCheckoutClose';
 // The partial-payment detection/repair pass (2026-07-25).
 import { Args as RepairInvoicePaymentsArgs } from '../src/admin/repairInvoicePayments';
@@ -253,6 +254,9 @@ const FROZEN_REQUEST_SHAPES: Record<string, { schema: z.ZodObject<z.ZodRawShape>
   },
   archiveInvoice: { schema: ArchiveInvoiceArgs, keys: ['force', 'invoiceId'] },
   unarchiveInvoice: { schema: UnarchiveInvoiceArgs, keys: ['invoiceId'] },
+  // #2090: the confirm's amount travels with the call, so a balance that moved
+  // since the owner read it is refused rather than written off unseen.
+  writeOffInvoice: { schema: WriteOffInvoiceArgs, keys: ['amountCents', 'invoiceId'] },
   retryInvoiceCheckoutClose: { schema: RetryInvoiceCheckoutCloseArgs, keys: ['invoiceId'] },
   // W2-1 (ADR-0002 callable-only invoice writes). Both replace direct Android
   // Firestore writes, so the mirror Android builds in W2-2 is built FROM these
@@ -905,7 +909,7 @@ describe('callable contract drift guard (invoice state stamp stored fields)', ()
     const stamp = invoiceStateStampOf({ status: 'open', amountDue: 40, total: 40 }, 0);
     expect(Object.keys(stamp).sort()).toEqual(['editScope', 'status']);
   });
-  it('the eight status values are unchanged, lowercase, in precedence order', async () => {
+  it('the nine status values are unchanged, lowercase, in precedence order', async () => {
     const { INVOICE_STATES } = await import('../src/lib/invoiceEditPolicy');
     expect([...INVOICE_STATES]).toEqual([
       'quote',
@@ -916,6 +920,9 @@ describe('callable contract drift guard (invoice state stamp stored fields)', ()
       'paid',
       'zero',
       'open',
+      // #2090: added on purpose. Every client decodes it (web, portal web,
+      // Android, the desktop console and the MyTribe app).
+      'written_off',
     ]);
     for (const s of INVOICE_STATES) expect(s).toBe(s.toLowerCase());
   });
@@ -982,6 +989,10 @@ const FROZEN_RESPONSE_SHAPES: Record<
   // #2168: archiving a draft names the visits it let go; restoring one names
   // the visits it took back and, in plain words, the ones it could not.
   archiveInvoice: { load: () => import('../src/admin/archiveInvoice'), signature: ['invoiceId', 'ok', 'releasedSessionIds[]'] },
+  writeOffInvoice: {
+    load: async () => ({ Result: (await import('../src/admin/archiveInvoice')).WriteOffResult }),
+    signature: ['invoiceId', 'ok', 'writeOffId', 'writtenOffCents'],
+  },
   unarchiveInvoice: {
     load: () => import('../src/admin/unarchiveInvoice'),
     signature: [
@@ -1204,6 +1215,12 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'truncated',
       // How many rows across BOTH root-collection lists could not be read.
       'unresolvedAmountCount',
+      // #2090: the write-off entries, their own list, never summed into payments.
+      'writeOffs[].amountCents',
+      'writeOffs[].writeOffId',
+      'writeOffs[].writtenOffAtMs',
+      'writeOffs[].writtenOffBy',
+      'writtenOffCents',
       // Added for the staff Android invoice screen, which built this same list
       // from a raw read of the root `payments` collection and so never applied
       // `resolveLedgerAmountCents` — the bypass that kept the 100x units defect
@@ -1406,6 +1423,8 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     'terms',
     'total',
     'viewed',
+    // #2090: what was written off on a written_off invoice, null otherwise.
+    'writtenOffCents',
   ];
   it('the top level is three buckets plus the household balance, and nothing else', async () => {
     const { Result } = await import('../src/portal/getMyInvoices');

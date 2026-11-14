@@ -1771,3 +1771,60 @@ describe('#2164 Schedule under an Auntie sign-in', () => {
     expect(call).toHaveBeenCalledTimes(2);
   });
 });
+describe('#1868 a cancelled visit on the Schedule', () => {
+  // Thursday Jul 16 2026: 6:30 PM Chicago is 23:30 UTC.
+  const live = (id: string, startTime: string) => sessionEntry({ _id: id, kinfolkName: `The ${id}s`, startTime, endTime: '' });
+  function seedWeek(): void {
+    mockCollections({
+      sessions: {
+        status: 'ready',
+        data: [
+          live('Wren', '2026-07-16T14:00:00.000Z'),
+          { ...live('Rowan', '2026-07-16T23:30:00.000Z'), status: 'CANCELLED' },
+          { ...live('Mercer', '2026-07-16T16:00:00.000Z'), status: 'canceled' },
+          { ...live('Devlin', '2026-07-16T18:00:00.000Z'), status: 'cancelled' },
+        ],
+      },
+    });
+  }
+  function weekCount(): string {
+    const card = screen.getByText('Week sessions').closest('.den-stat, button.den-stat--button') as HTMLElement;
+    return card.querySelector('.den-stat-value')?.textContent ?? '';
+  }
+  it('leaves the week grid and the Week sessions count, in every stored spelling', () => {
+    withFixedToday(() => {
+      seedWeek();
+      render(<Schedule />);
+      const week = screen.getByRole('group', { name: 'Week' });
+      expect(week.querySelector('[data-session-id="Wren"]')).not.toBeNull();
+      for (const id of ['Rowan', 'Mercer', 'Devlin']) {
+        expect(week.querySelector(`[data-session-id="${id}"]`)).toBeNull();
+      }
+      expect(weekCount()).toBe('1');
+    });
+  });
+  it('stays on the day’s agenda, marked Cancelled', () => {
+    withFixedToday(() => {
+      seedWeek();
+      render(<Schedule />);
+      const list = agenda();
+      expect(within(list).getByText('The Rowans')).toBeInTheDocument();
+      expect(within(list).getAllByText('CANCELLED').length).toBeGreaterThanOrEqual(1);
+    });
+  });
+  it('leaves the month grid too', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 6, 16, 12, 0, 0));
+    try {
+      seedWeek();
+      render(<Schedule />);
+      fireEvent.click(screen.getByRole('tab', { name: 'Month' }));
+      const month = screen.getByRole('group', { name: 'Month' });
+      expect(month.querySelector('[data-session-id="Wren"]')).not.toBeNull();
+      expect(month.querySelector('[data-session-id="Rowan"]')).toBeNull();
+      expect(month.querySelector('[data-session-id="Devlin"]')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

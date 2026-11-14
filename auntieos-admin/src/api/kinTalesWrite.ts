@@ -1,5 +1,6 @@
-import { arrayUnion, collection, doc, increment, onSnapshot, writeBatch } from 'firebase/firestore';
-import { addDoc, commitBatch, setDoc } from '../lib/firestoreWrite';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
+import { addDoc, setDoc } from '../lib/firestoreWrite';
+import { call } from '../lib/fns';
 import { db } from '../lib/firebase';
 import { getAuthState } from '../lib/auth';
 import { checklistHasContent } from '../lib/kinTaleChecklist';
@@ -12,11 +13,12 @@ import { householdNoticeOf, type HouseholdNotice } from '../lib/householdNoticeW
  *
  *  - `firestore.rules:181`, `match /kin_care_reports/{reportId}`, `allow
  *    create: if isAuntie() || testOwnsIncoming()` / `allow update: if
- *    isAuntie() || testOwnsExisting()`: an admin writes this collection
- *    DIRECTLY from the client SDK. There is no `createKinTaleReport` /
- *    `updateKinTaleReport` / `sendKinTale` Cloud Function anywhere in
- *    MyTribe/functions/src; the backend only REACTS to these client writes via
- *    Firestore triggers. `onKinTaleUpdate.ts` fires `kintale.published` on the
+ *    isAuntie() || testOwnsExisting()`: an admin writes DRAFTS of this
+ *    collection DIRECTLY from the client SDK. There is no `createKinTaleReport`
+ *    / `updateKinTaleReport` Cloud Function. The SEND is the one exception,
+ *    since #2058: it goes through the `sendKinTaleReport` callable, so the
+ *    tale's own copy of its care tasks is taken in the same write (see
+ *    `sendKinTale` below). `onKinTaleUpdate.ts` fires `kintale.published` on the
  *    DRAFT->SENT flip `sendKinTale` performs below — that trigger is the ONLY
  *    thing that tells the household a web-composed KinTale exists — and
  *    `kintale.note.added` for a later post-send edit. `onKinTaleCreate.ts` fires
@@ -28,13 +30,11 @@ import { householdNoticeOf, type HouseholdNotice } from '../lib/householdNoticeW
  *    client-computed ISO string (`nowIsoUtc()`), never
  *    `FieldValue.serverTimestamp()`, matching every other date field already
  *    documented as opaque text in `api/kinTales.ts`.
- *  - `firebase-bridge.js`'s `markKinTaleReportSent`, the send transition: one
- *    `writeBatch` that (1) flips the report to `SENT` with `sentAt`/`sentVia`/
- *    `deliveryReceiptId` and (2) updates the PARENT `kin_care_sessions` doc
- *    (`reportIds: arrayUnion`, `sentReportCount: increment(1)`,
- *    `autoCompleteEligible: true`), atomically, so two concurrent sends can't
- *    clobber the session's running totals (the wasm client's own NOTE-52/W15
- *    comment on `FirestoreClient.kt#markKinTaleReportSent`).
+ *  - The send transition used to be a client `writeBatch` mirroring
+ *    `firebase-bridge.js`'s `markKinTaleReportSent`. Since #2058 the server
+ *    does the same two writes (the report to `SENT`, the parent
+ *    `kin_care_sessions` doc's `reportIds`/`sentReportCount` transforms) plus
+ *    the care-task copy, in one transaction.
  *
  * DELIBERATE DIVERGENCE from the wasm on UPDATE: the wasm always overwrites
  * the WHOLE document (`setDoc` with the client's complete in-memory
@@ -97,10 +97,10 @@ export interface KinTaleDraft {
    * (`KinTaleReportViewModel.kt:366`, `KinTaleComposeScreen.kt:1167`), each of
    * which strips its own sentinel id so it never reaches Firestore.
    *
-   * Not bookkeeping: this is the field the kinfolk portal resolves a sent
-   * tale's checklist labels from (`getMyKinTales.ts:156`), so without it the
-   * household is shown the built-in template's items regardless of which
-   * template the visit was actually captured under.
+   * Not bookkeeping: the send reads it to take the tale's own copy of its
+   * care tasks (#2058, `sendKinTaleReport`), so without it the copy would be
+   * the built-in template's items regardless of which template the visit was
+   * actually captured under.
    */
   templateId: string;
   /**
@@ -245,50 +245,30 @@ export interface SendKinTaleInput {
   reportId: string;
   sessionId: string;
 }
-
 /**
- * The send transition: `kin_care_reports/{reportId}` flips DRAFT -> SENT, and
- * `kin_care_sessions/{sessionId}` records the send, atomically (one
- * `writeBatch`), mirroring `firebase-bridge.js#markKinTaleReportSent`
- * exactly.
+ * The send: `kin_care_reports/{reportId}` flips DRAFT -> SENT through the
+ * `sendKinTaleReport` callable (#2058). The server does it in ONE transaction
+ * with the two things a client batch could not keep together: the tale's own
+ * copy of its care tasks (`careTasks`, operator ruling 2026-11-12, stamp at
+ * send), read from the template at that same moment, and the visit's record of
+ * the send (`reportIds`, `sentReportCount`, `autoCompleteEligible`,
+ * `kinTaleDue: false`). It used to be a `writeBatch` here, and a copy taken by
+ * a later write could miss a template deleted in between.
  *
- * `sentVia: 'pending'` and `deliveryReceiptId: ''` are the SAME placeholder
- * values the wasm composer's own `onSend()` sends, never a fabricated
- * channel/id: per its doc comment, "the backend pipeline overwrites with
- * sms/email/fcm" once actual delivery is attempted. This makes the identical
- * honest claim, no more.
+ * `sentVia: 'pending'`: this client announces nothing itself, so
+ * `onKinTaleUpdate` tells the household on the DRAFT -> SENT flip. A tale that
+ * was already sent is left as it is, so a retry cannot count it twice.
  *
- * Fail-loud on a blank id (mirrors the wasm's own `require()` guards in
- * `platformMarkKinTaleReportSent`): a send with nowhere to route the
- * session-side update throws rather than silently committing half of the
- * transition.
+ * Fail-loud on a blank id: a send with nowhere to route throws rather than
+ * reaching the server. The server reads the visit off the tale itself.
  */
 export async function sendKinTale(input: SendKinTaleInput): Promise<void> {
   if (input.reportId.trim() === '') throw new Error('sendKinTale requires a non-blank reportId');
   if (input.sessionId.trim() === '') throw new Error('sendKinTale requires a non-blank sessionId');
-
-  const now = new Date().toISOString();
-  const batch = writeBatch(db);
-  batch.update(doc(db, 'kin_care_reports', input.reportId), {
-    status: 'SENT',
-    sentAt: now,
-    sentVia: 'pending',
-    deliveryReceiptId: '',
-    updatedAt: now,
-  });
-  batch.update(doc(db, 'kin_care_sessions', input.sessionId), {
-    reportIds: arrayUnion(input.reportId),
-    sentReportCount: increment(1),
-    // Kept for installed Android builds, whose Home sweep still reads it. Since
-    // #2123 nothing completes a visit off it: departure does
-    // (`functions/src/triggers/onKinCareSessionDeparted.ts`).
-    autoCompleteEligible: true,
-    // #2123: the visit no longer owes its KinTale, so it leaves the Auntie's
-    // "KinTales to send" list (`lib/kinTaleTask.ts`).
-    kinTaleDue: false,
-    updatedAt: now,
-  });
-  await commitBatch(batch, 'this KinTale');
+  await call<{ reportId: string; sentVia: 'pending' }, { ok: true; reportId: string; alreadySent: boolean }>(
+    'sendKinTaleReport',
+    { reportId: input.reportId, sentVia: 'pending' },
+  );
 }
 /**
  * #1816: where the server records what the household was told about one

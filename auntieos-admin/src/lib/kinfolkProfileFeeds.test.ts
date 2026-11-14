@@ -151,6 +151,26 @@ describe('upcomingVisitsFor', () => {
     expect(upcomingVisitsFor(rows, 'k1', now, through).map((r) => r._id)).toEqual(['inside']);
     expect(upcomingVisitsFor(rows, 'k1', now, null).map((r) => r._id)).toEqual(['inside', 'beyond']);
   });
+  it('#2095 compares moments across both stored shapes, a zone-less start on the business clock', () => {
+    // 08:30 Chicago on Nov 13 is 14:30 UTC.
+    const nowNov = '2026-11-13T14:30:00.000Z';
+    const rows = [
+      // 9 AM Chicago, zone-less: still ahead, though "09" sorts before "14" as text.
+      session({ _id: 'wall-9am', startTime: '2026-11-13T09:00:00' }),
+      // 8 AM Chicago as an instant: already started.
+      session({ _id: 'instant-8am', startTime: '2026-11-13T14:00:00Z' }),
+      // 10 AM Chicago as an instant: ahead, after the 9 AM one.
+      session({ _id: 'instant-10am', startTime: '2026-11-13T16:00:00.000Z' }),
+      // 8 AM Chicago, zone-less: already started.
+      session({ _id: 'wall-8am', startTime: '2026-11-13T08:00:00' }),
+    ];
+    const zone = 'America/Chicago';
+    expect(upcomingVisitsFor(rows, 'k1', nowNov, null, 5, zone).map((r) => r._id)).toEqual(['wall-9am', 'instant-10am']);
+    // Through 9:30 AM Chicago keeps the 9 AM visit only.
+    expect(upcomingVisitsFor(rows, 'k1', nowNov, '2026-11-13T15:30:00.000Z', 5, zone).map((r) => r._id)).toEqual(['wall-9am']);
+    // A "now" that does not read gives nothing rather than a guess.
+    expect(upcomingVisitsFor(rows, 'k1', 'soon', null, 5, zone)).toEqual([]);
+  });
 });
 
 describe('coversKin', () => {

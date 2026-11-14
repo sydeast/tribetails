@@ -62,6 +62,8 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.SectionHeader
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.util.openInMaps
+import kotlinx.datetime.TimeZone
+import com.tribetails.auntieos.web.util.businessTimeZone
 
 /**
  * Operational detail for one Kin Care. Auntie taps into this from the Auntie
@@ -824,22 +826,27 @@ private fun sessionWindowFor(s: KinCareSession): String {
     }
 }
 
-/** "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear] (#1599). */
+/**
+ * "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear] (#1599),
+ * on the BUSINESS's clock (#2095): an instant is converted into [zone], a
+ * zone-less value is already business time. Printing the stored characters
+ * gave the UTC day and hour for an instant.
+ */
 internal fun shortIso(
     iso: String,
     currentYear: Int = com.tribetails.auntieos.web.screens.invoices.localTodayIso().take(4).toIntOrNull() ?: 0,
+    zone: TimeZone = businessTimeZone(),
 ): String =
     runCatchingCancellable {
         if (iso.length < 16) return@runCatchingCancellable iso
-        val year  = iso.substring(0, 4).toInt()
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time  = iso.substring(11, 16)
-        if (year == currentYear) "$month $day · $time" else "$month $day, $year · $time"
+        val at = com.tribetails.auntieos.web.screens.schedule.businessDateTimeOf(iso.trim(), zone)
+            ?: return@runCatchingCancellable iso
+        val month = MONTHS[at.monthNumber - 1]
+        val time  = "${at.hour.toString().padStart(2, '0')}:${at.minute.toString().padStart(2, '0')}"
+        if (at.year == currentYear) "$month ${at.dayOfMonth} · $time" else "$month ${at.dayOfMonth}, ${at.year} · $time"
     }.getOrDefault(iso)
 
-private fun shortIsoTimeOnly(iso: String): String =
-    runCatchingCancellable { if (iso.length >= 16) iso.substring(11, 16) else iso }
-        .getOrDefault(iso)
+private fun shortIsoTimeOnly(iso: String, zone: TimeZone = businessTimeZone()): String =
+    if (iso.length >= 16) businessShortTime(iso, zone) else iso
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")

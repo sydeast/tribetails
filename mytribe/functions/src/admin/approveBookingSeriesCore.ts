@@ -9,7 +9,7 @@ import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
 import { businessCalendarDate, businessTimeZone } from '../lib/bookingTimeBlocks';
-import { kinCareLengthMinutes } from '../portal/getServiceCatalog';
+import { kinCareLengthForVisit } from '../lib/serviceDisplayName';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import {
@@ -236,8 +236,8 @@ async function resolvePendingStartTimes(opts: {
       );
     }
 
-    const serviceId = typeof data['serviceId'] === 'string' ? (data['serviceId'] as string) : '';
-    const minutes = serviceId ? kinCareLengthMinutes(serviceId, settings['serviceDurations']) : null;
+    // #1866: by name when the visit has no id (the admin wizard books by name).
+    const minutes = kinCareLengthForVisit(data['serviceId'], name === 'visit' ? '' : name, settings);
     if (minutes == null) {
       throw new HttpsError(
         'invalid-argument',
@@ -284,35 +284,40 @@ async function resolvePendingStartTimes(opts: {
  * #1093: a stored visit's end for the approval re-check and the session it
  * creates. A visit requested before the server worked out ends carries none,
  * so the guards saw only its first instant and the session got
- * `serviceDurationMinutes: 0`. Its KinCare's length (`kinCareLengthMinutes`,
- * the same one `requestBooking` uses) fills it in; with no readable length the
- * end stays '' as before. `readServiceDurations` is called only when needed.
+ * `serviceDurationMinutes: 0`. Its KinCare's length fills it in; with no
+ * readable length the end stays '' as before. `readSettings` is called only
+ * when needed.
+ *
+ * #1866: the length is found by the visit's KinCare NAME when it has no
+ * `serviceId` (`kinCareLengthForVisit`). The admin booking wizard books by name
+ * on every client, so a request it filed before `createMultiDateBookingRequest`
+ * stored ends reaches here with neither, and was booked with a length of 0.
  */
 export async function storedVisitEndIso(
   startIso: string,
   data: Record<string, unknown>,
-  readServiceDurations: () => Promise<unknown>,
+  readSettings: () => Promise<Record<string, unknown> | undefined>,
 ): Promise<string> {
   const endIso = toIso(data['endTime']);
   if (endIso) return endIso;
   const startMs = Date.parse(startIso);
+  if (!Number.isFinite(startMs)) return '';
   const serviceId = typeof data['serviceId'] === 'string' ? (data['serviceId'] as string) : '';
-  if (!serviceId || !Number.isFinite(startMs)) return '';
-  const minutes = kinCareLengthMinutes(serviceId, await readServiceDurations());
+  const name = kinCareNameOf(data);
+  if (serviceId === '' && name === 'visit') return '';
+  const minutes = kinCareLengthForVisit(serviceId, name === 'visit' ? '' : name, await readSettings());
   return minutes == null ? '' : new Date(startMs + minutes * 60_000).toISOString();
 }
-
-/** One `business_settings.serviceDurations` read per approval, made on first use. */
-export function serviceDurationsReader(): () => Promise<unknown> {
-  let read: Promise<unknown> | null = null;
+/** One `business_settings` read per approval, made on first use. */
+export function serviceDurationsReader(): () => Promise<Record<string, unknown> | undefined> {
+  let read: Promise<Record<string, unknown> | undefined> | null = null;
   return () =>
     (read ??= db()
       .collection('business_settings')
       .doc('business_settings')
       .get()
-      .then((s) => (s.data() as Record<string, unknown> | undefined)?.['serviceDurations']));
+      .then((s) => s.data() as Record<string, unknown> | undefined));
 }
-
 /**
  * #1702: every visit this approval would book must still start ahead. A
  * household request that sat in the queue until its date went by was approved

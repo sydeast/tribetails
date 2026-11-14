@@ -4,7 +4,11 @@ import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.screens.invoices.InvoiceState
+import com.tribetails.auntieos.web.screens.invoices.invoiceIsArchived
 import com.tribetails.auntieos.web.screens.invoices.invoiceIsPaid
+import com.tribetails.auntieos.web.screens.invoices.invoiceStateOrNull
+import com.tribetails.auntieos.web.screens.invoices.invoiceWrittenOffCentsOf
 import com.tribetails.auntieos.web.screens.invoices.isoDatePrefixOrNull
 
 /**
@@ -26,13 +30,17 @@ import com.tribetails.auntieos.web.screens.invoices.isoDatePrefixOrNull
  * no parseable date are skipped (never fabricate an ordering). The latest date
  * per kinfolk wins via lexical comparison on the fixed YYYY-MM-DD form.
  */
-fun lastVisitByKinfolk(sessions: List<KinCareSession>): Map<String, String> {
+fun lastVisitByKinfolk(
+    sessions: List<KinCareSession>,
+    zone: kotlinx.datetime.TimeZone = com.tribetails.auntieos.web.util.businessTimeZone(),
+): Map<String, String> {
     val out = HashMap<String, String>()
     for (s in sessions) {
         if (s.status.uppercase() != "COMPLETED") continue
         if (s.kinfolkId.isBlank()) continue
         val stamp = s.completedAt.ifBlank { s.startTime }
-        val date = isoDatePrefixOrNull(stamp) ?: continue
+        // #2095: the business day, not the UTC date of an instant.
+        val date = isoDatePrefixOrNull(com.tribetails.auntieos.web.screens.sessions.businessDayOf(stamp, zone)) ?: continue
         val prev = out[s.kinfolkId]
         if (prev == null || date > prev) out[s.kinfolkId] = date
     }
@@ -107,13 +115,57 @@ fun weeklyRevenue(invoices: List<Invoice>, weekStartIso: String, nowIso: String)
     val end = isoDatePrefixOrNull(nowIso) ?: return 0.0
     var sum = 0.0
     for (inv in invoices) {
-        if (!invoiceIsPaid(inv)) continue
+        val earned = invoiceRevenueOf(inv)
+        if (earned <= 0.0) continue
         val date = isoDatePrefixOrNull(inv.date) ?: continue
-        if (date in start..end) sum += inv.total
+        if (date in start..end) sum += earned
     }
     return sum
 }
 
+/**
+ * What one invoice adds to revenue, in dollars: its total when paid, and for a
+ * written-off one (#2090) only what came in before the rest was written off.
+ * Checked before [invoiceIsPaid], which reads any non-draft invoice with no
+ * balance as paid and so would count the written-off part as money collected.
+ * Mirrors the web's `revenueOf` and Android's `invoiceRevenueOf`.
+ */
+internal fun invoiceRevenueOf(inv: Invoice): Double {
+    if (invoiceStateOrNull(inv) == InvoiceState.WRITTEN_OFF) {
+        val writtenOff = invoiceWrittenOffCentsOf(inv) ?: 0L
+        return maxOf(0L, kotlin.math.round(inv.total * 100.0).toLong() - writtenOff) / 100.0
+    }
+    return if (invoiceIsPaid(inv)) inv.total else 0.0
+}
+
+// ── Home: Cash Flow outstanding (home.cashFlow) ────────────────────────────────
+/** What the Cash Flow card says is still owed, and across how many invoices. */
+data class CashFlowOutstanding(val total: Double, val count: Int)
+/**
+ * #2000: what households have been asked to pay and have not. Stored state
+ * OPEN, a balance above zero, not archived: the rule the web Invoices screen's
+ * Outstanding card and Android's Invoices tile both read, so Home agrees with
+ * them. This console's own Invoices Outstanding tile calls this function too
+ * (`screens/invoices/InvoicesScreen.kt#SummaryStrip`).
+ *
+ * A POSITIVE test on the stamp. An unsent draft has gone to nobody and a quote
+ * is not a bill, so neither is owed; this card used to count every invoice with
+ * a balance and read an unsent draft as money unpaid. An archived invoice has
+ * been written off. The web's `outstandingTotals` and Android's
+ * `domain/Stage2Step2Helpers.kt#cashFlowOutstanding` are the same function.
+ */
+fun cashFlowOutstanding(invoices: List<Invoice>): CashFlowOutstanding {
+    var total = 0.0
+    var count = 0
+    for (inv in invoices) {
+        if (invoiceIsArchived(inv)) continue
+        if (invoiceStateOrNull(inv) != InvoiceState.OPEN) continue
+        if (!(inv.amountDue > 0.0)) continue
+        total += inv.amountDue
+        count += 1
+    }
+    return CashFlowOutstanding(total, count)
+}
 // ── Schedule: drag-to-reschedule arg mapping (schedule.dragReschedule) ─────────
 
 /** The (startTime, endTime) args a drag drop maps to for rescheduleBooking. */
@@ -156,11 +208,21 @@ fun rescheduleArgsForDrop(
 }
 
 /** Original visit duration in minutes: explicit field, else start->end span, else 30. */
-internal fun resolveDurationMinutes(session: KinCareSession): Int {
+@OptIn(kotlin.time.ExperimentalTime::class)
+internal fun resolveDurationMinutes(
+    session: KinCareSession,
+    zone: kotlinx.datetime.TimeZone = com.tribetails.auntieos.web.util.businessTimeZone(),
+): Int {
     if (session.serviceDurationMinutes > 0) return session.serviceDurationMinutes
-    val startM = isoMinuteOfDayOrNull(session.startTime)
-    val endM = isoMinuteOfDayOrNull(session.endTime)
-    if (startM != null && endM != null && endM > startM) return endM - startM
+    // #2095: the span between the two moments, in either stored shape. Reading
+    // hours and minutes off the text made a visit that crossed midnight (UTC
+    // midnight is 6 PM in Chicago in winter) look negative, and it fell to 30.
+    val start = com.tribetails.auntieos.web.screens.sessions.businessInstantOf(session.startTime, zone)
+    val end = com.tribetails.auntieos.web.screens.sessions.businessInstantOf(session.endTime, zone)
+    if (start != null && end != null) {
+        val minutes = (end - start).inWholeMinutes
+        if (minutes in 1..1439) return minutes.toInt()
+    }
     return 30
 }
 
@@ -168,15 +230,6 @@ private fun hhmm(minuteOfDay: Int): String {
     val h = (minuteOfDay / 60).coerceIn(0, 23)
     val m = (minuteOfDay % 60).coerceIn(0, 59)
     return "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
-}
-
-/** Positional minutes-of-day from an ISO "...THH:MM..." string, or null. */
-private fun isoMinuteOfDayOrNull(iso: String): Int? {
-    if (iso.length < 16 || iso[10] != 'T') return null
-    val hour = iso.substring(11, 13).toIntOrNull() ?: return null
-    val minute = iso.substring(14, 16).toIntOrNull() ?: return null
-    if (hour !in 0..23 || minute !in 0..59) return null
-    return hour * 60 + minute
 }
 
 /**

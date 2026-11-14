@@ -142,6 +142,7 @@ export const Result = z
         'no_total',
         'balance_already_correct',
         'would_lower_balance',
+        'written_off',
       ]),
       z.number().int().min(0),
     ),
@@ -159,6 +160,7 @@ function emptySkipTally(): Record<RepairSkipReason, number> {
     no_total: 0,
     balance_already_correct: 0,
     would_lower_balance: 0,
+    written_off: 0,
   };
 }
 

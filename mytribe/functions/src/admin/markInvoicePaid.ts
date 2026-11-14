@@ -18,6 +18,7 @@ import {
   type InvoiceSettlementState,
 } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
 import {
   PAYMENT_APPLIED_OWNER_AT_FIELD,
   PAYMENT_APPLIED_OWNER_FIELD,
@@ -273,6 +274,9 @@ export function refusedLifecycle(d: InvoiceDoc): string | null {
   if (s === 'credit') {
     return 'This is a credit owed to the household, not a bill. Redeeming it is its own flow.';
   }
+  // #2090: the owner gave up what was left. Taking money against it now would
+  // collect a balance the household was told it no longer owes.
+  if (isWrittenOff(d)) return WRITTEN_OFF_PAYMENT_REFUSAL;
   return null;
 }
 
@@ -410,6 +414,9 @@ export async function markInvoicePaidHandler(
       'Invoice is a draft or quote; send it first before recording a payment.',
     );
   }
+  if (isWrittenOff(data)) {
+    throw new HttpsError('failed-precondition', WRITTEN_OFF_PAYMENT_REFUSAL, { code: INVOICE_WRITTEN_OFF_CODE });
+  }
   const lifecycleRefusal = refusedLifecycle(data);
   if (lifecycleRefusal) {
     throw new HttpsError('failed-precondition', lifecycleRefusal, { code: 'invoice_not_payable' });
@@ -537,6 +544,16 @@ export async function markInvoicePaidHandler(
         assertSameCaller(stored, uid, 'recordedBy');
         return stored;
       }
+    }
+    // #2090: THE INVOICE AGAIN, INSIDE THE TRANSACTION. Everything above was
+    // decided on a read taken outside it, and the write below sets the balance
+    // from that read. A write-off committing in between would be overwritten
+    // with the old balance and an `open` stamp, bringing back a debt the owner
+    // had just given up. Reading the doc here puts it in this transaction's
+    // read set, so the two serialise, and the loser is refused.
+    const fresh = await tx.get(ref);
+    if (isWrittenOff((fresh.data() ?? {}) as InvoiceDoc)) {
+      throw new HttpsError('failed-precondition', WRITTEN_OFF_PAYMENT_REFUSAL, { code: INVOICE_WRITTEN_OFF_CODE });
     }
     // `create` when there is a key, so two attempts reaching the write together
     // are refereed by the server. A keyless call keeps `set`: its id is

@@ -10,9 +10,10 @@ import {
 } from '../api/kinTalesWrite';
 import {
   KINTALE_TEMPLATES_QUERY,
+  decodeCareTaskCopy,
   decodeKinTaleTemplate,
   pickTemplateForService,
-  templateForDraft,
+  templateForKinTale,
   templateIdForWire,
 } from '../api/kinTaleTemplates';
 import { getMediaFilesByIds, type MediaFile } from '../api/gallery';
@@ -99,15 +100,15 @@ import './KinTaleCompose.css';
  * in `FormSchemas.tsx` uses for its own irreversible action. Save Draft has no
  * such gate, it's the safe, reversible action.
  *
- * THE CHECKLIST AND THE M18 RULING. Issue #397's operator ruling of 2026-08-23
- * says a household must see an item deliberately left undone as UNTICKED rather
- * than not at all, and that the fix is to port the template condition engine to
- * the portal, NOT to stamp a resolved item list onto the report at send time.
- * That shortcut was offered and declined. This screen stamps no such list. What
- * it does write is the two things the ruling's fix needs to read: a real
- * `templateId`, so the portal can re-resolve this report's own items and
- * conditions, and an explicit `boolValue: false` on untick rather than a deleted
- * entry. See `lib/kinTaleChecklist.ts` for the full argument.
+ * THE CHECKLIST AND THE SENT COPY. Operator ruling 2026-11-12 (#2058, "stamp
+ * at send") reverses the 2026-08-23 ruling on issue #397: a sent tale keeps its
+ * own copy of the care tasks, taken by the server in the write that sends it
+ * (`sendKinTaleReport`), and editing or deleting the template never changes
+ * it. So a DRAFT is composed against its template (by its stored
+ * `templateId`), and a SENT tale against its own copy
+ * (`api/kinTaleTemplates.ts#templateForKinTale`). Unticking still writes
+ * `boolValue: false` rather than deleting the entry; a tick changed on a sent
+ * tale is relabelled into the copy by the server (`onKinTaleUpdate`).
  */
 
 export interface KinTaleComposeProps {
@@ -411,15 +412,27 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    * means the block the operator reads and the checklist they tick can never
    * disagree.
    */
-  const template = useMemo(
-    () => (draft ? templateForDraft(templates, draft.templateId) : null),
-    [templates, draft],
-  );
-  const checklistCtx = useChecklistContext(draft);
-  const attachedMedia = useAttachedMedia(draft?.mediaFileIds ?? []);
   // #1631: the stored row behind this draft, once it has been saved.
   const storedRow =
     draft?._id && reports.status === 'ready' ? reports.data.find((r) => r._id === draft._id) : undefined;
+  /**
+   * #2058: a sent tale's own copy of its care tasks, read off the stored row so
+   * a tick saved here and relabelled by the server shows up as it lands. Only a
+   * sent tale has one; a draft keeps following its template.
+   */
+  const sentCopy = useMemo(
+    () =>
+      storedRow !== undefined && kinTaleState(storedRow.status ?? '') === 'sent'
+        ? decodeCareTaskCopy(storedRow.careTasks)
+        : null,
+    [storedRow],
+  );
+  const template = useMemo(
+    () => (draft ? templateForKinTale(templates, draft.templateId, sentCopy) : null),
+    [templates, draft, sentCopy],
+  );
+  const checklistCtx = useChecklistContext(draft);
+  const attachedMedia = useAttachedMedia(draft?.mediaFileIds ?? []);
   /**
    * #1940: this tale has already gone home. Read off the STORED row's status,
    * never off how the screen was opened: KinTales' Edit opens drafts and sent

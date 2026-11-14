@@ -104,9 +104,10 @@ async function readInvoices(firestore: Firestore, kinfolkId: string): Promise<Ma
     const snap = await firestore.collection('invoices').where('kinfolkId', '==', kinfolkId).get();
     for (const d of snap.docs) {
       const data = d.data() as Record<string, unknown>;
-      // #2087 / #2088 / #2195: a visit held by a quote the household may not
-      // see, or by a withdrawn (cancelled) one, links to no invoice: MyTribe
-      // would open it as "not found".
+      // #2159 / #2087 / #2088 / #2195: a visit billed by an invoice the
+      // household may not see (any unsent draft, or an archived quote), or by a
+      // withdrawn (cancelled) quote, links to no invoice until it is sent:
+      // MyTribe would open it as "not found".
       if (hiddenFromHousehold(data) || isCancelled(data)) continue;
       for (const sid of invoiceSessionIds(data)) {
         if (!out.has(sid)) out.set(sid, d.id);

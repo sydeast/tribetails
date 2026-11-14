@@ -10,6 +10,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
 import { invoiceIsPaid } from '../lib/invoicePaidGate';
+import { isWrittenOff } from '../lib/invoiceArchive';
 import { sessionsToClose, type SweepDoc } from '../lib/checkoutSessionSweep';
 import {
   liveSessionsApi,
@@ -64,7 +65,9 @@ export async function retryInvoiceCheckoutCloseHandler(
   const snap = await db().collection('invoices').doc(args.invoiceId).get();
   if (!snap.exists) throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
   const data = snap.data() as SweepDoc & { kinfolkId?: string; invoiceNumber?: string };
-  if (!invoiceIsPaid(data)) {
+  // #2090: a written-off invoice owes nothing either, and the sweep closes its
+  // links (`sessionsToClose`), so Try again works on it as on a paid one.
+  if (!invoiceIsPaid(data) && !isWrittenOff(data)) {
     throw new HttpsError(
       'failed-precondition',
       'This invoice is not paid, so its payment links are still how the household pays.',

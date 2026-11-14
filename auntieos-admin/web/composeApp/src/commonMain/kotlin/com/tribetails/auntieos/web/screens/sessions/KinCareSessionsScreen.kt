@@ -99,6 +99,7 @@ import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
 import com.tribetails.auntieos.web.ui.components.color
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
 
 // ---- Sub-routes inside Auntie Time (drill into operational detail) ----
 
@@ -786,11 +787,42 @@ private fun ActionRow(
     onWriteKinTale: () -> Unit,
     onViewKinTale: () -> Unit,
 ) {
-    val now = nowIso()
     // Fires [action] through the shared pure patch/message builders so the button
-    // wiring holds no transition logic of its own (see kinCarePatch below).
+    // wiring holds no transition logic of its own (see kinCarePatch below). The
+    // stamp is read at the tap, a UTC instant (#2095), and the household notice
+    // is named from that same string (`visitNoticeEventOf`).
     fun fire(action: AuntieTimeAction) =
-        onWrite(session._id, kinCareWrite(session, action, now), kinCareSuccessMessage(action))
+        onWrite(session._id, kinCareWrite(session, action, nowIso()), kinCareSuccessMessage(action))
+
+    // #2039: a clock tap that does not fit the booking asks first, with the
+    // reason; one that fits writes at once, as before.
+    val zone = LocalAuntieTimeZone.current
+    var pendingClock by remember(session._id) { mutableStateOf<Pair<AuntieTimeAction, String>?>(null) }
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    fun clock(action: AuntieTimeAction) {
+        val warning = clockStepWarning(action, session, kotlin.time.Clock.System.now().toEpochMilliseconds(), zone)
+        if (warning == null) fire(action) else pendingClock = action to warning
+    }
+    pendingClock?.let { (action, warning) ->
+        AuntieDialog(
+            visible = true,
+            title = CLOCK_STEP_WARNING_TITLE,
+            onDismiss = { pendingClock = null },
+            maxWidth = 480.dp,
+            footer = {
+                GhostButton(label = "Not yet", onClick = { pendingClock = null })
+                PrimaryButton(
+                    label = if (action == AuntieTimeAction.Departed) "Yes, clock out" else "Yes, clock in",
+                    onClick = {
+                        pendingClock = null
+                        fire(action)
+                    },
+                )
+            },
+        ) {
+            Text(warning, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
+        }
+    }
 
     when (session.status.uppercase()) {
         "SCHEDULED" -> Row(
@@ -804,7 +836,7 @@ private fun ActionRow(
             )
             GhostButton(
                 label   = "Arrived",
-                onClick = { fire(AuntieTimeAction.Arrived) },
+                onClick = { clock(AuntieTimeAction.Arrived) },
                 modifier = Modifier.weight(1f),
             )
             // #2123: Complete completes the visit. It used to open the composer,
@@ -822,7 +854,7 @@ private fun ActionRow(
         ) {
             PrimaryButton(
                 label   = "Arrived",
-                onClick = { fire(AuntieTimeAction.Arrived) },
+                onClick = { clock(AuntieTimeAction.Arrived) },
                 modifier = Modifier.weight(1f),
             )
             // #2123: Complete completes the visit. It used to open the composer,
@@ -840,7 +872,7 @@ private fun ActionRow(
         ) {
             PrimaryButton(
                 label   = "Departed",
-                onClick = { fire(AuntieTimeAction.Departed) },
+                onClick = { clock(AuntieTimeAction.Departed) },
                 modifier = Modifier.weight(1f),
             )
             GhostButton(
@@ -1036,7 +1068,7 @@ internal enum class AuntieTimeAction {
 
 /**
  * The exact Firestore patch an in-visit clock action writes. [now] is the
- * caller's clock (`nowIso()` at composition) so the field set is deterministic
+ * caller's clock (`nowIso()` at the tap, a UTC instant) so the field set is deterministic
  * under test. Mark Completed and Cancel are not patches; see [kinCareWrite].
  *
  * Undo Arrived is the subtle one: it rewinds to ON_MY_WAY only when the session

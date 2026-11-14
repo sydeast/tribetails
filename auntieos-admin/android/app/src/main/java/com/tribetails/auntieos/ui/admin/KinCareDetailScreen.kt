@@ -275,7 +275,7 @@ fun KinCareDetailScreen(
                 .joinToString(" · ")
                 .ifBlank { household }
             val heroDetail = listOfNotNull(
-                window(s).takeIf { it.isNotBlank() },
+                window(s, businessZone(businessTimeZone)).takeIf { it.isNotBlank() },
                 s.kinfolkName.takeIf { it.isNotBlank() },
                 kinfolk?.serviceAddress?.takeIf { it.isNotBlank() },
             ).joinToString(" · ")
@@ -1020,9 +1020,9 @@ private fun wifiSummary(k: Kinfolk): String {
     return "$name$pass"
 }
 
-private fun window(s: KinCareSession): String {
-    val start = shortIso(s.startTime)
-    val end   = shortIsoTimeOnly(s.endTime)
+private fun window(s: KinCareSession, zone: java.time.ZoneId): String {
+    val start = shortIso(s.startTime, zone = zone)
+    val end   = shortIsoTimeOnly(s.endTime, zone)
     return when {
         start.isBlank() && end.isBlank() -> "Time TBD"
         end.isBlank()                    -> start
@@ -1030,20 +1030,26 @@ private fun window(s: KinCareSession): String {
     }
 }
 
-/** "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear] (#1599). */
-internal fun shortIso(iso: String, currentYear: Int = java.time.LocalDate.now().year): String =
+/**
+ * "Sep 3 · 14:02", or "Sep 3, 2025 · 14:02" when it is not [currentYear] (#1599).
+ * #2095: on the business clock. An instant printed its own characters, the UTC
+ * day and hour, so an 11:30 PM Chicago visit read "Nov 12 · 05:30".
+ */
+internal fun shortIso(
+    iso: String,
+    currentYear: Int = java.time.LocalDate.now().year,
+    zone: java.time.ZoneId = businessZone(null),
+): String =
     runCatching {
         if (iso.length < 16) return@runCatching iso
-        val year  = iso.substring(0, 4).toInt()
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time  = iso.substring(11, 16)
-        if (year == currentYear) "$month $day · $time" else "$month $day, $year · $time"
+        val at = com.tribetails.auntieos.domain.storedBusinessLocal(iso, zone) ?: return@runCatching iso
+        val month = MONTHS[at.monthValue - 1]
+        val time  = "${at.hour.toString().padStart(2, '0')}:${at.minute.toString().padStart(2, '0')}"
+        if (at.year == currentYear) "$month ${at.dayOfMonth} · $time" else "$month ${at.dayOfMonth}, ${at.year} · $time"
     }.getOrDefault(iso)
 
-private fun shortIsoTimeOnly(iso: String): String =
-    runCatching { if (iso.length >= 16) iso.substring(11, 16) else iso }
-        .getOrDefault(iso)
+private fun shortIsoTimeOnly(iso: String, zone: java.time.ZoneId): String =
+    com.tribetails.auntieos.domain.storedBusinessClock(iso, zone).ifBlank { if (iso.length >= 16) iso.substring(11, 16) else iso }
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
 

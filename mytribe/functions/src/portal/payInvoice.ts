@@ -22,7 +22,9 @@ import { CheckoutIdempotencyKeyArg } from '../lib/moneyIdempotency';
 import { amountDueCentsOf, statesNoBalance } from '../lib/amountDueRule';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
+import { INVOICE_WRITTEN_OFF_CODE, isWrittenOff } from '../lib/invoiceArchive';
 import { OPEN_CHECKOUT_SESSIONS_FIELD } from '../lib/checkoutSessionSweep';
+import { hiddenFromHousehold } from '../lib/quoteDecision';
 
 export const Args = z.object({
   invoiceId: z.string().min(1),
@@ -114,6 +116,11 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   const kinfolkId = (typeof inv['kinfolkId'] === 'string' ? (inv['kinfolkId'] as string) : null);
   if (!kinfolkId) throw new HttpsError('failed-precondition', 'Invoice not linked to a tribe.');
   if (!allowedIds.includes(kinfolkId)) throw new HttpsError('permission-denied', 'No access to this invoice.');
+  // #1906: an invoice the household may not see (an unsent draft, or an
+  // archived quote) takes no payment, and is answered exactly as a missing one
+  // so a guessed id learns nothing. MyTribe never offers it; this is the server
+  // holding the same line for any other caller.
+  if (hiddenFromHousehold(inv)) throw new HttpsError('not-found', 'Invoice not found.');
   // D-2026-09-28-BILLING-ACCESS-PAYS: paying is billing access, not primary-only.
   // The PRIMARY and a SECONDARY granted `billing_full` pay; `uid` rides in the
   // checkout metadata below so the webhook's audit names who actually paid.
@@ -141,6 +148,13 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   // document, one extra read, and only when the document states nothing. An
   // invoice that states its balance takes the same path it always did, for the
   // same cost.
+  // #2090: the business wrote off what was left. Nothing is owed, so no
+  // checkout is opened, and the household is told so in its own words.
+  if (isWrittenOff(inv as Record<string, unknown>)) {
+    throw new HttpsError('failed-precondition', 'There is nothing to pay on this invoice.', {
+      code: INVOICE_WRITTEN_OFF_CODE,
+    });
+  }
   let legacyPaidCents: number | null = null;
   if (statesNoBalance(inv)) {
     const rows = await invoiceSnap.ref.collection('payments').get();

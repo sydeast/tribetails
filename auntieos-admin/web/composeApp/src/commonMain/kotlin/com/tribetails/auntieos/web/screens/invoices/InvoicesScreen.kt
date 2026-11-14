@@ -51,6 +51,7 @@ import com.tribetails.auntieos.web.data.quoteCreatedMessage
 import com.tribetails.auntieos.web.data.receiptGeneratedMessage
 import com.tribetails.auntieos.web.data.reminderOutcomeMessage
 import com.tribetails.auntieos.web.data.mintQuoteIdempotencyKey
+import com.tribetails.auntieos.web.screens.cashFlowOutstanding
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -69,8 +70,8 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatCard
 import com.tribetails.auntieos.web.ui.components.color
-import com.tribetails.auntieos.web.util.nowIso
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.util.businessTodayIso
 
 /**
  * Den invoices view ("The Den · Invoices"). Editorial heading, a three-card stat
@@ -133,7 +134,7 @@ fun InvoicesScreen(
 
     // Today as a YYYY-MM-DD prefix; lexical compare on that fixed shape is
     // chronological. Computed once per composition from the platform clock.
-    val todayIso = remember { nowIso().take(10) }
+    val todayIso = remember { businessTodayIso() }
 
     var filter by remember { mutableStateOf(InvoiceFilter.All) }
     var query  by remember { mutableStateOf("") }
@@ -598,8 +599,13 @@ internal fun overdueCaptionFor(invoices: List<Invoice>, todayIso: String): Strin
 }
 @Composable
 private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
-    val outstanding = invoices.filter { invoiceIsOutstanding(it) }
-    val outstandingTotal = outstanding.sumOf { it.amountDue }
+    // #2000: the SAME function Home's Cash Flow card reads, so the two screens
+    // agree by construction: stored state OPEN, a balance above zero, not
+    // archived. This tile used `invoiceIsOutstanding` (any unpaid balance), so
+    // an unsent draft, a quote and an archived bill counted as owed here while
+    // Home left them out. `invoiceIsOutstanding` stays for `invoiceIsPaid`.
+    val outstanding = cashFlowOutstanding(invoices)
+    val outstandingTotal = outstanding.total
     val billedTotal = invoiceBilledTotal(invoices)
     val overdueInvoices = invoices.filter { invoiceIsOverdue(it, todayIso) }
     val overdueCount = overdueInvoices.size
@@ -614,7 +620,7 @@ private fun SummaryStrip(invoices: List<Invoice>, todayIso: String) {
         StatCard(
             label    = "Outstanding",
             value    = formatMoney(outstandingTotal),
-            trend    = "across ${outstanding.size} invoice${if (outstanding.size == 1) "" else "s"}",
+            trend    = "across ${outstanding.count} invoice${if (outstanding.count == 1) "" else "s"}",
             tone     = if (outstandingTotal > 0.0) AuntieStatusTone.Orange else AuntieStatusTone.Success,
             feature  = outstandingTotal > 0.0,
             modifier = Modifier.weight(1.4f),

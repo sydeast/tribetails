@@ -215,6 +215,28 @@ class DesktopTimestampRoundTripTest {
             java.util.TimeZone.setDefault(originalZone)
         }
     }
+    /** #2095: `nowIso()` is a UTC instant with a Z, whole seconds, sent to Firestore exactly as written. */
+    @Test
+    fun nowIsoIsAUtcInstantWithZ() {
+        val stamp = com.tribetails.auntieos.web.util.nowIso()
+        assertTrue(Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$""").matches(stamp), "nowIso was $stamp")
+        assertEquals(stamp, JvmFirestoreRest.timestampValueOf(stamp))
+    }
+    /** #2095: "today" and "this hour" read the business's wall clock, which has no zone suffix. */
+    @Test
+    fun businessNowIsTheBusinessWallClock() {
+        val originalSettings = JvmFirestoreFixtures.businessSettings
+        JvmFirestoreFixtures.businessSettings = BusinessSettings(timeZone = "America/Chicago")
+        try {
+            val local = com.tribetails.auntieos.web.util.businessNowLocalIso()
+            assertTrue(Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$""").matches(local), "businessNowLocalIso was $local")
+            val expectedDay = java.time.LocalDate.now(java.time.ZoneId.of("America/Chicago")).toString()
+            assertEquals(expectedDay, com.tribetails.auntieos.web.util.businessTodayIso())
+            assertEquals("America/Chicago", com.tribetails.auntieos.web.util.businessTimeZoneId())
+        } finally {
+            JvmFirestoreFixtures.businessSettings = originalSettings
+        }
+    }
     @Test
     fun timestampValueOfAcceptsDateTimesOnly() {
         assertEquals("2026-01-02T03:04:05.123456789Z", JvmFirestoreRest.timestampValueOf("2026-01-02T03:04:05.123456789Z"))

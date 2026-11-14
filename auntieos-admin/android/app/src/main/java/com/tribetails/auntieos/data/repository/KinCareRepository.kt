@@ -825,63 +825,37 @@ class KinCareRepository(
     }.onFailure { AuntieLog.e("Failed to update kin care report $reportId", it) }
 
     /**
-     * The send transition: the KinTale flips DRAFT -> SENT and its parent session
-     * records the send, as ONE atomic write.
+     * The send transition, through the `sendKinTaleReport` callable (#2058).
      *
-     * ONE BATCH, NOT TWO UPDATES (#552). This used to `await()` the report patch
-     * and then `await()` the session patch. Two things went wrong with that, and
-     * only the second one was loud:
+     * Operator ruling 2026-11-12, "stamp at send": a sent KinTale keeps its own
+     * copy of the care tasks, and editing or deleting the template never changes
+     * it. The server takes that copy from the template in the SAME transaction
+     * that flips the KinTale to SENT and records the send on its visit
+     * (`reportIds`, `sentReportCount`, `autoCompleteEligible`, `kinTaleDue`).
+     * This used to be a client batch (#552), and a copy taken by a later write
+     * could miss a template deleted in between.
      *
-     *  - A failure between them left a report marked SENT whose session never
-     *    counted it. `sentReportCount` is what `autoCompleteEligible` is derived
-     *    from, so the visit silently stopped being auto-completable, and nothing
-     *    anywhere said why. The failure surfaced as `Result.failure` from a call
-     *    that had ALREADY announced the KinTale as sent.
-     *  - `sentReportCount` is a running total under `FieldValue.increment`. Two
-     *    sends racing each other across two separate round trips is exactly the
-     *    interleaving the increment is there to survive, and it only survives it
-     *    inside one commit.
-     *
-     * This is also the shape the web client has always used
-     * (`auntieos-admin/src/api/kinTalesWrite.ts#sendKinTale`, one `writeBatch`
-     * over the same two documents), so the two clients now make the same
-     * guarantee rather than the same claim.
-     *
-     * STILL NAMED-FIELD UPDATES INSIDE THE BATCH. `WriteBatch.update` carries the
-     * same semantics as `DocumentReference.update`: it touches only the keys it
-     * names, so the reconcile pipeline's fields on `kin_care_reports` stay out of
-     * reach here for the same reason [updateKinCareReportFields] documents at
-     * length. A batched `set()` would not be equivalent, and is not what this does.
+     * The server reads the visit off the KinTale itself, so [sessionId] is only
+     * checked here, fail-loud, never sent. [sentVia] is `catalog` when this app
+     * already told the household through `dispatchVisitNotification`, with the
+     * dispatch id as [deliveryReceiptId], so `onKinTaleUpdate` does not tell them
+     * twice. A KinTale already sent is left as it is by the server.
      */
     suspend fun markReportSent(reportId: String, sessionId: String, sentVia: String, deliveryReceiptId: String): Result<Unit> = runCatchingCancellable {
         authGate.ensureAuthenticated()
-        val timestamp = getCurrentTimestamp()
-        val batch = firestore.batch()
-        batch.update(
-            firestore.collection("kin_care_reports").document(reportId),
-            mapOf(
-                "status" to ReportStatus.SENT.name,
-                "sentAt" to timestamp,
-                "sentVia" to sentVia,
-                "deliveryReceiptId" to deliveryReceiptId,
-                "updatedAt" to timestamp
+        require(reportId.isNotBlank()) { "markReportSent requires a report id" }
+        require(sessionId.isNotBlank()) { "markReportSent requires a session id" }
+        functions.getHttpsCallable("sendKinTaleReport")
+            .call(
+                mapOf(
+                    "reportId" to reportId,
+                    "sentVia" to sentVia,
+                    "deliveryReceiptId" to deliveryReceiptId,
+                ),
             )
-        )
-        // Bump session sentReportCount and flag autoCompleteEligible (still read by
-        // installed builds). #2123: the send also settles the "Send the KinTale" task.
-        batch.update(
-            firestore.collection("kin_care_sessions").document(sessionId),
-            mapOf(
-                "sentReportCount" to com.google.firebase.firestore.FieldValue.increment(1),
-                "autoCompleteEligible" to true,
-                "kinTaleDue" to false,
-                "updatedAt" to timestamp
-            )
-        )
-        batch.commit().await()
+            .awaitCallable()
         Unit
     }.onFailure { AuntieLog.e("Failed to mark report sent $reportId", it) }
-
     suspend fun getKinCareReport(reportId: String): Result<KinCareReport?> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         val snapshot = firestore.collection("kin_care_reports").document(reportId).get().await()

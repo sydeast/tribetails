@@ -238,6 +238,35 @@ class KinTaleReportViewModelTest {
         }
     }
 
+    /**
+     * #2058: the server marks the tale sent (and takes its copy of the care
+     * tasks). If it refuses, the screen says so and the tale stays a draft, never
+     * "sent" on a write that did not happen.
+     */
+    @Test
+    fun `a refused mark-sent says so and leaves the tale a draft`() = runTest(testDispatcher) {
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockRepo.getKinfolkById("kf1") } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockRepo.getKin("kf1") } returns Result.success(emptyList())
+        coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
+        coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.createKinCareReport(any()) } returns Result.success("rep-1")
+        coEvery { mockKinCareRepo.updateKinCareReportFields(any(), any()) } returns Result.success(Unit)
+        coEvery { mockNotifier.notify(VisitNotifier.Event.REPORT_SENT, any(), any(), any(), any(), any()) } returns
+            Result.success(VisitNotifier.DispatchResult(dispatchIds = listOf("n8n_77"), suppressed = false))
+        coEvery { mockKinCareRepo.markReportSent(any(), any(), any(), any()) } returns
+            Result.failure(RuntimeException("unavailable"))
+        val vm = buildViewModel()
+        vm.load("ses1", null)
+        advanceUntilIdle()
+        vm.updateBodyCopy("Biscuit had a great walk!")
+        vm.send()
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.sentSuccessfully)
+        assertFalse(vm.uiState.value.isSending)
+        assertEquals(ReportStatus.DRAFT.name, vm.uiState.value.report.status)
+        assertTrue(vm.uiState.value.error!!.contains("Couldn't finish sending"))
+    }
     @Test
     fun `send dispatch failure leaves status DRAFT and sets error`() = runTest(testDispatcher) {
         coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)

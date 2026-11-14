@@ -32,23 +32,14 @@ import type { SessionEntry } from '../api/sessions';
  *    and stay at their data-class defaults. They are still emitted so the
  *    document round-trips through the Kotlin decoders unchanged.
  *
- * COMPATIBILITY WITH THE M18 RULING (issue #397, operator ruling 2026-08-23).
- * The ruling is that a client must see an item deliberately left undone as
- * UNTICKED, rather than not at all, and that the way to get there is to port the
- * template condition engine to the portal, NOT to stamp a resolved item list
- * onto the report at send time. That shortcut was offered and declined. Nothing
- * here contradicts it, and two decisions here are what make it possible:
- *
- *  1. The report carries a real `templateId` (or `''` for the built-in), so the
- *     portal can re-resolve THIS report's items and THIS report's conditions
- *     later. No resolved list is stamped, no send-time snapshot is taken.
- *  2. Unticking writes `boolValue: false` and keeps the entry, exactly as
- *     `KinTaleComposeScreen.kt:292-295` does. It never deletes it. So a
- *     deliberately-undone item is already distinguishable from an untouched one
- *     for anything that cares to look, which is strictly more than M18 needs and
- *     never less. The portal reading only `boolValue === true` today
- *     (`getMyKinTales.ts:171`) is exactly the limitation M18 fixes; this module
- *     writes the data that fix will read.
+ * THE SENT COPY (#2058). Operator ruling 2026-11-12, "stamp at send",
+ * reverses the 2026-08-23 ruling on issue #397: a sent KinTale keeps its own
+ * copy of the care tasks, `careTasks`, which the server takes in the same
+ * write that sends it (`mytribe/functions/src/lib/careTaskStamp.ts`). Readers
+ * of a sent tale use that copy; only a draft is still resolved from its
+ * template. Unticking keeps writing `boolValue: false` rather than deleting
+ * the entry, so an item deliberately left undone stays distinguishable from
+ * one never touched.
  */
 
 /** One rendered checklist row: the template item plus the kin it is being asked about. */

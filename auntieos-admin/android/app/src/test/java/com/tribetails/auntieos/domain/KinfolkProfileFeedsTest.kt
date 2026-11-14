@@ -53,6 +53,33 @@ class KinfolkProfileFeedsTest {
         )
     }
     @Test
+    fun `#2095 upcoming compares moments across both stored shapes`() {
+        val chicago = java.time.ZoneId.of("America/Chicago")
+        // 08:30 Chicago on Nov 13 is 14:30 UTC.
+        val now = "2026-11-13T14:30:00Z"
+        val sessions = listOf(
+            // 9 AM Chicago, zone-less: still ahead, though "09" sorts before "14" as text.
+            KinCareSession(id = "wall-9am", kinfolkId = "k1", status = "scheduled", startTime = "2026-11-13T09:00:00"),
+            // 8 AM Chicago as an instant (14:00 UTC): already started.
+            KinCareSession(id = "instant-8am", kinfolkId = "k1", status = "scheduled", startTime = "2026-11-13T14:00:00Z"),
+            // 10 AM Chicago as an instant (16:00 UTC): ahead, after the 9 AM one.
+            KinCareSession(id = "instant-10am", kinfolkId = "k1", status = "scheduled", startTime = "2026-11-13T16:00:00.000Z"),
+            // 8 AM Chicago, zone-less: already started.
+            KinCareSession(id = "wall-8am", kinfolkId = "k1", status = "scheduled", startTime = "2026-11-13T08:00:00"),
+        )
+        assertEquals(
+            listOf("wall-9am", "instant-10am"),
+            upcomingVisitsFor(sessions, "k1", nowIso = now, zone = chicago).map { it.id },
+        )
+        // The far edge reads the same way: through 9:30 AM Chicago keeps the 9 AM visit only.
+        assertEquals(
+            listOf("wall-9am"),
+            upcomingVisitsFor(sessions, "k1", nowIso = now, throughIso = "2026-11-13T15:30:00Z", zone = chicago).map { it.id },
+        )
+        // A "now" that does not read gives nothing rather than a guess.
+        assertEquals(emptyList<String>(), upcomingVisitsFor(sessions, "k1", nowIso = "soon", zone = chicago).map { it.id })
+    }
+    @Test
     fun `the horizon lands the requested number of days out`() {
         assertEquals(
             "2026-06-14",

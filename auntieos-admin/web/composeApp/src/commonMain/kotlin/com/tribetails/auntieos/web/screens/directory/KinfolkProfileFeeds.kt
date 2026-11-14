@@ -3,6 +3,9 @@ package com.tribetails.auntieos.web.screens.directory
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
+import kotlinx.datetime.TimeZone
+import com.tribetails.auntieos.web.util.businessTimeZone
+import com.tribetails.auntieos.web.screens.sessions.businessInstantOf
 
 /**
  * Pure joins backing the kinfolk-profile feed panels (Recent KinTales / Upcoming
@@ -16,19 +19,28 @@ import com.tribetails.auntieos.web.data.KinCareSession
  */
 
 /** SCHEDULED/CONFIRMED visits for [kinfolkId] dated at/after [nowIso], soonest first. */
+@OptIn(kotlin.time.ExperimentalTime::class)
 fun upcomingVisitsFor(
     sessions: List<KinCareSession>,
     kinfolkId: String,
     nowIso: String,
     limit: Int = 5,
-): List<KinCareSession> =
-    sessions.asSequence()
+    zone: TimeZone = businessTimeZone(),
+): List<KinCareSession> {
+    // #2095: instants on the business's clock. A stored start is a `Z` instant
+    // or a zone-less business wall clock, and `nowIso` is an instant, so a
+    // string compare put the two shapes hours apart.
+    val nowMs = businessInstantOf(nowIso, zone)?.toEpochMilliseconds() ?: return emptyList()
+    return sessions.asSequence()
         .filter { it.kinfolkId == kinfolkId }
         .filter { it.status.equals("SCHEDULED", ignoreCase = true) || it.status.equals("CONFIRMED", ignoreCase = true) }
-        .filter { it.startTime.isNotBlank() && it.startTime >= nowIso }
-        .sortedBy { it.startTime }
+        .mapNotNull { s -> businessInstantOf(s.startTime, zone)?.toEpochMilliseconds()?.let { ms -> s to ms } }
+        .filter { (_, ms) -> ms >= nowMs }
+        .sortedBy { (_, ms) -> ms }
+        .map { (s, _) -> s }
         .take(limit)
         .toList()
+}
 
 /** SENT KinTales for [kinfolkId], most recent first (sentAt, falling back to visitDate). */
 fun recentTalesFor(

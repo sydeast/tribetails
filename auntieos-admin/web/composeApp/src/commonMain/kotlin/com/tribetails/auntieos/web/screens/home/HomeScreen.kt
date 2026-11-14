@@ -68,6 +68,7 @@ import com.tribetails.auntieos.web.data.RouteResult
 import com.tribetails.auntieos.web.data.SupplySummary
 import com.tribetails.auntieos.web.screens.invoices.formatMoney
 import com.tribetails.auntieos.web.screens.sessions.overdueOnAuntieTime
+import com.tribetails.auntieos.web.screens.cashFlowOutstanding
 import com.tribetails.auntieos.web.screens.weeklyRevenue
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
@@ -100,6 +101,11 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.plus
 import kotlinx.datetime.todayIn
+import com.tribetails.auntieos.web.screens.booking.NewBookingMath
+import com.tribetails.auntieos.web.screens.sessions.businessDayOf
+import com.tribetails.auntieos.web.screens.sessions.businessInstantOf
+import com.tribetails.auntieos.web.util.businessTodayIso
+import com.tribetails.auntieos.web.util.businessTimeZone
 
 /**
  * What a stat card shows for a given stream state.
@@ -176,9 +182,13 @@ fun HomeScreen(
     // generatedCopy): they are nothing to review and would render as "No recipient".
     val drafts   = (draftsState as? FirestoreResult.Data)?.value.orEmpty()
         .filter { it.body().isNotBlank() }
-    val todayKey = nowIso().take(10)
-    val todaySessions = sessions.filter { it.startTime.take(10) == todayKey }
-        .sortedBy { it.startTime }
+    // #2095: today and each visit's day on the BUSINESS's calendar. A visit
+    // stored as an instant used to be filed by its UTC date, so after about
+    // 6 PM in Chicago the evening's visits left Today's Pack for tomorrow's.
+    val homeZone = NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone)
+    val todayKey = businessTodayIso()
+    val todaySessions = sessions.filter { businessDayOf(it.startTime, homeZone) == todayKey }
+        .sortedBy { businessInstantOf(it.startTime, homeZone)?.toEpochMilliseconds() ?: Long.MAX_VALUE }
     val doneCount = todaySessions.count { it.status.uppercase() == "COMPLETED" }
     val onWayCount = todaySessions.count { it.status.uppercase() in setOf("ON_MY_WAY", "ARRIVED") }
 
@@ -199,9 +209,9 @@ fun HomeScreen(
     val invoices = (invoicesState as? FirestoreResult.Data)?.value.orEmpty()
     val weekStartKey = remember { localWeekStartIso() }
     val weekRevenue = weeklyRevenue(invoices, weekStartKey, todayKey)
-    // Cash Flow widget: invoices still owed (grouped by amountDue per the model).
-    val outstandingInvoices = invoices.filter { it.amountDue > 0.0 }
-    val outstandingTotal = outstandingInvoices.sumOf { it.amountDue }
+    // Cash Flow widget: sent invoices still owed, the Invoices rule (#2000).
+    val outstanding = cashFlowOutstanding(invoices)
+    val outstandingTotal = outstanding.total
     // Gatekeeper widget: households with the longest gap since their last visit.
     val visitGaps = householdVisitGaps(sessions, todayKey, limit = 5)
 
@@ -250,7 +260,7 @@ fun HomeScreen(
     // AO-35 route optimizer: one-shot optimizeRoute for today, loaded only while shown.
     val showsRoute = layout.any { it.key == DashKey.ROUTE_OPTIMIZER }
     var route by remember { mutableStateOf<WriteResult<RouteResult>?>(null) }
-    LaunchedEffect(showsRoute) { if (showsRoute && route == null) route = client.optimizeRoute(nowIso().take(10)) }
+    LaunchedEffect(showsRoute) { if (showsRoute && route == null) route = client.optimizeRoute(businessTodayIso()) }
     // AO-41 supplies: one-shot listSupplies, re-fetched whenever a +1 adjust bumps
     // the reload key so the low list stays honest after a restock write.
     val showsSupplies = layout.any { it.key == DashKey.SUPPLIES }
@@ -504,7 +514,7 @@ fun HomeScreen(
                                             if (outstandingTotal > 0.0) AuntieStatusTone.Orange else AuntieStatusTone.Success,
                                         )
                                         Text(
-                                            "${outstandingInvoices.size} unpaid invoice${if (outstandingInvoices.size == 1) "" else "s"}",
+                                            "${outstanding.count} unpaid invoice${if (outstanding.count == 1) "" else "s"}",
                                             style = AuntieTheme.typography.bodySmall,
                                             color = AuntieTheme.colors.textDim,
                                         )
@@ -587,12 +597,12 @@ fun HomeScreen(
                                 }
                             }
                             DashKey.WEEKLY_CAPACITY -> WeeklyCapacityWidget(sessionsState, todayKey)
-                            DashKey.OVERDUE_TRACKER -> OverdueVisitsWidget(sessionsState, nowIso())
+                            DashKey.OVERDUE_TRACKER -> OverdueVisitsWidget(sessionsState, nowIso(), homeZone)
                             DashKey.PET_BREAKDOWN -> PetBreakdownWidget(allKinState)
                             DashKey.FREQUENT_FLYERS -> FrequentFlyersWidget(sessionsState, todayKey)
                             DashKey.HOLIDAY_RUNWAY -> HolidayRunwayWidget(sessionsState, todayKey)
                             DashKey.UNREAD_MESSAGES -> UnreadMessagesWidget(conversations)
-                            DashKey.SAFEBOX -> SafeboxWidget(sessionsState, kinfolkState, nowIso())
+                            DashKey.SAFEBOX -> SafeboxWidget(sessionsState, kinfolkState, nowIso(), homeZone)
                             DashKey.CARE_FLAGS -> CareFlagsWidget(sessionsState, allKinState, todayKey)
                             DashKey.EXPIRATIONS -> ExpirationsWidget(expirations, todayKey)
                             DashKey.ROUTE_OPTIMIZER -> RouteOptimizerWidget(route)
@@ -757,7 +767,7 @@ internal fun householdVisitGaps(
             val name = group.firstOrNull { it.kinfolkName.isNotBlank() }?.kinfolkName ?: return@mapNotNull null
             val lastDate = group
                 .mapNotNull { s ->
-                    runCatchingCancellable { kotlinx.datetime.LocalDate.parse((s.completedAt.ifBlank { s.startTime }).take(10)) }.getOrNull()
+                    runCatchingCancellable { kotlinx.datetime.LocalDate.parse(businessDayOf(s.completedAt.ifBlank { s.startTime }, businessTimeZone())) }.getOrNull()
                 }
                 .maxOrNull() ?: return@mapNotNull null
             val days = (today.toEpochDays() - lastDate.toEpochDays()).toInt()

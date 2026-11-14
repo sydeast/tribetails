@@ -114,13 +114,24 @@ fun InvoiceDetailScreen(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    val (label, amt) = when {
-                        isCredit -> "Credit" to (invoice.creditAmountCents?.toDouble()?.div(100.0) ?: 0.0)
-                        invoice.isPaid -> "Paid" to invoice.total
-                        else -> "Amount Due" to invoice.amountDue
-                    }
+                    // #2090: a written-off invoice reads "Nothing to pay" (invoiceHeadline).
+                    val (label, amt) = invoiceHeadline(invoice)
                     Text(label, style = type.sansLabel)
-                    Text(formatUsd(amt), style = type.heritageDisplay)
+                    Text(amt, style = type.heritageDisplay)
+                }
+                if (invoice.status == InvoiceStatus.WrittenOff) {
+                    if (invoice.paidCents > 0L) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Paid", style = type.sansLabel)
+                            Text(formatUsd(invoice.paidCents / 100.0), style = type.sansBody)
+                        }
+                    }
+                    invoice.writtenOffCents?.takeIf { it > 0L }?.let { cents ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Written off", style = type.sansLabel)
+                            Text(formatUsd(cents / 100.0), style = type.sansBody)
+                        }
+                    }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Total", style = type.sansLabel)

@@ -31,6 +31,8 @@ class InvoiceActionsTest {
             InvoiceState.CREDIT to emptyList(),
             InvoiceState.REDEEMED to emptyList(),
             InvoiceState.ZERO to emptyList(),
+            // #2090: nothing to collect, remind about or receipt.
+            InvoiceState.WRITTEN_OFF to emptyList(),
         )
         assertEquals(InvoiceState.entries.toSet(), expected.keys)
         for ((state, actions) in expected) assertEquals(actions, invoiceActionsFor(state), state.name)

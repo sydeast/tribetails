@@ -197,6 +197,31 @@ export function sessionCountForDay<T>(byDay: Map<string, T[]>, iso: string): num
   return byDay.get(iso)?.length ?? 0;
 }
 
+/**
+ * #1868: a called-off visit, in any of the three spellings the stored status
+ * carries (`CANCELLED`, `CANCELED`, `cancelled`), the server's own
+ * `normalizeBookingStatus` rule.
+ */
+export function isCancelledSessionStatus(status: unknown): boolean {
+  const s = str(status).trim().toUpperCase();
+  return s === 'CANCELLED' || s === 'CANCELED';
+}
+
+/**
+ * #1868: the grid's view of the day map, called-off visits taken out. A
+ * cancelled visit stays on the day's agenda list, marked Cancelled, and leaves
+ * the week and month grids and the range's session count: it no longer holds
+ * the hour, so drawing it in the same colour as a live visit said it did.
+ */
+export function liveSessionsByDay<T extends { status?: unknown }>(byDay: Map<string, T[]>): Map<string, T[]> {
+  const out = new Map<string, T[]>();
+  for (const [day, rows] of byDay) {
+    const live = rows.filter((r) => !isCancelledSessionStatus(r.status));
+    if (live.length > 0) out.set(day, live);
+  }
+  return out;
+}
+
 export { sessionDayKey, sessionDayLabel, localDateIso };
 
 // ── busy blocks (`booking_time_slots`) ──────────────────────────────────────

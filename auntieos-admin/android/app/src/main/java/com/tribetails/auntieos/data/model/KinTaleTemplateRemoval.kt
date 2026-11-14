@@ -32,20 +32,20 @@ data class KinTaleTemplateUsage(
 enum class KinTaleTemplateRemoval { ARCHIVE, RESTORE, DELETE }
 
 /**
- * What stops working once the doc is gone, one line each, for the
- * delete-for-good confirm. Empty when nothing depends on it: the household feed
- * drops the checklist of a KinTale whose template is missing.
+ * What deleting for good means for the KinTales written from it, one line each,
+ * for the delete-for-good confirm, under the count [kinTaleTemplateDeleteHeadline]
+ * leads with. Empty when nothing used it.
+ *
+ * #2058 (operator ruling 2026-11-12, stamp at send): a sent KinTale keeps its own
+ * copy of the care tasks, so deleting the template takes nothing from a household.
+ * The line used to say the ticked items stop showing, which was true then; it also
+ * repeated the count and explained how the feed works. Same words as the web
+ * admin's `removalImpact`.
  */
-fun kinTaleTemplateRemovalImpact(usage: KinTaleTemplateUsage): List<String> {
-    val n = usage.kintaleCount
-    if (n <= 0) return emptyList()
-    return listOf(
-        "$n KinTale${if (n == 1) " was" else "s were"} written from it. " +
-            "${if (n == 1) "Its" else "Their"} ticked checklist items stop showing to the household, " +
-            "because the household feed reads the labels from the template.",
-    )
-}
-
+fun kinTaleTemplateRemovalImpact(usage: KinTaleTemplateUsage): List<String> =
+    if (usage.kintaleCount <= 0) emptyList() else listOf(SENT_KINTALES_KEEP_TASKS)
+/** #2058: the delete confirm's promise about KinTales already sent. */
+const val SENT_KINTALES_KEEP_TASKS = "KinTales already sent keep their care tasks."
 /** The line the delete-for-good confirm leads with: how many KinTales used it. */
 fun kinTaleTemplateDeleteHeadline(usage: KinTaleTemplateUsage): String {
     val n = usage.kintaleCount

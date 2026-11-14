@@ -20,6 +20,8 @@ const STATE_FIXTURES: Record<string, Record<string, unknown>> = {
   redeemed: { status: 'redeemed', amountDue: -25, total: -25, creditRedeemedAt: 'ts' },
   paid: { status: 'paid', amountDue: 0, total: 40 },
   zero: { status: 'open', amountDue: 0, total: 0 },
+  // #2090: the owner wrote off what was left. Never chased.
+  written_off: { status: 'written_off', amountDue: 0, amountDueCents: 0, total: 40, writtenOffCents: 4000 },
   open: { status: 'open', amountDue: 40, total: 40 },
 };
 

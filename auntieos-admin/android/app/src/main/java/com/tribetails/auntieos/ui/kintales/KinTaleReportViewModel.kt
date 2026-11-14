@@ -363,7 +363,9 @@ class KinTaleReportViewModel(
                 session = session,
                 kinfolk = kinfolk,
                 kinList = kinList,
-                template = template,
+                // #2058: a sent tale is shown against its own copy of the care
+                // tasks, never the template as it stands now.
+                template = template.forKinTale(report),
                 report = report,
                 uploadedMedia = media,
                 gpsRoute = session.gpsSummary?.route.orEmpty(),
@@ -902,25 +904,38 @@ class KinTaleReportViewModel(
             ).fold(
                 onSuccess = { result ->
                     val firstDispatchId = result.dispatchIds.firstOrNull().orEmpty()
+                    // #2058: the server marks the tale sent and takes its copy of
+                    // the care tasks. A refusal is shown, never read as "sent": a
+                    // retry is safe, because the notice is named by the tale (#832)
+                    // and the server leaves a tale already sent as it is.
                     kinCareRepository.markReportSent(
                         reportId = savedReport.id,
                         sessionId = session.id,
                         sentVia = "catalog",
                         deliveryReceiptId = firstDispatchId,
-                    )
-                    // #1816: what the server did, never a promise.
-                    val household = session.kinfolkName
-                    _uiState.value = _uiState.value.copy(
-                        isSending = false,
-                        sentSuccessfully = true,
-                        sentMessage = withHouseholdLine(
-                            "KinTale sent.",
-                            householdNoticeResultLine(result.notice, household, auntieSignedIn),
-                        ),
-                        report = savedReport.copy(
-                            status = ReportStatus.SENT.name,
-                            sentVia = "catalog",
-                        )
+                    ).fold(
+                        onSuccess = {
+                            // #1816: what the server did, never a promise.
+                            _uiState.value = _uiState.value.copy(
+                                isSending = false,
+                                sentSuccessfully = true,
+                                sentMessage = withHouseholdLine(
+                                    "KinTale sent.",
+                                    householdNoticeResultLine(result.notice, session.kinfolkName, auntieSignedIn),
+                                ),
+                                report = savedReport.copy(
+                                    status = ReportStatus.SENT.name,
+                                    sentVia = "catalog",
+                                )
+                            )
+                        },
+                        onFailure = { e ->
+                            AuntieLog.e("KinTale mark-sent failed", e)
+                            _uiState.value = _uiState.value.copy(
+                                isSending = false,
+                                error = "Couldn't finish sending: ${e.message ?: "unknown error"}. Tap Send to try again.",
+                            )
+                        },
                     )
                 },
                 onFailure = { e ->

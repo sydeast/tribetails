@@ -553,6 +553,14 @@ data class Invoice(
     /** Collected beyond the total, in integer cents. Non-zero only after an overpayment. */
     var overpaidCents: Long = 0L,
     /**
+     * #2090: what the owner wrote off, in integer cents, stamped by
+     * `writeOffInvoice` with `status: "written_off"` and a zero balance. 0 on
+     * every invoice that was not written off. Never counted as collected.
+     */
+    var writtenOffCents: Long = 0L,
+    /** #2090: when the balance was written off (a Firestore Timestamp). */
+    var writtenOffAt: Any? = null,
+    /**
      * The Invoice State Classifier's stored verdict (ADR-0002): one of the
      * server's eight canonical lowercase states (`quote`, `draft`, `cancelled`,
      * `credit`, `redeemed`, `paid`, `zero`, `open`), written by every
@@ -1119,6 +1127,11 @@ data class KinCareReport(
     // (appliesTo == "KINTALE"), keyed by field id. DISTINCT from [fieldResponses]
     // (KinTale-template answers). Mirrors the web KinCareReport.
     var formValues: Map<String, String> = emptyMap(),
+    // #2058: a SENT tale's own copy of its care tasks, stamped by the server in
+    // the write that sent it (operator ruling 2026-11-12, stamp at send). Read
+    // only: it is in KIN_CARE_REPORT_OTHER_WRITERS, so no save from this app
+    // writes it back. Null on a draft and on a tale sent before the copy existed.
+    var careTasks: CareTaskCopy? = null,
 )
 
 /**

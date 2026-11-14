@@ -147,3 +147,51 @@ data class FieldResponse(
     var stringValue: String = "",
     var mediaIds: List<String> = emptyList()
 )
+
+// ----- #2058: a sent KinTale's own copy of its care tasks -----
+/**
+ * `careTasks` on a SENT `kin_care_reports` doc, written by the server
+ * (`mytribe/functions/src/lib/careTaskStamp.ts`) in the write that sends the
+ * tale. Operator ruling 2026-11-12, "stamp at send": a sent KinTale keeps its
+ * own copy of the care tasks, and editing or deleting the template never
+ * changes it. [items] is every task the template offered, with its scope,
+ * order and conditions; [done] is what the household is shown.
+ */
+@Keep
+data class CareTaskCopy(
+    var v: Int = 0,
+    var stampedAt: String = "",
+    var stampedBy: String = "",
+    var templateId: String = "",
+    var templateName: String = "",
+    var source: String = "",
+    var checklistEnabled: Boolean = true,
+    var items: List<ChecklistItem> = emptyList(),
+    var done: List<CareTaskDone> = emptyList(),
+)
+@Keep
+data class CareTaskDone(
+    var key: String = "",
+    var kinId: String = "",
+    var text: String = "",
+    var note: String = "",
+)
+/** The copy version this app understands; any other reads as "no copy". */
+const val CARE_TASK_COPY_VERSION = 1
+/**
+ * The template a KinTale is shown against. A SENT tale carrying its own copy
+ * is shown against that copy: its checklist, labels and conditions come off
+ * the tale, so a template edited or deleted afterwards cannot reach it. The
+ * resolved [this] template still supplies the other sections' switches. A
+ * draft, and a tale sent before the copy existed, keep [this] unchanged.
+ */
+fun KinTaleTemplate.forKinTale(report: KinCareReport): KinTaleTemplate {
+    val copy = report.careTasks ?: return this
+    if (report.status.trim().uppercase() != ReportStatus.SENT.name) return this
+    if (copy.v != CARE_TASK_COPY_VERSION) return this
+    return copy(
+        name = copy.templateName.ifBlank { name },
+        checklistEnabled = copy.checklistEnabled,
+        checklistItems = copy.items.filter { it.key.isNotBlank() && it.text.isNotBlank() },
+    )
+}

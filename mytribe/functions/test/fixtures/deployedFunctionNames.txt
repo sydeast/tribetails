@@ -272,6 +272,7 @@ scheduleMarketingBlast
 screenCallAction
 sendExternalMessage
 sendInvoiceReminder
+sendKinTaleReport
 sendKinfolkMessage
 setActiveTribe
 setBrandTokens
@@ -327,3 +328,4 @@ verifyActivityLogChain
 verifyVisitArrival
 videoGpsStripSweep
 withdrawQuote
+writeOffInvoice

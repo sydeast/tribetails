@@ -402,7 +402,7 @@ fun UninvoicedVisitsPicker(
                                     color = c.textPrimary,
                                 )
                                 Text(
-                                    visitDayLabel(s.startTime, todayIso) +
+                                    visitDayLabel(s.startTime, todayIso, com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current) +
                                         if (s.durationMinutes > 0) " · ${s.durationMinutes.toLong()} min" else "",
                                     style = AuntieTheme.typography.bodySmall,
                                     color = c.textDim,
@@ -548,7 +548,7 @@ fun UninvoicedVisitsPicker(
                                         if (e.startTime.take(10).isBlank()) {
                                             "no start time"
                                         } else {
-                                            visitDayLabel(e.startTime, todayIso)
+                                            visitDayLabel(e.startTime, todayIso, com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current)
                                         }
                                         ) + if (e.reason.isBlank()) "" else " · ${e.reason}",
                                     style = AuntieTheme.typography.bodySmall,

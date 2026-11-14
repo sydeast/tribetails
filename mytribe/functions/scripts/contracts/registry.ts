@@ -25,7 +25,12 @@ import {
   Args as ListVisitInternalNotesArgs,
   Result as ListVisitInternalNotesResult,
 } from '../../src/admin/listVisitInternalNotes';
-import { Args as ArchiveInvoiceArgs, Result as ArchiveInvoiceResult } from '../../src/admin/archiveInvoice';
+import {
+  Args as ArchiveInvoiceArgs,
+  Result as ArchiveInvoiceResult,
+  WriteOffArgs as WriteOffInvoiceArgs,
+  WriteOffResult as WriteOffInvoiceResult,
+} from '../../src/admin/archiveInvoice';
 import { Args as BatchUpdateBookingsArgs, Result as BatchUpdateBookingsResult } from '../../src/admin/batchUpdateBookings';
 import { Args as CreateMultiDateBookingRequestArgs, Result as CreateMultiDateBookingRequestResult } from '../../src/admin/createMultiDateBookingRequest';
 import { Args as ManageBookingSeriesArgs, Result as ManageBookingSeriesResult } from '../../src/admin/manageBookingSeries';
@@ -200,6 +205,7 @@ export const INVOICE_CONTRACT_REGISTRY: ContractRegistry = {
     { name: 'sendInvoiceReminder', args: SendInvoiceReminderArgs, result: SendInvoiceReminderResult },
     { name: 'retryInvoiceCheckoutClose', args: RetryInvoiceCheckoutCloseArgs, result: RetryInvoiceCheckoutCloseResult },
     { name: 'unarchiveInvoice', args: UnarchiveInvoiceArgs, result: UnarchiveInvoiceResult },
+    { name: 'writeOffInvoice', args: WriteOffInvoiceArgs, result: WriteOffInvoiceResult },
     { name: 'updateInvoice', args: UpdateInvoiceArgs, result: UpdateInvoiceResult },
   ],
 };

@@ -1026,26 +1026,35 @@ class FirestoreClient {
         updateChangedFields("kin_care_reports", edited._id, modelChanges(KinCareReport.serializer(), loaded, edited, perKeyMaps = KIN_CARE_REPORT_PER_KEY_MAPS))
 
     /**
-     * Stamp the report SENT and seed the lifecycle metadata. The session-side
-     * cumulative fields (reportIds / sentReportCount) are NOT passed in: each
-     * platform applies them atomically (arrayUnion + increment on wasm via the
-     * Firestore SDK batch, via a Firestore `:commit` transform on JVM), so two
-     * concurrent sends never clobber each other's running totals (NOTE-52 / W15).
+     * The send, through the `sendKinTaleReport` callable (#2058). Operator ruling
+     * 2026-11-12, "stamp at send": the server marks the report SENT, takes the
+     * tale's own copy of its care tasks from the template, and records the send
+     * on the visit (`reportIds` arrayUnion, `sentReportCount` increment,
+     * `autoCompleteEligible`, `kinTaleDue: false`) in ONE transaction. This used
+     * to be a `:commit` from the console (NOTE-52 / W15); a copy taken by a later
+     * write could miss a template deleted in between. The server reads the visit
+     * off the report and stamps the send time itself; [sessionId] is only checked.
      */
     suspend fun markKinTaleReportSent(
         reportId: String,
         sessionId: String,
         sentVia: String,
         deliveryReceiptId: String,
-        sentAtIso: String,
-    ): WriteResult<Unit> = platformMarkKinTaleReportSent(
-        reportId = reportId,
-        sessionId = sessionId,
-        sentVia = sentVia,
-        deliveryReceiptId = deliveryReceiptId,
-        sentAtIso = sentAtIso,
-    )
-
+    ): WriteResult<Unit> {
+        if (reportId.isBlank()) return WriteResult.Err("Couldn't send: this KinTale has not been saved.")
+        if (sessionId.isBlank()) return WriteResult.Err("Couldn't send: this KinTale is not linked to a visit.")
+        val payload = buildJsonObject {
+            put("reportId", reportId)
+            put("sentVia", sentVia)
+            put("deliveryReceiptId", deliveryReceiptId)
+        }
+        return when (
+            val r = platformInvokeCallable("sendKinTaleReport", callableJson.encodeToString(JsonObject.serializer(), payload))
+        ) {
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+            is WriteResult.Err -> r
+        }
+    }
     /**
      * Triage action: link an orphan KinCareReport to a specific kinfolk. Stamps
      * `kinfolkId` + `kinfolkName` on the report doc, flips `triageStatus` to
@@ -1215,7 +1224,6 @@ class FirestoreClient {
                 sessionId = session._id,
                 sentVia = "catalog",
                 deliveryReceiptId = dispatchId,
-                sentAtIso = com.tribetails.auntieos.web.util.nowIso(),
             )
         ) {
             is WriteResult.Ok -> WriteResult.Ok(notice)
@@ -1714,6 +1722,20 @@ class FirestoreClient {
         return when (val r = platformInvokeCallable("withdrawQuote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message, r.code)
             is WriteResult.Ok -> WriteResult.Ok(decodeReleasedCount(r.value))
+        }
+    }
+
+    /**
+     * #2090: writes off what is left on an open invoice (owner only; the server
+     * refuses an Auntie). [amountCents] is the balance the confirm showed; a
+     * balance that moved since is refused in a sentence naming the new figure.
+     * Answers the cents written off. A refusal is returned verbatim.
+     */
+    suspend fun writeOffInvoice(invoiceId: String, amountCents: Long): WriteResult<Long> {
+        val payload = writeOffInvoicePayload(invoiceId, amountCents)
+        return when (val r = platformInvokeCallable("writeOffInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(decodeWrittenOffCents(r.value))
         }
     }
 
@@ -4095,8 +4117,11 @@ data class KinCareReport(
     // (which are KinTale-template answers): formValues are admin-defined custom
     // schema fields, fieldResponses are the report template's structured fields.
     val formValues: Map<String, String> = emptyMap(),
+    // #2058: a SENT tale's own copy of its care tasks, stamped by the server in
+    // the write that sent it. Read only: this console never edits it, so the
+    // field diff of an update never carries it.
+    val careTasks: CareTaskCopy? = null,
 )
-
 /**
  * True when this report is a migration-orphan that still needs admin attention:
  * no kinfolk linked, no triage decision yet, and `sentVia` matches one of the
@@ -4381,6 +4406,12 @@ data class Invoice(
     // stored (a timestamp in whatever shape the bridge delivers); present and
     // not null means archived, the server's own rule. Nothing here writes it.
     val archivedAt: JsonElement? = null,
+    /**
+     * #2090: the cents the owner wrote off, written by `writeOffInvoice` with
+     * `status: "written_off"` and a zero balance. Raw for the same reason as
+     * [paidCents]. Read through `screens.invoices.invoiceWrittenOffCentsOf`.
+     */
+    val writtenOffCents: JsonElement? = null,
     /**
      * #2087: true on a quote saved with "Send to kinfolk now" off: a draft only
      * the office sees, which goes out as a quote when it is sent. Written by
@@ -5517,3 +5548,15 @@ internal fun manageBookingSeriesPayload(action: String, kinfolkId: String, batch
         put("batchId", JsonPrimitive(batchId))
         note?.trim()?.takeIf { it.isNotEmpty() }?.let { put("note", JsonPrimitive(it)) }
     }
+
+
+/** #2090: the `writeOffInvoice` request: the invoice and the balance the confirm showed. */
+internal fun writeOffInvoicePayload(invoiceId: String, amountCents: Long): JsonObject = buildJsonObject {
+    put("invoiceId", JsonPrimitive(invoiceId))
+    put("amountCents", JsonPrimitive(amountCents))
+}
+
+/** #2090: the `writtenOffCents` of a `writeOffInvoice` answer, 0 when it cannot be read. */
+internal fun decodeWrittenOffCents(raw: String): Long = runCatching {
+    Json.parseToJsonElement(raw).jsonObject["writtenOffCents"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.toLong() ?: 0L
+}.getOrDefault(0L)

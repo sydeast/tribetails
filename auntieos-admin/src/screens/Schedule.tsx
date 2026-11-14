@@ -9,6 +9,7 @@ import {
   rangeLabel,
   shiftRange,
   sessionCountForDay,
+  liveSessionsByDay,
   groupBlockedSlotsByDate,
   busyWindowLabel,
   distinctServiceTypes,
@@ -431,8 +432,9 @@ export function Schedule({ onSelect }: ScheduleProps) {
     }
   }, [view, selected]);
 
+  // #1868: a cancelled visit is not a session in the range.
   const inViewCount = asyncScalar(sessionsState, (data) => {
-    const byDay = sessionsByBusinessDay(data, businessZone);
+    const byDay = liveSessionsByDay(sessionsByBusinessDay(data, businessZone));
     return daysInView.reduce((sum, day) => sum + sessionCountForDay(byDay, day), 0);
   });
 
@@ -545,6 +547,8 @@ export function Schedule({ onSelect }: ScheduleProps) {
       >
         {(sessions) => {
           const byDay = sessionsByBusinessDay(sessions, businessZone);
+          // #1868: the grids draw live visits only; the agenda keeps every row.
+          const gridByDay = liveSessionsByDay(byDay);
           const busyByDate = busyState.status === 'ready' ? groupBlockedSlotsByDate(busyState.data) : new Map<string, BusySlotEntry[]>();
           // SCOPED to the days on screen (`daysInView`, the same set the "in
           // view" stat card counts from), never the whole bounded 300-session
@@ -552,7 +556,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
           // the date range or switching Day/Week/Month changes `daysInView`,
           // which changes the legend along with it, and a view with nothing
           // scheduled yields an empty legend rather than a stale full list.
-          const sessionsInView = daysInView.flatMap((day) => byDay.get(day) ?? []);
+          const sessionsInView = daysInView.flatMap((day) => gridByDay.get(day) ?? []);
           // #1592: named against the catalog, then deduped, so two spellings
           // of one KinCare (`visit_60`, `60Mins`) are one legend row.
           const legend = sortServiceTypesByDuration(
@@ -656,7 +660,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   businessZone={businessZone}
                   today={todayIso}
                   selected={selected}
-                  byDay={byDay}
+                  byDay={gridByDay}
                   busyByDate={busyByDate}
                   catalog={serviceCatalog}
                   snapMinutes={snapMinutes}
@@ -675,7 +679,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                   businessZone={businessZone}
                   today={todayIso}
                   selected={selected}
-                  byDay={byDay}
+                  byDay={gridByDay}
                   busyByDate={busyByDate}
                   catalog={serviceCatalog}
                   onSelectDay={setSelected}

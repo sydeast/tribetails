@@ -136,3 +136,40 @@ export function serviceDisplayName(
   if (label !== '' && !looksLikeServiceCode(label)) return label;
   return null;
 }
+/**
+ * #1866: how long a booked KinCare runs, in minutes, or null when nothing says.
+ *
+ * The admin booking wizard on all three clients sends a visit's KinCare by NAME
+ * ("30 Minute Quick Check") with `serviceId: null` and no end, and the series
+ * approval looked the length up by id alone. So every visit booked that way
+ * reached Auntie Time with no end and a length of 0, while a Schedule > New
+ * visit for the same KinCare read 30. Resolved in this order:
+ *   1. the catalog id, when the visit carries one (`kinCareLengthMinutes`);
+ *   2. the catalog key its name matches (`matchServiceKey`), so a renamed or
+ *      respaced name still reaches the length the operator typed;
+ *   3. the length the name itself states ("30 Minute ...", "2Hrs").
+ * Two KinCares that match one name equally give no answer rather than a guess,
+ * unless they run for the same length.
+ */
+export function kinCareLengthForVisit(
+  serviceId: unknown,
+  serviceName: unknown,
+  settings: Record<string, unknown> | undefined | null,
+): number | null {
+  const catalog = serviceNameCatalogFrom(settings);
+  const id = typeof serviceId === 'string' ? serviceId.trim() : '';
+  if (id !== '') {
+    const byId = kinCareLengthMinutes(id, catalog.serviceDurations);
+    if (byId != null) return byId;
+  }
+  const name = typeof serviceName === 'string' ? serviceName.trim() : '';
+  if (name === '') return null;
+  const match = matchServiceKey(name, catalog);
+  if (match.kind === 'key') return kinCareLengthMinutes(match.key.trim(), catalog.serviceDurations);
+  if (match.kind === 'ambiguous') {
+    const lengths = new Set(match.keys.map((key) => kinCareLengthMinutes(key.trim(), catalog.serviceDurations)));
+    if (lengths.size === 1) return [...lengths][0] ?? null;
+    return null;
+  }
+  return kinCareLengthMinutes(name, catalog.serviceDurations);
+}

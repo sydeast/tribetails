@@ -685,6 +685,47 @@ describe('Auntie Time: the card runs the visit', () => {
     );
   });
 
+  // #2039: a clock-out that does not fit the booking asks with a warning, and
+  // still goes through when confirmed. A warning, never a refusal.
+  it('warns on a clock-out a minute after clock-in and before the start, then still writes DEPARTED', async () => {
+    const now = Date.now();
+    mount({
+      status: 'ARRIVED',
+      startTime: new Date(now + 43 * 60_000).toISOString(),
+      endTime: new Date(now + 88 * 60_000).toISOString(),
+      arrivedAt: new Date(now - 60_000).toISOString(),
+    });
+    await user.click(screen.getByRole('button', { name: /^Departed$/ }));
+    expect(screen.getByText('Check the time')).toBeInTheDocument();
+    expect(screen.getByText(/booked to start at \d\d:\d\d, 4[23] minutes from now\. Clocking out now ends it before it was due to begin\./)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /yes, clock out/i }));
+    expect(patchVisitLifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: 'sess1' }),
+      'DEPARTED',
+      expect.anything(),
+    );
+  });
+
+  it('asks the plain question for a clock-out that fits the booking', async () => {
+    const now = Date.now();
+    mount({
+      status: 'ARRIVED',
+      startTime: new Date(now - 40 * 60_000).toISOString(),
+      endTime: new Date(now - 10 * 60_000).toISOString(),
+      arrivedAt: new Date(now - 38 * 60_000).toISOString(),
+    });
+    await user.click(screen.getByRole('button', { name: /^Departed$/ }));
+    expect(screen.getByRole('button', { name: /yes, clock out/i })).toBeInTheDocument();
+    expect(screen.queryByText('Check the time')).toBeNull();
+  });
+
+  it('warns on a clock-in well ahead of the booked start', async () => {
+    const now = Date.now();
+    mount({ status: 'SCHEDULED', startTime: new Date(now + 47 * 60_000).toISOString(), endTime: '' });
+    await user.click(screen.getByRole('button', { name: /^Arrived$/ }));
+    expect(screen.getByText(/This visit is booked for \d\d:\d\d, 4[67] minutes from now\./)).toBeInTheDocument();
+  });
+
   it('Undo arrived on an arrived card writes UNDO_ARRIVAL', async () => {
     mount({ status: 'ARRIVED', startTime: at(0, 9) });
     await act(/^Undo arrived$/, /yes, undo the arrival/i);
