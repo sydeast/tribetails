@@ -1,5 +1,19 @@
 import { useEffect, useState } from 'react';
-import { patchVisitLifecycle, type VisitLifecycleAction } from '../api/sessionsWrite';
+import {
+  patchVisitLifecycle,
+  startVisitWithRangeCheck,
+  verifyVisitArrival,
+  type StartFix,
+  type VisitLifecycleAction,
+} from '../api/sessionsWrite';
+import { useArrivalRule } from './useArrivalRule';
+import {
+  START_NEEDS_PROPERTY_MESSAGE,
+  isRulesRefusal,
+  ownerOutsideRangeSentence,
+  requestStartFix,
+  startsVisit,
+} from './visitStartRange';
 import { lifecycleNowIso, type LifecycleActionDef } from './sessionLifecycle';
 import {
   beginVisitClockWrite,
@@ -106,6 +120,17 @@ function messageOf(err: unknown): string {
  *                  while its buttons offered the transitions of that old state.
  * @param auntie    an Auntie is signed in (#2185), so the result sentence names
  *                  the owner rather than Settings. The screen asks once.
+ *
+ * #2279, operator ruling 2026-11-14: AN AUNTIE CANNOT START A VISIT OUTSIDE THE
+ * RANGE OF THE HOUSEHOLD; ONLY THE OWNER CAN. With "Verify arrival and
+ * departure" on, her On my way and Arrived go to the server with her position
+ * (`startVisitWithRangeCheck`) instead of being written from the browser, and
+ * the server refuses them outside the range in a sentence this hook shows as
+ * it is. The rule being unknown (still loading, or the read failed) counts as
+ * on: the server then decides, and with the rule off it lets her through.
+ * Departed and Undo arrival are untouched. The owner keeps the direct write on
+ * every step; an owner's arrival is measured afterwards, so one outside the
+ * range is recorded on the visit and in the Activity Log.
  */
 export function useVisitLifecycle(
   session: VisitLifecycleSession | null,
@@ -115,6 +140,16 @@ export function useVisitLifecycle(
 ): VisitLifecycleController {
   const [pending, setPending] = useState<LifecycleActionDef | null>(null);
   const sessionId = session?._id ?? null;
+  const arrivalRule = useArrivalRule();
+  /**
+   * #2279: the rules refused her own start write, so the rule is on whatever
+   * this screen's minute-old read says. Every start after that goes through
+   * the server.
+   */
+  const [rulesRefusedStart, setRulesRefusedStart] = useState(false);
+  /** Does this Auntie's start go to the server to be measured? */
+  const startIsMeasured = (action: VisitLifecycleAction): boolean =>
+    auntie && startsVisit(action) && (arrivalRule !== false || rulesRefusedStart);
   /**
    * The last write's outcome, held in `lib/visitClockOutcome.ts` keyed by the
    * session id rather than in this component (#1794). The board unmounts a card
@@ -137,13 +172,26 @@ export function useVisitLifecycle(
     setPending(null);
   }, [sessionId]);
 
-  /** Resolves true once the row is where the action put it. */
-  async function run(action: VisitLifecycleAction): Promise<boolean> {
+  /**
+   * Resolves true once the row is where the action put it.
+   *
+   * @param fix the position asked for inside the confirm click (#2279), when
+   *            this step wants one. A "Sync now" re-send has none and asks
+   *            again; the permission is already in hand by then.
+   */
+  async function run(action: VisitLifecycleAction, fix?: Promise<StartFix | null>): Promise<boolean> {
     if (session === null) return false;
     const id = session._id;
     const seq = beginVisitClockWrite(id, action);
+    const measured = startIsMeasured(action);
     try {
-      const res = await patchVisitLifecycle(session, action, { nowIso: lifecycleNowIso() });
+      const res =
+        measured && startsVisit(action)
+          ? await startVisitWithRangeCheck(session, action, {
+              nowIso: lifecycleNowIso(),
+              fix: await (fix ?? requestStartFix()),
+            })
+          : await patchVisitLifecycle(session, action, { nowIso: lifecycleNowIso() });
 
       // `changed: false` is a real outcome, not a failure: the action was
       // already true and NOTHING was written, which is what stops a double
@@ -169,16 +217,52 @@ export function useVisitLifecycle(
       settleVisitClockWrite(id, seq, { status: 'done', message: `${moved}${checking}` });
       if (onWritten) onWritten();
 
+      // The sentence has up to three parts that land at different times: the
+      // move (now), what the household was told, and (#2279) an owner's arrival
+      // outside the range. Each one re-says the whole sentence from what is
+      // known so far, so neither late part can erase the other.
+      let said: string | null = null;
+      let rangeNote = '';
+      const resay = (): void => {
+        const notice = said === null ? checking.trim() : said;
+        const message = [moved, notice, rangeNote].filter((part) => part !== '').join(' ');
+        settleVisitClockWrite(id, seq, { status: 'done', message });
+      };
+
       // The second half, once the server has recorded what the household was
       // told (#2037: the server sends the notice from the saved step). It never
       // rejects, so there is no catch.
       // Written to the STORE, not to this component, which may have unmounted.
       void res.notification.then((outcome) => {
-        const said = visitNoticeOutcomeSentence(outcome, household, auntie);
-        settleVisitClockWrite(id, seq, { status: 'done', message: said === '' ? moved : `${moved} ${said}` });
+        said = visitNoticeOutcomeSentence(outcome, household, auntie);
+        resay();
       });
+
+      // #2279: the owner's arrival is measured AFTER it lands, best effort, as
+      // Android Home does. It cannot fail or undo the arrival. An Auntie's
+      // measured start was already checked by the server on the way in.
+      if (!auntie && action === 'ARRIVED' && fix !== undefined) {
+        void fix
+          .then((position) => (position === null ? null : verifyVisitArrival(id, position)))
+          .then((check) => {
+            if (check === null) return;
+            rangeNote = ownerOutsideRangeSentence(check);
+            if (rangeNote !== '') resay();
+          })
+          .catch(() => {
+            // No measurement. The arrival stands and completes as unverified.
+          });
+      }
       return true;
     } catch (err) {
+      // #2279: the rules refused an Auntie's own start write. The rule was
+      // switched on after this screen last read it; say what it means, and
+      // send her next tap through the server.
+      if (auntie && startsVisit(action) && !measured && isRulesRefusal(err)) {
+        setRulesRefusedStart(true);
+        settleVisitClockWrite(id, seq, { status: 'error', message: START_NEEDS_PROPERTY_MESSAGE });
+        return false;
+      }
       settleVisitClockWrite(id, seq, { status: 'error', message: messageOf(err) });
       return false;
     }
@@ -205,7 +289,13 @@ export function useVisitLifecycle(
       if (pending === null) return;
       const action = pending.action;
       setPending(null);
-      const accepted = run(action);
+      // #2279: asked for HERE, synchronously, for the same reason the tracker
+      // below is: the browser ties its location prompt to this click. An
+      // Auntie's measured start sends it to the server; the owner's arrival is
+      // measured with it afterwards. No other step asks.
+      const wantsFix =
+        startIsMeasured(action) || (!auntie && action === 'ARRIVED' && arrivalRule !== false);
+      const accepted = run(action, wantsFix ? requestStartFix() : undefined);
       // Still inside the confirm click, on purpose (#772): the browser ties
       // its location prompt to a user gesture, and `beginVisitTracking` asks
       // for the first fix synchronously. The write above runs alongside;

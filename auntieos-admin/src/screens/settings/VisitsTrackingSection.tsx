@@ -477,11 +477,13 @@ export function VisitsTrackingSection({ data, onSave }: VisitsTrackingSectionPro
             </label>
             <FieldError id="arrivalRadius" message={fieldError('arrivalRadiusMeters')} />
             <span id="arrivalRadius-hint" className="settingsEdit__hint">
-              Only applies while Verify arrival and departure by location is on. An arrival
-              recorded further than this from the household stops the visit being marked complete.
-              An arrival with no usable location still goes through, and is recorded as
-              unverified: no signal, location turned off, an address we cannot place on the map, or
-              the desktop console, which has no GPS.
+              Only applies while Verify arrival and departure by location is on. An Auntie cannot
+              start a visit, with On my way or Arrived, from further than this from the household,
+              or without sharing her location. You can start from anywhere, and an arrival of yours
+              further away than this is recorded on the visit and in the Activity Log. An arrival of
+              yours with no usable location still goes through, and is recorded as unverified: no
+              signal, location turned off, or the desktop console, which has no GPS. So does any
+              visit to an address we cannot place on the map.
             </span>
           </div>
           <div className="settingsEdit__fieldGroup">

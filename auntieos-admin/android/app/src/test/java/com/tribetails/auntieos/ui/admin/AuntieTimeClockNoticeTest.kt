@@ -66,12 +66,119 @@ class AuntieTimeClockNoticeTest {
         Dispatchers.resetMain()
     }
 
+    /** #2279: the position the arrival is measured with. Null is "no fix". */
+    private var fix: com.tribetails.auntieos.location.ArrivalFix? = null
+
     private fun vm() = AdminDataViewModel(
         repository = repo,
         invoiceRepository = mockk(relaxed = true),
         kinCareRepository = kinCareRepo,
         visitNotifier = { notifier },
+        arrivalFixes = {
+            object : com.tribetails.auntieos.location.ArrivalFixProvider {
+                override suspend fun currentFix() = fix
+            }
+        },
     )
+
+    /** #2279: an Arrived tap, and what the screen is told about the range. */
+    private fun AdminDataViewModel.arrive(): MutableList<String> {
+        val said = mutableListOf<String>()
+        clockAndNotify(
+            session = session,
+            patch = mapOf("status" to "ARRIVED", "arrivedAt" to AT),
+            event = VisitNotifier.Event.ARRIVED,
+            eventAtIso = AT,
+            household = "Dre East",
+            onWritten = {},
+            onNotified = { _, _ -> },
+            onArrivalChecked = { said += it },
+        )
+        return said
+    }
+
+    private fun arrivalChecked(status: com.tribetails.auntieos.domain.ArrivalCheckStatus, required: Boolean = true) {
+        coEvery { notifier.awaitStepNotice(any(), any(), any(), any()) } returns
+            Result.success(VisitNotifier.DispatchResult(listOf("n1"), suppressed = false))
+        coEvery { kinCareRepo.verifyVisitArrival(any(), any(), any(), any()) } returns Result.success(
+            com.tribetails.auntieos.domain.ArrivalCheckOutcome(status, 2400.0, 150, verificationRequired = required),
+        )
+    }
+
+    // ── #2279: the owner may start outside the range, and it is recorded ──────
+
+    @Test
+    fun `an arrival outside the range is measured after it lands, and the owner is told it was recorded`() =
+        runTest(testDispatcher) {
+            fix = com.tribetails.auntieos.location.ArrivalFix(34.09, -118.30, 10.0)
+            arrivalChecked(com.tribetails.auntieos.domain.ArrivalCheckStatus.OUTSIDE)
+            val said = vm().arrive()
+            advanceUntilIdle()
+
+            // The arrival is the direct write it always was; nothing is asked first.
+            coVerify(exactly = 1) { kinCareRepo.patchKinCareSession("dre1", any()) }
+            coVerify(exactly = 1) { kinCareRepo.verifyVisitArrival("dre1", 34.09, -118.30, 10.0) }
+            assertEquals(
+                listOf(
+                    "You arrived 2.4 km from this household, outside your 150 m range. " +
+                        "That is recorded on the visit and in the Activity Log.",
+                ),
+                said,
+            )
+        }
+
+    @Test
+    fun `an arrival inside the range says nothing about the range`() = runTest(testDispatcher) {
+        fix = com.tribetails.auntieos.location.ArrivalFix(34.05, -118.24, 8.0)
+        arrivalChecked(com.tribetails.auntieos.domain.ArrivalCheckStatus.WITHIN)
+        val said = vm().arrive()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { kinCareRepo.verifyVisitArrival("dre1", any(), any(), any()) }
+        assertEquals(emptyList<String>(), said)
+    }
+
+    @Test
+    fun `with the rule off an outside arrival says nothing`() = runTest(testDispatcher) {
+        fix = com.tribetails.auntieos.location.ArrivalFix(34.09, -118.30, 10.0)
+        arrivalChecked(com.tribetails.auntieos.domain.ArrivalCheckStatus.OUTSIDE, required = false)
+        val said = vm().arrive()
+        advanceUntilIdle()
+        assertEquals(emptyList<String>(), said)
+    }
+
+    @Test
+    fun `no fix means nothing is measured, and the arrival still lands`() = runTest(testDispatcher) {
+        fix = null
+        arrivalChecked(com.tribetails.auntieos.domain.ArrivalCheckStatus.OUTSIDE)
+        val said = vm().arrive()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { kinCareRepo.patchKinCareSession("dre1", any()) }
+        coVerify(exactly = 0) { kinCareRepo.verifyVisitArrival(any(), any(), any(), any()) }
+        assertEquals(emptyList<String>(), said)
+    }
+
+    @Test
+    fun `a measurement that fails leaves the arrival standing and says nothing`() = runTest(testDispatcher) {
+        fix = com.tribetails.auntieos.location.ArrivalFix(34.09, -118.30, 10.0)
+        coEvery { notifier.awaitStepNotice(any(), any(), any(), any()) } returns
+            Result.success(VisitNotifier.DispatchResult(listOf("n1"), suppressed = false))
+        coEvery { kinCareRepo.verifyVisitArrival(any(), any(), any(), any()) } returns
+            Result.failure(RuntimeException("offline"))
+        val said = vm().arrive()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { kinCareRepo.patchKinCareSession("dre1", any()) }
+        assertEquals(emptyList<String>(), said)
+    }
+
+    @Test
+    fun `On The Way measures nothing`() = runTest(testDispatcher) {
+        fix = com.tribetails.auntieos.location.ArrivalFix(34.09, -118.30, 10.0)
+        coEvery { notifier.awaitStepNotice(any(), any(), any(), any()) } returns
+            Result.success(VisitNotifier.DispatchResult(listOf("n1"), suppressed = false))
+        vm().omw()
+        advanceUntilIdle()
+        coVerify(exactly = 0) { kinCareRepo.verifyVisitArrival(any(), any(), any(), any()) }
+    }
 
     private class Seen {
         var written: Throwable? = Throwable("not called")

@@ -67,12 +67,26 @@ class ArrivalLocationCheckTest {
     }
 
     @Test
-    fun `an arrival outside the radius names the distance, the radius, and the consequence`() {
+    fun `an arrival outside the range names the distance and the range, and says it was recorded`() {
+        val msg = arrivalCheckNotice(outcome(ArrivalCheckStatus.OUTSIDE, distanceMeters = 2400.0))
+        assertEquals(
+            "You arrived 2.4 km from this household, outside your 150 m range. " +
+                "That is recorded on the visit and in the Activity Log.",
+            msg,
+        )
+    }
+
+    /**
+     * #2279: only the owner signs in to this app, and the owner may complete a
+     * visit that started outside the range. The notice must not tell them
+     * otherwise, which is what it said before the ruling.
+     */
+    @Test
+    fun `an arrival outside the range no longer says the visit cannot be completed`() {
         val msg = arrivalCheckNotice(outcome(ArrivalCheckStatus.OUTSIDE, distanceMeters = 2400.0))
         assertNotNull(msg)
-        assertTrue(msg!!, msg.contains("2.4 km"))
-        assertTrue(msg, msg.contains("150 m"))
-        assertTrue(msg, msg.contains("cannot be marked complete"))
+        assertTrue(msg!!, !msg.contains("cannot be marked complete"))
+        assertTrue(msg, !msg.contains("\u2014"))
     }
 
     /**

@@ -12,7 +12,15 @@ const { patchVisitLifecycle, updateKinCareSession } = vi.hoisted(() => ({
   patchVisitLifecycle: vi.fn(),
   updateKinCareSession: vi.fn(),
 }));
-vi.mock('../api/sessionsWrite', () => ({ patchVisitLifecycle, updateKinCareSession }));
+// #2279: an Auntie's start goes to the server while the arrival rule is on or
+// not yet known. These tests are about the sentence that follows the step, so
+// both paths answer from the one mock.
+vi.mock('../api/sessionsWrite', () => ({
+  patchVisitLifecycle,
+  startVisitWithRangeCheck: patchVisitLifecycle,
+  verifyVisitArrival: vi.fn(),
+  updateKinCareSession,
+}));
 // #1580: the internal-notes panel reads and writes through these two callables.
 const { listVisitInternalNotes, addInternalBookingNote } = vi.hoisted(() => ({
   listVisitInternalNotes: vi.fn(),
