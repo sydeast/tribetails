@@ -1,5 +1,11 @@
 package com.tribetails.auntieos.web.screens.schedule
 
+import com.tribetails.auntieos.web.screens.HouseholdNotice
+import com.tribetails.auntieos.web.screens.HouseholdNoticeKeys
+import com.tribetails.auntieos.web.screens.HouseholdNoticePreview
+import com.tribetails.auntieos.web.screens.householdNoticeConfirmLine
+import com.tribetails.auntieos.web.screens.householdNoticeResultLine
+import com.tribetails.auntieos.web.screens.withHouseholdLine
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -373,6 +379,20 @@ fun BookingDetailModal(
                 // the books (scheduled or in the field), Approve / Reject on a
                 // request. Nothing on a closed visit.
                 val sheetActions = scheduleSheetActions(session.status)
+                // #1838/#2027: who a cancel, a move or a note reaches, from the server.
+                var cancelPreview by remember(session._id) { mutableStateOf<HouseholdNoticePreview>(HouseholdNoticePreview.Checking) }
+                var movePreview by remember(session._id) { mutableStateOf<HouseholdNoticePreview>(HouseholdNoticePreview.Checking) }
+                var notePreview by remember(session._id) { mutableStateOf<HouseholdNoticePreview>(HouseholdNoticePreview.Checking) }
+                LaunchedEffect(session._id, confirming) {
+                    if (confirming == ScheduleSheetAction.Cancel) {
+                        cancelPreview = HouseholdNoticePreview.Checking
+                        cancelPreview = client.previewHouseholdNotice(session.kinfolkId, HouseholdNoticeKeys.CANCEL, session._id).asPreview()
+                    }
+                }
+                LaunchedEffect(session._id) {
+                    movePreview = client.previewHouseholdNotice(session.kinfolkId, HouseholdNoticeKeys.CHANGED, session._id).asPreview()
+                    notePreview = client.previewHouseholdNotice(session.kinfolkId, HouseholdNoticeKeys.NOTE).asPreview()
+                }
                 if (sheetActions.isNotEmpty()) {
                     DenPanel(title = "Actions") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -392,6 +412,11 @@ fun BookingDetailModal(
                                 }
                             } else {
                                 Text(scheduleSheetConfirmBody(pending, name), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                                if (pending == ScheduleSheetAction.Cancel) {
+                                    householdNoticeConfirmLine(cancelPreview, name)?.let {
+                                        Text(it, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                                    }
+                                }
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     PrimaryButton(
                                         label = if (transitioning) "Saving" else scheduleSheetConfirmLabel(pending),
@@ -400,9 +425,14 @@ fun BookingDetailModal(
                                             scope.launch {
                                                 transitioning = true
                                                 transitionError = null
-                                                val r = when (pending) {
+                                                // #1838: the cancel answers with what the household was told.
+                                                var notice: HouseholdNotice? = null
+                                                val r: WriteResult<Unit> = when (pending) {
                                                     ScheduleSheetAction.MarkCompleted -> client.completeKinCare(session._id, nowIso())
-                                                    ScheduleSheetAction.Cancel -> client.cancelBooking(session._id)
+                                                    ScheduleSheetAction.Cancel -> when (val c2 = client.cancelBookingNotice(session._id)) {
+                                                        is WriteResult.Ok -> { notice = c2.value; WriteResult.Ok(Unit) }
+                                                        is WriteResult.Err -> c2
+                                                    }
                                                     ScheduleSheetAction.Approve -> client.approveBooking(session._id)
                                                     ScheduleSheetAction.Reject -> client.rejectBooking(session._id)
                                                 }
@@ -410,7 +440,10 @@ fun BookingDetailModal(
                                                 confirming = null
                                                 when (r) {
                                                     is WriteResult.Ok -> {
-                                                        routeToast.show(scheduleSheetActionToast(pending, name), ToastKind.Success)
+                                                        routeToast.show(
+                                                            withHouseholdLine(scheduleSheetActionToast(pending, name), householdNoticeResultLine(notice, name)),
+                                                            ToastKind.Success,
+                                                        )
                                                         onDismiss()
                                                     }
                                                     // The server's own sentence: a refused Complete names what is missing.
@@ -445,6 +478,10 @@ fun BookingDetailModal(
                                 BottomBorderField(reschedDate, { reschedDate = it }, label = "Date (YYYY-MM-DD)", modifier = Modifier.weight(1f))
                                 BottomBorderField(reschedTime, { reschedTime = it }, label = "Time (HH:MM)", modifier = Modifier.weight(1f))
                             }
+                            // #2027: before the move, who the household notice reaches.
+                            householdNoticeConfirmLine(movePreview, session.kinfolkName)?.let {
+                                Text(it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                            }
                             PrimaryButton(
                                 label = if (rescheduling) "Rescheduling" else "Reschedule visit",
                                 enabled = !rescheduling && reschedDate.length == 10 && reschedTime.length == 5,
@@ -467,10 +504,7 @@ fun BookingDetailModal(
                                             val attempt = RescheduleAttempt(session._id, times.first, times.second)
                                             when (val out = client.rescheduleOutcome(attempt)) {
                                                 is RescheduleOutcome.Done -> {
-                                                    routeToast.show(
-                                                        "${session.kinfolkName.ifBlank { "Unnamed" }}'s visit is rescheduled.",
-                                                        ToastKind.Success,
-                                                    )
+                                                    routeToast.show(rescheduledToast(session.kinfolkName, out.notice), ToastKind.Success)
                                                     onDismiss()
                                                 }
                                                 is RescheduleOutcome.Refused -> {
@@ -500,10 +534,7 @@ fun BookingDetailModal(
                                                         when (val out = client.rescheduleOutcome(retry)) {
                                                             is RescheduleOutcome.Done -> {
                                                                 reschedError = null
-                                                                routeToast.show(
-                                                                    "${session.kinfolkName.ifBlank { "Unnamed" }}'s visit is rescheduled.",
-                                                                    ToastKind.Success,
-                                                                )
+                                                                routeToast.show(rescheduledToast(session.kinfolkName, out.notice), ToastKind.Success)
                                                                 onDismiss()
                                                             }
                                                             // No second offer: the same override is not put to the operator twice.
@@ -548,6 +579,10 @@ fun BookingDetailModal(
                                 )
                             }
                         }
+                        // #2027: whether the household is sent a notice about the note, from the server.
+                        householdNoticeConfirmLine(notePreview, session.kinfolkName)?.let {
+                            Text(it, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        }
                         PrimaryButton(
                             label = if (savingKinfolk) "Saving" else "Save kinfolk-facing note",
                             enabled = !locked && !savingKinfolk && kinfolkInput.isNotBlank(),
@@ -562,7 +597,12 @@ fun BookingDetailModal(
                                         internal = false,
                                     )
                                     when (r) {
-                                        is WriteResult.Ok -> kinfolkInput = ""
+                                        is WriteResult.Ok -> {
+                                            kinfolkInput = ""
+                                            // #2027: the staff note notice goes to the office only, and the
+                                            // server's dry run for it is what the note callable answers.
+                                            routeToast.show(noteSavedToast(notePreview, session.kinfolkName), ToastKind.Success)
+                                        }
                                         is WriteResult.Err -> saveError = r.message
                                     }
                                     savingKinfolk = false
@@ -749,3 +789,23 @@ internal fun scheduleSheetActionToast(action: ScheduleSheetAction, name: String)
     ScheduleSheetAction.Approve -> "$name's request is now Scheduled."
     ScheduleSheetAction.Reject -> "$name's request is cancelled."
 }
+
+/** #2027: the toast after a move, from the move's own answer about the household. */
+internal fun rescheduledToast(kinfolkName: String, notice: HouseholdNotice?): String =
+    withHouseholdLine("${kinfolkName.ifBlank { "Unnamed" }}'s visit is rescheduled.", householdNoticeResultLine(notice, kinfolkName))
+
+/**
+ * #2027: the toast after a kinfolk-facing note. The note callable's answer is
+ * the server's dry run for `kincare.note.auntie` (the note notice goes to the
+ * office only), which is [preview]; this console's note write returns only the
+ * note id.
+ */
+internal fun noteSavedToast(preview: HouseholdNoticePreview, kinfolkName: String): String {
+    val ready = preview as? HouseholdNoticePreview.Ready ?: return "Note saved."
+    val notice = HouseholdNotice(told = ready.willNotify, reason = ready.reason, name = ready.name, channels = ready.channels)
+    return withHouseholdLine("Note saved.", householdNoticeResultLine(notice, kinfolkName))
+}
+
+/** A preview call's answer as the confirm's state: the answer, or nothing to say. */
+internal fun WriteResult<HouseholdNoticePreview.Ready>.asPreview(): HouseholdNoticePreview =
+    (this as? WriteResult.Ok)?.value ?: HouseholdNoticePreview.Unknown

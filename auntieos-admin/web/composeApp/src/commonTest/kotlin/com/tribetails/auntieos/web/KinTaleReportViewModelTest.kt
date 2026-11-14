@@ -88,6 +88,36 @@ class KinTaleReportViewModelTest {
         assertTrue(v.error != null)
     }
 
+    // #1816: the banner after a send says what the server did, never a promise.
+    @Test
+    fun `1816 send says who the server told, and claims nothing when it said nothing`() = runTest {
+        val ds = FakeAuntieDataSource()
+        ds.sendNotice = com.tribetails.auntieos.web.screens.HouseholdNotice(false, "household_notices_off", "Dre East", emptyList())
+        val v = KinTaleReportViewModel(sessionId = "sess-1", dataSource = ds, scope = this)
+        v.updateBodyCopy("Great visit today!")
+        v.send(live(), session())
+        advanceUntilIdle()
+        assertEquals("KinTale sent. Nobody was told: notices to households are off in Settings.", v.sentMessage)
+
+        val older = KinTaleReportViewModel(sessionId = "sess-1", dataSource = FakeAuntieDataSource(), scope = this)
+        older.updateBodyCopy("Great visit today!")
+        older.send(live(), session())
+        advanceUntilIdle()
+        assertEquals("KinTale sent.", older.sentMessage)
+    }
+
+    @Test
+    fun `1816 Send asks first, and a source that cannot ask says nothing about the household`() = runTest {
+        val v = vm(scope = this)
+        v.requestSend(session())
+        advanceUntilIdle()
+        assertTrue(v.sendConfirmOpen)
+        assertNull(com.tribetails.auntieos.web.screens.householdNoticeConfirmLine(v.sendPreview, ""))
+        v.cancelSendConfirm()
+        assertFalse(v.sendConfirmOpen)
+        assertFalse(v.justSent)
+    }
+
     @Test
     fun `send success transitions to justSent`() = runTest {
         val v = vm(scope = this)

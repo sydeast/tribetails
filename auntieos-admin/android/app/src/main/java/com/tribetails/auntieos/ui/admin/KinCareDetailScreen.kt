@@ -1061,6 +1061,23 @@ private fun BookingNotesSection(
     val scope = rememberCoroutineScope()
     val bookingId = session.sourceBookingId.ifBlank { session.id }
     val canStream = session.kinfolkId.isNotBlank() && bookingId.isNotBlank()
+    // #2027: before a note is saved, say whether the household is sent a
+    // notice about it, from the server; after, say what was sent.
+    var notePreview by remember(session.kinfolkId) {
+        mutableStateOf<com.tribetails.auntieos.domain.HouseholdNoticePreview>(com.tribetails.auntieos.domain.HouseholdNoticePreview.Checking)
+    }
+    var noteSavedMessage by remember(session.id) { mutableStateOf("") }
+    LaunchedEffect(session.kinfolkId) {
+        notePreview = if (session.kinfolkId.isBlank()) {
+            com.tribetails.auntieos.domain.HouseholdNoticePreview.Unknown
+        } else {
+            runCatching {
+                com.tribetails.auntieos.AuntieOSApp.instance.visitNotifier
+                    .previewHousehold(session.kinfolkId, com.tribetails.auntieos.domain.HouseholdNoticeKeys.NOTE)
+                    .getOrThrow()
+            }.getOrElse { com.tribetails.auntieos.domain.HouseholdNoticePreview.Unknown }
+        }
+    }
 
     val kinfolkFacing by remember(canStream, bookingId) {
         if (canStream) notesRepo.streamKinfolkFacingNotes(session.kinfolkId, bookingId)
@@ -1135,6 +1152,9 @@ private fun BookingNotesSection(
                         color = AuntieTheme.colors.warning,
                     )
                 }
+                com.tribetails.auntieos.domain.householdNoticeConfirmLine(notePreview, session.kinfolkName)?.let { line ->
+                    Text(text = line, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+                }
                 PrimaryButton(
                     label = if (savingKinfolk) "Saving…" else "Save kinfolk-facing note",
                     enabled = canStream && !locked && !savingKinfolk && kinfolkInput.isNotBlank(),
@@ -1142,14 +1162,24 @@ private fun BookingNotesSection(
                         scope.launch {
                             savingKinfolk = true
                             error = null
+                            noteSavedMessage = ""
                             notesRepo.addKinfolkFacingNote(session.kinfolkId, bookingId, kinfolkInput.trim())
-                                .onSuccess { kinfolkInput = "" }
+                                .onSuccess { result ->
+                                    kinfolkInput = ""
+                                    noteSavedMessage = com.tribetails.auntieos.domain.withHouseholdLine(
+                                        "Note saved.",
+                                        com.tribetails.auntieos.domain.householdNoticeResultLine(result.notice, session.kinfolkName),
+                                    )
+                                }
                                 .onFailure { error = it.message ?: "Note save failed." }
                             savingKinfolk = false
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (noteSavedMessage.isNotEmpty()) {
+                    Text(text = noteSavedMessage, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textPrimary)
+                }
             }
         }
 

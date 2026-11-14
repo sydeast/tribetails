@@ -391,7 +391,12 @@ class FakeAuntieDataSource(
         return WriteResult.Ok(Unit)
     }
 
-    override suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit> {
+    /** #1816: what the fake send answers about the household. */
+    var sendNotice: com.tribetails.auntieos.web.screens.HouseholdNotice? = null
+    override suspend fun sendReport(
+        report: KinCareReport,
+        session: KinCareSession,
+    ): WriteResult<com.tribetails.auntieos.web.screens.HouseholdNotice?> {
         lastSendReport = report
         lastSendSession = session
         // Mirror the real fail-loud routing guards before flipping to SENT.
@@ -410,7 +415,7 @@ class FakeAuntieDataSource(
                 }
             )
         }
-        return WriteResult.Ok(Unit)
+        return WriteResult.Ok(sendNotice)
     }
 
     // ---- Booking notes (in-memory, keyed by kinfolkId+bookingId) ----

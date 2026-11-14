@@ -403,8 +403,14 @@ class KinCareRepository(
      * the line from the ENVELOPE booking's notes and wrote the result over the
      * session's, discarding whatever the session itself had recorded.
      */
-    suspend fun cancelSession(sessionId: String, reason: String = ""): Result<Unit> =
-        transitionBookingStatus(sessionId, BookingTransitionAction.CANCEL, reason = reason)
+    suspend fun cancelSession(
+        sessionId: String,
+        reason: String = "",
+    ): Result<com.tribetails.auntieos.data.contracts.HouseholdNoticeDto?> =
+        transitionBookingStatusRaw(sessionId, BookingTransitionAction.CANCEL, reason = reason)
+            // #1838: what the household was told, from the cancel itself. Null
+            // from a server older than the field.
+            .map { raw -> com.tribetails.auntieos.domain.householdNoticeOf(raw["notice"]) }
             .onFailure { AuntieLog.e("Failed to cancel session $sessionId", it) }
 
     // ---- Care-ops session callables (1E §A.9) ----
@@ -426,6 +432,11 @@ class KinCareRepository(
         notes: String = "",
         recordAsCompleted: Boolean = false,
         /**
+         * #1841: send the household "KinCare booking confirmed". Sent only when
+         * true; absent means no send, so an approval sends what it always did.
+         */
+        notifyHousehold: Boolean = false,
+        /**
          * #1630: the `enhanced_bookings` id this visit is the approval of. The
          * server derives the booking record's ids from it, so approving the
          * same booking twice returns the first visit instead of making two,
@@ -446,12 +457,23 @@ class KinCareRepository(
             put("notes", notes)
             enhancedBookingId?.takeIf { it.isNotBlank() }?.let { put("enhancedBookingId", it) }
             if (recordAsCompleted) put("recordAsCompleted", true)
+            if (notifyHousehold && !recordAsCompleted) put("notifyHousehold", true)
         }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("createKinCareSession").call(payload).awaitCallable().data as? Map<String, Any?>
             ?: error("createKinCareSession: non-map payload")
+        lastCreatedVisitNotice = com.tribetails.auntieos.domain.householdNoticeOf(raw["notice"])
         raw["sessionId"] as? String ?: error("createKinCareSession: missing sessionId")
     }.onFailure { AuntieLog.e("createKinCareSession failed", it) }
+
+    /**
+     * #1841: what the household was told about the visit the last
+     * [createKinCareSession] wrote, or null (none asked for, or an older
+     * server). Read right after a successful create.
+     */
+    @Volatile
+    var lastCreatedVisitNotice: com.tribetails.auntieos.data.contracts.HouseholdNoticeDto? = null
+        private set
 
     /**
      * A3: one operator status transition on one `kin_care_sessions` row, through
@@ -472,7 +494,15 @@ class KinCareRepository(
         action: BookingTransitionAction,
         completedAt: String = "",
         reason: String = "",
-    ): Result<Unit> = runCatchingCancellable {
+    ): Result<Unit> = transitionBookingStatusRaw(sessionId, action, completedAt, reason).map { }
+
+    /** [transitionBookingStatus], answering with the callable's result map (#1838 reads its `notice`). */
+    private suspend fun transitionBookingStatusRaw(
+        sessionId: String,
+        action: BookingTransitionAction,
+        completedAt: String = "",
+        reason: String = "",
+    ): Result<Map<String, Any?>> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "sessionId required" }
         val payload = buildMap<String, Any> {
@@ -484,8 +514,9 @@ class KinCareRepository(
             if (completedAt.isNotBlank()) put("completedAt", completedAt)
             if (reason.isNotBlank()) put("reason", reason.trim())
         }
-        functions.getHttpsCallable("transitionBookingStatus").call(payload).awaitCallable()
-        Unit
+        @Suppress("UNCHECKED_CAST")
+        (functions.getHttpsCallable("transitionBookingStatus").call(payload).awaitCallable().data as? Map<String, Any?>)
+            .orEmpty()
     }.onFailure { AuntieLog.e("transitionBookingStatus ${action.name} failed for $sessionId", it) }
 
     /**
@@ -519,7 +550,7 @@ class KinCareRepository(
         endTime: String,
         overrideBusyConflict: Boolean = false,
         overrideVisitConflict: Boolean = false,
-    ): Result<Unit> = runCatchingCancellable {
+    ): Result<com.tribetails.auntieos.data.contracts.HouseholdNoticeDto?> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(sessionId.isNotBlank()) { "rescheduleBooking needs a kin_care_sessions document id" }
         val args = RescheduleBookingArgs(
@@ -554,7 +585,8 @@ class KinCareRepository(
         check(result.sessionId == sessionId) {
             "rescheduleBooking confirmed a different session (${result.sessionId}) than requested ($sessionId)"
         }
-        Unit
+        // #2027: what the household was told about the move. Null from an older server.
+        result.notice
     }.onFailure { AuntieLog.e("rescheduleBooking failed", it) }
 
     // ---- Breadcrumbs subcollection (canonical GPS storage; parity w/ AuntieOS web FirestoreClient) ----

@@ -45,7 +45,6 @@ import com.composables.icons.lucide.Send
 import com.composables.icons.lucide.Trash2
 import com.composables.icons.lucide.TriangleAlert
 import com.tribetails.auntieos.web.config.LocalFeatureFlags
-import com.tribetails.auntieos.web.data.KINTALE_SENT_MESSAGE
 import com.tribetails.auntieos.web.data.ChecklistItem
 import com.tribetails.auntieos.web.data.CommunicationType
 import com.tribetails.auntieos.web.data.GenerateRequest
@@ -444,11 +443,34 @@ private fun KinTaleComposerBody(
         }
     }
 
+    // #1816: Send asks first, and says who the household notice will reach,
+    // from the server (previewVisitNotification, kintale.published).
+    var confirmSend by remember { mutableStateOf(false) }
+    var sendPreview by remember {
+        mutableStateOf<com.tribetails.auntieos.web.screens.HouseholdNoticePreview>(
+            com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Checking,
+        )
+    }
     fun onSend() {
         if (!hasContent(report)) {
             showToast("Nothing to send yet. Fill in some details first.", ToastKind.Error)
             return
         }
+        if (isSending) return
+        confirmSend = true
+        sendPreview = com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Checking
+        scope.launch {
+            val answer = client.previewHouseholdNotice(
+                session.kinfolkId,
+                com.tribetails.auntieos.web.screens.HouseholdNoticeKeys.KINTALE,
+            )
+            sendPreview = (answer as? WriteResult.Ok)?.value
+                ?: com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Unknown
+        }
+    }
+
+    fun doSend() {
+        confirmSend = false
         scope.launch {
             isSending = true
             // Persist any pending content first (creates the doc if needed).
@@ -479,8 +501,12 @@ private fun KinTaleComposerBody(
                     // #2123: the tale has gone home, and that is all a send does.
                     // The visit was marked Completed when the Auntie departed;
                     // the send batch cleared its "Send the KinTale" task.
+                    // #1816: the toast says what the server did. This write sends
+                    // nothing itself; the trigger tells the household and records
+                    // the outcome, so "Sending..." stays up while it is read.
+                    val notice = client.kinTaleSendNotice(savedId)
                     isSending = false
-                    routeToast.show(KINTALE_SENT_MESSAGE, ToastKind.Success)
+                    routeToast.show(kinTaleComposeSentMessage(notice, session.kinfolkName), ToastKind.Success)
                     onClose()
                 }
                 is WriteResult.Err -> {
@@ -528,6 +554,24 @@ private fun KinTaleComposerBody(
             isDeleting = isDeleting,
             onDelete  = { confirmDelete = true },
         )
+        AuntieDialog(
+            visible = confirmSend,
+            title = "Send this KinTale?",
+            onDismiss = { confirmSend = false },
+            footer = {
+                GhostButton(label = "Cancel", onClick = { confirmSend = false })
+                PrimaryButton(label = "Send KinTale", onClick = { doSend() })
+            },
+        ) {
+            Text(
+                text = kinTaleSendConfirmText(
+                    session.kinfolkName,
+                    com.tribetails.auntieos.web.screens.householdNoticeConfirmLine(sendPreview, session.kinfolkName),
+                ),
+                style = AuntieTheme.typography.bodyMedium,
+                color = AuntieTheme.colors.textPrimary,
+            )
+        }
         AuntieDialog(
             visible = confirmDelete,
             title = "Delete this draft?",
@@ -1363,3 +1407,21 @@ private fun shortIsoTimeOnly(iso: String): String =
         .getOrDefault(iso)
 
 private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+
+/**
+ * #1816: the toast after a compose-screen send, from the record the server's
+ * trigger wrote. None in time says it is still checking, never "told".
+ */
+internal fun kinTaleComposeSentMessage(
+    notice: com.tribetails.auntieos.web.screens.HouseholdNotice?,
+    household: String,
+): String {
+    if (notice == null) {
+        val who = household.trim().ifEmpty { "the household" }
+        return "KinTale sent. Still checking whether $who was told. The Activity Log will show it."
+    }
+    return com.tribetails.auntieos.web.screens.withHouseholdLine(
+        "KinTale sent.",
+        com.tribetails.auntieos.web.screens.householdNoticeResultLine(notice, household),
+    )
+}

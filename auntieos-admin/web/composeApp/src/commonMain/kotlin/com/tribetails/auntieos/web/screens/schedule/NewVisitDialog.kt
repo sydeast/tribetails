@@ -69,7 +69,8 @@ fun NewVisitDialog(
     client: FirestoreClient,
     localZone: TimeZone,
     onDismiss: () -> Unit,
-    onCreated: () -> Unit,
+    /** The visit was written; [summary] says so, and (#1841) who the server told. */
+    onCreated: (summary: String) -> Unit,
     /** Now, in epoch ms. A parameter so a test can stand at a known instant. */
     nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
@@ -94,6 +95,22 @@ fun NewVisitDialog(
     var durationText by remember { mutableStateOf("30") }
     var notes by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
+    // #1841 (operator ruling 2026-11-12): "Send the household a confirmation",
+    // on by default, never offered for a visit recorded as completed, and the
+    // form says what will happen, from the server's dry run.
+    var sendConfirmation by remember { mutableStateOf(true) }
+    var confirmPreview by remember {
+        mutableStateOf<com.tribetails.auntieos.web.screens.HouseholdNoticePreview>(
+            com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Checking,
+        )
+    }
+    androidx.compose.runtime.LaunchedEffect(selectedKinfolk?._id) {
+        val id = selectedKinfolk?._id.orEmpty()
+        confirmPreview = com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Checking
+        if (id.isNotBlank()) {
+            confirmPreview = client.previewHouseholdNotice(id, com.tribetails.auntieos.web.screens.HouseholdNoticeKeys.CONFIRM).asPreview()
+        }
+    }
     var error by remember { mutableStateOf<String?>(null) }
 
     val durationMinutes = durationText.toIntOrNull() ?: 0
@@ -183,6 +200,20 @@ fun NewVisitDialog(
                         }
                         BottomBorderField(durationText, { durationText = it }, label = "Duration (minutes)", keyboardType = KeyboardType.Number, modifier = Modifier.fillMaxWidth())
                         MultilineField(notes, { notes = it }, label = "Notes", minLines = 2, modifier = Modifier.fillMaxWidth())
+                        com.tribetails.auntieos.web.screens.newVisitConfirmationLine(
+                            offered = draftTiming != VisitWindowTiming.ENDED,
+                            householdPicked = selectedKinfolk != null,
+                            sendConfirmation = sendConfirmation,
+                            preview = confirmPreview,
+                            household = selectedKinfolk?.displayName.orEmpty(),
+                        )?.let { line ->
+                            com.tribetails.auntieos.web.ui.components.AuntieCheckbox(
+                                checked = sendConfirmation,
+                                onCheckedChange = { sendConfirmation = it },
+                                label = "Send the household a confirmation",
+                            )
+                            if (line.isNotEmpty()) Text(line, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        }
                     }
                 }
 
@@ -229,10 +260,14 @@ fun NewVisitDialog(
                                     serviceDurationMinutes = durationMinutes,
                                     notes = notes.trim(),
                                     recordAsCompleted = sendTiming == VisitWindowTiming.ENDED,
+                                    // #1841: only for a visit still ahead.
+                                    notifyHousehold = sendTiming != VisitWindowTiming.ENDED && sendConfirmation,
                                 )
                                 creating = false
                                 when (r) {
-                                    is WriteResult.Ok -> onCreated()
+                                    is WriteResult.Ok -> onCreated(
+                                        newVisitSummary(sendTiming == VisitWindowTiming.ENDED, r.value.notice, kf.displayName),
+                                    )
                                     is WriteResult.Err -> error = r.message
                                 }
                             }
@@ -244,3 +279,19 @@ fun NewVisitDialog(
         }
     }
 }
+
+/**
+ * #1841: the toast after New visit: what was written and, from the server, who
+ * was told. A visit recorded as completed is never announced, so its summary
+ * claims nothing about the household; an older server's answer neither.
+ */
+internal fun newVisitSummary(
+    recorded: Boolean,
+    notice: com.tribetails.auntieos.web.screens.HouseholdNotice?,
+    household: String,
+): String =
+    if (recorded) "Visit recorded as completed."
+    else com.tribetails.auntieos.web.screens.withHouseholdLine(
+        "Visit scheduled.",
+        com.tribetails.auntieos.web.screens.householdNoticeResultLine(notice, household),
+    )

@@ -69,6 +69,8 @@ import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.theme.*
 import com.tribetails.auntieos.ui.directory.KinRemovalRequestsPanel
 import com.tribetails.auntieos.ui.theme.AuntieTheme
+import com.tribetails.auntieos.domain.householdNoticeConfirmLine
+import com.tribetails.auntieos.domain.newVisitConfirmationLine
 import kotlin.math.roundToInt
 
 private const val DRAG_MINUTE_SNAP = 15
@@ -882,7 +884,7 @@ private fun ScheduleViewScreenContent(
                         onClick = { viewModel.selectBooking(booking) },
                         onApprove = null,
                         onReject = null,
-                        onCancel = { viewModel.cancelBooking(booking) },
+                        onCancel = { viewModel.requestCancel(booking) },
                         timeBlockLabel = timeBlockLabelFor(booking),
                         selecting = selecting,
                         selected = booking.id in selectedBookingIds,
@@ -934,10 +936,14 @@ private fun ScheduleViewScreenContent(
                 bookingMode  = state.bookingMode,
                 initialDate  = state.selectedDate,
                 onDismiss    = { viewModel.hideAddBookingDialog() },
-                onSave       = { booking, internalNote ->
-                    viewModel.createBooking(booking, internalNote)
+                onSave       = { booking, internalNote, notifyHousehold ->
+                    viewModel.createBooking(booking, internalNote, notifyHousehold)
                     viewModel.hideAddBookingDialog()
                 },
+                // #1841: what the confirmation would reach, from the server.
+                confirmationPreview = state.newVisitPreview,
+                onHouseholdPicked = { kinfolkId -> viewModel.loadNewVisitPreview(kinfolkId) },
+                auntieSignedIn = state.auntieSignedIn,
                 // #1574: a window that has ended is recorded as Completed, never booked.
                 onRecordCompleted = { visit ->
                     viewModel.recordCompletedVisit(
@@ -1022,12 +1028,56 @@ private fun ScheduleViewScreenContent(
             )
         }
 
+        // #1838: the cancel question, with who the household notice reaches.
+        state.pendingCancel?.let { booking ->
+            AuntieDialog(
+                visible = true,
+                title = "Cancel this scheduled visit?",
+                onDismiss = { viewModel.dismissCancel() },
+                footer = {
+                    GhostButton(label = "Back", onClick = { viewModel.dismissCancel() })
+                    PrimaryButton(label = "Yes, cancel the visit", onClick = { viewModel.confirmCancel() })
+                },
+            ) {
+                Text(
+                    "${householdPossessive(booking.kinfolkName)} visit will be cancelled. This cannot be undone.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+                householdNoticeConfirmLine(state.cancelPreview, booking.kinfolkName, state.auntieSignedIn)?.let {
+                    Text(it, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
+                }
+            }
+        }
+
+        // #2027: a drag asks first, with who the move will tell.
+        state.pendingMove?.let { move ->
+            AuntieDialog(
+                visible = true,
+                title = "Move this visit?",
+                onDismiss = { viewModel.dismissMove() },
+                footer = {
+                    GhostButton(label = "Keep it where it was", onClick = { viewModel.dismissMove() })
+                    PrimaryButton(label = "Move visit", onClick = { viewModel.confirmMove() })
+                },
+            ) {
+                Text(
+                    moveConfirmText(move.booking.kinfolkName, move.startIso),
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+                householdNoticeConfirmLine(state.movePreview, move.booking.kinfolkName, state.auntieSignedIn)?.let {
+                    Text(it, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
+                }
+            }
+        }
+
         state.selectedBooking?.let { booking ->
             BookingDetailsDialog(
                 booking      = booking,
                 onDismiss    = { viewModel.selectBooking(null) },
                 onApprove    = { viewModel.approveBooking(booking) },
-                onCancel     = { viewModel.cancelBooking(booking) },
+                onCancel     = { viewModel.requestCancel(booking) },
                 // #1576: the same Mark Completed web Bookings offers beside Cancel.
                 onMarkCompleted = { viewModel.markBookingCompleted(booking) },
                 onArchive    = { reason -> viewModel.archiveBooking(booking.id, reason) },
@@ -1048,6 +1098,8 @@ private fun ScheduleViewScreenContent(
                 writeError          = state.scheduleWriteError,
                 writeOverride       = state.scheduleWriteOverride,
                 writeInFlight       = state.scheduleWriteInFlight,
+                // #2027: who a move would tell, from the server.
+                moveNoticeLine      = householdNoticeConfirmLine(state.selectedMovePreview, booking.kinfolkName, state.auntieSignedIn),
                 onOverrideWrite     = { viewModel.retryScheduleWriteWithOverride() },
                 onDismissWriteError = { viewModel.clearScheduleWriteFeedback() },
             )
@@ -2481,7 +2533,13 @@ fun AddEnhancedBookingDialog(
     bookingMode: BookingMode,
     initialDate: LocalDate,
     onDismiss: () -> Unit,
-    onSave: (EnhancedBooking, String) -> Unit,
+    /** The booking, its internal note, and (#1841) whether the household is sent a confirmation. */
+    onSave: (EnhancedBooking, String, Boolean) -> Unit,
+    /** #1841: the server's answer for the picked household's confirmation. */
+    confirmationPreview: com.tribetails.auntieos.domain.HouseholdNoticePreview =
+        com.tribetails.auntieos.domain.HouseholdNoticePreview.Unknown,
+    onHouseholdPicked: (String?) -> Unit = {},
+    auntieSignedIn: Boolean = false,
     bookingSchemas: List<FormSchema> = emptyList(),
     schemaError: String? = null,
     /**
@@ -2517,6 +2575,9 @@ fun AddEnhancedBookingDialog(
     var notes         by remember { mutableStateOf("") }
     var internalNotes by remember { mutableStateOf("") }
     var publishImmediately by remember { mutableStateOf(false) }
+    // #1841: on by default; offered only for a visit confirmed now and still ahead.
+    var sendConfirmation by remember { mutableStateOf(true) }
+    LaunchedEffect(selectedKinfolk?.id) { onHouseholdPicked(selectedKinfolk?.id) }
     val draftTiming: com.tribetails.auntieos.domain.VisitWindowTiming? = run {
         val epochDay = datePickerState.selectedDateMillis?.let { it / 86_400_000L } ?: initialDate.toEpochDay()
         val s = runCatching { LocalTime.parse(startTimeText) }.getOrNull()
@@ -2644,6 +2705,32 @@ fun AddEnhancedBookingDialog(
                         Text("Confirm immediately (skip draft)", style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
                     }
                 }
+                newVisitConfirmationLine(
+                    confirmNow = publishImmediately,
+                    timing = draftTiming,
+                    householdPicked = selectedKinfolk != null,
+                    sendConfirmation = sendConfirmation,
+                    preview = confirmationPreview,
+                    household = selectedKinfolk?.displayName.orEmpty(),
+                    auntie = auntieSignedIn,
+                )?.let { line ->
+                    item {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                AuntieToggle(checked = sendConfirmation, onCheckedChange = { sendConfirmation = it })
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "Send the household a confirmation",
+                                    style = AuntieTheme.typography.bodyMedium,
+                                    color = AuntieTheme.colors.textPrimary,
+                                )
+                            }
+                            if (line.isNotEmpty()) {
+                                Text(line, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                            }
+                        }
+                    }
+                }
                 // Phase 14: admin-authored BOOKING custom fields. Only shown when a
                 // BOOKING schema exists or a load failed; answers ride into formValues.
                 if (bookingSchemas.isNotEmpty() || schemaError != null) {
@@ -2733,6 +2820,8 @@ fun AddEnhancedBookingDialog(
                                         formValues       = formValues.toMap(),
                                     ),
                                     internalNotes,
+                                    // #1841: only a booking confirmed now can send one.
+                                    publishImmediately && sendConfirmation,
                                 )
                             },
                             modifier = Modifier.weight(1f),
@@ -2819,6 +2908,8 @@ fun BookingDetailsDialog(
     writeInFlight: Boolean = false,
     onOverrideWrite: () -> Unit = {},
     onDismissWriteError: () -> Unit = {},
+    /** #2027: who a move would tell, or null to say nothing. */
+    moveNoticeLine: String? = null,
 ) {
     var notes              by remember(booking.id) { mutableStateOf(booking.notes) }
     var specialInstructions by remember(booking.id) { mutableStateOf(booking.specialInstructions) }
@@ -2917,6 +3008,10 @@ fun BookingDetailsDialog(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         AuntieField(value = reDate, onValueChange = { reDate = it }, label = "Date (YYYY-MM-DD)", modifier = Modifier.weight(1f))
                         AuntieField(value = reTime, onValueChange = { reTime = it }, label = "Time (HH:MM)", modifier = Modifier.weight(1f))
+                    }
+                    // #2027: before the move, who the household notice reaches.
+                    moveNoticeLine?.let {
+                        Text(it, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
                     }
                     PrimaryButton(
                         label    = if (writeInFlight) "Moving…" else "Reschedule visit",
@@ -3553,4 +3648,17 @@ internal fun IncomingSeriesRow(
             }
         }
     }
+}
+
+/**
+ * #2027: the drag question's first sentence, "The Wrens's visit moves to Tue,
+ * Nov 17 at 09:00." The time is the wall clock the drag wrote (24-hour, as
+ * auntieOS shows times). An unreadable time says "a new time".
+ */
+internal fun moveConfirmText(kinfolkName: String, startIso: String): String {
+    val at = runCatching {
+        LocalDateTime.parse(startIso, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+            .format(DateTimeFormatter.ofPattern("EEE, MMM d 'at' HH:mm", java.util.Locale.US))
+    }.getOrNull() ?: "a new time"
+    return "${householdPossessive(kinfolkName)} visit moves to $at."
 }

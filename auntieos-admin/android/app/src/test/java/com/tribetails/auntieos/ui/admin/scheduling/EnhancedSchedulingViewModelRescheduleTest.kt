@@ -113,7 +113,7 @@ class EnhancedSchedulingViewModelRescheduleTest {
     }
 
     private fun rescheduleSucceeds() {
-        coEvery { kinCareRepo.rescheduleBooking(any(), any(), any(), any(), any()) } returns Result.success(Unit)
+        coEvery { kinCareRepo.rescheduleBooking(any(), any(), any(), any(), any()) } returns Result.success(null)
     }
 
     private fun rescheduleRefuses(code: String, message: String) {
@@ -327,6 +327,9 @@ class EnhancedSchedulingViewModelRescheduleTest {
             vm.startDragBooking(booking(), LocalDateTime.parse("2026-06-02T10:00:00"))
             vm.updateDragPosition(LocalDateTime.parse("2026-06-02T13:30:00"))
             vm.completeDrag()
+            // #2027: a drag asks first; nothing is written until "Move visit".
+            coVerify(exactly = 0) { kinCareRepo.rescheduleBooking(any(), any(), any(), any(), any()) }
+            vm.confirmMove()
 
             coVerify(exactly = 1) {
                 kinCareRepo.rescheduleBooking(

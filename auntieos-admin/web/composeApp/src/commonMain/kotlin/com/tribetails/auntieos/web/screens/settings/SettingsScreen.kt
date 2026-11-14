@@ -4265,6 +4265,7 @@ private class FirestoreClientSettingsDataSource(
         client.approveBooking(bookingId, visitId, override)
     override suspend fun rejectBooking(bookingId: String, visitId: String?)  = client.rejectBooking(bookingId, visitId)
     override suspend fun cancelBooking(bookingId: String, visitId: String?)  = client.cancelBooking(bookingId, visitId)
+    override suspend fun cancelBookingNotice(bookingId: String, visitId: String?) = client.cancelBookingNotice(bookingId, visitId)
     override suspend fun createBooking(booking: com.tribetails.auntieos.web.data.KinCareSession) =
         client.createBookingRequest(booking)
     override fun mediaStream(entityId: String, entityType: String) = client.mediaStream(entityId, entityType)
@@ -4275,6 +4276,7 @@ private class FirestoreClientSettingsDataSource(
     override fun reportForSessionStream(sessionId: String) = client.reportForSessionStream(sessionId)
     override suspend fun saveReport(loaded: com.tribetails.auntieos.web.data.KinCareReport, edited: com.tribetails.auntieos.web.data.KinCareReport) = client.saveReport(loaded, edited)
     override suspend fun sendReport(report: com.tribetails.auntieos.web.data.KinCareReport, session: com.tribetails.auntieos.web.data.KinCareSession) = client.sendReport(report, session)
+    override suspend fun previewHouseholdNotice(familyId: String, key: String, sessionId: String?) = client.previewHouseholdNotice(familyId, key, sessionId)
     override fun trainingDocsStream() = client.trainingDocsStream()
     override fun vetClinicsStream() = client.vetClinicsStream()
     override suspend fun createVetClinic(clinic: com.tribetails.auntieos.web.data.VetClinic) = client.createVetClinic(clinic)
