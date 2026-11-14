@@ -68,6 +68,13 @@ fun visitNoticeOutcomeSentence(outcome: VisitNotifyOutcome, household: String): 
 }
 
 /**
+ * #2037: what the card says while it waits for the server's record of a clock
+ * step, so the wait (up to 30 seconds on a cold start) is never a silent one.
+ */
+fun visitNoticeCheckingSentence(household: String): String =
+    if (household.isBlank()) "Checking who was told." else "Checking whether $household was told."
+
+/**
  * The reason a session cannot be routed at all, from the row alone, or null
  * when it can. The same checks [VisitNotifier.notify] makes before it calls.
  */

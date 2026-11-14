@@ -113,6 +113,45 @@ class VisitClockNoticeTest {
         assertNull(JvmFirestoreFixtures.lastCallableName)
     }
 
+    /**
+     * #2037 review: the console's own `nowIso()` stamps the wall clock with no
+     * offset. That stamp used to parse to null here, so the console asked for
+     * no record at all and every tap read "Still checking". The server reads
+     * a zone-less stamp as UTC (`stampMs`), and so does this.
+     */
+    @Test
+    fun theConsolesOwnZonelessStampFindsTheServersRecord() = runBlocking {
+        val wallClock = "2026-11-10T16:00:00"
+        val serverMs = 1_794_326_400_000L // Date.parse("2026-11-10T16:00:00Z")
+        assertEquals(serverMs, visitNoticeAtMs(wallClock))
+        records[visitStepNoticeId(session._id, "arrived", serverMs)] =
+            JsonObject(mapOf("notified" to JsonPrimitive(true)))
+        val notice = visitNoticeEventOf(kinCarePatch(session, AuntieTimeAction.Arrived, wallClock))!!
+        val outcome = clockNoticeOutcome(session, notice) { event, ms ->
+            FirestoreClient().visitClockNoticeRecord(session, event, ms, waitMs = 0L, pollMs = 1L) { id ->
+                asked += id
+                records[id]
+            }
+        }
+        assertEquals("Dre East was notified.", visitNoticeOutcomeSentence(outcome, visitNoticeHousehold(session)))
+        assertEquals("dre1__arrived__$serverMs", asked.single())
+    }
+
+    @Test
+    fun theWaitSaysItIsCheckingAndAnUnroutableVisitSaysNothingYet() {
+        assertEquals("Checking whether Dre East was told.", visitNoticeCheckingSentence(session))
+        assertEquals("Checking who was told.", visitNoticeCheckingSentence(session.copy(kinfolkName = " ")))
+        // Not linked to a household: the outcome toast names that at once, no wait.
+        assertEquals("", visitNoticeCheckingSentence(session.copy(kinfolkId = "")))
+    }
+
+    @Test
+    fun whatTheConsoleStampsTodayParses() {
+        // The real stamp, not a fixture: whatever shape `nowIso()` has, it names a record.
+        val stamped = com.tribetails.auntieos.web.util.nowIso()
+        kotlin.test.assertNotNull(visitNoticeAtMs(stamped), "nowIso() gave $stamped")
+    }
+
     @Test
     fun noRecordInTimeIsStillCheckingNeverNotTold() {
         assertEquals("Still checking whether Dre East was told.", tap(AuntieTimeAction.Arrived))

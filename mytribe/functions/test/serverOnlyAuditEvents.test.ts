@@ -348,6 +348,24 @@ describe('#2162 logActivity refuses the server-only kinds from every sign-in', (
     },
   );
 
+  // #2037 review: an Auntie's installed apps did send these four after every
+  // clock tap. The server writes them now; her old build's copy is refused
+  // without a failure line, or every tap of hers would land in the digest.
+  it.each(['VISIT_ON_MY_WAY', 'VISIT_ARRIVED', 'VISIT_DEPARTED', 'VISIT_UNDO_ARRIVAL'])(
+    'an older build of an Auntie\'s apps sending %s gets the refusal and adds nothing to the digest',
+    async (actionType) => {
+      for (const [uid, claims] of [['auntie-1', AUNTIE], ['owner-1', OWNER]] as const) {
+        mocks.writeAuditEntryMock.mockClear();
+        await expect(wrapped(req({ actionType }, uid, claims))).rejects.toMatchObject({
+          code: 'permission-denied',
+          message: SERVER_ONLY_EVENT_REFUSAL,
+        });
+        expect(mocks.writeAuditEntryMock).not.toHaveBeenCalled();
+      }
+      expect(sentry.captureFunctionError).not.toHaveBeenCalled();
+    },
+  );
+
   it('from an Auntie, the same refusal still writes the failure line', async () => {
     await expect(
       wrapped(req({ actionType: 'NOTIFICATION_DISPATCHED' }, 'auntie-1', AUNTIE)),

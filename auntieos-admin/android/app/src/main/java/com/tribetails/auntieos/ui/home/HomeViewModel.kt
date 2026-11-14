@@ -683,7 +683,7 @@ class HomeViewModel(
         if (skip == null) {
             // #2037: the wait for the server's answer is never a silent one.
             _uiState.value = _uiState.value.copy(
-                visitNotice = "Checking whether $household was told.",
+                visitNotice = com.tribetails.auntieos.domain.visitNoticeCheckingSentence(household),
                 visitNoticeSent = false,
             )
         }

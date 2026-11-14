@@ -184,6 +184,56 @@ describe('#2037 a confirmed clock-in tells the household once and logs once', ()
     expect(linesOf('VISIT_ARRIVED')).toHaveLength(1);
   });
 
+  it('a second writer whose dispatch fails never overwrites a record that says the household was told', async () => {
+    seed();
+    await onKinCareSessionLifecycleHandler(arrive());
+    mocks.resolveKinCareRefFn.mockRejectedValueOnce(new Error('deadline exceeded'));
+    await onKinCareSessionLifecycleHandler(arrive());
+    expect(outcomeDoc(visitStepNoticeId('s1', 'arrived', Date.parse(ARRIVED_AT)))).toMatchObject({ notified: true });
+    expect(householdNotices()).toHaveLength(1);
+  });
+
+  it('an installed client that sends no stamp (the desktop console, a pre-#832 Android build) is still the duplicate, either order', async () => {
+    // The console stamps the wall clock with no offset, which its own parse
+    // refused, so it dispatched with no `eventAtMs` at all.
+    const wallClock = '2026-11-10T16:00:00';
+    const row = session({ status: 'ARRIVED', arrivedAt: wallClock });
+    const arriveAtWallClock = () => event(session(), row);
+    const oldConsole = () =>
+      dispatchVisitNotificationHandler({
+        data: { familyId: 'fam1', batchId: 'batch1', visitId: 'visit1', event: 'arrived' },
+        auth: { uid: 'uid_auntie', token: { name: 'TiTi' } },
+      } as never);
+
+    seed({ 'kin_care_sessions/s1': row });
+    await onKinCareSessionLifecycleHandler(arriveAtWallClock());
+    await expect(oldConsole()).resolves.toMatchObject({ suppressed: true, reason: 'already_notified' });
+    expect(householdNotices()).toHaveLength(1);
+
+    mocks.lines.length = 0;
+    mocks.ids.clear();
+    seed({ 'kin_care_sessions/s1': row });
+    await oldConsole();
+    await onKinCareSessionLifecycleHandler(arriveAtWallClock());
+    expect(householdNotices()).toHaveLength(1);
+    expect(linesOf('NOTIFICATION_DISPATCHED')).toHaveLength(1);
+  });
+
+  it('a stamp-less dispatch the session cannot vouch for is sent as before, under no time', async () => {
+    // Two sessions name the visit: nothing is guessed, and a dispatch still goes.
+    seed({
+      'kin_care_sessions/s1': session({ status: 'ARRIVED', arrivedAt: ARRIVED_AT }),
+      'kin_care_sessions/s2': session({ status: 'ARRIVED', arrivedAt: '2026-11-10T22:05:00.000Z' }),
+    });
+    await expect(
+      dispatchVisitNotificationHandler({
+        data: { familyId: 'fam1', batchId: 'batch1', visitId: 'visit1', event: 'arrived' },
+        auth: { uid: 'uid_auntie', token: { name: 'TiTi' } },
+      } as never),
+    ).resolves.toMatchObject({ suppressed: false });
+    expect(householdNotices()).toHaveLength(1);
+  });
+
   it('setVisitLifecycle announcing inline, then the trigger its own write fires, is one notice and one line', async () => {
     seed();
     const before = session();
@@ -267,6 +317,12 @@ describe('#2037 writes that are not a clock step send nothing', () => {
     ['the departure trigger completing the visit', session({ status: 'DEPARTED' }), session({ status: 'COMPLETED' })],
     ['a cancellation', session(), session({ status: 'CANCELLED' })],
     ['an unreadable status', session(), session({ status: 'WANDERING' })],
+    // #2037 review: the other server writers on this collection.
+    ['the KinTale-due stamp (#2158)', session({ status: 'COMPLETED' }), session({ status: 'COMPLETED', kinTaleDue: true })],
+    ['an invoice back-link (#2160)', session({ status: 'DEPARTED' }), session({ status: 'DEPARTED', invoiceId: 'inv1' })],
+    ['a reschedule', session({ scheduledAt: '2026-11-10T22:00:00Z' }), session({ scheduledAt: '2026-11-11T22:00:00Z' })],
+    ['an arrival time corrected in place', session({ status: 'ARRIVED', arrivedAt: ARRIVED_AT }), session({ status: 'ARRIVED', arrivedAt: '2026-11-10T22:10:00.000Z' })],
+    ['a visit in flight cancelled', session({ status: 'ARRIVED', arrivedAt: ARRIVED_AT }), session({ status: 'CANCELLED', arrivedAt: ARRIVED_AT })],
   ])('%s', async (_name, before, after) => {
     seed();
     await onKinCareSessionLifecycleHandler(event(before, after));
@@ -317,6 +373,27 @@ describe('visitStepOf', () => {
   });
 });
 
+describe('stampMs: the desktop console stamps the wall clock with no offset', () => {
+  it('reads a zone-less stamp as UTC, whatever zone the server runs in', () => {
+    // The console's `visitNoticeAtMs` names its record the same way.
+    expect(stampMs('2026-11-10T16:00:00')).toBe(Date.UTC(2026, 10, 10, 16, 0, 0));
+    expect(stampMs('2026-11-10T16:00')).toBe(Date.UTC(2026, 10, 10, 16, 0, 0));
+    expect(stampMs('2026-11-10T16:00:00.250')).toBe(Date.UTC(2026, 10, 10, 16, 0, 0, 250));
+  });
+  it('leaves a stamp with an offset as it is, and refuses what is not a time', () => {
+    expect(stampMs('2026-11-10T16:00:00-06:00')).toBe(Date.UTC(2026, 10, 10, 22, 0, 0));
+    expect(stampMs(ARRIVED_AT)).toBe(NOW);
+    expect(stampMs('')).toBeNull();
+    expect(stampMs('6pm')).toBeNull();
+    expect(stampMs(undefined)).toBeNull();
+  });
+  it('a desktop clock-in gets its record under the id the console asks for', async () => {
+    seed();
+    await onKinCareSessionLifecycleHandler(event(session(), session({ status: 'ARRIVED', arrivedAt: '2026-11-10T16:00:00' })));
+    expect(outcomeDoc(visitStepNoticeId('s1', 'arrived', Date.UTC(2026, 10, 10, 16, 0, 0)))).toMatchObject({ notified: true });
+  });
+});
+
 describe('writerUidOf', () => {
   it('reads the signed-in writer, then the row, and otherwise nobody', () => {
     expect(writerUidOf({ authType: 'unknown', authId: 'u1' }, {})).toBe('u1');
@@ -338,6 +415,31 @@ describe('writerUidOf', () => {
     await onKinCareSessionLifecycleHandler(arrive());
     expect(householdNotices()).toHaveLength(1);
     expect(mocks.logEventFn).toHaveBeenCalledWith(expect.objectContaining({ event: 'audit.write.failed', severity: 'error' }));
+  });
+
+  it('an authId Auth has no user for (a console edit carries an email) is not filed under that string', async () => {
+    mocks.authFn.mockReturnValue({
+      getUser: async () => {
+        throw Object.assign(new Error('no user record'), { code: 'auth/user-not-found' });
+      },
+    });
+    seed();
+    await onKinCareSessionLifecycleHandler(event(session(), session({ status: 'ARRIVED', arrivedAt: ARRIVED_AT }), { authId: 'owner@example.test' }));
+    expect(linesOf('VISIT_ARRIVED')[0]).toMatchObject({ actorRole: 'SYSTEM' });
+    expect(linesOf('VISIT_ARRIVED')[0]?.actorUid).toBeUndefined();
+    expect(linesOf('NOTIFICATION_DISPATCHED')[0]?.actorUid).toBeUndefined();
+    expect(householdNotices()).toHaveLength(1);
+  });
+
+  it('a passing Auth failure still names the writer, in the business band with no stamp', async () => {
+    mocks.authFn.mockReturnValue({
+      getUser: async () => {
+        throw Object.assign(new Error('deadline'), { code: 'auth/internal-error' });
+      },
+    });
+    seed();
+    await onKinCareSessionLifecycleHandler(arrive());
+    expect(linesOf('VISIT_ARRIVED')[0]).toMatchObject({ actorRole: 'AUNTIE', actorUid: 'uid_auntie' });
   });
 
   it('a step nobody can be named for is logged as the system and says "Your Auntie"', async () => {

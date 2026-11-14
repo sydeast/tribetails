@@ -357,10 +357,62 @@ export const previewVisitNotification = onCall(
   wrapAdminCallable('previewVisitNotification', previewVisitNotificationHandler),
 );
 
+/** The session field each clock step stamps, by the notice it sends. */
+const CLOCK_STAMP_FIELD: Readonly<Record<string, string>> = {
+  on_my_way: 'onMyWayAt',
+  arrived: 'arrivedAt',
+  departed: 'departedAt',
+};
+
+/**
+ * #2037 review: the stamp an installed client from before #2037 left out.
+ *
+ * The server now sends every clock step from the committed session write
+ * under a key that names the step's stamped time. A client that still
+ * dispatches after its write is meant to be the duplicate, and it is when it
+ * sends that time. Two kinds of installed client do not: the desktop console,
+ * whose zone-less `nowIso()` stamp its own `Instant.parse` refused, and an
+ * Android build from before #832. Their key carried no time, so without this
+ * the household heard twice. The stamp is read off the visit's session, as the
+ * trigger reads it (`stampMs`), so the two keys agree. When the visit does not
+ * name exactly one session, or the field holds no time, nothing is filled.
+ */
+async function clockStampFromSession(args: Args): Promise<number | undefined> {
+  const field = CLOCK_STAMP_FIELD[args.event];
+  if (field === undefined) return undefined;
+  try {
+    const sessions = db().collection('kin_care_sessions');
+    const query =
+      args.batchId && args.visitId
+        ? sessions.where('kinCareVisitId', '==', args.visitId)
+        : sessions.where('sourceBookingId', '==', args.bookingId ?? '');
+    const snap = await query.limit(2).get();
+    const rows = snap.docs
+      .map((d) => d.data() as Record<string, unknown>)
+      .filter((row) => row['kinfolkId'] === args.familyId)
+      .filter((row) => !(args.batchId && args.visitId) || row['kinCareBatchId'] === args.batchId);
+    if (rows.length !== 1) return undefined;
+    const { stampMs } = await import('../lib/visitStepNotice.js');
+    return stampMs(rows[0]![field]) ?? undefined;
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'dispatchVisitNotification',
+      event: 'visit.stamp.lookup.failed',
+      errorMessage: (err as Error)?.message,
+    });
+    return undefined;
+  }
+}
+
 export async function dispatchVisitNotificationHandler(
   req: CallableRequest<unknown>,
 ): Promise<DispatchVisitNotificationOutcome> {
   const args: Args = Args.parse(req.data);
+  if (args.eventAtMs === undefined && args.event !== 'report_sent') {
+    const at = await clockStampFromSession(args);
+    if (at !== undefined) args.eventAtMs = at;
+  }
   return dispatchVisitNotificationCore(args, req.auth!.uid, req.auth?.token?.name);
 }
 

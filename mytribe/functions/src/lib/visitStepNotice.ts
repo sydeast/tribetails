@@ -67,15 +67,24 @@ function nonBlank(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim() : '';
 }
 
+/** A date-time with no offset, the shape the desktop console's `nowIso()` stamps. */
+const ZONELESS_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
 /**
- * The stamped ISO time as ms. The clients name a notice by `Date.parse` (web,
- * desktop) or `Instant.parse(..).toEpochMilli()` (Android) of the very string
- * they wrote, and both drop the digits after the millisecond, as this does.
+ * The stamped ISO time as ms. The clients name a notice by `Date.parse` (web)
+ * or `Instant.parse(..).toEpochMilli()` (Android) of the very string they
+ * wrote, and both drop the digits after the millisecond, as this does.
+ *
+ * The desktop console stamps the business's wall clock with no offset
+ * (`2026-11-10T16:00:00`). `Date.parse` would read that in the server's own
+ * zone, which is UTC in production and the machine's zone in a test, so it is
+ * read as UTC here, explicitly, and the console names its record the same way
+ * (`visitNoticeAtMs`). The value only names the notice; nothing shows it.
  */
 export function stampMs(raw: unknown): number | null {
   const iso = nonBlank(raw);
   if (iso === '') return null;
-  const ms = Date.parse(iso);
+  const ms = Date.parse(ZONELESS_DATE_TIME.test(iso) ? `${iso}Z` : iso);
   return Number.isFinite(ms) ? ms : null;
 }
 
@@ -188,14 +197,21 @@ function routingOf(session: SessionData):
  * (#1820) and stamped `admin` / `staffRole` on the line, which the Activity
  * Log reads to print the owner or an Auntie. A trigger has no token, so the
  * writer's claims are read from Auth and handed to the same resolver. A writer
- * whose claims cannot be read is still named, in the business band with no
- * stamp; no writer at all is the system's.
+ * whose claims cannot be read for a passing reason is still named, in the
+ * business band with no stamp; no writer at all is the system's.
+ *
+ * An id Auth has no user for is not a person. The event's `authId` is not
+ * promised to be a uid for every principal (a Firebase console edit has been
+ * seen to carry an email), so such an id is dropped and the line reads as the
+ * system's rather than filed under a string nobody signs in as.
  */
+const NOT_A_USER = new Set(['auth/user-not-found', 'auth/invalid-uid', 'auth/argument-error']);
+
 async function stepActor(
   actorUid: string | null,
   familyId: string,
-): Promise<{ actorRole: 'AUNTIE' | 'SYSTEM' | 'PRIMARY' | 'SECONDARY'; stamp: Record<string, unknown> }> {
-  if (!actorUid) return { actorRole: 'SYSTEM', stamp: {} };
+): Promise<{ uid: string | null; actorRole: 'AUNTIE' | 'SYSTEM' | 'PRIMARY' | 'SECONDARY'; stamp: Record<string, unknown> }> {
+  if (!actorUid) return { uid: null, actorRole: 'SYSTEM', stamp: {} };
   try {
     const [{ auth }, { resolveAuditActor, auditActorPayload }] = await Promise.all([
       import('./firestoreAdmin.js'),
@@ -207,9 +223,11 @@ async function stepActor(
       'onKinCareSessionLifecycle',
       familyId === '' ? undefined : familyId,
     );
-    return { actorRole: actor.actorRole, stamp: auditActorPayload(actor) };
-  } catch {
-    return { actorRole: 'AUNTIE', stamp: {} };
+    return { uid: actorUid, actorRole: actor.actorRole, stamp: auditActorPayload(actor) };
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    if (typeof code === 'string' && NOT_A_USER.has(code)) return { uid: null, actorRole: 'SYSTEM', stamp: {} };
+    return { uid: actorUid, actorRole: 'AUNTIE', stamp: {} };
   }
 }
 
@@ -247,7 +265,7 @@ export async function announceVisitStep(input: {
       severity: 'info',
       status: 'SUCCESS',
       actorRole: actor.actorRole,
-      ...(input.actorUid ? { actorUid: input.actorUid } : {}),
+      ...(actor.uid ? { actorUid: actor.uid } : {}),
       targetUid: sessionId,
       targetCollection: 'kin_care_sessions',
       ...(familyId !== '' ? { familyId } : {}),
@@ -294,7 +312,7 @@ export async function announceVisitStep(input: {
           ...(step.etaMinutes !== undefined ? { etaMinutes: step.etaMinutes } : {}),
           ...(step.atMs !== null ? { eventAtMs: step.atMs } : {}),
         },
-        input.actorUid ?? '',
+        actor.uid ?? '',
         input.actorName,
         {
           auditDocId: `visitnotice__${visitStepAuditId(sessionId, step, input.fallbackKey)}`,
@@ -361,6 +379,18 @@ async function recordOutcome(
     recordedAt: FieldValue.serverTimestamp(),
   };
   try {
+    if (rec.outcome.notified) {
+      await ref.set(doc);
+      return rec.outcome;
+    }
+    if (rec.outcome.notifySkipped === 'dispatch_failed') {
+      // #2037 review: a second writer whose dispatch failed (a passing error)
+      // never overwrites a first writer that did tell the household.
+      const prior = await ref.get();
+      if (prior.exists && (prior.data() as { notified?: unknown }).notified === true) return { notified: true, notifySkipped: null };
+      await ref.set(doc);
+      return rec.outcome;
+    }
     if (rec.outcome.notifySkipped !== 'already_notified') {
       await ref.set(doc);
       return rec.outcome;
