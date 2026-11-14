@@ -1299,7 +1299,7 @@ describe('Schedule write surfaces', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Move this visit?' });
     expect(rescheduleBooking).not.toHaveBeenCalled();
     expect(await within(dialog).findByText('Dre East will get an email.')).toBeInTheDocument();
-    expect(previewHouseholdNotice).toHaveBeenCalledWith(expect.any(String), 'kincare.changed');
+    expect(previewHouseholdNotice).toHaveBeenCalledWith(expect.any(String), 'kincare.changed', 'sess-42');
     await confirmMove();
     expect(await screen.findByText("The Whitfields's visit is rescheduled. Dre East was sent an email.")).toBeInTheDocument();
   });

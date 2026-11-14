@@ -13,7 +13,12 @@ import { type HouseholdNoticeKey, type HouseholdNoticePreview } from './househol
  *        confirm open, or a visit with no household).
  * @returns `checking` until the answer lands, `unknown` when the call failed.
  */
-export function useHouseholdNoticePreview(familyId: string | null, key: HouseholdNoticeKey): HouseholdNoticePreview {
+export function useHouseholdNoticePreview(
+  familyId: string | null,
+  key: HouseholdNoticeKey,
+  /** #1838/#2027: the visit a cancel or move is about; the server then runs the visit's own checks too. */
+  sessionId?: string,
+): HouseholdNoticePreview {
   const [preview, setPreview] = useState<HouseholdNoticePreview>({ status: 'checking' });
 
   useEffect(() => {
@@ -23,7 +28,7 @@ export function useHouseholdNoticePreview(familyId: string | null, key: Househol
     }
     let live = true;
     setPreview({ status: 'checking' });
-    previewHouseholdNotice(familyId, key).then(
+    (sessionId === undefined ? previewHouseholdNotice(familyId, key) : previewHouseholdNotice(familyId, key, sessionId)).then(
       (answer) => {
         if (live) setPreview({ status: 'ready', ...answer });
       },
@@ -35,7 +40,7 @@ export function useHouseholdNoticePreview(familyId: string | null, key: Househol
     return () => {
       live = false;
     };
-  }, [familyId, key]);
+  }, [familyId, key, sessionId]);
 
   return familyId === null ? { status: 'checking' } : preview;
 }

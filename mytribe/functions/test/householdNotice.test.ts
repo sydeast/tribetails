@@ -10,6 +10,7 @@ import {
   householdNoticeFromOutcome,
   previewHouseholdNotice,
   sendHouseholdNotice,
+  type HouseholdNoticeKey,
 } from '../src/notifications/householdNotice';
 
 /**
@@ -40,7 +41,9 @@ async function both(docs: Docs, key = 'kincare.booking.cancel') {
   mocks.dbFn.mockReturnValue(ctx.db);
   const result = await sendHouseholdNotice(
     'fam1',
-    { key, data: { kinfolkId: 'fam1', bookingId: 'v1', visitId: 'v1' }, targetType: 'booking', targetId: 'v1' },
+    // The send takes only the admin-action keys; the clock key below proves the
+    // all-channels-off case on a key whose channels a household can switch off.
+    { key: key as HouseholdNoticeKey, data: { kinfolkId: 'fam1', bookingId: 'v1', visitId: 'v1' }, targetType: 'booking', targetId: 'v1' },
     'test',
   );
   const householdRecords = ctx.writes.filter(

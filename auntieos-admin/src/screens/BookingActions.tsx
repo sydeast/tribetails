@@ -226,8 +226,13 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
   const cancelPreview = useHouseholdNoticePreview(
     mode.kind === 'confirm' && mode.action.kind === 'cancel' ? familyId : null,
     'kincare.booking.cancel',
+    entry?._id,
   );
-  const movePreview = useHouseholdNoticePreview(mode.kind === 'reschedule' ? familyId : null, 'kincare.changed');
+  const movePreview = useHouseholdNoticePreview(
+    mode.kind === 'reschedule' ? familyId : null,
+    'kincare.changed',
+    entry?._id,
+  );
 
   if (!entry) {
     return (
@@ -525,6 +530,14 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   const [retry, setRetry] = useState<'visit' | 'busy' | null>(null);
   const kinfolkName = entry.kinfolkName ?? '';
   const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
+  // #1838: the cancel question asks the server who the household notice will
+  // reach, for this visit, and the toast reports what the cancel did.
+  const statusFamilyId = (entry.kinfolkId ?? '').trim() === '' ? null : (entry.kinfolkId ?? null);
+  const statusCancelPreview = useHouseholdNoticePreview(
+    confirming?.kind === 'cancel' ? statusFamilyId : null,
+    'kincare.booking.cancel',
+    entry._id,
+  );
 
   /** Pose [action]'s question, unless the arrival rule already answers it (#1608). */
   function ask(action: ActionDef) {
@@ -540,10 +553,11 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
     setError(null);
     setRetry(null);
     try {
-      if (override === null) await action.run(entry._id);
-      else await action.run(entry._id, { [override]: true });
+      const notice = override === null ? await action.run(entry._id) : await action.run(entry._id, { [override]: true });
       setBusy(false);
-      showToast(action.confirmedToast(displayName));
+      showToast(
+        withHouseholdLine(action.confirmedToast(displayName), householdNoticeResultLine(notice ?? null, displayName, auntie)),
+      );
       onDone();
     } catch (err) {
       // Fail loud, and stay on the confirm step: the operator sees which
@@ -591,6 +605,9 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
             {confirming.confirmTitle}
           </p>
           <p className="booking-actions__confirm">{confirming.confirmBody(displayName)}</p>
+          {confirming.kind === 'cancel' && (
+            <HouseholdNoticeLine line={householdNoticeConfirmLine(statusCancelPreview, displayName, auntie)} />
+          )}
           <div className="booking-actions__row">
             <GhostButton
               label="Back"

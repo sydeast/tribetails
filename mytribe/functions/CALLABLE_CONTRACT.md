@@ -2715,7 +2715,12 @@ the handler.
 
 ### rescheduleBooking
 - req `{ sessionId: string, startTime: string, endTime: string }`
-- res `{ ok: true, sessionId: string }`
+- res `{ ok: true, sessionId: string, notice?: HouseholdNoticeDto }`
+- `notice` (#2027): what the household was told about the move. A confirmed
+  visit's `kincare.changed` is sent by this call, after the household's copy
+  moves and before the session write, and the visit write carries a fresh
+  `officeNoticeStamp` so `onBookingsWrite` skips it. `HouseholdNoticeDto` is
+  `{ told: boolean, reason: string|null, name: string|null, channels: ('email'|'sms'|'push')[] }`.
 - Server-bound reschedule of a `kin_care_sessions` doc (Schedule
   drag-to-reschedule and Bookings bulk/per-card Reschedule share this).
   404s if the session doesn't exist. Audit records the actual before/after
@@ -2754,7 +2759,10 @@ exported from `admin/batchUpdateBookings.ts`, outbound-validated, generated
 into the Contracts module. This doc stays the semantics reference; the schema
 is the shape authority.
 - req `{ ids: string[] /* each 1..200, max 100 */, action: 'APPROVE'|'REJECT'|'CANCEL' }`
-- res `{ ok: true, action, updated: number, failed: Array<{ id: string, error: string }> }`
+- res `{ ok: true, action, updated: number, failed: Array<{ id: string, error: string }>, notices?: Array<{ id: string, notice: HouseholdNoticeDto }> }`
+- `notices` (#1838), CANCEL only: what each kinCares visit's household was told.
+  The cancel sends `kincare.booking.cancel` itself and stamps the visit
+  (`officeNoticeStamp`) so `onBookingsWrite` skips that write.
 - **TWO CALLERS, TWO ID SPACES, resolved in the SAME request.** "A booking" is a
   different document on each platform, and `ids` may be a mix of both:
   - kinCares envelope visit ids, `families/{kinfolkId}/bookings/{batchId}/
@@ -3551,3 +3559,24 @@ the callable originally took.
 - `failed-precondition` `already_fired` when the fire time has passed. Refused
   loudly rather than stamping a row "cancelled" over mail that already went out.
   `already_cancelled` on a second attempt.
+
+- `previewVisitNotification` req `{ familyId?: string, key?: 'kintale.published'|'kincare.booking.cancel'|'kincare.changed'|'kincare.note.auntie'|'kincare.booking.confirm', sessionId?: string }`.
+  Without `key` the answer is unchanged (`{ ok, willNotify, reason }`). With
+  `key` it adds `name` and `channels`, from the dispatcher's own dry run
+  (`previewHouseholdCopy`). With `sessionId` and a cancel or move key it also
+  runs that visit's checks (a booking record to address, a move only of a
+  confirmed visit), so the confirm cannot promise what the send will not do.
+- `transitionBookingStatus` res gains `notice?: HouseholdNoticeDto` on a CANCEL
+  that changed something; the cancel sends the household notice itself.
+- `addBookingNote` res gains `notice?: HouseholdNoticeDto` on a staff note. The
+  staff note notice (`kincare.note.auntie`) goes to the office only, so it reads
+  `{ told: false, reason: 'not_a_household_notice' }`.
+- `createKinCareSession` req gains `notifyHousehold?: boolean` (absent means no
+  send; ignored for a visit recorded as completed); res gains
+  `notice?: HouseholdNoticeDto` (`not_requested` when not sent). The send is
+  `kincare.booking.confirm` with the request approval's payload, so the office
+  also gets its copy, as on an approval.
+- `dispatchVisitNotification` res gains `notice: HouseholdNoticeDto`.
+- A KinTale sent by a direct Firestore write (`sentVia: 'pending'`) has its
+  outcome recorded by `onKinTaleUpdate` at `visit_step_notices/kintale__{reportId}`
+  (`{ kind: 'kintale', reportId, notified, reason, notice, recordedAt }`).

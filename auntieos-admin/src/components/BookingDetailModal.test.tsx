@@ -406,7 +406,7 @@ describe('BookingDetailModal: #2027, a move and a note say who the household tol
     });
     open();
     expect(await screen.findByTestId('move-notice-line')).toHaveTextContent('Dre East will get an email.');
-    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.changed');
+    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.changed', 'vis_v1');
     await user.click(screen.getByRole('button', { name: 'Reschedule visit' }));
     expect(await screen.findByRole('status')).toHaveTextContent(
       "The Whitfields's visit is rescheduled. Dre East was sent an email.",

@@ -38,11 +38,13 @@ export async function previewVisitNotification(familyId: string): Promise<VisitN
 export async function previewHouseholdNotice(
   familyId: string,
   key: HouseholdNoticeKey,
+  /** #1838/#2027: the visit a cancel or move is about, so the visit's own checks run too. */
+  sessionId?: string,
 ): Promise<{ willNotify: boolean; reason: string | null; name: string | null; channels: string[] }> {
   const res = await call<
-    { familyId: string; key: HouseholdNoticeKey },
+    { familyId: string; key: HouseholdNoticeKey; sessionId?: string },
     { willNotify?: unknown; reason?: unknown; name?: unknown; channels?: unknown }
-  >('previewVisitNotification', { familyId, key });
+  >('previewVisitNotification', { familyId, key, ...(sessionId !== undefined && sessionId !== '' ? { sessionId } : {}) });
   if (typeof res?.willNotify !== 'boolean' || !Array.isArray(res.channels)) {
     throw new Error('previewVisitNotification: no answer for this notice');
   }

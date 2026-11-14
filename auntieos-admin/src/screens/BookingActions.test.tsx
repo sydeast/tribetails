@@ -269,7 +269,7 @@ describe('BookingActions: #1838, the cancel says who the household told', () => 
     cancelBooking.mockResolvedValue({ told: true, reason: null, name: 'Dre East', channels: ['email', 'sms'] });
     await openCancel();
     expect(await screen.findByText('Dre East will get an email and a text.')).toBeInTheDocument();
-    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.booking.cancel');
+    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.booking.cancel', 'ses-2');
     await userEvent.click(screen.getByRole('button', { name: /yes, cancel the visit/i }));
     expect(await screen.findByRole('status')).toHaveTextContent(
       "The Whitfields's visit is cancelled. Dre East was sent an email and a text.",
@@ -311,7 +311,23 @@ describe('BookingActions: #1838, the cancel says who the household told', () => 
     render(<BookingActions entry={entry({ _id: 'ses-2', status: 'SCHEDULED' })} onClose={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Reschedule' }));
     expect(await screen.findByText('Dre East will get an email.')).toBeInTheDocument();
-    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.changed');
+    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.changed', 'ses-2');
+  });
+
+  // The walk's own surface: the "Visit detail" sheet's Actions panel.
+  it('the sheet panel (BookingStatusActions): the cancel question names who will be told, the toast who was', async () => {
+    previewHouseholdNotice.mockResolvedValue({ willNotify: false, reason: 'session_has_no_routing_ids', name: 'Dre East', channels: [] });
+    cancelBooking.mockResolvedValue({ told: false, reason: 'session_has_no_routing_ids', name: 'Dre East', channels: [] });
+    const onDone = vi.fn();
+    render(<BookingStatusActions entry={entry({ _id: 'ses-3', status: 'SCHEDULED' })} onDone={onDone} initialAction="cancel" />);
+    expect(screen.getByText('Cancel this scheduled visit?')).toBeInTheDocument();
+    expect(await screen.findByText('Nobody will be told: this visit is not linked to a booking.')).toBeInTheDocument();
+    expect(previewHouseholdNotice).toHaveBeenCalledWith('kf1', 'kincare.booking.cancel', 'ses-3');
+    await userEvent.click(screen.getByRole('button', { name: /yes, cancel the visit/i }));
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      "The Whitfields's visit is cancelled. Nobody was told: this visit is not linked to a booking.",
+    );
+    expect(onDone).toHaveBeenCalled();
   });
 });
 

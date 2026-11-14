@@ -267,6 +267,38 @@ describe('previewVisitNotification with a key', () => {
     expect(await previewVisitNotificationHandler(req({ familyId: 'kf1' }))).toEqual({ ok: true, willNotify: true, reason: null });
   });
 
+  it('with a sessionId, the confirm and the cancel agree on a visit with no booking record', async () => {
+    const docs = { ...household(), [SESSION]: { status: 'SCHEDULED', kinfolkId: 'kf1' } };
+    seed(docs);
+    const preview = await previewVisitNotificationHandler(
+      req({ sessionId: 'vis_v1', key: 'kincare.booking.cancel' }),
+    );
+    seed(docs);
+    const res = await transitionBookingStatusHandler(req({ sessionId: 'vis_v1', action: 'CANCEL' }));
+    expect(preview).toMatchObject({ willNotify: false, reason: 'session_has_no_routing_ids' });
+    expect(res.notice).toMatchObject({ told: false, reason: 'session_has_no_routing_ids' });
+  });
+
+  it('with a sessionId, the confirm and the move agree on a visit not yet confirmed', async () => {
+    const docs = { ...household(), ...linked() };
+    (docs[VISIT] as Record<string, unknown>)['status'] = 'requested';
+    seed(docs);
+    const preview = await previewVisitNotificationHandler(req({ sessionId: 'vis_v1', key: 'kincare.changed' }));
+    seed(docs);
+    const res = await rescheduleBookingHandler(
+      req({ sessionId: 'vis_v1', startTime: '2026-09-10T15:00:00.000Z', endTime: '2026-09-10T16:00:00.000Z' }),
+    );
+    expect(preview).toMatchObject({ willNotify: false, reason: 'not_a_household_notice' });
+    expect(res.notice).toMatchObject({ told: false, reason: 'not_a_household_notice' });
+  });
+
+  it('with a sessionId on a linked, confirmed visit, the confirm names the household as the send does', async () => {
+    seed({ ...household(), ...linked() });
+    expect(
+      await previewVisitNotificationHandler(req({ sessionId: 'vis_v1', key: 'kincare.booking.cancel' })),
+    ).toEqual({ ok: true, willNotify: true, reason: null, name: 'Dre East', channels: ['email'] });
+  });
+
   it('refuses a key that no admin confirm sends', async () => {
     seed(household());
     await expect(previewVisitNotificationHandler(req({ familyId: 'kf1', key: 'invoice.new' }))).rejects.toThrow();

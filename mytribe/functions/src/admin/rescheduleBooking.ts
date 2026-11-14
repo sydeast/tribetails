@@ -151,6 +151,38 @@ export async function rescheduleBookingHandler(
       householdNotices.visitTellsHouseholdOfChanges(visit) ? householdNotices.freshOfficeNoticeStamp() : null,
   });
 
+  // #2027: right after the household's copy moved, and before the session
+  // write, so a session write that fails cannot leave a moved, stamped visit
+  // whose notice nobody sent (the trigger skips a stamped write).
+  let notice: HouseholdNotice;
+  const familyId = typeof prev?.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
+  if (mirror.visit && mirror.visit.officeNoticeStamp !== null) {
+    const v = mirror.visit;
+    const changedFields = [
+      ...(prev?.startTime !== args.startTime ? ['startTime'] : []),
+      ...(prev?.endTime !== args.endTime ? ['endTime'] : []),
+    ];
+    notice = await householdNotices.sendVisitHouseholdNotice({
+      key: 'kincare.changed',
+      kinfolkId: v.kinfolkId,
+      batchId: v.batchId,
+      visitId: v.visitId,
+      visit: { ...v.before, startTime: Date.parse(args.startTime) },
+      officeNoticeStamp: v.officeNoticeStamp!,
+      extra: { changedFields: changedFields.length > 0 ? changedFields : ['startTime'] },
+      actorUid: uid,
+      caller: 'rescheduleBooking',
+    });
+  } else if (familyId === '' || !mirror.mirrored) {
+    // No booking record behind the session: nothing addresses the household.
+    notice =
+      familyId === ''
+        ? { told: false, reason: 'session_has_no_routing_ids', name: null, channels: [] }
+        : await householdNotices.householdNoticeNotSent(familyId, 'session_has_no_routing_ids');
+  } else {
+    // A visit not yet confirmed: the household is not told of a move.
+    notice = await householdNotices.householdNoticeNotSent(familyId, 'not_a_household_notice');
+  }
   await ref.set(
     { startTime: args.startTime, endTime: args.endTime, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid },
     { merge: true },
@@ -188,36 +220,6 @@ export async function rescheduleBookingHandler(
     },
   });
 
-  // #2027: after the write, so the household hears about a move that happened.
-  let notice: HouseholdNotice;
-  const familyId = typeof prev?.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
-  if (mirror.visit && mirror.visit.officeNoticeStamp !== null) {
-    const v = mirror.visit;
-    const changedFields = [
-      ...(prev?.startTime !== args.startTime ? ['startTime'] : []),
-      ...(prev?.endTime !== args.endTime ? ['endTime'] : []),
-    ];
-    notice = await householdNotices.sendVisitHouseholdNotice({
-      key: 'kincare.changed',
-      kinfolkId: v.kinfolkId,
-      batchId: v.batchId,
-      visitId: v.visitId,
-      visit: { ...v.before, startTime: Date.parse(args.startTime) },
-      officeNoticeStamp: v.officeNoticeStamp!,
-      extra: { changedFields: changedFields.length > 0 ? changedFields : ['startTime'] },
-      actorUid: uid,
-      caller: 'rescheduleBooking',
-    });
-  } else if (familyId === '' || !mirror.mirrored) {
-    // No booking record behind the session: nothing addresses the household.
-    notice =
-      familyId === ''
-        ? { told: false, reason: 'session_has_no_routing_ids', name: null, channels: [] }
-        : await householdNotices.householdNoticeNotSent(familyId, 'session_has_no_routing_ids');
-  } else {
-    // A visit not yet confirmed: the household is not told of a move.
-    notice = await householdNotices.householdNoticeNotSent(familyId, 'not_a_household_notice');
-  }
   return validateResponse('rescheduleBooking', Result, { ok: true, sessionId: args.sessionId, notice });
 }
 

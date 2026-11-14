@@ -324,7 +324,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
   const { showToast } = useToast();
   const auntie = useIsAuntie();
   const dropFamilyId = confirmDrop === null ? null : str(confirmDrop.drop.session.kinfolkId).trim() || null;
-  const dropPreview = useHouseholdNoticePreview(dropFamilyId, 'kincare.changed');
+  const dropPreview = useHouseholdNoticePreview(dropFamilyId, 'kincare.changed', confirmDrop?.drop.session._id);
 
   // ── unblock (#574) ─────────────────────────────────────────────────────────
   // Blocking a window has had a callable since B6; removing one had none, so no

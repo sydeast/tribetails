@@ -53,7 +53,11 @@ export interface HouseholdNoticePreview {
   willNotify: boolean;
   reason: Extract<
     HouseholdNoticeReason,
-    'not_a_household_notice' | 'household_has_no_portal_account' | 'household_prefs_suppressed' | 'household_notices_off'
+    | 'not_a_household_notice'
+    | 'household_has_no_portal_account'
+    | 'household_prefs_suppressed'
+    | 'household_notices_off'
+    | 'session_has_no_routing_ids'
   > | null;
   name: string | null;
   channels: Channel[];
@@ -266,6 +270,52 @@ export async function sendVisitHouseholdNotice(input: {
     },
     input.caller,
   );
+}
+
+/**
+ * #1838/#2027 review: the confirm for a cancel or a move of ONE visit, with
+ * the visit's own checks the send makes, before the household's:
+ *
+ *   - the session must name its booking record (`kinfolkId`, `kinCareBatchId`,
+ *     `kinCareVisitId`) and that record must exist; otherwise the cancel or the
+ *     move reaches nobody (`session_has_no_routing_ids`), as in
+ *     `transitionBookingStatus#visitMirrorFor` and `visitTimeMirror`;
+ *   - a cancel of a visit already finished sends nothing either;
+ *   - a move tells the household only while the visit is confirmed
+ *     (`visitTellsHouseholdOfChanges`), else `not_a_household_notice`.
+ *
+ * Then the household, through `previewHouseholdNotice`, as the send does.
+ */
+export async function previewVisitHouseholdNotice(
+  sessionId: string,
+  key: 'kincare.booking.cancel' | 'kincare.changed',
+): Promise<HouseholdNoticePreview & { familyId: string | null }> {
+  const session = ((await db().collection('kin_care_sessions').doc(sessionId).get()).data() ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const familyId = words(session['kinfolkId']);
+  const batchId = words(session['kinCareBatchId']);
+  const visitId = words(session['kinCareVisitId']);
+  const nobody = async (
+    reason: 'session_has_no_routing_ids' | 'not_a_household_notice',
+  ): Promise<HouseholdNoticePreview & { familyId: string | null }> => ({
+    willNotify: false,
+    reason,
+    name: familyId === '' ? null : await householdNoticeName(familyId, null),
+    channels: [],
+    familyId: familyId === '' ? null : familyId,
+  });
+  if (familyId === '' || batchId === '' || visitId === '') return nobody('session_has_no_routing_ids');
+  const visitSnap = await db().doc(`families/${familyId}/bookings/${batchId}/kinCares/${visitId}`).get();
+  const visit = (visitSnap.data() ?? {}) as Record<string, unknown>;
+  const status = words(visit['status']);
+  if (!visitSnap.exists) return nobody('session_has_no_routing_ids');
+  if (key === 'kincare.booking.cancel' && (status === 'cancelled' || status === 'completed')) {
+    return nobody('session_has_no_routing_ids');
+  }
+  if (key === 'kincare.changed' && !visitTellsHouseholdOfChanges(visit)) return nobody('not_a_household_notice');
+  return { ...(await previewHouseholdNotice(familyId, key)), familyId };
 }
 
 /** The two statuses on which `onBookingsWrite` tells the household a visit changed. */

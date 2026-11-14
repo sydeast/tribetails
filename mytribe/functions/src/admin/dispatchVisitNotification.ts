@@ -406,6 +406,7 @@ export interface PreviewHouseholdNoticeOutcome {
     | 'household_has_no_portal_account'
     | 'household_prefs_suppressed'
     | 'household_notices_off'
+    | 'session_has_no_routing_ids'
     | null;
   /** The member's own name, else the household's. Never an email or an id. */
   name: string | null;
@@ -413,10 +414,21 @@ export interface PreviewHouseholdNoticeOutcome {
   channels: Array<'email' | 'sms' | 'push'>;
 }
 
-const PreviewArgs = z.object({
-  familyId: z.string().trim().min(1),
-  key: z.enum(PREVIEW_NOTICE_KEYS).optional(),
-});
+const PreviewArgs = z
+  .object({
+    familyId: z.string().trim().min(1).optional(),
+    key: z.enum(PREVIEW_NOTICE_KEYS).optional(),
+    /**
+     * #1838/#2027: the visit a cancel or move confirm is about. With it the
+     * answer also runs the visit's own checks the send makes (a booking record
+     * to address, a move only of a confirmed visit), so the confirm and the
+     * result cannot disagree about an unlinked or unconfirmed visit.
+     */
+    sessionId: z.string().trim().min(1).max(200).optional(),
+  })
+  .refine((a) => a.familyId !== undefined || (a.sessionId !== undefined && a.key !== undefined), {
+    message: 'Provide familyId, or a sessionId with a key.',
+  });
 
 /**
  * #1840: what a clock confirm may say about the household BEFORE the tap,
@@ -441,11 +453,17 @@ const PreviewArgs = z.object({
 export async function previewVisitNotificationHandler(
   req: CallableRequest<unknown>,
 ): Promise<PreviewVisitNotificationOutcome | PreviewHouseholdNoticeOutcome> {
-  const { familyId, key } = PreviewArgs.parse(req.data);
+  const { familyId: givenFamilyId, key, sessionId } = PreviewArgs.parse(req.data);
   if (key !== undefined) {
-    const { previewHouseholdNotice } = await import('../notifications/householdNotice.js');
-    return { ok: true, ...(await previewHouseholdNotice(familyId, key)) };
+    const notices = await import('../notifications/householdNotice.js');
+    if (sessionId !== undefined && (key === 'kincare.booking.cancel' || key === 'kincare.changed')) {
+      const answer = await notices.previewVisitHouseholdNotice(sessionId, key);
+      return { ok: true, willNotify: answer.willNotify, reason: answer.reason, name: answer.name, channels: answer.channels };
+    }
+    if (givenFamilyId === undefined) throw new HttpsError('invalid-argument', 'familyId is required for this notice.');
+    return { ok: true, ...(await notices.previewHouseholdNotice(givenFamilyId, key)) };
   }
+  const familyId = givenFamilyId!;
   const recipientUid = await householdRecipientUid(familyId);
   if (!recipientUid) {
     return { ok: true, willNotify: false, reason: 'household_has_no_portal_account' };
