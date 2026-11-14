@@ -259,6 +259,13 @@ class AdminDataViewModel(
      * into America/Chicago, the server's own default.
      */
     private val _businessTimeZone = MutableStateFlow("")
+
+    /**
+     * #1966: Settings > Invoices > Payment terms and the business zone, for New
+     * invoice. Read when the composer opens ([loadInvoiceTermsSetting]).
+     */
+    private val _invoiceTermsSetting = MutableStateFlow(InvoiceTermsSettingState(loading = true))
+    val invoiceTermsSetting: StateFlow<InvoiceTermsSettingState> = _invoiceTermsSetting.asStateFlow()
     val businessTimeZone: StateFlow<String> = _businessTimeZone.asStateFlow()
     private val _timeBlocks = MutableStateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>>(emptyList())
 
@@ -899,6 +906,26 @@ class AdminDataViewModel(
      * for exactly one household at a time and reloads whenever the queue changes,
      * so a cached copy here would only ever be a second answer to disagree with.
      */
+    /**
+     * #1966: read the Payment terms setting and the zone for New invoice. A
+     * failed read keeps due on receipt and America/Chicago, and says so.
+     */
+    fun loadInvoiceTermsSetting() {
+        viewModelScope.launch {
+            _invoiceTermsSetting.value = _invoiceTermsSetting.value.copy(loading = true, failed = false)
+            val result = runCatchingCancellable { repository.getBusinessSettings().getOrThrow() }
+            _invoiceTermsSetting.value = result.fold(
+                onSuccess = { settings ->
+                    InvoiceTermsSettingState(
+                        paymentTerms = com.tribetails.auntieos.domain.paymentTermsSettingOf(settings.invoicePaymentTerms),
+                        timeZone = settings.timeZone.trim().ifBlank { com.tribetails.auntieos.domain.TERMS_FALLBACK_TIME_ZONE },
+                    )
+                },
+                onFailure = { InvoiceTermsSettingState(failed = true) },
+            )
+        }
+    }
+
     suspend fun loadUninvoicedSessions(
         kinfolkId: String,
         from: String? = null,

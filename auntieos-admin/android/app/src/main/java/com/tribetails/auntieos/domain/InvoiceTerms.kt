@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.domain
 
 import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeParseException
 
 /**
@@ -28,11 +30,10 @@ import java.time.format.DateTimeParseException
  * [resolveDueDate] returns the real day plus [DueDateResolution.isPast], and the
  * composer says so out loud.
  *
- * SERVICE-RELATIVE TERMS WITH NO VISITS RESOLVE TO NOTHING, deliberately. There
- * is no last visit to count from, so there is no date to state, and the honest
- * answer is a null plus a sentence naming what is missing. The alternative,
- * silently falling back to the invoice date, would print a due date derived from
- * a rule that was never applied.
+ * VISIT-RELATIVE TERMS WITH NO VISITS ARE DUE ON RECEIPT (#1966, operator
+ * ruling 2026-11-12), and [DueDateResolution.appliedCode] says so. Visit days are
+ * BUSINESS days: an instant is read on the business's clock ([serviceDayOf]), so
+ * an evening visit in Chicago is not counted on the next UTC day.
  *
  * MIRRORED, NOT SHARED, AND THE SERVER IS THE AUTHORITY. This is the THIRD copy
  * of one rule table: `mytribe/functions/src/lib/invoiceTerms.ts` owns it,
@@ -55,6 +56,9 @@ enum class InvoiceTermsBasis {
 
     /** The day of the last visit the invoice covers. */
     SERVICE,
+
+    /** #1966: the day of the first visit the invoice covers. */
+    FIRST_VISIT,
 
     /** Nothing: the code hands the date back to the operator. */
     NONE,
@@ -89,6 +93,146 @@ enum class InvoiceTermsCode(
         label = "Due on receipt",
         words = "Due on receipt",
     ),
+    DUE_ON_FIRST_VISIT(
+        wire = "due_on_first_visit",
+        basis = InvoiceTermsBasis.FIRST_VISIT,
+        days = 0,
+        label = "Due on the day of the first visit",
+        words = "Due on the day of the first visit",
+    ),
+    DUE_ON_LAST_VISIT(
+        wire = "due_on_last_visit",
+        basis = InvoiceTermsBasis.SERVICE,
+        days = 0,
+        label = "Due on the day of the last visit",
+        words = "Due on the day of the last visit",
+    ),
+    NET_1_AFTER_LAST_VISIT(
+        wire = "net_1_after_last_visit",
+        basis = InvoiceTermsBasis.SERVICE,
+        days = 1,
+        label = "Due 1 day after the last visit",
+        words = "Due 1 day after the last visit",
+    ),
+    NET_2_AFTER_LAST_VISIT(
+        wire = "net_2_after_last_visit",
+        basis = InvoiceTermsBasis.SERVICE,
+        days = 2,
+        label = "Due 2 days after the last visit",
+        words = "Due 2 days after the last visit",
+    ),
+    NET_3_AFTER_LAST_VISIT(
+        wire = "net_3_after_last_visit",
+        basis = InvoiceTermsBasis.SERVICE,
+        days = 3,
+        label = "Due 3 days after the last visit",
+        words = "Due 3 days after the last visit",
+    ),
+    NET_4_AFTER_LAST_VISIT(
+        wire = "net_4_after_last_visit",
+        basis = InvoiceTermsBasis.SERVICE,
+        days = 4,
+        label = "Due 4 days after the last visit",
+        words = "Due 4 days after the last visit",
+    ),
+    NET_5_AFTER_LAST_VISIT(
+        wire = "net_5_after_last_visit",
+        basis = InvoiceTermsBasis.SERVICE,
+        days = 5,
+        label = "Due 5 days after the last visit",
+        words = "Due 5 days after the last visit",
+    ),
+    NET_6_AFTER_LAST_VISIT(
+        wire = "net_6_after_last_visit",
+        basis = InvoiceTermsBasis.SERVICE,
+        days = 6,
+        label = "Due 6 days after the last visit",
+        words = "Due 6 days after the last visit",
+    ),
+    NET_7_AFTER_LAST_VISIT(
+        wire = "net_7_after_last_visit",
+        basis = InvoiceTermsBasis.SERVICE,
+        days = 7,
+        label = "Due 7 days after the last visit",
+        words = "Due 7 days after the last visit",
+    ),
+    NET_14_AFTER_LAST_VISIT(
+        wire = "net_14_after_last_visit",
+        basis = InvoiceTermsBasis.SERVICE,
+        days = 14,
+        label = "Due 14 days after the last visit",
+        words = "Due 14 days after the last visit",
+    ),
+    NET_30_AFTER_LAST_VISIT(
+        wire = "net_30_after_last_visit",
+        basis = InvoiceTermsBasis.SERVICE,
+        days = 30,
+        label = "Due 30 days after the last visit",
+        words = "Due 30 days after the last visit",
+    ),
+    NET_1_BEFORE_FIRST_VISIT(
+        wire = "net_1_before_first_visit",
+        basis = InvoiceTermsBasis.FIRST_VISIT,
+        days = -1,
+        label = "Due 1 day before the first visit",
+        words = "Due 1 day before the first visit",
+    ),
+    NET_2_BEFORE_FIRST_VISIT(
+        wire = "net_2_before_first_visit",
+        basis = InvoiceTermsBasis.FIRST_VISIT,
+        days = -2,
+        label = "Due 2 days before the first visit",
+        words = "Due 2 days before the first visit",
+    ),
+    NET_3_BEFORE_FIRST_VISIT(
+        wire = "net_3_before_first_visit",
+        basis = InvoiceTermsBasis.FIRST_VISIT,
+        days = -3,
+        label = "Due 3 days before the first visit",
+        words = "Due 3 days before the first visit",
+    ),
+    NET_4_BEFORE_FIRST_VISIT(
+        wire = "net_4_before_first_visit",
+        basis = InvoiceTermsBasis.FIRST_VISIT,
+        days = -4,
+        label = "Due 4 days before the first visit",
+        words = "Due 4 days before the first visit",
+    ),
+    NET_5_BEFORE_FIRST_VISIT(
+        wire = "net_5_before_first_visit",
+        basis = InvoiceTermsBasis.FIRST_VISIT,
+        days = -5,
+        label = "Due 5 days before the first visit",
+        words = "Due 5 days before the first visit",
+    ),
+    NET_6_BEFORE_FIRST_VISIT(
+        wire = "net_6_before_first_visit",
+        basis = InvoiceTermsBasis.FIRST_VISIT,
+        days = -6,
+        label = "Due 6 days before the first visit",
+        words = "Due 6 days before the first visit",
+    ),
+    NET_7_BEFORE_FIRST_VISIT(
+        wire = "net_7_before_first_visit",
+        basis = InvoiceTermsBasis.FIRST_VISIT,
+        days = -7,
+        label = "Due 7 days before the first visit",
+        words = "Due 7 days before the first visit",
+    ),
+    NET_14_BEFORE_FIRST_VISIT(
+        wire = "net_14_before_first_visit",
+        basis = InvoiceTermsBasis.FIRST_VISIT,
+        days = -14,
+        label = "Due 14 days before the first visit",
+        words = "Due 14 days before the first visit",
+    ),
+    NET_30_BEFORE_FIRST_VISIT(
+        wire = "net_30_before_first_visit",
+        basis = InvoiceTermsBasis.FIRST_VISIT,
+        days = -30,
+        label = "Due 30 days before the first visit",
+        words = "Due 30 days before the first visit",
+    ),
     NET_7(
         wire = "net_7",
         basis = InvoiceTermsBasis.INVOICE,
@@ -110,27 +254,6 @@ enum class InvoiceTermsCode(
         label = "Due 30 days after the invoice date",
         words = "Due 30 days after the invoice date",
     ),
-    DUE_ON_LAST_VISIT(
-        wire = "due_on_last_visit",
-        basis = InvoiceTermsBasis.SERVICE,
-        days = 0,
-        label = "Due on the day of the last visit",
-        words = "Due on the day of the last visit",
-    ),
-    NET_7_AFTER_LAST_VISIT(
-        wire = "net_7_after_last_visit",
-        basis = InvoiceTermsBasis.SERVICE,
-        days = 7,
-        label = "Due 7 days after the last visit",
-        words = "Due 7 days after the last visit",
-    ),
-    NET_14_AFTER_LAST_VISIT(
-        wire = "net_14_after_last_visit",
-        basis = InvoiceTermsBasis.SERVICE,
-        days = 14,
-        label = "Due 14 days after the last visit",
-        words = "Due 14 days after the last visit",
-    ),
     CUSTOM(
         wire = "custom",
         basis = InvoiceTermsBasis.NONE,
@@ -142,6 +265,27 @@ enum class InvoiceTermsCode(
 
 /** Every rule, in the order the composer offers them. */
 fun invoiceTermsDefs(): List<InvoiceTermsCode> = InvoiceTermsCode.entries.toList()
+
+/**
+ * #1966: the options of Settings > Invoices > Payment terms, in the ruled
+ * order: due on receipt, the first visit, the last visit, then 1 to 7, 14 and
+ * 30 days after the last visit, then the same counts before the first visit.
+ * The server's `PAYMENT_TERMS_SETTING_CODES`.
+ */
+val PAYMENT_TERMS_SETTING_CODES: List<InvoiceTermsCode> = InvoiceTermsCode.entries.filter {
+    it != InvoiceTermsCode.NET_7 && it != InvoiceTermsCode.NET_14 && it != InvoiceTermsCode.NET_30 &&
+        it != InvoiceTermsCode.CUSTOM
+}
+
+/** #1966: what every business starts on, and what an absent setting reads as. */
+val DEFAULT_PAYMENT_TERMS: InvoiceTermsCode = InvoiceTermsCode.DUE_ON_RECEIPT
+
+/**
+ * #1966: the stored `invoicePaymentTerms` setting as a code. Absent, blank or
+ * not one of the setting's options reads as [DEFAULT_PAYMENT_TERMS].
+ */
+fun paymentTermsSettingOf(raw: String?): InvoiceTermsCode =
+    parseInvoiceTermsCode(raw)?.takeIf { it in PAYMENT_TERMS_SETTING_CODES } ?: DEFAULT_PAYMENT_TERMS
 
 /**
  * A stored or transported value read back as a code, or null.
@@ -191,24 +335,68 @@ fun addDays(day: String, days: Long): String {
     return LocalDate.parse(day).plusDays(days).toString()
 }
 
+/** A bare local date-time: no `Z`, no offset. It is already the business's wall clock. */
+private val BARE_LOCAL_TIME = Regex("""^(\d{4}-\d{2}-\d{2})[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$""")
+
+/** An instant: a date-time ending in `Z` or a UTC offset. */
+private val ZONED_INSTANT = Regex("""^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})$""")
+
+/** The business's zone when none is given or the given one cannot be read (#1109). */
+const val TERMS_FALLBACK_TIME_ZONE = "America/Chicago"
+
+private fun zoneOrNull(id: String): ZoneId? = try {
+    ZoneId.of(id)
+} catch (_: Exception) {
+    null
+}
+
+/**
+ * #1966: the BUSINESS day a visit's `startTime` falls on, or null when it
+ * cannot be read. The same reading as the server's `serviceDayOf`:
+ *
+ *  - a bare day (`2026-11-30`) is that day;
+ *  - a bare local time (`2026-11-30T19:00`) is the business's wall clock
+ *    already, so its own date is the day;
+ *  - an instant (`2026-12-01T01:00:00.000Z`, `...-06:00`) is read on the
+ *    business's clock in [timeZone], falling back to America/Chicago when the
+ *    zone cannot be read. That instant is Nov 30 in Chicago.
+ */
+fun serviceDayOf(raw: String, timeZone: String = TERMS_FALLBACK_TIME_ZONE): String? {
+    val s = raw.trim()
+    if (isCalendarDay(s)) return s
+    BARE_LOCAL_TIME.matchEntire(s)?.let { m ->
+        val day = m.groupValues[1]
+        return if (isCalendarDay(day)) day else null
+    }
+    if (!ZONED_INSTANT.matches(s)) return null
+    // OffsetDateTime wants `+hh:mm`; the server also accepts `+hhmm`.
+    val normalized = Regex("""([+-]\d{2})(\d{2})$""").replace(s) { "${it.groupValues[1]}:${it.groupValues[2]}" }
+    val instant = try {
+        OffsetDateTime.parse(normalized).toInstant()
+    } catch (_: DateTimeParseException) {
+        return null
+    }
+    val zone = zoneOrNull(timeZone) ?: ZoneId.of(TERMS_FALLBACK_TIME_ZONE)
+    return instant.atZone(zone).toLocalDate().toString()
+}
+
+private fun serviceDaysOf(serviceDates: List<String>, timeZone: String): List<String> =
+    serviceDates.mapNotNull { serviceDayOf(it, timeZone) }
+
 /**
  * The LAST day work was done, out of whatever dates the caller has.
  *
- * Accepts full ISO timestamps as well as bare days, because a visit's
- * `startTime` is an ISO-8601 string and truncating it here means no caller has
- * to remember to. Unreadable entries are skipped rather than sorted as text:
+ * Accepts full ISO timestamps as well as bare days, read as business days by
+ * [serviceDayOf]. Unreadable entries are skipped rather than sorted as text:
  * "" would otherwise win a max against nothing and lose one against everything,
  * silently, in a function that decides when money is owed.
  */
-fun lastServiceDay(serviceDates: List<String>): String? {
-    var latest: String? = null
-    for (raw in serviceDates) {
-        val day = raw.trim().take(10)
-        if (!isCalendarDay(day)) continue
-        if (latest == null || day > latest) latest = day
-    }
-    return latest
-}
+fun lastServiceDay(serviceDates: List<String>, timeZone: String = TERMS_FALLBACK_TIME_ZONE): String? =
+    serviceDaysOf(serviceDates, timeZone).maxOrNull()
+
+/** #1966: the FIRST day work was done, by the same reading as [lastServiceDay]. */
+fun firstServiceDay(serviceDates: List<String>, timeZone: String = TERMS_FALLBACK_TIME_ZONE): String? =
+    serviceDaysOf(serviceDates, timeZone).minOrNull()
 
 /**
  * What [resolveDueDate] worked out.
@@ -219,6 +407,9 @@ fun lastServiceDay(serviceDates: List<String>): String? {
  *   shift; see the file header.
  * @property basisDay which day the count ran from, or null when nothing was
  *   counted.
+ * @property appliedCode the rule that produced [dueDate]: the code asked for,
+ *   or [InvoiceTermsCode.DUE_ON_RECEIPT] when a visit-relative code found no
+ *   visits to count from (#1966).
  * @property problem why there is no date, as operator-facing text, or null when
  *   there is one. Names what is missing and what to do, never a bare "invalid".
  */
@@ -227,19 +418,22 @@ data class DueDateResolution(
     val isPast: Boolean,
     val basisDay: String?,
     val problem: String?,
+    val appliedCode: InvoiceTermsCode,
 )
 
 /**
  * The due date these terms mean, given the work on the invoice and today.
  *
- * `(terms, serviceDates, now) => dueDate`, the resolver the composer calls and
- * the one the server re-runs before it writes.
+ * `(terms, serviceDates, now, timeZone) => dueDate`, the resolver the composer
+ * calls and the one the server re-runs before it writes. [timeZone] is the
+ * business's (`business_settings.timeZone`).
  */
 fun resolveDueDate(
     code: InvoiceTermsCode,
     invoiceDate: String,
     serviceDates: List<String>,
     now: String,
+    timeZone: String = TERMS_FALLBACK_TIME_ZONE,
 ): DueDateResolution {
     if (code.basis == InvoiceTermsBasis.NONE) {
         return DueDateResolution(
@@ -248,13 +442,21 @@ fun resolveDueDate(
             basisDay = null,
             problem = "These terms let you pick the due date, so there is nothing to work out. " +
                 "Choose the date yourself.",
+            appliedCode = code,
         )
     }
 
-    val basisDay = if (code.basis == InvoiceTermsBasis.INVOICE) {
+    val visitDay = when (code.basis) {
+        InvoiceTermsBasis.SERVICE -> lastServiceDay(serviceDates, timeZone)
+        InvoiceTermsBasis.FIRST_VISIT -> firstServiceDay(serviceDates, timeZone)
+        else -> null
+    }
+    // A visit-relative code with no visits to count from is due on receipt.
+    val applied = if (code.basis != InvoiceTermsBasis.INVOICE && visitDay == null) InvoiceTermsCode.DUE_ON_RECEIPT else code
+    val basisDay = if (applied.basis == InvoiceTermsBasis.INVOICE) {
         invoiceDate.trim().takeIf { isCalendarDay(it) }
     } else {
-        lastServiceDay(serviceDates)
+        visitDay
     }
 
     if (basisDay == null) {
@@ -262,22 +464,19 @@ fun resolveDueDate(
             dueDate = null,
             isPast = false,
             basisDay = null,
-            problem = if (code.basis == InvoiceTermsBasis.INVOICE) {
-                "These terms count from the invoice date, and this invoice has no date on it yet. " +
-                    "Set the date, or pick the date yourself."
-            } else {
-                "These terms count from the last visit, and there are no visits on this invoice yet. " +
-                    "Add the visits it covers, or pick the date yourself."
-            },
+            problem = "These terms count from the invoice date, and this invoice has no date on it yet. " +
+                "Set the date, or pick the date yourself.",
+            appliedCode = applied,
         )
     }
 
-    val dueDate = addDays(basisDay, code.days)
+    val dueDate = addDays(basisDay, applied.days)
     return DueDateResolution(
         dueDate = dueDate,
         // Strictly before: due today is due, not overdue.
         isPast = isCalendarDay(now) && dueDate < now,
         basisDay = basisDay,
         problem = null,
+        appliedCode = applied,
     )
 }

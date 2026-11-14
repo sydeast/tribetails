@@ -324,15 +324,21 @@ class InvoiceComposerTest {
     }
 
     @Test
-    fun `service-relative terms with nothing ticked say what is missing`() {
+    fun `visit terms with nothing ticked are due on receipt, so the reason is the missing work`() {
+        // #1966: no visits to count from is due on receipt, not a dead end.
         val reason = blocked(
             termsCode = InvoiceTermsCode.NET_14_AFTER_LAST_VISIT,
             serviceDates = emptyList(),
             selectedCount = 0,
             money = ComposerMoney(emptyList(), 0L, 0L, null),
         )
-        assertNotNull(reason)
-        assertTrue(reason!!.contains("no visits on this invoice yet"))
+        assertEquals("Tick the work this invoice covers, or add a line of your own.", reason)
+    }
+    @Test
+    fun `#1966 visit terms with no visits say they are due on receipt`() {
+        val due = resolveDueDate(InvoiceTermsCode.NET_7_BEFORE_FIRST_VISIT, "2026-08-19", emptyList(), "2026-08-19")
+        assertEquals("2026-08-19", due.dueDate)
+        assertEquals(NO_VISITS_DUE_ON_RECEIPT, composerTermsNote(InvoiceTermsCode.NET_7_BEFORE_FIRST_VISIT, due, "2026-08-19"))
     }
 
     @Test
