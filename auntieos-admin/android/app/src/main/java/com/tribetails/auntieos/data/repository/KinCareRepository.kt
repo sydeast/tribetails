@@ -867,6 +867,23 @@ class KinCareRepository(
     }.onFailure { AuntieLog.e("Failed to get reports for session $sessionId", it) }
 
     /**
+     * #2040: every KinTale written about one visit, unordered, for the composer
+     * to find the visit's saved draft in (`newestSavedDraft`).
+     *
+     * EQUALITY ONLY, on purpose. [getReportsForSession] above adds
+     * `orderBy("createdAt")`, which needs a sessionId+createdAt composite index
+     * that `firestore.indexes.json` does not declare, and it is unscoped for the
+     * sandbox. A failed read here blocks the composer, so this one asks only for
+     * what single-field indexes serve: the visit id, plus the kinfolkId clause
+     * [scoped] adds for a test admin. The caller sorts.
+     */
+    suspend fun getReportsForVisit(sessionId: String): Result<List<KinCareReport>> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        scoped.scopedQuery("kin_care_reports") { whereEqualTo("sessionId", sessionId) }
+            .toObjects(KinCareReport::class.java)
+    }.onFailure { AuntieLog.e("Failed to get the KinTales of visit $sessionId", it) }
+
+    /**
      * Every DRAFT KinTale, most recently touched first. No caller in the app
      * today; carried over rather than deleted, on the same reading as
      * [updateKinCareSession] - see this repo's KDoc on the git-era caveat.

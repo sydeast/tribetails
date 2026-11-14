@@ -45,6 +45,8 @@ class KinTaleReportViewModelTest {
         Dispatchers.setMain(testDispatcher)
         mockRepo = mockk()
         mockKinCareRepo = mockk()
+        // #2040: a new KinTale first looks for the visit's saved draft. None here.
+        coEvery { mockKinCareRepo.getReportsForVisit(any()) } returns Result.success(emptyList())
         mockUploader = mockk(relaxed = true)
         mockNotifier = mockk(relaxed = true)
     }

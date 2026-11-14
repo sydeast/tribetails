@@ -197,6 +197,8 @@ class KinTaleReportViewModel(
         // A KinTale we failed to read is not saveable at all, and a timer ticking
         // over its blank scaffold is the continuous version of that bug.
         if (reportExistsOnServer == false) return
+        // #1940: a sent tale saves only when the operator says so.
+        if (_uiState.value.report.isSentReport()) return
         autosaveJob?.cancel()
         autosaveJob = viewModelScope.launch {
             delay(AUTOSAVE_DEBOUNCE_MS)
@@ -299,9 +301,38 @@ class KinTaleReportViewModel(
                 reportBaseline = resumed
                 reportExistsOnServer = true
             } else {
-                report = scaffoldReport(session, template)
-                reportBaseline = null
-                reportExistsOnServer = null
+                // #2040: "Send the KinTale" names only the visit. A visit that
+                // already has a saved draft reopens it; a blank scaffold here is
+                // how a second draft for one visit got written. A lookup that
+                // FAILED is not "no draft": it gets the same refusal as a failed
+                // resume above, so nothing typed can become that second draft.
+                val lookup = kinCareRepository.getReportsForVisit(sessionId)
+                val visitReports = lookup.getOrNull()
+                if (visitReports == null) {
+                    reportBaseline = null
+                    reportExistsOnServer = false
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        session = session,
+                        kinfolk = kinfolk,
+                        kinList = kinList,
+                        template = template,
+                        reportLoadFailed = true,
+                        error = "Couldn't check this visit for a saved draft: " +
+                            (lookup.exceptionOrNull()?.message ?: "unknown error"),
+                    )
+                    return@launch
+                }
+                val saved = newestSavedDraft(visitReports, sessionId)
+                if (saved != null) {
+                    report = saved
+                    reportBaseline = saved
+                    reportExistsOnServer = true
+                } else {
+                    report = scaffoldReport(session, template)
+                    reportBaseline = null
+                    reportExistsOnServer = null
+                }
             }
 
             // Hydrate uploaded media (only meaningful for resumed drafts)
@@ -525,6 +556,12 @@ class KinTaleReportViewModel(
      * whether or not the operator typed anything, so this is the common case, not
      * the corner one - and `updatedAt` is what the operator reads as "my work is
      * safe as of then".
+     *
+     * #1940: A SENT KINTALE IS NEVER WRITTEN FROM HERE. Every automatic trigger
+     * (blur, a toggle, a mood pick, media, Back) lands in this function, and on a
+     * sent tale each write reaches the household's copy at once and can send them
+     * the "added to a KinTale" notice. Those edits wait as unsaved changes until
+     * the operator presses Save changes ([saveChanges]).
      */
     fun persistDraft() {
         // Every trigger funnels through here, so an immediate persist retires the
@@ -533,7 +570,26 @@ class KinTaleReportViewModel(
         // never cancels the coroutine it is running inside.
         autosaveJob?.cancel()
         autosaveJob = null
+        if (_uiState.value.report.isSentReport()) {
+            syncUnsavedMarker()
+            return
+        }
+        writeChanges()
+    }
 
+    /**
+     * #1940: the one writer of a SENT KinTale, behind its Save changes button. The
+     * write is the same field diff a draft save sends: never `status`, never
+     * `sentAt`, so nothing is sent again; `onKinTaleUpdate` alone decides whether
+     * the household hears about it. On a draft it is an ordinary save.
+     */
+    fun saveChanges() {
+        autosaveJob?.cancel()
+        autosaveJob = null
+        writeChanges()
+    }
+
+    private fun writeChanges() {
         val report = _uiState.value.report
         if (reportExistsOnServer == false) {
             // A blank scaffold standing in for a KinTale we failed to read. Writing
@@ -619,14 +675,7 @@ class KinTaleReportViewModel(
         }
     }
 
-    private fun hasContent(report: KinCareReport): Boolean =
-        report.title.isNotBlank() ||
-            report.bodyCopy.isNotBlank() ||
-            report.fieldResponses.isNotEmpty() ||
-            report.mediaFileIds.isNotEmpty() ||
-            report.petMoodSelections.isNotEmpty() ||
-            // Phase 14: an answered KINTALE custom field counts as content.
-            report.formValues.values.any { it.isNotBlank() }
+    private fun hasContent(report: KinCareReport): Boolean = report.hasKinTaleContent()
 
     fun addMedia(context: Context, uri: Uri) {
         val sessionId = _uiState.value.session?.id ?: return
@@ -724,6 +773,13 @@ class KinTaleReportViewModel(
         val state = _uiState.value
         val report = state.report
         val session = state.session ?: return
+        // #1940: a sent tale is never sent again. A second send would notify the
+        // household a second time and count the visit's KinTales twice. The
+        // screen offers no Send on one; this is the guard behind that.
+        if (report.isSentReport()) {
+            _uiState.value = state.copy(error = "This KinTale has already been sent. Save your changes instead.")
+            return
+        }
         val kinfolk = state.kinfolk ?: run {
             _uiState.value = _uiState.value.copy(error = "Cannot send: recipient contact not found.")
             return
@@ -957,3 +1013,54 @@ class KinTaleReportViewModel(
         }
     }
 }
+/**
+ * #2040: the saved draft "Send the KinTale" reopens for this visit, or null when
+ * the visit has none and the composer starts a new one.
+ *
+ * Only a report that is positively a DRAFT, was never sent, and belongs to this
+ * visit counts. A visit is meant to hold one draft; if two were ever saved (a
+ * phone and a desk, or two tabs), the NEWEST wins: latest `updatedAt`, then
+ * `createdAt`, then id. That is the order the desktop console already opens a
+ * visit's drafts in (`orderVisitReports`), and the web composer's
+ * `savedDraftForVisit` uses the same rule.
+ */
+internal fun newestSavedDraft(reports: List<KinCareReport>, sessionId: String): KinCareReport? {
+    if (sessionId.isBlank()) return null
+    return reports
+        .filter {
+            it.sessionId == sessionId &&
+                it.status.trim().uppercase() == ReportStatus.DRAFT.name &&
+                it.sentAt.isNullOrBlank()
+        }
+        .sortedWith(
+            compareByDescending<KinCareReport> { it.updatedAt }
+                .thenByDescending { it.createdAt }
+                .thenByDescending { it.id },
+        )
+        .firstOrNull()
+}
+/** #1940: whether this report has already gone home to the household. */
+internal fun KinCareReport.isSentReport(): Boolean = status.trim().uppercase() == ReportStatus.SENT.name
+/**
+ * #1940: what saving an edit to a SENT KinTale does, in the household's terms.
+ * Matches the server, not a hope: the portal serves the live KinTale, so every
+ * saved change shows, and `onKinTaleUpdate` sends the household its "Your Auntie
+ * added to a KinTale" notice only when the words change or a photo is added. A
+ * new headline, a ticked moment or a removed photo shows without one. Same
+ * sentence as the web composer's `sentKinTaleEditNote`.
+ */
+internal fun sentKinTaleEditNote(household: String): String {
+    val who = household.trim().ifBlank { "The household" }
+    return "This KinTale has been sent. $who will see your changes once you save them. " +
+        "New words or a new photo also send them a notice that you added to it."
+}
+
+/** Whether a KinTale has anything in it worth saving or sending. The screen reads it too (#1940). */
+internal fun KinCareReport.hasKinTaleContent(): Boolean =
+    title.isNotBlank() ||
+        bodyCopy.isNotBlank() ||
+        fieldResponses.isNotEmpty() ||
+        mediaFileIds.isNotEmpty() ||
+        petMoodSelections.isNotEmpty() ||
+        // Phase 14: an answered KINTALE custom field counts as content.
+        formValues.values.any { it.isNotBlank() }

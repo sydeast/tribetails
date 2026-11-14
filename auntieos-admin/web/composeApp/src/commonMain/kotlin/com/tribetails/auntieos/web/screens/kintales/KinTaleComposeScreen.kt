@@ -60,6 +60,7 @@ import com.tribetails.auntieos.web.data.appliesToSchemaIds
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinCareReport
+import com.tribetails.auntieos.web.data.orderVisitReports
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.KinTaleMediaConfig
 import com.tribetails.auntieos.web.data.KinTaleTemplate
@@ -167,6 +168,22 @@ fun KinTaleComposeScreen(
         ?: flowOf(DefaultKinTaleTemplate.template))
         .collectAsState(initial = DefaultKinTaleTemplate.template)
 
+    // #2040: "Send the KinTale" names only the visit. A visit that already has a
+    // saved draft reopens it ([newestSavedDraft]); a blank tale here is how a
+    // second draft for one visit was written. The answer is taken ONCE, from the
+    // first read that lands: the draft this screen then saves shows up in the
+    // same stream, and re-deciding on it would throw away whatever was typed
+    // since. A failed read is not "no draft": it shows its error and Retry.
+    val reportsReload = rememberReloadableRead()
+    val visitReports by remember(sessionId, reportsReload.generation) {
+        client.reportsForSessionStream(sessionId).settlesRetry(reportsReload)
+    }.collectAsState(initial = FirestoreResult.Loading)
+    var resume by remember(sessionId) { mutableStateOf<DraftResume?>(null) }
+    LaunchedEffect(visitReports) {
+        val data = visitReports as? FirestoreResult.Data ?: return@LaunchedEffect
+        if (resume == null) resume = DraftResume(newestSavedDraft(data.value, sessionId))
+    }
+
     if (session == null) {
         ScreenScaffold {
             // #867: a failed read shows its error, not a shimmer that never ends.
@@ -190,6 +207,27 @@ fun KinTaleComposeScreen(
         return
     }
 
+    val decided = resume
+    if (decided == null) {
+        ScreenScaffold {
+            (visitReports as? FirestoreResult.Error)?.let {
+                SectionHeader(title = "KinTale", subtitle = "", icon = Lucide.ClipboardList, onBack = onClose)
+                LoadErrorBanner(
+                    "Couldn't check this visit for a saved draft",
+                    it.message,
+                    onRetry = reportsReload::retry,
+                    retrying = reportsReload.retrying,
+                )
+                return@ScreenScaffold
+            }
+            SectionHeader(title = "Loading…", subtitle = "Looking for a saved draft", icon = Lucide.ClipboardList)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                repeat(3) { ShimmerCard(height = 100.dp) }
+            }
+        }
+        return
+    }
+
     KinTaleComposerBody(
         session  = session,
         kinfolk  = kinfolk,
@@ -198,7 +236,26 @@ fun KinTaleComposeScreen(
         client   = client,
         onClose  = onClose,
         onEditTemplate = { editingTemplate = true },
+        resumeFrom = decided.draft,
     )
+}
+
+/** #2040: what the first reports read decided. [draft] null means start a new tale. */
+private data class DraftResume(val draft: KinCareReport?)
+
+/**
+ * #2040: the saved draft "Send the KinTale" reopens for this visit, or null.
+ *
+ * Only a report that is positively a DRAFT, was never sent, and belongs to this
+ * visit counts. If two were ever saved, the NEWEST wins, in [orderVisitReports]'
+ * order for drafts: latest `updatedAt`, then `createdAt`, then id. The web
+ * composer (`savedDraftForVisit`) and Android (`newestSavedDraft`) use the same
+ * rule. Pure; unit-tested.
+ */
+internal fun newestSavedDraft(reports: List<KinCareReport>, sessionId: String): KinCareReport? {
+    if (sessionId.isBlank()) return null
+    return orderVisitReports(reports, sessionId)
+        .firstOrNull { it.status.trim().uppercase() == "DRAFT" && it.sentAt.isBlank() }
 }
 
 // -----------------------------------------------------------------------------
@@ -215,6 +272,8 @@ private fun KinTaleComposerBody(
     client: FirestoreClient,
     onClose: () -> Unit,
     onEditTemplate: () -> Unit,
+    /** #2040: the visit's saved draft to reopen, or null to start a new tale. */
+    resumeFrom: KinCareReport? = null,
 ) {
     val c = AuntieTheme.colors
     val scope = rememberReportingScope()
@@ -225,14 +284,18 @@ private fun KinTaleComposerBody(
     val routeToast = LocalRouteToast.current
 
     // Scaffold the in-memory draft. `_id` blank → first save creates the doc.
-    var report by remember(session._id, template._id) {
-        mutableStateOf(scaffoldReport(session, template))
+    // #2040: a reopened draft is keyed by its own id, not the template: it keeps
+    // the template it was written under, and a template read landing late must
+    // not swap it for a blank scaffold.
+    val identity = resumeFrom?._id ?: template._id
+    var report by remember(session._id, identity) {
+        mutableStateOf(resumeFrom ?: scaffoldReport(session, template))
     }
     // #994: the report as this screen last wrote it: the diff baseline for every
     // update, so a save sends only what changed since. Null until the first
     // create answers; `report._id` is blank until then too, so no update runs
-    // without it.
-    var written by remember(session._id, template._id) { mutableStateOf<KinCareReport?>(null) }
+    // without it. #2040: a reopened draft's baseline is the draft as read.
+    var written by remember(session._id, identity) { mutableStateOf(resumeFrom) }
     var bodyCopy by remember(report._id) { mutableStateOf(report.bodyCopy) }
     // Auntie-authored headline for the cover. Blank uses composerTitle(...) ONLY
     // as placeholder; we never write the derived value back onto the report.
