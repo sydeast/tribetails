@@ -3,7 +3,10 @@
 package com.kinfolk.portal.screens.notifications
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -321,5 +324,166 @@ class NotificationsListScreenTest {
         onNodeWithTag("notificationRow-n-arrived").performClick()
         waitForIdle()
         assertEquals("v7" to "b7", opened.visit)
+    }
+
+    // ---- #1833: the list and the bell's live count ----
+    @Test
+    fun aTapTakesTheRowOffTheBellAtOnce() = runComposeUiTest {
+        val locally = mutableListOf<String>()
+        val refused = mutableListOf<String>()
+        setThemedContent {
+            NotificationsListScreen(
+                kinfolkId = "fam-1",
+                portalApi = PortalApi(stubbed()),
+                onReadLocally = { locally += it },
+                onReadRefused = { refused += it },
+                nowMs = { now },
+            )
+        }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-visit").performClick()
+        waitForIdle()
+        assertEquals(listOf("n-visit"), locally)
+        assertTrue(refused.isEmpty())
+        // A row that was already read is not sent to the bell again.
+        onNodeWithTag("notificationRow-n-invoice").performClick()
+        waitForIdle()
+        assertEquals(listOf("n-visit"), locally)
+    }
+    @Test
+    fun aRefusedReadPutsTheRowBackOnTheBell() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("listMyNotifications", page(rows))
+        fake.stubError("markNotificationRead", IllegalStateException("permission-denied"))
+        val locally = mutableListOf<String>()
+        val refused = mutableListOf<String>()
+        setThemedContent {
+            NotificationsListScreen(
+                kinfolkId = "fam-1",
+                portalApi = PortalApi(fake),
+                onReadLocally = { locally += it },
+                onReadRefused = { refused += it },
+                nowMs = { now },
+            )
+        }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-tale").performClick()
+        waitForIdle()
+        assertEquals(listOf("n-tale"), locally)
+        assertEquals(listOf("n-tale"), refused)
+    }
+    @Test
+    fun aNoticeArrivingWhileTheListIsOpenIsListed_withoutLeavingTheScreen() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        val arrived = row("n-omw", "Your Auntie is on the way", minutesAgo = 0)
+        fake.stubSequence("listMyNotifications", page(rows), page(listOf(arrived) + rows))
+        val opened = Opened()
+        var revision by androidx.compose.runtime.mutableStateOf(0)
+        setThemedContent {
+            NotificationsListScreen(
+                kinfolkId = "fam-1",
+                portalApi = PortalApi(fake),
+                onUnreadCount = { opened.counts += it },
+                liveRevision = revision,
+                nowMs = { now },
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Your Auntie is on the way").assertDoesNotExist()
+        assertEquals(1, fake.calls.count { it.first == "listMyNotifications" })
+        // The bell's listener saw a row arrive.
+        revision = 1
+        waitForIdle()
+        onNodeWithText("Your Auntie is on the way").assertExists()
+        onNodeWithTag("unread-n-omw", useUnmergedTree = true).assertExists()
+        onNodeWithText("Visit confirmed").assertExists()
+        assertEquals(2, fake.calls.count { it.first == "listMyNotifications" })
+        assertEquals(listOf(4, 5), opened.counts)
+    }
+    @Test
+    fun aReloadAfterShowOlderKeepsTheOlderPageAndItsCursor_andListsNoRowTwice() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        val newest = page(listOf(rows[0]), unreadCount = 2, hasMore = true, nextBefore = 1_700_000_000_000L)
+        fake.stubSequence(
+            "listMyNotifications",
+            newest,
+            // "Show older": the last page.
+            page(listOf(rows[3]), unreadCount = 2),
+            // The bell's listener saw a change: the newest page again, which
+            // still says there is more after it.
+            newest,
+        )
+        var revision by androidx.compose.runtime.mutableStateOf(0)
+        setThemedContent {
+            NotificationsListScreen(kinfolkId = "fam-1", portalApi = PortalApi(fake), liveRevision = revision, nowMs = { now })
+        }
+        waitForIdle()
+        onNodeWithTag("notificationsOlder").performClick()
+        waitForIdle()
+        onNodeWithTag("notificationsOlder").assertDoesNotExist()
+        revision = 1
+        waitForIdle()
+        assertEquals(3, fake.calls.count { it.first == "listMyNotifications" })
+        onNodeWithTag("notificationRow-n-visit").assertExists()
+        onNodeWithTag("notificationRow-n-tale").assertExists()
+        // The older page is already on screen, so there is nothing more to offer.
+        onNodeWithTag("notificationsOlder").assertDoesNotExist()
+    }
+    @Test
+    fun aReloadOnTheFirstPageTakesTheFreshCursor_andShowOlderListsNoRowTwice() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        val arrived = row("n-omw", "Your Auntie is on the way", minutesAgo = 0)
+        fake.stubSequence(
+            "listMyNotifications",
+            // A full first page: n-visit, n-batch, and more behind them.
+            page(listOf(rows[0], rows[1]), hasMore = true, nextBefore = 1_700_000_000_200L),
+            // A notice arrived: it pushes n-batch off the newest page, and the
+            // cursor now sits at n-visit.
+            page(listOf(arrived, rows[0]), hasMore = true, nextBefore = 1_700_000_000_300L),
+            // "Show older" from that cursor starts at n-batch.
+            page(listOf(rows[1], rows[3])),
+        )
+        var revision by androidx.compose.runtime.mutableStateOf(0)
+        setThemedContent {
+            NotificationsListScreen(kinfolkId = "fam-1", portalApi = PortalApi(fake), liveRevision = revision, nowMs = { now })
+        }
+        waitForIdle()
+        revision = 1
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-omw").assertExists()
+        onNodeWithTag("notificationsOlder").performClick()
+        waitForIdle()
+        val asked = fake.calls.filter { it.first == "listMyNotifications" }
+        assertEquals(3, asked.size)
+        assertEquals(1_700_000_000_300L, asked[2].second?.get("before")?.jsonPrimitive?.content?.toLong())
+        assertEquals(1, onAllNodesWithTag("notificationRow-n-batch").fetchSemanticsNodes().size)
+        onNodeWithTag("notificationRow-n-visit").assertExists()
+        onNodeWithTag("notificationRow-n-tale").assertExists()
+    }
+    @Test
+    fun aFailedQuietReloadKeepsTheRowsOnScreen_andShowsNoError() = runComposeUiTest {
+        val fake = stubbed()
+        var revision by androidx.compose.runtime.mutableStateOf(0)
+        setThemedContent {
+            NotificationsListScreen(kinfolkId = "fam-1", portalApi = PortalApi(fake), liveRevision = revision, nowMs = { now })
+        }
+        waitForIdle()
+        fake.stubError("listMyNotifications", IllegalStateException("notifications unavailable"))
+        revision = 1
+        waitForIdle()
+        onNodeWithText("Visit confirmed").assertExists()
+        onNodeWithTag("notificationsError").assertDoesNotExist()
+    }
+    @Test
+    fun mergeNewestPage_putsFreshRowsFirst_keepsOlderPages_andDropsRowsNoLongerListed() {
+        fun item(id: String, at: Long?) = com.kinfolk.portal.portal.NotificationItem(
+            id = id, key = "k", category = "c", title = id, description = "", actorName = "", actorPhotoUrl = "",
+            targetType = "", targetId = "", visitId = null, batchId = null, createdAtMs = at, readAtMs = null,
+        )
+        val shown = listOf(item("c", 300), item("b", 200), item("a", 100), item("old", 50))
+        // "b" was archived since: the fresh page spans 400..100 and no longer holds it.
+        val fresh = listOf(item("new", 400), item("c", 300), item("a", 100))
+        assertEquals(listOf("new", "c", "a", "old"), mergeNewestPage(shown, fresh).map { it.id })
+        assertEquals(emptyList(), mergeNewestPage(shown, emptyList()))
     }
 }
