@@ -82,8 +82,22 @@ fun NotificationsListScreen(
     onOpenTribe: () -> Unit = {},
     /** #1874: a reply from the office. */
     onOpenMessages: () -> Unit = {},
-    /** The bell's count: the server's number on load, one less per tap. */
+    /**
+     * The count the bell shows before its first live snapshot: the server's
+     * number on load, one less per tap. Once the bell is live (#1833) it
+     * counts for itself and this only keeps the starting number honest.
+     */
     onUnreadCount: (Int) -> Unit = {},
+    /**
+     * #1833: moves when the bell's listener sees one of this person's rows
+     * arrive or change. The newest page is read again, so the rows and the
+     * bell's count move together; older pages already on screen stay.
+     */
+    liveRevision: Int = 0,
+    /** #1833: a tapped row stops counting on the bell at once, ahead of the server... */
+    onReadLocally: (notificationId: String) -> Unit = {},
+    /** ...and counts again when the server refuses the read. */
+    onReadRefused: (notificationId: String) -> Unit = {},
     nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
     val type = LocalKinfolkTypography.current
@@ -113,6 +127,31 @@ fun NotificationsListScreen(
     }
 
     LaunchedEffect(kinfolkId) { load(null) }
+    // #1833: a row arrived or changed while the list is open. Quiet on
+    // purpose: the rows stay on screen while the newest page is re-read, and a
+    // failed re-read leaves them as they were (the first load reports its own).
+    var seenRevision by remember { mutableStateOf(liveRevision) }
+    LaunchedEffect(liveRevision) {
+        if (liveRevision == seenRevision) return@LaunchedEffect
+        seenRevision = liveRevision
+        val shown = items ?: return@LaunchedEffect
+        try {
+            val page = portalApi.listMyNotifications(kinfolkId = kinfolkId, limit = PAGE_SIZE, before = null)
+            val merged = mergeNewestPage(shown, page.items)
+            items = merged
+            // Only a list still on its first page takes the new cursor; one
+            // that has paged further keeps the cursor of its oldest row.
+            if (shown.size <= PAGE_SIZE) {
+                hasMore = page.hasMore
+                nextBefore = page.nextBefore
+            }
+            unread = page.unreadCount
+            onUnreadCount(page.unreadCount)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) {
+        }
+    }
 
     fun open(item: NotificationItem) {
         if (item.unread) {
@@ -120,13 +159,16 @@ fun NotificationsListScreen(
             items = items?.map { if (it.id == item.id) it.copy(readAtMs = readAt) else it }
             unread = (unread - 1).coerceAtLeast(0)
             onUnreadCount(unread)
+            onReadLocally(item.id)
             scope.launch {
                 try {
                     portalApi.markNotificationRead(item.id)
                 } catch (c: CancellationException) {
                     throw c
                 } catch (_: Throwable) {
-                    // The next load shows the row unread again, which is the truth.
+                    // The row goes back on the bell, and the next load shows it
+                    // unread again, which is the truth.
+                    onReadRefused(item.id)
                 }
             }
         }
@@ -205,6 +247,19 @@ fun NotificationsListScreen(
     }
 }
 
+/**
+ * #1833: the newest page read again, laid over what is on screen. The fresh
+ * rows come first, as the server ordered them; rows already shown that are
+ * older than the fresh page stay underneath. A shown row the fresh page should
+ * have held and did not (archived since, or about another tribe now) is gone.
+ */
+internal fun mergeNewestPage(shown: List<NotificationItem>, fresh: List<NotificationItem>): List<NotificationItem> {
+    if (fresh.isEmpty()) return emptyList()
+    val freshIds = fresh.map { it.id }.toSet()
+    val oldestFresh = fresh.mapNotNull { it.createdAtMs }.minOrNull() ?: return fresh
+    val older = shown.filter { it.id !in freshIds && (it.createdAtMs ?: Long.MAX_VALUE) < oldestFresh }
+    return fresh + older
+}
 @Composable
 private fun NotificationRow(item: NotificationItem, nowMs: Long, onClick: () -> Unit) {
     val type = LocalKinfolkTypography.current

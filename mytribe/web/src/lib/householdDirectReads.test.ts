@@ -33,6 +33,7 @@ const FIRESTORE_IMPORTERS = [
   'lib/firebase.ts',
   'lib/kinDirectRead.ts',
   'lib/messagesListener.ts',
+  'lib/unreadNotificationsListener.ts',
   'lib/vetClinicsDirectRead.ts',
 ];
 

@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NotificationsList } from './NotificationsList';
 import type { ListMyNotificationsResult, NotificationItemDto } from '../api/notificationsApi';
 import type { GetMyHomeResult } from '../api/types';
+import { liveUnreadOf, resetUnreadBadge, setLiveRows } from '../lib/unreadBadge';
 
 /**
  * The notifications list behind the bell (#1316).
@@ -87,6 +88,7 @@ function renderScreen(home: Partial<GetMyHomeResult> | null = { unreadNotificati
 }
 
 beforeEach(() => {
+  resetUnreadBadge();
   mocks.list.mockReset();
   mocks.markRead.mockReset();
   mocks.navigate.mockReset();
@@ -214,6 +216,42 @@ describe('NotificationsList tap (#1316)', () => {
     await open(/New KinTale/);
     expect(screen.getByRole('button', { name: /New KinTale/ })).toHaveAttribute('data-unread', 'false');
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/kintales', search: { tale: 'tale-2' } });
+  });
+});
+/**
+ * #1833: the bell's live count follows a tap at once, and a refused read puts
+ * the row back on it. The rows below are what the bell's listener holds.
+ */
+describe('NotificationsList tap and the live bell count (#1833)', () => {
+  const live = (ids: string[]) => ids.map((id) => ({ id, unread: true, archived: false, tribeId: 'fam1' }));
+  it('takes the tapped row off the bell before the server answers', async () => {
+    let settle: (v: { ok: true }) => void = () => undefined;
+    mocks.markRead.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+    mocks.list.mockResolvedValue(page(ROWS));
+    setLiveRows(live(['n-visit', 'n-batch', 'n-tale', 'n-kinfolk']));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 4 });
+    await userEvent.click(screen.getByRole('button', { name: /Visit confirmed/ }));
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 3 });
+    settle({ ok: true });
+  });
+  it('puts the row back on the bell when the server refuses the read', async () => {
+    mocks.markRead.mockRejectedValue(new Error('permission-denied'));
+    mocks.list.mockResolvedValue(page(ROWS));
+    setLiveRows(live(['n-visit', 'n-batch', 'n-tale', 'n-kinfolk']));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    await userEvent.click(screen.getByRole('button', { name: /New KinTale/ }));
+    await waitFor(() => expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 4 }));
+  });
+  it('leaves the bell alone for a row that was already read', async () => {
+    mocks.list.mockResolvedValue(page(ROWS));
+    setLiveRows(live(['n-visit', 'n-batch', 'n-tale', 'n-kinfolk']));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    await userEvent.click(screen.getByRole('button', { name: /^New invoice/ }));
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 4 });
   });
 });
 describe('#1831, #1898, #1913: each notice says what happened and opens what it is about', () => {
