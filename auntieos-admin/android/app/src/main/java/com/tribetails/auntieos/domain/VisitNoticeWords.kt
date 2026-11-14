@@ -61,9 +61,18 @@ fun visitNoticeOutcomeSentence(outcome: VisitNotifyOutcome, household: String): 
         "session_has_no_kinfolk" -> "No household was notified, because this visit is not linked to one."
         "session_has_no_routing_ids" -> "$name was not notified, because this visit is not linked to a booking."
         "dispatch_failed" -> "The notice to $household could not be sent."
+        // #2037: the server sends from the saved step; the card only stopped waiting.
+        "notice_pending" -> if (household.isBlank()) "Still checking who was told." else "Still checking whether $household was told."
         else -> "$name was not notified."
     }
 }
+
+/**
+ * #2037: what the card says while it waits for the server's record of a clock
+ * step, so the wait (up to 30 seconds on a cold start) is never a silent one.
+ */
+fun visitNoticeCheckingSentence(household: String): String =
+    if (household.isBlank()) "Checking who was told." else "Checking whether $household was told."
 
 /**
  * The reason a session cannot be routed at all, from the row alone, or null

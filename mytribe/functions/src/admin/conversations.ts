@@ -110,6 +110,70 @@ const ReplyArgs = z.object({
   body: z.string().min(1).max(MAX_MESSAGE_HTML),
 });
 
+/**
+ * #1874: tell the household the office replied. Before this a reply showed on
+ * the portal Messages page and nowhere else: no row on the notifications list,
+ * no bell count, nothing on their channels.
+ *
+ * Sent from the server, after the message is written, never from the client.
+ * Every admin client (web, Android, desktop) replies through this callable, so
+ * this one place covers all three. The household send gate, the operator's
+ * channel switches and the household's own preferences all apply inside the
+ * dispatcher. One notice per reply: `dedupeKey` is the message id, so a second
+ * reply a minute later is a second notice, and a retry of this one is not.
+ *
+ * Best-effort: the reply is already in the thread, and a notice that cannot be
+ * sent must not fail it or offer a retry that would post it twice.
+ */
+async function notifyHouseholdOfReply(args: {
+  kinfolkId: string;
+  kinfolkName: string;
+  messageId: string;
+  body: string;
+  uid: string;
+}): Promise<void> {
+  try {
+    const [{ resolveKinfolkUid }, { enqueueNotificationDetailed }, { messagePreview }] = await Promise.all([
+      import('../lib/resolveKinfolkUid.js'),
+      import('../notifications/dispatcher.js'),
+      import('../lib/richText.js'),
+    ]);
+    const recipientUid = await resolveKinfolkUid(args.kinfolkId);
+    if (!recipientUid) {
+      logEvent({
+        severity: 'info',
+        function: 'replyToConversation',
+        event: 'reply.notice.skipped',
+        uid: args.uid,
+        extra: { kinfolkId: args.kinfolkId, reason: 'household_has_no_portal_account' },
+      });
+      return;
+    }
+    await enqueueNotificationDetailed({
+      key: 'message.reply',
+      recipientUid,
+      data: {
+        kinfolkId: args.kinfolkId,
+        kinfolkName: args.kinfolkName,
+        messageId: args.messageId,
+        preview: messagePreview(args.body, 200),
+      },
+      actorUid: args.uid,
+      targetType: 'conversation',
+      targetId: args.kinfolkId,
+      dedupeKey: `message:${args.messageId}`,
+    });
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'replyToConversation',
+      event: 'notification.dispatch.failed',
+      uid: args.uid,
+      errorMessage: (err as Error)?.message,
+    });
+  }
+}
+
 export async function replyToConversationHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ok: true; kinfolkId: string; messageId: string }> {
@@ -160,6 +224,8 @@ export async function replyToConversationHandler(
   }).catch((err) => {
     logEvent({ severity: 'warn', function: 'replyToConversation', event: 'audit.write.failed', uid, errorMessage: (err as Error)?.message });
   });
+
+  await notifyHouseholdOfReply({ kinfolkId: args.kinfolkId, kinfolkName, messageId, body: args.body, uid });
 
   return { ok: true, kinfolkId: args.kinfolkId, messageId };
 }

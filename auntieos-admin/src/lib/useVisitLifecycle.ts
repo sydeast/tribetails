@@ -9,7 +9,7 @@ import {
   useVisitClockState,
   type LifecycleWriteState,
 } from './visitClockOutcome';
-import { visitNoticeOutcomeSentence } from './visitNotice';
+import { actionNotifiesHousehold, visitNoticeOutcomeSentence } from './visitNotice';
 import { type VisitLifecycleSession } from './visitLifecyclePatch';
 import { beginVisitTracking, endVisitTracking, stopVisitTracking } from './visitTracking';
 
@@ -161,11 +161,17 @@ export function useVisitLifecycle(
       // about the household yet. The push is still in flight; claiming it here
       // would be exactly the lie this hook exists to prevent.
       const moved = `${res.from} → ${res.status}.`;
-      settleVisitClockWrite(id, seq, { status: 'done', message: moved });
+      // #2037: while the server's answer about the household is on its way,
+      // the card says it is checking, so the wait is never a silent one.
+      const checking = actionNotifiesHousehold(action)
+        ? ` ${household === '' ? 'Checking who was told.' : `Checking whether ${household} was told.`}`
+        : '';
+      settleVisitClockWrite(id, seq, { status: 'done', message: `${moved}${checking}` });
       if (onWritten) onWritten();
 
-      // The second half, once the dispatch actually settles. It never rejects,
-      // so there is no catch: a failed push comes back as `notified: false`.
+      // The second half, once the server has recorded what the household was
+      // told (#2037: the server sends the notice from the saved step). It never
+      // rejects, so there is no catch.
       // Written to the STORE, not to this component, which may have unmounted.
       void res.notification.then((outcome) => {
         const said = visitNoticeOutcomeSentence(outcome, household, auntie);

@@ -536,9 +536,12 @@ const CATALOG_LIST: NotificationDef[] = [
     //   - Admin, ticked, household has a portal account: household and office,
     //     full or partial. The office copy is the same "Payment received" template
     //     the household gets, not an "Invoice Paid" message.
-    //   - Admin, unticked or no portal account: the office alone, and only when
-    //     this payment paid the invoice off. recordPayment enqueues with no
-    //     household uid. In the two-step flow it learns that by claiming the
+    //   - Admin, unticked, paying the invoice off (#1973): the office, and the
+    //     household on their notifications list only, nothing emailed, texted or
+    //     pushed (`listOnlyFor`). The record form says "the household is only
+    //     notified once it is paid off", and #866 had made that untrue.
+    //   - Admin, no portal account: the office alone, and only when this payment
+    //     paid the invoice off. In the two-step flow recordPayment learns that by claiming the
     //     `markInvoicePaid:<id>` owner stamp (`paymentAppliedNoticeClaim`) in its
     //     own transaction, where `<id>` is the `settledByInvoicePaymentId` both
     //     admin clients pass from step 1. No id, or another id, never claims.
@@ -756,6 +759,37 @@ const CATALOG_LIST: NotificationDef[] = [
     recipientResolver: 'businessAdmins',
     templates: { email: 'message.received', sms: 'message.received', push: 'message.received' },
     description: 'A kinfolk sent your business a message.',
+  },
+  {
+    // #1874: the other direction of `message.received`, one household at a
+    // time. The office answers a household's message from the conversation
+    // screen (`replyToConversation`), and the household hears about it on its
+    // notifications list and its own channels. Before this row a reply showed
+    // on the portal Messages page and nowhere else, so a household that was
+    // not looking at that page never knew one had come in.
+    //
+    // Gated like every household notice: the send gate
+    // (`householdNotificationsLive`), the operator's channel switches, and the
+    // household's own preferences. One notice per reply (`dedupeKey` is the
+    // message id), so two replies a minute apart are two notices.
+    key: 'message.reply',
+    // The label and description are the row on the household's notifications
+    // list (the dispatcher writes them as its title and description), so they
+    // are in the household's words.
+    label: 'You have a new message',
+    audience: 'kinfolk',
+    audiences: { kinfolk: true },
+    category: 'messages',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: {},
+    alwaysEnabled: false,
+    kinfolkFacing: true,
+    deliveryMode: 'trigger',
+    recipientResolver: 'kinfolkAcct',
+    templates: { email: 'message.reply', sms: 'message.reply', push: 'message.reply' },
+    description: 'A reply to you in Messages.',
+    householdTitle: 'New message from {business}',
+    householdDescription: 'When {business} writes to you in Messages.',
   },
   {
     // The other direction of `message.received`: the office writes one message

@@ -112,7 +112,7 @@ describe('#2162 the server-only list matches the server writers', () => {
   });
 
   it('keys declared ahead of a server writer stay open', () => {
-    for (const k of ['VISIT_ARRIVED', 'UPDATE_KINFOLK', 'CONTENT_KINTALE_SENT', 'NOTIFICATION_NOT_SENT']) {
+    for (const k of ['VISIT_COMPLETED', 'UPDATE_KINFOLK', 'CONTENT_KINTALE_SENT', 'NOTIFICATION_NOT_SENT']) {
       expect(isServerOnlyAuditEvent(k)).toBe(false);
     }
   });
@@ -173,15 +173,14 @@ function scanClient(files: string[], callSite: RegExp): ClientScan {
 
 const isTestPath = (p: string) => /[/\\](test|androidTest|commonTest|jvmTest)[/\\]/.test(p) || /\.test\.tsx?$/.test(p);
 
-/** Admin web: `logActivity({ actionType: '...' })`, and the visit taps' `VISIT_${action}`. */
+/**
+ * Admin web: `logActivity({ actionType: '...' })`. The visit taps' `VISIT_${action}`
+ * line left the web in #2037: the server writes it from the committed step.
+ */
 function scanAdminWeb(): ClientScan {
   const src = join(REPO, 'auntieos-admin', 'src');
   const files = walk(src, (p) => /\.tsx?$/.test(p) && !isTestPath(p));
-  const scan = scanClient(files, /(?<![\w"'`])logActivity\(/g);
-  const lifecycle = readFileSync(join(src, 'api', 'sessionsWrite.ts'), 'utf8');
-  const union = /export type VisitLifecycleAction = ([^;]+);/.exec(lifecycle)?.[1] ?? '';
-  for (const m of union.matchAll(/'([A-Z_]+)'/g)) scan.kinds.add(`VISIT_${m[1]}`);
-  return scan;
+  return scanClient(files, /(?<![\w"'`])logActivity\(/g);
 }
 
 /**
@@ -222,7 +221,7 @@ describe('#2162 no admin client sends a server-only kind', () => {
     expect(web.calls).toBeGreaterThanOrEqual(2);
     expect(android.calls).toBeGreaterThanOrEqual(35);
     expect(desktop.calls).toBeGreaterThanOrEqual(10);
-    for (const k of ['DRAFT_APPROVED', 'VISIT_ARRIVED', 'VISIT_UNDO_ARRIVAL']) expect(web.kinds).toContain(k);
+    expect(web.kinds).toContain('DRAFT_APPROVED');
     for (const k of ['RECORD_PAYMENT', 'VISIT_COMPLETED', 'SESSION_OFFICE_NOTE_ADDED', 'AUTH_PASSWORD_CHANGED']) {
       expect(android.kinds).toContain(k);
     }
@@ -236,12 +235,12 @@ describe('#2162 no admin client sends a server-only kind', () => {
     // a call that passes it on instead: the wrappers themselves, the data
     // sources' pass-through overrides, the booking screen's `audit` helper,
     // the draft approval's `audit` step (its caller's lambda is scanned), and
-    // the two kinds worked out elsewhere (`VISIT_${action}` on web and
-    // `clientHouseholdAuditAction` on desktop, both read above). A new file
+    // the kind worked out elsewhere (`clientHouseholdAuditAction` on desktop,
+    // read above). A new file
     // here is a new indirect sender: read where its kind comes from, make the
     // scan see it, then add the file.
     const D = 'auntieos-admin/web/composeApp/src/commonMain/kotlin/com/tribetails/auntieos/web';
-    expect([...web.indirect].sort()).toEqual(['auntieos-admin/src/api/activityLog.ts', 'auntieos-admin/src/api/sessionsWrite.ts']);
+    expect([...web.indirect].sort()).toEqual(['auntieos-admin/src/api/activityLog.ts']);
     expect([...android.indirect].sort()).toEqual([
       'auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/admin/AuditLog.kt',
       'auntieos-admin/android/app/src/main/java/com/tribetails/auntieos/data/repository/AuntieRepository.kt',
@@ -349,6 +348,24 @@ describe('#2162 logActivity refuses the server-only kinds from every sign-in', (
     },
   );
 
+  // #2037 review: an Auntie's installed apps did send these four after every
+  // clock tap. The server writes them now; her old build's copy is refused
+  // without a failure line, or every tap of hers would land in the digest.
+  it.each(['VISIT_ON_MY_WAY', 'VISIT_ARRIVED', 'VISIT_DEPARTED', 'VISIT_UNDO_ARRIVAL'])(
+    'an older build of an Auntie\'s apps sending %s gets the refusal and adds nothing to the digest',
+    async (actionType) => {
+      for (const [uid, claims] of [['auntie-1', AUNTIE], ['owner-1', OWNER]] as const) {
+        mocks.writeAuditEntryMock.mockClear();
+        await expect(wrapped(req({ actionType }, uid, claims))).rejects.toMatchObject({
+          code: 'permission-denied',
+          message: SERVER_ONLY_EVENT_REFUSAL,
+        });
+        expect(mocks.writeAuditEntryMock).not.toHaveBeenCalled();
+      }
+      expect(sentry.captureFunctionError).not.toHaveBeenCalled();
+    },
+  );
+
   it('from an Auntie, the same refusal still writes the failure line', async () => {
     await expect(
       wrapped(req({ actionType: 'NOTIFICATION_DISPATCHED' }, 'auntie-1', AUNTIE)),
@@ -397,7 +414,8 @@ describe('#2162 logActivity refuses the server-only kinds from every sign-in', (
 
 describe('#2162 every other kind the owner writes still lands', () => {
   it('the client inventory is not empty', () => {
-    expect(clientKinds.length).toBeGreaterThan(40);
+    // #2037 took the four clock steps off the clients (the server writes them).
+    expect(clientKinds.length).toBeGreaterThan(35);
   });
 
   it.each(clientKinds)('writes %s for the owner', async (actionType) => {
@@ -412,7 +430,7 @@ describe('#2162 every other kind the owner writes still lands', () => {
   });
 
   it('an Auntie still writes her own lines', async () => {
-    await logActivityHandler(req({ actionType: 'VISIT_ARRIVED' }, 'auntie-1', AUNTIE));
-    expect(mocks.writeAuditEntryMock.mock.calls[0][0].event).toBe('VISIT_ARRIVED');
+    await logActivityHandler(req({ actionType: 'VISIT_COMPLETED' }, 'auntie-1', AUNTIE));
+    expect(mocks.writeAuditEntryMock.mock.calls[0][0].event).toBe('VISIT_COMPLETED');
   });
 });

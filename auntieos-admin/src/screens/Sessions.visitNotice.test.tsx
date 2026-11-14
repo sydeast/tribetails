@@ -208,7 +208,7 @@ describe('the outcome survives the card moving to Active', () => {
     const view = render(<Sessions onSelect={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: /^OMW$/ }));
     await user.click(screen.getByRole('button', { name: /yes, mark it on the way/i }));
-    expect(await screen.findByText('SCHEDULED → ON_MY_WAY.')).toBeInTheDocument();
+    expect(await screen.findByText('SCHEDULED → ON_MY_WAY. Checking whether Dre East was told.')).toBeInTheDocument();
 
     // The reload the write asks for: the board goes to its loading row, which
     // unmounts every card...

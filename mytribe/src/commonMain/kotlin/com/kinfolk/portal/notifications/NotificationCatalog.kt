@@ -141,6 +141,20 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
         ),
     ),
     CategoryDef(
+        // #1874: a reply from the office used to reach the Messages page only.
+        id = "messages",
+        title = "Messages",
+        description = "Messages from {business} to your household.",
+        keys = listOf(
+            NotificationKey(
+                key = "message.reply",
+                title = "A new message for you",
+                description = "When {business} writes to you in Messages.",
+                allowedChannels = ALL,
+            ),
+        ),
+    ),
+    CategoryDef(
         id = "invoice",
         title = "Invoices & Payments",
         description = "Invoice updates, reminders, and payment confirmations.",

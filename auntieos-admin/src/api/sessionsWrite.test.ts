@@ -20,12 +20,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  * the old negative is kept, unchanged and just as load-bearing, for COMPLETE
  * and CANCEL: those never came through this module and still do not.
  */
-const { doc, updateDoc, setDoc } = vi.hoisted(() => ({
-  doc: vi.fn((..._args: unknown[]) => ({ __ref: true }) as unknown),
-  updateDoc: vi.fn(),
-  setDoc: vi.fn(),
-}));
-vi.mock('firebase/firestore', () => ({ doc, updateDoc, setDoc }));
+const { doc, updateDoc, setDoc, onSnapshot, unsubscribe } = vi.hoisted(() => {
+  const unsubscribe = vi.fn();
+  return {
+    doc: vi.fn((..._args: unknown[]) => ({ __ref: true }) as unknown),
+    updateDoc: vi.fn(),
+    setDoc: vi.fn(),
+    unsubscribe,
+    // #2037: the read of the server's record of what the household was told.
+    onSnapshot: vi.fn((..._args: unknown[]) => unsubscribe),
+  };
+});
+vi.mock('firebase/firestore', () => ({ doc, updateDoc, setDoc, onSnapshot }));
 vi.mock('../lib/firebase', () => ({ db: { __db: true } }));
 
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
@@ -36,6 +42,9 @@ import {
   setVisitLifecycle,
   updateKinCareSession,
   VISIT_LIFECYCLE_ILLEGAL_CODE,
+  VISIT_NOTICE_WAIT_MS,
+  visitStepNoticeId,
+  visitStepRecordOutcome,
 } from './sessionsWrite';
 
 const NOW = '2026-09-12T14:02:00Z';
@@ -57,6 +66,8 @@ beforeEach(() => {
   updateDoc.mockReset();
   updateDoc.mockResolvedValue(undefined);
   setDoc.mockReset();
+  onSnapshot.mockClear();
+  unsubscribe.mockClear();
   call.mockReset();
   call.mockResolvedValue({ ok: true, dispatchIds: ['d1'], suppressed: false });
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -137,167 +148,104 @@ describe('patchVisitLifecycle writes the status straight to Firestore', () => {
   });
 });
 
-describe('the audit and the household push run AFTER the write, and cannot fail it', () => {
-  it('fires logActivity with Android actionType, after the patch has resolved', async () => {
-    const order: string[] = [];
-    updateDoc.mockImplementation(async () => {
-      order.push('updateDoc');
-    });
-    call.mockImplementation(async (name: string) => {
-      order.push(`call:${name}`);
-      return { ok: true, dispatchIds: ['d1'], suppressed: false };
-    });
+/**
+ * #2037: the line and the household notice are the SERVER's, sent from the
+ * committed write. This module sends neither, so a reload a second after the
+ * tap cannot lose them. It only reads the server's record of what the household
+ * was told, for the sentence on the card.
+ */
+describe('after the write, the browser sends nothing and reads the server record (#2037)', () => {
+  /** Deliver the server's record to the live read the module opened. */
+  function record(data: Record<string, unknown> | null) {
+    const [, next] = onSnapshot.mock.calls.at(-1) as [unknown, (snap: unknown) => void];
+    next({ exists: () => data !== null, data: () => data });
+  }
 
+  it('calls neither logActivity nor dispatchVisitNotification, for any step', async () => {
+    for (const [session, action] of [
+      [SCHEDULED_SESSION, 'ON_MY_WAY'],
+      [{ ...SCHEDULED_SESSION, status: 'ON_MY_WAY' }, 'ARRIVED'],
+      [ARRIVED_SESSION, 'DEPARTED'],
+      [ARRIVED_SESSION, 'UNDO_ARRIVAL'],
+    ] as const) {
+      await patchVisitLifecycle(session, action, { nowIso: NOW });
+    }
+    expect(callNames()).toEqual([]);
+  });
+
+  it('reads the record named by the session, the notice and the stamped time', async () => {
     const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
-    await res.notification;
-
-    expect(order[0]).toBe('updateDoc');
-    expect(order).toContain('call:logActivity');
-    expect(order).toContain('call:dispatchVisitNotification');
-    expect(call).toHaveBeenCalledWith('logActivity', {
-      actionType: 'VISIT_DEPARTED',
-      description: 'Marked the departure: arrived to departed',
-      status: 'SUCCESS',
-      targetId: 's1',
-      targetCollection: 'kin_care_sessions',
-      // #1820: the opened line used to read "written with no payload".
-      payload: { visitId: 's1', action: 'DEPARTED', from: 'ARRIVED', to: 'DEPARTED', source: 'web' },
-    });
-    const sent = call.mock.calls.find((c: unknown[]) => c[0] === 'logActivity')![1] as Record<string, unknown>;
-    expect(String(sent['description'])).not.toContain('s1');
-    // #1820: who did it is the server's answer. The client names no role and no actor.
-    expect(Object.keys(sent).filter((k) => /role|actor/i.test(k))).toEqual([]);
-  });
-
-  it('routes the push on the envelope pair, preferring it over a legacy bookingId', async () => {
-    const res = await patchVisitLifecycle(
-      { ...ARRIVED_SESSION, sourceBookingId: 'legacy1' },
-      'DEPARTED',
-      { nowIso: NOW },
-    );
-    await res.notification;
-    expect(call).toHaveBeenCalledWith('dispatchVisitNotification', {
-      familyId: 'fam1',
-      batchId: 'batch1',
-      visitId: 'visit1',
-      event: 'departed',
-      eventAtMs: Date.parse(NOW),
-    });
-  });
-
-  it('#832: sends the stamped time, so a re-arrival is a new notification and a retry of one tap is not', async () => {
-    const eventAtOf = () =>
-      (call.mock.calls.filter((c) => c[0] === 'dispatchVisitNotification').at(-1)?.[1] as { eventAtMs?: number })
-        ?.eventAtMs;
-    const onTheWay = { ...SCHEDULED_SESSION, status: 'ON_MY_WAY', onMyWayAt: '2026-09-12T13:40:00Z' };
-
-    await (await patchVisitLifecycle(onTheWay, 'ARRIVED', { nowIso: '2026-09-12T14:02:00Z' })).notification;
-    const first = eventAtOf();
-    await (await patchVisitLifecycle(onTheWay, 'ARRIVED', { nowIso: '2026-09-12T14:05:00Z' })).notification;
-    const second = eventAtOf();
-    await (await patchVisitLifecycle(onTheWay, 'ARRIVED', { nowIso: '2026-09-12T14:02:00Z' })).notification;
-    const retry = eventAtOf();
-
-    expect(first).toBe(Date.parse('2026-09-12T14:02:00Z'));
-    expect(second).toBe(Date.parse('2026-09-12T14:05:00Z'));
-    expect(retry).toBe(first);
-  });
-
-  it('falls back to the legacy flat bookingId when there is no envelope', async () => {
-    const res = await patchVisitLifecycle(
-      { _id: 's1', status: 'ARRIVED', kinfolkId: 'fam1', sourceBookingId: 'legacy1' },
-      'DEPARTED',
-      { nowIso: NOW },
-    );
-    await res.notification;
-    expect(call).toHaveBeenCalledWith('dispatchVisitNotification', {
-      familyId: 'fam1',
-      bookingId: 'legacy1',
-      event: 'departed',
-      eventAtMs: Date.parse(NOW),
-    });
-  });
-
-  // THE CENTRAL CLAIM: the Auntie IS at the door. Losing that because a push
-  // could not be enqueued would be the worse outcome, which is why Android
-  // wraps both of these in `runCatching` and why neither is awaited in front of
-  // the write here.
-  it('an audit that throws does not fail the tap', async () => {
-    call.mockImplementation(async (name: string) => {
-      if (name === 'logActivity') throw new Error('logActivity unavailable');
-      return { ok: true, dispatchIds: ['d1'], suppressed: false };
-    });
-    const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
-    expect(res.changed).toBe(true);
+    expect(doc).toHaveBeenLastCalledWith({ __db: true }, 'visit_step_notices', `s1__departed__${Date.parse(NOW)}`);
+    expect(visitStepNoticeId('s1', 'departed', Date.parse(NOW))).toBe(`s1__departed__${Date.parse(NOW)}`);
+    record({ notified: true, reason: null });
     await expect(res.notification).resolves.toEqual({ notified: true, notifySkipped: null });
+    expect(unsubscribe).toHaveBeenCalled();
   });
 
-  it('a dispatch that throws does not fail the tap, and names the skip', async () => {
-    call.mockImplementation(async (name: string) => {
-      if (name === 'dispatchVisitNotification') throw new Error('functions/internal');
-      return { ok: true };
-    });
+  it('waits past a record that does not exist yet', async () => {
     const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
+    record(null);
+    record({ notified: false, reason: 'household_notices_off' });
+    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: 'household_notices_off' });
+  });
+
+  it.each(['household_has_no_portal_account', 'household_notices_off', 'household_prefs_suppressed', 'already_notified'])(
+    'passes the recorded reason %s through',
+    async (reason) => {
+      const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
+      record({ notified: false, reason });
+      await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: reason });
+    },
+  );
+
+  it('a record with no reason is "not sent", never a guess', () => {
+    expect(visitStepRecordOutcome({ notified: false })).toEqual({ notified: false, notifySkipped: 'not_sent' });
+  });
+
+  it('no record in time is "still checking", not "not told", and the read is closed', async () => {
+    vi.useFakeTimers();
+    try {
+      const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
+      vi.advanceTimersByTime(VISIT_NOTICE_WAIT_MS);
+      await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: 'notice_pending' });
+      expect(unsubscribe).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a refused read is "still checking" and never fails the tap', async () => {
+    const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
+    const [, , fail] = onSnapshot.mock.calls.at(-1) as [unknown, unknown, (err: Error) => void];
+    fail(new Error('Missing or insufficient permissions.'));
     expect(res.changed).toBe(true);
-    await expect(res.notification).resolves.toEqual({
-      notified: false,
-      notifySkipped: 'dispatch_failed',
-    });
+    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: 'notice_pending' });
   });
 
-  it('both failing together still leaves the visit clocked', async () => {
-    call.mockRejectedValue(new Error('everything is down'));
-    const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
-    expect(updateDoc).toHaveBeenCalledTimes(1);
-    expect(res.status).toBe('DEPARTED');
-    await expect(res.notification).resolves.toMatchObject({ notified: false });
-  });
-
-  it('an undo tells nobody: no dispatch at all', async () => {
+  it('an undo tells nobody and reads nothing', async () => {
     const res = await patchVisitLifecycle(ARRIVED_SESSION, 'UNDO_ARRIVAL', { nowIso: NOW });
-    await res.notification;
-    expect(callNames()).not.toContain('dispatchVisitNotification');
-    await expect(res.notification).resolves.toEqual({
-      notified: false,
-      notifySkipped: 'no_event_for_action',
-    });
+    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: 'no_event_for_action' });
+    expect(onSnapshot).not.toHaveBeenCalled();
   });
 
-  it('a session with no routing ids names why, rather than implying a push', async () => {
-    const res = await patchVisitLifecycle(
-      { _id: 's1', status: 'ARRIVED', kinfolkId: 'fam1' },
-      'DEPARTED',
-      { nowIso: NOW },
-    );
-    await expect(res.notification).resolves.toEqual({
-      notified: false,
-      notifySkipped: 'session_has_no_routing_ids',
+  it('a session with no routing ids names why at once, as the server records it', async () => {
+    const res = await patchVisitLifecycle({ _id: 's1', status: 'ARRIVED', kinfolkId: 'fam1' }, 'DEPARTED', {
+      nowIso: NOW,
     });
-    expect(callNames()).not.toContain('dispatchVisitNotification');
+    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: 'session_has_no_routing_ids' });
+    expect(onSnapshot).not.toHaveBeenCalled();
   });
 
-  // #1794: a server that predates `reason` still says `suppressed`. The web
-  // on the main channel talks to production functions until a release, so
-  // this must say "not sent" without guessing why.
-  it('a suppressed dispatch with no reason is reported as not sent', async () => {
-    call.mockResolvedValue({ ok: true, dispatchIds: [], suppressed: true });
-    const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
-    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: 'not_sent' });
+  it('a session linked to no household names that', async () => {
+    const res = await patchVisitLifecycle({ ...ARRIVED_SESSION, kinfolkId: '' }, 'DEPARTED', { nowIso: NOW });
+    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: 'session_has_no_kinfolk' });
   });
-  it.each([
-    'household_has_no_portal_account',
-    'household_notices_off',
-    'household_prefs_suppressed',
-    'already_notified',
-  ])('passes the server reason %s through', async (reason) => {
-    call.mockResolvedValue({ ok: true, dispatchIds: [], suppressed: true, reason });
-    const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
-    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: reason });
-  });
-  it('a delivered dispatch is notified, whatever else the answer carries', async () => {
-    call.mockResolvedValue({ ok: true, dispatchIds: ['n1'], suppressed: false, reason: null });
-    const res = await patchVisitLifecycle(ARRIVED_SESSION, 'DEPARTED', { nowIso: NOW });
-    await expect(res.notification).resolves.toEqual({ notified: true, notifySkipped: null });
+
+  it('a legacy flat bookingId is routable, so the record is read', async () => {
+    await patchVisitLifecycle({ _id: 's1', status: 'ARRIVED', kinfolkId: 'fam1', sourceBookingId: 'legacy1' }, 'DEPARTED', {
+      nowIso: NOW,
+    });
+    expect(onSnapshot).toHaveBeenCalledTimes(1);
   });
 });
 

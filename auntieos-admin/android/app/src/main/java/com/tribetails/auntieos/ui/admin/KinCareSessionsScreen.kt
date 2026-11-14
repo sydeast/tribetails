@@ -317,7 +317,14 @@ fun KinCareSessionsScreen(
                 household = householdOf(session),
                 onWritten = { err ->
                     scope.launch {
-                        toastMessage = err?.let { "Couldn't update: ${it.message}" } ?: msg
+                        // #2037: the server's record of what the household was
+                        // told can take a while; the toast says it is checking.
+                        val checking = if (com.tribetails.auntieos.domain.visitRoutingSkip(session) == null) {
+                            " " + com.tribetails.auntieos.domain.visitNoticeCheckingSentence(householdOf(session))
+                        } else {
+                            ""
+                        }
+                        toastMessage = err?.let { "Couldn't update: ${it.message}" } ?: "$msg$checking"
                         toastKind = if (err != null) ToastKind.Error else ToastKind.Success
                         toastVisible = true
                     }

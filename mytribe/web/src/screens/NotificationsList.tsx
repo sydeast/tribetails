@@ -99,6 +99,9 @@ export function NotificationsList() {
       case 'tale':
         void navigate({ to: '/kintales', search: { tale: target.taleId } });
         break;
+      case 'messages':
+        void navigate({ to: '/messages' });
+        break;
       case 'none':
         break;
     }

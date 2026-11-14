@@ -510,6 +510,10 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
     if (recipient.businessRoster === true && channels.email && businessEmailCarried) {
       channels = { ...channels, email: false };
     }
+    // #1973: this copy is a notifications-list record only (see `listOnlyFor`).
+    if (args.listOnlyFor?.includes(recipient.uid) === true) {
+      channels = { ...channels, email: false, sms: false, push: false };
+    }
     const recordOnly = !hasAnyChannel(channels);
     if (recordOnly) {
       logEvent({

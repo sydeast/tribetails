@@ -107,7 +107,8 @@ class NotificationSettingsScreenTest {
         onNodeWithTag("notif-jump").assertExists()
         val chips = onAllNodes(isJumpChip()).fetchSemanticsNodes()
             .map { it.config[SemanticsProperties.TestTag].removePrefix("notif-jump-") }
-        assertEquals(listOf("visit", "kintale", "invoice", "schedule", "home", "marketing"), chips)
+        // #1874: the fallback lists Messages, as the live catalog does.
+        assertEquals(listOf("visit", "kintale", "messages", "invoice", "schedule", "home", "marketing"), chips)
         onNodeWithTag("notif-jump-visit").assertTextEquals("Visit Updates")
         onNodeWithTag("notif-jump-schedule").assertTextEquals("Schedule Reminders")
         onNodeWithTag("notif-jump-marketing").assertTextEquals("Newsletters & Community")

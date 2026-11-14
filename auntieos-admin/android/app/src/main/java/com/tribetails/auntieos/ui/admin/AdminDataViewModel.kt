@@ -667,7 +667,12 @@ class AdminDataViewModel(
 
     /**
      * #1794: an Auntie Time clock tap (On The Way, Arrived): patch the session,
-     * then tell the household, then say what the household was told.
+     * then say what the household was told.
+     *
+     * #2037: the server tells the household, and writes the Activity Log line,
+     * from the committed patch. This card never wrote that line at all before,
+     * and a tap whose patch sat in the offline queue told nobody. It now reads
+     * the server's record of the step ([VisitNotifier.awaitStepNotice]).
      *
      * THE SCREEN USED TO SAY "kinfolk notified" AND NOTIFY NOBODY. Its clock
      * buttons went through [patchKinCareSession], which writes the status and
@@ -701,7 +706,7 @@ class AdminDataViewModel(
                 ?.let { com.tribetails.auntieos.domain.VisitNotifyOutcome(notified = false, notifySkipped = it) }
                 ?: try {
                     com.tribetails.auntieos.domain.visitNotifyOutcomeOf(
-                        visitNotifier().notify(event, session, eventAtIso = eventAtIso),
+                        visitNotifier().awaitStepNotice(session.id, event, eventAtIso),
                     )
                 } catch (e: Exception) {
                     e.rethrowIfCancellation()
