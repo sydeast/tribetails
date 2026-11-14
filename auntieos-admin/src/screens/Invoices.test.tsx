@@ -61,6 +61,10 @@ const { useCollection, useDocById } = vi.hoisted(() => ({
 vi.mock('../lib/firestore', () => ({ useCollection, useDocById }));
 // #1744: the detail sheet's visit rows name their KinCare off the catalog, a
 // `business_settings` read; the empty catalog keeps it off the network.
+// #1966: the business's Payment terms setting, unset (due on receipt).
+vi.mock('../lib/useInvoiceTermsSetting', () => ({
+  useInvoiceTermsSetting: () => ({ status: 'ready', paymentTerms: 'due_on_receipt', timeZone: 'America/Chicago', retry: () => {} }),
+}));
 vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: {}, serviceDurations: {}, timeBlocks: [] }),
 }));

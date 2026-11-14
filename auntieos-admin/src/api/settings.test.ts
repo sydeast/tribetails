@@ -134,6 +134,15 @@ describe('mergeBusinessSettings', () => {
       mergeBusinessSettings({ requireArrivalDepartureVerification: 'true' as unknown as boolean }).requireArrivalDepartureVerification,
     ).toBe(false);
   });
+  it('#1966: reads Payment terms as due on receipt unless a stored option says otherwise', () => {
+    expect(mergeBusinessSettings(undefined).invoicePaymentTerms).toBe('due_on_receipt');
+    expect(DEFAULT_BUSINESS_SETTINGS.invoicePaymentTerms).toBe('due_on_receipt');
+    expect(mergeBusinessSettings({ invoicePaymentTerms: 'net_14_after_last_visit' }).invoicePaymentTerms).toBe(
+      'net_14_after_last_visit',
+    );
+    expect(mergeBusinessSettings({ invoicePaymentTerms: 'custom' }).invoicePaymentTerms).toBe('due_on_receipt');
+    expect(mergeBusinessSettings({ invoicePaymentTerms: null }).invoicePaymentTerms).toBe('due_on_receipt');
+  });
   it('#2123: reads an absent kinTaleRequired as OFF (ruling 2026-11-13), the server reading; only a stored true is on', () => {
     expect(mergeBusinessSettings({}).kinTaleRequired).toBe(false);
     expect(mergeBusinessSettings(undefined).kinTaleRequired).toBe(false);

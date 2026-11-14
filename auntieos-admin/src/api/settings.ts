@@ -3,6 +3,7 @@ import { db } from '../lib/firebase';
 import { arr } from '../lib/coerce';
 import { normalizeHomeSections } from '../lib/settingsFormat';
 import type { TagDef } from '../lib/tags/model';
+import { DEFAULT_PAYMENT_TERMS, paymentTermsSettingOf, type InvoiceTermsCode } from '../lib/invoiceTerms';
 
 /**
  * Business Settings (read-only overview).
@@ -447,6 +448,12 @@ export interface BusinessSettings {
    */
   kinTaleRequired: boolean;
   /**
+   * #1966: Settings > Invoices > Payment terms, the terms every new invoice
+   * starts on. Absent or not one of the options reads as due on receipt, as on
+   * the server (`paymentTermsSettingOf`).
+   */
+  invoicePaymentTerms: InvoiceTermsCode;
+  /**
    * ISSUE #582: how close to the household counts as arrived, in metres. Only
    * meaningful while `requireArrivalDepartureVerification` is on — it is that
    * switch's threshold, not a second switch, so there is no "off" value here.
@@ -627,6 +634,8 @@ export const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   // reads it (`kinTaleRequiredFrom` in functions/src/lib/kinTaleRequirement.ts):
   // only an explicit true is on.
   kinTaleRequired: false,
+  // #1966: every business starts on due on receipt.
+  invoicePaymentTerms: DEFAULT_PAYMENT_TERMS,
   // 150 m. Android's dormant geofence constants are 50 m and 100 m, which are
   // too tight for a fix taken indoors, where an Auntie usually is when she
   // presses the button. See ARRIVAL_RADIUS_DEFAULT_METERS in
@@ -884,6 +893,7 @@ export function mergeBusinessSettings(raw: RawSettings | undefined): BusinessSet
     // #2123: only a stored `true` is on, the server's reading
     // (`kinTaleRequiredFrom` in functions/src/lib/kinTaleRequirement.ts).
     kinTaleRequired: r.kinTaleRequired === true,
+    invoicePaymentTerms: paymentTermsSettingOf(r.invoicePaymentTerms),
     arrivalRadiusMeters: (r.arrivalRadiusMeters as number) ?? d.arrivalRadiusMeters,
     autoStartTrackingOnVisitStart:
       (r.autoStartTrackingOnVisitStart as boolean) ?? d.autoStartTrackingOnVisitStart,

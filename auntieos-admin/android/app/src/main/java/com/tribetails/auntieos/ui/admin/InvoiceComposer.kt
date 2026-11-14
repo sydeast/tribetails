@@ -506,6 +506,29 @@ fun composerCreateLabel(kind: InvoiceCreateKind, visitCount: Int): String {
     return "$verb for $visitCount visit${if (visitCount == 1) "" else "s"}"
 }
 
+/** #1966: said beside Terms when visit-relative terms have no visits to count from. */
+const val NO_VISITS_DUE_ON_RECEIPT = "There are no visits on this invoice, so it is due on receipt."
+
+/** #1966 review: said beside Terms when the terms work out to a day before the invoice date. */
+const val TERMS_BEFORE_INVOICE_DATE = "These terms work out to a day before the invoice date, so it is due on receipt."
+/** #1966: said beside Terms, and as the button's reason, while the Payment terms setting loads. */
+const val TERMS_LOADING = "Loading your payment terms…"
+
+/** #1966: said when the Payment terms setting could not be read. */
+const val TERMS_LOAD_FAILED = "Your payment terms could not be loaded, so this invoice starts on due on receipt."
+
+/**
+ * #1966: what New invoice needs from Settings: the Payment terms a new invoice
+ * starts on and the zone its visit days are counted in. [loading] until the
+ * read lands; [failed] keeps the defaults (due on receipt, America/Chicago).
+ */
+data class InvoiceTermsSettingState(
+    val loading: Boolean = false,
+    val failed: Boolean = false,
+    val paymentTerms: InvoiceTermsCode = InvoiceTermsCode.DUE_ON_RECEIPT,
+    val timeZone: String = com.tribetails.auntieos.domain.TERMS_FALLBACK_TIME_ZONE,
+)
+
 /** What the due-date field is doing, and why it is not typeable. Said once. */
 fun composerTermsNote(
     termsCode: InvoiceTermsCode,
@@ -516,6 +539,12 @@ fun composerTermsNote(
 ): String = when {
     termsCode == InvoiceTermsCode.CUSTOM -> "These terms leave the due date to you."
     due.dueDate == null -> due.problem.orEmpty()
+    // #1966 review: a bill is never due before its own date.
+    due.beforeInvoiceDate && due.isPast && !quote -> "$TERMS_BEFORE_INVOICE_DATE The invoice date has already passed, " +
+        "so this invoice is overdue the moment it goes out."
+    due.beforeInvoiceDate -> TERMS_BEFORE_INVOICE_DATE
+    // #1966: a visit rule on an invoice with no visits is due on receipt.
+    due.appliedCode != termsCode -> NO_VISITS_DUE_ON_RECEIPT
     due.isPast && quote ->
         "Worked out from the terms, counting from ${due.basisDay ?: invoiceDate}. That date has already passed."
     due.isPast ->

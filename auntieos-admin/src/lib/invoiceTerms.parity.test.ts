@@ -42,6 +42,13 @@ const SHARED_EXPORTS: readonly string[] = [
   'addDays',
   'lastServiceDay',
   'resolveDueDate',
+  // #1966
+  'PAYMENT_TERMS_SETTING_CODES',
+  'DEFAULT_PAYMENT_TERMS',
+  'TERMS_FALLBACK_TIME_ZONE',
+  'paymentTermsSettingOf',
+  'serviceDayOf',
+  'firstServiceDay',
 ];
 
 /**

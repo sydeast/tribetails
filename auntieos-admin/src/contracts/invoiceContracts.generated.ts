@@ -140,7 +140,7 @@ export interface CreateInvoiceArgs {
   terms?: string;
   /** Optional in the request; the server defaults it to ''. */
   dueDate?: string;
-  termsCode?: 'due_on_receipt' | 'net_7' | 'net_14' | 'net_30' | 'due_on_last_visit' | 'net_7_after_last_visit' | 'net_14_after_last_visit' | 'custom';
+  termsCode?: 'due_on_receipt' | 'due_on_first_visit' | 'due_on_last_visit' | 'net_1_after_last_visit' | 'net_2_after_last_visit' | 'net_3_after_last_visit' | 'net_4_after_last_visit' | 'net_5_after_last_visit' | 'net_6_after_last_visit' | 'net_7_after_last_visit' | 'net_14_after_last_visit' | 'net_30_after_last_visit' | 'net_1_before_first_visit' | 'net_2_before_first_visit' | 'net_3_before_first_visit' | 'net_4_before_first_visit' | 'net_5_before_first_visit' | 'net_6_before_first_visit' | 'net_7_before_first_visit' | 'net_14_before_first_visit' | 'net_30_before_first_visit' | 'net_7' | 'net_14' | 'net_30' | 'custom';
   /** Optional in the request; the server defaults it to ''. */
   discount?: string;
   total: number;
@@ -194,7 +194,7 @@ export interface CreateQuoteArgs {
   terms?: string;
   /** Optional in the request; the server defaults it to ''. */
   dueDate?: string;
-  termsCode?: 'due_on_receipt' | 'net_7' | 'net_14' | 'net_30' | 'due_on_last_visit' | 'net_7_after_last_visit' | 'net_14_after_last_visit' | 'custom';
+  termsCode?: 'due_on_receipt' | 'due_on_first_visit' | 'due_on_last_visit' | 'net_1_after_last_visit' | 'net_2_after_last_visit' | 'net_3_after_last_visit' | 'net_4_after_last_visit' | 'net_5_after_last_visit' | 'net_6_after_last_visit' | 'net_7_after_last_visit' | 'net_14_after_last_visit' | 'net_30_after_last_visit' | 'net_1_before_first_visit' | 'net_2_before_first_visit' | 'net_3_before_first_visit' | 'net_4_before_first_visit' | 'net_5_before_first_visit' | 'net_6_before_first_visit' | 'net_7_before_first_visit' | 'net_14_before_first_visit' | 'net_30_before_first_visit' | 'net_7' | 'net_14' | 'net_30' | 'custom';
   /** Optional in the request; the server defaults it to ''. */
   discount?: string;
   total: number;
@@ -1191,7 +1191,7 @@ export interface UpdateInvoiceArgsPatch {
   date?: string;
   dueDate?: string;
   terms?: string;
-  termsCode?: 'due_on_receipt' | 'net_7' | 'net_14' | 'net_30' | 'due_on_last_visit' | 'net_7_after_last_visit' | 'net_14_after_last_visit' | 'custom';
+  termsCode?: 'due_on_receipt' | 'due_on_first_visit' | 'due_on_last_visit' | 'net_1_after_last_visit' | 'net_2_after_last_visit' | 'net_3_after_last_visit' | 'net_4_after_last_visit' | 'net_5_after_last_visit' | 'net_6_after_last_visit' | 'net_7_after_last_visit' | 'net_14_after_last_visit' | 'net_30_after_last_visit' | 'net_1_before_first_visit' | 'net_2_before_first_visit' | 'net_3_before_first_visit' | 'net_4_before_first_visit' | 'net_5_before_first_visit' | 'net_6_before_first_visit' | 'net_7_before_first_visit' | 'net_14_before_first_visit' | 'net_30_before_first_visit' | 'net_7' | 'net_14' | 'net_30' | 'custom';
   kinfolkName?: string;
   client?: string;
   address?: string;

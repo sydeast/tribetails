@@ -347,15 +347,21 @@ class InvoiceComposerTest {
     }
 
     @Test
-    fun `service-relative terms with nothing ticked say what is missing`() {
+    fun `visit terms with nothing ticked are due on receipt, so the reason is the missing work`() {
+        // #1966: no visits to count from is due on receipt, not a dead end.
         val reason = blocked(
             termsCode = InvoiceTermsCode.NET_14_AFTER_LAST_VISIT,
             serviceDates = emptyList(),
             selectedCount = 0,
             money = ComposerMoney(emptyList(), 0L, 0L, null),
         )
-        assertNotNull(reason)
-        assertTrue(reason!!.contains("no visits on this invoice yet"))
+        assertEquals("Tick the work this invoice covers, or add a line of your own.", reason)
+    }
+    @Test
+    fun `#1966 visit terms with no visits say they are due on receipt`() {
+        val due = resolveDueDate(InvoiceTermsCode.NET_7_BEFORE_FIRST_VISIT, "2026-08-19", emptyList(), "2026-08-19")
+        assertEquals("2026-08-19", due.dueDate)
+        assertEquals(NO_VISITS_DUE_ON_RECEIPT, composerTermsNote(InvoiceTermsCode.NET_7_BEFORE_FIRST_VISIT, due, "2026-08-19"))
     }
 
     @Test
@@ -409,19 +415,20 @@ class InvoiceComposerTest {
 
     @Test
     fun `the terms note says where the date came from and never moves a past one`() {
+        // Dated Jul 21 and sent later: due Jul 27, already behind Aug 19.
         val past = resolveDueDate(
-            InvoiceTermsCode.DUE_ON_LAST_VISIT,
-            "2026-08-19",
-            listOf("2026-08-11"),
+            InvoiceTermsCode.NET_7_AFTER_LAST_VISIT,
+            "2026-07-21",
+            listOf("2026-07-20"),
             "2026-08-19",
         )
-        val note = composerTermsNote(InvoiceTermsCode.DUE_ON_LAST_VISIT, past, "2026-08-19")
-        assertTrue(note.contains("counting from 2026-08-11"))
+        val note = composerTermsNote(InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, past, "2026-07-21")
+        assertTrue(note.contains("counting from 2026-07-20"))
         assertTrue(note.contains("already"))
         assertTrue(note.contains("overdue the moment it goes out"))
         // #2092: a quote is not a bill, so a past date does not make it overdue.
-        val quoteNote = composerTermsNote(InvoiceTermsCode.DUE_ON_LAST_VISIT, past, "2026-08-19", quote = true)
-        assertEquals("Worked out from the terms, counting from 2026-08-11. That date has already passed.", quoteNote)
+        val quoteNote = composerTermsNote(InvoiceTermsCode.NET_7_AFTER_LAST_VISIT, past, "2026-07-21", quote = true)
+        assertEquals("Worked out from the terms, counting from 2026-07-20. That date has already passed.", quoteNote)
     }
 
     @Test
@@ -442,6 +449,20 @@ class InvoiceComposerTest {
         )
         assertEquals("1 visit is back in this household's unbilled work.", exclusionNotice(1, false, quote = true))
         assertEquals("2 visits are back in this household's un-invoiced work.", exclusionNotice(2, false))
+    }
+
+    @Test
+    fun `#1966 review terms that land before the invoice date say it is due on receipt`() {
+        val due = resolveDueDate(InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-08-19", listOf("2026-08-11"), "2026-08-19")
+        assertEquals("2026-08-19", due.dueDate)
+        assertEquals(TERMS_BEFORE_INVOICE_DATE, composerTermsNote(InvoiceTermsCode.DUE_ON_LAST_VISIT, due, "2026-08-19"))
+        // Dated Aug 19 and written up on Sep 1: held to Aug 19, which has passed, and it still says so.
+        val backdated = resolveDueDate(InvoiceTermsCode.DUE_ON_LAST_VISIT, "2026-08-19", listOf("2026-08-11"), "2026-09-01")
+        val note = composerTermsNote(InvoiceTermsCode.DUE_ON_LAST_VISIT, backdated, "2026-08-19")
+        assertTrue(note.startsWith(TERMS_BEFORE_INVOICE_DATE))
+        assertTrue(note.contains("overdue the moment it goes out"))
+        // #2092: a quote is not a bill, so it never says overdue.
+        assertEquals(TERMS_BEFORE_INVOICE_DATE, composerTermsNote(InvoiceTermsCode.DUE_ON_LAST_VISIT, backdated, "2026-08-19", quote = true))
     }
 
     @Test
