@@ -15,7 +15,8 @@ import { KINFOLK } from '../fixtures/accounts';
  * number on the bell here comes from the listener.
  */
 
-const BADGE = '[data-testid="bell-badge"]';
+const BELL = '.nav a.iconbtn[href="/notifications"]';
+const BADGE = `${BELL} [data-testid="bell-badge"]`;
 const mine = (id: string, extra: Record<string, unknown> = {}) => ({ id, kinfolkId: KINFOLK.kinfolkId, ...extra });
 const IDS = ['e2e-bell-1', 'e2e-bell-2', 'e2e-bell-other', 'e2e-bell-archived'];
 
@@ -26,13 +27,13 @@ describe('bell badge, live (#1833)', () => {
 
   it('goes up as notices arrive and down as they are read, without a reload', () => {
     cy.signIn();
-    cy.get('a.iconbtn[aria-label="Notifications"]').should('exist');
+    cy.get(BELL).should('have.attr', 'aria-label', 'Notifications');
     cy.get(BADGE).should('not.exist');
 
     // A notice arrives.
     cy.task('putNotification', mine('e2e-bell-1'));
     cy.get(BADGE, { timeout: 15_000 }).should('have.text', '1');
-    cy.get('a.iconbtn').should('have.attr', 'aria-label', 'Notifications, 1 unread');
+    cy.get(BELL).should('have.attr', 'aria-label', 'Notifications, 1 unread');
 
     // A second one.
     cy.task('putNotification', mine('e2e-bell-2'));
@@ -52,7 +53,7 @@ describe('bell badge, live (#1833)', () => {
     // The rest are read: no badge, and the bell says so.
     cy.task('putNotification', mine('e2e-bell-2', { read: true }));
     cy.get(BADGE, { timeout: 15_000 }).should('not.exist');
-    cy.get('a.iconbtn').should('have.attr', 'aria-label', 'Notifications');
+    cy.get(BELL).should('have.attr', 'aria-label', 'Notifications');
 
     // Marked unread again by the office: it is back on the bell.
     cy.task('putNotification', mine('e2e-bell-2', { read: false }));

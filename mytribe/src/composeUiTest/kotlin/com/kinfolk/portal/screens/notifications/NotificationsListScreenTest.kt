@@ -400,6 +400,35 @@ class NotificationsListScreenTest {
         assertEquals(listOf(4, 5), opened.counts)
     }
     @Test
+    fun aReloadAfterShowOlderKeepsTheOlderPageAndItsCursor_andListsNoRowTwice() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        val newest = page(listOf(rows[0]), unreadCount = 2, hasMore = true, nextBefore = 1_700_000_000_000L)
+        fake.stubSequence(
+            "listMyNotifications",
+            newest,
+            // "Show older": the last page.
+            page(listOf(rows[3]), unreadCount = 2),
+            // The bell's listener saw a change: the newest page again, which
+            // still says there is more after it.
+            newest,
+        )
+        var revision by androidx.compose.runtime.mutableStateOf(0)
+        setThemedContent {
+            NotificationsListScreen(kinfolkId = "fam-1", portalApi = PortalApi(fake), liveRevision = revision, nowMs = { now })
+        }
+        waitForIdle()
+        onNodeWithTag("notificationsOlder").performClick()
+        waitForIdle()
+        onNodeWithTag("notificationsOlder").assertDoesNotExist()
+        revision = 1
+        waitForIdle()
+        assertEquals(3, fake.calls.count { it.first == "listMyNotifications" })
+        onNodeWithTag("notificationRow-n-visit").assertExists()
+        onNodeWithTag("notificationRow-n-tale").assertExists()
+        // The older page is already on screen, so there is nothing more to offer.
+        onNodeWithTag("notificationsOlder").assertDoesNotExist()
+    }
+    @Test
     fun aFailedQuietReloadKeepsTheRowsOnScreen_andShowsNoError() = runComposeUiTest {
         val fake = stubbed()
         var revision by androidx.compose.runtime.mutableStateOf(0)

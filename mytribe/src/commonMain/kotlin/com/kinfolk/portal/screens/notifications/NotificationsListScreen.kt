@@ -109,11 +109,15 @@ fun NotificationsListScreen(
     var nextBefore by remember { mutableStateOf<Long?>(null) }
     var loadingMore by remember { mutableStateOf(false) }
     var unread by remember { mutableStateOf(0) }
+    // #1833: true once "Show older" has added a page; the paging cursor then
+    // belongs to the oldest row on screen and a re-read of the newest page must not move it.
+    var pagedOlder by remember { mutableStateOf(false) }
 
     suspend fun load(before: Long?) {
         try {
             val page = portalApi.listMyNotifications(kinfolkId = kinfolkId, limit = PAGE_SIZE, before = before)
             items = if (before == null) page.items else items.orEmpty() + page.items
+            pagedOlder = before != null
             hasMore = page.hasMore
             nextBefore = page.nextBefore
             unread = page.unreadCount
@@ -141,7 +145,7 @@ fun NotificationsListScreen(
             items = merged
             // Only a list still on its first page takes the new cursor; one
             // that has paged further keeps the cursor of its oldest row.
-            if (shown.size <= PAGE_SIZE) {
+            if (!pagedOlder) {
                 hasMore = page.hasMore
                 nextBefore = page.nextBefore
             }
