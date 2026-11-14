@@ -273,6 +273,7 @@ screenCallAction
 sendExternalMessage
 sendHouseholdPush
 sendInvoiceReminder
+sendKinTaleReport
 sendKinfolkMessage
 setActiveTribe
 setBrandTokens

@@ -1026,26 +1026,35 @@ class FirestoreClient {
         updateChangedFields("kin_care_reports", edited._id, modelChanges(KinCareReport.serializer(), loaded, edited, perKeyMaps = KIN_CARE_REPORT_PER_KEY_MAPS))
 
     /**
-     * Stamp the report SENT and seed the lifecycle metadata. The session-side
-     * cumulative fields (reportIds / sentReportCount) are NOT passed in: each
-     * platform applies them atomically (arrayUnion + increment on wasm via the
-     * Firestore SDK batch, via a Firestore `:commit` transform on JVM), so two
-     * concurrent sends never clobber each other's running totals (NOTE-52 / W15).
+     * The send, through the `sendKinTaleReport` callable (#2058). Operator ruling
+     * 2026-11-12, "stamp at send": the server marks the report SENT, takes the
+     * tale's own copy of its care tasks from the template, and records the send
+     * on the visit (`reportIds` arrayUnion, `sentReportCount` increment,
+     * `autoCompleteEligible`, `kinTaleDue: false`) in ONE transaction. This used
+     * to be a `:commit` from the console (NOTE-52 / W15); a copy taken by a later
+     * write could miss a template deleted in between. The server reads the visit
+     * off the report and stamps the send time itself; [sessionId] is only checked.
      */
     suspend fun markKinTaleReportSent(
         reportId: String,
         sessionId: String,
         sentVia: String,
         deliveryReceiptId: String,
-        sentAtIso: String,
-    ): WriteResult<Unit> = platformMarkKinTaleReportSent(
-        reportId = reportId,
-        sessionId = sessionId,
-        sentVia = sentVia,
-        deliveryReceiptId = deliveryReceiptId,
-        sentAtIso = sentAtIso,
-    )
-
+    ): WriteResult<Unit> {
+        if (reportId.isBlank()) return WriteResult.Err("Couldn't send: this KinTale has not been saved.")
+        if (sessionId.isBlank()) return WriteResult.Err("Couldn't send: this KinTale is not linked to a visit.")
+        val payload = buildJsonObject {
+            put("reportId", reportId)
+            put("sentVia", sentVia)
+            put("deliveryReceiptId", deliveryReceiptId)
+        }
+        return when (
+            val r = platformInvokeCallable("sendKinTaleReport", callableJson.encodeToString(JsonObject.serializer(), payload))
+        ) {
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+            is WriteResult.Err -> r
+        }
+    }
     /**
      * Triage action: link an orphan KinCareReport to a specific kinfolk. Stamps
      * `kinfolkId` + `kinfolkName` on the report doc, flips `triageStatus` to
@@ -1206,7 +1215,6 @@ class FirestoreClient {
             sessionId = session._id,
             sentVia = "catalog",
             deliveryReceiptId = dispatchId,
-            sentAtIso = com.tribetails.auntieos.web.util.nowIso(),
         )
     }
 
@@ -3979,8 +3987,11 @@ data class KinCareReport(
     // (which are KinTale-template answers): formValues are admin-defined custom
     // schema fields, fieldResponses are the report template's structured fields.
     val formValues: Map<String, String> = emptyMap(),
+    // #2058: a SENT tale's own copy of its care tasks, stamped by the server in
+    // the write that sent it. Read only: this console never edits it, so the
+    // field diff of an update never carries it.
+    val careTasks: CareTaskCopy? = null,
 )
-
 /**
  * True when this report is a migration-orphan that still needs admin attention:
  * no kinfolk linked, no triage decision yet, and `sentVia` matches one of the
