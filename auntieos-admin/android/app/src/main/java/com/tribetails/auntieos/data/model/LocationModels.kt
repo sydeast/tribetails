@@ -204,6 +204,11 @@ data class BusinessSettings(
     // with no KinTale sent becomes a "Send the KinTale" task on Auntie Time
     // until it is sent. It never blocks completion.
     var kinTaleRequired: Boolean = false,
+    // #1966: Settings > Invoices > Payment terms, the terms every new invoice
+    // starts on, as the wire code. Absent reads as due on receipt; read it
+    // through `paymentTermsSettingOf` (domain/InvoiceTerms.kt), which also reads
+    // any value that is not one of the options as due on receipt, as the server does.
+    var invoicePaymentTerms: String = "due_on_receipt",
     // ISSUE #582: how close to the household counts as arrived, in metres. The
     // threshold under the switch above, not a second switch — there is no "off"
     // value here, that is what the switch is for. 150 m matches

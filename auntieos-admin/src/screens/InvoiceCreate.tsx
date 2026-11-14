@@ -23,6 +23,7 @@ import { localDateIso } from '../lib/invoiceFormat';
 import { parseDollarsToCents, normalizeMoneyText, MAX_UNIT_CENTS } from '../lib/invoiceMoneyInput';
 import { invoiceTermsDefs, resolveDueDate, type InvoiceTermsCode } from '../lib/invoiceTerms';
 import { dueDateOrderProblem } from '../lib/invoiceDueOrder';
+import { useInvoiceTermsSetting } from '../lib/useInvoiceTermsSetting';
 import { Dialog } from '../components/Dialog';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
@@ -253,6 +254,9 @@ export function buildBoundLines(
  * disabled while submitting (never a double-submit), and the primary button
  * carries Buttons.tsx's `busy` state.
  */
+/** #1966: said beside Terms, and as the button's reason, while the setting loads. */
+const TERMS_LOADING = 'Loading your payment terms…';
+
 export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: InvoiceCreateProps) {
   const kinfolkState = useKinfolkRoster();
   const households = kinfolkState.status === 'ready' ? kinfolkState.data : [];
@@ -262,7 +266,21 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
   const [kinfolkId, setKinfolkId] = useState(seedKinfolkId ?? '');
   const [path, setPath] = useState<InvoiceCreatePath>('work');
   const [date, setDate] = useState(() => localDateIso(new Date()));
-  const [termsCode, setTermsCode] = useState<InvoiceTermsCode>('due_on_receipt');
+  /**
+   * #1966: the terms start on the business's Payment terms setting (Settings >
+   * Payments > Invoices), seeded once it loads unless the operator has already
+   * picked terms here.
+   */
+  const termsSetting = useInvoiceTermsSetting();
+  const [termsCode, setTermsCodeState] = useState<InvoiceTermsCode>(termsSetting.paymentTerms);
+  const termsPicked = useRef(false);
+  const setTermsCode = useCallback((code: InvoiceTermsCode) => {
+    termsPicked.current = true;
+    setTermsCodeState(code);
+  }, []);
+  useEffect(() => {
+    if (termsSetting.status === 'ready' && !termsPicked.current) setTermsCodeState(termsSetting.paymentTerms);
+  }, [termsSetting.status, termsSetting.paymentTerms]);
   const [customDueDate, setCustomDueDate] = useState('');
   const [totalText, setTotalText] = useState('');
   const [invoiceDiscountText, setInvoiceDiscountText] = useState('');
@@ -340,8 +358,14 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
     const serviceDates = onWork
       ? sessions.filter((s) => selected.has(s.sessionId)).map((s) => s.startTime)
       : [];
-    return resolveDueDate({ code: termsCode, invoiceDate: date }, serviceDates, localDateIso(new Date()));
-  }, [termsCode, date, onWork, sessions, selected]);
+    // #1966: visit days on the business's clock, as the server counts them.
+    return resolveDueDate(
+      { code: termsCode, invoiceDate: date },
+      serviceDates,
+      localDateIso(new Date()),
+      termsSetting.timeZone,
+    );
+  }, [termsCode, date, onWork, sessions, selected, termsSetting.timeZone]);
 
   const dueDateForSubmit = termsCode === 'custom' ? customDueDate : (due.dueDate ?? '');
 
@@ -397,6 +421,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
    */
   const blocked: string | null = (() => {
     if (kinfolkId.trim() === '') return 'Pick a household first.';
+    if (termsSetting.status === 'loading') return TERMS_LOADING;
     if (termsCode !== 'custom' && due.dueDate === null) return due.problem;
     if (dueOrderProblem !== null) return dueOrderProblem;
     if (onWork) {
@@ -545,11 +570,19 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
 
   /** What the due-date field is doing, and why it is not typeable. Said once. */
   const termsNote =
-    termsCode === 'custom'
+    termsSetting.status === 'loading'
+      ? TERMS_LOADING
+      : termsCode === 'custom'
       ? 'These terms leave the due date to you.'
       : due.dueDate === null
         ? due.problem
-        : due.isPast
+        : due.beforeInvoiceDate
+          ? due.isPast && !isQuote
+            ? 'These terms work out to a day before the invoice date, so it is due on receipt. The invoice date has already passed, so this invoice is overdue the moment it goes out.'
+            : 'These terms work out to a day before the invoice date, so it is due on receipt.'
+          : due.appliedCode !== termsCode
+          ? 'There are no visits on this invoice, so it is due on receipt.'
+          : due.isPast
           ? isQuote
             ? `Worked out from the terms, counting from ${due.basisDay ?? date}. That date has already passed.`
             : `Worked out from the terms, counting from ${due.basisDay ?? date}. That date has already passed, so this invoice is overdue the moment it goes out.`
@@ -747,7 +780,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
               className="invoice-create__input"
               value={termsCode}
               onChange={(e) => setTermsCode(e.target.value as InvoiceTermsCode)}
-              disabled={submitting}
+              disabled={submitting || termsSetting.status === 'loading'}
               aria-label="Terms"
             >
               {invoiceTermsDefs().map((def) => (
@@ -782,9 +815,15 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
           </label>
         </div>
 
-        <p className="invoice-create__derived" role="status">
+        <p className="invoice-create__derived" role="status" aria-busy={termsSetting.status === 'loading'}>
           {termsNote}
         </p>
+        {termsSetting.status === 'error' && (
+          <div className="invoice-create__derived" role="alert">
+            Your payment terms could not be loaded, so this invoice starts on due on receipt.{' '}
+            <GhostButton label="Try again" onClick={termsSetting.retry} disabled={submitting} />
+          </div>
+        )}
 
         {isQuote && (
           <div className="invoice-create__toggle-row">

@@ -321,6 +321,51 @@ describe('#2088 turning a quote into an invoice keeps its visits', () => {
     expect(portal.open.map((i) => [i.id, i.status])).toEqual([[quoteId, 'open']]);
   });
 
+  it('#1966: the invoice it becomes is due by the business Payment terms, counted from its visits', async () => {
+    const ctx = world({
+      'business_settings/business_settings': {
+        timeZone: 'America/Chicago',
+        householdNotificationsLive: true,
+        invoicePaymentTerms: 'net_14_after_last_visit',
+      },
+      // 7 PM on Jun 3 in Chicago, 00:00 on Jun 4 in UTC.
+      'kin_care_sessions/s2': visit({ startTime: '2026-06-04T00:00:00.000Z' }),
+    });
+    keyN += 1;
+    const { invoiceId } = await createQuoteHandler(
+      admin({
+        ...composerQuote(['s1', 's2']),
+        termsCode: 'due_on_receipt',
+        dueDate: '',
+        idempotencyKey: `quot_17000000022${String(keyN).padStart(2, '0')}_z`,
+      }),
+    );
+    await convertQuoteToInvoiceHandler(admin({ invoiceId }));
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['termsCode']).toBe('net_14_after_last_visit');
+    expect(inv['terms']).toBe('Due 14 days after the last visit');
+    expect(inv['dueDate']).toBe('2026-06-17');
+  });
+
+  it('#1966: a due date the office picked by hand survives the change', async () => {
+    const ctx = world({
+      'business_settings/business_settings': { invoicePaymentTerms: 'net_30_after_last_visit' },
+    });
+    keyN += 1;
+    const { invoiceId } = await createQuoteHandler(
+      admin({
+        ...composerQuote(['s1']),
+        termsCode: 'custom',
+        dueDate: '2026-07-04',
+        idempotencyKey: `quot_17000000023${String(keyN).padStart(2, '0')}_w`,
+      }),
+    );
+    await convertQuoteToInvoiceHandler(admin({ invoiceId }));
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['termsCode']).toBe('custom');
+    expect(inv['dueDate']).toBe('2026-07-04');
+  });
+
   it('a quote saved unsent turns into a plain draft invoice', async () => {
     const ctx = world();
     const quoteId = await unsentQuote();

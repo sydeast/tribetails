@@ -99,6 +99,8 @@ internal val BUSINESS_SETTINGS_DIFF_FIELDS: Map<String, SettingsDiffField> = lin
     "requireArrivalDepartureVerification" to SettingsDiffField({ it.requireArrivalDepartureVerification }),
     // #2123: the KinTale task switch. Lives in the Visit records panel beside the arrival rule.
     "kinTaleRequired" to SettingsDiffField({ it.kinTaleRequired }),
+    // #1966: the Payment terms every new invoice starts on. Lives in the Payments section.
+    "invoicePaymentTerms" to SettingsDiffField({ it.invoicePaymentTerms }),
     "arrivalRadiusMeters" to SettingsDiffField({ it.arrivalRadiusMeters }),
     "autoStartTrackingOnVisitStart" to SettingsDiffField({ it.autoStartTrackingOnVisitStart }),
     // Written as the enum NAME, which is byte-for-byte what the whole-object
