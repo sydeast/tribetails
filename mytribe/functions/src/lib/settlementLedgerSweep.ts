@@ -80,6 +80,7 @@ import {
   SETTLEMENT_LEDGER_PENDING_FIELD,
   SETTLEMENT_LEDGER_SWEEP_GRACE_MS,
   SETTLEMENT_LEDGER_SWEEP_WRITER,
+  SETTLEMENT_NOTICE_UID_FIELD,
   settlementLedgerRowId,
 } from './paymentAppliedOwner';
 // Defined beside the claim fields so `recordPayment` can read it without
@@ -310,6 +311,29 @@ export async function finishAbandonedSettlement(firestore: Firestore, invoiceId:
   // Loaded here so the scheduled sweep's cold start does not pay for the
   // callable module until there is an abandoned settlement to finish.
   const { sendPaymentConfirmation, noticeStamps } = await import('../admin/recordPayment.js');
+  // WHO THE PAYOFF IS LISTED FOR, written on the row BEFORE the send (lead
+  // ruling 2026-11-14). The stamps written after the send can be lost. If the
+  // household's billing member then changes and a late second call arrives,
+  // that call must be able to tell that the household's copy already went to
+  // someone else, so it sends the new member nothing. A send only follows a
+  // row that carries this, so the two cannot disagree. If the row is gone, a
+  // late second call has replaced it and owns the notice now.
+  try {
+    const { resolveBillingRecipientUid } = await import('./resolveBillingRecipientUid.js');
+    const listedFor = await resolveBillingRecipientUid(staged.kinfolkId);
+    await firestore
+      .collection('payments')
+      .doc(staged.rowId)
+      .update({ [SETTLEMENT_NOTICE_UID_FIELD]: listedFor ?? '' });
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'settlementLedgerSweep',
+      event: 'settlement.ledger.recipient.stamp.failed',
+      extra: { ...extra, err: (err as Error)?.message },
+    });
+    return false;
+  }
   const sent = await sendPaymentConfirmation({
     kinfolkId: staged.kinfolkId,
     invoiceId,

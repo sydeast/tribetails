@@ -246,27 +246,62 @@ describe('#2281 third review: a ticked late second call after the sweep, real di
     expect(ordersFor('kinUid')).toHaveLength(1);
     expect(ordersFor('office1')).toHaveLength(1);
   });
-  it('that lost stamp and a changed billing member together: the new member is sent the confirmation the admin ticked, the office is not told twice', async () => {
-    // A double fault, pinned so the behaviour is a decision and not an accident.
-    // With the sweep's stamps gone the call cannot know a household copy was
-    // ever written, so it sends the ticked confirmation to the billing member
-    // as of now. The ledger is per recipient, so that member's copy is new.
+  it('that lost stamp and a changed billing member together: nobody gets the confirmation, and the admin is told it did not go out', async () => {
+    // Lead ruling, 2026-11-14. The sweep listed the payoff for the member of
+    // the time and lost its stamps. The row still says who it was listed for
+    // (written before the send), and the dispatcher's ledger still has that
+    // copy, so the new billing member is sent nothing.
     await sweptPayoff();
+    expect(docs[`payments/${SETTLE_ROW}`]).toMatchObject({ householdNoticeUid: 'kinUid' });
     delete docs[`payments/${SETTLE_ROW}`]!.confirmationAppOnly;
     delete docs[`payments/${SETTLE_ROW}`]!.officeNoticeSentAt;
     hooks.billingUid.current = 'kinUid2';
     const first = await step2();
+    expectNothingNewSent();
+    expect(recordsFor('kinUid2')).toEqual([]);
+    expect(ordersFor('kinUid2')).toEqual([]);
+    expect(first).toMatchObject({ confirmationEmailSent: false, householdNoPortalAccount: false, officeNoticePending: false });
+    expect(first).not.toHaveProperty('confirmationAppOnly');
+    expect(ledgerRows()).toEqual([`payments/${PAY}`]);
+    // The row has the lost stamps back, and remembers who the copy was for.
+    expect(docs[`payments/${PAY}`]).toMatchObject({
+      confirmationEmailSent: false,
+      confirmationAppOnly: true,
+      officeNoticeSentAt: '__TS__',
+      householdNoticeUid: 'kinUid',
+    });
+    // A retry changes nothing and gives the same answer.
+    expect(await step2()).toEqual(first);
+    expectNothingNewSent();
+    expect(recordsFor('kinUid2')).toEqual([]);
+    expect(ordersFor('kinUid2')).toEqual([]);
+  });
+  it('a changed billing member when the sweep never got the household copy out: the current member gets the ticked confirmation', async () => {
+    // Not the case above: here no household copy exists for anyone, so the
+    // payment's confirmation is still owed, and it goes to the billing member
+    // as of now. The office copy the sweep did send is not repeated.
+    await step1();
+    hooks.billingUid.current = null;
+    expect(await sweep()).toBe(1);
+    expect(recordsFor('kinUid')).toEqual([]);
+    expect(recordsFor('office1')).toHaveLength(1);
+    expect(docs[`payments/${SETTLE_ROW}`]).toMatchObject({ householdNoticeUid: '' });
+    hooks.billingUid.current = 'kinUid2';
+    const first = await step2();
     expect(recordsFor('kinUid2')).toHaveLength(1);
     expect(ordersFor('kinUid2')).toHaveLength(1);
-    expect(first).toMatchObject({ confirmationEmailSent: true, confirmationAppOnly: false });
-    // The first member keeps the list entry and is not emailed; the office has one copy.
-    expect(recordsFor('kinUid')).toHaveLength(1);
-    expect(ordersFor('kinUid')).toEqual([]);
     expect(recordsFor('office1')).toHaveLength(1);
     expect(ordersFor('office1')).toHaveLength(1);
+    expect(first).toMatchObject({ confirmationEmailSent: true, confirmationAppOnly: false });
     await step2();
-    expect(recordsFor('kinUid2')).toHaveLength(1);
     expect(ordersFor('kinUid2')).toHaveLength(1);
-    expect(ordersFor('office1')).toHaveLength(1);
+  });
+  it('a lost stamp with the same billing member is unchanged: the ledger refuses the copy and the ticked email goes once', async () => {
+    await sweptPayoff();
+    delete docs[`payments/${SETTLE_ROW}`]!.confirmationAppOnly;
+    const first = await step2();
+    expect(recordsFor('kinUid')).toHaveLength(1);
+    expect(ordersFor('kinUid')).toHaveLength(1);
+    expect(first).toMatchObject({ confirmationEmailSent: true, confirmationAppOnly: false });
   });
 });

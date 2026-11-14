@@ -31,7 +31,12 @@ import { centsToDollars, formatUsdCents, paidCentsFromPayments, type PaymentAmou
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
-import { deliverListedCopy, enqueueNotificationDetailed, type ListedCopyDelivery } from '../notifications/dispatcher';
+import {
+  deliverListedCopy,
+  enqueueNotificationDetailed,
+  hasDeliveredCopy,
+  type ListedCopyDelivery,
+} from '../notifications/dispatcher';
 import { reachedAppOnly } from '../notifications/appOnly';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import {
@@ -39,6 +44,7 @@ import {
   SETTLEMENT_LEDGER_PENDING_AT_FIELD,
   SETTLEMENT_LEDGER_PENDING_FIELD,
   SETTLEMENT_LEDGER_SWEEP_WRITER,
+  SETTLEMENT_NOTICE_UID_FIELD,
   claimableMarkInvoicePaidOwner,
   markInvoicePaidSettlementOf,
   paymentAppliedOwner,
@@ -955,6 +961,10 @@ export async function recordPaymentHandler(
       // sweep's, so both senders share one dedupe identity for the settlement.
       row['replacedSettlementLedgerRowId'] = replacedSweepRow.id;
       row['noticePaymentId'] = replacedSweepRow.id;
+      // Who the sweep listed the payoff for, so a same-key retry can still
+      // tell when the household's copy belongs to an earlier billing member.
+      const listedFor = replacedSweepRow.data[SETTLEMENT_NOTICE_UID_FIELD];
+      if (typeof listedFor === 'string') row[SETTLEMENT_NOTICE_UID_FIELD] = listedFor;
     }
     const settledOwner = claimedOwner ?? (replacedSweepRow !== null ? (settlement?.owner ?? null) : null);
     if (linkedInvoiceRef && settledOwner !== null) {
@@ -1852,6 +1862,67 @@ async function sendAfterSweepRow(input: {
   changed: boolean;
 }> {
   const owed = copiesOwed(input.stamps, input.ticked, true);
+  // THE STAMPS SAY NO HOUSEHOLD COPY WAS WRITTEN, AND THE BILLING MEMBER HAS
+  // CHANGED SINCE THE SWEEP (lead ruling 2026-11-14). The sweep may have
+  // listed the payoff for the earlier member and lost its stamp. If it did,
+  // the household's copy exists and is not the new member's: nobody is sent
+  // anything, and the admin is told the confirmation did not go out, as when
+  // the stamp is there. `elsewhere` is that case; `unsure` is a lookup that
+  // failed, which sends the household nothing this time and leaves the row
+  // unstamped so a same-key retry asks again.
+  let elsewhere = false;
+  let unsure = false;
+  const listedFor = input.stamps[SETTLEMENT_NOTICE_UID_FIELD];
+  if ((owed.householdDue || owed.listDue) && typeof listedFor === 'string' && listedFor !== '') {
+    try {
+      const billingNow = await resolveBillingRecipientUid(input.kinfolkId);
+      if (billingNow !== listedFor) {
+        elsewhere = await hasDeliveredCopy({
+          key: 'invoice.payment.applied',
+          recipientUid: listedFor,
+          data: { kinfolkId: input.kinfolkId, invoiceId: input.invoiceId, paymentId: input.noticePaymentId },
+        });
+      }
+    } catch (err) {
+      unsure = true;
+      logEvent({
+        severity: 'warn',
+        function: 'recordPayment',
+        event: 'payment.confirmation.listed-for.lookup.failed',
+        uid: input.uid,
+        extra: { kinfolkId: input.kinfolkId, paymentId: input.noticePaymentId, err: (err as Error)?.message },
+      });
+    }
+  }
+  if (elsewhere || unsure) {
+    // The office copy alone, when it is still owed. The dispatcher's ledger
+    // drops it if the sweep already sent it.
+    const sent = owed.officeDue
+      ? await sendPaymentConfirmation({
+          kinfolkId: input.kinfolkId,
+          invoiceId: input.invoiceId,
+          paymentId: input.noticePaymentId,
+          uid: input.uid,
+          householdRequested: false,
+          settlesInvoice: true,
+          officeDue: true,
+        })
+      : NOTHING_SENT;
+    return {
+      sent,
+      confirmationEmailSent: false,
+      // Not "app only": the clients print that as the household having email
+      // and text off. The admin is told the confirmation did not go out.
+      confirmationAppOnly: false,
+      stamps: {
+        // The earlier member's listed copy is on record: the lost stamp, restored.
+        ...(elsewhere ? { confirmationAppOnly: true } : {}),
+        ...(sent.office ? { officeNoticeSentAt: FieldValue.serverTimestamp() } : {}),
+        ...(sent.skipped ? { officeNoticeSkippedReason: 'no-recipients' } : {}),
+      },
+      changed: elsewhere || sent.office || sent.skipped === true,
+    };
+  }
   const sent =
     !owed.householdDue && !owed.listDue && !owed.officeDue
       ? NOTHING_SENT

@@ -1025,6 +1025,22 @@ async function routeByDeliveryMode(
   }
 }
 
+/**
+ * #2281: whether this notice was already written for this recipient, read off
+ * the dedupe ledger entry a delivery writes (the same key, identity and
+ * recipient). Reads one document and writes nothing. A copy older than the
+ * ledger keeps entries for reads as not written.
+ */
+export async function hasDeliveredCopy(
+  args: Pick<EnqueueArgs, 'key' | 'data' | 'dedupeKey'> & { recipientUid: string },
+): Promise<boolean> {
+  if (args.recipientUid === '') return false;
+  const def = getNotificationDef(args.key);
+  const identity = dedupeIdentityOf(args, resolveTargetRef(args));
+  if (identity === '') return false;
+  const snap = await db().collection(DEDUPE_COLLECTION).doc(dedupeDocId(def.key, identity, args.recipientUid)).get();
+  return snap.exists;
+}
 /** What {@link deliverListedCopy} did. `sent` and `already` mean a delivery channel carries the copy. */
 export type ListedCopyDelivery = 'sent' | 'already' | 'no-record' | 'off' | 'no-channels' | 'gated';
 

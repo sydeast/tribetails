@@ -199,6 +199,12 @@ export function settlementLedgerRowId(settlementPaymentId: string): string {
 }
 /** `recordedByServer` on a ledger row the sweep wrote. Only such a row is ever replaced, and only by a call naming its settlement. */
 export const SETTLEMENT_LEDGER_SWEEP_WRITER = 'settlementLedgerSweep';
+/**
+ * On the sweep's ledger row, and carried onto a row that replaces it: the
+ * billing member the payoff was listed for ('' when the household had none).
+ * Written before the sweep sends, so it survives a lost notice stamp.
+ */
+export const SETTLEMENT_NOTICE_UID_FIELD = 'householdNoticeUid';
 const MARK_INVOICE_PAID_OWNER_PREFIX = 'markInvoicePaid:';
 /**
  * #2281 review: THE `markInvoicePaid` SETTLEMENT A LEDGER ROW FOR THIS INVOICE
