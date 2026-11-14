@@ -62,7 +62,8 @@ class InvoiceTermsParityTest {
         listOf(
             resolveDueDate(InvoiceTermsCode.CUSTOM, "2026-08-19", emptyList(), "2026-08-19").problem,
             resolveDueDate(InvoiceTermsCode.NET_14, "", emptyList(), "2026-08-19").problem,
-            resolveDueDate(InvoiceTermsCode.NET_14_AFTER_LAST_VISIT, "2026-08-19", emptyList(), "2026-08-19").problem,
+            // #1966: no visits and no date, so due on receipt with nothing to count from.
+            resolveDueDate(InvoiceTermsCode.NET_14_AFTER_LAST_VISIT, "", emptyList(), "2026-08-19").problem,
         ).forEach { sentence ->
             assertTrue(!sentence.isNullOrBlank())
             assertTrue(serverSource.contains("'$sentence'"), "The server does not use this sentence verbatim: \"$sentence\"")

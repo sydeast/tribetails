@@ -768,7 +768,7 @@ describe('updateInvoice structured terms', () => {
   it('counts service-relative terms from the visits the invoice already links', async () => {
     const ctx = buildDbMock({
       docs: {
-        'invoices/inv1': { ...OPEN_INVOICE, date: '2026-06-20', sessionIds: ['s1', 's2'] },
+        'invoices/inv1': { ...OPEN_INVOICE, date: '2026-06-10', sessionIds: ['s1', 's2'] },
         'kin_care_sessions/s1': { startTime: '2026-06-02T14:00:00.000Z' },
         'kin_care_sessions/s2': { startTime: '2026-06-09T14:00:00.000Z' },
       },
@@ -779,6 +779,23 @@ describe('updateInvoice structured terms', () => {
       req({ invoiceId: 'inv1', patch: { termsCode: 'net_7_after_last_visit' } }),
     );
     expect(invoiceWrite(ctx)?.data.dueDate).toBe('2026-06-16');
+  });
+  it('#1966 review: never re-decides a due date before the invoice date', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'invoices/inv1': { ...OPEN_INVOICE, date: '2026-06-20', sessionIds: ['s1', 's2'] },
+        'kin_care_sessions/s1': { startTime: '2026-06-02T14:00:00.000Z' },
+        'kin_care_sessions/s2': { startTime: '2026-06-09T14:00:00.000Z' },
+      },
+      queryDocs: { 'invoices/inv1/payments': [] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { termsCode: 'net_7_after_last_visit' } }),
+    );
+    // Jun 16 is before the Jun 20 invoice date, so it is due on receipt.
+    expect(invoiceWrite(ctx)?.data.dueDate).toBe('2026-06-20');
+    expect(invoiceWrite(ctx)?.data.termsCode).toBe('due_on_receipt');
   });
   it('re-decides the due date from a date set in the SAME patch', async () => {
     const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-01' });

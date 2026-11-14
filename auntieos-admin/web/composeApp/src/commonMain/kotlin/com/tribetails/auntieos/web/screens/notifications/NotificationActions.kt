@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.web.screens.notifications
 
 import com.tribetails.auntieos.web.data.NotificationEntry
+import com.tribetails.auntieos.web.screens.booking.BookingSeries
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
@@ -53,23 +54,61 @@ fun activeNotifications(all: List<NotificationEntry>): List<NotificationEntry> =
 fun notificationIsRead(entry: NotificationEntry): Boolean = entry.isRead
 
 /**
+ * #2069: how a waiting request is known in the live queue: its household and its
+ * request id (`batchId`). A batchId is only unique within a household, so both.
+ */
+fun visitRequestKey(kinfolkId: String, batchId: String): String = "${kinfolkId.trim()}/${batchId.trim()}"
+
+/**
+ * #2069: every request still waiting, read off the live incoming-requests queue
+ * (collectionGroup kinCares, status == requested) that Bookings lists. Pure.
+ */
+fun pendingRequestKeys(series: List<BookingSeries>): Set<String> =
+    series.map { visitRequestKey(it.kinfolkId, it.batchId) }.toSet()
+
+/**
+ * The queue key a `kincare.requested` row names, or null when the row is not a
+ * request or names no household or request id (then it cannot be answered).
+ */
+fun notificationRequestKey(entry: NotificationEntry): String? {
+    if (entry.key.trim() != PENDING_BOOKING_REQUEST_KEY) return null
+    val kinfolkId = notificationRequestKinfolkId(entry)
+    val batchId = entry.targetId.trim()
+    if (kinfolkId.isEmpty() || batchId.isEmpty()) return null
+    return visitRequestKey(kinfolkId, batchId)
+}
+
+/**
+ * #2069: true only when the live queue says this row's request is still
+ * waiting. [pending] is null while the queue has not loaded or when it failed;
+ * then nothing is known to be waiting, so nothing is offered a decision.
+ *
+ * #1694 (#1647) read "no `requestResolution` stamp" as "still waiting". Rows
+ * written before that trigger shipped were never stamped, so requests from
+ * August, long booked or declined, kept offering Approve and Deny, and "Needs a
+ * decision" counted them. A missing stamp proves nothing; the queue does.
+ */
+fun isWaitingRequest(entry: NotificationEntry, pending: Set<String>?): Boolean {
+    val key = notificationRequestKey(entry) ?: return false
+    return pending != null && key in pending
+}
+
+/**
  * Which quick actions apply to [entry]. Order is presentation order. Rules:
  *   - exactly one of MarkRead / MarkUnread, by current readAt state,
  *   - OpenTarget only when targetType is navigable AND targetId is non-blank,
- *   - ApproveBooking + DenyBooking only on a booking request still waiting on a
- *     decision: key `kincare.requested`, targetType "booking" with a targetId,
- *     a household ([notificationRequestKinfolkId], #1675), and no
- *     `requestResolution` stamp ([requestOutcomeLabel] is null),
+ *   - ApproveBooking + DenyBooking only on a `kincare.requested` row whose
+ *     request the live queue [pending] still holds ([isWaitingRequest], #2069),
  *   - Archive is always offered.
  *
  * Approve/Deny used to be offered on EVERY booking-targeted row, a booking
  * confirmation included. Web and Android narrowed it to `kincare.requested` in
  * #706 (operator: "most of these don't need most of these ctas"); this build
  * never got that change. #1647 then has the server stamp an answered request,
- * so a request booked or declined anywhere stops offering a decision here too.
+ * and #2069 asks the queue rather than trusting a stamp that old rows lack.
  * Pure; unit-tested.
  */
-fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
+fun applicableActions(entry: NotificationEntry, pending: Set<String>? = null): List<NotificationAction> {
     val actions = mutableListOf<NotificationAction>()
 
     actions += if (notificationIsRead(entry)) NotificationAction.MarkUnread
@@ -77,7 +116,8 @@ fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
 
     val hasTarget = entry.targetId.isNotBlank() &&
         entry.targetType.trim().lowercase() in NAVIGABLE_TARGET_TYPES
-    if (hasTarget || notificationOpenRoute(entry) is NotificationOpenRoute.UnappliedPayment) {
+    val route = notificationOpenRoute(entry)
+    if (hasTarget || route is NotificationOpenRoute.UnappliedPayment || route is NotificationOpenRoute.VisitRequest) {
         actions += NotificationAction.OpenTarget
     }
 
@@ -87,13 +127,7 @@ fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
         actions += NotificationAction.CreateQuote
     }
 
-    if (
-        entry.key.trim() == PENDING_BOOKING_REQUEST_KEY &&
-        requestOutcomeLabel(entry) == null &&
-        entry.targetType.trim().lowercase() == "booking" &&
-        entry.targetId.isNotBlank() &&
-        notificationRequestKinfolkId(entry).isNotEmpty()
-    ) {
+    if (entry.targetType.trim().lowercase() == "booking" && isWaitingRequest(entry, pending)) {
         actions += NotificationAction.ApproveBooking
         actions += NotificationAction.DenyBooking
     }
@@ -108,8 +142,8 @@ fun applicableActions(entry: NotificationEntry): List<NotificationAction> {
  * disagree. Replaces the "Dispatched" tile (#1592), as web's
  * `Notifications.tsx` "Needs a decision" did under R5. Pure; unit-tested.
  */
-fun needsDecisionCount(entries: List<NotificationEntry>): Int =
-    entries.count { NotificationAction.ApproveBooking in applicableActions(it) }
+fun needsDecisionCount(entries: List<NotificationEntry>, pending: Set<String>? = null): Int =
+    entries.count { NotificationAction.ApproveBooking in applicableActions(it, pending) }
 /**
  * The one catalog key that means "a booking request is waiting on a decision"
  * (mytribe/functions/src/notifications/catalog.ts: "Kinfolk requested a KinCare
@@ -125,10 +159,14 @@ const val PENDING_BOOKING_REQUEST_KEY = "kincare.requested"
  * ("Answered"): the server only stamps a request that has left `requested`.
  * Mirrors web's `requestOutcomeLabel`. Pure; unit-tested.
  */
-fun requestOutcomeLabel(entry: NotificationEntry): String? {
+fun requestOutcomeLabel(entry: NotificationEntry, pending: Set<String>? = null): String? {
     if (entry.key.trim() != PENDING_BOOKING_REQUEST_KEY) return null
+    // #2069: the live queue wins. A request it still holds is waiting.
+    if (isWaitingRequest(entry, pending)) return null
     return when (entry.requestResolution.trim().lowercase()) {
-        "" -> null
+        // #2069: no stamp, and the queue (once known) does not hold it: the
+        // request was answered or withdrawn before rows were stamped.
+        "" -> if (pending != null) "Answered" else null
         "booked" -> "Booked"
         "declined" -> "Declined"
         "cancelled" -> "Cancelled"
@@ -160,10 +198,13 @@ suspend fun answerBookingRequest(
     client: com.tribetails.auntieos.web.data.FirestoreClient,
     entry: NotificationEntry,
     approve: Boolean,
+    /** #1875 / #2030: the operator's note for the household, blank when they left none. */
+    note: String = "",
 ): RequestAnswer {
     val action = if (approve) com.tribetails.auntieos.web.data.BookingSeriesAction.APPROVE
     else com.tribetails.auntieos.web.data.BookingSeriesAction.CANCEL
-    return when (val r = client.manageBookingSeries(action, notificationRequestKinfolkId(entry), entry.targetId.trim())) {
+    val trimmed = note.trim().take(HOUSEHOLD_NOTE_MAX).ifEmpty { null }
+    return when (val r = client.manageBookingSeries(action, notificationRequestKinfolkId(entry), entry.targetId.trim(), trimmed)) {
         is com.tribetails.auntieos.web.data.WriteResult.Err -> RequestAnswer(error = r.message, notice = null)
         is com.tribetails.auntieos.web.data.WriteResult.Ok -> {
             val res = r.value
@@ -181,6 +222,9 @@ suspend fun answerBookingRequest(
     }
 }
 
+/** #2030: the server takes at most this many characters of note with an answer. */
+const val HOUSEHOLD_NOTE_MAX = 500
+
 /** #1003: the admin notice for a card payment that could not be applied. */
 const val UNAPPLIED_PAYMENT_NOTICE_KEY = "invoice.payment.unapplied"
 
@@ -194,6 +238,14 @@ sealed class NotificationOpenRoute {
      * and [paymentId]'s Decide dialog open when it is still waiting.
      */
     data class UnappliedPayment(val kinfolkId: String, val paymentId: String?) : NotificationOpenRoute()
+
+    /**
+     * #2028: a "Kinfolk requested a KinCare visit" row opens its request on
+     * Bookings (the same card Bookings' Visit requests shows), by household and
+     * request id. Its targetId is the request's `batchId`, not a booking, so the
+     * old booking route had nothing to open.
+     */
+    data class VisitRequest(val kinfolkId: String, val batchId: String) : NotificationOpenRoute()
 }
 
 private fun NotificationEntry.dataString(key: String): String =
@@ -206,6 +258,9 @@ private fun NotificationEntry.dataString(key: String): String =
  * other key keeps the targetType / targetId route. Pure; unit-tested.
  */
 fun notificationOpenRoute(entry: NotificationEntry): NotificationOpenRoute {
+    if (notificationRequestKey(entry) != null) {
+        return NotificationOpenRoute.VisitRequest(notificationRequestKinfolkId(entry), entry.targetId.trim())
+    }
     if (entry.key.trim() == UNAPPLIED_PAYMENT_NOTICE_KEY) {
         val kinfolkId = entry.dataString("kinfolkId")
         if (kinfolkId.isNotEmpty()) {

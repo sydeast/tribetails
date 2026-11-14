@@ -134,6 +134,7 @@ class InvoiceTermsParityTest {
                 basis = when (it.basis) {
                     InvoiceTermsBasis.INVOICE -> "invoice"
                     InvoiceTermsBasis.SERVICE -> "service"
+                    InvoiceTermsBasis.FIRST_VISIT -> "first_visit"
                     InvoiceTermsBasis.NONE -> "none"
                 },
                 days = it.days,
@@ -169,7 +170,8 @@ class InvoiceTermsParityTest {
         val sentences = listOf(
             resolveDueDate(InvoiceTermsCode.CUSTOM, "2026-08-19", emptyList(), "2026-08-19").problem,
             resolveDueDate(InvoiceTermsCode.NET_14, "", emptyList(), "2026-08-19").problem,
-            resolveDueDate(InvoiceTermsCode.NET_14_AFTER_LAST_VISIT, "2026-08-19", emptyList(), "2026-08-19").problem,
+            // #1966: no visits and no invoice date, so due on receipt with nothing to count from.
+            resolveDueDate(InvoiceTermsCode.NET_14_AFTER_LAST_VISIT, "", emptyList(), "2026-08-19").problem,
         )
         sentences.forEach { sentence ->
             assertTrue("A resolver branch returned no sentence at all", !sentence.isNullOrBlank())

@@ -116,6 +116,15 @@ export const BookingDtoSchema = z
     /** What the office said when it accepted or declined. */
     cancelResponseNote: z.string().nullable(),
     /**
+     * #2029: when the office DECLINED this visit's request, or null. Set only
+     * while the visit reads `cancelled` and carries the `requestDeclinedAt`
+     * stamp that `manageBookingSeries` CANCEL writes on a decline (#533). A
+     * declined request and a cancelled visit share the `cancelled` status, so
+     * without this the household read "Cancelled" on a visit nobody cancelled.
+     * A declined request approved later reads its new status, so this is null.
+     */
+    requestDeclinedAtMs: z.number().int().nullable(),
+    /**
      * The kinfolk reschedule ask (#399 item 2), or null when this visit has
      * never had one. `pending` while the office has not ruled; `accepted` once
      * the visit has been moved to the proposed time; `declined` when it has
@@ -281,6 +290,7 @@ export function kinCareToDto(
     cancelRequestStatus: cancelStatus,
     cancelRequestReason: stringOrNull(data['cancelRequestReason']),
     cancelResponseNote: stringOrNull(data['cancelResponseNote']),
+    requestDeclinedAtMs: status === 'cancelled' ? tsMillis(data['requestDeclinedAt']) : null,
     rescheduleRequestStatus: rescheduleStatusOf(data['rescheduleRequestStatus']),
     rescheduleRequestedStartTimeMs: tsMillis(data['rescheduleRequestedStartTime']),
     rescheduleRequestedEndTimeMs: tsMillis(data['rescheduleRequestedEndTime']),

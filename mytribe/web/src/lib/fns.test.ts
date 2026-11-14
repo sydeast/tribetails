@@ -29,11 +29,17 @@ describe('call', () => {
     expect(httpsCallable).toHaveBeenCalledWith(expect.anything(), 'getMyHome', { timeout: 20_000 });
   });
 
-  it('converts a deadline-exceeded rejection into a CallableTimeoutError naming the callable', async () => {
+  it('converts a deadline-exceeded rejection into a CallableTimeoutError that keeps the name off the screen', async () => {
     const deadlineExceeded = new FirebaseError('functions/deadline-exceeded', 'deadline exceeded');
     vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockRejectedValue(deadlineExceeded) as never);
     await expect(call('addKinTaleComment', {})).rejects.toThrow(CallableTimeoutError);
-    await expect(call('addKinTaleComment', {})).rejects.toThrow(/addKinTaleComment/);
+    const err = await call('addKinTaleComment', {}).catch((e: unknown) => e);
+    // The name is for logs only (#1919): the sentence is what a household reads.
+    expect((err as CallableTimeoutError).callableName).toBe('addKinTaleComment');
+    expect((err as Error).message).not.toMatch(/addKinTaleComment|Tribe Tails/);
+    expect((err as Error).message).toBe(
+      'No answer came back within 20 seconds, so it may still have gone through. Check before trying again.',
+    );
   });
 
   it('rethrows non-timeout errors unchanged', async () => {

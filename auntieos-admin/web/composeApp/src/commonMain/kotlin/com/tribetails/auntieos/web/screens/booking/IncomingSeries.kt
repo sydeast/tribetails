@@ -109,3 +109,19 @@ fun groupIncomingBySeries(
             )
         }
         .sortedBy { it.visits.firstOrNull()?.startTime ?: "" }
+
+/**
+ * #1875: what answering the request will do, said with its day and time, so the
+ * confirm step names the household (its title) and the date before anything is
+ * sent, and says who will be told. Same sentences as the web's request dialog.
+ */
+fun BookingSeries.decisionLine(decline: Boolean, zone: TimeZone): String {
+    val lines = visitLines(zone)
+    val whenText = when {
+        lines.isEmpty() -> "This request"
+        lines.size == 1 -> lines.first()
+        else -> "The $visitCount visits from ${lines.first()} to ${lines.last()}"
+    }
+    return if (decline) "$whenText will not be booked. The household will be told."
+    else "$whenText will go on the schedule and on the household's portal."
+}

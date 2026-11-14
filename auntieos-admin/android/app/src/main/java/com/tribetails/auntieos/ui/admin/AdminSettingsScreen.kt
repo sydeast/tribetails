@@ -594,11 +594,19 @@ fun AdminSettingsScreen(
 
                         // A8 Payments: a switch per method, the handles and the
                         // written instructions (#1177, parity with web #409).
-                        SettingsSection.Payments -> PaymentOptionsPanel(
-                            settings = uiState.businessSettings,
-                            saving = uiState.settingsSaving,
-                            onSettingsChange = { viewModel.updateBusinessSettings(it) },
-                        )
+                        // #1966: the Payment terms every new invoice starts on, first.
+                        SettingsSection.Payments -> Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            InvoiceTermsPanel(
+                                settings = uiState.businessSettings,
+                                saving = uiState.settingsSaving,
+                                onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                            )
+                            PaymentOptionsPanel(
+                                settings = uiState.businessSettings,
+                                saving = uiState.settingsSaving,
+                                onSettingsChange = { viewModel.updateBusinessSettings(it) },
+                            )
+                        }
 
                         // A8 W16/W17: the weather widgets' coverage area (city/metro/
                         // ZIP, not a street address).

@@ -9,6 +9,8 @@ function entry(over: Partial<NotificationEntry> = {}): NotificationEntry {
   return { _id: 'n1', key: 'kincare.booking.confirm', ...over };
 }
 
+/** #2069: the waiting booking requests, by household and batch. */
+const WAITING: ReadonlySet<string> = new Set(['kf1/b1', 'kf1/req_1', 'k9/b1']);
 /** No write in flight, unless a test overrides `pending`. */
 const IDLE = new Set<NotificationPendingKind>();
 
@@ -23,6 +25,9 @@ function handlers() {
     onArchive: vi.fn(),
     onRestore: vi.fn(),
     onBookingAction: vi.fn(),
+    // #2069: the live queue holds these requests, so they read as waiting.
+    pendingRequests: WAITING as ReadonlySet<string> | null,
+    pendingRequestsLoading: false,
   };
 }
 
@@ -308,5 +313,45 @@ describe('NotificationQuickActions for an Auntie (#2200 / #2201)', () => {
     expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
     rerender(<NotificationQuickActions entry={e} read={false} {...handlers()} />);
     expect(screen.getByRole('button', { name: 'Create quote' })).toBeInTheDocument();
+  });
+});
+/**
+ * #2069 / #1875: Approve and Deny only on a request the live queue holds, and a
+ * press only ASKS for the decision; the screen opens the confirm step.
+ */
+describe('NotificationQuickActions and the live request queue (#2069, #1875)', () => {
+  const request = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } });
+  it('offers no Approve or Deny on a request the queue no longer holds, and says it was answered', () => {
+    render(<NotificationQuickActions entry={request} read={false} {...handlers()} pendingRequests={new Set()} />);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
+    expect(screen.getByText('Answered')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open' })).toBeInTheDocument();
+  });
+  it('says it is checking while the queue reads, with no decision offered', () => {
+    render(
+      <NotificationQuickActions entry={request} read={false} {...handlers()} pendingRequests={null} pendingRequestsLoading />,
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Checking');
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+  });
+  it('shows no checking cue once the queue read has failed (the screen says so instead)', () => {
+    render(<NotificationQuickActions entry={request} read={false} {...handlers()} pendingRequests={null} />);
+    expect(screen.queryByText('Checking')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+  });
+  it('a press of Approve or Deny only asks the screen for the decision', async () => {
+    const h = handlers();
+    render(<NotificationQuickActions entry={request} read={false} {...h} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    expect(h.onBookingAction).toHaveBeenCalledWith('req_1', 'REJECT');
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(h.onBookingAction).toHaveBeenCalledWith('req_1', 'APPROVE');
+  });
+  it('Open on a waiting request goes to its card on Bookings (#2028)', async () => {
+    const h = handlers();
+    render(<NotificationQuickActions entry={request} read={false} {...h} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(h.onNavigate).toHaveBeenCalledWith({ to: '/bookings', search: { requestId: 'req_1', requestKinfolkId: 'kf1' } });
   });
 });

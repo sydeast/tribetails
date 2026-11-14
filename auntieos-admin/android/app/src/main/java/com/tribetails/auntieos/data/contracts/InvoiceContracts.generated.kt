@@ -270,7 +270,7 @@ data class CreateInvoiceArgs(
     /** The server defaults this to `""`. */
     val dueDate: String = "",
     /**
-     * One of `due_on_receipt`, `net_7`, `net_14`, `net_30`, `due_on_last_visit`, `net_7_after_last_visit`, `net_14_after_last_visit`, `custom`.
+     * One of `due_on_receipt`, `due_on_first_visit`, `due_on_last_visit`, `net_1_after_last_visit`, `net_2_after_last_visit`, `net_3_after_last_visit`, `net_4_after_last_visit`, `net_5_after_last_visit`, `net_6_after_last_visit`, `net_7_after_last_visit`, `net_14_after_last_visit`, `net_30_after_last_visit`, `net_1_before_first_visit`, `net_2_before_first_visit`, `net_3_before_first_visit`, `net_4_before_first_visit`, `net_5_before_first_visit`, `net_6_before_first_visit`, `net_7_before_first_visit`, `net_14_before_first_visit`, `net_30_before_first_visit`, `net_7`, `net_14`, `net_30`, `custom`.
      * Optional: omitted from the payload when null.
      */
     val termsCode: String? = null,
@@ -377,7 +377,7 @@ data class CreateQuoteArgs(
     /** The server defaults this to `""`. */
     val dueDate: String = "",
     /**
-     * One of `due_on_receipt`, `net_7`, `net_14`, `net_30`, `due_on_last_visit`, `net_7_after_last_visit`, `net_14_after_last_visit`, `custom`.
+     * One of `due_on_receipt`, `due_on_first_visit`, `due_on_last_visit`, `net_1_after_last_visit`, `net_2_after_last_visit`, `net_3_after_last_visit`, `net_4_after_last_visit`, `net_5_after_last_visit`, `net_6_after_last_visit`, `net_7_after_last_visit`, `net_14_after_last_visit`, `net_30_after_last_visit`, `net_1_before_first_visit`, `net_2_before_first_visit`, `net_3_before_first_visit`, `net_4_before_first_visit`, `net_5_before_first_visit`, `net_6_before_first_visit`, `net_7_before_first_visit`, `net_14_before_first_visit`, `net_30_before_first_visit`, `net_7`, `net_14`, `net_30`, `custom`.
      * Optional: omitted from the payload when null.
      */
     val termsCode: String? = null,
@@ -2383,7 +2383,7 @@ data class UpdateInvoiceArgsPatch(
     /** Optional: omitted from the payload when null. */
     val terms: String? = null,
     /**
-     * One of `due_on_receipt`, `net_7`, `net_14`, `net_30`, `due_on_last_visit`, `net_7_after_last_visit`, `net_14_after_last_visit`, `custom`.
+     * One of `due_on_receipt`, `due_on_first_visit`, `due_on_last_visit`, `net_1_after_last_visit`, `net_2_after_last_visit`, `net_3_after_last_visit`, `net_4_after_last_visit`, `net_5_after_last_visit`, `net_6_after_last_visit`, `net_7_after_last_visit`, `net_14_after_last_visit`, `net_30_after_last_visit`, `net_1_before_first_visit`, `net_2_before_first_visit`, `net_3_before_first_visit`, `net_4_before_first_visit`, `net_5_before_first_visit`, `net_6_before_first_visit`, `net_7_before_first_visit`, `net_14_before_first_visit`, `net_30_before_first_visit`, `net_7`, `net_14`, `net_30`, `custom`.
      * Optional: omitted from the payload when null.
      */
     val termsCode: String? = null,

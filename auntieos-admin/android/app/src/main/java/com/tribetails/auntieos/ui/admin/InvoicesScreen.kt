@@ -342,6 +342,9 @@ fun InvoicesScreen(
     /** #1609: the row send waiting on its confirm, and which send it is. */
     var rowSendConfirm by remember { mutableStateOf<Pair<Invoice, String>?>(null) }
     var showComposer by remember { mutableStateOf(false) }
+    // #1966: New invoice starts on the Payment terms setting; read it each time the composer opens.
+    val invoiceTermsSetting by viewModel.invoiceTermsSetting.collectAsState()
+    LaunchedEffect(showComposer) { if (showComposer) viewModel.loadInvoiceTermsSetting() }
     // ONE COMPOSER, ONE BUTTON (#408). A quote is an invoice in QUOTE status, so
     // the kind is a field inside the dialog rather than a second CTA the operator
     // has to choose between before seeing what the work looks like. This is only
@@ -552,6 +555,8 @@ fun InvoicesScreen(
         initialKinfolkId = quoteSeedKinfolkId,
         submitting = creating,
         submitError = createError,
+        termsSetting = invoiceTermsSetting,
+        onRetryTermsSetting = { viewModel.loadInvoiceTermsSetting() },
         onDismiss = { showComposer = false; quoteSeedKinfolkId = ""; createError = null },
         onOpenVisit = { sessionId -> showComposer = false; onOpenVisit(sessionId) },
         loadUninvoiced = { kinfolkId, from, to -> viewModel.loadUninvoicedSessions(kinfolkId, from, to) },

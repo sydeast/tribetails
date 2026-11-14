@@ -121,6 +121,20 @@ data class SchedulingState(
     // (one row per batchId). Approve/cancel the whole series via manageBookingSeries.
     val incomingSeries: List<IncomingSeries> = emptyList(),
     val incomingError: String? = null,
+    /**
+     * #2069: true while [incomingSeries] is the live stream's latest good read,
+     * false before its first answer and after it fails. [incomingError] cannot
+     * say this: a refused approval writes it too. The Notifications screen
+     * offers Approve / Deny on a request only while this is true and the
+     * request is in [incomingSeries].
+     */
+    val incomingLive: Boolean = false,
+    /**
+     * #2028: the request a notification's Open asked this screen to show, as
+     * [incomingRequestKey]. Its card opens its detail sheet on arrival and then
+     * clears this.
+     */
+    val focusedRequestKey: String? = null,
     val seriesActionBatchId: String? = null, // batchId currently being approved/cancelled
     val seriesActionMessage: String? = null,
     /**
@@ -181,7 +195,16 @@ data class SchedulingState(
     val scheduleWriteOverride: ScheduleOverrideKind? = null,
     // The write currently in flight, so the same block/move cannot be fired twice.
     val scheduleWriteInFlight: Boolean = false,
-)
+) {
+    /**
+     * #2028: a notification's Open named a request the live queue does not hold
+     * (booked, turned down or withdrawn since). Bookings says so rather than
+     * landing on nothing. Unknown while the queue is not live, so false then.
+     */
+    val focusedRequestGone: Boolean
+        get() = focusedRequestKey != null && incomingLive &&
+            incomingSeries.none { it.requestKey == focusedRequestKey }
+}
 
 /**
  * UI state for the Google Calendar OAuth connect/push card (Task 7.2). Kept as
@@ -464,7 +487,38 @@ class EnhancedSchedulingViewModel(
         observeBusyTimeSlots()
         observeIncomingSeries()
         loadVisitRequests()
+        observeVisitAskChanges()
         loadGoogleCalendarState()
+    }
+
+    /**
+     * #1864: the move and cancel asks are read once through callables, so a new
+     * ask filed while this screen stayed open never reached it. A live change
+     * signal ([BookingRepository.visitAskChangesStream]) now reads them again,
+     * quietly: the rows already shown stay put while the read is out.
+     *
+     * Not for a test admin, whose cross-tenant read would be refused. A signal
+     * that cannot start or fails is logged and never shown: the callables
+     * report their own failures, and without the signal the queue is what it
+     * was before, read on open.
+     */
+    private fun observeVisitAskChanges() {
+        viewModelScope.launch {
+            if (auntieRepository.isTestAdminActive()) return@launch
+            flow { emitAll(bookingRepository.visitAskChangesStream()) }
+                .catch { com.tribetails.auntieos.util.AuntieLog.e("visit ask change signal unavailable", it) }
+                .collect { loadVisitRequests(quiet = true) }
+        }
+    }
+
+    /** #2028: a notification's Open names the request to show; its card opens it. */
+    fun focusIncomingRequest(kinfolkId: String, batchId: String) {
+        _state.value = _state.value.copy(focusedRequestKey = incomingRequestKey(kinfolkId, batchId))
+    }
+
+    /** #2028: the focused request's sheet is open, so arriving again does not reopen it. */
+    fun clearFocusedRequest() {
+        _state.value = _state.value.copy(focusedRequestKey = null)
     }
 
     /**
@@ -531,9 +585,13 @@ class EnhancedSchedulingViewModel(
                         _state.value = _state.value.copy(
                             incomingSeries = groupIncomingBySeries(incoming) { kid -> byId[kid]?.displayName },
                             incomingError = null,
+                            incomingLive = true,
                         )
                     }
                     .onFailure { e ->
+                        // #2069: whatever the banner says, the list is no longer
+                        // known to be current, so nothing may be answered off it.
+                        _state.value = _state.value.copy(incomingLive = false)
                         // Fail-loud: keep any existing list, surface the error — but not in
                         // the sandbox, where the denial is expected (no cross-tenant data).
                         if (!sandbox) _state.value = _state.value.copy(
@@ -745,8 +803,10 @@ class EnhancedSchedulingViewModel(
      * so a broken reschedule read cannot hide a cancellation that has been
      * waiting since July, which is the exact failure this feature exists to end.
      */
-    fun loadVisitRequests() {
-        _state.value = _state.value.copy(visitRequestsLoading = true)
+    fun loadVisitRequests(quiet: Boolean = false) {
+        // #1864: a re-read on the live signal keeps the rows on screen while it
+        // is out, rather than swapping the panel for its loading bar.
+        if (!quiet) _state.value = _state.value.copy(visitRequestsLoading = true)
         viewModelScope.launch {
             // Stage-0I sandbox: the underlying reads are cross-tenant and a test
             // admin cannot make them, so their permission-denied must not paint
@@ -758,10 +818,15 @@ class EnhancedSchedulingViewModel(
                 reschedule.exceptionOrNull()?.let { add("Reschedule requests: ${it.message ?: "the read did not land"}") }
                 cancel.exceptionOrNull()?.let { add("Cancellation requests: ${it.message ?: "the read did not land"}") }
             }
+            // #1864: on a quiet re-read, a queue whose read failed keeps the
+            // rows it already showed; the banner below still says it failed.
+            val shown = _state.value.visitRequests
+            val shownReschedule = if (quiet) shown.filterIsInstance<VisitRequestRow.Reschedule>().map { it.dto } else emptyList()
+            val shownCancel = if (quiet) shown.filterIsInstance<VisitRequestRow.Cancel>().map { it.dto } else emptyList()
             _state.value = _state.value.copy(
                 visitRequests = mergeVisitRequests(
-                    reschedule.getOrDefault(emptyList()),
-                    cancel.getOrDefault(emptyList()),
+                    reschedule.getOrDefault(shownReschedule),
+                    cancel.getOrDefault(shownCancel),
                 ),
                 visitRequestsLoading = false,
                 visitRequestsError = if (failures.isEmpty() || sandbox) {

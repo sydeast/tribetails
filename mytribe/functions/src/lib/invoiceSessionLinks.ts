@@ -633,6 +633,8 @@ export interface QuoteVisitChange {
   plan: SessionLinkPlan;
   /** Merge into the invoice's own write. `{}` when nothing on the invoice changes. */
   fields: Record<string, unknown>;
+  /** #1966: the visits the quote holds once this change lands (`readQuoteReopen` only). */
+  held?: string[];
 }
 
 /**
@@ -747,7 +749,7 @@ export async function readQuoteReopen(
     );
   }
   const { held, claim } = await readHoldable(tx, firestore, invoiceId, visitsNamedBy(data));
-  return { plan: { invoiceId, claim, release: [] }, fields: holdFields(data, held) };
+  return { plan: { invoiceId, claim, release: [] }, fields: holdFields(data, held), held };
 }
 
 /** `details.code` when a quote cannot be accepted because its work is billed elsewhere. */

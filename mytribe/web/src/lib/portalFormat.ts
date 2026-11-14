@@ -28,11 +28,23 @@ type BookingStatus = GetMyBookingsResultLiveVisit['status'];
  * with `visitProgress: 'ended'`, and that pair reads Completed here too, so no
  * screen can show a Departed stage.
  */
-export type VisitStage = BookingStatus;
-type StagePair = Pick<GetMyBookingsResultLiveVisit, 'status' | 'visitProgress'>;
+export type VisitStage = BookingStatus | 'declined';
+/**
+ * `requestDeclinedAtMs` is optional so an answer cached from before #2029,
+ * which has no such field, still reads (as Cancelled, the way it did).
+ */
+type StagePair = Pick<GetMyBookingsResultLiveVisit, 'status' | 'visitProgress'> &
+  Partial<Pick<GetMyBookingsResultLiveVisit, 'requestDeclinedAtMs'>>;
 
+/**
+ * #2029: a request the office declined is stored `cancelled`, the same status
+ * as a visit someone cancelled. The server marks the decline
+ * (`requestDeclinedAtMs`), and the household reads it as Declined so it can
+ * tell the two apart.
+ */
 export function visitStageOf(b: StagePair): VisitStage {
   if (b.status === 'active' && b.visitProgress === 'ended') return 'completed';
+  if (b.status === 'cancelled' && b.requestDeclinedAtMs != null) return 'declined';
   return b.status;
 }
 
@@ -45,7 +57,7 @@ export function isUnderWay(b: StagePair): boolean {
 /** Completed or cancelled, read through the stage so a departed visit counts (#2123). */
 export function isFinished(b: StagePair): boolean {
   const stage = visitStageOf(b);
-  return stage === 'completed' || stage === 'cancelled';
+  return stage === 'completed' || stage === 'cancelled' || stage === 'declined';
 }
 
 /**
@@ -295,6 +307,7 @@ export function bookingChip(stage: VisitStage): ChipInfo {
       return { label, tone: 'go' };
     case 'completed':
     case 'cancelled':
+    case 'declined':
       return { label, tone: 'done' };
     default:
       return { label, tone: 'warm' };
@@ -336,6 +349,7 @@ export function bookingStatusIcon(stage: VisitStage): string {
     case 'requested':
       return '\u{1F552}';
     case 'cancelled':
+    case 'declined':
       return '\u2715';
     default:
       return '\u2705';
@@ -389,6 +403,8 @@ export function bookingStatusChip(stage: VisitStage): BookingStatusChip {
       return { label: 'COMPLETED', tone: 'completed' };
     case 'cancelled':
       return { label: 'CANCELLED', tone: 'cancelled' };
+    case 'declined':
+      return { label: 'DECLINED', tone: 'cancelled' };
   }
 }
 
@@ -424,6 +440,7 @@ export function bookingTimelineIndex(stage: VisitStage): number | null {
     case 'completed':
       return 4;
     case 'cancelled':
+    case 'declined':
       return null;
   }
 }

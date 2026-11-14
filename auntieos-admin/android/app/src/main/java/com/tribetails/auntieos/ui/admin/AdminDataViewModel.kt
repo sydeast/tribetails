@@ -259,6 +259,13 @@ class AdminDataViewModel(
      * into America/Chicago, the server's own default.
      */
     private val _businessTimeZone = MutableStateFlow("")
+
+    /**
+     * #1966: Settings > Invoices > Payment terms and the business zone, for New
+     * invoice. Read when the composer opens ([loadInvoiceTermsSetting]).
+     */
+    private val _invoiceTermsSetting = MutableStateFlow(InvoiceTermsSettingState(loading = true))
+    val invoiceTermsSetting: StateFlow<InvoiceTermsSettingState> = _invoiceTermsSetting.asStateFlow()
     val businessTimeZone: StateFlow<String> = _businessTimeZone.asStateFlow()
     private val _timeBlocks = MutableStateFlow<List<com.tribetails.auntieos.data.model.TimeBlockDefinition>>(emptyList())
 
@@ -443,21 +450,40 @@ class AdminDataViewModel(
      * `targetId` is the request's envelope id (`batchId`); it used to go to
      * `batchUpdateBookings`, which only knows visit ids, so every press came
      * back not-found. Fail-loud: the server's refusal is shown verbatim.
+     *
+     * #1875: reached only from the row's confirm step, never from the button
+     * itself, and [note] is what the operator wrote the household there
+     * (#2030): blank sends none. One answer at a time: a press while one is
+     * out is ignored, and [answeringRequestId] names the request in flight so
+     * its row shows that it is working.
      */
-    fun answerBookingRequest(kinfolkId: String, batchId: String, approve: Boolean) {
+    fun answerBookingRequest(kinfolkId: String, batchId: String, approve: Boolean, note: String = "") {
         if (kinfolkId.isBlank() || batchId.isBlank()) return
+        if (_answeringRequestId.value != null) return
         val action = if (approve) "APPROVE" else "CANCEL"
+        val trimmed = note.trim()
+        _answeringRequestId.value = batchId
         viewModelScope.launch {
-            repository.manageBookingSeries(action, kinfolkId, batchId)
-                .onSuccess { result ->
-                    _bulkReadMessage.value = bookingRequestAnswerMessage(approve, result)
+            val result = if (trimmed.isEmpty()) {
+                repository.manageBookingSeries(action, kinfolkId, batchId)
+            } else {
+                repository.manageBookingSeries(action, kinfolkId, batchId, note = trimmed)
+            }
+            result
+                .onSuccess { res ->
+                    _bulkReadMessage.value = bookingRequestAnswerMessage(approve, res)
                     loadNotifications()
                 }
                 .onFailure { throwable ->
                     _bulkReadMessage.value = "Couldn't ${if (approve) "approve" else "decline"}: ${throwable.message}"
                 }
+            _answeringRequestId.value = null
         }
     }
+
+    private val _answeringRequestId = MutableStateFlow<String?>(null)
+    /** #1875: the request (its `batchId`) whose answer is in flight, or null. */
+    val answeringRequestId: StateFlow<String?> = _answeringRequestId.asStateFlow()
 
     /**
      * #1609: the sentence the row confirm shows, naming who a reminder
@@ -915,6 +941,26 @@ class AdminDataViewModel(
      * for exactly one household at a time and reloads whenever the queue changes,
      * so a cached copy here would only ever be a second answer to disagree with.
      */
+    /**
+     * #1966: read the Payment terms setting and the zone for New invoice. A
+     * failed read keeps due on receipt and America/Chicago, and says so.
+     */
+    fun loadInvoiceTermsSetting() {
+        viewModelScope.launch {
+            _invoiceTermsSetting.value = _invoiceTermsSetting.value.copy(loading = true, failed = false)
+            val result = runCatchingCancellable { repository.getBusinessSettings().getOrThrow() }
+            _invoiceTermsSetting.value = result.fold(
+                onSuccess = { settings ->
+                    InvoiceTermsSettingState(
+                        paymentTerms = com.tribetails.auntieos.domain.paymentTermsSettingOf(settings.invoicePaymentTerms),
+                        timeZone = settings.timeZone.trim().ifBlank { com.tribetails.auntieos.domain.TERMS_FALLBACK_TIME_ZONE },
+                    )
+                },
+                onFailure = { InvoiceTermsSettingState(failed = true) },
+            )
+        }
+    }
+
     suspend fun loadUninvoicedSessions(
         kinfolkId: String,
         from: String? = null,
