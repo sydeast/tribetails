@@ -1,5 +1,6 @@
-import { useSearch } from '@tanstack/react-router';
+import { useRouteContext, useSearch } from '@tanstack/react-router';
 import { Bookings } from '../screens/Bookings';
+import { isAuntieAccess } from '../lib/access';
 
 /**
  * Adapts `/bookings?bookingId=<flat session id>` to Bookings' props, the same
@@ -16,11 +17,18 @@ import { Bookings } from '../screens/Bookings';
  * `/bookings?requestId=<batch id>&requestKinfolkId=<household id>` is the
  * "Kinfolk requested a KinCare visit" notice (#2028), which opens that
  * request's card. A batch id is unique only inside its household, so both.
+ *
+ * #2187, operator ruling 2026-11-14 ("No, only I can"): it also tells the
+ * screen whether an Auntie is signed in, from the access the admin layout
+ * already resolved, so New booking is never drawn for her, first paint
+ * included.
  */
 export function BookingsView() {
   const { bookingId, kinRemoval, requestId, requestKinfolkId } = useSearch({ from: '/admin/bookings' });
+  const { access } = useRouteContext({ from: '/admin' });
   return (
     <Bookings
+      isAuntie={isAuntieAccess(access)}
       {...(bookingId ? { initialBookingId: bookingId } : {})}
       {...(kinRemoval ? { kinRemovalRequestId: kinRemoval } : {})}
       {...(requestId && requestKinfolkId

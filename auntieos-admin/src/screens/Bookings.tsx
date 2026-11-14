@@ -261,6 +261,16 @@ const HISTORY_PAGE_SIZE = 25;
 
 interface BookingsProps {
   /**
+   * An Auntie is signed in (#2187, operator ruling 2026-11-14: "No, only I
+   * can"). Making a booking is the owner's alone, so she gets no New booking
+   * button and the create dialog is never mounted for her. A prop from the
+   * route adapter, not `useIsAuntie`: that hook reads false until the token
+   * resolves, which would draw her the button for a moment. The server
+   * refuses her the create regardless (`createMultiDateBookingRequest` is not
+   * in `AUNTIE_ALLOWED_CALLABLES`).
+   */
+  isAuntie?: boolean;
+  /**
    * Row-select hook. The router mounts this screen with no selection handler
    * (no detail ROUTE exists), so by default this screen wires its OWN: selecting
    * a row opens `BookingDetailModal`, the full detail sheet, fed from the SAME
@@ -346,7 +356,13 @@ function rowViewsFor(rows: BookingEntry[]): RowView[] {
  * and api/bookingsWrite.ts for exactly why those two callables don't apply to
  * this list's rows.
  */
-export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestId, focusRequest }: BookingsProps) {
+export function Bookings({
+  onSelectBooking,
+  initialBookingId,
+  kinRemovalRequestId,
+  focusRequest,
+  isAuntie = false,
+}: BookingsProps) {
   const navigate = useNavigate();
   const rows = useCollection<BookingEntry>(BOOKINGS_QUERY);
   // History is open like every other section, and grows a page at a time. It
@@ -689,7 +705,10 @@ export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestI
         subtitle="Pending requests and scheduled visits"
         // #1607: ONE Select, on the list toolbar right above the rows it picks
         // (#701's reason). Two buttons doing the same thing read as two modes.
-        trailing={<PrimaryButton label="New booking" onClick={() => setShowCreate(true)} />}
+        // #2187: the owner's alone. An Auntie gets no button, not a disabled one.
+        trailing={
+          isAuntie ? undefined : <PrimaryButton label="New booking" onClick={() => setShowCreate(true)} />
+        }
       />
 
       <WorkSettingsNotice state={workSettings} />
@@ -870,7 +889,7 @@ export function Bookings({ onSelectBooking, initialBookingId, kinRemovalRequestI
           />
         ))}
 
-      {showCreate && (
+      {showCreate && !isAuntie && (
         <NewBookingDialog onClose={() => setShowCreate(false)} onCreated={handleCreated} />
       )}
     </div>
