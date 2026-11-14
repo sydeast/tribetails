@@ -51,6 +51,48 @@ describe('the short line and its link', () => {
     expect(householdSmsText('One.\n\nTwo.', PORTAL_URL)).toBe(`One. Two. ${LINK}`);
     expect(householdPushShelfLine('One.\n\nTwo.')).toBe('One. Two.');
   });
+
+  // An emoji is two code units. Whatever the cut lands on, no half is sent.
+  const loneHalf = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  it.each([193, 194, 195, 196, 197, 198, 199, 200])(
+    'an emoji across the cut is dropped whole, never halved (%i letters before it)',
+    (lead) => {
+      const text = `${'a'.repeat(lead)}${'\u{1F436}'.repeat(40)}`;
+      const sms = householdSmsText(text, PORTAL_URL);
+      const push = householdPushShelfLine(text);
+      expect(loneHalf.test(sms)).toBe(false);
+      expect(loneHalf.test(push)).toBe(false);
+      expect(sms.endsWith(`... ${LINK}`)).toBe(true);
+      expect(sms.length).toBeLessThanOrEqual(householdSmsMax(PORTAL_URL));
+      expect(push.endsWith('…')).toBe(true);
+      expect(push.length).toBeLessThanOrEqual(HOUSEHOLD_SHORT_LINE_MAX);
+    },
+  );
+
+  it('a text message is cut at the end of a word, not inside one', () => {
+    const sent = householdSmsText(`${'Please leave the gate unlatched. '.repeat(5)}Thirty-three more words follow here and on.`, PORTAL_URL);
+    const line = sent.slice(0, -LINK.length - 1);
+    expect(line.length).toBeLessThanOrEqual(HOUSEHOLD_SHORT_LINE_MAX);
+    expect(line).toBe(`${'Please leave the gate unlatched. '.repeat(5)}Thirty-three more words follow...`);
+  });
+
+  it('an address typed into a note is dropped whole when the cut lands inside it', () => {
+    const lead = 'Tribe Tails: the Drop-In Visit for Biscuit is still on. '.repeat(3).trim();
+    const sent = householdSmsText(`${lead} The form is at https://forms.tribetails.com/intake/2026/household/updated-entry-details?ref=note thanks`, PORTAL_URL);
+    expect(sent).toBe(`${lead} The form is at... ${LINK}`);
+    expect(sent.match(/https:\/\/\S+/g)).toEqual([`${PORTAL_URL}${HOUSEHOLD_NOTICE_ROUTE}`]);
+  });
+
+  it('one long run of letters with no space is still cut, not dropped', () => {
+    const sent = householdSmsText(`Hello ${'x'.repeat(400)}`, PORTAL_URL);
+    expect(sent).toBe(`Hello ${'x'.repeat(191)}... ${LINK}`);
+  });
+
+  it('a message that ends exactly on the limit is not cut', () => {
+    const exact = `${'word '.repeat(39)}fives`;
+    expect(exact.length).toBe(HOUSEHOLD_SHORT_LINE_MAX);
+    expect(householdSmsText(exact, PORTAL_URL)).toBe(`${exact} ${LINK}`);
+  });
 });
 
 describe('every household text message and push in the repo templates', () => {

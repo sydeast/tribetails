@@ -120,7 +120,33 @@ export function householdPushShelfLine(body: string): string {
   const flat = body.replace(/\s+/g, ' ').trim();
   return flat.length <= HOUSEHOLD_SHORT_LINE_MAX
     ? flat
-    : `${flat.slice(0, HOUSEHOLD_SHORT_LINE_MAX - 1).trimEnd()}\u2026`;
+    : `${cutWhole(flat, HOUSEHOLD_SHORT_LINE_MAX - 1).trimEnd()}\u2026`;
+}
+/**
+ * The first `max` characters of `text`, never ending on half of a two-part
+ * character. An emoji is stored as a pair; a cut between the two halves sends
+ * a broken character that the phone shows as a box. PURE.
+ */
+function cutWhole(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const last = text.charCodeAt(max - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
+}
+/** The longest unfinished word the cut steps back over, so one long run of letters is not all lost. */
+const SHORT_LINE_WORD_BACKOFF = 30;
+/**
+ * `text` cut to at most `max` characters at the end of a word. A word the cut
+ * landed inside is dropped, and a web address it landed inside is always
+ * dropped, however long: half an address reads as a link and opens nothing. PURE.
+ */
+function cutAtWord(text: string, max: number): string {
+  const head = cutWhole(text, max);
+  if (head.length === text.length || text.charAt(head.length) === ' ') return head.trimEnd();
+  const lastSpace = head.lastIndexOf(' ');
+  if (lastSpace <= 0) return head;
+  const unfinished = head.slice(lastSpace + 1);
+  const isAddress = /:\/\/|^www\./i.test(unfinished);
+  return isAddress || unfinished.length <= SHORT_LINE_WORD_BACKOFF ? head.slice(0, lastSpace).trimEnd() : head;
 }
 /** What comes before the link a text message did not already carry. */
 export const HOUSEHOLD_SMS_LINK_LABEL = 'More in MyTribe:';
@@ -138,8 +164,10 @@ function householdSmsLink(portalUrl: string): string {
  *   - A message that already links to MyTribe and fits is sent as written (the
  *     confirmation's "Every date: {{portalUrl}}").
  *   - Any other message is cut to `HOUSEHOLD_SHORT_LINE_MAX` and the link to the
- *     notifications list is put after it. A link the cut would have broken is
- *     taken out first, so the message never ends in half an address.
+ *     notifications list is put after it. A MyTribe link is taken out first,
+ *     and the cut steps back to the end of a word, so the message never ends
+ *     in half an address (the household's own, or one typed into a note) or
+ *     half an emoji.
  *
  * The cut ends in three plain dots, not the ellipsis character: one character
  * outside the basic text-message alphabet makes the carrier send the whole
@@ -154,6 +182,6 @@ export function householdSmsText(rendered: string, portalUrl: string): string {
   const line =
     words.length <= HOUSEHOLD_SHORT_LINE_MAX
       ? words
-      : `${words.slice(0, HOUSEHOLD_SHORT_LINE_MAX - 3).trimEnd()}...`;
+      : `${cutAtWord(words, HOUSEHOLD_SHORT_LINE_MAX - 3)}...`;
   return `${line} ${householdSmsLink(portalUrl)}`;
 }
