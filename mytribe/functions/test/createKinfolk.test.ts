@@ -202,6 +202,45 @@ describe('createKinfolk', () => {
     expect(hasPrimaryContact({ phoneNumber: 42 })).toBe(false);
   });
 
+  // #1951: the walk created a household with "abc" for its phone and a word with
+  // no @ sign for its email. Each filled-in contact field is checked before
+  // anything is written, with the field named for the client.
+  it.each([
+    ['phoneNumber', 'abc', 'The phone number needs 10 digits, or 11 starting with 1.'],
+    ['phoneNumber', '555-0134', 'The phone number needs 10 digits, or 11 starting with 1.'],
+    ['phoneNumber', '2 805 555 0134', 'The phone number needs 10 digits, or 11 starting with 1.'],
+    ['secondaryPhone', 'xyz', 'The secondary phone needs 10 digits, or 11 starting with 1.'],
+    ['email', 'catch', "The email address doesn't look right."],
+    ['email', 'catch@hanasamku', "The email address doesn't look right."],
+    ['email', 'catch@hanasamku..com', "The email address doesn't look right."],
+    ['secondaryEmail', 'pawsome', "The secondary email address doesn't look right."],
+  ])('refuses %s %j, and writes nothing', async (field, value, message) => {
+    const mock = buildDbMock({ queryDocs: { kinfolk: [] } });
+    mocks.dbFn.mockReturnValue(mock.db);
+    await expect(
+      createKinfolkHandler(call({ kinfolk: household({ email: 'catch@hanasamku.com', [field]: value }) })),
+    ).rejects.toMatchObject({ code: 'invalid-argument', message, details: { field } });
+    expect(mock.writes).toHaveLength(0);
+    expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
+  });
+
+  it('takes blank secondary fields, a 10 digit, an 11 digit and an E.164 phone, and a real address', async () => {
+    const mock = buildDbMock({ queryDocs: { kinfolk: [] } });
+    mocks.dbFn.mockReturnValue(mock.db);
+    const ok = { email: 'catch@hanasamku.com', secondaryPhone: '', secondaryEmail: '' };
+    await createKinfolkHandler(call({ kinfolk: household({ ...ok, phoneNumber: '805-555-0141' }) }));
+    await createKinfolkHandler(call({ kinfolk: household({ ...ok, phoneNumber: '1 (805) 555-0142', email: 'pawsome@hanasamku.com' }) }));
+    await createKinfolkHandler(call({ kinfolk: household({ ...ok, phoneNumber: '+18055550143', email: 'e2e-admin@tribetails.com' }) }));
+    expect(mock.writes).toHaveLength(3);
+  });
+
+  it('checks the shape after the required checks, so a blank household still reads as missing contact', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { kinfolk: [] } }).db);
+    await expect(
+      createKinfolkHandler(call({ kinfolk: household({ phoneNumber: '', email: '', secondaryEmail: 'pawsome' }) })),
+    ).rejects.toMatchObject({ message: PRIMARY_CONTACT_REQUIRED_MESSAGE });
+  });
+
   it('refuses a payload that is not { kinfolk: {...} }', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { kinfolk: [] } }).db);
     await expect(createKinfolkHandler(call(household()))).rejects.toMatchObject({ code: 'invalid-argument' });

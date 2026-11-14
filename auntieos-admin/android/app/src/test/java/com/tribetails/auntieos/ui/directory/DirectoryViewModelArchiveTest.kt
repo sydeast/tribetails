@@ -99,7 +99,7 @@ class DirectoryViewModelArchiveTest {
     fun `unarchiveKinfolk routes to repository unarchiveKinfolk`() = runTest(testDispatcher) {
         seedEditState(status = "archived")
         advanceUntilIdle()
-        coEvery { repository.unarchiveKinfolk(any()) } returns Result.success(Unit)
+        coEvery { repository.unarchiveKinfolk(any()) } returns Result.success("active")
 
         viewModel.unarchiveKinfolk()
         advanceUntilIdle()

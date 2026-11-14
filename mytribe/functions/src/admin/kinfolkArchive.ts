@@ -27,9 +27,13 @@ import { validateResponse } from '../lib/callableResponse';
  *
  *   archive  status `archived`, `archivedAt` (ISO instant, the type the
  *            Kotlin clients have always stored), `archivedReason` (optional,
- *            trimmed), `archivedBy` (the caller's uid).
- *   restore  status `active`, and the three archive fields cleared to "" so
- *            the readers that expect them keep the same shape.
+ *            trimmed), `archivedBy` (the caller's uid), and
+ *            `statusBeforeArchive`: the status the household held (#1958).
+ *   restore  the status in `statusBeforeArchive` when it is one a household
+ *            can be set to (active, prospect, inactive), otherwise `active`,
+ *            and the four archive fields cleared to "" so the readers that
+ *            expect them keep the same shape. A household archived before
+ *            #1958 has no stored status and restores to `active`, as it did.
  *
  * Archiving an archived household, or restoring one that is not archived,
  * changes nothing and writes no Activity Log line (`changed: false`).
@@ -57,7 +61,28 @@ export const SetKinfolkArchivedResult = z
   .strict();
 
 export const KINFOLK_ARCHIVED_STATUS = 'archived';
+/** The status a restore falls back to when no usable prior status is stored. */
 export const KINFOLK_RESTORED_STATUS = 'active';
+/** #1958: where an archive keeps the status the household held. */
+export const KINFOLK_STATUS_BEFORE_ARCHIVE = 'statusBeforeArchive';
+/** The statuses a household can be set to, and so restored to (the clients' picker). */
+export const KINFOLK_RESTORABLE_STATUSES: readonly string[] = ['active', 'prospect', 'inactive'];
+
+/** #1958: the status an archive keeps, lower-cased. Blank or unknown keeps `active`. */
+export function kinfolkStatusToKeep(current: string): string {
+  const s = current.trim().toLowerCase();
+  return KINFOLK_RESTORABLE_STATUSES.includes(s) ? s : KINFOLK_RESTORED_STATUS;
+}
+
+/**
+ * #1958: the status a restore gives back. The kept prior status when it is one
+ * a household can be set to (any case, any surrounding spaces), otherwise
+ * `active`: a household archived before the prior status was kept has none.
+ */
+export function restoredKinfolkStatus(doc: Record<string, unknown>): string {
+  const raw = doc[KINFOLK_STATUS_BEFORE_ARCHIVE];
+  return kinfolkStatusToKeep(typeof raw === 'string' ? raw : '');
+}
 
 function parseArgs(data: unknown): z.infer<typeof SetKinfolkArchivedArgs> {
   try {
@@ -109,6 +134,7 @@ export async function setKinfolkArchivedHandler(
           archivedAt: new Date().toISOString(),
           archivedReason: reason,
           archivedBy: uid,
+          [KINFOLK_STATUS_BEFORE_ARCHIVE]: kinfolkStatusToKeep(current),
           updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true },
@@ -116,18 +142,20 @@ export async function setKinfolkArchivedHandler(
       return { changed: true, status: KINFOLK_ARCHIVED_STATUS, name };
     }
 
+    const restored = restoredKinfolkStatus(data);
     tx.set(
       ref,
       {
-        status: KINFOLK_RESTORED_STATUS,
+        status: restored,
         archivedAt: '',
         archivedReason: '',
         archivedBy: '',
+        [KINFOLK_STATUS_BEFORE_ARCHIVE]: '',
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
     );
-    return { changed: true, status: KINFOLK_RESTORED_STATUS, name };
+    return { changed: true, status: restored, name };
   });
 
   if (outcome.changed) {

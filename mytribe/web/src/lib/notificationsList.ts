@@ -34,6 +34,8 @@ export type NotificationTarget =
   | { kind: 'schedule' }
   | { kind: 'invoice'; invoiceId: string }
   | { kind: 'tale'; taleId: string }
+  /** #1874: a reply from the office opens Messages. */
+  | { kind: 'messages' }
   | { kind: 'none' };
 
 /**
@@ -59,6 +61,8 @@ export function notificationTarget(
       return id ? { kind: 'invoice', invoiceId: id } : { kind: 'none' };
     case 'kintale':
       return id ? { kind: 'tale', taleId: id } : { kind: 'none' };
+    case 'conversation':
+      return { kind: 'messages' };
     default:
       return { kind: 'none' };
   }

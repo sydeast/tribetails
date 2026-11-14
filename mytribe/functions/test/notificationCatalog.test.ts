@@ -175,6 +175,9 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
     'assignment.assigned': { staff: true },
     'assignment.changed': { staff: true },
     'message.received': { business: true },
+    // #1874: the office's reply to one household, the other direction of
+    // message.received. Kinfolk-only, like broadcast.message.
+    'message.reply': { kinfolk: true },
     // #386: the office's broadcast out to a whole audience segment, the other
     // direction of message.received. Kinfolk-only; the operator wrote it, so
     // they do not need a copy of it back.

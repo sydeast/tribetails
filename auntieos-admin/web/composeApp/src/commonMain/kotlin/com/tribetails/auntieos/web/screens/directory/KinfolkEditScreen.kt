@@ -45,6 +45,7 @@ import com.tribetails.auntieos.web.data.draftsEqual
 import com.tribetails.auntieos.web.data.emergencyContactsOf
 import com.tribetails.auntieos.web.data.kinfolkChanges
 import com.tribetails.auntieos.web.data.kinfolkArchiveOffered
+import com.tribetails.auntieos.web.data.kinfolkRestoredMessage
 import com.tribetails.auntieos.web.data.isBlankDrafts
 import com.tribetails.auntieos.web.data.toDrafts
 import com.tribetails.auntieos.web.data.validateEmergencyContactDrafts
@@ -496,6 +497,9 @@ fun KinfolkEditScreen(
         val saveContacts = retryId != null || emergencyContactsNeedSaving(isNew, ecDrafts, ecBaseline)
         val contactProblem = if (saveContacts) {
             validateEmergencyContactDrafts(ecDrafts, listOf("$firstName $lastName"), listOf(phoneNumber, secondaryPhone))
+                // #1951: on Add, "xyz" for the contact's phone is refused before
+                // the household is created, not after.
+                ?: emergencyContactPhoneShapeError(ecDrafts).takeIf { isNew || retryId != null }
         } else null
         // Add (and an Add retry) requires a valid contact before anything is
         // written. On Edit the contact never blocks the household (#829 review
@@ -831,6 +835,8 @@ fun KinfolkEditScreen(
                     label        = "Phone *",
                     enabled      = householdFieldsEnabled,
                     isError      = phoneError && attemptedSave,
+                    // #1951: why, beside the field, not a red line alone.
+                    errorMessage = kinfolkPhoneMessage(phoneNumber).takeIf { attemptedSave },
                     modifier     = Modifier.weight(1f),
                     keyboardType = KeyboardType.Phone,
                 )
@@ -839,6 +845,7 @@ fun KinfolkEditScreen(
                     label        = "Email *",
                     enabled      = householdFieldsEnabled,
                     isError      = emailError && attemptedSave,
+                    errorMessage = kinfolkEmailMessage(email).takeIf { attemptedSave },
                     modifier     = Modifier.weight(1f),
                     keyboardType = KeyboardType.Email,
                 )
@@ -892,6 +899,7 @@ fun KinfolkEditScreen(
                     label        = "Secondary phone",
                     enabled      = householdFieldsEnabled,
                     isError      = secondaryPhoneError && attemptedSave,
+                    errorMessage = kinfolkSecondaryPhoneMessage(secondaryPhone).takeIf { attemptedSave },
                     modifier     = Modifier.weight(1f),
                     keyboardType = KeyboardType.Phone,
                 )
@@ -900,6 +908,7 @@ fun KinfolkEditScreen(
                     label        = "Secondary email",
                     enabled      = householdFieldsEnabled,
                     isError      = secondaryEmailError && attemptedSave,
+                    errorMessage = kinfolkSecondaryEmailMessage(secondaryEmail).takeIf { attemptedSave },
                     modifier     = Modifier.weight(1f),
                     keyboardType = KeyboardType.Email,
                 )
@@ -1066,7 +1075,8 @@ fun KinfolkEditScreen(
                         saving = false
                         when (r) {
                             // Same exit as an archive: back to where the operator came from.
-                            is WriteResult.Ok  -> { routeToast.show("${existing.displayName} is active again.", ToastKind.Success); onArchived() }
+                            // #1958: names the status it came back as (a Prospect stays one).
+                            is WriteResult.Ok  -> { routeToast.show(kinfolkRestoredMessage(existing.displayName, r.value), ToastKind.Success); onArchived() }
                             is WriteResult.Err -> showToast("Restore failed: ${r.message}", ToastKind.Error)
                         }
                     }

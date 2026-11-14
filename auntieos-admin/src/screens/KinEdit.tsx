@@ -10,6 +10,7 @@ import { AsyncRegion } from '../components/AsyncRegion';
 import { Banner } from '../components/Banner';
 import { BreedField } from '../components/BreedField';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
+import { Dialog } from '../components/Dialog';
 import { useToast } from '../components/Toast';
 import { useAdminAccess } from '../lib/access';
 import { validateKinAge, validateKinWeight } from '../lib/kinMeasures';
@@ -132,6 +133,9 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  // #2017: Archive asks first, naming the Kin. Restore acts at once: it puts
+  // the Kin back, and Archive is there to undo it.
+  const [askArchive, setAskArchive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The seeded dog / cat breed bank behind the Breed dropdown. A failure here is
   // NOT fatal and NOT silent: banks come back empty, breed degrades to the free
@@ -242,12 +246,21 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
     try {
       await setKinArchived(kinId, archived);
       setArchiving(false);
+      setAskArchive(false);
       showToast(archived ? `${displayName} is archived.` : `${displayName} is active again.`);
       onDone();
     } catch (err) {
       setArchiving(false);
+      setAskArchive(false);
       setError(`Could not save: ${err instanceof Error ? err.message : 'Update failed'}`);
     }
+  }
+
+  /** #2017: Archive opens the confirm; Restore runs straight away. */
+  function handleArchiveButton() {
+    if (!form || archiving) return;
+    if (form.status === 'archived') void handleArchiveToggle();
+    else setAskArchive(true);
   }
 
   const busy = saving || archiving;
@@ -417,7 +430,7 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
                           ? 'Restore'
                           : 'Archive'
                     }
-                    onClick={() => void handleArchiveToggle()}
+                    onClick={handleArchiveButton}
                     disabled={busy}
                   />
                 )}
@@ -435,6 +448,33 @@ export function KinEdit({ kinId, kinName, onDone, onCancel }: KinEditProps) {
           )
         }
       </AsyncRegion>
+
+      {askArchive && isOwner && (
+        <Dialog
+          title="Archive this Kin"
+          onClose={() => {
+            if (!archiving) setAskArchive(false);
+          }}
+          footer={
+            <>
+              <GhostButton label="Cancel" onClick={() => setAskArchive(false)} disabled={archiving} />
+              <PrimaryButton
+                label={archiving ? 'Archiving…' : 'Archive'}
+                onClick={() => void handleArchiveToggle()}
+                disabled={archiving}
+                busy={archiving}
+              />
+            </>
+          }
+        >
+          {/* #2017: names the Kin, says what archiving does and where to find it again. */}
+          <p className="kedit__confirm">
+            Archive <strong>{displayName}</strong>? {displayName} leaves the Kin list and the household&apos;s
+            roster. To bring {displayName} back, choose Archived under Show on the Directory&apos;s Kin tab, open{' '}
+            {displayName}, and press Restore.
+          </p>
+        </Dialog>
+      )}
     </div>
   );
 }

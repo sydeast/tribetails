@@ -16,10 +16,8 @@ import {
   VISIT_LIFECYCLE_ILLEGAL_CODE,
   evaluateVisitLifecycle,
   illegalLifecycleMessage,
-  notificationEventFor,
   type VisitLifecycleAction,
 } from '../lib/visitLifecycle';
-import { dispatchVisitNotificationCore } from './dispatchVisitNotification';
 
 /**
  * #397 L19: server-bound On-my-way / Clock in / Clock out / Undo arrival on ONE
@@ -73,6 +71,9 @@ import { dispatchVisitNotificationCore } from './dispatchVisitNotification';
  *      nothing triggers on a `kin_care_sessions` write, so any other writer
  *      notifies nobody. Doing it here means the web cannot ship a clock-in
  *      whose "kinfolk notified" is a lie. See the notification block below.
+ *      #2037: a session write now triggers `onKinCareSessionLifecycle`,
+ *      which sends every clock step from the server, so this reason holds
+ *      for every writer. This callable calls the same function inline.
  *
  * WHAT IT IS NOT FOR, and each has an owner already:
  *   - COMPLETED / CANCELLED: `transitionBookingStatus`. Those are terminal,
@@ -186,81 +187,6 @@ interface SessionDoc {
   kinCareBatchId?: unknown;
   kinCareVisitId?: unknown;
   sourceBookingId?: unknown;
-}
-
-function nonBlank(v: unknown): string {
-  return typeof v === 'string' && v.trim() !== '' ? v.trim() : '';
-}
-
-/**
- * Tell the household, best-effort.
- *
- * BEST-EFFORT IS THE ANDROID CONTRACT, not a shortcut. `VisitNotifier.notify`
- * returns a `Result` and `HomeViewModel` only ever reads its success branch --
- * a failed dispatch logs and the visit stays clocked in. Making the clock-in
- * fail because a push could not be enqueued would lose the operational fact
- * (the Auntie IS at the door) over a message. What web adds is that the
- * outcome is REPORTED rather than silently dropped, so the screen can say
- * "clocked in, but the household was not notified" instead of implying both.
- *
- * The routing ids are `VisitNotifier`'s, transcribed: prefer the envelope pair
- * (`kinCareBatchId` + `kinCareVisitId`), fall back to the legacy flat
- * `sourceBookingId`, and when a session carries neither there is nothing to
- * route to -- an AuntieOS-native visit that predates the kinCare envelope.
- * Android `error()`s there and swallows it in `runCatching`; here it is a named
- * skip reason rather than a swallowed throw.
- */
-async function notifyHousehold(args: {
-  action: VisitLifecycleAction;
-  session: SessionDoc;
-  uid: string;
-  actorName: string | undefined;
-  etaMinutes: number | undefined;
-  /** When this step was stamped (ms epoch): part of the notification's identity (#832). */
-  eventAtMs: number | undefined;
-}): Promise<{ notified: boolean; notifySkipped: string | null }> {
-  const event = notificationEventFor(args.action);
-  if (event === null) return { notified: false, notifySkipped: 'no_event_for_action' };
-
-  const familyId = nonBlank(args.session.kinfolkId);
-  if (familyId === '') return { notified: false, notifySkipped: 'session_has_no_kinfolk' };
-
-  const batchId = nonBlank(args.session.kinCareBatchId);
-  const visitId = nonBlank(args.session.kinCareVisitId);
-  const bookingId = nonBlank(args.session.sourceBookingId);
-  const useEnvelope = batchId !== '' && visitId !== '';
-  if (!useEnvelope && bookingId === '') {
-    return { notified: false, notifySkipped: 'session_has_no_routing_ids' };
-  }
-
-  try {
-    const outcome = await dispatchVisitNotificationCore(
-      {
-        familyId,
-        ...(useEnvelope ? { batchId, visitId } : { bookingId }),
-        event,
-        ...(args.etaMinutes !== undefined ? { etaMinutes: args.etaMinutes } : {}),
-        ...(args.eventAtMs !== undefined ? { eventAtMs: args.eventAtMs } : {}),
-      },
-      args.uid,
-      args.actorName,
-    );
-    // #1794: the core names why nobody was told. `?? 'household_prefs_suppressed'`
-    // only covers a core that predates `reason`, which cannot happen inside one
-    // deploy but keeps this mapping total.
-    return outcome.suppressed
-      ? { notified: false, notifySkipped: outcome.reason ?? 'household_prefs_suppressed' }
-      : { notified: true, notifySkipped: null };
-  } catch (err) {
-    logEvent({
-      severity: 'warn',
-      function: 'setVisitLifecycle',
-      event: 'visit.notification.failed',
-      uid: args.uid,
-      errorMessage: (err as Error)?.message,
-    });
-    return { notified: false, notifySkipped: 'dispatch_failed' };
-  }
 }
 
 export async function setVisitLifecycleHandler(
@@ -428,44 +354,41 @@ export async function setVisitLifecycleHandler(
 
   await ref.set(patch, { merge: true });
 
-  const { notified, notifySkipped } = await notifyHousehold({
-    action: args.action,
-    session: prev,
-    uid,
-    actorName: req.auth?.token?.name,
-    etaMinutes: args.etaMinutes,
-    eventAtMs: Number.isFinite(Date.parse(stampedAt)) ? Date.parse(stampedAt) : undefined,
-  });
-
-  await writeAuditEntry({
-    event: AUDIT_EVENTS.VISIT_LIFECYCLE_SET,
-    severity: 'info',
-    status: 'SUCCESS',
-    actorRole: 'AUNTIE',
-    actorUid: uid,
-    targetUid: args.sessionId,
-    targetCollection: 'kin_care_sessions',
-    // #1752: words; the session is the entry's target.
-    description: (await import('../lib/activityWords.js')).visitTransitionWords(args.action, decision.from, decision.to),
-    payload: {
-      sessionId: args.sessionId,
-      action: args.action,
-      from: decision.from,
-      to: decision.to,
-      changed: true,
-      notified,
-      notifySkipped,
-    },
-  }).catch((err) => {
-    logEvent({
-      severity: 'warn',
-      function: 'setVisitLifecycle',
-      event: 'audit.write.failed',
-      uid,
-      errorMessage: (err as Error)?.message,
-    });
-  });
-
+  // #2037: the Activity Log line and the household notice come from
+  // `lib/visitStepNotice.ts`, the same function the session trigger runs for
+  // this write. Both name the step the same way (`visitStepOf` on the row as
+  // it was and as this write leaves it), so whichever reaches it second writes
+  // no second line and sends no second notice. Called here, rather than left
+  // to the trigger, because this callable answers with what the household was
+  // told.
+  const { visitStepOf, announceVisitStep } = await import('../lib/visitStepNotice.js');
+  const written: Record<string, unknown> = { ...(prev as Record<string, unknown>), ...patch };
+  const step = visitStepOf(prev as Record<string, unknown>, written);
+  let notified = false;
+  let notifySkipped: string | null = 'no_event_for_action';
+  if (step !== null) {
+    try {
+      ({ notified, notifySkipped } = await announceVisitStep({
+        sessionId: args.sessionId,
+        session: written,
+        step,
+        actorUid: uid,
+        actorName: req.auth?.token?.name,
+        source: 'setVisitLifecycle',
+        fallbackKey: stampedAt,
+      }));
+    } catch (err) {
+      // The line could not be written. The trigger this write fires writes it.
+      logEvent({
+        severity: 'warn',
+        function: 'setVisitLifecycle',
+        event: 'audit.write.failed',
+        uid,
+        errorMessage: (err as Error)?.message,
+      });
+      notifySkipped = 'dispatch_failed';
+    }
+  }
   logEvent({
     severity: 'info',
     function: 'setVisitLifecycle',

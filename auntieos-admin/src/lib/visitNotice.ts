@@ -38,7 +38,9 @@ export type VisitNoticeSkip =
   | 'already_in_this_state'
   | 'no_recipient'
   | 'not_sent'
-  | 'dispatch_failed';
+  | 'dispatch_failed'
+  /** #2037: the server has not recorded the outcome yet. Not a "not told". */
+  | 'notice_pending';
 
 /** What each action tells the household, as the end of "X will be told ...". */
 const TOLD_WHAT: Readonly<Partial<Record<VisitLifecycleAction, string>>> = {
@@ -96,6 +98,13 @@ export function visitNoticeOutcomeSentence(
       return `${name} was not notified, because this visit is not linked to a booking.`;
     case 'dispatch_failed':
       return `The notice to ${household} could not be sent.`;
+    case 'notice_pending':
+      // #2037: the server sends the notice from the saved step. This card
+      // only stopped waiting to hear how it went; the Activity Log will show it.
+      // An Auntie has no Activity Log, so her line stops at the first sentence.
+      return `${household === '' ? 'Still checking who was told.' : `Still checking whether ${household} was told.`}${
+        auntie ? '' : ' The Activity Log will show it.'
+      }`;
     default:
       // `no_recipient`, `not_sent`, and anything an older or newer server says
       // that this build has no words for. True, and it promises nothing.

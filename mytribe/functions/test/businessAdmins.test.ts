@@ -811,8 +811,9 @@ describe('#2223 sending: an Auntie or household already on the list gets no busi
   /**
    * Review of #2223: claims can be wiped while the staff record stays. Deleting
    * a `clients/{uid}` doc clears every claim on that login (`onClientsWrite`),
-   * and `grant-staff-role.mjs --role none` swallows a failed staff-record
-   * delete. The staff record is evidence, as it is in `staffRoles.ts`.
+   * and the staff role tool removes the claim before it deletes the staff
+   * record (#2228), so a run that stops between the two leaves exactly this.
+   * The staff record is evidence, as it is in `staffRoles.ts`.
    */
   it('skips an Auntie whose claims were wiped or whose login is gone while her staff record remains', async () => {
     mocks.claims = { wiped: {}, gone: null, bare: {} };

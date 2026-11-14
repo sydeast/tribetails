@@ -89,7 +89,7 @@ let docs: Docs;
 
 const STAFF_UID = 'staff-uid-1';
 /** One row per copy that actually reached a person. */
-let delivered: Array<{ key: string; recipientUid: string; household: boolean }>;
+let delivered: Array<{ key: string; recipientUid: string; household: boolean; listOnly: boolean }>;
 let ledger: Map<string, number>;
 /** #1511: recipients whose record is written with every delivery channel off. */
 let appOnlyUids: string[];
@@ -125,10 +125,12 @@ function fakeEnqueue(args: EnqueueArgs): FakeOutcome {
     const last = ledger.get(k);
     if (identity !== '' && last !== undefined && Date.now() - last < windowMs) continue;
     ledger.set(k, Date.now());
-    delivered.push({ key: args.key, recipientUid: r.uid, household: r.household });
+    // #1973: a list-only copy is a notifications-list record with every channel off.
+    const listOnly = args.listOnlyFor?.includes(r.uid) === true;
+    delivered.push({ key: args.key, recipientUid: r.uid, household: r.household, listOnly });
     ids.push(`n${delivered.length}`);
     // As the real dispatcher does (#1507): reported only for a record written.
-    if (appOnlyUids.includes(r.uid)) appOnly.push(r.uid);
+    if (appOnlyUids.includes(r.uid) || listOnly) appOnly.push(r.uid);
   }
   return { written: ids, suppressed: [], unresolved, appOnly };
 }
@@ -180,6 +182,10 @@ function appliedCount(key = 'invoice.payment.applied'): number {
   return delivered.filter((d) => d.key === key && d.household).length;
 }
 
+/** #1973: household copies of `key` written to their notifications list only. */
+function listOnlyCount(key = 'invoice.payment.applied'): number {
+  return delivered.filter((d) => d.key === key && d.household && d.listOnly).length;
+}
 /** Office copies of `key`. */
 function staffCount(key = 'invoice.payment.applied'): number {
   return delivered.filter((d) => d.key === key && !d.household).length;
@@ -531,11 +537,12 @@ describe('#866 admin-recorded payments (markInvoicePaid then recordPayment)', ()
     expect(staffCount()).toBe(1);
   });
 
-  it('full, confirmation unticked: none to the household, and the office still gets its copy', async () => {
+  it('#1973 full, confirmation unticked: the household sees the payoff on their list only, and the office gets its copy', async () => {
     seedInvoice();
     await adminTwoStep(40, false);
     expect(docs[INVOICE]!['status']).toBe('paid');
-    expect(appliedCount()).toBe(0);
+    expect(appliedCount()).toBe(1);
+    expect(listOnlyCount()).toBe(1);
     expect(staffCount()).toBe(1);
   });
 
@@ -571,11 +578,12 @@ describe('#866 admin-recorded payments (recordPayment applying the money itself)
     expect(staffCount()).toBe(1);
   });
 
-  it('full, confirmation unticked: none to the household, one office copy', async () => {
+  it('#1973 full, confirmation unticked: the household list copy only, one office copy', async () => {
     seedInvoice();
     await adminApply(40, false);
     expect(docs[INVOICE]!['status']).toBe('paid');
-    expect(appliedCount()).toBe(0);
+    expect(appliedCount()).toBe(1);
+    expect(listOnlyCount()).toBe(1);
     expect(staffCount()).toBe(1);
   });
 
@@ -622,11 +630,12 @@ describe('#866 recordPayment: a retry of the same submission', () => {
     expect(staffCount()).toBe(1);
   });
 
-  it('a retry of an unticked submission sends the household nothing', async () => {
+  it('#1973 a retry of an unticked payoff sends the household no second list copy', async () => {
     seedInvoice();
     await adminApply(40, false, KEY);
     await adminApply(40, false, KEY);
-    expect(appliedCount()).toBe(0);
+    expect(appliedCount()).toBe(1);
+    expect(listOnlyCount()).toBe(1);
   });
 
   it('#1511 a confirmation that reached the household in the app only is stamped so, and a retry past the ledger window sends nothing more', async () => {
@@ -697,6 +706,8 @@ describe('#866 recordPayment: a retry of the same submission', () => {
   it('an office copy nobody can receive is stamped skipped, and a retry makes no second enqueue call', async () => {
     seedInvoice();
     mocks.roster.state = 'empty';
+    // No household account either (#1973: one with an account gets its list copy).
+    mocks.resolveUid.mockResolvedValue(null);
     await adminApply(40, false, KEY);
     expect(staffCount()).toBe(0);
     expect(docs[`payments/${KEY}`]).toMatchObject({ officeNoticeSkippedReason: 'no-recipients' });
@@ -766,7 +777,9 @@ describe('#866 office copy: only for a payment that pays the invoice off (as on 
     await ledgerStep(5, false, settledBy);
     await ledgerStep(5, false);
     expect(staffCount()).toBe(1);
-    expect(appliedCount()).toBe(0);
+    // #1973: the payoff's one list copy, and none for the later payments.
+    expect(appliedCount()).toBe(1);
+    expect(listOnlyCount()).toBe(1);
   });
 
   it('step 2 never ran: an unrelated linked payment 30 days later does not claim the settlement', async () => {
@@ -791,7 +804,7 @@ describe('#866 office copy: only for a payment that pays the invoice off (as on 
     later(1 * MIN);
     await ledgerStep(40, false);
     expect(staffCount()).toBe(1);
-    expect(appliedCount()).toBe(0);
+    expect(listOnlyCount()).toBe(1);
     expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toMatch(/^markInvoicePaid:/);
   });
 
@@ -822,12 +835,12 @@ describe('#866 office copy: only for a payment that pays the invoice off (as on 
     later(HOUR);
     await adminApply(40, false, OFFICE_KEY);
     expect(staffCount()).toBe(1);
-    expect(appliedCount()).toBe(0);
+    expect(listOnlyCount()).toBe(1);
     expect(docs[`payments/${OFFICE_KEY}`]!['officeNoticeSentAt']).toBeTruthy();
-
     later(HOUR);
     await adminApply(40, false, OFFICE_KEY);
     expect(staffCount()).toBe(1);
+    expect(listOnlyCount()).toBe(1);
   });
 
   it('unticked full, two-step flow, first enqueue fails: a same-key retry sends the office copy once', async () => {
@@ -844,7 +857,7 @@ describe('#866 office copy: only for a payment that pays the invoice off (as on 
     later(HOUR);
     await ledgerStep(40, false, settledBy, OFFICE_KEY);
     expect(staffCount()).toBe(1);
-    expect(appliedCount()).toBe(0);
+    expect(listOnlyCount()).toBe(1);
   });
 
   it('unticked partial retried with the same key still tells nobody', async () => {
@@ -1048,7 +1061,8 @@ describe('#884 review: updateInvoice decides and writes in one transaction', () 
       }),
     );
     expect(staffCount()).toBe(1);
-    expect(appliedCount()).toBe(0);
+    // #1973: B paid it off, so the household has it on their list.
+    expect(listOnlyCount()).toBe(1);
   });
 });
 

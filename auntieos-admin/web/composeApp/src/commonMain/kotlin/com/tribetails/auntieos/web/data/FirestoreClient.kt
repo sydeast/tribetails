@@ -839,8 +839,11 @@ class FirestoreClient {
      * ARCHIVE_KINFOLK / RESTORE_KINFOLK Activity Log line, so this client writes
      * no line of its own. The rules refuse a direct change to those fields. A
      * refusal comes back as [KINFOLK_ARCHIVE_OWNER_ONLY].
+     *
+     * #1958: Ok carries the status the household now holds, which on a restore
+     * is the one it held before the archive ([restoredKinfolkStatusFrom]).
      */
-    suspend fun setKinfolkArchived(id: String, archived: Boolean, reason: String = ""): WriteResult<Unit> {
+    suspend fun setKinfolkArchived(id: String, archived: Boolean, reason: String = ""): WriteResult<String> {
         if (id.isBlank()) return WriteResult.Err("setKinfolkArchived requires a kinfolk id")
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(id.trim()))
@@ -849,11 +852,15 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("setKinfolkArchived", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(kinfolkArchiveRefusalText(r.message))
-            is WriteResult.Ok  -> WriteResult.Ok(Unit)
+            is WriteResult.Ok  -> WriteResult.Ok(if (archived) "archived" else restoredKinfolkStatusFrom(r.value))
         }
     }
-    suspend fun archiveKinfolk(id: String):  WriteResult<Unit>   = setKinfolkArchived(id, archived = true)
-    suspend fun restoreKinfolk(id: String):  WriteResult<Unit>   = setKinfolkArchived(id, archived = false)
+    suspend fun archiveKinfolk(id: String):  WriteResult<Unit>   = when (val r = setKinfolkArchived(id, archived = true)) {
+        is WriteResult.Ok  -> WriteResult.Ok(Unit)
+        is WriteResult.Err -> r
+    }
+    /** #1958: Ok carries the status the household came back as. */
+    suspend fun restoreKinfolk(id: String):  WriteResult<String> = setKinfolkArchived(id, archived = false)
     suspend fun createKin(k: Kin):           WriteResult<String> =
         platformCreateKin(k.copy(kinfolkId = enforceWriteKinfolkId(testMode, k.kinfolkId)))
     /**
@@ -1204,45 +1211,55 @@ class FirestoreClient {
     }
 
     /**
-     * #1840: tell the household about one clock step (`on_my_way`, `arrived`,
-     * `departed`) and hand back the server's raw answer, which says whether a
-     * notice went out and, when none did, why. The server decides who the
-     * household's login is; this client holds no opinion about it.
+     * #2037: what the household was told about one clock step (`on_my_way`,
+     * `arrived`, `departed`), as the SERVER recorded it, in the shape the
+     * dispatch used to answer (`dispatchIds`, `suppressed`, `reason`), so
+     * [com.tribetails.auntieos.web.screens.sessions.visitNotifyOutcomeOf]
+     * reads it unchanged.
      *
-     * Same routing as [sendReport]: the envelope ids when both are present,
-     * else the legacy booking id. [eventAtMs] is the stamp the patch just
-     * wrote, so a retry of this tap is one notice and a re-arrival is a new one
-     * (#832).
+     * THIS CLIENT NO LONGER TELLS THE HOUSEHOLD. It used to call
+     * `dispatchVisitNotification` after its patch (#1840), and a console
+     * closed in between lost the notice. The server now sends it from the
+     * committed write (`functions/src/triggers/onKinCareSessionLifecycle.ts`)
+     * and records the outcome at `visit_step_notices/{id}`. This polls that
+     * record for up to [waitMs]; with none by then it answers `notice_pending`,
+     * which the toast says as "still checking", never as "not told".
+     *
+     * [eventAtMs] is the stamp the patch just wrote: with the session id and
+     * the notice it names the record, as [visitStepNoticeId] builds it.
      */
-    suspend fun dispatchVisitClockNotice(
+    suspend fun visitClockNoticeRecord(
         session: KinCareSession,
         event: String,
         eventAtMs: Long?,
+        waitMs: Long = VISIT_NOTICE_WAIT_MS,
+        pollMs: Long = 1_500L,
+        read: suspend (String) -> JsonObject? = { platformVisitStepNoticeDoc(it) },
     ): WriteResult<String> {
-        val familyId = session.kinfolkId
-        if (familyId.isBlank()) return WriteResult.Err("This visit is not linked to a household.")
-        val batchId = session.kinCareBatchId?.takeIf { it.isNotBlank() }
-        val visitId = session.kinCareVisitId?.takeIf { it.isNotBlank() }
-        val legacyBookingId = session.sourceBookingId.takeIf { it.isNotBlank() }
-        val useEnvelopeIds = batchId != null && visitId != null
-        if (!useEnvelopeIds && legacyBookingId == null) {
-            return WriteResult.Err("This visit is not linked to a booking.")
-        }
-        val payload = buildJsonObject {
-            put("familyId", familyId)
-            if (useEnvelopeIds) {
-                put("batchId", batchId!!)
-                put("visitId", visitId!!)
-            } else {
-                put("bookingId", legacyBookingId!!)
-            }
-            put("event", event)
-            if (eventAtMs != null) put("eventAtMs", eventAtMs)
-        }
-        return platformInvokeCallable(
-            "dispatchVisitNotification",
-            callableJson.encodeToString(JsonObject.serializer(), payload),
+        fun answer(notified: Boolean, reason: String?): WriteResult<String> = WriteResult.Ok(
+            callableJson.encodeToString(
+                JsonObject.serializer(),
+                buildJsonObject {
+                    put("dispatchIds", JsonArray(emptyList()))
+                    put("suppressed", !notified)
+                    if (reason != null) put("reason", reason)
+                },
+            ),
         )
+        if (eventAtMs == null) return answer(false, "notice_pending")
+        val id = visitStepNoticeId(session._id, event, eventAtMs)
+        var waited = 0L
+        while (true) {
+            val doc = runCatchingCancellable { read(id) }.getOrNull()
+            if (doc != null) {
+                val notified = (doc["notified"] as? JsonPrimitive)?.booleanOrNull == true
+                val reason = (doc["reason"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+                return answer(notified, if (notified) null else reason ?: "not_sent")
+            }
+            if (waited >= waitMs) return answer(false, "notice_pending")
+            kotlinx.coroutines.delay(pollMs)
+            waited += pollMs
+        }
     }
 
     /**
@@ -2931,6 +2948,21 @@ internal expect fun platformEmailsStream():     Flow<FirestoreResult<List<EmailM
 internal expect fun platformInvoicesStream():   Flow<FirestoreResult<List<Invoice>>>
 /** #1567: one invoice document from the server as plain JSON, or null when it does not exist. */
 internal expect suspend fun platformInvoiceDocPlain(invoiceId: String): kotlinx.serialization.json.JsonObject?
+/**
+ * #2037: how long the console waits for the server's record of a clock step
+ * before it says it is still checking. Web waits the same (`VISIT_NOTICE_WAIT_MS`).
+ */
+internal const val VISIT_NOTICE_WAIT_MS: Long = 30_000L
+
+/**
+ * #2037: the id of one clock step's record at `visit_step_notices/{id}`: the
+ * session, the notice and the stamped time. The server builds the same string
+ * (`functions/src/lib/visitStepNotice.ts#visitStepNoticeId`), and so do web
+ * and Android.
+ */
+internal fun visitStepNoticeId(sessionId: String, event: String, atMs: Long): String = "${sessionId}__${event}__$atMs"
+/** #2037: the server's record of what a household was told about one clock step, or null while there is none. */
+internal expect suspend fun platformVisitStepNoticeDoc(noticeId: String): kotlinx.serialization.json.JsonObject?
 internal expect fun platformActivityStream():   Flow<FirestoreResult<List<ActivityLogEntry>>>
 internal expect fun platformNotificationsStream(): Flow<FirestoreResult<List<NotificationEntry>>>
 internal expect fun platformDossierStream(kinfolkId: String): Flow<FirestoreResult<Dossier?>>

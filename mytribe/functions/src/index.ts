@@ -716,6 +716,10 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // moment it is Departed, whichever client (or offline queue) wrote the
   // departure; sending a KinTale never decides it.
   onKinCareSessionDeparted: () => require('./triggers/onKinCareSessionDeparted'),
+  // #2037: a FOURTH. Each clock step's Activity Log line and household notice
+  // come from the committed write, so a reload or an offline queue on the
+  // client can no longer lose them.
+  onKinCareSessionLifecycle: () => require('./triggers/onKinCareSessionLifecycle'),
   onBookingEnvelopeCreate: () => require('./triggers/onBookingEnvelopeCreate'),
   // #1647: stamps a request's `kincare.requested` rows once the request is
   // booked or declined, so no client offers Approve/Deny on an answered request.

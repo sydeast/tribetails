@@ -34,6 +34,13 @@ export const AUDIT_EVENTS = {
   PERM_REVOKED: 'PERM_REVOKED',
   PERM_BILLING_GRANTED: 'PERM_BILLING_GRANTED',
   PERM_BILLING_REVOKED: 'PERM_BILLING_REVOKED',
+  /**
+   * #2228: an Auntie's staff role ended (`grant-staff-role.mjs --role none`, or
+   * her `clients/{uid}` doc deleted), so she left the business admin list and
+   * her work devices were unregistered from business notices in the same step.
+   * Written by `lib/staffAccessEnd.ts`, only when something changed.
+   */
+  PERM_STAFF_ROLE_REMOVED: 'PERM_STAFF_ROLE_REMOVED',
 
   SECRETS_TRIBEPIN_SET: 'SECRETS_TRIBEPIN_SET',
   SECRETS_TRIBEPIN_CHANGE_REQUESTED: 'SECRETS_TRIBEPIN_CHANGE_REQUESTED',
@@ -594,9 +601,10 @@ export const AUDIT_EVENTS = {
   TEMPLATE_UNASSIGNED: 'TEMPLATE_UNASSIGNED',
   TEMPLATE_CONVERTED: 'TEMPLATE_CONVERTED',
 
-  // The in-visit clock. The admin clients have written these four through
-  // `logActivity` since the tap moved to a direct write; declared so a server
-  // writer can use the same keys and old and new lines read alike.
+  // The in-visit clock. The admin clients wrote these four through
+  // `logActivity` after their own direct write until #2037; the server now
+  // writes them from the committed write (`lib/visitStepNotice.ts`), under the
+  // same keys, so old and new lines read alike.
   VISIT_ON_MY_WAY: 'VISIT_ON_MY_WAY',
   VISIT_ARRIVED: 'VISIT_ARRIVED',
   VISIT_DEPARTED: 'VISIT_DEPARTED',
@@ -616,8 +624,8 @@ export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];
  * for the same act, or a line for an act that never happened.
  *
  * Keys not listed stay open to the owner, so a new client line needs no change
- * here. A key declared above with no server writer yet (the visit taps, the
- * Kinfolk and Kin record keys, `NOTIFICATION_NOT_SENT`) is not listed until a
+ * here. A key declared above with no server writer yet (the Kinfolk and Kin
+ * record keys, `NOTIFICATION_NOT_SENT`) is not listed until a
  * server writer exists. `test/serverOnlyAuditEvents.test.ts` fails when a
  * writer in `src/` emits a key missing here, and when a key here has no writer
  * left.
@@ -645,6 +653,7 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.PERM_BILLING_REVOKED,
   AUDIT_EVENTS.PERM_GRANTED,
   AUDIT_EVENTS.PERM_REVOKED,
+  AUDIT_EVENTS.PERM_STAFF_ROLE_REMOVED,
   AUDIT_EVENTS.SECRETS_TRIBEPIN_SET,
   AUDIT_EVENTS.SECRETS_TRIBEPIN_VALIDATED,
   AUDIT_EVENTS.OPERATOR_CROSSTENANT_ACCESS,
@@ -721,6 +730,13 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.VISIT_LIFECYCLE_REFUSED,
   AUDIT_EVENTS.VISIT_LIFECYCLE_SET,
   AUDIT_EVENTS.VISIT_OVERLAP_CONFLICT_OVERRIDDEN,
+  // #2037: the four clock steps, written from the committed session write. An
+  // installed admin client from before #2037 still sends its own copy after the
+  // write; refusing it here is what keeps the step to one line.
+  AUDIT_EVENTS.VISIT_ON_MY_WAY,
+  AUDIT_EVENTS.VISIT_ARRIVED,
+  AUDIT_EVENTS.VISIT_DEPARTED,
+  AUDIT_EVENTS.VISIT_UNDO_ARRIVAL,
   AUDIT_EVENTS.INTEGRATION_CALENDAR_CONNECTED,
   AUDIT_EVENTS.INTEGRATION_CALENDAR_DISCONNECTED,
   AUDIT_EVENTS.INTEGRATION_CALENDAR_PUSH,

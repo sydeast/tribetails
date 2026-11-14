@@ -59,6 +59,14 @@ class VisitNoticeWordsTest {
     }
 
     @Test
+    fun `the wait for the server's record says it is checking, and later that it still is`() {
+        // #2037: Home and Auntie Time both show this while the record is on its way.
+        assertEquals("Checking whether Dre East was told.", visitNoticeCheckingSentence("Dre East"))
+        assertEquals("Checking who was told.", visitNoticeCheckingSentence(""))
+        assertEquals("Still checking whether Dre East was told.", said(false, "notice_pending"))
+    }
+
+    @Test
     fun `a lower-case name opens the sentence with a capital`() {
         assertEquals("The Wrens was notified.", said(true, null, "the Wrens"))
     }

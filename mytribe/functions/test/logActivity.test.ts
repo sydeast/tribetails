@@ -151,7 +151,7 @@ describe('logActivityHandler', () => {
  */
 describe('#1820 logActivity records who the caller really is', () => {
   it('the owner: staff band, stamped as the owner', async () => {
-    await logActivityHandler(req({ actionType: 'VISIT_ARRIVED' }, 'owner-1', OWNER));
+    await logActivityHandler(req({ actionType: 'VISIT_COMPLETED' }, 'owner-1', OWNER));
     expect(written().actorRole).toBe('AUNTIE');
     expect(written().actorUid).toBe('owner-1');
     expect(written().payload).toEqual({ admin: true, staffRole: null });
@@ -159,20 +159,20 @@ describe('#1820 logActivity records who the caller really is', () => {
 
   it('the owner by the allowlist fallback, with no claim minted yet', async () => {
     process.env.AUNTIE_OPERATOR_UIDS = 'boot-1';
-    await logActivityHandler(req({ actionType: 'VISIT_ARRIVED' }, 'boot-1', HOUSEHOLD));
+    await logActivityHandler(req({ actionType: 'VISIT_COMPLETED' }, 'boot-1', HOUSEHOLD));
     expect(written().actorRole).toBe('AUNTIE');
     expect(written().payload).toEqual({ admin: true, staffRole: null });
   });
 
   it('an Auntie: staff band, stamped as the Auntie, never as the owner', async () => {
-    await logActivityHandler(req({ actionType: 'VISIT_ARRIVED' }, 'auntie-1', AUNTIE));
+    await logActivityHandler(req({ actionType: 'VISIT_COMPLETED' }, 'auntie-1', AUNTIE));
     expect(written().actorRole).toBe('AUNTIE');
     expect(written().payload).toEqual({ admin: false, staffRole: 'auntie' });
   });
 
   it('an account carrying both claims is the Auntie, as every other gate treats it', async () => {
     await logActivityHandler(
-      req({ actionType: 'VISIT_ARRIVED' }, 'both-1', { admin: true, staffRole: 'auntie' }),
+      req({ actionType: 'VISIT_COMPLETED' }, 'both-1', { admin: true, staffRole: 'auntie' }),
     );
     expect(written().payload).toEqual({ admin: false, staffRole: 'auntie' });
   });
@@ -223,7 +223,7 @@ describe('#1820 logActivity records who the caller really is', () => {
     await logActivityHandler(
       req(
         {
-          actionType: 'VISIT_ARRIVED',
+          actionType: 'VISIT_COMPLETED',
           actorRole: 'SYSTEM',
           role: 'PRIMARY',
           staffRole: 'auntie',
@@ -271,8 +271,8 @@ describe('#1820 logActivity is still a staff callable', () => {
   });
 
   it('admits the owner and an Auntie', async () => {
-    await expect(wrapped(req({ actionType: 'VISIT_ARRIVED' }, 'owner-1', OWNER))).resolves.toMatchObject({ ok: true });
-    await expect(wrapped(req({ actionType: 'VISIT_ARRIVED' }, 'auntie-1', AUNTIE))).resolves.toMatchObject({ ok: true });
+    await expect(wrapped(req({ actionType: 'VISIT_COMPLETED' }, 'owner-1', OWNER))).resolves.toMatchObject({ ok: true });
+    await expect(wrapped(req({ actionType: 'VISIT_COMPLETED' }, 'auntie-1', AUNTIE))).resolves.toMatchObject({ ok: true });
     expect(writeAuditEntryMock).toHaveBeenCalledTimes(2);
   });
 });
@@ -283,7 +283,8 @@ describe('#1820 logActivity is still a staff callable', () => {
  */
 describe('#1820 what an Auntie may write a line about', () => {
   const hers = [
-    'VISIT_ON_MY_WAY', 'VISIT_ARRIVED', 'VISIT_DEPARTED', 'VISIT_COMPLETED', 'VISIT_NOTE_ADDED', 'VISIT_PHOTO_ADDED',
+    // #2037: the four clock steps are the server's lines now (SERVER_ONLY_AUDIT_EVENTS).
+    'VISIT_COMPLETED', 'VISIT_NOTE_ADDED', 'VISIT_PHOTO_ADDED',
     'CONTENT_KINTALE_SENT', 'UPDATE_KIN', 'CREATE_KIN', 'UPDATE_KINFOLK', 'DRAFT_APPROVED', 'BLOCK_TIME_SLOT',
   ];
   it.each(hers)('writes %s for an Auntie', async (actionType) => {
@@ -349,7 +350,7 @@ describe('#1820 logActivity takes a bounded payload', () => {
   it('stores the listed facts beside the server stamp', async () => {
     await logActivityHandler(
       req({
-        actionType: 'VISIT_ARRIVED',
+        actionType: 'VISIT_COMPLETED',
         targetId: 's1',
         payload: { visitId: 's1', from: 'ON_MY_WAY', to: 'ARRIVED', source: 'web' },
       }),
@@ -387,7 +388,7 @@ describe('#1820 logActivity takes a bounded payload', () => {
   });
 
   it('writes no client facts when none are sent', async () => {
-    await logActivityHandler(req({ actionType: 'VISIT_ARRIVED' }));
+    await logActivityHandler(req({ actionType: 'VISIT_COMPLETED' }));
     expect(written().payload).toEqual({ admin: true, staffRole: null });
   });
 

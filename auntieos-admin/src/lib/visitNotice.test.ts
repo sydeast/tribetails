@@ -57,6 +57,11 @@ describe('visitNoticeOutcomeSentence', () => {
       'No household was notified, because this visit is not linked to one.',
     ],
     [{ notified: false, notifySkipped: 'dispatch_failed' }, 'The notice to Dre East could not be sent.'],
+    // #2037: the server sends from the saved step; the card only stopped waiting.
+    [
+      { notified: false, notifySkipped: 'notice_pending' },
+      'Still checking whether Dre East was told. The Activity Log will show it.',
+    ],
     [{ notified: false, notifySkipped: 'not_sent' }, 'Dre East was not notified.'],
     [{ notified: false, notifySkipped: 'something_newer' }, 'Dre East was not notified.'],
   ])('%j reads %s', (outcome, sentence) => {
@@ -311,6 +316,12 @@ describe('#2185 the switch-off lines under an Auntie sign-in', () => {
     );
     expect(line).toBe('Dre East was not notified, because the owner has notices to households turned off.');
     expect(line).not.toMatch(/Settings/);
+  });
+
+  it('#2037: still checking, without the Activity Log she does not have', () => {
+    expect(visitNoticeOutcomeSentence({ notified: false, notifySkipped: 'notice_pending' }, 'Dre East', true)).toBe(
+      'Still checking whether Dre East was told.',
+    );
   });
 
   it('the confirm names the owner, not Settings', () => {

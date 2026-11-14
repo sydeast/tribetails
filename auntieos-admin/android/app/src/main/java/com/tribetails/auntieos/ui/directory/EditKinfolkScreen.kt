@@ -272,14 +272,19 @@ fun EditKinfolkScreen(
                                 onValueChange = viewModel::updateEditPhoneNumber,
                                 label = "Primary Phone",
                                 modifier = Modifier.fillMaxWidth(),
+                                isError = editKinfolkPhoneError(state.phoneNumber) != null,
                             )
+                            // #1951: why Save is off, said beside the field.
+                            FieldErrorText(editKinfolkPhoneError(state.phoneNumber))
 
                             AuntieField(
                                 value = state.email,
                                 onValueChange = viewModel::updateEditEmail,
                                 label = "Email",
                                 modifier = Modifier.fillMaxWidth(),
+                                isError = addKinfolkEmailError(state.email) != null,
                             )
+                            FieldErrorText(addKinfolkEmailError(state.email))
 
                             AuntieField(
                                 value = state.outstandingBalance,
@@ -410,14 +415,18 @@ fun EditKinfolkScreen(
                                 onValueChange = viewModel::updateEditSecondaryPhone,
                                 label = "Secondary Phone",
                                 modifier = Modifier.fillMaxWidth(),
+                                isError = addKinfolkSecondaryPhoneError(state.secondaryPhone) != null,
                             )
+                            FieldErrorText(addKinfolkSecondaryPhoneError(state.secondaryPhone))
 
                             AuntieField(
                                 value = state.secondaryEmail,
                                 onValueChange = viewModel::updateEditSecondaryEmail,
                                 label = "Secondary Email",
                                 modifier = Modifier.fillMaxWidth(),
+                                isError = addKinfolkEmailError(state.secondaryEmail) != null,
                             )
+                            FieldErrorText(addKinfolkEmailError(state.secondaryEmail))
 
                             // item 2: Preferred contact method + Best time to contact
                             // editor removed (Auntie complaint). Model fields preserved

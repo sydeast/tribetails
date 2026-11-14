@@ -8,6 +8,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { KINFOLK_DUPLICATE_WINDOW_MS, duplicateMatch, type DuplicateMatch } from '../lib/kinfolkDuplicate';
+import { isEmailShape, isUsPhoneShape } from '../lib/contactShape';
 
 /**
  * #890: the one way an admin client creates a household (`kinfolk/{id}`).
@@ -105,6 +106,30 @@ export function hasPrimaryContact(kinfolk: Record<string, unknown>): boolean {
   });
 }
 
+/**
+ * #1951: each phone and email the household is created with is checked against
+ * the shape every admin form checks (`lib/contactShape.ts`), before anything is
+ * written. Blank is allowed: Android and the desktop console send the whole
+ * model, with every field they did not fill as "". The update side is held to
+ * the same shapes by `firestore.rules` (`kinfolkContactShapesOk`), because an
+ * edit is a direct write.
+ */
+export const CONTACT_SHAPE_CHECKS: readonly { field: string; ok: (v: string) => boolean; message: string }[] = [
+  { field: 'phoneNumber', ok: isUsPhoneShape, message: 'The phone number needs 10 digits, or 11 starting with 1.' },
+  { field: 'secondaryPhone', ok: isUsPhoneShape, message: 'The secondary phone needs 10 digits, or 11 starting with 1.' },
+  { field: 'email', ok: isEmailShape, message: "The email address doesn't look right." },
+  { field: 'secondaryEmail', ok: isEmailShape, message: "The secondary email address doesn't look right." },
+];
+
+/** The first contact field that is filled in but not a phone or an email, or null. */
+export function contactShapeProblem(kinfolk: Record<string, unknown>): { field: string; message: string } | null {
+  for (const check of CONTACT_SHAPE_CHECKS) {
+    const v = kinfolk[check.field];
+    if (typeof v === 'string' && v.trim() !== '' && !check.ok(v)) return { field: check.field, message: check.message };
+  }
+  return null;
+}
+
 function millisOf(v: unknown): number {
   if (v && typeof v === 'object' && typeof (v as { toMillis?: unknown }).toMillis === 'function') {
     return (v as { toMillis: () => number }).toMillis();
@@ -130,6 +155,10 @@ export async function createKinfolkHandler(req: CallableRequest<unknown>): Promi
   }
   if (!hasPrimaryContact(parsed.data.kinfolk)) {
     throw new HttpsError('invalid-argument', PRIMARY_CONTACT_REQUIRED_MESSAGE);
+  }
+  const shape = contactShapeProblem(parsed.data.kinfolk);
+  if (shape !== null) {
+    throw new HttpsError('invalid-argument', shape.message, { field: shape.field });
   }
   const body = Object.fromEntries(Object.entries(parsed.data.kinfolk).filter(([k]) => !SERVER_OWNED_KEYS.includes(k)));
   const ignoreDuplicateOf = parsed.data.ignoreDuplicateOf?.trim() || null;
