@@ -960,11 +960,29 @@ service cloud.firestore {
                && get(/databases/$(database)/documents/business_settings/business_settings)
                     .data.get('requireArrivalDepartureVerification', false) == true;
       }
+      // READ THE WAY THE SERVER READS IT. `setVisitLifecycle` and the departure
+      // trigger trim and upper-case a status before they act on it, so a
+      // comparison against the exact spelling here would let `arrived` or
+      // ` ARRIVED` through as "not a start" and the server would then treat it
+      // as one. A status that is not a string is nobody's start.
+      function visitStatusIs(data, status) {
+        return data.get('status', '') is string
+               && data.get('status', '').trim().upper() == status;
+      }
+      // A START IS ALSO A DEPARTURE WITH NO ARRIVAL UNDER IT. Departed written
+      // straight from Scheduled or On my way, with the two time stamps beside
+      // it, skips Arrived altogether, and the departure trigger would complete
+      // that visit with nothing ever measured. So while the switch is on her
+      // client may write Departed only onto a visit that is Arrived, which is
+      // the only place any screen offers it.
       function startsVisit() {
         return request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
-               && (request.resource.data.status == 'ARRIVED'
-                   || (request.resource.data.status == 'ON_MY_WAY'
-                       && !(resource.data.get('status', '') in ['ARRIVED', 'DEPARTED'])));
+               && (visitStatusIs(request.resource.data, 'ARRIVED')
+                   || (visitStatusIs(request.resource.data, 'ON_MY_WAY')
+                       && !visitStatusIs(resource.data, 'ARRIVED')
+                       && !visitStatusIs(resource.data, 'DEPARTED'))
+                   || (visitStatusIs(request.resource.data, 'DEPARTED')
+                       && !visitStatusIs(resource.data, 'ARRIVED')));
       }
       // The two fields the server writes to say an OWNER's arrival was outside
       // the range, which is what lets that visit complete. An Auntie's client

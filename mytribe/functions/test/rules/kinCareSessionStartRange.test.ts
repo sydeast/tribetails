@@ -57,6 +57,22 @@ describe('rules: an Auntie cannot start a visit by direct write while arrival ve
     );
   });
 
+  it('refuses a start spelled the way the server would still read as one', async () => {
+    // The server trims and upper-cases a status before acting on it.
+    for (const status of ['arrived', ' ARRIVED ', 'Arrived', 'on_my_way']) {
+      await seed({ session: { status: 'SCHEDULED' }, settings: RULE_ON });
+      await assertFails((await as('auntie1', AUNTIE)).set({ status }, { merge: true }));
+    }
+  });
+
+  it('refuses her Departed on a visit that never arrived, so Arrived cannot be skipped', async () => {
+    const skip = { status: 'DEPARTED', arrivedAt: '2026-11-14T09:10:00Z', departedAt: '2026-11-14T09:40:00Z' };
+    await seed({ session: { status: 'SCHEDULED' }, settings: RULE_ON });
+    await assertFails((await as('auntie1', AUNTIE)).set(skip, { merge: true }));
+    await seed({ session: { status: 'ON_MY_WAY', onMyWayAt: '2026-11-14T09:00:00Z' }, settings: RULE_ON });
+    await assertFails((await as('auntie1', AUNTIE)).set(skip, { merge: true }));
+  });
+
   it('still lets her depart a visit that was started', async () => {
     await seed({ session: { status: 'ARRIVED', arrivedAt: '2026-11-14T09:10:00Z' }, settings: RULE_ON });
     await assertSucceeds(
@@ -107,6 +123,20 @@ describe('rules: what the start rule leaves alone', () => {
     const auntie = await as('auntie1', AUNTIE);
     await assertSucceeds(auntie.set({ status: 'ON_MY_WAY', onMyWayAt: '2026-11-14T09:00:00Z' }, { merge: true }));
     await assertSucceeds(auntie.set({ status: 'ARRIVED', arrivedAt: '2026-11-14T09:10:00Z' }, { merge: true }));
+  });
+
+  it('with the switch off, her Departed is not held to an arrival either', async () => {
+    await seed({ session: { status: 'SCHEDULED' }, settings: { requireArrivalDepartureVerification: false } });
+    await assertSucceeds(
+      (await as('auntie1', AUNTIE)).set({ status: 'DEPARTED', departedAt: '2026-11-14T09:40:00Z' }, { merge: true }),
+    );
+  });
+
+  it('the owner departs by direct write from any step with the switch on', async () => {
+    await seed({ session: { status: 'SCHEDULED' }, settings: RULE_ON });
+    await assertSucceeds(
+      (await as('owner1', OWNER)).set({ status: 'DEPARTED', departedAt: '2026-11-14T09:40:00Z' }, { merge: true }),
+    );
   });
 
   it('an Auntie starts by direct write when the switch was never saved (absent means off)', async () => {
