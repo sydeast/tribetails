@@ -434,6 +434,56 @@ describe('onKinTaleUpdate trigger: the care-task copy (#2058)', () => {
     expect((write.data['careTasks'] as { stampedBy: string }).stampedBy).toBe('backstop');
     expect(enqueuedKeys()).toEqual(['kintale.published']);
   });
+  it('an installed Android build that sends itself (sentVia catalog) gets a copy and no second notice, and the re-entered write stops', async () => {
+    // The installed app already told the household through
+    // dispatchVisitNotification, then wrote SENT itself with sentVia catalog.
+    const before = { ...base, sentVia: '', status: 'DRAFT', sentAt: '', fieldResponses: walkTick };
+    const after = { ...base, sentVia: 'catalog', status: 'SENT', sentAt: '2026-11-12T10:00:00.000Z', fieldResponses: walkTick };
+    const ctx = buildDbMock({
+      docs: { 'kin_care_reports/r1': { ...after }, 'kintale_templates/tpl': TEMPLATE },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await onKinTaleUpdateHandler(makeEvent(before, after));
+    const stampWrites = () => ctx.writes.filter((w) => w.path === 'kin_care_reports/r1' && 'careTasks' in w.data);
+    expect(stampWrites()).toHaveLength(1);
+    const stamp = stampWrites()[0]!.data['careTasks'] as { stampedBy: string; done: Array<{ key: string; kinId: string }> };
+    expect(stamp.stampedBy).toBe('backstop');
+    expect(stamp.done).toEqual([expect.objectContaining({ key: 'walk', kinId: 'dog1' })]);
+    expect(enqueuedKeys()).toEqual([]);
+
+    // The stamp write re-enters the trigger: nothing more is written or sent.
+    const stamped = { ...after, careTasks: stamp };
+    await onKinTaleUpdateHandler(makeEvent(after, stamped));
+    expect(stampWrites()).toHaveLength(1);
+    expect(enqueuedKeys()).toEqual([]);
+  });
+  it('a tick changed for one Kin keeps every other Kin tick, each on its own Kin', async () => {
+    const { buildCareTaskStamp } = await import('../src/lib/careTaskStamp');
+    const twoKin = {
+      'dog1|walk': { fieldKey: 'walk', kinId: 'dog1', boolValue: true },
+      'dog2|walk': { fieldKey: 'walk', kinId: 'dog2', boolValue: true },
+    };
+    const before = {
+      ...base,
+      status: 'SENT',
+      sentAt: '2026-11-12T10:00:00.000Z',
+      fieldResponses: twoKin,
+      careTasks: buildCareTaskStamp({ templateId: 'tpl', template: TEMPLATE, fieldResponses: twoKin, now: 'x', by: 'send' }),
+    };
+    // dog1's walk is unticked after the send; dog2's stays.
+    const after = {
+      ...before,
+      fieldResponses: { ...twoKin, 'dog1|walk': { fieldKey: 'walk', kinId: 'dog1', boolValue: false } },
+    };
+    const ctx = buildDbMock({ docs: { 'kin_care_reports/r1': after }, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await onKinTaleUpdateHandler(makeEvent(before, after));
+    const write = ctx.writes.find((w) => w.path === 'kin_care_reports/r1' && 'careTasks' in w.data)!;
+    const done = (write.data['careTasks'] as { done: Array<{ key: string; kinId: string; text: string }> }).done;
+    expect(done).toEqual([{ key: 'walk', kinId: 'dog2', text: 'Long walk', note: '' }]);
+    expect(enqueuedKeys()).toEqual([]);
+  });
   it('a draft edit never stamps', async () => {
     const before = { ...base, status: 'DRAFT', sentAt: '', fieldResponses: {} };
     const after = { ...before, fieldResponses: walkTick };
