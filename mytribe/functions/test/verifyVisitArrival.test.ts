@@ -109,10 +109,43 @@ describe('verifyVisitArrival', () => {
     expect(write?.merge).toBe(true);
     expect(Object.keys(write?.data ?? {}).sort()).toEqual([
       'arrivalAccuracyMeters',
+      // #2279: who measured, so the departure trigger can tell an owner's
+      // outside arrival from anyone else's.
+      'arrivalCheckedByOwner',
       'arrivalDistanceMeters',
       'arrivalLocationCheckedAt',
     ]);
     expect(write?.data.arrivalAccuracyMeters).toBe(8);
+    expect(write?.data.arrivalCheckedByOwner).toBe(true);
+  });
+  // #2279: the owner may start a visit from outside the range. It is allowed,
+  // and this is where the visit and the Activity Log record that it was.
+  it("records an owner's arrival outside the range on the visit and in the Activity Log", async () => {
+    const ctx = seed({ settings: { requireArrivalDepartureVerification: true, arrivalRadiusMeters: 150 } });
+    const res = await verifyVisitArrivalHandler(req({ sessionId: 's1', ...ACROSS_TOWN, accuracyMeters: 10 }));
+    expect(res.status).toBe('outside');
+    const write = ctx.writes.find((w) => w.path === 'kin_care_sessions/s1');
+    expect(write?.data.arrivalCheckedByOwner).toBe(true);
+    const audit = mocks.writeAuditEntryFn.mock.calls[0][0];
+    expect(audit).toMatchObject({ event: 'VISIT_ARRIVAL_LOCATION_CHECK', severity: 'warn' });
+    expect(audit.description).toMatch(/^Owner arrived outside the range: \d+m from the household \(range 150m\)$/);
+    expect(audit.payload).toMatchObject({ checkStatus: 'outside', ownerOutsideRange: true });
+  });
+  it('a measurement an Auntie takes is never stamped as the owner', async () => {
+    const ctx = seed({});
+    const auntie = { ...req({ sessionId: 's1', ...ACROSS_TOWN, accuracyMeters: 10 }), auth: { uid: 'auntie1', token: { staffRole: 'auntie' } } };
+    await verifyVisitArrivalHandler(auntie as never);
+    const write = ctx.writes.find((w) => w.path === 'kin_care_sessions/s1');
+    expect(write?.data.arrivalCheckedByOwner).toBe(false);
+    const audit = mocks.writeAuditEntryFn.mock.calls[0][0];
+    expect(audit.description).toBe('Arrival location check: outside the household radius');
+    expect(audit.payload).not.toHaveProperty('ownerOutsideRange');
+  });
+  it('says nothing about the owner being outside the range when the rule is off', async () => {
+    seed({ settings: { requireArrivalDepartureVerification: false } });
+    await verifyVisitArrivalHandler(req({ sessionId: 's1', ...ACROSS_TOWN, accuracyMeters: 10 }));
+    const audit = mocks.writeAuditEntryFn.mock.calls[0][0];
+    expect(audit.description).toBe('Arrival location check: outside the household radius');
   });
 
   /**

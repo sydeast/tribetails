@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import Handlebars from 'handlebars';
 import { SEED_CORPUS } from '../src/notifications/seedCorpus.generated';
 import { NOTIFICATION_CATALOG } from '../src/notifications/catalog';
 import { resolveChannels } from '../src/notifications/prefs';
@@ -13,7 +12,7 @@ import {
   householdSmsMax,
   householdSmsText,
   parsePushTxt,
-  stripUnresolvedTokens,
+  renderPlainText,
 } from '../src/notifications/templateParsers';
 import {
   HOUSEHOLD_PUSH_ROUTE,
@@ -109,7 +108,8 @@ describe('every household text message and push in the repo templates', () => {
     portalUrl: PORTAL_URL,
     preview: 'x'.repeat(200),
   });
-  const render = (tpl: string, key: string) => stripUnresolvedTokens(Handlebars.compile(tpl)(worstCase(key)));
+  // The senders' own renderer (#2321), so this measures what is sent.
+  const render = (tpl: string, key: string) => renderPlainText(tpl, worstCase(key));
 
   it('there is something to check', () => {
     expect(householdKeys.length).toBeGreaterThan(20);

@@ -188,6 +188,22 @@ export function visitMissingStepsWords(missing: readonly string[]): string {
 export function visitOutsideRadiusWords(distanceMeters: number, radiusMeters: number): string {
   return `Could not complete the visit: arrival was recorded ${distanceMeters}m from the household (radius ${radiusMeters}m)`;
 }
+/** #2279: the owner started a visit from outside the range, which only the owner may do. */
+export function ownerArrivedOutsideRangeWords(distanceMeters: number, radiusMeters: number): string {
+  return `Owner arrived outside the range: ${distanceMeters}m from the household (range ${radiusMeters}m)`;
+}
+/** #2279: that visit, completed. The owner may complete outside the range, and the log says so. */
+export function visitCompletedOutsideRangeWords(from: string, distanceMeters: number, radiusMeters: number): string {
+  return `Completed the visit outside the range: ${visitStatusWords(from)} to completed, arrival ${distanceMeters}m from the household (range ${radiusMeters}m)`;
+}
+/** #2279: an Auntie's start, refused. `why` is `auntieStartDecision`'s. */
+export function auntieStartRefusedWords(action: string, why: string): string {
+  return `Could not ${actionWords(action).attempt}: ${why}`;
+}
+/** #2279: an Auntie's start that no range could be checked for (the household has no map location). */
+export function auntieStartUncheckedWords(action: string): string {
+  return `${actionWords(action).done} with no range check: the household's location is not set`;
+}
 /** A refusal whose reason is already a sentence (the schedule guard's message). */
 export function visitRefusedWords(action: string, reason: string): string {
   return `Could not ${actionWords(action).attempt}: ${reason}`;

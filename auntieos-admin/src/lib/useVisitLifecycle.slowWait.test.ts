@@ -27,7 +27,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../api/sessionsWrite', () => ({
   patchVisitLifecycle: (...a: unknown[]) => mocks.patchVisitLifecycle(...a),
+  // #2279: the hook imports these two as well. Nothing here is an Auntie's
+  // start or a measured arrival, so a call to either would be a defect.
+  startVisitWithRangeCheck: vi.fn(() => Promise.reject(new Error('not expected in this file'))),
+  verifyVisitArrival: vi.fn(() => Promise.reject(new Error('not expected in this file'))),
 }));
+// #2279: the hook now reads the arrival rule, and the real read goes to
+// Firestore, which the network guard (#1138) refuses in a unit test. These
+// taps are the owner's with the rule off: the direct write this file is about.
+vi.mock('./useArrivalRule', () => ({ useArrivalRule: () => false }));
 vi.mock('./sessionLifecycle', () => ({ lifecycleNowIso: () => mocks.lifecycleNowIso() }));
 vi.mock('./visitTracking', () => ({
   beginVisitTracking: vi.fn(),

@@ -8,9 +8,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
-import { classifyArrivalDistance, haversineMeters } from '../lib/geo';
-import { readArrivalSettings } from '../lib/arrivalVerification';
-import { resolveHouseholdLocation } from '../lib/householdLocation';
+import { ARRIVAL_CHECKED_BY_OWNER_FIELD, readArrivalSettings } from '../lib/arrivalVerification';
+import { isOwner, isOwnerClaim } from '../lib/staffGate';
 
 /**
  * ISSUE #582: measures how far a recorded arrival was from the household, and
@@ -126,31 +125,29 @@ export async function verifyVisitArrivalHandler(
 
   const kinfolkId = typeof session['kinfolkId'] === 'string' ? session['kinfolkId'] : '';
   const token = (process.env[MAPBOX_ACCESS_TOKEN] ?? '').trim();
-  const lookup = await resolveHouseholdLocation(db(), kinfolkId, token);
-
-  let status: (typeof ARRIVAL_CHECK_STATUSES)[number];
-  let distanceMeters: number | null = null;
-  let reason: string | null = null;
-
-  if (!lookup.found) {
-    // No coordinate for this household: no address, an address Mapbox will not
-    // match, or the geocoder being down. None of those is the Auntie's doing,
-    // so none of them records a distance and none of them will refuse a
-    // COMPLETE later. The reason is returned so the operator can go fix the
-    // address rather than wonder why the check never runs.
-    status = 'household_location_unknown';
-    reason = lookup.reason;
-  } else {
-    distanceMeters =
-      Math.round(haversineMeters({ lat: args.lat, lng: args.lng }, lookup.location) * 10) / 10;
-    status = classifyArrivalDistance({
-      distanceMeters,
-      accuracyMeters: args.accuracyMeters ?? null,
-      radiusMeters: settings.radiusMeters,
-    });
-    if (status === 'unverified') reason = 'fix_too_imprecise';
-  }
-
+  // #2279: the measurement is `lib/visitStartRange.ts#measureArrival`, shared
+  // with the start gate in `setVisitLifecycle` so the two cannot measure two
+  // ways. No coordinate for the household (no address, an address Mapbox will
+  // not match, the geocoder down) records no distance; the reason is returned
+  // so the operator can go fix the address.
+  // Imported here, not at file scope: the entrypoint loads every file-scope
+  // import on every cold start (`test/coldStartImportGraph.test.ts`).
+  const { measureArrival } = await import('../lib/visitStartRange.js');
+  const measured = await measureArrival(db(), {
+    kinfolkId,
+    fix: { lat: args.lat, lng: args.lng, accuracyMeters: args.accuracyMeters },
+    radiusMeters: settings.radiusMeters,
+    mapboxToken: token,
+  });
+  const status: (typeof ARRIVAL_CHECK_STATUSES)[number] = measured.status;
+  const distanceMeters = measured.distanceMeters;
+  const reason = measured.reason;
+  // #2279: who took this measurement. The owner may start a visit from outside
+  // the range and it then completes with that recorded; an Auntie may not. The
+  // departure trigger has no caller to ask, so it reads this. Only the server
+  // writes it: `firestore.rules` refuses the field from an Auntie's client.
+  const byOwner = isOwner(uid, isOwnerClaim(req.auth?.token), 'verifyVisitArrival');
+  const ownerOutsideRange = byOwner && settings.required && status === 'outside';
   // The three stamped fields, written together so a re-check overwrites a stale
   // measurement rather than leaving half of one behind. `null` on the no-
   // coordinate path clears any earlier reading for the same reason.
@@ -159,6 +156,7 @@ export async function verifyVisitArrivalHandler(
       arrivalDistanceMeters: distanceMeters,
       arrivalAccuracyMeters: distanceMeters === null ? null : (args.accuracyMeters ?? null),
       arrivalLocationCheckedAt: new Date().toISOString(),
+      [ARRIVAL_CHECKED_BY_OWNER_FIELD]: byOwner,
     },
     { merge: true },
   );
@@ -173,7 +171,14 @@ export async function verifyVisitArrivalHandler(
     actorUid: uid,
     targetUid: args.sessionId,
     targetCollection: SESSIONS_COLLECTION,
-    description: (await import('../lib/activityWords.js')).arrivalCheckWords(status),
+    // #2279: an owner's arrival outside the range is allowed, and this line is
+    // where the Activity Log says it was one, with the distance.
+    description: ownerOutsideRange
+      ? (await import('../lib/activityWords.js')).ownerArrivedOutsideRangeWords(
+          Math.round(distanceMeters ?? 0),
+          settings.radiusMeters,
+        )
+      : (await import('../lib/activityWords.js')).arrivalCheckWords(status),
     payload: {
       sessionId: args.sessionId,
       // Distance, radius and accuracy only. The coordinate that produced them
@@ -183,6 +188,7 @@ export async function verifyVisitArrivalHandler(
       radiusMeters: settings.radiusMeters,
       accuracyMeters: args.accuracyMeters ?? null,
       verificationRequired: settings.required,
+      ...(ownerOutsideRange ? { ownerOutsideRange: true } : {}),
       ...(reason ? { reason } : {}),
     },
   }).catch((err) => {
@@ -205,7 +211,7 @@ export async function verifyVisitArrivalHandler(
       status,
       distanceMeters,
       radiusMeters: settings.radiusMeters,
-      geocodedNow: lookup.found ? lookup.geocodedNow : false,
+      geocodedNow: measured.geocodedNow,
     },
   });
 
