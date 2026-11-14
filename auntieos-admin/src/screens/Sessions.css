@@ -344,6 +344,12 @@
 .sessions__acts > * {
   flex: 1 1 8rem;
 }
+/* #2199: an Auntie's held Complete arrives inside the tip wrapper, whose own
+   `flex: none` ties with the rule above. Named here so it takes the row's size
+   whichever sheet loads last. */
+.sessions__acts > .kit-tip {
+  flex: 1 1 8rem;
+}
 
 /* Mock `.btn.teal`, worn by "Send the KinTale" alone: the kit's primary button
    recoloured to the KinTale teal. The hover and active rules are restated at
@@ -388,6 +394,9 @@
     margin-left: auto;
   }
   .sessions__acts > * {
+    flex: 1 1 100%;
+  }
+  .sessions__acts > .kit-tip {
     flex: 1 1 100%;
   }
 }

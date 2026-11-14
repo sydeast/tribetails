@@ -60,8 +60,8 @@ const SDK_STATUS_TEXT = /^(Unknown backend error status|Backend error status):/;
  * (`functions/src/lib/wrapAdminCallable.ts`, and the two gates beside it). An
  * Auntie read "Admin claim required." under a Complete she was refused. It
  * names a token field, so it is developer wording and takes the sentence for
- * its code. Web only: Android and the desktop console let in the owner alone,
- * who is never refused by that gate.
+ * its code. Web only: neither Android nor the desktop console lets an Auntie
+ * sign in.
  */
 const STAFF_GATE_TEXT = /^admin claim required\b/i;
 

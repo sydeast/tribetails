@@ -107,6 +107,10 @@ a.auntie-btn--ghost:hover {
    stays: the reason opens on focus, so the keyboard has to see where it is. */
 button.auntie-btn[aria-disabled='true'] {
   cursor: not-allowed;
+  /* It sits inside the tip's own inline-flex wrapper. Where a row sizes its
+     children (`.sessions__acts > *`), the wrapper takes that size and this
+     fills it, so a held Complete is as wide as the owner's. */
+  flex: 1 1 auto;
 }
 button.auntie-btn--primary[aria-disabled='true']:hover,
 button.auntie-btn--primary[aria-disabled='true']:active {
