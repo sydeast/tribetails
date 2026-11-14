@@ -329,7 +329,36 @@ class AuntieOSApp : Application() {
 
 private const val CRASH_FILE = "last_crash.txt"
 
+/**
+ * Where the crash handler below writes: the Application that most recently ran
+ * `onCreate`. Held apart from the handler so that the handler itself can be
+ * installed once per process and never again.
+ */
+@Volatile
+private var crashReportContext: Context? = null
+
+private var crashHandlerInstalled = false
+
+/**
+ * Installs the on-disk crash handler ONCE, and points it at [ctx].
+ *
+ * It used to wrap whatever default handler was already there on every call,
+ * capturing both that handler and [ctx]. On a device `onCreate` runs once per
+ * process, so that was one wrapper. Under Robolectric a new AuntieOSApp is
+ * built for every test method and the whole suite shares one JVM, so each test
+ * added a link to a chain hanging off a JVM-wide static: every Application the
+ * run had ever created stayed reachable, each with its resource tables, and
+ * the 512 MB test heap filled a few hundred tests in. That is what failed CI
+ * with OutOfMemoryError in whichever class was running when it ran out (#2301).
+ *
+ * A second call now only moves [crashReportContext], so at most one
+ * Application is held, the same one `AuntieOSApp.instance` already holds.
+ */
+@Synchronized
 private fun installDefensiveCrashHandler(ctx: Context) {
+    crashReportContext = ctx
+    if (crashHandlerInstalled) return
+    crashHandlerInstalled = true
     val prior = Thread.getDefaultUncaughtExceptionHandler()
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
         try {
@@ -342,7 +371,8 @@ private fun installDefensiveCrashHandler(ctx: Context) {
             sb.append("version=").append(BuildConfig.VERSION_NAME).append('+').append(BuildConfig.VERSION_CODE).append('\n')
             sb.append("---\n")
             sb.append(Log.getStackTraceString(throwable))
-            ctx.openFileOutput(CRASH_FILE, Context.MODE_PRIVATE).use { it.write(sb.toString().toByteArray()) }
+            crashReportContext?.openFileOutput(CRASH_FILE, Context.MODE_PRIVATE)
+                ?.use { it.write(sb.toString().toByteArray()) }
         } catch (_: Throwable) {
             // best-effort - do not mask the original crash
         }

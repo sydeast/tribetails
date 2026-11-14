@@ -1,3 +1,4 @@
+import java.lang.management.ManagementFactory
 import java.util.Properties
 import java.io.ByteArrayOutputStream
 
@@ -199,6 +200,43 @@ android {
                     else -> recordProp.toBoolean()
                 }
                 it.systemProperty("roborazzi.test.record", record.toString())
+
+                // The unit-test worker's heap, stated here instead of inherited.
+                //
+                // Nothing set it before, so the worker ran on Gradle's default
+                // of 512 MB. `org.gradle.jvmargs` in gradle.properties does not
+                // reach it: that sizes the build JVM, not the forked test JVM.
+                //
+                // Measured 2026-11-14 at 5,755 tests, sampling the worker's class
+                // histogram after a forced GC: with the crash-handler leak in
+                // AuntieOSApp the 512 MB was full a few minutes in (568 live
+                // AuntieOSApp instances) and the run thrashed in GC until it
+                // failed or hung. With the leak fixed the same 512 MB passes,
+                // and under this 1 GB the retained set ends the run at about
+                // 450 MB, which leaves about half of it free.
+                // Beside it sit the 2 GB build JVM and the Kotlin daemon, which
+                // together still fit a 16 GB machine several times over. If the
+                // retained set climbs towards this limit again, look for what
+                // is holding Applications before raising the number: the line
+                // printed below, and `jcmd <pid> GC.class_histogram` against
+                // the "Gradle Test Executor" process, are where to start.
+                //
+                // The whole suite stays in this one worker (one fork, no
+                // forkEvery) on purpose. A second fork pays Robolectric's
+                // sandbox startup again and doubles the memory, and forkEvery
+                // would only have hidden the leak that #2301 turned out to be.
+                val testTask = it
+                testTask.maxHeapSize = "1g"
+                testTask.doFirst {
+                    val os = ManagementFactory.getOperatingSystemMXBean()
+                        as com.sun.management.OperatingSystemMXBean
+                    logger.lifecycle(
+                        "Unit test worker: heap ${testTask.maxHeapSize}, " +
+                            "${testTask.maxParallelForks} fork, on a host with " +
+                            "${os.availableProcessors} cores and " +
+                            "${os.totalMemorySize / (1024 * 1024)} MB RAM",
+                    )
+                }
             }
         }
     }
