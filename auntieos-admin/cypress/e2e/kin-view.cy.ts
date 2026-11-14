@@ -50,8 +50,9 @@ const BISCUIT_DOC = 'kin/vis-kin-1';
  * (the local `.kview__name` is gone). KinView takes over the whole Directory
  * screen while a kin is open, so this h1 is the only one on the page. The tag
  * pills sit in the band's `badges` slot since PR #788 (`.den-heading-badges`),
- * and the reactive marker stays under the band in `.kview__flags`; both are the
- * kit's `StatusPill`, matched by `.den-statuspill` inside the row that owns them.
+ * and the reactive marker stays under the band in `.kview__flags`. The marker
+ * is the kit's `StatusPill` (`.den-statuspill`). A tag is not always one: see
+ * `headingTags` below.
  */
 const KIN_NAME = 'h1.den-heading-title';
 
@@ -62,6 +63,21 @@ const KIN_NAME = 'h1.den-heading-title';
  * long for the read.
  */
 const KIN_LOAD = { timeout: 8_000 } as const;
+
+/**
+ * The row of tags next to the Kin's name, once the Kin has been read.
+ *
+ * The row is drawn from the loaded record (it also holds Edit tags), so getting
+ * it waits for `getKin`. The tag is matched by its text in the row, not by the
+ * class of the thing that draws it: since #2015 a tag is a `.tag-chip` with its
+ * icon and colour once the pet tag list has loaded, and the plain
+ * `.den-statuspill` only while that list is loading or when it will not load.
+ * Matching `.den-statuspill` alone (#2302) passed only when the Kin read beat
+ * the tag list read and the plain pill was caught before the chip replaced it.
+ */
+function headingTags() {
+  return cy.get('.den-heading-badges', KIN_LOAD);
+}
 
 /**
  * The request body as searchable text, whatever shape Cypress hands over.
@@ -163,6 +179,7 @@ describe('kin view and edit', () => {
     openKinFromDirectory('Biscuit');
     cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
+    headingTags().should('not.contain.text', TAG);
 
     cy.contains('button', 'Edit tags', KIN_LOAD).click();
     cy.get('[aria-label="Add a pet tag"]').type(`${TAG}{enter}`);
@@ -182,7 +199,7 @@ describe('kin view and edit', () => {
     // Firestore rather than the assign field's own optimistic state.
     openKinFromDirectory('Biscuit');
     cy.get(KIN_NAME, { timeout: 8_000 }).should('have.text', 'Biscuit');
-    cy.contains('.den-heading-badges .den-statuspill', TAG, KIN_LOAD).should('exist');
+    headingTags().should('contain.text', TAG);
     cy.contains('.den-panel-title', 'Tags').should('not.exist');
 
     // Teardown: remove the tag through the same control, leaving the fixture
@@ -195,6 +212,8 @@ describe('kin view and edit', () => {
     // here: the next spec's first command is a `cy.visit`, so an unflushed
     // clear would leave Biscuit tagged for everything that runs after it.
     cy.wait('@tagCleared');
+    // The row repaints from the saved list: the tag is off the heading too.
+    headingTags().should('not.contain.text', TAG);
   });
 
   it('#689 the crumb step that is not the current screen is a real link, opened from the Directory Kin tab', () => {
