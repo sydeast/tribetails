@@ -129,12 +129,14 @@ export async function runGrantStaffRole(args: GrantStaffRoleArgs, out: StaffRole
     }
     out.log(`Created ${email} (${uid}).`);
   }
+  // A re-run finds an account this run created, so it needs no --password.
+  const untouched = user ? 'Nothing was changed.' : 'The account was created; nothing else was changed.';
 
   let existing: Record<string, unknown>;
   try {
     existing = ((await auth().getUser(uid)).customClaims ?? {}) as Record<string, unknown>;
   } catch (err) {
-    out.error(`FAILED to read the claims on ${email}: ${errMessage(err)}\nNothing was changed. Re-run this command.`);
+    out.error(`FAILED to read the claims on ${email}: ${errMessage(err)}\n${untouched} Re-run this command.`);
     return 1;
   }
 
@@ -153,7 +155,7 @@ export async function runGrantStaffRole(args: GrantStaffRoleArgs, out: StaffRole
     try {
       await auth().setCustomUserClaims(uid, { ...existing, staffRole: role });
     } catch (err) {
-      out.error(`FAILED to add the staff role claim to ${email}: ${errMessage(err)}\nNothing was changed. Re-run this command.`);
+      out.error(`FAILED to add the staff role claim to ${email}: ${errMessage(err)}\n${untouched} Re-run this command.`);
       return 1;
     }
     // staff/{uid} is what the Assigned Auntie picker (listStaff) renders from,

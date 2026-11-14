@@ -621,6 +621,18 @@ describe('grant-staff-role --role auntie (unchanged)', () => {
     expect(errors.join('\n')).toMatch(/FAILED to write the staff record for pawsome@hanasamku\.com: PERMISSION_DENIED/);
   });
 
+  it('a claim failure right after creating the account says the account was created', async () => {
+    dbWith({});
+    fakeAuth.setCustomUserClaims.mockRejectedValueOnce(new Error('auth unavailable'));
+    const { out, errors } = collector();
+
+    expect(
+      await runGrantStaffRole({ email: 'pawsome@hanasamku.com', role: 'auntie', password: 'not-a-real-pw-1' }, out),
+    ).toBe(1);
+    expect(errors.join('\n')).toMatch(/FAILED to add the staff role claim to pawsome@hanasamku\.com: auth unavailable/);
+    expect(errors.join('\n')).toMatch(/The account was created; nothing else was changed\. Re-run this command\./);
+  });
+
   it('refuses an account holding the owner claim', async () => {
     const world = dbWith({});
     addUser('op1', OWNER_EMAIL, { admin: true });
