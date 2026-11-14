@@ -153,7 +153,7 @@ class KinTaleConditionEngineTest {
     @Test
     fun conditionSummary_attributeExists_readable() {
         val s = conditionSummary(FieldCondition(source = "KIN_ATTRIBUTE", op = "EXISTS", attributeKey = "medicationHealthNotes"))
-        assertEquals("Only show when the pet has Medication / health notes", s)
+        assertEquals("Only show when the pet has Medications / health notes", s)
     }
 
     @Test

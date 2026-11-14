@@ -172,6 +172,13 @@ function kin(overrides: Partial<KinDto>): KinDto {
     colorMarkings: null,
     spayedNeutered: false,
     vetInfo: null,
+    staysAs: null,
+    routine: null,
+    trainingCommands: null,
+    feedingBrand: null,
+    vaccinations: null,
+    ownVetClinicId: '',
+    vet: null,
     ...overrides,
   };
 }

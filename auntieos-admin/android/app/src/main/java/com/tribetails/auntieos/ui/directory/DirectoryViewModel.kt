@@ -24,6 +24,7 @@ import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.SubmitVetClinicResult
+import com.tribetails.auntieos.data.model.VetClinic
 import com.tribetails.auntieos.data.model.VetClinicsSnapshot
 import com.tribetails.auntieos.domain.validateKinAge
 import com.tribetails.auntieos.domain.validateKinWeight
@@ -578,6 +579,22 @@ data class EditKinUiState(
     val vaccinations: String = "",
     val medicationHealthNotes: String = "",
     val vetInfo: String = "",
+    // #1908: the household's care block, now edited here too.
+    val feedingInstructions: String = "",
+    val walkingInstructions: String = "",
+    val allergies: String = "",
+    val emergencyNotes: String = "",
+    /** "Notes for the Auntie": the household's notes, not [officeNotes]. */
+    val sitterNotes: String = "",
+    /**
+     * #1908 kin-vet: "Different vet for this Kin". Unticked (the default, and
+     * how a Kin with no vet of its own loads) means the household's vet.
+     */
+    val differentVet: Boolean = false,
+    /** The clinic picked while [differentVet] is ticked; "" until one is. */
+    val ownVetClinicId: String = "",
+    /** The dropdown's clinics: the area vet list a household may pick from. */
+    val vetClinicOptions: List<VetClinic> = emptyList(),
     val checklist: String = "",
     val reactive: Boolean = false,
     val officeNotes: String = "",
@@ -1977,9 +1994,10 @@ class DirectoryViewModel(
                 // read off the owning Kinfolk doc, which is the copy that made
                 // the vet authored in two places at once. A failed read leaves
                 // the vet blank rather than showing a stale one.
+                val clinics = repository.getVetClinicsOnce().getOrNull().orEmpty()
                 val householdVet = resolveHouseholdVet(
                     repository.getHouseholdData(kin.kinfolkId).getOrNull(),
-                    repository.getVetClinicsOnce().getOrNull().orEmpty(),
+                    clinics,
                 )
                 loadedKin = kin
                 _editKinState.value = EditKinUiState(
@@ -1988,18 +2006,26 @@ class DirectoryViewModel(
                     name = kin.name,
                     species = kin.species,
                     breed = kin.breed,
-                    age = kin.age,
+                    age = kin.age.orEmpty(),
                     sex = kin.sex,
                     weight = kin.weight,
                     colorMarkings = kin.colorMarkings,
                     spayedNeutered = kin.spayedNeutered,
-                    staysAs = kin.staysAs,
-                    routine = kin.routine,
-                    trainingCommands = kin.trainingCommands,
-                    feedingBrand = kin.feedingBrand,
-                    vaccinations = kin.vaccinations,
-                    medicationHealthNotes = kin.medicationHealthNotes,
-                    vetInfo = kin.vetInfo,
+                    staysAs = kin.staysAs.orEmpty(),
+                    routine = kin.routine.orEmpty(),
+                    trainingCommands = kin.trainingCommands.orEmpty(),
+                    feedingBrand = kin.feedingBrand.orEmpty(),
+                    vaccinations = kin.vaccinations.orEmpty(),
+                    medicationHealthNotes = kin.medicationHealthNotes.orEmpty(),
+                    vetInfo = kin.vetInfo.orEmpty(),
+                    feedingInstructions = kin.feedingInstructions.orEmpty(),
+                    walkingInstructions = kin.walkingInstructions.orEmpty(),
+                    allergies = kin.allergies.orEmpty(),
+                    emergencyNotes = kin.emergencyNotes.orEmpty(),
+                    sitterNotes = kin.sitterNotes.orEmpty(),
+                    differentVet = kin.ownVetClinicId.orEmpty().isNotBlank(),
+                    ownVetClinicId = kin.ownVetClinicId.orEmpty().trim(),
+                    vetClinicOptions = pickableVetClinics(clinics),
                     checklist = kin.checklist,
                     reactive = kin.reactive,
                     officeNotes = kin.officeNotes,
@@ -2052,6 +2078,14 @@ class DirectoryViewModel(
     fun updateEditKinFeedingBrand(value: String) { _editKinState.value = _editKinState.value.copy(feedingBrand = value) }
     fun updateEditKinVaccinations(value: String) { _editKinState.value = _editKinState.value.copy(vaccinations = value) }
     fun updateEditKinMedicationHealthNotes(value: String) { _editKinState.value = _editKinState.value.copy(medicationHealthNotes = value) }
+    fun updateEditKinFeedingInstructions(value: String) { _editKinState.value = _editKinState.value.copy(feedingInstructions = value) }
+    fun updateEditKinWalkingInstructions(value: String) { _editKinState.value = _editKinState.value.copy(walkingInstructions = value) }
+    fun updateEditKinAllergies(value: String) { _editKinState.value = _editKinState.value.copy(allergies = value) }
+    fun updateEditKinEmergencyNotes(value: String) { _editKinState.value = _editKinState.value.copy(emergencyNotes = value) }
+    fun updateEditKinSitterNotes(value: String) { _editKinState.value = _editKinState.value.copy(sitterNotes = value) }
+    /** #1908 kin-vet: tick "Different vet for this Kin". Unticking goes back to the household's vet on save. */
+    fun updateEditKinDifferentVet(value: Boolean) { _editKinState.value = _editKinState.value.copy(differentVet = value) }
+    fun updateEditKinOwnVetClinic(clinicId: String) { _editKinState.value = _editKinState.value.copy(ownVetClinicId = clinicId) }
     // vetInfo has no setter: vet is read-only on the Kin (single-source on Kinfolk, 1D).
     // The legacy value is still loaded + preserved through save until migration.
     fun updateEditKinChecklist(value: String) { _editKinState.value = _editKinState.value.copy(checklist = value) }
@@ -2231,6 +2265,12 @@ class DirectoryViewModel(
         vaccinations = state.vaccinations,
         medicationHealthNotes = state.medicationHealthNotes,
         vetInfo = state.vetInfo,
+        feedingInstructions = state.feedingInstructions,
+        walkingInstructions = state.walkingInstructions,
+        allergies = state.allergies,
+        emergencyNotes = state.emergencyNotes,
+        sitterNotes = state.sitterNotes,
+        ownVetClinicId = ownVetClinicIdToSave(state.differentVet, state.ownVetClinicId),
         checklist = state.checklist,
         reactive = state.reactive,
         officeNotes = state.officeNotes,

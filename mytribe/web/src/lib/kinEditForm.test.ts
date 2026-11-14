@@ -31,6 +31,13 @@ function kin(overrides: Partial<KinDto> = {}): KinDto {
     colorMarkings: null,
     spayedNeutered: false,
     vetInfo: null,
+    staysAs: null,
+    routine: null,
+    trainingCommands: null,
+    feedingBrand: null,
+    vaccinations: null,
+    ownVetClinicId: '',
+    vet: null,
     ...overrides,
   };
 }
@@ -147,47 +154,89 @@ describe('buildKinChanges', () => {
 
 describe('shared facts (#1310)', () => {
   it('seeds the form from the kin, null becoming empty', () => {
-    expect(kinFormFromDto(kin())).toMatchObject({ sex: '', weight: '', colorMarkings: '', vetInfo: '', spayedNeutered: false });
+    expect(kinFormFromDto(kin())).toMatchObject({ sex: '', weight: '', colorMarkings: '', spayedNeutered: false });
     expect(
-      kinFormFromDto(kin({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', vetInfo: 'Dr A', spayedNeutered: true })),
-    ).toMatchObject({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', vetInfo: 'Dr A', spayedNeutered: true });
+      kinFormFromDto(kin({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', spayedNeutered: true })),
+    ).toMatchObject({ sex: 'Female', weight: '52 lbs', colorMarkings: 'Black', spayedNeutered: true });
   });
-
   it('sends only what changed, a cleared text as an empty string (never null), and the flag as a boolean', () => {
-    const k = kin({ sex: 'Male', weight: '50 lbs', colorMarkings: 'Black', vetInfo: 'Dr A', spayedNeutered: false });
-    expect(buildKinChanges(k, formFor({ sex: 'Male', weight: '50 lbs', colorMarkings: 'Black', vetInfo: 'Dr A' }))).toEqual({});
-    expect(buildKinChanges(k, formFor({ sex: 'Male', weight: '', colorMarkings: 'Black', vetInfo: 'Dr A' }))).toEqual({ weight: '' });
-    expect(buildKinChanges(k, formFor({ sex: 'Female', weight: '50 lbs', colorMarkings: 'Black', vetInfo: 'Dr B', spayedNeutered: true }))).toEqual({
+    const k = kin({ sex: 'Male', weight: '50 lbs', colorMarkings: 'Black', spayedNeutered: false });
+    expect(buildKinChanges(k, formFor({ sex: 'Male', weight: '50 lbs', colorMarkings: 'Black' }))).toEqual({});
+    expect(buildKinChanges(k, formFor({ sex: 'Male', weight: '', colorMarkings: 'Black' }))).toEqual({ weight: '' });
+    expect(buildKinChanges(k, formFor({ sex: 'Female', weight: '50 lbs', colorMarkings: 'Black', spayedNeutered: true }))).toEqual({
       sex: 'Female',
-      vetInfo: 'Dr B',
       spayedNeutered: true,
     });
     expect(buildKinChanges(kin({ spayedNeutered: true }), formFor({ spayedNeutered: false }))).toEqual({ spayedNeutered: false });
   });
-
   it('treats an unset value and an empty form field as the same (no phantom change)', () => {
     expect(buildKinChanges(kin({ sex: null, weight: null, vetInfo: null }), formFor())).toEqual({});
   });
-
+  it('never sends the old free-text vet note: it is no longer an input (#1908 kin-vet)', () => {
+    const k = kin({ vetInfo: 'Dr A' });
+    expect(kinFormFromDto(k)).not.toHaveProperty('vetInfo');
+    expect(buildKinChanges(k, formFor())).toEqual({});
+  });
   it('enforces the server caps', () => {
     expect(validateKinForm(formFor({ sex: 'x'.repeat(41) })).sex).toMatch(/40/);
     expect(validateKinForm(formFor({ weight: 'x'.repeat(41) })).weight).toMatch(/40/);
     expect(validateKinForm(formFor({ colorMarkings: 'x'.repeat(201) })).colorMarkings).toMatch(/200/);
-    expect(validateKinForm(formFor({ vetInfo: 'x'.repeat(2001) })).vetInfo).toMatch(/2000/);
     expect(hasErrors(validateKinForm(formFor({ sex: 'x'.repeat(40), colorMarkings: 'x'.repeat(200) })))).toBe(false);
   });
 });
-
+/** #1908 (owner ruling 2026-11-11): the care facts the admin kept, the household's to fill too. */
+describe('care facts shared with the admin (#1908)', () => {
+  const FIELDS = ['staysAs', 'routine', 'trainingCommands', 'feedingBrand', 'vaccinations'] as const;
+  for (const key of FIELDS) {
+    it(`${key}: seeds from the Kin, sends a change, clears with '' (never null), and is capped at 2000`, () => {
+      expect(kinFormFromDto(kin({ [key]: 'From the office' }))[key]).toBe('From the office');
+      expect(kinFormFromDto(kin())[key]).toBe('');
+      expect(buildKinChanges(kin(), formFor({ [key]: ' New ' }))).toEqual({ [key]: 'New' });
+      expect(buildKinChanges(kin({ [key]: 'Old' }), formFor({ [key]: '' }))).toEqual({ [key]: '' });
+      expect(buildKinChanges(kin({ [key]: 'Same' }), formFor({ [key]: 'Same' }))).toEqual({});
+      expect(validateKinForm(formFor({ [key]: 'x'.repeat(2001) }))[key]).toMatch(/2000/);
+    });
+  }
+  it('Medications / health notes holds both sides, so it has room for 4000 (#1908 kin-meds)', () => {
+    expect(validateKinForm(formFor({ medications: 'x'.repeat(4000) })).medications).toBeUndefined();
+    expect(validateKinForm(formFor({ medications: 'x'.repeat(4001) })).medications).toMatch(/4000/);
+  });
+});
+/** #1908 kin-vet: the household's vet unless "Different vet for this Kin" is ticked. */
+describe('the Kin vet (#1908 kin-vet)', () => {
+  it('a Kin with no vet of its own starts unticked', () => {
+    expect(kinFormFromDto(kin())).toMatchObject({ differentVet: false, ownVetClinicId: '' });
+  });
+  it('a Kin with its own vet starts ticked, on that clinic', () => {
+    expect(kinFormFromDto(kin({ ownVetClinicId: 'c2' }))).toMatchObject({ differentVet: true, ownVetClinicId: 'c2' });
+  });
+  it('ticking and picking sends the clinic', () => {
+    expect(buildKinChanges(kin(), formFor({ differentVet: true, ownVetClinicId: 'c2' }))).toEqual({ ownVetClinicId: 'c2' });
+  });
+  it('unticking sends "" (back to the household vet), whatever clinic the form still remembers', () => {
+    expect(buildKinChanges(kin({ ownVetClinicId: 'c2' }), formFor({ differentVet: false, ownVetClinicId: 'c2' }))).toEqual({ ownVetClinicId: '' });
+  });
+  it('ticked with no clinic chosen cannot be saved', () => {
+    expect(validateKinForm(formFor({ differentVet: true, ownVetClinicId: '' })).ownVetClinicId).toMatch(/Choose a vet/);
+    expect(validateKinForm(formFor({ differentVet: false, ownVetClinicId: '' })).ownVetClinicId).toBeUndefined();
+  });
+  it('a Kin from an older backend with no ownVetClinicId reads as the household vet', () => {
+    const legacy = { ...kin() } as Partial<KinDto>;
+    delete legacy.ownVetClinicId;
+    expect(kinFormFromDto(legacy as KinDto)).toMatchObject({ differentVet: false, ownVetClinicId: '' });
+    expect(buildKinChanges(legacy as KinDto, kinFormFromDto(legacy as KinDto))).toEqual({});
+  });
+});
 describe('emptyKinForm', () => {
   it('every field starts blank, and it validates as incomplete (name required)', () => {
     const form = emptyKinForm();
-    const { spayedNeutered, ...text } = form;
+    const { spayedNeutered, differentVet, ...text } = form;
     expect(Object.values(text).every((v) => v === '')).toBe(true);
     expect(spayedNeutered).toBe(false);
+    expect(differentVet).toBe(false);
     expect(validateKinForm(form).name).toBe('Name is required.');
   });
 });
-
 describe('buildNewKinPayload', () => {
   it('sends the full payload (not a diff): every blank field becomes null, name is trimmed', () => {
     const form = { ...emptyKinForm(), name: '  Rex  ', species: 'Dog' };
@@ -204,28 +253,33 @@ describe('buildNewKinPayload', () => {
       sitterNotes: null,
     });
   });
-
-  it('adds the shared facts (#1310) only when they have a value', () => {
+  it('adds the shared facts (#1310, #1908) and the Kin vet only when they have a value', () => {
     const form: KinEditForm = {
       ...emptyKinForm(),
       name: 'Rex',
       sex: 'Male',
       weight: ' 52 lbs ',
       colorMarkings: 'Black',
-      vetInfo: 'Riverside Animal Hospital',
       spayedNeutered: true,
+      routine: ' Walk at 7 ',
+      vaccinations: 'Rabies 2027',
+      differentVet: true,
+      ownVetClinicId: 'c2',
     };
     expect(buildNewKinPayload(form)).toMatchObject({
       sex: 'Male',
       weight: '52 lbs',
       colorMarkings: 'Black',
-      vetInfo: 'Riverside Animal Hospital',
       spayedNeutered: true,
+      routine: 'Walk at 7',
+      vaccinations: 'Rabies 2027',
+      ownVetClinicId: 'c2',
     });
     const blank = buildNewKinPayload({ ...emptyKinForm(), name: 'Rex' });
-    for (const k of ['sex', 'weight', 'colorMarkings', 'vetInfo', 'spayedNeutered']) expect(blank).not.toHaveProperty(k);
+    for (const k of ['sex', 'weight', 'colorMarkings', 'vetInfo', 'spayedNeutered', 'staysAs', 'routine', 'ownVetClinicId']) {
+      expect(blank).not.toHaveProperty(k);
+    }
   });
-
   it('parses a valid age and trims every text field', () => {
     const form: KinEditForm = { ...emptyKinForm(), name: 'Rex', ageYears: '4', breed: '  Beagle  ' };
     const payload = buildNewKinPayload(form);

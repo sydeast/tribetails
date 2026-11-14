@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
@@ -135,6 +137,31 @@ fun TribeScreen(
     // session that the picker catalog does not list yet (an unapproved submission).
     var vetClinicId by remember { mutableStateOf("") }
     var vetPicked by remember { mutableStateOf<VetClinic?>(null) }
+    // #1917: a pick or a removal is saved the moment it is made (setHouseholdVet),
+    // never held for the page Save. These carry that write's wait and failure.
+    var vetSaving by remember { mutableStateOf(false) }
+    var vetSaveError by remember { mutableStateOf<String?>(null) }
+    var vetSaveMessage by remember { mutableStateOf<String?>(null) }
+    fun saveVet(clinic: VetClinic?) {
+        if (vetSaving) return
+        vetSaving = true
+        vetSaveError = null
+        vetSaveMessage = null
+        scope.launch {
+            try {
+                val now = portalApi.setHouseholdVet(kinfolkId = kinfolkId, clinicId = clinic?.id.orEmpty())
+                vetClinicId = now?.id ?: clinic?.id.orEmpty()
+                vetPicked = clinic ?: now?.let { VetClinic(it.id, it.name, it.phone, it.address, isEmergency = it.isEmergency) }
+                vetSaveMessage = if (clinic == null) "Clinic removed." else "Clinic saved."
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                vetSaveError = householdVetSaveFailure(clinic != null, t.message)
+            } finally {
+                vetSaving = false
+            }
+        }
+    }
     // Free-text rows written before the picker existed. Shown read-only, never edited
     // and never removed by Save: the rows stay on the profile until Auntie clears them.
     var legacyVetName by remember { mutableStateOf("") }
@@ -412,8 +439,11 @@ fun TribeScreen(
                 clinicId = vetClinicId,
                 picked = vetPicked,
                 legacyName = legacyVetName, legacyPhone = legacyVetPhone, legacyAddress = legacyVetAddress,
-                onPick = { c -> vetClinicId = c.id; vetPicked = c },
-                onClear = { vetClinicId = ""; vetPicked = null },
+                onPick = { c -> saveVet(c) },
+                onClear = { saveVet(null) },
+                saving = vetSaving,
+                saveError = vetSaveError,
+                saveMessage = vetSaveMessage,
                 showAfterHours = true,
                 // #868: stored with the home details, behind the same grant.
                 afterHoursLocked = !canEditHome,
@@ -501,10 +531,11 @@ fun TribeScreen(
                             fun card(key: String, label: String, value: String, set: MutableList<CustomField>, clear: MutableList<String>) {
                                 if (value.isNotBlank()) set += CustomField(key = key, label = label, value = value.trim()) else clear += key
                             }
-                            // #1378: the clinic is one id. The old free-text name, phone and
-                            // address rows are not in this edit, so a row that has no control
-                            // here is kept as stored.
-                            card(VET_CLINIC_ID_KEY, "Vet Clinic", vetClinicId, profileSet, profileClear)
+                            // #1917: the clinic is not in this Save. It was saved when it
+                            // was picked (setHouseholdVet), and its row is neither sent nor
+                            // removed here, so this Save can never put back a clinic the
+                            // household just changed. The old free-text name, phone and
+                            // address rows have no control here and are kept as stored.
                             val ps = profileSchema
                             val nextDisplayName = if (ps != null) {
                                 profileValues["displayName"]?.trim().orEmpty().ifBlank { displayName.trim() }
@@ -514,7 +545,7 @@ fun TribeScreen(
                             ps?.sections?.flatMap { it.fields }?.filter { it.key != "displayName" }?.forEach { f ->
                                 schemaFieldRow(profileFields, f.key, f.label, profileValues[f.key])?.let { profileSet += it }
                             }
-                            val profileEdit = editCustomFields(profileFields, profileSet, profileClear, LEGACY_EMERGENCY_CONTACT_KEYS)
+                            val profileEdit = profileSaveEdit(profileFields, profileSet, profileClear)
                             // #868: the two halves are separate callables and either can
                             // be refused on its own, so each is attempted and reported.
                             profileHalf = try {
@@ -757,6 +788,10 @@ private fun VetClinicSection(
     legacyAddress: String,
     onPick: (VetClinic) -> Unit,
     onClear: () -> Unit,
+    /** #1917: a pick or removal being saved right now, and how the last one went. */
+    saving: Boolean = false,
+    saveError: String? = null,
+    saveMessage: String? = null,
     showAfterHours: Boolean = false,
     /** #868: the viewer has no Home access, so the after-hours clinic shows the lock sentence instead of fields. */
     afterHoursLocked: Boolean = false,
@@ -769,6 +804,8 @@ private fun VetClinicSection(
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
     var vetQuery by remember { mutableStateOf("") }
+    // #1908 kin-vet: the list opens on focus, the whole area list, narrowed by typing.
+    var listOpen by remember { mutableStateOf(false) }
     var submittingClinic by remember { mutableStateOf(false) }
     var submitClinicMsg by remember { mutableStateOf<String?>(null) }
     /** Near-matches the server offered instead of creating a duplicate; non-empty means the household must choose. */
@@ -776,6 +813,7 @@ private fun VetClinicSection(
     fun pick(c: VetClinic) {
         onPick(c)
         vetQuery = ""
+        listOpen = false
         candidates = emptyList()
         submitClinicMsg = null
     }
@@ -830,11 +868,30 @@ private fun VetClinicSection(
             // choosing a clinic that exists is always offered first.
             KinField(
                 value = vetQuery,
-                onValueChange = { vetQuery = it },
+                onValueChange = { vetQuery = it; listOpen = true },
                 label = "Search vet clinics",
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.hasFocus) listOpen = true },
+                enabled = !saving,
                 fieldTestTag = "vet-search",
             )
+            if (saving) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.testTag("vet-saving"),
+                ) {
+                    KinSpinner()
+                    Text("Saving your clinic…", style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
+                }
+            }
+            saveError?.let {
+                Text(it, style = type.sansLabel.copy(color = KinfolkBrand.SnuggleCoral), modifier = Modifier.testTag("vet-save-error"))
+            }
+            if (!saving && saveError == null) {
+                saveMessage?.let {
+                    Text(it, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted), modifier = Modifier.testTag("vet-saved"))
+                }
+            }
             if (clinicsLoading) {
                 Row(horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s), verticalAlignment = Alignment.CenterVertically) {
                     KinSpinner()
@@ -848,15 +905,19 @@ private fun VetClinicSection(
                     modifier = Modifier.testTag("vet-load-error"),
                 )
             }
-            if (vetQuery.isNotBlank()) {
-                vetClinicMatches(vetQuery, clinics).forEach { clinic ->
-                    ClinicRow(
-                        title = clinicTitle(clinic.name, clinic.isEmergency),
-                        detail = clinic.address,
-                        tag = "vet-match-${clinic.id}",
-                        onClick = { pick(clinic) },
-                    )
+            if ((listOpen || vetQuery.isNotBlank()) && !saving) {
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
+                    vetClinicChoices(vetQuery, clinics).forEach { clinic ->
+                        ClinicRow(
+                            title = clinicTitle(clinic.name, clinic.isEmergency),
+                            detail = clinic.address,
+                            tag = "vet-match-${clinic.id}",
+                            onClick = { pick(clinic) },
+                        )
+                    }
                 }
+            }
+            if (vetQuery.isNotBlank() && !saving) {
                 if (!clinicAlreadyOnList(vetQuery, clinics)) {
                     ClinicRow(
                         title = if (submittingClinic) "Checking…" else "+ Add \"${vetQuery.trim()}\" as a new clinic",
@@ -927,8 +988,8 @@ private fun VetClinicSection(
             }
             if (clinicId.isNotBlank()) {
                 GhostPillButton(
-                    label = "Remove clinic",
-                    onClick = onClear,
+                    label = if (saving) "Saving…" else "Remove clinic",
+                    onClick = { if (!saving) onClear() },
                     icon = Icons.Filled.Close,
                     color = KinfolkBrand.KinTeal,
                     modifier = Modifier.testTag("vet-clear"),
@@ -1001,6 +1062,20 @@ private fun ClinicRow(title: String, detail: String, tag: String, onClick: () ->
             Text(detail, style = type.sansLabel.copy(color = KinfolkBrand.NavyMuted))
         }
     }
+}
+/**
+ * #1917. The page Save's profile rows: [editCustomFields] with the vet clinic
+ * row and the legacy Emergency Contact rows never sent. The clinic is saved
+ * when it is picked; a stale copy of its row riding along would put an old
+ * clinic back over the one just picked.
+ */
+internal fun profileSaveEdit(stored: List<CustomField>, set: List<CustomField>, clear: Collection<String>): CustomFieldEdit =
+    editCustomFields(stored, set.filter { it.key != VET_CLINIC_ID_KEY }, clear.filter { it != VET_CLINIC_ID_KEY }, LEGACY_EMERGENCY_CONTACT_KEYS + VET_CLINIC_ID_KEY)
+/** #1917: the sentence a pick or removal that did not save shows on the card. */
+internal fun householdVetSaveFailure(picking: Boolean, reason: String?): String {
+    val what = if (picking) "This clinic was not saved" else "The clinic was not removed"
+    val why = reason?.trim()?.trimEnd('.')?.takeIf { it.isNotBlank() } ?: "try again"
+    return "$what: $why."
 }
 /** Keys the Vet Clinic card edits, stored in profile customFields (#872). The
  *  save handler's card() calls below key off these same constants, so this

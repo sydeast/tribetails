@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { KinAdd } from './KinAdd';
@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   addKin: vi.fn<(kin: unknown, kinfolkId?: string) => Promise<{ kinId: string }>>(),
   navigate: vi.fn(),
   uploadKinPhotoSigned: vi.fn<(kinId: string, file: File, kinfolkId?: string) => Promise<string>>(),
+  getMyTribeProfile: vi.fn(),
+  getVetClinics: vi.fn(),
 }));
 
 vi.mock('../api/portal', () => ({
@@ -21,6 +23,11 @@ vi.mock('../api/kinPhotoApi', async (orig) => ({
   uploadKinPhotoSigned: (kinId: string, file: File, kinfolkId?: string) =>
     mocks.uploadKinPhotoSigned(kinId, file, kinfolkId),
 }));
+vi.mock('../api/tribeApi', async (orig) => ({
+  ...(await orig<typeof import('../api/tribeApi')>()),
+  getMyTribeProfile: () => mocks.getMyTribeProfile(),
+  getVetClinics: () => mocks.getVetClinics(),
+}));
 vi.mock('../lib/activeTribe', () => ({ getActiveKinfolkId: () => 'fam1' }));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 vi.mock('@tanstack/react-router', () => ({
@@ -28,6 +35,14 @@ vi.mock('@tanstack/react-router', () => ({
   Link: ({ children }: { children?: ReactNode }) => <a>{children}</a>,
 }));
 
+const HOME_VET = { id: 'home', name: 'Cedar Animal Care', phone: '', address: '1 Main St', isEmergency: false };
+const CLINIC_OWN = { id: 'own', name: 'Riverside Vets', phone: '', address: '2 River Rd', isEmergency: false, website: '', googleMapsUrl: '' };
+beforeEach(() => {
+  mocks.getMyTribeProfile.mockReset();
+  mocks.getMyTribeProfile.mockResolvedValue({ profile: { kinfolkId: 'fam1', displayName: 'X', customFields: [] }, vetClinic: HOME_VET, homeAccess: {} });
+  mocks.getVetClinics.mockReset();
+  mocks.getVetClinics.mockResolvedValue({ clinics: [CLINIC_OWN] });
+});
 function renderScreen() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -118,7 +133,8 @@ describe('KinAdd', () => {
     await user.type(screen.getByLabelText('Weight'), '40 lbs');
     await user.type(screen.getByLabelText('Color / markings'), 'Brindle');
     await user.click(screen.getByLabelText(/Spayed \/ neutered/));
-    await user.type(screen.getByLabelText('Vet'), 'Riverside Animal Hospital');
+    await user.type(screen.getByLabelText('Routine'), 'Walk at 7');
+    await user.type(screen.getByLabelText('Stays as'), 'Crate');
     await user.click(screen.getByRole('button', { name: /Add Kin/i }));
 
     await waitFor(() => expect(mocks.addKin).toHaveBeenCalledTimes(1));
@@ -129,10 +145,42 @@ describe('KinAdd', () => {
         weight: '40 lbs',
         colorMarkings: 'Brindle',
         spayedNeutered: true,
-        vetInfo: 'Riverside Animal Hospital',
+        routine: 'Walk at 7',
+        staysAs: 'Crate',
       }),
       'fam1',
     );
+  });
+  it('#1908 kin-vet: a new Kin goes to the household vet unless a different vet is chosen', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    expect(await screen.findByText('From your Tribe Profile: Cedar Animal Care · 1 Main St')).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/^Name/i), 'Rex');
+    await user.click(screen.getByLabelText('Different vet for this Kin'));
+    await user.click(screen.getByLabelText(/this Kin.s vet/));
+    await user.click(within(screen.getByRole('listbox')).getByText('Riverside Vets'));
+    await user.click(screen.getByRole('button', { name: /Add Kin/i }));
+    await waitFor(() => expect(mocks.addKin).toHaveBeenCalledTimes(1));
+    expect(mocks.addKin).toHaveBeenCalledWith(expect.objectContaining({ name: 'Rex', ownVetClinicId: 'own' }), 'fam1');
+  });
+  it('#1908 kin-vet: ticked with no vet chosen blocks the add and says why', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await user.type(await screen.findByLabelText(/^Name/i), 'Rex');
+    await user.click(screen.getByLabelText('Different vet for this Kin'));
+    await user.click(screen.getByRole('button', { name: /Add Kin/i }));
+    expect(await screen.findByText(/Choose a vet for this Kin/)).toBeInTheDocument();
+    expect(mocks.addKin).not.toHaveBeenCalled();
+  });
+  it('an untouched Kin vet sends no ownVetClinicId and no free-text vet', async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await user.type(await screen.findByLabelText(/^Name/i), 'Rex');
+    await user.click(screen.getByRole('button', { name: /Add Kin/i }));
+    await waitFor(() => expect(mocks.addKin).toHaveBeenCalledTimes(1));
+    const sent = mocks.addKin.mock.calls[0]![0] as Record<string, unknown>;
+    expect(sent).not.toHaveProperty('ownVetClinicId');
+    expect(sent).not.toHaveProperty('vetInfo');
   });
 
   it('sad / negative path: blocks submit and shows an inline error for a whitespace-only name', async () => {

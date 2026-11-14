@@ -75,21 +75,80 @@ describe('getMyKinHandler', () => {
     expect(res.kin[0]).toMatchObject({ sex: 'Male', weight: '68 lbs', colorMarkings: 'Yellow', spayedNeutered: true, vetInfo: 'Riverside' });
     expect(res.kin[1]).toMatchObject({ sex: null, weight: null, colorMarkings: null, spayedNeutered: false, vetInfo: null });
   });
-  it('never returns staff-only fields the mirror copies onto the family doc (officeNotes, reactive, routine, vaccinations, tags)', async () => {
+  it('never returns the office-only fields (officeNotes, reactive, tags, the raw medication notes key)', async () => {
     const ctx = buildDbMock({
       docs: { 'clients/u1': { kinfolkIds: ['3'] } },
       queryDocs: {
         'families/3/kin': [
-          { id: 'k1', data: { name: 'Buddy', status: 'active', officeNotes: 'bites', reactive: true, routine: 'r', vaccinations: 'v', trainingCommands: 't', feedingBrand: 'b', medicationHealthNotes: 'm', tags: ['x'] } },
+          { id: 'k1', data: { name: 'Buddy', status: 'active', officeNotes: 'bites', reactive: true, medicationHealthNotes: 'm', tags: ['x'] } },
         ],
       },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { getMyKinHandler } = await import('../src/portal/getMyKin');
     const res = await getMyKinHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
-    for (const k of ['officeNotes', 'reactive', 'routine', 'vaccinations', 'trainingCommands', 'feedingBrand', 'medicationHealthNotes', 'tags']) {
+    for (const k of ['officeNotes', 'reactive', 'medicationHealthNotes', 'tags']) {
       expect(res.kin[0]).not.toHaveProperty(k);
     }
+  });
+  it('#1908: returns the care facts the household now fills, defaulted when absent', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: {
+        'families/3/kin': [
+          { id: 'k1', data: { name: 'Buddy', status: 'active', staysAs: 'Crate', routine: 'r', trainingCommands: 't', feedingBrand: 'b', vaccinations: 'v', medications: 'm' } },
+          { id: 'k2', data: { name: 'Mo', status: 'active' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyKinHandler } = await import('../src/portal/getMyKin');
+    const res = await getMyKinHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.kin[0]).toMatchObject({ staysAs: 'Crate', routine: 'r', trainingCommands: 't', feedingBrand: 'b', vaccinations: 'v', medications: 'm', ownVetClinicId: '' });
+    expect(res.kin[1]).toMatchObject({ staysAs: null, routine: null, trainingCommands: null, feedingBrand: null, vaccinations: null, ownVetClinicId: '' });
+  });
+  describe('#1908 kin-vet: the vet a Kin goes to', () => {
+    const CLINICS = {
+      'vet_clinics/home': { name: 'Cedar Animal Care', phone: '555 0142', address: '1 Main St' },
+      'vet_clinics/own': { name: 'Riverside Vets', phone: '555 0199', address: '2 River Rd' },
+    };
+    function household(kin: Array<{ id: string; data: Record<string, unknown> }>, householdVet: string | null) {
+      return buildDbMock({
+        docs: { 'clients/u1': { kinfolkIds: ['3'] }, ...CLINICS },
+        queryDocs: {
+          'families/3/kin': kin,
+          household_data: householdVet === null ? [] : [{ id: 'hd1', data: { kinfolkId: '3', primaryVetClinicId: householdVet } }],
+        },
+      });
+    }
+    it('a Kin with no vet of its own goes to the household vet', async () => {
+      const ctx = household([{ id: 'k1', data: { name: 'Buddy', status: 'active' } }], 'home');
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { getMyKinHandler } = await import('../src/portal/getMyKin');
+      const res = await getMyKinHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+      expect(res.kin[0].vet).toEqual({ clinic: { id: 'home', name: 'Cedar Animal Care', phone: '555 0142', address: '1 Main St', isEmergency: false }, fromHousehold: true });
+    });
+    it('a Kin with its own vet goes to that one, not the household vet', async () => {
+      const ctx = household([{ id: 'k1', data: { name: 'Buddy', status: 'active', ownVetClinicId: 'own' } }], 'home');
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { getMyKinHandler } = await import('../src/portal/getMyKin');
+      const res = await getMyKinHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+      expect(res.kin[0]).toMatchObject({ ownVetClinicId: 'own', vet: { clinic: { id: 'own', name: 'Riverside Vets' }, fromHousehold: false } });
+    });
+    it('no household vet and none of its own: no vet', async () => {
+      const ctx = household([{ id: 'k1', data: { name: 'Buddy', status: 'active' } }], null);
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { getMyKinHandler } = await import('../src/portal/getMyKin');
+      const res = await getMyKinHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+      expect(res.kin[0].vet).toBeNull();
+    });
+    it('a Kin vet that no longer exists shows no vet rather than the household one', async () => {
+      const ctx = household([{ id: 'k1', data: { name: 'Buddy', status: 'active', ownVetClinicId: 'gone' } }], 'home');
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { getMyKinHandler } = await import('../src/portal/getMyKin');
+      const res = await getMyKinHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+      expect(res.kin[0].vet).toBeNull();
+    });
   });
   /**
    * THIS TEST USED TO ASSERT THE LEAK. It read

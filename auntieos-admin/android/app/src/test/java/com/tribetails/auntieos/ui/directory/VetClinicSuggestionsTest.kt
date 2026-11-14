@@ -16,9 +16,30 @@ class VetClinicSuggestionsTest {
         VetClinic(name = "Banfield Pet Hospital"),
     )
 
-    @Test fun blankQuery_returnsNothing() {
-        assertEquals(emptyList<VetClinic>(), vetClinicSuggestions("", catalog))
-        assertEquals(emptyList<VetClinic>(), vetClinicSuggestions("   ", catalog))
+    /**
+     * #1908 kin-vet (owner ruling 2026-11-12): "a dropdown field preloaded with
+     * all vets in the entire area". A blank query is the whole pickable list,
+     * by name, as soon as the picker opens.
+     */
+    @Test fun blankQuery_listsEveryPickableClinicByName() {
+        val names = vetClinicSuggestions("", catalog).map { it.name }
+        assertEquals(catalog.map { it.name }.sortedBy { it.lowercase() }, names)
+        assertEquals(names, vetClinicSuggestions("   ", catalog).map { it.name })
+    }
+    @Test fun blankQuery_leavesOutRetiredAndWaitingClinics() {
+        val mixed = catalog + listOf(
+            VetClinic(name = "Closed Clinic", archived = true),
+            VetClinic(name = "Waiting Clinic", verified = false),
+        )
+        val names = vetClinicSuggestions("", mixed).map { it.name }
+        assertTrue("Closed Clinic" !in names)
+        assertTrue("Waiting Clinic" !in names)
+        assertEquals(catalog.size, names.size)
+    }
+    @Test fun noCapByDefault_everyClinicIsReachable() {
+        val many = (1..50).map { VetClinic(name = "Clinic $it") }
+        assertEquals(50, vetClinicSuggestions("", many).size)
+        assertEquals(50, vetClinicSuggestions("clinic", many).size)
     }
 
     @Test fun prefixMatchesRankBeforeSubstring() {
@@ -36,9 +57,8 @@ class VetClinicSuggestionsTest {
         )
     }
 
-    @Test fun respectsLimit() {
+    @Test fun respectsAnExplicitLimit() {
         val many = (1..50).map { VetClinic(name = "Clinic $it") }
-        assertEquals(8, vetClinicSuggestions("clinic", many).size)
         assertEquals(3, vetClinicSuggestions("clinic", many, limit = 3).size)
     }
 

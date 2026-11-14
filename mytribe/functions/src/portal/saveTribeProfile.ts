@@ -2,6 +2,13 @@ import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https
 import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
+import {
+  LEGACY_VET_ROW_KEY,
+  readHouseholdVetClinicId,
+  resolveVetClinicSummary,
+  writeHouseholdVetClinicId,
+  type VetClinicSummary,
+} from '../lib/vetClinicCatalog';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
@@ -132,10 +139,17 @@ export async function saveTribeProfileHandler(
   }
 
   let stripped: { count: number; outcome: 'echo' | 'applied' | 'ignored' } | null = null;
-  const sentFields = args.customFields ?? [];
+  // #1908 kin-vet: the household's vet has one store, shared with the admin
+  // (the household vet section of lib/vetClinicCatalog.ts), and new clients set it through
+  // `setHouseholdVet` the moment it is picked (#1917). An old client still
+  // sends it as the `vetClinicId` row; that row is taken out of the profile
+  // save and applied to the store after it, only when it names another vet.
+  const sentVetRow = (args.customFields ?? []).find((f) => f.key === LEGACY_VET_ROW_KEY);
+  const vetRowRemoved = (args.removeCustomFieldKeys ?? []).includes(LEGACY_VET_ROW_KEY);
+  const sentFields = (args.customFields ?? []).filter((f) => f.key !== LEGACY_VET_ROW_KEY);
   const sentRows = sentFields.filter((f) => isEmergencyContactKey(f.key));
   const sent = legacyContactFromRows(sentRows);
-  const removeKeys = (args.removeCustomFieldKeys ?? []).filter((k) => !isEmergencyContactKey(k));
+  const removeKeys = (args.removeCustomFieldKeys ?? []).filter((k) => !isEmergencyContactKey(k) && k !== LEGACY_VET_ROW_KEY);
   // #873 second review: Home access is checked ONCE, before the transaction.
   // Inside it, the check was a plain read the transaction did not lock, and a
   // retry ran it again (and isOwner logged its allowlist fallback twice). A
@@ -245,6 +259,11 @@ export async function saveTribeProfileHandler(
     }
     throw e;
   });
+  if (sentVetRow !== undefined || vetRowRemoved) {
+    const wanted = sentVetRow !== undefined ? sentVetRow.value.trim() : '';
+    const current = await readHouseholdVetClinicId(firestore, kinfolkId);
+    if (wanted !== current && !wanted.includes('/')) await writeHouseholdVetClinicId(firestore, kinfolkId, wanted);
+  }
   if (touchesCustomFields) update['customFields'] = true;
   const emergencyContactWrite = result.ecWrite;
   const emergencyContactIgnored = result.outcome === 'ignored';
@@ -327,4 +346,78 @@ export const saveTribeProfile = onCall(
   // gets permission-denied with no indication why.
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'] },
   wrapCallable('saveTribeProfile', saveTribeProfileHandler),
+);
+
+// ── setHouseholdVet ──────────────────────────────────────────────────────────
+// Beside saveTribeProfile because it is the other half of the Tribe Profile's
+// save, and so it adds no module of its own to the entrypoint
+// (test/coldStartImportGraph.test.ts).
+
+export const SetHouseholdVetArgs = z.object({
+  kinfolkId: z.string().optional(),
+  /** A `vet_clinics` id, or '' to take the household's vet off. */
+  clinicId: z.string().trim().max(128),
+});
+
+export interface SetHouseholdVetResult {
+  ok: true;
+  /** The household's vet now, resolved for display; null when it has none. */
+  vetClinic: VetClinicSummary | null;
+}
+
+/**
+ * #1908 kin-vet, #1917. Sets the household's vet from the portal, at the moment
+ * it is picked. The Tribe Profile's Vet Clinic card used to hold a pick on the
+ * screen until "Save Changes" at the bottom of the page, while showing it as
+ * "CLINIC ON FILE", so a household that picked a clinic and left lost it. A
+ * pick and a removal are now one call each, saved when made.
+ *
+ * Writes the one store both apps read (`the household vet section of lib/vetClinicCatalog.ts`). Any member
+ * of the household may set it, as with the rest of the Tribe Profile
+ * (`saveTribeProfile` has the same gate). A clinic must be on the area vet
+ * list: it exists and is not archived. A clinic this household just submitted
+ * (`submitVetClinic`, still waiting for the office) is allowed, because the
+ * household that typed it in is using it.
+ */
+export async function setHouseholdVetHandler(req: CallableRequest<unknown>): Promise<SetHouseholdVetResult> {
+  initSentry();
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  const parsed = SetHouseholdVetArgs.safeParse(req.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Invalid arguments.');
+  const args = parsed.data;
+  const firestore = db();
+  const { kinfolkId } = await resolveKinfolkAccess(
+    uid,
+    args.kinfolkId,
+    householdStaffFlag(req.auth, 'setHouseholdVet'),
+    'setHouseholdVet',
+  );
+
+  const clinicId = args.clinicId;
+  if (clinicId !== '') {
+    if (clinicId.includes('/')) throw new HttpsError('invalid-argument', 'That vet is not on the list.');
+    const snap = await firestore.doc(`vet_clinics/${clinicId}`).get();
+    if (!snap.exists || (snap.data() ?? {})['archived'] === true) {
+      throw new HttpsError('invalid-argument', 'That vet is not on the list.');
+    }
+  }
+
+  const current = await readHouseholdVetClinicId(firestore, kinfolkId);
+  if (current !== clinicId) await writeHouseholdVetClinicId(firestore, kinfolkId, clinicId);
+  const vetClinic = await resolveVetClinicSummary(firestore, clinicId);
+  logEvent({
+    severity: 'info',
+    function: 'setHouseholdVet',
+    event: clinicId === '' ? 'portal.householdVet.cleared' : 'portal.householdVet.set',
+    uid,
+    extra: { kinfolkId, changed: current !== clinicId },
+  });
+  return { ok: true, vetClinic };
+}
+
+export const setHouseholdVet = onCall(
+  // AUNTIE_OPERATOR_UIDS: resolveKinfolkAccess -> isOwner reads it (see saveTribeProfile).
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN', 'AUNTIE_OPERATOR_UIDS'] },
+  wrapCallable('setHouseholdVet', setHouseholdVetHandler),
 );

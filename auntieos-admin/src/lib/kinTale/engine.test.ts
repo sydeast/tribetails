@@ -137,7 +137,7 @@ describe('KinTale engine (ported cases)', () => {
   it('conditionSummary: attribute exists is readable', () => {
     expect(
       conditionSummary(fc({ source: 'KIN_ATTRIBUTE', op: 'EXISTS', attributeKey: 'medicationHealthNotes' })),
-    ).toBe('Only show when the pet has Medication / health notes');
+    ).toBe('Only show when the pet has Medications / health notes');
   });
 
   it('conditionSummary: service contains is readable', () => {

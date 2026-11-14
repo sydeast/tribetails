@@ -12,6 +12,17 @@ internal fun vetClinicMatches(query: String, clinics: List<VetClinic>, limit: In
     return clinics.filter { it.name.contains(q, ignoreCase = true) }.take(limit)
 }
 /**
+ * #1908 kin-vet: the area vet list as a dropdown shows it. A blank [query] is
+ * the WHOLE list ("a dropdown preloaded with all vets in the area"), sorted by
+ * name; typing narrows it by name. No cap: the list scrolls.
+ */
+internal fun vetClinicChoices(query: String, clinics: List<VetClinic>): List<VetClinic> {
+    val q = query.trim()
+    val sorted = clinics.sortedBy { it.name.lowercase() }
+    if (q.isEmpty()) return sorted
+    return sorted.filter { it.name.contains(q, ignoreCase = true) }
+}
+/**
  * The clinic to show as "Clinic on file" for the linked [clinicId]: the catalog
  * row when it lists it, else the clinic picked or added this session (an
  * unapproved submission is not in the catalog). Null when nothing is linked or

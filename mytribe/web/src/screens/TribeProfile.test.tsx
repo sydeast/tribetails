@@ -47,6 +47,8 @@ vi.mock('../api/tribeApi', async () => {
     saveTribeProfile: vi.fn(),
     saveHomeAccess: vi.fn(),
     submitVetClinic: vi.fn(),
+    // #1917: the household vet saves the moment it is picked.
+    setHouseholdVet: vi.fn(),
     addSecondaryContact: vi.fn(),
     updateSecondaryPermissions: vi.fn(),
     // #829: the Emergency Contacts card reads and writes through its own callables.
@@ -121,6 +123,10 @@ async function renderTribeProfile(opts: {
   vi.mocked(tribeApi.listSecondaryKinfolk).mockResolvedValue(opts.secondaryKinfolk ?? []);
   vi.mocked(tribeApi.saveTribeProfile).mockResolvedValue({ ok: true });
   vi.mocked(tribeApi.saveHomeAccess).mockResolvedValue({ ok: true });
+  vi.mocked(tribeApi.setHouseholdVet).mockImplementation(async ({ clinicId }) => ({
+    ok: true,
+    vetClinic: clinicId === '' ? null : { id: clinicId, name: (opts.clinics ?? []).find((c) => c.id === clinicId)?.name ?? 'Clinic', phone: '', address: '', isEmergency: false },
+  }));
   vi.mocked(portal.getBusinessContact).mockResolvedValue({ name: 'Tribe Tails Pet Care', email: '', phone: '', address: '', privacyPolicyUrl: '' });
   // getFormSchema throws 'not-found' when no admin has authored that schema.
   // That throw is the fork this bug lives on.
@@ -183,14 +189,15 @@ describe('TribeProfile: Emergency Contacts follow Home access (#843, #829)', () 
     expect(view.queryByText('Stale')).toBeNull();
   });
 
-  it('#829: the profile save carries no emergencyContact key at all, and keeps the vet clinic', async () => {
+  it('#829, #1917: the profile save carries no emergencyContact key and no vet row (the vet saves on its own)', async () => {
     const view = await renderTribeProfile({ profile: STALE_EC });
     await userEvent.click(await view.findByRole('button', { name: /Save Changes/ }));
     const { saveTribeProfile, saveEmergencyContacts } = await import('../api/tribeApi');
     await waitFor(() => expect(saveTribeProfile).toHaveBeenCalledTimes(1));
     const keys = (vi.mocked(saveTribeProfile).mock.calls[0]?.[0].customFields ?? []).map((f) => f.key);
     expect(keys.filter((k) => k.startsWith('emergencyContact'))).toEqual([]);
-    expect(keys).toContain('vetClinicId');
+    expect(keys).not.toContain('vetClinicId');
+    expect(vi.mocked(saveTribeProfile).mock.calls[0]?.[0].removeCustomFieldKeys ?? []).not.toContain('vetClinicId');
     expect(saveEmergencyContacts).not.toHaveBeenCalled();
   });
 
@@ -593,7 +600,8 @@ describe('TribeProfile: a schema-mode save keeps the rows it does not edit (#873
     expect(await view.findByText('Tribe Profile saved.')).toBeInTheDocument();
     const { saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
     const profile = vi.mocked(saveTribeProfile).mock.calls[0]![0];
-    expect(profile.customFields).toEqual([OFFICE, ALLERGY, VET]);
+    // #1917: the vet row is never part of the page save.
+    expect(profile.customFields).toEqual([OFFICE, ALLERGY]);
     expect(profile.removeCustomFieldKeys).toEqual([]);
     // #868: nothing in the home details changed, so no home access call.
     expect(saveHomeAccess).not.toHaveBeenCalled();
@@ -607,7 +615,7 @@ describe('TribeProfile: a schema-mode save keeps the rows it does not edit (#873
     await userEvent.type(await view.findByDisplayValue('5678'), '9');
     await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
     const { profile, home } = await saved();
-    expect(profile.customFields).toEqual([OFFICE, { ...ALLERGY, value: 'Beef' }, VET]);
+    expect(profile.customFields).toEqual([OFFICE, { ...ALLERGY, value: 'Beef' }]);
     expect(home.customFields).toEqual([SHED, { ...ALARM, value: '56789' }, AFTER_PHONE]);
   });
 
@@ -617,7 +625,7 @@ describe('TribeProfile: a schema-mode save keeps the rows it does not edit (#873
     await userEvent.clear(await view.findByDisplayValue('5678'));
     await userEvent.click(view.getByRole('button', { name: /Save Changes/ }));
     const { profile, home } = await saved();
-    expect(profile.customFields).toEqual([OFFICE, { ...ALLERGY, value: '' }, VET]);
+    expect(profile.customFields).toEqual([OFFICE, { ...ALLERGY, value: '' }]);
     expect(home.customFields).toEqual([SHED, { ...ALARM, value: '' }, AFTER_PHONE]);
   });
 
@@ -630,7 +638,7 @@ describe('TribeProfile: a schema-mode save keeps the rows it does not edit (#873
     expect(home.removeCustomFieldKeys).toEqual(['afterHoursVetPhone']);
   });
 
-  it('without a schema the stored rows go back the same way, and a stored duplicate vetClinicId folds into one row', async () => {
+  it('without a schema the stored rows go back the same way, and no vetClinicId row goes with them (#1917)', async () => {
     const dupVet: GetMyTribeProfileResult = {
       ...SCHEMA_PROFILE,
       profile: { ...SCHEMA_PROFILE.profile, customFields: [VET, OFFICE, { ...VET, value: 'clinic-1' }] },
@@ -639,7 +647,7 @@ describe('TribeProfile: a schema-mode save keeps the rows it does not edit (#873
     await userEvent.click(await view.findByRole('button', { name: /Save Changes/ }));
     expect(await view.findByText('Tribe Profile saved.')).toBeInTheDocument();
     const { saveTribeProfile, saveHomeAccess } = await import('../api/tribeApi');
-    expect(vi.mocked(saveTribeProfile).mock.calls[0]![0].customFields).toEqual([VET, OFFICE]);
+    expect(vi.mocked(saveTribeProfile).mock.calls[0]![0].customFields).toEqual([OFFICE]);
     expect(saveHomeAccess).not.toHaveBeenCalled();
   });
 });
@@ -663,7 +671,7 @@ describe('TribeProfile: the vet is chosen, never typed', () => {
   };
   it('offers no free-text clinic boxes', async () => {
     const { queryByLabelText, findByLabelText } = await renderTribeProfile({});
-    await findByLabelText(/Search vet clinics/i);
+    await findByLabelText(/your vet clinic/i);
     expect(queryByLabelText('Clinic Name')).toBeNull();
     expect(queryByLabelText('Clinic Phone')).toBeNull();
     expect(queryByLabelText('Clinic Address')).toBeNull();
@@ -671,7 +679,7 @@ describe('TribeProfile: the vet is chosen, never typed', () => {
 
   it('puts the create affordance LAST, after the existing clinics', async () => {
     const { findByLabelText, container } = await renderTribeProfile({ clinics: [RIVERSIDE] });
-    const search = await findByLabelText(/Search vet clinics/i);
+    const search = await findByLabelText(/your vet clinic/i);
     await userEvent.type(search, 'river');
     await waitFor(() => {
       const rows = [...container.querySelectorAll('.suggestrow b')].map((n) => n.textContent ?? '');
@@ -690,7 +698,7 @@ describe('TribeProfile: the vet is chosen, never typed', () => {
       candidates: [{ ...RIVERSIDE, verified: true, reason: 'name' as const }],
     });
     const { findByLabelText, findByText } = await renderTribeProfile({});
-    const search = await findByLabelText(/Search vet clinics/i);
+    const search = await findByLabelText(/your vet clinic/i);
     await userEvent.type(search, 'Riverside Animal Hospital');
     await userEvent.click(await findByText(/as a new clinic/));
     expect(await findByText(/already on the shared list/i)).toBeTruthy();
@@ -717,7 +725,7 @@ describe('TribeProfile: the vet is chosen, never typed', () => {
         candidates: [],
       });
     const { findByLabelText, findByText } = await renderTribeProfile({});
-    const search = await findByLabelText(/Search vet clinics/i);
+    const search = await findByLabelText(/your vet clinic/i);
     await userEvent.type(search, 'Riverside Animal Hospital');
     await userEvent.click(await findByText(/as a new clinic/));
     await userEvent.click(await findByText(/as a different clinic/));
@@ -737,7 +745,7 @@ describe('TribeProfile: the vet is chosen, never typed', () => {
       candidates: [],
     });
     const { findByLabelText, findByText } = await renderTribeProfile({});
-    const search = await findByLabelText(/Search vet clinics/i);
+    const search = await findByLabelText(/your vet clinic/i);
     await userEvent.type(search, 'Somewhere New');
     await userEvent.click(await findByText(/as a new clinic/));
     await waitFor(() => expect(tribeApi.submitVetClinic).toHaveBeenCalled());
@@ -975,13 +983,16 @@ describe('TribeProfile: the vet clinic is never shown as a database id (#1325)',
     expect(view.queryByText('Profile fields')).toBeNull();
     expect(view.container.textContent).not.toContain(CLINIC_ID);
   });
-  it('still saves the chosen clinic id untouched', async () => {
+  it('the page save leaves the chosen clinic alone: it neither sends nor removes it (#1917)', async () => {
     const view = await renderTribeProfile({ profile: WITH_CLINIC, clinics: [] });
     await userEvent.click(await view.findByRole('button', { name: /Save Changes/ }));
-    const { saveTribeProfile } = await import('../api/tribeApi');
+    const { saveTribeProfile, setHouseholdVet } = await import('../api/tribeApi');
     await waitFor(() => expect(saveTribeProfile).toHaveBeenCalledTimes(1));
-    const rows = vi.mocked(saveTribeProfile).mock.calls[0]?.[0].customFields ?? [];
-    expect(rows.find((f) => f.key === 'vetClinicId')?.value).toBe(CLINIC_ID);
+    const args = vi.mocked(saveTribeProfile).mock.calls[0]![0];
+    expect((args.customFields ?? []).find((f) => f.key === 'vetClinicId')).toBeUndefined();
+    expect(args.removeCustomFieldKeys ?? []).not.toContain('vetClinicId');
+    expect(setHouseholdVet).not.toHaveBeenCalled();
+    expect(view.getByText('Banfield Pet Hospital')).toBeInTheDocument();
   });
 });
 // #1387: a linked clinic can be unlinked, same as portal Android.
@@ -1004,32 +1015,33 @@ describe('TribeProfile: Remove clinic (#1387)', () => {
   };
   it('offers no Remove clinic control when no clinic is linked', async () => {
     const view = await renderTribeProfile({ clinics: [CLINIC_1] });
-    await view.findByLabelText(/Search vet clinics/i);
+    await view.findByLabelText(/your vet clinic/i);
     expect(view.queryByRole('button', { name: /Remove clinic/ })).toBeNull();
   });
-  it('clears vetClinicId through removeCustomFieldKeys only, shows a busy cue, then returns to the picker', async () => {
+  it('takes the household vet off at once through setHouseholdVet, shows a busy cue, then returns to the picker', async () => {
     const view = await renderTribeProfile({ profile: LINKED, clinics: [CLINIC_1] });
-    const { saveTribeProfile } = await import('../api/tribeApi');
-    let release: (v: { ok: true }) => void = () => {};
-    vi.mocked(saveTribeProfile).mockImplementationOnce(() => new Promise((res) => { release = res; }));
+    const { saveTribeProfile, setHouseholdVet } = await import('../api/tribeApi');
+    let release: (v: { ok: true; vetClinic: null }) => void = () => {};
+    vi.mocked(setHouseholdVet).mockImplementationOnce(() => new Promise((res) => { release = res; }));
     const btn = await view.findByRole('button', { name: /Remove clinic/ });
     expect(view.getByText('Clinic on file')).toBeInTheDocument();
     await userEvent.click(btn);
-    await waitFor(() => expect(saveTribeProfile).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(saveTribeProfile).mock.calls[0]?.[0]).toEqual({ kinfolkId: 'kin-fam-1', removeCustomFieldKeys: ['vetClinicId'] });
+    await waitFor(() => expect(setHouseholdVet).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(setHouseholdVet).mock.calls[0]?.[0]).toEqual({ kinfolkId: 'kin-fam-1', clinicId: '' });
+    expect(saveTribeProfile).not.toHaveBeenCalled();
     // Pessimistic: still linked, button busy and disabled while the save is out.
     const busy = view.getByRole('button', { name: /Removing/ });
     expect(busy).toBeDisabled();
     expect(view.getByText('Clinic on file')).toBeInTheDocument();
-    release({ ok: true });
+    release({ ok: true, vetClinic: null });
     await waitFor(() => expect(view.queryByText('Clinic on file')).toBeNull());
     expect(view.queryByRole('button', { name: /Remove clinic|Removing/ })).toBeNull();
-    expect(view.getByLabelText(/Search vet clinics/i)).toBeInTheDocument();
+    expect(view.getByLabelText(/your vet clinic/i)).toBeInTheDocument();
   });
   it('a refused removal keeps the clinic linked and says why', async () => {
     const view = await renderTribeProfile({ profile: LINKED, clinics: [CLINIC_1] });
-    const { saveTribeProfile } = await import('../api/tribeApi');
-    vi.mocked(saveTribeProfile).mockRejectedValueOnce(new Error('too many saves'));
+    const { setHouseholdVet } = await import('../api/tribeApi');
+    vi.mocked(setHouseholdVet).mockRejectedValueOnce(new Error('too many saves'));
     await userEvent.click(await view.findByRole('button', { name: /Remove clinic/ }));
     expect(await view.findByText("Couldn't remove the clinic: too many saves")).toBeInTheDocument();
     expect(view.getByText('Clinic on file')).toBeInTheDocument();
@@ -1037,9 +1049,9 @@ describe('TribeProfile: Remove clinic (#1387)', () => {
   });
   it('can remove a clinic that is no longer on the shared list', async () => {
     const view = await renderTribeProfile({ profile: LINKED, clinics: [] });
-    const { saveTribeProfile } = await import('../api/tribeApi');
+    const { setHouseholdVet } = await import('../api/tribeApi');
     await userEvent.click(await view.findByRole('button', { name: /Remove clinic/ }));
-    await waitFor(() => expect(saveTribeProfile).toHaveBeenCalledWith({ kinfolkId: 'kin-fam-1', removeCustomFieldKeys: ['vetClinicId'] }));
+    await waitFor(() => expect(setHouseholdVet).toHaveBeenCalledWith({ kinfolkId: 'kin-fam-1', clinicId: '' }));
   });
 });
 
@@ -1047,10 +1059,63 @@ describe('TribeProfile: warm on open (#1504)', () => {
   it('wakes both halves of the page save once the profile loads, once each', async () => {
     const user = userEvent.setup();
     const view = await renderTribeProfile({});
-    await waitFor(() => expect(vi.mocked(warmSave).mock.calls).toEqual([['saveTribeProfile'], ['saveHomeAccess']]));
+    const woken = [['saveTribeProfile'], ['saveHomeAccess']];
+    await waitFor(() => expect(vi.mocked(warmSave).mock.calls).toEqual(woken));
     await user.type(view.getAllByRole('textbox')[0]!, 'x');
-    expect(vi.mocked(warmSave).mock.calls).toEqual([['saveTribeProfile'], ['saveHomeAccess']]);
+    expect(vi.mocked(warmSave).mock.calls).toEqual(woken);
     const tribeApi = await import('../api/tribeApi');
     expect(tribeApi.saveTribeProfile).not.toHaveBeenCalled();
+  });
+});
+/**
+ * #1917: a clinic picked on the Tribe Profile read "CLINIC ON FILE" but was lost
+ * unless Save Changes, five cards further down, was pressed. #1908 kin-vet: the
+ * list is the whole area list, open on focus.
+ */
+describe('TribeProfile: the household vet saves the moment it is picked (#1917)', () => {
+  const clinic = (n: number) => ({ id: `c${n}`, name: `Clinic ${String(n).padStart(2, '0')}`, phone: '', address: `${n} Main St`, website: '', googleMapsUrl: '', isEmergency: false });
+  const TWELVE = Array.from({ length: 12 }, (_, i) => clinic(i + 1));
+  it('opens the whole area list on focus, every clinic, with no cut-off at 8', async () => {
+    const view = await renderTribeProfile({ clinics: TWELVE });
+    await userEvent.click(await view.findByLabelText(/your vet clinic/i));
+    const list = view.getByRole('listbox');
+    expect(within(list).getAllByRole('option')).toHaveLength(12);
+    await userEvent.type(view.getByLabelText(/your vet clinic/i), 'Clinic 1');
+    // Clinic 10, 11, 12.
+    expect(within(view.getByRole('listbox')).getAllByRole('option')).toHaveLength(3);
+  });
+  it('a pick calls setHouseholdVet at once, says Saving, and shows the clinic only once it is on file', async () => {
+    const view = await renderTribeProfile({ clinics: TWELVE });
+    const { setHouseholdVet, saveTribeProfile } = await import('../api/tribeApi');
+    let release: (v: { ok: true; vetClinic: { id: string; name: string; phone: string; address: string; isEmergency: boolean } }) => void = () => {};
+    vi.mocked(setHouseholdVet).mockImplementationOnce(() => new Promise((res) => { release = res; }));
+    await userEvent.click(await view.findByLabelText(/your vet clinic/i));
+    await userEvent.click(within(view.getByRole('listbox')).getByText('Clinic 03'));
+    expect(setHouseholdVet).toHaveBeenCalledWith({ kinfolkId: 'kin-fam-1', clinicId: 'c3' });
+    expect(view.getByText(/Saving Clinic 03/)).toBeInTheDocument();
+    expect(view.queryByText('Clinic on file')).toBeNull();
+    release({ ok: true, vetClinic: { id: 'c3', name: 'Clinic 03', phone: '', address: '3 Main St', isEmergency: false } });
+    expect(await view.findByText('Clinic on file')).toBeInTheDocument();
+    expect(view.getByText('Clinic 03')).toBeInTheDocument();
+    // Nothing waits for Save Changes.
+    expect(saveTribeProfile).not.toHaveBeenCalled();
+  });
+  it('a refused pick says why and keeps what was on file', async () => {
+    const view = await renderTribeProfile({ clinics: TWELVE });
+    const { setHouseholdVet } = await import('../api/tribeApi');
+    vi.mocked(setHouseholdVet).mockRejectedValueOnce(new Error('That vet is not on the list.'));
+    await userEvent.click(await view.findByLabelText(/your vet clinic/i));
+    await userEvent.click(within(view.getByRole('listbox')).getByText('Clinic 05'));
+    expect(await view.findByText("Couldn't save Clinic 05 as your clinic: That vet is not on the list.")).toBeInTheDocument();
+    expect(view.queryByText('Clinic on file')).toBeNull();
+  });
+  it('a newly added clinic becomes the household vet through the same save', async () => {
+    const tribeApi = await import('../api/tribeApi');
+    vi.mocked(tribeApi.submitVetClinic).mockResolvedValue({ status: 'created', clinicId: 'new1', created: true, pending: true, candidates: [] });
+    const view = await renderTribeProfile({});
+    await userEvent.type(await view.findByLabelText(/your vet clinic/i), 'Somewhere New');
+    await userEvent.click(await view.findByText(/as a new clinic/));
+    await waitFor(() => expect(tribeApi.setHouseholdVet).toHaveBeenCalledWith({ kinfolkId: 'kin-fam-1', clinicId: 'new1' }));
+    expect(await view.findByText(/It is on your record now/)).toBeInTheDocument();
   });
 });

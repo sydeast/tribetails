@@ -36,6 +36,19 @@ vi.mock('../api/breeds', async (orig) => ({
 // #1492: the Archive / Restore control is owner-only, like the server callable.
 const access = vi.hoisted(() => ({ current: { status: 'admin' } as { status: string } | null }));
 vi.mock('../lib/access', () => ({ useAdminAccess: () => access.current }));
+// #1908 kin-vet: the household's vet (household_data) and the area vet list.
+const { getHouseholdData, clinics } = vi.hoisted(() => ({
+  getHouseholdData: vi.fn(),
+  clinics: { current: [] as Array<Record<string, unknown>> },
+}));
+vi.mock('../api/householdData', async (orig) => ({
+  ...(await orig<typeof import('../api/householdData')>()),
+  getHouseholdData: (id: string) => getHouseholdData(id),
+}));
+vi.mock('../lib/firestore', async (orig) => ({
+  ...(await orig<typeof import('../lib/firestore')>()),
+  useCollection: () => ({ status: 'ready', data: clinics.current }),
+}));
 import { KinEdit } from './KinEdit';
 import { mergeKinDetail } from '../api/kinView';
 
@@ -50,6 +63,9 @@ beforeEach(() => {
   access.current = { status: 'admin' };
   breedBanks.current = { dogBreeds: ['Border Collie', 'Boxer'], catBreeds: ['Bengal'] };
   breedsFailed.current = false;
+  getHouseholdData.mockReset();
+  getHouseholdData.mockResolvedValue(null);
+  clinics.current = [];
 });
 
 describe('KinEdit', () => {
@@ -334,7 +350,7 @@ describe('KinEdit vet rule (fix-backlog 5.4: vets attach to the Kinfolk)', () =>
     // removed panel (which would pass for the wrong reason).
     expect(screen.getByText('Health')).toBeInTheDocument();
     expect(screen.getByText('Vaccinations')).toBeInTheDocument();
-    expect(screen.getByText('Medication / health notes')).toBeInTheDocument();
+    expect(screen.getByText('Medications / health notes')).toBeInTheDocument();
     expect(screen.queryByText('Vet info')).not.toBeInTheDocument();
     // Nothing anywhere on the editor is seeded with the stored vet value, so it
     // cannot be typed into some other input either.
@@ -349,7 +365,7 @@ describe('KinEdit vet rule (fix-backlog 5.4: vets attach to the Kinfolk)', () =>
     render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
     await screen.findByText('Name');
     // #895: saves send only changed fields, so edit the two Health fields.
-    for (const label of ['Vaccinations', 'Medication / health notes']) {
+    for (const label of ['Vaccinations', 'Medications / health notes']) {
       await userEvent.type(screen.getByText(label).parentElement!.querySelector('textarea, input')!, 'x');
     }
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
@@ -434,5 +450,100 @@ describe('KinEdit vet rule (fix-backlog 5.4: vets attach to the Kinfolk)', () =>
       await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
       expect(updateKin.mock.calls[0]![1].breed).toBe('Lab / pit mix');
     });
+  });
+});
+/** #1908 (owner ruling 2026-11-11): the household's care block gets a box here. */
+describe('KinEdit: the fields the household fills too (#1908)', () => {
+  for (const [key, label] of [
+    ['feedingInstructions', 'Feeding instructions'],
+    ['walkingInstructions', 'Walking instructions'],
+    ['sitterNotes', 'Notes for the Auntie'],
+    ['allergies', 'Allergies'],
+    ['emergencyNotes', 'Emergency notes'],
+  ] as const) {
+    it(`loads, edits and saves ${label} alone`, async () => {
+      getKin.mockResolvedValue(kin({ [key]: 'before' }));
+      updateKin.mockResolvedValue(undefined);
+      render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+      const box = (await screen.findByText(label)).parentElement!.querySelector('textarea')!;
+      expect(box).toHaveValue('before');
+      await userEvent.clear(box);
+      await userEvent.type(box, 'after');
+      await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+      await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+      expect(updateKin.mock.calls[0]![1]).toEqual({ [key]: 'after' });
+    });
+  }
+  it('a null the portal wrote reads as an empty box, and is not sent unless edited', async () => {
+    getKin.mockResolvedValue(mergeKinDetail('p1', { name: 'Willow', species: 'Dog', allergies: null }));
+    updateKin.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    expect((await screen.findByText('Allergies')).parentElement!.querySelector('textarea')).toHaveValue('');
+    await userEvent.type(screen.getByText('Vaccinations').parentElement!.querySelector('textarea')!, 'x');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+    expect(updateKin.mock.calls[0]![1]).toEqual({ vaccinations: 'x' });
+  });
+});
+/**
+ * #1908 kin-vet (owner ruling 2026-11-12): the Kin's vet is the household's,
+ * read only, unless "Different vet for this Kin" is ticked.
+ */
+describe('KinEdit: the vet (#1908 kin-vet)', () => {
+  const CLINICS = [
+    { _id: 'home', name: 'Cedar Animal Care', phone: '555 0142' },
+    { _id: 'own', name: 'Riverside Vets' },
+    { _id: 'gone', name: 'Old Clinic', archived: true },
+  ];
+  it("shows the household's vet read only, with the box unticked", async () => {
+    clinics.current = CLINICS;
+    getHouseholdData.mockResolvedValue({ _id: 'hd', kinfolkId: 'kf1', primaryVetClinicId: 'home' });
+    getKin.mockResolvedValue(kin({ kinfolkId: 'kf1' }));
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    expect(await screen.findByTestId('kin-vet-household')).toHaveTextContent("Cedar Animal Care · 555 0142 (the household's vet)");
+    expect(screen.getByLabelText('Different vet for this Kin')).not.toBeChecked();
+    expect(screen.queryByLabelText('Vet for this Kin')).toBeNull();
+  });
+  it('ticking opens the area vet list, and the pick is saved as the Kin vet', async () => {
+    clinics.current = CLINICS;
+    getKin.mockResolvedValue(kin({ kinfolkId: 'kf1' }));
+    updateKin.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    await userEvent.click(await screen.findByLabelText('Different vet for this Kin'));
+    const list = screen.getByLabelText('Vet for this Kin');
+    // Listed on open, the whole list but a retired clinic.
+    expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Choose a vet',
+      'Cedar Animal Care · 555 0142',
+      'Riverside Vets',
+    ]);
+    await userEvent.selectOptions(list, 'own');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+    expect(updateKin.mock.calls[0]![1]).toEqual({ ownVetClinicId: 'own' });
+  });
+  it('a Kin with its own vet opens ticked; unticking sends it back to the household vet', async () => {
+    clinics.current = CLINICS;
+    getKin.mockResolvedValue(kin({ kinfolkId: 'kf1', ownVetClinicId: 'own' }));
+    updateKin.mockResolvedValue(undefined);
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    const box = await screen.findByLabelText('Different vet for this Kin');
+    expect(box).toBeChecked();
+    expect(screen.getByLabelText('Vet for this Kin')).toHaveValue('own');
+    await userEvent.click(box);
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateKin).toHaveBeenCalledTimes(1));
+    expect(updateKin.mock.calls[0]![1]).toEqual({ ownVetClinicId: '' });
+  });
+  it('no household vet says so, rather than a blank line', async () => {
+    getKin.mockResolvedValue(kin({ kinfolkId: 'kf1' }));
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    expect(await screen.findByTestId('kin-vet-household')).toHaveTextContent('No vet on the household yet.');
+  });
+  it('a household vet that will not load says so', async () => {
+    getHouseholdData.mockRejectedValue(new Error('denied'));
+    getKin.mockResolvedValue(kin({ kinfolkId: 'kf1' }));
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    expect(await screen.findByText('The vet list did not load')).toBeInTheDocument();
   });
 });
