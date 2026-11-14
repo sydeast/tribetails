@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { InvoiceDetail } from './InvoiceDetail';
@@ -121,6 +121,7 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,
+  writtenOffCents: null,
   // Issue #409: how this bill can be paid, resolved server-side off the
   // options it was issued with. The card needs nothing configured, so a
   // believable invoice always carries at least this one.
@@ -135,6 +136,7 @@ const CREDIT_INVOICE: GetMyInvoicesResult['credits'][number] = {
   status: 'credit',
   creditAmountCents: 2000,
   creditRedeemedAtMs: null,
+  writtenOffCents: null,
   // Issue #409: how this bill can be paid, resolved server-side off the
   // options it was issued with. The card needs nothing configured, so a
   // believable invoice always carries at least this one.
@@ -679,6 +681,7 @@ describe('InvoiceDetail payment option sources (issue #409)', () => {
     creditAmountCents: null,
     creditTarget: null,
     creditRedeemedAtMs: null,
+    writtenOffCents: null,
     payMethods: [{ id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null }],
   };
 
@@ -872,5 +875,48 @@ describe('InvoiceDetail: money controls follow billing access, not the primary r
     expect(screen.queryByRole('button', { name: 'Save to Account Balance' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Accept quote' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
+  });
+});
+// #2090: the business wrote off what was left. The household reads it plainly:
+// written off, nothing to pay, no way to pay, and never "Paid" for money that
+// did not come in.
+describe('InvoiceDetail #2090 written off', () => {
+  const WRITTEN_OFF: GetMyInvoicesResult['paid'][number] = {
+    ...OPEN_INVOICE,
+    status: 'written_off',
+    amountDue: 0,
+    paidCents: 2000,
+    writtenOffCents: 3000,
+    payMethods: [],
+  };
+  async function renderWith(invoice: GetMyInvoicesResult['paid'][number]) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue({ open: [], paid: [invoice], credits: [], accountBalanceCents: 0 });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+  }
+  it('reads Written off with the amount, says there is nothing to pay, and offers no way to pay', async () => {
+    await renderWith(WRITTEN_OFF);
+    expect((await screen.findAllByText('WRITTEN OFF')).length).toBeGreaterThan(0);
+    const row = screen.getByTestId('written-off-row');
+    expect(row).toHaveTextContent('Written off');
+    expect(row).toHaveTextContent('$30.00');
+    expect(screen.getByText('Nothing to pay')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /pay with credit card/i })).toBeNull();
+    expect(screen.queryByText('PAID')).toBeNull();
+  });
+  it('shows only what was really paid, never the total, on the Paid row', async () => {
+    await renderWith(WRITTEN_OFF);
+    await screen.findByTestId('written-off-row');
+    expect(screen.getByText('$20.00')).toBeInTheDocument();
+    // Written off whole: no Paid row at all, where total minus balance would say $50.00.
+    cleanup();
+    await renderWith({ ...WRITTEN_OFF, paidCents: 0, writtenOffCents: 5000 });
+    await screen.findByTestId('written-off-row');
+    expect(screen.queryByText('Paid')).toBeNull();
   });
 });

@@ -2189,6 +2189,9 @@ class PortalApi(
         "quote" -> InvoiceStatus.Quote
         "zero" -> InvoiceStatus.Zero
         "cancelled" -> InvoiceStatus.Cancelled
+        // #2090: before this it fell to Open, which would have shown a
+        // written-off invoice as Pending with a Pay button.
+        "written_off" -> InvoiceStatus.WrittenOff
         else -> InvoiceStatus.Open
     }
     private fun decodeInvoice(el: JsonElement): Invoice {
@@ -2217,6 +2220,8 @@ class PortalApi(
                 else -> null
             },
             creditRedeemedAtMs = o["creditRedeemedAtMs"]?.jsonPrimitive?.longOrNull,
+            writtenOffCents = o["writtenOffCents"]?.jsonPrimitive?.longOrNull,
+            paidCents = o["paidCents"]?.jsonPrimitive?.longOrNull ?: 0L,
             quoteDecision = when (o["quoteDecision"]?.jsonPrimitive?.contentOrNull) {
                 "accepted" -> QuoteDecision.Accepted
                 "denied" -> QuoteDecision.Denied

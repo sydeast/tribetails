@@ -14,6 +14,8 @@ import {
   longDateLabel,
   offersPayment,
   partPaidSummary,
+  paidDollarsOf,
+  WRITTEN_OFF_ROW_LABEL,
   shortDateLabel,
 } from '../lib/invoiceFormat';
 import { useAuth, useSignOut } from '../lib/auth';
@@ -118,7 +120,9 @@ export function Invoices() {
     if (Number.isNaN(ms)) return sum;
     const d = new Date(ms);
     const now = new Date();
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() ? sum + i.total : sum;
+    // #2090: a written-off invoice adds only what was actually paid on it.
+    const paid = i.status === 'written_off' ? paidDollarsOf(i) : i.total;
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() ? sum + paid : sum;
   }, 0);
 
   return (
@@ -339,7 +343,12 @@ function PaidRow(props: { invoice: InvoiceDto; divider: boolean }) {
   const status = invoiceStatusInfo(inv.status, inv.creditRedeemedAtMs);
   const tile = calTileFor(inv.date);
   // #1330: with the year. A history spanning New Year read Jul 1, Jun 17, Dec 17.
-  const paidLabel = inv.status === 'cancelled' ? 'No charge' : `Paid ${longDateLabel(inv.date) ?? '—'}`;
+  const paidLabel =
+    inv.status === 'cancelled'
+      ? 'No charge'
+      : inv.status === 'written_off'
+        ? WRITTEN_OFF_ROW_LABEL
+        : `Paid ${longDateLabel(inv.date) ?? '—'}`;
 
   return (
     <Link className={`inv ${status.invClass}`} to="/invoices/$invoiceId" params={{ invoiceId: inv.id }} style={props.divider ? undefined : { borderTop: 'none' }}>
@@ -359,7 +368,7 @@ function PaidRow(props: { invoice: InvoiceDto; divider: boolean }) {
       </div>
       <div className="end">
         <span className={`chip ${status.cssClass}`}>{status.chipLabel}</span>
-        <span className="btn ghost sm">{inv.status === 'cancelled' ? 'View' : 'Receipt'}</span>
+        <span className="btn ghost sm">{inv.status === 'cancelled' || inv.status === 'written_off' ? 'View' : 'Receipt'}</span>
       </div>
     </Link>
   );

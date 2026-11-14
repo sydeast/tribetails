@@ -54,6 +54,8 @@ vi.mock('../lib/useBookingCatalog', () => ({
     timeBlocks: [],
   }),
 }));
+// #2095: the Upcoming panel reads the business zone (a business_settings read).
+vi.mock('../lib/useBusinessZone', () => ({ useBusinessZone: () => 'America/Chicago' }));
 
 import {
   RecentKinTalesPanel,

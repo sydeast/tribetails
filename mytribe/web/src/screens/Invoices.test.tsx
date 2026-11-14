@@ -78,6 +78,7 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditAmountCents: null,
   creditTarget: null,
   creditRedeemedAtMs: null,
+  writtenOffCents: null,
   // Issue #409: how this bill can be paid, resolved server-side off the
   // options it was issued with. The card needs nothing configured, so a
   // believable invoice always carries at least this one.
@@ -89,6 +90,7 @@ const CREDIT_INVOICE: GetMyInvoicesResult['credits'][number] = {
   status: 'credit',
   creditAmountCents: 2000,
   creditRedeemedAtMs: null,
+  writtenOffCents: null,
   // Issue #409: how this bill can be paid, resolved server-side off the
   // options it was issued with. The card needs nothing configured, so a
   // believable invoice always carries at least this one.
@@ -167,6 +169,20 @@ describe('Invoices: a PAID invoice has no Pay now button (docket Q5)', () => {
   it('an open row still does', async () => {
     await renderWith({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
     expect(await screen.findByRole('button', { name: /Pay now/ })).toBeInTheDocument();
+  });
+  // #2090: a written-off invoice sits in the history, says so, and asks for nothing.
+  it('a written-off row reads Written off, nothing to pay, with no Pay now and no Receipt', async () => {
+    await renderWith({
+      open: [],
+      paid: [{ ...OPEN_INVOICE, id: 'inv-wo', status: 'written_off', amountDue: 0, writtenOffCents: 5000, payMethods: [] }],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByText('WRITTEN OFF')).toBeInTheDocument();
+    expect(screen.getAllByText('Written off, nothing to pay').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /Pay now/ })).toBeNull();
+    expect(screen.queryByText('Receipt')).toBeNull();
+    expect(screen.queryByText('PAID')).toBeNull();
   });
 });
 // #1039: a SECONDARY with billing access can decline a quote too

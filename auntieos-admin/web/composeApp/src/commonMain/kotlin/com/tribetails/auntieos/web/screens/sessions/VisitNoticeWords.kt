@@ -91,9 +91,11 @@ internal fun visitNotifyOutcomeOf(result: WriteResult<String>): VisitNotifyOutco
 /**
  * The stamp as epoch milliseconds, or null when it does not parse.
  *
- * #2037: this console's `nowIso()` stamps the business's wall clock with no
- * offset (`2026-11-10T16:00:00`), which [Instant.parse] refuses. Such a stamp
- * is read as UTC, as the server does (`functions/src/lib/visitStepNotice.ts#stampMs`),
+ * Since #2095 this console's `nowIso()` stamps a UTC instant with a `Z`, as
+ * web and Android do, read here and on the server alike. #2037: a stamp an
+ * older console wrote is the business's wall clock with no offset
+ * (`2026-11-10T16:00:00`), which [Instant.parse] refuses. Such a stamp is
+ * still read as UTC, as the server does (`functions/src/lib/visitStepNotice.ts#stampMs`),
  * so the two name the step's record alike. The value only names the record.
  */
 @OptIn(kotlin.time.ExperimentalTime::class)

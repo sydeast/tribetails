@@ -424,6 +424,8 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   resolveUnappliedPayment: () => require('./admin/resolveUnappliedPayment'),
   archiveInvoice: () => require('./admin/archiveInvoice'),
   unarchiveInvoice: () => require('./admin/unarchiveInvoice'),
+  // #2090: owner-only. Writes off what is left on an invoice; archive refuses money owed.
+  writeOffInvoice: () => require('./admin/archiveInvoice'),
   retryInvoiceCheckoutClose: () => require('./admin/retryInvoiceCheckoutClose'),
   // Detection + repair for invoices wrecked by the pre-2026-07-25 partial-payment
   // write. `detect` mode reports and writes nothing; see the file header.

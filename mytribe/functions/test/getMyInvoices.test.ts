@@ -38,6 +38,43 @@ describe('getMyInvoicesHandler', () => {
     expect(res.accountBalanceCents).toBe(500);
   });
 
+  // #2090: the business wrote off what was left. The household sees it with its
+  // settled invoices, under its own state, with nothing owed and no way to pay.
+  it('ships a written-off invoice in the paid bucket as written_off, owing nothing, with no pay methods', async () => {
+    const written = {
+      kinfolkId: '3',
+      status: 'written_off',
+      total: 40,
+      amountDue: 0,
+      amountDueCents: 0,
+      paidCents: 1000,
+      writtenOffCents: 3000,
+      writtenOffAt: 'ts',
+      date: '2026-11-01',
+    };
+    const open = { kinfolkId: '3', status: 'open', total: 9, amountDue: 9, amountDueCents: 900 };
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] } },
+      queryDocs: { invoices: [{ id: 'inv-wo', data: written }, { id: 'inv-open', data: open }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler, openBalanceCentsOf } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.open.map((i) => i.id)).toEqual(['inv-open']);
+    expect(res.paid.find((i) => i.id === 'inv-wo')).toMatchObject({
+      status: 'written_off',
+      amountDue: 0,
+      isPaid: false,
+      partiallyPaid: false,
+      paidCents: 1000,
+      writtenOffCents: 3000,
+      payMethods: [],
+    });
+    expect(res.open.find((i) => i.id === 'inv-open')?.writtenOffCents).toBeNull();
+    // Home's Balance due counts the open bill only.
+    expect(openBalanceCentsOf([written, open])).toBe(900);
+  });
+
   // #1039: who decided, carried straight from the doc so the screens can
   // tell the actor from a bystander.
   it('maps quoteDecidedByUid / quoteDecidedByName when the doc carries them', async () => {

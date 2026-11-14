@@ -38,6 +38,7 @@ describe('invoiceStateInfo', () => {
     ['paid', 'Paid', 'PAID', 'paid'],
     ['zero', 'Zero balance', 'ZERO', 'zero'],
     ['open', 'Open', 'OPEN', 'open'],
+    ['written_off', 'Written off', 'WRITTEN OFF', 'written-off'],
   ] as const)('%s -> label %s / chip %s / css %s', (state, label, chipLabel, cssClass) => {
     expect(invoiceStateInfo(state)).toEqual({ label, chipLabel, cssClass });
   });
@@ -222,13 +223,21 @@ describe('invoiceActionsOffered (#2168)', () => {
     expect(invoiceActionsOffered('draft', true)).toEqual([]);
     expect(invoiceActionsOffered('draft', false)).toEqual(['reviewSend']);
   });
-  it('archiving leaves the collection actions as the state gives them', () => {
+  it('archiving leaves recording a payment as the state gives it, and drops Send reminder (#2090)', () => {
     for (const s of INVOICE_STATES) {
-      expect(invoiceActionsOffered(s, true)).toEqual(invoiceActionsFor(s).filter((a) => a !== 'reviewSend'));
+      expect(invoiceActionsOffered(s, true)).toEqual(
+        invoiceActionsFor(s).filter((a) => a !== 'reviewSend' && a !== 'reminder'),
+      );
     }
+    // The walk saw archived open rows offering Send reminder; the server refuses it.
+    expect(invoiceActionsOffered('open', true)).toEqual(['markPaid']);
+    expect([...invoiceActionsOffered('open', false)].sort()).toEqual(['markPaid', 'reminder']);
   });
 });
 describe('invoiceActionsFor', () => {
+  it('#2090: a written-off invoice offers nothing: no reminder, no payment, no receipt', () => {
+    expect(invoiceActionsFor('written_off')).toEqual([]);
+  });
   it('a paid invoice offers a receipt and NOTHING else (the AO-19 report)', () => {
     expect(invoiceActionsFor('paid')).toEqual(['receipt']);
   });

@@ -342,11 +342,15 @@ class InvoiceRepositoryTest {
     // ── archiveInvoice payload ───────────────────────────────────────────────
 
     @Test
-    fun `archiveInvoice omits force unless the operator chose the write-off`() {
-        assertEquals(setOf("invoiceId"), archiveInvoiceArgs("inv1", force = false).toPayload().keys)
-        val forced = archiveInvoiceArgs("inv1", force = true).toPayload()
-        assertEquals(setOf("invoiceId", "force"), forced.keys)
-        assertEquals(true, forced["force"])
+    fun `#2090 archiveInvoice never sends force`() {
+        assertEquals(mapOf<String, Any?>("invoiceId" to "inv1"), archiveInvoiceArgs("inv1").toPayload())
+    }
+    @Test
+    fun `#2090 writeOffInvoice carries the invoice and the amount the confirm showed`() {
+        assertEquals(
+            mapOf<String, Any?>("invoiceId" to "inv1", "amountCents" to 900L),
+            writeOffInvoiceArgs("inv1", 900L).toPayload(),
+        )
     }
 
     // ── resendQuote payload (issue #448) ─────────────────────────────────────

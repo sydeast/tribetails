@@ -7,6 +7,7 @@ import { nextUpcomingSession, safeboxAccessLines } from '../../lib/dashboardInsi
 import { sessionHousehold, sessionWindow } from '../../lib/sessionFormat';
 import { bookingServiceName } from '../../lib/bookingFormat';
 import { useBookingCatalog } from '../../lib/useBookingCatalog';
+import { useBusinessZone } from '../../lib/useBusinessZone';
 import { DenPanel, ServicePill, EmptyHint } from '../../components/DenScreenKit';
 import { LoadingRow } from '../../components/LoadingRow';
 import { AsyncRegion } from '../../components/AsyncRegion';
@@ -28,6 +29,8 @@ export function SafeboxWidget() {
   // A full ISO instant (not a local date): "upcoming" is future-of-now, and it
   // doesn't change mid-render, so compute it once.
   const nowIso = useMemo(() => new Date().toISOString(), []);
+  // #2095: a zone-less start is read on the stored business clock.
+  const businessZone = useBusinessZone();
   // #1592: the pill names the KinCare, never the stored `visit_60`.
   const catalog = useBookingCatalog();
 
@@ -40,13 +43,13 @@ export function SafeboxWidget() {
       <AsyncRegion
         state={rows}
         what="visits"
-        isEmpty={(data) => nextUpcomingSession(data, nowIso) === null}
+        isEmpty={(data) => nextUpcomingSession(data, nowIso, businessZone) === null}
         loading={<LoadingRow label="Loading visits…" className="den-hint" />}
         empty={<EmptyHint>No upcoming visits on the books.</EmptyHint>}
       >
         {(data) => {
           // Non-null: isEmpty already returned false for this same data + nowIso.
-          const next = nextUpcomingSession(data, nowIso)!;
+          const next = nextUpcomingSession(data, nowIso, businessZone)!;
           return (
             <div className="dash-widget">
               <div className="safebox__head">

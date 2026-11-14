@@ -197,10 +197,9 @@ fun withKinfolkUpdatedAt(changes: List<KinfolkFieldChange>, nowIso: String): Lis
 
 /**
  * Now as a UTC instant to the millisecond ("2026-11-13T18:04:05.123Z"), the
- * stamp [withKinfolkUpdatedAt] writes. Not `nowIso()`: that is zone-less
- * business wall-clock time, which the Directory's readers (web, Android and
- * this console) refuse as an instant, so a desktop edit would read as never
- * changed.
+ * stamp [withKinfolkUpdatedAt] writes. Not `nowIso()`, which keeps whole
+ * seconds; before #2095 that was zone-less business wall-clock time, which the
+ * Directory's readers (web, Android and this console) refuse as an instant.
  */
 @OptIn(kotlin.time.ExperimentalTime::class)
 fun kinfolkUpdatedAtNow(): String =

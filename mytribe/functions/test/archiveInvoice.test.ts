@@ -97,22 +97,47 @@ describe('archiveInvoice', () => {
     await expect(archiveInvoiceHandler(req({ invoiceId: 'inv1' }))).rejects.toThrow(/40\.00/);
   });
 
-  it('allows it with force: true, and records that it was forced', async () => {
+  it('#2090: refuses an owed invoice even with force: true, in plain words, and writes nothing', async () => {
+    // Archive is only tidying (operator ruling 2026-11-12). The old `force`
+    // dropped the balance from Outstanding while the household was still asked
+    // to pay it. An older client still sends it, and is refused the same way.
     const ctx = seed(OPEN_OWING);
     mocks.dbFn.mockReturnValue(ctx.db);
-
-    await archiveInvoiceHandler(req({ invoiceId: 'inv1', force: true }));
-    expect(write(ctx)!.data.archivedAt).toBe('__TS__');
-    // Forcing is writing off real money, so the audit must be able to tell a
-    // forced archive from an ordinary one.
-    expect(writeAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'BILLING_INVOICE_ARCHIVED',
-        payload: expect.objectContaining({ forced: true }),
-      }),
+    const err = await archiveInvoiceHandler(req({ invoiceId: 'inv1', force: true })).catch((e) => e);
+    expect(err).toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'invoice_still_owing', owedCents: 4000 },
+    });
+    expect(err.message).toBe(
+      'This invoice still has $40.00 owing, so it cannot be archived. Record the payment, or write off the balance first.',
     );
+    expect(err.message).not.toMatch(/archive it anyway/i);
+    expect(ctx.writes).toHaveLength(0);
+    expect(writeAuditEntry).not.toHaveBeenCalled();
   });
-
+  it('#2090: refuses a part-paid invoice with a balance left', async () => {
+    const ctx = seed({ ...OPEN_OWING, amountDue: 15, amountDueCents: 1500, paidCents: 2500 });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(archiveInvoiceHandler(req({ invoiceId: 'inv1' }))).rejects.toMatchObject({
+      details: { code: 'invoice_still_owing', owedCents: 1500 },
+    });
+  });
+  it('#2090: archives an invoice once its balance was written off', async () => {
+    const ctx = seed({
+      ...OPEN_OWING,
+      status: 'written_off',
+      amountDue: 0,
+      amountDueCents: 0,
+      writtenOffCents: 4000,
+      writtenOffAt: 'ts',
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(archiveInvoiceHandler(req({ invoiceId: 'inv1' }))).resolves.toMatchObject({ ok: true });
+    expect(write(ctx)!.data.archivedAt).toBe('__TS__');
+    // Archiving never touches money: the write-off stays exactly as it was.
+    expect(write(ctx)!.data).not.toHaveProperty('amountDue');
+    expect(write(ctx)!.data).not.toHaveProperty('status');
+  });
   it('refuses to archive an already-archived invoice rather than restamping it', async () => {
     const ctx = seed({ ...PAID, archivedAt: 'already' });
     mocks.dbFn.mockReturnValue(ctx.db);

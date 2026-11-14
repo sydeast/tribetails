@@ -55,6 +55,8 @@ import com.tribetails.auntieos.data.contracts.SendInvoiceReminderArgs
 import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceArgs
 import com.tribetails.auntieos.data.contracts.SetSessionDoNotInvoiceResult
 import com.tribetails.auntieos.data.contracts.UnarchiveInvoiceArgs
+import com.tribetails.auntieos.data.contracts.WriteOffInvoiceArgs
+import com.tribetails.auntieos.data.contracts.decodeWriteOffInvoiceResult
 import com.tribetails.auntieos.data.contracts.UpdateInvoiceArgs
 import com.tribetails.auntieos.data.contracts.UpdateInvoiceArgsPatch
 import com.tribetails.auntieos.data.contracts.UpdateInvoiceResult
@@ -403,11 +405,10 @@ class InvoiceRepository(
      * sees the invoice and can still pay it.
      *
      * A CALLABLE RATHER THAN A DIRECT FIRESTORE WRITE (as every invoice write
-     * now is - ADR-0002). The server enforces the precondition that actually
-     * matters: archiving an invoice money is still owed on removes it from the
-     * very total that would remind anyone to collect it, so it is REFUSED unless
-     * [force] is set, and a forced archive is audited distinctly as a write-off.
-     * A client-side version of that rule is not a rule.
+     * now is - ADR-0002). #2090: archiving is only tidying, so an invoice with
+     * money owed is REFUSED, and no flag gets round that any more; the balance
+     * is given up with [writeOffInvoice] first. A client-side version of that
+     * rule is not a rule.
      *
      * Fail-loud: the server's message (still owing, already archived) is
      * surfaced verbatim, because it is the part that tells the operator what to
@@ -417,15 +418,35 @@ class InvoiceRepository(
      * un-invoiced list (0 for any other invoice, and from a server older than
      * #2168, which does not say).
      */
-    suspend fun archiveInvoice(invoiceId: String, force: Boolean = false): Result<Int> = runCatchingCancellable {
+    suspend fun archiveInvoice(invoiceId: String): Result<Int> = runCatchingCancellable {
         authGate.ensureAuthenticated()
         require(invoiceId.isNotBlank()) { "archiveInvoice requires an invoice id" }
         @Suppress("UNCHECKED_CAST")
         val raw = functions.getHttpsCallable("archiveInvoice")
-            .call(archiveInvoiceArgs(invoiceId, force).toPayload())
+            .call(archiveInvoiceArgs(invoiceId).toPayload())
             .awaitCallable().data as? Map<String, Any?>
         decodeArchiveInvoiceResult(raw).releasedSessionIds.size
     }.onFailure { AuntieLog.e("archiveInvoice failed for $invoiceId", it) }
+
+    /**
+     * #2090: writes off what is left on an open invoice (owner only; the server
+     * refuses an Auntie). The server records the write-off as its own ledger
+     * entry, not a payment and not credit, stamps the invoice `written_off`
+     * with nothing owed, and the household is no longer asked to pay it.
+     * [amountCents] is the balance the confirm showed: a balance that moved
+     * since is refused with the new figure in the message, so nothing is
+     * written off unseen. The answer is the cents written off.
+     */
+    suspend fun writeOffInvoice(invoiceId: String, amountCents: Long): Result<Long> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(invoiceId.isNotBlank()) { "writeOffInvoice requires an invoice id" }
+        require(amountCents > 0L) { "writeOffInvoice requires a balance to write off" }
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("writeOffInvoice")
+            .call(writeOffInvoiceArgs(invoiceId, amountCents).toPayload())
+            .awaitCallable().data as? Map<String, Any?>
+        decodeWriteOffInvoiceResult(raw).writtenOffCents
+    }.onFailure { AuntieLog.e("writeOffInvoice failed for $invoiceId", it) }
 
     /**
      * Task 5.1: restores an archived invoice to the working list.
@@ -1153,13 +1174,16 @@ internal fun markInvoicePaidArgs(
 )
 
 /**
- * The `archiveInvoice` request. An unforced archive omits `force` rather than
- * sending `false`, which is the shape this callable has always been called
- * with: the flag exists to say a write-off was chosen, and every audited
- * archive should be able to tell "not forced" from "the client had an opinion".
+ * The `archiveInvoice` request. #2090: `force` is never sent. The server ignores
+ * it and refuses an invoice with money owed either way; the write-off is
+ * [writeOffInvoiceArgs].
  */
-internal fun archiveInvoiceArgs(invoiceId: String, force: Boolean): ArchiveInvoiceArgs =
-    ArchiveInvoiceArgs(invoiceId = invoiceId, force = force.takeIf { it })
+internal fun archiveInvoiceArgs(invoiceId: String): ArchiveInvoiceArgs =
+    ArchiveInvoiceArgs(invoiceId = invoiceId, force = null)
+
+/** #2090: the `writeOffInvoice` request: the invoice and the balance the confirm showed. */
+internal fun writeOffInvoiceArgs(invoiceId: String, amountCents: Long): WriteOffInvoiceArgs =
+    WriteOffInvoiceArgs(invoiceId = invoiceId, amountCents = amountCents)
 
 /**
  * [Payment] -> `recordPayment` request: every field of Android's model EXCEPT

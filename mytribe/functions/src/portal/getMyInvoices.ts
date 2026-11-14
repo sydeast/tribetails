@@ -240,6 +240,13 @@ export const InvoiceDtoSchema = z
      */
     creditRedeemedAtMs: z.number().nullable(),
     /**
+     * #2090: what the business wrote off, in cents, on a `written_off` invoice;
+     * null on every other one. The household's screen says the invoice was
+     * written off and there is nothing to pay. `paidCents` above stays what
+     * actually came in, so nothing reads the write-off as a payment.
+     */
+    writtenOffCents: CentsSchema.nullable(),
+    /**
      * Per-visit line items resolved from the invoice's `sessionIds` (AuntieOS
      * `kin_care_sessions` docs). OPTIONAL: absent when the invoice carries no
      * sessionIds or when the session lookups fail. Never fails the whole call.
@@ -335,6 +342,10 @@ export const Result = z
  *                        re-derived redemption from `creditRedeemedAtMs`).
  *                        Stays beside its unredeemed siblings, where every
  *                        client already renders it.
+ *   written_off → paid   #2090: the business wrote off what was left, so it
+ *                        is closed and nothing is asked for. It sits with the
+ *                        settled invoices, ships as `written_off` (never
+ *                        `paid`), and no client offers a way to pay it.
  *   cancelled → (none)   withdrawn; excluded from all three buckets, exactly
  *                        as the 5-state code excluded it. The household is
  *                        not shown a bill that no longer stands.
@@ -493,6 +504,7 @@ export async function getMyInvoicesHandler(
       creditAmountCents: isCredit ? Math.round(Math.abs(amountDue !== 0 ? amountDue : total) * 100) : null,
       creditTarget: isCredit && data['creditTarget'] === 'accountBalance' ? 'accountBalance' : null,
       creditRedeemedAtMs: isCredit ? tsMillis(data['creditRedeemedAt']) : null,
+      writtenOffCents: status === 'written_off' ? integerCentsFrom(data['writtenOffCents']) : null,
       // Resolved against the options this invoice was ISSUED with when it
       // carries a snapshot, and against live settings when it does not.
       // A PAID INVOICE OFFERS NO WAY TO PAY (operator ruling 2026-09-27,
@@ -583,7 +595,7 @@ export async function getMyInvoicesHandler(
     .filter((i) => i.status === 'open' || i.status === 'quote' || i.status === 'zero')
     .sort((a, b) => sortDay(a.dueDate).localeCompare(sortDay(b.dueDate)));
   const paid = all
-    .filter((i) => i.status === 'paid')
+    .filter((i) => i.status === 'paid' || i.status === 'written_off')
     .sort((a, b) => sortDay(b.date).localeCompare(sortDay(a.date)));
   const credits = all
     .filter((i) => i.status === 'credit' || i.status === 'redeemed')

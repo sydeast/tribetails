@@ -132,6 +132,8 @@ class InvoiceDetailLedgerColumnsTest {
         paidCents = 0L,
         totalCents = 30000L,
         amountDueCents = 4444L,
+        writeOffs = emptyList(),
+        writtenOffCents = 0L,
         ledgerPayments = ledgerPayments,
         unlinkedKinfolkPayments = unlinked,
         unresolvedAmountCount = (ledgerPayments + unlinked).count { !it.amountResolved }.toLong(),

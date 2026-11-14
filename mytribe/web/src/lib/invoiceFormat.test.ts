@@ -16,6 +16,7 @@ import {
   quoteActorLabel,
   shortDateLabel,
   documentNoun,
+  paidDollarsOf,
 } from './invoiceFormat';
 
 describe('documentNoun (#2092)', () => {
@@ -230,5 +231,26 @@ describe('declinedRowLabel', () => {
   });
   it('falls back to bare "Declined" rather than guessing a subject', () => {
     expect(declinedRowLabel({ quoteDecidedByUid: null, quoteDecidedByName: null }, 'u1')).toBe('Declined');
+  });
+});
+
+// #2090: written off is its own label, never Paid, and never a way to pay.
+describe('#2090 written off', () => {
+  it('is labelled Written off', () => {
+    expect(invoiceStatusInfo('written_off', null)).toEqual({
+      label: 'Written off',
+      chipLabel: 'WRITTEN OFF',
+      cssClass: 'writtenoff',
+      invClass: '',
+    });
+  });
+  it('offers no payment', () => {
+    expect(offersPayment({ status: 'written_off', amountDue: 0, isPaid: false })).toBe(false);
+  });
+  it('counts only the recorded payments as paid, never total minus balance', () => {
+    expect(paidDollarsOf({ status: 'written_off', paidCents: 0, total: 50, amountDue: 0 })).toBe(0);
+    expect(paidDollarsOf({ status: 'written_off', paidCents: 2000, total: 50, amountDue: 0 })).toBe(20);
+    // Every other state keeps the legacy fallback.
+    expect(paidDollarsOf({ status: 'paid', paidCents: 0, total: 50, amountDue: 0 })).toBe(50);
   });
 });

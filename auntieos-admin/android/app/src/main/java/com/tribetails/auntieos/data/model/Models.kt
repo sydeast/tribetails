@@ -575,6 +575,14 @@ data class Invoice(
     /** Collected beyond the total, in integer cents. Non-zero only after an overpayment. */
     var overpaidCents: Long = 0L,
     /**
+     * #2090: what the owner wrote off, in integer cents, stamped by
+     * `writeOffInvoice` with `status: "written_off"` and a zero balance. 0 on
+     * every invoice that was not written off. Never counted as collected.
+     */
+    var writtenOffCents: Long = 0L,
+    /** #2090: when the balance was written off (a Firestore Timestamp). */
+    var writtenOffAt: Any? = null,
+    /**
      * The Invoice State Classifier's stored verdict (ADR-0002): one of the
      * server's eight canonical lowercase states (`quote`, `draft`, `cancelled`,
      * `credit`, `redeemed`, `paid`, `zero`, `open`), written by every

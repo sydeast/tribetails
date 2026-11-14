@@ -53,7 +53,11 @@ data class PayMethod(
  * The server sends nothing outside this list: `getMyInvoices` validates
  * `status` against the same eight-state enum before it answers.
  */
-enum class InvoiceStatus { Draft, Quote, Open, Zero, Paid, Credit, Redeemed, Cancelled }
+enum class InvoiceStatus {
+    Draft, Quote, Open, Zero, Paid, Credit, Redeemed, Cancelled,
+    /** #2090: the business wrote off what was left. Nothing to pay, and not paid. */
+    WrittenOff,
+}
 /** What the household said about a quote. Null until they have answered. */
 enum class QuoteDecision { Accepted, Denied }
 
@@ -124,6 +128,16 @@ data class Invoice(
      * falls back to the home list on null and NOT on empty.
      */
     val payMethods: List<PayMethod>? = null,
+    /**
+     * #2090: what the business wrote off, in cents, on a written-off invoice;
+     * null on every other one and from a server older than the field.
+     */
+    val writtenOffCents: Long? = null,
+    /**
+     * #2090: what the household actually paid, in cents (the server's
+     * `paidCents`). 0 when nothing is recorded or the server is older.
+     */
+    val paidCents: Long = 0L,
 )
 
 /** One covered visit on an invoice. All fields optional server-side. */

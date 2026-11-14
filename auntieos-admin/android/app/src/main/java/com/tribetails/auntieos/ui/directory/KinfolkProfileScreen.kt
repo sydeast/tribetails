@@ -881,7 +881,9 @@ internal fun VisitLine(
         ) {
             Box(Modifier.size(9.dp).clip(CircleShape).background(tone.color(c)))
             Text(
-                "${s.startTime.take(10)} ${formatTime(s.startTime)}",
+                // #2095: the visit's business day and time, not its stored UTC characters.
+                "${com.tribetails.auntieos.domain.storedBusinessDay(s.startTime, com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current)} " +
+                    formatTime(s.startTime, com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current),
                 style = AuntieTheme.typography.mono.copy(fontSize = 12.sp),
                 color = c.textPrimary,
             )
@@ -969,6 +971,7 @@ internal fun invoiceFeedPill(inv: Invoice): Pair<String, AuntieStatusTone> = whe
     InvoiceState.CANCELLED -> "Cancelled" to AuntieStatusTone.Muted
     InvoiceState.CREDIT -> "Credit" to AuntieStatusTone.Teal
     InvoiceState.REDEEMED -> "Redeemed" to AuntieStatusTone.Muted
+    InvoiceState.WRITTEN_OFF -> "Written off" to AuntieStatusTone.Muted
     null -> inv.status.trim().ifBlank { "No status" } to AuntieStatusTone.Muted
 }
 

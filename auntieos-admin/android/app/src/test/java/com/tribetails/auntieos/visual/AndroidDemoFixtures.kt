@@ -107,6 +107,8 @@ object AndroidDemoFixtures {
         paidCents = 0L,
         totalCents = 0L,
         amountDueCents = 0L,
+        writeOffs = emptyList(),
+        writtenOffCents = 0L,
         ledgerPayments = listOf(
             GetInvoiceLedgerResultLedgerPayment(
                 paymentId = "demo-pay-stripe",

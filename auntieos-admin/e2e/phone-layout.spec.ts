@@ -367,6 +367,9 @@ test('the invoice ledger tables span their panel at 390px, and only Payment Hist
       paidCents: 6000,
       totalCents: 24000,
       amountDueCents: 18000,
+      // #2090: nothing written off on this invoice.
+      writeOffs: [],
+      writtenOffCents: 0,
       // The eight-column table, in the widest state it honestly reaches: a
       // reference string the operator's processor really produces, an "Applied
       // to" cell carrying an invoice number with a second line under it, and six

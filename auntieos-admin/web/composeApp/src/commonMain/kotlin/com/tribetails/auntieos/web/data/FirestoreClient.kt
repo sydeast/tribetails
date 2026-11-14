@@ -1639,6 +1639,20 @@ class FirestoreClient {
     }
 
     /**
+     * #2090: writes off what is left on an open invoice (owner only; the server
+     * refuses an Auntie). [amountCents] is the balance the confirm showed; a
+     * balance that moved since is refused in a sentence naming the new figure.
+     * Answers the cents written off. A refusal is returned verbatim.
+     */
+    suspend fun writeOffInvoice(invoiceId: String, amountCents: Long): WriteResult<Long> {
+        val payload = writeOffInvoicePayload(invoiceId, amountCents)
+        return when (val r = platformInvokeCallable("writeOffInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(decodeWrittenOffCents(r.value))
+        }
+    }
+
+    /**
      * #2168: restores an archived invoice (`unarchiveInvoice`), the one way back
      * from read-only. Answers the server's `notice`, its sentence about visits a
      * restored draft could not take back ('' when every visit came back, or from
@@ -4292,6 +4306,12 @@ data class Invoice(
     // not null means archived, the server's own rule. Nothing here writes it.
     val archivedAt: JsonElement? = null,
     /**
+     * #2090: the cents the owner wrote off, written by `writeOffInvoice` with
+     * `status: "written_off"` and a zero balance. Raw for the same reason as
+     * [paidCents]. Read through `screens.invoices.invoiceWrittenOffCentsOf`.
+     */
+    val writtenOffCents: JsonElement? = null,
+    /**
      * #2087: true on a quote saved with "Send to kinfolk now" off: a draft only
      * the office sees, which goes out as a quote when it is sent. Written by
      * the server only. Read through `screens.invoices.isQuoteDraft`.
@@ -5435,3 +5455,15 @@ internal fun manageBookingSeriesPayload(action: String, kinfolkId: String, batch
         put("batchId", JsonPrimitive(batchId))
         note?.trim()?.takeIf { it.isNotEmpty() }?.let { put("note", JsonPrimitive(it)) }
     }
+
+
+/** #2090: the `writeOffInvoice` request: the invoice and the balance the confirm showed. */
+internal fun writeOffInvoicePayload(invoiceId: String, amountCents: Long): JsonObject = buildJsonObject {
+    put("invoiceId", JsonPrimitive(invoiceId))
+    put("amountCents", JsonPrimitive(amountCents))
+}
+
+/** #2090: the `writtenOffCents` of a `writeOffInvoice` answer, 0 when it cannot be read. */
+internal fun decodeWrittenOffCents(raw: String): Long = runCatching {
+    Json.parseToJsonElement(raw).jsonObject["writtenOffCents"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.toLong() ?: 0L
+}.getOrDefault(0L)

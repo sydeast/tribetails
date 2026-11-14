@@ -10,6 +10,7 @@ import {
 import { getAdmin } from './firestoreAdmin';
 import { formatUsd, formatUsdCents, lineAmountCents } from './invoiceMath';
 import { invoiceIsPaid } from './invoicePaidGate';
+import { isWrittenOff } from './invoiceArchive';
 
 /**
  * Stage 3 / 16.2 - server-side invoice PDF.
@@ -64,6 +65,8 @@ export interface InvoiceForPdf {
   status: string;
   total: number;
   amountDue: number;
+  /** #2090: cents written off, 0 on any invoice that was not. */
+  writtenOffCents: number;
   paymentsHistory: string;
   /** Empty when this invoice was never itemized. Never a fabricated single row. */
   lineItems: InvoiceLineForPdf[];
@@ -145,6 +148,7 @@ export function invoiceForPdf(id: string, data: Record<string, unknown>): Invoic
     status: str('status') || str('invoiceStatus'),
     total: num('total'),
     amountDue: num('amountDue'),
+    writtenOffCents: intOr0('writtenOffCents'),
     paymentsHistory: str('paymentsHistory'),
     lineItems,
     invoiceDiscountCents: intOr0('invoiceDiscountCents'),
@@ -252,7 +256,9 @@ export async function renderInvoicePdf(inv: InvoiceForPdf): Promise<Uint8Array> 
 
   line(`${headings.numberLabel}: ${inv.invoiceNumber}`, { f: bold });
   gap();
-  if (inv.status) { line(`Status: ${inv.status}`); gap(); }
+  // #2090: the stored key is never printed; a written-off invoice says so in words.
+  const writtenOff = inv.status.trim().toLowerCase() === 'written_off';
+  if (inv.status) { line(`Status: ${writtenOff ? 'Written off' : inv.status}`); gap(); }
   if (inv.date) { line(`Date: ${inv.date}`); gap(); }
   if (inv.dueDate) { line(`Due: ${inv.dueDate}`); gap(); }
   gap(10);
@@ -317,6 +323,10 @@ export async function renderInvoicePdf(inv: InvoiceForPdf): Promise<Uint8Array> 
   // would show the same invoice two discounts.
   if (inv.lineItems.length === 0 && inv.discount && inv.discount !== '0' && inv.discount !== '0.00') {
     line(`Discount: ${inv.discount}`); gap();
+  }
+  if (writtenOff && inv.writtenOffCents > 0) {
+    line(`Written off: ${usdCents(inv.writtenOffCents)}`);
+    gap();
   }
   line(`Amount due: ${usd(inv.amountDue)}`, { f: bold });
   gap(16);
@@ -428,7 +438,7 @@ export async function generateAndStoreInvoicePdf(id: string, data: Record<string
   // A PAID INVOICE PRINTS NO "HOW TO PAY" (operator ruling 2026-09-27, docket
   // Q5): the PDF is a receipt by then, and the Venmo/PayPal handles on it are
   // pay links the household could still follow. The settings are not read.
-  if (invoiceIsPaid(data)) {
+  if (invoiceIsPaid(data) || isWrittenOff(data)) {
     inv.paymentMethods = '';
     return storeInvoicePdf(id, await renderInvoicePdf(inv));
   }

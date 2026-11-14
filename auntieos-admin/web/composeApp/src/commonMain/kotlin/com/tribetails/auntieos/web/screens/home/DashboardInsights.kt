@@ -8,7 +8,12 @@ import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.SupplyItem
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.screens.inbox.ConversationSummary
+import com.tribetails.auntieos.web.screens.sessions.businessDayOf
+import com.tribetails.auntieos.web.screens.sessions.businessInstantOf
+import com.tribetails.auntieos.web.util.businessTimeZone
+import kotlin.time.ExperimentalTime
 import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.TimeZone
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.plus
@@ -22,6 +27,17 @@ import kotlinx.datetime.plus
 
 private fun parseDay(s: String): LocalDate? =
     runCatchingCancellable { LocalDate.parse(s.take(10)) }.getOrNull()
+
+/**
+ * #2095: the BUSINESS day a stored visit time falls on. An instant (`...Z`) is
+ * read in [zone]; its first ten characters are its UTC date, which after about
+ * 6 PM in Chicago is already tomorrow. A zone-less value keeps its own date.
+ */
+private fun visitDay(stored: String, zone: TimeZone): LocalDate? = parseDay(businessDayOf(stored, zone))
+
+/** A stored visit time as epoch ms on the business's clock, for ordering and "now" comparisons. */
+@OptIn(ExperimentalTime::class)
+private fun visitMs(stored: String, zone: TimeZone): Long? = businessInstantOf(stored, zone)?.toEpochMilliseconds()
 
 private fun LocalDate.mondayOfWeek(): LocalDate =
     plus(-(dayOfWeek.isoDayNumber - 1), DateTimeUnit.DAY)
@@ -44,14 +60,14 @@ data class WeeklyCapacity(val booked: Int, val record: Int, val capacity: Int) {
     val beatingRecord: Boolean get() = record in 1 until booked || (record == 0 && booked > 0)
 }
 
-fun weeklyCapacity(sessions: List<KinCareSession>, todayIso: String): WeeklyCapacity? {
+fun weeklyCapacity(sessions: List<KinCareSession>, todayIso: String, zone: TimeZone = businessTimeZone()): WeeklyCapacity? {
     val today = parseDay(todayIso) ?: return null
     val monday = today.mondayOfWeek()
     fun weekCount(weekStart: LocalDate): Int {
         val weekEnd = weekStart.plus(7, DateTimeUnit.DAY)
         return sessions.count { s ->
             if (s.isCancelled()) return@count false
-            val d = parseDay(s.startTime) ?: return@count false
+            val d = visitDay(s.startTime, zone) ?: return@count false
             d >= weekStart && d < weekEnd
         }
     }
@@ -80,16 +96,22 @@ fun overdueVisits(
     sessions: List<KinCareSession>,
     nowIso: String,
     withinDays: Int = 30,
+    zone: TimeZone = businessTimeZone(),
 ): List<OverdueVisit> {
-    val today = parseDay(nowIso) ?: return emptyList()
+    // #2095: compared as instants on the business's clock. A stored time is a
+    // `Z` instant or a zone-less business wall clock, and `nowIso` is an
+    // instant, so comparing the strings set the two shapes hours apart.
+    val nowMs = visitMs(nowIso, zone) ?: return emptyList()
+    val today = visitDay(nowIso, zone) ?: return emptyList()
     val staleBefore = today.plus(-withinDays, DateTimeUnit.DAY)
     return sessions
         .mapNotNull { s ->
             val status = s.status.uppercase()
             if (status == "COMPLETED" || s.isCancelled()) return@mapNotNull null
             val end = s.endTime.ifBlank { s.startTime }
-            val endDay = parseDay(end) ?: return@mapNotNull null
-            if (end >= nowIso || endDay < staleBefore) return@mapNotNull null
+            val endDay = visitDay(end, zone) ?: return@mapNotNull null
+            val endMs = visitMs(end, zone) ?: return@mapNotNull null
+            if (endMs >= nowMs || endDay < staleBefore) return@mapNotNull null
             OverdueVisit(
                 sessionId = s._id,
                 kinfolkName = s.kinfolkName.ifBlank { "Kinfolk" },
@@ -97,7 +119,7 @@ fun overdueVisits(
                 endedAt = end,
             )
         }
-        .sortedByDescending { it.endedAt }
+        .sortedByDescending { visitMs(it.endedAt, zone) ?: Long.MIN_VALUE }
 }
 
 // ── W10 pets by type ──────────────────────────────────────────────────────────
@@ -137,13 +159,14 @@ fun frequentFlyers(
     todayIso: String,
     days: Int = 90,
     limit: Int = 5,
+    zone: TimeZone = businessTimeZone(),
 ): List<FrequentFlyer> {
     val today = parseDay(todayIso) ?: return emptyList()
     val since = today.plus(-days, DateTimeUnit.DAY)
     return sessions
         .filter { s ->
             s.status.uppercase() == "COMPLETED" &&
-                parseDay(s.completedAt.ifBlank { s.startTime })?.let { it in since..today } == true
+                visitDay(s.completedAt.ifBlank { s.startTime }, zone)?.let { it in since..today } == true
         }
         .groupBy { it.kinfolkId.ifBlank { it.kinfolkName } }
         .mapNotNull { (_, group) ->
@@ -196,11 +219,20 @@ fun unreadClientMessageCount(rows: List<ConversationSummary>): Int = rows.count 
  * compare) and whose state is neither cancelled nor completed. Mirrors the React
  * nextUpcomingSession. `null` when nothing is coming up.
  */
-fun nextUpcomingSession(sessions: List<KinCareSession>, nowIso: String): KinCareSession? =
-    sessions.asSequence()
+fun nextUpcomingSession(
+    sessions: List<KinCareSession>,
+    nowIso: String,
+    zone: TimeZone = businessTimeZone(),
+): KinCareSession? {
+    // #2095: instants on the business's clock, never a string compare across shapes.
+    val nowMs = visitMs(nowIso, zone) ?: return null
+    return sessions.asSequence()
         .filter { !it.isCancelled() && it.status.uppercase() != "COMPLETED" }
-        .filter { it.startTime.isNotBlank() && it.startTime >= nowIso }
-        .minByOrNull { it.startTime }
+        .mapNotNull { s -> visitMs(s.startTime, zone)?.let { ms -> s to ms } }
+        .filter { (_, ms) -> ms >= nowMs }
+        .minByOrNull { (_, ms) -> ms }
+        ?.first
+}
 
 data class AccessLine(val label: String, val value: String, val mono: Boolean = false)
 
@@ -254,13 +286,14 @@ fun careFlags(
     todaySessions: List<KinCareSession>,
     kinById: Map<String, Kin>,
     todayIso: String,
+    zone: TimeZone = businessTimeZone(),
 ): List<CareFlag> {
     val today = todayIso.take(10)
     val seen = mutableSetOf<Pair<String, String>>()
     val out = mutableListOf<CareFlag>()
     todaySessions.asSequence()
         .filter { !it.isCancelled() }
-        .filter { it.startTime.take(10) == today }
+        .filter { businessDayOf(it.startTime, zone) == today }
         .forEach { s ->
             val kinIds = s.kinIds.ifEmpty { listOfNotNull(s.kinId.takeIf { id -> id.isNotBlank() }) }
             val household = s.kinfolkName.ifBlank { "Kinfolk" }
@@ -405,6 +438,7 @@ fun holidayRunway(
     sessions: List<KinCareSession>,
     todayIso: String,
     count: Int = 3,
+    zone: TimeZone = businessTimeZone(),
 ): List<HolidayRunway> {
     val today = parseDay(todayIso) ?: return emptyList()
     return (usPetCareHolidays(today.year) + usPetCareHolidays(today.year + 1))
@@ -416,7 +450,7 @@ fun holidayRunway(
             val windowEnd = h.date.plus(2, DateTimeUnit.DAY)
             val booked = sessions.count { s ->
                 if (s.isCancelled()) return@count false
-                val d = parseDay(s.startTime) ?: return@count false
+                val d = visitDay(s.startTime, zone) ?: return@count false
                 d in windowStart..windowEnd
             }
             HolidayRunway(

@@ -91,7 +91,7 @@ export interface AmountDueDoc {
  * and that is what its own classifier state (`draft`/`quote`) keeps the office
  * from chasing.
  */
-export const SETTLED_LABELS: readonly string[] = ['paid', 'cancelled', 'credit', 'redeemed'];
+export const SETTLED_LABELS: readonly string[] = ['paid', 'cancelled', 'credit', 'redeemed', 'written_off'];
 
 function label(v: unknown): string {
   return typeof v === 'string' ? v.trim().toLowerCase() : '';
