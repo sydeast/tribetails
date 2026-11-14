@@ -12,6 +12,7 @@ import { materializeKinRoster, resolveKinfolkDisplayName } from '../lib/kinRoste
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
+import type { HouseholdNotice } from './dispatchVisitNotification';
 
 /**
  * 1E §A.9: server-bound creation of a kin_care_sessions doc (scheduleNewVisit).
@@ -55,13 +56,15 @@ import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
  * so the new session is reachable from its visit exactly as an approved one is.
  *
  * WHAT IT DELIBERATELY DOES NOT CHANGE:
- *  - Nobody is notified. A New visit never notified anybody, and the office
- *    scheduling a visit directly is not a request anyone rules on.
- *    `onBookingEnvelopeCreate` already ignores an envelope created confirmed;
- *    the visit carries `seriesApprovedAt`, which is how `onBookingsWrite` knows
- *    the confirmation was decided by the code that wrote the whole set (the
- *    approve core's stamp, read by nothing else), so it sends no per-visit
- *    "your visit is confirmed".
+ *  - The triggers send nothing. `onBookingEnvelopeCreate` already ignores an
+ *    envelope created confirmed; the visit carries `seriesApprovedAt`, which is
+ *    how `onBookingsWrite` knows the confirmation was decided by the code that
+ *    wrote the whole set (the approve core's stamp, read by nothing else), so
+ *    it sends no per-visit "your visit is confirmed".
+ *    #1841 (operator ruling 2026-11-12): the household's confirmation is the
+ *    admin's choice, made on the New visit form (`notifyHousehold`), and this
+ *    call sends it itself, once, so the form can say who was told. Never for a
+ *    visit recorded as already completed.
  *  - No default assignee. `writeEnvelope` starts a household's request on the
  *    admin's plate; a New visit starts unassigned, because choosing the Auntie
  *    is the step this issue makes possible, and an assignee on create would
@@ -110,6 +113,14 @@ const Args = z.object({
    * `lib/pastVisit.ts` and the handler's note below.
    */
   recordAsCompleted: z.boolean().optional(),
+  /**
+   * #1841: send the household "KinCare booking confirmed" for this visit. The
+   * New visit form's "Send the household a confirmation" control, on by
+   * default there. ABSENT MEANS NO SEND, so every other caller (an Android
+   * approval, an installed client from before this) sends exactly what it did.
+   * Ignored for a visit recorded as completed, which is never announced.
+   */
+  notifyHousehold: z.boolean().optional(),
 });
 
 /**
@@ -128,6 +139,12 @@ export function visitLengthMinutes(stated: number | undefined, startIso: string,
 export interface CreateKinCareSessionResult {
   ok: true;
   sessionId: string;
+  /**
+   * #1841: what the household was told about the new visit. Present on every
+   * new write: `not_requested` when the form's control was off or the visit was
+   * recorded as completed. Absent on a replay of an approval already made.
+   */
+  notice?: HouseholdNotice;
 }
 
 export async function createKinCareSessionHandler(
@@ -324,7 +341,34 @@ export async function createKinCareSessionHandler(
     extra: { sessionId: ref.id, kinfolkId: args.kinfolkId, batchId, visitId },
   });
 
-  return { ok: true, sessionId: ref.id };
+  // #1841: after the write, so a confirmation names a visit that exists.
+  const householdNotices = await import('../notifications/householdNotice.js');
+  let notice: HouseholdNotice;
+  if (args.notifyHousehold === true && !backdated) {
+    const { bookingConfirmData } = await import('./approveBookingSeriesCore.js');
+    const { data } = await bookingConfirmData({
+      kinfolkId: args.kinfolkId,
+      batchId,
+      envelope: record.envelope as Record<string, unknown>,
+      householdNote: '',
+    });
+    notice = await householdNotices.sendHouseholdNotice(
+      args.kinfolkId,
+      {
+        key: 'kincare.booking.confirm',
+        data,
+        actorUid: uid,
+        targetType: 'booking',
+        targetId: batchId,
+        dedupeKey: `booking:${batchId}:new_visit`,
+      },
+      'createKinCareSession',
+    );
+  } else {
+    notice = await householdNotices.householdNoticeNotSent(args.kinfolkId, 'not_requested');
+  }
+
+  return { ok: true, sessionId: ref.id, notice };
 }
 
 export const createKinCareSession = onCall(

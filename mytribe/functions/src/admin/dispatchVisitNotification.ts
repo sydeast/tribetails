@@ -109,6 +109,52 @@ export const VISIT_NOTICE_REASONS = [
 ] as const;
 export type VisitNoticeReason = (typeof VISIT_NOTICE_REASONS)[number];
 
+/**
+ * #1816, #1838, #2027, #1841: why the household was not told (or will not be)
+ * about an admin action, by name. The clients turn each into a sentence: web
+ * `lib/householdNoticeWords.ts`, Android `domain/HouseholdNoticeWords.kt`, the
+ * desktop console's `screens/HouseholdNoticeWords.kt`. The rules that produce
+ * them are `notifications/householdNotice.ts`; the shape lives here because
+ * this module is already in the cold-start graph.
+ *
+ *   not_a_household_notice           this action sends the household nothing
+ *                                    (the key has no household audience).
+ *   household_has_no_portal_account  no member login to send to.
+ *   household_prefs_suppressed       the notice is turned off for them.
+ *   household_notices_off            the send gate (`householdNotificationsLive`) is shut.
+ *   already_notified                 the same notice already reached them.
+ *   session_has_no_routing_ids       the visit has no booking record to address.
+ *   not_requested                    the admin chose not to send one (New visit).
+ *   dispatch_failed                  the send threw.
+ *   no_recipient                     the dispatcher resolved nobody.
+ */
+export const HOUSEHOLD_NOTICE_REASONS = [
+  'not_a_household_notice',
+  'household_has_no_portal_account',
+  'household_prefs_suppressed',
+  'household_notices_off',
+  'already_notified',
+  'session_has_no_routing_ids',
+  'not_requested',
+  'dispatch_failed',
+  'no_recipient',
+] as const;
+export type HouseholdNoticeReason = (typeof HOUSEHOLD_NOTICE_REASONS)[number];
+
+/** What happened to the household's copy of a notice an admin action sent. */
+export const HouseholdNoticeSchema = z
+  .object({
+    /** True when a record reached the household (their notifications list, plus each channel below). */
+    told: z.boolean(),
+    reason: z.enum(HOUSEHOLD_NOTICE_REASONS).nullable(),
+    /** Who, in words: the member's own name, else the household's. Never an email or an id. */
+    name: z.string().nullable(),
+    /** How it went out. Empty with `told` means the notifications list only. */
+    channels: z.array(z.enum(['email', 'sms', 'push'])),
+  })
+  .strict();
+export type HouseholdNotice = z.infer<typeof HouseholdNoticeSchema>;
+
 export interface DispatchVisitNotificationOutcome {
   ok: true;
   dispatchIds: string[];
@@ -116,6 +162,8 @@ export interface DispatchVisitNotificationOutcome {
   suppressed: boolean;
   /** Why nobody was told, or null when a notification record was written. */
   reason: VisitNoticeReason | null;
+  /** #1816: the household's copy, with who and how, for the KinTale send's result line. */
+  notice: HouseholdNotice;
 }
 
 /**
@@ -239,7 +287,14 @@ export async function dispatchVisitNotificationCore(
         reason: 'household_has_no_portal_account',
       },
     });
-    return { ok: true, dispatchIds: [], suppressed: true, reason: 'household_has_no_portal_account' };
+    const { householdNoticeNotSent } = await import('../notifications/householdNotice.js');
+    return {
+      ok: true,
+      dispatchIds: [],
+      suppressed: true,
+      reason: 'household_has_no_portal_account',
+      notice: await householdNoticeNotSent(args.familyId, 'household_has_no_portal_account'),
+    };
   }
 
   // #2037: the clock trigger may not know who made the write. With no actor
@@ -307,7 +362,13 @@ export async function dispatchVisitNotificationCore(
     extra: { key, familyId: args.familyId, batchId, visitId, dispatchCount: dispatchIds.length, reason },
   });
 
-  return { ok: true, dispatchIds, suppressed: dispatchIds.length === 0, reason };
+  const { householdNoticeFromOutcome, householdNoticeName } = await import('../notifications/householdNotice.js');
+  const notice = householdNoticeFromOutcome(
+    enqueued,
+    recipientUid,
+    await householdNoticeName(args.familyId, recipientUid),
+  );
+  return { ok: true, dispatchIds, suppressed: dispatchIds.length === 0, reason, notice };
 }
 
 /** Why a confirm may not promise the household a notice, or null when it may. */
@@ -323,7 +384,39 @@ export interface PreviewVisitNotificationOutcome {
   reason: VisitNoticePreviewReason | null;
 }
 
-const PreviewArgs = z.object({ familyId: z.string().trim().min(1) });
+/**
+ * #1816, #1838, #2027, #1841: the household notices an admin confirm can ask
+ * about by key. Each is the key the action it confirms sends: a KinTale send,
+ * a cancel, a move, a kinfolk-facing note, a New visit's confirmation.
+ */
+export const PREVIEW_NOTICE_KEYS = [
+  'kintale.published',
+  'kincare.booking.cancel',
+  'kincare.changed',
+  'kincare.note.auntie',
+  'kincare.booking.confirm',
+] as const;
+
+/** The answer for one key: who would be told, and how. */
+export interface PreviewHouseholdNoticeOutcome {
+  ok: true;
+  willNotify: boolean;
+  reason:
+    | 'not_a_household_notice'
+    | 'household_has_no_portal_account'
+    | 'household_prefs_suppressed'
+    | 'household_notices_off'
+    | null;
+  /** The member's own name, else the household's. Never an email or an id. */
+  name: string | null;
+  /** The channels it would go out on. Empty with `willNotify`: the notifications list only. */
+  channels: Array<'email' | 'sms' | 'push'>;
+}
+
+const PreviewArgs = z.object({
+  familyId: z.string().trim().min(1),
+  key: z.enum(PREVIEW_NOTICE_KEYS).optional(),
+});
 
 /**
  * #1840: what a clock confirm may say about the household BEFORE the tap,
@@ -338,11 +431,21 @@ const PreviewArgs = z.object({ familyId: z.string().trim().min(1) });
  * Read-only. It does not predict a notice the household turned off for
  * themselves or a repeat of a step already sent; the result line, which is the
  * dispatch's own answer, names those.
+ *
+ * WITH A `key` (#1816, #1838, #2027, #1841) it answers for that notice in
+ * full: the dispatcher's own dry run (`previewHouseholdCopy`) adds the
+ * household's prefs and the channels, and the answer names the person. The
+ * two fields above keep their meaning, so an installed client that reads only
+ * them reads the same answer.
  */
 export async function previewVisitNotificationHandler(
   req: CallableRequest<unknown>,
-): Promise<PreviewVisitNotificationOutcome> {
-  const { familyId } = PreviewArgs.parse(req.data);
+): Promise<PreviewVisitNotificationOutcome | PreviewHouseholdNoticeOutcome> {
+  const { familyId, key } = PreviewArgs.parse(req.data);
+  if (key !== undefined) {
+    const { previewHouseholdNotice } = await import('../notifications/householdNotice.js');
+    return { ok: true, ...(await previewHouseholdNotice(familyId, key)) };
+  }
   const recipientUid = await householdRecipientUid(familyId);
   if (!recipientUid) {
     return { ok: true, willNotify: false, reason: 'household_has_no_portal_account' };

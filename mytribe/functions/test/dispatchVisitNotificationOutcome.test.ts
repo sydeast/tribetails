@@ -79,6 +79,8 @@ describe('a household with no portal account (#1794)', () => {
       dispatchIds: [],
       suppressed: true,
       reason: 'household_has_no_portal_account',
+      // #1816: the household's copy, the shape the KinTale send's result line reads.
+      notice: { told: false, reason: 'household_has_no_portal_account', name: null, channels: [] },
     });
     expect(householdWrites()).toHaveLength(0);
   });
@@ -143,7 +145,13 @@ describe('suppressions are named, not folded into one', () => {
 
     const res = await tap();
 
-    expect(res).toEqual({ ok: true, dispatchIds: [], suppressed: true, reason: 'household_notices_off' });
+    expect(res).toEqual({
+      ok: true,
+      dispatchIds: [],
+      suppressed: true,
+      reason: 'household_notices_off',
+      notice: expect.objectContaining({ told: false, reason: 'household_notices_off', channels: [] }),
+    });
     expect(householdWrites()).toHaveLength(0);
   });
 

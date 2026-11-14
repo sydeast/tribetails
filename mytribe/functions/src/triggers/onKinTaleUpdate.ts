@@ -260,11 +260,15 @@ async function publishKinTale(reportId: string, after: KinCareReportDoc): Promis
     return;
   }
 
-  const recipientUid = await resolveKinfolkUid(kinfolkId);
-  try {
-    await enqueueNotification({
+  // #1816: the send's outcome is kept for the admin who sent it. The web
+  // composer writes the send straight to Firestore, so this trigger is the
+  // only thing that knows whether the household was told; it records that at
+  // `visit_step_notices/kintale__{reportId}` and the composer waits for it.
+  const { sendHouseholdNotice } = await import('../notifications/householdNotice.js');
+  const notice = await sendHouseholdNotice(
+    kinfolkId,
+    {
       key: 'kintale.published',
-      recipientUid: recipientUid ?? '',
       data: {
         kinfolkId,
         taleId: reportId,
@@ -272,15 +276,38 @@ async function publishKinTale(reportId: string, after: KinCareReportDoc): Promis
       },
       targetType: 'kintale',
       targetId: reportId,
-    });
+    },
+    'onKinTaleUpdate',
+  );
+  try {
+    await db()
+      .collection('visit_step_notices')
+      .doc(kinTaleSendNoticeId(reportId))
+      .set({
+        kind: 'kintale',
+        reportId,
+        notified: notice.told,
+        reason: notice.reason,
+        notice,
+        recordedAt: FieldValue.serverTimestamp(),
+      });
   } catch (err) {
     logEvent({
       severity: 'warn',
       function: 'onKinTaleUpdate',
-      event: 'notification.dispatch.failed',
-      extra: { kinfolkId, taleId: reportId, err: (err as Error)?.message },
+      event: 'kintale.notice.record.failed',
+      extra: { reportId },
+      errorMessage: (err as Error)?.message,
     });
   }
+}
+
+/**
+ * #1816: where a KinTale send's household outcome is recorded. Mirrored in web
+ * `api/kinTalesWrite.ts#kinTaleSendNoticeId` and the desktop console.
+ */
+export function kinTaleSendNoticeId(reportId: string): string {
+  return `kintale__${reportId}`;
 }
 
 export const onKinTaleUpdate = onDocumentUpdated(

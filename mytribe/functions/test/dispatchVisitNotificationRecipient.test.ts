@@ -95,7 +95,13 @@ describe('dispatchVisitNotification: who receives (#1840)', () => {
 
     const res = await tap();
 
-    expect(res).toEqual({ ok: true, dispatchIds: [], suppressed: true, reason: 'household_has_no_portal_account' });
+    expect(res).toEqual({
+      ok: true,
+      dispatchIds: [],
+      suppressed: true,
+      reason: 'household_has_no_portal_account',
+      notice: expect.objectContaining({ told: false, reason: 'household_has_no_portal_account' }),
+    });
     expect(noticeWrites()).toHaveLength(0);
   });
 
@@ -105,7 +111,13 @@ describe('dispatchVisitNotification: who receives (#1840)', () => {
 
     const res = await tap({ uid: 'uid_admin' });
 
-    expect(res).toEqual({ ok: true, dispatchIds: [], suppressed: true, reason: 'household_has_no_portal_account' });
+    expect(res).toEqual({
+      ok: true,
+      dispatchIds: [],
+      suppressed: true,
+      reason: 'household_has_no_portal_account',
+      notice: expect.objectContaining({ told: false, reason: 'household_has_no_portal_account' }),
+    });
     expect(noticeWrites()).toHaveLength(0);
   });
 
@@ -171,7 +183,13 @@ describe('dispatchVisitNotification: who receives (#1840)', () => {
 
     const res = await tap();
 
-    expect(res).toEqual({ ok: true, dispatchIds: [], suppressed: true, reason: 'household_notices_off' });
+    expect(res).toEqual({
+      ok: true,
+      dispatchIds: [],
+      suppressed: true,
+      reason: 'household_notices_off',
+      notice: expect.objectContaining({ told: false, reason: 'household_notices_off' }),
+    });
     expect(noticeWrites()).toHaveLength(0);
   });
 

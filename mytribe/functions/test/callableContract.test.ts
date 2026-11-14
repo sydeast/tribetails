@@ -1325,7 +1325,19 @@ describe('callable contract drift guard (A3 booking status transitions)', () => 
 
   it('response signature is unchanged', () => {
     expect(shapeSignature(TransitionBookingStatusResult)).toEqual(
-      ['action', 'changed', 'from', 'ok', 'sessionId', 'status'].sort(),
+      [
+        'action',
+        'changed',
+        'from',
+        'ok',
+        'sessionId',
+        'status',
+        // #1838: what the household was told about a cancel.
+        'notice.channels[]',
+        'notice.name',
+        'notice.reason',
+        'notice.told',
+      ].sort(),
     );
   });
 });

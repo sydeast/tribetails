@@ -11,10 +11,18 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { sanitizeRichText } from '../lib/richText';
 import { assertNoteWindowOpen } from '../lib/bookingNoteCutoff';
 import { validateResponse } from '../lib/callableResponse';
+import { HouseholdNoticeSchema } from '../admin/dispatchVisitNotification';
 
 export const Result = z
   .object({
     noteId: z.string().min(1),
+    /**
+     * #2027: on a note the office wrote, what the household is sent about it.
+     * The notice for a staff note (`kincare.note.auntie`) goes to the office
+     * only, so this says the household gets none; they read the note on the
+     * visit. Absent on a household's own note.
+     */
+    notice: HouseholdNoticeSchema.optional(),
   })
   .strict();
 
@@ -110,7 +118,15 @@ export async function addBookingNoteHandler(
       authorRole: staff ? 'admin' : 'kinfolk',
     },
   });
-  return validateResponse('addBookingNote', Result, { noteId: ref.id });
+  if (!staff) return validateResponse('addBookingNote', Result, { noteId: ref.id });
+  // `onBookingNoteCreate` sends the staff note's notice; this reads, through the
+  // dispatcher's own dry run, whether any of it reaches the household.
+  const { previewHouseholdNotice } = await import('../notifications/householdNotice.js');
+  const preview = await previewHouseholdNotice(kinfolkId, 'kincare.note.auntie');
+  return validateResponse('addBookingNote', Result, {
+    noteId: ref.id,
+    notice: { told: preview.willNotify, reason: preview.reason, name: preview.name, channels: preview.channels },
+  });
 }
 
 export const addBookingNote = onCall(
