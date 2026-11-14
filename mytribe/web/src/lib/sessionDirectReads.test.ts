@@ -47,12 +47,16 @@ const COLLECTION = 'kin_care_sessions';
 // user (`allow read: if signedIn()`); the client applies the callable's filter.
 // #1321: `businessPublicCard.ts` reads `business_public/card`, the mirror the
 // rules open to everyone (`allow read: if true`) and no client may write.
+// #1833: `unreadNotificationsListener.ts` listens to the signed-in person's own
+// `notifications` rows for the bell's count (`allow read` to the recipient only,
+// and only as a query filtered on their own `recipientUid`).
 const FIRESTORE_IMPORTERS = [
   'lib/breadcrumbs.ts',
   'lib/businessPublicCard.ts',
   'lib/firebase.ts',
   'lib/kinDirectRead.ts',
   'lib/messagesListener.ts',
+  'lib/unreadNotificationsListener.ts',
   'lib/vetClinicsDirectRead.ts',
 ];
 

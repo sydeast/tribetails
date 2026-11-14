@@ -573,6 +573,16 @@ describe('Schedule screen', () => {
     expect(within(actions).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });
 
+  // #2199: the route tells the calendar an Auntie is signed in, and the sheet's
+  // Mark Completed is held as it opens. The seat read answers "owner" here.
+  it('#2199: told that an Auntie is signed in, the sheet holds Mark Completed as it opens', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [todaySession({ status: 'SCHEDULED' })] } });
+    render(<Schedule isAuntie />);
+    await user.click(within(agenda()).getByRole('button', { name: /The Whitfields/i }));
+    const held = within(screen.getByTestId('booking-detail-actions')).getByRole('button', { name: 'Mark Completed' });
+    expect(held).toHaveAttribute('aria-disabled', 'true');
+    expect(held).toHaveAccessibleDescription('Only the owner can complete a visit.');
+  });
   it('closing the detail sheet returns to the agenda', async () => {
     mockCollections({ sessions: { status: 'ready', data: [todaySession()] } });
     render(<Schedule />);

@@ -1,7 +1,6 @@
 package com.tribetails.auntieos.ui.invoices
 
 import com.tribetails.auntieos.TestFixtures
-import com.tribetails.auntieos.data.contracts.MarkInvoicePaidResult
 import com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.data.model.Payment
@@ -26,13 +25,14 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * #982: what `InvoiceDetailViewModel.recordPayment` sends to `markInvoicePaid`.
+ * #982: what `InvoiceDetailViewModel.recordPayment` puts ON THE INVOICE.
  *
- * `markInvoicePaid` puts money ON THE INVOICE. It must get the applied part
- * only, the dialog's Amount box, the same figure admin web sends from its Amount
- * box (`InvoiceDetail.tsx`, Mark paid). The tip is the tip and any leftover is
- * leftover; neither belongs on the invoice. The ledger row (`recordPayment`)
- * still carries the whole transaction, with the gross tip and the fee.
+ * #2269: one `recordPayment` call, whose `apply` is the part that goes on the
+ * invoice. It must be the applied part only, the dialog's Amount box, the same
+ * figure admin web sends from its Amount box (`InvoiceDetail.tsx`, Record
+ * payment). The tip is the tip and any leftover is leftover; neither belongs on
+ * the invoice. The same call's `amount` carries the whole transaction, with the
+ * gross tip and the fee.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RecordPaymentMarkPaidAmountTest {
@@ -54,23 +54,19 @@ class RecordPaymentMarkPaidAmountTest {
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repo.getBusinessSettings() } returns Result.failure(RuntimeException("not under test"))
         coEvery { repo.logActivity(any()) } returns Result.success(Unit)
-        coEvery { invoiceRepo.markInvoicePaid(any(), any(), any(), any(), any()) } returns
-            Result.success(
-                MarkInvoicePaidResult(
-                    ok = true,
-                    invoiceId = "inv1",
-                    paymentId = "ipay-1",
-                    state = "settled",
-                    totalCents = 12_750L,
-                    paidCents = 12_750L,
-                    amountDueCents = 0L,
-                    overpaidCents = 0L,
-                )
-            )
-        coEvery { invoiceRepo.recordInvoicePayment(any(), any(), any()) } returns
-            Result.success(decodeRecordPaymentResult(mapOf("ok" to true, "paymentId" to "pay-1")))
+        coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns settled()
     }
 
+    /** A one-call answer that paid the invoice off, plus whatever else the test needs. */
+    private fun settled(extra: Map<String, Any?> = emptyMap()) = Result.success(
+        decodeRecordPaymentResult(
+            mapOf(
+                "ok" to true,
+                "paymentId" to "pay-1",
+                "application" to mapOf("invoiceId" to "inv1", "state" to "settled", "amountDueCents" to 0),
+            ) + extra,
+        ),
+    )
     @After
     fun tearDown() {
         Dispatchers.resetMain()
@@ -100,8 +96,8 @@ class RecordPaymentMarkPaidAmountTest {
             creditToAccount = if (paymentTotal > 0.0) paymentTotal - amount - tip else 0.0,
         )
 
-    /** Runs one Record press and answers (markInvoicePaid amount, ledger payment). */
-    private fun record(amount: Double, tip: Double, fee: Double, paymentTotal: Double = 0.0): Pair<Double?, Payment> {
+    /** Runs one Record press and answers (applied amount, the transaction sent with it). */
+    private fun record(amount: Double, tip: Double, fee: Double, paymentTotal: Double = 0.0): Pair<Double, Payment> {
         val vm = InvoiceDetailViewModel(
             repository = repo,
             invoiceRepository = invoiceRepo,
@@ -110,10 +106,9 @@ class RecordPaymentMarkPaidAmountTest {
         vm.loadInvoice("inv1")
         // The dialog hands over the transaction AND its Amount box.
         vm.recordPayment(dialog(amount, tip, fee, paymentTotal), amount)
-        val applied = mutableListOf<Double?>()
-        coVerify(exactly = 1) { invoiceRepo.markInvoicePaid("inv1", captureNullable(applied), any(), any(), any()) }
+        val applied = mutableListOf<Double>()
         val sent = mutableListOf<Payment>()
-        coVerify(exactly = 1) { invoiceRepo.recordInvoicePayment(capture(sent), any(), any()) }
+        coVerify(exactly = 1) { invoiceRepo.recordPaymentOnInvoice(capture(sent), capture(applied), any()) }
         return applied.single() to sent.single()
     }
 
@@ -122,7 +117,7 @@ class RecordPaymentMarkPaidAmountTest {
         // $127.50 bill, $10 gross tip, $2.71 fee: the client handed over $137.50.
         val (applied, ledger) = record(amount = 127.5, tip = 10.0, fee = 2.71)
         advanceUntilIdle()
-        assertEquals(127.5, applied!!, 0.0001)
+        assertEquals(127.5, applied, 0.0001)
         assertEquals(137.5, ledger.amount, 0.0001)
         assertEquals(10.0, ledger.tip, 0.0001)
         assertEquals(2.71, ledger.fee, 0.0001)
@@ -133,19 +128,15 @@ class RecordPaymentMarkPaidAmountTest {
         // $200 in: $127.50 on the invoice, $10 tip, $62.50 left over.
         val (applied, ledger) = record(amount = 127.5, tip = 10.0, fee = 2.71, paymentTotal = 200.0)
         advanceUntilIdle()
-        assertEquals(127.5, applied!!, 0.0001)
+        assertEquals(127.5, applied, 0.0001)
         assertEquals(200.0, ledger.amount, 0.0001)
         assertEquals(10.0, ledger.tip, 0.0001)
     }
 
     @Test
     fun `the toast repeats the server's credit in web's words, and only that`() = runTest(testDispatcher) {
-        coEvery { invoiceRepo.recordInvoicePayment(any(), any(), any()) } returns
-            Result.success(
-                decodeRecordPaymentResult(
-                    mapOf("ok" to true, "paymentId" to "pay-1", "creditedToAccountCents" to 6_250),
-                )
-            )
+        coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns
+            settled(mapOf("creditedToAccountCents" to 6_250))
         val vm = InvoiceDetailViewModel(repository = repo, invoiceRepository = invoiceRepo, kinCareRepository = kinCareRepo)
         vm.loadInvoice("inv1")
         vm.recordPayment(dialog(127.5, 10.0, 2.71, paymentTotal = 200.0), 127.5)
@@ -161,15 +152,8 @@ class RecordPaymentMarkPaidAmountTest {
     @Test
     fun `#1511 a confirmation that reached the household in the app only is said in the toast, and the toast is not green`() =
         runTest(testDispatcher) {
-            coEvery { invoiceRepo.recordInvoicePayment(any(), any(), any()) } returns
-                Result.success(
-                    decodeRecordPaymentResult(
-                        mapOf(
-                            "ok" to true, "paymentId" to "pay-1",
-                            "confirmationEmailSent" to false, "confirmationAppOnly" to true,
-                        ),
-                    )
-                )
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns
+                settled(mapOf("confirmationEmailSent" to false, "confirmationAppOnly" to true))
             val vm = InvoiceDetailViewModel(repository = repo, invoiceRepository = invoiceRepo, kinCareRepository = kinCareRepo)
             vm.loadInvoice("inv1")
             vm.recordPayment(dialog(127.5, 10.0, 2.71).apply { sendConfirmationEmail = true }, 127.5)
@@ -185,8 +169,8 @@ class RecordPaymentMarkPaidAmountTest {
 
     @Test
     fun `#1511 the app-only flag is ignored when no confirmation was asked for`() = runTest(testDispatcher) {
-        coEvery { invoiceRepo.recordInvoicePayment(any(), any(), any()) } returns
-            Result.success(decodeRecordPaymentResult(mapOf("ok" to true, "paymentId" to "pay-1", "confirmationAppOnly" to true)))
+        coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns
+            settled(mapOf("confirmationAppOnly" to true))
         val vm = InvoiceDetailViewModel(repository = repo, invoiceRepository = invoiceRepo, kinCareRepository = kinCareRepo)
         vm.loadInvoice("inv1")
         vm.recordPayment(dialog(127.5, 10.0, 2.71), 127.5)
@@ -207,11 +191,11 @@ class RecordPaymentMarkPaidAmountTest {
         )
     }
     @Test
-    fun `the wait shows a busy state until both calls have answered`() = runTest(testDispatcher) {
+    fun `the wait shows a busy state until the call has answered`() = runTest(testDispatcher) {
         val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
-        coEvery { invoiceRepo.recordInvoicePayment(any(), any(), any()) } coAnswers {
+        coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } coAnswers {
             gate.await()
-            Result.success(decodeRecordPaymentResult(mapOf("ok" to true, "paymentId" to "pay-1")))
+            settled()
         }
         val vm = InvoiceDetailViewModel(repository = repo, invoiceRepository = invoiceRepo, kinCareRepository = kinCareRepo)
         vm.loadInvoice("inv1")
@@ -226,7 +210,7 @@ class RecordPaymentMarkPaidAmountTest {
         // $50 toward the $127.50 bill plus a $5 tip.
         val (applied, ledger) = record(amount = 50.0, tip = 5.0, fee = 0.0)
         advanceUntilIdle()
-        assertEquals(50.0, applied!!, 0.0001)
+        assertEquals(50.0, applied, 0.0001)
         assertEquals(55.0, ledger.amount, 0.0001)
         assertEquals(5.0, ledger.tip, 0.0001)
     }

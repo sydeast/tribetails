@@ -450,7 +450,7 @@ private fun Wordmark() {
  * numeric, "99+" past 99, the same as the web portal's `unreadBadgeLabel`.
  */
 @Composable
-private fun BellButton(unread: Int, onClick: () -> Unit) {
+internal fun BellButton(unread: Int, onClick: () -> Unit) {
     val type = LocalKinfolkTypography.current
     val badge = unreadBadgeLabel(unread)
     val name = bellAccessibleName(unread)

@@ -11,6 +11,7 @@ import { bellAccessibleName, unreadBadgeLabel } from '../lib/notificationsList';
 import { SaveNoticeLine } from './SaveNotice';
 import { myHomeKey } from '../lib/portalQueryKeys';
 import { useSilentPushRefresh } from '../lib/useSilentPushRefresh';
+import { bellCount, useLiveUnread } from '../lib/unreadBadge';
 
 export type PortalNavTab = 'home' | 'tribe' | 'schedule' | 'kintales' | 'invoices' | 'account' | 'messages';
 
@@ -89,13 +90,17 @@ export function PortalNav(props: { active: PortalNavTab | null }) {
   // #1457: the avatar menu's Invoices item follows the same answer.
   const billingAccess = billingAccessOf(branding.data);
   const navLinks = billingAccess ? NAV_LINKS : NAV_LINKS.filter((l) => l.id !== 'invoices');
-  // #1316: the bell's unread count rides the same cached answer, so the badge
-  // costs no call of its own; the list itself is fetched only when the bell
-  // is tapped. An older server leaves the field out, which reads as 0.
-  const unreadBadge = unreadBadgeLabel(branding.data?.unreadNotifications);
+  // #1833: the bell's unread count is live (lib/unreadBadge.ts): it moves when
+  // a notice arrives, when one is read here or anywhere else, and when several
+  // are read at once. Until the first snapshot it shows the count this cached
+  // `getMyHome` answer loaded with (#1316), so the badge is there on first
+  // paint; after a failed listener it shows none, never an old number.
+  const liveUnread = useLiveUnread(kinfolkId ?? branding.data?.kinfolkId);
+  const unreadCount = bellCount(liveUnread, branding.data?.unreadNotifications);
+  const unreadBadge = unreadBadgeLabel(unreadCount);
   // The count reaches screen readers through the link's name, since the badge
   // itself is decoration the label would override.
-  const bellName = bellAccessibleName(branding.data?.unreadNotifications);
+  const bellName = bellAccessibleName(unreadCount);
   // #1290: one source for the avatar on every screen (see lib/identity.ts).
   const { initial } = usePortalIdentity();
   const { signOut, signingOut, error: signOutError } = useSignOut();

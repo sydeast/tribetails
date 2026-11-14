@@ -30,7 +30,6 @@ import {
 import { checkInvoiceTotal, formatCentsUsd, storedTotalSourceLabel } from '../lib/invoiceReconcile';
 import { APP_ONLY_NOTE, lastReminderLabel, reminderOutcomeMessage } from '../lib/invoiceReminder';
 import {
-  markInvoicePaid,
   sendInvoiceReminder,
   generateReceipt,
   generateInvoicePdf,
@@ -76,10 +75,7 @@ import { phaseOfError } from '../lib/offlineWrite';
 import { readInvoiceSendMarks } from '../api/invoiceSendCheck';
 import { sendMarksOf, sendOutcomeAfterSilence, type SendCheckAction } from '../lib/invoiceSendCheck';
 import { CallableTimeoutError, LONG_CALLABLE_TIMEOUT_MS } from '../lib/fns';
-import {
-  mintInvoicePaymentIdempotencyKey,
-  mintPaymentIdempotencyKey,
-} from '../lib/moneyIdempotency';
+import { mintPaymentIdempotencyKey } from '../lib/moneyIdempotency';
 import './InvoiceDetail.css';
 
 /**
@@ -94,11 +90,11 @@ import './InvoiceDetail.css';
  *   blocked  nothing was sent. Re-enter it when there is a signal. Safe.
  *   unknown  it was away when the signal went. SINCE #825 THIS IS SAFE TO
  *            RE-SUBMIT, and the sentence below says so rather than sending the
- *            operator off to check by hand. Both money callables in this
- *            panel's flow now carry a caller-minted `idempotencyKey` — the id
- *            of the row each will write — and the panel holds one pair of keys
- *            for as long as the form is unchanged, so pressing again lands on
- *            the rows the first press may already have written.
+ *            operator off to check by hand. The money callable in this
+ *            panel's flow carries a caller-minted `idempotencyKey` (the id of
+ *            the row it will write), and the panel holds it for as long as the
+ *            form is unchanged, so pressing again lands on the row the first
+ *            press may already have written.
  *
  *            What that fixed: `recordPayment` wrote an auto-id row into the
  *            root `payments` collection with no dedupe of any kind and, with
@@ -497,6 +493,45 @@ export function paymentSplit(input: {
   }
   return { ok: true, paidCents, appliedCents, tipCents, creditCents, overCents };
 }
+/**
+ * #2299: the balance a refused payment ran into, in integer cents, when the
+ * server sent one (`details.amountDueCents`). Null for every other failure.
+ */
+export function refusalAmountDueCents(caught: unknown): number | null {
+  const details = (caught as { details?: unknown } | null)?.details;
+  if (details === null || typeof details !== 'object') return null;
+  const cents = (details as { amountDueCents?: unknown }).amountDueCents;
+  return typeof cents === 'number' && Number.isInteger(cents) && cents >= 0 ? cents : null;
+}
+/** The server's own code for a refusal (`details.code`), or null. */
+function refusalCode(caught: unknown): string | null {
+  const details = (caught as { details?: unknown } | null)?.details;
+  if (details === null || typeof details !== 'object') return null;
+  const code = (details as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
+/**
+ * #2299: a blank Amount reached a server from before `apply.settleBalance`,
+ * which reads it as nothing applied and refuses, recording nothing. Its own
+ * sentence talks about leaving the invoice off the payment, which this form
+ * cannot do, so the panel says what to do here.
+ */
+export function blankAmountRefusedByOlderServer(caught: unknown, amountBox: string, paymentTotalBox: string): boolean {
+  if (amountBox.trim() !== '') return false;
+  const code = refusalCode(caught);
+  // That server checks a typed tip against the payment amount first, and with
+  // both amounts blank the payment amount went as 0.
+  return code === 'apply_zero_amount' || (code === 'tip_exceeds_amount' && paymentTotalBox.trim() === '');
+}
+export const BLANK_AMOUNT_NOT_TAKEN =
+  'This payment was not recorded. Enter the amount collected, then record it again.';
+/**
+ * #2299: shown where the split would be, when Amount is blank and the panel
+ * holds no balance it can trust (the payments have not loaded, or failed to).
+ * The server applies what is owed when the payment is recorded.
+ */
+export const BLANK_AMOUNT_BALANCE_UNKNOWN =
+  'The balance has not loaded. A blank amount pays what this invoice owes when you record it.';
 type PendingAction = InvoiceAction;
 
 interface ActionMeta {
@@ -515,6 +550,10 @@ interface ActionMeta {
  * #866: the household's payment confirmation is sent by the `recordPayment`
  * step and by nothing else, so when that step fails or cannot run, the operator
  * has to hear that the confirmation did not go out either.
+ *
+ * #2269: the invoice panel no longer has a separate ledger step that can fail
+ * on its own (one call records the payment and sends the confirmation), so it
+ * no longer shows this. Kept exported for the sentence's other readers.
  */
 export const CONFIRMATION_NOT_SENT_WITH_LEDGER =
   ' The confirmation email did not go out either, because it is sent with the ledger row. Let the household know another way.';
@@ -539,7 +578,7 @@ const ACTIONS: readonly ActionMeta[] = [
     // Replaced at confirm time by what the server says actually happened, so the
     // panel never claims an invoice was paid off when it was not.
     successMessage: 'Payment recorded.',
-    callableName: 'markInvoicePaid',
+    callableName: 'recordPayment',
   },
   {
     key: 'receipt',
@@ -822,9 +861,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   /**
    * Whether the notice above is wholly good news.
    *
-   * An action can land AND leave something undone: `markInvoicePaid` settles
-   * the bill, then the payment-ledger row is written best-effort, and a failure
-   * there is appended to the outcome sentence rather than thrown. Mark 10 of
+   * An action can land AND leave something undone: a payment is recorded and
+   * its confirmation does not go out, and that is appended to the outcome
+   * sentence rather than thrown. Mark 10 of
    * the 2026-08-17 walk is what that looked like when the whole sentence
    * rendered green: "why green box when there was a failure". A banner may not
    * be the last thing to know the action was partly refused.
@@ -879,32 +918,24 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const [paidCredit, setPaidCredit] = useState('');
   const [paidSendConfirmation, setPaidSendConfirmation] = useState(false);
   /**
-   * #825: ONE PAIR OF KEYS PER SUBMISSION, held across a re-press.
+   * #825: ONE KEY PER SUBMISSION, held across a re-press.
    *
-   * This flow makes TWO money writes — `markInvoicePaid` (the authority) and
-   * `recordPayment` (the display ledger) — so it holds two keys, one shaped for
-   * each callable's anchor row. They are minted lazily on the first press and
-   * kept while the form is unchanged, which is exactly the case that used to
-   * double-collect: the operator sees `functions/internal`, which the SDK
-   * reports whether the request never arrived or the write committed and the
-   * reply was lost, and presses again.
-   *
-   * KEEPING THEM ACROSS A PARTIAL FAILURE IS THE POINT. Step 1 can land and
-   * step 2 fail; pressing again then replays step 1 (the server answers from
-   * the row it already wrote, rather than collecting a second time) and writes
-   * the ledger row that is genuinely missing. Without the keys, the only safe
-   * advice after that was "go and look", and the only unsafe-but-tempting
-   * action was to press again.
+   * Since #2269 the payment is one `recordPayment` call, so it holds one key:
+   * the id of the ledger row that call writes. It is minted lazily on the
+   * first press and kept while the form is unchanged, which is exactly the
+   * case that used to double-collect: the operator sees `functions/internal`,
+   * which the SDK reports whether the request never arrived or the write
+   * committed and the reply was lost, and presses again. The server then
+   * answers from the row the first press wrote, rather than collecting a
+   * second time.
    *
    * Cleared by `startAction` (a new dialog is a new payment) and by the effect
    * below whenever any figure on the form changes (an edited payment is a
    * different payment, and a held key would report the first one's figures back
    * for money that was never collected).
    */
-  const settleKey = useRef<string | null>(null);
   const ledgerKey = useRef<string | null>(null);
   useEffect(() => {
-    settleKey.current = null;
     ledgerKey.current = null;
   }, [
     paidAmount,
@@ -964,6 +995,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   const [ledgerError, setLedgerError] = useState<string | null>(null);
   // Bumped to re-run the load. A counter rather than a boolean so two reloads in
   // a row (record a payment, then record another) both actually fire.
+  // #2299: what a refused payment said is owed now. Used as the balance until
+  // the reload that refusal started comes back with the ledger's own figure.
+  const [refusedDueCents, setRefusedDueCents] = useState<number | null>(null);
   const [ledgerNonce, setLedgerNonce] = useState(0);
   const reloadLedger = useCallback(() => setLedgerNonce((n) => n + 1), []);
 
@@ -1091,7 +1125,13 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // then the cents the server stamped on the invoice. Never the dollar
   // `amountDue` alone: on an invoice the old partial write touched it reads 0
   // while money is owed, and capping at that would make the whole payment tip.
-  const balanceDueCents: number | null = ledger?.amountDueCents ?? invoice.amountDueCents ?? null;
+  // #2299: after a refusal, the balance the server refused against comes first.
+  const balanceDueCents: number | null =
+    refusedDueCents ?? ledger?.amountDueCents ?? invoice.amountDueCents ?? null;
+  // #2299: Amount left blank means "pay what is owed", and the server works
+  // that out. With no balance here to show, the split line says so instead of
+  // adding up a figure from the invoice's older dollar balance.
+  const blankAmountNoBalance = paidAmount.trim() === '' && balanceDueCents === null;
   const split = paymentSplit({
     paymentTotal: paidTotal,
     applied: paidAmount,
@@ -1126,6 +1166,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       .then((res) => {
         if (stale) return;
         setLedger(res);
+        setRefusedDueCents(null);
         setLedgerLoading(false);
       })
       .catch((caught: unknown) => {
@@ -1166,7 +1207,6 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     // these whenever a figure changes, but opening the dialog is not a figure
     // change, and a key held from the last payment would report that one's
     // result back for this one.
-    settleKey.current = null;
     ledgerKey.current = null;
     setPending(key);
   }
@@ -1562,7 +1602,6 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // sentence instead of a silently-ignored keystroke. An unparseable
         // amount is refused outright: guessing at it would record real money
         // against a household.
-        let amount: number | undefined;
         if (typed !== '') {
           const normalized = normalizeMoneyText(typed);
           const parsed = normalized === null || normalized === '' ? NaN : Number(normalized);
@@ -1571,7 +1610,6 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             setActionError(`"${typed}" is not an amount. Enter dollars, for example 20 or 20.50.`);
             return;
           }
-          amount = parsed;
         }
         // The tip and the fee, same rule and same reason. A blank box is zero;
         // a box with something unparseable in it is a refusal, because that is
@@ -1605,159 +1643,146 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           return;
         }
         // #988: WHERE THE MONEY GOES, checked before anything is written, so the
-        // panel refuses a split that does not add up rather than let the server
-        // do it after `markInvoicePaid` has already collected.
-        const checked = paymentSplit({
-          paymentTotal: paidTotal,
-          applied: typed,
-          tip: paidTip,
-          credit: paidCredit,
-          fallbackApplied: invoice.amountDue,
-          amountDueCents: balanceDueCents,
-        });
-        if (checked === null || !checked.ok) {
+        // panel refuses a split that does not add up before sending it.
+        // #2299: AMOUNT LEFT BLANK MEANS "PAY WHAT IS OWED", AND THE SERVER
+        // DECIDES WHAT THAT IS. The panel sends the intent and only what she
+        // typed; the server applies the balance its own transaction reads and
+        // finishes the sum (a blank payment amount is applied + tip + credit,
+        // a blank tip is the rest). Until #2281 a blank Amount meant this, and
+        // the one-call panel then sent its own figure, which was $0 or an old
+        // smaller sum when the payments had not loaded.
+        const settleBalance = typed === '';
+        // The split is checked against the balance on screen when there is
+        // one, so a sum that does not add up is refused before it is sent.
+        // With no balance here there is nothing to check a blank Amount
+        // against, and the server's refusal says what is owed.
+        const checked =
+          settleBalance && balanceDueCents === null
+            ? null
+            : paymentSplit({
+                paymentTotal: paidTotal,
+                applied: typed,
+                tip: paidTip,
+                credit: paidCredit,
+                fallbackApplied: invoice.amountDue,
+                amountDueCents: balanceDueCents,
+              });
+        if (checked !== null && !checked.ok) {
           setBusy(false);
-          setActionError(checked === null ? 'One of the amounts cannot be read.' : checked.error);
+          setActionError(checked.error);
+          // A blank Amount was checked against the balance on screen, which
+          // the server would not use. Read the payments again, so an old
+          // figure does not keep refusing a payment the server would take.
+          if (settleBalance) reloadLedger();
           return;
         }
-        if (checked.creditCents > 0 && !invoice.kinfolkId) {
+        if (checked === null && !settleBalance) {
+          setBusy(false);
+          setActionError('One of the amounts cannot be read.');
+          return;
+        }
+        const creditCents = checked !== null ? checked.creditCents : Math.round(credit * 100);
+        if (creditCents > 0 && !invoice.kinfolkId) {
           setBusy(false);
           setActionError('Account credit needs a household, and this invoice is not linked to one.');
           return;
         }
-        // The tip that is sent: typed, or the rest of the payment when blank,
-        // plus (#1566) whatever of the amount collected was over the balance.
-        const tipToSend = checked.tipCents / 100;
-        const creditCents = checked.creditCents;
+        // The tip that is sent. Amount typed: the split's tip, which is what
+        // she typed, or the rest of the payment when blank, plus (#1566)
+        // whatever of the amount collected was over the balance. Amount
+        // blank: only the tip she typed, and 0 lets the server take the rest.
+        const tipToSend = settleBalance ? tip : (checked?.tipCents ?? 0) / 100;
         // #1566: the invoice takes what it owes and no more. A typed amount over
-        // the balance is settled at the balance; the rest went to the tip above.
-        if (amount !== undefined) amount = checked.appliedCents / 100;
+        // the balance is applied at the balance; the rest went to the tip above.
 
-        // STEP 1 OF 2, AND THE ORDER MATTERS. `markInvoicePaid` is the money
-        // authority: it writes the `invoices/{id}/payments` subcollection and
-        // re-derives the balance from the sum of every recorded payment. Its
-        // failure is fatal to the whole action, because nothing was written and
-        // no payment happened. Same sequence Android has run since W2-2.
-        settleKey.current ??= mintInvoicePaymentIdempotencyKey();
+        // #2269/#2230: ONE CALL, THE WHOLE PAYMENT. `recordPayment` with an
+        // `apply` puts the applied part on the invoice, writes the invoice's
+        // own payment row and the ledger row, gives any account credit and
+        // sends the confirmation, in one server transaction that reads the
+        // invoice and its payments itself. The desktop console records a
+        // payment the same way. It replaced two calls, `markInvoicePaid` then
+        // `recordPayment`: a reload between them left a paid invoice with no
+        // ledger row and nobody told, and a refusal or failure now means
+        // nothing at all was recorded.
+        //
+        // The applied part is what she typed, capped at the balance by
+        // `paymentSplit`, or (#2299) "what is owed" when she left it blank. If
+        // the balance moved since the panel loaded, a typed amount over it is
+        // refused with what is owed now, and the panel shows that figure.
         ledgerKey.current ??= mintPaymentIdempotencyKey();
-        const res = await markInvoicePaid(invoice._id, {
-          ...(amount !== undefined && { amount }),
-          ...(method !== '' && { method }),
-          ...(reference !== '' && { reference }),
-          idempotencyKey: settleKey.current,
+        const appliedCents = checked?.appliedCents ?? 0;
+        const ledgerRow = await recordPayment({
+          kinfolkId: invoice.kinfolkId,
+          kinfolkName: invoice.kinfolkName,
+          client: invoice.client,
+          date: localDateIso(new Date()),
+          paymentMethod: method,
+          referenceNumber: reference,
+          // THE WHOLE SUM THE CLIENT PAID, tip and any leftover included. The
+          // invoice takes the applied part; this row is the transaction.
+          // #2299: with Amount blank the panel does not know the applied part,
+          // so a blank payment amount goes as 0 and the server adds it up.
+          amount: typedTotal > 0 ? typedTotal : settleBalance ? 0 : (checked?.paidCents ?? 0) / 100,
+          tip: tipToSend,
+          fee,
+          notes: paidNotes.trim(),
+          // #988: the credit is the amount she entered, and nothing else.
+          // `autoApply` only says whether there is one.
+          autoApply: creditCents > 0,
+          creditToAccountCents: creditCents,
+          sendConfirmationEmail: paidSendConfirmation,
+          invoiceId: invoice._id,
+          invoiceNumber: invoice.invoiceNumber,
+          apply: settleBalance
+            ? { invoiceId: invoice._id, invoiceNumber: invoice.invoiceNumber, amount: 0, settleBalance: true }
+            : { invoiceId: invoice._id, invoiceNumber: invoice.invoiceNumber, amount: appliedCents / 100 },
+          idempotencyKey: ledgerKey.current,
         });
+        const res = ledgerRow.application;
 
-        // WHAT THIS ONE PAYMENT WAS WORTH, which is NOT `res.paidCents`: that
-        // figure is everything ever collected on the invoice, so sending it to
-        // step 2 would book a $40 ledger row for a $20 second payment.
-        //
-        // Two exact sources, and no third. The operator's own typed amount, or
-        // the difference between the server's new cumulative total and the
-        // cumulative total the loaded ledger already showed. Both of those come
-        // from the same subcollection, so they cannot disagree. When neither is
-        // available (the amount was left blank AND the ledger read failed) no
-        // row is written at all: a guessed figure on a payment record is worse
-        // than a missing one.
-        const typedCents = amount !== undefined ? Math.round(amount * 100) : null;
-        const derivedCents = ledger !== null ? res.paidCents - ledger.paidCents : null;
-        const thisPaymentCents = typedCents ?? derivedCents;
-
-        // STEP 2 OF 2, BEST-EFFORT. The ROOT `payments` collection is the
-        // display ledger the Payments screens and every report read. Until now
-        // this app never wrote it, so a payment taken through the web admin was
-        // invisible to those screens while Android's identical action showed up
-        // in both. It is deliberately NOT folded into step 1: the settlement
-        // arithmetic never reads this collection, which is exactly what stops
-        // the two rows double-counting against each other.
-        //
-        // A failure here is REPORTED and does not fail the action. The money has
-        // already moved and the invoice is already settled, so throwing now
-        // would offer a retry that collects a second time. The operator is told
-        // what is missing and where, rather than told nothing or told a lie.
         let ledgerNote = '';
-        if (thisPaymentCents === null || thisPaymentCents <= 0) {
+        // #866: the server says WHY, so the note does not have to guess.
+        // #1511: an app-only confirmation is in the household's notifications
+        // list with nothing emailed or texted; it is neither "sent" nor "did
+        // not go out", and it is read first so the next branch cannot call it
+        // the latter.
+        if (paidSendConfirmation && ledgerRow.confirmationAppOnly === true) {
           incomplete = true;
-          ledgerNote =
-            " No row was added to the payment ledger, because this payment's own amount could not be stated exactly: it was left blank and the invoice's recorded payments could not be read. The invoice itself is correct; add the ledger row from the Payments screen.";
-        } else {
-          try {
-            const ledgerRow = await recordPayment({
-              kinfolkId: invoice.kinfolkId,
-              kinfolkName: invoice.kinfolkName,
-              client: invoice.client,
-              date: localDateIso(new Date()),
-              paymentMethod: method,
-              referenceNumber: reference,
-              // THE WHOLE SUM THE CLIENT PAID, tip and any leftover included.
-              // `markInvoicePaid` above settled the bill with the applied part;
-              // this row is the TRANSACTION, which is larger whenever there was
-              // a tip or money over.
-              amount: typedTotal > 0 ? typedTotal : (thisPaymentCents + creditCents) / 100 + tipToSend,
-              tip: tipToSend,
-              fee,
-              notes: paidNotes.trim(),
-              // #988: the credit is the amount she entered, and nothing else.
-              // `autoApply` only says whether there is one.
-              autoApply: creditCents > 0,
-              creditToAccountCents: creditCents,
-              sendConfirmationEmail: paidSendConfirmation,
-              invoiceId: invoice._id,
-              invoiceNumber: invoice.invoiceNumber,
-              // #866: the settlement row step 1 just wrote. The server claims
-              // that settlement, and tells the office "paid", only for this id,
-              // so no later payment linked to the invoice can claim it.
-              settledByInvoicePaymentId: res.paymentId,
-              idempotencyKey: ledgerKey.current,
-            });
-            // NO `apply` FIELD, deliberately. `markInvoicePaid` has already
-            // settled this invoice two steps up; sending an apply here would put
-            // the same money against the same bill a second time. The Apply
-            // amount for this flow IS what markInvoicePaid collected.
-            // #866: the server says WHY, so the note does not have to guess.
-            // #1511: an app-only confirmation is in the household's notifications
-            // list with nothing emailed or texted; it is neither "sent" nor "did
-            // not go out", and it is read first so the next branch cannot call it
-            // the latter.
-            if (paidSendConfirmation && ledgerRow.confirmationAppOnly === true) {
-              incomplete = true;
-              ledgerNote += ` The confirmation reached the household in the app only. ${APP_ONLY_NOTE}`;
-            } else if (paidSendConfirmation && !ledgerRow.confirmationEmailSent) {
-              incomplete = true;
-              ledgerNote += ledgerRow.householdNoPortalAccount
-                ? ' The confirmation email did not go out: the household has no portal account. The payment itself is recorded.'
-                : ' The confirmation email did not go out. The payment itself is recorded; let the household know another way.';
-            }
-            if (ledgerRow.officeNoticePending) {
-              incomplete = true;
-              ledgerNote +=
-                ' The office copy of the payment notice did not go out, because the admin roster could not be read. The household copy is not affected.';
-            }
-            if (ledgerRow.creditedToAccountCents > 0) {
-              ledgerNote += ` ${formatUsd(ledgerRow.creditedToAccountCents / 100)} has been added to the household's account credit. It stays there until you apply an amount to an invoice.`;
-            }
-          } catch (caught) {
-            incomplete = true;
-            ledgerNote = ` The payment ledger row did not save (${
-              caught instanceof Error ? caught.message : 'The payment was not recorded.'
-            }), so this payment will not appear on the Payments screen. The invoice itself is correct.`;
-            // #866: the confirmation rides on this call, and since #866 nothing
-            // else sends one for a payment recorded here.
-            if (paidSendConfirmation) ledgerNote += CONFIRMATION_NOT_SENT_WITH_LEDGER;
-          }
+          ledgerNote += ` The confirmation reached the household in the app only. ${APP_ONLY_NOTE}`;
+        } else if (paidSendConfirmation && !ledgerRow.confirmationEmailSent) {
+          incomplete = true;
+          ledgerNote += ledgerRow.householdNoPortalAccount
+            ? ' The confirmation email did not go out: the household has no portal account. The payment itself is recorded.'
+            : ' The confirmation email did not go out. The payment itself is recorded; let the household know another way.';
         }
-        if ((thisPaymentCents === null || thisPaymentCents <= 0) && paidSendConfirmation) {
-          ledgerNote += CONFIRMATION_NOT_SENT_WITH_LEDGER;
+        if (ledgerRow.officeNoticePending) {
+          incomplete = true;
+          ledgerNote +=
+            ' The office copy of the payment notice did not go out, because the admin roster could not be read. The household copy is not affected.';
+        }
+        if (ledgerRow.creditedToAccountCents > 0) {
+          ledgerNote += ` ${formatUsd(ledgerRow.creditedToAccountCents / 100)} has been added to the household's account credit. It stays there until you apply an amount to an invoice.`;
         }
 
         // WHAT THE SERVER SAYS HAPPENED, not what the button was called. The
         // whole defect this change fixes was a UI that reported "paid" for a
         // payment that paid off half the invoice.
+        if (res === null) incomplete = true;
+        // #2299: a blank Amount paid what the server found owing. When that is
+        // not the figure this panel was showing, the sentence says how much
+        // was recorded, so a different sum is never booked without a word.
+        if (settleBalance && res !== null && balanceDueCents !== null && res.appliedCents !== balanceDueCents) {
+          incomplete = true;
+          ledgerNote += ` This invoice owed ${formatUsd(res.appliedCents / 100)}, not the ${formatUsd(balanceDueCents / 100)} shown here, so ${formatUsd(res.appliedCents / 100)} was applied to it.`;
+        }
         outcome =
-          (res.state === 'partial'
-            ? `Partial payment recorded. ${formatUsd(res.amountDueCents / 100)} is still owed, and the invoice stays open.`
-            : res.state === 'overpaid'
-              ? `Payment recorded and the invoice is settled. It was overpaid by ${formatUsd(res.overpaidCents / 100)}, which has not been turned into a credit; issue one if that is what the household is owed.`
-              : 'Payment recorded. The invoice is paid in full.') + ledgerNote;
+          (res === null
+            ? 'Payment recorded. Open the invoice again to check what is still owed.'
+            : res.state === 'partial'
+              ? `Partial payment recorded. ${formatUsd(res.amountDueCents / 100)} is still owed, and the invoice stays open.`
+              : res.state === 'overpaid'
+                ? `Payment recorded and the invoice is settled. It was overpaid by ${formatUsd(res.overpaidCents / 100)}, which has not been turned into a credit; issue one if that is what the household is owed.`
+                : 'Payment recorded. The invoice is paid in full.') + ledgerNote;
 
         // Both halves of the panel below now describe a stale invoice: the
         // payment just written is in neither list.
@@ -1783,7 +1808,19 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         return;
       }
       setBusy(false);
-      setActionError(invoiceActionError(caught, meta.callableName));
+      setActionError(
+        meta.key === 'markPaid' && blankAmountRefusedByOlderServer(caught, paidAmount, paidTotal)
+          ? BLANK_AMOUNT_NOT_TAKEN
+          : invoiceActionError(caught, meta.callableName),
+      );
+      if (meta.key === 'markPaid') {
+        // #2299: a refused or failed payment may mean the balance moved since
+        // the panel loaded. The server's figure is shown straight away when it
+        // sent one, and the payments are read again either way, so the same
+        // entry is not refused twice against an old figure.
+        setRefusedDueCents(refusalAmountDueCents(caught));
+        reloadLedger();
+      }
     }
   }
 
@@ -2330,7 +2367,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     className="invoice-detail__field-input"
                     value={paidAmount}
                     onChange={(e) => setPaidAmount(e.target.value)}
-                    placeholder={String(invoice.amountDue)}
+                    placeholder={
+                      balanceDueCents !== null ? (balanceDueCents / 100).toFixed(2) : 'what this invoice owes'
+                    }
                     inputMode="decimal"
                     disabled={busy}
                     aria-label="Amount collected in dollars"
@@ -2423,7 +2462,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     what is left after the applied part and any credit she
                     chose; the fee comes out of the tip, not out of the bill. */}
                 <p className="invoice-detail__unapplied" role="status" aria-label="Where this payment goes">
-                  {split === null ? (
+                  {blankAmountNoBalance ? (
+                    <span className="invoice-detail__unapplied-unknown">{BLANK_AMOUNT_BALANCE_UNKNOWN}</span>
+                  ) : split === null ? (
                     <span className="invoice-detail__unapplied-unknown">
                       Not yet: one of the amounts above cannot be read.
                     </span>

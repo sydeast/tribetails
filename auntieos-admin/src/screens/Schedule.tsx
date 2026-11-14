@@ -125,6 +125,12 @@ interface ScheduleProps {
    * a static div and the screen had no detail view at all (operator issue 16).
    */
   onSelect?: (sessionId: string) => void;
+  /**
+   * #2199: whether an Auntie is signed in, from the access the admin layout
+   * resolved before the screen drew, so Mark Completed in the sheet is held from the first paint.
+   * Left out, the sheet reads the token itself, a moment later.
+   */
+  isAuntie?: boolean;
 }
 
 /**
@@ -207,7 +213,7 @@ interface ScheduleProps {
  * banner names what failed either way; an operator with no calendar sync reads
  * it as "the blocks did not load", which is exactly true.
  */
-export function Schedule({ onSelect }: ScheduleProps) {
+export function Schedule({ onSelect, isAuntie = false }: ScheduleProps) {
   const sessionsState = useCollection<ScheduleSessionEntry>(SCHEDULE_SESSIONS_QUERY);
   const busyState = useCollection<BusySlotEntry>(SCHEDULE_BUSY_SLOTS_QUERY);
   const navigate = useNavigate();
@@ -704,6 +710,7 @@ export function Schedule({ onSelect }: ScheduleProps) {
                     <BookingStatusActions
                       entry={{ ...openSession, createdAt: null }}
                       onDone={() => setOpenSessionId(null)}
+                      isAuntie={isAuntie}
                     />
                   }
                   onOpenKinfolk={(kinfolkId) =>

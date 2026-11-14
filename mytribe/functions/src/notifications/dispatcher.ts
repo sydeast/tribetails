@@ -1087,3 +1087,102 @@ async function routeByDeliveryMode(
     }
   }
 }
+
+/**
+ * #2281: whether this notice was already written for this recipient, read off
+ * the dedupe ledger entry a delivery writes (the same key, identity and
+ * recipient). Reads one document and writes nothing. A copy older than the
+ * ledger keeps entries for reads as not written.
+ */
+export async function hasDeliveredCopy(
+  args: Pick<EnqueueArgs, 'key' | 'data' | 'dedupeKey'> & { recipientUid: string },
+): Promise<boolean> {
+  if (args.recipientUid === '') return false;
+  const def = getNotificationDef(args.key);
+  const identity = dedupeIdentityOf(args, resolveTargetRef(args));
+  if (identity === '') return false;
+  const snap = await db().collection(DEDUPE_COLLECTION).doc(dedupeDocId(def.key, identity, args.recipientUid)).get();
+  return snap.exists;
+}
+/** What {@link deliverListedCopy} did. `sent` and `already` mean a delivery channel carries the copy. */
+export type ListedCopyDelivery = 'sent' | 'already' | 'no-record' | 'off' | 'no-channels' | 'gated';
+
+/**
+ * #2281 review: SENDS, ON THE RECIPIENT'S OWN CHANNELS, A COPY THAT SO FAR
+ * EXISTS ONLY ON THEIR NOTIFICATIONS LIST.
+ *
+ * A `listOnlyFor` copy (#1973) writes the record and the dedupe ledger entry
+ * and no work order. When the admin later asks for that same notice to be
+ * sent, enqueueing it again cannot do it: the ledger refuses the copy as a
+ * duplicate, and a new identity would put a second record on the household's
+ * list and send the office a second copy. So this adds the missing work order
+ * to the record that is already there. One recipient, no new record, no
+ * ledger write, no other audience.
+ *
+ * It finds the record through the ledger entry the first send wrote (the same
+ * key, identity and recipient), and writes `notificationDispatch/{id}` only
+ * when none exists, in one transaction, so two calls at once send one copy and
+ * a copy that already went out on a channel is never sent again. The
+ * recipient's settings, the operator's switch and the household send gate are
+ * read exactly as an enqueue reads them.
+ *
+ * Trigger-mode keys only: the other modes have no record to attach to yet.
+ */
+export async function deliverListedCopy(
+  args: Pick<EnqueueArgs, 'key' | 'data' | 'dedupeKey'> & { recipientUid: string },
+): Promise<{ outcome: ListedCopyDelivery; channels: Channel[] }> {
+  const none = (outcome: ListedCopyDelivery) => ({ outcome, channels: [] as Channel[] });
+  const def = getNotificationDef(args.key);
+  if (def.external === true || def.deliveryMode !== 'trigger' || args.recipientUid === '') return none('no-record');
+  const recipient = (await resolveRecipients(def, args)).find((r) => r.uid === args.recipientUid);
+  if (recipient === undefined) return none('no-record');
+  const [userPrefs, businessOverride] = await Promise.all([
+    loadUserPrefs(recipient.uid, recipient.collection),
+    loadBusinessOverride(def.key),
+  ]);
+  const stream = streamForRecipient(def, recipient.collection);
+  if (notificationDisabledFor(def, userPrefs, businessOverride, stream) !== null) return none('off');
+  const channels = activeChannelList(resolveChannels(def, userPrefs, businessOverride, stream));
+  if (channels.length === 0) return none('no-channels');
+  if (stream === 'kinfolk' && !(await loadHouseholdSendGate(db())).live) return none('gated');
+
+  const identity = dedupeIdentityOf(args, resolveTargetRef(args));
+  if (identity === '') return none('no-record');
+  const ledgerRef = db().collection(DEDUPE_COLLECTION).doc(dedupeDocId(def.key, identity, recipient.uid));
+  const outcome = await db().runTransaction(async (tx: Transaction): Promise<ListedCopyDelivery> => {
+    const ledger = await tx.get(ledgerRef);
+    const entry = ledger.exists ? (ledger.data() as { notificationId?: unknown; collection?: unknown }) : undefined;
+    const notificationId = typeof entry?.notificationId === 'string' ? entry.notificationId : '';
+    if (notificationId === '' || entry?.collection !== 'notifications') return 'no-record';
+    const recordRef = db().collection('notifications').doc(notificationId);
+    const orderRef = db().collection(DISPATCH_COLLECTION).doc(notificationId);
+    const record = await tx.get(recordRef);
+    const order = await tx.get(orderRef);
+    if (!record.exists) return 'no-record';
+    if (order.exists) return 'already';
+    // The shape `routeByDeliveryMode` writes, carrying the record's own data so
+    // the email says what the list entry says.
+    tx.set(orderRef, {
+      notificationId,
+      key: def.key,
+      recipientUid: recipient.uid,
+      data: (record.data() as { data?: unknown } | undefined)?.data ?? args.data,
+      mode: 'trigger',
+      channels,
+      // #2280: as on an enqueue's work order, so the senders keep a household's
+      // text message and push short. Without it they send the long form.
+      stream,
+      status: 'pending',
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return 'sent';
+  });
+  logEvent({
+    severity: 'info',
+    function: 'deliverListedCopy',
+    event: 'notification.listed-copy.delivery',
+    uid: recipient.uid,
+    extra: { key: def.key, identity, outcome, channels: outcome === 'sent' ? channels : [] },
+  });
+  return { outcome, channels: outcome === 'sent' ? channels : [] };
+}

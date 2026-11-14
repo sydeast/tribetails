@@ -44,7 +44,7 @@
  * settling another's bill, and no screen would ever show why.
  */
 import { FieldValue } from 'firebase-admin/firestore';
-import type { Firestore } from 'firebase-admin/firestore';
+import type { Firestore, Transaction } from 'firebase-admin/firestore';
 
 import type { StagedWriter } from './moneyIdempotency';
 
@@ -87,7 +87,11 @@ export interface ApplyOutcome {
 export interface ApplyRefusal {
   code: string;
   message: string;
-  /** #1566: set on an over-balance refusal, the balance the apply ran into. */
+  /**
+   * #1566: set on an over-balance refusal, the balance the apply ran into.
+   * #2299: and on every refusal of a "settle the balance" apply that read one,
+   * so the screen can show what is owed now.
+   */
   amountDueCents?: number;
 }
 
@@ -225,7 +229,74 @@ export function planApply(input: {
   };
 }
 
-/** Reads the invoice a plan needs, with its payment subcollection. */
+/**
+ * #2299: WHAT "SETTLE THE BALANCE" COMES TO, from the invoice and payments the
+ * caller's transaction read. `recordPayment` asks this when the admin left the
+ * Amount box blank: the applied part is then whatever is still owed as the
+ * server reads it, never a figure a screen worked out from an older read.
+ *
+ * It refuses what `planApply` refuses about the invoice itself (missing,
+ * another household's, a draft or quote, cancelled or a credit, already
+ * settled), with the same codes and sentences, and an invoice that owes
+ * nothing. The caller then plans the apply with the returned figure, so the
+ * payment-side checks in `planApply` still run.
+ */
+export function balanceToSettle(
+  invoice: InvoiceForApply,
+  kinfolkId: string,
+): { ok: true; amountDueCents: number } | { ok: false; refusal: ApplyRefusal } {
+  if (invoice.doc === null) {
+    return {
+      ok: false,
+      refusal: {
+        code: 'apply_invoice_not_found',
+        message: `Invoice '${invoice.invoiceId}' does not exist, so nothing can be applied to it.`,
+      },
+    };
+  }
+  const doc = invoice.doc;
+  const label = invoiceNumberOf(doc) || invoice.invoiceId;
+  const invoiceKin = typeof doc.kinfolkId === 'string' ? doc.kinfolkId : '';
+  if (kinfolkId !== '' && invoiceKin !== '' && invoiceKin !== kinfolkId) {
+    return {
+      ok: false,
+      refusal: {
+        code: 'apply_wrong_household',
+        message: `Invoice ${label} belongs to a different household than this payment.`,
+      },
+    };
+  }
+  if (isDraftOrQuote(doc)) {
+    return {
+      ok: false,
+      refusal: {
+        code: 'apply_invoice_not_sent',
+        message: `Invoice ${label} is a draft or quote; send it before applying a payment to it.`,
+      },
+    };
+  }
+  const lifecycle = refusedLifecycle(doc);
+  if (lifecycle !== null) return { ok: false, refusal: { code: 'apply_invoice_not_payable', message: lifecycle } };
+  const before = settleInvoice(invoiceTotalCentsOf(doc), paidCentsFromPayments(invoice.existingPayments));
+  const settled = alreadySettledRefusal(doc, invoice.existingPayments.length, before.state);
+  if (settled !== null) return { ok: false, refusal: { ...settled, amountDueCents: 0 } };
+  if (before.amountDueCents <= 0) {
+    return {
+      ok: false,
+      refusal: {
+        code: 'apply_nothing_owed',
+        message: `Invoice ${label} owes nothing, so no payment can be recorded against it.`,
+        amountDueCents: 0,
+      },
+    };
+  }
+  return { ok: true, amountDueCents: before.amountDueCents };
+}
+/**
+ * Reads the invoice a plan needs, with its payment subcollection, OUTSIDE any
+ * transaction. Fine for a plan that is only reported; a plan that is staged is
+ * read with [readInvoiceForApplyInTransaction] (#2269).
+ */
 export async function readInvoiceForApply(
   firestore: Firestore,
   invoiceId: string,
@@ -234,6 +305,36 @@ export async function readInvoiceForApply(
   const snap = await ref.get();
   if (!snap.exists) return { invoiceId, doc: null, existingPayments: [] };
   const paymentsSnap = await ref.collection('payments').get();
+  return {
+    invoiceId,
+    doc: (snap.data() ?? {}) as InvoiceDoc,
+    existingPayments: paymentsSnap.docs.map((d) => d.data() as PaymentAmount),
+  };
+}
+
+/**
+ * #2269: the same read, inside a transaction. THE ONE TO PLAN FROM whenever the
+ * plan is then staged.
+ *
+ * `stageApply` writes the new balance from the plan's `after`, and `after` is
+ * the stored payments plus this one. Planned from a read taken outside the
+ * transaction, a second payment landing in between is left out of the sum, and
+ * the invoice ends up saying more is owed than its payments leave. Read here,
+ * the invoice doc is in the transaction's read set and its write set, so two
+ * payments on one invoice commit one after the other, and the second re-plans
+ * against what the first wrote.
+ *
+ * Both reads come before any write, which Firestore requires.
+ */
+export async function readInvoiceForApplyInTransaction(
+  firestore: Firestore,
+  tx: Transaction,
+  invoiceId: string,
+): Promise<InvoiceForApply> {
+  const ref = firestore.collection('invoices').doc(invoiceId);
+  const snap = await tx.get(ref);
+  if (!snap.exists) return { invoiceId, doc: null, existingPayments: [] };
+  const paymentsSnap = await tx.get(ref.collection('payments'));
   return {
     invoiceId,
     doc: (snap.data() ?? {}) as InvoiceDoc,

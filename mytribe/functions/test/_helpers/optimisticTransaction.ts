@@ -19,7 +19,9 @@ import type { SetOptionsLike } from './mockDb';
  *     rejects with ABORTED.
  *   - `onRead(path, attempt)` runs after each document read returns, so a test
  *     can land another device's write in the window between read and commit, or
- *     check what a retry reads.
+ *     check what a retry reads. It is awaited (#2269), so the write it lands can
+ *     be a second handler run for real, its own transaction committed before
+ *     this attempt goes on.
  *   - `committed()` lists, in order, the paths written THROUGH the transaction by
  *     the attempt that committed. A write made directly on a ref, inside the
  *     callback or after it, never appears there (#873 second review).
@@ -30,7 +32,7 @@ import type { SetOptionsLike } from './mockDb';
 export function installOptimisticTransactions(
   db: any,
   docs: Record<string, any>,
-  opts: { maxAttempts?: number; onRead?: (path: string, attempt: number) => void } = {},
+  opts: { maxAttempts?: number; onRead?: (path: string, attempt: number) => void | Promise<void> } = {},
 ): { attempts: () => number; committed: () => string[] } {
   const maxAttempts = opts.maxAttempts ?? 5;
   let attempts = 0;
@@ -52,7 +54,7 @@ export function installOptimisticTransactions(
           const snap = await target.get();
           if (typeof target.path === 'string' && snap && 'exists' in snap) {
             seen.set(target.path, JSON.stringify(docs[target.path] ?? null));
-            opts.onRead?.(target.path, attempt);
+            await opts.onRead?.(target.path, attempt);
           }
           return snap;
         },

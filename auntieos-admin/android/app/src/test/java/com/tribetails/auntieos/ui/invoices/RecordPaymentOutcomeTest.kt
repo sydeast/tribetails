@@ -196,4 +196,34 @@ class RecordPaymentOutcomeTest {
         assertTrue(msg, msg.contains("reached the household in the app only"))
         assertTrue(msg, msg.contains("office copy of the payment notice did not go out"))
     }
+
+    // ── #2269: the one recordPayment call's application ────────────────────
+
+    private fun application(state: String, amountDueCents: Long = 0L, overpaidCents: Long = 0L) =
+        com.tribetails.auntieos.data.contracts.decodeRecordPaymentResultApplication(
+            mapOf("state" to state, "amountDueCents" to amountDueCents, "overpaidCents" to overpaidCents),
+        )
+
+    @Test
+    fun `#2269 the application reads exactly as the old settlement did, state for state`() {
+        for (state in listOf("partial", "settled", "overpaid", "unpaid", "")) {
+            assertEquals(
+                recordPaymentToast(settlement(state, amountDueCents = 2000L, overpaidCents = 50L)),
+                recordPaymentToast(application(state, amountDueCents = 2000L, overpaidCents = 50L)),
+            )
+            assertEquals(
+                recordPaymentAuditDescription(20.0, "INV-9", settlement(state, amountDueCents = 2000L)),
+                recordPaymentAuditDescription(20.0, "INV-9", application(state, amountDueCents = 2000L)),
+            )
+        }
+    }
+
+    @Test
+    fun `#2269 no application at all says the position is unknown, never paid in full`() {
+        assertEquals(recordPaymentToast(settlement("")), recordPaymentToast(null as com.tribetails.auntieos.data.contracts.RecordPaymentResultApplication?))
+        assertTrue(
+            recordPaymentAuditDescription(20.0, "INV-9", null as com.tribetails.auntieos.data.contracts.RecordPaymentResultApplication?)
+                .contains("did not report"),
+        )
+    }
 }

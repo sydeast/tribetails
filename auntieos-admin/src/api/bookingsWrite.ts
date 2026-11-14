@@ -1,6 +1,7 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { call } from '../lib/fns';
+import { COMPLETE_OWNER_ONLY } from '../lib/completeRule';
 import { householdNoticeOf, type HouseholdNotice } from '../lib/householdNoticeWords';
 import type {
   AddBookingNoteArgs,
@@ -131,14 +132,30 @@ interface TransitionBookingStatusArgs {
  * Throws (never swallows) on any callable failure, permission-denied and the
  * refusals included: per the fail-loud policy, the caller surfaces
  * `err.message` rather than this module deciding what the operator gets to see.
+ *
+ * ONE REFUSAL IS REWORDED (#2199, operator ruling 2026-11-14). Completing a
+ * visit is the owner's: this callable is not on an Auntie's list, so the staff
+ * gate refuses her with `permission-denied`. Her screens hold Complete back
+ * before it gets here; if one ever gets through (a role not read yet, a stale
+ * tab), she reads `COMPLETE_OWNER_ONLY`, the same sentence the held button
+ * carries. The error keeps its `code`. The other three actions are untouched.
  */
 export async function transitionBookingStatus(
   args: TransitionBookingStatusArgs,
 ): Promise<TransitionBookingStatusResult> {
-  return call<TransitionBookingStatusArgs, TransitionBookingStatusResult>(
-    'transitionBookingStatus',
-    args,
-  );
+  try {
+    return await call<TransitionBookingStatusArgs, TransitionBookingStatusResult>('transitionBookingStatus', args);
+  } catch (err) {
+    if (args.action === 'COMPLETE' && isPermissionDenied(err)) {
+      throw Object.assign(new Error(COMPLETE_OWNER_ONLY, { cause: err }), { code: (err as { code: string }).code });
+    }
+    throw err;
+  }
+}
+
+function isPermissionDenied(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && (code === 'permission-denied' || code.endsWith('/permission-denied'));
 }
 
 /**

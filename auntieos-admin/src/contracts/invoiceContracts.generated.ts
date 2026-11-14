@@ -644,6 +644,7 @@ export interface RecordPaymentArgsApply {
   /** Optional in the request; the server defaults it to ''. */
   invoiceNumber?: string;
   amount: number;
+  settleBalance?: boolean;
 }
 
 /**

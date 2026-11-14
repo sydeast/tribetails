@@ -95,11 +95,29 @@ fun KinfolkPortalAppGuarded() {
     var home by remember { mutableStateOf<MyHomeResult?>(null) }
     var homeError by remember { mutableStateOf<String?>(null) }
     var personName by remember { mutableStateOf("") }
-    // #1316: the bell badge. Seeded from getMyHome, then kept current by the
-    // notifications list itself (the server's count on load, one less per tap),
-    // since `home` is read once per tribe and would otherwise never move.
+    // #1316: the count the bell opens with, from getMyHome (and from the
+    // notifications list's own load). #1833: it is only what the bell shows
+    // until its first live snapshot; see below.
     var unreadNotifications by remember { mutableStateOf(0) }
     LaunchedEffect(home) { unreadNotifications = home?.unreadNotifications ?: 0 }
+    // #1833: the bell's live count. One listener for the whole app, keyed on
+    // who is signed in, so the badge moves when a notice arrives, when one is
+    // read here or anywhere else, and when several are read at once, with no
+    // reload. Sign-out cancels it and forgets what it held.
+    val unreadBadge = remember { com.kinfolk.portal.portal.UnreadBadge() }
+    val unreadBadgeModel by unreadBadge.model.collectAsState()
+    val signedInUid = (authState as? AuthState.SignedIn)?.uid
+    LaunchedEffect(signedInUid, firestoreClient) {
+        unreadBadge.reset()
+        if (signedInUid != null) {
+            com.kinfolk.portal.portal.followUnreadBadge(
+                firestore = firestoreClient,
+                uid = signedInUid,
+                badge = unreadBadge,
+                stillSignedIn = { (repo.state.value as? AuthState.SignedIn)?.uid == signedInUid },
+            )
+        }
+    }
     var claimInviteId by remember { mutableStateOf<String?>(readInitialClaimInviteId()) }
     val initialShareToken = remember { readInitialShareToken() }
     // #1293: a launch link we could not place; cleared by Back to Home.
@@ -239,8 +257,14 @@ fun KinfolkPortalAppGuarded() {
                             shellHomeSections = home?.portal?.home ?: emptyList(),
                             shellChat = home?.portal?.chat ?: com.kinfolk.portal.portal.PortalChat(),
                             shellBillingAccess = home?.billingAccess ?: true,
-                            shellUnreadNotifications = unreadNotifications,
+                            shellUnreadNotifications = com.kinfolk.portal.portal.bellCount(
+                                unreadBadgeModel.liveFor(resolvedKinfolkId),
+                                unreadNotifications,
+                            ),
                             onUnreadNotificationsChanged = { unreadNotifications = it },
+                            notificationsRevision = unreadBadgeModel.revision,
+                            onNotificationReadLocally = unreadBadge::markReadLocally,
+                            onNotificationReadRefused = unreadBadge::undoLocalRead,
                             onDismissBannerPerUser = { bannerId ->
                                 // Best-effort sync; never blocks the local hide.
                                 scope.launch {

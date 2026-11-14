@@ -1537,8 +1537,11 @@ class FirestoreClient {
         val payload = recordPaymentPayload(entry, scopedKinfolkId, idempotencyKey)
         return when (val r = platformInvokeCallable("recordPayment", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message)
+            // #2315: an answer that cannot be read is not "the payment was not
+            // recorded". The call went through, and the decoder's own text is
+            // shown nowhere.
             is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeRecordPaymentOutcome(r.value)) }
-                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+                .getOrElse { WriteResult.Err(PAYMENT_ANSWER_UNREADABLE_MESSAGE) }
         }
     }
 

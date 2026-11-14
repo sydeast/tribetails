@@ -11,6 +11,7 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { householdNoteOf, markReadInPages, notificationTarget, notificationWhen } from '../lib/notificationsList';
 import { myHomeKey } from '../lib/portalQueryKeys';
+import { markReadLocally, undoLocalRead } from '../lib/unreadBadge';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
@@ -30,15 +31,16 @@ const PAGE_SIZE = 50;
  * were, under the avatar menu.
  *
  * Reads `listMyNotifications`, newest first, a page at a time. A tap marks the
- * row read optimistically (the row and the bell count change at once, the
- * server is told, and `getMyHome` is re-read afterwards so the badge carries
- * the server's number), then opens the thing the row is about: a visit, an
+ * row read optimistically (the row and the bell count change at once and the
+ * server is told; the bell's live count, lib/unreadBadge.ts, then carries the
+ * server's number), then opens the thing the row is about: a visit, an
  * invoice, a tale (or KinTales), a Kin (or the Kin list), Tribe, Messages, or
  * Schedule for a row about a whole booking request. A row
  * about nothing openable is only marked read.
  *
- * The list is fetched when this screen opens and never from the nav: the bell
- * badge rides `getMyHome.unreadNotifications`, which PortalNav already holds.
+ * The list is fetched when this screen opens, and again whenever the bell's
+ * listener sees a row arrive or change (#1833), so the rows and the count
+ * move together. The nav never fetches it.
  */
 export function NotificationsList() {
   const kinfolkId = getActiveKinfolkId();
@@ -76,14 +78,17 @@ export function NotificationsList() {
       queryClient.setQueryData<InfiniteData<ListMyNotificationsResult>>(queryKey, (old) =>
         old ? markReadInPages(old, item.id, readAt) : old,
       );
-      // The bell follows at once; the server's own count replaces the guess
-      // once the mark has landed (or failed, in which case the row comes back
-      // unread on the next load and that is the truth).
+      // The bell follows at once (#1833): the row stops counting here, ahead
+      // of the server, and the live count takes over when the read comes back.
+      // A refused read puts the row back on the bell, which is the truth.
+      markReadLocally(item.id);
+      // The count `getMyHome` loaded with is what the bell shows before its
+      // first live snapshot, so it is kept in step too.
       queryClient.setQueryData<GetMyHomeResult>(myHomeKey(kinfolkId), (old) =>
         old ? { ...old, unreadNotifications: Math.max(0, (old.unreadNotifications ?? 0) - 1) } : old,
       );
       void markNotificationRead(item.id)
-        .catch(() => undefined)
+        .catch(() => undoLocalRead(item.id))
         .then(() => queryClient.invalidateQueries({ queryKey: myHomeKey(kinfolkId) }));
     }
     const target = notificationTarget(item);
