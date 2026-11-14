@@ -74,8 +74,8 @@ import com.tribetails.auntieos.web.screens.isNewKinfolk
 import com.tribetails.auntieos.web.screens.lastVisitByKinfolk
 import com.tribetails.auntieos.web.util.SortOption
 import com.tribetails.auntieos.web.util.householdLabel
-import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.util.sortedByOption
+import com.tribetails.auntieos.web.util.businessTodayIso
 
 /**
  * Sub-routes inside the Directory tab. The top-level [DirectoryScreen] keeps
@@ -288,7 +288,7 @@ private fun DirectoryListScreen(
     val kintaleCountByKf: Map<String, Int> = remember(reports) {
         reports.groupingBy { it.kinfolkId }.eachCount()
     }
-    val todayIso = remember { nowIso() }
+    val todayIso = remember { businessTodayIso() }
 
     // Tab counts shown in the segmented picker pills (mockup .ct micro-counts).
     val kinfolkCount = (uiState.allKinfolk as? FirestoreResult.Data)?.value?.size

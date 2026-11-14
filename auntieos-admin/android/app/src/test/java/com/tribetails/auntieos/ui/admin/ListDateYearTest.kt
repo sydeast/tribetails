@@ -54,8 +54,18 @@ class ListDateYearTest {
     fun inboxAndVisitRowsNameTheYearOutsideThisOne() {
         assertEquals("Jul 2 · 14:02", com.tribetails.auntieos.ui.inbox.shortDateTime("2026-07-02T14:02:00Z", 2026))
         assertEquals("Jul 2, 2025 · 14:02", com.tribetails.auntieos.ui.inbox.shortDateTime("2025-07-02T14:02:00Z", 2026))
-        assertEquals("Jul 2, 2025 · 14:02", shortIso("2025-07-02T14:02:00Z", 2026))
+        assertEquals("Jul 2, 2025 · 14:02", shortIso("2025-07-02T14:02:00Z", 2026, java.time.ZoneOffset.UTC))
         assertEquals("soon", shortIso("soon", 2026))
+    }
+
+    @Test
+    fun visitDetailTimesReadOnTheBusinessClock() {
+        // #2095: 11:30 PM Chicago on Nov 11 is 05:30 UTC on Nov 12.
+        val chicago = java.time.ZoneId.of("America/Chicago")
+        assertEquals("Nov 11 · 23:30", shortIso("2026-11-12T05:30:00.000Z", 2026, chicago))
+        assertEquals("Nov 11 · 23:30", shortIso("2026-11-11T23:30:00", 2026, chicago))
+        // The night clocks go back: 23:30 CST Nov 1 is 05:30 UTC Nov 2.
+        assertEquals("Nov 1 · 23:30", shortIso("2026-11-02T05:30:00Z", 2026, chicago))
     }
     @Test
     fun activityDayHeadingsNameTheYearOnlyForAnotherYear() {

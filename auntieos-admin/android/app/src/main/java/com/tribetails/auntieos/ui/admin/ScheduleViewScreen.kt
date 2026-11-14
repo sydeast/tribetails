@@ -161,6 +161,15 @@ internal fun groupBookingsByStatus(rows: List<EnhancedBooking>): List<BookingSec
 internal fun List<BookingSection>.section(key: BookingSectionKey): BookingSection =
     first { it.key == key }
 
+/**
+ * #1868: the bookings the month grid and the week strip mark a day with. A
+ * cancelled one (`REJECTED`) no longer holds the day, so it neither adds a dot
+ * nor counts toward a cell's "+N"; the day's agenda still lists it, faded.
+ * Pure; tested in `BookingSectionsTest`.
+ */
+internal fun liveGridBookings(rows: List<EnhancedBooking>): List<EnhancedBooking> =
+    rows.filter { it.status != BookingStatus.REJECTED }
+
 enum class CalendarViewType(val displayName: String) {
     DAY("Day"),
     WEEK("Week"),
@@ -774,7 +783,7 @@ private fun ScheduleViewScreenContent(
                     if (state.viewMode == CalendarViewMode.MONTH) {
                         EnhancedMonthView(
                             currentDate     = state.selectedDate,
-                            bookings        = filteredBookings,
+                            bookings        = liveGridBookings(filteredBookings),
                             timeSlots       = state.timeSlots,
                             catalog         = serviceCatalog,
                             onBookingClick  = { viewModel.selectBooking(it) },
@@ -795,7 +804,7 @@ private fun ScheduleViewScreenContent(
                             days         = weekDays,
                             selectedDate = state.selectedDate,
                             hasItems     = { day ->
-                                filteredBookings.any { booking ->
+                                liveGridBookings(filteredBookings).any { booking ->
                                     parseIsoDateTimeOrNull(booking.startDateTime)?.toLocalDate() == day
                                 }
                             },
@@ -1729,7 +1738,7 @@ private fun BookingSectionCard(
                         color = if (hasName) c.textPrimary else c.textFaint,
                     )
                     Text(
-                        text = "${booking.baseServiceTitle.takeIf { it.isNotBlank() }?.let { catalog.nameOf(it) } ?: booking.title.ifBlank { "Visit" }} · ${bookingDateLabel(booking)}" +
+                        text = "${booking.baseServiceTitle.takeIf { it.isNotBlank() }?.let { catalog.nameOf(it) } ?: booking.title.ifBlank { "Visit" }} · ${bookingDateLabel(booking, LocalBusinessZone.current)}" +
                             (timeBlockLabel?.let { " · $it block" } ?: ""),
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
@@ -1870,9 +1879,10 @@ private fun bookingStatusBadge(booking: EnhancedBooking, zone: ZoneId): String =
 }
 
 /** Human date for a booking row, mirroring the web bookingDateLabel fallback chain. */
-private fun bookingDateLabel(booking: EnhancedBooking): String {
+private fun bookingDateLabel(booking: EnhancedBooking, zone: ZoneId): String {
     val raw = booking.startDateTime.ifBlank { booking.endDateTime }
-    return raw.take(10).ifBlank { "Date pending" }
+    // #2095: the business day, not an instant's UTC day.
+    return com.tribetails.auntieos.domain.storedBusinessDay(raw, zone).ifBlank { "Date pending" }
 }
 
 @Suppress("unused")
@@ -2827,9 +2837,13 @@ fun BookingDetailsDialog(
     var confirmComplete    by remember(booking.id) { mutableStateOf(false) }
     var archiveReason      by remember { mutableStateOf("") }
     // Reschedule prefill from the current start (wires Stage-1 rescheduleBooking, §A.9).
-    var reDate by remember(booking.id) { mutableStateOf(booking.startDateTime.take(10)) }
+    // #2095: on the business clock, so an unchanged save never moves the visit.
+    val prefillZone = LocalBusinessZone.current
+    var reDate by remember(booking.id) {
+        mutableStateOf(com.tribetails.auntieos.ui.admin.scheduling.rescheduleDatePrefill(booking.startDateTime, prefillZone))
+    }
     var reTime by remember(booking.id) {
-        mutableStateOf(if (booking.startDateTime.length >= 16 && booking.startDateTime[10] == 'T') booking.startDateTime.substring(11, 16) else "")
+        mutableStateOf(com.tribetails.auntieos.ui.admin.scheduling.rescheduleTimePrefill(booking.startDateTime, prefillZone))
     }
 
     // #1158: the zone-less start is the business's wall clock, not the phone's.

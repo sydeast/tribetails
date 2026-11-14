@@ -139,6 +139,23 @@ describe('nextUpcomingSession', () => {
     expect(nextUpcomingSession([sess({ startTime: '' })], now)).toBeNull();
     expect(nextUpcomingSession([sess({ startTime: '2026-07-18T09:00:00.000Z' })], now)).toBeNull();
   });
+
+  it('#2095 compares moments across both stored shapes, a zone-less start on the business clock', () => {
+    // 08:30 Chicago on Nov 13 is 14:30 UTC.
+    const nowNov = '2026-11-13T14:30:00.000Z';
+    const zone = 'America/Chicago';
+    const rows = [
+      // 10 AM Chicago as an instant: ahead.
+      sess({ _id: 'instant-10am', startTime: '2026-11-13T16:00:00.000Z' }),
+      // 9 AM Chicago, zone-less: ahead and sooner, though "09" sorts before "14" as text.
+      sess({ _id: 'wall-9am', startTime: '2026-11-13T09:00:00' }),
+      // 8 AM Chicago, zone-less: already started.
+      sess({ _id: 'wall-8am', startTime: '2026-11-13T08:00:00' }),
+    ];
+    expect(nextUpcomingSession(rows, nowNov, zone)?._id).toBe('wall-9am');
+    expect(nextUpcomingSession([sess({ startTime: '2026-11-13T08:00:00' })], nowNov, zone)).toBeNull();
+    expect(nextUpcomingSession(rows, 'soon', zone)).toBeNull();
+  });
 });
 
 describe('safeboxAccessLines', () => {

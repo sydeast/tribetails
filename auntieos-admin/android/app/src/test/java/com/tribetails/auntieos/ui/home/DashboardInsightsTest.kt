@@ -90,6 +90,26 @@ class DashboardInsightsTest {
         assertEquals(listOf("s1"), overdueVisits(sessions, now).map { it.sessionId })
     }
 
+    // #2095: a visit stored as a UTC instant beside "now" as a wall clock.
+    @Test
+    fun overdue_compares_instants_across_the_two_stored_shapes() {
+        val zone = java.time.ZoneId.of("America/Chicago")
+        // 10:30 PM Nov 11 in Chicago, as the business wall clock.
+        val now = "2026-11-11T22:30:00"
+        val sessions = listOf(
+            // Ended 10:00 PM Chicago, stored as 04:00 UTC Nov 12: overdue.
+            KinCareSession(id = "late", kinfolkName = "the Wrens", startTime = "2026-11-12T03:30:00Z",
+                endTime = "2026-11-12T04:00:00Z", status = "ARRIVED"),
+            // Ends 11:30 PM Chicago (05:30 UTC Nov 12): not yet.
+            KinCareSession(id = "later", kinfolkName = "the Rowans", startTime = "2026-11-12T05:00:00Z",
+                endTime = "2026-11-12T05:30:00Z", status = "SCHEDULED"),
+        )
+        assertEquals(listOf("late"), overdueVisits(sessions, now, zone = zone).map { it.sessionId })
+        // The same moment given as a UTC instant agrees.
+        assertEquals(listOf("late"), overdueVisits(sessions, "2026-11-12T04:30:00Z", zone = zone).map { it.sessionId })
+        // Home hands it `Instant.now().toString()`, fractional seconds and all.
+        assertEquals(listOf("late"), overdueVisits(sessions, "2026-11-12T04:30:00.123456Z", zone = zone).map { it.sessionId })
+    }
     // ── Pets by type ────────────────────────────────────────────────────────
 
     @Test
@@ -234,6 +254,26 @@ class DashboardInsightsTest {
         assertEquals("real", nextUpcomingSession(sessions, "2026-07-19T12:00:00Z")?.kinfolkId)
     }
 
+    @Test
+    fun `an evening visit counts in its own business week (#2095)`() {
+        val chicago = java.time.ZoneId.of("America/Chicago")
+        // Sunday Nov 15 2026 at 11:30 PM Chicago is 05:30 UTC on Monday Nov 16,
+        // the next week by its UTC day.
+        val sessions = listOf(visit("2026-11-16T05:30:00Z", kinId = "late"))
+        assertEquals(1, weeklyCapacity(sessions, "2026-11-12", chicago)?.booked)
+        assertEquals(0, weeklyCapacity(sessions, "2026-11-17", chicago)?.booked)
+    }
+    @Test
+    fun `next upcoming compares a wall-clock start as the instant it is (#2095)`() {
+        val chicago = java.time.ZoneId.of("America/Chicago")
+        val sessions = listOf(
+            // 11:30 PM Chicago on Nov 11, stored as the business wall clock.
+            visit("2026-11-11T23:30:00", kinId = "late"),
+            // 9:00 PM Chicago on Nov 11, stored as an instant (03:00 UTC Nov 12).
+            visit("2026-11-12T03:00:00Z", kinId = "evening"),
+        )
+        assertEquals("evening", nextUpcomingSession(sessions, "2026-11-12T01:00:00Z", chicago)?.kinfolkId)
+    }
     @Test
     fun `next upcoming is null when nothing is coming up`() {
         assertNull(nextUpcomingSession(listOf(visit("2026-07-18T09:00:00Z")), "2026-07-19T12:00:00Z"))

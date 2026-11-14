@@ -32,6 +32,7 @@ import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { archiveDefaultRange, archiveFetchBounds, archiveRows, groupArchiveByBusinessDay } from '../lib/sessionArchive';
 import { businessTodayIso } from '../lib/businessZoneTime';
 import { useBusinessZone } from '../lib/useBusinessZone';
+import { ClockStepWarningLine } from '../components/ClockStepWarningLine';
 import { useVisitNoticeReach } from '../lib/useVisitNoticeReach';
 import { actionNotifiesHousehold, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
 import { completeRefusal } from '../lib/completeRule';
@@ -547,6 +548,8 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   // Firestore now, and it decides legality, no-op and notification routing from
   // this row rather than reading the document back first.
   const clock = useVisitLifecycle(entry, household, onWritten, auntie);
+  // #2039: a tap that does not fit the booking says so in the confirm.
+  const businessZone = useBusinessZone();
   // #1840: the confirm's household line, from the server's answer (a member
   // login to send to, and the switch), asked when the confirm opens.
   const reach = useVisitNoticeReach(
@@ -824,6 +827,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
               household, and a mis-tap on a dense board is easier than one on a
               sheet with a single action row. */}
           <p>{clock.pending.confirmBody(household)}</p>
+          <ClockStepWarningLine action={clock.pending.action} session={entry} businessZone={businessZone} />
           {/* #1794, #1840: promises a notice only when the server says one can
               be sent, and otherwise says why not. Says it is checking while
               that answer is on its way. */}

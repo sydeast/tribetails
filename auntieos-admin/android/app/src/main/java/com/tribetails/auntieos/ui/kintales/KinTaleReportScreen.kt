@@ -1247,7 +1247,10 @@ private fun RecipientsPanel(state: KinTaleUiState) {
 private fun VisitMetaPanel(state: KinTaleUiState) {
     val catalog = rememberServiceCatalog()
     val session = state.session ?: return
-    val visitDate = session.startTime.take(10)
+    // #2095: the visit's business day and clock, not the stored instant's UTC
+    // characters (an 11:30 PM Chicago arrival printed as 05:30 the next day).
+    val visitZone = com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current
+    val visitDate = com.tribetails.auntieos.domain.storedBusinessDay(session.startTime, visitZone)
     DenPanel(
         title = "Visit",
         // #1592: the KinCare's name, never the stored `visit_60`.
@@ -1259,16 +1262,23 @@ private fun VisitMetaPanel(state: KinTaleUiState) {
                 AuntieKeyValueRow(label = "Visit date", value = visitDate, valueMono = true)
             }
             if (!session.arrivedAt.isNullOrBlank()) {
-                AuntieKeyValueRow(label = "Arrived", value = session.arrivedAt.orEmpty(), valueMono = true)
+                AuntieKeyValueRow(label = "Arrived", value = businessStamp(session.arrivedAt, visitZone), valueMono = true)
             }
             AuntieKeyValueRow(
                 label = "Departed",
-                value = session.departedAt?.takeIf { it.isNotBlank() } ?: "-",
+                value = session.departedAt?.takeIf { it.isNotBlank() }?.let { businessStamp(it, visitZone) } ?: "-",
                 valueMono = true,
                 showDivider = false,
             )
         }
     }
+}
+
+/** "2026-11-11 23:30" on the business clock, or the stored text when it does not read. */
+internal fun businessStamp(raw: String?, zone: java.time.ZoneId): String {
+    val day = com.tribetails.auntieos.domain.storedBusinessDay(raw, zone)
+    val clock = com.tribetails.auntieos.domain.storedBusinessClock(raw, zone)
+    return if (day.isEmpty() || clock.isEmpty()) raw.orEmpty() else "$day $clock"
 }
 
 /**

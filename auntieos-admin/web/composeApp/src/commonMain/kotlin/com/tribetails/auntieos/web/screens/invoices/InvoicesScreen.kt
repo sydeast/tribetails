@@ -70,8 +70,8 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatCard
 import com.tribetails.auntieos.web.ui.components.color
-import com.tribetails.auntieos.web.util.nowIso
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.util.businessTodayIso
 
 /**
  * Den invoices view ("The Den · Invoices"). Editorial heading, a three-card stat
@@ -134,7 +134,7 @@ fun InvoicesScreen(
 
     // Today as a YYYY-MM-DD prefix; lexical compare on that fixed shape is
     // chronological. Computed once per composition from the platform clock.
-    val todayIso = remember { nowIso().take(10) }
+    val todayIso = remember { businessTodayIso() }
 
     var filter by remember { mutableStateOf(InvoiceFilter.All) }
     var query  by remember { mutableStateOf("") }

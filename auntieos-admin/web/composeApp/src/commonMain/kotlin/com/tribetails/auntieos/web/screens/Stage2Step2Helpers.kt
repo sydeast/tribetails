@@ -29,13 +29,17 @@ import com.tribetails.auntieos.web.screens.invoices.isoDatePrefixOrNull
  * no parseable date are skipped (never fabricate an ordering). The latest date
  * per kinfolk wins via lexical comparison on the fixed YYYY-MM-DD form.
  */
-fun lastVisitByKinfolk(sessions: List<KinCareSession>): Map<String, String> {
+fun lastVisitByKinfolk(
+    sessions: List<KinCareSession>,
+    zone: kotlinx.datetime.TimeZone = com.tribetails.auntieos.web.util.businessTimeZone(),
+): Map<String, String> {
     val out = HashMap<String, String>()
     for (s in sessions) {
         if (s.status.uppercase() != "COMPLETED") continue
         if (s.kinfolkId.isBlank()) continue
         val stamp = s.completedAt.ifBlank { s.startTime }
-        val date = isoDatePrefixOrNull(stamp) ?: continue
+        // #2095: the business day, not the UTC date of an instant.
+        val date = isoDatePrefixOrNull(com.tribetails.auntieos.web.screens.sessions.businessDayOf(stamp, zone)) ?: continue
         val prev = out[s.kinfolkId]
         if (prev == null || date > prev) out[s.kinfolkId] = date
     }
@@ -187,11 +191,21 @@ fun rescheduleArgsForDrop(
 }
 
 /** Original visit duration in minutes: explicit field, else start->end span, else 30. */
-internal fun resolveDurationMinutes(session: KinCareSession): Int {
+@OptIn(kotlin.time.ExperimentalTime::class)
+internal fun resolveDurationMinutes(
+    session: KinCareSession,
+    zone: kotlinx.datetime.TimeZone = com.tribetails.auntieos.web.util.businessTimeZone(),
+): Int {
     if (session.serviceDurationMinutes > 0) return session.serviceDurationMinutes
-    val startM = isoMinuteOfDayOrNull(session.startTime)
-    val endM = isoMinuteOfDayOrNull(session.endTime)
-    if (startM != null && endM != null && endM > startM) return endM - startM
+    // #2095: the span between the two moments, in either stored shape. Reading
+    // hours and minutes off the text made a visit that crossed midnight (UTC
+    // midnight is 6 PM in Chicago in winter) look negative, and it fell to 30.
+    val start = com.tribetails.auntieos.web.screens.sessions.businessInstantOf(session.startTime, zone)
+    val end = com.tribetails.auntieos.web.screens.sessions.businessInstantOf(session.endTime, zone)
+    if (start != null && end != null) {
+        val minutes = (end - start).inWholeMinutes
+        if (minutes in 1..1439) return minutes.toInt()
+    }
     return 30
 }
 
@@ -199,15 +213,6 @@ private fun hhmm(minuteOfDay: Int): String {
     val h = (minuteOfDay / 60).coerceIn(0, 23)
     val m = (minuteOfDay % 60).coerceIn(0, 59)
     return "${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}"
-}
-
-/** Positional minutes-of-day from an ISO "...THH:MM..." string, or null. */
-private fun isoMinuteOfDayOrNull(iso: String): Int? {
-    if (iso.length < 16 || iso[10] != 'T') return null
-    val hour = iso.substring(11, 13).toIntOrNull() ?: return null
-    val minute = iso.substring(14, 16).toIntOrNull() ?: return null
-    if (hour !in 0..23 || minute !in 0..59) return null
-    return hour * 60 + minute
 }
 
 /**

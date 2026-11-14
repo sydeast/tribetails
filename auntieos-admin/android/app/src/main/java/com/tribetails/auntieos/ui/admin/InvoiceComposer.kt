@@ -78,8 +78,13 @@ private val MONTHS = listOf(
  * this year. Falls back to the raw text rather than blanking it, because an
  * unreadable date on a visit is worth seeing.
  */
-fun visitDayLabel(raw: String, todayIso: String): String {
-    val iso = raw.trim().take(10)
+fun visitDayLabel(
+    raw: String,
+    todayIso: String,
+    /** #2095: a stored instant is placed on its business day, never its UTC one. */
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+): String {
+    val iso = com.tribetails.auntieos.domain.storedBusinessDay(raw, zone)
     if (!Regex("""^\d{4}-\d{2}-\d{2}$""").matches(iso)) return raw.trim()
     val month = iso.substring(5, 7).toIntOrNull() ?: return raw.trim()
     val name = MONTHS.getOrNull(month - 1) ?: return raw.trim()
@@ -96,9 +101,11 @@ fun visitDayLabel(raw: String, todayIso: String): String {
 fun visitLineDescription(
     session: ListUninvoicedSessionsResultSession,
     catalog: ServiceCatalog = ServiceCatalog(),
+    /** #2095: the day is the business's, never the stored instant's UTC day. */
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
 ): String {
     val label = catalog.nameOf(session.serviceType)
-    val day = session.startTime.take(10)
+    val day = com.tribetails.auntieos.domain.storedBusinessDay(session.startTime, zone)
     return if (day.isBlank()) label else "$label, $day"
 }
 
@@ -145,11 +152,13 @@ fun buildBoundLines(
     prices: Map<String, String>,
     /** #1744: what names each line's service; the household reads this text. */
     catalog: ServiceCatalog = ServiceCatalog(),
+    /** #2095: the business clock each line's day is read on. */
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
 ): BoundLinesOutcome {
     val lines = mutableListOf<InvoiceLineItem>()
     for (s in sessions) {
         if (s.sessionId !in selected) continue
-        val description = visitLineDescription(s, catalog)
+        val description = visitLineDescription(s, catalog, zone)
         var unitCents = s.unitCents
         if (unitCents == null) {
             val typed = (prices[s.sessionId] ?: "").trim()
@@ -335,8 +344,9 @@ fun composerMoney(
     drafts: List<ComposerDraftLine>,
     invoiceDiscountText: String,
     catalog: ServiceCatalog = ServiceCatalog(),
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
 ): ComposerMoney {
-    val bound = buildBoundLines(sessions, selected, prices, catalog)
+    val bound = buildBoundLines(sessions, selected, prices, catalog, zone)
     if (bound.error != null) return ComposerMoney(null, 0L, 0L, bound.error)
 
     val typed = parseDraftLines(drafts, invoiceDiscountText)

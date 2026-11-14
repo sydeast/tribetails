@@ -6,6 +6,13 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { ADDRESS_FIELDS, mapboxForwardGeocode } from '../lib/householdLocation';
+import {
+  businessClockOfStoredStart,
+  businessDayOfStoredStart,
+  businessTimeZone,
+  storedStartBoundsForBusinessDays,
+} from '../lib/bookingTimeBlocks';
+import { FALLBACK_BUSINESS_TIME_ZONE } from '../lib/businessHours';
 
 /**
  * AO-35 Route Optimizer (dashboard widget). Given a day (YYYY-MM-DD) it gathers
@@ -65,12 +72,14 @@ export interface OptimizeRouteResult {
 // Pure helpers (unit-tested without Firestore or Mapbox)
 // ---------------------------------------------------------------------------
 
-/** Minutes-of-day for an ISO instant, or null when unparseable. */
-export function startMinutesFromIso(iso: string): number | null {
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return null;
-  const d = new Date(ms);
-  return d.getHours() * 60 + d.getMinutes();
+/**
+ * Minutes-of-day on the BUSINESS clock for a stored start, or null when
+ * unparseable. #2094: this read `getHours()`, the server's own clock, which is
+ * UTC in production, so a 9 AM Chicago visit stored as an instant sorted and
+ * timed as 3 PM. A zone-less wall clock is already business time.
+ */
+export function startMinutesFromIso(iso: string, timeZone: string = FALLBACK_BUSINESS_TIME_ZONE): number | null {
+  return businessClockOfStoredStart(iso, timeZone)?.minutes ?? null;
 }
 
 /** Total minutes-of-day -> "HH:MM" (wraps at 24h, clamps negatives to 0). */
@@ -105,11 +114,6 @@ function isCancelled(status: unknown): boolean {
   return s === 'cancelled' || s === 'canceled';
 }
 
-function nextDay(dateIso: string): string {
-  const d = new Date(`${dateIso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString().slice(0, 10);
-}
 
 // ---------------------------------------------------------------------------
 // Mapbox seams (real fetch; mocked in tests via vi.stubGlobal('fetch', ...))
@@ -218,18 +222,25 @@ export async function optimizeRouteHandler(
   const token = (process.env[MAPBOX_ACCESS_TOKEN] ?? '').trim();
   if (!token) throw new HttpsError('failed-precondition', 'mapbox_not_configured');
 
-  // That day's sessions: lexical range on the ISO startTime string captures the
-  // whole calendar day; cancellation is filtered in-memory (Firestore has no !=).
+  // #2094: the BUSINESS day, start to end. A lexical range on the picked day
+  // cut it at UTC midnight (6 or 7 PM Chicago), leaving the evening off and
+  // pulling the previous evening in. The read is a day wider on each side and
+  // each row is kept by where its start falls on the business clock, in either
+  // stored shape. Cancellation is filtered in memory (Firestore has no !=).
+  const settingsSnap = await db().collection('business_settings').doc('business_settings').get();
+  const timeZone = businessTimeZone(settingsSnap.data());
+  const bounds = storedStartBoundsForBusinessDays(args.date, args.date);
   const snap = await db()
     .collection(SESSIONS_COLLECTION)
-    .where('startTime', '>=', args.date)
-    .where('startTime', '<', nextDay(args.date))
+    .where('startTime', '>=', bounds.from)
+    .where('startTime', '<', bounds.toExclusive)
     .get();
 
   const sessions: DaySession[] = [];
   for (const d of snap.docs) {
     const data = d.data() as Record<string, unknown>;
     if (isCancelled(data.status)) continue;
+    if (businessDayOfStoredStart(data.startTime, timeZone) !== args.date) continue;
     const kinfolkId = typeof data.kinfolkId === 'string' ? data.kinfolkId : '';
     const { household, address } = await resolveHousehold(kinfolkId);
     sessions.push({
@@ -237,7 +248,7 @@ export async function optimizeRouteHandler(
       kinfolkId,
       household,
       address,
-      startMinutes: startMinutesFromIso(typeof data.startTime === 'string' ? data.startTime : ''),
+      startMinutes: startMinutesFromIso(typeof data.startTime === 'string' ? data.startTime : '', timeZone),
     });
   }
 

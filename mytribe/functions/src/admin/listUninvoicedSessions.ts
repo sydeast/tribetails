@@ -14,6 +14,7 @@ import {
   sessionDoNotInvoiceReason,
 } from '../lib/sessionInvoicing';
 import { catalogServiceName, matchServiceKey, serviceNameCatalogFrom, type ServiceNameCatalog } from '../lib/serviceDisplayName';
+import { businessDayOfStoredStart, businessTimeZone, storedStartBoundsForBusinessDays } from '../lib/bookingTimeBlocks';
 
 /**
  * Completed visits that no invoice has claimed yet, priced from the rate card
@@ -111,7 +112,7 @@ export const Args = z
      * lets the date range be dropped.
      */
     kinfolkId: z.string().min(1).max(200).optional(),
-    /** Inclusive window start, `YYYY-MM-DD`. Compared lexically against the ISO `startTime`. */
+    /** Inclusive window start, a business day `YYYY-MM-DD` (#2094). */
     from: z.string().regex(DAY, 'from must be YYYY-MM-DD').optional(),
     /** Inclusive window end, `YYYY-MM-DD`. */
     to: z.string().regex(DAY, 'to must be YYYY-MM-DD').optional(),
@@ -227,13 +228,6 @@ export type UninvoicedSession = z.infer<typeof UninvoicedSessionSchema>;
 export type ExcludedSession = z.infer<typeof ExcludedSessionSchema>;
 export type ListUninvoicedSessionsResult = z.infer<typeof Result>;
 
-/** The day after `day` (`YYYY-MM-DD`), so an inclusive `to` becomes an exclusive bound. */
-function nextDay(day: string): string {
-  const d = new Date(`${day}T00:00:00.000Z`);
-  d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString().slice(0, 10);
-}
-
 /**
  * A rate-card entry as integer cents, or null when it cannot be trusted.
  *
@@ -299,14 +293,30 @@ export async function listUninvoicedSessionsHandler(
   // `(kinfolkId ASC, startTime DESC)` composite; with no household it is a
   // single-field order, which every collection has automatically. No status
   // predicate here on purpose (see the header).
+  //
+  // #2094: `from` and `to` are BUSINESS days. A lexical window on the bare days
+  // cut each at UTC midnight (6 or 7 PM Chicago): the last day's evening visits
+  // were left out and the evening before the first day came in. The window is
+  // read a day wider on each side and every row is then kept by the business
+  // day its start falls on (`inRange` below), for either stored shape. The
+  // query keeps its shape, so the same index serves it; `scanned` and
+  // `truncated` count the wider read.
+  const settingsSnap = await firestore.doc(SETTINGS_DOC).get();
+  const timeZone = businessTimeZone(settingsSnap.data());
   let query = firestore.collection(SESSIONS_COLLECTION) as FirebaseFirestore.Query;
   if (args.kinfolkId !== undefined) query = query.where('kinfolkId', '==', args.kinfolkId);
-  if (args.from !== undefined && args.to !== undefined) {
-    query = query.where('startTime', '>=', args.from).where('startTime', '<', nextDay(args.to));
+  const range = args.from !== undefined && args.to !== undefined ? { from: args.from, to: args.to } : null;
+  if (range !== null) {
+    const bounds = storedStartBoundsForBusinessDays(range.from, range.to);
+    query = query.where('startTime', '>=', bounds.from).where('startTime', '<', bounds.toExclusive);
   }
   const snap = await query.orderBy('startTime', 'desc').limit(MAX_SESSIONS).get();
+  const inRange = (startTime: unknown): boolean => {
+    if (range === null) return true;
+    const day = businessDayOfStoredStart(startTime, timeZone);
+    return day !== null && day >= range.from && day <= range.to;
+  };
 
-  const settingsSnap = await firestore.doc(SETTINGS_DOC).get();
   const rawRates = (settingsSnap.data() ?? {})['serviceRates'];
   const rateCardLoaded =
     typeof rawRates === 'object' && rawRates !== null && !Array.isArray(rawRates);
@@ -351,6 +361,7 @@ export async function listUninvoicedSessionsHandler(
 
   for (const d of snap.docs) {
     const data = d.data() as Record<string, unknown>;
+    if (!inRange(data['startTime'])) continue;
     if (!isSessionCompleted(data['status'])) continue;
     if (!isSessionUnclaimed(data['invoiceId'])) continue;
 

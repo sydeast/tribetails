@@ -20,6 +20,7 @@ fun householdVisitGaps(
     sessions: List<KinCareSession>,
     todayIso: String,
     limit: Int = 5,
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
 ): List<HouseholdGap> {
     val today = parseIsoDate(todayIso) ?: return emptyList()
     return sessions
@@ -29,7 +30,8 @@ fun householdVisitGaps(
             val name = group.firstOrNull { it.kinfolkName.isNotBlank() }?.kinfolkName
                 ?: return@mapNotNull null
             val lastDate = group
-                .mapNotNull { s -> parseIsoDate((s.completedAt.orEmpty().ifBlank { s.startTime }).take(10)) }
+                // #2095: the business day of the visit, not its stored UTC day.
+                .mapNotNull { s -> parseIsoDate(storedBusinessDay(s.completedAt.orEmpty().ifBlank { s.startTime }, zone)) }
                 .maxOrNull() ?: return@mapNotNull null
             val days = ChronoUnit.DAYS.between(lastDate, today).toInt()
             if (days < 0) null else HouseholdGap(name, days)

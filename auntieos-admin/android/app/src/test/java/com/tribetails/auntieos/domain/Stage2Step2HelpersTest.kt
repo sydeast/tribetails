@@ -43,6 +43,14 @@ class Stage2Step2HelpersTest {
         )
         assertEquals("2026-06-01", lastVisitByKinfolk(sessions)["k1"])
     }
+    @Test fun lastVisit_isTheBusinessDayOfAnEveningInstant() {
+        // #2095: 11:30 PM Chicago on Nov 11 is 05:30 UTC on Nov 12.
+        val chicago = java.time.ZoneId.of("America/Chicago")
+        val sessions = listOf(
+            KinCareSession(id = "s1", kinfolkId = "k1", status = "COMPLETED", completedAt = "2026-11-12T05:30:00.000Z"),
+        )
+        assertEquals("2026-11-11", lastVisitByKinfolk(sessions, chicago)["k1"])
+    }
 
     // ── directory.newBadge ────────────────────────────────────────────────────
 
@@ -179,6 +187,18 @@ class Stage2Step2HelpersTest {
         assertEquals("2026-06-10T10:45:00", args.endTime) // 45-min span preserved
     }
 
+    @Test fun rescheduleArgs_keepsTheLengthOfAVisitThatCrossesUtcMidnight() {
+        // #2095: 5:30 PM to 6:30 PM Chicago is 23:30Z to 00:30Z. Read off the
+        // text the end looked earlier than the start and the visit fell to 30.
+        val chicago = java.time.ZoneId.of("America/Chicago")
+        val s = KinCareSession(id = "s1", startTime = "2026-11-11T23:30:00Z", endTime = "2026-11-12T00:30:00Z")
+        assertEquals(60, resolveDurationMinutes(s, chicago))
+        val args = rescheduleArgsForDrop(s, "2026-11-13", dropMinuteOfDay = 17 * 60, snapMinutes = 15)!!
+        assertEquals("2026-11-13T18:00:00", args.endTime)
+        // A wall-clock window across the business's midnight keeps its length too.
+        val late = KinCareSession(id = "s2", startTime = "2026-11-11T23:30:00", endTime = "2026-11-12T00:15:00")
+        assertEquals(45, resolveDurationMinutes(late, chicago))
+    }
     @Test fun rescheduleArgs_failsLoudOnJunk() {
         assertEquals(null, rescheduleArgsForDrop(KinCareSession(id = ""), "2026-06-10", 600))
         assertEquals(null, rescheduleArgsForDrop(KinCareSession(id = "s1"), "2026-06-10", 1440))
