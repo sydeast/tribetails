@@ -480,7 +480,10 @@ describe('KinView: panels', () => {
   it('says what is missing rather than dropping a blank panel', async () => {
     mount();
     expect(await screen.findByText('No care notes for Willow yet.')).toBeInTheDocument();
-    expect(screen.getByText('No medical notes for Willow yet.')).toBeInTheDocument();
+    // The Medical panel reads the household's vet first (#1908), so its empty
+    // line lands a tick after the Kin does.
+    expect(await screen.findByText('No medical notes for Willow yet.')).toBeInTheDocument();
+    expect(screen.queryByText('Loading the vet…')).toBeNull();
     expect(screen.getByText('No notes yet.')).toBeInTheDocument();
     expect(screen.getByText('No 411 for Willow yet.')).toBeInTheDocument();
     expect(screen.getByText('No KinTales about Willow yet.')).toBeInTheDocument();
