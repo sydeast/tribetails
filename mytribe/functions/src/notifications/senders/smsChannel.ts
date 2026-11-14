@@ -3,7 +3,7 @@ import { db } from '../../lib/firestoreAdmin';
 import { getTwilio, getTwilioFromNumber } from '../../lib/twilio';
 import { describeProviderFailure } from '../../lib/providerFailure';
 import { redactRecipient } from '../../lib/suppressions';
-import { stripUnresolvedTokens } from '../templateParsers';
+import { kinForStoredTemplate, stripUnresolvedTokens } from '../templateParsers';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
 /**
@@ -71,7 +71,8 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
   }
 
   const body = stripUnresolvedTokens(
-    Handlebars.compile(tpl.text)({ ...data, recipientUid, notificationKey: def.key }),
+    // #2093: a template stored before the quote wording changed still reads whole.
+    Handlebars.compile(tpl.text)({ ...kinForStoredTemplate(data, [tpl.text]), recipientUid, notificationKey: def.key }),
   );
   const twilio = await getTwilio();
   let message: { sid: string };

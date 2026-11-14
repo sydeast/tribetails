@@ -115,6 +115,26 @@ class EmailBlockEditTest {
         assertTrue(hasBrokenMergeField("{{#if}}x{{/if}}"))
     }
 
+    @Test fun blockTagsMustPairUpBeforeSave() {
+        // Whole tags that do not pair would fail the send, so Save stays off.
+        assertTrue(hasBrokenMergeField("{{#if isQuote}}Your quote is ready"))
+        assertTrue(hasBrokenMergeField("Your quote is ready{{/if}}"))
+        assertTrue(hasBrokenMergeField("{{else}}Your invoice is ready"))
+        assertTrue(hasBrokenMergeField("{{#if a}}x{{else}}y{{else}}z{{/if}}"))
+        assertTrue(hasBrokenMergeField("{{#if a}}{{#each b}}x{{/if}}{{/each}}"))
+        assertTrue(hasBrokenMergeField("{{#if a}}x{{/unless}}"))
+        // Well formed, nested and repeated blocks save.
+        assertFalse(hasBrokenMergeField("{{#if a}}x{{/if}} and {{#unless b}}y{{else}}z{{/unless}}"))
+        assertFalse(hasBrokenMergeField("{{#if a}}{{#if b}}x{{else}}y{{/if}}{{/if}}"))
+        assertFalse(hasBrokenMergeField("You're all set{{#if kinName}} for {{kinName}}'s care{{/if}}."))
+        // The draft check uses it, so an unpaired subject keeps Save off.
+        val draft = VisualDraft(
+            subject = "{{#if isQuote}}Your quote is ready", headline = "Hi", blocks = emptyList(),
+            title = "t", description = "", category = "", tags = emptyList(),
+        )
+        assertEquals(DRAFT_BROKEN_MERGE_FIELD, visualDraftProblem(draft))
+    }
+
     @Test fun aButtonLabelChangesAndItsTargetDoesNot() {
         assertEquals(
             "<p><a href=\"{{link}}\" class=\"button\">Choose a new password</a></p>",

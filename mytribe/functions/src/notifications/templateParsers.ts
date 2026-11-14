@@ -55,3 +55,37 @@ export function parsePushTxt(raw: string): PushTxtParsed {
   }
   return { title, body };
 }
+
+/**
+ * #2093, UNTIL THE TEMPLATES ARE RE-IMPORTED. A quote with no Kin on it names
+ * no Kin, and the repo's templates say so with `{{#if kinName}}`. Prod sends
+ * the STORED templates, and the ones stored before this change put
+ * `{{kinName}}` in a sentence unguarded ("accepted the quote for {{kinName}}'s
+ * care"), which an empty name breaks ("for 's care"). So when a quote names no
+ * Kin, the enricher also keeps the household's roster under this field, the
+ * name those older templates were always given, and `kinForStoredTemplate`
+ * hands it only to a template that has no guard. The card never reads it.
+ */
+export const QUOTE_HOUSEHOLD_KIN_FIELD = 'quoteHouseholdKinNames';
+
+const KIN_TOKEN = /\{\{\{?\s*kinName\s*\}?\}\}/;
+const KIN_GUARD = /\{\{\s*#if\s+kinName\s*\}\}/;
+
+/**
+ * The context one stored template renders with (see QUOTE_HOUSEHOLD_KIN_FIELD).
+ * `texts` are that channel's template strings (subject, body, title...). A
+ * template that guards on `{{#if kinName}}` gets the context as it is; one that
+ * uses `{{kinName}}` with no guard gets the household's names, as before #2093.
+ * PURE.
+ */
+export function kinForStoredTemplate(
+  data: Record<string, unknown>,
+  texts: ReadonlyArray<string | null | undefined>,
+): Record<string, unknown> {
+  const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  const roster = text(data[QUOTE_HOUSEHOLD_KIN_FIELD]);
+  if (roster === '' || text(data.kinName) !== '') return data;
+  const all = texts.filter((t): t is string => typeof t === 'string');
+  if (!all.some((t) => KIN_TOKEN.test(t)) || all.some((t) => KIN_GUARD.test(t))) return data;
+  return { ...data, kinName: roster };
+}

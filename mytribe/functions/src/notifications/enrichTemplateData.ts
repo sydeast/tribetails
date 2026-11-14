@@ -1,4 +1,5 @@
 import { db } from '../lib/firestoreAdmin';
+import { QUOTE_HOUSEHOLD_KIN_FIELD } from './templateParsers';
 import { businessTokens, loadBusinessName } from '../lib/businessName';
 import { logEvent } from '../lib/logger';
 import { businessTimeZone, householdTimeContextFrom } from '../lib/bookingTimeBlocks';
@@ -838,7 +839,16 @@ export async function enrichTemplateData(
     let v = str(data.kinName) || joinNames(data.kinNames);
     // #2093: a quote's notice (its answer, or `invoice.new` sending it) names
     // the Kin on the quote, never the household's roster.
-    if (!v) v = isQuoteNotice(key, data) ? await loadQuoteKinNames() : await loadKinName();
+    if (!v && isQuoteNotice(key, data)) {
+      v = await loadQuoteKinNames();
+      if (!v) {
+        // Only for a stored template from before #2093 (QUOTE_HOUSEHOLD_KIN_FIELD).
+        const roster = await loadKinName();
+        if (roster !== '') ctx[QUOTE_HOUSEHOLD_KIN_FIELD] = roster;
+      }
+    } else if (!v) {
+      v = await loadKinName();
+    }
     fill('kinName', v);
   }
 

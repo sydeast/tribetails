@@ -712,22 +712,32 @@ async function writeOnce(
 }
 
 /**
- * #2093: the title stored on one copy of a notice. The household's copy reads
- * the catalog's `householdTitle` ("You accepted a quote"), the title its
- * Notification settings row already shows (#1372); every other copy keeps the
- * operator's `label` ("Kinfolk accepted a quote"). A `{business}` placeholder
- * is filled the way `getNotificationCatalog` fills it, and only a title that
- * carries one pays for the settings read.
+ * #2093: the title and the line under it stored on one copy of a notice. The
+ * household's copy reads the catalog's `householdTitle` ("A quote was
+ * accepted") and `householdDescription`, the words its Notification settings
+ * row already shows (#1372, #1359); every other copy keeps the operator's
+ * `label` ("Kinfolk accepted a quote") and `description`. A `{business}`
+ * placeholder is filled the way `getNotificationCatalog` fills it, and only
+ * copy that carries one pays for the settings read.
  */
+export async function noticeCopyFor(
+  def: Pick<NotificationDef, 'label' | 'description' | 'householdTitle' | 'householdDescription'>,
+  stream: AudienceStream,
+): Promise<{ title: string; description: string }> {
+  if (stream !== 'kinfolk') return { title: def.label, description: def.description };
+  const title = def.householdTitle?.trim() || def.label;
+  const description = def.householdDescription?.trim() || def.description;
+  if (!/\{business/i.test(title) && !/\{business/i.test(description)) return { title, description };
+  const name = await loadBusinessName('dispatcher');
+  return { title: fillBusinessPlaceholders(title, name), description: fillBusinessPlaceholders(description, name) };
+}
+
+/** The title half of {@link noticeCopyFor}. */
 export async function noticeTitleFor(
-  def: Pick<NotificationDef, 'label' | 'householdTitle'>,
+  def: Pick<NotificationDef, 'label' | 'householdTitle'> & Partial<Pick<NotificationDef, 'description' | 'householdDescription'>>,
   stream: AudienceStream,
 ): Promise<string> {
-  if (stream !== 'kinfolk') return def.label;
-  const title = def.householdTitle?.trim() ?? '';
-  if (title === '') return def.label;
-  if (!/\{business/i.test(title)) return title;
-  return fillBusinessPlaceholders(title, await loadBusinessName('dispatcher'));
+  return (await noticeCopyFor({ description: '', ...def }, stream)).title;
 }
 
 function hasAnyChannel(c: ResolvedChannels): boolean {
@@ -776,6 +786,8 @@ async function routeByDeliveryMode(
    * `NotificationDoc` because `createdAt` is a FieldValue sentinel here and a
    * Timestamp on read, which no single interface can honestly say.
    */
+  // #2093: the household's own copy is worded to its reader (#1372).
+  const copy = await noticeCopyFor(def, stream);
   const content = {
     key: def.key,
     category: def.category,
@@ -784,9 +796,8 @@ async function routeByDeliveryMode(
     // AO-28: human-renderable content on the entry itself (title + description
     // from the catalog def) + the resolved actor identity, so a client renders
     // "<title> — <actorName>" with an avatar instead of a bare key.
-    // #2093: the household's own copy is titled to its reader (#1372).
-    title: await noticeTitleFor(def, stream),
-    description: def.description,
+    title: copy.title,
+    description: copy.description,
     actorName: actor.actorName,
     actorPhotoUrl: actor.actorPhotoUrl,
     data: args.data,

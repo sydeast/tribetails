@@ -138,7 +138,7 @@ export interface NotificationDef {
    */
   householdDescription?: string;
   /**
-   * The row's title addressed to the household (#1372): "You accepted a quote",
+   * The row's title addressed to the household (#1372): "A quote was accepted",
    * not "Kinfolk accepted a quote". Sent beside `label`; the portal prefers it and
    * the admin matrix keeps `label`. Required for every `audiences.kinfolk` key
    * (notificationCatalogHouseholdCopy.test.ts).

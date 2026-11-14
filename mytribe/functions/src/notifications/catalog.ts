@@ -645,7 +645,9 @@ const CATALOG_LIST: NotificationDef[] = [
     secondaryResolver: 'businessAdmins',
     templates: { email: 'quote.accepted', push: 'quote.accepted' },
     description: 'Quote accepted confirmation.',
-    householdTitle: 'You accepted a quote',
+    // Not "You accepted a quote": the household copy goes to the billing
+    // recipient, who may be a different member from the one who accepted.
+    householdTitle: 'A quote was accepted',
     householdDescription: 'Confirmation that your household accepted a quote.',
   },
   {
