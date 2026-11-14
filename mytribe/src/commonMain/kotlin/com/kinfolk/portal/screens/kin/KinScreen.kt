@@ -83,6 +83,7 @@ fun KinScreen(
         controller.reload()
         controller.loadSchema()
         controller.loadBreeds()
+        controller.loadVets()
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -189,6 +190,10 @@ fun KinScreen(
             onClose = { addNew = false },
             onSubmit = { payload, photo -> controller.addAndReload(payload, (photo as? KinPhotoChange.Upload)?.image) },
             photoUploading = controller.photoUploading,
+            householdVet = controller.householdVet,
+            vetClinics = controller.vetClinics,
+            vetsLoading = !controller.vetsLoaded,
+            vetsError = controller.vetsError,
         )
     }
 }
@@ -211,6 +216,8 @@ fun KinAddEditScreen(
     // #1314: a delete reloads the roster before the dialog closes, and the Kin
     // is no longer in it. Keep the last resolved Kin so `initial` does not flip
     // to null (Add mode) for the instant before onClose.
+    // #1908 kin-vet: the vet line needs the household vet and the area list.
+    LaunchedEffect(controller) { if (!controller.vetsLoaded) controller.loadVets() }
     val found = kinId?.let { controller.find(it) }
     var pinned by remember(kinId) { mutableStateOf(found) }
     if (found != null) pinned = found
@@ -236,6 +243,10 @@ fun KinAddEditScreen(
             }
         },
         photoUploading = controller.photoUploading,
+        householdVet = controller.householdVet,
+        vetClinics = controller.vetClinics,
+        vetsLoading = !controller.vetsLoaded,
+        vetsError = controller.vetsError,
         onArchive = if (kinId != null) { restore -> controller.archiveAndReload(kinId, restore) } else null,
         removalOptions = if (kinId != null) { { controller.kinRemovalOptions(kinId) } } else null,
         onDelete = if (kinId != null) { { controller.deleteAndReload(kinId) } } else null,
@@ -262,6 +273,7 @@ fun KinDetailHost(
     // would be said about a Kin that is there: read it here, and wait visibly.
     LaunchedEffect(kinId) {
         if (controller.data == null) controller.reload()
+        if (!controller.vetsLoaded) controller.loadVets()
     }
     val data = controller.data
     val error = controller.error
@@ -301,6 +313,7 @@ fun KinDetailHost(
     KinDetailScreen(
         familyName = familyName,
         kin = kin,
+        vet = controller.vetFor(kin),
         onBack = onBack,
         onEdit = { onEdit(kin.id) },
     )

@@ -151,7 +151,7 @@ class KinClearFieldsTest {
             initial = stored, name = "Buddy", species = "Dog", breed = "Beagle", ageText = "2",
             feed = "1 cup", walk = "Twice", meds = "Apoquel", allergies = "", emergency = "Call Sam", sitter = "Shy",
         )
-        val facts = sharedFactsPayload(stored, sex = "Male", weight = "", markings = "Tri", fixed = true, vet = "Dr A")
+        val facts = sharedFactsPayload(stored, sex = "Male", weight = "", markings = "Tri", fixed = true)
         val sent = sentKin(care.copy(weight = facts.weight))
         assertEquals(JsonNull, sent["allergies"])
         assertEquals("", sent["weight"]!!.jsonPrimitive.content)

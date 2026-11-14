@@ -38,6 +38,9 @@ import com.kinfolk.portal.nav.avatarInitial
 import com.kinfolk.portal.nav.isWideShell
 import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.KinStatus
+import com.kinfolk.portal.portal.KinVet
+import com.kinfolk.portal.screens.tribe.clinicTitle
+import com.kinfolk.portal.util.formatPhone
 import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
@@ -47,7 +50,7 @@ import com.kinfolk.portal.theme.LocalKinfolkTypography
  * Kin profile, per ui-ideas/mytribe-kin-detail-2026-05-31.html: crumb row
  * (back + "Profile" + Edit), a hero card with the big round photo, then a
  * 1.6fr/1fr two-column body at the 880dp shell breakpoint (About + Care on the
- * left; Sitter Notes and Emergency Notes on the right). Narrow widths stack the
+ * left; Notes for your Auntie and Emergency Notes on the right). Narrow widths stack the
  * same cards in one column.
  *
  * #1311: this screen reads only. The mockup's Memorial card is gone by ruling;
@@ -61,6 +64,8 @@ fun KinDetailScreen(
     kin: Kin,
     onBack: () -> Unit,
     onEdit: () -> Unit = {},
+    /** #1908 kin-vet: the vet this Kin goes to ([com.kinfolk.portal.portal.resolveKinVet]), or null for none. */
+    vet: KinVet? = kin.vet,
 ) {
     val type = LocalKinfolkTypography.current
     val memorial = kin.status == KinStatus.NoLongerWithUs
@@ -114,11 +119,11 @@ fun KinDetailScreen(
 
             val mainColumn: @Composable () -> Unit = {
                 AboutCard(kin)
-                CareCard(kin)
+                CareCard(kin, vet)
             }
             val asideColumn: @Composable () -> Unit = {
                 NoteCard(
-                    sectLabel = "SITTER NOTES",
+                    sectLabel = "NOTES FOR YOUR AUNTIE",
                     title = "Good to know",
                     body = kin.sitterNotes,
                 )
@@ -221,15 +226,9 @@ private fun AboutCard(kin: Kin) {
 }
 
 @Composable
-private fun CareCard(kin: Kin) {
+private fun CareCard(kin: Kin, vet: KinVet?) {
     val type = LocalKinfolkTypography.current
-    val facts = listOfNotNull(
-        kin.feedingInstructions?.takeIf { it.isNotBlank() }?.let { "FEEDING" to it },
-        kin.walkingInstructions?.takeIf { it.isNotBlank() }?.let { "WALKING" to it },
-        kin.medications?.takeIf { it.isNotBlank() }?.let { "MEDICATIONS" to it },
-        kin.allergies?.takeIf { it.isNotBlank() }?.let { "ALLERGIES" to it },
-        kin.vetInfo?.takeIf { it.isNotBlank() }?.let { "VET" to it },
-    )
+    val facts = kinCareFacts(kin, vet)
     if (facts.isEmpty()) return
     GlassCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(KinfolkSpacing.l)) {
         Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
@@ -302,3 +301,31 @@ private fun EmergencyCard(notes: String?) {
         Text(notes, style = type.sansBody)
     }
 }
+/**
+ * The Care card's rows, in order. #1908: the care facts the household now
+ * fills sit with the rest. #1908 kin-vet: the vet is the clinic this Kin goes
+ * to (its own, or the household's, said so); the old free-text vet note is
+ * shown, labelled, only when no clinic resolves.
+ */
+internal fun kinCareFacts(kin: Kin, vet: KinVet?): List<Pair<String, String>> = listOfNotNull(
+    kin.feedingInstructions?.takeIf { it.isNotBlank() }?.let { "FEEDING" to it },
+    kin.feedingBrand?.takeIf { it.isNotBlank() }?.let { "FOOD / BRAND" to it },
+    kin.walkingInstructions?.takeIf { it.isNotBlank() }?.let { "WALKING" to it },
+    kin.routine?.takeIf { it.isNotBlank() }?.let { "ROUTINE" to it },
+    kin.staysAs?.takeIf { it.isNotBlank() }?.let { "STAYS AS" to it },
+    kin.trainingCommands?.takeIf { it.isNotBlank() }?.let { "TRAINING" to it },
+    kin.medications?.takeIf { it.isNotBlank() }?.let { "MEDICATIONS / HEALTH NOTES" to it },
+    kin.allergies?.takeIf { it.isNotBlank() }?.let { "ALLERGIES" to it },
+    kin.vaccinations?.takeIf { it.isNotBlank() }?.let { "VACCINATIONS" to it },
+    when {
+        vet != null -> "VET" to kinVetLine(vet)
+        !kin.vetInfo.isNullOrBlank() -> "VET NOTES" to kin.vetInfo
+        else -> null
+    },
+)
+/** "Cedar Animal Care · (805) 555-0142 · from your Tribe Profile". */
+internal fun kinVetLine(vet: KinVet): String = listOf(
+    clinicTitle(vet.clinic.name, vet.clinic.isEmergency),
+    formatPhone(vet.clinic.phone),
+    if (vet.fromHousehold) "from your Tribe Profile" else "",
+).filter { it.isNotBlank() }.joinToString(" · ")
