@@ -143,7 +143,7 @@ class EmailContentRoundTripTest {
             .map { File(it, "content.html") }
             .filter { it.isFile }
             .sortedBy { it.parentFile.name }
-        assertEquals(57, files.size)
+        assertEquals(58, files.size) // 58 since #1874 (message.reply)
         val loopSeeds = mutableListOf<String>()
         for (file in files) {
             val html = file.readText(Charsets.UTF_8)
