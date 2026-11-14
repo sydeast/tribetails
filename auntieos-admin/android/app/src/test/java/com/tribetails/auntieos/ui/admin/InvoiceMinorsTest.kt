@@ -20,6 +20,8 @@ class InvoiceMinorsTest {
             Invoice(id = "paid", status = "paid", total = 15.0),
             Invoice(id = "draft", status = "draft", total = 25.0),
             Invoice(id = "quote", status = "quote", total = 90.0),
+            // #2088: a withdrawn quote.
+            Invoice(id = "withdrawn", status = "cancelled", total = 70.0),
         )
         assertEquals(55.0, invoiceBilledTotal(invoices), 0.0001)
     }

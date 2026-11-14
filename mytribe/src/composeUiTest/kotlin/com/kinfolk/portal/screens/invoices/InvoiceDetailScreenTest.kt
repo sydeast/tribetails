@@ -386,12 +386,12 @@ class InvoiceDetailScreenTest {
             InvoiceDetailScreen(
                 "The Foster",
                 quote(),
-                quoteError = "This quote was only good through 2026-08-01.",
+                quoteError = "This quote is not open for an answer right now. Ask your Auntie about it.",
                 onBack = {},
             )
         }
         waitForIdle()
-        onNodeWithText("This quote was only good through 2026-08-01.").assertIsDisplayed()
+        onNodeWithText("This quote is not open for an answer right now. Ask your Auntie about it.").assertIsDisplayed()
     }
     @Test
     fun quote_alreadyDeclined_saysSoAndOffersNoButtons() = runComposeUiTest {

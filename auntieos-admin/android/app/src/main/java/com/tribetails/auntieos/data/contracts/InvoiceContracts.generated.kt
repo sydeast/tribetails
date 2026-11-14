@@ -1999,6 +1999,78 @@ internal fun decodeResendQuoteResult(raw: Map<String, Any?>?): ResendQuoteResult
         appOnly = raw?.get("appOnly") as? Boolean,
     )
 
+// ---------- convertQuoteToInvoice ----------
+
+/** Request payload for the `convertQuoteToInvoice` callable. */
+data class ConvertQuoteToInvoiceArgs(
+    val invoiceId: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+    }
+}
+
+/** Response from the `convertQuoteToInvoice` callable. */
+data class ConvertQuoteToInvoiceResult(
+    val ok: Boolean,
+    val invoiceId: String,
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    val status: String,
+)
+
+/**
+ * Fail-soft decode of `ConvertQuoteToInvoiceResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeConvertQuoteToInvoiceResult(raw: Map<String, Any?>?): ConvertQuoteToInvoiceResult =
+    ConvertQuoteToInvoiceResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        status = (raw?.get("status") as? String).orEmpty(),
+    )
+
+// ---------- withdrawQuote ----------
+
+/** Request payload for the `withdrawQuote` callable. */
+data class WithdrawQuoteArgs(
+    val invoiceId: String,
+) {
+    /**
+     * The wire payload for this request, in the `recordPaymentPayload` convention:
+     * a pure map, no Firebase types, so a test can assert it without static init.
+     */
+    fun toPayload(): Map<String, Any?> = buildMap<String, Any?> {
+        put("invoiceId", invoiceId)
+    }
+}
+
+/** Response from the `withdrawQuote` callable. */
+data class WithdrawQuoteResult(
+    val ok: Boolean,
+    val invoiceId: String,
+    /** One of `quote`, `draft`, `cancelled`, `credit`, `redeemed`, `paid`, `zero`, `open`. `""` when the payload omits it. */
+    val status: String,
+    val releasedSessionIds: List<String>,
+)
+
+/**
+ * Fail-soft decode of `WithdrawQuoteResult` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeWithdrawQuoteResult(raw: Map<String, Any?>?): WithdrawQuoteResult =
+    WithdrawQuoteResult(
+        ok = raw?.get("ok") as? Boolean ?: false,
+        invoiceId = (raw?.get("invoiceId") as? String).orEmpty(),
+        status = (raw?.get("status") as? String).orEmpty(),
+        releasedSessionIds = (raw?.get("releasedSessionIds") as? List<*>).orEmpty().mapNotNull { it as? String },
+    )
+
 // ---------- reviewAndSendDraftInvoice ----------
 
 /** Request payload for the `reviewAndSendDraftInvoice` callable. */

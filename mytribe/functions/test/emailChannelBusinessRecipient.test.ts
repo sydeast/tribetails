@@ -12,9 +12,22 @@ const mocks = vi.hoisted(() => ({
   loadEmailTemplate: vi.fn(),
   sendTemplatedEmail: vi.fn(),
   logEvent: vi.fn(),
+  /** Custom claims per uid; a uid not named here is an owner (`admin: true`). */
+  claims: {} as Record<string, Record<string, unknown>>,
 }));
 
-vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
+vi.mock('../src/lib/firestoreAdmin', () => ({
+  db: mocks.dbFn,
+  auth: vi.fn(),
+  getAdmin: () => ({
+    auth: () => ({
+      getUsers: async (ids: Array<{ uid: string }>) => ({
+        users: ids.map(({ uid }) => ({ uid, customClaims: mocks.claims[uid] ?? { admin: true } })),
+        notFound: [],
+      }),
+    }),
+  }),
+}));
 vi.mock('../src/lib/sendFromTemplate', () => ({ loadEmailTemplate: mocks.loadEmailTemplate }));
 vi.mock('../src/lib/email', () => ({ sendTemplatedEmail: mocks.sendTemplatedEmail }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEvent }));
@@ -68,6 +81,7 @@ beforeEach(() => {
   mocks.loadEmailTemplate.mockReset().mockResolvedValue({ subject: 'S', body: 'B' });
   mocks.sendTemplatedEmail.mockReset().mockResolvedValue('msg-1');
   mocks.logEvent.mockReset();
+  mocks.claims = {};
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
 
@@ -178,6 +192,47 @@ describe('sendEmailChannel: business email goes to businessEmail (#1564)', () =>
     await sendEmailChannel({
       def: { ...BUSINESS_DEF, recipientResolver: 'kinfolkAcct', secondaryResolver: 'businessAdmins' },
       recipientUid: 'household1',
+      data: {},
+    });
+
+    expect(mocks.sendTemplatedEmail.mock.calls[0]![0].to).toBe('catch@hanasamku.com');
+  });
+});
+
+/**
+ * #2223 review: the dispatcher skips an Auntie left on the business admin list,
+ * so the business-copy check here has to agree with it about who is on it.
+ */
+describe('sendEmailChannel: the business copy check skips an Auntie on the list (#2223)', () => {
+  it('a list holding only an Auntie: the allowlist owner the dispatcher chose still gets the business email', async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = ADMIN;
+    mocks.claims = { auntie1: { staffRole: 'auntie' } };
+    mocks.dbFn.mockReturnValue(
+      dbWith({
+        [ROSTER]: { uids: ['auntie1'] },
+        [SETTINGS]: { businessEmail: 'pawsome@hanasamku.com' },
+      }),
+    );
+
+    const res = await sendEmailChannel({ def: BUSINESS_DEF, recipientUid: ADMIN, data: {} });
+
+    expect(res).toEqual({ providerMessageId: 'msg-1' });
+    expect(mocks.sendTemplatedEmail.mock.calls[0]![0].to).toBe('pawsome@hanasamku.com');
+  });
+
+  it("an Auntie left on the list keeps her own assignment mail on her staff record", async () => {
+    mocks.claims = { auntie1: { staffRole: 'auntie' } };
+    mocks.dbFn.mockReturnValue(
+      dbWith({
+        'staff/auntie1': { email: 'catch@hanasamku.com', staffRole: 'auntie' },
+        [ROSTER]: { uids: [ADMIN, 'auntie1'] },
+        [SETTINGS]: { businessEmail: 'pawsome@hanasamku.com' },
+      }),
+    );
+
+    await sendEmailChannel({
+      def: { ...AUNTIE_DEF, secondaryResolver: 'businessAdmins' },
+      recipientUid: 'auntie1',
       data: {},
     });
 

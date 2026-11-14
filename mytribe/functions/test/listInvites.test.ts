@@ -127,7 +127,7 @@ describe('listInvites HAPPY', () => {
     expect(res.invites.map((i) => i.inviteId)).toEqual(['rq_mine']);
   });
 
-  it('audits the operator cross-tenant read and logs a count without the invite ids', async () => {
+  it("#1839: writes no Activity Log line for the owner's look, and logs a count without the invite ids", async () => {
     const ctx = seed([invite('rq_1')]);
     mocks.dbFn.mockReturnValue(ctx.db);
 
@@ -135,15 +135,7 @@ describe('listInvites HAPPY', () => {
       callableRequest({ familyId: 'fam1' }, { uid: 'admin1', token: { admin: true } }),
     );
 
-    expect(mocks.writeAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'SUCCESS',
-        event: 'OPERATOR_CROSSTENANT_ACCESS',
-        actorRole: 'AUNTIE',
-        actorUid: 'admin1',
-        familyId: 'fam1',
-      }),
-    );
+    expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
     const logged = JSON.stringify(mocks.logEvent.mock.calls);
     expect(logged).toContain('membership.invites.listed');
     // The invite id IS the claim-link bearer token. It must not reach the logs.
@@ -162,7 +154,7 @@ describe('listInvites HAPPY', () => {
     expect(res.scanned).toBe(0);
   });
 
-  it('still returns the read when the audit write fails, and says so in the log', async () => {
+  it('a stuck audit chain cannot touch the read, because the read writes no line', async () => {
     const ctx = seed([invite('rq_1')]);
     mocks.dbFn.mockReturnValue(ctx.db);
     mocks.writeAuditEntry.mockRejectedValue(new Error('audit chain head locked'));
@@ -172,7 +164,8 @@ describe('listInvites HAPPY', () => {
     );
 
     expect(res.invites).toHaveLength(1);
-    expect(JSON.stringify(mocks.logEvent.mock.calls)).toContain('audit.write.failed');
+    expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
+    expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain('audit.write.failed');
   });
 });
 

@@ -1,6 +1,7 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
+import { hiddenFromHousehold } from '../lib/quoteDecision';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
@@ -73,6 +74,11 @@ export async function getMyInvoicePdfHandler(
   if (data.kinfolkId !== kinfolkId) {
     // The invoice belongs to a different household: refuse (no cross-tenant read).
     throw new HttpsError('permission-denied', 'You do not have access to this invoice.');
+  }
+  // #2087 / #2195: a quote the household may not see (saved unsent, turned
+  // into an invoice not sent yet, or archived) is answered as a missing one.
+  if (hiddenFromHousehold(data)) {
+    throw new HttpsError('not-found', `Invoice ${args.invoiceId} does not exist.`);
   }
 
   let pdfUrl: string;

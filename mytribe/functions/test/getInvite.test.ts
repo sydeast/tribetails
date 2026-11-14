@@ -168,8 +168,9 @@ describe('getInvite HAPPY', () => {
 
     expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain('secretTok');
     expect(JSON.stringify(mocks.writeAuditEntry.mock.calls)).not.toContain('secretTok');
-    expect(mocks.writeAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'OPERATOR_CROSSTENANT_ACCESS', familyId: 'f1' }),
+    // #1839: the owner's own look writes no Activity Log line.
+    expect(mocks.writeAuditEntry).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'OPERATOR_CROSSTENANT_ACCESS' }),
     );
   });
 });

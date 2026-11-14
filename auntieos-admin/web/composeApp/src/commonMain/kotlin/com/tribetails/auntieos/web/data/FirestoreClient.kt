@@ -1607,6 +1607,33 @@ class FirestoreClient {
      * restored draft could not take back ('' when every visit came back, or from
      * a server too old to send one). A refusal is returned verbatim.
      */
+    /**
+     * #2088: the quote becomes a DRAFT INVOICE that keeps its number, lines and
+     * visits; the household hears about the bill when it is sent. Fail-loud:
+     * the server's refusal (accepted, archived, not a quote, a line's visit
+     * billed elsewhere, named by its day) is the message.
+     */
+    suspend fun convertQuoteToInvoice(invoiceId: String): WriteResult<Unit> {
+        val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
+        return when (val r = platformInvokeCallable("convertQuoteToInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
+
+    /**
+     * #2088: the quote is withdrawn (cancelled), the household no longer sees
+     * it, and its visits go back on the not-yet-invoiced list. Answers how many
+     * visits went back.
+     */
+    suspend fun withdrawQuote(invoiceId: String): WriteResult<Int> {
+        val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
+        return when (val r = platformInvokeCallable("withdrawQuote", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(decodeReleasedCount(r.value))
+        }
+    }
+
     suspend fun unarchiveInvoice(invoiceId: String): WriteResult<String> {
         val payload = buildJsonObject { put("invoiceId", JsonPrimitive(invoiceId)) }
         return when (val r = platformInvokeCallable("unarchiveInvoice", callableJson.encodeToString(JsonObject.serializer(), payload))) {
@@ -4202,6 +4229,19 @@ data class Invoice(
     // stored (a timestamp in whatever shape the bridge delivers); present and
     // not null means archived, the server's own rule. Nothing here writes it.
     val archivedAt: JsonElement? = null,
+    /**
+     * #2087: true on a quote saved with "Send to kinfolk now" off: a draft only
+     * the office sees, which goes out as a quote when it is sent. Written by
+     * the server only. Read through `screens.invoices.isQuoteDraft`.
+     */
+    val quoteDraft: Boolean? = null,
+    /**
+     * #2195: the household's answer to a quote ('accepted' or 'denied'), read
+     * only so the Archived and Restore words do not promise a declined quote an
+     * answer. Raw, so an odd stored value cannot fail the whole decode. Read
+     * through `screens.invoices.quoteDeclined`.
+     */
+    val quoteDecision: JsonElement? = null,
 )
 
 /**
@@ -5297,6 +5337,10 @@ fun orderVisitReports(reports: List<KinCareReport>, sessionId: String): List<Kin
     return sent + rest
 }
 
+/** #2088: how many visits a `withdrawQuote` answer put back on the list; 0 when the body does not parse. */
+internal fun decodeReleasedCount(body: String): Int = runCatching {
+    (Json.parseToJsonElement(body).jsonObject["releasedSessionIds"] as? kotlinx.serialization.json.JsonArray)?.size ?: 0
+}.getOrDefault(0)
 /**
  * #2168: the `notice` of an `unarchiveInvoice` answer. '' when it is absent,
  * not a string, or the body does not parse: the restore itself happened, and

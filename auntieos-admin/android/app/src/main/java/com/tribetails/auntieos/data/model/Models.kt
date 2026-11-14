@@ -588,6 +588,13 @@ data class Invoice(
      */
     var quoteDecision: String? = null,
     /**
+     * #2087: true on a quote saved with "Send to kinfolk now" off. It is a
+     * draft only the office sees (`status = "draft"`), and sending it makes it
+     * a Quote. Written by the server only. NULLABLE per the Class B decode rule
+     * above: absent on every other invoice. Read through `domain.isQuoteDraft`.
+     */
+    var quoteDraft: Boolean? = null,
+    /**
      * When the household was last reminded about this invoice (ms epoch), written
      * by the `sendInvoiceReminder` callable and the daily reminder cron, never by
      * this app (#832).

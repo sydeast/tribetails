@@ -132,7 +132,7 @@ describe('listAllInvites HAPPY', () => {
     expect(ctx.deletes).toHaveLength(0);
   });
 
-  it('audits the cross-tenant read and logs counts without any invite id', async () => {
+  it("#1839: writes no Activity Log line for the owner's look, and logs counts without any invite id", async () => {
     const ctx = buildDbMock({
       docs: { 'kinfolk/f1': { lastName: 'Demo' } },
       queryDocs: { inviteRequests: [invite('rq_secret')] },
@@ -141,14 +141,7 @@ describe('listAllInvites HAPPY', () => {
 
     await listAllInvitesHandler(callableRequest({}, admin));
 
-    expect(mocks.writeAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'SUCCESS',
-        event: 'OPERATOR_CROSSTENANT_ACCESS',
-        actorRole: 'AUNTIE',
-        actorUid: 'admin1',
-      }),
-    );
+    expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
     const booked = JSON.stringify(mocks.writeAuditEntry.mock.calls);
     const logged = JSON.stringify(mocks.logEvent.mock.calls);
     expect(logged).toContain('membership.invites.listedAll');
@@ -157,7 +150,7 @@ describe('listAllInvites HAPPY', () => {
     expect(booked).not.toContain('rq_secret');
   });
 
-  it('still returns the read when the audit write fails, and says so in the log', async () => {
+  it('a stuck audit chain cannot touch the read, because the read writes no line', async () => {
     const ctx = buildDbMock({
       docs: { 'kinfolk/f1': { lastName: 'Demo' } },
       queryDocs: { inviteRequests: [invite('i1')] },
@@ -168,7 +161,8 @@ describe('listAllInvites HAPPY', () => {
     const res = await listAllInvitesHandler(callableRequest({}, admin));
 
     expect(res.invites).toHaveLength(1);
-    expect(JSON.stringify(mocks.logEvent.mock.calls)).toContain('audit.write.failed');
+    expect(mocks.writeAuditEntry).not.toHaveBeenCalled();
+    expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain('audit.write.failed');
   });
 
   it('returns an empty list, and reads no household, when nobody has ever been invited', async () => {

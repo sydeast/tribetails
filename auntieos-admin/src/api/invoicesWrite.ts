@@ -3,6 +3,8 @@ import { reminderOutcomeOf, type ReminderOutcome } from '../lib/invoiceReminder'
 import type {
   ArchiveInvoiceArgs,
   ArchiveInvoiceResult,
+  ConvertQuoteToInvoiceArgs,
+  ConvertQuoteToInvoiceResult,
   CreateInvoiceArgs,
   CreateInvoiceResult,
   CreateQuoteArgs,
@@ -38,6 +40,8 @@ import type {
   SetSessionDoNotInvoiceArgs,
   SetSessionDoNotInvoiceResult,
   UnarchiveInvoiceArgs,
+  WithdrawQuoteArgs,
+  WithdrawQuoteResult,
   UnarchiveInvoiceResult,
   UpdateInvoiceArgs,
   UpdateInvoiceArgsPatch,
@@ -501,10 +505,9 @@ export async function generateInvoicePdf(invoiceId: string): Promise<string> {
  *
  * Throws `failed-precondition` with `details.code` of `quote_accepted_locked`
  * (accepted, so it is a bill now), `quote_not_declined` (still waiting for an
- * answer — send a reminder instead), `quote_not_a_quote`, or `quote_expired`
- * (its due date has passed, so the household could only decline it again: give
- * it a new due date first, which is an ordinary edit). `not-found` if the id is
- * wrong. Branch on the CODE, never the message.
+ * answer — send a reminder instead), `quote_not_a_quote`, or `invoice_archived`
+ * (restore it first). A quote does not expire (#2088), so there is no date
+ * refusal. `not-found` if the id is wrong. Branch on the CODE, never the message.
  *
  * #1507: `appOnly` is true when the quote reached the household in the app
  * only, with every delivery channel off for them. Absent from a function
@@ -522,13 +525,36 @@ export async function resendQuote(invoiceId: string): Promise<ResendQuoteOutcome
 }
 
 /**
+ * convertQuoteToInvoice (admin, #2088): the quote becomes a DRAFT INVOICE that
+ * keeps its number, lines and visits, and any answer on it is cleared. The
+ * household hears about the bill when the draft is sent (Review and send),
+ * and sees nothing until then. Refused with `quote_accepted_locked`,
+ * `quote_not_a_quote`, `invoice_archived` or `quote_visits_not_billable` (a
+ * line's visit is billed elsewhere, cancelled or gone; named by its day).
+ */
+export async function convertQuoteToInvoice(invoiceId: string): Promise<ConvertQuoteToInvoiceResult> {
+  return call<ConvertQuoteToInvoiceArgs, ConvertQuoteToInvoiceResult>('convertQuoteToInvoice', { invoiceId });
+}
+
+/**
+ * withdrawQuote (admin, #2088): the quote is cancelled, the household no
+ * longer sees it, and the visits it held go back on the not-yet-invoiced list,
+ * as on a decline. `releasedSessionIds` is those visits. Refused with
+ * `quote_accepted_locked`, `quote_not_a_quote` or `invoice_archived`.
+ */
+export async function withdrawQuote(invoiceId: string): Promise<WithdrawQuoteResult> {
+  return call<WithdrawQuoteArgs, WithdrawQuoteResult>('withdrawQuote', { invoiceId });
+}
+
+/**
  * archiveInvoice (admin): stamps `archivedAt` / `archivedBy` so the invoice
  * drops out of the operator's working list and out of the outstanding and billed
  * totals.
  *
  * ARCHIVING IS NOT DELETION AND NOT CANCELLATION. The invoice keeps every field
  * it had, and the kinfolk portal is unaffected: the household still sees it and
- * can still pay it.
+ * can still pay it. #2195: except a quote, which the household stops seeing,
+ * and whose visits go back on the not-yet-invoiced list, as a draft's do.
  *
  * `force` exists because archiving an invoice that money is still owed on
  * removes it from the very total that would remind anyone to collect it, which

@@ -22,6 +22,7 @@ import {
   boundSessionIds,
   linkedWithoutLine,
   quoteHoldsNoVisits,
+  quoteWithdrawn,
   readSessionLinks,
   stageSessionLinks,
 } from '../lib/invoiceSessionLinks';
@@ -215,6 +216,15 @@ export async function linkInvoiceSessionsHandler(
     // link set here would be a hold with nothing to release it. Unlinking is
     // still allowed: a visit linked to it before declines let go of visits
     // has no other way back to the not-yet-invoiced list.
+    // #2088: a withdrawn quote let go of its visits for good; a link set here
+    // would take a visit off the not-yet-invoiced list for a cancelled record.
+    if (added.length > 0 && quoteWithdrawn(data)) {
+      throw new HttpsError(
+        'failed-precondition',
+        'This quote was withdrawn, so it holds no visits. Put them on a new quote or invoice instead.',
+        { code: 'quote_withdrawn_holds_no_visits' },
+      );
+    }
     if (added.length > 0 && quoteHoldsNoVisits(data)) {
       throw new HttpsError(
         'failed-precondition',

@@ -26,8 +26,11 @@ enum class HouseholdSend(val wire: String) { REMINDER("reminder"), REVIEW_SEND("
  * and send sends the draft and marks the invoice open; it does not touch the
  * household's account credit, and the words make no claim about a payment.
  */
-fun sendConfirmBodyText(send: HouseholdSend): String =
-    if (send == HouseholdSend.REMINDER) {
+fun sendConfirmBodyText(send: HouseholdSend, quote: Boolean = false): String =
+    if (quote && send == HouseholdSend.REVIEW_SEND) {
+        // #2087: a quote saved unsent goes out through the draft send, as a quote.
+        SEND_QUOTE_CONFIRM_TEXT
+    } else if (send == HouseholdSend.REMINDER) {
         "This sends a real payment-reminder notification to the household."
     } else {
         "This sends the draft to the household and marks the invoice open. A draft missing its " +
@@ -47,6 +50,8 @@ internal fun SendConfirmDialog(
     send: HouseholdSend,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    /** #2087: the draft being sent is a quote saved unsent. */
+    quote: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     var preview by remember(invoiceId, send) { mutableStateOf<String?>(null) }
@@ -58,19 +63,27 @@ internal fun SendConfirmDialog(
     }
     AuntieDialog(
         visible = true,
-        title = if (send == HouseholdSend.REMINDER) "Send a payment reminder?" else "Send this draft?",
+        title = when {
+            send == HouseholdSend.REMINDER -> "Send a payment reminder?"
+            quote -> "Send this quote?"
+            else -> "Send this draft?"
+        },
         onDismiss = onDismiss,
         footer = {
             GhostButton(label = "Cancel", onClick = onDismiss)
             PrimaryButton(
-                label = if (send == HouseholdSend.REMINDER) "Send reminder" else "Review and send",
+                label = when {
+                    send == HouseholdSend.REMINDER -> "Send reminder"
+                    quote -> "Send quote"
+                    else -> "Review and send"
+                },
                 onClick = onConfirm,
             )
         },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                sendConfirmBodyText(send),
+                sendConfirmBodyText(send, quote),
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
