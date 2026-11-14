@@ -377,3 +377,69 @@ describe('onKinTaleUpdate trigger — thumbs denormalization (task-24a)', () => 
     expect(enqueuedKeys()).toEqual(['kintale.note.added']);
   });
 });
+// #2058 (operator ruling 2026-11-12, stamp at send): the trigger keeps a sent
+// tale's own copy of its care tasks in step. Through the real handler, so the
+// wiring and the notification gates are proven together.
+describe('onKinTaleUpdate trigger: the care-task copy (#2058)', () => {
+  const TEMPLATE = {
+    name: 'Dog Walk',
+    checklistItems: [
+      { key: 'walk', text: 'Long walk', scope: 'PER_PET', order: 0 },
+      { key: 'mail', text: 'Brought the mail in', scope: 'PER_VISIT', order: 1 },
+    ],
+  };
+  const walkTick = { 'dog1|walk': { fieldKey: 'walk', kinId: 'dog1', boolValue: true } };
+  const base = { kinfolkId: 'fam1', bodyCopy: 'narrative', mediaFileIds: [], templateId: 'tpl', sentVia: 'pending' };
+  async function stampedSent() {
+    const { buildCareTaskStamp } = await import('../src/lib/careTaskStamp');
+    return {
+      ...base,
+      status: 'SENT',
+      sentAt: '2026-11-12T10:00:00.000Z',
+      fieldResponses: walkTick,
+      careTasks: buildCareTaskStamp({ templateId: 'tpl', template: TEMPLATE, fieldResponses: walkTick, now: 'x', by: 'send' }),
+    };
+  }
+  it('a tick changed on a stamped sent tale relabels the copy and sends no notice', async () => {
+    const before = await stampedSent();
+    const after = { ...before, fieldResponses: { ...walkTick, mail: { fieldKey: 'mail', kinId: '', boolValue: true } } };
+    // The template is gone: the copy is relabelled from its own items.
+    const ctx = buildDbMock({ docs: { 'kin_care_reports/r1': after }, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await onKinTaleUpdateHandler(makeEvent(before, after));
+    const write = ctx.writes.find((w) => w.path === 'kin_care_reports/r1' && 'careTasks' in w.data)!;
+    expect(Object.keys(write.data)).toEqual(['careTasks']);
+    const done = (write.data['careTasks'] as { done: Array<{ text: string }> }).done.map((d) => d.text);
+    expect(done).toEqual(['Long walk', 'Brought the mail in']);
+    expect(enqueuedKeys()).toEqual([]);
+  });
+  it('a body edit on a stamped sent tale leaves the copy alone', async () => {
+    const before = await stampedSent();
+    const after = { ...before, bodyCopy: 'narrative, and then a nap' };
+    const ctx = buildDbMock({ docs: { 'kin_care_reports/r1': after }, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await onKinTaleUpdateHandler(makeEvent(before, after));
+    expect(ctx.writes.some((w) => 'careTasks' in w.data)).toBe(false);
+  });
+  it('a DRAFT to SENT write by an installed app gets a copy and is announced once', async () => {
+    const before = { ...base, status: 'DRAFT', sentAt: '', fieldResponses: walkTick };
+    const after = { ...base, status: 'SENT', sentAt: '2026-11-12T10:00:00.000Z', fieldResponses: walkTick };
+    const ctx = buildDbMock({
+      docs: { 'kin_care_reports/r1': after, 'kintale_templates/tpl': TEMPLATE },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await onKinTaleUpdateHandler(makeEvent(before, after));
+    const write = ctx.writes.find((w) => w.path === 'kin_care_reports/r1' && 'careTasks' in w.data)!;
+    expect((write.data['careTasks'] as { stampedBy: string }).stampedBy).toBe('backstop');
+    expect(enqueuedKeys()).toEqual(['kintale.published']);
+  });
+  it('a draft edit never stamps', async () => {
+    const before = { ...base, status: 'DRAFT', sentAt: '', fieldResponses: {} };
+    const after = { ...before, fieldResponses: walkTick };
+    const ctx = buildDbMock({ docs: { 'kin_care_reports/r1': after, 'kintale_templates/tpl': TEMPLATE }, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await onKinTaleUpdateHandler(makeEvent(before, after));
+    expect(ctx.writes.some((w) => 'careTasks' in w.data)).toBe(false);
+  });
+});

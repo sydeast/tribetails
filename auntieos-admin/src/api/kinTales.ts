@@ -89,10 +89,17 @@ export interface KinTaleEntry {
    * Read back by `KinTaleCompose.tsx` when reopening a draft, so the checklist
    * is rebuilt from the template it was captured under rather than re-derived
    * from the service type; `api/kinTaleTemplates.ts#templateForDraft` explains
-   * why re-deriving loses ticks. The kinfolk portal resolves the same field to
-   * label a sent tale's checklist (`getMyKinTales.ts:156`).
+   * why re-deriving loses ticks. A sent tale is labelled from its own copy
+   * (`careTasks`, below) instead, on every reader (#2058).
    */
   templateId?: string | undefined;
+  /**
+   * #2058: a SENT tale's own copy of its care tasks, stamped by the server in
+   * the write that sent it (operator ruling 2026-11-12, stamp at send). Never
+   * written by this admin. `unknown` for the reason `fieldResponses` is; decode
+   * through `api/kinTaleTemplates.ts#decodeCareTaskCopy`.
+   */
+  careTasks?: unknown;
   /**
    * Captured checklist answers: a map from `"$kinId|$fieldKey"` (bare
    * `fieldKey` for a per-visit item) to a `FieldResponse` object. Deliberately

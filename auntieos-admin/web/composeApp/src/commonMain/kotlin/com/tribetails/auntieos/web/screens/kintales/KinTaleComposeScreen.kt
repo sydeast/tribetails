@@ -101,7 +101,6 @@ import com.tribetails.auntieos.web.ui.components.SectionHeader
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatusToast
 import com.tribetails.auntieos.web.ui.components.ToastKind
-import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.util.openUrl
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.flowOf
@@ -472,9 +471,8 @@ private fun KinTaleComposerBody(
             when (val r = client.markKinTaleReportSent(
                 reportId          = savedId,
                 sessionId         = session._id,
-                sentVia           = "pending",  // backend pipeline overwrites with sms/email/fcm
+                sentVia           = "pending",  // onKinTaleUpdate tells the household
                 deliveryReceiptId = "",
-                sentAtIso         = nowIso(),
             )) {
                 is WriteResult.Ok -> {
                     // #2123: the tale has gone home, and that is all a send does.

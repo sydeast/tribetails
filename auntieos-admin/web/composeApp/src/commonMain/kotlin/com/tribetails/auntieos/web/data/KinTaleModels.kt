@@ -184,3 +184,51 @@ object DefaultKinTaleTemplate {
 /** Composite key matching Android's `responseKey(fieldKey, kinId)` so reports round-trip. */
 internal fun responseKey(fieldKey: String, kinId: String): String =
     if (kinId.isBlank()) fieldKey else "$kinId|$fieldKey"
+
+// ----- #2058: a sent KinTale's own copy of its care tasks -----
+/**
+ * `careTasks` on a SENT `kin_care_reports` doc, written by the server
+ * (`mytribe/functions/src/lib/careTaskStamp.ts`) in the write that sends the
+ * tale. Operator ruling 2026-11-12, "stamp at send": a sent KinTale keeps its
+ * own copy of the care tasks, and editing or deleting the template never
+ * changes it. [items] is every task the template offered, with scope, order and
+ * conditions; [done] is what the household is shown. Mirrors Android's
+ * `CareTaskCopy` field for field.
+ */
+@Serializable
+data class CareTaskCopy(
+    val v: Int = 0,
+    val stampedAt: String = "",
+    val stampedBy: String = "",
+    val templateId: String = "",
+    val templateName: String = "",
+    val source: String = "",
+    val checklistEnabled: Boolean = true,
+    val items: List<ChecklistItem> = emptyList(),
+    val done: List<CareTaskDone> = emptyList(),
+)
+@Serializable
+data class CareTaskDone(
+    val key: String = "",
+    val kinId: String = "",
+    val text: String = "",
+    val note: String = "",
+)
+/** The copy version this console understands; any other reads as "no copy". */
+const val CARE_TASK_COPY_VERSION = 1
+/**
+ * The template a KinTale is shown against. A SENT tale carrying its own copy is
+ * shown against that copy, so a template edited or deleted afterwards cannot
+ * reach it; [this] still supplies the other sections' switches. A draft, and a
+ * tale sent before the copy existed, keep [this] unchanged. Pure; tested.
+ */
+fun KinTaleTemplate.forKinTale(report: KinCareReport): KinTaleTemplate {
+    val copy = report.careTasks ?: return this
+    if (report.status.trim().uppercase() != "SENT") return this
+    if (copy.v != CARE_TASK_COPY_VERSION) return this
+    return copy(
+        name = copy.templateName.ifBlank { name },
+        checklistEnabled = copy.checklistEnabled,
+        checklistItems = copy.items.filter { it.key.isNotBlank() && it.text.isNotBlank() },
+    )
+}

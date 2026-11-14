@@ -215,9 +215,30 @@ class SendReportDispatchTest {
     // ── helpers ───────────────────────────────────────────────────────────────
 
     /** Parse the last captured callable payload as a JsonObject for assertions. */
+    // #2058: the dispatch is no longer the LAST callable a send makes; the
+    // `sendKinTaleReport` callable follows it, so the dispatch payload is picked
+    // by name.
     private fun lastDispatchPayload() = Json.parseToJsonElement(
-        requireNotNull(JvmFirestoreFixtures.lastCallablePayloadJson) {
-            "No callable was invoked — check that callableResponses is set before calling sendReport"
+        requireNotNull(JvmFirestoreFixtures.callablePayloads.lastOrNull { it.first == "dispatchVisitNotification" }?.second) {
+            "No dispatch was invoked: check that callableResponses is set before calling sendReport"
         }
     ).jsonObject
+    /** #2058: a dispatched send is then marked SENT by the server, with the dispatch id as its receipt. */
+    @Test
+    fun aDispatchedSendIsMarkedSentThroughTheCallableAsCatalog() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf(
+            "dispatchVisitNotification" to """{"ok":true,"dispatchIds":["disp-1"]}""",
+            "sendKinTaleReport" to """{"ok":true,"reportId":"report-1","alreadySent":false}""",
+        )
+        val r = FirestoreClient().sendReport(report(), session())
+        assertEquals(WriteResult.Ok(Unit), r)
+        assertEquals(
+            listOf("dispatchVisitNotification", "sendKinTaleReport"),
+            JvmFirestoreFixtures.callablePayloads.map { it.first },
+        )
+        val sent = Json.parseToJsonElement(JvmFirestoreFixtures.callablePayloads.last().second).jsonObject
+        assertEquals("report-1", sent["reportId"]?.jsonPrimitive?.content)
+        assertEquals("catalog", sent["sentVia"]?.jsonPrimitive?.content)
+        assertEquals("disp-1", sent["deliveryReceiptId"]?.jsonPrimitive?.content)
+    }
 }

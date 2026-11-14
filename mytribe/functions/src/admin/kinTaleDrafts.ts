@@ -1,8 +1,11 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
+import { wrapCallable } from '../lib/wrapCallable';
+import { staffBypass } from '../lib/staffGate';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -104,6 +107,12 @@ export async function publishGeneratedDraftHandler(
   const draftRef = db().collection('generated_drafts').doc(args.draftId);
   const reportRef = db().collection('kin_care_reports').doc();
   const now = new Date().toISOString();
+  // #2058: the tale carries its own copy of the care tasks from the write that
+  // sends it. A generated draft has no checklist answers, so the copy is the
+  // built-in list with nothing done, which is still a copy: the feed never goes
+  // looking in a template for this tale.
+  const { buildCareTaskStamp, CARE_TASKS_FIELD } = await import('../lib/careTaskStamp.js');
+  const careTasks = buildCareTaskStamp({ templateId: '', template: null, fieldResponses: {}, now, by: 'send' });
 
   const outcome = await db().runTransaction(async (tx) => {
     const draftSnap = await tx.get(draftRef);
@@ -150,6 +159,7 @@ export async function publishGeneratedDraftHandler(
       mediaFileIds: [],
       templateId: '',
       fieldResponses: {},
+      [CARE_TASKS_FIELD]: careTasks,
       status: 'SENT',
       sentAt: now,
       sentVia: 'pending',
@@ -255,4 +265,155 @@ export const publishGeneratedDraft = onCall(
 export const deleteGeneratedDraft = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   wrapAdminCallable('deleteGeneratedDraft', deleteGeneratedDraftHandler),
+);
+
+/**
+ * #2058: SENDING A KINTALE, for all three admin clients.
+ *
+ * Operator ruling 2026-11-12, "stamp at send": a sent KinTale keeps its own copy
+ * of the care tasks, and editing or deleting the template never changes it.
+ * Until now each client flipped the report to SENT with its own batch write,
+ * so the copy could only have been taken by a second write after the send,
+ * with a template delete free to land in between. This is the send: one
+ * transaction reads the tale and its template, then marks the tale SENT,
+ * stamps `careTasks` (`lib/careTaskStamp.ts`) and records the send on the
+ * visit, together.
+ *
+ * The visit-side fields are the ones the client batches wrote
+ * (`auntieos-admin/src/api/kinTalesWrite.ts#sendKinTale`,
+ * `KinCareRepository.markReportSent`, the desktop `markReportSentAtomic`):
+ * `reportIds` and `sentReportCount` as transforms so two sends cannot clobber
+ * each other's totals, `autoCompleteEligible` for installed Android builds, and
+ * `kinTaleDue: false` (#2123).
+ *
+ * `sentVia` is `'pending'` when the household is told by `onKinTaleUpdate`
+ * (admin web), and `'catalog'` when the client already told them through
+ * `dispatchVisitNotification` (Android, desktop) and `deliveryReceiptId` names
+ * that dispatch (`lib/kinTalePublishClaim.ts`).
+ *
+ * ONCE ONLY. A tale already sent is left exactly as it is and the call answers
+ * `alreadySent`, so a double tap or a retry after a lost reply cannot count the
+ * visit's KinTales twice or replace the copy taken at the real send.
+ *
+ * WHO. The owner and an Auntie (sending is her core work, `lib/auntieAccess.ts`),
+ * and a sandboxed test admin for a tale and visit in her own test household,
+ * the same reach `firestore.rules` gives her on both documents.
+ */
+const SendArgs = z.object({
+  reportId: z.string().trim().min(1).max(200).regex(/^[^/]+$/, 'reportId must be a bare document id'),
+  sentVia: z.enum(['pending', 'catalog']).default('pending'),
+  deliveryReceiptId: z.string().max(500).default(''),
+});
+
+export interface SendKinTaleReportResult {
+  ok: true;
+  reportId: string;
+  /** True when the tale had already been sent and nothing was written. */
+  alreadySent: boolean;
+}
+
+function testScopeOf(token: Record<string, unknown>): string | null {
+  const raw = token['testTribeId'];
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
+export async function sendKinTaleReportHandler(
+  req: CallableRequest<unknown>,
+): Promise<SendKinTaleReportResult> {
+  const actorUid = req.auth?.uid ?? '';
+  if (!actorUid) throw new HttpsError('unauthenticated', 'Sign in required.');
+  const token = (req.auth?.token ?? {}) as Record<string, unknown>;
+  const staff = staffBypass(req.auth, 'sendKinTaleReport');
+  const testScope = staff ? null : testScopeOf(token);
+  if (!staff && testScope === null) throw new HttpsError('permission-denied', 'Admin claim required.');
+
+  const parsed = SendArgs.safeParse(req.data);
+  if (!parsed.success) {
+    throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Invalid request.');
+  }
+
+  const { reportId, sentVia, deliveryReceiptId } = parsed.data;
+  const { buildCareTaskStamp, CARE_TASKS_FIELD } = await import('../lib/careTaskStamp.js');
+  const reportRef = db().collection('kin_care_reports').doc(reportId);
+  const outOfScope = 'This KinTale is not in your test household.';
+
+  const outcome = await db().runTransaction(async (tx) => {
+    const snap = await tx.get(reportRef);
+    if (!snap.exists) {
+      throw new HttpsError('not-found', 'This KinTale no longer exists. It may have been deleted.');
+    }
+    const report = (snap.data() ?? {}) as Record<string, unknown>;
+    if (testScope !== null && either(report['kinfolkId'], '') !== testScope) {
+      throw new HttpsError('permission-denied', outOfScope);
+    }
+    // Keyed on the status alone: an unsent draft is sent whatever else it carries.
+    if (either(report['status'], '').toUpperCase() === 'SENT') return { alreadySent: true as const };
+
+    const sessionId = either(report['sessionId'], '');
+    if (sessionId === '') {
+      throw new HttpsError('failed-precondition', 'This KinTale is not linked to a visit, so it cannot be sent.');
+    }
+    const sessionRef = db().collection('kin_care_sessions').doc(sessionId);
+    const templateId = either(report['templateId'], '');
+    const [sessionSnap, templateSnap] = await Promise.all([
+      tx.get(sessionRef),
+      templateId === '' ? Promise.resolve(null) : tx.get(db().collection('kintale_templates').doc(templateId)),
+    ]);
+    if (!sessionSnap.exists) {
+      throw new HttpsError('failed-precondition', 'The visit this KinTale belongs to no longer exists.');
+    }
+    if (
+      testScope !== null &&
+      either((sessionSnap.data() as Record<string, unknown> | undefined)?.['kinfolkId'], '') !== testScope
+    ) {
+      throw new HttpsError('permission-denied', outOfScope);
+    }
+
+    const now = new Date().toISOString();
+    const template =
+      templateSnap && templateSnap.exists ? ((templateSnap.data() ?? {}) as Record<string, unknown>) : null;
+    const careTasks = buildCareTaskStamp({
+      templateId,
+      template,
+      fieldResponses: report['fieldResponses'],
+      now,
+      by: 'send',
+    });
+
+    tx.update(reportRef, {
+      status: 'SENT',
+      sentAt: now,
+      sentVia,
+      deliveryReceiptId,
+      updatedAt: now,
+      [CARE_TASKS_FIELD]: careTasks,
+    });
+
+    tx.update(sessionRef, {
+      reportIds: FieldValue.arrayUnion(reportId),
+      sentReportCount: FieldValue.increment(1),
+      autoCompleteEligible: true,
+      kinTaleDue: false,
+      updatedAt: now,
+    });
+
+    return { alreadySent: false as const, source: careTasks.source, done: careTasks.done.length };
+  });
+
+  logEvent({
+    severity: outcome.alreadySent ? 'info' : outcome.source === 'templateMissing' ? 'warn' : 'info',
+    function: 'sendKinTaleReport',
+    event: outcome.alreadySent ? 'kintale.send.replayed' : 'kintale.sent',
+    uid: actorUid,
+    extra: outcome.alreadySent
+      ? { reportId }
+      : { reportId, sentVia, careTaskSource: outcome.source, careTasksDone: outcome.done },
+  });
+
+  return { ok: true, reportId, alreadySent: outcome.alreadySent };
+}
+
+export const sendKinTaleReport = onCall(
+  { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
+  wrapCallable('sendKinTaleReport', sendKinTaleReportHandler),
 );

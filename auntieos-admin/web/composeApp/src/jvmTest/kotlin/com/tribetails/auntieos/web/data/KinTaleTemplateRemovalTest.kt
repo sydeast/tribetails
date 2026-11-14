@@ -47,9 +47,12 @@ class KinTaleTemplateRemovalTest {
     @Test fun nothingDependingOnTheTemplateSaysNothing() =
         assertTrue(kinTaleTemplateRemovalImpact(usage()).isEmpty())
 
+    // #2058: a sent KinTale keeps its own copy of the care tasks, so the confirm
+    // says so, once, and never repeats the count or explains the feed.
     @Test fun namesTheKinTalesThatUseItSingularAndPlural() {
-        assertTrue(kinTaleTemplateRemovalImpact(usage(kintaleCount = 1)).first().startsWith("1 KinTale was written from it"))
-        assertTrue(kinTaleTemplateRemovalImpact(usage(kintaleCount = 3)).first().startsWith("3 KinTales were written from it"))
+        assertEquals(listOf("KinTales already sent keep their care tasks."), kinTaleTemplateRemovalImpact(usage(kintaleCount = 1)))
+        assertEquals(listOf("KinTales already sent keep their care tasks."), kinTaleTemplateRemovalImpact(usage(kintaleCount = 3)))
+        assertFalse(kinTaleTemplateRemovalImpact(usage(kintaleCount = 3)).joinToString(" ").contains("written from"))
     }
 
     @Test fun theDeleteConfirmLeadsWithTheCount() {
