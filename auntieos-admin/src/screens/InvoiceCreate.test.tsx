@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { type ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type Kinfolk } from '../api/directory';
@@ -56,6 +56,10 @@ const CATALOG = vi.hoisted(() => ({
   serviceRates: { 'Long walk': '45' },
   serviceDurations: { 'Long walk': '45' },
   timeBlocks: [],
+}));
+// #1966: the business's Payment terms setting, unset (due on receipt).
+vi.mock('../lib/useInvoiceTermsSetting', () => ({
+  useInvoiceTermsSetting: () => ({ status: 'ready', paymentTerms: 'due_on_receipt', timeZone: 'America/Chicago', retry: () => {} }),
 }));
 vi.mock('../lib/useBookingCatalog', () => ({ useBookingCatalog: () => CATALOG }));
 
@@ -487,13 +491,24 @@ describe('InvoiceCreate terms and due date', () => {
     expect(screen.getByRole('button', { name: /create invoice for 1 visit/i })).toBeEnabled();
   });
 
-  it('blocks with the reason stated when the terms cannot work a date out at all', async () => {
+  it('#1966: makes visit terms with no visit ticked due on receipt, and says why', async () => {
     await pick();
+    fireEvent.change(screen.getByLabelText('Invoice date'), { target: { value: '2026-08-19' } });
     await userEvent.selectOptions(screen.getByLabelText('Terms'), 'net_7_after_last_visit');
     // Untick the only visit: there is now nothing to count from.
     await userEvent.click(screen.getByRole('checkbox'));
-    expect(await screen.findByText(/no visits on this invoice yet/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^create invoice$/i })).toBeDisabled();
+    expect(
+      await screen.findByText('There are no visits on this invoice, so it is due on receipt.'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Invoice due date')).toHaveValue('2026-08-19');
+  });
+
+  it('blocks with the reason stated when the terms cannot work a date out at all', async () => {
+    await pick();
+    await userEvent.selectOptions(screen.getByLabelText('Terms'), 'net_14');
+    fireEvent.change(screen.getByLabelText('Invoice date'), { target: { value: '' } });
+    expect(await screen.findByText(/no date on it yet/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create invoice/i })).toBeDisabled();
   });
 });
 

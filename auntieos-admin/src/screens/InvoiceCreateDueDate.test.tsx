@@ -42,6 +42,10 @@ vi.mock('../api/invoicesWrite', async (orig) => ({
   setSessionDoNotInvoice,
 }));
 
+// #1966: the business's Payment terms setting, unset (due on receipt).
+vi.mock('../lib/useInvoiceTermsSetting', () => ({
+  useInvoiceTermsSetting: () => ({ status: 'ready', paymentTerms: 'due_on_receipt', timeZone: 'America/Chicago', retry: () => {} }),
+}));
 vi.mock('../lib/useBookingCatalog', () => ({
   useBookingCatalog: () => ({ serviceRates: {}, serviceDurations: {}, timeBlocks: [] }),
 }));
