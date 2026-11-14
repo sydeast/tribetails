@@ -286,6 +286,16 @@ export function paymentNoticeGaveUpWords(attempts: number): string {
   return `A payment notification was not delivered after ${attempts} retries`;
 }
 
+/**
+ * #2300: a payment row with no settlement id, recorded for an invoice whose
+ * payoff already has a ledger row, and large enough to be that payoff. It is
+ * kept as its own payment; the owner decides whether it is a duplicate. The
+ * invoice's number only, never an id.
+ */
+export function paymentPossibleDuplicateWords(invoiceNumber: string): string {
+  const which = invoiceNumber.trim() === '' ? 'an invoice that' : `invoice ${invoiceNumber.trim()}, which`;
+  return `A payment was recorded for ${which} was already settled. Check for a duplicate.`;
+}
 /** The vet clinic callables, when the clinic named is not there. */
 export function vetClinicNotFoundWords(verb: 'update' | 'archive'): string {
   return `Vet clinic ${verb} refused: the clinic was not found`;

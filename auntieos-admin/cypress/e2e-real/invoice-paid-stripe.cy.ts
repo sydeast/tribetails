@@ -7,7 +7,8 @@ import { vendorConfigured } from '../support/e2e-real';
  *
  * WHY THIS PATH. The admin has no control that calls Stripe and shows Stripe's
  * answer. Its one Stripe path is indirect: Record payment calls
- * `markInvoicePaid`, the invoice becomes paid, and the
+ * `recordPayment` with an `apply` (#2269; `markInvoicePaid` before it), the
+ * invoice becomes paid, and the
  * `onInvoicePaidExpireCheckouts` trigger asks Stripe to expire every checkout
  * session still open on it (docket Q5, a paid invoice takes no payment). So the
  * spec mints a real TEST-MODE session first, the way `payInvoice` does when a
@@ -66,7 +67,7 @@ describe('invoice payment with an open Stripe checkout (real callable, Stripe te
     cy.task('deleteDoc', { collection: 'invoices', id: INVOICE_ID });
   });
 
-  it('#1089 records a payment through markInvoicePaid on an invoice with a Stripe checkout still open', () => {
+  it('#1089 records a payment through Record payment on an invoice with a Stripe checkout still open', () => {
     cy.task<string>('stripeTestCheckoutSession', { invoiceId: INVOICE_ID, amountCents: TOTAL * 100 }).then(
       (sessionId) => {
         cy.task('upsertDoc', {

@@ -22,6 +22,8 @@ import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } f
 import {
   PAYMENT_APPLIED_OWNER_AT_FIELD,
   PAYMENT_APPLIED_OWNER_FIELD,
+  SETTLEMENT_LEDGER_PENDING_AT_FIELD,
+  SETTLEMENT_LEDGER_PENDING_FIELD,
   paymentAppliedOwner,
 } from '../lib/paymentAppliedOwner';
 import { InvoicePaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
@@ -77,8 +79,14 @@ import {
  * Canonical store is the FLAT top-level `invoices` collection (the same one
  * createInvoice/postInvoiceEvent/sendInvoiceReminder read and write).
  *
+ * #2269/#2230: THE ADMIN DIALOGS NO LONGER CALL THIS. Admin web, Android and
+ * the desktop console record a payment as ONE `recordPayment` call carrying an
+ * `apply`, which pays the bill, writes the ledger row and sends the notice from
+ * one transaction. This callable stays, unchanged in its request and answer,
+ * for the admin builds already installed, which still make the two calls.
+ *
  * Notification: deliberately NOT enqueued here, and (#866) not by the invoice
- * trigger either. Both admin clients call this and then `recordPayment`, and
+ * trigger either. Older admin clients call this and then `recordPayment`, and
  * `recordPayment` carries the operator's Send Confirmation toggle. So a
  * settling payment stamps `paymentAppliedNoticeOwner` in the same write that
  * pays the bill, and `onInvoicesWrite` stays silent for it. Before #866 the
@@ -87,6 +95,11 @@ import {
  * invoice open, so nothing is stamped and no trigger fires; its confirmation,
  * when ticked, also comes from `recordPayment`. Ownership table:
  * notifications/catalog.ts, on the `invoice.payment.applied` entry.
+ *
+ * #2230: a settling payment also stamps `settlementLedgerPending`, which that
+ * `recordPayment` clears when it claims the settlement. When the app stops
+ * before its second call, `lib/settlementLedgerSweep.ts` writes the ledger row
+ * and sends the payoff notice instead.
  */
 // Exported so the callable-contract drift guard can freeze this request shape.
 export const Args = z.object({
@@ -402,139 +415,32 @@ export async function markInvoicePaidHandler(
     }
   }
 
-  const snap = await ref.get();
-  if (!snap.exists) {
-    throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
-  }
-  const data = snap.data() as InvoiceDoc;
-
-  if (isDraftOrQuote(data)) {
-    throw new HttpsError(
-      'failed-precondition',
-      'Invoice is a draft or quote; send it first before recording a payment.',
-    );
-  }
-  if (isWrittenOff(data)) {
-    throw new HttpsError('failed-precondition', WRITTEN_OFF_PAYMENT_REFUSAL, { code: INVOICE_WRITTEN_OFF_CODE });
-  }
-  const lifecycleRefusal = refusedLifecycle(data);
-  if (lifecycleRefusal) {
-    throw new HttpsError('failed-precondition', lifecycleRefusal, { code: 'invoice_not_payable' });
-  }
-
-  // The payments SUBCOLLECTION is the only field that can say how much has come
-  // in. Read BEFORE the guard, because the guard's whole job is to compare the
-  // doc's claim against it.
-  const paymentsSnap = await ref.collection('payments').get();
-  const existingPayments = paymentsSnap.docs.map((d) => d.data() as PaymentAmount);
-  const existingPaidCents = paidCentsFromPayments(existingPayments);
-  const totalCents = invoiceTotalCentsOf(data);
-  const before = settleInvoice(totalCents, existingPaidCents);
-
-  const settledRefusal = alreadySettledRefusal(data, existingPayments.length, before.state);
-  if (settledRefusal) {
-    throw new HttpsError('failed-precondition', settledRefusal.message, { code: settledRefusal.code });
-  }
-
-  const familyId = data.kinfolkId;
-  // Omitted `amount` means "settle the rest", and the rest is what the payments
-  // leave outstanding. Reading `data.amountDue` here instead would record a $0
-  // payment on every invoice the old write had already zeroed.
-  const paidCents = args.amount !== undefined ? Math.round(args.amount * 100) : before.amountDueCents;
-  // #1566: what is over the balance is tip, and this callable has no tip to
-  // put it in. Refused before anything is written.
-  const overBalance = overBalanceRefusal(paidCents, before);
-  if (overBalance) {
-    throw new HttpsError('failed-precondition', overBalance.message, { code: overBalance.code });
-  }
-  const paidAmount = centsToDollars(paidCents);
   const paidAtIso = args.paidAt ?? new Date().toISOString();
 
-  const after = settleInvoice(totalCents, existingPaidCents + paidCents);
-  const settling = after.state === 'settled' || after.state === 'overpaid';
-
-  const paymentRow = {
-    // Both denominations. `amountCents` is what the settlement was computed
-    // from and what future sums prefer; `amount` stays because every payment
-    // recorded before this change carries only it, and the PDF and the Android
-    // payments join both read dollars.
-    amount: paidAmount,
-    amountCents: paidCents,
-    method: args.method ?? null,
-    reference: args.reference ?? null,
-    paidAt: paidAtIso,
-    recordedBy: uid,
-    createdAt: FieldValue.serverTimestamp(),
-    // #825, DENORMALIZED SO A REPLAY CAN BE ANSWERED FROM ONE READ. This is
-    // where the invoice stood after THIS payment, which is what this call
-    // reported and therefore what a retry of it must report. Recomputing on a
-    // retry would answer with today's settlement instead, so the same call
-    // would return different figures depending on how often it was retried.
-    // `paidCentsFromPayments` reads only `amount`/`amountCents`, so an extra
-    // map on the row changes no sum anywhere.
-    settlement: {
-      state: after.state,
-      totalCents: after.totalCents,
-      paidCents: after.paidCents,
-      amountDueCents: after.amountDueCents,
-      overpaidCents: after.overpaidCents,
-    },
-  };
-  const invoiceUpdate = {
-    // A PARTIAL PAYMENT LEAVES THE INVOICE OPEN with a real balance, so it
-    // stays in Outstanding and someone chases the rest. Only a settling
-    // payment writes 'paid'. (The state stamp below re-derives the same value
-    // from the merged doc; writing it here too keeps the rule readable at the
-    // point it is decided.)
-    status: settling ? 'paid' : 'open',
-    paymentStatus: settling ? 'PAID' : 'PARTIAL',
-    // Integer cents: the truth. Written even on an un-itemized invoice, where
-    // `totalCents` is projected from the dollar `total`, so every downstream
-    // reader has an exact figure instead of re-deriving one from a float.
-    totalCents: after.totalCents,
-    paidCents: after.paidCents,
-    amountDueCents: after.amountDueCents,
-    overpaidCents: after.overpaidCents,
-    // The legacy dollar scalar, projected from the SAME cents figure in the
-    // same pass so the two can never disagree. Never negative: see
-    // settleInvoice's note on why an overpayment must not read as a credit.
-    amountDue: centsToDollars(after.amountDueCents),
-    paymentMethod: args.method ?? null,
-    paymentReference: args.reference ?? null,
-    // `paidAt`/`paidBy` mean "when this invoice was PAID", so they are stamped
-    // only by the payment that actually settles it. A partial stamps
-    // `lastPaymentAt`/`lastPaymentBy` instead, which is a different claim and
-    // deserves a different field rather than a premature version of this one.
-    ...(settling
-      ? {
-          paidAt: FieldValue.serverTimestamp(),
-          paidBy: uid,
-          // #866: the household's confirmation for this payment belongs to the
-          // `recordPayment` step both admin clients run next, which carries the
-          // Send Confirmation toggle. Stamped in the write that pays the bill, so
-          // `onInvoicesWrite` neither doubles a ticked confirmation nor sends
-          // one the admin left unticked.
-          [PAYMENT_APPLIED_OWNER_FIELD]: paymentAppliedOwner('markInvoicePaid', paymentRef.id),
-          // When the stamp was written, so an older admin client that does not
-          // send this settlement's id can still claim it moments later, and no
-          // unrelated payment days later can (OLD_CLIENT_CLAIM_WINDOW_MS).
-          [PAYMENT_APPLIED_OWNER_AT_FIELD]: Date.now(),
-        }
-      : {}),
-    lastPaymentAt: FieldValue.serverTimestamp(),
-    lastPaymentBy: uid,
-    updatedAt: FieldValue.serverTimestamp(),
-  };
-  // ── ONE TRANSACTION: THE DEDUPE, THE PAYMENT ROW, THE INVOICE ───────────
+  // ── ONE TRANSACTION: EVERY READ, EVERY GUARD, THE ROW, THE INVOICE (#2269) ─
   //
-  // This was a batch, which was already atomic. What a batch cannot do is make
-  // the writes conditional on what is stored, and a retried PARTIAL payment
-  // passes every guard above on its second pass — the invoice still owes a
-  // balance, so the second attempt looks exactly like a genuine second payment.
-  // The read that finds the key's row and the writes it cancels now share one
-  // snapshot, and the lock Firestore takes on that row serialises two attempts
-  // that overlap.
-  const replayed = await db().runTransaction(async (tx) => {
+  // Before #2269 the invoice and its payments were read OUTSIDE this
+  // transaction, the new balance was worked out from that read, and the
+  // transaction only re-read the invoice to refuse a write-off (#2090). Two
+  // payments recorded at the same moment both read the same "before", and the
+  // second one to commit wrote its balance from it: the invoice then said more
+  // was owed than its payments left, and the first payment was missing from
+  // `paidCents`.
+  //
+  // Now the invoice doc and its `payments` subcollection are read here, and
+  // every figure written below is derived from those two reads. Every other
+  // path that moves money onto an invoice (recordPayment's apply, the credit
+  // draw, an unapplied card payment's decision, the Stripe webhook, the repair
+  // pass) reads and writes the same invoice doc inside its own transaction, so
+  // the invoice doc is the point they all serialise on: whichever commits
+  // second re-runs against what the first committed, and its guards (already
+  // settled, over the balance) run again on the new figures.
+  //
+  // Anything thrown in here aborts the attempt, so a refusal writes nothing.
+  // Nothing is logged or audited from inside: an attempt can be discarded and
+  // re-run, and a line written from a discarded attempt would report money
+  // that never moved.
+  const outcome = await db().runTransaction(async (tx) => {
     // Every read before every write, which Firestore requires and the guard
     // wants anyway.
     if (args.idempotencyKey !== undefined) {
@@ -542,19 +448,137 @@ export async function markInvoicePaidHandler(
       if (existing.exists) {
         const stored = (existing.data() ?? {}) as Record<string, unknown>;
         assertSameCaller(stored, uid, 'recordedBy');
-        return stored;
+        return { replayed: stored } as const;
       }
     }
-    // #2090: THE INVOICE AGAIN, INSIDE THE TRANSACTION. Everything above was
-    // decided on a read taken outside it, and the write below sets the balance
-    // from that read. A write-off committing in between would be overwritten
-    // with the old balance and an `open` stamp, bringing back a debt the owner
-    // had just given up. Reading the doc here puts it in this transaction's
-    // read set, so the two serialise, and the loser is refused.
-    const fresh = await tx.get(ref);
-    if (isWrittenOff((fresh.data() ?? {}) as InvoiceDoc)) {
+    const snap = await tx.get(ref);
+    if (!snap.exists) {
+      throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+    }
+    const data = snap.data() as InvoiceDoc;
+    // The payments SUBCOLLECTION is the only field that can say how much has
+    // come in. Read in this transaction, after the invoice, so the balance
+    // below and the payments it is summed from are the same snapshot.
+    const paymentsSnap = await tx.get(ref.collection('payments'));
+
+    if (isDraftOrQuote(data)) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Invoice is a draft or quote; send it first before recording a payment.',
+      );
+    }
+    // #2090: the owner gave up what was left. Decided on this transaction's own
+    // read, so a write-off committing first makes this attempt re-run and refuse.
+    if (isWrittenOff(data)) {
       throw new HttpsError('failed-precondition', WRITTEN_OFF_PAYMENT_REFUSAL, { code: INVOICE_WRITTEN_OFF_CODE });
     }
+    const lifecycleRefusal = refusedLifecycle(data);
+    if (lifecycleRefusal) {
+      throw new HttpsError('failed-precondition', lifecycleRefusal, { code: 'invoice_not_payable' });
+    }
+
+    const existingPayments = paymentsSnap.docs.map((d) => d.data() as PaymentAmount);
+    const existingPaidCents = paidCentsFromPayments(existingPayments);
+    const totalCents = invoiceTotalCentsOf(data);
+    const before = settleInvoice(totalCents, existingPaidCents);
+
+    const settledRefusal = alreadySettledRefusal(data, existingPayments.length, before.state);
+    if (settledRefusal) {
+      throw new HttpsError('failed-precondition', settledRefusal.message, { code: settledRefusal.code });
+    }
+
+    // Omitted `amount` means "settle the rest", and the rest is what the
+    // payments leave outstanding. Reading `data.amountDue` here instead would
+    // record a $0 payment on every invoice the old write had already zeroed.
+    const paidCents = args.amount !== undefined ? Math.round(args.amount * 100) : before.amountDueCents;
+    // #1566: what is over the balance is tip, and this callable has no tip to
+    // put it in. Refused before anything is written.
+    const overBalance = overBalanceRefusal(paidCents, before);
+    if (overBalance) {
+      throw new HttpsError('failed-precondition', overBalance.message, { code: overBalance.code });
+    }
+    const paidAmount = centsToDollars(paidCents);
+    const after = settleInvoice(totalCents, existingPaidCents + paidCents);
+    const settling = after.state === 'settled' || after.state === 'overpaid';
+
+    const paymentRow = {
+      // Both denominations. `amountCents` is what the settlement was computed
+      // from and what future sums prefer; `amount` stays because every payment
+      // recorded before this change carries only it, and the PDF and the
+      // Android payments join both read dollars.
+      amount: paidAmount,
+      amountCents: paidCents,
+      method: args.method ?? null,
+      reference: args.reference ?? null,
+      paidAt: paidAtIso,
+      recordedBy: uid,
+      createdAt: FieldValue.serverTimestamp(),
+      // #825, DENORMALIZED SO A REPLAY CAN BE ANSWERED FROM ONE READ. This is
+      // where the invoice stood after THIS payment, which is what this call
+      // reported and therefore what a retry of it must report. Recomputing on a
+      // retry would answer with today's settlement instead, so the same call
+      // would return different figures depending on how often it was retried.
+      // `paidCentsFromPayments` reads only `amount`/`amountCents`, so an extra
+      // map on the row changes no sum anywhere.
+      settlement: {
+        state: after.state,
+        totalCents: after.totalCents,
+        paidCents: after.paidCents,
+        amountDueCents: after.amountDueCents,
+        overpaidCents: after.overpaidCents,
+      },
+    };
+    const invoiceUpdate = {
+      // A PARTIAL PAYMENT LEAVES THE INVOICE OPEN with a real balance, so it
+      // stays in Outstanding and someone chases the rest. Only a settling
+      // payment writes 'paid'. (The state stamp below re-derives the same value
+      // from the merged doc; writing it here too keeps the rule readable at the
+      // point it is decided.)
+      status: settling ? 'paid' : 'open',
+      paymentStatus: settling ? 'PAID' : 'PARTIAL',
+      // Integer cents: the truth. Written even on an un-itemized invoice, where
+      // `totalCents` is projected from the dollar `total`, so every downstream
+      // reader has an exact figure instead of re-deriving one from a float.
+      totalCents: after.totalCents,
+      paidCents: after.paidCents,
+      amountDueCents: after.amountDueCents,
+      overpaidCents: after.overpaidCents,
+      // The legacy dollar scalar, projected from the SAME cents figure in the
+      // same pass so the two can never disagree. Never negative: see
+      // settleInvoice's note on why an overpayment must not read as a credit.
+      amountDue: centsToDollars(after.amountDueCents),
+      paymentMethod: args.method ?? null,
+      paymentReference: args.reference ?? null,
+      // `paidAt`/`paidBy` mean "when this invoice was PAID", so they are stamped
+      // only by the payment that actually settles it. A partial stamps
+      // `lastPaymentAt`/`lastPaymentBy` instead, which is a different claim and
+      // deserves a different field rather than a premature version of this one.
+      ...(settling
+        ? {
+            paidAt: FieldValue.serverTimestamp(),
+            paidBy: uid,
+            // #866: the household's confirmation for this payment belongs to the
+            // `recordPayment` step the older admin clients run next, which
+            // carries the Send Confirmation toggle. Stamped in the write that
+            // pays the bill, so `onInvoicesWrite` neither doubles a ticked
+            // confirmation nor sends one the admin left unticked.
+            [PAYMENT_APPLIED_OWNER_FIELD]: paymentAppliedOwner('markInvoicePaid', paymentRef.id),
+            // When the stamp was written, so an older admin client that does not
+            // send this settlement's id can still claim it moments later, and no
+            // unrelated payment days later can (OLD_CLIENT_CLAIM_WINDOW_MS).
+            [PAYMENT_APPLIED_OWNER_AT_FIELD]: Date.now(),
+            // #2230: and until that step claims it, this settlement is owed a
+            // ledger row and a notice. If the app is closed or reloaded before
+            // its second call, the sweep finishes both
+            // (`lib/settlementLedgerSweep.ts`); the claim clears this.
+            [SETTLEMENT_LEDGER_PENDING_FIELD]: paymentAppliedOwner('markInvoicePaid', paymentRef.id),
+            [SETTLEMENT_LEDGER_PENDING_AT_FIELD]: Date.now(),
+          }
+        : {}),
+      lastPaymentAt: FieldValue.serverTimestamp(),
+      lastPaymentBy: uid,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
     // `create` when there is a key, so two attempts reaching the write together
     // are refereed by the server. A keyless call keeps `set`: its id is
     // server-minted and cannot collide.
@@ -573,10 +597,18 @@ export async function markInvoicePaidHandler(
       },
       { merge: true },
     );
-    return null;
+    return {
+      replayed: null,
+      familyId: data.kinfolkId,
+      invoiceNumber: data.invoiceNumber,
+      paidCents,
+      paidAmount,
+      after,
+      settling,
+    } as const;
   });
 
-  if (replayed !== null) {
+  if (outcome.replayed !== null) {
     logEvent({
       severity: 'info',
       function: 'markInvoicePaid',
@@ -584,8 +616,10 @@ export async function markInvoicePaidHandler(
       uid,
       extra: { invoiceId: args.invoiceId, paymentId: paymentRef.id, raced: true },
     });
-    return replayResult(args.invoiceId, paymentRef.id, replayed);
+    return replayResult(args.invoiceId, paymentRef.id, outcome.replayed);
   }
+  const { familyId, paidCents, paidAmount, after, settling } = outcome;
+  const data = { invoiceNumber: outcome.invoiceNumber };
 
   await writeAuditEntry({
     status: 'SUCCESS',
