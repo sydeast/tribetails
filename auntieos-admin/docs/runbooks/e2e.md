@@ -735,6 +735,15 @@ difference: with the flag off, a Checkout URL rendered nothing; with it on,
 Stripe's page text appeared. The admin real config does not set it, because no
 admin spec goes to Stripe's page.
 
+Since 2026-11-14 Stripe serves the session at `/g/pay/`, and in Electron 146
+its form frame stayed 2 px tall with the flag on (#2304, run 43629608013). The
+portal's real run now starts Chrome (`--browser chrome` in `e2e:real:run`; the
+hosted runner and a Mac with Chrome installed both have it), with the flag
+unchanged. When the pay spec gives up on Stripe's page its message lists the
+page's fields, frames, browser, console errors and refused requests, and after
+the run the config prints the lines Chrome's console logged for Stripe's
+scripts and saves them as `cypress/.artifacts/real/stripe-page-console.log`.
+
 ## Pointing a Cypress run at a deployed host (added 2026-08-30)
 
 `baseUrl` in `cypress.config.ts` is the emulator (`http://127.0.0.1:5174`) and
