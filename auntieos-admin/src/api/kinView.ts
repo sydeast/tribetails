@@ -30,8 +30,22 @@ export interface KinDetail {
   trainingCommands: string;
   feedingBrand: string;
   vaccinations: string;
+  /** #1908 kin-meds: ONE field with the household's Medications (the mirror carries it both ways). */
   medicationHealthNotes: string;
+  /** Legacy free-text vet note. No longer an input (#1908 kin-vet); shown only when no clinic resolves. */
   vetInfo: string;
+  /** #1908 kin-vet: a `vet_clinics` id for this Kin alone, '' when it goes to the household's vet. */
+  ownVetClinicId: string;
+  /**
+   * #1908: the household's care block, now edited here too. Existing docs may
+   * hold null for any of them (the portal clears with null); they read as ''.
+   */
+  feedingInstructions: string;
+  walkingInstructions: string;
+  allergies: string;
+  emergencyNotes: string;
+  /** The household's notes for the Auntie. Not `officeNotes`, which stays the office's own. */
+  sitterNotes: string;
   officeNotes: string;
   /**
    * Pet tag NAMES (e.g. "Reactive"), the `petTags` vocabulary's assignment side.
@@ -54,7 +68,8 @@ const EMPTY: Omit<KinDetail, '_id'> = {
   kinfolkId: '', name: '', species: 'Dog', breed: '', age: '', sex: '', weight: '', status: 'active',
   profilePictureUrl: '', colorMarkings: '', spayedNeutered: false, reactive: false,
   staysAs: '', routine: '', trainingCommands: '', feedingBrand: '', vaccinations: '',
-  medicationHealthNotes: '', vetInfo: '', officeNotes: '', tags: [], checklist: '',
+  medicationHealthNotes: '', vetInfo: '', ownVetClinicId: '', feedingInstructions: '', walkingInstructions: '',
+  allergies: '', emergencyNotes: '', sitterNotes: '', officeNotes: '', tags: [], checklist: '',
 };
 
 /** Defensive field-by-field merge (never `undefined`, never fabricates a value). */
@@ -87,6 +102,12 @@ export function mergeKinDetail(id: string, raw: Record<string, unknown> | undefi
     vaccinations: s(r.vaccinations, EMPTY.vaccinations),
     medicationHealthNotes: s(r.medicationHealthNotes, EMPTY.medicationHealthNotes),
     vetInfo: s(r.vetInfo, EMPTY.vetInfo),
+    ownVetClinicId: s(r.ownVetClinicId, EMPTY.ownVetClinicId),
+    feedingInstructions: s(r.feedingInstructions, EMPTY.feedingInstructions),
+    walkingInstructions: s(r.walkingInstructions, EMPTY.walkingInstructions),
+    allergies: s(r.allergies, EMPTY.allergies),
+    emergencyNotes: s(r.emergencyNotes, EMPTY.emergencyNotes),
+    sitterNotes: s(r.sitterNotes, EMPTY.sitterNotes),
     officeNotes: s(r.officeNotes, EMPTY.officeNotes),
     checklist: s(r.checklist, EMPTY.checklist),
   };

@@ -76,6 +76,12 @@ vi.mock('../api/kinRemovalRequests', () => ({
   resolveKinRemovalRequest: vi.fn(),
 }));
 vi.mock('../lib/access', () => ({ useAdminAccess: () => ({ status: 'admin' }) }));
+// #1908 kin-vet: the household's vet, read once from household_data.
+const { getHouseholdData } = vi.hoisted(() => ({ getHouseholdData: vi.fn() }));
+vi.mock('../api/householdData', async (orig) => ({
+  ...(await orig<typeof import('../api/householdData')>()),
+  getHouseholdData: (id: string) => getHouseholdData(id),
+}));
 
 import { KinView, kinHeroLine } from './KinView';
 import { mergeKinDetail } from '../api/kinView';
@@ -115,7 +121,17 @@ beforeEach(() => {
   updateKinTags.mockResolvedValue(undefined);
   listKinRemovalRequests.mockReset();
   listKinRemovalRequests.mockResolvedValue({ requests: [] });
+  getHouseholdData.mockReset();
+  getHouseholdData.mockResolvedValue(null);
 });
+/** A tag under the name: a resolved chip (#2015), or the plain pill while the tag list loads. */
+function isTagPill(el: HTMLElement): boolean {
+  return el.closest('.tag-chip') !== null || el.classList.contains('den-statuspill');
+}
+/** The vet clinic bank `useVetClinics` streams, everything else empty. */
+function withClinics(clinics: Array<Record<string, unknown>>) {
+  useCollection.mockImplementation((spec: { path?: string }) => (spec?.path === 'vet_clinics' ? ready(clinics) : ready([])));
+}
 
 describe('KinView: the household removal request band (#1408)', () => {
   it('shows a pending request near the top, with Archive and Decline', async () => {
@@ -241,15 +257,30 @@ describe('KinView: hero', () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
-  it('shows pet tags as kit pills next to the name, not a separate Tags panel', async () => {
+  it('shows pet tags as chips next to the name, not a separate Tags panel', async () => {
     mount({ tags: ['Yellow lab', 'Microchipped'] });
-    const pill = await screen.findByText('Yellow lab');
-    expect(pill).toHaveClass('den-statuspill');
-    expect(screen.getByText('Microchipped')).toHaveClass('den-statuspill');
+    await waitFor(() => expect(screen.getByText('Yellow lab').closest('.tag-chip')).not.toBeNull());
+    expect(screen.getByText('Microchipped').closest('.tag-chip')).not.toBeNull();
     expect(screen.queryByText('Tags')).toBeNull();
     expect(screen.queryByLabelText(/add a pet tag/i)).toBeNull();
   });
-
+  it('#2015: a tag pill under the name carries the tag icon and colour, so an allergy reads as one', async () => {
+    getBusinessSettings.mockResolvedValue({
+      householdTags: [],
+      petTags: [{ name: 'Chicken/Poultry', color: { token: 'coral', css: 'var(--color-coral)' }, icon: 'ALLERGY' }],
+    });
+    mount({ tags: ['Chicken/Poultry'] });
+    const name = await screen.findByText('Chicken/Poultry');
+    await waitFor(() => expect(name.closest('.tag-chip')).not.toBeNull());
+    const chip = name.closest('.tag-chip')!;
+    expect(chip).toHaveAttribute('data-token', 'coral');
+    expect(within(chip as HTMLElement).getByText('ALLERGY')).toBeInTheDocument();
+  });
+  it('#2015: keeps the plain pills when the tag list will not load, never no pills', async () => {
+    getBusinessSettings.mockRejectedValue(new Error('offline'));
+    mount({ tags: ['Chicken/Poultry'] });
+    expect(await screen.findByText('Chicken/Poultry')).toHaveClass('den-statuspill');
+  });
   it('says nothing about status for an active pet, and pills any other status', async () => {
     const { unmount } = mount();
     await screen.findByText('Care checklist');
@@ -280,9 +311,7 @@ describe('KinView: hero', () => {
     expect(leading.style.getPropertyValue('--avatar-size')).toBe('120px');
     // `.owner` under the breed line, `.tags` last, both in the band's own slots.
     expect(band.querySelector('.den-heading-extra')).toHaveTextContent(/belongs to the Wrens/);
-    expect(within(band.querySelector('.den-heading-badges') as HTMLElement).getByText('Yellow lab')).toHaveClass(
-      'den-statuspill',
-    );
+    expect(isTagPill(within(band.querySelector('.den-heading-badges') as HTMLElement).getByText('Yellow lab'))).toBe(true);
     expect(within(band).getByRole('button', { name: 'Edit tags' })).toBeInTheDocument();
     // Nothing of the identity is laid out on the page under the band any more.
     expect(container.querySelector('.kview__identity')).toBeNull();
@@ -403,7 +432,7 @@ describe('KinView: hero', () => {
     // The band's pills are the saved list, not the one first read.
     const band = document.querySelector('.den-heading-badges') as HTMLElement;
     expect(within(band).queryByText('On meds')).toBeNull();
-    expect(within(band).getByText('Reactive')).toHaveClass('den-statuspill');
+    expect(isTagPill(within(band).getByText('Reactive'))).toBe(true);
     expect(getKin).toHaveBeenCalledTimes(1); // repainted from the save, not a re-read
   });
 
@@ -417,7 +446,7 @@ describe('KinView: hero', () => {
     expect(await screen.findByText(/Couldn't save tags: permission-denied/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Done' })).toBeEnabled();
     const band = document.querySelector('.den-heading-badges') as HTMLElement;
-    expect(within(band).getByText('Reactive')).toHaveClass('den-statuspill');
+    expect(isTagPill(within(band).getByText('Reactive'))).toBe(true);
   });
 });
 
@@ -469,13 +498,52 @@ describe('KinView: panels', () => {
     expect(screen.queryByText('Feeding')).toBeNull();
   });
 
-  it('puts vaccinations, medication and vet info in Medical', async () => {
-    mount({ vaccinations: 'Rabies 2027', vetInfo: 'Riverside Animal Hospital' });
+  it('puts vaccinations, medications, allergies and emergency notes in Medical (#1908)', async () => {
+    mount({ vaccinations: 'Rabies 2027', medicationHealthNotes: 'Thyroid tablet', allergies: 'Chicken', emergencyNotes: 'Call the vet first' });
     expect(await screen.findByText('Rabies 2027')).toBeInTheDocument();
-    expect(screen.getByText('Riverside Animal Hospital')).toBeInTheDocument();
+    expect(screen.getByText('Medications / health notes')).toBeInTheDocument();
+    expect(screen.getByText('Chicken')).toBeInTheDocument();
+    expect(screen.getByText('Call the vet first')).toBeInTheDocument();
     expect(screen.queryByText('Health')).toBeNull();
   });
-
+  it('#1908: shows the household care block in Care checklist', async () => {
+    mount({ feedingInstructions: '1 cup AM', walkingInstructions: 'Short loop', sitterNotes: 'Leash by the door' });
+    expect(await screen.findByText('1 cup AM')).toBeInTheDocument();
+    expect(screen.getByText('Walking instructions')).toBeInTheDocument();
+    expect(screen.getByText('Notes for the Auntie')).toBeInTheDocument();
+    expect(screen.getByText('Leash by the door')).toBeInTheDocument();
+  });
+  describe('#1908 kin-vet: the vet the Kin goes to', () => {
+    const CLINICS = [
+      { _id: 'home', name: 'Cedar Animal Care', phone: '555 0142' },
+      { _id: 'own', name: 'Riverside Vets', phone: '555 0199' },
+    ];
+    it("no vet of its own: the household's vet, marked as the household's", async () => {
+      withClinics(CLINICS);
+      getHouseholdData.mockResolvedValue({ _id: 'hd', kinfolkId: 'kf-1', primaryVetClinicId: 'home' });
+      mount();
+      expect(await screen.findByText("Cedar Animal Care · 555 0142 (the household's vet)")).toBeInTheDocument();
+    });
+    it('a vet of its own: that one, not the household one', async () => {
+      withClinics(CLINICS);
+      getHouseholdData.mockResolvedValue({ _id: 'hd', kinfolkId: 'kf-1', primaryVetClinicId: 'home' });
+      mount({ ownVetClinicId: 'own' });
+      expect(await screen.findByText('Riverside Vets · 555 0199')).toBeInTheDocument();
+      expect(screen.queryByText(/Cedar Animal Care/)).toBeNull();
+    });
+    it('the old free-text vet note shows, labelled, only when no clinic resolves', async () => {
+      withClinics(CLINICS);
+      mount({ vetInfo: 'Riverside Animal Hospital' });
+      expect(await screen.findByText('Riverside Animal Hospital')).toBeInTheDocument();
+      expect(screen.getByText('Vet notes on file')).toBeInTheDocument();
+    });
+    it('a household vet that will not load says so', async () => {
+      withClinics(CLINICS);
+      getHouseholdData.mockRejectedValue(new Error('denied'));
+      mount();
+      expect(await screen.findByText('Could not load the vet. Reload to try again.')).toBeInTheDocument();
+    });
+  });
   it("renders office notes as Auntie's notes, with the staff-only note as the meta and not a subtitle", async () => {
     mount({ officeNotes: 'Treats in the blue tin.' });
     expect(await screen.findByText('Treats in the blue tin.')).toHaveClass('kview__notebox');
@@ -528,7 +596,9 @@ describe('KinView: panels', () => {
   it('says so when the pet has no household to match feeds against', async () => {
     mount({ kinfolkId: '' });
     expect(await screen.findByText(/No household on file for Willow/)).toBeInTheDocument();
-    expect(useCollection).not.toHaveBeenCalled();
+    // No feed is streamed. The vet clinic list is the one read still made: it
+    // resolves a vet picked for this Kin alone (#1908 kin-vet).
+    expect(useCollection.mock.calls.filter(([spec]) => (spec as { path?: string })?.path !== 'vet_clinics')).toEqual([]);
     expect(screen.queryByText(/belongs to/)).toBeNull();
   });
 

@@ -14,10 +14,16 @@ function clinic(over: Partial<VetClinic> & { _id: string; name: string }): VetCl
 }
 
 describe('vetClinicSuggestions', () => {
-  it('returns nothing for a blank query: this is a search box, not a catalog dump', () => {
-    const all = [clinic({ _id: '1', name: 'Riverside Animal Hospital' })];
-    expect(vetClinicSuggestions('', all)).toEqual([]);
-    expect(vetClinicSuggestions('   ', all)).toEqual([]);
+  it('#1908 kin-vet: a blank query is the whole area list, uncapped, named clinics only', () => {
+    // Owner ruling 2026-11-12: "a dropdown field preloaded with all vets in the
+    // entire area". This used to return nothing until something was typed.
+    const all = [
+      clinic({ _id: '1', name: 'Riverside Animal Hospital' }),
+      clinic({ _id: '2', name: '' }),
+      ...Array.from({ length: 12 }, (_, i) => clinic({ _id: `v${i}`, name: `Vetworks ${i}` })),
+    ];
+    expect(vetClinicSuggestions('', all).map((c) => c._id)).toEqual(['1', ...Array.from({ length: 12 }, (_, i) => `v${i}`)]);
+    expect(vetClinicSuggestions('   ', all)).toHaveLength(13);
   });
 
   it('ranks PREFIX matches ahead of substring matches', () => {

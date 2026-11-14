@@ -92,7 +92,8 @@ export function VetClinicPicker({
     }
   }
 
-  const showList = open && query.trim() !== '' && !creating;
+  // #1908 kin-vet: the list opens on focus with every clinic, and typing narrows it.
+  const showList = open && !creating;
 
   useEffect(() => {
     if (!showList) return;
@@ -168,7 +169,7 @@ export function VetClinicPicker({
           disabled={disabled}
           autoComplete="off"
           placeholder={
-            clinics.length === 0 ? 'No clinics in the catalog yet' : `Type to search ${clinics.length} clinics`
+            clinics.length === 0 ? 'No clinics in the catalog yet' : `Pick or type to search ${clinics.length} clinics`
           }
           aria-expanded={showList}
           aria-controls={showList ? listId : undefined}
@@ -226,21 +227,25 @@ export function VetClinicPicker({
               )}
             </div>
 
-            {/* PINNED, always last, always present. Outside the scrolling
-                options block on purpose: with a long match list the operator
-                must not have to scroll to reach the one action that handles a
-                clinic the bank has never heard of. */}
-            <button
-              type="button"
-              className="vetpick__create"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                cancelBlurClose();
-                setCreating(true);
-              }}
-            >
-              Create &quot;{query.trim()}&quot; as a new vet clinic
-            </button>
+            {/* PINNED, always last, present whenever a name is typed. Outside
+                the scrolling options block on purpose: with a long match list
+                the operator must not have to scroll to reach the one action
+                that handles a clinic the bank has never heard of. With nothing
+                typed there is no name to create (#1908: the list now opens on
+                focus, before any typing). */}
+            {query.trim() !== '' && (
+              <button
+                type="button"
+                className="vetpick__create"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  cancelBlurClose();
+                  setCreating(true);
+                }}
+              >
+                Create &quot;{query.trim()}&quot; as a new vet clinic
+              </button>
+            )}
           </div>
         )}
       </div>
