@@ -703,7 +703,10 @@ In CI the two jobs are on separate runners.
    `STRIPE_TEST_WEBHOOK_SECRET` before the preflight, which writes it to
    `.secret.local` as `STRIPE_WEBHOOK_SECRET`;
 3. stops the forwarder when the run ends. Its output is
-   `cypress/.real/stripe-listen.log`.
+   `cypress/.real/stripe-listen.log`, written at that point with the webhook
+   signing value masked. During the run the CLI writes to
+   `stripe-listen.raw.log` beside it, which is deleted when the run ends and
+   is not in the job's artifacts.
 
 A key that is not a test key is refused before the CLI ever sees it. The
 preflight then reports one more flag, `stripeWebhook`, which is true only with
