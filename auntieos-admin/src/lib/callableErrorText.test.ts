@@ -48,6 +48,22 @@ describe('plainCallableMessage', () => {
     const refusal = 'This activity is recorded by the system on its own, so it cannot be added from the app.';
     expect(plainCallableMessage('functions/permission-denied', `${refusal} [403]`)).toBe(refusal);
   });
+  // #2199: an Auntie read the staff gate's own words under a Complete she was
+  // refused (mytribe/functions/src/lib/wrapAdminCallable.ts).
+  it.each([
+    ['functions/permission-denied', 'Admin claim required. [403]'],
+    ['functions/permission-denied', 'Admin claim required.'],
+    ['permission-denied', 'Admin claim required'],
+    ['functions/permission-denied', 'Admin claim required for this action'],
+  ])('#2199: never shows the staff gate text (%s "%s")', (code, message) => {
+    const plain = plainCallableMessage(code, message);
+    expect(plain).toBe('Your account is not allowed to do this.');
+    expect(plain).not.toMatch(/admin claim/i);
+  });
+  it('#2199: a refusal that only mentions an admin is still the server\'s to word', () => {
+    const refusal = 'Only an admin claim holder can be the business owner of record.';
+    expect(plainCallableMessage('functions/permission-denied', refusal)).toBe(refusal);
+  });
   it('keeps the machine tokens screens match on', () => {
     expect(plainCallableMessage('functions/failed-precondition', 'no_recipients [400]')).toBe('no_recipients');
     expect(plainCallableMessage('functions/failed-precondition', 'recipient_opted_out')).toBe('recipient_opted_out');

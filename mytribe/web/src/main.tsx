@@ -37,6 +37,7 @@ import { initSentry } from './lib/sentry';
 import { queryClient } from './lib/queryClient';
 import { installPortalWarmup } from './lib/portalWarmup';
 import { router } from './router';
+import { UnreadNotificationsBridge } from './components/UnreadNotificationsBridge';
 
 // Start crash reporting before the app renders, so an error during first paint
 // is still captured. No-op (with a visible console line) when no VITE_SENTRY_DSN.
@@ -176,6 +177,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <Sentry.ErrorBoundary fallback={<CrashFallback />}>
         <RouterProvider router={router} />
       </Sentry.ErrorBoundary>
+      {/* #1833: the one listener behind the bell's unread count. Outside the
+          error boundary on purpose: it draws nothing, and the count must not
+          depend on which screen is up. */}
+      <UnreadNotificationsBridge />
     </QueryClientProvider>
   </React.StrictMode>,
 );

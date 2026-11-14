@@ -597,6 +597,28 @@ describe('rules: flat top-level collections', () => {
       throw new Error(`expected only the owners own row, got: ${snap.docs.map((d) => d.id).join(',')}`);
     }
   });
+  it("notifications: the portal bell's own-recipient list is allowed for a Kinfolk and returns only their rows (#1833)", async () => {
+    const env = await getEnv();
+    await seedTwoRecipients();
+    // The MyTribe bell's live query, web and Android: recipientUid == own uid,
+    // newest first, the newest 100.
+    const bell = (uid: string) =>
+      asUser(env, 'kin-a')
+        .firestore()
+        .collection('notifications')
+        .where('recipientUid', '==', uid)
+        .orderBy('createdAt', 'desc')
+        .limit(100)
+        .get();
+    const snap = await assertSucceeds(bell('kin-a'));
+    if (snap.docs.map((d) => d.id).join(',') !== 'house-a') {
+      throw new Error(`expected only the Kinfolks own row, got: ${snap.docs.map((d) => d.id).join(',')}`);
+    }
+    await assertFails(bell('kin-b'));
+    await assertFails(
+      asUser(env, 'kin-a').firestore().collection('notifications').orderBy('createdAt', 'desc').limit(100).get(),
+    );
+  });
   it('notifications: an unfiltered list is denied for the owner, a caretaker and a Kinfolk', async () => {
     const env = await getEnv();
     await seedTwoRecipients();

@@ -6,6 +6,8 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PortalNav } from './PortalNav';
 import { getMyHome } from '../api/portal';
+import { act } from '@testing-library/react';
+import { markReadLocally, resetUnreadBadge, setLiveRows, setUnreadFeedFailed, type BadgeRow } from '../lib/unreadBadge';
 
 /**
  * #538, "the upper right icon cannot be the signout. how else will they get
@@ -61,6 +63,7 @@ function renderNav(active: Parameters<typeof PortalNav>[0]['active'] = 'home') {
   );
 }
 beforeEach(() => {
+  resetUnreadBadge();
   accessMock.isOperator = false;
   signOutSpy.mockReset();
   accountMock.getMyAccount.mockReset();
@@ -307,5 +310,85 @@ describe('PortalNav bell (#1316)', () => {
     renderNav();
     expect(await screen.findByTestId('bell-badge')).toHaveTextContent('99+');
     expect(screen.getByRole('link', { name: 'Notifications, 150 unread' })).toBeTruthy();
+  });
+});
+
+/**
+ * #1833: "the bell badge does not count a new notice until the page is
+ * reloaded". The badge read 6 while the list under it showed 7 unread rows,
+ * four times out of four. It now follows the live rows (lib/unreadBadge.ts)
+ * with no reload and no call of its own.
+ */
+describe('PortalNav bell, live count (#1833)', () => {
+  const unread = (id: string, tribeId = 'kin-1'): BadgeRow => ({ id, unread: true, archived: false, tribeId });
+  const read = (id: string): BadgeRow => ({ id, unread: false, archived: false, tribeId: 'kin-1' });
+  const six = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => unread(id));
+  function homeWith(unreadNotifications: number) {
+    vi.mocked(getMyHome).mockResolvedValueOnce({
+      businessLogoUrl: undefined,
+      businessName: 'Tribe Tails Pet Care',
+      unreadNotifications,
+    } as unknown as Awaited<ReturnType<typeof getMyHome>>);
+  }
+  it('goes from 6 to 7 when a notice arrives, with no reload and no second getMyHome', async () => {
+    homeWith(6);
+    renderNav();
+    expect(await screen.findByTestId('bell-badge')).toHaveTextContent('6');
+    const calls = vi.mocked(getMyHome).mock.calls.length;
+    act(() => setLiveRows(six));
+    expect(screen.getByTestId('bell-badge')).toHaveTextContent('6');
+    act(() => setLiveRows([unread('omw'), ...six]));
+    expect(screen.getByTestId('bell-badge')).toHaveTextContent('7');
+    expect(screen.getByRole('link', { name: 'Notifications, 7 unread' })).toBeTruthy();
+    expect(vi.mocked(getMyHome).mock.calls.length).toBe(calls);
+  });
+  it('goes down when one is read, at the tap and again from another device', async () => {
+    homeWith(6);
+    renderNav();
+    await screen.findByTestId('bell-badge');
+    act(() => setLiveRows(six));
+    act(() => markReadLocally('a'));
+    expect(screen.getByTestId('bell-badge')).toHaveTextContent('5');
+    act(() => setLiveRows([read('a'), read('b'), ...six.slice(2)]));
+    expect(screen.getByTestId('bell-badge')).toHaveTextContent('4');
+  });
+  it('draws no badge once all are marked read, and the name drops the count', async () => {
+    homeWith(6);
+    renderNav();
+    await screen.findByTestId('bell-badge');
+    act(() => setLiveRows(six));
+    act(() => setLiveRows(six.map((r) => read(r.id))));
+    expect(screen.queryByTestId('bell-badge')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Notifications' })).toHaveAttribute('href', '/notifications');
+  });
+  it('trusts the live rows over the count the portal opened with', async () => {
+    homeWith(6);
+    renderNav();
+    await screen.findByTestId('bell-badge');
+    act(() => setLiveRows([unread('a'), unread('b')]));
+    expect(screen.getByTestId('bell-badge')).toHaveTextContent('2');
+  });
+  it('does not count a row about another tribe, an archived row, or a read one', async () => {
+    homeWith(0);
+    renderNav();
+    await waitFor(() => expect(getMyHome).toHaveBeenCalled());
+    act(() =>
+      setLiveRows([
+        unread('mine'),
+        unread('other', 'kin-2'),
+        { id: 'archived', unread: true, archived: true, tribeId: 'kin-1' },
+        read('seen'),
+      ]),
+    );
+    expect(screen.getByTestId('bell-badge')).toHaveTextContent('1');
+  });
+  it('after a failed listener it draws no badge and no banner, and the bell still opens the list', async () => {
+    homeWith(6);
+    renderNav();
+    await screen.findByTestId('bell-badge');
+    act(() => setUnreadFeedFailed());
+    expect(screen.queryByTestId('bell-badge')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Notifications' })).toHaveAttribute('href', '/notifications');
   });
 });

@@ -36,7 +36,7 @@ import { ClockStepWarningLine } from '../components/ClockStepWarningLine';
 import { UndoDepartedAction } from '../components/UndoDepartedAction';
 import { useVisitNoticeReach } from '../lib/useVisitNoticeReach';
 import { actionNotifiesHousehold, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
-import { completeRefusal } from '../lib/completeRule';
+import { COMPLETE_OWNER_ONLY, completeRefusal } from '../lib/completeRule';
 import { useArrivalRule } from '../lib/useArrivalRule';
 import { useIsAuntie } from '../lib/useIsAuntie';
 import { usePagedCollection } from '../lib/usePagedCollection';
@@ -50,6 +50,7 @@ import { DenScreenHeading, StatusPill, EmptyHint, ErrorHint } from '../component
 import { AsyncLoading } from '../components/AsyncRegion';
 import { LoadingRow } from '../components/LoadingRow';
 import { GhostButton, PrimaryButton } from '../components/Buttons';
+import { HeldButton } from '../components/HeldButton';
 import { Avatar } from '../components/Avatar';
 import { Dialog } from '../components/Dialog';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -99,6 +100,12 @@ interface SessionsProps {
    * KinTale is sent). Same absent-means-hidden rule.
    */
   onViewKinTale?: (kinTaleId: string) => void;
+  /**
+   * #2199: whether an Auntie is signed in, from the access the admin layout
+   * resolved before the screen drew, so Complete is held from the first paint.
+   * Left out, the screen reads the token itself, a moment later.
+   */
+  isAuntie?: boolean;
 }
 
 /**
@@ -154,14 +161,18 @@ interface SessionsProps {
  * mounts SessionDetail over the same by-id subscription this screen used to run.
  * That is why nothing below reads `kin_care_sessions` by id any more.
  */
-export function Sessions({ onSelect, onComposeKinTale, onViewKinTale }: SessionsProps) {
+export function Sessions({ onSelect, onComposeKinTale, onViewKinTale, isAuntie = false }: SessionsProps) {
   const [mode, setMode] = useState<ViewMode>('window');
 
   // Computed once per render pass, not per keystroke/tick, same rationale as
   // Invoices.tsx's todayIso: "today" doesn't change mid-session.
   const todayIso = useMemo(() => localDateIso(new Date()), []);
   // #2185: asked once for the board, so no card points an Auntie to Settings.
-  const auntie = useIsAuntie();
+  // #2199: the route already knows who is signed in (`isAuntie`), so her
+  // Complete is held from the first paint; the token read stays as the answer
+  // for a caller that passes nothing.
+  const auntieRead = useIsAuntie();
+  const auntie = isAuntie || auntieRead;
 
   // #2036: the Archive's FROM and TO are days on the BUSINESS's calendar. It
   // opens on the 30 days that end where Recent stops, so no wrapped visit sits
@@ -590,6 +601,13 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   }, [state, settledStatus, onWritten]);
 
   function askComplete() {
+    // #2199: completing a visit is the owner's. The card draws her a held
+    // button with no way to get here; this is the same answer for a tap that
+    // beat the read of who is signed in.
+    if (auntie) {
+      setCompleteError(COMPLETE_OWNER_ONLY);
+      return;
+    }
     const refusal = completeRefusal(arrivalRule, entry, auntie);
     if (refusal !== null) {
       setCompleteError(refusal);
@@ -601,6 +619,11 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
 
   async function runComplete() {
     setCompleteAsked(false);
+    // #2199: a confirm opened before her role was read asks the server nothing.
+    if (auntie) {
+      setCompleteError(COMPLETE_OWNER_ONLY);
+      return;
+    }
     setCompleting(true);
     setCompleteError(null);
     try {
@@ -760,13 +783,15 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
               />
             ),
           )}
-          {offersComplete && (
-            <GhostButton
-              label="Complete"
-              onClick={askComplete}
-              disabled={clock.saving || completing}
-            />
-          )}
+          {/* #2199, operator ruling 2026-11-14: for an Auntie Complete "is
+              disabled but visible". It keeps its place on the card and says
+              why on hover, focus or a press; nothing behind it can run. */}
+          {offersComplete &&
+            (auntie ? (
+              <HeldButton label="Complete" reason={COMPLETE_OWNER_ONLY} />
+            ) : (
+              <GhostButton label="Complete" onClick={askComplete} disabled={clock.saving || completing} />
+            ))}
           {/* The mock's one teal button (`.btn.teal`): the write-up is a different
               kind of step from the clock, and it wears the KinTale hue rather
               than brand orange. `sessions__btn--teal` recolours the kit button;
@@ -839,7 +864,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
         </Dialog>
       )}
 
-      {completeAsked && (
+      {completeAsked && !auntie && (
         <Dialog
           title="Mark this visit completed?"
           onClose={() => setCompleteAsked(false)}

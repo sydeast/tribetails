@@ -1,5 +1,5 @@
 import { defineConfig } from 'cypress';
-import seed from './cypress/seed';
+import seed, { kinfolkUid, remove, upsert } from './cypress/seed';
 
 /**
  * Cypress config for the MyTribe portal.
@@ -60,6 +60,30 @@ export default defineConfig({
         async seedOnce() {
           seeded ??= seed();
           await seeded;
+          return null;
+        },
+        /**
+         * #1833: writes (or changes) one `notifications/{id}` row addressed to
+         * the seeded kinfolk, the way the dispatcher and the read callables do,
+         * while a spec is on screen. `read` and `archived` stamp or clear the
+         * field; `kinfolkId` is the household the row names.
+         */
+        async putNotification(arg: { id: string; kinfolkId: string; read?: boolean; archived?: boolean; minutesAgo?: number }) {
+          await seeded;
+          await upsert('notifications', arg.id, {
+            recipientUid: kinfolkUid(),
+            key: 'kincare.auntie.omw',
+            category: 'visit',
+            title: 'Your Auntie is on the way',
+            data: { kinfolkId: arg.kinfolkId },
+            createdAt: new Date(Date.now() - (arg.minutesAgo ?? 0) * 60_000),
+            readAt: arg.read ? new Date() : null,
+            archivedAt: arg.archived ? new Date() : null,
+          });
+          return null;
+        },
+        async removeNotification(id: string) {
+          await remove('notifications', id);
           return null;
         },
       });

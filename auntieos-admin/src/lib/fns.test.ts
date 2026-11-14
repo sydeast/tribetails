@@ -168,6 +168,21 @@ describe('call, the operator copy of a refusal (#1592)', () => {
     const err = (await call('updateKinfolk', {}).catch((e: unknown) => e)) as FirebaseError;
     expect(err.message).toBe('Pick a join date from 2025 on.');
   });
+
+  // #2199: what an Auntie was shown when the staff gate refused her a callable.
+  it('#2199: shows a plain sentence, not "Admin claim required.", and keeps the code', async () => {
+    httpsCallable.mockReturnValue(() =>
+      Promise.reject(new FirebaseError('functions/permission-denied', 'Admin claim required. [403]')),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const err = (await call('transitionBookingStatus', {}).catch((e: unknown) => e)) as FirebaseError;
+    expect(err).toBeInstanceOf(FirebaseError);
+    expect(err.code).toBe('functions/permission-denied');
+    expect(err.message).toBe('Your account is not allowed to do this.');
+    // The raw text is kept for triage.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Admin claim required.'));
+    warn.mockRestore();
+  });
 });
 
 describe('call, revoked-session reaction', () => {

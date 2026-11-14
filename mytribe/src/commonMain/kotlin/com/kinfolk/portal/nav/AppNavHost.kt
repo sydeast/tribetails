@@ -122,13 +122,19 @@ fun AppNavHost(
      */
     shellBillingAccess: Boolean = true,
     /**
-     * #1316: `getMyHome.unreadNotifications`, the count on the header bell.
-     * The notifications list reports the server's count when it loads and the
-     * drop after each tap through [onUnreadNotificationsChanged], so the badge
-     * moves without a second `getMyHome`.
+     * The count on the header bell. #1833: live, from the app's one listener
+     * (portal/UnreadBadge.kt); before its first snapshot it is the count
+     * `getMyHome` loaded with (#1316), which the notifications list keeps in
+     * step through [onUnreadNotificationsChanged].
      */
     shellUnreadNotifications: Int = 0,
     onUnreadNotificationsChanged: (Int) -> Unit = {},
+    /** #1833: moves when the bell's listener sees a row arrive or change; the open list reloads on it. */
+    notificationsRevision: Int = 0,
+    /** #1833: a row tapped on the list stops counting on the bell at once... */
+    onNotificationReadLocally: (notificationId: String) -> Unit = {},
+    /** ...and counts again if the server refused the read. */
+    onNotificationReadRefused: (notificationId: String) -> Unit = {},
     cameFromPicker: Boolean,
     resolveTribes: suspend () -> List<TribeSummary>,
     onPick: (kinfolkId: String) -> Unit,
@@ -477,6 +483,9 @@ fun AppNavHost(
                             // #1874: a reply from the office opens Messages, the way every entry point does.
                             onOpenMessages = { openMessages() },
                             onUnreadCount = onUnreadNotificationsChanged,
+                            liveRevision = notificationsRevision,
+                            onReadLocally = onNotificationReadLocally,
+                            onReadRefused = onNotificationReadRefused,
                         )
                     }
                 }

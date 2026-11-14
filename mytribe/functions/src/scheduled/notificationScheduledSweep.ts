@@ -55,6 +55,29 @@ export const notificationScheduledSweep = onSchedule(
         extra: { error: (err as Error)?.message },
       });
     }
+    // #2230: a payment an older admin client paid off with `markInvoicePaid`
+    // and never followed with its `recordPayment` call (a reload, a closed
+    // app). Writes the ledger row and sends the payoff notice that call owed.
+    // Its own failure never blocks the queue drain either.
+    try {
+      const { sweepAbandonedSettlements } = await import('../lib/settlementLedgerSweep.js');
+      const finished = await sweepAbandonedSettlements(db(), now);
+      if (finished > 0) {
+        logEvent({
+          severity: 'info',
+          function: 'notificationScheduledSweep',
+          event: 'settlement.ledger.finished',
+          extra: { finished },
+        });
+      }
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'notificationScheduledSweep',
+        event: 'settlement.ledger.sweep.failed',
+        extra: { error: (err as Error)?.message },
+      });
+    }
     const snap = await db()
       .collection('scheduledNotifications')
       .where('fireAtMs', '<=', now)

@@ -194,6 +194,16 @@ export async function remove(path: string, id: string): Promise<void> {
   );
 }
 
+/**
+ * The seeded kinfolk's uid, for a task that writes a document addressed to
+ * them after the seed has run (#1833: `notifications/{id}` carries the
+ * recipient's uid, which the auth emulator assigns at sign-up).
+ */
+let seededKinfolkUid: string | null = null;
+export function kinfolkUid(): string {
+  if (seededKinfolkUid === null) throw new Error('portal e2e: kinfolkUid() was read before the seed ran');
+  return seededKinfolkUid;
+}
 export default async function seed(): Promise<void> {
   await wipe();
 
@@ -203,6 +213,7 @@ export default async function seed(): Promise<void> {
   // once because the seeded kinfolk has exactly one household and can never
   // pick another.
   const uid = await createUser(KINFOLK.email, KINFOLK.password, { kinfolkId: KINFOLK.kinfolkId });
+  seededKinfolkUid = uid;
 
   // The row `getMyAccess` reads in production. The callable itself is stubbed in
   // this harness, so nothing in a spec depends on this document. It is written

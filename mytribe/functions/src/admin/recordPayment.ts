@@ -18,21 +18,38 @@ import {
 } from '../lib/invoiceResponseSchema';
 import { TIP_BASES, dollarsToCents, paymentMoneyOf } from '../lib/paymentMoney';
 import {
+  balanceToSettle,
   planApply,
-  readInvoiceForApply,
+  readInvoiceForApplyInTransaction,
+  type InvoiceForApply,
   stageApply,
   type ApplyOutcome,
   type ApplyStep,
 } from '../lib/paymentApply';
 import { creditAccount } from '../lib/accountCredit';
-import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { centsToDollars, formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
-import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import {
+  deliverListedCopy,
+  enqueueNotificationDetailed,
+  hasDeliveredCopy,
+  type ListedCopyDelivery,
+} from '../notifications/dispatcher';
 import { reachedAppOnly } from '../notifications/appOnly';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
-import { PAYMENT_APPLIED_CLAIM_FIELD, claimableMarkInvoicePaidOwner } from '../lib/paymentAppliedOwner';
+import {
+  PAYMENT_APPLIED_CLAIM_FIELD,
+  SETTLEMENT_LEDGER_PENDING_AT_FIELD,
+  SETTLEMENT_LEDGER_PENDING_FIELD,
+  SETTLEMENT_LEDGER_SWEEP_WRITER,
+  SETTLEMENT_NOTICE_UID_FIELD,
+  claimableMarkInvoicePaidOwner,
+  markInvoicePaidSettlementOf,
+  paymentAppliedOwner,
+  settlementLedgerRowId,
+} from '../lib/paymentAppliedOwner';
 import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
 
 /**
@@ -203,8 +220,39 @@ export const Args = z.object({
       invoiceId: z.string().min(1).max(200),
       /** Denormalized for display. Blank is fine; the invoice doc is the authority. */
       invoiceNumber: z.string().max(200).default(''),
-      /** DOLLARS applied to that invoice. */
+      /** DOLLARS applied to that invoice. Sent as 0 with `settleBalance`. */
       amount: z.number().min(0).max(10_000_000),
+      /**
+       * #2299: "PAY WHAT IS OWED". The admin left the Amount box blank, so the
+       * applied part is the invoice's balance AS THIS CALL'S TRANSACTION READS
+       * IT, not a figure the screen worked out from an older read. Before
+       * #2281 a blank Amount meant exactly this (`markInvoicePaid` with no
+       * amount settled the rest). The one-call panel then sent its own figure,
+       * which could be $0 or an out-of-date smaller sum when the payments
+       * list had not loaded.
+       *
+       * The screen cannot add up a payment whose applied part it does not
+       * know, so with this intent it sends only what was typed and the server
+       * finishes the sum. With B the balance read, and the credit as entered:
+       *
+       *   `amount` 0 (Payment amount blank)   the payment is B + tip + credit
+       *   `amount` typed, `tip` 0             the tip is the rest:
+       *                                       amount - B - credit (ruling
+       *                                       2026-09-27, the extra is tip)
+       *   both typed                          they must add up to
+       *                                       B + tip + credit, or the call is
+       *                                       refused. A typed tip is never
+       *                                       rewritten.
+       *
+       * A payment that does not cover B is refused, never booked as a part
+       * payment: blank means the whole balance. Every refusal carries
+       * `amountDueCents`, so the screen can show what is owed now. The row,
+       * the audit entry and the answer hold the figures as resolved.
+       *
+       * `amount` above must be 0 with it. A number and "whatever is owed" are
+       * two different instructions, and a call carrying both is refused.
+       */
+      settleBalance: z.boolean().optional(),
     })
     .optional(),
   /**
@@ -271,8 +319,15 @@ export const Args = z.object({
    * It is how this call learns that its own first step paid the invoice off, so
    * the office is told "paid" exactly once, under this payment. The server
    * claims the invoice's `markInvoicePaid:<id>` owner stamp only when it matches
-   * this id; a call without it never claims, so a later, unrelated payment
-   * linked to the same invoice cannot.
+   * this id. A call without it claims only its own settlement of the last few
+   * minutes, or one still waiting for its ledger row that this row covers
+   * (#2281 review), so a later, unrelated payment linked to the same invoice
+   * cannot.
+   *
+   * #2281 review: when the sweep has already written the ledger row for that
+   * settlement (`payments/settle_<id>`), this call's row takes its place.
+   * #2300: only a call that sends this id does that. A row without it never
+   * deletes or replaces a ledger row.
    *
    * OPTIONAL, like every addition here. A client that does not send it gets the
    * household confirmation it ticked, and the office is not told for its
@@ -460,28 +515,44 @@ export async function recordPaymentHandler(
   // carries are the collection's legacy shape and are still stored verbatim
   // below; nothing downstream re-derives cents from them, so no two readers can
   // round the same dollar differently.
-  const amountCents = dollarsToCents(args.amount);
-  const tipCents = dollarsToCents(args.tip);
+  // #2299: with `apply.settleBalance` the applied part, and with it the whole
+  // amount or the tip, is not known until the transaction has read the
+  // invoice. These four are then provisional here and resolved in the
+  // transaction (`resolveSettleBalance`), before anything is staged.
+  const settleBalance = args.apply?.settleBalance === true;
+  if (settleBalance && dollarsToCents(args.apply?.amount ?? 0) !== 0) {
+    throw new HttpsError(
+      'invalid-argument',
+      'This payment asks to pay what the invoice owes and also names an amount. Send one or the other.',
+      { code: 'settle_balance_with_amount' },
+    );
+  }
+  let amountCents = dollarsToCents(args.amount);
+  let tipCents = dollarsToCents(args.tip);
   const feeCents = dollarsToCents(args.fee);
   // #977: in the two-step admin flow the applied part was put on the invoice by
   // `markInvoicePaid`, not by this call, so it is read off the settlement row
   // this call names. See `twoStepAppliedCents`.
   const twoStep = args.apply ? null : await twoStepAppliedCents(args);
-  const appliedCents = args.apply ? dollarsToCents(args.apply.amount) : (twoStep?.appliedCents ?? 0);
-  const money = paymentMoneyOf({
-    amountCents,
-    tipCents,
-    feeCents,
-    appliedCents,
-    // Stamped, not inferred: this server writes gross tips and says so, which
-    // is the whole point of the field.
-    tipBasis: 'gross',
-  });
+  let appliedCents = args.apply ? dollarsToCents(args.apply.amount) : (twoStep?.appliedCents ?? 0);
+  const moneyOf = () =>
+    paymentMoneyOf({
+      amountCents,
+      tipCents,
+      feeCents,
+      appliedCents,
+      // Stamped, not inferred: this server writes gross tips and says so, which
+      // is the whole point of the field.
+      tipBasis: 'gross',
+    });
+  let money = moneyOf();
   // A TIP LARGER THAN THE PAYMENT is refused up front rather than stored as a
   // negative unapplied balance. It is a keying slip (the tip typed into the
   // amount box, or dollars mistaken for cents), and every later reader of the
   // row would have to decide what a payment that is more tip than money means.
-  if (tipCents > amountCents) {
+  // #2299: not checked here for a "pay what is owed" call, whose amount may be
+  // blank until the transaction fills it in; the sum is checked there.
+  if (!settleBalance && tipCents > amountCents) {
     throw new HttpsError(
       'invalid-argument',
       `A tip of ${dollars(tipCents)} does not fit inside a payment of ${dollars(amountCents)}. ` +
@@ -490,32 +561,16 @@ export async function recordPaymentHandler(
     );
   }
   const paidAtIso = new Date().toISOString();
-  // THE APPLY, PLANNED BEFORE ANYTHING IS WRITTEN. Refusing here means no
-  // payment row either: an operator who mis-keyed the Apply box gets the whole
-  // form back to correct, not a stored payment whose apply silently did not
-  // happen.
+  // THE APPLY IS PLANNED INSIDE THE TRANSACTION BELOW (#2269). Refusing there
+  // still means no payment row either: an operator who mis-keyed the Apply box
+  // gets the whole form back to correct, not a stored payment whose apply
+  // silently did not happen.
   //
-  // The plan is still read and refused OUTSIDE the transaction (#825). These
-  // are reads of an invoice this call does not own, the refusal they produce is
-  // about the request rather than about the stored state, and pulling them in
-  // would make every transaction retry re-read the whole subcollection.
-  let plannedStep: ApplyStep | null = null;
-  if (args.apply) {
-    const plan = planApply({
-      invoice: await readInvoiceForApply(db(), args.apply.invoiceId),
-      appliedCents,
-      kinfolkId,
-      // What the payment has to give: everything except the gross tip. The tip
-      // is the operator's, never the household's bill.
-      spendableCents: amountCents - tipCents,
-    });
-    if (!plan.ok) {
-      throw new HttpsError('failed-precondition', plan.refusal.message, {
-        code: plan.refusal.code,
-      });
-    }
-    plannedStep = plan.step;
-  }
+  // It used to be planned here, from a read of the invoice and its payments
+  // taken outside the transaction (#825), and `stageApply` wrote the new
+  // balance from that plan. Two payments on one invoice at the same moment
+  // then both planned from the same "before", and the second to commit wrote
+  // a balance that left the first one out.
   // ── ACCOUNT CREDIT: EXACTLY THE AMOUNT THE ADMIN ENTERED (#988) ─────────
   //
   // Operator ruling, 2026-09-27: "any overpayment made by the kinfolk, it is
@@ -553,7 +608,9 @@ export async function recordPaymentHandler(
         { code: 'credit_leftover_unknown' },
       );
     }
-    if (chosenCreditCents > money.unappliedCents) {
+    // #2299: a "pay what is owed" call has no leftover to check yet. Its sum
+    // is made to add up, credit included, in the transaction.
+    if (!settleBalance && chosenCreditCents > money.unappliedCents) {
       throw new HttpsError(
         'invalid-argument',
         `Account credit of ${dollars(chosenCreditCents)} is more than the ${dollars(Math.max(0, money.unappliedCents))} ` +
@@ -607,7 +664,13 @@ export async function recordPaymentHandler(
       if (snap.exists) {
         const stored = (snap.data() ?? {}) as Record<string, unknown>;
         assertSameCaller(stored, actor.uid, 'recordedBy');
-        return { replayed: stored, application: null as ApplyOutcome | null, settlesInvoice: false };
+        return {
+          replayed: stored,
+          application: null as ApplyOutcome | null,
+          settlesInvoice: false,
+          replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
+          possibleDuplicateOf: null as string | null,
+        };
       }
     }
     // #866: DID THIS SUBMISSION'S OWN `markInvoicePaid` STEP PAY THE INVOICE OFF?
@@ -615,32 +678,169 @@ export async function recordPaymentHandler(
     // the invoice as a display link, passing the payment id that step returned.
     // The office is told only for a payment that paid the bill off, so this call
     // claims THAT settlement's owner stamp (`markInvoicePaid:<id>`), in the same
-    // transaction, and only once. A call without the id never claims.
+    // transaction, and only once.
     // An older installed client sends no id; it may still claim a settlement
     // stamped within the last few minutes, which is its own step 1 landing just
     // before this (OLD_CLIENT_CLAIM_WINDOW_MS in lib/paymentAppliedOwner.ts).
+    // Past that window see the #2281 review note below.
+    // #2269: THE APPLY, PLANNED FROM THIS TRANSACTION'S OWN READ of the invoice
+    // and every payment on it. `stageApply` writes the new balance from this
+    // plan, so the plan and the payments it is summed from must be one
+    // snapshot. The invoice doc is read here and written by `stageApply`, so a
+    // second payment (or credit draw, or write-off) on the same invoice
+    // committing first makes this attempt re-run and re-plan against it, and
+    // its guards (already settled, over the balance) run on the new figures.
+    let plannedStep: ApplyStep | null = null;
+    if (args.apply) {
+      const invoice = await readInvoiceForApplyInTransaction(db(), tx, args.apply.invoiceId);
+      // #2090: a written-off invoice refuses with its own code, the one every
+      // admin client reads, before the general "not payable" refusal can.
+      if (invoice.doc !== null && isWrittenOff(invoice.doc as Record<string, unknown>)) {
+        throw new HttpsError('failed-precondition', WRITTEN_OFF_PAYMENT_REFUSAL, { code: INVOICE_WRITTEN_OFF_CODE });
+      }
+      if (settleBalance) {
+        // #2299: the applied part is the balance this transaction just read.
+        // A re-run after a competing payment reads the new balance and
+        // resolves again, so the figures always belong to the commit.
+        const resolved = resolveSettleBalance({
+          invoice,
+          kinfolkId,
+          typedAmountCents: dollarsToCents(args.amount),
+          typedTipCents: dollarsToCents(args.tip),
+          creditCents: chosenCreditCents,
+        });
+        amountCents = resolved.amountCents;
+        tipCents = resolved.tipCents;
+        appliedCents = resolved.appliedCents;
+        money = moneyOf();
+      }
+      const plan = planApply({
+        invoice,
+        appliedCents,
+        kinfolkId,
+        // What the payment has to give: everything except the gross tip. The
+        // tip is the operator's, never the household's bill.
+        spendableCents: amountCents - tipCents,
+      });
+      if (!plan.ok) {
+        throw new HttpsError('failed-precondition', plan.refusal.message, {
+          code: plan.refusal.code,
+          // #1566: the balance an over-balance apply ran into, so a client can
+          // say what is still owed now, not what the dialog loaded.
+          ...(plan.refusal.amountDueCents !== undefined ? { amountDueCents: plan.refusal.amountDueCents } : {}),
+        });
+      }
+      plannedStep = plan.step;
+    }
     const linkedInvoiceRef =
       !plannedStep && args.invoiceId !== '' ? db().collection('invoices').doc(args.invoiceId) : null;
     const linkedInvoiceSnap = linkedInvoiceRef ? await tx.get(linkedInvoiceRef) : null;
-    // #2090: THE INVOICE BEING SETTLED, AGAIN, INSIDE THE TRANSACTION. The plan
-    // was read outside it (#825), and `stageApply` writes the balance from that
-    // read, so a write-off committing in between would be overwritten with the
-    // old balance. Reading the doc here puts it in this transaction's read set,
-    // so the two serialise, and a written-off invoice refuses the payment.
-    if (plannedStep) {
-      const fresh = await tx.get(db().collection('invoices').doc(plannedStep.invoiceId));
-      if (isWrittenOff((fresh.data() ?? {}) as Record<string, unknown>)) {
-        throw new HttpsError('failed-precondition', WRITTEN_OFF_PAYMENT_REFUSAL, { code: INVOICE_WRITTEN_OFF_CODE });
+    const linkedInvoice = linkedInvoiceSnap?.exists
+      ? ((linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>)
+      : undefined;
+    let claimedOwner = linkedInvoice
+      ? claimableMarkInvoicePaidOwner(linkedInvoice, kinfolkId, args.settledByInvoicePaymentId, Date.now())
+      : null;
+    // #2281 review: THE SETTLEMENT'S LEDGER ROW IS WRITTEN ONCE, WHOEVER GETS
+    // THERE FIRST. `settlementLedgerSweep` finishes a settlement whose second
+    // call never came by writing `payments/settle_<id>` and taking the claim.
+    // A second call that then does come (the operator pressing Record again
+    // after a lost reply) found the claim taken and wrote its own row beside
+    // the sweep's: one payment, two ledger rows.
+    //
+    // A CALL THAT NAMES THE SETTLEMENT REPLACES THE SWEEP'S ROW, AND ONLY SUCH
+    // A CALL. Its row is the true one: it carries the tip, the fee and any
+    // credit the admin entered, and the sweep's row is a stand-in built from
+    // the settlement alone (`tipBasis: 'unknown'`). So it deletes the sweep's
+    // row and writes its own in the same commit, and keeps the sweep row's
+    // notice stamps so the copies it already sent are not sent again. The
+    // settlement id is the proof that both rows are one payment.
+    //
+    // A ROW WITH NO SETTLEMENT ID NEVER DELETES OR REPLACES A LEDGER ROW
+    // (#2300, lead ruling 2026-11-14). It is a row added by hand or a
+    // pre-#866 build's second call, and nothing on it says which payment it
+    // is. Until this change one that covered the settled amount replaced the
+    // sweep's row with no time limit, so a household that paid the same $40
+    // twice, months apart, lost the first payment's ledger row.
+    //   - AFTER THE SWEEP it is written as its own payment and the sweep's row
+    //     is left exactly as it is. When it covers the settled amount it may
+    //     be that same payment recorded twice, so the owner gets one Activity
+    //     Log warning (`possibleDuplicateOf` below). A smaller row (a tip sent
+    //     the next day) gets none.
+    //   - BEFORE THE SWEEP, past OLD_CLIENT_CLAIM_WINDOW_MS, a row that covers
+    //     the settled amount still takes the claim, so the sweep finds the
+    //     settlement claimed and writes nothing. That writes one row where
+    //     there would be two, and deletes nothing. It ends when the sweep
+    //     finishes the settlement, about SETTLEMENT_LEDGER_SWEEP_GRACE_MS
+    //     after the payoff.
+    //
+    // WHY THIS IS SAFE AGAINST THE SWEEP RUNNING AT THE SAME MOMENT. Both
+    // transactions read the invoice doc and write it (the claim), and the
+    // sweep's row lives at an id made from the invoice's own owner stamp, read
+    // here by id. Whichever commits second re-runs and sees the other's write.
+    // No query is involved, so there is no row for either to miss.
+    let replacedSweepRow: { id: string; data: Record<string, unknown> } | null = null;
+    let possibleDuplicateOf: string | null = null;
+    const settlement =
+      claimedOwner === null ? markInvoicePaidSettlementOf(linkedInvoice, kinfolkId, args.settledByInvoicePaymentId) : null;
+    if (settlement !== null && linkedInvoiceRef) {
+      const named = args.settledByInvoicePaymentId !== undefined;
+      const coverCents = amountCents - tipCents;
+      if (settlement.claimed) {
+        const sweepRowRef = db().collection('payments').doc(settlementLedgerRowId(settlement.settlementId));
+        const sweepRowSnap = await tx.get(sweepRowRef);
+        const sweepRow = (sweepRowSnap.data() ?? {}) as Record<string, unknown>;
+        const settledCents = storedCents(sweepRow, 'amountCents');
+        const isSweepRow =
+          sweepRowSnap.exists &&
+          sweepRow['recordedByServer'] === SETTLEMENT_LEDGER_SWEEP_WRITER &&
+          sweepRow['invoiceId'] === args.invoiceId &&
+          sweepRow['kinfolkId'] === kinfolkId;
+        if (isSweepRow && named) {
+          replacedSweepRow = { id: sweepRowRef.id, data: sweepRow };
+        } else if (isSweepRow && settledCents > 0 && coverCents >= settledCents) {
+          possibleDuplicateOf = sweepRowRef.id;
+        }
+      } else if (!named && settlement.pending) {
+        const settlementSnap = await tx.get(linkedInvoiceRef.collection('payments').doc(settlement.settlementId));
+        const settledCents = settlementSnap.exists
+          ? paidCentsFromPayments([(settlementSnap.data() ?? {}) as PaymentAmount])
+          : 0;
+        if (settledCents > 0 && coverCents >= settledCents) claimedOwner = settlement.owner;
       }
     }
-    const claimedOwner = linkedInvoiceSnap?.exists
-      ? claimableMarkInvoicePaidOwner(
-          (linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>,
-          kinfolkId,
-          args.settledByInvoicePaymentId,
-          Date.now(),
-        )
-      : null;
+    // THE INVOICE HAS MOVED ON SINCE THE SETTLEMENT THIS CALL NAMES: an edit
+    // reopened it, or a later payment paid it off again and holds the owner
+    // stamp now. Nothing above matches, and the call's row would land beside
+    // the sweep's, or the sweep's beside it. The call names its settlement and
+    // that row exists under this invoice (`twoStep.known`), so the sweep's row
+    // is read by the id made from that name, and a stamp still waiting on that
+    // settlement is cleared below. The notice claim is left alone: the invoice
+    // is not this settlement's to speak for any more.
+    let namedPendingOwner: string | null = null;
+    if (
+      claimedOwner === null &&
+      settlement === null &&
+      linkedInvoice !== undefined &&
+      args.settledByInvoicePaymentId !== undefined &&
+      twoStep?.known === true &&
+      kinfolkId !== '' &&
+      linkedInvoice['kinfolkId'] === kinfolkId
+    ) {
+      const sweepRowRef = db().collection('payments').doc(settlementLedgerRowId(args.settledByInvoicePaymentId));
+      const sweepRowSnap = await tx.get(sweepRowRef);
+      const sweepRow = (sweepRowSnap.data() ?? {}) as Record<string, unknown>;
+      if (
+        sweepRowSnap.exists &&
+        sweepRow['recordedByServer'] === SETTLEMENT_LEDGER_SWEEP_WRITER &&
+        sweepRow['invoiceId'] === args.invoiceId &&
+        sweepRow['kinfolkId'] === kinfolkId
+      ) {
+        replacedSweepRow = { id: sweepRowRef.id, data: sweepRow };
+      }
+      const named = paymentAppliedOwner('markInvoicePaid', args.settledByInvoicePaymentId);
+      if (linkedInvoice[SETTLEMENT_LEDGER_PENDING_FIELD] === named) namedPendingOwner = named;
+    }
     // THE APPLY AND THE PAYMENT ROW LAND TOGETHER. `markInvoicePaid` and this
     // callable were two steps on purpose (the money first, the display row
     // second and best-effort), and that stays true for the flow that calls them
@@ -670,8 +870,11 @@ export async function recordPaymentHandler(
       paymentMethod: args.paymentMethod,
       referenceNumber: args.referenceNumber,
       email: args.email,
-      amount: args.amount,
-      tip: args.tip,
+      // #2299: for a "pay what is owed" call the request's own figures may be
+      // blank, so the row holds the resolved ones, from the same cents as the
+      // fields below. Every other call stores what it sent, as before.
+      amount: settleBalance ? centsToDollars(amountCents) : args.amount,
+      tip: settleBalance ? centsToDollars(tipCents) : args.tip,
       notes: args.notes,
       invoiceId: args.invoiceId,
       invoiceNumber: args.invoiceNumber,
@@ -742,19 +945,60 @@ export async function recordPaymentHandler(
     // copy reads the same answer instead of re-deriving it from a later state.
     // Either this call's own apply settled it, or it claimed the settlement
     // `markInvoicePaid` stamped just before it.
+    // A sweep row exists only for a settlement that paid the invoice off, and
+    // the row taking its place is that same payment's.
     const settlesInvoice = staged
       ? staged.state === 'settled' || staged.state === 'overpaid'
-      : claimedOwner !== null;
+      : claimedOwner !== null || replacedSweepRow !== null;
     row['settlesInvoice'] = settlesInvoice;
-    if (linkedInvoiceRef && claimedOwner !== null) {
-      tx.set(linkedInvoiceRef, { [PAYMENT_APPLIED_CLAIM_FIELD]: claimedOwner }, { merge: true });
+    if (replacedSweepRow !== null) {
+      // The copies the sweep already sent for this payment, so they are not
+      // sent again; what is still owed is worked out from these after the commit.
+      for (const field of CARRIED_NOTICE_STAMPS) {
+        if (replacedSweepRow.data[field] != null) row[field] = replacedSweepRow.data[field];
+      }
+      // Which row this one replaced, and the id its notice goes out under: the
+      // sweep's, so both senders share one dedupe identity for the settlement.
+      row['replacedSettlementLedgerRowId'] = replacedSweepRow.id;
+      row['noticePaymentId'] = replacedSweepRow.id;
+      // Who the sweep listed the payoff for, so a same-key retry can still
+      // tell when the household's copy belongs to an earlier billing member.
+      const listedFor = replacedSweepRow.data[SETTLEMENT_NOTICE_UID_FIELD];
+      if (typeof listedFor === 'string') row[SETTLEMENT_NOTICE_UID_FIELD] = listedFor;
     }
+    const settledOwner = claimedOwner ?? (replacedSweepRow !== null ? (settlement?.owner ?? null) : null);
+    if (linkedInvoiceRef && settledOwner !== null) {
+      const linked = linkedInvoice ?? {};
+      tx.set(
+        linkedInvoiceRef,
+        {
+          // Already this value when the sweep took the claim first.
+          [PAYMENT_APPLIED_CLAIM_FIELD]: settledOwner,
+          // #2230: this is the second call that settlement was waiting for, so
+          // the ledger row and the notice are this call's now, and the sweep
+          // that finishes an abandoned settlement stands down. Cleared only
+          // when it names this settlement, never a later one.
+          ...(linked[SETTLEMENT_LEDGER_PENDING_FIELD] === settledOwner
+            ? { [SETTLEMENT_LEDGER_PENDING_FIELD]: '', [SETTLEMENT_LEDGER_PENDING_AT_FIELD]: null }
+            : {}),
+        },
+        { merge: true },
+      );
+    }
+    if (linkedInvoiceRef && settledOwner === null && namedPendingOwner !== null) {
+      tx.set(
+        linkedInvoiceRef,
+        { [SETTLEMENT_LEDGER_PENDING_FIELD]: '', [SETTLEMENT_LEDGER_PENDING_AT_FIELD]: null },
+        { merge: true },
+      );
+    }
+    if (replacedSweepRow !== null) tx.delete(db().collection('payments').doc(replacedSweepRow.id));
     // `create` WHEN THERE IS A KEY, so two attempts that somehow reach the
     // write together are refereed by the server rather than by the read above.
     // A keyless call keeps `set`: its id is server-minted and cannot collide.
     if (args.idempotencyKey !== undefined) tx.create(ref, row);
     else tx.set(ref, row);
-    return { replayed: null, application: staged, settlesInvoice };
+    return { replayed: null, application: staged, settlesInvoice, replacedSweepRow, possibleDuplicateOf };
   });
 
   if (committed.replayed !== null) {
@@ -768,25 +1012,61 @@ export async function recordPaymentHandler(
     return replayWithConfirmation(ref, committed.replayed, args.sendConfirmationEmail, actor.uid);
   }
   const application = committed.application;
+  const replacedSweepRow = committed.replacedSweepRow;
+  if (replacedSweepRow !== null) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordPayment',
+      event: 'settlement.ledger.replaced',
+      uid: actor.uid,
+      extra: { paymentId: ref.id, replacedPaymentId: replacedSweepRow.id, kinfolkId, invoiceId: args.invoiceId },
+    });
+  }
 
+  // #2300: this row has no settlement id and landed beside the sweep's row for
+  // a payoff it is large enough to be. Both rows are kept. The payment's one
+  // Activity Log line is a warning in plain words, so the owner can check
+  // whether the same payment was recorded twice.
+  const possibleDuplicateOf = committed.possibleDuplicateOf;
+  // Loaded only on this path, as every other writer loads its words, so the
+  // entrypoint's cold start does not pay for the module.
+  const duplicateWords =
+    possibleDuplicateOf !== null
+      ? (await import('../lib/activityWords.js')).paymentPossibleDuplicateWords(args.invoiceNumber)
+      : null;
+  if (possibleDuplicateOf !== null) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordPayment',
+      event: 'settlement.ledger.possible_duplicate',
+      uid: actor.uid,
+      extra: { paymentId: ref.id, settlementPaymentId: possibleDuplicateOf, kinfolkId, invoiceId: args.invoiceId },
+    });
+  }
   await writeAuditEntry({
     status: 'SUCCESS',
     event: AUDIT_EVENTS.BILLING_PAYMENT_RECORDED,
-    severity: 'info',
+    severity: possibleDuplicateOf !== null ? 'warn' : 'info',
     actorRole: 'AUNTIE',
     actorUid: actor.uid,
     targetUid: ref.id,
     targetCollection: 'payments',
     familyId: kinfolkId || undefined,
-    description: args.invoiceId
-      ? `Payment row recorded against invoice ${args.invoiceNumber || args.invoiceId}`
-      : 'Standalone payment row recorded',
+    description:
+      duplicateWords !== null
+        ? duplicateWords
+        : args.invoiceId
+          ? `Payment row recorded against invoice ${args.invoiceNumber || args.invoiceId}`
+          : 'Standalone payment row recorded',
     payload: {
       paymentId: ref.id,
       kinfolkId,
       invoiceId: args.invoiceId,
-      amount: args.amount,
-      tip: args.tip,
+      amount: settleBalance ? centsToDollars(amountCents) : args.amount,
+      tip: settleBalance ? centsToDollars(tipCents) : args.tip,
+      // #2299: the admin left Amount blank and the server applied the balance
+      // it read. The figures above are the resolved ones.
+      ...(settleBalance ? { applySettledBalance: true } : {}),
       // THE FEE IS IN THE AUDIT TRAIL, not only on the doc. The whole defect
       // being fixed is a fee that existed and was written down nowhere.
       fee: args.fee,
@@ -811,6 +1091,27 @@ export async function recordPaymentHandler(
       // second payment from a second attempt at one payment is the trail that
       // would have had to answer #825 after the fact.
       idempotencyKey: args.idempotencyKey ?? null,
+      // #2300: the ledger row already recorded for this invoice's payoff, which
+      // this row may repeat. Both are in `payments`.
+      ...(possibleDuplicateOf !== null ? { possibleDuplicateOfPaymentId: possibleDuplicateOf } : {}),
+      // #2281 review: the sweep's stand-in row this one took the place of, kept
+      // here because the row itself is gone from `payments`.
+      ...(replacedSweepRow !== null
+        ? {
+            replacedSettlementLedgerRow: {
+              paymentId: replacedSweepRow.id,
+              amountCents: storedCents(replacedSweepRow.data, 'amountCents'),
+              date: replacedSweepRow.data['date'] ?? '',
+              paymentMethod: replacedSweepRow.data['paymentMethod'] ?? '',
+              referenceNumber: replacedSweepRow.data['referenceNumber'] ?? '',
+              settledByInvoicePaymentId: replacedSweepRow.data['settledByInvoicePaymentId'] ?? '',
+              recordedBy: replacedSweepRow.data['recordedBy'] ?? '',
+              confirmationEmailSent: replacedSweepRow.data['confirmationEmailSent'] === true,
+              confirmationAppOnly: replacedSweepRow.data['confirmationAppOnly'] === true,
+              officeNoticeSent: replacedSweepRow.data['officeNoticeSentAt'] != null,
+            },
+          }
+        : {}),
     },
   }).catch((err) => {
     logEvent({
@@ -833,26 +1134,62 @@ export async function recordPaymentHandler(
   // invoice off (`settlesInvoice`, decided in the transaction above), on their
   // notifications list with nothing emailed (#1973), and so does the office.
   // An unticked partial tells nobody.
-  const sent = await sendPaymentConfirmation({
-    kinfolkId,
-    // The invoice the confirmation is ABOUT: the one this payment was
-    // applied to, or the display link when nothing was applied. The catalog's
-    // `invoice.payment.applied` template needs one.
-    invoiceId: application?.invoiceId ?? args.invoiceId,
-    paymentId: ref.id,
-    uid: actor.uid,
-    householdRequested: args.sendConfirmationEmail,
-    settlesInvoice: committed.settlesInvoice,
-    officeDue: true,
-    // #1973: an unticked payment that pays the invoice off still puts the
-    // payoff on the household's notifications list (nothing is emailed).
-    householdOnPayoff: true,
-  });
-  // #1511: "sent" means a channel carried it. A copy that reached the household
-  // in the app only is reported through `confirmationAppOnly` instead.
-  const confirmationEmailSent = sent.household && !sent.householdAppOnly;
-  const confirmationAppOnly = sent.household && sent.householdAppOnly;
-  {
+  //
+  // #2281 review: a row that took a sweep row's place sends only the copies the
+  // sweep did not get out, read off the stamps it carried over, the way a
+  // same-key retry does. They go out under the sweep row's id.
+  //
+  // The exception is the email the admin ticks on that late call: the sweep
+  // could not know about the tick and only listed the payoff, so the listed
+  // copy is now sent on the household's own channels (`sendAfterSweepRow`).
+  let sent: ConfirmationOutcome;
+  let confirmationEmailSent: boolean;
+  let confirmationAppOnly: boolean;
+  if (replacedSweepRow !== null) {
+    const after = await sendAfterSweepRow({
+      stamps: replacedSweepRow.data,
+      ticked: args.sendConfirmationEmail,
+      kinfolkId,
+      invoiceId: args.invoiceId,
+      noticePaymentId: replacedSweepRow.id,
+      uid: actor.uid,
+    });
+    sent = after.sent;
+    confirmationEmailSent = after.confirmationEmailSent;
+    confirmationAppOnly = after.confirmationAppOnly;
+    // With or without a key: the row carries the sweep's stamps, and a stamp
+    // that says "list only" after the email went would be untrue.
+    if (after.changed) {
+      await ref.update(after.stamps).catch((err) => {
+        logEvent({
+          severity: 'warn',
+          function: 'recordPayment',
+          event: 'payment.confirmation.stamp.failed',
+          uid: actor.uid,
+          extra: { paymentId: ref.id, err: (err as Error)?.message },
+        });
+      });
+    }
+  } else {
+    sent = await sendPaymentConfirmation({
+      kinfolkId,
+      // The invoice the confirmation is ABOUT: the one this payment was
+      // applied to, or the display link when nothing was applied. The catalog's
+      // `invoice.payment.applied` template needs one.
+      invoiceId: application?.invoiceId ?? args.invoiceId,
+      paymentId: ref.id,
+      uid: actor.uid,
+      householdRequested: args.sendConfirmationEmail,
+      settlesInvoice: committed.settlesInvoice,
+      officeDue: true,
+      // #1973: an unticked payment that pays the invoice off still puts the
+      // payoff on the household's notifications list (nothing is emailed).
+      householdOnPayoff: true,
+    });
+    // #1511: "sent" means a channel carried it. A copy that reached the household
+    // in the app only is reported through `confirmationAppOnly` instead.
+    confirmationEmailSent = sent.household && !sent.householdAppOnly;
+    confirmationAppOnly = sent.household && sent.householdAppOnly;
     // STAMPED ON THE ROW, so a replay can report it (#825) and a same-key retry
     // knows what is left to send (#866). Outside the transaction because it is
     // not known inside one: the send is attempted only after the money has
@@ -872,7 +1209,6 @@ export async function recordPaymentHandler(
       });
     }
   }
-
   logEvent({
     severity: 'info',
     function: 'recordPayment',
@@ -913,8 +1249,9 @@ export async function recordPaymentHandler(
     application,
     creditedToAccountCents,
     confirmationEmailSent,
-    // Present only when a household copy was written by this call (#1511).
-    ...(sent.household ? { confirmationAppOnly } : {}),
+    // Present only when a household copy was written by this call, or by the
+    // sweep whose row this call replaced (#1511).
+    ...(confirmationEmailSent || confirmationAppOnly ? { confirmationAppOnly } : {}),
     householdNoPortalAccount: sent.noPortalAccount,
     officeNoticePending: sent.officePending,
   });
@@ -977,6 +1314,58 @@ function dollars(cents: number): string {
   return formatUsdCents(cents);
 }
 
+/**
+ * #2299: THE FIGURES OF A "PAY WHAT IS OWED" PAYMENT, from the balance the
+ * transaction read. The rules are on `Args.apply.settleBalance`. Throws the
+ * refusal; every one that read a balance carries it as `amountDueCents`.
+ *
+ * The result always satisfies `amount = applied + tip + credit`, so nothing is
+ * left over that is neither tip nor credit, and the credit is exactly what the
+ * admin entered.
+ */
+function resolveSettleBalance(input: {
+  invoice: InvoiceForApply;
+  kinfolkId: string;
+  typedAmountCents: number;
+  typedTipCents: number;
+  creditCents: number;
+}): { amountCents: number; tipCents: number; appliedCents: number } {
+  const balance = balanceToSettle(input.invoice, input.kinfolkId);
+  if (!balance.ok) {
+    throw new HttpsError('failed-precondition', balance.refusal.message, {
+      code: balance.refusal.code,
+      ...(balance.refusal.amountDueCents !== undefined ? { amountDueCents: balance.refusal.amountDueCents } : {}),
+    });
+  }
+  const due = balance.amountDueCents;
+  const { typedAmountCents, typedTipCents, creditCents } = input;
+  if (typedAmountCents === 0) {
+    return { amountCents: due + typedTipCents + creditCents, tipCents: typedTipCents, appliedCents: due };
+  }
+  const creditNote = creditCents > 0 ? ` plus ${dollars(creditCents)} of account credit` : '';
+  if (typedTipCents === 0) {
+    const restCents = typedAmountCents - due - creditCents;
+    if (restCents < 0) {
+      throw new HttpsError(
+        'failed-precondition',
+        `A payment of ${dollars(typedAmountCents)} does not cover the ${dollars(due)} this invoice still owes${creditNote}. ` +
+          `Raise the payment amount, or enter the part being paid under Amount collected.`,
+        { code: 'settle_payment_short', amountDueCents: due },
+      );
+    }
+    return { amountCents: typedAmountCents, tipCents: restCents, appliedCents: due };
+  }
+  if (due + typedTipCents + creditCents !== typedAmountCents) {
+    throw new HttpsError(
+      'failed-precondition',
+      `This invoice still owes ${dollars(due)}. With a ${dollars(typedTipCents)} tip${creditNote} that comes to ` +
+        `${dollars(due + typedTipCents + creditCents)}, not the ${dollars(typedAmountCents)} paid. ` +
+        `Change the tip or the payment amount, or leave the tip blank to take the rest.`,
+      { code: 'settle_split_mismatch', amountDueCents: due },
+    );
+  }
+  return { amountCents: typedAmountCents, tipCents: typedTipCents, appliedCents: due };
+}
 /** A stored number, or 0. Absent reads as zero, never as a guess. */
 function storedCents(stored: Record<string, unknown>, field: string): number {
   const v = stored[field];
@@ -1024,7 +1413,37 @@ export const PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
  * copy for a retry: the record exists, and sending again would not add a
  * channel the household has turned off.
  */
-function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown> {
+/** The stamps `noticeStamps` writes: carried onto a row that replaces the sweep's (#2281 review). */
+const CARRIED_NOTICE_STAMPS = [
+  'confirmationEmailSent',
+  'confirmationAppOnly',
+  'officeNoticeSentAt',
+  'officeNoticeSkippedReason',
+] as const;
+/**
+ * Which copies of `invoice.payment.applied` a payment's row still shows as
+ * owed, for a retry (#866) or for a row taking a sweep row's place (#2281
+ * review). The rules are in the note on `replayWithConfirmation`.
+ */
+function copiesOwed(
+  stored: Record<string, unknown>,
+  householdRequested: boolean,
+  settlesInvoice: boolean,
+): { householdTold: boolean; householdDue: boolean; listDue: boolean; officeDue: boolean } {
+  const householdTold = stored['confirmationEmailSent'] === true || stored['confirmationAppOnly'] === true;
+  return {
+    householdTold,
+    householdDue: householdRequested && !householdTold,
+    // #1973: the unticked payoff's list-only copy, owed until it is on record.
+    listDue: !householdRequested && settlesInvoice && !householdTold,
+    officeDue:
+      (settlesInvoice || householdRequested) &&
+      stored['officeNoticeSentAt'] == null &&
+      // Nobody existed to receive it last time; that is final, not unfinished.
+      stored['officeNoticeSkippedReason'] == null,
+  };
+}
+export function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown> {
   return {
     ...(sent.household && !sent.householdAppOnly ? { confirmationEmailSent: true } : {}),
     ...(sent.household && sent.householdAppOnly ? { confirmationAppOnly: true } : {}),
@@ -1058,16 +1477,44 @@ async function replayWithConfirmation(
   actorUid: string,
 ): Promise<z.infer<typeof Result>> {
   const answer = replayResult(ref.id, stored);
+  // #2281 review: a row that replaced the sweep's finishes what that payment is
+  // still owed the same way its first attempt did, under the sweep row's id.
+  const sweepRowId = stored['noticePaymentId'];
+  if (typeof sweepRowId === 'string' && sweepRowId !== '') {
+    const after = await sendAfterSweepRow({
+      stamps: stored,
+      ticked: householdRequested,
+      kinfolkId: answer.kinfolkId,
+      invoiceId: typeof stored['invoiceId'] === 'string' ? stored['invoiceId'] : '',
+      noticePaymentId: sweepRowId,
+      uid: actorUid,
+    });
+    if (after.changed) {
+      await ref.update(after.stamps).catch((err) => {
+        logEvent({
+          severity: 'warn',
+          function: 'recordPayment',
+          event: 'payment.confirmation.stamp.failed',
+          uid: actorUid,
+          extra: { paymentId: ref.id, replay: true, err: (err as Error)?.message },
+        });
+      });
+    }
+    // The row's own `confirmationAppOnly` stamp is not this answer's: it records
+    // that the listed copy exists, and what the answer says about it is worked
+    // out afresh above, as on the first attempt.
+    const { confirmationAppOnly: _storedAppOnly, ...rest } = answer;
+    void _storedAppOnly;
+    return {
+      ...rest,
+      confirmationEmailSent: after.confirmationEmailSent,
+      ...(after.confirmationEmailSent || after.confirmationAppOnly ? { confirmationAppOnly: after.confirmationAppOnly } : {}),
+      householdNoPortalAccount: after.sent.noPortalAccount,
+      officeNoticePending: after.sent.officePending,
+    };
+  }
   const settlesInvoice = stored['settlesInvoice'] === true;
-  const householdTold = stored['confirmationEmailSent'] === true || stored['confirmationAppOnly'] === true;
-  const householdDue = householdRequested && !householdTold;
-  // #1973: the unticked payoff's list-only copy, owed until it is on record.
-  const listDue = !householdRequested && settlesInvoice && !householdTold;
-  const officeDue =
-    (settlesInvoice || householdRequested) &&
-    stored['officeNoticeSentAt'] == null &&
-    // Nobody existed to receive it last time; that is final, not unfinished.
-    stored['officeNoticeSkippedReason'] == null;
+  const { householdTold, householdDue, listDue, officeDue } = copiesOwed(stored, householdRequested, settlesInvoice);
   if (!householdDue && !listDue && !officeDue) return answer;
   const sent = await sendPaymentConfirmation({
     kinfolkId: answer.kinfolkId,
@@ -1192,7 +1639,7 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
  *     household uid writes only the office copy, the shape the Stripe webhook
  *     uses. An unticked partial, or a payment that paid nothing off, tells nobody.
  */
-interface ConfirmationOutcome {
+export interface ConfirmationOutcome {
   /**
    * The household copy was written (#1511: read off the dispatcher's outcome,
    * not assumed from the uid). A copy the ledger deduped counts, because the
@@ -1206,6 +1653,13 @@ interface ConfirmationOutcome {
    * texted or pushed. Never true without `household`.
    */
   householdAppOnly: boolean;
+  /**
+   * #2281 review: the household copy in `household` is an earlier delivery of
+   * this same payment's notice, found on the dispatcher's ledger; this call
+   * wrote nothing for them. Whether that earlier copy was emailed is not known
+   * from here.
+   */
+  householdDuplicate?: boolean;
   /** The office copy was enqueued: it rides every enqueue, unless its roster lookup failed. */
   office: boolean;
   /**
@@ -1223,7 +1677,15 @@ interface ConfirmationOutcome {
   officePending: boolean;
 }
 
-async function sendPaymentConfirmation(input: {
+/** No copy was attempted, because none was owed. */
+const NOTHING_SENT: ConfirmationOutcome = {
+  household: false,
+  householdAppOnly: false,
+  office: false,
+  noPortalAccount: false,
+  officePending: false,
+};
+export async function sendPaymentConfirmation(input: {
   kinfolkId: string;
   invoiceId: string;
   paymentId: string;
@@ -1320,6 +1782,7 @@ async function sendPaymentConfirmation(input: {
       recipientUid !== null && (householdSuppressed === undefined || householdSuppressed.reason === 'duplicate');
     return {
       household,
+      householdDuplicate: household && householdSuppressed?.reason === 'duplicate',
       // Per recipient: the office's channels are not the household's.
       // #1973: a list-only copy is app-only by construction.
       householdAppOnly: household && recipientUid !== null && (listOnly || reachedAppOnly(outcome, recipientUid)),
@@ -1349,6 +1812,208 @@ async function sendPaymentConfirmation(input: {
   }
 }
 
+/**
+ * #2281 review: WHAT A ROW THAT TOOK THE SWEEP ROW'S PLACE STILL SENDS, on its
+ * first attempt and on a same-key retry.
+ *
+ * `stamps` are the copies on record for this payment: the sweep row's on the
+ * first attempt, the replacing row's own on a retry. Every copy goes out under
+ * the sweep row's id, the identity the sweep sent under, so the dispatcher's
+ * ledger drops one the sweep sent and could not stamp.
+ *
+ *   - Copies not on record are sent as a retry sends them (`copiesOwed`).
+ *   - THE TICKED EMAIL (lead ruling, 2026-11-14). The sweep cannot know the
+ *     admin ticked Send Confirmation, so it only lists the payoff (#1973).
+ *     When the late call is ticked and no channel has carried the household's
+ *     copy, the listed copy is sent on the household's own channels
+ *     (`deliverListedCopy`): email by default. Not a second enqueue: that
+ *     would be refused as a duplicate, or under a new identity would list the
+ *     payoff twice and tell the office twice.
+ *   - A household copy the ledger reports as a duplicate is the sweep's list
+ *     entry, not an email, so it is never reported as emailed by that alone.
+ *
+ * A send that fails leaves the stamps as they were, and the next same-key
+ * retry tries again. The answer never says both "emailed" and "list only".
+ *
+ * WHAT THE ANSWER SAYS WHEN THE TICKED EMAIL DID NOT GO. Every admin client
+ * prints `confirmationAppOnly: true` as "reached the household in the app
+ * only. Email and text are off for this household." That is true for one
+ * reason only: the household's own settings have every channel off. For every
+ * other reason (the operator switched this notification off, the household
+ * send gate is shut, the billing member has changed since the sweep listed
+ * the payoff so the listed copy is someone else's, the household has no
+ * portal account now, or the send failed) the answer leaves it out, and the
+ * clients say the confirmation email did not go out. The ROW keeps
+ * `confirmationAppOnly: true` in each of those cases: the listed copy exists,
+ * and that stamp is what lets a same-key retry try the email again.
+ */
+async function sendAfterSweepRow(input: {
+  stamps: Record<string, unknown>;
+  ticked: boolean;
+  kinfolkId: string;
+  invoiceId: string;
+  noticePaymentId: string;
+  uid: string;
+}): Promise<{
+  sent: ConfirmationOutcome;
+  confirmationEmailSent: boolean;
+  confirmationAppOnly: boolean;
+  stamps: Record<string, unknown>;
+  changed: boolean;
+}> {
+  const owed = copiesOwed(input.stamps, input.ticked, true);
+  // THE STAMPS SAY NO HOUSEHOLD COPY WAS WRITTEN, AND THE BILLING MEMBER HAS
+  // CHANGED SINCE THE SWEEP (lead ruling 2026-11-14). The sweep may have
+  // listed the payoff for the earlier member and lost its stamp. If it did,
+  // the household's copy exists and is not the new member's: nobody is sent
+  // anything, and the admin is told the confirmation did not go out, as when
+  // the stamp is there. `elsewhere` is that case; `unsure` is a lookup that
+  // failed, which sends the household nothing this time and leaves the row
+  // unstamped so a same-key retry asks again.
+  let elsewhere = false;
+  let unsure = false;
+  const listedFor = input.stamps[SETTLEMENT_NOTICE_UID_FIELD];
+  if ((owed.householdDue || owed.listDue) && typeof listedFor === 'string' && listedFor !== '') {
+    try {
+      const billingNow = await resolveBillingRecipientUid(input.kinfolkId);
+      if (billingNow !== listedFor) {
+        elsewhere = await hasDeliveredCopy({
+          key: 'invoice.payment.applied',
+          recipientUid: listedFor,
+          data: { kinfolkId: input.kinfolkId, invoiceId: input.invoiceId, paymentId: input.noticePaymentId },
+        });
+      }
+    } catch (err) {
+      unsure = true;
+      logEvent({
+        severity: 'warn',
+        function: 'recordPayment',
+        event: 'payment.confirmation.listed-for.lookup.failed',
+        uid: input.uid,
+        extra: { kinfolkId: input.kinfolkId, paymentId: input.noticePaymentId, err: (err as Error)?.message },
+      });
+    }
+  }
+  if (elsewhere || unsure) {
+    // The office copy alone, when it is still owed. The dispatcher's ledger
+    // drops it if the sweep already sent it.
+    const sent = owed.officeDue
+      ? await sendPaymentConfirmation({
+          kinfolkId: input.kinfolkId,
+          invoiceId: input.invoiceId,
+          paymentId: input.noticePaymentId,
+          uid: input.uid,
+          householdRequested: false,
+          settlesInvoice: true,
+          officeDue: true,
+        })
+      : NOTHING_SENT;
+    return {
+      sent,
+      confirmationEmailSent: false,
+      // Not "app only": the clients print that as the household having email
+      // and text off. The admin is told the confirmation did not go out.
+      confirmationAppOnly: false,
+      stamps: {
+        // The earlier member's listed copy is on record: the lost stamp, restored.
+        ...(elsewhere ? { confirmationAppOnly: true } : {}),
+        ...(sent.office ? { officeNoticeSentAt: FieldValue.serverTimestamp() } : {}),
+        ...(sent.skipped ? { officeNoticeSkippedReason: 'no-recipients' } : {}),
+      },
+      changed: elsewhere || sent.office || sent.skipped === true,
+    };
+  }
+  const sent =
+    !owed.householdDue && !owed.listDue && !owed.officeDue
+      ? NOTHING_SENT
+      : await sendPaymentConfirmation({
+          kinfolkId: input.kinfolkId,
+          invoiceId: input.invoiceId,
+          paymentId: input.noticePaymentId,
+          uid: input.uid,
+          householdRequested: owed.householdDue,
+          settlesInvoice: true,
+          officeDue: owed.officeDue,
+          officeOwedWithoutHousehold: input.ticked && owed.householdTold,
+          householdOnPayoff: owed.listDue,
+        });
+  const duplicate = sent.household && sent.householdDuplicate === true;
+  const listedBefore = input.stamps['confirmationAppOnly'] === true;
+  let emailed =
+    input.stamps['confirmationEmailSent'] === true || (sent.household && !duplicate && !sent.householdAppOnly);
+  let deliveredNow = false;
+  let delivery: ListedPayoffDelivery | null = null;
+  if (input.ticked && !emailed && (listedBefore || duplicate)) {
+    delivery = await deliverListedPayoff(input);
+    deliveredNow = delivery === 'sent' || delivery === 'already';
+    emailed = deliveredNow;
+  }
+  const listed = listedBefore || sent.household;
+  return {
+    sent,
+    confirmationEmailSent: emailed,
+    // "App only" is said only when it is the household's own settings that kept
+    // the email back, or when no email was asked for. See the note above.
+    confirmationAppOnly: listed && !emailed && (delivery === null || delivery === 'no-channels'),
+    stamps: {
+      ...(emailed ? { confirmationEmailSent: true, confirmationAppOnly: false } : listed ? { confirmationAppOnly: true } : {}),
+      ...(sent.office ? { officeNoticeSentAt: FieldValue.serverTimestamp() } : {}),
+      ...(sent.skipped ? { officeNoticeSkippedReason: 'no-recipients' } : {}),
+    },
+    changed: deliveredNow || sent.household || sent.office || sent.skipped === true,
+  };
+}
+/**
+ * What became of the ticked email for a payoff the sweep only listed: the
+ * dispatcher's own outcome, or `no-recipient` (the household has no portal
+ * account now) or `failed` (the lookup or the send threw).
+ */
+type ListedPayoffDelivery = ListedCopyDelivery | 'no-recipient' | 'failed';
+/**
+ * Sends the household's listed payoff copy on their own channels. `sent` and
+ * `already` mean a channel carries it. NEVER THROWS: the payment is recorded,
+ * and a failure here is retried by the next same-key call.
+ *
+ * The copy is looked up for the household's billing member AS OF NOW. When
+ * that is not the member the sweep listed it for, there is no listed copy of
+ * theirs to send (`no-record`) and nothing goes out: this never writes a new
+ * list entry, and never emails a member a copy that sits on another member's
+ * list.
+ */
+async function deliverListedPayoff(input: {
+  kinfolkId: string;
+  invoiceId: string;
+  noticePaymentId: string;
+  uid: string;
+}): Promise<ListedPayoffDelivery> {
+  try {
+    const recipientUid = await resolveBillingRecipientUid(input.kinfolkId);
+    if (recipientUid === null) return 'no-recipient';
+    const { outcome } = await deliverListedCopy({
+      key: 'invoice.payment.applied',
+      recipientUid,
+      // The data the sweep's copy went out with, so the ledger entry is found.
+      data: { kinfolkId: input.kinfolkId, invoiceId: input.invoiceId, paymentId: input.noticePaymentId },
+    });
+    logEvent({
+      severity: 'info',
+      function: 'recordPayment',
+      event: 'payment.confirmation.listed-copy',
+      uid: input.uid,
+      extra: { kinfolkId: input.kinfolkId, paymentId: input.noticePaymentId, outcome },
+    });
+    return outcome;
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordPayment',
+      event: 'payment.confirmation.listed-copy.failed',
+      uid: input.uid,
+      extra: { kinfolkId: input.kinfolkId, paymentId: input.noticePaymentId, err: (err as Error)?.message },
+    });
+    return 'failed';
+  }
+}
 export const recordPayment = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   // wrapCallable, NOT wrapAdminCallable: the gate must also admit a scoped

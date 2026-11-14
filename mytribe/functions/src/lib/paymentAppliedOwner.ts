@@ -133,6 +133,19 @@ export const PAYMENT_APPLIED_OWNER_AT_FIELD = 'paymentAppliedNoticeOwnerAtMs';
  * their step 2 lands seconds after step 1; 5 minutes covers a cold start and a
  * slow network with room to spare, and is far short of the days-later unrelated
  * payment that must not claim (the P3 case).
+ *
+ * #2281 review: past this window a call with no id can still take the CLAIM of
+ * a settlement that is waiting for its ledger row, when its row covers the
+ * settled amount (`markInvoicePaidSettlementOf`, and the note in
+ * `recordPayment`). That ends when the sweep finishes the settlement, about
+ * SETTLEMENT_LEDGER_SWEEP_GRACE_MS after the payoff.
+ *
+ * #2300: once the sweep has written the settlement's ledger row, a call with
+ * no id claims nothing and replaces nothing, however soon or late it comes. It
+ * is written as its own payment, and the owner is warned when it is large
+ * enough to be the same payoff recorded twice. Before #2300 such a row replaced
+ * the sweep's row with no time limit, so the days-later unrelated payment was
+ * refused the claim and still erased the earlier payment's ledger row.
  */
 export const OLD_CLIENT_CLAIM_WINDOW_MS = 5 * 60 * 1000;
 
@@ -144,6 +157,93 @@ export const OLD_CLIENT_CLAIM_WINDOW_MS = 5 * 60 * 1000;
  */
 export const OLD_CLIENT_CLAIM_CLOCK_SKEW_MS = 5 * 1000;
 
+/**
+ * #2230: A `markInvoicePaid` SETTLEMENT STILL OWED ITS LEDGER ROW AND NOTICE.
+ *
+ * Older installed admin clients record a payment as two calls: `markInvoicePaid`
+ * pays the bill, then `recordPayment` writes the root `payments` ledger row and
+ * sends `invoice.payment.applied`. A reload or a closed app between the two left
+ * a paid invoice with no ledger row and nobody told.
+ *
+ * So the settling `markInvoicePaid` write stamps PENDING with its owner
+ * (`markInvoicePaid:<paymentId>`) and PENDING_AT, in the same commit as the
+ * money. The `recordPayment` that claims that settlement clears PENDING to ''
+ * in the same transaction as its claim. One still pending after
+ * SETTLEMENT_LEDGER_SWEEP_GRACE_MS had no second call, and
+ * `notificationScheduledSweep` finishes it (`lib/settlementLedgerSweep.ts`).
+ *
+ * Finished, PENDING is '' and PENDING_AT is null. A null never matches the
+ * sweep's numeric range filter, so a finished settlement is never fetched again.
+ *
+ * Their own fields, not `paymentAppliedNoticePending*`: the credit notice sweep
+ * reads those oldest first and skips every owner that is not a credit draw, so
+ * these would sit at the front of its query for good.
+ */
+export const SETTLEMENT_LEDGER_PENDING_FIELD = 'settlementLedgerPending';
+export const SETTLEMENT_LEDGER_PENDING_AT_FIELD = 'settlementLedgerPendingAtMs';
+
+/**
+ * How old a pending settlement must be before the sweep finishes it. Twice
+ * OLD_CLIENT_CLAIM_WINDOW_MS, so an older client's own second call, which may
+ * claim for that long, normally gets there first. One that arrives later and
+ * before the sweep still leaves a single ledger row (#2281 review): it takes
+ * the claim, and the sweep writes nothing. After the sweep, only a call that
+ * names the settlement replaces the sweep's row; one with no id is written
+ * beside it as its own payment (#2300).
+ */
+export const SETTLEMENT_LEDGER_SWEEP_GRACE_MS = 2 * OLD_CLIENT_CLAIM_WINDOW_MS;
+
+/** The root `payments` id the sweep writes for one settlement row. */
+export function settlementLedgerRowId(settlementPaymentId: string): string {
+  return `settle_${settlementPaymentId}`;
+}
+/** `recordedByServer` on a ledger row the sweep wrote. Only such a row is ever replaced, and only by a call naming its settlement. */
+export const SETTLEMENT_LEDGER_SWEEP_WRITER = 'settlementLedgerSweep';
+/**
+ * On the sweep's ledger row, and carried onto a row that replaces it: the
+ * billing member the payoff was listed for ('' when the household had none).
+ * Written before the sweep sends, so it survives a lost notice stamp.
+ */
+export const SETTLEMENT_NOTICE_UID_FIELD = 'householdNoticeUid';
+const MARK_INVOICE_PAID_OWNER_PREFIX = 'markInvoicePaid:';
+/**
+ * #2281 review: THE `markInvoicePaid` SETTLEMENT A LEDGER ROW FOR THIS INVOICE
+ * BELONGS TO, and how far it has got. Null unless the invoice is paid, belongs
+ * to `kinfolkId`, and was paid off by `markInvoicePaid` (by the settlement
+ * `invoicePaymentId` names, when one is given).
+ *
+ *   - `claimed`: a second call or the sweep has taken the settlement. If it was
+ *     the sweep, its row is `payments/settle_<settlementId>`.
+ *   - `pending`: the settlement still waits for its ledger row and notice.
+ *
+ * Unlike `claimableMarkInvoicePaidOwner` it has no time window and does not
+ * stop at a claim. `recordPayment` uses it for the two cases that function
+ * refuses: a call that arrives after the sweep, and a row with no settlement
+ * id that arrives after OLD_CLIENT_CLAIM_WINDOW_MS. Both are then decided on
+ * documents read in the same transaction, not on the clock. What each may do
+ * is `recordPayment`'s rule, not this function's: after the sweep only a call
+ * that names the settlement replaces the sweep's row (#2300).
+ */
+export function markInvoicePaidSettlementOf(
+  invoice: Record<string, unknown> | undefined,
+  kinfolkId: string,
+  invoicePaymentId: string | undefined,
+): { owner: string; settlementId: string; claimed: boolean; pending: boolean } | null {
+  if (!invoice || kinfolkId === '' || invoice['kinfolkId'] !== kinfolkId) return null;
+  const owner = invoice[PAYMENT_APPLIED_OWNER_FIELD];
+  if (typeof owner !== 'string' || !owner.startsWith(MARK_INVOICE_PAID_OWNER_PREFIX)) return null;
+  const settlementId = owner.slice(MARK_INVOICE_PAID_OWNER_PREFIX.length);
+  if (settlementId === '') return null;
+  if (invoicePaymentId !== undefined && invoicePaymentId !== settlementId) return null;
+  const status = typeof invoice['status'] === 'string' ? invoice['status'].trim().toLowerCase() : '';
+  if (status !== 'paid') return null;
+  return {
+    owner,
+    settlementId,
+    claimed: invoice[PAYMENT_APPLIED_CLAIM_FIELD] === owner,
+    pending: invoice[SETTLEMENT_LEDGER_PENDING_FIELD] === owner,
+  };
+}
 /**
  * The `markInvoicePaid` owner stamp a `recordPayment` for `kinfolkId` may claim
  * on this invoice, or null. Claimable means: the invoice is paid, belongs to that

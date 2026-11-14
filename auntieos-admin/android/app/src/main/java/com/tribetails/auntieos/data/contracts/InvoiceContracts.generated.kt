@@ -1284,6 +1284,8 @@ data class RecordPaymentArgsApply(
     /** The server defaults this to `""`. */
     val invoiceNumber: String = "",
     val amount: Double,
+    /** Optional: omitted from the payload when null. */
+    val settleBalance: Boolean? = null,
 ) {
     /**
      * The wire payload for this request, in the `recordPaymentPayload` convention:
@@ -1293,6 +1295,7 @@ data class RecordPaymentArgsApply(
         put("invoiceId", invoiceId)
         put("invoiceNumber", invoiceNumber)
         put("amount", amount)
+        if (settleBalance != null) put("settleBalance", settleBalance)
     }
 }
 

@@ -11,6 +11,7 @@ vi.mock('../lib/firebase', () => ({ db: { __db: true } }));
 const { call } = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock('../lib/fns', () => ({ call }));
 
+import { COMPLETE_OWNER_ONLY } from '../lib/completeRule';
 import {
   transitionBookingStatus,
   approveBooking,
@@ -63,6 +64,49 @@ describe('transitionBookingStatus (the shared callable primitive)', () => {
     await expect(
       transitionBookingStatus({ sessionId: 'ses1', action: 'COMPLETE' }),
     ).rejects.toThrow('Cannot COMPLETE a booking in status CANCELLED.');
+  });
+
+  // #2199, operator ruling 2026-11-14: completing a visit is the owner's. The
+  // staff gate refuses an Auntie; she reads who can, never the gate's words.
+  it.each(['functions/permission-denied', 'permission-denied'])(
+    '#2199: a COMPLETE refused with %s reads "Only the owner can complete a visit."',
+    async (code) => {
+      const refused = Object.assign(new Error('Your account is not allowed to do this.'), { code });
+      call.mockRejectedValue(refused);
+      const err = (await transitionBookingStatus({ sessionId: 'ses1', action: 'COMPLETE' }).catch(
+        (e: unknown) => e,
+      )) as Error & { code?: string; cause?: unknown };
+      expect(err.message).toBe('Only the owner can complete a visit.');
+      expect(err.message).toBe(COMPLETE_OWNER_ONLY);
+      expect(err.message).not.toMatch(/admin claim/i);
+      // Still a permission refusal to anything that reads the code, and the
+      // server's own error is kept behind it.
+      expect(err.code).toBe(code);
+      expect(err.cause).toBe(refused);
+    },
+  );
+
+  it('#2199: markBookingCompleted, the sheet\'s Mark Completed, reads the same', async () => {
+    call.mockRejectedValue(Object.assign(new Error('Admin claim required.'), { code: 'functions/permission-denied' }));
+    await expect(markBookingCompleted('ses1', '2026-07-16T10:00:00.000Z')).rejects.toThrow(COMPLETE_OWNER_ONLY);
+  });
+
+  it('#2199 NEGATIVE: the other three actions keep the refusal they were given', async () => {
+    const refused = Object.assign(new Error('Your account is not allowed to do this.'), {
+      code: 'functions/permission-denied',
+    });
+    call.mockRejectedValue(refused);
+    for (const action of ['APPROVE', 'REJECT', 'CANCEL'] as const) {
+      await expect(transitionBookingStatus({ sessionId: 'ses1', action })).rejects.toBe(refused);
+    }
+  });
+
+  it('#2199 NEGATIVE: a COMPLETE refused for another reason is not reworded', async () => {
+    const refused = Object.assign(new Error('This visit has no arrival recorded.'), {
+      code: 'functions/failed-precondition',
+    });
+    call.mockRejectedValue(refused);
+    await expect(transitionBookingStatus({ sessionId: 'ses1', action: 'COMPLETE' })).rejects.toBe(refused);
   });
 });
 
