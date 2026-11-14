@@ -419,6 +419,29 @@ class InvoiceComposerTest {
         assertTrue(note.contains("counting from 2026-08-11"))
         assertTrue(note.contains("already"))
         assertTrue(note.contains("overdue the moment it goes out"))
+        // #2092: a quote is not a bill, so a past date does not make it overdue.
+        val quoteNote = composerTermsNote(InvoiceTermsCode.DUE_ON_LAST_VISIT, past, "2026-08-19", quote = true)
+        assertEquals("Worked out from the terms, counting from 2026-08-11. That date has already passed.", quoteNote)
+    }
+
+    @Test
+    fun `2092 a quote's lines say quote and unbilled, an invoice's keep their words`() {
+        assertEquals(
+            "2 of 3 unbilled visits selected for the Halbrooks.",
+            uninvoicedScopeLine("the Halbrooks", 3, 2, 3L, null, null, quote = true),
+        )
+        assertEquals(
+            "No unbilled completed visits for the Halbrooks. 4 visits were checked.",
+            uninvoicedScopeLine("the Halbrooks", 0, 0, 4L, null, null, quote = true),
+        )
+        assertTrue(composerTotalSentence(true, 2500L, "$25.00").startsWith("This quote will be created for $25.00,"))
+        assertTrue(composerTotalSentence(false, 2500L, "$25.00").startsWith("This invoice will be created for $25.00,"))
+        assertEquals(
+            "Totals are worked out from the work this quote covers. Tick a visit above, or add a line of your own.",
+            composerTotalSentence(true, null, ""),
+        )
+        assertEquals("1 visit is back in this household's unbilled work.", exclusionNotice(1, false, quote = true))
+        assertEquals("2 visits are back in this household's un-invoiced work.", exclusionNotice(2, false))
     }
 
     @Test

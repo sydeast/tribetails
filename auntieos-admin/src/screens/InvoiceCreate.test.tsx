@@ -543,6 +543,36 @@ describe('InvoiceCreate quotes', () => {
     expect(screen.queryByText(/Could not create the quote/)).toBeNull();
   });
 
+  it('#2092: the New quote form calls it a quote, offers no Do not invoice, and spells Kinfolk', async () => {
+    render(<InvoiceCreate mode="quote" onClose={vi.fn()} />);
+    expect(screen.getByText(/its unbilled work appears here/i)).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await screen.findByRole('checkbox');
+
+    expect(screen.getByText(/^This quote will be created for \$25\.00/)).toBeInTheDocument();
+    expect(screen.queryByText(/This invoice will be created/)).toBeNull();
+    expect(screen.getByText('1 of 1 unbilled visit selected for Pat Whitfield.')).toBeInTheDocument();
+    expect(screen.queryByText(/un-invoiced/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /do not invoice/i })).toBeNull();
+    expect(screen.getByLabelText('Quote date')).toBeInTheDocument();
+    expect(screen.getByLabelText('Quote due date')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Send to Kinfolk now' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /^Quote / })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('checkbox'));
+    expect(screen.getByText(/Totals are worked out from the work this quote covers/)).toBeInTheDocument();
+  });
+
+  it('#2092: the invoice form keeps its own words', async () => {
+    render(<InvoiceCreate mode="invoice" onClose={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await screen.findByRole('checkbox');
+    expect(screen.getByText(/^This invoice will be created for \$25\.00/)).toBeInTheDocument();
+    expect(screen.getByText('1 of 1 un-invoiced visit selected for Pat Whitfield.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /do not invoice/i })).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: /send to kinfolk now/i })).toBeNull();
+  });
+
   it('opens on the quote kind when the notifications feed seeded it', () => {
     render(<InvoiceCreate mode="quote" onClose={vi.fn()} seedKinfolkId="kf1" />);
     expect(screen.getByLabelText('What is this')).toHaveValue('quote');

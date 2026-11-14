@@ -33,12 +33,39 @@ import { usingFixtureAdmin } from '../support/commands';
  * with `adminUidFields: ['recipientUid']`, and the last test seeds one row
  * addressed to a household to prove it stays off this screen.
  *
- * UI-ONLY, per the 2026-09-01 operator ruling: no callable is stubbed here
- * because none of these three assertions needs one. Reading the feed is a
- * live Firestore listener (`notificationsQueryFor`), and expanding a card,
- * checking which buttons render, and reading a row's own class are all pure
- * client state and CSS.
+ * UI-ONLY, per the 2026-09-01 operator ruling. Reading the feed is a live
+ * Firestore listener (`notificationsQueryFor`), and expanding a card and
+ * reading a row's own class are pure client state and CSS. One callable is
+ * stubbed with `cy.intercept` (fine for callables, same ruling):
+ * `listPendingBookingRequests`, because since #2069 a request row offers
+ * Approve and Deny only when the live queue of waiting requests holds it.
  */
+
+const CALLABLE = (name: string) => `**/us-central1/${name}`;
+
+/** #2069: the waiting queue, holding [requests]. */
+function stubWaitingRequests(requests: readonly unknown[]) {
+  cy.intercept('POST', CALLABLE('listPendingBookingRequests'), {
+    statusCode: 200,
+    body: { result: { requests } },
+  }).as('listPending');
+}
+
+/** The request PENDING_DOC is about, as the Bookings queue lists it. */
+const WAITING_REQUEST = {
+  kinfolkId: 'e2e-kf-1',
+  batchId: 'e2e-notif-visit-1',
+  kinfolkName: 'Wanda Thorne',
+  serviceType: 'Dog walking',
+  kinNames: ['Biscuit'],
+  notes: null,
+  visitCount: 1,
+  firstStartTimeMs: Date.now() + 3 * 86_400_000,
+  lastStartTimeMs: Date.now() + 3 * 86_400_000,
+  startTimeMsList: [Date.now() + 3 * 86_400_000],
+  visits: [],
+  requestedAtMs: Date.now(),
+};
 
 const PENDING_ID = 'e2e-notif-pending';
 const CONFIRMED_ID = 'e2e-notif-confirmed';
@@ -162,6 +189,7 @@ describe('notifications', () => {
   });
 
   it('#706 offers Approve and Deny only on a pending KinCare request, never on a confirmed booking', () => {
+    stubWaitingRequests([WAITING_REQUEST]);
     cy.signIn();
     cy.visit('/notifications');
 
@@ -173,6 +201,50 @@ describe('notifications', () => {
       cy.contains('button', 'Approve').should('not.exist');
       cy.contains('button', 'Deny').should('not.exist');
     });
+  });
+
+  it('#2069 a request the waiting queue no longer holds offers Open only', () => {
+    stubWaitingRequests([]);
+    cy.signIn();
+    cy.visit('/notifications');
+    cy.wait('@listPending');
+    cy.contains('.notif-row', 'KinCare visit requested').within(() => {
+      cy.contains('button', 'Approve').should('not.exist');
+      cy.contains('button', 'Deny').should('not.exist');
+      cy.contains('button', 'Open').should('exist');
+      cy.contains('Answered').should('exist');
+    });
+  });
+
+  it('#1875 Deny asks first, naming the household, and sends nothing on Cancel', () => {
+    stubWaitingRequests([WAITING_REQUEST]);
+    cy.intercept('POST', CALLABLE('manageBookingSeries'), cy.spy().as('answer'));
+    cy.signIn();
+    cy.visit('/notifications');
+    cy.contains('.notif-row', 'KinCare visit requested').within(() => {
+      cy.contains('button', 'Deny').click();
+    });
+    cy.get('[role="dialog"]').within(() => {
+      cy.contains('Turn down this request from Wanda Thorne').should('exist');
+      cy.contains('The household will be told.').should('exist');
+      cy.contains('button', 'Cancel').click();
+    });
+    cy.get('[role="dialog"]').should('not.exist');
+    cy.get('@answer').should('not.have.been.called');
+  });
+
+  it('#2028 Open on a waiting request opens its card on Bookings, not "Booking unavailable"', () => {
+    stubWaitingRequests([WAITING_REQUEST]);
+    cy.intercept('POST', CALLABLE('listRescheduleRequests'), { statusCode: 200, body: { result: { requests: [] } } });
+    cy.intercept('POST', CALLABLE('listCancelRequests'), { statusCode: 200, body: { result: { requests: [] } } });
+    cy.signIn();
+    cy.visit('/notifications');
+    cy.contains('.notif-row', 'KinCare visit requested').within(() => {
+      cy.contains('button', 'Open').click();
+    });
+    cy.location('pathname').should('eq', '/bookings');
+    cy.get('[role="dialog"]').should('contain.text', 'New request from Wanda Thorne');
+    cy.contains('Booking unavailable').should('not.exist');
   });
 
   it('#707 a read row is dimmed and offers Mark unread; an unread row is not and offers Mark read', () => {

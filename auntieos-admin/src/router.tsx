@@ -331,7 +331,9 @@ const bookingsRoute = createRoute({
   staticData: { title: navTitle('bookings') },
   // `kinRemoval=<request id>` is where a "Kinfolk asked to remove a Kin" notice
   // opens: the removal queue on this screen, already unfolded (#1912).
-  validateSearch: optionalIdSearch(['bookingId', 'kinRemoval'] as const),
+  // `requestId` + `requestKinfolkId` is where a "Kinfolk requested a KinCare
+  // visit" notice opens: that request's card in the Visit requests queue (#2028).
+  validateSearch: optionalIdSearch(['bookingId', 'kinRemoval', 'requestId', 'requestKinfolkId'] as const),
   component: lazyRouteComponent(() => import('./routes/BookingsView'), 'BookingsView'),
 });
 

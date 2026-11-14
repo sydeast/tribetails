@@ -555,7 +555,7 @@ private fun InvoiceDetailBody(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text  = "Invoice #${invoice.invoiceNumber.ifBlank { "-" }}",
+                    text  = invoiceDocTitle(invoice),
                     style = AuntieTheme.typography.titleLarge,
                     color = c.textPrimary,
                 )

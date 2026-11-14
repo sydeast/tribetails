@@ -12,13 +12,20 @@ import { Bookings } from '../screens/Bookings';
  *
  * `/bookings?kinRemoval=<request id>` is the other arrival (#1912): the
  * "Kinfolk asked to remove a Kin" notice, which opens the removal queue here.
+ *
+ * `/bookings?requestId=<batch id>&requestKinfolkId=<household id>` is the
+ * "Kinfolk requested a KinCare visit" notice (#2028), which opens that
+ * request's card. A batch id is unique only inside its household, so both.
  */
 export function BookingsView() {
-  const { bookingId, kinRemoval } = useSearch({ from: '/admin/bookings' });
+  const { bookingId, kinRemoval, requestId, requestKinfolkId } = useSearch({ from: '/admin/bookings' });
   return (
     <Bookings
       {...(bookingId ? { initialBookingId: bookingId } : {})}
       {...(kinRemoval ? { kinRemovalRequestId: kinRemoval } : {})}
+      {...(requestId && requestKinfolkId
+        ? { focusRequest: { kinfolkId: requestKinfolkId, batchId: requestId } }
+        : {})}
     />
   );
 }

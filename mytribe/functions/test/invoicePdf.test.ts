@@ -15,7 +15,7 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: vi.fn().mockResolvedValue('audit-1') }));
 vi.mock('../src/lib/resolveKinfolkAccess', () => ({ resolveKinfolkAccess: mocks.resolveKinfolkAccess }));
 
-import { renderInvoicePdf, invoiceForPdf, winAnsiSafe, lineItemsForPdf, usdCents, formatQty, formatPaymentMethods, type InvoiceForPdf } from '../src/lib/invoicePdf';
+import { renderInvoicePdf, invoiceForPdf, pdfHeadings, winAnsiSafe, lineItemsForPdf, usdCents, formatQty, formatPaymentMethods, type InvoiceForPdf } from '../src/lib/invoicePdf';
 import { generateInvoicePdfHandler } from '../src/admin/generateInvoicePdf';
 import { getMyInvoicePdfHandler } from '../src/portal/getMyInvoicePdf';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
@@ -65,6 +65,14 @@ describe('renderInvoicePdf (pure)', () => {
     });
     const bytes = await renderInvoicePdf(inv);
     expect(String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3])).toBe('%PDF');
+  });
+
+  it('#2092: a quote prints as a QUOTE, prepared for the household; every other state as an INVOICE', () => {
+    expect(pdfHeadings('quote')).toEqual({ title: 'QUOTE', numberLabel: 'Quote #', partyLabel: 'Prepared for' });
+    expect(pdfHeadings(' Quote ')).toEqual({ title: 'QUOTE', numberLabel: 'Quote #', partyLabel: 'Prepared for' });
+    for (const status of ['open', 'paid', 'draft', 'cancelled', '']) {
+      expect(pdfHeadings(status)).toEqual({ title: 'INVOICE', numberLabel: 'Invoice #', partyLabel: 'Bill to' });
+    }
   });
 
   it('winAnsiSafe keeps Latin-1 + cp1252 specials, maps the rest to ?', () => {

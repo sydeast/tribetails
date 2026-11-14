@@ -71,6 +71,9 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.ui.components.StatCard
 import kotlinx.coroutines.launch
+import com.tribetails.auntieos.web.screens.booking.NewBookingMath
+import com.tribetails.auntieos.web.screens.booking.SeriesDecisionDialog
+import com.tribetails.auntieos.web.screens.booking.groupIncomingBySeries
 
 /**
  * Admin notification inbox ("The Den · Notifications").
@@ -106,18 +109,35 @@ fun NotificationsScreen(
     // #1003: `invoice.payment.unapplied` opens the household profile with that
     // payment's Decide dialog instead of the invoice (see [notificationOpenRoute]).
     onOpenUnappliedPayment: (kinfolkId: String, paymentId: String?) -> Unit = { _, _ -> },
+    // #2028: a "Kinfolk requested a KinCare visit" row opens its request on Bookings.
+    onOpenVisitRequest: (kinfolkId: String, batchId: String) -> Unit = { _, _ -> },
+    client: FirestoreClient = remember { FirestoreClient() },
 ) {
     val openEntry: (NotificationEntry) -> Unit = { entry ->
         when (val r = notificationOpenRoute(entry)) {
             is NotificationOpenRoute.UnappliedPayment -> onOpenUnappliedPayment(r.kinfolkId, r.paymentId)
+            is NotificationOpenRoute.VisitRequest -> onOpenVisitRequest(r.kinfolkId, r.batchId)
             is NotificationOpenRoute.Target -> onOpenTarget(r.targetType, r.targetId)
         }
     }
-    val client = remember { FirestoreClient() }
     val scope = rememberReportingScope()
 
     // P0-FLICKER: hoist the Flow via remember so it survives recomposition.
     val state by remember { client.notificationsStream() }.collectAsState(initial = FirestoreResult.Loading)
+
+    // #2069: the requests still waiting, from the same incoming-requests queue
+    // Bookings lists. A row is offered a decision only when this queue holds its
+    // request; while it loads or when it fails, nothing is (Open still is).
+    val incomingState by remember { client.incomingKinCaresStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val settingsState by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    val waitingSeries = remember(incomingState, kinfolkState) {
+        val visits = (incomingState as? FirestoreResult.Data)?.value.orEmpty()
+        val names = (kinfolkState as? FirestoreResult.Data)?.value.orEmpty().associate { it._id to it.displayName }
+        groupIncomingBySeries(visits) { names[it] }
+    }
+    val pending: Set<String>? = if (incomingState is FirestoreResult.Data) pendingRequestKeys(waitingSeries) else null
+    val zone = NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone)
 
     // Active category filter. null = "All". Selection is presentation-only; it
     // narrows the already-loaded list and never touches the data source.
@@ -154,12 +174,15 @@ fun NotificationsScreen(
             }
         }
     }
+    // #1875: Approve and Deny open a confirm step that names the household, the
+    // day and who will be told, with the note box; nothing is sent from the row.
+    var confirming by remember { mutableStateOf<Pair<NotificationEntry, Boolean>?>(null) }
+    var answering by remember { mutableStateOf(false) }
     val onBookingAction: (NotificationEntry, String) -> Unit = { entry, action ->
-        scope.launch {
-            val answer = answerBookingRequest(client, entry, approve = action == "APPROVE")
-            actionError = answer.error
-            actionNotice = answer.notice
-        }
+        confirming = entry to (action != "APPROVE")
+    }
+    val confirmSeries = confirming?.let { (entry, _) ->
+        waitingSeries.firstOrNull { visitRequestKey(it.kinfolkId, it.batchId) == notificationRequestKey(entry) }
     }
     val onBulkArchive: () -> Unit = {
         val ids = selectedIds.toList()
@@ -213,7 +236,7 @@ fun NotificationsScreen(
                 val unreadCount = all.count { !it.isRead }
                 // #1592 / R5: the strip counts the operator's work, not the
                 // sender's. "Dispatched" was delivery-pipeline health.
-                val decisionCount = needsDecisionCount(all)
+                val decisionCount = needsDecisionCount(all, pending)
 
                 Heading(unreadCount = unreadCount)
                 Spacer(Modifier.height(20.dp))
@@ -229,9 +252,9 @@ fun NotificationsScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     StatCard(
-                        label = "In your inbox",
+                        label = "Active",
                         value = all.size.toString(),
-                        trend = "active notifications",
+                        trend = "in your notifications list",
                         tone = AuntieStatusTone.Purple,
                         modifier = Modifier.weight(1f),
                     )
@@ -342,6 +365,7 @@ fun NotificationsScreen(
                                 onCreateQuote = onCreateQuote,
                                 onArchive = onArchive,
                                 onBookingAction = onBookingAction,
+                                pending = pending,
                             )
                         }
                     }
@@ -349,6 +373,27 @@ fun NotificationsScreen(
             }
         }
     }
+
+    // #1875: the confirm step, shared with Bookings' Visit requests card. It stays
+    // open on "Working…" until the server answers, so the wait is visible.
+    SeriesDecisionDialog(
+        series = confirmSeries,
+        decline = confirming?.second == true,
+        zone = zone,
+        busy = answering,
+        onDismiss = { confirming = null },
+        onConfirm = { note ->
+            val (entry, decline) = confirming ?: return@SeriesDecisionDialog
+            answering = true
+            scope.launch {
+                val answer = answerBookingRequest(client, entry, approve = !decline, note = note)
+                actionError = answer.error
+                actionNotice = answer.notice
+                answering = false
+                confirming = null
+            }
+        },
+    )
 }
 
 /**
@@ -439,6 +484,7 @@ private fun Feed(
     onCreateQuote: (String) -> Unit,
     onArchive: (NotificationEntry) -> Unit,
     onBookingAction: (NotificationEntry, String) -> Unit,
+    pending: Set<String>?,
 ) {
     val newestDate = entries.firstOrNull()?.createdAt?.let { datePrefix(it) }
     val (recentItems, earlierItems) = entries.partition {
@@ -448,12 +494,12 @@ private fun Feed(
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (recentItems.isNotEmpty()) {
             DaySeparator("Recent")
-            recentItems.forEach { row(it, selectedIds, onToggleSelect, onToggleRead, onOpenTarget, onCreateQuote, onArchive, onBookingAction) }
+            recentItems.forEach { row(it, selectedIds, onToggleSelect, onToggleRead, onOpenTarget, onCreateQuote, onArchive, onBookingAction, pending) }
         }
         if (earlierItems.isNotEmpty()) {
             if (recentItems.isNotEmpty()) Spacer(Modifier.height(6.dp))
             DaySeparator("Earlier")
-            earlierItems.forEach { row(it, selectedIds, onToggleSelect, onToggleRead, onOpenTarget, onCreateQuote, onArchive, onBookingAction) }
+            earlierItems.forEach { row(it, selectedIds, onToggleSelect, onToggleRead, onOpenTarget, onCreateQuote, onArchive, onBookingAction, pending) }
         }
     }
 }
@@ -468,9 +514,11 @@ private fun row(
     onCreateQuote: (String) -> Unit,
     onArchive: (NotificationEntry) -> Unit,
     onBookingAction: (NotificationEntry, String) -> Unit,
+    pending: Set<String>?,
 ) {
     NotificationRow(
         entry = entry,
+        pending = pending,
         selected = entry._id in selectedIds,
         onToggleSelect = { checked -> onToggleSelect(entry._id, checked) },
         onToggleRead = { onToggleRead(entry) },
@@ -508,6 +556,7 @@ private fun DaySeparator(label: String) {
 @Composable
 private fun NotificationRow(
     entry: NotificationEntry,
+    pending: Set<String>?,
     selected: Boolean,
     onToggleSelect: (Boolean) -> Unit,
     onToggleRead: () -> Unit,
@@ -521,7 +570,7 @@ private fun NotificationRow(
     val dims = AuntieTheme.dims
     val typo = AuntieTheme.typography
     val unread = !entry.isRead
-    val actions = applicableActions(entry)
+    val actions = applicableActions(entry, pending)
 
     val border = if (unread) c.accent.copy(alpha = 0.4f) else c.border
 
@@ -562,7 +611,7 @@ private fun NotificationRow(
             Spacer(Modifier.height(2.dp))
             // #1647: an answered request says how it ended, where the Approve
             // and Deny buttons used to sit.
-            requestOutcomeLabel(entry)?.let { outcome ->
+            requestOutcomeLabel(entry, pending)?.let { outcome ->
                 AuntieStatusPill(
                     label = outcome,
                     tone = if (outcome == "Booked") AuntieStatusTone.Success else AuntieStatusTone.Neutral,

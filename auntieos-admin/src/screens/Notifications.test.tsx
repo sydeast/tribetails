@@ -58,6 +58,42 @@ const { approveBookingRequest, declineBookingRequest } = vi.hoisted(() => ({
   declineBookingRequest: vi.fn(),
 }));
 vi.mock('../api/bookingRequests', () => ({ approveBookingRequest, declineBookingRequest }));
+
+// #2069: the live queue of waiting booking requests. Swapped per test; by
+// default it holds the one request `waitingRequest()` names below.
+const { pendingState } = vi.hoisted(() => ({ pendingState: { current: null as unknown } }));
+vi.mock('../lib/pendingBookingRequests', () => ({
+  usePendingBookingRequests: () => pendingState.current,
+  usePollTick: () => 0,
+  VISIT_REQUESTS_REFRESH_MS: 60_000,
+}));
+vi.mock('../lib/visitRequestSignal', () => ({ useVisitRequestSignal: () => 0 }));
+/** The request the waiting row is about, as the Bookings queue lists it. */
+const WAITING_REQUEST = {
+  kinfolkId: 'kf1',
+  batchId: 'req_b1',
+  kinfolkName: 'The Wrens',
+  serviceType: '60Minute',
+  kinNames: ['Biscuit'],
+  notes: null,
+  visitCount: 1,
+  firstStartTimeMs: new Date(2026, 10, 19, 11, 0).getTime(),
+  lastStartTimeMs: new Date(2026, 10, 19, 11, 0).getTime(),
+  startTimeMsList: [new Date(2026, 10, 19, 11, 0).getTime()],
+  visits: [],
+  requestedAtMs: new Date(2026, 10, 10, 10, 50).getTime(),
+};
+function queueHolding(...requests: (typeof WAITING_REQUEST)[]): Async<ReadonlyMap<string, unknown>> {
+  return { status: 'ready', data: new Map(requests.map((r) => [`${r.kinfolkId}/${r.batchId}`, r])) };
+}
+beforeEach(() => {
+  // The request rows the older cases below use (b1, b2) are waiting too.
+  pendingState.current = queueHolding(
+    WAITING_REQUEST,
+    { ...WAITING_REQUEST, batchId: 'b1' },
+    { ...WAITING_REQUEST, kinfolkId: 'kf2', batchId: 'b2' },
+  );
+});
 const APPROVED = {
   ok: true,
   action: 'APPROVE',
@@ -499,7 +535,7 @@ describe('Notifications stat strip', () => {
       ],
     });
     render(<Notifications />);
-    expect(screen.getByText('In your inbox')).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.getByText('Needs a decision')).toBeInTheDocument();
     expect(screen.queryByText('Dispatched')).toBeNull();
     expect(screen.getByText('3')).toBeInTheDocument();
@@ -538,7 +574,7 @@ describe('Notifications stat strip', () => {
       ],
     });
     render(<Notifications />);
-    expect(screen.getByText('In your inbox')).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText('Archived'), 'only');
     expect(screen.getByText('Filed away')).toBeInTheDocument();
@@ -849,21 +885,103 @@ describe('Notifications quick actions (issue #20)', () => {
       ...over,
     });
 
+  /** #1875: Approve and Deny open the confirm step; this presses its confirm. */
+  async function confirmDecision(label: 'Book it' | 'Send the decline') {
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: label }));
+  }
+
   it('#1675: Approve books the whole request by household and request id, not batchUpdateBookings', async () => {
+    approveBookingRequest.mockResolvedValue(APPROVED);
     mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await confirmDecision('Book it');
     await waitFor(() => expect(approveBookingRequest).toHaveBeenCalledWith('kf1', 'req_b1'));
     expect(batchUpdateBookings).not.toHaveBeenCalled();
     expect(screen.queryByText('Notification action failed')).toBeNull();
   });
 
   it('#1675: Deny declines the whole request by household and request id', async () => {
+    declineBookingRequest.mockResolvedValue({ ok: true, householdNotified: true });
     mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
-    await waitFor(() => expect(declineBookingRequest).toHaveBeenCalledWith('kf1', 'req_b1'));
+    await confirmDecision('Send the decline');
+    await waitFor(() => expect(declineBookingRequest).toHaveBeenCalledWith('kf1', 'req_b1', ''));
     expect(batchUpdateBookings).not.toHaveBeenCalled();
+  });
+
+  // #1875: one press of Deny declined the request and told the household, with
+  // no confirm and no undo.
+  it('#1875: Deny sends nothing until the confirm step, which names the household, the date and who is told', async () => {
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(declineBookingRequest).not.toHaveBeenCalled();
+    expect(within(dialog).getByText('Turn down this request from The Wrens')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Nov 19.*will not be booked\. The household will be told\./)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Anything to add for the household (optional)')).toBeInTheDocument();
+    // Backing out sends nothing at all.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(declineBookingRequest).not.toHaveBeenCalled();
+  });
+
+  it('#1875: Approve asks first too, and the note typed there goes to the household', async () => {
+    approveBookingRequest.mockResolvedValue(APPROVED);
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(approveBookingRequest).not.toHaveBeenCalled();
+    expect(within(dialog).getByText('Book this request for The Wrens')).toBeInTheDocument();
+    await userEvent.type(within(dialog).getByLabelText('Note for the household (optional)'), 'See you then');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Book it' }));
+    await waitFor(() => expect(approveBookingRequest).toHaveBeenCalledWith('kf1', 'req_b1', { note: 'See you then' }));
+    expect(await screen.findByText(/The Wrens: Approved\./)).toBeInTheDocument();
+  });
+
+  // #2069: the August rows kept Approve and Deny months after their visits
+  // were booked, and "Needs a decision" read 19 against Bookings' 5.
+  it('#2069: a request the live queue no longer holds offers Open only, and is not counted', () => {
+    mockStreams({ status: 'ready', data: [waitingRequest({ _id: 'old', targetId: 'aug_req' })] });
+    render(<Notifications />);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open' })).toBeInTheDocument();
+    expect(screen.getByText('Answered')).toBeInTheDocument();
+  });
+
+  it('#2069: while the queue reads, request rows say they are checking and offer no decision', () => {
+    pendingState.current = { status: 'loading' };
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.getByText('Checking')).toBeInTheDocument();
+  });
+
+  it('#2069: a queue that did not load says so, with a retry, and offers no decision', async () => {
+    const retry = vi.fn();
+    pendingState.current = { status: 'error', message: 'Could not load: offline', retry };
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    expect(screen.getByText('Waiting requests did not load')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(retry).toHaveBeenCalled();
+  });
+
+  it('#2028: Open on a waiting request goes to its card on Bookings', async () => {
+    const onNavigate = vi.fn();
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications onNavigate={onNavigate} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(onNavigate).toHaveBeenCalledWith({
+      to: '/bookings',
+      search: { requestId: 'req_b1', requestKinfolkId: 'kf1' },
+    });
   });
 
   it('#1675: offers no Approve/Deny on a request row that names no household, since it cannot be answered', () => {
@@ -888,6 +1006,7 @@ describe('Notifications quick actions (issue #20)', () => {
     mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await confirmDecision('Book it');
     expect(
       await screen.findByText(/Approved 2 of 3 visits\. The rest did not go through and the household has not been told/),
     ).toBeInTheDocument();
@@ -898,6 +1017,7 @@ describe('Notifications quick actions (issue #20)', () => {
     mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await confirmDecision('Book it');
     expect(await screen.findByText(/did not go out, so tell them another way/)).toBeInTheDocument();
   });
 
@@ -906,6 +1026,7 @@ describe('Notifications quick actions (issue #20)', () => {
     mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await confirmDecision('Book it');
     expect(
       await screen.findByText(/Set a start time for the Overnight on Nov 9 before approving\./),
     ).toBeInTheDocument();
@@ -917,6 +1038,7 @@ describe('Notifications quick actions (issue #20)', () => {
     mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await confirmDecision('Book it');
     expect(
       await screen.findByText(/That time overlaps a busy block on your Google Calendar\./),
     ).toBeInTheDocument();
@@ -926,6 +1048,7 @@ describe('Notifications quick actions (issue #20)', () => {
     mockStreams({ status: 'ready', data: [waitingRequest()] });
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    await confirmDecision('Send the decline');
     expect(await screen.findByText(/permission-denied/i)).toBeInTheDocument();
   });
 
@@ -1108,6 +1231,9 @@ describe('Notifications card detail', () => {
     render(<Notifications />);
     await userEvent.click(screen.getByRole('button', { name: /A KinCare visit was assigned/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    // #1875: through the confirm step.
+    approveBookingRequest.mockResolvedValue(APPROVED);
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Book it' }));
     await waitFor(() => expect(approveBookingRequest).toHaveBeenCalledWith('kf1', 'b1'));
   });
 });

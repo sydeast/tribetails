@@ -505,7 +505,7 @@ export async function generateInvoicePdf(invoiceId: string): Promise<string> {
  *
  * Throws `failed-precondition` with `details.code` of `quote_accepted_locked`
  * (accepted, so it is a bill now), `quote_not_declined` (still waiting for an
- * answer — send a reminder instead), `quote_not_a_quote`, or `invoice_archived`
+ * answer; a quote takes no reminder, #2220), `quote_not_a_quote`, or `invoice_archived`
  * (restore it first). A quote does not expire (#2088), so there is no date
  * refusal. `not-found` if the id is wrong. Branch on the CODE, never the message.
  *

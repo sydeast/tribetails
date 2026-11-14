@@ -136,3 +136,36 @@ export async function applyBookingWrite(
     /* the write succeeded; the list catches up on its next read */
   }
 }
+
+/**
+ * #1919: a booking write whose answer never came back may still have landed.
+ * #1281 covered the reply that arrives; this is the reply that does not. The
+ * 20-second budget ran out on a reschedule the server went on to save, and the
+ * page said it may not have gone through while the new time was already on
+ * file.
+ *
+ * Reads the list fresh (the read the household would otherwise make by
+ * reloading) and hands back the visit when [landed] says the ask is on it, so
+ * the caller can finish exactly as if the reply had arrived. Null when the
+ * visit does not show the ask, or the read itself fails: then the caller still
+ * does not know, and says so.
+ */
+export async function visitAfterNoAnswer(
+  queryClient: QueryClient,
+  kinfolkId: string | undefined,
+  visitId: string,
+  landed: (visit: Visit) => boolean,
+): Promise<Visit | null> {
+  try {
+    const fresh = await getMyBookings(kinfolkId);
+    // The fresh list is the truth either way, so the screen draws from it.
+    queryClient.setQueryData(bookingsQueryKey(kinfolkId), fresh);
+    const visit =
+      [fresh.liveVisit, ...fresh.upcoming, ...fresh.recent, ...fresh.envelopes.flatMap((e) => e.kinCares)].find(
+        (v): v is Visit => v !== null && v.id === visitId,
+      ) ?? null;
+    return visit !== null && landed(visit) ? visit : null;
+  } catch {
+    return null;
+  }
+}

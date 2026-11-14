@@ -27,8 +27,10 @@ class NotificationRequestResolutionTest {
         data = data,
     )
 
+    // #2069: waiting is read off the live queue, not off a missing stamp.
+    private val live = setOf("kf1/req_1", "k9/req_1")
     @Test fun `a waiting request offers Approve and Deny and no outcome`() {
-        val a = applicableNotificationActions(request())
+        val a = applicableNotificationActions(request(), live)
         assertTrue(a.canApproveDeny)
         assertNull(a.outcome)
     }
@@ -41,19 +43,19 @@ class NotificationRequestResolutionTest {
             "BOOKED" to "Booked",
             "something-new" to "Answered",
         )) {
-            val a = applicableNotificationActions(request(stamp))
+            val a = applicableNotificationActions(request(stamp), live)
             assertFalse("Approve/Deny on a $stamp request", a.canApproveDeny)
             assertEquals(label, a.outcome)
         }
     }
 
     @Test fun `a blank stamp is still waiting`() {
-        assertTrue(applicableNotificationActions(request("  ")).canApproveDeny)
+        assertTrue(applicableNotificationActions(request("  "), live).canApproveDeny)
     }
 
     @Test fun `an answered request no longer offers Create quote`() {
-        val waiting = applicableNotificationActions(request(data = mapOf("kinfolkId" to "k9")))
-        val booked = applicableNotificationActions(request("booked", mapOf("kinfolkId" to "k9")))
+        val waiting = applicableNotificationActions(request(data = mapOf("kinfolkId" to "k9")), live)
+        val booked = applicableNotificationActions(request("booked", mapOf("kinfolkId" to "k9")), live)
         assertTrue(waiting.canCreateQuote)
         assertFalse(booked.canCreateQuote)
     }
@@ -67,7 +69,7 @@ class NotificationRequestResolutionTest {
     @Test fun `Needs a decision counts only requests still waiting`() {
         // The walk: requests waiting, one booked from Bookings, count unchanged.
         val rows = listOf(request(), request("booked"), request("declined"))
-        assertEquals(1, rows.count { applicableNotificationActions(it).canApproveDeny })
+        assertEquals(1, rows.count { applicableNotificationActions(it, live).canApproveDeny })
     }
 
     @Test fun `the decoder reads the server stamp`() {

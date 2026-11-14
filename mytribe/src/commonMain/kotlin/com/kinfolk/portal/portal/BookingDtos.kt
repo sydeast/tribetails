@@ -52,6 +52,13 @@ data class Booking(
     /** What the office said when it accepted or declined the cancellation. */
     val cancelResponseNote: String? = null,
     /**
+     * #2029: when the office DECLINED this visit's request, or null. The
+     * server sets it only while the visit is cancelled because of a decline,
+     * so it is what tells a declined request apart from a cancelled visit.
+     * Absent on an older server, which reads as Cancelled the way it did.
+     */
+    val requestDeclinedAtMs: Long? = null,
+    /**
      * Where the kinfolk's ask for a new time stands, or null when this visit
      * has never had one. The proposed window and the office's note survive the
      * decision on purpose, so the screen can say what was asked for and what
@@ -148,7 +155,7 @@ fun BusinessNote.heading(businessName: String?, written: (Long?) -> String): Str
     return listOf(what, who, written(createdAtMs)).filter { it.isNotEmpty() }.joinToString(" · ")
 }
 /** True once the visit is over (completed or cancelled): nobody is left to read a note. */
-fun Booking.isFinished(): Boolean = stage().let { it == VisitStage.Completed || it == VisitStage.Cancelled }
+fun Booking.isFinished(): Boolean = stage().let { it == VisitStage.Completed || it == VisitStage.Cancelled || it == VisitStage.Declined }
 
 /**
  * The three answers a reschedule ask can be waiting on. Anything else the

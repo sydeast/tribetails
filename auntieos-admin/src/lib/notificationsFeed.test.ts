@@ -261,12 +261,17 @@ describe('notificationsForArchived', () => {
  * buttons, so the count and the buttons cannot disagree.
  */
 describe('actionableNotificationCount', () => {
+  // #2069: the live queue of waiting requests, by household and batch.
+  const WAITING = new Set(['kf1/b1', 'kf1/req_1', 'kf1/req_2', 'kf1/req_3']);
   it('counts rows whose quick actions offer a decision (a pending booking request)', () => {
     expect(
-      actionableNotificationCount([
-        entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'b1', data: { kinfolkId: 'kf1' } }),
-        entry({ _id: 'b', targetType: 'invoice', targetId: 'i1' }),
-      ]),
+      actionableNotificationCount(
+        [
+          entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'b1', data: { kinfolkId: 'kf1' } }),
+          entry({ _id: 'b', targetType: 'invoice', targetId: 'i1' }),
+        ],
+        WAITING,
+      ),
     ).toBe(1);
   });
   it('does not count a booking notification whose event is not the pending-request key', () => {
@@ -287,7 +292,7 @@ describe('actionableNotificationCount', () => {
           data: { kinfolkId: 'kf1' },
           readAt: ts('2026-07-16T10:00:00Z'),
         }),
-      ]),
+      ], WAITING),
     ).toBe(1);
   });
   it('does not count a booking notification with no target id, which shows no buttons', () => {
@@ -323,7 +328,26 @@ describe('actionableNotificationCount', () => {
     const waiting = entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } });
     const booked = entry({ _id: 'b', key: 'kincare.requested', targetType: 'booking', targetId: 'req_2', data: { kinfolkId: 'kf1' }, requestResolution: 'booked' });
     const declined = entry({ _id: 'c', key: 'kincare.requested', targetType: 'booking', targetId: 'req_3', data: { kinfolkId: 'kf1' }, requestResolution: 'declined' });
-    expect(actionableNotificationCount([waiting, booked, declined])).toBe(1);
+    expect(actionableNotificationCount([waiting, booked, declined], WAITING)).toBe(1);
+  });
+  // #2069, the walk: "Needs a decision 19" while Bookings had 5 waiting. The
+  // August rows were never stamped, and the queue no longer holds them.
+  it('counts only the requests the live queue holds, whatever their rows lack', () => {
+    const rows = [
+      entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } }),
+      entry({ _id: 'old1', key: 'kincare.requested', targetType: 'booking', targetId: 'aug_1', data: { kinfolkId: 'kf3' } }),
+      entry({ _id: 'old2', key: 'kincare.requested', targetType: 'booking', targetId: 'aug_2', data: { kinfolkId: 'kf3' } }),
+    ];
+    expect(actionableNotificationCount(rows, WAITING)).toBe(1);
+  });
+  it('counts one request once, however many rows name it', () => {
+    const one = { key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } };
+    expect(actionableNotificationCount([entry({ _id: 'a', ...one }), entry({ _id: 'b', ...one })], WAITING)).toBe(1);
+  });
+  it('counts nothing as waiting while the queue is unknown', () => {
+    const waiting = entry({ _id: 'a', key: 'kincare.requested', targetType: 'booking', targetId: 'req_1', data: { kinfolkId: 'kf1' } });
+    expect(actionableNotificationCount([waiting])).toBe(0);
+    expect(actionableNotificationCount([waiting], null)).toBe(0);
   });
 });
 /**

@@ -140,6 +140,33 @@ class InvoiceCreatePayloadTest {
         assertEquals(listOf("s1", "s2"), bound)
     }
 
+    /**
+     * #2087: the quote was saved as a draft and only its send failed. The
+     * client keeps the refusal's code and details, so the composer can close
+     * onto the saved quote instead of offering a retry that makes a second one.
+     */
+    @Test
+    fun aQuoteSavedButNotSentKeepsItsCodeAndSavedId() = runBlocking {
+        val sentence = "The quote was saved as a draft, but it could not be sent to the household. Open it and press Send quote to try again."
+        JvmFirestoreFixtures.callableErrors = mapOf("createQuote" to sentence)
+        JvmFirestoreFixtures.callableErrorCodes = mapOf("createQuote" to "quote_saved_not_sent")
+        JvmFirestoreFixtures.callableErrorDetails = mapOf("createQuote" to """{"code":"quote_saved_not_sent","invoiceId":"q9"}""")
+        val r = composed(isQuote = true, sendToKinfolk = true)
+        val res = FirestoreClient().createQuote(r.invoice, r.sendToKinfolk, termsCode = r.termsCode, lineItems = r.lineItems)
+        val err = res as WriteResult.Err
+        assertEquals(sentence, err.message)
+        assertEquals("q9", quoteSavedNotSentId(err.code, err.details))
+    }
+
+    @Test
+    fun anyOtherQuoteRefusalLeavesTheComposerOpen() = runBlocking {
+        JvmFirestoreFixtures.callableErrors = mapOf("createQuote" to "That visit is on quote 1041.")
+        JvmFirestoreFixtures.callableErrorCodes = mapOf("createQuote" to "session_on_other_invoice")
+        val r = composed(isQuote = true, sendToKinfolk = true)
+        val err = FirestoreClient().createQuote(r.invoice, r.sendToKinfolk, termsCode = r.termsCode, lineItems = r.lineItems) as WriteResult.Err
+        assertNull(quoteSavedNotSentId(err.code, err.details))
+    }
+
     @Test
     fun theBlankPathSendsNoLineItemsKeyAtAll() = runBlocking {
         JvmFirestoreFixtures.callableResponses = mapOf("createInvoice" to """{"ok":true,"invoiceId":"inv_2"}""")

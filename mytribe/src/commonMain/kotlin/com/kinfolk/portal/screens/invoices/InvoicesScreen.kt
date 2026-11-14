@@ -293,13 +293,13 @@ private fun OpenInvoiceRow(
             KinCalendarBadge(calendarBadgeFromLabel(invoice.dueDate), accent = KinfolkBrand.KinfolkOrange)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    invoice.client ?: "Invoice #${invoice.id}",
+                    invoice.client ?: "${invoiceDocNoun(invoice)} #${invoice.id}",
                     style = type.sansBody.copy(fontWeight = FontWeight.SemiBold),
                 )
                 // With no client name the title is already "Invoice #id" — don't
                 // repeat it; the due date below carries the meta line.
                 if (invoice.client != null) {
-                    Text("Invoice #${invoice.id}", style = type.sansMeta)
+                    Text("${invoiceDocNoun(invoice)} #${invoice.id}", style = type.sansMeta)
                 }
                 Text(openRowMetaLabel(invoice, viewerUid), style = type.sansMeta)
             }
@@ -445,6 +445,14 @@ internal fun quoteActorLabel(invoice: Invoice, viewerUid: String?): String? = wh
     !invoice.quoteDecidedByName.isNullOrBlank() -> invoice.quoteDecidedByName
     else -> null
 }
+
+/**
+ * #2092: what the document is called on screen. A quote (answered or not) is a
+ * "Quote"; an accepted one is an open invoice now and is an "Invoice". The same
+ * rule as the web portal's `documentNoun`.
+ */
+internal fun invoiceDocNoun(invoice: Invoice): String =
+    if (invoice.status == InvoiceStatus.Quote) "Quote" else "Invoice"
 
 /**
  * The meta line under an open-bucket row. A quote is not due on a date the way

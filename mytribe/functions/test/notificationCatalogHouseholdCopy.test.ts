@@ -49,7 +49,7 @@ describe('household-visible notification copy', () => {
     );
     it('leaves the operator label alone for the admin matrix', () => {
       expect(NOTIFICATION_CATALOG['quote.accepted'].label).toBe('Kinfolk accepted a quote');
-      expect(NOTIFICATION_CATALOG['quote.accepted'].householdTitle).toBe('You accepted a quote');
+      expect(NOTIFICATION_CATALOG['quote.accepted'].householdTitle).toBe('A quote was accepted');
     });
     it('leaves the operator text alone for the admin matrix', () => {
       expect(NOTIFICATION_CATALOG['kincare.changed'].description).toBe(

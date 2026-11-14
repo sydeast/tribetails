@@ -71,6 +71,14 @@ import { STAFF_ROLE_AUNTIE } from './auntieAccess';
  *      details, inbound customer messages, ratings. The cap bounds how far a
  *      mistaken or malicious add can spread that.
  *
+ * One writer sits outside these three on purpose: `lib/staffAccessEnd.ts`
+ * (#2228), which takes an Auntie off the list when her staff role ends. It may
+ * leave the list empty when she was the only uid on it. Keeping her there to
+ * satisfy invariant 1 is worse: a list holding only an Auntie already resolves
+ * to nobody (she is skipped at send time), and an EMPTY list is the one the
+ * dispatch self-heal refills from the owner allowlist. It never removes an
+ * owner account, and it logs an emptied list at `error`.
+ *
  * Add and set also refuse, before the transaction, any submitted uid that is
  * not an owner account, and every recipient read skips an Auntie or household
  * account already on the list (#2223, "Only the owner's accounts" below).
@@ -149,6 +157,14 @@ function dedupe(uids: readonly unknown[]): string[] {
   return out;
 }
 
+/**
+ * The stored document, read the way every resolver reads it. Exported for
+ * `lib/staffAccessEnd.ts`, which edits the list inside its own transaction.
+ */
+export function normalizeBusinessAdmins(data: unknown): BusinessAdminsSettings {
+  return normalize(data);
+}
+
 function normalize(data: unknown): BusinessAdminsSettings {
   const doc = (data ?? {}) as { uids?: unknown; defaultAssigneeUid?: unknown };
   const explicit =
@@ -181,6 +197,11 @@ function envOperatorUids(): string[] {
 
 function adminsRef() {
   return db().collection(DOC_PATH.collection).doc(DOC_PATH.doc);
+}
+
+/** `businessSettings/admins`. Exported for `lib/staffAccessEnd.ts`. */
+export function businessAdminsRef() {
+  return adminsRef();
 }
 
 /*

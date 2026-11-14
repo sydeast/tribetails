@@ -50,6 +50,8 @@ import com.tribetails.auntieos.data.model.howToPayRowsForInvoice
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.domain.InvoiceAction
+import com.tribetails.auntieos.domain.draftPanelLine
+import com.tribetails.auntieos.domain.invoiceDocTitle
 import com.tribetails.auntieos.domain.InvoiceEditScope
 import com.tribetails.auntieos.domain.invoiceEditScopeOf
 import com.tribetails.auntieos.domain.InvoiceState
@@ -788,11 +790,7 @@ private fun invoiceDetailBody(
                 },
                 body = {
                     Text(
-                        if (quoteDraft) {
-                            "This quote is saved but not sent, so the household cannot see it. Send it when it is ready."
-                        } else {
-                            "This invoice is still a draft. Review it, then send it to notify the client."
-                        },
+                        draftPanelLine(quoteDraft),
                         style = AuntieTheme.typography.bodySmall,
                         color = AuntieTheme.colors.textDim,
                     )
@@ -1133,7 +1131,7 @@ private fun InvoiceHeaderBar(invoice: Invoice, state: InvoiceState?, overdue: Bo
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text  = "Invoice #${invoice.invoiceNumber.ifBlank { "-" }}",
+                text  = invoiceDocTitle(invoice),
                 style = AuntieTheme.typography.titleLarge,
                 color = c.textPrimary,
             )
