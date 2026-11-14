@@ -23,15 +23,23 @@ GOOGLE_CLOUD_PROJECT=auntieos-ttpc node scripts/grant-staff-role.mjs \
   --email auntie@example.com --role auntie
 ```
 
-Add `--password` only when the account does not exist yet. `--role none`
-revokes it, and in the same run takes her off the business admin list,
-unregisters her AuntieOS phone from business notices and writes a
-`PERM_STAFF_ROLE_REMOVED` line to the Activity Log (#2228). Her staff record is
-deleted last. If any step fails the tool says which one and exits 1: run the
-same command again, it picks up where it stopped and changes nothing that is
-already done. An owner account (the `admin` claim) is never taken off the
-list, and one with no staff role is refused outright. Deleting an Auntie's `clients/{uid}` doc does the same list
-and device cleanup through `onClientsWrite`. Do **not** give an Auntie the `admin` claim: 116 rule sites and 62
+Add `--password` only when the account does not exist yet. She signs in on the
+AuntieOS web app. The AuntieOS Android app and the desktop console admit only
+an owner today.
+
+`--role none` revokes it, and in the same run takes her off the business admin
+list, deletes any AuntieOS Android device registration under her account (the
+Android app registers its device on launch for whoever is signed in, even an
+account it then refuses) and
+writes a `PERM_STAFF_ROLE_REMOVED` line to the Activity Log (#2228). Her staff
+record is deleted last. If any step fails the tool says which one and exits 1:
+run the same command again, it picks up where it stopped and changes nothing
+that is already done. An owner account (the `admin` claim) is never taken off
+the list, and one with no staff role is refused outright. Deleting an Auntie's
+`clients/{uid}` doc does the same list and device cleanup through
+`onClientsWrite`, but leaves her staff record in place.
+
+Do **not** give an Auntie the `admin` claim: 116 rule sites and 62
 server expressions read `admin`, and the split is safe only because an Auntie
 carries none of it. `grant-staff-role.mjs` refuses to mint both, and
 `setAdminClaim` refuses to grant `admin` to an account that holds `staffRole`.

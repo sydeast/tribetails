@@ -490,6 +490,83 @@ describe('grant-staff-role --role none', () => {
     expect(world.deletes).toEqual([]);
   });
 
+  it('a double-claimed account whose record step failed is finished by the re-run', async () => {
+    const world = dbWith({
+      [ADMINS]: { uids: ['d1'] },
+      'staff/d1': { staffRole: 'auntie', notificationPrefs: { x: true } },
+    });
+    addUser('d1', OWNER_EMAIL, { admin: true, staffRole: 'auntie' });
+    const realCollection = world.db.collection;
+    let failUpdate = true;
+    world.db.collection = (path: string) => {
+      const col = realCollection(path);
+      if (path !== 'staff') return col;
+      const realDoc = col.doc;
+      col.doc = (id?: string) => {
+        const ref = realDoc(id);
+        const realUpdate = ref.update;
+        ref.update = vi.fn(async (data: Record<string, unknown>) => {
+          if (failUpdate) {
+            failUpdate = false;
+            throw new Error('UNAVAILABLE');
+          }
+          return realUpdate(data);
+        });
+        return ref;
+      };
+      return col;
+    };
+
+    const first = collector();
+    expect(await runGrantStaffRole({ email: OWNER_EMAIL, role: 'none' }, first.out)).toBe(1);
+    expect(first.errors.join('\n')).toMatch(/FAILED to take the staff role off the staff record for e2e-admin@tribetails\.com: UNAVAILABLE/);
+    // The claim is already off, so the account now looks like a plain owner.
+    expect(mocks.users.get('d1')?.customClaims).toEqual({ admin: true });
+    expect(world.docs['staff/d1']).toMatchObject({ staffRole: 'auntie' });
+
+    const again = collector();
+    expect(await runGrantStaffRole({ email: OWNER_EMAIL, role: 'none' }, again.out)).toBe(0);
+    expect(again.errors).toEqual([]);
+    expect(world.docs['staff/d1']).toMatchObject({ staffRole: '__DELETE__', notificationPrefs: { x: true } });
+    expect(world.docs[ADMINS]?.['uids']).toEqual(['d1']);
+    expect(world.deletes).toEqual([]);
+  });
+
+  it('a failed account lookup is named and exits non-zero without changing anything', async () => {
+    const world = auntieWorld();
+    fakeAuth.getUserByEmail.mockRejectedValueOnce(Object.assign(new Error('UNAVAILABLE'), { code: 'auth/internal-error' }));
+    const { out, errors } = collector();
+
+    expect(await runGrantStaffRole({ email: AUNTIE_EMAIL, role: 'none' }, out)).toBe(1);
+
+    expect(errors.join('\n')).toMatch(/FAILED to look up the account for catch@hanasamku\.com: UNAVAILABLE/);
+    expect(world.writes).toEqual([]);
+    expect(world.deletes).toEqual([]);
+    expect(fakeAuth.setCustomUserClaims).not.toHaveBeenCalled();
+  });
+
+  it('a failed read-back after a complete run still exits 0', async () => {
+    const world = auntieWorld();
+    const realGetUser = fakeAuth.getUser.getMockImplementation()!;
+    let calls = 0;
+    fakeAuth.getUser.mockImplementation(async (uid: string) => {
+      calls += 1;
+      // The first read is the claims before the change; the last is the read-back.
+      if (calls > 1) throw new Error('UNAVAILABLE');
+      return realGetUser(uid);
+    });
+    const { out, lines, errors } = collector();
+    try {
+      expect(await runGrantStaffRole({ email: AUNTIE_EMAIL, role: 'none' }, out)).toBe(0);
+    } finally {
+      fakeAuth.getUser.mockImplementation(realGetUser);
+    }
+
+    expect(errors).toEqual([]);
+    expect(lines.join('\n')).toMatch(/Done\. The claims could not be read back just now/);
+    expect(world.docs['staff/a1']).toBeUndefined();
+  });
+
   it('no account: nothing to revoke', async () => {
     dbWith({});
     const { out, errors } = collector();
@@ -507,6 +584,41 @@ describe('grant-staff-role --role auntie (unchanged)', () => {
 
     expect(mocks.users.get('a2')?.customClaims).toEqual({ role: 'kinfolk', staffRole: 'auntie' });
     expect(world.docs['staff/a2']).toMatchObject({ uid: 'a2', staffRole: 'auntie' });
+  });
+
+  it('says where she can sign in today', async () => {
+    dbWith({});
+    addUser('a2', 'pawsome@hanasamku.com', {});
+    const { out, lines } = collector();
+
+    expect(await runGrantStaffRole({ email: 'pawsome@hanasamku.com', role: 'auntie' }, out)).toBe(0);
+
+    expect(lines).toContain(
+      'She signs in on the AuntieOS web app. The AuntieOS Android app and the desktop console admit only an owner today.',
+    );
+  });
+
+  it('a failed staff-record write is named and exits non-zero', async () => {
+    const world = dbWith({});
+    addUser('a2', 'pawsome@hanasamku.com', {});
+    const realCollection = world.db.collection;
+    world.db.collection = (path: string) => {
+      const col = realCollection(path);
+      if (path !== 'staff') return col;
+      const realDoc = col.doc;
+      col.doc = (id?: string) => {
+        const ref = realDoc(id);
+        ref.set = vi.fn(async () => {
+          throw new Error('PERMISSION_DENIED');
+        });
+        return ref;
+      };
+      return col;
+    };
+    const { out, errors } = collector();
+
+    expect(await runGrantStaffRole({ email: 'pawsome@hanasamku.com', role: 'auntie' }, out)).toBe(1);
+    expect(errors.join('\n')).toMatch(/FAILED to write the staff record for pawsome@hanasamku\.com: PERMISSION_DENIED/);
   });
 
   it('refuses an account holding the owner claim', async () => {

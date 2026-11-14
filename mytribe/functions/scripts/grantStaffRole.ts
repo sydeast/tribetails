@@ -101,7 +101,10 @@ export async function runGrantStaffRole(args: GrantStaffRoleArgs, out: StaffRole
   try {
     user = await auth().getUserByEmail(email);
   } catch (err) {
-    if ((err as { code?: unknown })?.code !== 'auth/user-not-found') throw err;
+    if ((err as { code?: unknown })?.code !== 'auth/user-not-found') {
+      out.error(`FAILED to look up the account for ${email}: ${errMessage(err)}\nNothing was changed. Re-run this command.`);
+      return 1;
+    }
   }
 
   let uid: string;
@@ -117,12 +120,23 @@ export async function runGrantStaffRole(args: GrantStaffRoleArgs, out: StaffRole
       out.error(`No account for ${email} and no --password given to create one.`);
       return 2;
     }
-    const created = await auth().createUser({ email, password, emailVerified: true, displayName });
-    uid = created.uid;
+    try {
+      const created = await auth().createUser({ email, password, emailVerified: true, displayName });
+      uid = created.uid;
+    } catch (err) {
+      out.error(`FAILED to create the account for ${email}: ${errMessage(err)}\nNothing was changed. Re-run this command.`);
+      return 1;
+    }
     out.log(`Created ${email} (${uid}).`);
   }
 
-  const existing = ((await auth().getUser(uid)).customClaims ?? {}) as Record<string, unknown>;
+  let existing: Record<string, unknown>;
+  try {
+    existing = ((await auth().getUser(uid)).customClaims ?? {}) as Record<string, unknown>;
+  } catch (err) {
+    out.error(`FAILED to read the claims on ${email}: ${errMessage(err)}\nNothing was changed. Re-run this command.`);
+    return 1;
+  }
 
   if (role === 'auntie') {
     // The refusal that keeps the claim split meaningful. Naming the remedy
@@ -136,29 +150,55 @@ export async function runGrantStaffRole(args: GrantStaffRoleArgs, out: StaffRole
       );
       return 1;
     }
-    await auth().setCustomUserClaims(uid, { ...existing, staffRole: role });
+    try {
+      await auth().setCustomUserClaims(uid, { ...existing, staffRole: role });
+    } catch (err) {
+      out.error(`FAILED to add the staff role claim to ${email}: ${errMessage(err)}\nNothing was changed. Re-run this command.`);
+      return 1;
+    }
     // staff/{uid} is what the Assigned Auntie picker (listStaff) renders from,
     // and what the business notice filter reads when the claims do not say.
     // A claim without this row is an Auntie no screen can name.
-    await db()
-      .collection('staff')
-      .doc(uid)
-      .set(
-        {
-          uid,
-          email,
-          displayName: displayName ?? user?.displayName ?? email,
-          staffRole: role,
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true },
+    try {
+      await db()
+        .collection('staff')
+        .doc(uid)
+        .set(
+          {
+            uid,
+            email,
+            displayName: displayName ?? user?.displayName ?? email,
+            staffRole: role,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+    } catch (err) {
+      out.error(
+        `FAILED to write the staff record for ${email}: ${errMessage(err)}\n`
+          + 'The staff role claim is on, but the Assigned Auntie picker cannot list her yet. Re-run this command.',
       );
-    out.log(`Claims now: ${JSON.stringify((await auth().getUser(uid)).customClaims ?? {})}`);
-    out.log('The token is minted at sign-in, so this takes effect on the next sign-in.');
+      return 1;
+    }
+    await reportClaims(uid, out);
+    // Where she can sign in today (#2228 review): the admin web app admits the
+    // Auntie role (auntieos-admin/src/lib/access.ts); the Android app's
+    // `isOwnerClaims` and the desktop console's `ownerFromClaims` admit only an owner.
+    out.log('She signs in on the AuntieOS web app. The AuntieOS Android app and the desktop console admit only an owner today.');
     return 0;
   }
 
   return revokeStaffRole(uid, email, existing, out);
+}
+
+/** The closing lines of a run that did what it set out to. A failed read-back does not undo that. */
+async function reportClaims(uid: string, out: StaffRoleOutput): Promise<void> {
+  try {
+    out.log(`Claims now: ${JSON.stringify((await auth().getUser(uid)).customClaims ?? {})}`);
+  } catch (err) {
+    out.log(`Done. The claims could not be read back just now (${errMessage(err)}).`);
+  }
+  out.log('The token is minted at sign-in, so this takes effect on the next sign-in.');
 }
 
 async function revokeStaffRole(
@@ -168,13 +208,25 @@ async function revokeStaffRole(
   out: StaffRoleOutput,
 ): Promise<number> {
   // An owner with no staff role has nothing to revoke. Before #2228 this went
-  // on to delete her staff record, which holds her notice settings.
+  // on to delete her staff record, which holds her notice settings. The one
+  // exception is a double-claimed account whose earlier run removed the claim
+  // and then failed to take the role off her record: that run is finished
+  // below (`owner-kept` keeps the record and only drops `staffRole`).
   if (existing['admin'] === true && existing['staffRole'] === undefined) {
-    out.error(
-      `${email} holds the owner claim and no staff role; nothing to revoke. `
-        + 'An owner account is never taken off the business admin list this way.',
-    );
-    return 2;
+    let recordRole: unknown;
+    try {
+      recordRole = (await db().collection('staff').doc(uid).get()).data()?.['staffRole'];
+    } catch (err) {
+      out.error(`FAILED to read the staff record for ${email}: ${errMessage(err)}\nNothing was changed. Re-run this command.`);
+      return 1;
+    }
+    if (recordRole !== 'auntie') {
+      out.error(
+        `${email} holds the owner claim and no staff role; nothing to revoke. `
+          + 'An owner account is never taken off the business admin list this way.',
+      );
+      return 2;
+    }
   }
 
   // 1. The business admin list, her work devices and the Activity Log line.
@@ -224,15 +276,17 @@ async function revokeStaffRole(
       out.log('Staff record deleted.');
     }
   } catch (err) {
+    const step = ended.outcome === 'owner-kept'
+      ? `take the staff role off the staff record for ${email}`
+      : `delete the staff record for ${email}`;
     out.error(
-      `FAILED to delete the staff record for ${email}: ${errMessage(err)}\n`
+      `FAILED to ${step}: ${errMessage(err)}\n`
         + 'The Assigned Auntie picker can still list her. Re-run this command.',
     );
     return 1;
   }
 
-  out.log(`Claims now: ${JSON.stringify((await auth().getUser(uid)).customClaims ?? {})}`);
-  out.log('The token is minted at sign-in, so this takes effect on the next sign-in.');
+  await reportClaims(uid, out);
   return 0;
 }
 
