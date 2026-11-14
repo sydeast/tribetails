@@ -1648,6 +1648,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         if (checked !== null && !checked.ok) {
           setBusy(false);
           setActionError(checked.error);
+          // A blank Amount was checked against the balance on screen, which
+          // the server would not use. Read the payments again, so an old
+          // figure does not keep refusing a payment the server would take.
+          if (settleBalance) reloadLedger();
           return;
         }
         if (checked === null && !settleBalance) {

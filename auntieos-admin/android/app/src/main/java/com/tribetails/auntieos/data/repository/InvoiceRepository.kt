@@ -950,7 +950,11 @@ class InvoiceRepository(
             val result = decodeRecordPaymentResult(raw)
             result.paymentId.ifBlank { throw PaymentAnswerUnreadable("recordPayment: missing paymentId") }
             result
-        }.onFailure { AuntieLog.e("Failed to record payment", it) }
+        }.onFailure {
+            // #2298: the developer's detail is logged here and shown nowhere.
+            val detail = (it as? PaymentAnswerUnreadable)?.developerDetail?.let { d -> " ($d)" }.orEmpty()
+            AuntieLog.e("Failed to record payment$detail", it)
+        }
     /**
      * Q6 (operator ruling 2026-09-27): give a household account credit, with a
      * reason. [idempotencyKey] is REQUIRED and becomes the credit's id, so a

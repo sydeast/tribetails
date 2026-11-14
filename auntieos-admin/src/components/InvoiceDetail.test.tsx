@@ -1869,6 +1869,8 @@ describe('recording a payment is one call that writes the settlement and the led
       expect(screen.getAllByText(/A payment of \$30\.00 does not cover the \$40\.00 applied/i)).toHaveLength(2),
     );
     expect(recordPayment).not.toHaveBeenCalled();
+    // The figure it was refused against is the panel's own, so it is read again.
+    await waitFor(() => expect(getInvoiceLedger).toHaveBeenCalledTimes(2));
   });
   it('says so when the server found a different balance than the one shown', async () => {
     getInvoiceLedger.mockResolvedValue(ledgerResult({ amountDueCents: 4000 }));
