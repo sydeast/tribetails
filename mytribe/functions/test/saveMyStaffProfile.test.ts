@@ -214,6 +214,66 @@ describe('saveMyStaffProfile', () => {
     expect(ctx.writes).toHaveLength(0);
   });
 
+  it('NEGATIVE: a key spelled another way, a prototype key or a nested value is refused', async () => {
+    const ctx = buildDbMock({
+      docs: { 'users/auntie-1': form(), 'users/owner-1': form({ displayName: 'The Owner' }) },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const base = JSON.stringify(form({ title: 'Changed' })).slice(0, -1);
+
+    // Built from JSON text, the way a request arrives: an object literal with
+    // `__proto__` would set the prototype instead of carrying the key.
+    const extraKeys = [
+      '"__proto__":{"admin":true,"uid":"owner-1"}',
+      '"constructor":{"prototype":{"admin":true}}',
+      '"prototype":{"admin":true}',
+      '"UID":"owner-1"',
+      '"Uid":"owner-1"',
+      '"isAdmin":true',
+      '"IsAdmin":true',
+      '"StaffRole":"owner"',
+      '"staffrole":"owner"',
+      '"DisplayName":"Changed"',
+      '"displayName ":"Changed"',
+      '"displayName.uid":"owner-1"',
+      '"users/owner-1":"x"',
+      '"":"x"',
+    ];
+    for (const extra of extraKeys) {
+      await expect(call(JSON.parse(`${base},${extra}}`))).rejects.toMatchObject({ code: 'invalid-argument' });
+    }
+
+    const nested = ['{"uid":"owner-1"}', '{"__proto__":{"admin":true}}', '["Changed"]', 'null', 'true'];
+    for (const value of nested) {
+      const data: unknown = JSON.parse(JSON.stringify(form()).replace('"Auntie Nora"', value));
+      await expect(call(data)).rejects.toMatchObject({ code: 'invalid-argument' });
+    }
+    await expect(call([form()])).rejects.toMatchObject({ code: 'invalid-argument' });
+    await expect(call(JSON.stringify(form()))).rejects.toMatchObject({ code: 'invalid-argument' });
+
+    expect(ctx.writes).toHaveLength(0);
+    expect(profileLines()).toHaveLength(0);
+    expect(({} as Record<string, unknown>).admin).toBeUndefined();
+    expect(({} as Record<string, unknown>).uid).toBeUndefined();
+  });
+
+  it('NEGATIVE: the owner naming another uid is refused too, and only ever writes his own record', async () => {
+    const ctx = buildDbMock({
+      docs: { 'users/owner-1': form({ title: 'Owner' }), 'users/auntie-1': form() },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    for (const key of ['uid', 'userId', 'targetUid']) {
+      await expect(call({ ...form({ title: 'Changed' }), [key]: 'auntie-1' }, owner)).rejects.toMatchObject({
+        code: 'invalid-argument',
+      });
+    }
+    expect(ctx.writes).toHaveLength(0);
+
+    await call(form({ title: 'Head of Care' }), owner);
+    expect(ctx.writes.map((w) => w.path)).toEqual(['users/owner-1']);
+  });
+
   it('NEGATIVE: a household account, a stranger and a signed-out caller are refused', async () => {
     const ctx = buildDbMock();
     mocks.dbFn.mockReturnValue(ctx.db);
