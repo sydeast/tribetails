@@ -839,8 +839,11 @@ class FirestoreClient {
      * ARCHIVE_KINFOLK / RESTORE_KINFOLK Activity Log line, so this client writes
      * no line of its own. The rules refuse a direct change to those fields. A
      * refusal comes back as [KINFOLK_ARCHIVE_OWNER_ONLY].
+     *
+     * #1958: Ok carries the status the household now holds, which on a restore
+     * is the one it held before the archive ([restoredKinfolkStatusFrom]).
      */
-    suspend fun setKinfolkArchived(id: String, archived: Boolean, reason: String = ""): WriteResult<Unit> {
+    suspend fun setKinfolkArchived(id: String, archived: Boolean, reason: String = ""): WriteResult<String> {
         if (id.isBlank()) return WriteResult.Err("setKinfolkArchived requires a kinfolk id")
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(id.trim()))
@@ -849,11 +852,15 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("setKinfolkArchived", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(kinfolkArchiveRefusalText(r.message))
-            is WriteResult.Ok  -> WriteResult.Ok(Unit)
+            is WriteResult.Ok  -> WriteResult.Ok(if (archived) "archived" else restoredKinfolkStatusFrom(r.value))
         }
     }
-    suspend fun archiveKinfolk(id: String):  WriteResult<Unit>   = setKinfolkArchived(id, archived = true)
-    suspend fun restoreKinfolk(id: String):  WriteResult<Unit>   = setKinfolkArchived(id, archived = false)
+    suspend fun archiveKinfolk(id: String):  WriteResult<Unit>   = when (val r = setKinfolkArchived(id, archived = true)) {
+        is WriteResult.Ok  -> WriteResult.Ok(Unit)
+        is WriteResult.Err -> r
+    }
+    /** #1958: Ok carries the status the household came back as. */
+    suspend fun restoreKinfolk(id: String):  WriteResult<String> = setKinfolkArchived(id, archived = false)
     suspend fun createKin(k: Kin):           WriteResult<String> =
         platformCreateKin(k.copy(kinfolkId = enforceWriteKinfolkId(testMode, k.kinfolkId)))
     /**

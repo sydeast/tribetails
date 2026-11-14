@@ -97,7 +97,8 @@ fun DirectoryScreen(
     // pets it counted. Read once, as the screen first composes.
     val openedFromKinInCare = remember { DirectoryDeepLink.consumeKinInCare() }
     var selectedTab by remember { mutableIntStateOf(if (openedFromKinInCare) 1 else 0) }
-    var kinInCareOnly by remember { mutableStateOf(openedFromKinInCare) }
+    // #1902: All kin, In care, or Archived: the one list an archived Kin is on.
+    var kinShow by remember { mutableStateOf(if (openedFromKinInCare) KinShow.InCare else KinShow.All) }
     var kinSearch by remember { mutableStateOf("") }
     // The Kin tab's sort sits here beside its search, the same way the Kinfolk
     // tab's sits on the view model beside its own filters.
@@ -248,10 +249,10 @@ fun DirectoryScreen(
                                     )
                                 }
                                 AuntieDropdownField(
-                                    value = if (kinInCareOnly) "In care" else "All kin",
-                                    options = listOf("All kin", "In care"),
-                                    onSelect = { kinInCareOnly = it == "In care" },
-                                    displayText = { it },
+                                    value = kinShow,
+                                    options = KinShow.entries.toList(),
+                                    onSelect = { kinShow = it },
+                                    displayText = { it.label },
                                     label = "Show",
                                     modifier = Modifier.width(160.dp),
                                 )
@@ -297,7 +298,7 @@ fun DirectoryScreen(
                             kinSearch = kinSearch,
                             kinTag = activeKinTag,
                             kinSort = kinSort,
-                            inCareOnly = kinInCareOnly,
+                            show = kinShow,
                             onKinClick = onKinClick,
                         )
                     }
@@ -397,12 +398,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.kinSection(
     kinSearch: String,
     kinTag: String,
     kinSort: SortOption,
-    inCareOnly: Boolean,
+    show: KinShow,
     onKinClick: (String) -> Unit,
 ) {
     // The search + tag + sort live in `filterKinDirectory`, so the rule a JUnit
     // test pins is the rule this list actually draws.
-    val allKin = filterKinDirectory(state.kinByKinfolkId.values.flatten(), kinSearch, kinTag, kinSort, inCareOnly)
+    val allKin = filterKinDirectory(state.kinByKinfolkId.values.flatten(), kinSearch, kinTag, kinSort, show)
 
     when {
         state.isLoading -> item {
@@ -425,12 +426,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.kinSection(
         }
 
         allKin.isEmpty() -> item {
+            val (title, message) = kinEmptyStateText(kinSearch, show)
             AuntieEmptyState(
                 icon = Lucide.Search,
-                title = if (kinSearch.isBlank()) "No Kin on file yet"
-                        else "No matches for \"$kinSearch\"",
-                message = if (kinSearch.isBlank()) "Add Kin from a Kinfolk profile."
-                          else "Try a different name, species, or breed.",
+                title = title,
+                message = message,
             )
         }
 

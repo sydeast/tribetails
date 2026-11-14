@@ -1,5 +1,9 @@
 package com.tribetails.auntieos.web.data
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+
 /**
  * #2161, operator ruling 2026-11-13: only the owner archives or restores a
  * Kinfolk household. The server enforces it (the owner-only
@@ -29,3 +33,24 @@ fun kinfolkArchiveRefusalText(message: String): String {
  * admits only the owner's `admin` claim otherwise, so that is the owner.
  */
 fun kinfolkArchiveOffered(testMode: TestMode): Boolean = !testMode.active
+
+/** The statuses a household can be set to, and so restored to (the editor's chips). */
+private val KINFOLK_RESTORABLE_STATUSES = setOf("active", "prospect", "inactive")
+/**
+ * #1958: the status the `setKinfolkArchived` answer says a restore gave back,
+ * the one the household held before the archive. An answer that cannot be read,
+ * or names no such status, reads as `active`: what a restore gave before the
+ * prior status was kept.
+ */
+fun restoredKinfolkStatusFrom(answerJson: String): String {
+    val status = runCatching {
+        (Json.parseToJsonElement(answerJson).jsonObject["status"] as? JsonPrimitive)?.content
+    }.getOrNull()?.trim()?.lowercase().orEmpty()
+    return if (status in KINFOLK_RESTORABLE_STATUSES) status else "active"
+}
+/** #1958: the restore confirmation, naming that status. Admin web and Android word it the same. */
+fun kinfolkRestoredMessage(name: String, status: String): String = when (status.trim().lowercase()) {
+    "prospect" -> "$name is restored as a Prospect."
+    "inactive" -> "$name is restored as Inactive."
+    else -> "$name is active again."
+}

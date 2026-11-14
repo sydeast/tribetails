@@ -236,7 +236,9 @@ class KinDetailViewModel(
      * reverted chip plus a visible banner.
      */
     suspend fun saveTags(kinId: String, kinfolkId: String, tags: List<String>) {
-        repository.updateKinFields(kinId, kinfolkId, mapOf("tags" to tags)).getOrThrow()
+        // #2115: the link the Kin was loaded with, so a tag save never re-points it.
+        val linked = _uiState.value.kin?.takeIf { it.id == kinId }?.familyKinPath
+        repository.updateKinFields(kinId, kinfolkId, mapOf("tags" to tags), linked).getOrThrow()
         val current = _uiState.value.kin ?: return
         if (current.id == kinId) {
             _uiState.value = _uiState.value.copy(kin = current.copy(tags = tags))

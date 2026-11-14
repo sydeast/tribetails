@@ -74,7 +74,7 @@ class KinDetailViewModelTest {
         coEvery { repo.get411ForKin(any()) } returns Result.success(null)
         coEvery { repo.getKinfolkById(any()) } returns Result.success(wrens)
         coEvery { repo.listFormSchemas() } returns Result.success(emptyList())
-        coEvery { repo.updateKinFields(any(), any(), any()) } returns Result.success(Unit)
+        coEvery { repo.updateKinFields(any(), any(), any(), any()) } returns Result.success(Unit)
         coEvery { kinCareRepo.getAllKinCareReports() } returns Result.success(emptyList())
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { removalRepo.list(any()) } returns Result.success(emptyList())
@@ -89,7 +89,7 @@ class KinDetailViewModelTest {
 
     private fun captureKinChanges(): CapturingSlot<Map<String, Any>> {
         val changes = slot<Map<String, Any>>()
-        coEvery { repo.updateKinFields(any(), any(), capture(changes)) } returns Result.success(Unit)
+        coEvery { repo.updateKinFields(any(), any(), capture(changes), any()) } returns Result.success(Unit)
         return changes
     }
 
@@ -275,7 +275,7 @@ class KinDetailViewModelTest {
 
         assertEquals(setOf("tags"), changes.captured.keys)
         assertEquals(listOf("reactive", "senior"), changes.captured["tags"])
-        coVerify(exactly = 1) { repo.updateKinFields("k1", "kf1", any()) }
+        coVerify(exactly = 1) { repo.updateKinFields("k1", "kf1", any(), any()) }
     }
 
     @Test
@@ -299,7 +299,7 @@ class KinDetailViewModelTest {
     @Test
     fun `removing a tag just added still writes the shortened list`() = runTest(testDispatcher) {
         val sent = mutableListOf<Any?>()
-        coEvery { repo.updateKinFields(any(), any(), any()) } answers {
+        coEvery { repo.updateKinFields(any(), any(), any(), any()) } answers {
             sent += thirdArg<Map<String, Any>>()["tags"]
             Result.success(Unit)
         }
@@ -319,7 +319,7 @@ class KinDetailViewModelTest {
     /** Fail-loud: a rejected tag write throws, which is what reverts the chip. */
     @Test(expected = RuntimeException::class)
     fun `a rejected tag write throws`() = runTest(testDispatcher) {
-        coEvery { repo.updateKinFields(any(), any(), any()) } returns
+        coEvery { repo.updateKinFields(any(), any(), any(), any()) } returns
             Result.failure(RuntimeException("permission-denied"))
         val vm = viewModel()
         vm.load("k1")

@@ -76,12 +76,12 @@ class DirectoryViewModelSaveConfirmationTest {
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { invoiceRepo.getInvoicesForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repo.updateKinfolkFields(any(), any()) } returns Result.success(Unit)
-        coEvery { repo.updateKinFields(any(), any(), any()) } returns Result.success(Unit)
+        coEvery { repo.updateKinFields(any(), any(), any(), any()) } returns Result.success(Unit)
         coEvery { repo.setKinArchived(any(), any()) } answers { Result.success(if (secondArg<Boolean>()) "archived" else "active") }
         coEvery { repo.getKinByIds(any()) } returns Result.success(mapOf(storedKin.id to storedKin))
         coEvery { repo.getKinfolkById(any()) } returns Result.success(storedKinfolk)
         coEvery { repo.archiveKinfolk(any(), any()) } returns Result.success(Unit)
-        coEvery { repo.unarchiveKinfolk(any()) } returns Result.success(Unit)
+        coEvery { repo.unarchiveKinfolk(any()) } returns Result.success("active")
         coEvery { repo.createKinfolkComplete(any(), any()) } returns
             Result.success(KinfolkCreated(Kinfolk(id = "new-kf", firstName = "Pat", lastName = "Nguyen"), null))
         coEvery { repo.saveEmergencyContacts(any(), any()) } returns Result.success(emptyList())
@@ -201,6 +201,31 @@ class DirectoryViewModelSaveConfirmationTest {
             assertEquals(false, vm.editKinfolkState.value.isSuccess)
             assertEquals(false, vm.editKinfolkState.value.isDeleted)
         }
+
+    // #1958: the walk restored a Prospect and was told it was active again.
+    @Test
+    fun `restoring a household that was a Prospect keeps it a Prospect and says so`() =
+        runTest(testDispatcher) {
+            coEvery { repo.unarchiveKinfolk(any()) } returns Result.success("prospect")
+            val vm = kinfolkEditor()
+
+            vm.unarchiveKinfolk()
+            advanceUntilIdle()
+
+            assertEquals("Ada Lovelace is restored as a Prospect.", vm.editKinfolkState.value.successMessage)
+            assertEquals("prospect", vm.editKinfolkState.value.status)
+        }
+
+    @Test
+    fun `the restore answer's status is read, and a missing one reads as active`() {
+        assertEquals("prospect", restoredKinfolkStatusFrom(mapOf("ok" to true, "status" to "prospect")))
+        assertEquals("inactive", restoredKinfolkStatusFrom(mapOf("status" to " Inactive ")))
+        assertEquals("active", restoredKinfolkStatusFrom(mapOf("ok" to true)))
+        assertEquals("active", restoredKinfolkStatusFrom(mapOf("status" to "archived")))
+        assertEquals("active", restoredKinfolkStatusFrom(null))
+        assertEquals("Ada is restored as Inactive.", kinfolkRestoredMessage("Ada", "inactive"))
+        assertEquals("Ada is active again.", kinfolkRestoredMessage("Ada", "active"))
+    }
 
     // ── Add Kin ──────────────────────────────────────────────────────────────
 

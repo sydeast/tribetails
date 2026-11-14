@@ -105,7 +105,7 @@ class DirectoryViewModelAuditLogTest {
         viewModel = DirectoryViewModel(repository, invoiceRepository, kinCareRepository)
         viewModel.loadKinfolkForEdit("kf-un")
         advanceUntilIdle()
-        coEvery { repository.unarchiveKinfolk(any()) } returns Result.success(Unit)
+        coEvery { repository.unarchiveKinfolk(any()) } returns Result.success("active")
 
         viewModel.unarchiveKinfolk()
         advanceUntilIdle()
