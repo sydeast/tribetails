@@ -395,6 +395,48 @@ class BookingRepository(
     }
 
     /**
+     * #1864: a CHANGE SIGNAL for the household's move and cancel asks, which
+     * the office reads through callables (`listRescheduleRequests`,
+     * `listCancelRequests`) once, when Bookings opens. A new ask filed while the
+     * screen stayed open never reached it until the screen was opened again.
+     *
+     * Two listeners, each the exact shape the server's own read uses, so the
+     * indexes that serve the server serve these too: `rescheduleRequestStatus ==
+     * pending` ordered by `rescheduleRequestedAt` (composite, collection group),
+     * and everything ordered by `cancelRequestedAt` (single field, collection
+     * group). Emits once per change after each listener's first snapshot; the
+     * first is the state the screen has just read, so it is skipped. The rows
+     * still come from the callables: this only says when to read them again.
+     *
+     * A listener error is logged and the signal goes quiet. It never paints a
+     * banner: the callables report their own failures, and a test admin cannot
+     * make a cross-tenant read at all (the caller does not start it for one).
+     */
+    fun visitAskChangesStream(): Flow<Unit> = callbackFlow {
+        fun listener(label: String): com.google.firebase.firestore.EventListener<com.google.firebase.firestore.QuerySnapshot> {
+            var first = true
+            return com.google.firebase.firestore.EventListener { _, err ->
+                if (err != null) {
+                    AuntieLog.e("visitAskChangesStream $label listener error", err)
+                    return@EventListener
+                }
+                if (first) first = false else trySend(Unit)
+            }
+        }
+        val reschedule = firestore.collectionGroup("kinCares")
+            .whereEqualTo("rescheduleRequestStatus", "pending")
+            .orderBy("rescheduleRequestedAt", Query.Direction.ASCENDING)
+            .addSnapshotListener(listener("reschedule"))
+        val cancel = firestore.collectionGroup("kinCares")
+            .orderBy("cancelRequestedAt", Query.Direction.ASCENDING)
+            .addSnapshotListener(listener("cancel"))
+        awaitClose {
+            reschedule.remove()
+            cancel.remove()
+        }
+    }
+
+    /**
      * #1577: the household's own notes on a booking request, the envelope-level
      * `notes` at `families/{familyId}/bookings/{batchId}` (no visit doc carries
      * them). Read when the request is opened, not streamed with the queue.

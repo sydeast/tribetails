@@ -214,4 +214,70 @@ class VisitRequestCardsTest {
         rule.waitForIdle()
         assertEquals(listOf("We are full that week."), declined)
     }
+    // #2028: a notification's Open lands with this request's sheet already open,
+    // and says so once, so coming back later does not open it again.
+    @Test
+    fun aRequestOpenedFromANotificationArrivesWithItsSheetOpen() {
+        val series = groupIncomingBySeries(
+            listOf(
+                IncomingKinCare(
+                    familyId = "kf1", batchId = "b1", visitId = "v1", kinfolkId = "kf1",
+                    kinfolkName = "The Rowans", serviceType = "Dog Walk",
+                    startTime = "2026-12-03T15:00:00Z", status = "requested", kinNames = listOf("Rex"),
+                ),
+            ),
+        ).single()
+        var opened = 0
+        rule.setContent {
+            AuntieOSTheme {
+                CompositionLocalProvider(LocalBusinessZone provides zone) {
+                    IncomingSeriesRow(
+                        series = series,
+                        inFlight = false,
+                        actionsLocked = false,
+                        startTimes = emptyMap(),
+                        onSetStartTime = { _, _ -> },
+                        onApprove = {},
+                        onCancel = {},
+                        openDetailOnArrival = true,
+                        onDetailOpened = { opened += 1 },
+                    )
+                }
+            }
+        }
+        rule.onNodeWithText("New request from The Rowans").assertExists()
+        rule.waitForIdle()
+        assertEquals(1, opened)
+    }
+    // #1875: the confirm step names the date it answers, not only the household.
+    @Test
+    fun theConfirmStepNamesTheDates() {
+        val series = groupIncomingBySeries(
+            listOf(
+                IncomingKinCare(
+                    familyId = "kf1", batchId = "b1", visitId = "v1", kinfolkId = "kf1",
+                    kinfolkName = "The Rowans", serviceType = "Dog Walk",
+                    startTime = "2026-12-03T15:00:00Z", status = "requested", kinNames = listOf("Rex"),
+                ),
+            ),
+        ).single()
+        rule.setContent {
+            AuntieOSTheme {
+                CompositionLocalProvider(LocalBusinessZone provides zone) {
+                    IncomingSeriesRow(
+                        series = series,
+                        inFlight = false,
+                        actionsLocked = false,
+                        startTimes = emptyMap(),
+                        onSetStartTime = { _, _ -> },
+                        onApprove = {},
+                        onCancel = {},
+                    )
+                }
+            }
+        }
+        rule.onNodeWithText("Cancel").performClick()
+        rule.onNodeWithText("Thu, Dec 3 at 9:00 AM").assertExists()
+        rule.onNodeWithText("Nothing will be booked. The household will be told.").assertExists()
+    }
 }

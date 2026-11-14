@@ -296,6 +296,7 @@ export interface GetMyBookingsResultLiveVisit {
   cancelRequestStatus: 'pending' | 'accepted' | 'declined' | null;
   cancelRequestReason: string | null;
   cancelResponseNote: string | null;
+  requestDeclinedAtMs: number | null;
   rescheduleRequestStatus: 'pending' | 'accepted' | 'declined' | null;
   rescheduleRequestedStartTimeMs: number | null;
   rescheduleRequestedEndTimeMs: number | null;

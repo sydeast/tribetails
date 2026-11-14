@@ -1071,7 +1071,17 @@ private fun AuthenticatedNavHost(
             }
             composable(Screen.AdminNotifications.route) {
                 AdminGate(repository = app.repository, onDenied = { navController.popBackStack() }) {
+                    // #2069: the live request queue Bookings reads, and whether it
+                    // is current. Not current means no row may offer an answer.
+                    val scheduling by schedulingVm.state.collectAsState()
                     NotificationsScreen(
+                        pendingRequests = if (scheduling.incomingLive) scheduling.incomingSeries else null,
+                        businessTimeZone = scheduling.businessSettings.timeZone,
+                        // #2028: a waiting request opens on Bookings with its sheet open.
+                        onOpenRequest = { kinfolkId, batchId ->
+                            schedulingVm.focusIncomingRequest(kinfolkId, batchId)
+                            navController.navigate(Screen.Calendar.route) { launchSingleTop = true }
+                        },
                         onBack = { navController.popBackStack() },
                         // Step 4: "open linked item" routes by the notification's
                         // targetType/targetId to the matching detail screen. An

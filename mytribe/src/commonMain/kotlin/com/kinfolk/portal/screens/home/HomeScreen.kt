@@ -696,7 +696,7 @@ private fun StatusPill(b: Booking) {
         VisitStage.EnRoute -> KinfolkBrand.PackPink
         VisitStage.Active -> KinfolkBrand.SnuggleCoral
         VisitStage.Completed -> KinfolkBrand.KinTeal
-        VisitStage.Cancelled -> KinfolkBrand.NavyMuted
+        VisitStage.Cancelled, VisitStage.Declined -> KinfolkBrand.NavyMuted
     }
     val label = stage.label()
     GlassCard(

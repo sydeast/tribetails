@@ -60,6 +60,9 @@ import com.kinfolk.portal.portal.awaitingStartTime
 import com.kinfolk.portal.portal.canRequestReschedule
 import com.kinfolk.portal.portal.isAwaitingVisit
 import com.kinfolk.portal.portal.isFinished
+import com.kinfolk.portal.portal.isNoAnswerError
+import com.kinfolk.portal.portal.noAnswerMessage
+import com.kinfolk.portal.portal.visitAfterNoAnswer
 import com.kinfolk.portal.screens.schedule.util.RESCHEDULE_REASON_MAX
 import com.kinfolk.portal.screens.schedule.util.ReviewRow
 import com.kinfolk.portal.screens.schedule.util.RescheduleProposal
@@ -339,11 +342,29 @@ fun KinCareDetailScreen(
                             } catch (c: CancellationException) {
                                 throw c
                             } catch (t: Throwable) {
-                                // The server writes these for a household to
-                                // read (a past time, a second ask while one is
-                                // pending), so they are shown as they arrive
-                                // rather than flattened to "try again".
-                                rescheduleError = t.message ?: "Could not send the request."
+                                if (isNoAnswerError(t)) {
+                                    // #1919: no answer is not a failure. Look
+                                    // first ("Sending..." stays up meanwhile):
+                                    // the same time waiting on this visit means
+                                    // it went through, and it ends as a success.
+                                    val landed = portalApi.visitAfterNoAnswer(kinfolkId, b.id) {
+                                        it.rescheduleRequestStatus == RescheduleRequestStatus.Pending &&
+                                            it.rescheduleRequestedStartTimeMs == proposal.startMs
+                                    }
+                                    if (landed != null) {
+                                        bookings = landed.first
+                                        kinCare = landed.second
+                                        reschedulePendingLocal = true
+                                    } else {
+                                        rescheduleError = noAnswerMessage()
+                                    }
+                                } else {
+                                    // The server writes these for a household to
+                                    // read (a past time, a second ask while one is
+                                    // pending), so they are shown as they arrive
+                                    // rather than flattened to "try again".
+                                    rescheduleError = t.message ?: "Could not send the request."
+                                }
                             } finally {
                                 rescheduleSending = false
                             }
@@ -372,7 +393,21 @@ fun KinCareDetailScreen(
                             } catch (c: CancellationException) {
                                 throw c
                             } catch (t: Throwable) {
-                                cancelError = t.message ?: "Could not send the request."
+                                if (isNoAnswerError(t)) {
+                                    // #1919: same as the reschedule ask above.
+                                    val landed = portalApi.visitAfterNoAnswer(kinfolkId, b.id) {
+                                        it.cancelRequestStatus == CancelRequestStatus.Pending
+                                    }
+                                    if (landed != null) {
+                                        bookings = landed.first
+                                        kinCare = landed.second
+                                        cancelPendingLocal = true
+                                    } else {
+                                        cancelError = noAnswerMessage()
+                                    }
+                                } else {
+                                    cancelError = t.message ?: "Could not send the request."
+                                }
                             } finally {
                                 cancelSending = false
                             }
@@ -429,7 +464,12 @@ private fun KinCareDetailBody(
                 Text(com.kinfolk.portal.util.visitTitle(kinCare.title, kinCare.serviceLabel) ?: "Booking", style = type.heritageTitle)
                 Text(bookingWhenLabel(kinCare, withDate = true).ifEmpty { "TBD" }, style = type.sansLabel)
                 ReviewRow("KinCare Duration", kinCare.serviceLabel ?: "TBD")
-                ReviewRow("Auntie", kinCare.auntieDisplayName ?: "Pending")
+                // #2029: a declined request will never get an Auntie, so it is not "Pending".
+                ReviewRow(
+                    "Auntie",
+                    kinCare.auntieDisplayName
+                        ?: if (kinCare.stage() == com.kinfolk.portal.portal.VisitStage.Declined) "Not assigned" else "Pending",
+                )
                 ReviewRow(
                     "Kin",
                     kinCare.kinNames.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "TBD",

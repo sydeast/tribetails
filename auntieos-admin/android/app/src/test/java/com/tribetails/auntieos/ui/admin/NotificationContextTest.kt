@@ -111,7 +111,8 @@ class NotificationContextTest {
             id = "n1", key = "kincare.requested", targetType = "booking", targetId = "req_1",
             data = mapOf("kinfolkId" to "kf-9"),
         )
-        assertTrue(applicableNotificationActions(pending).canApproveDeny)
+        // #2069: only while the live request queue holds it.
+        assertTrue(applicableNotificationActions(pending, setOf("kf-9/req_1")).canApproveDeny)
     }
     // #1675: Approve/Deny answer the request through manageBookingSeries, which
     // needs the household as well as the request id.
@@ -150,7 +151,7 @@ class NotificationContextTest {
             targetId = "bk-1",
             data = mapOf("kinfolkId" to "kf-9"),
         )
-        assertTrue(applicableNotificationActions(requested).canCreateQuote)
+        assertTrue(applicableNotificationActions(requested, setOf("kf-9/bk-1")).canCreateQuote)
     }
 
     @Test fun `create-quote is withheld once a quote was accepted, or a request already has an invoice`() {
@@ -170,7 +171,7 @@ class NotificationContextTest {
             targetId = "bk-1",
             data = mapOf("kinfolkId" to "kf-9", "invoiceId" to "inv-2"),
         )
-        assertFalse(applicableNotificationActions(invoiced).canCreateQuote)
+        assertFalse(applicableNotificationActions(invoiced, setOf("kf-9/bk-1")).canCreateQuote)
     }
 
     @Test fun `create-quote disappears when no household can be identified, even on a qualifying key`() {

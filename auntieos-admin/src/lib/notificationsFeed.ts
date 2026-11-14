@@ -1,5 +1,6 @@
 import { dayKey, isRead, type NotificationEntry } from '../api/notifications';
-import { applicableNotificationActions } from './notificationActions';
+import { applicableNotificationActions, pendingRequestKey, type PendingRequestSet } from './notificationActions';
+import { notificationKinfolkId } from './notificationContext';
 
 /**
  * Pure `notifications` feed selectors, shared by the Notifications SCREEN and
@@ -114,10 +115,18 @@ export function unreadNotificationCount(rows: readonly NotificationEntry[]): num
  * archiving a row takes it out of all three counts together rather than out of
  * some of them.
  */
-export function actionableNotificationCount(rows: readonly NotificationEntry[]): number {
-  return activeNotifications(rows).filter(
-    (r) => applicableNotificationActions(r).bookingId !== '',
-  ).length;
+export function actionableNotificationCount(
+  rows: readonly NotificationEntry[],
+  pendingRequests: PendingRequestSet = null,
+): number {
+  // #2069: one per waiting REQUEST, not per row. Two notices about one request
+  // are one decision, and the number is the one Bookings shows as waiting.
+  const waiting = new Set<string>();
+  for (const r of activeNotifications(rows)) {
+    const { bookingId } = applicableNotificationActions(r, { pendingRequests });
+    if (bookingId !== '') waiting.add(pendingRequestKey(notificationKinfolkId(r), bookingId));
+  }
+  return waiting.size;
 }
 
 /**

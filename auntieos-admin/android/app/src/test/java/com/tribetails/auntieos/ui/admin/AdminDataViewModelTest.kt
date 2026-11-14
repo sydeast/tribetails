@@ -839,6 +839,44 @@ class AdminDataViewModelTest {
         coVerify(exactly = 0) { mockRepo.manageBookingSeries(any(), any(), any(), any(), any(), any()) }
     }
 
+    // #1875: the row's confirm step carries the operator's note for the household.
+    @Test
+    fun `answerBookingRequest sends the confirm step's note, trimmed`() = runTest(testDispatcher) {
+        coEvery {
+            mockRepo.manageBookingSeries("CANCEL", "kf1", "req_b1", any(), any(), any(), "We are full that week.")
+        } returns Result.success(seriesResult())
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.answerBookingRequest("kf1", "req_b1", approve = false, note = "  We are full that week.  ")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            mockRepo.manageBookingSeries("CANCEL", "kf1", "req_b1", any(), any(), any(), "We are full that week.")
+        }
+    }
+
+    // #1875: every wait shows; one answer at a time.
+    @Test
+    fun `answerBookingRequest names the request in flight and ignores a second press`() = runTest(testDispatcher) {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { mockRepo.manageBookingSeries("APPROVE", "kf1", "req_b1", any(), any(), any()) } coAnswers {
+            gate.await()
+            Result.success(seriesResult())
+        }
+        coEvery { mockRepo.getNotifications() } returns Result.success(emptyList())
+
+        val vm = buildViewModel()
+        vm.answerBookingRequest("kf1", "req_b1", approve = true)
+        assertEquals("req_b1", vm.answeringRequestId.value)
+        vm.answerBookingRequest("kf1", "req_b1", approve = true)
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertNull(vm.answeringRequestId.value)
+        coVerify(exactly = 1) { mockRepo.manageBookingSeries("APPROVE", "kf1", "req_b1", any(), any(), any()) }
+    }
+
     @Test
     fun `bookingRequestAnswerMessage reports what the server did`() {
         assertEquals(

@@ -126,6 +126,21 @@ export function notificationOpenRoute(entry: NotificationEntry): NotificationRou
   return notificationTargetRoute(entry.targetType, entry.targetId);
 }
 
+/** The identity of one waiting request: a batch id is unique only inside its household. */
+export function pendingRequestKey(kinfolkId: string, batchId: string): string {
+  return `${kinfolkId}/${batchId}`;
+}
+/**
+ * #2028: where Open goes for a booking request: its card in the Bookings
+ * Visit requests queue. `targetId` on `kincare.requested` is the request's
+ * envelope id (`batchId`, since #532), and a request has no visit record until
+ * it is booked, so the target table's `vis_{id}` lookup found nothing and the
+ * operator got "Booking unavailable" instead of the request.
+ */
+export function notificationRequestRoute(kinfolkId: string, batchId: string): NotificationRoute {
+  return { to: '/bookings', search: { requestId: batchId, requestKinfolkId: kinfolkId } };
+}
+
 /**
  * The Invoices quote composer, seeded with a household. The archive threaded
  * the same seed through its App shell as `composeQuoteForKinfolkId`; here it
@@ -156,10 +171,30 @@ export interface NotificationActionSet {
   quote: NotificationRoute | null;
   /**
    * #1647: how an answered request ended ("Booked", "Declined", "Cancelled"),
-   * shown where Approve/Deny used to be. Null on every row that is not an
-   * answered `kincare.requested`.
+   * shown where Approve/Deny used to be. #2069: "Answered" for a request the
+   * live queue no longer holds and the server never stamped. Null on every row
+   * that is not an answered `kincare.requested`.
    */
   outcome: string | null;
+  /**
+   * #2069: an unanswered request row whose waiting state is not known yet,
+   * because the live queue has not read (or failed to). Neither offered as
+   * waiting nor shown as answered.
+   */
+  awaitingQueue: boolean;
+}
+
+/**
+ * #2069: the booking requests still waiting, keyed by `pendingRequestKey`
+ * (`lib/pendingBookingRequests.ts`), or null while that read is in flight or
+ * failed. Anything with `has` will do: the screen passes the queue's map.
+ */
+export type PendingRequestSet = { has(key: string): boolean } | null;
+
+export interface NotificationActionContext {
+  isAuntie?: boolean;
+  /** Absent is the same as null: not known, so nothing is offered as waiting. */
+  pendingRequests?: PendingRequestSet;
 }
 
 /**
@@ -224,6 +259,16 @@ const QUOTE_DENIED_KEY = 'quote.denied';
  * `bookingId` below. Before #1647 a booked request kept offering Approve/Deny
  * on its card until the row was archived.
  *
+ * #2069 REQUIRES POSITIVE EVIDENCE. The stamp above only reaches rows written
+ * after #1647, and rows from before it (the walk's August rows, some carrying a
+ * visit id from before #532) never got one, so they kept Approve and Deny
+ * three months after their visits had been booked, and "Needs a decision" read
+ * 19 against Bookings' 5 waiting. A request is now offered as waiting only when
+ * the live queue (`pendingRequests`, the same read Bookings > Review lists)
+ * holds its household and batch. While that queue is still loading, or its read
+ * failed, nothing is offered as waiting: Open is still there, and the request
+ * is answered on its card.
+ *
  * CREATE QUOTE is offered for a quote or a booking request that has no
  * invoice yet: `quote.denied` (the quote itself was rejected, no bill exists)
  * or `kincare.requested` (a fresh ask, nothing billed) PROVIDED the entry does
@@ -237,25 +282,29 @@ const QUOTE_DENIED_KEY = 'quote.denied';
  */
 export function applicableNotificationActions(
   entry: NotificationEntry,
-  { isAuntie = false }: { isAuntie?: boolean } = {},
+  { isAuntie = false, pendingRequests = null }: NotificationActionContext = {},
 ): NotificationActionSet {
   const type = normalizedTargetType(entry.targetType);
   const targetId = str(entry.targetId).trim();
   const key = str(entry.key).trim();
-  const outcome = requestOutcomeLabel(entry);
+  const stamped = requestOutcomeLabel(entry);
 
   const kinfolkId = notificationKinfolkId(entry);
+  // A request row this client can answer: it names its household and batch.
+  const isAnswerableRequest =
+    key === PENDING_BOOKING_REQUEST_KEY && type === 'booking' && targetId !== '' && kinfolkId !== '';
   const isPendingBookingRequest =
-    key === PENDING_BOOKING_REQUEST_KEY &&
-    outcome === null &&
-    type === 'booking' &&
-    targetId !== '' &&
-    kinfolkId !== '';
+    isAnswerableRequest &&
+    stamped === null &&
+    pendingRequests !== null &&
+    pendingRequests.has(pendingRequestKey(kinfolkId, targetId));
+  // #2069: the queue has spoken and this request is not on it.
+  const knownAnswered = isAnswerableRequest && pendingRequests !== null && !isPendingBookingRequest;
+  const outcome = stamped ?? (knownAnswered ? 'Answered' : null);
 
   const hasInvoiceReference = type === 'invoice' || str(rec(entry.data)['invoiceId']).trim() !== '';
   const isQuoteDenial = key === QUOTE_DENIED_KEY;
-  const isUninvoicedBookingRequest =
-    key === PENDING_BOOKING_REQUEST_KEY && outcome === null && !hasInvoiceReference;
+  const isUninvoicedBookingRequest = isPendingBookingRequest && !hasInvoiceReference;
   const quoteEligible = kinfolkId !== '' && (isQuoteDenial || isUninvoicedBookingRequest);
 
   // #2200 / #2201: an owner-only screen (Invoices, for these rows) sends an
@@ -269,10 +318,16 @@ export function applicableNotificationActions(
   // section, which is money and is not drawn for an Auntie. Without a
   // household it falls back to its invoice, which `forViewer` drops anyway.
   const isPaymentDecision = key === UNAPPLIED_PAYMENT_KEY;
+  // #2028: a request opens on its card, unless the live queue says it is gone
+  // and the server never stamped it. Such a row may predate #532 and carry a
+  // visit id, which the target table still opens as that visit.
+  const opensOnRequestCard = isAnswerableRequest && (stamped !== null || !knownAnswered);
+  const open = opensOnRequestCard ? notificationRequestRoute(kinfolkId, targetId) : notificationOpenRoute(entry);
   return {
-    open: isAuntie && isPaymentDecision ? null : forViewer(notificationOpenRoute(entry)),
+    open: isAuntie && isPaymentDecision ? null : forViewer(open),
     bookingId: isPendingBookingRequest ? targetId : '',
     quote: forViewer(quoteEligible ? notificationQuoteRoute(kinfolkId) : null),
     outcome,
+    awaitingQueue: isAnswerableRequest && stamped === null && pendingRequests === null,
   };
 }

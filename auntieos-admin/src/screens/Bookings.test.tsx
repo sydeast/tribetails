@@ -110,8 +110,12 @@ const TEST_SETTINGS = {
  * the bookings list, the section renders nothing when both its queues are empty
  * anyway, and its own states are covered in VisitRequestsSection.test.tsx.
  */
+const { visitRequestsProps } = vi.hoisted(() => ({ visitRequestsProps: [] as unknown[] }));
 vi.mock('../components/VisitRequestsSection', () => ({
-  VisitRequestsSection: () => null,
+  VisitRequestsSection: (props: unknown) => {
+    visitRequestsProps.push(props);
+    return null;
+  },
 }));
 vi.mock('../components/KinRemovalRequests', () => ({
   KinRemovalRequestsSection: () => null,
@@ -203,6 +207,20 @@ async function pick(...names: string[]) {
   }
 }
 
+describe('Bookings opens the request a notice named (#2028)', () => {
+  it('hands the request to the Visit requests queue, so its card opens', () => {
+    visitRequestsProps.length = 0;
+    render(<Bookings focusRequest={{ kinfolkId: 'kf1', batchId: 'req_1' }} />);
+    expect(visitRequestsProps.at(-1)).toMatchObject({ focusRequest: { kinfolkId: 'kf1', batchId: 'req_1' } });
+    // It is a request, not a booking: nothing is looked up as a visit.
+    expect(screen.queryByText('Booking unavailable')).toBeNull();
+  });
+  it('hands no request over on an ordinary visit', () => {
+    visitRequestsProps.length = 0;
+    render(<Bookings />);
+    expect(visitRequestsProps.at(-1)).not.toHaveProperty('focusRequest');
+  });
+});
 describe('Bookings screen', () => {
   it('renders a streamed row with its household, service, when, and status chip', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });

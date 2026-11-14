@@ -60,13 +60,16 @@ class NotificationActionsTest {
         val waiting = NotificationEntry(_id = "w", key = "kincare.requested", targetType = "booking", targetId = "bk1", data = household)
         val confirmation = NotificationEntry(_id = "c", key = "kincare.booking.confirm", targetType = "booking", targetId = "bk2", data = household)
         val dispatched = NotificationEntry(_id = "d", key = "invoice.new", status = "dispatched")
-        assertEquals(1, needsDecisionCount(listOf(waiting, confirmation, dispatched)))
-        assertEquals(0, needsDecisionCount(emptyList()))
+        assertEquals(1, needsDecisionCount(listOf(waiting, confirmation, dispatched), setOf("kf1/bk1")))
+        assertEquals(0, needsDecisionCount(emptyList(), setOf("kf1/bk1")))
+        // #2069: while the queue is unknown, nothing is counted as waiting.
+        assertEquals(0, needsDecisionCount(listOf(waiting), null))
     }
     @Test
     fun bookingTargetOffersApproveDenyAndOpen() {
         val actions = applicableActions(
             NotificationEntry(key = "kincare.requested", targetType = "booking", targetId = "bk1", data = kotlinx.serialization.json.buildJsonObject { put("kinfolkId", kotlinx.serialization.json.JsonPrimitive("kf1")) }),
+            setOf("kf1/bk1"),
         )
         assertTrue(NotificationAction.ApproveBooking in actions)
         assertTrue(NotificationAction.DenyBooking in actions)
@@ -113,6 +116,7 @@ class NotificationActionsTest {
     fun bookingTargetTypeIsCaseInsensitive() {
         val actions = applicableActions(
             NotificationEntry(key = "kincare.requested", targetType = "Booking", targetId = "bk1", data = kotlinx.serialization.json.buildJsonObject { put("kinfolkId", kotlinx.serialization.json.JsonPrimitive("kf1")) }),
+            setOf("kf1/bk1"),
         )
         assertTrue(NotificationAction.ApproveBooking in actions)
     }
@@ -165,7 +169,7 @@ class NotificationActionsTest {
         val waiting = NotificationEntry(key = "kincare.requested", targetType = "booking", targetId = "req_1", data = kotlinx.serialization.json.buildJsonObject { put("kinfolkId", kotlinx.serialization.json.JsonPrimitive("kf1")) })
         assertNull(requestOutcomeLabel(waiting))
         assertNull(requestOutcomeLabel(waiting.copy(requestResolution = "  ")))
-        assertTrue(NotificationAction.ApproveBooking in applicableActions(waiting.copy(requestResolution = "  ")))
+        assertTrue(NotificationAction.ApproveBooking in applicableActions(waiting.copy(requestResolution = "  "), setOf("kf1/req_1")))
         // The stamp means nothing on another key.
         assertNull(requestOutcomeLabel(waiting.copy(key = "kincare.booking.confirm", requestResolution = "booked")))
     }

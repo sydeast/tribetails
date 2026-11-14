@@ -1,5 +1,11 @@
 package com.tribetails.auntieos.ui.admin
 
+import com.tribetails.auntieos.ui.admin.scheduling.incomingRequestKey
+import com.tribetails.auntieos.ui.admin.scheduling.IncomingSeries
+import com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone
+import com.tribetails.auntieos.ui.admin.scheduling.requestKey
+import com.tribetails.auntieos.data.model.businessZone
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -132,8 +138,29 @@ fun NotificationsScreen(
      * targetType/targetId routing through [onOpenTarget].
      */
     onOpenEntry: ((NotificationEntry) -> Unit)? = null,
+    /**
+     * #2069: the requests still waiting, from the live request queue Bookings
+     * reads (`incomingKinCareRequestsStream`). Null while that queue is not
+     * known, before its first answer or after a failed read: then no row offers
+     * Approve or Deny, only Open.
+     */
+    pendingRequests: List<IncomingSeries>? = null,
+    /**
+     * #2028: Open on a request still waiting lands on Bookings with that
+     * request's sheet open, instead of looking it up as a visit it is not yet.
+     */
+    onOpenRequest: ((kinfolkId: String, batchId: String) -> Unit)? = null,
+    /** The business's saved time zone, so the confirm step's dates read on its clock (#1158). */
+    businessTimeZone: String? = null,
 ) {
     val entries by viewModel.notifications.collectAsState()
+    val answeringRequestId by viewModel.answeringRequestId.collectAsState()
+    val pendingKeys = remember(pendingRequests) { pendingRequests?.map { it.requestKey }?.toSet() }
+    val seriesByKey = remember(pendingRequests) { pendingRequests?.associateBy { it.requestKey }.orEmpty() }
+    // #1875: the request whose Approve (true) or Deny (false) was pressed, now
+    // on its confirm step. Nothing is sent until that step is confirmed.
+    var deciding by remember { mutableStateOf<Pair<NotificationEntry, Boolean>?>(null) }
+    var decisionNote by remember { mutableStateOf("") }
     // Issue #20: notification docs carry a household ID and almost never a
     // household NAME, so the directory is loaded alongside the feed and the row
     // resolves against it. Same call the triage and picker surfaces already use;
@@ -198,7 +225,8 @@ fun NotificationsScreen(
                 // a decision, from the same `applicableNotificationActions` that
                 // decides which rows show Approve/Deny, so the tile and the
                 // buttons cannot disagree.
-                val actionableCount = all.count { applicableNotificationActions(it).canApproveDeny }
+                // #2069: through the live queue, so this counts what Bookings has waiting.
+                val actionableCount = all.count { applicableNotificationActions(it, pendingKeys).canApproveDeny }
                 // #1611: Select all reaches only the rows the active filter chip
                 // shows. It used to take the whole feed, so "Select all" under
                 // the Unread chip also picked every read row hidden behind it.
@@ -362,21 +390,65 @@ fun NotificationsScreen(
                                         viewModel.toggleNotificationRead(entry.id, isNotificationUnread(entry))
                                     },
                                     onOpen = { entry ->
-                                        onOpenEntry?.invoke(entry) ?: onOpenTarget(entry.targetType, entry.targetId)
+                                        val request = waitingRequestOf(entry, pendingKeys)
+                                        if (request != null && onOpenRequest != null) {
+                                            onOpenRequest(request.first, request.second)
+                                        } else {
+                                            onOpenEntry?.invoke(entry) ?: onOpenTarget(entry.targetType, entry.targetId)
+                                        }
                                     },
                                     onCreateQuote = { entry -> onCreateQuote(notificationKinfolkId(entry)) },
                                     onDismiss = { entry -> viewModel.archiveNotification(entry.id) },
-                                    // #1675: the row names the request (targetId = batchId) and its household.
-                                    onApprove = { entry ->
-                                        viewModel.answerBookingRequest(notificationKinfolkId(entry), entry.targetId, approve = true)
-                                    },
-                                    onDeny = { entry ->
-                                        viewModel.answerBookingRequest(notificationKinfolkId(entry), entry.targetId, approve = false)
-                                    },
+                                    // #1875: each opens the confirm step; it is the step that answers.
+                                    onApprove = { entry -> decisionNote = ""; deciding = entry to true },
+                                    onDeny = { entry -> decisionNote = ""; deciding = entry to false },
+                                    pendingKeys = pendingKeys,
+                                    answeringRequestId = answeringRequestId,
                                 )
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // #1875: the confirm step for the row's Approve or Deny, the same one the
+        // request's card on Bookings uses (household, dates, who is told, note).
+        deciding?.let { (entry, approve) ->
+            val request = waitingRequestOf(entry, pendingKeys)
+            val series = request?.let { seriesByKey[incomingRequestKey(it.first, it.second)] }
+            if (request == null || series == null) {
+                // Answered somewhere else while the step was open: nothing to confirm.
+                LaunchedEffect(entry.id) { deciding = null }
+            } else {
+                CompositionLocalProvider(LocalBusinessZone provides businessZone(businessTimeZone)) {
+                    SeriesDecisionDialog(
+                        visible = true,
+                        series = series,
+                        decline = !approve,
+                        note = decisionNote,
+                        onNoteChange = { decisionNote = it },
+                        enabled = answeringRequestId == null,
+                        readyToBook = series.pendingNights.isEmpty(),
+                        onDismiss = { deciding = null },
+                        onConfirm = {
+                            viewModel.answerBookingRequest(request.first, request.second, approve, decisionNote)
+                            deciding = null
+                            decisionNote = ""
+                        },
+                        catalog = rememberServiceCatalog(),
+                        notReadyAction = onOpenRequest?.let { open ->
+                            {
+                                PrimaryButton(
+                                    label = "Open the request",
+                                    onClick = {
+                                        deciding = null
+                                        open(request.first, request.second)
+                                    },
+                                )
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -482,6 +554,8 @@ private fun Feed(
     onDismiss: (NotificationEntry) -> Unit,
     onApprove: (NotificationEntry) -> Unit,
     onDeny: (NotificationEntry) -> Unit,
+    pendingKeys: Set<String>?,
+    answeringRequestId: String?,
 ) {
     val newestDate = entries.firstOrNull()?.createdAt?.let { datePrefix(it) }
     val (recentItems, earlierItems) = entries.partition {
@@ -503,6 +577,8 @@ private fun Feed(
         onDismiss = { onDismiss(entry) },
         onApprove = { onApprove(entry) },
         onDeny = { onDeny(entry) },
+        pendingKeys = pendingKeys,
+        answeringRequestId = answeringRequestId,
     )
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -564,12 +640,14 @@ private fun NotificationRow(
     onDismiss: () -> Unit,
     onApprove: () -> Unit,
     onDeny: () -> Unit,
+    pendingKeys: Set<String>? = null,
+    answeringRequestId: String? = null,
 ) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     val typo = AuntieTheme.typography
     val unread = isNotificationUnread(entry)
-    val actions = applicableNotificationActions(entry)
+    val actions = applicableNotificationActions(entry, pendingKeys)
     // Computed here, not inside the Column's content, because issue #705 needs
     // it to decide the Column's OWN modifier (whether the whole body toggles).
     val detailRows = notificationDetailRows(entry, rememberServiceCatalog())
@@ -732,6 +810,9 @@ private fun NotificationRow(
                     onDismiss = onDismiss,
                     onApprove = onApprove,
                     onDeny = onDeny,
+                    // #1875: this row's answer is out; any answer out locks the rest.
+                    answering = answeringRequestId != null && answeringRequestId == entry.targetId.trim(),
+                    answerLocked = answeringRequestId != null,
                 )
             }
         }
@@ -775,6 +856,8 @@ private fun QuickActions(
     onDismiss: () -> Unit,
     onApprove: () -> Unit,
     onDeny: () -> Unit,
+    answering: Boolean = false,
+    answerLocked: Boolean = false,
 ) {
     val dims = AuntieTheme.dims
     FlowRow(
@@ -783,8 +866,13 @@ private fun QuickActions(
         verticalArrangement = Arrangement.spacedBy(dims.space2),
     ) {
         if (actions.canApproveDeny) {
-            PrimaryButton(label = "Approve", onClick = onApprove)
-            GhostButton(label = "Deny", onClick = onDeny)
+            PrimaryButton(
+                label = if (answering) "Working…" else "Approve",
+                onClick = onApprove,
+                enabled = !answerLocked,
+                loading = answering,
+            )
+            GhostButton(label = "Deny", onClick = onDeny, enabled = !answerLocked)
         }
         // #1647: an answered request says how it ended instead of offering a
         // decision nobody can make any more.
@@ -988,25 +1076,44 @@ internal fun requestOutcomeLabel(entry: NotificationEntry): String? {
  * disappears entirely when no household is identifiable. Matches the web
  * build. Pure; unit-tested.
  */
-internal fun applicableNotificationActions(entry: NotificationEntry): NotificationActions {
+internal fun applicableNotificationActions(
+    entry: NotificationEntry,
+    /**
+     * #2069: the requests still waiting, as [incomingRequestKey]s, from the live
+     * request queue (`incomingKinCareRequestsStream`). Null while that queue is
+     * not known: before its first answer, or after its read failed.
+     */
+    pendingRequests: Set<String>? = null,
+): NotificationActions {
     val base = applicableNotificationActions(entry.targetType, entry.targetId)
     val key = entry.key.trim()
     val type = entry.targetType.trim().lowercase()
     val targetId = entry.targetId.trim()
+    val kinfolkId = notificationKinfolkId(entry)
+    val isRequestRow = key == PENDING_BOOKING_REQUEST_KEY
 
-    val outcome = requestOutcomeLabel(entry)
-
+    // #2069: WAITING NEEDS POSITIVE EVIDENCE. #1647 read "no answer stamp" as
+    // waiting, and rows from before that stamp existed were never stamped (and
+    // rows from before #532 name a visit, not the request), so three-month-old
+    // rows still offered Approve and Deny and "Needs a decision" counted 19
+    // while Bookings had 5 waiting. A row is waiting only when the live queue
+    // holds its household and request; while the queue is unknown, Open only.
+    val stampOutcome = requestOutcomeLabel(entry)
+    val inLiveQueue = pendingRequests?.contains(incomingRequestKey(kinfolkId, targetId)) == true
     val isPendingBookingRequest =
-        key == PENDING_BOOKING_REQUEST_KEY && outcome == null && type == "booking" && targetId.isNotBlank() &&
-            notificationKinfolkId(entry).isNotBlank()
+        isRequestRow && stampOutcome == null && type == "booking" && targetId.isNotBlank() &&
+            kinfolkId.isNotBlank() && inLiveQueue
+    // An unstamped request the live queue no longer holds has been answered
+    // somewhere; which way is the stamp's to say, and it has none.
+    val outcome = stampOutcome
+        ?: if (isRequestRow && pendingRequests != null && !isPendingBookingRequest) "Answered" else null
 
     val hasInvoiceReference = type == "invoice" || dataString(entry, "invoiceId").isNotBlank()
     val isQuoteDenial = key == QUOTE_DENIED_KEY
     // An answered request is no longer a fresh ask (#706's "already-decided"
-    // rule), so it offers no quote either (#1647).
-    val isUninvoicedBookingRequest =
-        key == PENDING_BOOKING_REQUEST_KEY && outcome == null && !hasInvoiceReference
-    val kinfolkId = notificationKinfolkId(entry)
+    // rule), so it offers no quote either (#1647), and neither does one not
+    // known to be waiting (#2069).
+    val isUninvoicedBookingRequest = isPendingBookingRequest && !hasInvoiceReference
     val quoteEligible = kinfolkId.isNotBlank() && (isQuoteDenial || isUninvoicedBookingRequest)
 
     return base.copy(
@@ -1017,6 +1124,16 @@ internal fun applicableNotificationActions(entry: NotificationEntry): Notificati
         canCreateQuote = quoteEligible,
         outcome = outcome,
     )
+}
+
+/**
+ * #2028: the household and request a row names, when the live queue holds it
+ * as still waiting; null otherwise. Open goes to that request's sheet on
+ * Bookings, and the confirm step answers that request. Pure; unit-tested.
+ */
+internal fun waitingRequestOf(entry: NotificationEntry, pendingRequests: Set<String>?): Pair<String, String>? {
+    if (!applicableNotificationActions(entry, pendingRequests).canApproveDeny) return null
+    return notificationKinfolkId(entry) to entry.targetId.trim()
 }
 
 /** #1003: a card payment the webhook recorded but could not apply to its invoice. */

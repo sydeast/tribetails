@@ -13,7 +13,7 @@ package com.kinfolk.portal.portal
  * `visitProgress: ended`, and that pair reads [VisitStage.Completed] here, so
  * no screen shows a Departed stage.
  */
-enum class VisitStage { Requested, Confirmed, EnRoute, Active, Completed, Cancelled }
+enum class VisitStage { Requested, Confirmed, EnRoute, Active, Completed, Cancelled, Declined }
 
 fun Booking.stage(): VisitStage = when (status) {
     BookingStatus.Requested -> VisitStage.Requested
@@ -21,7 +21,9 @@ fun Booking.stage(): VisitStage = when (status) {
     BookingStatus.EnRoute -> VisitStage.EnRoute
     BookingStatus.Active -> if (visitProgress == VisitProgress.Ended) VisitStage.Completed else VisitStage.Active
     BookingStatus.Completed -> VisitStage.Completed
-    BookingStatus.Cancelled -> VisitStage.Cancelled
+    // #2029: a request the office declined is stored cancelled too; the
+    // server's decline stamp is what tells the two apart.
+    BookingStatus.Cancelled -> if (requestDeclinedAtMs != null) VisitStage.Declined else VisitStage.Cancelled
 }
 
 /**
@@ -36,6 +38,7 @@ fun VisitStage.label(): String = when (this) {
     VisitStage.Active -> "IN PROGRESS"
     VisitStage.Completed -> "COMPLETED"
     VisitStage.Cancelled -> "CANCELLED"
+    VisitStage.Declined -> "DECLINED"
 }
 
 /** On the way or arrived: the Auntie has started and the visit is not finished. A departed visit is finished (#2123). */

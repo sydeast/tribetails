@@ -443,21 +443,40 @@ class AdminDataViewModel(
      * `targetId` is the request's envelope id (`batchId`); it used to go to
      * `batchUpdateBookings`, which only knows visit ids, so every press came
      * back not-found. Fail-loud: the server's refusal is shown verbatim.
+     *
+     * #1875: reached only from the row's confirm step, never from the button
+     * itself, and [note] is what the operator wrote the household there
+     * (#2030): blank sends none. One answer at a time: a press while one is
+     * out is ignored, and [answeringRequestId] names the request in flight so
+     * its row shows that it is working.
      */
-    fun answerBookingRequest(kinfolkId: String, batchId: String, approve: Boolean) {
+    fun answerBookingRequest(kinfolkId: String, batchId: String, approve: Boolean, note: String = "") {
         if (kinfolkId.isBlank() || batchId.isBlank()) return
+        if (_answeringRequestId.value != null) return
         val action = if (approve) "APPROVE" else "CANCEL"
+        val trimmed = note.trim()
+        _answeringRequestId.value = batchId
         viewModelScope.launch {
-            repository.manageBookingSeries(action, kinfolkId, batchId)
-                .onSuccess { result ->
-                    _bulkReadMessage.value = bookingRequestAnswerMessage(approve, result)
+            val result = if (trimmed.isEmpty()) {
+                repository.manageBookingSeries(action, kinfolkId, batchId)
+            } else {
+                repository.manageBookingSeries(action, kinfolkId, batchId, note = trimmed)
+            }
+            result
+                .onSuccess { res ->
+                    _bulkReadMessage.value = bookingRequestAnswerMessage(approve, res)
                     loadNotifications()
                 }
                 .onFailure { throwable ->
                     _bulkReadMessage.value = "Couldn't ${if (approve) "approve" else "decline"}: ${throwable.message}"
                 }
+            _answeringRequestId.value = null
         }
     }
+
+    private val _answeringRequestId = MutableStateFlow<String?>(null)
+    /** #1875: the request (its `batchId`) whose answer is in flight, or null. */
+    val answeringRequestId: StateFlow<String?> = _answeringRequestId.asStateFlow()
 
     /**
      * #1609: the sentence the row confirm shows, naming who a reminder

@@ -243,6 +243,8 @@ export async function getMyBookingsHandler(
       cancelRequestStatus: null,
       cancelRequestReason: null,
       cancelResponseNote: null,
+      // #2029: an office-booked visit was never a request, so never declined.
+      requestDeclinedAtMs: null,
       // A session with no booking envelope has no kinCares doc to carry a
       // request, and the portal cannot ask for one on it either (both request
       // callables need a batchId). Null is the honest answer, not a default.
