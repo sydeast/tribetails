@@ -36,7 +36,10 @@ import {
   PAYMENT_APPLIED_CLAIM_FIELD,
   SETTLEMENT_LEDGER_PENDING_AT_FIELD,
   SETTLEMENT_LEDGER_PENDING_FIELD,
+  SETTLEMENT_LEDGER_SWEEP_WRITER,
   claimableMarkInvoicePaidOwner,
+  markInvoicePaidSettlementOf,
+  settlementLedgerRowId,
 } from '../lib/paymentAppliedOwner';
 import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
 
@@ -596,7 +599,12 @@ export async function recordPaymentHandler(
       if (snap.exists) {
         const stored = (snap.data() ?? {}) as Record<string, unknown>;
         assertSameCaller(stored, actor.uid, 'recordedBy');
-        return { replayed: stored, application: null as ApplyOutcome | null, settlesInvoice: false };
+        return {
+          replayed: stored,
+          application: null as ApplyOutcome | null,
+          settlesInvoice: false,
+          replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
+        };
       }
     }
     // #866: DID THIS SUBMISSION'S OWN `markInvoicePaid` STEP PAY THE INVOICE OFF?
@@ -644,14 +652,68 @@ export async function recordPaymentHandler(
     const linkedInvoiceRef =
       !plannedStep && args.invoiceId !== '' ? db().collection('invoices').doc(args.invoiceId) : null;
     const linkedInvoiceSnap = linkedInvoiceRef ? await tx.get(linkedInvoiceRef) : null;
-    const claimedOwner = linkedInvoiceSnap?.exists
-      ? claimableMarkInvoicePaidOwner(
-          (linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>,
-          kinfolkId,
-          args.settledByInvoicePaymentId,
-          Date.now(),
-        )
+    const linkedInvoice = linkedInvoiceSnap?.exists
+      ? ((linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>)
+      : undefined;
+    let claimedOwner = linkedInvoice
+      ? claimableMarkInvoicePaidOwner(linkedInvoice, kinfolkId, args.settledByInvoicePaymentId, Date.now())
       : null;
+    // #2281 review: THE SETTLEMENT'S LEDGER ROW IS WRITTEN ONCE, WHOEVER GETS
+    // THERE FIRST. `settlementLedgerSweep` finishes a settlement whose second
+    // call never came by writing `payments/settle_<id>` and taking the claim.
+    // A second call that then does come (the operator pressing Record again
+    // after a lost reply, or a row added by hand for the invoice) found the
+    // claim taken and wrote its own row beside the sweep's: one payment, two
+    // ledger rows.
+    //
+    // THIS CALL'S ROW IS THE TRUE ONE. It carries the tip, the fee and any
+    // credit the admin entered; the sweep's row is a stand-in built from the
+    // settlement alone (`tipBasis: 'unknown'`). So this call deletes the
+    // sweep's row and writes its own in the same commit, and keeps the sweep
+    // row's notice stamps so the copies it already sent are not sent again.
+    //
+    // WHICH CALLS. One that names the settlement replaces its sweep row
+    // outright. One with no settlement id (a hand-added row, a pre-#866 build)
+    // must be linked to the invoice, for the same household, and cover the
+    // settled amount with its non-tip money; a later, smaller row (a tip sent
+    // the next day) is a different payment and is left alone. Before the
+    // sweep has run, that same test lets a row with no settlement id take the
+    // claim after OLD_CLIENT_CLAIM_WINDOW_MS, so the sweep finds the
+    // settlement claimed and writes nothing.
+    //
+    // WHY THIS IS SAFE AGAINST THE SWEEP RUNNING AT THE SAME MOMENT. Both
+    // transactions read the invoice doc and write it (the claim), and the
+    // sweep's row lives at an id made from the invoice's own owner stamp, read
+    // here by id. Whichever commits second re-runs and sees the other's write.
+    // No query is involved, so there is no row for either to miss.
+    let replacedSweepRow: { id: string; data: Record<string, unknown> } | null = null;
+    const settlement =
+      claimedOwner === null ? markInvoicePaidSettlementOf(linkedInvoice, kinfolkId, args.settledByInvoicePaymentId) : null;
+    if (settlement !== null && linkedInvoiceRef) {
+      const named = args.settledByInvoicePaymentId !== undefined;
+      const coverCents = amountCents - tipCents;
+      if (settlement.claimed) {
+        const sweepRowRef = db().collection('payments').doc(settlementLedgerRowId(settlement.settlementId));
+        const sweepRowSnap = await tx.get(sweepRowRef);
+        const sweepRow = (sweepRowSnap.data() ?? {}) as Record<string, unknown>;
+        const settledCents = storedCents(sweepRow, 'amountCents');
+        if (
+          sweepRowSnap.exists &&
+          sweepRow['recordedByServer'] === SETTLEMENT_LEDGER_SWEEP_WRITER &&
+          sweepRow['invoiceId'] === args.invoiceId &&
+          sweepRow['kinfolkId'] === kinfolkId &&
+          (named || (settledCents > 0 && coverCents >= settledCents))
+        ) {
+          replacedSweepRow = { id: sweepRowRef.id, data: sweepRow };
+        }
+      } else if (!named && settlement.pending) {
+        const settlementSnap = await tx.get(linkedInvoiceRef.collection('payments').doc(settlement.settlementId));
+        const settledCents = settlementSnap.exists
+          ? paidCentsFromPayments([(settlementSnap.data() ?? {}) as PaymentAmount])
+          : 0;
+        if (settledCents > 0 && coverCents >= settledCents) claimedOwner = settlement.owner;
+      }
+    }
     // THE APPLY AND THE PAYMENT ROW LAND TOGETHER. `markInvoicePaid` and this
     // callable were two steps on purpose (the money first, the display row
     // second and best-effort), and that stays true for the flow that calls them
@@ -753,33 +815,49 @@ export async function recordPaymentHandler(
     // copy reads the same answer instead of re-deriving it from a later state.
     // Either this call's own apply settled it, or it claimed the settlement
     // `markInvoicePaid` stamped just before it.
+    // A sweep row exists only for a settlement that paid the invoice off, and
+    // the row taking its place is that same payment's.
     const settlesInvoice = staged
       ? staged.state === 'settled' || staged.state === 'overpaid'
-      : claimedOwner !== null;
+      : claimedOwner !== null || replacedSweepRow !== null;
     row['settlesInvoice'] = settlesInvoice;
-    if (linkedInvoiceRef && claimedOwner !== null) {
-      const linked = (linkedInvoiceSnap?.data() ?? {}) as Record<string, unknown>;
+    if (replacedSweepRow !== null) {
+      // The copies the sweep already sent for this payment, so they are not
+      // sent again; what is still owed is worked out from these after the commit.
+      for (const field of CARRIED_NOTICE_STAMPS) {
+        if (replacedSweepRow.data[field] != null) row[field] = replacedSweepRow.data[field];
+      }
+      // Which row this one replaced, and the id its notice goes out under: the
+      // sweep's, so both senders share one dedupe identity for the settlement.
+      row['replacedSettlementLedgerRowId'] = replacedSweepRow.id;
+      row['noticePaymentId'] = replacedSweepRow.id;
+    }
+    const settledOwner = claimedOwner ?? (replacedSweepRow !== null ? (settlement?.owner ?? null) : null);
+    if (linkedInvoiceRef && settledOwner !== null) {
+      const linked = linkedInvoice ?? {};
       tx.set(
         linkedInvoiceRef,
         {
-          [PAYMENT_APPLIED_CLAIM_FIELD]: claimedOwner,
+          // Already this value when the sweep took the claim first.
+          [PAYMENT_APPLIED_CLAIM_FIELD]: settledOwner,
           // #2230: this is the second call that settlement was waiting for, so
           // the ledger row and the notice are this call's now, and the sweep
           // that finishes an abandoned settlement stands down. Cleared only
           // when it names this settlement, never a later one.
-          ...(linked[SETTLEMENT_LEDGER_PENDING_FIELD] === claimedOwner
+          ...(linked[SETTLEMENT_LEDGER_PENDING_FIELD] === settledOwner
             ? { [SETTLEMENT_LEDGER_PENDING_FIELD]: '', [SETTLEMENT_LEDGER_PENDING_AT_FIELD]: null }
             : {}),
         },
         { merge: true },
       );
     }
+    if (replacedSweepRow !== null) tx.delete(db().collection('payments').doc(replacedSweepRow.id));
     // `create` WHEN THERE IS A KEY, so two attempts that somehow reach the
     // write together are refereed by the server rather than by the read above.
     // A keyless call keeps `set`: its id is server-minted and cannot collide.
     if (args.idempotencyKey !== undefined) tx.create(ref, row);
     else tx.set(ref, row);
-    return { replayed: null, application: staged, settlesInvoice };
+    return { replayed: null, application: staged, settlesInvoice, replacedSweepRow };
   });
 
   if (committed.replayed !== null) {
@@ -793,6 +871,16 @@ export async function recordPaymentHandler(
     return replayWithConfirmation(ref, committed.replayed, args.sendConfirmationEmail, actor.uid);
   }
   const application = committed.application;
+  const replacedSweepRow = committed.replacedSweepRow;
+  if (replacedSweepRow !== null) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordPayment',
+      event: 'settlement.ledger.replaced',
+      uid: actor.uid,
+      extra: { paymentId: ref.id, replacedPaymentId: replacedSweepRow.id, kinfolkId, invoiceId: args.invoiceId },
+    });
+  }
 
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -836,6 +924,24 @@ export async function recordPaymentHandler(
       // second payment from a second attempt at one payment is the trail that
       // would have had to answer #825 after the fact.
       idempotencyKey: args.idempotencyKey ?? null,
+      // #2281 review: the sweep's stand-in row this one took the place of, kept
+      // here because the row itself is gone from `payments`.
+      ...(replacedSweepRow !== null
+        ? {
+            replacedSettlementLedgerRow: {
+              paymentId: replacedSweepRow.id,
+              amountCents: storedCents(replacedSweepRow.data, 'amountCents'),
+              date: replacedSweepRow.data['date'] ?? '',
+              paymentMethod: replacedSweepRow.data['paymentMethod'] ?? '',
+              referenceNumber: replacedSweepRow.data['referenceNumber'] ?? '',
+              settledByInvoicePaymentId: replacedSweepRow.data['settledByInvoicePaymentId'] ?? '',
+              recordedBy: replacedSweepRow.data['recordedBy'] ?? '',
+              confirmationEmailSent: replacedSweepRow.data['confirmationEmailSent'] === true,
+              confirmationAppOnly: replacedSweepRow.data['confirmationAppOnly'] === true,
+              officeNoticeSent: replacedSweepRow.data['officeNoticeSentAt'] != null,
+            },
+          }
+        : {}),
     },
   }).catch((err) => {
     logEvent({
@@ -858,25 +964,35 @@ export async function recordPaymentHandler(
   // invoice off (`settlesInvoice`, decided in the transaction above), on their
   // notifications list with nothing emailed (#1973), and so does the office.
   // An unticked partial tells nobody.
-  const sent = await sendPaymentConfirmation({
-    kinfolkId,
-    // The invoice the confirmation is ABOUT: the one this payment was
-    // applied to, or the display link when nothing was applied. The catalog's
-    // `invoice.payment.applied` template needs one.
-    invoiceId: application?.invoiceId ?? args.invoiceId,
-    paymentId: ref.id,
-    uid: actor.uid,
-    householdRequested: args.sendConfirmationEmail,
-    settlesInvoice: committed.settlesInvoice,
-    officeDue: true,
-    // #1973: an unticked payment that pays the invoice off still puts the
-    // payoff on the household's notifications list (nothing is emailed).
-    householdOnPayoff: true,
-  });
+  //
+  // #2281 review: a row that took a sweep row's place sends only the copies the
+  // sweep did not get out, read off the stamps it carried over, the way a
+  // same-key retry does. They go out under the sweep row's id.
+  const owed = replacedSweepRow !== null ? copiesOwed(replacedSweepRow.data, args.sendConfirmationEmail, true) : null;
+  const sent =
+    owed !== null && !owed.householdDue && !owed.listDue && !owed.officeDue
+      ? NOTHING_SENT
+      : await sendPaymentConfirmation({
+          kinfolkId,
+          // The invoice the confirmation is ABOUT: the one this payment was
+          // applied to, or the display link when nothing was applied. The catalog's
+          // `invoice.payment.applied` template needs one.
+          invoiceId: application?.invoiceId ?? args.invoiceId,
+          paymentId: replacedSweepRow?.id ?? ref.id,
+          uid: actor.uid,
+          householdRequested: owed !== null ? owed.householdDue : args.sendConfirmationEmail,
+          settlesInvoice: committed.settlesInvoice,
+          officeDue: owed !== null ? owed.officeDue : true,
+          ...(owed !== null ? { officeOwedWithoutHousehold: args.sendConfirmationEmail && owed.householdTold } : {}),
+          // #1973: an unticked payment that pays the invoice off still puts the
+          // payoff on the household's notifications list (nothing is emailed).
+          householdOnPayoff: owed !== null ? owed.listDue : true,
+        });
   // #1511: "sent" means a channel carried it. A copy that reached the household
   // in the app only is reported through `confirmationAppOnly` instead.
-  const confirmationEmailSent = sent.household && !sent.householdAppOnly;
-  const confirmationAppOnly = sent.household && sent.householdAppOnly;
+  const carried = replacedSweepRow?.data ?? {};
+  const confirmationEmailSent = carried['confirmationEmailSent'] === true || (sent.household && !sent.householdAppOnly);
+  const confirmationAppOnly = carried['confirmationAppOnly'] === true || (sent.household && sent.householdAppOnly);
   {
     // STAMPED ON THE ROW, so a replay can report it (#825) and a same-key retry
     // knows what is left to send (#866). Outside the transaction because it is
@@ -938,8 +1054,9 @@ export async function recordPaymentHandler(
     application,
     creditedToAccountCents,
     confirmationEmailSent,
-    // Present only when a household copy was written by this call (#1511).
-    ...(sent.household ? { confirmationAppOnly } : {}),
+    // Present only when a household copy was written by this call, or by the
+    // sweep whose row this call replaced (#1511).
+    ...(confirmationEmailSent || confirmationAppOnly ? { confirmationAppOnly } : {}),
     householdNoPortalAccount: sent.noPortalAccount,
     officeNoticePending: sent.officePending,
   });
@@ -1049,6 +1166,36 @@ export const PAYMENT_CONFIRMATION_DEDUPE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
  * copy for a retry: the record exists, and sending again would not add a
  * channel the household has turned off.
  */
+/** The stamps `noticeStamps` writes: carried onto a row that replaces the sweep's (#2281 review). */
+const CARRIED_NOTICE_STAMPS = [
+  'confirmationEmailSent',
+  'confirmationAppOnly',
+  'officeNoticeSentAt',
+  'officeNoticeSkippedReason',
+] as const;
+/**
+ * Which copies of `invoice.payment.applied` a payment's row still shows as
+ * owed, for a retry (#866) or for a row taking a sweep row's place (#2281
+ * review). The rules are in the note on `replayWithConfirmation`.
+ */
+function copiesOwed(
+  stored: Record<string, unknown>,
+  householdRequested: boolean,
+  settlesInvoice: boolean,
+): { householdTold: boolean; householdDue: boolean; listDue: boolean; officeDue: boolean } {
+  const householdTold = stored['confirmationEmailSent'] === true || stored['confirmationAppOnly'] === true;
+  return {
+    householdTold,
+    householdDue: householdRequested && !householdTold,
+    // #1973: the unticked payoff's list-only copy, owed until it is on record.
+    listDue: !householdRequested && settlesInvoice && !householdTold,
+    officeDue:
+      (settlesInvoice || householdRequested) &&
+      stored['officeNoticeSentAt'] == null &&
+      // Nobody existed to receive it last time; that is final, not unfinished.
+      stored['officeNoticeSkippedReason'] == null,
+  };
+}
 export function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown> {
   return {
     ...(sent.household && !sent.householdAppOnly ? { confirmationEmailSent: true } : {}),
@@ -1084,20 +1231,15 @@ async function replayWithConfirmation(
 ): Promise<z.infer<typeof Result>> {
   const answer = replayResult(ref.id, stored);
   const settlesInvoice = stored['settlesInvoice'] === true;
-  const householdTold = stored['confirmationEmailSent'] === true || stored['confirmationAppOnly'] === true;
-  const householdDue = householdRequested && !householdTold;
-  // #1973: the unticked payoff's list-only copy, owed until it is on record.
-  const listDue = !householdRequested && settlesInvoice && !householdTold;
-  const officeDue =
-    (settlesInvoice || householdRequested) &&
-    stored['officeNoticeSentAt'] == null &&
-    // Nobody existed to receive it last time; that is final, not unfinished.
-    stored['officeNoticeSkippedReason'] == null;
+  const { householdTold, householdDue, listDue, officeDue } = copiesOwed(stored, householdRequested, settlesInvoice);
   if (!householdDue && !listDue && !officeDue) return answer;
+  // #2281 review: a row that replaced the sweep's keeps sending under the
+  // sweep row's id, the identity every earlier copy for this payment used.
+  const noticePaymentId = stored['noticePaymentId'];
   const sent = await sendPaymentConfirmation({
     kinfolkId: answer.kinfolkId,
     invoiceId: answer.application?.invoiceId ?? (typeof stored['invoiceId'] === 'string' ? stored['invoiceId'] : ''),
-    paymentId: ref.id,
+    paymentId: typeof noticePaymentId === 'string' && noticePaymentId !== '' ? noticePaymentId : ref.id,
     uid: actorUid,
     householdRequested: householdDue,
     settlesInvoice,
@@ -1248,6 +1390,14 @@ export interface ConfirmationOutcome {
   officePending: boolean;
 }
 
+/** No copy was attempted, because none was owed. */
+const NOTHING_SENT: ConfirmationOutcome = {
+  household: false,
+  householdAppOnly: false,
+  office: false,
+  noPortalAccount: false,
+  officePending: false,
+};
 export async function sendPaymentConfirmation(input: {
   kinfolkId: string;
   invoiceId: string;

@@ -808,9 +808,35 @@ describe('#866 office copy: only for a payment that pays the invoice off (as on 
     expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toMatch(/^markInvoicePaid:/);
   });
 
-  it('an older installed client 10 minutes after the settlement claims nothing', async () => {
+  // #2281 review: past the claim window the clock no longer decides. While the
+  // settlement still waits for its ledger row, a row for the same invoice that
+  // covers the settled amount is that row, and takes the claim so the sweep
+  // writes no second one. Anything else claims nothing, as before.
+  it('an older installed client 10 minutes after a settlement nobody finished takes it, when its row covers the amount', async () => {
     seedInvoice();
     await settleStep(40);
+    later(10 * MIN);
+    await ledgerStep(40, false);
+    expect(staffCount()).toBe(1);
+    expect(listOnlyCount()).toBe(1);
+    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toMatch(/^markInvoicePaid:/);
+    expect(docs[INVOICE]!['settlementLedgerPending']).toBe('');
+  });
+  it('a smaller row 10 minutes after the settlement claims nothing', async () => {
+    seedInvoice();
+    await settleStep(40);
+    later(10 * MIN);
+    await ledgerStep(15, false);
+    expect(staffCount()).toBe(0);
+    expect(docs[INVOICE]!['paymentAppliedNoticeClaim']).toBeUndefined();
+    expect(docs[INVOICE]!['settlementLedgerPending']).toMatch(/^markInvoicePaid:/);
+  });
+  it('an older installed client 10 minutes after a settlement that is no longer waiting claims nothing', async () => {
+    seedInvoice();
+    await settleStep(40);
+    // Finished, or settled before the pending stamp existed.
+    docs[INVOICE]!['settlementLedgerPending'] = '';
+    docs[INVOICE]!['settlementLedgerPendingAtMs'] = null;
     later(10 * MIN);
     await ledgerStep(40, false);
     expect(staffCount()).toBe(0);
@@ -933,6 +959,10 @@ describe('#866 old-client claim window and clock skew', () => {
   it('a settlement stamp that reads 10 seconds in the future is not trusted', async () => {
     seedInvoice();
     await settleStep(40);
+    // The clock rule alone: a settlement still waiting for its ledger row is
+    // claimed by a covering row whatever the clock says (#2281 review).
+    docs[INVOICE]!['settlementLedgerPending'] = '';
+    docs[INVOICE]!['settlementLedgerPendingAtMs'] = null;
     later(-10_000);
     await ledgerStep(40, false);
     expect(staffCount()).toBe(0);

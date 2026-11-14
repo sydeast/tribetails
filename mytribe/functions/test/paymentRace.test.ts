@@ -74,6 +74,7 @@ import { repairInvoicePaymentsHandler } from '../src/admin/repairInvoicePayments
 import { ledgerDateOf, sweepAbandonedSettlements, settlementLedgerRowId } from '../src/lib/settlementLedgerSweep';
 import {
   PAYMENT_APPLIED_CLAIM_FIELD,
+  PAYMENT_APPLIED_OWNER_AT_FIELD,
   SETTLEMENT_LEDGER_PENDING_AT_FIELD,
   SETTLEMENT_LEDGER_PENDING_FIELD,
   SETTLEMENT_LEDGER_SWEEP_GRACE_MS,
@@ -497,5 +498,219 @@ describe('#2230: an older admin client stops between its two calls', () => {
     expect(docs[`payments/${pay(1)}`]).toMatchObject({ settlesInvoice: true, appliedCents: 4000 });
     expect(hooks.enqueue).toHaveBeenCalledTimes(1);
     expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(0);
+  });
+});
+
+/**
+ * #2281 review: THE SWEEP'S ROW AND A LATE SECOND CALL ARE ONE PAYMENT.
+ *
+ * The sweep writes `payments/settle_<id>` for a settlement nobody finished. A
+ * second call that arrives after it (the operator pressing Record again on a
+ * tab whose first reply was lost, or a row added by hand for the same invoice)
+ * used to write its own row beside the sweep's, so the ledger counted the
+ * payment twice. The caller's row carries the tip, the fee and any credit; the
+ * sweep's row does not. So the caller's row takes the sweep row's place in one
+ * commit, and keeps its notice stamps.
+ */
+describe('#2281 review: a second call that arrives after the sweep', () => {
+  const later = () => Date.now() + SETTLEMENT_LEDGER_SWEEP_GRACE_MS + 1000;
+  const settleRow = settlementLedgerRowId(ipay(1));
+  const ledgerRows = () => Object.keys(docs).filter((p) => p.startsWith('payments/') && docs[p] != null);
+  const step1 = () =>
+    markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 40, method: 'venmo', reference: 'VN-9', idempotencyKey: ipay(1) }));
+  /** Step 2 as an installed two-call build sends it: the whole transaction, tip and fee included. */
+  const step2 = (settlementId: string, over: Record<string, unknown> = {}) =>
+    recordPaymentHandler(
+      req({
+        kinfolkId: 'fam1',
+        kinfolkName: 'The Riveras',
+        client: 'Ana Rivera',
+        date: '2026-11-13',
+        paymentMethod: 'venmo',
+        referenceNumber: 'VN-9',
+        amount: 45,
+        tip: 5,
+        fee: 1.5,
+        invoiceId: 'inv1',
+        invoiceNumber: '1029',
+        settledByInvoicePaymentId: settlementId,
+        sendConfirmationEmail: true,
+        idempotencyKey: pay(1),
+        ...over,
+      }),
+    );
+  /** A row added by hand for the invoice: linked to it, no settlement id, no apply. */
+  const handRow = (over: Record<string, unknown> = {}) =>
+    recordPaymentHandler(
+      req({
+        kinfolkId: 'fam1',
+        date: '2026-11-13',
+        paymentMethod: 'venmo',
+        amount: 45,
+        tip: 5,
+        invoiceId: 'inv1',
+        invoiceNumber: '1029',
+        idempotencyKey: pay(2),
+        ...over,
+      }),
+    );
+  /** Moves the settlement's stamp back, so a call with no settlement id is past the old-client claim window. */
+  const ageSettlement = (ms: number) => {
+    docs[INVOICE]![PAYMENT_APPLIED_OWNER_AT_FIELD] -= ms;
+  };
+  it('the late retry leaves one ledger row with the caller\'s amounts, and no second notice', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    // The reply is lost. Ten minutes on, the sweep finishes the settlement.
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    expect(ledgerRows()).toEqual([`payments/${settleRow}`]);
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+    // The operator presses Record again with the same form: both calls, same keys.
+    expect(await step1()).toEqual(settled);
+    const first = await step2(settled.paymentId);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({
+      amountCents: 4500,
+      tipCents: 500,
+      feeCents: 150,
+      tipBasis: 'gross',
+      appliedCents: 4000,
+      unappliedCents: 0,
+      proceedsCents: 4350,
+      settledByInvoicePaymentId: ipay(1),
+      settlesInvoice: true,
+      recordedBy: 'admin1',
+      // The sweep's notice stamps came across with the row.
+      confirmationAppOnly: true,
+      officeNoticeSentAt: '__TS__',
+      replacedSettlementLedgerRowId: settleRow,
+    });
+    expect(first).toMatchObject({ paymentId: pay(1), amountCents: 4500, tipCents: 500, feeCents: 150, appliedCents: 4000 });
+    // The household and the office were told once, by the sweep.
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+    expect(first).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true, officeNoticePending: false });
+    // The money did not move again.
+    expect(docs[INVOICE]).toMatchObject({ paidCents: 4000, amountDueCents: 0, [SETTLEMENT_LEDGER_PENDING_FIELD]: '' });
+    expect(subcollectionRows()).toBe(1);
+    expect(docs['families/fam1']!.accountBalanceCents).toBe(12000);
+    // A second retry by the same key is answered from the row.
+    expect(await step2(settled.paymentId)).toEqual(first);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+    // And the sweep has nothing left to do.
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(0);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+  });
+  it('a credit the admin entered on the late retry is given once', async () => {
+    const tx = installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    const over = { amount: 55, creditToAccountCents: 1000 };
+    const first = await step2(settled.paymentId, over);
+    await step2(settled.paymentId, over);
+    expect(first).toMatchObject({ creditedToAccountCents: 1000, appliedCents: 4000, tipCents: 500 });
+    expect(docs['families/fam1']!.accountBalanceCents).toEqual({ __increment: 1000 });
+    // One write to the balance across both attempts.
+    expect(tx.committed().filter((p) => p === 'families/fam1')).toHaveLength(1);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+  });
+  it('the sweep landing inside the second call\'s window still ends with one row and one notice', async () => {
+    const settled = await step1();
+    const { tx, fired } = landInsideWindow(() => sweepAbandonedSettlements(ctx.db as never, later()));
+    await step2(settled.paymentId);
+    expect(fired()).toBe(true);
+    expect(tx.attempts()).toBeGreaterThan(1);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ amountCents: 4500, tipCents: 500, settlesInvoice: true });
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+  });
+  it('a sweep notice that never went out is sent once by the late retry, under the settlement\'s own identity', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    hooks.enqueue.mockRejectedValueOnce(Object.assign(new Error('UNAVAILABLE'), { code: 'unavailable' }));
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(0);
+    expect(docs[INVOICE]![SETTLEMENT_LEDGER_PENDING_FIELD]).toBe(`markInvoicePaid:${ipay(1)}`);
+    const first = await step2(settled.paymentId);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+    expect(hooks.enqueue).toHaveBeenCalledTimes(2);
+    // The same identity the sweep sends under, so the dispatcher's ledger
+    // catches a copy the sweep got out before it could stamp the row.
+    expect(hooks.enqueue.mock.calls[1]![0]).toMatchObject({
+      key: 'invoice.payment.applied',
+      data: { invoiceId: 'inv1', paymentId: settleRow },
+    });
+    expect(first.confirmationEmailSent).toBe(true);
+    expect(docs[INVOICE]).toMatchObject({ [SETTLEMENT_LEDGER_PENDING_FIELD]: '', [SETTLEMENT_LEDGER_PENDING_AT_FIELD]: null });
+    // Nothing further from a retry or from the sweep.
+    await step2(settled.paymentId);
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(0);
+    expect(hooks.enqueue).toHaveBeenCalledTimes(2);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+  });
+  it('the sweep writes nothing after a row was added by hand for the settlement', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    await step1();
+    // Six minutes on: past the old-client claim window, before the sweep.
+    ageSettlement(6 * 60 * 1000);
+    await handRow();
+    expect(docs[INVOICE]).toMatchObject({
+      [PAYMENT_APPLIED_CLAIM_FIELD]: `markInvoicePaid:${ipay(1)}`,
+      [SETTLEMENT_LEDGER_PENDING_FIELD]: '',
+      [SETTLEMENT_LEDGER_PENDING_AT_FIELD]: null,
+    });
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(0);
+    expect(ledgerRows()).toEqual([`payments/${pay(2)}`]);
+    expect(docs[`payments/${settleRow}`]).toBeUndefined();
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+  });
+  it('a row added by hand after the sweep takes the sweep row\'s place', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    await step1();
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    ageSettlement(60 * 60 * 1000);
+    await handRow();
+    expect(ledgerRows()).toEqual([`payments/${pay(2)}`]);
+    expect(docs[`payments/${pay(2)}`]).toMatchObject({
+      amountCents: 4500,
+      tipCents: 500,
+      settlesInvoice: true,
+      confirmationAppOnly: true,
+      replacedSettlementLedgerRowId: settleRow,
+    });
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+  });
+  it('a later row linked to the invoice that does not cover the payment leaves the sweep row alone', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    await step1();
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    ageSettlement(60 * 60 * 1000);
+    // A tip sent the next day, recorded against the same invoice.
+    await handRow({ amount: 5, tip: 5 });
+    expect(ledgerRows().sort()).toEqual([`payments/${pay(2)}`, `payments/${settleRow}`].sort());
+    expect(docs[`payments/${settleRow}`]).toMatchObject({ amountCents: 4000 });
+    expect(docs[`payments/${pay(2)}`]).toMatchObject({ amountCents: 500, settlesInvoice: false });
+    // The tip row is unticked and paid nothing off: nobody is told again.
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+  });
+  it('and before the sweep, the same small row does not stand in for the settlement', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    await step1();
+    ageSettlement(6 * 60 * 1000);
+    await handRow({ amount: 5, tip: 5 });
+    expect(docs[INVOICE]![SETTLEMENT_LEDGER_PENDING_FIELD]).toBe(`markInvoicePaid:${ipay(1)}`);
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    expect(ledgerRows().sort()).toEqual([`payments/${pay(2)}`, `payments/${settleRow}`].sort());
+  });
+  it('an earlier part payment\'s ledger row does not stop the sweep finishing a later payoff', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const part = await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 15, idempotencyKey: ipay(2) }));
+    await step2(part.paymentId, { amount: 15, tip: 0, fee: 0, sendConfirmationEmail: false });
+    // The payoff's second call never comes.
+    await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 25, idempotencyKey: ipay(1) }));
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    expect(ledgerRows().sort()).toEqual([`payments/${pay(1)}`, `payments/${settleRow}`].sort());
+    expect(docs[`payments/${settleRow}`]).toMatchObject({ amountCents: 2500, settledByInvoicePaymentId: ipay(1) });
   });
 });

@@ -34,13 +34,29 @@
  * on the next run, up to SETTLEMENT_LEDGER_MAX_ATTEMPTS, then given up and
  * logged; the ledger row stays.
  *
+ * A SECOND CALL THAT COMES AFTER ALL (#2281 review). The row this pass writes
+ * is a stand-in: it has no tip, fee or credit. `recordPayment` therefore never
+ * writes a second row beside it:
+ *
+ *   - a call naming the settlement (`settledByInvoicePaymentId`) that finds
+ *     this pass's row deletes it and writes its own in the same transaction,
+ *     keeping the notice stamps, so nobody is told twice;
+ *   - a row with no settlement id that is linked to the invoice and covers the
+ *     settled amount (a row added by hand, or a pre-#866 build's second call)
+ *     does the same after this pass, and before it takes the claim, so this
+ *     pass finds the settlement claimed and writes nothing.
+ *
+ * Both writers read and write the invoice doc in their transaction, and this
+ * pass's row sits at an id made from the invoice's own owner stamp, so
+ * whichever commits second sees what the first did. No query is involved.
+ * Any copy `recordPayment` still owes goes out under this pass's row id, so
+ * the dispatcher's ledger catches one this pass sent and could not stamp.
+ *
  * WHAT IT CANNOT CATCH. A settlement that left a balance (a partial) stamps
  * nothing, because nothing is owed to anyone until it is paid off and an
- * unticked partial tells nobody. And a pre-#866 client whose second call lands
- * more than OLD_CLIENT_CLAIM_WINDOW_MS late writes its own row without claiming,
- * so a row the sweep wrote first is then joined by a second one for the same
- * payment. The grace is twice that window to keep this to a call that is late
- * by many minutes.
+ * unticked partial tells nobody. And a row added by hand with no link to the
+ * invoice, or for less than the settled amount, cannot be told from a
+ * different payment, so it is left beside this pass's row.
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
@@ -56,7 +72,12 @@ import {
   SETTLEMENT_LEDGER_PENDING_AT_FIELD,
   SETTLEMENT_LEDGER_PENDING_FIELD,
   SETTLEMENT_LEDGER_SWEEP_GRACE_MS,
+  SETTLEMENT_LEDGER_SWEEP_WRITER,
+  settlementLedgerRowId,
 } from './paymentAppliedOwner';
+// Defined beside the claim fields so `recordPayment` can read it without
+// importing this module (which loads `recordPayment` itself, lazily).
+export { settlementLedgerRowId };
 
 /** Tries per abandoned settlement before it is given up: about an hour at one run every 5 minutes. */
 export const SETTLEMENT_LEDGER_MAX_ATTEMPTS = 12;
@@ -69,10 +90,6 @@ export const SETTLEMENT_LEDGER_SWEEP_BUDGET_MS = 15 * 1000;
 const SWEEP_LIMIT = 50;
 const OWNER_PREFIX = 'markInvoicePaid:';
 
-/** The root `payments` id the sweep writes for one settlement row. */
-export function settlementLedgerRowId(settlementPaymentId: string): string {
-  return `settle_${settlementPaymentId}`;
-}
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
@@ -188,7 +205,7 @@ async function stageLedgerRow(firestore: Firestore, invoiceId: string): Promise<
         confirmationEmailSent: false,
         confirmationAppOnly: false,
         // Which writer made it, for anyone reading the row later.
-        recordedByServer: 'settlementLedgerSweep',
+        recordedByServer: SETTLEMENT_LEDGER_SWEEP_WRITER,
       });
     }
     tx.set(
@@ -299,6 +316,10 @@ export async function finishAbandonedSettlement(firestore: Firestore, invoiceId:
   const done = (sent.household || sent.office || sent.skipped === true) && !sent.officePending;
   try {
     if (sent.household || sent.office || sent.skipped) {
+      // Throws when a late second call has replaced the row in the meantime
+      // (#2281 review). That call cleared the pending stamp and owns the row
+      // now; what it still sends goes out under this row's id, so the
+      // dispatcher's ledger drops it as a copy of the one just sent.
       await firestore.collection('payments').doc(staged.rowId).update(noticeStamps(sent));
     }
     if (done) {

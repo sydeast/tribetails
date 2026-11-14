@@ -176,6 +176,49 @@ export const SETTLEMENT_LEDGER_PENDING_AT_FIELD = 'settlementLedgerPendingAtMs';
  */
 export const SETTLEMENT_LEDGER_SWEEP_GRACE_MS = 2 * OLD_CLIENT_CLAIM_WINDOW_MS;
 
+/** The root `payments` id the sweep writes for one settlement row. */
+export function settlementLedgerRowId(settlementPaymentId: string): string {
+  return `settle_${settlementPaymentId}`;
+}
+/** `recordedByServer` on a ledger row the sweep wrote. Only such a row is ever replaced. */
+export const SETTLEMENT_LEDGER_SWEEP_WRITER = 'settlementLedgerSweep';
+const MARK_INVOICE_PAID_OWNER_PREFIX = 'markInvoicePaid:';
+/**
+ * #2281 review: THE `markInvoicePaid` SETTLEMENT A LEDGER ROW FOR THIS INVOICE
+ * BELONGS TO, and how far it has got. Null unless the invoice is paid, belongs
+ * to `kinfolkId`, and was paid off by `markInvoicePaid` (by the settlement
+ * `invoicePaymentId` names, when one is given).
+ *
+ *   - `claimed`: a second call or the sweep has taken the settlement. If it was
+ *     the sweep, its row is `payments/settle_<settlementId>`.
+ *   - `pending`: the settlement still waits for its ledger row and notice.
+ *
+ * Unlike `claimableMarkInvoicePaidOwner` it has no time window and does not
+ * stop at a claim. `recordPayment` uses it for the two cases that function
+ * refuses: a call that arrives after the sweep, and a row with no settlement
+ * id that arrives after OLD_CLIENT_CLAIM_WINDOW_MS. Both are then decided on
+ * documents read in the same transaction, not on the clock.
+ */
+export function markInvoicePaidSettlementOf(
+  invoice: Record<string, unknown> | undefined,
+  kinfolkId: string,
+  invoicePaymentId: string | undefined,
+): { owner: string; settlementId: string; claimed: boolean; pending: boolean } | null {
+  if (!invoice || kinfolkId === '' || invoice['kinfolkId'] !== kinfolkId) return null;
+  const owner = invoice[PAYMENT_APPLIED_OWNER_FIELD];
+  if (typeof owner !== 'string' || !owner.startsWith(MARK_INVOICE_PAID_OWNER_PREFIX)) return null;
+  const settlementId = owner.slice(MARK_INVOICE_PAID_OWNER_PREFIX.length);
+  if (settlementId === '') return null;
+  if (invoicePaymentId !== undefined && invoicePaymentId !== settlementId) return null;
+  const status = typeof invoice['status'] === 'string' ? invoice['status'].trim().toLowerCase() : '';
+  if (status !== 'paid') return null;
+  return {
+    owner,
+    settlementId,
+    claimed: invoice[PAYMENT_APPLIED_CLAIM_FIELD] === owner,
+    pending: invoice[SETTLEMENT_LEDGER_PENDING_FIELD] === owner,
+  };
+}
 /**
  * The `markInvoicePaid` owner stamp a `recordPayment` for `kinfolkId` may claim
  * on this invoice, or null. Claimable means: the invoice is paid, belongs to that
