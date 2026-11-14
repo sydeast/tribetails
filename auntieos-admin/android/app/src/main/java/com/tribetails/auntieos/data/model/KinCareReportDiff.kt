@@ -19,7 +19,8 @@ package com.tribetails.auntieos.data.model
  *
  *   this editor              title, bodyCopy, fieldResponses, petMoodSelections,
  *                            mediaFileIds, formValues
- *   markReportSent           status, sentAt, sentVia, deliveryReceiptId
+ *   markReportSent           status, sentAt, sentVia, deliveryReceiptId,
+ *   (sendKinTaleReport)      careTasks (#2058, the server's copy of the care tasks)
  *   triageOrphanReport       kinfolkId, kinfolkName, triageStatus, triagedAt,
  *   (server callable)        triagedBy, duplicateOfReportId, archiveReason
  *   the repository           id, authorId, authorDisplayName, createdAt, updatedAt
@@ -120,6 +121,9 @@ internal val KIN_CARE_REPORT_OTHER_WRITERS = setOf(
     // session prefill, write-once at create
     "sessionId", "kinIds", "serviceType", "visitDate", "arrivedAt", "departedAt",
     "visitRouteId", "templateId",
+    // #2058: the sent tale's own copy of its care tasks, server-written only
+    // (sendKinTaleReport, and onKinTaleUpdate when a tick changes after the send)
+    "careTasks",
 )
 
 /**

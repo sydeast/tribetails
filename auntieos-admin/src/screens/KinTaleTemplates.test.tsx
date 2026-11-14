@@ -1173,7 +1173,10 @@ describe('KinTaleTemplates: remove, archive, delete for good (#1591)', () => {
     await user.click(screen.getByRole('button', { name: 'Delete Old sit for good' }));
     const dialog = screen.getByRole('dialog', { name: 'Delete Old sit for good?' });
     expect(await within(dialog).findByText('3 KinTales were written from this template.')).toBeInTheDocument();
-    expect(within(dialog).getByText(/ticked checklist items stop showing to the household/)).toBeInTheDocument();
+    // #2058: sent KinTales keep their own copy, and the count is said once.
+    expect(within(dialog).getByText('KinTales already sent keep their care tasks.')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/stop showing to the household/)).toBeNull();
+    expect(within(dialog).getAllByText(/were written from/)).toHaveLength(1);
     expect(getKinTaleTemplateUsage).toHaveBeenCalledWith('t2');
     await user.click(within(dialog).getByRole('button', { name: 'Delete for good' }));
     await waitFor(() => expect(removeKinTaleTemplate).toHaveBeenCalledWith('t2', 'delete'));

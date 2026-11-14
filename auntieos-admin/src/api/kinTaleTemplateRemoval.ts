@@ -9,7 +9,8 @@ import { deleteDoc, updateDoc } from '../lib/firestoreWrite';
  * OPERATOR RULING, 2026-11-05 docket: "both". Remove moves a template to an
  * archive: the doc stays, so it is restorable, but it is hidden from the
  * template list and never picked for a new KinTale (`pickTemplateForService`
- * skips it). KinTales already written from it keep reading it. Deleting for
+ * skips it). KinTales already sent keep their own copy of the care tasks
+ * (#2058), so neither archiving nor deleting changes them. Deleting for
  * good happens only from inside the archive, behind a warning that says how
  * many KinTales used it. Removal stays owner-only: the `kintale_templates`
  * write rule is `isOwner()`, and its delete rule also requires `archived ==
@@ -40,25 +41,21 @@ export async function getKinTaleTemplateUsage(templateId: string): Promise<KinTa
 }
 
 /**
- * What stops working once the doc is gone, one line each, for the delete-for-good
- * confirm. Empty when nothing depends on it. The household feed
- * (`getMyKinTales.resolveChecklists`) drops the checklist of a KinTale whose
- * template is missing. The template is already archived by then, so it is no
- * longer anyone's default for new KinTales.
+ * What deleting for good means for the KinTales written from it, one line each,
+ * for the delete-for-good confirm, under the count {@link deleteHeadline} leads
+ * with. Empty when nothing used it.
+ *
+ * #2058 (operator ruling 2026-11-12, stamp at send): a sent KinTale keeps its
+ * own copy of the care tasks, so deleting the template takes nothing from a
+ * household. The line used to say the ticked items stop showing, which was
+ * true then; it also repeated the count and explained how the feed works.
  */
 export function removalImpact(usage: KinTaleTemplateUsage): string[] {
-  const lines: string[] = [];
-  if (usage.kintaleCount > 0) {
-    const n = usage.kintaleCount;
-    lines.push(
-      `${n} KinTale${n === 1 ? ' was' : 's were'} written from it. ` +
-        `${n === 1 ? 'Its' : 'Their'} ticked checklist items stop showing to the household, ` +
-        `because the household feed reads the labels from the template.`,
-    );
-  }
-  return lines;
+  if (usage.kintaleCount === 0) return [];
+  return [SENT_KINTALES_KEEP_TASKS];
 }
-
+/** #2058: the delete confirm's promise about KinTales already sent. */
+export const SENT_KINTALES_KEEP_TASKS = 'KinTales already sent keep their care tasks.';
 /** The line the delete-for-good confirm leads with: how many KinTales used it. */
 export function deleteHeadline(usage: KinTaleTemplateUsage): string {
   const n = usage.kintaleCount;

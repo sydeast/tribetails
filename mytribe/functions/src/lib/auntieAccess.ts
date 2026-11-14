@@ -54,8 +54,9 @@ export const STAFF_ROLE_AUNTIE = 'auntie';
  */
 export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // ── KinTales: her core output ──────────────────────────────────────────
-  // A KinTale itself is a direct client write governed by firestore.rules, not
-  // a callable. These are the callables its lifecycle reaches for.
+  // A KinTale draft is a direct client write governed by firestore.rules, not
+  // a callable. These are the callables its lifecycle reaches for, the send
+  // among them since #2058.
   'dispatchVisitNotification', // Android + desktop announce a send through this
   'previewVisitNotification', // the clock confirm asks who would be told (#1840)
   'createShareLink', // share a tale with someone outside the household
@@ -66,6 +67,9 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // #1563: send a generated KinTale draft to its household. Deleting one
   // (deleteGeneratedDraft) is destructive (rule 6) and stays with the owner.
   'publishGeneratedDraft',
+  // #2058: sending a visit's KinTale. Marks it sent and stamps its own copy of
+  // the care tasks in one transaction, which a client write could not do.
+  'sendKinTaleReport',
   // #2163, operator ruling 2026-11-13: an Auntie never sees Templates (email,
   // SMS, push). listTemplates, listTemplateBindings and listCategories were
   // here, but only the Templates screens call them on any client, so they

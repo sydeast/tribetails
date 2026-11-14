@@ -1127,6 +1127,11 @@ data class KinCareReport(
     // (appliesTo == "KINTALE"), keyed by field id. DISTINCT from [fieldResponses]
     // (KinTale-template answers). Mirrors the web KinCareReport.
     var formValues: Map<String, String> = emptyMap(),
+    // #2058: a SENT tale's own copy of its care tasks, stamped by the server in
+    // the write that sent it (operator ruling 2026-11-12, stamp at send). Read
+    // only: it is in KIN_CARE_REPORT_OTHER_WRITERS, so no save from this app
+    // writes it back. Null on a draft and on a tale sent before the copy existed.
+    var careTasks: CareTaskCopy? = null,
 )
 
 /**

@@ -53,6 +53,27 @@ export async function onKinTaleCreateHandler(event: any): Promise<void> {
     }
   }
 
+  // #2058: a tale created already SENT by a writer other than the send
+  // callable or `publishGeneratedDraft` (which stamp it in the same write)
+  // gets its own copy of the care tasks here. A draft create does nothing.
+  if (report) {
+    try {
+      const { isSentKinTale, readCareTaskStamp, syncCareTaskStamp, CARE_TASKS_FIELD } = await import(
+        '../lib/careTaskStamp.js'
+      );
+      const data = report as Record<string, unknown>;
+      if (isSentKinTale(data) && readCareTaskStamp(data[CARE_TASKS_FIELD]) === null) {
+        await syncCareTaskStamp(db(), db().doc(`kin_care_reports/${reportId}`));
+      }
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'onKinTaleCreate',
+        event: 'trigger.care_tasks.stamp_failed',
+        extra: { reportId, err: (err as Error)?.message },
+      });
+    }
+  }
   // Enrol the report in the reconcile pipeline. Runs BEFORE the draft return
   // below, because a draft is the normal create and still has to reconcile;
   // gating it on SENT would leave the common case out. Never blocks the
