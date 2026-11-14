@@ -328,6 +328,7 @@ function booking(overrides: Partial<GetMyBookingsResultLiveVisit> = {}): GetMyBo
     cancelRequestStatus: null,
     cancelRequestReason: null,
     cancelResponseNote: null,
+    requestDeclinedAtMs: null,
     rescheduleRequestStatus: null,
     rescheduleRequestedStartTimeMs: null,
     rescheduleRequestedEndTimeMs: null,

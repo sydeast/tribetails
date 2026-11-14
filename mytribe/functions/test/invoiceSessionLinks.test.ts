@@ -381,9 +381,10 @@ describe('#1970 updateInvoice unlinks a visit whose line it removes', () => {
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     await updateInvoiceHandler(
-      req({ invoiceId: 'inv1', patch: { lineItems: [line('s1')], termsCode: 'net_7_after_last_visit', date: '2026-06-10' } }),
+      req({ invoiceId: 'inv1', patch: { lineItems: [line('s1')], termsCode: 'net_7_after_last_visit', date: '2026-06-05' } }),
     );
-    // s2 (06-09) left with its line, so the last visit is s1 (06-02).
+    // s2 (06-09) left with its line, so the last visit is s1 (06-02). Dated
+    // Jun 5, so the Jun 9 answer is not held to the invoice date (#1966 review).
     expect(writeAt(ctx, 'invoices/inv1')?.data.dueDate).toBe('2026-06-09');
   });
 });

@@ -367,6 +367,29 @@ describe('notificationBatchSweep: promotion', () => {
     );
   });
 
+  it("#2093: a household's digest keeps the household's words the queued rows carry", async () => {
+    const household = (id: string, at: number): Row => {
+      const r = item('u1', 'kintale-comments', id, at);
+      return {
+        ...r,
+        data: {
+          ...r.data,
+          title: 'New comment on your KinTale',
+          description: 'When someone comments on one of your KinTales.',
+        },
+      };
+    };
+    const ctx = buildBatchDb({
+      'kintale-comments': [household('c-a', NOW - 30 * MIN), household('c-b', NOW - 20 * MIN)],
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await runNotificationBatchSweep(NOW);
+    const digest = ctx.sink.writes.find((w) => w.path.startsWith('notifications/'));
+    expect(digest!.data.title).toBe('New comment on your KinTale');
+    expect(digest!.data.description).toBe('When someone comments on one of your KinTales.');
+    expect(String(digest!.data.title)).not.toMatch(/comment box/);
+  });
+
   it('holds a bucket whose oldest item is still inside the window', async () => {
     // kintale.comment.added uses a 5-minute window.
     const ctx = buildBatchDb({

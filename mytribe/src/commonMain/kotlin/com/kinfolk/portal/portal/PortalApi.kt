@@ -2065,6 +2065,8 @@ class PortalApi(
         cancelRequestStatus = decodeCancelStatus(o["cancelRequestStatus"]?.jsonPrimitive?.contentOrNull),
         cancelRequestReason = o["cancelRequestReason"]?.jsonPrimitive?.contentOrNull,
         cancelResponseNote = o["cancelResponseNote"]?.jsonPrimitive?.contentOrNull,
+        // #2029: absent on an older server, which reads as a plain cancellation.
+        requestDeclinedAtMs = o["requestDeclinedAtMs"]?.jsonPrimitive?.longOrNull,
         rescheduleRequestStatus = decodeRescheduleStatus(o["rescheduleRequestStatus"]?.jsonPrimitive?.contentOrNull),
         rescheduleRequestedStartTimeMs = o["rescheduleRequestedStartTimeMs"]?.jsonPrimitive?.longOrNull,
         rescheduleRequestedEndTimeMs = o["rescheduleRequestedEndTimeMs"]?.jsonPrimitive?.longOrNull,

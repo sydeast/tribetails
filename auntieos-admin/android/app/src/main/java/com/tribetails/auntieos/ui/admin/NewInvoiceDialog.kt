@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -105,6 +106,9 @@ fun NewInvoiceDialog(
     initialKinfolkId: String = "",
     submitting: Boolean = false,
     submitError: String? = null,
+    /** #1966: the business's Payment terms setting and zone, and whether they have loaded. */
+    termsSetting: InvoiceTermsSettingState = InvoiceTermsSettingState(),
+    onRetryTermsSetting: () -> Unit = {},
 ) {
     if (!visible) return
 
@@ -122,7 +126,13 @@ fun NewInvoiceDialog(
     var kind by remember(initialKind) { mutableStateOf(initialKind) }
     var path by remember { mutableStateOf(InvoiceCreatePath.WORK) }
     var date by remember(todayIso) { mutableStateOf(todayIso) }
-    var termsCode by remember { mutableStateOf(InvoiceTermsCode.DUE_ON_RECEIPT) }
+    // #1966: the terms start on the business's Payment terms setting, seeded
+    // once it loads unless the operator has already picked terms here.
+    var termsPicked by remember { mutableStateOf(false) }
+    var termsCode by remember { mutableStateOf(termsSetting.paymentTerms) }
+    LaunchedEffect(termsSetting.loading, termsSetting.paymentTerms) {
+        if (!termsSetting.loading && !termsPicked) termsCode = termsSetting.paymentTerms
+    }
     var customDueDate by remember { mutableStateOf("") }
     var totalText by remember { mutableStateOf("") }
     var invoiceDiscountText by remember { mutableStateOf("") }
@@ -149,6 +159,8 @@ fun NewInvoiceDialog(
         invoiceDate = date,
         serviceDates = if (onWork) sessions.filter { it.sessionId in selected }.map { it.startTime } else emptyList(),
         now = todayIso,
+        // #1966: visit days on the business's clock, as the server counts them.
+        timeZone = termsSetting.timeZone,
     )
     val dueDateForSubmit = if (termsCode == InvoiceTermsCode.CUSTOM) customDueDate.trim() else due.dueDate.orEmpty()
 
@@ -157,7 +169,7 @@ fun NewInvoiceDialog(
     val catalog = rememberServiceCatalog()
     val money = if (onWork) composerMoney(sessions, selected, prices, extraLines, invoiceDiscountText, catalog) else null
 
-    val blocked = composerBlockedReason(
+    val blocked = if (termsSetting.loading) TERMS_LOADING else composerBlockedReason(
         kinfolkId = pick.id,
         path = path,
         termsCode = termsCode,
@@ -168,8 +180,9 @@ fun NewInvoiceDialog(
         draftCount = extraLines.size,
         money = money,
         totalText = totalText,
+        quote = isQuote,
     )
-    val termsNote = composerTermsNote(termsCode, due, date)
+    val termsNote = if (termsSetting.loading) TERMS_LOADING else composerTermsNote(termsCode, due, date, quote = isQuote)
 
     // #1593: each refusal under the field it is about, while it is wrong.
     val dueOrderProblem = if (termsCode == InvoiceTermsCode.CUSTOM) {
@@ -212,7 +225,7 @@ fun NewInvoiceDialog(
         if (onWork) {
             val lines = money?.lines
             if (money == null || lines == null || lines.isEmpty()) {
-                validationError = money?.error ?: "This invoice has no work on it yet."
+                validationError = money?.error ?: "This ${if (isQuote) "quote" else "invoice"} has no work on it yet."
                 return@submit
             }
             base.total = centsToDollars(money.totalCents)
@@ -316,7 +329,7 @@ fun NewInvoiceDialog(
 
         when {
             pick.id.isBlank() -> Text(
-                "Pick a household and its un-invoiced work appears here, ready to tick.",
+                "Pick a household and its ${if (isQuote) "unbilled" else "un-invoiced"} work appears here, ready to tick.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -336,12 +349,17 @@ fun NewInvoiceDialog(
                 setDoNotInvoice = setDoNotInvoice,
                 disabled = submitting,
                 catalog = catalog,
+                forQuote = isQuote,
             )
 
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "A blank invoice, with a total you type. Nothing on it is linked to logged work, so " +
-                        "nothing here can tell whether this household has already been billed for it.",
+                    if (isQuote) {
+                        "A blank quote, with a total you type. Nothing on it is linked to logged work."
+                    } else {
+                        "A blank invoice, with a total you type. Nothing on it is linked to logged work, so " +
+                            "nothing here can tell whether this household has already been billed for it."
+                    },
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )
@@ -356,7 +374,7 @@ fun NewInvoiceDialog(
                 )
                 totalFieldProblem?.let { FieldProblem(it) }
                 GhostButton(
-                    label = "Bill this household's logged work instead",
+                    label = if (isQuote) "Quote this household's logged work instead" else "Bill this household's logged work instead",
                     onClick = { path = InvoiceCreatePath.WORK },
                     enabled = !submitting,
                 )
@@ -380,15 +398,12 @@ fun NewInvoiceDialog(
             // different facts and must not read alike.
             Text(
                 if (money?.lines?.isNotEmpty() == true) {
-                    "This invoice will be created for ${formatCents(money.totalCents)}, worked out from the " +
-                        "work it covers. There is nowhere to type a total, so it can never say a different " +
-                        "number from the work it lists."
+                    composerTotalSentence(isQuote, money.totalCents, formatCents(money.totalCents))
                 } else if (money?.error != null && (selected.isNotEmpty() || extraLines.isNotEmpty())) {
                     // #1593: refused money has no total; the field above says why.
                     "Total $NO_FIGURE"
                 } else {
-                    "Totals are worked out from the work this invoice covers. Tick a visit above, or add a " +
-                        "line of your own."
+                    composerTotalSentence(isQuote, null, "")
                 },
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
@@ -430,14 +445,23 @@ fun NewInvoiceDialog(
         AuntieDropdownField(
             value = termsCode,
             options = invoiceTermsDefs(),
-            onSelect = { termsCode = it },
+            onSelect = {
+                termsPicked = true
+                termsCode = it
+            },
             displayText = { it.label },
             label = "Terms",
-            enabled = !submitting,
+            enabled = !submitting && !termsSetting.loading,
             modifier = Modifier.fillMaxWidth(),
         )
 
         Text(termsNote, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        if (termsSetting.failed) {
+            // Stacked, not side by side: beside a weighted sentence the button
+            // measured a few pixels wide and could not be tapped.
+            Text(TERMS_LOAD_FAILED, style = AuntieTheme.typography.bodySmall, color = c.error)
+            GhostButton(label = "Try again", onClick = onRetryTermsSetting, enabled = !submitting)
+        }
 
         if (isQuote) {
             Row(
@@ -446,7 +470,7 @@ fun NewInvoiceDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Send to kinfolk", style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                    Text("Send to Kinfolk now", style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
                     Text(
                         "Notify the household that a quote is ready.",
                         style = AuntieTheme.typography.bodySmall,

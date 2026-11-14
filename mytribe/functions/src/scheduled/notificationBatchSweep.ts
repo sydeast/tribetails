@@ -108,6 +108,13 @@ interface BucketSummary {
   catalogKey: string;
   category: string;
   channels: string[];
+  /**
+   * #2093: the words the dispatcher stored on the queued row, which are
+   * already this recipient's own (the household's title on a household copy).
+   * '' on a row queued before rows carried them; the digest then reads the def.
+   */
+  title: string;
+  description: string;
   items: BatchItem[];
 }
 
@@ -202,6 +209,8 @@ export async function runNotificationBatchSweep(
             catalogKey,
             category: (data.category as string | undefined) ?? 'kintale',
             channels: (data.channels as string[] | undefined) ?? [],
+            title: typeof data.title === 'string' ? data.title.trim() : '',
+            description: typeof data.description === 'string' ? data.description.trim() : '',
             items: [],
           };
           grouped.set(groupId, entry);
@@ -257,9 +266,11 @@ export async function runNotificationBatchSweep(
         // and a read-per-ref would blow the transaction deadline at this chunk
         // size for no guarantee (the digest write is unconditional either way).
         for (const item of chunk) tx.delete(item.ref);
-        // A digest has no single originating row whose title it could copy, so
-        // its human content comes from the catalog def that declared the batch.
-        // Before this it carried no title at all and the card rendered the key.
+        // A digest's human content is the words its queued rows carry: the
+        // dispatcher wrote them per recipient, so a household's digest reads
+        // the household's title (#2093), never the operator's label. A row
+        // queued before rows carried words falls back to the catalog def that
+        // declared the batch. Before either, the card rendered the bare key.
         promoteQueuedNotification(
           tx,
           {
@@ -267,8 +278,8 @@ export async function runNotificationBatchSweep(
             category: bucket.category,
             recipientUid: bucket.uid,
             actorUid: null,
-            title: digestDef.label,
-            description: digestDef.description,
+            title: bucket.title || digestDef.label,
+            description: bucket.description || digestDef.description,
             channels: bucket.channels,
           },
           {

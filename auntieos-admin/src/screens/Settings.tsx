@@ -13,6 +13,7 @@ import { SectionNav, sectionTabId, sectionPanelId, type SectionNavItem } from '.
 import { SECTION_ICONS } from './settings/sectionIcons';
 import { BookingBehaviorSection, MyTribePortalSection, PaymentOptionsSection } from './settings/sections';
 import { BrandingSection } from './settings/BrandingSection';
+import { InvoiceTermsSection } from './settings/InvoiceTermsSection';
 import { PhoneLineSection } from './settings/PhoneLineSection';
 import { BusinessProfileSection } from './settings/BusinessProfileSection';
 import { BookingRulesSection } from './settings/BookingRulesSection';
@@ -398,8 +399,15 @@ function renderDataSection(
     // ISSUE #409: a real toggle per method, replacing the three free-text
     // boxes whose only off switch was deleting the handle. Operator, walk
     // mark 17: "make it a true toggle for different payment option".
+    // #1966: the Payment terms every new invoice starts on, beside the ways
+    // kinfolk pay.
     case 'payments':
-      return <PaymentOptionsSection data={data} onSave={persist} />;
+      return (
+        <>
+          <InvoiceTermsSection data={data} onSave={persist} />
+          <PaymentOptionsSection data={data} onSave={persist} />
+        </>
+      );
     case 'mytribe':
       return <MyTribePortalSection data={data} onSave={persist} onServerChanged={applyServerChange} />;
     // TWO PANELS, ONE TAB, AND THE SETTINGS-BACKED ONE COMES FIRST.

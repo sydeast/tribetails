@@ -18,7 +18,8 @@ import { OfflineNotice } from '../components/OfflineNotice';
 import { LoadingLine } from '../components/Loading';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
-import { applyBookingWrite } from '../lib/bookingsCache';
+import { applyBookingWrite, visitAfterNoAnswer } from '../lib/bookingsCache';
+import { CallableTimeoutError } from '../lib/fns';
 import { viewOfQuery } from '../lib/queryState';
 import {
   auntieName,
@@ -136,9 +137,18 @@ export function BookingDetail() {
   // writing when a request is already open on the visit, and the write itself
   // is a set/merge of fixed fields, so a replay cannot stack requests.
   const cancelVisit = usePortalMutation({
-    mutationFn: (reason: string) => {
+    mutationFn: async (reason: string) => {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be cancelled here.');
-      return requestBookingCancellation(found.kinfolkId, found.batchId, found.id, reason);
+      try {
+        return await requestBookingCancellation(found.kinfolkId, found.batchId, found.id, reason);
+      } catch (err) {
+        // #1919: no answer is not a failure. When the visit now shows the ask,
+        // it went through, and the panel closes as if the reply had arrived.
+        if (!(err instanceof CallableTimeoutError)) throw err;
+        const landed = await visitAfterNoAnswer(queryClient, kinfolkId, found.id, (v) => v.cancelRequestStatus === 'pending');
+        if (landed === null) throw err;
+        return { ok: true as const, visitId: found.id, alreadyPending: false, visit: landed };
+      }
     },
     // #1281: the panel used to close here while the visit underneath still
     // showed its pre-ask state for 10s+. The server's copy of the visit goes
@@ -157,9 +167,31 @@ export function BookingDetail() {
   // can do is surface that refusal — which is the right answer, and is already
   // the sentence `onError` shows. It cannot stack two proposed times.
   const reschedule = usePortalMutation({
-    mutationFn: (p: RescheduleProposal) => {
+    mutationFn: async (p: RescheduleProposal) => {
       if (!found?.batchId) throw new Error('This visit is not linked to a booking yet, so it cannot be moved here.');
-      return requestBookingReschedule(found.kinfolkId, found.batchId, found.id, p.startMs, rescheduleReason, p.timeBlockId);
+      try {
+        return await requestBookingReschedule(found.kinfolkId, found.batchId, found.id, p.startMs, rescheduleReason, p.timeBlockId);
+      } catch (err) {
+        // #1919: the walk's send took over 20 seconds, the page said it may
+        // not have gone through, and a reload showed the new time on file. So
+        // before saying anything, look: the same time waiting on this visit
+        // means it went through.
+        if (!(err instanceof CallableTimeoutError)) throw err;
+        const landed = await visitAfterNoAnswer(
+          queryClient,
+          kinfolkId,
+          found.id,
+          (v) => v.rescheduleRequestStatus === 'pending' && v.rescheduleRequestedStartTimeMs === p.startMs,
+        );
+        if (landed === null) throw err;
+        return {
+          ok: true as const,
+          visitId: found.id,
+          proposedStartTimeMs: p.startMs,
+          proposedEndTimeMs: landed.rescheduleRequestedEndTimeMs,
+          visit: landed,
+        };
+      }
     },
     // #1281: same as the cancellation ask above. "New time requested for …"
     // is drawn from the cached visit, so it shows the moment the panel closes.
@@ -365,7 +397,10 @@ export function BookingDetail() {
                   <div className="ic">{'\u{1F469}'}</div>
                   <div>
                     <div className="lab">Auntie</div>
-                    <div className="val">{found.auntieDisplayName ?? 'Not yet assigned'}</div>
+                    {/* #2029: a declined request will never get an Auntie, so not "yet". */}
+                    <div className="val">
+                      {found.auntieDisplayName ?? (stage === 'declined' ? 'Not assigned' : 'Not yet assigned')}
+                    </div>
                   </div>
                 </div>
                 <div className="bk-field f4">

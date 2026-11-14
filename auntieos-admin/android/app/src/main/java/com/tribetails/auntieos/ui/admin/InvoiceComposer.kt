@@ -448,6 +448,8 @@ fun composerBlockedReason(
     draftCount: Int,
     money: ComposerMoney?,
     totalText: String,
+    /** #2092: the composer is making a quote, and says so. */
+    quote: Boolean = false,
 ): String? {
     if (kinfolkId.isBlank()) return "Pick a household first."
     if (date.isNotBlank() && !isValidNewInvoiceIsoDate(date)) {
@@ -465,7 +467,7 @@ fun composerBlockedReason(
     return when (path) {
         InvoiceCreatePath.WORK -> when {
             selectedCount == 0 && draftCount == 0 ->
-                "Tick the work this invoice covers, or add a line of your own."
+                "Tick the work this ${if (quote) "quote" else "invoice"} covers, or add a line of your own."
             money?.error != null -> money.error
             else -> null
         }
@@ -494,10 +496,47 @@ fun composerCreateLabel(kind: InvoiceCreateKind, visitCount: Int): String {
     return "$verb for $visitCount visit${if (visitCount == 1) "" else "s"}"
 }
 
+/** #1966: said beside Terms when visit-relative terms have no visits to count from. */
+const val NO_VISITS_DUE_ON_RECEIPT = "There are no visits on this invoice, so it is due on receipt."
+
+/** #1966 review: said beside Terms when the terms work out to a day before the invoice date. */
+const val TERMS_BEFORE_INVOICE_DATE = "These terms work out to a day before the invoice date, so it is due on receipt."
+/** #1966: said beside Terms, and as the button's reason, while the Payment terms setting loads. */
+const val TERMS_LOADING = "Loading your payment terms…"
+
+/** #1966: said when the Payment terms setting could not be read. */
+const val TERMS_LOAD_FAILED = "Your payment terms could not be loaded, so this invoice starts on due on receipt."
+
+/**
+ * #1966: what New invoice needs from Settings: the Payment terms a new invoice
+ * starts on and the zone its visit days are counted in. [loading] until the
+ * read lands; [failed] keeps the defaults (due on receipt, America/Chicago).
+ */
+data class InvoiceTermsSettingState(
+    val loading: Boolean = false,
+    val failed: Boolean = false,
+    val paymentTerms: InvoiceTermsCode = InvoiceTermsCode.DUE_ON_RECEIPT,
+    val timeZone: String = com.tribetails.auntieos.domain.TERMS_FALLBACK_TIME_ZONE,
+)
+
 /** What the due-date field is doing, and why it is not typeable. Said once. */
-fun composerTermsNote(termsCode: InvoiceTermsCode, due: DueDateResolution, invoiceDate: String): String = when {
+fun composerTermsNote(
+    termsCode: InvoiceTermsCode,
+    due: DueDateResolution,
+    invoiceDate: String,
+    /** #2092: a quote is not a bill, so a past date does not make it overdue. */
+    quote: Boolean = false,
+): String = when {
     termsCode == InvoiceTermsCode.CUSTOM -> "These terms leave the due date to you."
     due.dueDate == null -> due.problem.orEmpty()
+    // #1966 review: a bill is never due before its own date.
+    due.beforeInvoiceDate && due.isPast && !quote -> "$TERMS_BEFORE_INVOICE_DATE The invoice date has already passed, " +
+        "so this invoice is overdue the moment it goes out."
+    due.beforeInvoiceDate -> TERMS_BEFORE_INVOICE_DATE
+    // #1966: a visit rule on an invoice with no visits is due on receipt.
+    due.appliedCode != termsCode -> NO_VISITS_DUE_ON_RECEIPT
+    due.isPast && quote ->
+        "Worked out from the terms, counting from ${due.basisDay ?: invoiceDate}. That date has already passed."
     due.isPast ->
         "Worked out from the terms, counting from ${due.basisDay ?: invoiceDate}. That date has already " +
             "passed, so this invoice is overdue the moment it goes out."
@@ -521,13 +560,31 @@ fun uninvoicedScopeLine(
     scanned: Long,
     narrowedFrom: String?,
     narrowedTo: String?,
+    /** #2092: on a quote the work is "unbilled"; "un-invoiced" is an invoice's word. */
+    quote: Boolean = false,
 ): String {
     val window = if (narrowedFrom != null && narrowedTo != null) " between $narrowedFrom and $narrowedTo" else ""
+    val open = if (quote) "unbilled" else "un-invoiced"
     return if (total == 0) {
-        "No un-invoiced completed visits for $householdLabel$window. $scanned visits were checked."
+        "No $open completed visits for $householdLabel$window. $scanned visits were checked."
     } else {
-        "$selectedCount of $total un-invoiced visit${if (total == 1) "" else "s"} selected for " +
+        "$selectedCount of $total $open visit${if (total == 1) "" else "s"} selected for " +
             "$householdLabel$window."
+    }
+}
+
+/**
+ * #2092: the line under the visits, stating the figure the work adds up to, in
+ * the word for what is being made. Null [totalCents] means nothing is on it
+ * yet, which is a different fact from a $0.00 total and must not read like one.
+ */
+fun composerTotalSentence(quote: Boolean, totalCents: Long?, formatted: String): String {
+    val noun = if (quote) "quote" else "invoice"
+    return if (totalCents != null) {
+        "This $noun will be created for $formatted, worked out from the work it covers. There is nowhere to " +
+            "type a total, so it can never say a different number from the work it lists."
+    } else {
+        "Totals are worked out from the work this $noun covers. Tick a visit above, or add a line of your own."
     }
 }
 
@@ -549,13 +606,13 @@ fun doNotInvoiceLabel(count: Int): String = when (count) {
  * ones: re-marking a visit somebody already marked is a no-op, and reporting it
  * as a change would make the confirmation lie.
  */
-fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean): String {
+fun exclusionNotice(changedCount: Int, doNotInvoice: Boolean, quote: Boolean = false): String {
     val subject = if (changedCount == 1) "1 visit is" else "$changedCount visits are"
     return if (doNotInvoice) {
         val obj = if (changedCount == 1) "it" else "them"
         "$subject marked do not invoice, and off this list until you put $obj back."
     } else {
-        "$subject back in this household's un-invoiced work."
+        "$subject back in this household's ${if (quote) "unbilled" else "un-invoiced"} work."
     }
 }
 

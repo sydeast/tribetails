@@ -98,7 +98,8 @@ class SettingsFieldChecksRenderTest {
             section = "Payments",
             waitFor = "Save payment options",
         )
-        fun cancel() = onNodeWithText("Cancel")
+        // #1966: the Invoices panel above has its own Cancel; this is Payment options' one.
+        fun cancel() = onAllNodesWithText("Cancel")[1]
         fun save() = onNodeWithText("Save payment options")
         cancel().assertIsNotEnabled()
         save().assertIsNotEnabled()

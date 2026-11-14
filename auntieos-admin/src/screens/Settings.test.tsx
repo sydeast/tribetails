@@ -155,6 +155,7 @@ const DEFAULT_BUSINESS_SETTINGS: BusinessSettings = {
   enablePhotoLocationTagging: true,
   requireArrivalDepartureVerification: true,
   kinTaleRequired: false,
+  invoicePaymentTerms: 'due_on_receipt',
   arrivalRadiusMeters: 150,
   autoStartTrackingOnVisitStart: true,
   trackingAccuracy: 'HIGH',

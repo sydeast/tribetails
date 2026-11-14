@@ -18,7 +18,12 @@ import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
 import { randomUUID } from 'node:crypto';
 import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
-import { resolveStructuredTerms, serviceDaysForSessions } from '../lib/invoiceCreateFields';
+import {
+  businessToday,
+  readInvoiceTermsSettings,
+  resolveStructuredTerms,
+  serviceDaysForSessions,
+} from '../lib/invoiceCreateFields';
 import { DUE_BEFORE_INVOICE_DATE_CODE, dueDateOrderProblem } from '../lib/invoiceDay';
 import { validateResponse } from '../lib/callableResponse';
 import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
@@ -371,6 +376,8 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
   // consistent due date rather than two half-applied ones.
   if (patch.termsCode !== undefined) {
     const serviceDates = await serviceDaysForSessions(db(), nextSessionIds);
+    // #1966: visit days on the business's clock, as at creation.
+    const termsSettings = await readInvoiceTermsSettings(db());
     const outcome = resolveStructuredTerms({
       termsCode: patch.termsCode,
       date: patch.date ?? (typeof data.date === 'string' ? data.date : ''),
@@ -383,7 +390,8 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
           ? (patch.dueDate ?? (typeof data.dueDate === 'string' ? data.dueDate : ''))
           : (patch.dueDate ?? ''),
       serviceDates,
-      now: new Date().toISOString().slice(0, 10),
+      now: businessToday(termsSettings.timeZone),
+      timeZone: termsSettings.timeZone,
     });
     if (!outcome.ok) {
       throw new HttpsError('failed-precondition', outcome.message, { code: outcome.code });

@@ -43,6 +43,8 @@ interface InvoiceLineItemsTableProps {
   lines: readonly InvoiceLineItem[];
   /** Whole-invoice reduction in cents, rendered as its own row when non-zero. */
   invoiceDiscountCents?: number;
+  /** #2092: the table's caption; a quote reads "What is quoted", since it bills nothing. */
+  caption?: string;
 }
 
 /**
@@ -53,12 +55,16 @@ interface InvoiceLineItemsTableProps {
  * was billed", which is a different and much worse claim than saying nothing.
  * `InvoiceDetail` makes that call explicitly.
  */
-export function InvoiceLineItemsTable({ lines, invoiceDiscountCents = 0 }: InvoiceLineItemsTableProps) {
+export function InvoiceLineItemsTable({
+  lines,
+  invoiceDiscountCents = 0,
+  caption = 'What was billed',
+}: InvoiceLineItemsTableProps) {
   const totals = computeInvoiceTotals(lines, invoiceDiscountCents, 0);
 
   return (
     <table className="invoice-lines">
-      <caption className="invoice-lines__caption">What was billed</caption>
+      <caption className="invoice-lines__caption">{caption}</caption>
       <thead>
         <tr>
           <th scope="col">Description</th>

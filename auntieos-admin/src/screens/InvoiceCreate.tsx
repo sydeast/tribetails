@@ -23,6 +23,7 @@ import { localDateIso } from '../lib/invoiceFormat';
 import { parseDollarsToCents, normalizeMoneyText, MAX_UNIT_CENTS } from '../lib/invoiceMoneyInput';
 import { invoiceTermsDefs, resolveDueDate, type InvoiceTermsCode } from '../lib/invoiceTerms';
 import { dueDateOrderProblem } from '../lib/invoiceDueOrder';
+import { useInvoiceTermsSetting } from '../lib/useInvoiceTermsSetting';
 import { Dialog } from '../components/Dialog';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
@@ -253,6 +254,9 @@ export function buildBoundLines(
  * disabled while submitting (never a double-submit), and the primary button
  * carries Buttons.tsx's `busy` state.
  */
+/** #1966: said beside Terms, and as the button's reason, while the setting loads. */
+const TERMS_LOADING = 'Loading your payment terms…';
+
 export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: InvoiceCreateProps) {
   const kinfolkState = useKinfolkRoster();
   const households = kinfolkState.status === 'ready' ? kinfolkState.data : [];
@@ -262,7 +266,21 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
   const [kinfolkId, setKinfolkId] = useState(seedKinfolkId ?? '');
   const [path, setPath] = useState<InvoiceCreatePath>('work');
   const [date, setDate] = useState(() => localDateIso(new Date()));
-  const [termsCode, setTermsCode] = useState<InvoiceTermsCode>('due_on_receipt');
+  /**
+   * #1966: the terms start on the business's Payment terms setting (Settings >
+   * Payments > Invoices), seeded once it loads unless the operator has already
+   * picked terms here.
+   */
+  const termsSetting = useInvoiceTermsSetting();
+  const [termsCode, setTermsCodeState] = useState<InvoiceTermsCode>(termsSetting.paymentTerms);
+  const termsPicked = useRef(false);
+  const setTermsCode = useCallback((code: InvoiceTermsCode) => {
+    termsPicked.current = true;
+    setTermsCodeState(code);
+  }, []);
+  useEffect(() => {
+    if (termsSetting.status === 'ready' && !termsPicked.current) setTermsCodeState(termsSetting.paymentTerms);
+  }, [termsSetting.status, termsSetting.paymentTerms]);
   const [customDueDate, setCustomDueDate] = useState('');
   const [totalText, setTotalText] = useState('');
   const [invoiceDiscountText, setInvoiceDiscountText] = useState('');
@@ -316,6 +334,8 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
   ]);
 
   const isQuote = kind === 'quote';
+  /** #2092: what the form is making, in its own word. A quote is not an invoice to the reader. */
+  const noun = isQuote ? 'quote' : 'invoice';
   const selectedHousehold = households.find((h) => h._id === kinfolkId);
   const householdLabel = selectedHousehold ? kinfolkDisplayName(selectedHousehold) : 'this household';
   const onWork = path === 'work';
@@ -338,8 +358,14 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
     const serviceDates = onWork
       ? sessions.filter((s) => selected.has(s.sessionId)).map((s) => s.startTime)
       : [];
-    return resolveDueDate({ code: termsCode, invoiceDate: date }, serviceDates, localDateIso(new Date()));
-  }, [termsCode, date, onWork, sessions, selected]);
+    // #1966: visit days on the business's clock, as the server counts them.
+    return resolveDueDate(
+      { code: termsCode, invoiceDate: date },
+      serviceDates,
+      localDateIso(new Date()),
+      termsSetting.timeZone,
+    );
+  }, [termsCode, date, onWork, sessions, selected, termsSetting.timeZone]);
 
   const dueDateForSubmit = termsCode === 'custom' ? customDueDate : (due.dueDate ?? '');
 
@@ -395,11 +421,12 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
    */
   const blocked: string | null = (() => {
     if (kinfolkId.trim() === '') return 'Pick a household first.';
+    if (termsSetting.status === 'loading') return TERMS_LOADING;
     if (termsCode !== 'custom' && due.dueDate === null) return due.problem;
     if (dueOrderProblem !== null) return dueOrderProblem;
     if (onWork) {
       if (selected.size === 0 && extraLines.length === 0) {
-        return 'Tick the work this invoice covers, or add a line of your own.';
+        return `Tick the work this ${noun} covers, or add a line of your own.`;
       }
       if (money?.error != null) return money.error;
       return null;
@@ -417,11 +444,11 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
 
     if (onWork) {
       if (money === null || money.error !== null || money.lines === null || money.totals === null) {
-        setValidationError(money?.error ?? 'This invoice has no work on it yet.');
+        setValidationError(money?.error ?? `This ${noun} has no work on it yet.`);
         return;
       }
       if (money.lines.length === 0) {
-        setValidationError('Tick the work this invoice covers, or add a line of your own.');
+        setValidationError(`Tick the work this ${noun} covers, or add a line of your own.`);
         return;
       }
       // Both dollar scalars are the PROJECTION of the same cents figure the
@@ -543,12 +570,22 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
 
   /** What the due-date field is doing, and why it is not typeable. Said once. */
   const termsNote =
-    termsCode === 'custom'
+    termsSetting.status === 'loading'
+      ? TERMS_LOADING
+      : termsCode === 'custom'
       ? 'These terms leave the due date to you.'
       : due.dueDate === null
         ? due.problem
-        : due.isPast
-          ? `Worked out from the terms, counting from ${due.basisDay ?? date}. That date has already passed, so this invoice is overdue the moment it goes out.`
+        : due.beforeInvoiceDate
+          ? due.isPast && !isQuote
+            ? 'These terms work out to a day before the invoice date, so it is due on receipt. The invoice date has already passed, so this invoice is overdue the moment it goes out.'
+            : 'These terms work out to a day before the invoice date, so it is due on receipt.'
+          : due.appliedCode !== termsCode
+          ? 'There are no visits on this invoice, so it is due on receipt.'
+          : due.isPast
+          ? isQuote
+            ? `Worked out from the terms, counting from ${due.basisDay ?? date}. That date has already passed.`
+            : `Worked out from the terms, counting from ${due.basisDay ?? date}. That date has already passed, so this invoice is overdue the moment it goes out.`
           : `Worked out from the terms, counting from ${due.basisDay ?? date}. Choose "A date I pick myself" to set it by hand.`;
   const createLabel = isQuote ? 'Create quote' : 'Create invoice';
   const idBase = useId();
@@ -648,7 +685,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
 
         {kinfolkId === '' ? (
           <p className="invoice-create__derived">
-            Pick a household and its un-invoiced work appears here, ready to tick.
+            Pick a household and its {isQuote ? 'unbilled' : 'un-invoiced'} work appears here, ready to tick.
           </p>
         ) : onWork ? (
           <UninvoicedVisitsPicker
@@ -661,12 +698,14 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
             onSessionsLoaded={handleSessionsLoaded}
             disabled={submitting}
             onWriteBlankInvoice={() => setPath('blank')}
+            forQuote={isQuote}
           />
         ) : (
           <div className="invoice-create__blank">
             <p className="invoice-create__derived">
-              A blank invoice, with a total you type. Nothing on it is linked to logged work, so
-              nothing here can tell whether this household has already been billed for it.
+              {isQuote
+                ? 'A blank quote, with a total you type. Nothing on it is linked to logged work.'
+                : 'A blank invoice, with a total you type. Nothing on it is linked to logged work, so nothing here can tell whether this household has already been billed for it.'}
             </p>
             <label className="invoice-create__field">
               <span className="invoice-create__label">Total ($)</span>
@@ -687,7 +726,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
               )}
             </label>
             <GhostButton
-              label="Bill this household's logged work instead"
+              label={isQuote ? "Quote this household's logged work instead" : "Bill this household's logged work instead"}
               onClick={() => setPath('work')}
               disabled={submitting}
             />
@@ -714,8 +753,8 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
                 are different facts and must not read alike. */}
             <p className="invoice-create__derived">
               {money?.totals && money.lines !== null && money.lines.length > 0
-                ? `This invoice will be created for ${formatCentsUsd(money.totals.totalCents)}, worked out from the work it covers. There is nowhere to type a total, so it can never say a different number from the work it lists.`
-                : 'Totals are worked out from the work this invoice covers. Tick a visit above, or add a line of your own.'}
+                ? `This ${noun} will be created for ${formatCentsUsd(money.totals.totalCents)}, worked out from the work it covers. There is nowhere to type a total, so it can never say a different number from the work it lists.`
+                : `Totals are worked out from the work this ${noun} covers. Tick a visit above, or add a line of your own.`}
             </p>
           </>
         )}
@@ -732,7 +771,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
               value={date}
               onChange={(e) => setDate(e.target.value)}
               disabled={submitting}
-              aria-label="Invoice date"
+              aria-label={isQuote ? 'Quote date' : 'Invoice date'}
             />
           </label>
           <label className="invoice-create__field">
@@ -741,7 +780,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
               className="invoice-create__input"
               value={termsCode}
               onChange={(e) => setTermsCode(e.target.value as InvoiceTermsCode)}
-              disabled={submitting}
+              disabled={submitting || termsSetting.status === 'loading'}
               aria-label="Terms"
             >
               {invoiceTermsDefs().map((def) => (
@@ -764,7 +803,7 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
               // DISABLED WITH THE REASON STATED BELOW, never hidden. The terms
               // decide this date, and the way to change it is to change them.
               disabled={submitting || termsCode !== 'custom'}
-              aria-label="Invoice due date"
+              aria-label={isQuote ? 'Quote due date' : 'Invoice due date'}
               aria-invalid={dueOrderProblem !== null}
               aria-describedby={dueOrderProblem !== null ? dueErrorId : undefined}
             />
@@ -776,18 +815,24 @@ export function InvoiceCreate({ mode, onClose, onCreated, seedKinfolkId }: Invoi
           </label>
         </div>
 
-        <p className="invoice-create__derived" role="status">
+        <p className="invoice-create__derived" role="status" aria-busy={termsSetting.status === 'loading'}>
           {termsNote}
         </p>
+        {termsSetting.status === 'error' && (
+          <div className="invoice-create__derived" role="alert">
+            Your payment terms could not be loaded, so this invoice starts on due on receipt.{' '}
+            <GhostButton label="Try again" onClick={termsSetting.retry} disabled={submitting} />
+          </div>
+        )}
 
         {isQuote && (
           <div className="invoice-create__toggle-row">
-            <span>Send to kinfolk now</span>
+            <span>Send to Kinfolk now</span>
             <Toggle
               checked={sendToKinfolk}
               onChange={setSendToKinfolk}
               disabled={submitting}
-              label="Send to kinfolk now"
+              label="Send to Kinfolk now"
             />
           </div>
         )}

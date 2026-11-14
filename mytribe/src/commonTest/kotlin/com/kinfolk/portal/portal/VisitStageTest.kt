@@ -101,7 +101,7 @@ class VisitStageTest {
     @Test
     fun `every stage has one word, the same as the web portal`() {
         assertEquals(
-            listOf("REQUESTED", "CONFIRMED", "EN ROUTE", "IN PROGRESS", "COMPLETED", "CANCELLED"),
+            listOf("REQUESTED", "CONFIRMED", "EN ROUTE", "IN PROGRESS", "COMPLETED", "CANCELLED", "DECLINED"),
             VisitStage.entries.map { it.label() },
         )
     }

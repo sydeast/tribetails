@@ -69,8 +69,9 @@ export function isSentQuote(doc: Record<string, unknown>): boolean {
  *       - #2088: a quote the office turned into an invoice not sent yet;
  *   - #2195: an archived quote. Archiving a quote works like archiving a draft:
  *     the household stops seeing it and its visits go back on the list.
- *
- * A withdrawn quote is `cancelled`, which MyTribe already shows no one.
+ *   - a withdrawn quote (`cancelled`, stamped `quoteWithdrawnAt`). No list
+ *     bucket ever showed one, but its PDF was still served by id: the office
+ *     took the offer back, so nothing of it stays in front of the household.
  *
  * The one rule for every household read: `getMyInvoices` (list, buckets and
  * totals, and so the detail page and any deep link, which both open from that
@@ -80,6 +81,7 @@ export function isSentQuote(doc: Record<string, unknown>): boolean {
 export function hiddenFromHousehold(doc: Record<string, unknown>): boolean {
   const status = statusOf(doc);
   if (status === 'draft') return true;
+  if (status === 'cancelled' && doc['quoteWithdrawnAt'] !== undefined && doc['quoteWithdrawnAt'] !== null) return true;
   return status === 'quote' && isArchived(doc);
 }
 

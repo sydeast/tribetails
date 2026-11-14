@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -11,9 +11,23 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { validateResponse } from '../lib/callableResponse';
 import { InvoiceStateSchema, OkSchema } from '../lib/invoiceResponseSchema';
+import { INVOICE_STATES } from '../lib/invoiceEditPolicy';
 import { refuseIfArchived } from '../lib/invoiceArchive';
 import { QUOTE_DRAFT_FIELD, isQuoteDraft, isSentQuote, quoteDecisionOf } from '../lib/quoteDecision';
-import { readDeclineRelease, readQuoteReopen, stageSessionLinks } from '../lib/invoiceSessionLinks';
+import {
+  quoteWithdrawn,
+  readDeclineRelease,
+  readQuoteReopen,
+  stageSessionLinks,
+  storedReleasedSessionIds,
+} from '../lib/invoiceSessionLinks';
+import {
+  MAX_TERMS_SESSIONS,
+  businessToday,
+  readInvoiceTermsSettings,
+  resolveStructuredTerms,
+  type InvoiceTermsSettings,
+} from '../lib/invoiceCreateFields';
 
 /**
  * #2088: WHAT THE OFFICE CAN DO WITH A QUOTE ONCE IT EXISTS, besides sending it
@@ -110,6 +124,17 @@ export function quoteActionRefusal(
     };
   }
   if (!isQuoteDraft(doc) && !isSentQuote(doc)) {
+    // What the quote became, when it was one: "not a quote" is true of both,
+    // and says nothing about which of the two the office already did.
+    if (action === 'convert' && quoteWithdrawn(doc)) {
+      return { code: 'quote_not_a_quote', message: 'This quote was withdrawn, so it cannot be turned into an invoice.' };
+    }
+    if (action === 'withdraw' && wasConverted(doc)) {
+      return {
+        code: 'quote_not_a_quote',
+        message: 'This quote was turned into an invoice, so there is no quote left to withdraw.',
+      };
+    }
     return {
       code: 'quote_not_a_quote',
       message:
@@ -119,6 +144,35 @@ export function quoteActionRefusal(
     };
   }
   return null;
+}
+
+/** #2088: the office turned this quote into an invoice (it is no longer a quote). */
+function wasConverted(doc: Record<string, unknown>): boolean {
+  return (
+    doc['quoteConvertedAt'] !== undefined &&
+    doc['quoteConvertedAt'] !== null &&
+    !isQuoteDraft(doc) &&
+    !isSentQuote(doc)
+  );
+}
+
+/**
+ * True when the change asked for has already been made: a retry of a Turn into
+ * invoice or a Withdraw that succeeded, whose answer the client never saw. The
+ * retry answers success and writes nothing, rather than "This is not a quote",
+ * which would tell the office its change failed when it did not. PURE.
+ */
+export function quoteActionAlreadyDone(doc: Record<string, unknown>, action: 'convert' | 'withdraw'): boolean {
+  return action === 'convert' ? wasConverted(doc) : quoteWithdrawn(doc);
+}
+
+/** The stored state, for a retry's answer; 'draft' when the stamp is unreadable. */
+function storedState(doc: Record<string, unknown>): z.infer<typeof InvoiceStateSchema> {
+  const raw = doc['status'] ?? doc['invoiceStatus'];
+  const status = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return (INVOICE_STATES as readonly string[]).includes(status)
+    ? (status as z.infer<typeof InvoiceStateSchema>)
+    : 'draft';
 }
 
 function parse<T extends z.ZodTypeAny>(schema: T, data: unknown, name: string): z.infer<T> {
@@ -143,6 +197,44 @@ async function audit(entry: Parameters<typeof writeAuditEntry>[0], fn: string, u
   });
 }
 
+/**
+ * #1966: the terms fields a quote turned into an invoice is written with.
+ *
+ * The business's Payment terms setting decides the due date, counted on the
+ * business's clock from the visits the invoice holds (due on receipt when it
+ * holds none). A due date the office picked by hand is kept: `custom` terms, or
+ * a typed date with no code at all. So is a quote the setting cannot date (no
+ * invoice date), rather than refusing the change. Reads only, so it runs inside
+ * the transaction before any write.
+ */
+export async function convertedQuoteTerms(
+  tx: Transaction,
+  firestore: Firestore,
+  data: Record<string, unknown>,
+  held: readonly string[],
+  settings: InvoiceTermsSettings,
+): Promise<Record<string, unknown>> {
+  const code = typeof data['termsCode'] === 'string' ? data['termsCode'].trim() : '';
+  const typedDue = typeof data['dueDate'] === 'string' ? data['dueDate'].trim() : '';
+  if (code === 'custom' || (code === '' && typedDue !== '')) return {};
+  const ids = Array.from(new Set(held.filter((id) => id.trim() !== ''))).slice(0, MAX_TERMS_SESSIONS);
+  const snaps = await Promise.all(ids.map((id) => tx.get(firestore.collection('kin_care_sessions').doc(id))));
+  const serviceDates: string[] = [];
+  for (const snap of snaps) {
+    const startTime = snap.exists ? (snap.data() ?? {})['startTime'] : undefined;
+    if (typeof startTime === 'string' && startTime.trim() !== '') serviceDates.push(startTime);
+  }
+  const outcome = resolveStructuredTerms({
+    termsCode: settings.paymentTerms,
+    date: typeof data['date'] === 'string' ? data['date'] : '',
+    dueDate: '',
+    serviceDates,
+    now: businessToday(settings.timeZone),
+    timeZone: settings.timeZone,
+  });
+  return outcome.ok ? outcome.fields : {};
+}
+
 export async function convertQuoteToInvoiceHandler(
   req: CallableRequest<unknown>,
 ): Promise<z.infer<typeof ConvertQuoteToInvoiceResult>> {
@@ -153,10 +245,13 @@ export async function convertQuoteToInvoiceHandler(
   const firestore = db();
   const ref = firestore.collection('invoices').doc(args.invoiceId);
 
+  const termsSettings = await readInvoiceTermsSettings(firestore);
   const outcome = await firestore.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new HttpsError('not-found', 'That quote could not be found.');
     const data = snap.data() as Record<string, unknown>;
+    // A retry of a convert that already happened: nothing to write or record.
+    if (quoteActionAlreadyDone(data, 'convert')) return { alreadyDone: true as const, status: storedState(data) };
     refuseIfArchived(data);
     const refusal = quoteActionRefusal(data, 'convert');
     if (refusal) throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
@@ -166,8 +261,13 @@ export async function convertQuoteToInvoiceHandler(
     // the change by its day, with nothing written. A declined quote let its
     // visits go, and takes the free ones back here.
     const visits = await readQuoteReopen(tx, firestore, args.invoiceId, data, 'convert');
+    // #1966: the invoice it becomes is due by the business's Payment terms,
+    // counted from the visits it now holds, unless the quote's due date was
+    // picked by hand.
+    const due = await convertedQuoteTerms(tx, firestore, data, visits.held ?? [], termsSettings);
     const update: Record<string, unknown> = {
       ...visits.fields,
+      ...due,
       status: 'draft',
       invoiceStatus: 'draft',
       [QUOTE_DRAFT_FIELD]: FieldValue.delete(),
@@ -181,6 +281,7 @@ export async function convertQuoteToInvoiceHandler(
     tx.set(ref, { ...update, ...stamp }, { merge: true });
     stageSessionLinks(tx, firestore, visits.plan, new Date().toISOString());
     return {
+      alreadyDone: false as const,
       status: stamp.status,
       kinfolkId: typeof data['kinfolkId'] === 'string' ? (data['kinfolkId'] as string) : undefined,
       invoiceNumber: data['invoiceNumber'],
@@ -189,6 +290,21 @@ export async function convertQuoteToInvoiceHandler(
       sessionsLinked: visits.plan.claim,
     };
   });
+
+  if (outcome.alreadyDone) {
+    logEvent({
+      severity: 'info',
+      function: 'convertQuoteToInvoice',
+      event: 'admin.quote.convert.retry-of-completed',
+      uid,
+      extra: { invoiceId: args.invoiceId },
+    });
+    return validateResponse('convertQuoteToInvoice', ConvertQuoteToInvoiceResult, {
+      ok: true,
+      invoiceId: args.invoiceId,
+      status: outcome.status,
+    });
+  }
 
   const words = await import('../lib/activityWords.js');
   await audit(
@@ -241,6 +357,11 @@ export async function withdrawQuoteHandler(
     const snap = await tx.get(ref);
     if (!snap.exists) throw new HttpsError('not-found', 'That quote could not be found.');
     const data = snap.data() as Record<string, unknown>;
+    // A retry of a withdraw that already happened: it answers with the visits
+    // that withdrawal put back, and writes and records nothing.
+    if (quoteActionAlreadyDone(data, 'withdraw')) {
+      return { alreadyDone: true as const, status: storedState(data), released: storedReleasedSessionIds(data) };
+    }
     refuseIfArchived(data);
     const refusal = quoteActionRefusal(data, 'withdraw');
     if (refusal) throw new HttpsError('failed-precondition', refusal.message, { code: refusal.code });
@@ -263,6 +384,7 @@ export async function withdrawQuoteHandler(
     tx.set(ref, { ...update, ...stamp }, { merge: true });
     stageSessionLinks(tx, firestore, visits.plan, new Date().toISOString());
     return {
+      alreadyDone: false as const,
       status: stamp.status,
       kinfolkId: typeof data['kinfolkId'] === 'string' ? (data['kinfolkId'] as string) : undefined,
       invoiceNumber: data['invoiceNumber'],
@@ -271,6 +393,22 @@ export async function withdrawQuoteHandler(
       released: visits.plan.release,
     };
   });
+
+  if (outcome.alreadyDone) {
+    logEvent({
+      severity: 'info',
+      function: 'withdrawQuote',
+      event: 'admin.quote.withdraw.retry-of-completed',
+      uid,
+      extra: { invoiceId: args.invoiceId },
+    });
+    return validateResponse('withdrawQuote', WithdrawQuoteResult, {
+      ok: true,
+      invoiceId: args.invoiceId,
+      status: outcome.status,
+      releasedSessionIds: outcome.released,
+    });
+  }
 
   const words = await import('../lib/activityWords.js');
   await audit(

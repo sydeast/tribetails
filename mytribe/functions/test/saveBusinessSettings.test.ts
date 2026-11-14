@@ -291,6 +291,19 @@ describe('field checks: the 2026-11-05 QA walk', () => {
     expect(one('kinTaleRequired', 'true')).toBe('KinTale required has to be on or off.');
     expect(one('kinTaleRequired', null)).toBe('KinTale required has to be on or off.');
   });
+  it('#1966: Payment terms is one of the ruled options, and nothing else', () => {
+    expect(one('invoicePaymentTerms', 'due_on_receipt')).toBeNull();
+    expect(one('invoicePaymentTerms', 'due_on_first_visit')).toBeNull();
+    expect(one('invoicePaymentTerms', 'net_14_after_last_visit')).toBeNull();
+    expect(one('invoicePaymentTerms', 'net_30_before_first_visit')).toBeNull();
+    // Terms an invoice may carry, but not a business setting.
+    expect(one('invoicePaymentTerms', 'net_14')).toBe('Pick payment terms from the list.');
+    expect(one('invoicePaymentTerms', 'custom')).toBe('Pick payment terms from the list.');
+    expect(one('invoicePaymentTerms', 'Net 14')).toBe('Pick payment terms from the list.');
+    expect(one('invoicePaymentTerms', '')).toBe('Pick payment terms from the list.');
+    expect(one('invoicePaymentTerms', 14)).toBe('Pick payment terms from the list.');
+    expect(one('invoicePaymentTerms', null)).toBe('Pick payment terms from the list.');
+  });
   it('time blocks: names, times, order and overlaps', () => {
     const block = (over: Record<string, unknown>) => ({
       id: 'm',
@@ -422,6 +435,17 @@ describe('saveBusinessSettings', () => {
     setup();
     const refused = await refusalOf({ kinTaleRequired: 'no' });
     expect(refused.message).toBe('KinTale required has to be on or off.');
+    expect(settingsWrites()).toHaveLength(0);
+  });
+
+  it('#1966: saves Payment terms, and refuses a value off the list', async () => {
+    await saveBusinessSettingsHandler(owner({ changes: { invoicePaymentTerms: 'net_7_before_first_visit' } }));
+    expect(settingsWrites()[0]!.data).toMatchObject({ invoicePaymentTerms: 'net_7_before_first_visit' });
+
+    setup();
+    const refused = await refusalOf({ invoicePaymentTerms: 'net_45_after_last_visit' });
+    expect(refused.message).toBe('Pick payment terms from the list.');
+    expect(refused.details).toMatchObject({ field: 'invoicePaymentTerms' });
     expect(settingsWrites()).toHaveLength(0);
   });
 

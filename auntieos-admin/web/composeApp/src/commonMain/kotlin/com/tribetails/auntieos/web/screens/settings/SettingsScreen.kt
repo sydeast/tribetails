@@ -748,10 +748,18 @@ private fun SectionPanel(
         SettingsSection.VisitsTracking -> VisitsTrackingPanel(
             settingsData = settingsData, settingsLoaded = settingsLoaded, vm = vm, scope = scope,
         )
-        SettingsSection.Payments -> PaymentOptionsPanel(
-            authUser = authUser, client = client, vm = vm, uiState = uiState,
-            settingsData = settingsData, settingsLoaded = settingsLoaded, scope = scope,
-        )
+        // #1966: the Payment terms every new invoice starts on, first.
+        SettingsSection.Payments -> Column(verticalArrangement = Arrangement.spacedBy(AuntieTheme.dims.space4)) {
+            InvoiceTermsPanel(
+                settingsData = settingsData,
+                settingsLoaded = settingsLoaded,
+                save = { vm.saveSettings(it) },
+            )
+            PaymentOptionsPanel(
+                authUser = authUser, client = client, vm = vm, uiState = uiState,
+                settingsData = settingsData, settingsLoaded = settingsLoaded, scope = scope,
+            )
+        }
         SettingsSection.Tags -> TagVocabularyPanel(
             settingsData = settingsData, settingsLoaded = settingsLoaded,
             client = client, vm = vm, scope = scope,

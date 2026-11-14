@@ -6,6 +6,7 @@ import { MAX_INSTRUCTIONS_LENGTH, PAY_METHOD_IDS } from './paymentMethods';
 import { assertCloudinaryUrlInFolder } from './cloudinary';
 import { BRAND_ASSET_FOLDER } from './brandAsset';
 import { isEmailShape, isUsPhoneShape } from './contactShape';
+import { PAYMENT_TERMS_SETTING_CODES } from './invoiceTerms';
 
 export { isEmailShape, isUsPhoneShape };
 
@@ -60,6 +61,7 @@ export const PHONE_INVALID = 'Enter a 10-digit phone number, or leave it blank.'
 export const PRIVACY_URL_INVALID = 'Enter a full https:// link.';
 export const TIME_ZONE_INVALID = 'Pick a time zone from the list.';
 export const THEME_INVALID = 'Pick a theme from the list.';
+export const PAYMENT_TERMS_INVALID = 'Pick payment terms from the list.';
 export const DATE_INVALID = 'Enter a real date as YYYY-MM-DD.';
 export const DATE_PAST = 'That date has passed. Pick today or a later date.';
 export const HOURS_RANGE_INVALID = 'Enter both an opening and a closing time.';
@@ -749,6 +751,8 @@ export const BUSINESS_SETTINGS_CHECKS: Readonly<Record<string, Check>> = {
   paypalHandle: handle(paypalHandleProblem),
   cashappHandle: handle(cashappHandleProblem),
   paymentOptions: checkPaymentOptions,
+  // #1966: Settings > Invoices > Payment terms. Absent reads as due on receipt.
+  invoicePaymentTerms: oneOf(PAYMENT_TERMS_SETTING_CODES, PAYMENT_TERMS_INVALID),
   // Phone line and notifications
   voiceLiveTransferEnabled: bool('Live transfer'),
   householdNotificationsLive: bool('Household notifications'),

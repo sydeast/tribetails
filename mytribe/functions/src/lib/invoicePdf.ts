@@ -200,6 +200,24 @@ export function winAnsiSafe(s: string): string {
   return out;
 }
 
+/** The three words at the top of the document, which say whether it is a bill. */
+export interface PdfHeadings {
+  title: string;
+  numberLabel: string;
+  partyLabel: string;
+}
+
+/**
+ * #2092: a quote's PDF says QUOTE. A quote is work not agreed yet, so the
+ * household is not "billed" by it; an accepted quote is an open invoice and
+ * prints as one. PURE.
+ */
+export function pdfHeadings(status: string): PdfHeadings {
+  return status.trim().toLowerCase() === 'quote'
+    ? { title: 'QUOTE', numberLabel: 'Quote #', partyLabel: 'Prepared for' }
+    : { title: 'INVOICE', numberLabel: 'Invoice #', partyLabel: 'Bill to' };
+}
+
 /**
  * Renders the invoice to PDF bytes. Pure (no IO): deterministic given the input,
  * so it is unit-testable on its own. Single Letter-size page, Helvetica.
@@ -228,17 +246,18 @@ export async function renderInvoicePdf(inv: InvoiceForPdf): Promise<Uint8Array> 
 
   line(businessLabel(inv.businessName, { capital: true }), { size: 22, f: bold });
   gap(16);
-  line('INVOICE', { size: 14, f: bold, color: dim });
+  const headings = pdfHeadings(inv.status);
+  line(headings.title, { size: 14, f: bold, color: dim });
   gap(28);
 
-  line(`Invoice #: ${inv.invoiceNumber}`, { f: bold });
+  line(`${headings.numberLabel}: ${inv.invoiceNumber}`, { f: bold });
   gap();
   if (inv.status) { line(`Status: ${inv.status}`); gap(); }
   if (inv.date) { line(`Date: ${inv.date}`); gap(); }
   if (inv.dueDate) { line(`Due: ${inv.dueDate}`); gap(); }
   gap(10);
 
-  line('Bill to', { f: bold, color: dim });
+  line(headings.partyLabel, { f: bold, color: dim });
   gap();
   if (inv.client) { line(inv.client); gap(); }
   else if (inv.kinfolkName) { line(inv.kinfolkName); gap(); }

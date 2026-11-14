@@ -192,6 +192,11 @@ private fun ScheduleViewScreenContent(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val bizZone = LocalBusinessZone.current
+    // #2028: a notification's Open is for this visit to the screen only, so a
+    // "no longer waiting" note does not greet the operator on a later return.
+    androidx.compose.runtime.DisposableEffect(viewModel) {
+        onDispose { viewModel.clearFocusedRequest() }
+    }
 
     // Time-block descriptor for booking cards (spec 15 item 5). Resolver +
     // Business-Settings timeBlocks now exist (Stage 1 §A.8). Always on, same as
@@ -534,6 +539,24 @@ private fun ScheduleViewScreenContent(
                     }
                 }
             }
+            // #2028: a notification's Open named a request that is no longer
+            // waiting. Same words as the web's Visit requests queue.
+            if (state.focusedRequestGone) {
+                item {
+                    AuntieBanner(
+                        tone = AuntieBannerTone.Info,
+                        title = "That request is no longer waiting",
+                        icon = Lucide.CircleAlert,
+                        onDismiss = { viewModel.clearFocusedRequest() },
+                    ) {
+                        Text(
+                            "It was booked, turned down or withdrawn, so there is nothing left to answer.",
+                            style = AuntieTheme.typography.bodySmall,
+                            color = AuntieTheme.colors.textDim,
+                        )
+                    }
+                }
+            }
             state.seriesActionMessage?.let { msg ->
                 item {
                     AuntieBanner(
@@ -562,6 +585,8 @@ private fun ScheduleViewScreenContent(
                                     onCancel = { note -> viewModel.cancelSeries(series, note) },
                                     loadNotes = { viewModel.loadRequestNotes(series) },
                                     catalog = serviceCatalog,
+                                    openDetailOnArrival = state.focusedRequestKey == series.requestKey,
+                                    onDetailOpened = { viewModel.clearFocusedRequest() },
                                 )
                             }
                         }
@@ -3262,6 +3287,86 @@ private fun visitRequestTime(ms: Long?, zone: ZoneId): String {
  */
 /** #2030: the server takes up to 500 characters of note (`manageBookingSeries`). */
 internal const val HOUSEHOLD_NOTE_MAX = 500
+
+/**
+ * The confirm step for answering a whole incoming request: titled with the
+ * household (#1577), naming each date the request covers and who is told
+ * (#1875), with the note for the household (#2030).
+ *
+ * One composable for both places a request is answered, its Visit requests
+ * card here and its row on Notifications, so the two cannot say different
+ * things. [readyToBook] false means a night still needs its start time (#1098),
+ * which only the card can set: the approval is refused with that reason and
+ * [notReadyAction] offers the way there.
+ */
+@Composable
+internal fun SeriesDecisionDialog(
+    visible: Boolean,
+    series: IncomingSeries,
+    decline: Boolean,
+    note: String,
+    onNoteChange: (String) -> Unit,
+    enabled: Boolean,
+    readyToBook: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    catalog: ServiceCatalog = ServiceCatalog(),
+    notReadyAction: (@Composable () -> Unit)? = null,
+) {
+    val c = AuntieTheme.colors
+    val zone = LocalBusinessZone.current
+    val blocked = !decline && !readyToBook
+    AuntieDialog(
+        visible = visible,
+        title = if (decline) series.declineConfirmTitle() else series.approveConfirmTitle(),
+        onDismiss = onDismiss,
+        footer = {
+            GhostButton(label = "Never mind", onClick = onDismiss)
+            if (blocked && notReadyAction != null) {
+                notReadyAction()
+            } else {
+                PrimaryButton(
+                    label = if (decline) "Turn it down" else "Book it",
+                    onClick = onConfirm,
+                    enabled = enabled && !blocked,
+                )
+            }
+        },
+    ) {
+        Text(text = series.subject(catalog), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+        // #1875: the dates, so nobody answers a request without seeing which one.
+        series.visitLines(zone, catalog).forEach { line ->
+            Text(text = line, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
+        Text(
+            text = when {
+                decline -> "Nothing will be booked. The household will be told."
+                blocked -> if (series.pendingNights.size == 1) {
+                    "This request has a night with no start time yet. Set it on the request before booking."
+                } else {
+                    "This request has nights with no start time yet. Set them on the request before booking."
+                }
+                series.visitCount == 1 -> "This visit will go on the schedule and on the household's portal."
+                else -> "All ${series.visitCount} visits will go on the schedule and on the household's portal."
+            },
+            style = AuntieTheme.typography.bodyMedium,
+            color = c.textPrimary,
+        )
+        if (!blocked) {
+            // #2030: the same two labels as the web's dialog.
+            AuntieField(
+                value = note,
+                onValueChange = { onNoteChange(it.take(HOUSEHOLD_NOTE_MAX)) },
+                label = if (decline) "Anything to add for the household (optional)" else "Note for the household (optional)",
+                singleLine = false,
+                minLines = 3,
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+                fieldModifier = Modifier.testTag("householdNote"),
+            )
+        }
+    }
+}
 @Composable
 internal fun IncomingSeriesRow(
     series: IncomingSeries,
@@ -3275,6 +3380,13 @@ internal fun IncomingSeriesRow(
     loadNotes: suspend () -> Result<String> = { Result.success("") },
     /** #1744: the request names its KinCare, never a stored key. */
     catalog: ServiceCatalog = ServiceCatalog(),
+    /**
+     * #2028: a notification's Open brought the operator here for THIS request,
+     * so its detail sheet is open on arrival. [onDetailOpened] then clears the
+     * ask, so coming back to the screen later does not open it again.
+     */
+    openDetailOnArrival: Boolean = false,
+    onDetailOpened: () -> Unit = {},
 ) {
     val c = AuntieTheme.colors
     val zone = LocalBusinessZone.current
@@ -3282,7 +3394,13 @@ internal fun IncomingSeriesRow(
     val ready = seriesReadyToApprove(series, startTimes)
     val seriesKey = seriesNightKey(series, "")
     var confirming by remember(seriesKey) { mutableStateOf<String?>(null) }
-    var detailOpen by remember(seriesKey) { mutableStateOf(false) }
+    var detailOpen by remember(seriesKey) { mutableStateOf(openDetailOnArrival) }
+    LaunchedEffect(openDetailOnArrival) {
+        if (openDetailOnArrival) {
+            detailOpen = true
+            onDetailOpened()
+        }
+    }
     // #2030: what the operator writes the household with the answer. The
     // household reads it on the booking and in the answer's notice. Cleared on
     // every new confirm, so a note meant for a decline never rides an approval.
@@ -3359,48 +3477,25 @@ internal fun IncomingSeriesRow(
             )
         }
     }
-    AuntieDialog(
+    SeriesDecisionDialog(
         visible = confirming != null,
-        title = if (confirming == "cancel") series.declineConfirmTitle() else series.approveConfirmTitle(),
+        series = series,
+        decline = confirming == "cancel",
+        note = householdNote,
+        onNoteChange = { householdNote = it },
+        enabled = !actionsLocked,
+        // The card's Approve stays off until every night has its time.
+        readyToBook = true,
         onDismiss = { confirming = null },
-        footer = {
-            GhostButton(label = "Never mind", onClick = { confirming = null })
-            PrimaryButton(
-                label = if (confirming == "cancel") "Turn it down" else "Book it",
-                onClick = {
-                    val decision = confirming
-                    val note = householdNote.trim()
-                    confirming = null
-                    householdNote = ""
-                    if (decision == "cancel") onCancel(note) else onApprove(note)
-                },
-                enabled = !actionsLocked,
-            )
+        onConfirm = {
+            val decision = confirming
+            val note = householdNote.trim()
+            confirming = null
+            householdNote = ""
+            if (decision == "cancel") onCancel(note) else onApprove(note)
         },
-    ) {
-        Text(text = series.subject(catalog), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
-        Text(
-            text = if (confirming == "cancel") {
-                "Nothing will be booked. The household will be told."
-            } else {
-                if (series.visitCount == 1) "This visit will go on the schedule and on the household's portal."
-                else "All ${series.visitCount} visits will go on the schedule and on the household's portal."
-            },
-            style = AuntieTheme.typography.bodyMedium,
-            color = c.textPrimary,
-        )
-        // #2030: the same two labels as the web's dialog.
-        AuntieField(
-            value = householdNote,
-            onValueChange = { householdNote = it.take(HOUSEHOLD_NOTE_MAX) },
-            label = if (confirming == "cancel") "Anything to add for the household (optional)" else "Note for the household (optional)",
-            singleLine = false,
-            minLines = 3,
-            enabled = !actionsLocked,
-            modifier = Modifier.fillMaxWidth(),
-            fieldModifier = Modifier.testTag("householdNote"),
-        )
-    }
+        catalog = catalog,
+    )
     if (detailOpen) {
         var notes by remember(seriesKey) { mutableStateOf<Result<String>?>(null) }
         LaunchedEffect(seriesKey) { notes = loadNotes() }

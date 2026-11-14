@@ -60,7 +60,12 @@ import { createQuoteHandler } from '../src/admin/createQuote';
 import { createInvoiceHandler } from '../src/admin/createInvoice';
 import { reviewAndSendDraftInvoiceHandler } from '../src/admin/reviewAndSendDraftInvoice';
 import { postInvoiceEventHandler } from '../src/admin/postInvoiceEvent';
-import { convertQuoteToInvoiceHandler, withdrawQuoteHandler, quoteActionRefusal } from '../src/admin/quoteActions';
+import {
+  convertQuoteToInvoiceHandler,
+  withdrawQuoteHandler,
+  quoteActionAlreadyDone,
+  quoteActionRefusal,
+} from '../src/admin/quoteActions';
 import { archiveInvoiceHandler } from '../src/admin/archiveInvoice';
 import { linkInvoiceSessionsHandler } from '../src/admin/linkInvoiceSessions';
 import { updateInvoiceHandler } from '../src/admin/updateInvoice';
@@ -316,6 +321,51 @@ describe('#2088 turning a quote into an invoice keeps its visits', () => {
     expect(portal.open.map((i) => [i.id, i.status])).toEqual([[quoteId, 'open']]);
   });
 
+  it('#1966: the invoice it becomes is due by the business Payment terms, counted from its visits', async () => {
+    const ctx = world({
+      'business_settings/business_settings': {
+        timeZone: 'America/Chicago',
+        householdNotificationsLive: true,
+        invoicePaymentTerms: 'net_14_after_last_visit',
+      },
+      // 7 PM on Jun 3 in Chicago, 00:00 on Jun 4 in UTC.
+      'kin_care_sessions/s2': visit({ startTime: '2026-06-04T00:00:00.000Z' }),
+    });
+    keyN += 1;
+    const { invoiceId } = await createQuoteHandler(
+      admin({
+        ...composerQuote(['s1', 's2']),
+        termsCode: 'due_on_receipt',
+        dueDate: '',
+        idempotencyKey: `quot_17000000022${String(keyN).padStart(2, '0')}_z`,
+      }),
+    );
+    await convertQuoteToInvoiceHandler(admin({ invoiceId }));
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['termsCode']).toBe('net_14_after_last_visit');
+    expect(inv['terms']).toBe('Due 14 days after the last visit');
+    expect(inv['dueDate']).toBe('2026-06-17');
+  });
+
+  it('#1966: a due date the office picked by hand survives the change', async () => {
+    const ctx = world({
+      'business_settings/business_settings': { invoicePaymentTerms: 'net_30_after_last_visit' },
+    });
+    keyN += 1;
+    const { invoiceId } = await createQuoteHandler(
+      admin({
+        ...composerQuote(['s1']),
+        termsCode: 'custom',
+        dueDate: '2026-07-04',
+        idempotencyKey: `quot_17000000023${String(keyN).padStart(2, '0')}_w`,
+      }),
+    );
+    await convertQuoteToInvoiceHandler(admin({ invoiceId }));
+    const inv = await docOf(ctx, `invoices/${invoiceId}`);
+    expect(inv['termsCode']).toBe('custom');
+    expect(inv['dueDate']).toBe('2026-07-04');
+  });
+
   it('a quote saved unsent turns into a plain draft invoice', async () => {
     const ctx = world();
     const quoteId = await unsentQuote();
@@ -389,6 +439,12 @@ describe('#2088 withdrawing a quote releases its visits like a decline', () => {
     expect(q['sessionIds']).toEqual([]);
     expect(q['releasedSessionIds']).toEqual(['s1', 's2']);
     expect(await portalIds()).toEqual([]);
+    // Its PDF is no longer served either: a withdrawn quote is hidden like the
+    // quote itself, so a link kept from before answers as a missing one, in
+    // words with no id in them.
+    expect(hiddenFromHousehold(q)).toBe(true);
+    const pdfErr = await getMyInvoicePdfHandler(kinfolk({ invoiceId: quoteId, kinfolkId: 'fam1' })).catch((e) => e);
+    expect(pdfErr).toMatchObject({ code: 'not-found', message: 'That invoice or quote is no longer available.' });
     const extras = await loadVisitExtras(ctx.db as any, 'fam1', { wantLinks: true, billingAccess: true });
     expect(extras.invoiceBySession.size).toBe(0);
     await expect(acceptQuoteHandler(kinfolk({ invoiceId: quoteId }))).rejects.toMatchObject({
@@ -399,10 +455,10 @@ describe('#2088 withdrawing a quote releases its visits like a decline', () => {
       admin({ ...composerQuote(['s1'], { dueDate: '' }), status: 'draft', idempotencyKey: 'inv_1700000002088_w' }),
     );
     expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(invoiceId);
-    // Withdrawn is final as a quote.
-    await expect(withdrawQuoteHandler(admin({ invoiceId: quoteId }))).rejects.toMatchObject({
-      details: { code: 'quote_not_a_quote' },
-    });
+    // Withdrawn is final as a quote: it cannot be turned into an invoice.
+    const err = await convertQuoteToInvoiceHandler(admin({ invoiceId: quoteId })).catch((e) => e);
+    expect(err).toMatchObject({ details: { code: 'quote_not_a_quote' } });
+    expect(err.message).toBe('This quote was withdrawn, so it cannot be turned into an invoice.');
   });
 
   it('a withdrawn quote takes no visit back: Link visits is refused, and Edit is closed', async () => {
@@ -451,6 +507,55 @@ describe('#2088 withdrawing a quote releases its visits like a decline', () => {
     for (const call of [convertQuoteToInvoiceHandler, withdrawQuoteHandler]) {
       await expect(call(admin({ invoiceId: quoteId }))).rejects.toMatchObject({ details: { code: 'invoice_archived' } });
     }
+  });
+});
+
+describe('a retry of Turn into invoice or Withdraw that already succeeded answers success', () => {
+  it('withdraw twice: the second answers ok with the same visits, and writes and records nothing', async () => {
+    const ctx = world();
+    const quoteId = await sentQuote(['s1', 's2']);
+    const first = await withdrawQuoteHandler(admin({ invoiceId: quoteId }));
+    const writes = ctx.writes.length;
+    (writeAuditEntry as any).mockClear();
+
+    const again = await withdrawQuoteHandler(admin({ invoiceId: quoteId }));
+
+    expect(again).toEqual(first);
+    expect(again).toEqual({ ok: true, invoiceId: quoteId, status: 'cancelled', releasedSessionIds: ['s1', 's2'] });
+    expect(ctx.writes.length).toBe(writes);
+    expect(writeAuditEntry).not.toHaveBeenCalled();
+  });
+
+  it('convert twice: the second answers ok with the draft it became, and writes and records nothing', async () => {
+    const ctx = world();
+    const quoteId = await sentQuote(['s1']);
+    const first = await convertQuoteToInvoiceHandler(admin({ invoiceId: quoteId }));
+    const writes = ctx.writes.length;
+    (writeAuditEntry as any).mockClear();
+
+    const again = await convertQuoteToInvoiceHandler(admin({ invoiceId: quoteId }));
+
+    expect(again).toEqual(first);
+    expect(again).toEqual({ ok: true, invoiceId: quoteId, status: 'draft' });
+    expect(ctx.writes.length).toBe(writes);
+    expect(writeAuditEntry).not.toHaveBeenCalled();
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(quoteId);
+  });
+
+  it('a converted quote cannot be withdrawn, and says what it became', async () => {
+    world();
+    const quoteId = await sentQuote(['s1']);
+    await convertQuoteToInvoiceHandler(admin({ invoiceId: quoteId }));
+    const err = await withdrawQuoteHandler(admin({ invoiceId: quoteId })).catch((e) => e);
+    expect(err).toMatchObject({ code: 'failed-precondition', details: { code: 'quote_not_a_quote' } });
+    expect(err.message).toBe('This quote was turned into an invoice, so there is no quote left to withdraw.');
+  });
+
+  it('an invoice that was never a quote is still refused', () => {
+    expect(quoteActionAlreadyDone({ status: 'draft' }, 'convert')).toBe(false);
+    expect(quoteActionAlreadyDone({ status: 'cancelled' }, 'withdraw')).toBe(false);
+    expect(quoteActionAlreadyDone({ status: 'draft', quoteConvertedAt: 'ts' }, 'convert')).toBe(true);
+    expect(quoteActionAlreadyDone({ status: 'cancelled', quoteWithdrawnAt: 'ts' }, 'withdraw')).toBe(true);
   });
 });
 

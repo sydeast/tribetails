@@ -104,10 +104,44 @@ fun buttonTarget(block: EmailBlock.TextBlock): String? {
     return find(block.inlines)?.href
 }
 
-/** True when [text] holds `{{` or `}}` that is not part of a whole merge field. */
+/**
+ * A whole block-helper tag: `{{#if isQuote}}`, `{{else}}`, `{{/if}}`. Complete,
+ * so not a broken merge field. #2092: invoice.new's subject says "quote" on a
+ * quote through one of these, and Save must stay open on it.
+ */
+private val WHOLE_BLOCK_TAG =
+    Regex("""\{\{\s*(?:[#^]\s*(if|unless|each|with)\s+[A-Za-z_][A-Za-z0-9_.]*|/\s*(if|unless|each|with)|else)\s*\}\}""")
+
+/**
+ * True when [text] holds `{{` or `}}` that is not part of a whole merge field or
+ * block tag, or when its block tags do not pair up. Each `{{#if x}}` needs its
+ * own `{{/if}}` in the same field, closed in order, with at most one `{{else}}`
+ * between them: the server compiles every field on its own at send time, and an
+ * unpaired tag fails the whole send, so Save stays off until they pair.
+ */
 fun hasBrokenMergeField(text: String): Boolean {
-    val rest = EMAIL_MERGE_TOKEN.replace(text, "")
-    return "{{" in rest || "}}" in rest
+    val rest = EMAIL_MERGE_TOKEN.replace(WHOLE_BLOCK_TAG.replace(text, ""), "")
+    return "{{" in rest || "}}" in rest || !blockTagsPairUp(text)
+}
+
+private class OpenBlock(val helper: String, var sawElse: Boolean = false)
+
+private fun blockTagsPairUp(text: String): Boolean {
+    val open = ArrayDeque<OpenBlock>()
+    for (m in WHOLE_BLOCK_TAG.findAll(text)) {
+        val opener = m.groups[1]?.value
+        val closer = m.groups[2]?.value
+        when {
+            opener != null -> open.addLast(OpenBlock(opener))
+            closer != null -> if (open.removeLastOrNull()?.helper != closer) return false
+            else -> {
+                val top = open.lastOrNull() ?: return false
+                if (top.sawElse) return false
+                top.sawElse = true
+            }
+        }
+    }
+    return open.isEmpty()
 }
 
 /** Readable text for a fragment: tags dropped, entities decoded, one line per block. */

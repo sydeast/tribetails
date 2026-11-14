@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,6 +89,8 @@ fun NewInvoiceDialog(
         }
     }
     val todayIso = remember { localTodayIso() }
+    // #1966: the Payment terms a new invoice starts on, and the business zone.
+    val settingsRead = rememberLiveRead(visible) { client.businessSettingsStream() }
     NewInvoiceDialogContent(
         visible = visible,
         picks = picks,
@@ -103,6 +106,8 @@ fun NewInvoiceDialog(
         retryingPick = kinfolkRead.retrying,
         submitting = submitting,
         submitError = submitError,
+        termsSetting = invoiceTermsSettingStateOf(settingsRead.data, settingsRead.hasLoaded, settingsRead.error),
+        onRetryTermsSetting = settingsRead::retry,
     )
 }
 
@@ -124,6 +129,9 @@ internal fun NewInvoiceDialogContent(
     retryingPick: Boolean = false,
     submitting: Boolean = false,
     submitError: String? = null,
+    /** #1966: the business's Payment terms setting and zone, and whether they have loaded. */
+    termsSetting: InvoiceTermsSettingState = InvoiceTermsSettingState(),
+    onRetryTermsSetting: () -> Unit = {},
 ) {
     if (!visible) return
     val c = AuntieTheme.colors
@@ -133,7 +141,13 @@ internal fun NewInvoiceDialogContent(
     }
     var path by remember { mutableStateOf(InvoiceCreatePath.WORK) }
     var date by remember(todayIso) { mutableStateOf(todayIso) }
-    var termsCode by remember { mutableStateOf(InvoiceTermsCode.DUE_ON_RECEIPT) }
+    // #1966: the terms start on the business's Payment terms setting, seeded
+    // once it loads unless the operator has already picked terms here.
+    var termsPicked by remember { mutableStateOf(false) }
+    var termsCode by remember { mutableStateOf(termsSetting.paymentTerms) }
+    LaunchedEffect(termsSetting.loading, termsSetting.paymentTerms) {
+        if (!termsSetting.loading && !termsPicked) termsCode = termsSetting.paymentTerms
+    }
     var customDueDate by remember { mutableStateOf("") }
     var totalText by remember { mutableStateOf("") }
     var invoiceDiscountText by remember { mutableStateOf("") }
@@ -153,11 +167,13 @@ internal fun NewInvoiceDialogContent(
         invoiceDate = date,
         serviceDates = if (onWork) sessions.filter { it.sessionId in selected }.map { it.startTime } else emptyList(),
         now = todayIso,
+        // #1966: visit days on the business's clock, as the server counts them.
+        timeZone = termsSetting.timeZone,
     )
     // #1744: each visit line names its KinCare, never the stored `visit_60`.
     val catalog = com.tribetails.auntieos.web.screens.LocalServiceCatalog.current
     val money = if (onWork) composerMoney(sessions, selected, prices, extraLines, invoiceDiscountText, catalog) else null
-    val blocked = composerBlockedReason(
+    val blocked = if (termsSetting.loading) TERMS_LOADING else composerBlockedReason(
         kinfolkId = pick.id,
         path = path,
         termsCode = termsCode,
@@ -168,8 +184,9 @@ internal fun NewInvoiceDialogContent(
         draftCount = extraLines.size,
         money = money,
         totalText = totalText,
+        quote = quoteMode,
     )
-    val termsNote = composerTermsNote(termsCode, due, date)
+    val termsNote = if (termsSetting.loading) TERMS_LOADING else composerTermsNote(termsCode, due, date, quote = quoteMode)
 
     // #1593: each refusal under the field it is about, while it is wrong.
     val dueOrderProblem = if (termsCode == InvoiceTermsCode.CUSTOM) {
@@ -253,7 +270,7 @@ internal fun NewInvoiceDialogContent(
 
         when {
             pick.id.isBlank() -> Text(
-                "Pick a household to see its un-invoiced visits.",
+                if (quoteMode) "Pick a household to see its unbilled visits." else "Pick a household to see its un-invoiced visits.",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
@@ -271,11 +288,16 @@ internal fun NewInvoiceDialogContent(
                 load = loadUninvoiced,
                 setDoNotInvoice = setDoNotInvoice,
                 disabled = submitting,
+                forQuote = quoteMode,
             )
 
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "A blank invoice with a typed total. It is not linked to any logged visit.",
+                    if (quoteMode) {
+                        "A blank quote with a typed total. It is not linked to any logged visit."
+                    } else {
+                        "A blank invoice with a typed total. It is not linked to any logged visit."
+                    },
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )
@@ -290,7 +312,7 @@ internal fun NewInvoiceDialogContent(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 GhostButton(
-                    label = "Bill this household's logged work instead",
+                    label = if (quoteMode) "Quote this household's logged work instead" else "Bill this household's logged work instead",
                     onClick = { path = InvoiceCreatePath.WORK },
                     enabled = !submitting,
                 )
@@ -350,12 +372,21 @@ internal fun NewInvoiceDialogContent(
             label = "Terms",
             options = invoiceTermsDefs(),
             selected = termsCode,
-            onSelect = { termsCode = it },
+            onSelect = {
+                termsPicked = true
+                termsCode = it
+            },
             optionLabel = { it.label },
-            enabled = !submitting,
+            enabled = !submitting && !termsSetting.loading,
             modifier = Modifier.fillMaxWidth(),
         )
         Text(termsNote, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        if (termsSetting.failed) {
+            // Stacked, not side by side: beside a weighted sentence the button
+            // measured a few pixels wide and could not be tapped.
+            Text(TERMS_LOAD_FAILED, style = AuntieTheme.typography.bodySmall, color = c.error)
+            GhostButton(label = "Try again", onClick = onRetryTermsSetting, enabled = !submitting)
+        }
 
         if (quoteMode) {
             Row(
@@ -364,7 +395,7 @@ internal fun NewInvoiceDialogContent(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "Send to kinfolk now",
+                    "Send to Kinfolk now",
                     style = AuntieTheme.typography.bodyMedium,
                     color = c.textPrimary,
                     modifier = Modifier.weight(1f),

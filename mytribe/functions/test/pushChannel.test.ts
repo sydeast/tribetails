@@ -112,6 +112,25 @@ describe('sendPushChannel', () => {
     expect(call.data).toEqual({ notificationKey: 't.k', route: '/kc/kc123' });
   });
 
+  it('#2093: a quote with no Kin still reads whole in a push template stored before re-import', async () => {
+    const push = async (template: { title: string; body: string }) => {
+      const ctx = buildPushDbMock({ template, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockReset();
+      mocks.multicast.mockResolvedValue({ successCount: 1, failureCount: 0, responses: [{ success: true, messageId: 'm' }] });
+      await sendPushChannel({ def: def(), recipientUid: 'u1', data: { kinName: '', quoteHouseholdKinNames: 'Rex, Mo' } });
+      return mocks.multicast.mock.calls[0]![0].notification as { title: string; body: string };
+    };
+    expect(await push({ title: 'Quote accepted', body: "You're all set for {{kinName}}'s care." })).toEqual({
+      title: 'Quote accepted',
+      body: "You're all set for Rex, Mo's care.",
+    });
+    expect(await push({ title: 'Quote accepted', body: "You're all set{{#if kinName}} for {{kinName}}'s care{{/if}}." })).toEqual({
+      title: 'Quote accepted',
+      body: "You're all set.",
+    });
+  });
+
   it('prunes invalid tokens reported by FCM', async () => {
     const ctx = buildPushDbMock({
       template: { title: 't', body: 'b' },
