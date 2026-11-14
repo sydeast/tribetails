@@ -352,7 +352,7 @@ fun ScheduleScreen() {
                             anchor = selected ?: today,
                             weeks = 5,
                             selected = selected,
-                            countFor = { day -> sessionsByDate[day.toString()].orEmpty().size },
+                            countFor = { day -> sessionsByDate[day.toString()].orEmpty().count { !isCancelledVisitStatus(it.status) } },
                             onSelect = { selected = it },
                         )
                     }
@@ -361,7 +361,7 @@ fun ScheduleScreen() {
                             anchor = selected ?: today,
                             weeks = 6,
                             selected = selected,
-                            countFor = { day -> sessionsByDate[day.toString()].orEmpty().size },
+                            countFor = { day -> sessionsByDate[day.toString()].orEmpty().count { !isCancelledVisitStatus(it.status) } },
                             onSelect = { selected = it },
                         )
                     }
@@ -589,7 +589,7 @@ private fun WeekCalendar(
     // A 6:30 visit used to sit behind a footer line that did not name the day.
     val gridWindow = weekGridWindow(
         days.flatMap { day ->
-            sessionsByDate[day.toString()].orEmpty().mapNotNull { sess ->
+            sessionsByDate[day.toString()].orEmpty().filterNot { isCancelledVisitStatus(it.status) }.mapNotNull { sess ->
                 val start = localMinutesOfDay(sess.startTime, localZone) ?: return@mapNotNull null
                 start to visitEndMinute(sess, start, localZone)
             }
@@ -601,7 +601,7 @@ private fun WeekCalendar(
     var offWindowCount = 0
     var placeableCount = 0
     days.forEach { day ->
-        sessionsByDate[day.toString()].orEmpty().forEach { sess ->
+        sessionsByDate[day.toString()].orEmpty().filterNot { isCancelledVisitStatus(it.status) }.forEach { sess ->
             val m = localMinutesOfDay(sess.startTime, localZone)
             if (m == null || m < windowStart || m >= windowEnd) offWindowCount++ else placeableCount++
         }
@@ -1260,11 +1260,11 @@ private fun monthAbbrev(date: LocalDate): String =
 @Composable
 private fun serviceTint(serviceType: String, status: String): Color {
     val c = AuntieTheme.colors
-    if (status.uppercase() == "CANCELLED") return c.textFaint
+    if (isCancelledVisitStatus(status)) return c.textFaint
     return bookingServiceTone(serviceType, LocalServiceCatalog.current).color(c)
 }
 
-private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
+private fun statusTone(status: String): AuntieStatusTone = when (canonicalVisitStatus(status)) {
     "ON_MY_WAY" -> AuntieStatusTone.Warning
     "ARRIVED", "DEPARTED" -> AuntieStatusTone.Orange
     "COMPLETED" -> AuntieStatusTone.Success
@@ -1272,13 +1272,25 @@ private fun statusTone(status: String): AuntieStatusTone = when (status.uppercas
     else -> AuntieStatusTone.Neutral
 }
 
-private fun statusBadge(status: String): String = when (status.uppercase()) {
+private fun statusBadge(status: String): String = when (canonicalVisitStatus(status)) {
     "COMPLETED" -> "COMPLETED"
     "ON_MY_WAY", "ARRIVED", "DEPARTED" -> "ACTIVE"
     "SCHEDULED" -> "CONFIRMED"
     "CANCELLED" -> "CANCELLED"
     else -> status.uppercase()
 }
+
+/**
+ * #1868: a called-off visit in any stored spelling (`CANCELLED`, `CANCELED`,
+ * `cancelled`), the server's `normalizeBookingStatus` rule. It is drawn faded
+ * and left out of every count on this screen: it no longer holds the hour.
+ */
+internal fun isCancelledVisitStatus(status: String): Boolean =
+    status.trim().uppercase().let { it == "CANCELLED" || it == "CANCELED" }
+
+/** The status in upper case, with the one-L spelling read as CANCELLED. */
+internal fun canonicalVisitStatus(status: String): String =
+    if (isCancelledVisitStatus(status)) "CANCELLED" else status.trim().uppercase()
 
 private fun scheduleSubtitle(session: KinCareSession): String {
     val who = session.kinfolkName.ifBlank { "Kinfolk" }

@@ -4,6 +4,9 @@ import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.data.InvoiceLineItem
 import com.tribetails.auntieos.web.data.UninvoicedSession
 import kotlin.math.roundToLong
+import kotlinx.datetime.TimeZone
+import com.tribetails.auntieos.web.util.businessTimeZone
+import com.tribetails.auntieos.web.screens.sessions.businessDayOf
 
 /**
  * #1178: everything the desktop new-invoice composer decides, with no Compose in
@@ -88,8 +91,9 @@ enum class InvoiceCreatePath { WORK, BLANK }
 private val MONTHS = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 /** "Aug 11", or "Aug 11, 2025" when not this year. Falls back to the raw text. */
-fun visitDayLabel(raw: String, todayIso: String): String {
-    val iso = raw.trim().take(10)
+fun visitDayLabel(raw: String, todayIso: String, zone: TimeZone = businessTimeZone()): String {
+    // #2095: the BUSINESS day the stored time falls on, not its UTC date.
+    val iso = businessDayOf(raw.trim(), zone)
     if (!Regex("""^\d{4}-\d{2}-\d{2}$""").matches(iso)) return raw.trim()
     val month = iso.substring(5, 7).toIntOrNull() ?: return raw.trim()
     val name = MONTHS.getOrNull(month - 1) ?: return raw.trim()
@@ -103,9 +107,14 @@ fun visitDayLabel(raw: String, todayIso: String): String {
  * The service is the KinCare's name off the catalog, never the stored
  * `visit_60` (#1744): this text is written onto the invoice the household reads.
  */
-fun visitLineDescription(session: UninvoicedSession, catalog: com.tribetails.auntieos.web.screens.ServiceCatalog = com.tribetails.auntieos.web.screens.ServiceCatalog()): String {
+fun visitLineDescription(
+    session: UninvoicedSession,
+    catalog: com.tribetails.auntieos.web.screens.ServiceCatalog = com.tribetails.auntieos.web.screens.ServiceCatalog(),
+    zone: TimeZone = businessTimeZone(),
+): String {
     val label = catalog.nameOf(session.serviceType)
-    val day = session.startTime.take(10)
+    // #2095: the day it happened where the business is; an 11:30 PM visit is not tomorrow's.
+    val day = businessDayOf(session.startTime, zone)
     return if (day.isBlank()) label else "$label, $day"
 }
 

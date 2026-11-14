@@ -381,6 +381,30 @@ class BulkRescheduleHelpersTest {
     }
 
     @Test
+    fun `#2095 a window stored as instants keeps its length when moved`() {
+        // 9:00 to 10:00 PM Chicago, stored as 03:00Z to 04:00Z the next day. The
+        // zone-less parse failed on these and the move wrote a 30-minute visit.
+        assertEquals(
+            "2026-11-14T21:00:00" to "2026-11-14T22:00:00",
+            buildRescheduleTimes("2026-11-14", "21:00", "2026-11-12T03:00:00.000Z", "2026-11-12T04:00:00.000Z"),
+        )
+    }
+    @Test
+    fun `#2095 a start stored as an instant prefills its business day and time`() {
+        val chicago = java.time.ZoneId.of("America/Chicago")
+        // 11:30 PM Chicago on Nov 11 is 05:30 UTC on Nov 12: saving the form
+        // unchanged must leave the visit where it is.
+        assertEquals("2026-11-11", rescheduleDatePrefill("2026-11-12T05:30:00.000Z", chicago))
+        assertEquals("23:30", rescheduleTimePrefill("2026-11-12T05:30:00.000Z", chicago))
+        // The night clocks go forward: 00:30 CST on Mar 8 is 06:30 UTC.
+        assertEquals("2026-03-08", rescheduleDatePrefill("2026-03-08T06:30:00Z", chicago))
+        assertEquals("00:30", rescheduleTimePrefill("2026-03-08T06:30:00Z", chicago))
+        // A wall clock is kept.
+        assertEquals("2026-11-11", rescheduleDatePrefill("2026-11-11T23:30:00", chicago))
+        assertEquals("23:30", rescheduleTimePrefill("2026-11-11T23:30:00", chicago))
+    }
+
+    @Test
     fun `the summary names both numbers, in the right number`() {
         val moved = BulkRescheduleRow("a", "The Wrens", BulkRescheduleStatus.MOVED, "Moved.")
         val refused = BulkRescheduleRow("b", "The Devlins", BulkRescheduleStatus.REFUSED, "No.")

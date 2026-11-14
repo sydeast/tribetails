@@ -155,7 +155,10 @@ fun NewInvoiceDialog(
     /** The lines this invoice would carry, and the live total under them. */
     // #1744: each visit line names its KinCare, never the stored `visit_60`.
     val catalog = rememberServiceCatalog()
-    val money = if (onWork) composerMoney(sessions, selected, prices, extraLines, invoiceDiscountText, catalog) else null
+    val money = if (onWork) composerMoney(
+        sessions, selected, prices, extraLines, invoiceDiscountText, catalog,
+        com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone.current,
+    ) else null
 
     val blocked = composerBlockedReason(
         kinfolkId = pick.id,

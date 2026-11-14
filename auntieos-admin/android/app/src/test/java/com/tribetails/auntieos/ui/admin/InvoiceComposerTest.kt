@@ -47,6 +47,29 @@ class InvoiceComposerTest {
     }
 
     @Test
+    fun `#2095 the picker's day label is the business day`() {
+        val chicago = java.time.ZoneId.of("America/Chicago")
+        assertEquals("Nov 11", visitDayLabel("2026-11-12T05:30:00.000Z", "2026-11-13", chicago))
+        assertEquals("Nov 11", visitDayLabel("2026-11-11T23:30:00", "2026-11-13", chicago))
+        val line = buildBoundLines(
+            listOf(session("s1", service = "visit_45", start = "2026-11-12T05:30:00.000Z")), setOf("s1"), emptyMap(), catalog, chicago,
+        ).lines.single()
+        assertEquals("Long walk, 2026-11-11", line.description)
+    }
+    @Test
+    fun `#2095 an evening visit's line carries its business day, not the UTC one`() {
+        // 11:30 PM Chicago on Nov 11 is 05:30 UTC on Nov 12.
+        val chicago = java.time.ZoneId.of("America/Chicago")
+        assertEquals(
+            "Long walk, 2026-11-11",
+            visitLineDescription(session("s1", service = "visit_45", start = "2026-11-12T05:30:00.000Z"), catalog, chicago),
+        )
+        assertEquals(
+            "Long walk, 2026-11-11",
+            visitLineDescription(session("s1", service = "visit_45", start = "2026-11-11T23:30:00"), catalog, chicago),
+        )
+    }
+    @Test
     fun `#1744 the composer's lines carry the KinCare name`() {
         val money = composerMoney(
             sessions = listOf(session("s1", service = "visit_45")),

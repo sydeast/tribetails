@@ -67,7 +67,6 @@ import com.tribetails.auntieos.web.data.MediaFile
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.canDeleteAsDraft
 import com.tribetails.auntieos.web.data.responseKey
-import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.screens.sessions.RouteMap
 import com.tribetails.auntieos.web.screens.LocalServiceCatalog
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -106,6 +105,8 @@ import com.tribetails.auntieos.web.util.openUrl
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.datetime.TimeZone
+import com.tribetails.auntieos.web.util.businessTimeZone
 
 /**
  * KinTale composer, opens after a Kin Care is "DEPARTED" and lets Auntie write
@@ -814,7 +815,7 @@ private fun CoverHero(
                 text = listOfNotNull(
                     "Visit",
                     session.serviceType.takeIf { it.isNotBlank() }?.let { LocalServiceCatalog.current.nameOf(it) },
-                    sessionWindow(session),
+                    kinTaleSessionWindow(session),
                 ).joinToString(" · "),
                 style = AuntieTheme.typography.labelSmall,
                 color = c.background.copy(alpha = 0.9f),
@@ -1276,27 +1277,11 @@ private fun hasContent(report: KinCareReport): Boolean =
         // custom-fields-only tale still persists + sends.
         report.formValues.values.any { it.isNotBlank() }
 
-private fun sessionWindow(s: KinCareSession): String {
-    val start = shortIso(s.startTime)
-    val end   = shortIsoTimeOnly(s.endTime)
-    return when {
-        start.isBlank() && end.isBlank() -> "Time TBD"
-        end.isBlank()                    -> start
-        else                             -> "$start to $end"
-    }
-}
-
-private fun shortIso(iso: String): String =
-    runCatchingCancellable {
-        if (iso.length < 16) return@runCatchingCancellable iso
-        val month = MONTHS[iso.substring(5, 7).toInt() - 1]
-        val day   = iso.substring(8, 10).trimStart('0').ifBlank { "0" }
-        val time  = iso.substring(11, 16)
-        "$month $day · $time"
-    }.getOrDefault(iso)
-
-private fun shortIsoTimeOnly(iso: String): String =
-    runCatchingCancellable { if (iso.length >= 16) iso.substring(11, 16) else iso }
-        .getOrDefault(iso)
-
-private val MONTHS = listOf("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+/**
+ * #2095: the visit's window on the BUSINESS's clock, Auntie Time's own
+ * [com.tribetails.auntieos.web.screens.sessions.sessionWindow]. This screen kept
+ * a copy that printed the stored characters, so a visit stored as an instant
+ * read its UTC day and hour ("Nov 12 · 05:30" for 11:30 PM on Nov 11).
+ */
+internal fun kinTaleSessionWindow(s: KinCareSession, zone: TimeZone = businessTimeZone()): String =
+    com.tribetails.auntieos.web.screens.sessions.sessionWindow(s, zone)

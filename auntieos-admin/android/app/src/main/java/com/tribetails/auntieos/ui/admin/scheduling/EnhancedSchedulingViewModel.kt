@@ -282,9 +282,13 @@ internal fun buildRescheduleTimes(date: String, time: String, originalStart: Str
     if (date.length != 10 || time.length != 5) return null
     val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
     val start = runCatching { LocalDateTime.parse("${date}T${time}:00") }.getOrNull() ?: return null
+    // #2095: the length between the two stored moments, in either stored shape.
+    // An instant used to fail the zone-less parse here and the visit was moved
+    // as a 30-minute one.
+    val zone = businessZone(null)
     val durMin = runCatching {
-        val s = LocalDateTime.parse(originalStart, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-        val e = LocalDateTime.parse(originalEnd, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        val s = com.tribetails.auntieos.domain.storedBusinessInstant(originalStart, zone)!!
+        val e = com.tribetails.auntieos.domain.storedBusinessInstant(originalEnd, zone)!!
         java.time.Duration.between(s, e).toMinutes().toInt()
     }.getOrNull()?.takeIf { it > 0 } ?: 30
     val end = start.plusMinutes(durMin.toLong())
@@ -371,23 +375,32 @@ internal fun bulkRescheduleSkipReason(status: BookingStatus): String = when (sta
     BookingStatus.ACCEPTED -> ""
 }
 
-/** `yyyy-MM-dd` out of a stored local start, or blank when it does not parse. Pure. */
-internal fun rescheduleDatePrefill(startDateTime: String): String =
-    if (startDateTime.length >= 10 && runCatching { LocalDate.parse(startDateTime.take(10)) }.isSuccess) {
+/**
+ * `yyyy-MM-dd` of a stored start on the business clock, or blank when it does
+ * not parse. Pure. #2095: a start stored as a UTC instant used to prefill its
+ * UTC day, and saving the form unchanged moved the visit; it is read in [zone].
+ * A zone-less start is already business time and is kept.
+ */
+internal fun rescheduleDatePrefill(startDateTime: String, zone: java.time.ZoneId = businessZone(null)): String {
+    com.tribetails.auntieos.domain.storedBusinessLocal(startDateTime, zone)?.let { return it.toLocalDate().toString() }
+    return if (startDateTime.length >= 10 && runCatching { LocalDate.parse(startDateTime.take(10)) }.isSuccess) {
         startDateTime.take(10)
     } else {
         ""
     }
+}
 
-/** `HH:mm` out of a stored local start, or blank when it does not parse. Pure. */
-internal fun rescheduleTimePrefill(startDateTime: String): String =
-    if (startDateTime.length >= 16 && startDateTime[10] == 'T' &&
+/** `HH:mm` of a stored start on the business clock, or blank when it does not parse. Pure. See [rescheduleDatePrefill]. */
+internal fun rescheduleTimePrefill(startDateTime: String, zone: java.time.ZoneId = businessZone(null)): String {
+    com.tribetails.auntieos.domain.storedBusinessClock(startDateTime, zone).let { if (it.isNotEmpty()) return it }
+    return if (startDateTime.length >= 16 && startDateTime[10] == 'T' &&
         runCatching { LocalTime.parse(startDateTime.substring(11, 16)) }.isSuccess
     ) {
         startDateTime.substring(11, 16)
     } else {
         ""
     }
+}
 
 /**
  * The headline over the per-visit result list. Always names both numbers,
@@ -1657,8 +1670,8 @@ class EnhancedSchedulingViewModel(
             targets += BulkRescheduleTarget(
                 bookingId = id,
                 name = name,
-                date = rescheduleDatePrefill(booking.startDateTime),
-                time = rescheduleTimePrefill(booking.startDateTime),
+                date = rescheduleDatePrefill(booking.startDateTime, businessZoneOf(_state.value.businessSettings.timeZone)),
+                time = rescheduleTimePrefill(booking.startDateTime, businessZoneOf(_state.value.businessSettings.timeZone)),
                 currentStart = booking.startDateTime,
             )
         }

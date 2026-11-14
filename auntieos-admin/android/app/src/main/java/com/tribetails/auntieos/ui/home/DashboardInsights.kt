@@ -20,6 +20,16 @@ import java.time.LocalDate
 private fun parseDay(s: String): LocalDate? =
     runCatching { LocalDate.parse(s.take(10)) }.getOrNull()
 
+/**
+ * #2095: the business day a stored visit time falls on. [parseDay] read the
+ * first ten characters, which for a UTC instant is the UTC day, so a visit
+ * after about 6 PM Chicago was counted on the next day.
+ */
+private fun sessionDay(raw: String?, zone: java.time.ZoneId): LocalDate? =
+    parseDay(com.tribetails.auntieos.domain.storedBusinessDay(raw, zone))
+
+private val DEFAULT_ZONE: java.time.ZoneId get() = com.tribetails.auntieos.data.model.businessZone(null)
+
 private fun LocalDate.mondayOfWeek(): LocalDate = minusDays((dayOfWeek.value - 1).toLong())
 
 private val CANCELLED_STATUSES = setOf("CANCELLED", "CANCELED")
@@ -33,14 +43,14 @@ data class WeeklyCapacity(val booked: Int, val record: Int, val capacity: Int) {
     val beatingRecord: Boolean get() = record in 1 until booked || (record == 0 && booked > 0)
 }
 
-fun weeklyCapacity(sessions: List<KinCareSession>, todayIso: String): WeeklyCapacity? {
+fun weeklyCapacity(sessions: List<KinCareSession>, todayIso: String, zone: java.time.ZoneId = DEFAULT_ZONE): WeeklyCapacity? {
     val today = parseDay(todayIso) ?: return null
     val monday = today.mondayOfWeek()
     fun weekCount(weekStart: LocalDate): Int {
         val weekEnd = weekStart.plusDays(7)
         return sessions.count { s ->
             if (s.isCancelled()) return@count false
-            val d = parseDay(s.startTime) ?: return@count false
+            val d = sessionDay(s.startTime, zone) ?: return@count false
             d >= weekStart && d < weekEnd
         }
     }
@@ -62,25 +72,29 @@ fun overdueVisits(
     sessions: List<KinCareSession>,
     nowIso: String,
     withinDays: Int = 30,
+    zone: java.time.ZoneId = DEFAULT_ZONE,
 ): List<OverdueVisit> {
-    parseDay(nowIso) ?: return emptyList()
-    val staleBefore = parseDay(nowIso)!!.minusDays(withinDays.toLong())
+    // #2095: instants on the business clock, not the stored text. A UTC
+    // instant and a zone-less wall clock do not compare as strings.
+    val now = com.tribetails.auntieos.domain.storedBusinessInstant(nowIso, zone) ?: return emptyList()
+    val today = now.atZone(zone).toLocalDate()
+    val staleBefore = today.minusDays(withinDays.toLong())
     return sessions
         .mapNotNull { s ->
             val status = s.status.uppercase()
             if (status == "COMPLETED" || s.isCancelled()) return@mapNotNull null
             val end = s.endTime.ifBlank { s.startTime }
-            val endDay = parseDay(end) ?: return@mapNotNull null
-            // ISO strings compare lexicographically, so no clock math is needed.
-            if (end >= nowIso || endDay < staleBefore) return@mapNotNull null
+            val endAt = com.tribetails.auntieos.domain.storedBusinessInstant(end, zone) ?: return@mapNotNull null
+            if (!endAt.isBefore(now) || endAt.atZone(zone).toLocalDate() < staleBefore) return@mapNotNull null
             OverdueVisit(
                 sessionId = s.id,
                 kinfolkName = s.kinfolkName.ifBlank { "Kinfolk" },
                 serviceType = s.serviceType,
                 endedAt = end,
-            )
+            ) to endAt
         }
-        .sortedByDescending { it.endedAt }
+        .sortedByDescending { it.second }
+        .map { it.first }
 }
 
 // ── Pets by type ────────────────────────────────────────────────────────────
@@ -110,13 +124,14 @@ fun frequentFlyers(
     todayIso: String,
     days: Int = 90,
     limit: Int = 5,
+    zone: java.time.ZoneId = DEFAULT_ZONE,
 ): List<FrequentFlyer> {
     val today = parseDay(todayIso) ?: return emptyList()
     val since = today.minusDays(days.toLong())
     return sessions
         .filter { s ->
             s.status.uppercase() == "COMPLETED" &&
-                parseDay(s.completedAt.orEmpty().ifBlank { s.startTime })?.let { it in since..today } == true
+                sessionDay(s.completedAt.orEmpty().ifBlank { s.startTime }, zone)?.let { it in since..today } == true
         }
         .groupBy { it.kinfolkId.ifBlank { it.kinfolkName } }
         .mapNotNull { (_, group) ->
@@ -162,6 +177,7 @@ fun holidayRunway(
     sessions: List<KinCareSession>,
     todayIso: String,
     count: Int = 3,
+    zone: java.time.ZoneId = DEFAULT_ZONE,
 ): List<HolidayRunway> {
     val today = parseDay(todayIso) ?: return emptyList()
     return (usPetCareHolidays(today.year) + usPetCareHolidays(today.year + 1))
@@ -173,7 +189,7 @@ fun holidayRunway(
             val windowEnd = h.date.plusDays(2)
             val booked = sessions.count { s ->
                 if (s.isCancelled()) return@count false
-                val d = parseDay(s.startTime) ?: return@count false
+                val d = sessionDay(s.startTime, zone) ?: return@count false
                 d in windowStart..windowEnd
             }
             HolidayRunway(
@@ -220,11 +236,22 @@ fun unreadClientMessageCount(rows: List<ConversationSummary>): Int = rows.count 
  * Earliest visit whose start is now or later ([nowIso] a full ISO instant, string
  * compare) and whose state is neither cancelled nor completed. Mirrors web + React.
  */
-fun nextUpcomingSession(sessions: List<KinCareSession>, nowIso: String): KinCareSession? =
-    sessions.asSequence()
+fun nextUpcomingSession(
+    sessions: List<KinCareSession>,
+    nowIso: String,
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+): KinCareSession? {
+    // #2095: compared as instants, a zone-less start read on the business clock.
+    // A string compare put a wall-clock `2026-11-11T23:30:00` before a UTC
+    // `2026-11-12T03:00:00Z` that is hours earlier.
+    val now = com.tribetails.auntieos.domain.storedBusinessInstant(nowIso, zone)
+    return sessions.asSequence()
         .filter { !it.isCancelled() && it.status.uppercase() != "COMPLETED" }
-        .filter { it.startTime.isNotBlank() && it.startTime >= nowIso }
-        .minByOrNull { it.startTime }
+        .mapNotNull { s -> com.tribetails.auntieos.domain.storedBusinessInstant(s.startTime, zone)?.let { s to it } }
+        .filter { (_, at) -> now == null || !at.isBefore(now) }
+        .minByOrNull { (_, at) -> at }
+        ?.first
+}
 data class AccessLine(val label: String, val value: String, val mono: Boolean = false)
 /**
  * A household's access notes as display lines, blank fields dropped. Codes/

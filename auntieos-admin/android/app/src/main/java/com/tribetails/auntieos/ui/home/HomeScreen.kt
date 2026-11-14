@@ -35,6 +35,9 @@ import com.tribetails.auntieos.ui.admin.overdueOnAuntieTime
 import com.tribetails.auntieos.ui.admin.serviceCatalog
 import com.tribetails.auntieos.ui.branding.homeHeading
 import com.tribetails.auntieos.ui.components.*
+import com.tribetails.auntieos.domain.ClockStep
+import com.tribetails.auntieos.ui.admin.ClockStepWarningDialog
+import com.tribetails.auntieos.ui.admin.clockStepWarningFor
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
 import com.tribetails.auntieos.ui.components.AnimatedMeshBackground
@@ -411,6 +414,7 @@ fun HomeScreen(
                                                 TodayVisitCardView(
                                                     card = card,
                                                     catalog = state.businessSettings.serviceCatalog(),
+                                                    zone = com.tribetails.auntieos.data.model.businessZone(state.businessSettings.timeZone),
                                                     defaultEtaMinutes = state.businessSettings.defaultEtaMinutes,
                                                     etaOptions = state.businessSettings.etaMinuteOptions,
                                                     actionPending = state.pendingActionSessionId == card.session.id,
@@ -542,7 +546,11 @@ fun HomeScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 if (state.isLoading) EmptyHint("Loading visits…")
-                                else WeeklyCapacityWidget(state.allSessions, java.time.LocalDate.now().toString())
+                                else WeeklyCapacityWidget(
+                                    state.allSessions,
+                                    com.tribetails.auntieos.ui.admin.businessTodayIso(state.businessSettings.timeZone),
+                                    com.tribetails.auntieos.data.model.businessZone(state.businessSettings.timeZone),
+                                )
                             }
                             DashKey.OVERDUE_TRACKER -> DenPanel(
                                 title = "Overdue visits",
@@ -550,7 +558,14 @@ fun HomeScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 if (state.isLoading) EmptyHint("Loading visits…")
-                                else OverdueVisitsWidget(state.allSessions, java.time.LocalDate.now().toString(), state.businessSettings.serviceCatalog())
+                                // #2095: "now" is the instant it is, never a bare date: the
+                                // overdue test compares instants, and a date reads as nothing.
+                                else OverdueVisitsWidget(
+                                    state.allSessions,
+                                    java.time.Instant.now().toString(),
+                                    state.businessSettings.serviceCatalog(),
+                                    com.tribetails.auntieos.data.model.businessZone(state.businessSettings.timeZone),
+                                )
                             }
                             DashKey.PET_BREAKDOWN -> DenPanel(
                                 title = "Pets by type",
@@ -566,7 +581,11 @@ fun HomeScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 if (state.isLoading) EmptyHint("Loading visits…")
-                                else FrequentFlyersWidget(state.allSessions, java.time.LocalDate.now().toString())
+                                else FrequentFlyersWidget(
+                                    state.allSessions,
+                                    com.tribetails.auntieos.ui.admin.businessTodayIso(state.businessSettings.timeZone),
+                                    com.tribetails.auntieos.data.model.businessZone(state.businessSettings.timeZone),
+                                )
                             }
                             DashKey.HOLIDAY_RUNWAY -> DenPanel(
                                 title = "Holiday runway",
@@ -574,7 +593,11 @@ fun HomeScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 if (state.isLoading) EmptyHint("Loading visits…")
-                                else HolidayRunwayWidget(state.allSessions, java.time.LocalDate.now().toString())
+                                else HolidayRunwayWidget(
+                                    state.allSessions,
+                                    com.tribetails.auntieos.ui.admin.businessTodayIso(state.businessSettings.timeZone),
+                                    com.tribetails.auntieos.data.model.businessZone(state.businessSettings.timeZone),
+                                )
                             }
                             DashKey.UNREAD_MESSAGES -> DenPanel(
                                 title = "Unread client messages",
@@ -594,6 +617,7 @@ fun HomeScreen(
                                     kinfolkResult = state.safeboxKinfolk,
                                     nowIso = java.time.Instant.now().toString(),
                                     catalog = state.businessSettings.serviceCatalog(),
+                                    zone = com.tribetails.auntieos.data.model.businessZone(state.businessSettings.timeZone),
                                 )
                             }
                             DashKey.CARE_FLAGS -> DenPanel(
@@ -992,6 +1016,8 @@ private fun TodayVisitCardView(
     card: TodayVisitCard,
     /** #1592: the card names the KinCare, never the stored `visit_60`. */
     catalog: ServiceCatalog,
+    /** #2039: the business clock an odd clock tap is judged on. */
+    zone: java.time.ZoneId,
     defaultEtaMinutes: Int,
     etaOptions: List<Int>,
     actionPending: Boolean,
@@ -1010,6 +1036,24 @@ private fun TodayVisitCardView(
     val tone = bookingServiceTone(session.serviceType, catalog)
 
     var etaMinutes by remember(session.id) { mutableStateOf(defaultEtaMinutes) }
+    // #2039: a tap that does not fit the booking asks first; one that fits
+    // writes straight away, as it always has.
+    var clockAsk by remember(session.id) { mutableStateOf<Pair<ClockStep, String>?>(null) }
+    fun clockTap(step: ClockStep, write: () -> Unit) {
+        val warning = clockStepWarningFor(step, session, zone)
+        if (warning == null) write() else clockAsk = step to warning
+    }
+    clockAsk?.let { (step, warning) ->
+        ClockStepWarningDialog(
+            step = step,
+            warning = warning,
+            onConfirm = {
+                clockAsk = null
+                if (step == ClockStep.DEPARTED) onDeparted() else onArrived()
+            },
+            onDismiss = { clockAsk = null },
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -1034,7 +1078,7 @@ private fun TodayVisitCardView(
             ServicePill(serviceName, tone)
             Spacer(Modifier.width(4.dp))
             Column(horizontalAlignment = Alignment.End) {
-                Text(formatTime(session.startTime), style = AuntieTheme.typography.titleSmall, color = AuntieTheme.colors.textPrimary)
+                Text(formatTime(session.startTime, zone), style = AuntieTheme.typography.titleSmall, color = AuntieTheme.colors.textPrimary)
                 Text(statusLabel(session.status), style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
             }
         }
@@ -1073,13 +1117,13 @@ private fun TodayVisitCardView(
                 label = "Arrived",
                 icon = Lucide.MapPin,
                 enabled = !actionPending && (status == VisitStatus.SCHEDULED || status == VisitStatus.ON_MY_WAY),
-                onClick = onArrived
+                onClick = { clockTap(ClockStep.ARRIVED, onArrived) }
             )
             LifecycleButton(
                 label = "Departed",
                 icon = Lucide.House,
                 enabled = !actionPending && status == VisitStatus.ARRIVED,
-                onClick = onDeparted
+                onClick = { clockTap(ClockStep.DEPARTED, onDeparted) }
             )
             // KinTale entry. Only appears once kin care has actually started (Arrived).
             // Hidden (not disabled) before that, per Auntie's UX direction.

@@ -382,6 +382,7 @@ class HomeViewModel(
                     sessions = allSessions,
                     todayIso = businessTodayIso(bs.timeZone),
                     limit = 5,
+                    zone = businessZone(bs.timeZone),
                 )
                 var allKinLoaded = true
                 val allKin = allKinDef.await().getOrElse { e ->

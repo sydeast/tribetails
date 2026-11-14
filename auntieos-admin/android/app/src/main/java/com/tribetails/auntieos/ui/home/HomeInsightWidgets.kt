@@ -39,6 +39,7 @@ import com.tribetails.auntieos.ui.components.CountUpText
 import com.tribetails.auntieos.ui.components.PulsingBadge
 import com.tribetails.auntieos.ui.components.ServicePill
 import com.tribetails.auntieos.ui.components.color
+import com.tribetails.auntieos.ui.components.formatTime
 import com.tribetails.auntieos.ui.admin.ServiceCatalog
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlin.math.roundToInt
@@ -64,8 +65,13 @@ internal fun InsightHint(text: String, error: Boolean = false) {
 // ── Weekly capacity ─────────────────────────────────────────────────────────
 
 @Composable
-internal fun WeeklyCapacityWidget(sessions: List<KinCareSession>, todayIso: String) {
-    val cap = weeklyCapacity(sessions, todayIso)
+internal fun WeeklyCapacityWidget(
+    sessions: List<KinCareSession>,
+    todayIso: String,
+    /** #2095: the business clock each visit's day is read on. */
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+) {
+    val cap = weeklyCapacity(sessions, todayIso, zone)
     if (cap == null) {
         InsightHint("Couldn't read today's date to size the week.", error = true)
         return
@@ -133,8 +139,10 @@ internal fun OverdueVisitsWidget(
     nowIso: String,
     /** #1592: the pill names the KinCare, never the stored `visit_60`. */
     catalog: ServiceCatalog = ServiceCatalog(),
+    /** #2095: the business clock "now" and each visit's end are read on. */
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
 ) {
-    val overdue = overdueVisits(sessions, nowIso)
+    val overdue = overdueVisits(sessions, nowIso, zone = zone)
     if (overdue.isEmpty()) {
         InsightHint("Nothing overdue. Clean slate.")
         return
@@ -154,7 +162,8 @@ internal fun OverdueVisitsWidget(
                 PulsingBadge(color = c.error, size = 9.dp)
                 Column(Modifier.weight(1f)) {
                     Text(v.kinfolkName, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
-                    Text("ended ${v.endedAt.take(10)}", style = AuntieTheme.typography.bodySmall, color = c.error)
+                    // #2095: the business day it ended, not the stored instant's UTC day.
+                    Text("ended ${com.tribetails.auntieos.domain.storedBusinessDay(v.endedAt, zone)} ${formatTime(v.endedAt, zone)}".trim(), style = AuntieTheme.typography.bodySmall, color = c.error)
                 }
                 if (v.serviceType.isNotBlank()) ServicePill(catalog.nameOf(v.serviceType))
             }
@@ -234,8 +243,12 @@ private fun SpeciesDonut(slices: List<SpeciesSlice>, total: Int, palette: List<C
 // ── Frequent flyers ─────────────────────────────────────────────────────────
 
 @Composable
-internal fun FrequentFlyersWidget(sessions: List<KinCareSession>, todayIso: String) {
-    val flyers = frequentFlyers(sessions, todayIso)
+internal fun FrequentFlyersWidget(
+    sessions: List<KinCareSession>,
+    todayIso: String,
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+) {
+    val flyers = frequentFlyers(sessions, todayIso, zone = zone)
     if (flyers.isEmpty()) {
         InsightHint("No completed visits in the last 90 days yet.")
         return
@@ -279,8 +292,12 @@ internal fun FrequentFlyersWidget(sessions: List<KinCareSession>, todayIso: Stri
 // ── Holiday runway ──────────────────────────────────────────────────────────
 
 @Composable
-internal fun HolidayRunwayWidget(sessions: List<KinCareSession>, todayIso: String) {
-    val runway = holidayRunway(sessions, todayIso)
+internal fun HolidayRunwayWidget(
+    sessions: List<KinCareSession>,
+    todayIso: String,
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
+) {
+    val runway = holidayRunway(sessions, todayIso, zone = zone)
     if (runway.isEmpty()) {
         InsightHint("Couldn't read today's date to plan the runway.", error = true)
         return
@@ -396,6 +413,8 @@ internal fun SafeboxWidget(
     nowIso: String,
     /** #1592: the pill names the KinCare, never the stored `visit_60`. */
     catalog: ServiceCatalog = ServiceCatalog(),
+    /** #2095: the business clock the next visit is read and printed on. */
+    zone: java.time.ZoneId = com.tribetails.auntieos.data.model.businessZone(null),
 ) {
     when {
         kinfolkResult?.isFailure == true ->
@@ -405,7 +424,7 @@ internal fun SafeboxWidget(
             )
         sessionsLoading || kinfolkResult == null -> InsightHint("Loading…")
         else -> {
-            val next = nextUpcomingSession(sessions, nowIso)
+            val next = nextUpcomingSession(sessions, nowIso, zone)
             if (next == null) {
                 InsightHint("No upcoming visits on the books.")
             } else {
@@ -423,7 +442,12 @@ internal fun SafeboxWidget(
                         )
                         if (next.serviceType.isNotBlank()) ServicePill(catalog.nameOf(next.serviceType))
                     }
-                    Text(next.startTime.take(10), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                    // #2095: the visit's business day and time, not its stored UTC characters.
+                    Text(
+                        "${com.tribetails.auntieos.domain.storedBusinessDay(next.startTime, zone)} ${formatTime(next.startTime, zone)}".trim(),
+                        style = AuntieTheme.typography.bodySmall,
+                        color = c.textDim,
+                    )
                     val lines = household?.let { safeboxAccessLines(it) } ?: emptyList()
                     when {
                         household == null ->

@@ -113,6 +113,8 @@ import androidx.compose.runtime.LaunchedEffect
 import com.tribetails.auntieos.web.ui.components.DynamicFormFieldsReadOnly
 import com.tribetails.auntieos.web.ui.components.hasDynamicFieldValues
 import com.tribetails.auntieos.web.screens.communicate.SYNTHESIZE_SUCCESS
+import com.tribetails.auntieos.web.util.businessTimeZone
+import com.tribetails.auntieos.web.screens.schedule.businessDateTimeOf
 
 @Composable
 fun KinfolkProfileScreen(
@@ -625,7 +627,9 @@ fun KinfolkProfileScreen(
                         ups.forEachIndexed { i, s ->
                             AuntieKeyValueRow(
                                 label = LocalServiceCatalog.current.nameOf(s.serviceType),
-                                value = s.startTime.take(16).replace('T', ' ').ifBlank { null },
+                                value = businessDateTimeOf(s.startTime.trim(), businessTimeZone())
+                                    ?.let { "${it.date} ${it.hour.toString().padStart(2, '0')}:${it.minute.toString().padStart(2, '0')}" }
+                                    ?: s.startTime.take(16).replace('T', ' ').ifBlank { null },
                                 showDivider = i != ups.lastIndex,
                             )
                         }

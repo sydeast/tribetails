@@ -52,6 +52,9 @@ import com.tribetails.auntieos.web.ui.components.ServicePill
 import com.tribetails.auntieos.web.ui.components.color
 import com.tribetails.auntieos.web.ui.components.formatTime
 import kotlin.math.roundToInt
+import kotlinx.datetime.TimeZone
+import com.tribetails.auntieos.web.util.businessTimeZone
+import com.tribetails.auntieos.web.screens.sessions.businessDayOf
 
 /**
  * A8 insight widgets (W8 Weekly capacity, W9 Overdue visits, W10 Pets by type,
@@ -153,7 +156,11 @@ private fun CapacityBar(fraction: Float) {
 // ── W9 overdue visits ─────────────────────────────────────────────────────────
 
 @Composable
-internal fun OverdueVisitsWidget(sessionsState: FirestoreResult<List<KinCareSession>>, nowIso: String) {
+internal fun OverdueVisitsWidget(
+    sessionsState: FirestoreResult<List<KinCareSession>>,
+    nowIso: String,
+    zone: TimeZone = businessTimeZone(),
+) {
     DenPanel(
         title = "Overdue visits",
         subtitle = "Past their end time and not marked complete.",
@@ -161,7 +168,7 @@ internal fun OverdueVisitsWidget(sessionsState: FirestoreResult<List<KinCareSess
         hoverLift = true,
     ) {
         SessionsGate(sessionsState) { sessions ->
-            val overdue = overdueVisits(sessions, nowIso)
+            val overdue = overdueVisits(sessions, nowIso, zone = zone)
             if (overdue.isEmpty()) {
                 EmptyHint("Nothing overdue. Clean slate.")
             } else {
@@ -181,7 +188,7 @@ internal fun OverdueVisitsWidget(sessionsState: FirestoreResult<List<KinCareSess
                             Column(Modifier.weight(1f)) {
                                 Text(v.kinfolkName, style = AuntieTheme.typography.titleSmall, color = c.textPrimary)
                                 Text(
-                                    "ended ${v.endedAt.take(10)} ${formatTime(v.endedAt)}".trim(),
+                                    "ended ${businessDayOf(v.endedAt, zone)} ${formatTime(v.endedAt, zone)}".trim(),
                                     style = AuntieTheme.typography.bodySmall,
                                     color = c.error,
                                 )
@@ -501,6 +508,7 @@ internal fun SafeboxWidget(
     sessionsState: FirestoreResult<List<KinCareSession>>,
     kinfolkState: FirestoreResult<List<Kinfolk>>,
     nowIso: String,
+    zone: TimeZone = businessTimeZone(),
 ) {
     DenPanel(
         title = "Key & code safebox",
@@ -514,7 +522,7 @@ internal fun SafeboxWidget(
             kinfolkState is FirestoreResult.Error ->
                 EmptyHint("Couldn't load households: ${kinfolkState.message}", error = true)
             sessionsState is FirestoreResult.Data && kinfolkState is FirestoreResult.Data -> {
-                val next = nextUpcomingSession(sessionsState.value, nowIso)
+                val next = nextUpcomingSession(sessionsState.value, nowIso, zone)
                 if (next == null) {
                     EmptyHint("No upcoming visits on the books.")
                 } else {
@@ -533,7 +541,7 @@ internal fun SafeboxWidget(
                             if (next.serviceType.isNotBlank()) BookingServicePill(next.serviceType)
                         }
                         Text(
-                            "${next.startTime.take(10)} ${formatTime(next.startTime)}".trim(),
+                            "${businessDayOf(next.startTime, zone)} ${formatTime(next.startTime, zone)}".trim(),
                             style = AuntieTheme.typography.bodySmall,
                             color = c.textDim,
                         )
