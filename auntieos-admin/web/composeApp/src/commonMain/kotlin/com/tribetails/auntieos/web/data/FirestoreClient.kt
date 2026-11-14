@@ -3641,6 +3641,28 @@ object TolerantStringListSerializer : KSerializer<List<String>> {
 }
 
 /**
+ * #1370, #1908: decodes a text field that may hold an explicit null (the portal
+ * clears a Kin's care text with null, and the mirror carried that null onto the
+ * flat doc before it learned to write ""), or nothing at all, as "". The desktop
+ * codec does not coerce, so a null on a plain `String` throws and the defensive
+ * collection decode drops the WHOLE Kin from the list. A non-string value reads
+ * as its text. Encodes as a plain string.
+ */
+object TolerantStringSerializer : KSerializer<String> {
+    override val descriptor: SerialDescriptor = String.serializer().descriptor
+    override fun deserialize(decoder: Decoder): String {
+        val jsonDecoder = decoder as? JsonDecoder
+            ?: return runCatchingCancellable { decoder.decodeString() }.getOrDefault("")
+        val el = jsonDecoder.decodeJsonElement()
+        val prim = el as? JsonPrimitive ?: return ""
+        if (el is JsonNull) return ""
+        return prim.content
+    }
+    override fun serialize(encoder: Encoder, value: String) {
+        encoder.encodeString(value)
+    }
+}
+/**
  * Decodes a `householdTags` / `petTags` vocabulary, keeping only well-formed
  * `{ name, color: { token, css }, icon }` rows. Reproduces `decodeTagDefs`
  * (React api/settings.ts:241-255) drop for drop: skip a row that is not an object,
@@ -4095,10 +4117,10 @@ data class Kin(
     val kinfolkId: String = "",
     val name: String = "",
     val species: String = "Dog",
-    val breed: String = "",
-    val age: String = "",
-    val sex: String = "",
-    val weight: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val breed: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val age: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val sex: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val weight: String = "",
     val status: String = "active",
     val profilePictureUrl: String = "",   // Kin (pet) photo; parity with android Kin.profilePictureUrl
 
@@ -4136,16 +4158,34 @@ data class Kin(
     @Serializable(with = FirestoreInstantStringSerializer::class)
     val updatedAt: String = "",
 
-    // Extended care fields (mirror Android model)
-    val colorMarkings: String = "",
+    // Extended care fields (mirror Android model). #1908: each text field reads a
+    // null or missing value as "" (TolerantStringSerializer), never dropping the Kin.
+    @Serializable(with = TolerantStringSerializer::class) val colorMarkings: String = "",
     val spayedNeutered: Boolean = false,
-    val staysAs: String = "",
-    val routine: String = "",
-    val trainingCommands: String = "",
-    val feedingBrand: String = "",
-    val vaccinations: String = "",
-    val medicationHealthNotes: String = "",
-    val vetInfo: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val staysAs: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val routine: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val trainingCommands: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val feedingBrand: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val vaccinations: String = "",
+    /** #1908 kin-meds: ONE field with the household's Medications (the mirror carries it both ways). */
+    @Serializable(with = TolerantStringSerializer::class) val medicationHealthNotes: String = "",
+    /** Legacy free-text vet note. No longer an input (#1908 kin-vet); shown only when no clinic resolves. */
+    @Serializable(with = TolerantStringSerializer::class) val vetInfo: String = "",
+    /**
+     * #1908 (owner ruling 2026-11-11): the care block the household keeps,
+     * which the admin now edits too. Shared both ways by the Kin mirror.
+     */
+    @Serializable(with = TolerantStringSerializer::class) val feedingInstructions: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val walkingInstructions: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val allergies: String = "",
+    @Serializable(with = TolerantStringSerializer::class) val emergencyNotes: String = "",
+    /** The household's notes for the Auntie ("Notes for the Auntie"). Not [officeNotes]. */
+    @Serializable(with = TolerantStringSerializer::class) val sitterNotes: String = "",
+    /**
+     * #1908 kin-vet: a `vet_clinics` id for this Kin alone; "" means the Kin
+     * goes to the household's vet (`household_data.primaryVetClinicId`).
+     */
+    @Serializable(with = TolerantStringSerializer::class) val ownVetClinicId: String = "",
     val checklist: String = "",
     val reactive: Boolean = false,
     val ownerEmail: String = "",
@@ -4301,6 +4341,14 @@ data class HouseholdData(
     val kinfolkId: String = "",
 
     // Veterinary Information
+    /**
+     * #1908 kin-vet: the household's vet as a `vet_clinics` id, the one store
+     * the admin web, Android and the portal read (`setHouseholdVet`). A Kin
+     * with no vet of its own goes to this one. The free-text fields below are
+     * the legacy fallback for a household that predates the clinic list.
+     */
+    val primaryVetClinicId: String = "",
+    val emergencyVetClinicId: String = "",
     val primaryVetName: String = "",
     val primaryVetPhone: String = "",
     val primaryVetAddress: String = "",
