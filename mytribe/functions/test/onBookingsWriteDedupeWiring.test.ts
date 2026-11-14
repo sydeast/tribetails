@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Timestamp } from 'firebase-admin/firestore';
 import { buildDbMock } from './_helpers/mockDb';
 
 /**
@@ -93,5 +94,47 @@ describe('onBookingsWrite passes each event its identity (#832)', () => {
     expect(sent('kincare.booking.cancel').map((a) => a.dedupeKey)).toEqual([
       'booking:v1:kincare.booking.cancel:event:evt-8',
     ]);
+  });
+});
+
+/**
+ * #1838/#2027 review: WIRING for the office notice stamp. A cancel or a move
+ * whose callable told the household itself stamps the visit; the trigger must
+ * then send neither notice, and must send again for every later write that
+ * leaves the stamp as it was.
+ */
+describe('onBookingsWrite leaves a stamped cancel or move to the callable that made it (#1838, #2027)', () => {
+  // Real Timestamps: the trigger compares the two windows by their stored value.
+  const start = Timestamp.fromMillis(SEP4);
+  const later = Timestamp.fromMillis(SEP4 + 86_400_000);
+  it('a stamped cancel sends no cancel from here', async () => {
+    await write(
+      'evt-20',
+      { status: 'confirmed', startTime: start },
+      { status: 'cancelled', startTime: start, officeNoticeStamp: 's-1' },
+    );
+    expect(sent('kincare.booking.cancel')).toHaveLength(0);
+  });
+  it('a stamped move sends no change from here', async () => {
+    await write(
+      'evt-21',
+      { status: 'confirmed', startTime: start },
+      { status: 'confirmed', startTime: later, officeNoticeStamp: 's-2' },
+    );
+    expect(sent('kincare.changed')).toHaveLength(0);
+  });
+  it('a later write that carries the same stamp still sends: a move, then a cancel, by anyone else', async () => {
+    await write(
+      'evt-22',
+      { status: 'confirmed', startTime: start, officeNoticeStamp: 's-2' },
+      { status: 'confirmed', startTime: later, officeNoticeStamp: 's-2' },
+    );
+    await write(
+      'evt-23',
+      { status: 'confirmed', startTime: later, officeNoticeStamp: 's-2' },
+      { status: 'cancelled', startTime: later, officeNoticeStamp: 's-2' },
+    );
+    expect(sent('kincare.changed')).toHaveLength(1);
+    expect(sent('kincare.booking.cancel')).toHaveLength(1);
   });
 });

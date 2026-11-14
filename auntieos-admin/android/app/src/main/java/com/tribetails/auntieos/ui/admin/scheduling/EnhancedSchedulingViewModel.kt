@@ -1610,11 +1610,13 @@ class EnhancedSchedulingViewModel(
         val familyId = booking.kinfolkId.trim()
         if (familyId.isEmpty()) return HouseholdNoticePreview.Unknown
         val linked = findLinkedSessionIds(booking.id).getOrElse { return HouseholdNoticePreview.Unknown }
-        // Not exactly one linked visit: the cancel or move addresses no booking
-        // record, so nobody is told, and the confirm says so rather than
-        // answering for the household alone (the bridge sends nothing then).
-        val sessionId = linked.singleOrNull()
-            ?: return HouseholdNoticePreview.Ready(false, "session_has_no_routing_ids", null, emptyList())
+        // No linked visit: the cancel or move addresses no booking record, so
+        // nobody is told, and the confirm says so rather than answering for
+        // the household alone (the bridge sends nothing then).
+        if (linked.isEmpty()) return HouseholdNoticePreview.Ready(false, "session_has_no_routing_ids", null, emptyList())
+        // More than one: each is cancelled and each may tell the household, so
+        // the confirm says nothing rather than "nobody".
+        val sessionId = linked.singleOrNull() ?: return HouseholdNoticePreview.Unknown
         return runCatching { householdPreviewer(familyId, key, sessionId).getOrThrow() }
             .getOrElse { HouseholdNoticePreview.Unknown }
     }

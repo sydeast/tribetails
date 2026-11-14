@@ -181,6 +181,24 @@ describe('#2027 moving a visit', () => {
     expect(ctx.writes.find((w) => w.path === VISIT)!.data['officeNoticeStamp']).toBeUndefined();
   });
 
+  it('NEGATIVE: a move onto the window the visit already holds is not a move: nobody is told, no stamp', async () => {
+    const ctx = seed({ ...household(), ...linked() });
+    const same = { sessionId: 'vis_v1', startTime: '2026-09-01T10:00:00.000Z', endTime: '2026-09-01T11:00:00.000Z' };
+    const res = await rescheduleBookingHandler(req(same));
+    expect(res.notice).toMatchObject({ told: false, reason: 'not_a_household_notice' });
+    expect(ctx.writes.some((w) => w.path.startsWith('notifications/') && (w.data as { key?: string }).key === 'kincare.changed')).toBe(false);
+    expect(ctx.writes.find((w) => w.path === VISIT)!.data['officeNoticeStamp']).toBeUndefined();
+  });
+  it('a move that only changes the length names the end, as the trigger would', async () => {
+    const ctx = seed({ ...household(), ...linked() });
+    const longer = { sessionId: 'vis_v1', startTime: '2026-09-01T10:00:00.000Z', endTime: '2026-09-01T11:30:00.000Z' };
+    const res = await rescheduleBookingHandler(req(longer));
+    expect(res.notice).toMatchObject({ told: true });
+    const records = householdRecords(ctx, 'kincare.changed');
+    expect(records).toHaveLength(1);
+    expect(JSON.stringify(records[0]!.data)).toContain('endTime');
+    expect(JSON.stringify(records[0]!.data)).not.toContain('"startTime"');
+  });
   it('NEGATIVE: no member login: nobody is told, and the office is still told', async () => {
     const ctx = seed({ ...household({ 'families/kf1/members/kinUid': { status: 'REMOVED' } }), ...linked() });
     const res = await rescheduleBookingHandler(req(move));

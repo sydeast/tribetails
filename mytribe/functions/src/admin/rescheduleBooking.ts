@@ -137,6 +137,18 @@ export async function rescheduleBookingHandler(
   // opposite order fails the other way round, which is the failure this issue
   // exists about.
   const householdNotices = await import('../notifications/householdNotice.js');
+  // #2027: which of the household visit's two times this move changes, read off
+  // the visit itself, as `onBookingsWrite` reads them (`CHANGE_WATCH_FIELDS`).
+  const movedFields = (visit: Record<string, unknown>): string[] => {
+    const ms = (raw: unknown): number | null => {
+      const ts = raw as { toMillis?: () => number } | null | undefined;
+      return ts && typeof ts.toMillis === 'function' ? ts.toMillis() : null;
+    };
+    return [
+      ...(ms(visit['startTime']) !== Date.parse(args.startTime) ? ['startTime'] : []),
+      ...(ms(visit['endTime']) !== Date.parse(args.endTime) ? ['endTime'] : []),
+    ];
+  };
   const mirror = await mirrorSessionTimesToEnvelope({
     sessionId: args.sessionId,
     session: prev,
@@ -147,8 +159,13 @@ export async function rescheduleBookingHandler(
     // #2027: a confirmed visit tells the household it moved. This call sends
     // that itself, so it can say who was told, and stamps the write so
     // `onBookingsWrite` does not send it twice.
+    // Only a window that really changes on the household's visit: a move onto
+    // the time it already holds changes nothing there, the trigger never sent
+    // for it, and neither does this call.
     officeNoticeStampFor: (visit) =>
-      householdNotices.visitTellsHouseholdOfChanges(visit) ? householdNotices.freshOfficeNoticeStamp() : null,
+      householdNotices.visitTellsHouseholdOfChanges(visit) && movedFields(visit).length > 0
+        ? householdNotices.freshOfficeNoticeStamp()
+        : null,
   });
 
   // #2027: right after the household's copy moved, and before the session
@@ -158,10 +175,7 @@ export async function rescheduleBookingHandler(
   const familyId = typeof prev?.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
   if (mirror.visit && mirror.visit.officeNoticeStamp !== null) {
     const v = mirror.visit;
-    const changedFields = [
-      ...(prev?.startTime !== args.startTime ? ['startTime'] : []),
-      ...(prev?.endTime !== args.endTime ? ['endTime'] : []),
-    ];
+    const changedFields = movedFields(v.before);
     notice = await householdNotices.sendVisitHouseholdNotice({
       key: 'kincare.changed',
       kinfolkId: v.kinfolkId,
@@ -169,7 +183,7 @@ export async function rescheduleBookingHandler(
       visitId: v.visitId,
       visit: { ...v.before, startTime: Date.parse(args.startTime) },
       officeNoticeStamp: v.officeNoticeStamp!,
-      extra: { changedFields: changedFields.length > 0 ? changedFields : ['startTime'] },
+      extra: { changedFields },
       actorUid: uid,
       caller: 'rescheduleBooking',
     });

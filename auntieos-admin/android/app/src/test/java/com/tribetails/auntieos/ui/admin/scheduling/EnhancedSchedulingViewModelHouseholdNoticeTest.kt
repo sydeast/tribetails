@@ -182,6 +182,21 @@ class EnhancedSchedulingViewModelHouseholdNoticeTest {
             vm.state.value.bookingActionMessage,
         )
     }
+    @Test
+    fun `NEGATIVE a booking with two linked visits says nothing before, since each cancel may tell the household`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getKinCareSessionsBySourceBookingId("b1") } returns Result.success(
+            listOf(
+                KinCareSession(id = "s1", kinfolkId = "kf1", status = "SCHEDULED"),
+                KinCareSession(id = "s2", kinfolkId = "kf1", status = "SCHEDULED"),
+            ),
+        )
+        coEvery { kinCareRepo.cancelSession(any(), any()) } returns Result.success(told)
+        val vm = vm()
+        vm.requestCancel(booking())
+        assertEquals(null, householdNoticeConfirmLine(vm.state.value.cancelPreview, "The Wrens"))
+        vm.confirmCancel()
+        assertEquals("The Wrens's visit is cancelled. Dre East was sent an email.", vm.state.value.bookingActionMessage)
+    }
     // ── #2027: drag and move ─────────────────────────────────────────────────
 
     @Test
