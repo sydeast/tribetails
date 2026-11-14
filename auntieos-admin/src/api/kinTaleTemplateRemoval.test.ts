@@ -104,9 +104,10 @@ describe('kinTaleTemplateRemoval (#1591)', () => {
     expect(removalImpact(usage())).toEqual([]);
   });
 
-  it('removalImpact names what the household loses, singular and plural', () => {
-    expect(removalImpact(usage({ kintaleCount: 1 }))[0]).toMatch(/^1 KinTale was written from it/);
-    expect(removalImpact(usage({ kintaleCount: 3 }))[0]).toMatch(/^3 KinTales were written from it/);
+  it('#2058: removalImpact says sent KinTales keep their care tasks, once, without repeating the count', () => {
+    expect(removalImpact(usage({ kintaleCount: 1 }))).toEqual(['KinTales already sent keep their care tasks.']);
+    expect(removalImpact(usage({ kintaleCount: 3 }))).toEqual(['KinTales already sent keep their care tasks.']);
+    expect(removalImpact(usage({ kintaleCount: 3 })).join(' ')).not.toMatch(/written from|template|feed/i);
   });
 
   it('archiveImpact says it is restorable, and what archiving the default means', () => {

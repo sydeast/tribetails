@@ -87,6 +87,24 @@ export async function onKinTaleUpdateHandler(event: any): Promise<void> {
     });
   }
 
+  // #2058: a sent tale keeps its own copy of the care tasks (`careTasks`,
+  // `lib/careTaskStamp.ts`). The send callable takes it in the same write that
+  // sends the tale; this keeps it right afterwards. Two cases reach here: a tale
+  // sent without one (an installed app that still writes SENT itself, or a tale
+  // sent before #2058 being edited), and a tick changed on a sent tale, which
+  // relabels the copy from its own items, never from the template. Best-effort,
+  // like thumbs: a failure here is worth a log, not a lost notification. The
+  // write is `careTasks` alone, so the update it causes finds nothing to do.
+  try {
+    await maintainCareTasks(reportId, before as Record<string, unknown>, after as Record<string, unknown>);
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'onKinTaleUpdate',
+      event: 'trigger.care_tasks.stamp_failed',
+      extra: { reportId, err: (err as Error)?.message },
+    });
+  }
   // Nothing the household can see. Covers DRAFT → DRAFT and any unsend.
   if (after.status !== 'SENT') return;
 
@@ -223,6 +241,33 @@ export async function onKinTaleUpdateHandler(event: any): Promise<void> {
   });
 }
 
+/**
+ * #2058: whether this update touches the tale's copy of its care tasks, and if
+ * so, the transaction that brings it in step. Reading the copy first keeps the
+ * common write (a thumbs stamp, a body edit on a stamped tale) to no reads.
+ */
+async function maintainCareTasks(
+  reportId: string,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): Promise<void> {
+  const { isSentKinTale, readCareTaskStamp, syncCareTaskStamp, CARE_TASKS_FIELD } = await import(
+    '../lib/careTaskStamp.js'
+  );
+  if (!isSentKinTale(after)) return;
+  const stamped = readCareTaskStamp(after[CARE_TASKS_FIELD]) !== null;
+  const answersChanged = JSON.stringify(before['fieldResponses'] ?? null) !== JSON.stringify(after['fieldResponses'] ?? null);
+  if (stamped && !answersChanged) return;
+  const outcome = await syncCareTaskStamp(db(), db().doc(`kin_care_reports/${reportId}`));
+  if (outcome === 'stamped') {
+    logEvent({
+      severity: 'info',
+      function: 'onKinTaleUpdate',
+      event: stamped ? 'trigger.care_tasks.relabelled' : 'trigger.care_tasks.stamped',
+      extra: { reportId },
+    });
+  }
+}
 /**
  * The DRAFT → SENT moment: the household can now open this KinTale, so tell
  * them. Silent when the publishing client already announced the send itself, or

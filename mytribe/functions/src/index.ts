@@ -649,6 +649,9 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // #1563: send a generated KinTale draft to its household, or delete an unsent one.
   publishGeneratedDraft: () => require('./admin/kinTaleDrafts'),
   deleteGeneratedDraft: () => require('./admin/kinTaleDrafts'),
+  // #2058: the send of a visit's KinTale, for all three admin clients. Marks it
+  // SENT and stamps its own copy of the care tasks in one transaction.
+  sendKinTaleReport: () => require('./admin/kinTaleDrafts'),
   // B2: the "Needs triage" read side. Web has no Firestore path to this list
   // that stays correct as the collection grows past KINTALES_QUERY's 200-row
   // cap; see listOrphanReports.ts for why a dedicated callable, not a filter.

@@ -41,6 +41,7 @@
     "sweep:kinfolk-staff-notes": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/sweepKinfolkNotificationStaffNotes.ts",
     "backfill:booking-kin-roster": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillBookingKinRoster.ts",
     "backfill:kintale-provenance": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillKinTaleCreatedAtProvenance.ts",
+    "backfill:kintale-care-tasks": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillKinTaleCareTasks.ts",
     "backfill:notif-split": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillNotificationDeliverySplit.ts",
     "backfill:broadcast-category": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillBroadcastNotificationCategory.ts",
     "backfill:generated-draft-created-on": "NODE_PATH=node_modules ts-node --compiler \"$PWD/node_modules/typescript\" --project ../scripts/tsconfig.json ../scripts/backfillGeneratedDraftCreatedOn.ts",

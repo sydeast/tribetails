@@ -272,6 +272,7 @@ scheduleMarketingBlast
 screenCallAction
 sendExternalMessage
 sendInvoiceReminder
+sendKinTaleReport
 sendKinfolkMessage
 setActiveTribe
 setBrandTokens
