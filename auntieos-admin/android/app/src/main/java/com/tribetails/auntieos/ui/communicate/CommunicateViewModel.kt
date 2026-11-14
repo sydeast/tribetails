@@ -146,8 +146,12 @@ data class CommunicateUiState(
     // Approval
     val isSaving: Boolean = false,
     val savedDraftId: String? = null,
-    /** #1625: the "send this to the household?" confirm for a Text or Email approve. */
+    /** #1625: the "send this to the household?" confirm for a Text, Email or Push approve. */
     val approveConfirmOpen: Boolean = false,
+    /** #2061: what the push send answered for an approved Push draft, shown under the approve bar. */
+    val pushNotice: HouseholdPushNotice? = null,
+    /** #2061: a held push being tried again. */
+    val isRetryingPush: Boolean = false,
     // #1563: a stored `generated_drafts` doc opened from KinTales or Home.
     val draftLoading: Boolean = false,
     val draftLoadError: String? = null,
@@ -474,6 +478,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     generatedCommType     = result.communicationType,
                     generatedModel        = result.model,
                     savedDraftId          = null,
+                    pushNotice            = null,
                     publishedReportId     = null,
                     publishedBefore       = false,
                     draftDeleted          = false,
@@ -506,15 +511,63 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
         }
         val channel = approveDeliveryChannel(state.commType)
         val blocker = approveSendBlocker(channel, approveRecipient(state), state.subject, state.generatedCopy)
+            ?: if (isPushType(state.commType) && state.kinfolkId.isNullOrBlank()) {
+                "This push is not addressed to a household. Choose one before sending."
+            } else {
+                null
+            }
         if (blocker != null) {
             _uiState.value = state.copy(error = blocker)
             return
         }
-        if (channel != null) {
+        // #2061: a Push reaches a household now, so it is confirmed like a Text or Email.
+        if (channel != null || isPushType(state.commType)) {
             _uiState.value = state.copy(error = null, approveConfirmOpen = true)
             return
         }
         approveDraft()
+    }
+
+    /** The household's name for the push result line. */
+    private fun pushHousehold(state: CommunicateUiState): String =
+        approveRecipient(state)?.displayName ?: state.generatedKinfolkName.ifBlank { "the household" }
+
+    /**
+     * #2061: the push for an approved Push draft. Never throws: a failed call is
+     * a held result the operator can try again, because the draft is already
+     * approved and the button that approved it is gone.
+     */
+    private suspend fun sendPushFor(state: CommunicateUiState, draftId: String): HouseholdPushNotice {
+        val household = pushHousehold(state)
+        val result = try {
+            repo.sendHouseholdPush(state.kinfolkId.orEmpty(), draftId, state.generatedCopy)
+        } catch (t: Throwable) {
+            t.rethrowIfCancellation()
+            Result.failure(t)
+        }
+        return result.fold(
+            onSuccess = { householdPushNotice(it, household) },
+            onFailure = { e ->
+                HouseholdPushNotice(
+                    title = "Not sent",
+                    body = "The draft is approved, but the push could not be sent: " +
+                        (e.message ?: "the server did not answer") + ". Nothing reached $household.",
+                    retryable = true,
+                )
+            },
+        )
+    }
+
+    /** #2061: try a held push again, once its cause is fixed. The draft stays approved. */
+    fun retryHouseholdPush() {
+        val state = _uiState.value
+        val draftId = state.savedDraftId ?: return
+        if (state.isRetryingPush || state.pushNotice?.retryable != true) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isRetryingPush = true)
+            val notice = sendPushFor(state, draftId)
+            _uiState.value = _uiState.value.copy(isRetryingPush = false, pushNotice = notice)
+        }
     }
 
     fun cancelApproveConfirm() { _uiState.value = _uiState.value.copy(approveConfirmOpen = false) }
@@ -558,6 +611,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     generatedCommType    = type,
                     generatedModel       = draft.model,
                     savedDraftId         = null,
+                    pushNotice           = null,
                     publishedReportId    = draft.publishedReportId.ifBlank { null },
                     publishedBefore      = draft.isPublished,
                     pendingKinfolkId     = if (household == null && kinfolkId.isNotBlank()) kinfolkId else null,
@@ -624,6 +678,7 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                         generatedCommType = "",
                         generatedModel = "",
                         savedDraftId = null,
+                        pushNotice = null,
                         publishedReportId = null,
                         successMessage = "Draft deleted.",
                     )
@@ -718,6 +773,18 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     val auditNote = auditFailure?.let {
                         " The audit entry could not be written: " + (it.message ?: "unknown error")
                     }.orEmpty()
+                    // #2061: a Push goes to the household's devices, behind the
+                    // send gate and their own settings, and the result says
+                    // what reached them.
+                    if (isPushType(state.commType) && !state.kinfolkId.isNullOrBlank()) {
+                        val notice = sendPushFor(state, draftId)
+                        _uiState.value = _uiState.value.copy(
+                            isSaving     = false,
+                            savedDraftId = draftId,
+                            pushNotice   = notice.copy(body = notice.body + auditNote),
+                        )
+                        return@onSuccess
+                    }
                     // #1625: the send, AFTER the approve write landed, the same
                     // order as the web admin. A Text or Email approve that sent
                     // nothing left the household unreached while the screen said

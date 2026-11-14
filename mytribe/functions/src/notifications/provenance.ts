@@ -675,6 +675,13 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       source: 'src/admin/conversations.ts',
       dataKeys: ['kinfolkId', 'kinfolkName', 'messageId', 'preview'],
     },
+    {
+      // #2061: the household's settings row for a one-to-one push. The push
+      // carries the office's own words, so no template is read.
+      trigger: 'The office approves a Push draft for one household in Communicate.',
+      source: 'src/admin/sendHouseholdPush.ts',
+      dataKeys: ['kinfolkId'],
+    },
   ],
   'pets.updated': [
     {

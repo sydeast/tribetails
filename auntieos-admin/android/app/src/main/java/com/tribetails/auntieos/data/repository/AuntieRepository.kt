@@ -1003,6 +1003,24 @@ class AuntieRepository(
             .awaitCallable().data as? Map<String, Any?>
         decodeExternalSendResult(raw, channel)
     }.onFailure { AuntieLog.e("sendExternalMessage failed (channel=$channel)", it) }
+    /**
+     * #2061: pushes an approved Communicate "Push" draft to its household via
+     * the `sendHouseholdPush` callable. The server applies the household send
+     * gate and the household's own settings and says what happened; nothing
+     * here predicts a send. Once per draft on the server, so a retry is safe.
+     */
+    suspend fun sendHouseholdPush(
+        kinfolkId: String,
+        draftId: String,
+        body: String,
+    ): Result<com.tribetails.auntieos.ui.communicate.HouseholdPushResult> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        @Suppress("UNCHECKED_CAST")
+        val raw = functions.getHttpsCallable("sendHouseholdPush")
+            .call(mapOf("kinfolkId" to kinfolkId, "draftId" to draftId, "body" to body.trim()))
+            .awaitCallable().data as? Map<String, Any?>
+        com.tribetails.auntieos.ui.communicate.decodeHouseholdPushResult(raw)
+    }.onFailure { AuntieLog.e("sendHouseholdPush failed", it) }
 
     /**
      * Stage 2 step 5: records an opt-out for a recipient via the deployed
