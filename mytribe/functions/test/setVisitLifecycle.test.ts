@@ -107,7 +107,10 @@ describe('clocking a visit in', () => {
       'admin1',
       'Auntie Jo',
       // #2037: the "dispatched" line has a fixed id, shared with the trigger.
-      { auditDocId: `visitnotice__visitstep__s1__ARRIVED__${Date.parse('2026-08-24T14:02:00Z')}` },
+      {
+        auditDocId: `visitnotice__visitstep__s1__ARRIVED__${Date.parse('2026-08-24T14:02:00Z')}`,
+        dedupeWindowMs: 24 * 60 * 60 * 1000,
+      },
     );
     // #2037: the step's line is the clock step's own kind, with a fixed id, so
     // the trigger this write fires finds it written and writes no second one.

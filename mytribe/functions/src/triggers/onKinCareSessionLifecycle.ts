@@ -36,6 +36,10 @@ export type SessionLifecycleEvent = FirestoreAuthEvent<Change<DocumentSnapshot> 
 export function writerUidOf(event: Pick<SessionLifecycleEvent, 'authType' | 'authId'>, after: SessionData): string | null {
   const authId = typeof event.authId === 'string' ? event.authId.trim() : '';
   if (authId !== '' && event.authType !== 'service_account' && event.authType !== 'system') return authId;
+  // Only a server write reads `updatedBy`: it is the caller `setVisitLifecycle`
+  // stamped in that same write. The field stays on the row afterwards, so a
+  // later client write must never be filed under it.
+  if (event.authType !== 'service_account') return null;
   const stamped = typeof after['updatedBy'] === 'string' ? after['updatedBy'].trim() : '';
   return stamped !== '' ? stamped : null;
 }

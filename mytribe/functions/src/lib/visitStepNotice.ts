@@ -39,6 +39,8 @@ import { notificationEventFor, type VisitLifecycleAction } from './visitLifecycl
  */
 
 export const VISIT_STEP_NOTICES_COLLECTION = 'visit_step_notices';
+/** How long a clock step's notice is remembered against a redelivered event. */
+export const VISIT_STEP_DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type SessionData = Record<string, unknown>;
 
@@ -182,11 +184,42 @@ function routingOf(session: SessionData):
 }
 
 /**
+ * Who the line names. `logActivity` worked this out from the caller's token
+ * (#1820) and stamped `admin` / `staffRole` on the line, which the Activity
+ * Log reads to print the owner or an Auntie. A trigger has no token, so the
+ * writer's claims are read from Auth and handed to the same resolver. A writer
+ * whose claims cannot be read is still named, in the business band with no
+ * stamp; no writer at all is the system's.
+ */
+async function stepActor(
+  actorUid: string | null,
+  familyId: string,
+): Promise<{ actorRole: 'AUNTIE' | 'SYSTEM' | 'PRIMARY' | 'SECONDARY'; stamp: Record<string, unknown> }> {
+  if (!actorUid) return { actorRole: 'SYSTEM', stamp: {} };
+  try {
+    const [{ auth }, { resolveAuditActor, auditActorPayload }] = await Promise.all([
+      import('./firestoreAdmin.js'),
+      import('./auditActor.js'),
+    ]);
+    const user = await auth().getUser(actorUid);
+    const actor = await resolveAuditActor(
+      { uid: actorUid, token: (user.customClaims ?? {}) as never },
+      'onKinCareSessionLifecycle',
+      familyId === '' ? undefined : familyId,
+    );
+    return { actorRole: actor.actorRole, stamp: auditActorPayload(actor) };
+  } catch {
+    return { actorRole: 'AUNTIE', stamp: {} };
+  }
+}
+
+/**
  * Write the step's Activity Log line and, for a forward step, tell the
  * household. Safe to call more than once for the same step, from any server
- * path. Never throws for the notice: a failed dispatch is the outcome
- * `dispatch_failed`, recorded for the card. A failed line write does throw, so
- * a trigger run is retried rather than leaving the step unrecorded.
+ * path. Never throws: a failed dispatch is the outcome `dispatch_failed`,
+ * recorded for the card, and a failed line write is logged at `error` (and so
+ * reaches Sentry) without holding the notice back. The two are independent,
+ * as they were on the clients.
  *
  * @param session  the session as the write left it (`after`).
  * @param actorUid who made the write, when known. Null for a write the server
@@ -207,25 +240,38 @@ export async function announceVisitStep(input: {
   const { visitTransitionWords } = await import('./activityWords.js');
   const familyId = nonBlank(session['kinfolkId']);
 
-  await writeAuditEntry({
-    event: STEP_EVENT[step.action],
-    severity: 'info',
-    status: 'SUCCESS',
-    actorRole: input.actorUid ? 'AUNTIE' : 'SYSTEM',
-    ...(input.actorUid ? { actorUid: input.actorUid } : {}),
-    targetUid: sessionId,
-    targetCollection: 'kin_care_sessions',
-    ...(familyId !== '' ? { familyId } : {}),
-    description: visitTransitionWords(step.action, step.from, step.to),
-    payload: {
-      visitId: sessionId,
-      action: step.action,
-      from: step.from,
-      to: step.to,
-      source: input.source,
-    },
-    docId: visitStepAuditId(sessionId, step, input.fallbackKey),
-  });
+  const actor = await stepActor(input.actorUid, familyId);
+  try {
+    await writeAuditEntry({
+      event: STEP_EVENT[step.action],
+      severity: 'info',
+      status: 'SUCCESS',
+      actorRole: actor.actorRole,
+      ...(input.actorUid ? { actorUid: input.actorUid } : {}),
+      targetUid: sessionId,
+      targetCollection: 'kin_care_sessions',
+      ...(familyId !== '' ? { familyId } : {}),
+      description: visitTransitionWords(step.action, step.from, step.to),
+      payload: {
+        visitId: sessionId,
+        action: step.action,
+        from: step.from,
+        to: step.to,
+        source: input.source,
+        // The same owner or Auntie stamp `logActivity` put on these lines (#1820).
+        ...actor.stamp,
+      },
+      docId: visitStepAuditId(sessionId, step, input.fallbackKey),
+    });
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'announceVisitStep',
+      event: 'audit.write.failed',
+      extra: { sessionId, action: step.action, source: input.source },
+      errorMessage: (err as Error)?.message,
+    });
+  }
 
   const event = visitStepEvent(step.action);
   if (event === null) return { notified: false, notifySkipped: 'no_event_for_action' };
@@ -250,7 +296,11 @@ export async function announceVisitStep(input: {
         },
         input.actorUid ?? '',
         input.actorName,
-        { auditDocId: `visitnotice__${visitStepAuditId(sessionId, step, input.fallbackKey)}` },
+        {
+          auditDocId: `visitnotice__${visitStepAuditId(sessionId, step, input.fallbackKey)}`,
+          // A redelivery hours later is still this step: its key names the stamp.
+          ...(step.atMs !== null ? { dedupeWindowMs: VISIT_STEP_DEDUPE_WINDOW_MS } : {}),
+        },
       );
       dispatchIds = res.dispatchIds;
       outcome = res.suppressed

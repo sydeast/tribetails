@@ -77,6 +77,9 @@ describe('#1874 a reply from the office tells the household', () => {
       key: 'message.reply',
       targetType: 'conversation',
       targetId: 'kf1',
+      // The row the household reads on their notifications list.
+      title: 'You have a new message',
+      description: 'A reply to you in Messages.',
     });
   });
 

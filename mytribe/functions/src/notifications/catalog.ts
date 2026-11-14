@@ -771,7 +771,10 @@ const CATALOG_LIST: NotificationDef[] = [
     // household's own preferences. One notice per reply (`dedupeKey` is the
     // message id), so two replies a minute apart are two notices.
     key: 'message.reply',
-    label: 'Reply to a household message',
+    // The label and description are the row on the household's notifications
+    // list (the dispatcher writes them as its title and description), so they
+    // are in the household's words.
+    label: 'You have a new message',
     audience: 'kinfolk',
     audiences: { kinfolk: true },
     category: 'messages',
@@ -782,7 +785,7 @@ const CATALOG_LIST: NotificationDef[] = [
     deliveryMode: 'trigger',
     recipientResolver: 'kinfolkAcct',
     templates: { email: 'message.reply', sms: 'message.reply', push: 'message.reply' },
-    description: 'The office replied to a household in Messages.',
+    description: 'A reply to you in Messages.',
     householdTitle: 'New message from {business}',
     householdDescription: 'When {business} writes to you in Messages.',
   },

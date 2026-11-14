@@ -188,6 +188,12 @@ export async function dispatchVisitNotificationCore(
      * `setVisitLifecycle` reaching the same clock step write it once.
      */
     auditDocId?: string;
+    /**
+     * #2037: how far back the duplicate check looks. The clock trigger passes a
+     * day: its key names the step's stamped time, so a late redelivery is the
+     * same step and a re-arrival is a new one whatever the window.
+     */
+    dedupeWindowMs?: number;
   } = {},
 ): Promise<DispatchVisitNotificationOutcome> {
   const resolved = await resolveKinCareRef({
@@ -271,6 +277,7 @@ export async function dispatchVisitNotificationCore(
     data,
     actorUid,
     dedupeKey: visitDedupeKey(visitId, args),
+    ...(opts.dedupeWindowMs !== undefined ? { dedupeWindowMs: opts.dedupeWindowMs } : {}),
   });
   const dispatchIds = enqueued.written;
   const reason = visitNoticeReasonFor(enqueued);

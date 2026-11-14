@@ -16,12 +16,13 @@ import { buildDbMock, HOUSEHOLD_GATE_SETTINGS_PATH } from './_helpers/mockDb';
  */
 const mocks = vi.hoisted(() => ({
   dbFn: vi.fn(),
+  authFn: vi.fn(),
   resolveKinCareRefFn: vi.fn(),
   logEventFn: vi.fn(),
   lines: [] as Array<Record<string, any>>,
   ids: new Set<string>(),
 }));
-vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
+vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: mocks.authFn, getAdmin: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEventFn }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/sessionRevocation', () => import('./_helpers/mockSessionRevocation'));
@@ -115,6 +116,7 @@ beforeEach(() => {
   mocks.lines.length = 0;
   mocks.ids.clear();
   mocks.logEventFn.mockReset();
+  mocks.authFn.mockReset().mockReturnValue({ getUser: async () => ({ customClaims: { staffRole: 'auntie' } }) });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -320,6 +322,22 @@ describe('writerUidOf', () => {
     expect(writerUidOf({ authType: 'unknown', authId: 'u1' }, {})).toBe('u1');
     expect(writerUidOf({ authType: 'service_account', authId: 'sa' }, { updatedBy: 'u2' })).toBe('u2');
     expect(writerUidOf({ authType: 'system' }, {})).toBeNull();
+    // A client write never inherits the caller an earlier server write stamped.
+    expect(writerUidOf({ authType: 'unknown' }, { updatedBy: 'u2' })).toBeNull();
+  });
+  it('stamps the owner or the Auntie on the line, as logActivity did (#1820)', async () => {
+    mocks.authFn.mockReturnValue({ getUser: async () => ({ customClaims: { admin: true } }) });
+    seed();
+    await onKinCareSessionLifecycleHandler(arrive());
+    expect(linesOf('VISIT_ARRIVED')[0]).toMatchObject({ actorRole: 'AUNTIE', payload: expect.objectContaining({ admin: true, staffRole: null }) });
+  });
+  it('a line that cannot be written does not hold the notice back', async () => {
+    seed();
+    const { writeAuditEntry } = await import('../src/lib/writeAuditEntry');
+    (writeAuditEntry as unknown as { mockRejectedValueOnce: (e: Error) => void }).mockRejectedValueOnce(new Error('chain busy'));
+    await onKinCareSessionLifecycleHandler(arrive());
+    expect(householdNotices()).toHaveLength(1);
+    expect(mocks.logEventFn).toHaveBeenCalledWith(expect.objectContaining({ event: 'audit.write.failed', severity: 'error' }));
   });
 
   it('a step nobody can be named for is logged as the system and says "Your Auntie"', async () => {
