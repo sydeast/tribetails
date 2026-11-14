@@ -113,7 +113,12 @@ export async function saveMyStaffProfileHandler(
 
   await ref.set({ ...profile, updatedAt: new Date().toISOString() }, { merge: true });
 
-  // Field names only. The values (a phone number, a bio) stay off the log.
+  // Field names only. The values (a phone number, a bio) stay off the log. The
+  // description is read by a person, so it carries the on-screen labels; the
+  // stored keys stay in the payload.
+  const changedLabels = STAFF_PROFILE_FIELDS.filter((f) => changed.includes(f.key)).map((f) =>
+    f.label.toLowerCase(),
+  );
   const actor = await resolveAuditActor(req.auth, 'saveMyStaffProfile');
   await writeAuditEntry({
     status: 'SUCCESS',
@@ -123,7 +128,7 @@ export async function saveMyStaffProfileHandler(
     actorUid: uid,
     targetUid: uid,
     targetCollection: 'users',
-    description: `Account profile updated: ${changed.join(', ')}`,
+    description: `Account profile updated: ${changedLabels.join(', ')}`,
     payload: { fields: changed, ...auditActorPayload(actor) },
   }).catch((err: unknown) => {
     // The profile is saved. A log line that failed to write must not tell her

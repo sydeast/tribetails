@@ -89,12 +89,12 @@ describe('saveMyStaffProfile', () => {
   });
 
   it('HAPPY: the Activity Log line names her as the Auntie and the fields, never the values', async () => {
-    const ctx = buildDbMock({ docs: { 'users/auntie-1': form({ phone: '555-0199', bio: '' }) } });
+    const ctx = buildDbMock({ docs: { 'users/auntie-1': form({ firstName: 'N', phone: '555-0199', bio: '' }) } });
     mocks.dbFn.mockReturnValue(ctx.db);
 
     const res = await call(form());
 
-    expect(res.changed).toEqual(['phone', 'bio']);
+    expect(res.changed).toEqual(['firstName', 'phone', 'bio']);
     expect(writeAuditEntry).toHaveBeenCalledTimes(1);
     const entry = (writeAuditEntry as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(entry).toMatchObject({
@@ -103,8 +103,9 @@ describe('saveMyStaffProfile', () => {
       actorUid: 'auntie-1',
       targetUid: 'auntie-1',
       targetCollection: 'users',
-      description: 'Account profile updated: phone, bio',
-      payload: { fields: ['phone', 'bio'], admin: false, staffRole: 'auntie' },
+      // Labels a person reads, not stored keys.
+      description: 'Account profile updated: first name, phone, bio',
+      payload: { fields: ['firstName', 'phone', 'bio'], admin: false, staffRole: 'auntie' },
     });
     expect(JSON.stringify(entry)).not.toContain('555-0100');
     expect(JSON.stringify(entry)).not.toContain('Loves dogs');
