@@ -208,6 +208,27 @@ describe('#944 wrapAdminCallable enforces the table', () => {
   });
 
   /**
+   * #2187, operator ruling 2026-11-14 ("No, only I can"): making a booking is
+   * the owner's alone. The admin web hides New booking from an Auntie; this is
+   * the half that holds whatever a client draws. Pinned three ways: the name
+   * is off the table, the wrapper refuses her under it, and the deployed
+   * export is wrapped under that same name (a rename would otherwise leave
+   * this test checking a string nothing uses).
+   */
+  it('#2187: REFUSES an Auntie the New booking create, and still admits the owner', async () => {
+    expect(AUNTIE_ALLOWED_CALLABLES.has('createMultiDateBookingRequest')).toBe(false);
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    const handler = vi.fn(async () => ({ ok: true }));
+    const wrapped = wrapAdminCallable('createMultiDateBookingRequest', handler);
+    await expect(wrapped({ auth: auntieAuth } as never)).rejects.toMatchObject({ code: 'permission-denied' });
+    // Refused at the gate: the handler, and so every write in it, never ran.
+    expect(handler).not.toHaveBeenCalled();
+    await expect(wrapped({ auth: ownerAuth } as never)).resolves.toMatchObject({ ok: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+    const src = readFileSync(resolve(__dirname, '../src/admin/createMultiDateBookingRequest.ts'), 'utf8');
+    expect(src).toContain("wrapAdminCallable('createMultiDateBookingRequest', createMultiDateBookingRequestHandler)");
+  });
+  /**
    * #2164 / #2182: her work and her own notification choices go through two
    * narrow reads. The owner's Business Settings and Settings > Notifications
    * callables stay refused.
@@ -267,6 +288,20 @@ describe('#944 wrapAdminCallable enforces the table', () => {
       .rejects.toMatchObject({ code: 'permission-denied' });
   });
 
+  /**
+   * #2287: an Auntie saves her own Account profile. The handler writes the
+   * caller's own record and only the profile fields (test/saveMyStaffProfile).
+   */
+  it('#2287: admits an Auntie to save her own Account profile', async () => {
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    const wrapped = wrapAdminCallable('saveMyStaffProfile', async () => ({ ok: true }));
+    await expect(wrapped({ auth: auntieAuth } as never)).resolves.toMatchObject({ ok: true });
+    await expect(wrapped({ auth: ownerAuth } as never)).resolves.toMatchObject({ ok: true });
+    await expect(wrapped({ auth: { uid: 'stranger', token: {} } } as never))
+      .rejects.toMatchObject({ code: 'permission-denied' });
+    await expect(wrapped({ auth: { uid: 'kin-1', token: { role: 'kinfolk', kinfolkId: 'kf1' } } } as never))
+      .rejects.toMatchObject({ code: 'permission-denied' });
+  });
   it('still refuses a caller with neither role, and an unauthenticated one', async () => {
     const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
     const wrapped = wrapAdminCallable('listStaff', async () => ({ ok: true }));

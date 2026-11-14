@@ -142,6 +142,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'portalUrl',
         'bookingDate',
         'bookingTime',
+        // #2030: the office's note to the household with its yes; null when none.
+        'note',
       ],
     },
     {

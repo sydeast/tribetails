@@ -322,6 +322,8 @@ export async function runNotificationBatchSweep(
             title: bucket.title || digestDef.label,
             description,
             channels: bucket.channels,
+            // #2280: the senders keep a household's text message and push short.
+            ...(household ? { stream: 'kinfolk' } : bucket.stream !== '' ? { stream: bucket.stream } : {}),
             ...householdFields,
           },
           {

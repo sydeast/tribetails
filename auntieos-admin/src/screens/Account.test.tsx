@@ -12,7 +12,10 @@ const { useRouteContext, useNavigate, navigate } = vi.hoisted(() => {
   return { useRouteContext: vi.fn(), useNavigate: vi.fn(() => navigate), navigate };
 });
 const { getUserProfile } = vi.hoisted(() => ({ getUserProfile: vi.fn() }));
-const { saveUserProfile } = vi.hoisted(() => ({ saveUserProfile: vi.fn() }));
+const { saveUserProfile, saveMyStaffProfile } = vi.hoisted(() => ({
+  saveUserProfile: vi.fn(),
+  saveMyStaffProfile: vi.fn(),
+}));
 const { changeEmail, sendReset, signOut, AccountSecurityError } = vi.hoisted(() => {
   class AccountSecurityError extends Error {}
   return {
@@ -47,7 +50,7 @@ vi.mock('@tanstack/react-router', () => ({
   ),
 }));
 vi.mock('../api/account', () => ({ getUserProfile }));
-vi.mock('../api/accountWrite', () => ({ saveUserProfile }));
+vi.mock('../api/accountWrite', () => ({ saveUserProfile, saveMyStaffProfile }));
 vi.mock('../api/businessAdmins', () => ({ listBusinessAdmins }));
 // Spread the real module: the Business profile panel imports its field list and
 // its fee-schedule helpers from `screens/settings/sections`, which reads them
@@ -64,8 +67,11 @@ vi.mock('../api/myNotifications', async (orig) => ({
   getMyNotificationPrefs,
 }));
 vi.mock('../api/myNotificationsWrite', () => ({ saveMyAdminNotificationPrefs }));
-const { uploadUserPhoto } = vi.hoisted(() => ({ uploadUserPhoto: vi.fn() }));
-vi.mock('../api/accountPhoto', () => ({ uploadUserPhoto }));
+const { uploadUserPhoto, uploadMyStaffPhoto } = vi.hoisted(() => ({
+  uploadUserPhoto: vi.fn(),
+  uploadMyStaffPhoto: vi.fn(),
+}));
+vi.mock('../api/accountPhoto', () => ({ uploadUserPhoto, uploadMyStaffPhoto }));
 
 import { Account, AccountRouteView } from './Account';
 
@@ -166,8 +172,10 @@ beforeEach(() => {
   useRouteContext.mockReturnValue({ access: { status: 'admin' } });
   getUserProfile.mockReset().mockResolvedValue(profile());
   saveUserProfile.mockReset().mockResolvedValue(undefined);
+  saveMyStaffProfile.mockReset().mockResolvedValue(undefined);
   navigate.mockReset();
   uploadUserPhoto.mockReset();
+  uploadMyStaffPhoto.mockReset();
   listBusinessAdmins.mockReset().mockResolvedValue(roster([admin('op-1-abcdefghij')]));
   getBusinessSettings.mockReset().mockResolvedValue(
     mergeBusinessSettings({
@@ -342,6 +350,33 @@ describe('Account profile: inline editing', () => {
 
     expect(await screen.findByText(/Could not save: permission-denied/)).toBeInTheDocument();
     expect(profilePanel().getByLabelText('Phone')).toHaveValue('555-0111');
+    // #2287: the owner's save is still the direct write.
+    expect(saveMyStaffProfile).not.toHaveBeenCalled();
+  });
+  it('#2287: a database refusal on Save reads as a sentence, never the database message', async () => {
+    saveUserProfile.mockRejectedValueOnce(
+      Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }),
+    );
+    const user = userEvent.setup();
+    render(<Account />);
+    await heroName();
+    await user.clear(profilePanel().getByLabelText('Phone'));
+    await user.type(profilePanel().getByLabelText('Phone'), '555-0111');
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(
+      await screen.findByText('Could not save: Your account is not allowed to do this.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/insufficient permissions/i)).toBeNull();
+  });
+  it('#2287: a database refusal on the profile read reads as a sentence too', async () => {
+    getUserProfile.mockReset().mockRejectedValue(
+      Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }),
+    );
+    render(<Account />);
+    expect(
+      await screen.findByText("Couldn't read your profile: Your account is not allowed to do this."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/insufficient permissions/i)).toBeNull();
   });
 
   it('surfaces a profile read error fail-loud (never a blank/fabricated card)', async () => {
@@ -621,15 +656,112 @@ describe('Account for an Auntie (#2163)', () => {
     expect(listBusinessAdmins).toHaveBeenCalled();
   });
 
-  it('still saves her own profile', async () => {
+  // #2287: the rules refuse her a browser write to her own record, so her Save
+  // goes through the server, which takes her uid from her sign-in.
+  it('saves her own profile through the server, with no uid and no browser write', async () => {
     const user = userEvent.setup();
     render(<Account />);
     await heroName();
     const p = profilePanel();
     await user.clear(p.getByLabelText('Title / Role'));
     await user.type(p.getByLabelText('Title / Role'), 'Auntie');
+    await user.clear(p.getByLabelText('Phone'));
+    await user.type(p.getByLabelText('Phone'), '555-0111');
     await user.click(screen.getByRole('button', { name: 'Save profile' }));
-    expect(saveUserProfile).toHaveBeenCalledWith('op-1-abcdefghij', expect.objectContaining({ title: 'Auntie' }));
+    expect(saveMyStaffProfile).toHaveBeenCalledTimes(1);
+    expect(saveMyStaffProfile).toHaveBeenCalledWith({
+      displayName: 'Auntie Nora',
+      firstName: 'Nora',
+      lastName: 'Brooks',
+      phone: '555-0111',
+      title: 'Auntie',
+      bio: 'Loves dogs.',
+    });
+    expect(saveUserProfile).not.toHaveBeenCalled();
+    expect(await screen.findByText('Profile saved.')).toBeInTheDocument();
+    expect(getUserProfile).toHaveBeenCalledTimes(2);
+  });
+  it('shows Saving on the button and locks the fields while her save is in flight', async () => {
+    let finish: () => void = () => {};
+    saveMyStaffProfile.mockImplementation(() => new Promise<void>((resolve) => (finish = resolve)));
+    const user = userEvent.setup();
+    render(<Account />);
+    await heroName();
+    const p = profilePanel();
+    await user.clear(p.getByLabelText('Bio'));
+    await user.type(p.getByLabelText('Bio'), 'Walks at dawn.');
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    const busy = await screen.findByRole('button', { name: 'Saving…' });
+    expect(busy).toBeDisabled();
+    expect(p.getByLabelText('Bio')).toBeDisabled();
+    finish();
+    expect(await screen.findByText('Profile saved.')).toBeInTheDocument();
+    expect(saveMyStaffProfile).toHaveBeenCalledTimes(1);
+  });
+  it('keeps her edits and shows the server sentence when her save is refused', async () => {
+    saveMyStaffProfile.mockRejectedValueOnce(new Error('Bio can be at most 2,000 characters.'));
+    const user = userEvent.setup();
+    render(<Account />);
+    await heroName();
+    const p = profilePanel();
+    await user.clear(p.getByLabelText('Bio'));
+    await user.type(p.getByLabelText('Bio'), 'Too long, says the server.');
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(
+      await screen.findByText('Could not save: Bio can be at most 2,000 characters.'),
+    ).toBeInTheDocument();
+    expect(p.getByLabelText('Bio')).toHaveValue('Too long, says the server.');
+    expect(screen.queryByText('Profile saved.')).toBeNull();
+    expect(getUserProfile).toHaveBeenCalledTimes(1);
+  });
+  it('does not send a blank display name to the server', async () => {
+    const user = userEvent.setup();
+    render(<Account />);
+    await heroName();
+    await user.clear(screen.getByLabelText('Display name'));
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(await screen.findByText("Display name can't be blank.")).toBeInTheDocument();
+    expect(saveMyStaffProfile).not.toHaveBeenCalled();
+  });
+  it('changes her photo through the server path, then re-reads her profile', async () => {
+    uploadMyStaffPhoto.mockResolvedValue('https://res.cloudinary.com/demo/new.jpg');
+    getUserProfile
+      .mockResolvedValueOnce(profile())
+      .mockResolvedValueOnce(profile({ photoUrl: 'https://res.cloudinary.com/demo/new.jpg' }));
+    render(<Account />);
+    await heroName();
+    await userEvent.upload(
+      photoInput(),
+      new File([new Uint8Array([137, 80, 78, 71])], 'me.png', { type: 'image/png' }),
+    );
+    expect(uploadMyStaffPhoto).toHaveBeenCalledWith('op-1-abcdefghij', expect.any(File), expect.any(Function));
+    expect(uploadUserPhoto).not.toHaveBeenCalled();
+    expect(await screen.findByRole('img', { name: 'Auntie Nora' })).toHaveAttribute(
+      'src',
+      'https://res.cloudinary.com/demo/new.jpg',
+    );
+  });
+  it('names the stage while her photo is saving, and says why in a sentence when it is refused', async () => {
+    let fail: (err: Error) => void = () => {};
+    uploadMyStaffPhoto.mockImplementation(
+      (_uid: string, _file: File, onStage: (s: string) => void) =>
+        new Promise<string>((_resolve, reject) => {
+          onStage('saving');
+          fail = reject;
+        }),
+    );
+    render(<Account />);
+    await heroName();
+    await userEvent.upload(
+      photoInput(),
+      new File([new Uint8Array([137, 80, 78, 71])], 'me.png', { type: 'image/png' }),
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Saving…');
+    expect(screen.getByRole('button', { name: 'Change photo' })).toBeDisabled();
+    fail(Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }));
+    expect(await screen.findByText('Your account is not allowed to do this.')).toBeInTheDocument();
+    expect(screen.queryByText(/insufficient permissions/i)).toBeNull();
+    expect(getUserProfile).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -680,6 +812,8 @@ describe('Account screen: profile photo', () => {
       expect.any(File),
       expect.any(Function),
     );
+    // #2287: the owner's photo path is unchanged.
+    expect(uploadMyStaffPhoto).not.toHaveBeenCalled();
     // The screen shows what Firestore now holds, not what the upload returned.
     expect(getUserProfile).toHaveBeenCalledTimes(2);
     expect(await screen.findByRole('img', { name: 'Auntie Nora' })).toHaveAttribute(

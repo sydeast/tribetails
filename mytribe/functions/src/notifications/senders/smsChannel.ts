@@ -3,7 +3,8 @@ import { db } from '../../lib/firestoreAdmin';
 import { getTwilio, getTwilioFromNumber } from '../../lib/twilio';
 import { describeProviderFailure } from '../../lib/providerFailure';
 import { redactRecipient } from '../../lib/suppressions';
-import { kinForStoredTemplate, stripUnresolvedTokens } from '../templateParsers';
+import { householdSmsText, kinForStoredTemplate, stripUnresolvedTokens } from '../templateParsers';
+import { PORTAL_URL } from '../visitDates';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
 /**
@@ -30,13 +31,18 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
  *     stamped the channel row `failed`, which reads as a delivery fault rather
  *     than a household we have no number for.
  *
+ * A HOUSEHOLD'S COPY IS SHORT AND CARRIES A LINK (#2280, operator ruling
+ * 2026-11-14): the rendered text is cut to a short line and ends with a link to
+ * MyTribe, where the notifications list holds the whole message. See
+ * `householdSmsText` in templateParsers.ts.
+ *
  * Phone format expectation: E.164 (`+15551234567`). Documents missing the
  * leading `+` are passed through to Twilio which will reject with a 21211
  * "Invalid 'To' Phone Number", surfaced rather than silently fixed so the
  * source-of-truth phone capture flow gets corrected upstream.
  */
 export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSendResult> {
-  const { def, recipientUid, data } = args;
+  const { def, recipientUid, data, stream } = args;
   const templateId = def.templates.sms;
   if (!templateId) {
     throw new Error(`smsChannel(${def.key}): catalog has no sms template id`);
@@ -70,10 +76,13 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
     return { skipped: true, skipReason: 'recipient_no_phone' };
   }
 
-  const body = stripUnresolvedTokens(
+  const rendered = stripUnresolvedTokens(
     // #2093: a template stored before the quote wording changed still reads whole.
     Handlebars.compile(tpl.text)({ ...kinForStoredTemplate(data, [tpl.text]), recipientUid, notificationKey: def.key }),
   );
+  // #2280: a household's text message is short and links into MyTribe, where
+  // the whole message is. Staff and business copies are sent as written.
+  const body = stream === 'kinfolk' ? householdSmsText(rendered, PORTAL_URL) : rendered;
   const twilio = await getTwilio();
   let message: { sid: string };
   try {

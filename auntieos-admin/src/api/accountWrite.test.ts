@@ -3,8 +3,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { setDoc, doc } = vi.hoisted(() => ({ setDoc: vi.fn(), doc: vi.fn() }));
 vi.mock('firebase/firestore', () => ({ setDoc, doc }));
 vi.mock('../lib/firebase', () => ({ db: {} }));
+const { call } = vi.hoisted(() => ({ call: vi.fn() }));
+vi.mock('../lib/fns', () => ({ call }));
 
-import { saveUserProfile, saveUserPhotoUrl, type UserProfilePatch } from './accountWrite';
+import {
+  saveMyStaffProfile,
+  saveUserProfile,
+  saveUserPhotoUrl,
+  type UserProfilePatch,
+} from './accountWrite';
 
 function patch(over: Partial<UserProfilePatch> = {}): UserProfilePatch {
   return {
@@ -22,6 +29,26 @@ beforeEach(() => {
   setDoc.mockReset();
   doc.mockReset();
   doc.mockReturnValue('doc-ref');
+  call.mockReset().mockResolvedValue({ ok: true });
+});
+/** #2287: an Auntie's save goes through the server, for her own record. */
+describe('saveMyStaffProfile', () => {
+  it('sends the six fields to the server and never writes the record from the browser', async () => {
+    await saveMyStaffProfile(patch());
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith('saveMyStaffProfile', patch());
+    expect(setDoc).not.toHaveBeenCalled();
+  });
+  it('sends no uid and no key beyond the six, whatever the caller hands in', async () => {
+    const wide = { ...patch(), uid: 'someone-else', photoUrl: 'https://x/a.jpg', email: 'catch@hanasamku.com' };
+    await saveMyStaffProfile(wide as UserProfilePatch);
+    const sent = (call.mock.calls[0] as [string, Record<string, unknown>])[1];
+    expect(Object.keys(sent).sort()).toEqual(['bio', 'displayName', 'firstName', 'lastName', 'phone', 'title']);
+  });
+  it('passes a server refusal on for the screen to show', async () => {
+    call.mockRejectedValue(new Error('Enter a display name.'));
+    await expect(saveMyStaffProfile(patch({ displayName: '' }))).rejects.toThrow('Enter a display name.');
+  });
 });
 
 describe('saveUserProfile', () => {

@@ -5,11 +5,15 @@ import { logEvent } from '../../lib/logger';
 import { getNotificationDef } from '../catalog';
 import { enrichTemplateData } from '../enrichTemplateData';
 import { channelSenders } from '../senders';
-import type { Channel } from '../types';
+import type { AudienceStream, Channel } from '../types';
 import { writeAuditEntry } from '../../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../../lib/auditEvents';
 
 const CHANNELS: ReadonlySet<Channel> = new Set(['email', 'sms', 'push']);
+
+function isAudienceStream(v: unknown): v is AudienceStream {
+  return v === 'kinfolk' || v === 'business' || v === 'staff';
+}
 
 /**
  * Processes a single channel subdoc. Looks up the parent WORK ORDER, resolves
@@ -55,6 +59,7 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
           recipientUid?: string;
           data?: Record<string, unknown>;
           notificationId?: string;
+          stream?: unknown;
         }
       | undefined;
     if (!parent || !parent.key || !parent.recipientUid) {
@@ -78,6 +83,8 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
         def,
         recipientUid: parent.recipientUid,
         data: enrichedData,
+        // #2280: a household's text message and push are kept short with a link.
+        ...(isAudienceStream(parent.stream) ? { stream: parent.stream } : {}),
       });
       // Fail-soft skip (e.g. recipient has no email on file): a permanent,
       // undeliverable-on-this-channel condition that must NOT throw — throwing

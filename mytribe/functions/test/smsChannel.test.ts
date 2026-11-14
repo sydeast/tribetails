@@ -181,4 +181,48 @@ describe('sendSmsChannel', () => {
       "Twilio send failed (HTTP 400, code 21211): The 'To' number +1******1111 is not a valid phone number.",
     );
   });
+  describe('#2280: a household text message is short and links into MyTribe', () => {
+    const LINK = 'More in MyTribe: https://kinfolk.tribetails.com/notifications';
+    const longNote = 'Please leave the side gate unlatched. '.repeat(14).trim();
+    const send = async (text: string, data: Record<string, unknown>, stream?: 'kinfolk' | 'business' | 'staff') => {
+      const ctx = buildDbMock({ docs: { 'smsTemplates/t.k': { text }, 'clients/u1': { phone: '+15555551111' } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.messagesCreate.mockReset();
+      mocks.messagesCreate.mockResolvedValue({ sid: 'SM_h' });
+      await sendSmsChannel({ def: def(), recipientUid: 'u1', data, ...(stream ? { stream } : {}) });
+      return mocks.messagesCreate.mock.calls[0]![0].body as string;
+    };
+    it('puts the link after a short message that had none', async () => {
+      expect(await send("It's Auntie. I updated invoice {{n}}.", { n: 'INV-2027' }, 'kinfolk')).toBe(
+        `It's Auntie. I updated invoice INV-2027. ${LINK}`,
+      );
+    });
+    it("cuts a 500-character note short, in plain dots, and keeps the link whole", async () => {
+      const body = await send('Tribe Tails: we could not take the Drop-In for Biscuit. {{note}}', { note: longNote }, 'kinfolk');
+      expect(longNote.length).toBeGreaterThan(400);
+      expect(body.endsWith(` ${LINK}`)).toBe(true);
+      const line = body.slice(0, -LINK.length - 1);
+      expect(line.length).toBeLessThanOrEqual(200);
+      expect(line.endsWith('...')).toBe(true);
+      expect(body.length).toBeLessThanOrEqual(200 + 1 + LINK.length);
+      // One character outside the basic alphabet would triple the cost.
+      expect(body).not.toContain('…');
+    });
+    it('sends a message that already links to MyTribe as written', async () => {
+      const text = "It's Auntie. {{kinName}}'s visit is locked in. Every date: {{portalUrl}}";
+      expect(await send(text, { kinName: 'Biscuit', portalUrl: 'https://kinfolk.tribetails.com' }, 'kinfolk')).toBe(
+        "It's Auntie. Biscuit's visit is locked in. Every date: https://kinfolk.tribetails.com",
+      );
+    });
+    it('never ends in half an address when a linked message runs long', async () => {
+      const text = '{{note}} Every date: {{portalUrl}}';
+      const body = await send(text, { note: longNote, portalUrl: 'https://kinfolk.tribetails.com' }, 'kinfolk');
+      expect(body.endsWith(` ${LINK}`)).toBe(true);
+      expect(body.match(/https:\/\//g)).toHaveLength(1);
+      expect(body.length).toBeLessThanOrEqual(200 + 1 + LINK.length);
+    });
+    it.each(['business', 'staff', undefined] as const)('a %s copy is sent as written', async (stream) => {
+      expect(await send('Tribe Tails: {{note}}', { note: longNote }, stream)).toBe(`Tribe Tails: ${longNote}`);
+    });
+  });
 });

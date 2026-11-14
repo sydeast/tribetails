@@ -175,4 +175,28 @@ describe('onNotificationChannelCreate central enrichment', () => {
     expect(passed.data.amount).toBe('$75.00');
     expect(passed.data.kinName).toBe('Rex');
   });
+  it("#2280: hands the work order's stream to the sender, so a household's text and push stay short", async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: {} }).db);
+    const { onNotificationChannelCreateHandler } = await import(
+      '../src/notifications/triggers/onNotificationChannelCreate'
+    );
+    const run = async (channel: 'sms' | 'push', stream: unknown) => {
+      const { event } = makeEvent(channel, {
+        key: 'kincare.booking.confirm',
+        recipientUid: 'cli1',
+        data: {},
+        ...(stream === undefined ? {} : { stream }),
+      });
+      await onNotificationChannelCreateHandler(event);
+    };
+    await run('sms', 'kinfolk');
+    expect(mocks.smsSender.mock.calls[0]![0].stream).toBe('kinfolk');
+    await run('push', 'business');
+    expect(mocks.pushSender.mock.calls[0]![0].stream).toBe('business');
+    // A work order written before the stamp existed, or one carrying junk: no stream at all.
+    await run('push', undefined);
+    await run('push', 'everyone');
+    expect('stream' in mocks.pushSender.mock.calls[1]![0]).toBe(false);
+    expect('stream' in mocks.pushSender.mock.calls[2]![0]).toBe(false);
+  });
 });

@@ -52,6 +52,9 @@ Frozen request shapes:
 - Operator preferences (added 2026-07-25): `saveDashboardLayout`. One field, but
   the VALUE is the contract (a "key:size" token), so the guard freezes the token
   regex alongside the key set.
+- Staff Account profile (added 2026-11-14, #2287): `saveMyStaffProfile`. Six
+  text keys and no uid. The absence of a uid is part of the contract: the
+  record written is the caller's.
 - Invoice write funnel W2-1 (added 2026-07-28, ADR-0002): `linkInvoiceSessions`,
   `recordPayment`. Frozen from birth: android's W2-2 mirror is built FROM these
   shapes rather than reverse-engineered later. Both are flat (`sessionIds` is an
@@ -3361,6 +3364,23 @@ account under the household's name. `getMyAccount` already reports that state as
   mirror is left alone, so the screen never shows a card that is gone or hides
   one that is not.
 
+### saveMyStaffProfile
+- req `{ displayName: string, firstName: string, lastName: string, phone: string,
+  title: string, bio: string }`. All six are required and the object is strict:
+  any other key (a uid, `photoUrl`, `email`, `dashboardWidgets`) is refused with
+  `invalid-argument`, never ignored.
+- res `{ ok: true, profile: { ...the six fields as stored, trimmed }, changed: string[] }`
+- Merge-writes the six fields plus `updatedAt` (ISO string) to
+  `users/{uid}` on the CALLER's own document (`req.auth.uid`).
+- Limits after trimming: `displayName` 1 to 120, `firstName` and `lastName` 80,
+  `phone` 40, `title` 120, `bio` 2,000. A value past its limit, or a blank
+  display name, is refused with a sentence written for the person saving.
+- Staff only. The owner may call it; an Auntie is admitted by
+  `lib/auntieAccess.ts`. `firestore.rules` refuses an Auntie every client write
+  to `users/{uid}`, so this is her only save path. Admin web calls it for an
+  Auntie; the owner's Account page keeps its direct write.
+- Writes one `PROFILE_UPDATED` Activity Log line naming the changed fields
+  (never their values). A save that changes nothing writes nothing.
 ### saveDashboardLayout
 - req `{ tokens: string[] /* each `^[a-zA-Z]+:(compact|wide)$`, max 30 */ }`
 - res `{ ok: true, tokens: string[] }` (echoes what was stored, so the client

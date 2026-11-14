@@ -1,6 +1,7 @@
 import { doc } from 'firebase/firestore';
 import { setDoc } from '../lib/firestoreWrite';
 import { db } from '../lib/firebase';
+import { call } from '../lib/fns';
 
 /**
  * The write half of api/account.ts, kept in its own module so the read screen's
@@ -57,6 +58,29 @@ export async function saveUserProfile(uid: string, patch: UserProfilePatch): Pro
   );
 }
 
+/**
+ * #2287: an Auntie saves her own profile fields through the server.
+ *
+ * `firestore.rules` lets her read her own `users/{uid}` and refuses her every
+ * client write to it, so `saveUserProfile` above cannot work for her. The
+ * `saveMyStaffProfile` callable writes these same six fields to the CALLER's
+ * record. No uid is sent: the server takes it from her sign-in, so this cannot
+ * reach anyone else's record whatever is passed in.
+ *
+ * The owner stays on `saveUserProfile`. His direct write queues when he has no
+ * signal and lands when it returns (`lib/firestoreWrite.ts`), which a callable
+ * does not do.
+ */
+export async function saveMyStaffProfile(patch: UserProfilePatch): Promise<void> {
+  await call<UserProfilePatch, { ok?: boolean }>('saveMyStaffProfile', {
+    displayName: patch.displayName,
+    firstName: patch.firstName,
+    lastName: patch.lastName,
+    phone: patch.phone,
+    title: patch.title,
+    bio: patch.bio,
+  });
+}
 /**
  * Saves the operator's own profile photo URL, and nothing else.
  *

@@ -283,8 +283,13 @@ const ALLOWED_EAGER_PACKAGES = [
  * rules, `lib/visitStepNotice.ts`, load with `await import()` inside the
  * handler (and inside `setVisitLifecycle`), so the entry is the only module it
  * adds.
+ *
+ * 457 since #2287 (on top of #2037's 456): `admin/saveMyStaffProfile.ts` is a
+ * new FUNCTIONS entry, a staff member saving her own Account profile.
+ * Everything it imports (the staff wrapper, the audit writer, the audit actor)
+ * was already here.
  */
-const MAX_OWN_EAGER_MODULES = 456;
+const MAX_OWN_EAGER_MODULES = 457;
 
 interface Edge {
   spec: string;

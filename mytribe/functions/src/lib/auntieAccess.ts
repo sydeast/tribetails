@@ -183,6 +183,11 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   // user record and only the layout field, so she can arrange no board but
   // hers. Without it she could never bring a hidden card onto her Home.
   'saveDashboardLayout',
+  // #2287, ruling 2026-11-13 (her Account page stays): saving her own Account
+  // profile. The handler writes the caller's own user record and only the name,
+  // phone, title and bio fields. Her photo is setMediaProfilePhoto above, which
+  // takes a USER target from her only when it is her own record.
+  'saveMyStaffProfile',
 ]);
 
 /**

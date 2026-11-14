@@ -8,6 +8,11 @@ import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { loadBusinessName } from '../lib/businessName';
 import { sanitizePlainText } from '../lib/richText';
 import { getNotificationDef } from '../notifications/catalog';
+import {
+  HOUSEHOLD_NOTICE_ROUTE,
+  HOUSEHOLD_SHORT_LINE_MAX,
+  householdPushShelfLine,
+} from '../notifications/templateParsers';
 import { loadHouseholdSendGate } from '../notifications/householdSendGate';
 import { loadBusinessOverride, loadUserPrefs, notificationDisabledFor, resolveChannels } from '../notifications/prefs';
 
@@ -65,19 +70,15 @@ export const HOUSEHOLD_PUSH_NOTIFICATION_KEY = 'message.reply';
 export const HOUSEHOLD_PUSH_BODY_MAX = 1000;
 export const HOUSEHOLD_PUSH_TITLE_MAX = 120;
 /**
- * The longest line the push itself carries. A push stays short and opens
- * MyTribe, where the notifications list holds the whole message (operator
- * ruling 2026-11-14). The same length `message.reply` cuts its preview to.
+ * The longest line the push itself carries, where a tap on it lands in MyTribe,
+ * and the cut. A push stays short and opens MyTribe, where the notifications
+ * list holds the whole message (operator ruling 2026-11-14). Since #2280 every
+ * household push follows the same rule, so the three live with the channel
+ * senders (`notifications/templateParsers.ts`) and are named here as before.
  */
-export const HOUSEHOLD_PUSH_SHELF_MAX = 200;
-/** Where a tap on the push lands in MyTribe: the list that holds the whole message. */
-export const HOUSEHOLD_PUSH_ROUTE = '/notifications';
-/** The push's own line: the whole message when it is short, else its opening and an ellipsis. */
-export function householdPushShelfLine(body: string): string {
-  const flat = body.replace(/\s+/g, ' ').trim();
-  return flat.length <= HOUSEHOLD_PUSH_SHELF_MAX ? flat : `${flat.slice(0, HOUSEHOLD_PUSH_SHELF_MAX - 1).trimEnd()}…`;
-}
-
+export const HOUSEHOLD_PUSH_SHELF_MAX = HOUSEHOLD_SHORT_LINE_MAX;
+export const HOUSEHOLD_PUSH_ROUTE = HOUSEHOLD_NOTICE_ROUTE;
+export { householdPushShelfLine };
 // Exported for the recursive callable-contract freeze (nested/effects shape).
 export const Args = z.object({
   kinfolkId: z.string().min(1).max(200),

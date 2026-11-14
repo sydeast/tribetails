@@ -3,7 +3,7 @@ import { linkOptions, useNavigate, useRouteContext } from '@tanstack/react-route
 import { useAuth } from '../lib/auth';
 import { isAuntieAccess } from '../lib/access';
 import { getUserProfile, type UserProfile } from '../api/account';
-import { saveUserProfile } from '../api/accountWrite';
+import { saveMyStaffProfile, saveUserProfile, type UserProfilePatch } from '../api/accountWrite';
 import { listBusinessAdmins } from '../api/businessAdmins';
 import { getBusinessSettings, type BusinessSettings } from '../api/settings';
 import { saveBusinessSettings } from '../api/settingsWrite';
@@ -34,7 +34,8 @@ import { Avatar } from '../components/Avatar';
 import { Toggle } from '../components/Toggle';
 import { PrimaryButton, GhostButton, IconButton } from '../components/Buttons';
 import { IconTile } from '../components/IconTile';
-import { uploadUserPhoto } from '../api/accountPhoto';
+import { uploadMyStaffPhoto, uploadUserPhoto } from '../api/accountPhoto';
+import { plainFailureText } from '../lib/callableErrorText';
 import { type UploadStage } from '../api/mediaUpload';
 import { SecurityPanel } from '../components/SecurityPanel';
 import { BUSINESS_PROFILE_FIELDS, TextFieldsSection } from './settings/sections';
@@ -181,7 +182,7 @@ export function Account({ onOpenNotifications }: AccountProps) {
           live &&
           setProfile({
             status: 'error',
-            message: `Couldn't read your profile: ${err instanceof Error ? err.message : 'Load failed'}`,
+            message: `Couldn't read your profile: ${plainFailureText(err, 'Load failed')}`,
             retry: load,
           }),
       );
@@ -196,12 +197,14 @@ export function Account({ onOpenNotifications }: AccountProps) {
     setPhotoError(null);
     setPhotoStage('signing');
     try {
-      await uploadUserPhoto(uid, file, setPhotoStage);
+      // #2287: the rules refuse an Auntie a client write to her own record, so
+      // her photo's last step goes through the server. The owner's is unchanged.
+      await (isAuntie ? uploadMyStaffPhoto : uploadUserPhoto)(uid, file, setPhotoStage);
       // Re-read rather than trust the returned URL: the screen shows what
       // `users/{uid}` holds, which is the only thing the next visit will show.
       load();
     } catch (err) {
-      setPhotoError(err instanceof Error ? err.message : 'Upload failed.');
+      setPhotoError(plainFailureText(err, 'Upload failed.'));
     } finally {
       setPhotoStage(null);
       // Or picking the same file again after a failure fires no change event.
@@ -216,14 +219,18 @@ export function Account({ onOpenNotifications }: AccountProps) {
     setSaveError(null);
     setJustSaved(false);
     try {
-      await saveUserProfile(uid, {
+      const patch: UserProfilePatch = {
         displayName: next.displayName.trim(),
         firstName: next.firstName.trim(),
         lastName: next.lastName.trim(),
         phone: next.phone.trim(),
         title: next.title.trim(),
         bio: next.bio.trim(),
-      });
+      };
+      // #2287: an Auntie saves through the server, which writes her own record
+      // and only these fields. The owner keeps his direct write.
+      if (isAuntie) await saveMyStaffProfile(patch);
+      else await saveUserProfile(uid, patch);
       // The saved values become "what was loaded" before the draft is dropped,
       // so the fields do not flash back to the old text while the re-read is in
       // flight. `load()` below then confirms them against the document.
@@ -248,7 +255,7 @@ export function Account({ onOpenNotifications }: AccountProps) {
       setJustSaved(true);
       load();
     } catch (err) {
-      setSaveError(`Could not save: ${err instanceof Error ? err.message : 'Save failed'}`);
+      setSaveError(`Could not save: ${plainFailureText(err, 'Save failed')}`);
     } finally {
       setSaving(false);
     }
