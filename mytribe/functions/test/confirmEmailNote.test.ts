@@ -86,12 +86,16 @@ describe('#2280: the confirmation email and the office note', () => {
     expect(sly.html).toContain('&lt;img src');
   });
 
-  it('a note with Handlebars in it is printed, not run', () => {
-    const out = render('{{kinfolkName}} {{{portalUrl}}} {{#each visits}}x{{/each}}');
-    expect(out.html).not.toContain('Jordan https://');
+  it('merge fields typed into a note are never filled in or run', () => {
+    // The note is a value, so Handlebars does not read it as a template; the
+    // leftover braces are then dropped by the last-step scrub every send has.
+    const out = render('Hello {{kinfolkName}} {{{portalUrl}}} {{#each visits}}x{{/each}} bye');
+    expect(out.html).toContain('<strong>A note from me:</strong> Hello');
+    expect(out.html).not.toContain('Hello Jordan');
     expect(out.html).not.toContain('xx');
+    expect(out.html).not.toContain('{{');
+    expect(out.text).not.toContain('Hello Jordan');
   });
-
   it('the template prints the note with two braces only, inside one #if', () => {
     expect(seed.emailContent).toContain('{{#if note}}');
     expect(seed.emailContent).not.toContain('{{{');
