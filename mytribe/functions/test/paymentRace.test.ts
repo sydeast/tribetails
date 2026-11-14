@@ -22,6 +22,7 @@ import { installOptimisticTransactions } from './_helpers/optimisticTransaction'
 const hooks = vi.hoisted(() => ({
   db: { current: null as unknown },
   enqueue: vi.fn(),
+  deliver: vi.fn(),
   beforeRepairPlan: null as null | (() => void),
 }));
 
@@ -39,6 +40,7 @@ vi.mock('../src/lib/resolveBillingRecipientUid', () => ({ resolveBillingRecipien
 vi.mock('../src/notifications/dispatcher', () => ({
   enqueueNotification: vi.fn().mockResolvedValue([]),
   enqueueNotificationDetailed: async (args: unknown) => hooks.enqueue(args),
+  deliverListedCopy: async (args: unknown) => hooks.deliver(args),
 }));
 vi.mock('../src/lib/invoicePaymentRepair', async () => {
   const actual = await vi.importActual<typeof import('../src/lib/invoicePaymentRepair')>('../src/lib/invoicePaymentRepair');
@@ -100,6 +102,8 @@ const OPEN = {
 beforeEach(() => {
   hooks.enqueue.mockReset();
   hooks.enqueue.mockResolvedValue({ written: ['n1'], suppressed: [], unresolved: [] });
+  hooks.deliver.mockReset();
+  hooks.deliver.mockResolvedValue({ outcome: 'sent', channels: ['email'] });
   hooks.beforeRepairPlan = null;
   docs = { [INVOICE]: { ...OPEN }, 'families/fam1': { accountBalanceCents: 12000 } };
   ctx = buildDbMock({ docs, writeThrough: true });
@@ -558,7 +562,7 @@ describe('#2281 review: a second call that arrives after the sweep', () => {
   const ageSettlement = (ms: number) => {
     docs[INVOICE]![PAYMENT_APPLIED_OWNER_AT_FIELD] -= ms;
   };
-  it('the late retry leaves one ledger row with the caller\'s amounts, and no second notice', async () => {
+  it('the late retry leaves one ledger row with the caller\'s amounts, and no second list entry or office copy', async () => {
     installOptimisticTransactions(ctx.db, docs);
     const settled = await step1();
     // The reply is lost. Ten minutes on, the sweep finishes the settlement.
@@ -580,27 +584,122 @@ describe('#2281 review: a second call that arrives after the sweep', () => {
       settledByInvoicePaymentId: ipay(1),
       settlesInvoice: true,
       recordedBy: 'admin1',
-      // The sweep's notice stamps came across with the row.
-      confirmationAppOnly: true,
+      // The sweep's office stamp came across with the row.
       officeNoticeSentAt: '__TS__',
       replacedSettlementLedgerRowId: settleRow,
     });
     expect(first).toMatchObject({ paymentId: pay(1), amountCents: 4500, tipCents: 500, feeCents: 150, appliedCents: 4000 });
-    // The household and the office were told once, by the sweep.
+    // The household's list and the office were told once, by the sweep: nothing
+    // is enqueued again.
     expect(hooks.enqueue).toHaveBeenCalledTimes(1);
-    expect(first).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true, officeNoticePending: false });
+    // The admin ticked Send Confirmation on this call, and the sweep had only
+    // listed the payoff. The listed copy is sent on the household's channels,
+    // once, under the sweep row's identity.
+    expect(hooks.deliver).toHaveBeenCalledTimes(1);
+    expect(hooks.deliver.mock.calls[0]![0]).toEqual({
+      key: 'invoice.payment.applied',
+      recipientUid: 'kin-uid-1',
+      data: { kinfolkId: 'fam1', invoiceId: 'inv1', paymentId: settleRow },
+    });
+    expect(first).toMatchObject({ confirmationEmailSent: true, confirmationAppOnly: false, officeNoticePending: false });
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ confirmationEmailSent: true, confirmationAppOnly: false });
     // The money did not move again.
     expect(docs[INVOICE]).toMatchObject({ paidCents: 4000, amountDueCents: 0, [SETTLEMENT_LEDGER_PENDING_FIELD]: '' });
     expect(subcollectionRows()).toBe(1);
     expect(docs['families/fam1']!.accountBalanceCents).toBe(12000);
-    // A second retry by the same key is answered from the row.
+    // A second retry by the same key is answered from the row, and emails nothing more.
     expect(await step2(settled.paymentId)).toEqual(first);
     expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
     expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+    expect(hooks.deliver).toHaveBeenCalledTimes(1);
     // And the sweep has nothing left to do.
     expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(0);
     expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
     expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+  });
+  it('an unticked late retry emails nothing: the sweep\'s list entry stands', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    const first = await step2(settled.paymentId, { sendConfirmationEmail: false });
+    expect(hooks.deliver).not.toHaveBeenCalled();
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+    expect(first).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true });
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true });
+  });
+  it('a ticked late retry for a household with every channel off stays list only, and says so', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    hooks.deliver.mockResolvedValue({ outcome: 'no-channels', channels: [] });
+    const first = await step2(settled.paymentId);
+    expect(first).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true });
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true });
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+  });
+  it('a ticked email that fails is sent by the next same-key retry, and never twice', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    hooks.deliver.mockRejectedValueOnce(Object.assign(new Error('UNAVAILABLE'), { code: 'unavailable' }));
+    const first = await step2(settled.paymentId);
+    // The payment is recorded; the email did not go, and the answer says so.
+    expect(first).toMatchObject({ paymentId: pay(1), confirmationEmailSent: false, confirmationAppOnly: true });
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true });
+    const second = await step2(settled.paymentId);
+    expect(second).toMatchObject({ confirmationEmailSent: true, confirmationAppOnly: false });
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ confirmationEmailSent: true, confirmationAppOnly: false });
+    expect(hooks.deliver).toHaveBeenCalledTimes(2);
+    expect(await step2(settled.paymentId)).toEqual(second);
+    expect(hooks.deliver).toHaveBeenCalledTimes(2);
+    // Throughout: one list entry and one office copy, both the sweep's.
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+  });
+  it('a copy the sweep sent and could not stamp is not reported as emailed unless it is', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    // The sweep's stamp on its row was lost. The dispatcher's ledger still
+    // knows both copies went out, and refuses them as duplicates.
+    delete docs[`payments/${settleRow}`]!.confirmationAppOnly;
+    delete docs[`payments/${settleRow}`]!.officeNoticeSentAt;
+    hooks.enqueue.mockResolvedValue({
+      written: [],
+      suppressed: [
+        { recipientUid: 'kin-uid-1', reason: 'duplicate' },
+        { recipientUid: 'office-1', reason: 'duplicate' },
+      ],
+      unresolved: [],
+    });
+    hooks.deliver.mockResolvedValue({ outcome: 'no-channels', channels: [] });
+    const first = await step2(settled.paymentId);
+    // The duplicate is the sweep's list entry, not an email.
+    expect(first).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true });
+    expect(hooks.deliver).toHaveBeenCalledTimes(1);
+    hooks.deliver.mockResolvedValue({ outcome: 'sent', channels: ['email'] });
+    expect(await step2(settled.paymentId)).toMatchObject({ confirmationEmailSent: true, confirmationAppOnly: false });
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+  });
+  it('a late retry after an edit reopened the invoice still leaves one ledger row', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
+    // A line was added: the invoice is open again with a balance.
+    Object.assign(docs[INVOICE]!, { status: 'open', totalCents: 5000, amountDueCents: 1000 });
+    await step2(settled.paymentId, { sendConfirmationEmail: false });
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ amountCents: 4500, tipCents: 500, replacedSettlementLedgerRowId: settleRow });
+    expect(hooks.enqueue).toHaveBeenCalledTimes(1);
+  });
+  it('and when that retry lands before the sweep, the sweep writes no second row', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    Object.assign(docs[INVOICE]!, { status: 'open', totalCents: 5000, amountDueCents: 1000 });
+    await step2(settled.paymentId, { sendConfirmationEmail: false });
+    expect(docs[INVOICE]).toMatchObject({ [SETTLEMENT_LEDGER_PENDING_FIELD]: '', [SETTLEMENT_LEDGER_PENDING_AT_FIELD]: null });
+    expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(0);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
   });
   it('a credit the admin entered on the late retry is given once', async () => {
     const tx = installOptimisticTransactions(ctx.db, docs);

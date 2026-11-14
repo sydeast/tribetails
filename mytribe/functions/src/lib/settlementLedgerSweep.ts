@@ -51,6 +51,9 @@
  * whichever commits second sees what the first did. No query is involved.
  * Any copy `recordPayment` still owes goes out under this pass's row id, so
  * the dispatcher's ledger catches one this pass sent and could not stamp.
+ * When that late call has Send Confirmation ticked, the payoff this pass only
+ * listed is then sent on the household's own channels, once
+ * (`deliverListedCopy`); the office is not told again.
  *
  * WHAT IT CANNOT CATCH. A settlement that left a balance (a partial) stamps
  * nothing, because nothing is owed to anyone until it is paid off and an

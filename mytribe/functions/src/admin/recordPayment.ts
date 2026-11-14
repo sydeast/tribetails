@@ -29,7 +29,7 @@ import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../li
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
-import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { deliverListedCopy, enqueueNotificationDetailed } from '../notifications/dispatcher';
 import { reachedAppOnly } from '../notifications/appOnly';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import {
@@ -39,6 +39,7 @@ import {
   SETTLEMENT_LEDGER_SWEEP_WRITER,
   claimableMarkInvoicePaidOwner,
   markInvoicePaidSettlementOf,
+  paymentAppliedOwner,
   settlementLedgerRowId,
 } from '../lib/paymentAppliedOwner';
 import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
@@ -720,6 +721,38 @@ export async function recordPaymentHandler(
         if (settledCents > 0 && coverCents >= settledCents) claimedOwner = settlement.owner;
       }
     }
+    // THE INVOICE HAS MOVED ON SINCE THE SETTLEMENT THIS CALL NAMES: an edit
+    // reopened it, or a later payment paid it off again and holds the owner
+    // stamp now. Nothing above matches, and the call's row would land beside
+    // the sweep's, or the sweep's beside it. The call names its settlement and
+    // that row exists under this invoice (`twoStep.known`), so the sweep's row
+    // is read by the id made from that name, and a stamp still waiting on that
+    // settlement is cleared below. The notice claim is left alone: the invoice
+    // is not this settlement's to speak for any more.
+    let namedPendingOwner: string | null = null;
+    if (
+      claimedOwner === null &&
+      settlement === null &&
+      linkedInvoice !== undefined &&
+      args.settledByInvoicePaymentId !== undefined &&
+      twoStep?.known === true &&
+      kinfolkId !== '' &&
+      linkedInvoice['kinfolkId'] === kinfolkId
+    ) {
+      const sweepRowRef = db().collection('payments').doc(settlementLedgerRowId(args.settledByInvoicePaymentId));
+      const sweepRowSnap = await tx.get(sweepRowRef);
+      const sweepRow = (sweepRowSnap.data() ?? {}) as Record<string, unknown>;
+      if (
+        sweepRowSnap.exists &&
+        sweepRow['recordedByServer'] === SETTLEMENT_LEDGER_SWEEP_WRITER &&
+        sweepRow['invoiceId'] === args.invoiceId &&
+        sweepRow['kinfolkId'] === kinfolkId
+      ) {
+        replacedSweepRow = { id: sweepRowRef.id, data: sweepRow };
+      }
+      const named = paymentAppliedOwner('markInvoicePaid', args.settledByInvoicePaymentId);
+      if (linkedInvoice[SETTLEMENT_LEDGER_PENDING_FIELD] === named) namedPendingOwner = named;
+    }
     // THE APPLY AND THE PAYMENT ROW LAND TOGETHER. `markInvoicePaid` and this
     // callable were two steps on purpose (the money first, the display row
     // second and best-effort), and that stays true for the flow that calls them
@@ -857,6 +890,13 @@ export async function recordPaymentHandler(
         { merge: true },
       );
     }
+    if (linkedInvoiceRef && settledOwner === null && namedPendingOwner !== null) {
+      tx.set(
+        linkedInvoiceRef,
+        { [SETTLEMENT_LEDGER_PENDING_FIELD]: '', [SETTLEMENT_LEDGER_PENDING_AT_FIELD]: null },
+        { merge: true },
+      );
+    }
     if (replacedSweepRow !== null) tx.delete(db().collection('payments').doc(replacedSweepRow.id));
     // `create` WHEN THERE IS A KEY, so two attempts that somehow reach the
     // write together are refereed by the server rather than by the read above.
@@ -974,32 +1014,58 @@ export async function recordPaymentHandler(
   // #2281 review: a row that took a sweep row's place sends only the copies the
   // sweep did not get out, read off the stamps it carried over, the way a
   // same-key retry does. They go out under the sweep row's id.
-  const owed = replacedSweepRow !== null ? copiesOwed(replacedSweepRow.data, args.sendConfirmationEmail, true) : null;
-  const sent =
-    owed !== null && !owed.householdDue && !owed.listDue && !owed.officeDue
-      ? NOTHING_SENT
-      : await sendPaymentConfirmation({
-          kinfolkId,
-          // The invoice the confirmation is ABOUT: the one this payment was
-          // applied to, or the display link when nothing was applied. The catalog's
-          // `invoice.payment.applied` template needs one.
-          invoiceId: application?.invoiceId ?? args.invoiceId,
-          paymentId: replacedSweepRow?.id ?? ref.id,
+  //
+  // The exception is the email the admin ticks on that late call: the sweep
+  // could not know about the tick and only listed the payoff, so the listed
+  // copy is now sent on the household's own channels (`sendAfterSweepRow`).
+  let sent: ConfirmationOutcome;
+  let confirmationEmailSent: boolean;
+  let confirmationAppOnly: boolean;
+  if (replacedSweepRow !== null) {
+    const after = await sendAfterSweepRow({
+      stamps: replacedSweepRow.data,
+      ticked: args.sendConfirmationEmail,
+      kinfolkId,
+      invoiceId: args.invoiceId,
+      noticePaymentId: replacedSweepRow.id,
+      uid: actor.uid,
+    });
+    sent = after.sent;
+    confirmationEmailSent = after.confirmationEmailSent;
+    confirmationAppOnly = after.confirmationAppOnly;
+    // With or without a key: the row carries the sweep's stamps, and a stamp
+    // that says "list only" after the email went would be untrue.
+    if (after.changed) {
+      await ref.update(after.stamps).catch((err) => {
+        logEvent({
+          severity: 'warn',
+          function: 'recordPayment',
+          event: 'payment.confirmation.stamp.failed',
           uid: actor.uid,
-          householdRequested: owed !== null ? owed.householdDue : args.sendConfirmationEmail,
-          settlesInvoice: committed.settlesInvoice,
-          officeDue: owed !== null ? owed.officeDue : true,
-          ...(owed !== null ? { officeOwedWithoutHousehold: args.sendConfirmationEmail && owed.householdTold } : {}),
-          // #1973: an unticked payment that pays the invoice off still puts the
-          // payoff on the household's notifications list (nothing is emailed).
-          householdOnPayoff: owed !== null ? owed.listDue : true,
+          extra: { paymentId: ref.id, err: (err as Error)?.message },
         });
-  // #1511: "sent" means a channel carried it. A copy that reached the household
-  // in the app only is reported through `confirmationAppOnly` instead.
-  const carried = replacedSweepRow?.data ?? {};
-  const confirmationEmailSent = carried['confirmationEmailSent'] === true || (sent.household && !sent.householdAppOnly);
-  const confirmationAppOnly = carried['confirmationAppOnly'] === true || (sent.household && sent.householdAppOnly);
-  {
+      });
+    }
+  } else {
+    sent = await sendPaymentConfirmation({
+      kinfolkId,
+      // The invoice the confirmation is ABOUT: the one this payment was
+      // applied to, or the display link when nothing was applied. The catalog's
+      // `invoice.payment.applied` template needs one.
+      invoiceId: application?.invoiceId ?? args.invoiceId,
+      paymentId: ref.id,
+      uid: actor.uid,
+      householdRequested: args.sendConfirmationEmail,
+      settlesInvoice: committed.settlesInvoice,
+      officeDue: true,
+      // #1973: an unticked payment that pays the invoice off still puts the
+      // payoff on the household's notifications list (nothing is emailed).
+      householdOnPayoff: true,
+    });
+    // #1511: "sent" means a channel carried it. A copy that reached the household
+    // in the app only is reported through `confirmationAppOnly` instead.
+    confirmationEmailSent = sent.household && !sent.householdAppOnly;
+    confirmationAppOnly = sent.household && sent.householdAppOnly;
     // STAMPED ON THE ROW, so a replay can report it (#825) and a same-key retry
     // knows what is left to send (#866). Outside the transaction because it is
     // not known inside one: the send is attempted only after the money has
@@ -1019,7 +1085,6 @@ export async function recordPaymentHandler(
       });
     }
   }
-
   logEvent({
     severity: 'info',
     function: 'recordPayment',
@@ -1236,16 +1301,44 @@ async function replayWithConfirmation(
   actorUid: string,
 ): Promise<z.infer<typeof Result>> {
   const answer = replayResult(ref.id, stored);
+  // #2281 review: a row that replaced the sweep's finishes what that payment is
+  // still owed the same way its first attempt did, under the sweep row's id.
+  const sweepRowId = stored['noticePaymentId'];
+  if (typeof sweepRowId === 'string' && sweepRowId !== '') {
+    const after = await sendAfterSweepRow({
+      stamps: stored,
+      ticked: householdRequested,
+      kinfolkId: answer.kinfolkId,
+      invoiceId: typeof stored['invoiceId'] === 'string' ? stored['invoiceId'] : '',
+      noticePaymentId: sweepRowId,
+      uid: actorUid,
+    });
+    if (after.changed) {
+      await ref.update(after.stamps).catch((err) => {
+        logEvent({
+          severity: 'warn',
+          function: 'recordPayment',
+          event: 'payment.confirmation.stamp.failed',
+          uid: actorUid,
+          extra: { paymentId: ref.id, replay: true, err: (err as Error)?.message },
+        });
+      });
+    }
+    return {
+      ...answer,
+      confirmationEmailSent: after.confirmationEmailSent,
+      ...(after.confirmationEmailSent || after.confirmationAppOnly ? { confirmationAppOnly: after.confirmationAppOnly } : {}),
+      householdNoPortalAccount: after.sent.noPortalAccount,
+      officeNoticePending: after.sent.officePending,
+    };
+  }
   const settlesInvoice = stored['settlesInvoice'] === true;
   const { householdTold, householdDue, listDue, officeDue } = copiesOwed(stored, householdRequested, settlesInvoice);
   if (!householdDue && !listDue && !officeDue) return answer;
-  // #2281 review: a row that replaced the sweep's keeps sending under the
-  // sweep row's id, the identity every earlier copy for this payment used.
-  const noticePaymentId = stored['noticePaymentId'];
   const sent = await sendPaymentConfirmation({
     kinfolkId: answer.kinfolkId,
     invoiceId: answer.application?.invoiceId ?? (typeof stored['invoiceId'] === 'string' ? stored['invoiceId'] : ''),
-    paymentId: typeof noticePaymentId === 'string' && noticePaymentId !== '' ? noticePaymentId : ref.id,
+    paymentId: ref.id,
     uid: actorUid,
     householdRequested: householdDue,
     settlesInvoice,
@@ -1379,6 +1472,13 @@ export interface ConfirmationOutcome {
    * texted or pushed. Never true without `household`.
    */
   householdAppOnly: boolean;
+  /**
+   * #2281 review: the household copy in `household` is an earlier delivery of
+   * this same payment's notice, found on the dispatcher's ledger; this call
+   * wrote nothing for them. Whether that earlier copy was emailed is not known
+   * from here.
+   */
+  householdDuplicate?: boolean;
   /** The office copy was enqueued: it rides every enqueue, unless its roster lookup failed. */
   office: boolean;
   /**
@@ -1501,6 +1601,7 @@ export async function sendPaymentConfirmation(input: {
       recipientUid !== null && (householdSuppressed === undefined || householdSuppressed.reason === 'duplicate');
     return {
       household,
+      householdDuplicate: household && householdSuppressed?.reason === 'duplicate',
       // Per recipient: the office's channels are not the household's.
       // #1973: a list-only copy is app-only by construction.
       householdAppOnly: household && recipientUid !== null && (listOnly || reachedAppOnly(outcome, recipientUid)),
@@ -1530,6 +1631,119 @@ export async function sendPaymentConfirmation(input: {
   }
 }
 
+/**
+ * #2281 review: WHAT A ROW THAT TOOK THE SWEEP ROW'S PLACE STILL SENDS, on its
+ * first attempt and on a same-key retry.
+ *
+ * `stamps` are the copies on record for this payment: the sweep row's on the
+ * first attempt, the replacing row's own on a retry. Every copy goes out under
+ * the sweep row's id, the identity the sweep sent under, so the dispatcher's
+ * ledger drops one the sweep sent and could not stamp.
+ *
+ *   - Copies not on record are sent as a retry sends them (`copiesOwed`).
+ *   - THE TICKED EMAIL (lead ruling, 2026-11-14). The sweep cannot know the
+ *     admin ticked Send Confirmation, so it only lists the payoff (#1973).
+ *     When the late call is ticked and no channel has carried the household's
+ *     copy, the listed copy is sent on the household's own channels
+ *     (`deliverListedCopy`): email by default. Not a second enqueue: that
+ *     would be refused as a duplicate, or under a new identity would list the
+ *     payoff twice and tell the office twice.
+ *   - A household copy the ledger reports as a duplicate is the sweep's list
+ *     entry, not an email, so it is never reported as emailed by that alone.
+ *
+ * A send that fails leaves the stamps as they were, and the next same-key
+ * retry tries again. The answer never says both "emailed" and "list only".
+ */
+async function sendAfterSweepRow(input: {
+  stamps: Record<string, unknown>;
+  ticked: boolean;
+  kinfolkId: string;
+  invoiceId: string;
+  noticePaymentId: string;
+  uid: string;
+}): Promise<{
+  sent: ConfirmationOutcome;
+  confirmationEmailSent: boolean;
+  confirmationAppOnly: boolean;
+  stamps: Record<string, unknown>;
+  changed: boolean;
+}> {
+  const owed = copiesOwed(input.stamps, input.ticked, true);
+  const sent =
+    !owed.householdDue && !owed.listDue && !owed.officeDue
+      ? NOTHING_SENT
+      : await sendPaymentConfirmation({
+          kinfolkId: input.kinfolkId,
+          invoiceId: input.invoiceId,
+          paymentId: input.noticePaymentId,
+          uid: input.uid,
+          householdRequested: owed.householdDue,
+          settlesInvoice: true,
+          officeDue: owed.officeDue,
+          officeOwedWithoutHousehold: input.ticked && owed.householdTold,
+          householdOnPayoff: owed.listDue,
+        });
+  const duplicate = sent.household && sent.householdDuplicate === true;
+  const listedBefore = input.stamps['confirmationAppOnly'] === true;
+  let emailed =
+    input.stamps['confirmationEmailSent'] === true || (sent.household && !duplicate && !sent.householdAppOnly);
+  let deliveredNow = false;
+  if (input.ticked && !emailed && (listedBefore || duplicate)) {
+    deliveredNow = await deliverListedPayoff(input);
+    emailed = deliveredNow;
+  }
+  const listed = listedBefore || sent.household;
+  return {
+    sent,
+    confirmationEmailSent: emailed,
+    confirmationAppOnly: listed && !emailed,
+    stamps: {
+      ...(emailed ? { confirmationEmailSent: true, confirmationAppOnly: false } : listed ? { confirmationAppOnly: true } : {}),
+      ...(sent.office ? { officeNoticeSentAt: FieldValue.serverTimestamp() } : {}),
+      ...(sent.skipped ? { officeNoticeSkippedReason: 'no-recipients' } : {}),
+    },
+    changed: deliveredNow || sent.household || sent.office || sent.skipped === true,
+  };
+}
+/**
+ * Sends the household's listed payoff copy on their own channels. True when a
+ * channel carries it now (or already did). NEVER THROWS: the payment is
+ * recorded, and a failure here is retried by the next same-key call.
+ */
+async function deliverListedPayoff(input: {
+  kinfolkId: string;
+  invoiceId: string;
+  noticePaymentId: string;
+  uid: string;
+}): Promise<boolean> {
+  try {
+    const recipientUid = await resolveBillingRecipientUid(input.kinfolkId);
+    if (recipientUid === null) return false;
+    const { outcome } = await deliverListedCopy({
+      key: 'invoice.payment.applied',
+      recipientUid,
+      // The data the sweep's copy went out with, so the ledger entry is found.
+      data: { kinfolkId: input.kinfolkId, invoiceId: input.invoiceId, paymentId: input.noticePaymentId },
+    });
+    logEvent({
+      severity: 'info',
+      function: 'recordPayment',
+      event: 'payment.confirmation.listed-copy',
+      uid: input.uid,
+      extra: { kinfolkId: input.kinfolkId, paymentId: input.noticePaymentId, outcome },
+    });
+    return outcome === 'sent' || outcome === 'already';
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'recordPayment',
+      event: 'payment.confirmation.listed-copy.failed',
+      uid: input.uid,
+      extra: { kinfolkId: input.kinfolkId, paymentId: input.noticePaymentId, err: (err as Error)?.message },
+    });
+    return false;
+  }
+}
 export const recordPayment = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   // wrapCallable, NOT wrapAdminCallable: the gate must also admit a scoped
