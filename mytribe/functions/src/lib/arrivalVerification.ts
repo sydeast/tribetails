@@ -217,6 +217,33 @@ export const ARRIVAL_EVIDENCE_FIELDS = [
 export function clearedArrivalEvidence(): Record<string, string> {
   return Object.fromEntries(ARRIVAL_EVIDENCE_FIELDS.map((f) => [f, '']));
 }
+/**
+ * #2279: who took the arrival measurement, written beside the three evidence
+ * fields by `verifyVisitArrival` and by `setVisitLifecycle`'s start gate.
+ *
+ * The owner may start a visit from outside the range and complete it; an Auntie
+ * may not start one there at all. `transitionBookingStatus` knows its caller,
+ * but the departure trigger completes a visit with nobody calling, so it reads
+ * this to tell an owner's outside arrival (complete, and record it) from any
+ * other (leave Departed for the owner to complete by hand).
+ *
+ * SERVER-WRITTEN ONLY. `firestore.rules` refuses the field from an Auntie's
+ * client. It is not in `ARRIVAL_EVIDENCE_FIELDS` on purpose: installed clients
+ * clear that exact list on Undo arrival and cannot learn a fourth name. A stale
+ * value is harmless, because it only means anything beside a measured distance,
+ * and every measurement rewrites it.
+ */
+export const ARRIVAL_CHECKED_BY_OWNER_FIELD = 'arrivalCheckedByOwner';
+/** Was the arrival measurement on this session taken by the owner? Only a stored `true` is. */
+export function arrivalCheckedByOwner(session: Record<string, unknown>): boolean {
+  return session[ARRIVAL_CHECKED_BY_OWNER_FIELD] === true;
+}
+/**
+ * #2279: stamped `true` on a visit that was completed with its arrival measured
+ * outside the range. Only the owner can produce one. This is the flag on the
+ * visit; the Activity Log line beside it carries the distance.
+ */
+export const COMPLETED_OUTSIDE_RANGE_FIELD = 'completedOutsideRange';
 /** A finite number off a document field, or null. Strings and NaN are not evidence. */
 function finiteNumber(raw: unknown): number | null {
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;

@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import {
   ARRIVAL_RADIUS_CODE,
   ARRIVAL_VERIFICATION_CODE,
+  COMPLETED_OUTSIDE_RANGE_FIELD,
   arrivalRadiusMessage,
   arrivalVerificationMessage,
   missingVisitSteps,
@@ -16,6 +17,7 @@ import {
   readArrivalSettings,
 } from '../lib/arrivalVerification';
 import { classifyArrivalDistance } from '../lib/geo';
+import { isOwner, isOwnerClaim } from '../lib/staffGate';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
@@ -352,6 +354,9 @@ export async function transitionBookingStatusHandler(
   // than trusted off the document — the session carries a measured distance,
   // this decides what that distance means against the operator's radius.
   let arrivalLocationVerdict: 'within' | 'outside' | 'unverified' | 'not_checked' = 'not_checked';
+  // #2279: set when the owner completes a visit whose arrival was measured
+  // outside the range. It is allowed, stamped on the visit and said in the log.
+  let outsideRange: { distanceMeters: number; radiusMeters: number } | null = null;
   if (args.action === 'COMPLETE') {
     const arrivalSettings = await readArrivalSettings(db());
     if (arrivalSettings.required) {
@@ -381,7 +386,18 @@ export async function transitionBookingStatusHandler(
         radiusMeters: arrivalSettings.radiusMeters,
       });
 
-      if (arrivalLocationVerdict === 'outside') {
+      // #2279, operator ruling 2026-11-14: "only admin auntie can complete
+      // visits outside of ranges". The owner completes it and the visit
+      // carries the flag. Anyone else is refused as before. Today only the
+      // owner can call this at all (`lib/auntieAccess.ts` leaves it out), so
+      // the refusal below is what holds the line if that list ever changes.
+      const callerIsOwner = isOwner(uid, isOwnerClaim(req.auth?.token), 'transitionBookingStatus');
+      if (arrivalLocationVerdict === 'outside' && callerIsOwner) {
+        outsideRange = {
+          distanceMeters: Math.round(evidence.distanceMeters ?? 0),
+          radiusMeters: arrivalSettings.radiusMeters,
+        };
+      } else if (arrivalLocationVerdict === 'outside') {
         await auditRefusal({
           uid,
           sessionId: args.sessionId,
@@ -450,6 +466,7 @@ export async function transitionBookingStatusHandler(
     status: decision.to,
     updatedAt: FieldValue.serverTimestamp(),
     updatedBy: uid,
+    ...(outsideRange !== null ? { [COMPLETED_OUTSIDE_RANGE_FIELD]: true } : {}),
   };
   // #2123: completing never waits on a KinTale. With "KinTale required" on
   // (absent reads off), a visit completed with nothing sent is left owing one,
@@ -546,7 +563,9 @@ export async function transitionBookingStatusHandler(
 
   await writeAuditEntry({
     event: AUDIT_EVENTS.BOOKING_STATUS_TRANSITION,
-    severity: 'info',
+    // #2279: a completion outside the range is one the owner should be able to
+    // find later without reading every info-level row.
+    severity: outsideRange !== null ? 'warn' : 'info',
     // The write above landed. Required since A4 removed the severity-to-status
     // guess that would have inferred this.
     status: 'SUCCESS',
@@ -555,13 +574,21 @@ export async function transitionBookingStatusHandler(
     targetUid: args.sessionId,
     targetCollection: 'kin_care_sessions',
     // #1752: words; the session is the entry's target.
-    description: (await import('../lib/activityWords.js')).visitTransitionWords(args.action, decision.from, decision.to),
+    description:
+      outsideRange !== null
+        ? (await import('../lib/activityWords.js')).visitCompletedOutsideRangeWords(
+            decision.from,
+            outsideRange.distanceMeters,
+            outsideRange.radiusMeters,
+          )
+        : (await import('../lib/activityWords.js')).visitTransitionWords(args.action, decision.from, decision.to),
     payload: {
       sessionId: args.sessionId,
       action: args.action,
       from: decision.from,
       to: decision.to,
       changed: true,
+      ...(outsideRange !== null ? { completedOutsideRange: true, ...outsideRange } : {}),
       // #1627: the household's copy moved too (null when the session has none).
       visitMirrored: mirror?.status ?? null,
       // #1726: the booking record this approval wrote for a session that had none.

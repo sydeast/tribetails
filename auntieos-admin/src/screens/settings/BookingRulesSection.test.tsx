@@ -412,6 +412,18 @@ describe('VisitsTrackingSection', () => {
     expect(screen.getByText(/still goes through, and is recorded as unverified/)).toBeTruthy();
   });
 
+  // #2279: the range now decides who can START a visit, and the panel has to
+  // say so. It used to say an arrival outside it stops the visit completing,
+  // which is no longer what happens.
+  it('says what the range does: an Auntie cannot start outside it, the owner can and it is recorded', () => {
+    render(<VisitsTrackingSection data={settings()} onSave={onSave} />);
+    const hint = document.getElementById('arrivalRadius-hint')?.textContent?.replace(/\s+/g, ' ') ?? '';
+    expect(hint).toContain('An Auntie cannot start a visit, with On my way or Arrived, from further than this');
+    expect(hint).toContain('You can start from anywhere');
+    expect(hint).toContain('recorded on the visit and in the Activity Log');
+    expect(hint).not.toContain('stops the visit being marked complete');
+  });
+
   it('saves an edited ETA option list', async () => {
     const user = userEvent.setup();
     render(<VisitsTrackingSection data={settings()} onSave={onSave} />);

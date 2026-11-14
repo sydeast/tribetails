@@ -233,7 +233,49 @@ describe("the operator's arrival rule still applies", () => {
     ]);
   });
 
-  it('an arrival recorded outside the radius stays Departed', async () => {
+  // #2279: the owner may start and complete outside the range, and it is
+  // recorded. `arrivalCheckedByOwner` is what the server stamps when the owner
+  // took the measurement.
+  it("the owner's arrival outside the radius completes, flagged on the visit and in the log", async () => {
+    const ctx = seed({
+      settings: { requireArrivalDepartureVerification: true, arrivalRadiusMeters: 150 },
+      session: departedSession({
+        arrivalDistanceMeters: 2000,
+        arrivalAccuracyMeters: 10,
+        arrivalCheckedByOwner: true,
+      }),
+    });
+    const outcome = await completeDepartedSession('s1');
+    expect(outcome).toMatchObject({
+      kind: 'completed',
+      outsideRange: { distanceMeters: 2000, radiusMeters: 150 },
+    });
+    expect(sessionWrite(ctx)?.data).toMatchObject({ status: 'COMPLETED', completedOutsideRange: true });
+    expect(audits()[0]).toMatchObject({
+      event: 'BOOKING_STATUS_TRANSITION',
+      severity: 'warn',
+      status: 'SUCCESS',
+      description:
+        'Completed the visit outside the range: departed to completed, arrival 2000m from the household (range 150m)',
+      payload: expect.objectContaining({ arrivalLocationVerdict: 'outside', completedOutsideRange: true }),
+    });
+  });
+  it('only a stored true counts as the owner: any other value stays Departed', async () => {
+    for (const flag of [false, 'true', 1, null]) {
+      const ctx = seed({
+        settings: { requireArrivalDepartureVerification: true, arrivalRadiusMeters: 150 },
+        session: departedSession({
+          arrivalDistanceMeters: 2000,
+          arrivalAccuracyMeters: 10,
+          arrivalCheckedByOwner: flag,
+        }),
+      });
+      expect(await completeDepartedSession('s1')).toMatchObject({ kind: 'refused', code: 'arrival_outside_radius' });
+      expect(ctx.writes).toEqual([]);
+      mocks.writeAuditEntryFn.mockClear();
+    }
+  });
+  it('an arrival recorded outside the radius by anyone else stays Departed', async () => {
     const ctx = seed({
       settings: { requireArrivalDepartureVerification: true, arrivalRadiusMeters: 150 },
       session: departedSession({ arrivalDistanceMeters: 2000, arrivalAccuracyMeters: 10 }),
@@ -253,6 +295,7 @@ describe("the operator's arrival rule still applies", () => {
     });
     expect((await completeDepartedSession('s1')).kind).toBe('completed');
     expect(sessionWrite(ctx)?.data).toMatchObject({ status: 'COMPLETED' });
+    expect(sessionWrite(ctx)?.data).not.toHaveProperty('completedOutsideRange');
     expect(audits()[0]?.payload).toMatchObject({ arrivalLocationVerdict: 'within' });
   });
 });

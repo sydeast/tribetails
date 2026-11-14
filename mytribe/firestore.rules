@@ -931,8 +931,51 @@ service cloud.firestore {
       // bookingTerminalFieldsUntouched() still applies to EVERY caller, owner
       // included, so an Auntie cannot reach COMPLETED or CANCELLED outside
       // transitionBookingStatus any more than the operator can.
+      //
+      // #2279, operator ruling 2026-11-14: "cant start visit until within range
+      // of the property ... only admin auntie can complete visits outside of
+      // ranges". With "Verify arrival and departure" on, an Auntie's start (On
+      // my way, Arrived) is measured on the server, by `setVisitLifecycle`,
+      // which refuses it outside the operator's range. A rule cannot measure a
+      // distance, so what it does is close the other door: while the switch is
+      // on, an Auntie's client may not write those two statuses itself. The
+      // callable runs on the Admin SDK and is not subject to this.
+      //
+      // WHAT STAYS OPEN, on purpose. The owner, on every client, offline queue
+      // included. An Auntie with the switch off, exactly as before. Departed
+      // and Undo arrival for an Auntie: an undo that rewinds an arrival to On
+      // my way is not a start, which is what the ARRIVED / DEPARTED test on the
+      // stored status is for.
+      //
+      // The `get()` costs one read, and only on an Auntie's write that starts a
+      // visit: `||` stops before it everywhere else. `.data.get(key, false)`
+      // because a bare read of a key the settings document does not carry is an
+      // error, and an error here would refuse every Auntie start on an install
+      // that never saved the switch. ABSENT MEANS OFF, as on the server
+      // (`lib/arrivalVerification.ts`).
+      // `exists()` first for the same reason: an install with no settings
+      // document at all has not switched anything on.
+      function arrivalRuleOn() {
+        return exists(/databases/$(database)/documents/business_settings/business_settings)
+               && get(/databases/$(database)/documents/business_settings/business_settings)
+                    .data.get('requireArrivalDepartureVerification', false) == true;
+      }
+      function startsVisit() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+               && (request.resource.data.status == 'ARRIVED'
+                   || (request.resource.data.status == 'ON_MY_WAY'
+                       && !(resource.data.get('status', '') in ['ARRIVED', 'DEPARTED'])));
+      }
+      // The two fields the server writes to say an OWNER's arrival was outside
+      // the range, which is what lets that visit complete. An Auntie's client
+      // never writes either.
+      function caretakerStartRuleHolds() {
+        return !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['arrivalCheckedByOwner', 'completedOutsideRange'])
+               && (!startsVisit() || !arrivalRuleOn());
+      }
       allow update: if (isOwner() || testOwnsExisting()
-                        || (isCaretaker() && caretakerMoneyUnchanged()))
+                        || (isCaretaker() && caretakerMoneyUnchanged() && caretakerStartRuleHolds()))
                     && bookingTerminalFieldsUntouched();
       allow delete: if isOwner() || testOwnsExisting();
 

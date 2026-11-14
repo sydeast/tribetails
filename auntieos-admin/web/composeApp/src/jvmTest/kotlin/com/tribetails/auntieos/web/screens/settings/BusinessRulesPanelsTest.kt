@@ -442,4 +442,16 @@ class BusinessRulesPanelsTest {
         assertTrue(ARRIVAL_RADIUS_NOTE.startsWith("Only applies while Verify arrival and departure by location is on."))
         assertFalse(ARRIVAL_RADIUS_NOTE.contains("switch above"))
     }
+
+    /**
+     * #2279: the range decides who can START a visit. The note used to say an
+     * arrival outside it stops the visit completing, which no longer happens.
+     */
+    @Test
+    fun `the arrival radius note says an Auntie cannot start outside it and the owner can`() {
+        assertTrue(ARRIVAL_RADIUS_NOTE.contains("An Auntie cannot start a visit, with On my way or Arrived, from further than this"))
+        assertTrue(ARRIVAL_RADIUS_NOTE.contains("You can start from anywhere"))
+        assertTrue(ARRIVAL_RADIUS_NOTE.contains("recorded on the visit and in the Activity Log"))
+        assertFalse(ARRIVAL_RADIUS_NOTE.contains("marked complete"))
+    }
 }

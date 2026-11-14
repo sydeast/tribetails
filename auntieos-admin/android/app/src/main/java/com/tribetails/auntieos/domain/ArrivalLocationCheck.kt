@@ -14,9 +14,16 @@ package com.tribetails.auntieos.domain
  *
  * THE CHECK NEVER BLOCKS AN ARRIVAL. Marking Arrived is a direct Firestore
  * patch on an offline write queue, and it stays exactly that. This runs after
- * it, best effort, and its whole job is to tell the Auntie NOW what the server
- * would otherwise only tell her when she tried to complete the visit — which is
- * the difference between a fixable problem and being stuck at the end of a day.
+ * it, best effort.
+ *
+ * #2279, operator ruling 2026-11-14: THIS APP IS THE OWNER'S, AND THE OWNER MAY
+ * START AND COMPLETE A VISIT OUTSIDE THE RANGE. Only the owner signs in here
+ * (`OwnerClaims.kt`). An Auntie cannot start a visit outside the range at all;
+ * the server refuses her On my way and Arrived, on admin web, which is where
+ * she works. So an outside arrival here no longer stops the visit completing.
+ * What this file says about one changed with that: it used to warn that the
+ * visit could not be marked complete, and it now says the arrival was recorded
+ * as outside the range.
  */
 
 /** The verdicts `verifyVisitArrival` returns, as a type rather than a string. */
@@ -24,7 +31,7 @@ enum class ArrivalCheckStatus {
     /** Measured inside the operator's radius. */
     WITHIN,
 
-    /** Measured confidently outside it. This visit cannot be marked complete as it stands. */
+    /** Measured confidently outside it. The owner's visit still completes, recorded as outside the range (#2279). */
     OUTSIDE,
 
     /** A fix arrived but was too imprecise to be evidence of anything. */
@@ -81,10 +88,10 @@ internal fun formatArrivalDistance(meters: Double): String =
  * check found can stop anything, so telling the Auntie about a distance would
  * be reporting a rule that does not exist.
  *
- * LOUD, AND SPECIFIC, WHEN THE VISIT CANNOT BE COMPLETED AS IT STANDS. That is
- * the message this whole path exists to deliver, and it is delivered at
- * arrival — while she is still standing there and can do something about it —
- * rather than hours later at COMPLETE.
+ * SPECIFIC WHEN THE ARRIVAL WAS OUTSIDE THE RANGE (#2279). The owner is allowed
+ * to start from there, so this is not a warning that something will fail. It
+ * says how far away the arrival was and that the visit and the Activity Log
+ * now carry that, so nothing about the record is a surprise later.
  */
 fun arrivalCheckNotice(outcome: ArrivalCheckOutcome?): String? {
     if (outcome == null) return null
@@ -93,9 +100,9 @@ fun arrivalCheckNotice(outcome: ArrivalCheckOutcome?): String? {
         ArrivalCheckStatus.WITHIN -> null
         ArrivalCheckStatus.OUTSIDE -> {
             val where = outcome.distanceMeters?.let { formatArrivalDistance(it) } ?: "a long way"
-            "Your arrival was recorded $where from this household, and your settings require it " +
-                "within ${formatArrivalDistance(outcome.radiusMeters.toDouble())}. This visit " +
-                "cannot be marked complete until it is recorded from the household."
+            "You arrived $where from this household, outside your " +
+                "${formatArrivalDistance(outcome.radiusMeters.toDouble())} range. That is recorded " +
+                "on the visit and in the Activity Log."
         }
         ArrivalCheckStatus.UNVERIFIED ->
             "Arrival recorded, but your location was too rough to check against the household. " +
