@@ -516,6 +516,13 @@ function refusalCode(caught: unknown): string | null {
  * sentence talks about leaving the invoice off the payment, which this form
  * cannot do, so the panel says what to do here.
  */
+export function blankAmountRefusedByOlderServer(caught: unknown, amountBox: string, paymentTotalBox: string): boolean {
+  if (amountBox.trim() !== '') return false;
+  const code = refusalCode(caught);
+  // That server checks a typed tip against the payment amount first, and with
+  // both amounts blank the payment amount went as 0.
+  return code === 'apply_zero_amount' || (code === 'tip_exceeds_amount' && paymentTotalBox.trim() === '');
+}
 export const BLANK_AMOUNT_NOT_TAKEN =
   'This payment was not recorded. Enter the amount collected, then record it again.';
 /**
@@ -1802,7 +1809,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
       }
       setBusy(false);
       setActionError(
-        meta.key === 'markPaid' && paidAmount.trim() === '' && refusalCode(caught) === 'apply_zero_amount'
+        meta.key === 'markPaid' && blankAmountRefusedByOlderServer(caught, paidAmount, paidTotal)
           ? BLANK_AMOUNT_NOT_TAKEN
           : invoiceActionError(caught, meta.callableName),
       );

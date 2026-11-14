@@ -1940,6 +1940,23 @@ describe('recording a payment is one call that writes the settlement and the led
     // The form is still open to take the amount.
     expect(screen.getByLabelText(/amount collected/i)).toBeInTheDocument();
   });
+  it('and with a tip typed, that server refuses on the tip first: the form still says to enter the amount', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ amountDueCents: 4000 }));
+    recordPayment.mockRejectedValueOnce(
+      Object.assign(
+        new Error('A tip of $5.00 does not fit inside a payment of $0.00. The tip is part of what the client paid, not an addition to it.'),
+        { code: 'functions/invalid-argument', details: { code: 'tip_exceeds_amount' } },
+      ),
+    );
+    await openBlankForm();
+    await userEvent.type(screen.getByLabelText(/^tip/i), '5');
+    await pressRecord();
+    expect(
+      await screen.findByText('This payment was not recorded. Enter the amount collected, then record it again.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/does not fit inside a payment of \$0\.00/i)).not.toBeInTheDocument();
+    expect(recordPayment).toHaveBeenCalledTimes(1);
+  });
   it('a refusal with no balance in it still reads the payments again', async () => {
     recordPayment.mockRejectedValueOnce(new Error('Invoice is already settled.'));
     getInvoiceLedger.mockResolvedValueOnce(ledgerResult({ amountDueCents: 4000 }));
