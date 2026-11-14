@@ -143,7 +143,8 @@ fun KinTaleReportScreen(
     // (#1007's `KinTaleComposeScreen.kt`), rather than inventing a third string.
     LaunchedEffect(state.sentSuccessfully) {
         if (state.sentSuccessfully) {
-            confirmation.show("KinTale sent. Kinfolk will hear from you soon.")
+            // #1816: the server's answer about the household, not a promise.
+            confirmation.show(state.sentMessage.ifBlank { "KinTale sent." })
             onBack()
         }
     }
@@ -504,7 +505,8 @@ fun KinTaleReportScreen(
                 )
                 PrimaryButton(
                     label = if (state.isSending) "Sending..." else kinTaleSendLabel(state.session?.kinfolkName.orEmpty()),
-                    onClick = { viewModel.send() },
+                    // #1816: Send asks first, with who the household notice reaches.
+                    onClick = { viewModel.requestSend() },
                     modifier = Modifier.weight(1f),
                     // #552: Save stays live while a rule is broken, Send does not.
                     // A draft with a dash in it is still a draft; what it is not is
@@ -521,6 +523,24 @@ fun KinTaleReportScreen(
                     onClick = { confirmDelete = true },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !state.isSaving && !state.isSending && !state.isDeleting,
+                )
+            }
+            AuntieDialog(
+                visible = state.sendConfirmOpen,
+                title = "Send this KinTale?",
+                onDismiss = { viewModel.cancelSendConfirm() },
+                footer = {
+                    GhostButton(label = "Cancel", onClick = { viewModel.cancelSendConfirm() })
+                    PrimaryButton(label = "Send KinTale", onClick = { viewModel.send() })
+                },
+            ) {
+                Text(
+                    text = kinTaleSendConfirmText(
+                        state.session?.kinfolkName.orEmpty(),
+                        viewModel.sendConfirmLine(state),
+                    ),
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
                 )
             }
             AuntieDialog(
@@ -797,6 +817,13 @@ internal fun deleteDraftConfirmText(recipient: String): String =
 
 internal fun kinTaleSendLabel(recipient: String): String =
     if (recipient.isBlank()) "Send KinTale" else "Send to $recipient"
+
+/**
+ * #1816: the send confirm's sentence, as web's (`KinTaleCompose.tsx`): the
+ * label, then the server's line about the household when there is one.
+ */
+internal fun kinTaleSendConfirmText(recipient: String, householdLine: String?): String =
+    listOfNotNull("${kinTaleSendLabel(recipient)}.", householdLine, "This cannot be undone.").joinToString(" ")
 
 /**
  * Per-kin heading text: "Name · Species · Breed" from a real [Kin] (spec 11

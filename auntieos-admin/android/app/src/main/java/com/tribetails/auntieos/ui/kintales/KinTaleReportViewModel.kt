@@ -1,5 +1,10 @@
 package com.tribetails.auntieos.ui.kintales
 
+import com.tribetails.auntieos.domain.HouseholdNoticeKeys
+import com.tribetails.auntieos.domain.HouseholdNoticePreview
+import com.tribetails.auntieos.domain.householdNoticeConfirmLine
+import com.tribetails.auntieos.domain.householdNoticeResultLine
+import com.tribetails.auntieos.domain.withHouseholdLine
 import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
@@ -50,6 +55,11 @@ data class KinTaleUiState(
     val hasUnsavedChanges: Boolean = false,
     val error: String? = null,
     val sentSuccessfully: Boolean = false,
+    // #1816: the send's confirm, and what the server said before and after.
+    val sendConfirmOpen: Boolean = false,
+    val sendPreview: HouseholdNoticePreview = HouseholdNoticePreview.Checking,
+    /** The message shown once the send lands: what was sent, and who the server told. */
+    val sentMessage: String = "",
     // #1631: deleting an unsent draft. [deletedSuccessfully] pops the screen.
     val isDeleting: Boolean = false,
     val deletedSuccessfully: Boolean = false,
@@ -771,7 +781,42 @@ class KinTaleReportViewModel(
         }
     }
 
+    /** #1816: an Auntie's lines never send her to Settings. False until read, and on any failure. */
+    private var auntieSignedIn = false
+
+    /**
+     * #1816: Send asks first, and the question says who the household notice
+     * will reach, from the server (`previewVisitNotification`, kintale.published).
+     * The old send went straight out and then said "Kinfolk will hear from you
+     * soon" whether or not anyone could.
+     */
+    fun requestSend() {
+        val state = _uiState.value
+        if (state.isSending || state.report.isSentReport()) return
+        _uiState.value = state.copy(sendConfirmOpen = true, sendPreview = HouseholdNoticePreview.Checking)
+        val familyId = state.session?.kinfolkId.orEmpty()
+        viewModelScope.launch {
+            auntieSignedIn = repository.isCurrentUserOwner().map { !it }.getOrDefault(false)
+            val preview = if (familyId.isBlank()) {
+                HouseholdNoticePreview.Unknown
+            } else {
+                notifier.previewHousehold(familyId, HouseholdNoticeKeys.KINTALE)
+                    .getOrElse { HouseholdNoticePreview.Unknown }
+            }
+            if (_uiState.value.sendConfirmOpen) _uiState.value = _uiState.value.copy(sendPreview = preview)
+        }
+    }
+
+    fun cancelSendConfirm() {
+        _uiState.value = _uiState.value.copy(sendConfirmOpen = false)
+    }
+
+    /** The confirm's line about the household, or null to say nothing. */
+    fun sendConfirmLine(state: KinTaleUiState = _uiState.value): String? =
+        householdNoticeConfirmLine(state.sendPreview, state.session?.kinfolkName.orEmpty(), auntieSignedIn)
+
     fun send() {
+        _uiState.value = _uiState.value.copy(sendConfirmOpen = false)
         val state = _uiState.value
         val report = state.report
         val session = state.session ?: return
@@ -870,9 +915,14 @@ class KinTaleReportViewModel(
                         deliveryReceiptId = firstDispatchId,
                     ).fold(
                         onSuccess = {
+                            // #1816: what the server did, never a promise.
                             _uiState.value = _uiState.value.copy(
                                 isSending = false,
                                 sentSuccessfully = true,
+                                sentMessage = withHouseholdLine(
+                                    "KinTale sent.",
+                                    householdNoticeResultLine(result.notice, session.kinfolkName, auntieSignedIn),
+                                ),
                                 report = savedReport.copy(
                                     status = ReportStatus.SENT.name,
                                     sentVia = "catalog",

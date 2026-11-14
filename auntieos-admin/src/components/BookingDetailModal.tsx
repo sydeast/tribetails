@@ -40,6 +40,15 @@ import { DenPanel, EmptyHint, ServicePill } from './DenScreenKit';
 import { useToast } from './Toast';
 import { VisitInternalNotes } from './VisitInternalNotes';
 import { useStaffNames } from '../lib/useStaffNames';
+import { useIsAuntie } from '../lib/useIsAuntie';
+import { useHouseholdNoticePreview } from '../lib/useHouseholdNoticePreview';
+import {
+  householdNoticeConfirmLine,
+  householdNoticeOf,
+  householdNoticeResultLine,
+  withHouseholdLine,
+  type HouseholdNotice,
+} from '../lib/householdNoticeWords';
 import './BookingDetailModal.css';
 
 /** Whatever a rejected callable or Firestore read gave us, as operator copy. */
@@ -174,10 +183,17 @@ export function BookingDetailModal({
   // exactly the shape that used to leave nothing confirming the move. Owned
   // here, not inside ReschedulePanel, so the confirmation names the same
   // `household` the rest of this sheet already reads.
-  const handleRescheduled = useCallback(() => {
-    showToast(`${household}'s visit is rescheduled.`);
-    onClose();
-  }, [household, onClose, showToast]);
+  // #2027: the toast says who the move told, from the move's own answer.
+  const auntie = useIsAuntie();
+  const handleRescheduled = useCallback(
+    (notice: HouseholdNotice | null) => {
+      showToast(
+        withHouseholdLine(`${household}'s visit is rescheduled.`, householdNoticeResultLine(notice, household, auntie)),
+      );
+      onClose();
+    },
+    [household, onClose, showToast, auntie],
+  );
 
   return (
     <Dialog title="Visit detail" onClose={onClose} variant="sheet">
@@ -256,6 +272,8 @@ export function BookingDetailModal({
           entry={entry}
           durationMinutes={durationMinutes}
           businessZone={businessZone}
+          household={household}
+          auntie={auntie}
           onDone={handleRescheduled}
         />
 
@@ -266,6 +284,8 @@ export function BookingDetailModal({
               batchId={batchId}
               visitId={visitId}
               locked={locked}
+              household={household}
+              auntie={auntie}
             />
           </>
         ) : (
@@ -503,10 +523,13 @@ interface ReschedulePanelProps {
   entry: ScheduleSessionEntry;
   durationMinutes: number;
   businessZone: string;
-  onDone: () => void;
+  /** #2027: whose visit, for the line about telling them. */
+  household: string;
+  auntie: boolean;
+  onDone: (notice: HouseholdNotice | null) => void;
 }
 
-function ReschedulePanel({ entry, durationMinutes, businessZone, onDone }: ReschedulePanelProps) {
+function ReschedulePanel({ entry, durationMinutes, businessZone, household, auntie, onDone }: ReschedulePanelProps) {
   const startTime = str(entry.startTime);
   const [date, setDate] = useState(() => businessDateInput(startTime, businessZone));
   const [time, setTime] = useState(() => businessTimeInput(startTime, businessZone));
@@ -518,6 +541,14 @@ function ReschedulePanel({ entry, durationMinutes, businessZone, onDone }: Resch
   // matching `sessionState`'s own default.
   const status = str(entry.status).trim().toUpperCase();
   const canReschedule = status === '' || status === 'SCHEDULED';
+  // #2027: before the move, the form says who the household notice reaches.
+  const familyId = str(entry.kinfolkId).trim();
+  const movePreview = useHouseholdNoticePreview(
+    canReschedule ? familyId : null,
+    'kincare.changed',
+    entry._id,
+  );
+  const moveLine = householdNoticeConfirmLine(movePreview, household, auntie);
 
   if (!canReschedule) {
     return (
@@ -545,12 +576,12 @@ function ReschedulePanel({ entry, durationMinutes, businessZone, onDone }: Resch
     setBusy(true);
     setError(null);
     try {
-      await rescheduleBooking(entry._id, times.startTime, times.endTime);
+      const res = await rescheduleBooking(entry._id, times.startTime, times.endTime);
       setBusy(false);
       // The live `kin_care_sessions` listener carries the new window back to
       // the agenda on its own, so the sheet closes rather than showing a stale
       // copy of the visit it just moved.
-      onDone();
+      onDone(householdNoticeOf(res?.notice));
     } catch (err) {
       setBusy(false);
       setError(failure(err));
@@ -587,6 +618,11 @@ function ReschedulePanel({ entry, durationMinutes, businessZone, onDone }: Resch
           />
         </label>
       </div>
+      {moveLine !== null && (
+        <p className="bdm__hint" data-testid="move-notice-line">
+          {moveLine}
+        </p>
+      )}
       <PrimaryButton
         label={busy ? 'Rescheduling…' : 'Reschedule visit'}
         onClick={() => void submit()}
@@ -614,6 +650,9 @@ interface NotesPanelProps {
   batchId: string;
   visitId: string;
   locked: boolean;
+  /** #2027: whose visit, for the line about telling them. */
+  household: string;
+  auntie: boolean;
 }
 
 /**
@@ -622,7 +661,11 @@ interface NotesPanelProps {
  * subscribe to: a legacy flat session has no `kinCares/{visitId}` doc, and a
  * conditional hook in the parent would be illegal.
  */
-function NotesPanel({ kinfolkId, batchId, visitId, locked }: NotesPanelProps) {
+function NotesPanel({ kinfolkId, batchId, visitId, locked, household, auntie }: NotesPanelProps) {
+  const { showToast } = useToast();
+  // #2027: before a note is saved, say whether the household is sent a notice.
+  const notePreview = useHouseholdNoticePreview(kinfolkId, 'kincare.note.auntie');
+  const noteLine = householdNoticeConfirmLine(notePreview, household, auntie);
   // #1607: a staff note names its writer, not a role.
   const staffNames = useStaffNames();
   const thread = useCollection<BookingNoteEntry>(
@@ -648,8 +691,10 @@ function NotesPanel({ kinfolkId, batchId, visitId, locked }: NotesPanelProps) {
     setSaving(true);
     setError(null);
     try {
-      await addBookingNote(kinfolkId, batchId, visitId, body);
+      const res = await addBookingNote(kinfolkId, batchId, visitId, body);
       setDraft('');
+      // #2027: the note's own answer about the household.
+      showToast(withHouseholdLine('Note saved.', householdNoticeResultLine(householdNoticeOf(res?.notice), household, auntie)));
     } catch (err) {
       // Fail loud. The kinfolk-facing callable rejects late notes server-side
       // with its own message; showing it verbatim is how an operator learns
@@ -703,6 +748,11 @@ function NotesPanel({ kinfolkId, batchId, visitId, locked }: NotesPanelProps) {
           aria-label={composerLabel}
         />
       </label>
+      {noteLine !== null && (
+        <p className="bdm__hint" data-testid="note-notice-line">
+          {noteLine}
+        </p>
+      )}
       <PrimaryButton
         label={saving ? 'Saving…' : `Save ${noun}`}
         onClick={() => void save()}

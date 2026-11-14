@@ -2,6 +2,11 @@ package com.tribetails.auntieos.ui.admin.scheduling
 
 import com.tribetails.auntieos.ui.admin.auditHousehold
 import com.tribetails.auntieos.ui.admin.householdPossessive
+import com.tribetails.auntieos.domain.HouseholdNoticeKeys
+import com.tribetails.auntieos.domain.HouseholdNoticePreview
+import com.tribetails.auntieos.domain.householdNoticeResultLine
+import com.tribetails.auntieos.domain.withHouseholdLine
+import com.tribetails.auntieos.data.contracts.HouseholdNoticeDto
 import com.tribetails.auntieos.ui.admin.settingsSaveFailureText
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -33,6 +38,9 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import com.tribetails.auntieos.util.runCatchingCancellable
 import com.tribetails.auntieos.util.rethrowIfCancellation
+
+/** #2027: a drag waiting on "Move visit" or "Keep it where it was". */
+data class PendingMove(val booking: EnhancedBooking, val startIso: String, val endIso: String)
 
 data class SchedulingState(
     val bookings: List<EnhancedBooking> = emptyList(),
@@ -78,6 +86,20 @@ data class SchedulingState(
     val newRequestKinError: String? = null,
     val showConflictDialog: Boolean = false,
     val dragState: DragState? = null,
+    // #1838: Cancel on a scheduled visit asks first, with the server's line
+    // about who the household notice reaches.
+    val pendingCancel: EnhancedBooking? = null,
+    val cancelPreview: HouseholdNoticePreview = HouseholdNoticePreview.Checking,
+    // #2027: a drag asks first ("Move this visit?") with who will be told, and
+    // the Reschedule form carries the same line for the visit it would move.
+    val pendingMove: PendingMove? = null,
+    val movePreview: HouseholdNoticePreview = HouseholdNoticePreview.Checking,
+    val selectedMovePreview: HouseholdNoticePreview = HouseholdNoticePreview.Checking,
+    // #1841: New Booking with "Confirm immediately" asks the server what the
+    // household's confirmation would reach, for the household picked.
+    val newVisitPreview: HouseholdNoticePreview = HouseholdNoticePreview.Checking,
+    // #1816/#2185: an Auntie's lines never send her to Settings.
+    val auntieSignedIn: Boolean = false,
     val availabilityResult: BookingAvailabilityResult? = null,
     // Phase 14: admin-authored BOOKING form_schemas (appliesTo == BOOKING), rendered
     // in the new-booking dialog; answers persist into EnhancedBooking.formValues.
@@ -477,6 +499,15 @@ class EnhancedSchedulingViewModel(
         com.tribetails.auntieos.data.repository.VisitRequestRepository(),
     /** #1574: the clock "already passed" is judged on. A parameter so a test can stand at a known instant. */
     private val clock: java.time.Clock = java.time.Clock.systemUTC(),
+    /**
+     * #1838/#2027/#1841: who a household notice would reach, from the server
+     * (`previewVisitNotification` with a key). Resolved only when a confirm
+     * asks, so a test that never opens one needs no app instance.
+     */
+    private val householdPreviewer: suspend (familyId: String, key: String, sessionId: String?) -> Result<HouseholdNoticePreview.Ready> =
+        { familyId, key, sessionId ->
+            com.tribetails.auntieos.AuntieOSApp.instance.visitNotifier.previewHousehold(familyId, key, sessionId)
+        },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SchedulingState())
@@ -1177,7 +1208,19 @@ class EnhancedSchedulingViewModel(
         }
     }
 
-    fun createBooking(booking: EnhancedBooking, internalNote: String = "") {
+    /**
+     * @param notifyHousehold #1841: only for a booking saved with "Confirm
+     *   immediately". That save is the office putting a confirmed visit on the
+     *   calendar, so it now books the visit the way Approve does (its booking
+     *   record and session, through `createKinCareSession`), sending the
+     *   household "KinCare booking confirmed" when the control is on. A draft
+     *   sends nothing and books nothing, as before.
+     */
+    /** #1841: the New Booking confirmation choice, held while a conflict question is open. */
+    private var pendingNotifyHousehold: Boolean = false
+
+    fun createBooking(booking: EnhancedBooking, internalNote: String = "", notifyHousehold: Boolean = false) {
+        pendingNotifyHousehold = notifyHousehold
         if (_state.value.isLoading) return
         _state.value = _state.value.copy(isLoading = true)
         viewModelScope.launch {
@@ -1226,7 +1269,11 @@ class EnhancedSchedulingViewModel(
                     targetId         = newBookingId,
                     targetCollection = "enhanced_bookings",
                 )
-                loadBookingsForDateRange()
+                if (booking.status == BookingStatus.ACCEPTED && newBookingId.isNotBlank()) {
+                    approveBooking(booking.copy(id = newBookingId), notifyHousehold = notifyHousehold)
+                } else {
+                    loadBookingsForDateRange()
+                }
             } else {
                 _state.value = _state.value.copy(
                     isLoading = false,
@@ -1366,6 +1413,12 @@ class EnhancedSchedulingViewModel(
     fun approveBooking(
         booking: EnhancedBooking,
         incoming: com.tribetails.auntieos.data.repository.IncomingKinCare? = null,
+        /**
+         * #1841: set only by a New Booking saved with "Confirm immediately":
+         * the household's confirmation, on or off. Null (every Approve) sends
+         * what approval always sent.
+         */
+        notifyHousehold: Boolean? = null,
     ) {
         // #1702: a booking whose start has gone by would go on the calendar
         // SCHEDULED in the past (operator ruling for #1574: a past visit only
@@ -1460,7 +1513,20 @@ class EnhancedSchedulingViewModel(
                         serviceDurationMinutes = durationMinutes,
                         notes = booking.notes,
                         enhancedBookingId = booking.id,
+                        notifyHousehold = notifyHousehold == true,
                     ).onSuccess { sessionId ->
+                        // #1841: a New Booking confirmed at once says it is
+                        // scheduled and who the server told.
+                        if (notifyHousehold != null) {
+                            val auntie = readAuntieSignedIn()
+                            val notice = kinCareRepository.lastCreatedVisitNotice
+                            _state.value = _state.value.copy(
+                                bookingActionMessage = withHouseholdLine(
+                                    "${householdPossessive(booking.kinfolkName)} visit is scheduled.",
+                                    householdNoticeResultLine(notice, booking.kinfolkName, auntie),
+                                ),
+                            )
+                        }
                         if (booking.internalNotes.isNotBlank()) {
                             com.tribetails.auntieos.data.repository.BookingNotesRepository()
                                 .addVisitInternalNote(sessionId, booking.internalNotes)
@@ -1531,6 +1597,55 @@ class EnhancedSchedulingViewModel(
         }
     }
 
+    /** An Auntie is signed in. False until read, and on any failure: the owner's words are the default. */
+    private suspend fun readAuntieSignedIn(): Boolean {
+        val auntie = runCatching { auntieRepository.isCurrentUserOwner().getOrThrow() }.map { !it }.getOrDefault(false)
+        if (auntie != _state.value.auntieSignedIn) _state.value = _state.value.copy(auntieSignedIn = auntie)
+        return auntie
+    }
+
+    /** #1838/#2027: the server's answer for [booking]'s household and [key], for this visit when one is linked. */
+    private suspend fun householdPreviewFor(booking: EnhancedBooking, key: String): HouseholdNoticePreview {
+        readAuntieSignedIn()
+        val familyId = booking.kinfolkId.trim()
+        if (familyId.isEmpty()) return HouseholdNoticePreview.Unknown
+        val linked = findLinkedSessionIds(booking.id).getOrElse { return HouseholdNoticePreview.Unknown }
+        // Not exactly one linked visit: the cancel or move addresses no booking
+        // record, so nobody is told, and the confirm says so rather than
+        // answering for the household alone (the bridge sends nothing then).
+        val sessionId = linked.singleOrNull()
+            ?: return HouseholdNoticePreview.Ready(false, "session_has_no_routing_ids", null, emptyList())
+        return runCatching { householdPreviewer(familyId, key, sessionId).getOrThrow() }
+            .getOrElse { HouseholdNoticePreview.Unknown }
+    }
+
+    /**
+     * #1838: Cancel on a scheduled visit asks first. A request still in DRAFT
+     * (the "Reject" button) is not a visit anyone was told about and goes
+     * straight through, as before.
+     */
+    fun requestCancel(booking: EnhancedBooking) {
+        if (booking.status == BookingStatus.DRAFT) {
+            cancelBooking(booking)
+            return
+        }
+        _state.value = _state.value.copy(pendingCancel = booking, cancelPreview = HouseholdNoticePreview.Checking)
+        viewModelScope.launch {
+            val preview = householdPreviewFor(booking, HouseholdNoticeKeys.CANCEL)
+            if (_state.value.pendingCancel?.id == booking.id) _state.value = _state.value.copy(cancelPreview = preview)
+        }
+    }
+
+    fun dismissCancel() {
+        _state.value = _state.value.copy(pendingCancel = null)
+    }
+
+    fun confirmCancel() {
+        val booking = _state.value.pendingCancel ?: return
+        _state.value = _state.value.copy(pendingCancel = null)
+        cancelBooking(booking)
+    }
+
     fun cancelBooking(booking: EnhancedBooking, reason: String = "Cancelled by admin") {
         viewModelScope.launch {
             val cancelled = booking.copy(
@@ -1569,18 +1684,26 @@ class EnhancedSchedulingViewModel(
             // drifted from web's own two distinct sentences (REJECT vs
             // CANCEL), the same fix #1009 made for kinfolk saves.
             val who = householdPossessive(booking.kinfolkName)
-            _state.value = _state.value.copy(
-                bookingActionMessage = if (booking.status == BookingStatus.DRAFT)
-                    "$who request is cancelled."
-                else
-                    "$who visit is cancelled.",
-            )
+            val done = if (booking.status == BookingStatus.DRAFT) "$who request is cancelled." else "$who visit is cancelled."
+            _state.value = _state.value.copy(bookingActionMessage = done)
 
-            bridgeCancellationToSession(booking, reason).onFailure { e ->
-                _state.value = _state.value.copy(
-                    errorMessage = "Booking cancelled, but linked session lookup/update failed: ${e.message}"
-                )
-            }
+            // #1838: the household half of the message is the cancel's own
+            // answer, read from the session bridge that made it.
+            bridgeCancellationToSession(booking, reason)
+                .onSuccess { notice ->
+                    // A request turned down (DRAFT) was never a visit anyone was told about.
+                    if (booking.status != BookingStatus.DRAFT) {
+                        val auntie = readAuntieSignedIn()
+                        _state.value = _state.value.copy(
+                            bookingActionMessage = withHouseholdLine(done, householdNoticeResultLine(notice, booking.kinfolkName, auntie)),
+                        )
+                    }
+                }
+                .onFailure { e ->
+                    _state.value = _state.value.copy(
+                        errorMessage = "Booking cancelled, but linked session lookup/update failed: ${e.message}"
+                    )
+                }
             loadBookingsForDateRange()
         }
     }
@@ -1967,12 +2090,18 @@ class EnhancedSchedulingViewModel(
             when (val outcome = applyVisitMove(booking, startIso, endIso, override)) {
                 is VisitMoveOutcome.NotAttempted -> failScheduleWrite(outcome.message)
                 is VisitMoveOutcome.Moved -> {
+                    // #2027: say the move landed, and who it told, from the move's answer.
+                    val auntie = readAuntieSignedIn()
                     _state.value = _state.value.copy(
                         scheduleWriteInFlight = false,
                         scheduleWriteError = outcome.staleWarning,
                         scheduleWriteOverride = null,
                         dragState = null,
                         selectedBooking = if (closeDetail) null else _state.value.selectedBooking,
+                        bookingActionMessage = withHouseholdLine(
+                            "${householdPossessive(booking.kinfolkName)} visit is rescheduled.",
+                            householdNoticeResultLine(outcome.notice, booking.kinfolkName, auntie),
+                        ),
                     )
                     loadBookingsForDateRange()
                 }
@@ -2001,7 +2130,7 @@ class EnhancedSchedulingViewModel(
          * sentence rather than a silent success: the visit really moved and this
          * calendar is now drawing the old slot.
          */
-        data class Moved(val staleWarning: String?) : VisitMoveOutcome
+        data class Moved(val staleWarning: String?, val notice: HouseholdNoticeDto? = null) : VisitMoveOutcome
         /** The server said no, with its own sentence and the override it offers (or none). */
         data class Refused(val message: String, val override: ScheduleOverrideKind?) : VisitMoveOutcome
         /** Nothing reached the server, and the reason is not the server's to give. */
@@ -2064,7 +2193,7 @@ class EnhancedSchedulingViewModel(
             overrideBusyConflict = override == ScheduleOverrideKind.BUSY,
             overrideVisitConflict = override == ScheduleOverrideKind.VISIT,
         ).fold(
-            onSuccess = {
+            onSuccess = { notice ->
                 // The visit moved; the envelope this screen draws has to follow,
                 // or the calendar keeps showing the old slot.
                 val patched = bookingRepository.updateBookingTimes(booking.id, startIso, endIso)
@@ -2072,6 +2201,7 @@ class EnhancedSchedulingViewModel(
                 // RESCHEDULE_BOOKING line itself (and the override line when one
                 // was used), and the server refuses a client copy of that kind.
                 VisitMoveOutcome.Moved(
+                    notice = notice,
                     staleWarning = patched.exceptionOrNull()?.let {
                         // Fail loud rather than quietly: the visit really did
                         // move, and this screen is now showing a stale window.
@@ -2214,7 +2344,34 @@ class EnhancedSchedulingViewModel(
             _state.value = _state.value.copy(dragState = null)
             return
         }
-        moveVisit(booking, startIso, endIso, override = null, closeDetail = false)
+        // #1574: a drop onto an hour that has passed is refused at once, not asked about.
+        com.tribetails.auntieos.domain.rescheduleIntoPastRefusal(startIso, businessNow())?.let {
+            _state.value = _state.value.copy(dragState = null)
+            failScheduleWrite(it)
+            return
+        }
+        // #2027: a drag is easy to make by accident and tells the household, so
+        // it asks first, with who will be told.
+        _state.value = _state.value.copy(
+            pendingMove = PendingMove(booking, startIso, endIso),
+            movePreview = HouseholdNoticePreview.Checking,
+        )
+        viewModelScope.launch {
+            val preview = householdPreviewFor(booking, HouseholdNoticeKeys.CHANGED)
+            if (_state.value.pendingMove?.booking?.id == booking.id) _state.value = _state.value.copy(movePreview = preview)
+        }
+    }
+
+    /** #2027: "Move visit" on the drag's question. */
+    fun confirmMove() {
+        val move = _state.value.pendingMove ?: return
+        _state.value = _state.value.copy(pendingMove = null)
+        moveVisit(move.booking, move.startIso, move.endIso, override = null, closeDetail = false)
+    }
+
+    /** #2027: "Keep it where it was": nothing is written, and the block snaps back. */
+    fun dismissMove() {
+        _state.value = _state.value.copy(pendingMove = null, dragState = null)
     }
 
     fun cancelDrag() {
@@ -2918,7 +3075,29 @@ class EnhancedSchedulingViewModel(
     }
 
     fun selectBooking(booking: EnhancedBooking?) {
-        _state.value = _state.value.copy(selectedBooking = booking)
+        _state.value = _state.value.copy(selectedBooking = booking, selectedMovePreview = HouseholdNoticePreview.Checking)
+        // #2027: the Reschedule form says who a move would tell, for a visit on the books.
+        if (booking != null && booking.status == BookingStatus.ACCEPTED) {
+            viewModelScope.launch {
+                val preview = householdPreviewFor(booking, HouseholdNoticeKeys.CHANGED)
+                if (_state.value.selectedBooking?.id == booking.id) _state.value = _state.value.copy(selectedMovePreview = preview)
+            }
+        }
+    }
+
+    /** #1841: what the New visit confirmation would reach for [kinfolkId], from the server. */
+    fun loadNewVisitPreview(kinfolkId: String?) {
+        if (kinfolkId.isNullOrBlank()) {
+            _state.value = _state.value.copy(newVisitPreview = HouseholdNoticePreview.Checking)
+            return
+        }
+        _state.value = _state.value.copy(newVisitPreview = HouseholdNoticePreview.Checking)
+        viewModelScope.launch {
+            readAuntieSignedIn()
+            val preview = runCatching { householdPreviewer(kinfolkId, HouseholdNoticeKeys.CONFIRM, null).getOrThrow() }
+                .getOrElse { HouseholdNoticePreview.Unknown }
+            _state.value = _state.value.copy(newVisitPreview = preview)
+        }
     }
 
     fun resolveConflict(forceCreate: Boolean = false) {
@@ -2950,7 +3129,14 @@ class EnhancedSchedulingViewModel(
                         targetId         = targetId,
                         targetCollection = "enhanced_bookings",
                     )
-                    loadBookingsForDateRange()
+                    // #1841: a New Booking confirmed at once, forced past a
+                    // conflict, is booked the way the plain save books it, with
+                    // the household's confirmation the admin chose.
+                    if (!isUpdate && booking.status == BookingStatus.ACCEPTED && targetId.isNotBlank()) {
+                        approveBooking(booking.copy(id = targetId), notifyHousehold = pendingNotifyHousehold)
+                    } else {
+                        loadBookingsForDateRange()
+                    }
                 } else {
                     _state.value = _state.value.copy(
                         errorMessage = "Failed to force-${if (isUpdate) "update" else "create"} booking: ${result.exceptionOrNull()?.message}"
@@ -3006,18 +3192,23 @@ class EnhancedSchedulingViewModel(
      *    wrote the result over the session's, discarding whatever the session
      *    had recorded.
      */
-    private suspend fun bridgeCancellationToSession(booking: EnhancedBooking, reason: String): Result<Unit> {
+    private suspend fun bridgeCancellationToSession(booking: EnhancedBooking, reason: String): Result<HouseholdNoticeDto?> {
         val sessionIds = findLinkedSessionIds(booking.id).getOrElse { return Result.failure(it) }
-        if (sessionIds.isEmpty()) return Result.success(Unit)
+        // #1838: no linked visit, nothing told: the server addresses no household.
+        if (sessionIds.isEmpty()) {
+            return Result.success(HouseholdNoticeDto(told = false, reason = "session_has_no_routing_ids", name = null, channels = emptyList()))
+        }
 
+        var notice: HouseholdNoticeDto? = null
         sessionIds.forEach { sessionId ->
             kinCareRepository.cancelSession(sessionId, reason)
+                .onSuccess { if (notice == null) notice = it }
                 .onFailure { e ->
                     Log.e("EnhancedSchedulingVM", "Failed to cancel linked KinCareSession $sessionId", e)
                     return Result.failure(e)
                 }
         }
-        return Result.success(Unit)
+        return Result.success(notice)
     }
 
     /**

@@ -20,6 +20,14 @@ import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
 import { DenPanel, EmptyHint } from '../components/DenScreenKit';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { useToast } from '../components/Toast';
+import { useHouseholdNoticePreview } from '../lib/useHouseholdNoticePreview';
+import {
+  householdNoticeConfirmLine,
+  householdNoticeOf,
+  householdNoticeResultLine,
+  withHouseholdLine,
+  type HouseholdNotice,
+} from '../lib/householdNoticeWords';
 import './BookingActions.css';
 
 /**
@@ -76,7 +84,8 @@ interface ActionDef {
    * sentence once, on the button they just pressed.
    */
   confirmedToast: (displayName: string) => string;
-  run: (bookingId: string, overrides?: ApproveOverride) => Promise<void>;
+  /** Resolves with what the household was told, when the action tells them anything (#1838). */
+  run: (bookingId: string, overrides?: ApproveOverride) => Promise<HouseholdNotice | null | void>;
 }
 /** What an Approve refusal lets the operator go past (#1145). A closed day is never in this. */
 type ApproveOverride = { visit?: boolean; busy?: boolean };
@@ -187,6 +196,16 @@ function toDatetimeLocal(raw: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** #1838/#2027: the confirm's line about the household, or nothing when the server could not be asked. */
+function HouseholdNoticeLine({ line }: { line: string | null }) {
+  if (line === null) return null;
+  return (
+    <p className="booking-actions__hint" data-testid="household-notice-line">
+      {line}
+    </p>
+  );
+}
+
 export function BookingActions({ entry, onClose }: BookingActionsProps) {
   const { showToast } = useToast();
   const [mode, setMode] = useState<Mode>({ kind: 'detail' });
@@ -199,6 +218,21 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
   const [retry, setRetry] = useState<'visit' | 'busy' | null>(null);
   // #1744: the Service row names the KinCare, never the stored `visit_60`.
   const catalog = useBookingCatalog();
+  // #1838/#2027: the cancel confirm and the reschedule form ask the server who
+  // the household notice will reach. Asked before the guard below, so the
+  // hooks run in the same order on every render.
+  const auntie = useIsAuntie();
+  const familyId = (entry?.kinfolkId ?? '').trim();
+  const cancelPreview = useHouseholdNoticePreview(
+    mode.kind === 'confirm' && mode.action.kind === 'cancel' ? familyId : null,
+    'kincare.booking.cancel',
+    entry?._id,
+  );
+  const movePreview = useHouseholdNoticePreview(
+    mode.kind === 'reschedule' ? familyId : null,
+    'kincare.changed',
+    entry?._id,
+  );
 
   if (!entry) {
     return (
@@ -257,9 +291,12 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
     setBusy(true);
     setError(null);
     try {
-      await action.run(booking._id);
+      const notice = await action.run(booking._id);
       setBusy(false);
-      showToast(action.confirmedToast(displayName));
+      // #1838: the household half of the toast is the server's answer.
+      showToast(
+        withHouseholdLine(action.confirmedToast(displayName), householdNoticeResultLine(notice ?? null, displayName, auntie)),
+      );
       onClose();
     } catch (err) {
       setBusy(false);
@@ -287,10 +324,18 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
     setError(null);
     setRetry(null);
     try {
-      if (override === null) await rescheduleBooking(booking._id, startTime, endTime);
-      else await rescheduleBooking(booking._id, startTime, endTime, { [override]: true });
+      const res =
+        override === null
+          ? await rescheduleBooking(booking._id, startTime, endTime)
+          : await rescheduleBooking(booking._id, startTime, endTime, { [override]: true });
       setBusy(false);
-      showToast(`${displayName}'s visit is rescheduled.`);
+      // #2027: the move's own answer about the household.
+      showToast(
+        withHouseholdLine(
+          `${displayName}'s visit is rescheduled.`,
+          householdNoticeResultLine(householdNoticeOf(res?.notice), displayName, auntie),
+        ),
+      );
       onClose();
     } catch (err) {
       setBusy(false);
@@ -318,6 +363,9 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
         }
       >
         <p className="booking-actions__hint">{action.confirmBody(displayName)}</p>
+        {action.kind === 'cancel' && (
+          <HouseholdNoticeLine line={householdNoticeConfirmLine(cancelPreview, displayName, auntie)} />
+        )}
         {error !== null && (
           <p className="booking-actions__error" role="alert">
             {error}
@@ -365,6 +413,7 @@ export function BookingActions({ entry, onClose }: BookingActionsProps) {
             onChange={(e) => setEndTime(e.target.value)}
           />
         </label>
+        <HouseholdNoticeLine line={householdNoticeConfirmLine(movePreview, displayName, auntie)} />
         {error !== null && (
           <p className="booking-actions__error" role="alert">
             {error}
@@ -481,6 +530,14 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
   const [retry, setRetry] = useState<'visit' | 'busy' | null>(null);
   const kinfolkName = entry.kinfolkName ?? '';
   const displayName = kinfolkName.trim() !== '' ? kinfolkName : 'Unnamed Kinfolk';
+  // #1838: the cancel question asks the server who the household notice will
+  // reach, for this visit, and the toast reports what the cancel did.
+  const statusFamilyId = (entry.kinfolkId ?? '').trim();
+  const statusCancelPreview = useHouseholdNoticePreview(
+    confirming?.kind === 'cancel' ? statusFamilyId : null,
+    'kincare.booking.cancel',
+    entry._id,
+  );
 
   /** Pose [action]'s question, unless the arrival rule already answers it (#1608). */
   function ask(action: ActionDef) {
@@ -496,10 +553,11 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
     setError(null);
     setRetry(null);
     try {
-      if (override === null) await action.run(entry._id);
-      else await action.run(entry._id, { [override]: true });
+      const notice = override === null ? await action.run(entry._id) : await action.run(entry._id, { [override]: true });
       setBusy(false);
-      showToast(action.confirmedToast(displayName));
+      showToast(
+        withHouseholdLine(action.confirmedToast(displayName), householdNoticeResultLine(notice ?? null, displayName, auntie)),
+      );
       onDone();
     } catch (err) {
       // Fail loud, and stay on the confirm step: the operator sees which
@@ -547,6 +605,9 @@ export function BookingStatusActions({ entry, onDone, initialAction }: BookingSt
             {confirming.confirmTitle}
           </p>
           <p className="booking-actions__confirm">{confirming.confirmBody(displayName)}</p>
+          {confirming.kind === 'cancel' && (
+            <HouseholdNoticeLine line={householdNoticeConfirmLine(statusCancelPreview, displayName, auntie)} />
+          )}
           <div className="booking-actions__row">
             <GhostButton
               label="Back"

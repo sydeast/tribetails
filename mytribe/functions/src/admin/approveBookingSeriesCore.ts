@@ -705,6 +705,64 @@ function envelopeStartRollup(
 }
 
 /**
+ * The `kincare.booking.confirm` payload for one booking record, read from its
+ * live visits: the days, the household's times (#1863), the template
+ * back-compat fields and the office's note (#2030). Shared by the request
+ * approval below and Schedule > New visit (#1841, `createKinCareSession`), so
+ * both confirmations read the same in every template and on the household's
+ * notice line (#2262).
+ */
+export async function bookingConfirmData(args: {
+  kinfolkId: string;
+  batchId: string;
+  envelope: Record<string, unknown> | undefined;
+  householdNote: string;
+}): Promise<{
+  visits: Awaited<ReturnType<typeof loadEnvelopeVisits>>;
+  tz: string;
+  data: Record<string, unknown>;
+}> {
+  const { kinfolkId, batchId, envelope, householdNote } = args;
+  // Read the live child set rather than reusing the pre-flip snapshot: the
+  // message names the days, and a visit cancelled between the request and the
+  // approval must not appear in it. See notifications/visitDates.ts.
+  const visits = await loadEnvelopeVisits(kinfolkId, batchId);
+  const tz = await loadBusinessTimeZone();
+  // #1863: the household's copy names each visit's time the way the portal
+  // shows it: a window in Time Blocks mode, the clock in Exact times mode.
+  const household = await loadHouseholdTimeContext();
+  const dateData = buildVisitDateData(visits, tz, undefined, household);
+  const first = visits[0] ?? null;
+  const firstMs = first?.startTimeMs ?? null;
+  return {
+    visits,
+    tz,
+    data: {
+      kinfolkId,
+      batchId,
+      // `bookingId` is the ENVELOPE here, not a visit: this message is about
+      // the whole request, the same grain `kincare.requested` moved to in #532.
+      bookingId: batchId,
+      serviceName: envelope?.['serviceName'] ?? null,
+      startTimeMs: firstMs,
+      ...dateData,
+      // Template back-compat, and the one reason these two are still sent.
+      // The seeds no longer reference them, but the Firestore documents in
+      // production do until the operator re-imports `kincare.booking.confirm`
+      // with it named in `overwriteIds`. Emitter-supplied values always win in
+      // `enrichTemplateData`, so the old template keeps naming the first day
+      // instead of rendering blanks in the gap between deploy and re-import.
+      bookingDate: firstMs == null ? null : formatBookingDate(firstMs, tz),
+      bookingTime: firstMs == null ? null : formatBookingTime(firstMs, tz),
+      // #1863: what the household's own copy says; see `visitTimesForStream`.
+      householdBookingTime: first == null ? null : householdVisitTime(first, household, tz),
+      // #2030: the office's words with the answer, for the notice body
+      // (`detail.householdNote`). Null, like the decline's, when there are none.
+      note: householdNote !== '' ? householdNote : null,
+    },
+  };
+}
+/**
  * The household's ONE answer to their request (#536), plus the office's copy via
  * the key's `businessAdmins` secondary resolver, plus ONE summary for each Auntie
  * the approved visits belong to.
@@ -785,47 +843,14 @@ async function dispatchSeriesConfirmation(args: {
       return false;
     }
 
-    // Read the live child set rather than reusing the pre-flip snapshot: the
-    // message names the days, and a visit cancelled between the request and the
-    // approval must not appear in it. See notifications/visitDates.ts.
-    const visits = await loadEnvelopeVisits(kinfolkId, batchId);
-    const tz = await loadBusinessTimeZone();
-    // #1863: the household's copy names each visit's time the way the portal
-    // shows it: a window in Time Blocks mode, the clock in Exact times mode.
-    const household = await loadHouseholdTimeContext();
-    const dateData = buildVisitDateData(visits, tz, undefined, household);
-    const first = visits[0] ?? null;
-    const firstMs = first?.startTimeMs ?? null;
+    const { visits, tz, data } = await bookingConfirmData({ kinfolkId, batchId, envelope, householdNote });
     const recipientUid = await resolveKinfolkUid(kinfolkId);
-
     let householdNotified = false;
     try {
       await enqueueNotification({
         key: 'kincare.booking.confirm',
         recipientUid: recipientUid ?? '',
-        data: {
-          kinfolkId,
-          batchId,
-          // `bookingId` is the ENVELOPE here, not a visit: this message is about
-          // the whole request, the same grain `kincare.requested` moved to in #532.
-          bookingId: batchId,
-          serviceName: envelope?.['serviceName'] ?? null,
-          startTimeMs: firstMs,
-          ...dateData,
-          // Template back-compat, and the one reason these two are still sent.
-          // The seeds no longer reference them, but the Firestore documents in
-          // production do until the operator re-imports `kincare.booking.confirm`
-          // with it named in `overwriteIds`. Emitter-supplied values always win in
-          // `enrichTemplateData`, so the old template keeps naming the first day
-          // instead of rendering blanks in the gap between deploy and re-import.
-          bookingDate: firstMs == null ? null : formatBookingDate(firstMs, tz),
-          bookingTime: firstMs == null ? null : formatBookingTime(firstMs, tz),
-          // #1863: what the household's own copy says; see `visitTimesForStream`.
-          householdBookingTime: first == null ? null : householdVisitTime(first, household, tz),
-          // #2030: the office's words with the answer, for the notice body
-          // (`detail.householdNote`). Null, like the decline's, when there are none.
-          note: householdNote !== '' ? householdNote : null,
-        },
+        data,
         targetType: 'booking',
         targetId: batchId,
         dedupeKey: `booking:${batchId}:approve:${claimMs}`,

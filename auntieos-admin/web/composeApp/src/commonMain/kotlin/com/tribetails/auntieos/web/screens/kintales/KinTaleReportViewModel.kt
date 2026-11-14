@@ -77,6 +77,39 @@ class KinTaleReportViewModel(
     var justSent: Boolean by mutableStateOf(false)
         private set
 
+    /** #1816: the send asks first; this is its question and the server's line about the household. */
+    var sendConfirmOpen: Boolean by mutableStateOf(false)
+        private set
+    var sendPreview: com.tribetails.auntieos.web.screens.HouseholdNoticePreview by
+        mutableStateOf(com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Checking)
+        private set
+
+    /** #1816: the banner after a send: what was sent, and who the server told. */
+    var sentMessage: String by mutableStateOf("KinTale sent.")
+        private set
+
+    /** #1816: open the send question and ask the server who the KinTale's notice reaches. */
+    fun requestSend(liveSession: KinCareSession?) {
+        if (isSending) return
+        sendConfirmOpen = true
+        sendPreview = com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Checking
+        val familyId = liveSession?.kinfolkId.orEmpty()
+        scope.launch {
+            val answer = if (familyId.isBlank()) null else dataSource.previewHouseholdNotice(
+                familyId,
+                com.tribetails.auntieos.web.screens.HouseholdNoticeKeys.KINTALE,
+            )
+            if (sendConfirmOpen) {
+                sendPreview = (answer as? WriteResult.Ok)?.value
+                    ?: com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Unknown
+            }
+        }
+    }
+
+    fun cancelSendConfirm() {
+        sendConfirmOpen = false
+    }
+
     var error: String? by mutableStateOf(null)
         private set
 
@@ -181,6 +214,7 @@ class KinTaleReportViewModel(
      * SENT flip so the auntie retries (matches Android).
      */
     fun send(liveReport: KinCareReport, liveSession: KinCareSession?) {
+        sendConfirmOpen = false
         val body = effectiveBody(liveReport.bodyCopy)
         if (body.isBlank()) {
             error = "Nothing to send yet. Fill in some details first."
@@ -211,6 +245,11 @@ class KinTaleReportViewModel(
                     // now carries the canonical sent report (status -> SENT, sentAt,
                     // sentVia, receipt). The screen shows the artifact view in place.
                     bodyDraft = null
+                    // #1816: what the server did, never a promise.
+                    sentMessage = com.tribetails.auntieos.web.screens.withHouseholdLine(
+                        "KinTale sent.",
+                        com.tribetails.auntieos.web.screens.householdNoticeResultLine(result.value, session.kinfolkName),
+                    )
                     justSent = true
                     error = null
                 }

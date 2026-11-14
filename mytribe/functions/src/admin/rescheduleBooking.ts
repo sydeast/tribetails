@@ -13,6 +13,7 @@ import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
 import { validateResponse } from '../lib/callableResponse';
 import { mirrorSessionTimesToEnvelope } from '../lib/visitTimeMirror';
+import { HouseholdNoticeSchema, type HouseholdNotice } from './dispatchVisitNotification';
 
 /**
  * 1E §A.9: server-bound reschedule of a kin_care_sessions doc. Shared by Schedule
@@ -53,6 +54,12 @@ export const Result = z
   .object({
     ok: z.literal(true),
     sessionId: z.string().min(1),
+    /**
+     * #2027: what the household was told about the move, sent by this call
+     * (the trigger skips a write this call stamped). Absent from a server
+     * older than this field; every current path sets it.
+     */
+    notice: HouseholdNoticeSchema.optional(),
   })
   .strict();
 
@@ -129,6 +136,7 @@ export async function rescheduleBookingHandler(
   // household sees the truth and the office's schedule can be re-driven. The
   // opposite order fails the other way round, which is the failure this issue
   // exists about.
+  const householdNotices = await import('../notifications/householdNotice.js');
   const mirror = await mirrorSessionTimesToEnvelope({
     sessionId: args.sessionId,
     session: prev,
@@ -136,8 +144,45 @@ export async function rescheduleBookingHandler(
     endIso: args.endTime,
     uid,
     fn: 'rescheduleBooking',
+    // #2027: a confirmed visit tells the household it moved. This call sends
+    // that itself, so it can say who was told, and stamps the write so
+    // `onBookingsWrite` does not send it twice.
+    officeNoticeStampFor: (visit) =>
+      householdNotices.visitTellsHouseholdOfChanges(visit) ? householdNotices.freshOfficeNoticeStamp() : null,
   });
 
+  // #2027: right after the household's copy moved, and before the session
+  // write, so a session write that fails cannot leave a moved, stamped visit
+  // whose notice nobody sent (the trigger skips a stamped write).
+  let notice: HouseholdNotice;
+  const familyId = typeof prev?.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
+  if (mirror.visit && mirror.visit.officeNoticeStamp !== null) {
+    const v = mirror.visit;
+    const changedFields = [
+      ...(prev?.startTime !== args.startTime ? ['startTime'] : []),
+      ...(prev?.endTime !== args.endTime ? ['endTime'] : []),
+    ];
+    notice = await householdNotices.sendVisitHouseholdNotice({
+      key: 'kincare.changed',
+      kinfolkId: v.kinfolkId,
+      batchId: v.batchId,
+      visitId: v.visitId,
+      visit: { ...v.before, startTime: Date.parse(args.startTime) },
+      officeNoticeStamp: v.officeNoticeStamp!,
+      extra: { changedFields: changedFields.length > 0 ? changedFields : ['startTime'] },
+      actorUid: uid,
+      caller: 'rescheduleBooking',
+    });
+  } else if (familyId === '' || !mirror.mirrored) {
+    // No booking record behind the session: nothing addresses the household.
+    notice =
+      familyId === ''
+        ? { told: false, reason: 'session_has_no_routing_ids', name: null, channels: [] }
+        : await householdNotices.householdNoticeNotSent(familyId, 'session_has_no_routing_ids');
+  } else {
+    // A visit not yet confirmed: the household is not told of a move.
+    notice = await householdNotices.householdNoticeNotSent(familyId, 'not_a_household_notice');
+  }
   await ref.set(
     { startTime: args.startTime, endTime: args.endTime, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid },
     { merge: true },
@@ -175,7 +220,7 @@ export async function rescheduleBookingHandler(
     },
   });
 
-  return validateResponse('rescheduleBooking', Result, { ok: true, sessionId: args.sessionId });
+  return validateResponse('rescheduleBooking', Result, { ok: true, sessionId: args.sessionId, notice });
 }
 
 export const rescheduleBooking = onCall(

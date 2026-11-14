@@ -8,6 +8,19 @@ import { type Async } from '../lib/async';
 import { type BookingEntry } from '../api/bookings';
 import { ToastProvider } from '../components/Toast';
 
+// #1838/#2027/#1841: the confirms ask the server who a household notice reaches.
+const { previewHouseholdNotice } = vi.hoisted(() => ({ previewHouseholdNotice: vi.fn() }));
+vi.mock('../api/visitNoticePreview', async (orig) => ({
+  ...(await orig<typeof import('../api/visitNoticePreview')>()),
+  previewHouseholdNotice,
+}));
+beforeEach(() => {
+  previewHouseholdNotice
+    .mockReset()
+    .mockResolvedValue({ willNotify: true, reason: null, name: 'Dre East', channels: ['email'] });
+});
+
+
 // The stubbed BookingDetailModal below still renders `props.actions` verbatim,
 // which is the real BookingStatusActions: it confirms a landed transition
 // through useToast(), which throws outside a ToastProvider. Same wrap

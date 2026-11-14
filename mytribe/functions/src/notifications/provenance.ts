@@ -167,11 +167,42 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'bookingTime',
       ],
     },
+    {
+      // #1841: Schedule > New visit, when the admin leaves "Send the household a
+      // confirmation" on. Same payload as a request approval (`bookingConfirmData`).
+      trigger:
+        'An admin puts a new visit on the schedule with "Send the household a confirmation" on. Never for a past visit recorded as completed.',
+      source: 'src/notifications/householdNotice.ts',
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'serviceName',
+        'startTimeMs',
+        'visits',
+        'visitCount',
+        'nextVisit',
+        'removed',
+        'removedCount',
+        'portalUrl',
+        'bookingDate',
+        'bookingTime',
+      ],
+    },
   ],
   'kincare.booking.cancel': [
     {
       trigger: 'A visit is cancelled.',
       source: 'src/triggers/onBookingsWrite.ts',
+      dataKeys: ['kinfolkId', 'batchId', 'bookingId', 'visitId', 'serviceName', 'startTimeMs'],
+    },
+    {
+      // #1838: the office's own cancel sends this itself, after the write, so the
+      // admin is told who heard. The write carries `officeNoticeStamp`, and the
+      // trigger above skips exactly that write.
+      trigger:
+        'An admin cancels a scheduled visit (Cancel on a visit, or Cancel on the Bookings list); the cancel itself sends it.',
+      source: 'src/notifications/householdNotice.ts',
       dataKeys: ['kinfolkId', 'batchId', 'bookingId', 'visitId', 'serviceName', 'startTimeMs'],
     },
   ],
@@ -187,6 +218,21 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
       trigger:
         'A confirmed visit is edited: its date, time, service or Auntie changes.',
       source: 'src/triggers/onBookingsWrite.ts',
+      dataKeys: [
+        'kinfolkId',
+        'batchId',
+        'bookingId',
+        'visitId',
+        'serviceName',
+        'startTimeMs',
+        'changedFields',
+      ],
+    },
+    {
+      // #2027: an admin move (Reschedule, or a drag on the Schedule grid) sends
+      // this itself, stamped so the trigger above skips that write.
+      trigger: 'An admin moves a confirmed visit to a new date or time; the move itself sends it.',
+      source: 'src/notifications/householdNotice.ts',
       dataKeys: [
         'kinfolkId',
         'batchId',

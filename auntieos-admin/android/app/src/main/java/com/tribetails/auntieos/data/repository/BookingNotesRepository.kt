@@ -39,18 +39,22 @@ class BookingNotesRepository(
         val createdAtMs: Long? = null,
     )
 
-    /** Append a kinfolk-facing note. Server returns failed-precondition inside 3hr window. */
+    /**
+     * Append a kinfolk-facing note. Server returns failed-precondition inside 3hr window.
+     * #2027: answers with the decoded result, whose `notice` says what the household is sent.
+     */
     suspend fun addKinfolkFacingNote(
         kinfolkId: String,
         bookingId: String,
         body: String,
-    ): Result<String> = runCatchingCancellable {
+    ): Result<com.tribetails.auntieos.data.contracts.AddBookingNoteResult> = runCatchingCancellable {
         require(body.isNotBlank()) { "Note body cannot be blank." }
         AuntieLog.i("BookingNotesRepository: addBookingNote kinfolk=$kinfolkId booking=$bookingId")
         val args = AddBookingNoteArgs(kinfolkId = kinfolkId, bookingId = bookingId, body = body)
         val raw = functions.getHttpsCallable("addBookingNote").call(args.toPayload()).awaitCallable().data
+        // #2027: the note id, and what the household is sent about it (`notice`).
         @Suppress("UNCHECKED_CAST")
-        decodeAddBookingNoteResult(raw as? Map<String, Any?>).noteId
+        decodeAddBookingNoteResult(raw as? Map<String, Any?>)
     }.onFailure { AuntieLog.e("BookingNotesRepository.addKinfolkFacingNote failed", it) }
 
     /** Append an admin-internal note. Admin-only via callable claim guard. */

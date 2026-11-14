@@ -11,7 +11,8 @@ data class RescheduleAttempt(
     val override: ScheduleOverride? = null,
 )
 sealed class RescheduleOutcome {
-    object Done : RescheduleOutcome()
+    /** #2027: what the household was told about the move, or null from an older server. */
+    data class Done(val notice: com.tribetails.auntieos.web.screens.HouseholdNotice? = null) : RescheduleOutcome()
     /** The server's own sentence, plus the override it lets the operator take, or null when there is none. */
     data class Refused(val message: String, val offer: ScheduleOverride?) : RescheduleOutcome()
 }
@@ -21,7 +22,7 @@ sealed class RescheduleOutcome {
  */
 suspend fun FirestoreClient.rescheduleOutcome(attempt: RescheduleAttempt): RescheduleOutcome =
     when (val r = rescheduleBooking(attempt.sessionId, attempt.startTime, attempt.endTime, attempt.override)) {
-        is WriteResult.Ok -> RescheduleOutcome.Done
+        is WriteResult.Ok -> RescheduleOutcome.Done(r.value)
         is WriteResult.Err -> RescheduleOutcome.Refused(
             r.message,
             if (attempt.override == null) overridableScheduleRefusal(r.code) else null,

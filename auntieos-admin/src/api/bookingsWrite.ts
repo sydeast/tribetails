@@ -1,6 +1,7 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { call } from '../lib/fns';
+import { householdNoticeOf, type HouseholdNotice } from '../lib/householdNoticeWords';
 import type {
   AddBookingNoteArgs,
   AddBookingNoteResult,
@@ -100,6 +101,8 @@ export interface TransitionBookingStatusResult {
   status: string;
   /** False when the row was already in the target status and nothing was written. */
   changed: boolean;
+  /** #1838: on a CANCEL that changed something, what the household was told. */
+  notice?: HouseholdNotice;
 }
 
 interface TransitionBookingStatusArgs {
@@ -184,12 +187,15 @@ export async function rejectBooking(bookingId: string): Promise<void> {
  * notes as `[Booking cancelled] <reason>` and records only that one was given,
  * never the text, in the audit payload.
  */
-export async function cancelBooking(bookingId: string, reason?: string): Promise<void> {
-  await transitionBookingStatus({
+export async function cancelBooking(bookingId: string, reason?: string): Promise<HouseholdNotice | null> {
+  const res = await transitionBookingStatus({
     sessionId: bookingId,
     action: 'CANCEL',
     ...(reason !== undefined && reason.trim() !== '' ? { reason: reason.trim() } : {}),
   });
+  // #1838: what the household was told, from the cancel itself. Null from a
+  // server older than the field: the toast then claims nothing about them.
+  return householdNoticeOf(res?.notice);
 }
 
 /**

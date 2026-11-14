@@ -119,6 +119,7 @@ class KinTaleOwedTest {
 
     @Test
     fun aSentKinTaleSaysSoAndNothingAboutTheVisit() {
-        assertEquals("KinTale sent. Kinfolk will hear from you soon.", KINTALE_SENT_MESSAGE)
+        // #1816: no promise about the household; the server's line follows it.
+        assertEquals("KinTale sent.", KINTALE_SENT_MESSAGE)
     }
 }

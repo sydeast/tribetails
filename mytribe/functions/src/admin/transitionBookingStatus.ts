@@ -19,6 +19,7 @@ import { classifyArrivalDistance } from '../lib/geo';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
+import { HouseholdNoticeSchema, type HouseholdNotice } from './dispatchVisitNotification';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
@@ -105,6 +106,11 @@ export const Result = z
     status: z.string(),
     /** False when the row was already in the target status and nothing was written. */
     changed: z.boolean(),
+    /**
+     * #1838: on a CANCEL that changed something, what the household was told,
+     * sent by this call (the trigger skips the write this call stamped).
+     */
+    notice: HouseholdNoticeSchema.optional(),
   })
   .strict();
 
@@ -484,13 +490,27 @@ export async function transitionBookingStatusHandler(
       ? await recordForUnlinkedSession(args.sessionId, uid, prev, approvedWindow)
       : null;
   if (record !== null) Object.assign(patch, record.sessionLink);
+  // #1838: a cancel tells the household from here, after the write, so the
+  // admin hears who was told. The stamp keeps `onBookingsWrite` from a second send.
+  const householdNotices = args.action === 'CANCEL' ? await import('../notifications/householdNotice.js') : null;
+  const officeNoticeStamp =
+    householdNotices !== null && mirror !== null ? householdNotices.freshOfficeNoticeStamp() : null;
   if (mirror === null && record === null) {
     await ref.set(patch, { merge: true });
   } else {
     const batch = db().batch();
     batch.set(ref, patch, { merge: true });
     if (mirror !== null) {
-      batch.set(mirror.ref, { status: mirror.status, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      batch.set(
+        mirror.ref,
+        {
+          status: mirror.status,
+          // #1838: this call tells the household about the cancel itself.
+          ...(officeNoticeStamp !== null ? { officeNoticeStamp } : {}),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
     }
     if (record !== null) {
       batch.set(record.envelopeRef, record.envelope);
@@ -576,6 +596,29 @@ export async function transitionBookingStatusHandler(
     extra: { sessionId: args.sessionId, action: args.action, from: decision.from, to: decision.to },
   });
 
+  let notice: HouseholdNotice | undefined;
+  if (householdNotices !== null) {
+    const familyId = typeof prev?.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
+    if (mirror !== null && officeNoticeStamp !== null) {
+      notice = await householdNotices.sendVisitHouseholdNotice({
+        key: 'kincare.booking.cancel',
+        kinfolkId: mirror.kinfolkId,
+        batchId: mirror.batchId,
+        visitId: mirror.visitId,
+        visit: mirror.data,
+        officeNoticeStamp,
+        actorUid: uid,
+        caller: 'transitionBookingStatus',
+      });
+    } else {
+      // No booking record behind the session (or it already read finished):
+      // nothing addresses the household, as before.
+      notice =
+        familyId === ''
+          ? { told: false, reason: 'session_has_no_routing_ids', name: null, channels: [] }
+          : await householdNotices.householdNoticeNotSent(familyId, 'session_has_no_routing_ids');
+    }
+  }
   return validateResponse('transitionBookingStatus', Result, {
     ok: true as const,
     sessionId: args.sessionId,
@@ -583,6 +626,7 @@ export async function transitionBookingStatusHandler(
     from: decision.from,
     status: decision.to,
     changed: true,
+    ...(notice !== undefined ? { notice } : {}),
   });
 }
 
@@ -614,7 +658,14 @@ export function visitMirrorStatus(action: BookingAction): 'cancelled' | 'complet
 async function visitMirrorFor(
   prev: { kinfolkId?: unknown; kinCareBatchId?: unknown; kinCareVisitId?: unknown } | undefined,
   action: BookingAction,
-): Promise<{ ref: FirebaseFirestore.DocumentReference; status: 'cancelled' | 'completed' } | null> {
+): Promise<{
+  ref: FirebaseFirestore.DocumentReference;
+  status: 'cancelled' | 'completed';
+  kinfolkId: string;
+  batchId: string;
+  visitId: string;
+  data: Record<string, unknown>;
+} | null> {
   const status = visitMirrorStatus(action);
   if (status === null) return null;
   const kinfolkId = typeof prev?.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
@@ -626,7 +677,7 @@ async function visitMirrorFor(
   if (!visit.exists) return null;
   const current = (visit.data() as { status?: unknown } | undefined)?.status;
   if (current === 'cancelled' || current === 'completed') return null;
-  return { ref: visitRef, status };
+  return { ref: visitRef, status, kinfolkId, batchId, visitId, data: (visit.data() ?? {}) as Record<string, unknown> };
 }
 
 /**

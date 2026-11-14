@@ -100,3 +100,15 @@
   outline: none;
   border-color: var(--color-primary);
 }
+
+/* #1841: the household confirmation choice and what it will do. */
+.new-visit__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.new-visit__notice {
+  margin: var(--space-1) 0 0;
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+}

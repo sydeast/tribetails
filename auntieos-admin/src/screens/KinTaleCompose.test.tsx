@@ -27,9 +27,13 @@ vi.mock('../api/kinTaleReportDraftDelete', async (orig) => ({
   deleteKinTaleReportDraft,
 }));
 
-const { saveKinTaleDraft, sendKinTale, transitionBookingStatus } = vi.hoisted(() => ({
+const { saveKinTaleDraft, sendKinTale, transitionBookingStatus, awaitKinTaleSendNotice, previewHouseholdNotice } = vi.hoisted(() => ({
   saveKinTaleDraft: vi.fn(),
   sendKinTale: vi.fn(),
+  // #1816: what the server recorded about the household after a send.
+  awaitKinTaleSendNotice: vi.fn(),
+  // #1816: what the server says the send will reach, before it.
+  previewHouseholdNotice: vi.fn(),
   // #2123: mocked only so a test can prove a send never completes the visit.
   transitionBookingStatus: vi.fn(),
 }));
@@ -46,7 +50,9 @@ vi.mock('../api/kinTalesWrite', async (orig) => ({
   ...(await orig<typeof import('../api/kinTalesWrite')>()),
   saveKinTaleDraft,
   sendKinTale,
+  awaitKinTaleSendNotice,
 }));
+vi.mock('../api/visitNoticePreview', () => ({ previewHouseholdNotice }));
 
 /**
  * The composer's one-shot reads. Mocked at the API seam rather than at
@@ -169,6 +175,8 @@ beforeEach(() => {
   saveKinTaleDraft.mockReset();
   sendKinTale.mockReset();
   transitionBookingStatus.mockReset();
+  awaitKinTaleSendNotice.mockReset().mockResolvedValue({ told: true, reason: null, name: 'Dre East', channels: ['email'] });
+  previewHouseholdNotice.mockReset().mockResolvedValue({ willNotify: true, reason: null, name: 'Dre East', channels: ['email'] });
   // A pet with no medication notes and no species quirks: every conditional
   // item in the built-in template is withheld from it unless a test says
   // otherwise, so a suite that never mentions the checklist sees a stable one.
@@ -591,7 +599,7 @@ describe('KinTaleCompose: Send, gated behind a confirm dialog', () => {
     render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
     await user.click(await screen.findByRole('button', { name: /send to the whitfields/i }));
     await user.click(screen.getByRole('button', { name: /^send kintale$/i }));
-    expect(await screen.findByText('KinTale sent. Kinfolk will hear from you soon.')).toBeInTheDocument();
+    expect(await screen.findByText('KinTale sent. Dre East was sent an email.')).toBeInTheDocument();
   });
 
   it('cancelling the confirm dialog never calls sendKinTale', async () => {
@@ -617,6 +625,66 @@ describe('KinTaleCompose: Send, gated behind a confirm dialog', () => {
 });
 
 /**
+ * #1816 (regression of #1794): the send confirm and toast promised "Kinfolk
+ * will get this recap" and "Kinfolk will hear from you soon" with household
+ * notices off and no portal account. #1805 fixed the clock taps only; the
+ * KinTale send path was never given the server's answer.
+ */
+describe('KinTaleCompose: #1816, the send says who the household told', () => {
+  async function openConfirm() {
+    mockStreams({ reports: { status: 'ready', data: [report({ title: 'Hi' })] } });
+    saveKinTaleDraft.mockResolvedValue('tale1');
+    sendKinTale.mockResolvedValue(undefined);
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /send to the whitfields/i }));
+    return screen.getByRole('dialog');
+  }
+
+  it('HAPPY: the confirm names who will get what, from the server', async () => {
+    const dialog = await openConfirm();
+    expect(await within(dialog).findByText(/Dre East will get an email\. This cannot be undone\./)).toBeInTheDocument();
+    expect(previewHouseholdNotice).toHaveBeenCalledWith(expect.any(String), 'kintale.published');
+    expect(within(dialog).queryByText(/Kinfolk will get this recap/)).toBeNull();
+  });
+
+  it('SAD: household notices off: the confirm says nobody will be told, and the toast says nobody was', async () => {
+    previewHouseholdNotice.mockResolvedValue({ willNotify: false, reason: 'household_notices_off', name: 'Dre East', channels: [] });
+    awaitKinTaleSendNotice.mockResolvedValue({ told: false, reason: 'household_notices_off', name: 'Dre East', channels: [] });
+    const dialog = await openConfirm();
+    expect(
+      await within(dialog).findByText(/Nobody will be told: notices to households are off in Settings\./),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^send kintale$/i }));
+    expect(
+      await screen.findByText('KinTale sent. Nobody was told: notices to households are off in Settings.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/will hear from you soon/)).toBeNull();
+  });
+
+  it('NEGATIVE: no portal account is named, never a promise', async () => {
+    previewHouseholdNotice.mockResolvedValue({ willNotify: false, reason: 'household_has_no_portal_account', name: 'Dre East', channels: [] });
+    const dialog = await openConfirm();
+    expect(await within(dialog).findByText(/Nobody will be told: Dre East has no portal account\./)).toBeInTheDocument();
+  });
+
+  it('ERROR: the server cannot be asked: the confirm claims nothing about the household', async () => {
+    previewHouseholdNotice.mockRejectedValue(new Error('offline'));
+    const dialog = await openConfirm();
+    await waitFor(() => expect(within(dialog).queryByText(/Checking who will be told/)).toBeNull());
+    expect(within(dialog).getByText(/This cannot be undone\./).textContent).not.toMatch(/will get|Nobody/);
+  });
+
+  it('ERROR: no record in time: the toast says it is still checking, not that anyone was told', async () => {
+    awaitKinTaleSendNotice.mockResolvedValue(null);
+    await openConfirm();
+    await user.click(screen.getByRole('button', { name: /^send kintale$/i }));
+    expect(
+      await screen.findByText('KinTale sent. Still checking whether The Whitfields was told. The Activity Log will show it.'),
+    ).toBeInTheDocument();
+  });
+});
+
+/**
  * #2123 (operator ruling 2026-11-12): a visit is Completed at departure, and a
  * KinTale never decides it. The #1793 completion after a send is gone.
  */
@@ -632,7 +700,7 @@ describe('KinTaleCompose: #2123, a send does not complete the visit', () => {
   }
   it('says the KinTale was sent, closes, and asks the server for nothing about the visit', async () => {
     const onClose = await sendIt();
-    expect(await screen.findByText('KinTale sent. Kinfolk will hear from you soon.')).toBeInTheDocument();
+    expect(await screen.findByText('KinTale sent. Dre East was sent an email.')).toBeInTheDocument();
     expect(onClose).toHaveBeenCalledOnce();
     expect(sendKinTale).toHaveBeenCalledOnce();
     expect(transitionBookingStatus).not.toHaveBeenCalled();

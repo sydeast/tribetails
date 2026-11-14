@@ -244,7 +244,34 @@ private fun BookingListScreen(
     fun runCancel(booking: KinCareSession) {
         scope.launch {
             vm.cancelBooking(booking._id, singleVisitId(booking))
-            if (vm.errorMessage == null) actionNotice = bookingActionNotice(BookingActionOutcome.CANCELLED, booking)
+            // #1838: the household half is the cancel's own answer.
+            if (vm.errorMessage == null) {
+                actionNotice = com.tribetails.auntieos.web.screens.withHouseholdLine(
+                    bookingActionNotice(BookingActionOutcome.CANCELLED, booking),
+                    com.tribetails.auntieos.web.screens.householdNoticeResultLine(vm.lastCancelNotice, booking.kinfolkName),
+                )
+            }
+        }
+    }
+
+    // #1838: Cancel on a scheduled visit asks first, with who the household notice reaches.
+    var cancelAsk by remember { mutableStateOf<KinCareSession?>(null) }
+    var cancelPreview by remember {
+        mutableStateOf<com.tribetails.auntieos.web.screens.HouseholdNoticePreview>(
+            com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Checking,
+        )
+    }
+    fun askCancel(booking: KinCareSession) {
+        cancelAsk = booking
+        cancelPreview = com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Checking
+        scope.launch {
+            val answer = client?.previewHouseholdNotice(
+                booking.kinfolkId,
+                com.tribetails.auntieos.web.screens.HouseholdNoticeKeys.CANCEL,
+                booking._id,
+            )
+            cancelPreview = (answer as? WriteResult.Ok)?.value
+                ?: com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Unknown
         }
     }
 
@@ -571,7 +598,7 @@ private fun BookingListScreen(
                             onToggleSelect = { toggleSelect(booking) },
                             onApprove = null,
                             onReject  = null,
-                            onCancel  = { runCancel(booking) },
+                            onCancel  = { askCancel(booking) },
                             onOpenDetail = { selectedBooking = booking },
                             timeBlockLabel = timeBlockLabelFor(booking),
                             serviceRates = kinCareRates,
@@ -581,6 +608,30 @@ private fun BookingListScreen(
             }
         }
         Spacer(Modifier.height(18.dp))
+
+        cancelAsk?.let { booking ->
+            com.tribetails.auntieos.web.ui.components.AuntieDialog(
+                visible = true,
+                title = "Cancel this scheduled visit?",
+                onDismiss = { cancelAsk = null },
+                footer = {
+                    GhostButton(label = "Back", onClick = { cancelAsk = null })
+                    PrimaryButton(label = "Yes, cancel the visit", onClick = {
+                        cancelAsk = null
+                        runCancel(booking)
+                    })
+                },
+            ) {
+                Text(
+                    "${booking.kinfolkName.ifBlank { "Unnamed" }}'s visit will be cancelled. This cannot be undone.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+                com.tribetails.auntieos.web.screens.householdNoticeConfirmLine(cancelPreview, booking.kinfolkName)?.let {
+                    Text(it, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
+                }
+            }
+        }
 
         // ── History (organized: sorted desc, split Completed / Cancelled, capped) ──
         // Auntie's complaint was "raw rows". Sort by the real timestamp each row
@@ -1645,6 +1696,7 @@ private class FirestoreClientBookingDataSource(
         client.approveBooking(bookingId, visitId, override)
     override suspend fun rejectBooking(bookingId: String, visitId: String?)  = client.rejectBooking(bookingId, visitId)
     override suspend fun cancelBooking(bookingId: String, visitId: String?)  = client.cancelBooking(bookingId, visitId)
+    override suspend fun cancelBookingNotice(bookingId: String, visitId: String?) = client.cancelBookingNotice(bookingId, visitId)
     override suspend fun createBooking(booking: KinCareSession): com.tribetails.auntieos.web.data.WriteResult<String> =
         client.createBookingRequest(booking)
     override fun incomingKinCaresStream() = client.incomingKinCaresStream()
@@ -1659,6 +1711,7 @@ private class FirestoreClientBookingDataSource(
     override fun reportForSessionStream(sessionId: String) = client.reportForSessionStream(sessionId)
     override suspend fun saveReport(loaded: com.tribetails.auntieos.web.data.KinCareReport, edited: com.tribetails.auntieos.web.data.KinCareReport) = client.saveReport(loaded, edited)
     override suspend fun sendReport(report: com.tribetails.auntieos.web.data.KinCareReport, session: com.tribetails.auntieos.web.data.KinCareSession) = client.sendReport(report, session)
+    override suspend fun previewHouseholdNotice(familyId: String, key: String, sessionId: String?) = client.previewHouseholdNotice(familyId, key, sessionId)
     override suspend fun logActivity(entry: com.tribetails.auntieos.web.data.ActivityLogEntry) = client.logActivity(entry)
     override fun trainingDocsStream() = client.trainingDocsStream()
     override fun bookingNotesStream(kinfolkId: String, bookingId: String) =

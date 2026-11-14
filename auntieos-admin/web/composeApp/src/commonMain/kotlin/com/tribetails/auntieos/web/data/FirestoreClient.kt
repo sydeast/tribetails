@@ -1167,7 +1167,10 @@ class FirestoreClient {
      * (suppressed) still sends, with a blank receipt the Delivery panel honestly
      * omits, never a faked id.
      */
-    suspend fun sendReport(report: KinCareReport, session: KinCareSession): WriteResult<Unit> {
+    suspend fun sendReport(
+        report: KinCareReport,
+        session: KinCareSession,
+    ): WriteResult<com.tribetails.auntieos.web.screens.HouseholdNotice?> {
         require(report._id.isNotBlank()) { "sendReport requires a saved report (non-blank id)" }
         val familyId = session.kinfolkId
         if (familyId.isBlank()) {
@@ -1200,22 +1203,98 @@ class FirestoreClient {
             // KinTale for one visit reaches the household and a retry does not.
             put("reportId", report._id)
         }
+        var notice: com.tribetails.auntieos.web.screens.HouseholdNotice? = null
         val dispatchId = when (
             val r = platformInvokeCallable(
                 "dispatchVisitNotification",
                 callableJson.encodeToString(JsonObject.serializer(), payload),
             )
         ) {
-            is WriteResult.Ok -> firstDispatchId(r.value)
+            is WriteResult.Ok -> {
+                // #1816: what the household was told, from the dispatch itself.
+                notice = noticeIn(r.value, "notice")
+                firstDispatchId(r.value)
+            }
             is WriteResult.Err -> return WriteResult.Err("Couldn't send: ${r.message}")
         }
 
-        return markKinTaleReportSent(
-            reportId = report._id,
-            sessionId = session._id,
-            sentVia = "catalog",
-            deliveryReceiptId = dispatchId,
-        )
+        return when (
+            val marked = markKinTaleReportSent(
+                reportId = report._id,
+                sessionId = session._id,
+                sentVia = "catalog",
+                deliveryReceiptId = dispatchId,
+            )
+        ) {
+            is WriteResult.Ok -> WriteResult.Ok(notice)
+            is WriteResult.Err -> marked
+        }
+    }
+
+    /** #1816: the `notice` object in a callable body, or null when it carries none (an older server). */
+    private fun noticeIn(dataJson: String, field: String): com.tribetails.auntieos.web.screens.HouseholdNotice? =
+        runCatchingCancellable {
+            (callableJson.parseToJsonElement(dataJson) as? JsonObject)?.get(field)
+                ?.let { com.tribetails.auntieos.web.screens.householdNoticeOf(it) }
+        }.getOrNull()
+
+    /**
+     * #1816, #1838, #2027, #1841: who an admin action's household notice will
+     * reach, and how, from the dispatcher's own dry run
+     * (`previewVisitNotification` with a key). [sessionId] (a cancel or a
+     * move) runs that visit's checks too. Err when the call fails or a server
+     * from before the key answers without channels: the confirm then says
+     * nothing about the household.
+     */
+    suspend fun previewHouseholdNotice(
+        familyId: String,
+        key: String,
+        sessionId: String? = null,
+    ): WriteResult<com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Ready> {
+        if (familyId.isBlank()) return WriteResult.Err("No household to ask about.")
+        val payload = buildJsonObject {
+            put("familyId", JsonPrimitive(familyId))
+            put("key", JsonPrimitive(key))
+            sessionId?.takeIf { it.isNotBlank() }?.let { put("sessionId", JsonPrimitive(it)) }
+        }
+        return when (val r = platformInvokeCallable("previewVisitNotification", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> runCatchingCancellable {
+                val obj = callableJson.parseToJsonElement(r.value) as? JsonObject
+                obj?.let { com.tribetails.auntieos.web.screens.householdPreviewOf(it) }
+            }.getOrNull()?.let { WriteResult.Ok(it) } ?: WriteResult.Err("No answer for this notice.")
+        }
+    }
+
+    /**
+     * #1816: what the household was told about a KinTale the compose screen
+     * sent by a direct write (`sentVia: "pending"`). The server's trigger is
+     * the only thing that knows; it records the outcome at
+     * `visit_step_notices/kintale__{reportId}`. Polls for up to [waitMs]; null
+     * when no record lands in time, which the toast says as "still checking".
+     */
+    suspend fun kinTaleSendNotice(
+        reportId: String,
+        waitMs: Long = 12_000L,
+        pollMs: Long = 1_500L,
+        read: suspend (String) -> JsonObject? = { platformVisitStepNoticeDoc(it) },
+    ): com.tribetails.auntieos.web.screens.HouseholdNotice? {
+        var waited = 0L
+        while (true) {
+            val doc = runCatchingCancellable { read("kintale__$reportId") }.getOrNull()
+            if (doc != null) {
+                return com.tribetails.auntieos.web.screens.householdNoticeOf(doc["notice"])
+                    ?: com.tribetails.auntieos.web.screens.HouseholdNotice(
+                        told = (doc["notified"] as? JsonPrimitive)?.booleanOrNull == true,
+                        reason = (doc["reason"] as? JsonPrimitive)?.contentOrNull,
+                        name = null,
+                        channels = emptyList(),
+                    )
+            }
+            if (waited >= waitMs) return null
+            kotlinx.coroutines.delay(pollMs)
+            waited += pollMs
+        }
     }
 
     /**
@@ -2045,7 +2124,39 @@ class FirestoreClient {
     suspend fun rejectBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
         bookingTransition(bookingId, visitId, "REJECT")
     suspend fun cancelBooking(bookingId: String, visitId: String? = null): WriteResult<Unit> =
-        bookingTransition(bookingId, visitId, "CANCEL")
+        when (val r = cancelBookingNotice(bookingId, visitId)) {
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+            is WriteResult.Err -> r
+        }
+
+    /**
+     * #1838: [cancelBooking], answering with what the household was told, read
+     * from the cancel's own result (`transitionBookingStatus.notice`, or the
+     * visit's entry in `batchUpdateBookings.notices`). Null from a server older
+     * than the field.
+     */
+    suspend fun cancelBookingNotice(
+        bookingId: String,
+        visitId: String? = null,
+    ): WriteResult<com.tribetails.auntieos.web.screens.HouseholdNotice?> {
+        if (visitId.isNullOrBlank()) {
+            val payload = buildJsonObject {
+                put("sessionId", JsonPrimitive(bookingId))
+                put("action", JsonPrimitive("CANCEL"))
+            }
+            return when (val r = platformInvokeCallable("transitionBookingStatus", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+                is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+                is WriteResult.Ok -> WriteResult.Ok(noticeIn(r.value, "notice"))
+            }
+        }
+        return when (val r = batchUpdateBookings(listOf(visitId), "CANCEL")) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> when (val one = singleBookingOutcome(r.value)) {
+                is WriteResult.Err -> one
+                is WriteResult.Ok -> WriteResult.Ok(r.value.notices[visitId])
+            }
+        }
+    }
 
     /**
      * #1617: Mark Completed on one `kin_care_sessions` row, through
@@ -2108,7 +2219,9 @@ class FirestoreClient {
         serviceDurationMinutes: Int = 0,
         notes: String = "",
         recordAsCompleted: Boolean = false,
-    ): WriteResult<String> {
+        /** #1841: send the household "KinCare booking confirmed". Sent only when true, never with [recordAsCompleted]. */
+        notifyHousehold: Boolean = false,
+    ): WriteResult<CreatedVisit> {
         val payload = buildJsonObject {
             put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId)))
             put("kinIds", buildJsonArray { kinIds.forEach { add(JsonPrimitive(it)) } })
@@ -2118,11 +2231,17 @@ class FirestoreClient {
             put("serviceDurationMinutes", JsonPrimitive(serviceDurationMinutes))
             put("notes", JsonPrimitive(notes))
             if (recordAsCompleted) put("recordAsCompleted", JsonPrimitive(true))
+            if (notifyHousehold && !recordAsCompleted) put("notifyHousehold", JsonPrimitive(true))
         }
         return when (val r = platformInvokeCallable("createKinCareSession", callableJson.encodeToString(JsonObject.serializer(), payload))) {
-            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
             is WriteResult.Ok -> runCatchingCancellable {
-                WriteResult.Ok(callableJson.parseToJsonElement(r.value).jsonObject["sessionId"]?.jsonPrimitive?.contentOrNull.orEmpty())
+                WriteResult.Ok(
+                    CreatedVisit(
+                        sessionId = callableJson.parseToJsonElement(r.value).jsonObject["sessionId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                        notice = noticeIn(r.value, "notice"),
+                    ),
+                )
             }.getOrElse { WriteResult.Err(it.message ?: "decode failed") }
         }
     }
@@ -2204,7 +2323,7 @@ class FirestoreClient {
         startTime: String,
         endTime: String,
         override: ScheduleOverride? = null,
-    ): WriteResult<Unit> {
+    ): WriteResult<com.tribetails.auntieos.web.screens.HouseholdNotice?> {
         val payload = buildJsonObject {
             put("sessionId", JsonPrimitive(sessionId))
             put("startTime", JsonPrimitive(startTime))
@@ -2218,7 +2337,8 @@ class FirestoreClient {
         }
         return when (val r = platformInvokeCallable("rescheduleBooking", callableJson.encodeToString(JsonObject.serializer(), payload))) {
             is WriteResult.Err -> WriteResult.Err(r.message, r.code)
-            is WriteResult.Ok -> WriteResult.Ok(Unit)
+            // #2027: what the household was told about the move. Null from an older server.
+            is WriteResult.Ok -> WriteResult.Ok(noticeIn(r.value, "notice"))
         }
     }
 
@@ -3255,6 +3375,8 @@ data class BatchBookingResult(
     val action: String,
     val updated: Int,
     val failed: List<BatchBookingFailure>,
+    /** #1838: on CANCEL, what each visit's household was told, by visit id. */
+    val notices: Map<String, com.tribetails.auntieos.web.screens.HouseholdNotice> = emptyMap(),
 ) {
     val failedCount: Int get() = failed.size
 }
@@ -3288,8 +3410,16 @@ internal fun decodeBatchBookingResult(dataJson: String): BatchBookingResult {
             error = o["error"]?.jsonPrimitive?.contentOrNull ?: "",
         )
     }
-    return BatchBookingResult(action = action, updated = updated, failed = failed)
+    val notices = (obj["notices"] as? JsonArray).orEmpty().mapNotNull { el ->
+        val o = el as? JsonObject ?: return@mapNotNull null
+        val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+        com.tribetails.auntieos.web.screens.householdNoticeOf(o["notice"])?.let { id to it }
+    }.toMap()
+    return BatchBookingResult(action = action, updated = updated, failed = failed, notices = notices)
 }
+
+/** #1841: a visit New visit wrote, and what its household was told. */
+data class CreatedVisit(val sessionId: String, val notice: com.tribetails.auntieos.web.screens.HouseholdNotice?)
 
 /**
  * Pure decode of the listCatalogKeys body `{keys:[...]}`. Throws on malformed

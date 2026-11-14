@@ -1,10 +1,31 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, within, waitFor, fireEvent, act } from '@testing-library/react';
+import { render as rtlRender, screen, within, waitFor, fireEvent, act } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { ToastProvider } from '../components/Toast';
+
+// #2027/#1841: the screen confirms a move and a New visit through useToast(),
+// which throws outside a ToastProvider. Same wrap KinfolkEdit.test.tsx uses.
+function render(ui: ReactElement) {
+  return rtlRender(<ToastProvider>{ui}</ToastProvider>);
+}
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type ScheduleSessionEntry, type BusySlotEntry } from '../api/schedule';
 import { localDateIso, weekDays, monthGridDays } from '../lib/scheduleFormat';
+
+// #1838/#2027/#1841: the confirms ask the server who a household notice reaches.
+const { previewHouseholdNotice } = vi.hoisted(() => ({ previewHouseholdNotice: vi.fn() }));
+vi.mock('../api/visitNoticePreview', async (orig) => ({
+  ...(await orig<typeof import('../api/visitNoticePreview')>()),
+  previewHouseholdNotice,
+}));
+beforeEach(() => {
+  previewHouseholdNotice
+    .mockReset()
+    .mockResolvedValue({ willNotify: true, reason: null, name: 'Dre East', channels: ['email'] });
+});
+
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
@@ -1202,6 +1223,10 @@ describe('Schedule write surfaces', () => {
     fireEvent(el, new MouseEvent('pointermove', { bubbles: true, clientX: 40, clientY: 40 + dy }));
     fireEvent(el, new MouseEvent('pointerup', { bubbles: true, clientX: 40, clientY: 40 + dy }));
   }
+  /** #2027: a drag asks first. Answer "Move visit". */
+  async function confirmMove() {
+    fireEvent.click(await screen.findByRole('button', { name: 'Move visit' }));
+  }
   function refusal(code: string, message: string) {
     return Object.assign(new Error(message), {
       code: 'functions/failed-precondition',
@@ -1212,6 +1237,7 @@ describe('Schedule write surfaces', () => {
     mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
     render(<Schedule />);
     dragBy(gridBlock(), HOUR_HEIGHT_PX); // one hour down: 9:00 -> 10:00
+    await confirmMove();
     await waitFor(() => expect(rescheduleBooking).toHaveBeenCalledTimes(1));
     const today = new Date();
     const at = (hh: number, mm: number) =>
@@ -1256,7 +1282,58 @@ describe('Schedule write surfaces', () => {
     // The same gesture DOES write once the travel clears that quarter-hour, so
     // the assertion above is about the no-op guard and not about a dead drag.
     dragBy(gridBlock(), 15);
+    await confirmMove();
     await waitFor(() => expect(rescheduleBooking).toHaveBeenCalledTimes(1));
+  });
+  // #2027: a drag is easy to make by accident and emails the household, so it
+  // asks first, says who will be told, and reports who was.
+  it('#2027 HAPPY: a drag asks first, names who will be told, and the toast says who was', async () => {
+    rescheduleBooking.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'sess-42',
+      notice: { told: true, reason: null, name: 'Dre East', channels: ['email'] },
+    });
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    dragBy(gridBlock(), HOUR_HEIGHT_PX);
+    const dialog = await screen.findByRole('dialog', { name: 'Move this visit?' });
+    expect(rescheduleBooking).not.toHaveBeenCalled();
+    expect(await within(dialog).findByText('Dre East will get an email.')).toBeInTheDocument();
+    expect(previewHouseholdNotice).toHaveBeenCalledWith(expect.any(String), 'kincare.changed', 'sess-42');
+    await confirmMove();
+    expect(await screen.findByText("The Whitfields's visit is rescheduled. Dre East was sent an email.")).toBeInTheDocument();
+  });
+  it('#2027 SAD: "Keep it where it was" writes nothing', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    dragBy(gridBlock(), HOUR_HEIGHT_PX);
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep it where it was' }));
+    expect(screen.queryByRole('dialog', { name: 'Move this visit?' })).toBeNull();
+    expect(rescheduleBooking).not.toHaveBeenCalled();
+  });
+  it('#2027 NEGATIVE: household notices off: the confirm says nobody will be told, and the toast says nobody was', async () => {
+    previewHouseholdNotice.mockResolvedValue({ willNotify: false, reason: 'household_notices_off', name: 'Dre East', channels: [] });
+    rescheduleBooking.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'sess-42',
+      notice: { told: false, reason: 'household_notices_off', name: 'Dre East', channels: [] },
+    });
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    dragBy(gridBlock(), HOUR_HEIGHT_PX);
+    expect(await screen.findByText('Nobody will be told: notices to households are off in Settings.')).toBeInTheDocument();
+    await confirmMove();
+    expect(
+      await screen.findByText("The Whitfields's visit is rescheduled. Nobody was told: notices to households are off in Settings."),
+    ).toBeInTheDocument();
+  });
+  it('#2027 ERROR: an older server with no answer: the toast claims nothing about the household', async () => {
+    rescheduleBooking.mockResolvedValueOnce({ ok: true, sessionId: 'sess-42' });
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    dragBy(gridBlock(), HOUR_HEIGHT_PX);
+    await confirmMove();
+    expect(await screen.findByText("The Whitfields's visit is rescheduled.")).toBeInTheDocument();
   });
   it('a refusal is surfaced with the server’s own sentence, and offers the override', async () => {
     rescheduleBooking.mockRejectedValueOnce(
@@ -1265,6 +1342,7 @@ describe('Schedule write surfaces', () => {
     mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
     render(<Schedule />);
     dragBy(gridBlock(), HOUR_HEIGHT_PX);
+    await confirmMove();
     await screen.findByText('Couldn’t move that visit');
     expect(screen.getByText(/overlaps a visit already booked/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Move anyway' }));
@@ -1278,6 +1356,7 @@ describe('Schedule write surfaces', () => {
     mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
     render(<Schedule />);
     dragBy(gridBlock(), HOUR_HEIGHT_PX);
+    await confirmMove();
     await screen.findByText('Couldn’t move that visit');
     expect(screen.queryByRole('button', { name: 'Move anyway' })).toBeNull();
   });
@@ -1566,6 +1645,8 @@ describe('Schedule on the business clock, device in another zone (#1158)', () =>
     fireEvent(el, new MouseEvent('pointerdown', { bubbles: true, clientX: 40, clientY: 40 }));
     fireEvent(el, new MouseEvent('pointermove', { bubbles: true, clientX: 40, clientY: 40 + HOUR_HEIGHT_PX }));
     fireEvent(el, new MouseEvent('pointerup', { bubbles: true, clientX: 40, clientY: 40 + HOUR_HEIGHT_PX }));
+    // #2027: a drag asks first.
+    fireEvent.click(await screen.findByRole('button', { name: 'Move visit' }));
     await waitFor(() => expect(rescheduleBooking).toHaveBeenCalledTimes(1));
     expect(rescheduleBooking).toHaveBeenCalledWith('sess-42', bizToday('15:00'), bizToday('16:00'), {});
   });

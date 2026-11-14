@@ -70,6 +70,12 @@ import com.tribetails.auntieos.web.ui.components.DenPanel
 import com.tribetails.auntieos.web.ui.components.DenScreenHeading
 import com.tribetails.auntieos.web.ui.components.EmptyHint
 import com.tribetails.auntieos.web.ui.components.GhostButton
+import com.tribetails.auntieos.web.ui.components.AuntieDialog
+import com.tribetails.auntieos.web.ui.components.LocalRouteToast
+import com.tribetails.auntieos.web.ui.components.ToastKind
+import com.tribetails.auntieos.web.screens.HouseholdNoticeKeys
+import com.tribetails.auntieos.web.screens.HouseholdNoticePreview
+import com.tribetails.auntieos.web.screens.householdNoticeConfirmLine
 import com.tribetails.auntieos.web.ui.components.GlassSurface
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
@@ -177,6 +183,14 @@ fun ScheduleScreen() {
 
     // #1154: the refused drop and the override its refusal offers, for "Move anyway" in the banner below.
     var rescheduleRetry by remember { mutableStateOf<RescheduleAttempt?>(null) }
+    val routeToast = LocalRouteToast.current
+    /** The household a session id names, for the move's question and its toast. */
+    fun householdOf(sessionId: String): String =
+        (sessionsState as? FirestoreResult.Data)?.value?.firstOrNull { it._id == sessionId }?.kinfolkName.orEmpty()
+    // #2027: a drag is easy to make by accident and tells the household, so the
+    // drop waits here, with its new window, until "Move visit" or "Keep it where it was".
+    var pendingDrop by remember { mutableStateOf<RescheduleAttempt?>(null) }
+    var dropPreview by remember { mutableStateOf<HouseholdNoticePreview>(HouseholdNoticePreview.Checking) }
     fun sendReschedule(attempt: RescheduleAttempt) {
         rescheduleError = null
         rescheduleRetry = null
@@ -190,7 +204,8 @@ fun ScheduleScreen() {
         optimistic[attempt.sessionId] = attempt.startTime to attempt.endTime // optimistic move
         scope.launch {
             when (val out = client.rescheduleOutcome(attempt)) {
-                is RescheduleOutcome.Done -> Unit // sessionsStream will confirm the new times
+                // sessionsStream will confirm the new times; #2027: say who the move told.
+                is RescheduleOutcome.Done -> routeToast.show(rescheduledToast(householdOf(attempt.sessionId), out.notice), ToastKind.Success)
                 is RescheduleOutcome.Refused -> {
                     if (prev == null) optimistic.remove(attempt.sessionId) else optimistic[attempt.sessionId] = prev
                     rescheduleError = out.message
@@ -199,8 +214,20 @@ fun ScheduleScreen() {
             }
         }
     }
-    fun onRescheduleDrop(args: RescheduleArgs) =
-        sendReschedule(RescheduleAttempt(args.sessionId, args.startTime, args.endTime))
+    fun onRescheduleDrop(args: RescheduleArgs) {
+        val attempt = RescheduleAttempt(args.sessionId, args.startTime, args.endTime)
+        // #1574: a drop onto an hour that has passed is refused at once, not asked about.
+        rescheduleIntoPastRefusal(attempt.startTime, localZone, Clock.System.now().toEpochMilliseconds())?.let {
+            rescheduleError = it
+            return
+        }
+        pendingDrop = attempt
+        dropPreview = HouseholdNoticePreview.Checking
+        val familyId = (sessionsState as? FirestoreResult.Data)?.value?.firstOrNull { it._id == args.sessionId }?.kinfolkId.orEmpty()
+        scope.launch {
+            dropPreview = client.previewHouseholdNotice(familyId, HouseholdNoticeKeys.CHANGED, args.sessionId).asPreview()
+        }
+    }
     ScreenScaffold {
         // Reframed as a calendar: the label follows the active view + visible range
         // (state/data-driven, not a fixed "this week's runs"). The mislabeled
@@ -399,12 +426,40 @@ fun ScheduleScreen() {
         )
     }
 
+    pendingDrop?.let { drop ->
+        AuntieDialog(
+            visible = true,
+            title = "Move this visit?",
+            onDismiss = { pendingDrop = null },
+            footer = {
+                GhostButton(label = "Keep it where it was", onClick = { pendingDrop = null })
+                PrimaryButton(label = "Move visit", onClick = {
+                    pendingDrop = null
+                    sendReschedule(drop)
+                })
+            },
+        ) {
+            Text(
+                moveConfirmText(householdOf(drop.sessionId), drop.startTime, localZone),
+                style = AuntieTheme.typography.bodyMedium,
+                color = AuntieTheme.colors.textPrimary,
+            )
+            householdNoticeConfirmLine(dropPreview, householdOf(drop.sessionId))?.let {
+                Text(it, style = AuntieTheme.typography.bodyMedium, color = AuntieTheme.colors.textPrimary)
+            }
+        }
+    }
+
     if (showNewVisit) {
         NewVisitDialog(
             client = client,
             localZone = localZone,
             onDismiss = { showNewVisit = false },
-            onCreated = { showNewVisit = false }, // the sessions stream re-renders the grid
+            // The sessions stream re-renders the grid; #1841: say what was written and who was told.
+            onCreated = { summary ->
+                showNewVisit = false
+                routeToast.show(summary, ToastKind.Success)
+            },
         )
     }
     if (showBlockTime) {
@@ -1418,3 +1473,22 @@ private fun visitEndMinute(session: KinCareSession, startMin: Int, zone: TimeZon
 
 /** #1606: below this a week block puts its time and household on one line. */
 private val COMPACT_BLOCK_HEIGHT = 44.dp
+
+/**
+ * #2027: the drag question's first sentence, "The Wrens's visit moves to Tue,
+ * Nov 17 at 09:00." on the business clock (24-hour, as auntieOS shows times).
+ * An unreadable time says "a new time".
+ */
+@OptIn(ExperimentalTime::class)
+internal fun moveConfirmText(kinfolkName: String, startIso: String, zone: TimeZone): String {
+    val name = kinfolkName.ifBlank { "Unnamed" }
+    val at = runCatching {
+        val local = Instant.parse(startIso).toLocalDateTime(zone)
+        val day = local.dayOfWeek.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+        val month = local.month.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+        val hh = local.hour.toString().padStart(2, '0')
+        val mm = local.minute.toString().padStart(2, '0')
+        "$day, $month ${local.dayOfMonth} at $hh:$mm"
+    }.getOrNull() ?: "a new time"
+    return "$name's visit moves to $at."
+}
