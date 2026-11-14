@@ -64,6 +64,7 @@ import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.BottomBorderField
 import com.tribetails.auntieos.web.ui.components.Crumb
 import com.tribetails.auntieos.web.ui.components.GhostButton
+import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.GlassSurface
 import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.ScreenScaffold
@@ -729,18 +730,51 @@ private fun ArchiveKinBlock(
                 Text(error, style = AuntieTheme.typography.bodySmall, color = c.textDim)
             }
         }
-        GhostButton(
-            label    = when {
-                busy && archived  -> "Restoring…"
-                busy              -> "Archiving…"
-                archived          -> "Restore"
-                else              -> "Archive"
-            },
-            onClick  = { onToggle(!archived) },
-            enabled  = !disabled,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        // #2017: Archive asks first, naming the Kin and the way back. Restore
+        // acts at once: it puts the Kin back, and Archive is there to undo it.
+        var confirming by remember(archived) { mutableStateOf(false) }
+        if (confirming && !archived && !busy) {
+            AuntieBanner(tone = AuntieBannerTone.Warning) {
+                Text(kinArchiveConfirmText(name), style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                GhostButton(
+                    label    = "Cancel",
+                    onClick  = { confirming = false },
+                    enabled  = !disabled,
+                    modifier = Modifier.weight(1f),
+                )
+                PrimaryButton(
+                    label    = "Archive $name",
+                    onClick  = { confirming = false; onToggle(true) },
+                    enabled  = !disabled,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        } else {
+            GhostButton(
+                label    = when {
+                    busy && archived  -> "Restoring…"
+                    busy              -> "Archiving…"
+                    archived          -> "Restore"
+                    else              -> "Archive"
+                },
+                onClick  = { if (archived) onToggle(false) else confirming = true },
+                enabled  = !disabled,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
+}
+
+/**
+ * #2017: the confirm's words. Names the Kin, says what archiving does and where
+ * to find it again. Admin web and admin Android say the same.
+ */
+internal fun kinArchiveConfirmText(name: String): String {
+    val who = name.trim().ifBlank { "this Kin" }
+    return "Archive $who? $who leaves the Kin list and the household's roster. " +
+        "To bring $who back, choose Archived under Show on the Directory's Kin tab, open $who, and press Restore."
 }
 // ---- Run-4 #6: breed dropdown (pure helpers + field) ----
 

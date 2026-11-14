@@ -9,7 +9,7 @@ import {
   TAG_FILTER_ALL,
   filterSortKinfolk,
   filterSortKin,
-  isKinInCare,
+  KIN_SHOW_OPTIONS,
   tagFilterOptions,
   activeKinByKinfolk,
   kinfolkDisplayName,
@@ -17,6 +17,7 @@ import {
   initialsOf,
   type Kinfolk,
   type Kin,
+  type KinShow,
   type SortOption,
 } from '../api/directory';
 import { useCollection } from '../lib/firestore';
@@ -322,10 +323,14 @@ function KinCard({ kin, householdName, onClick }: KinCardProps) {
  * operator who cleared the search and still saw "No matches for" had no way to
  * learn the tag was the thing holding rows back.
  */
-function noMatchHint(query: string, tag: string): string {
+function noMatchHint(query: string, tag: string, show?: KinShow): string {
   const q = query.trim();
   if (q !== '' && tag !== '') return `No matches for "${q}" tagged "${tag}".`;
   if (tag !== '') return `Nothing here is tagged "${tag}".`;
+  // #1902: on the Kin tab the Show picker alone can empty the list, so it is named.
+  if (q === '' && show === 'archived') return 'No archived kin.';
+  if (q === '' && show === 'inCare') return 'No kin in care.';
+  if (q === '' && show === 'all') return 'Every kin on file is archived. Choose Archived under Show to see them.';
   return `No matches for "${q}".`;
 }
 
@@ -413,7 +418,9 @@ export function Directory({
    * pet"; on, it keeps what `isKinInCare` keeps, which is exactly what Home's
    * "Kin in care" card counts.
    */
-  const [kinInCareOnly, setKinInCareOnly] = useState(initialKinInCare);
+  // #1902: and "Archived", the one list an archived Kin is on, so its Restore
+  // can be reached again.
+  const [kinShow, setKinShow] = useState<KinShow>(initialKinInCare ? 'inCare' : 'all');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<SortOption>(SORT_OPTION_DEFAULT);
   /**
@@ -737,12 +744,15 @@ export function Directory({
             <span className="directory__sort-label">Show</span>
             <select
               className="directory__sort-select"
-              value={kinInCareOnly ? 'inCare' : 'all'}
-              onChange={(e) => setKinInCareOnly(e.target.value === 'inCare')}
+              value={kinShow}
+              onChange={(e) => setKinShow(e.target.value as KinShow)}
               aria-label="Filter kin by status"
             >
-              <option value="all">All kin</option>
-              <option value="inCare">In care</option>
+              {KIN_SHOW_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </select>
             <span className="directory__sort-chevron">
               <ChevronGlyph />
@@ -822,9 +832,9 @@ export function Directory({
           empty={<EmptyHint>No kin on file yet.</EmptyHint>}
         >
           {(rows) => {
-            const visible = filterSortKin(kinInCareOnly ? rows.filter(isKinInCare) : rows, query, sort, activeKinTag);
+            const visible = filterSortKin(rows, query, sort, activeKinTag, kinShow);
             if (visible.length === 0) {
-              return <EmptyHint>{noMatchHint(query, activeKinTag)}</EmptyHint>;
+              return <EmptyHint>{noMatchHint(query, activeKinTag, kinShow)}</EmptyHint>;
             }
             return (
               <EntityCardGrid label="Kin" minCardWidth="290px" align="start">

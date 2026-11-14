@@ -165,15 +165,65 @@ describe('setKinfolkArchived: what it writes (#2161)', () => {
     expect(kinfolkWrites(ctx)[0]!.data).toMatchObject({ status: 'archived', archivedReason: '' });
   });
 
-  it('restore sets active and clears the three archive fields', async () => {
+  it('restore of a household archived before #1958 (no kept status) sets active and clears the archive fields', async () => {
     const ctx = office(ARCHIVED);
     mocks.dbFn.mockReturnValue(ctx.db);
     const { setKinfolkArchivedHandler } = await import('../src/admin/kinfolkArchive');
     const res = await setKinfolkArchivedHandler(call({ kinfolkId: 'kf1', archived: false, reason: 'ignored' }));
     const w = kinfolkWrites(ctx);
     expect(w).toHaveLength(1);
-    expect(w[0]!.data).toEqual({ status: 'active', archivedAt: '', archivedReason: '', archivedBy: '', updatedAt: '__TS__' });
+    expect(w[0]!.data).toEqual({
+      status: 'active',
+      archivedAt: '',
+      archivedReason: '',
+      archivedBy: '',
+      statusBeforeArchive: '',
+      updatedAt: '__TS__',
+    });
     expect(res).toEqual({ ok: true, archived: false, status: 'active', changed: true });
+  });
+
+  // #1958: an archive keeps the status the household held, and a restore gives it back.
+  it.each([
+    ['prospect', 'prospect'],
+    ['active', 'active'],
+    ['inactive', 'inactive'],
+    [' Prospect ', 'prospect'],
+    ['', 'active'],
+    ['lead', 'active'],
+  ])('archive of a household held as %j keeps %j', async (held, kept) => {
+    const ctx = office({ ...ACTIVE, status: held });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinfolkArchivedHandler } = await import('../src/admin/kinfolkArchive');
+    await setKinfolkArchivedHandler(call({ kinfolkId: 'kf1', archived: true }));
+    expect(kinfolkWrites(ctx)[0]!.data).toMatchObject({ status: 'archived', statusBeforeArchive: kept });
+  });
+
+  it.each([
+    ['prospect', 'prospect'],
+    ['inactive', 'inactive'],
+    ['active', 'active'],
+    [' PROSPECT ', 'prospect'],
+    ['archived', 'active'],
+    ['lead', 'active'],
+    [42, 'active'],
+  ])('restore with %j kept gives back %j, and clears it', async (kept, restored) => {
+    const ctx = office({ ...ARCHIVED, statusBeforeArchive: kept });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinfolkArchivedHandler } = await import('../src/admin/kinfolkArchive');
+    const res = await setKinfolkArchivedHandler(call({ kinfolkId: 'kf1', archived: false }));
+    expect(kinfolkWrites(ctx)[0]!.data).toMatchObject({ status: restored, statusBeforeArchive: '' });
+    expect(res).toEqual({ ok: true, archived: false, status: restored, changed: true });
+  });
+
+  it('a Prospect household archived then restored comes back as Prospect (#1958 walk)', async () => {
+    const ctx = office({ ...ACTIVE, status: 'prospect' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setKinfolkArchivedHandler } = await import('../src/admin/kinfolkArchive');
+    await setKinfolkArchivedHandler(call({ kinfolkId: 'kf1', archived: true }));
+    const res = await setKinfolkArchivedHandler(call({ kinfolkId: 'kf1', archived: false }));
+    expect(res).toMatchObject({ changed: true, status: 'prospect' });
+    expect(archiveAudits().map((e) => e.payload.status)).toEqual(['archived', 'prospect']);
   });
 
   it('restores a household stored as Archived', async () => {

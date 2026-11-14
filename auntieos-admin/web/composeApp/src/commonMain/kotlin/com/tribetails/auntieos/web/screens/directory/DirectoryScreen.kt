@@ -264,6 +264,9 @@ private fun DirectoryListScreen(
     // to populate per-Kinfolk-card chips. This removes the per-card N+1
     // kinStream() listeners the old KinfolkCard opened (one per card).
     val allKinState by remember { client.allKinStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #1902: the Kin tab's Show picker; "Archived" is the one list an archived
+    // Kin is on, so its Restore can be reached again.
+    var kinShow by remember { mutableStateOf(KinShow.All) }
 
     // Sessions feed the per-card "last visit" footer (last COMPLETED session per
     // kinfolk via the pure lastVisitByKinfolk helper). Reports feed the "New" badge
@@ -358,6 +361,21 @@ private fun DirectoryListScreen(
                 onSelect = { vm.setSort(it) },
             )
         }
+        if (activeTab == "Kin") {
+            Spacer(Modifier.height(12.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("Show", style = AuntieTheme.typography.labelLarge, color = AuntieTheme.colors.textDim)
+                SegmentedPicker(
+                    options  = KinShow.entries.toList(),
+                    selected = kinShow,
+                    onSelect = { kinShow = it },
+                    label    = { it.label },
+                )
+            }
+        }
         Spacer(Modifier.height(20.dp))
 
         // Fail loud: a broken sessions/reports stream must not silently drop the
@@ -423,8 +441,7 @@ private fun DirectoryListScreen(
                     Text(s.message, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error)
                 }
                 is FirestoreResult.Data -> {
-                    val filtered = s.value
-                        .filter { it.status != "archived" && matchKin(it, uiState.query) }
+                    val filtered = kinForShow(s.value, uiState.query, kinShow)
                         .sortedByOption(
                             option    = uiState.sort,
                             name      = { k -> k.name },
@@ -440,12 +457,11 @@ private fun DirectoryListScreen(
                             updatedAt = { _ -> "" },
                         )
                     if (filtered.isEmpty()) {
+                        val (title, message) = kinShowEmptyText(uiState.query, kinShow, anyOnFile = s.value.isNotEmpty())
                         AuntieEmptyState(
                             icon    = Lucide.Search,
-                            title   = if (s.value.isEmpty()) "No Kin on file yet"
-                                      else                   "No matches for \"${uiState.query}\"",
-                            message = if (s.value.isEmpty()) "Add Kin from a Kinfolk profile."
-                                      else "Try a different name, species, or breed.",
+                            title   = title,
+                            message = message,
                         )
                     } else {
                         // #1602: each card names its household, so two kin
@@ -515,14 +531,6 @@ private fun LoadingGrid() {
     CardGrid(items = (0 until 6).toList()) {
         ShimmerCard(height = CARD_HEIGHT)
     }
-}
-
-private fun matchKin(kin: Kin, q: String): Boolean {
-    if (q.isBlank()) return true
-    val needle = q.trim().lowercase()
-    return kin.name.lowercase().contains(needle)
-        || kin.species.lowercase().contains(needle)
-        || kin.breed.lowercase().contains(needle)
 }
 
 /**
