@@ -202,11 +202,15 @@ export interface CreateKinCareSessionArgs {
   overrideBusyConflict?: boolean;
   /** #1574: the window has ended, so the visit is written down as already Completed (never Scheduled). The server refuses it for a window that has not ended. */
   recordAsCompleted?: boolean;
+  /** #1841: send the household "KinCare booking confirmed". Absent means no send. Ignored for a recorded visit. */
+  notifyHousehold?: boolean;
 }
 
 export interface CreateKinCareSessionResult {
   ok: true;
   sessionId: string;
+  /** #1841: what the household was told about the new visit. Absent from an older server. */
+  notice?: unknown;
 }
 
 /**

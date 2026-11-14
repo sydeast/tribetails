@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { KINTALES_QUERY, type KinTaleEntry } from '../api/kinTales';
 import { SESSIONS_QUERY, type SessionEntry } from '../api/sessions';
 import {
+  awaitKinTaleSendNotice,
   saveKinTaleDraft,
   sendKinTale,
   hasKinTaleContent,
@@ -45,6 +46,13 @@ import { validateKinTaleDraft, type KinTaleDraftErrors } from '../lib/kinTaleDra
 import { useToast } from '../components/Toast';
 import { bookingServiceName } from '../lib/bookingFormat';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
+import { useIsAuntie } from '../lib/useIsAuntie';
+import { useHouseholdNoticePreview } from '../lib/useHouseholdNoticePreview';
+import {
+  householdNoticeConfirmLine,
+  householdNoticeResultLine,
+  withHouseholdLine,
+} from '../lib/householdNoticeWords';
 import './KinTaleCompose.css';
 
 /**
@@ -385,6 +393,12 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
   const [isSaving, setIsSaving] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [confirmSend, setConfirmSend] = useState(false);
+  // #1816: the confirm asks the server who the send will reach, and how.
+  const auntie = useIsAuntie();
+  const sendPreview = useHouseholdNoticePreview(
+    confirmSend && draft !== null ? draft.kinfolkId : null,
+    'kintale.published',
+  );
   const [banner, setBanner] = useState<Banner_ | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const { showToast } = useToast();
@@ -574,6 +588,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     if (!draft || isSending || isSent) return;
     setIsSending(true);
     setBanner(null);
+    let sentId = '';
     try {
       // Send always saves first, mirrors the wasm's own onSend(): a still-new
       // draft is created on the way to being sent, never sent unsaved.
@@ -587,11 +602,16 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
       if (id !== draft._id) setDraft({ ...draft, _id: id });
       setLoadedDraft({ ...draft, _id: id });
       await sendKinTale({ reportId: id, sessionId: draft.sessionId });
+      sentId = id;
     } catch (err) {
       setIsSending(false);
       setBanner({ tone: 'error', text: `Couldn't send: ${err instanceof Error ? err.message : 'unknown error'}` });
       return;
     }
+    // #1816: the toast says what the server did, not a promise. The send is
+    // committed; "Sending…" stays up while the trigger records who was told.
+    const notice = await awaitKinTaleSendNotice(sentId);
+    const household = draft.kinfolkName;
 
     // #2123: sending a KinTale never decides whether the visit is Completed.
     // Departure does, on the server (`triggers/onKinCareSessionDeparted.ts`),
@@ -604,7 +624,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     // fixed on desktop). `showToast` survives `onClose()` because
     // `ToastProvider` is mounted once above the router (main.tsx), the same
     // reason every other confirmation in this file already uses it.
-    showToast('KinTale sent. Kinfolk will hear from you soon.');
+    showToast(withHouseholdLine('KinTale sent.', kinTaleSentHouseholdLine(notice, household, auntie)));
     onClose();
   }
 
@@ -694,6 +714,7 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
         isSending,
         banner,
         confirmSend,
+        sendNoticeLine: householdNoticeConfirmLine(sendPreview, draft?.kinfolkName ?? '', auntie),
         onSaveDraft: () => void handleSaveDraft(),
         onOpenSendConfirm: () => setConfirmSend(true),
         onCancelSendConfirm: () => setConfirmSend(false),
@@ -888,6 +909,8 @@ interface ComposeFormProps {
   isSending: boolean;
   banner: Banner_ | null;
   confirmSend: boolean;
+  /** #1816: the server's answer to who the send will reach, or null to say nothing. */
+  sendNoticeLine: string | null;
   onSaveDraft: () => void;
   onOpenSendConfirm: () => void;
   onCancelSendConfirm: () => void;
@@ -906,6 +929,22 @@ interface ComposeFormProps {
  * Auntie added to a KinTale" notice only when the words change or a photo is
  * added. A new headline, a ticked moment or a removed photo shows without one.
  */
+/**
+ * #1816: the toast's line about the household after a send, from the record
+ * the server wrote. No record in time says it is still checking (the owner can
+ * read the answer in the Activity Log; an Auntie has none).
+ */
+export function kinTaleSentHouseholdLine(
+  notice: Parameters<typeof householdNoticeResultLine>[0],
+  household: string,
+  auntie: boolean,
+): string {
+  if (notice === null || notice === undefined) {
+    const who = household.trim() === '' ? 'the household' : household.trim();
+    return `Still checking whether ${who} was told.${auntie ? '' : ' The Activity Log will show it.'}`;
+  }
+  return householdNoticeResultLine(notice, household, auntie);
+}
 export function sentKinTaleEditNote(household: string): string {
   const who = household.trim() === '' ? 'The household' : household.trim();
   return `This KinTale has been sent. ${who} will see your changes once you save them. New words or a new photo also send them a notice that you added to it, at most one a minute.`;
@@ -928,6 +967,7 @@ function ComposeForm({
   isSending,
   banner,
   confirmSend,
+  sendNoticeLine,
   onSaveDraft,
   onOpenSendConfirm,
   onCancelSendConfirm,
@@ -1144,7 +1184,7 @@ function ComposeForm({
           }
         >
           <p className="kintale-compose__dialog-hint">
-            {sendLabel}. Kinfolk will get this recap. This cannot be undone.
+            {sendLabel}. {sendNoticeLine === null ? '' : `${sendNoticeLine} `}This cannot be undone.
           </p>
         </Dialog>
       )}

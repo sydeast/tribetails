@@ -71,6 +71,17 @@ import { BlockTimeDialog } from '../components/BlockTimeDialog';
 import { NewVisitDialog } from '../components/NewVisitDialog';
 import { ScheduleWeekGrid, type ScheduleDrop } from '../components/ScheduleWeekGrid';
 import { navKicker } from '../lib/nav';
+import { Dialog } from '../components/Dialog';
+import { useToast } from '../components/Toast';
+import { useIsAuntie } from '../lib/useIsAuntie';
+import { useHouseholdNoticePreview } from '../lib/useHouseholdNoticePreview';
+import {
+  householdNoticeConfirmLine,
+  householdNoticeOf,
+  householdNoticeResultLine,
+  withHouseholdLine,
+} from '../lib/householdNoticeWords';
+import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import './Schedule.css';
 
 const VIEW_MODES: readonly { key: ScheduleViewMode; label: string }[] = [
@@ -306,6 +317,14 @@ export function Schedule({ onSelect }: ScheduleProps) {
   const [dropRetry, setDropRetry] = useState<
     { drop: ScheduleDrop; kind: 'visit' | 'busy' } | null
   >(null);
+  // #2027: a drag is easy to make by accident and tells the household, so it
+  // asks first. The drop waits here, with its new window, until the operator
+  // says Move or Keep.
+  const [confirmDrop, setConfirmDrop] = useState<{ drop: ScheduleDrop; startTime: string } | null>(null);
+  const { showToast } = useToast();
+  const auntie = useIsAuntie();
+  const dropFamilyId = confirmDrop === null ? null : str(confirmDrop.drop.session.kinfolkId).trim() || null;
+  const dropPreview = useHouseholdNoticePreview(dropFamilyId, 'kincare.changed');
 
   // ── unblock (#574) ─────────────────────────────────────────────────────────
   // Blocking a window has had a callable since B6; removing one had none, so no
@@ -349,11 +368,19 @@ export function Schedule({ onSelect }: ScheduleProps) {
     setDropError(null);
     setDropRetry(null);
     try {
-      await rescheduleBooking(drop.session._id, times.startTime, times.endTime, {
+      const res = await rescheduleBooking(drop.session._id, times.startTime, times.endTime, {
         ...(override === 'visit' && { visit: true }),
         ...(override === 'busy' && { busy: true }),
       });
       setPendingSessionId(null);
+      // #2027: say the move happened and who it told, from the move's answer.
+      const household = sessionHousehold(str(drop.session.kinfolkName));
+      showToast(
+        withHouseholdLine(
+          `${household}'s visit is rescheduled.`,
+          householdNoticeResultLine(householdNoticeOf(res?.notice), household, auntie),
+        ),
+      );
     } catch (err) {
       setPendingSessionId(null);
       // The block snaps back on its own: nothing was written, and the grid
@@ -369,6 +396,27 @@ export function Schedule({ onSelect }: ScheduleProps) {
     // callable, no audit entry, no "rescheduled" event for a move nobody made.
     const fromDay = businessDayOf(str(drop.session.startTime), businessZone) ?? '';
     if (isNoOpDrop(drop.session, fromDay, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone, drop.window)) return;
+    // #2027: ask before moving. A drop with no readable window goes straight to
+    // `commitDrop`, which names that refusal.
+    const times = rescheduleTimesForDrop(drop.session, drop.targetDayIso, drop.dropMinuteOfDay, snapMinutes, businessZone, drop.window);
+    if (times === null) {
+      void commitDrop(drop, null);
+      return;
+    }
+    // #1574: a drop onto an hour that has passed is refused at once, not asked about.
+    const pastRefusal = rescheduleIntoPastRefusal(times.startTime, Date.now());
+    if (pastRefusal !== null) {
+      setDropError(pastRefusal);
+      return;
+    }
+    setDropError(null);
+    setConfirmDrop({ drop, startTime: times.startTime });
+  }
+
+  function moveConfirmedDrop() {
+    if (confirmDrop === null) return;
+    const { drop } = confirmDrop;
+    setConfirmDrop(null);
     void commitDrop(drop, null);
   }
 
@@ -683,6 +731,34 @@ export function Schedule({ onSelect }: ScheduleProps) {
         />
       )}
 
+      {confirmDrop !== null && (
+        <Dialog
+          title="Move this visit?"
+          onClose={() => setConfirmDrop(null)}
+          footer={
+            <>
+              <GhostButton label="Keep it where it was" onClick={() => setConfirmDrop(null)} />
+              <PrimaryButton label="Move visit" onClick={moveConfirmedDrop} />
+            </>
+          }
+        >
+          <p className="schedule__confirm-line">
+            {sessionHousehold(str(confirmDrop.drop.session.kinfolkName))}'s visit moves to{' '}
+            {bookingWhenLabel(confirmDrop.startTime, businessZone)}.
+          </p>
+          {householdNoticeConfirmLine(dropPreview, sessionHousehold(str(confirmDrop.drop.session.kinfolkName)), auntie) !==
+            null && (
+            <p className="schedule__confirm-line" data-testid="drop-notice-line">
+              {householdNoticeConfirmLine(
+                dropPreview,
+                sessionHousehold(str(confirmDrop.drop.session.kinfolkName)),
+                auntie,
+              )}
+            </p>
+          )}
+        </Dialog>
+      )}
+
       {newVisitOpen && (
         <NewVisitDialog
           households={households}
@@ -691,7 +767,11 @@ export function Schedule({ onSelect }: ScheduleProps) {
           initialDate={selected}
           businessZone={businessZone}
           onClose={() => setNewVisitOpen(false)}
-          onCreated={() => setNewVisitOpen(false)}
+          onCreated={(_sessionId, summary) => {
+            setNewVisitOpen(false);
+            // #1841: the visit was written; say so, and who was told.
+            showToast(summary);
+          }}
         />
       )}
     </div>

@@ -526,3 +526,8 @@
     justify-self: end;
   }
 }
+
+/* #2027: the drag confirm. */
+.schedule__confirm-line {
+  margin: 0 0 var(--space-2);
+}
