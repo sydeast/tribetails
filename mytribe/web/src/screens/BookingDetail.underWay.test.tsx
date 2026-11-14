@@ -47,7 +47,7 @@ vi.mock('@tanstack/react-router', () => ({
 
 beforeEach(() => {
   mocks.getMyHome.mockResolvedValue({ businessName: '' });
-  mocks.getBookingNotes.mockResolvedValue({ bookingNote: null, notes: [] });
+  mocks.getBookingNotes.mockResolvedValue({ bookingNote: null, notes: [], fromBusiness: [] });
   mocks.getMyVisits.mockResolvedValue({ visits: [] });
 });
 afterEach(() => {

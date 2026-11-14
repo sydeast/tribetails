@@ -100,6 +100,48 @@ describe('listBusinessAdmins', () => {
     expect(res.members[0]?.defaultAssignee).toBe(true);
   });
 
+  /**
+   * #2223: an Auntie or household account left on the list receives no
+   * business notice, so the gate must not name her as somebody who does.
+   */
+  it('leaves out an Auntie or household account on the list, without writing', async () => {
+    mocks.getUsers.mockResolvedValue({
+      users: [
+        { uid: 'op1', customClaims: { admin: true } },
+        { uid: 'a1', customClaims: { staffRole: 'auntie' } },
+        { uid: 'h1', customClaims: { role: 'kinfolk', kinfolkId: 'k1' } },
+      ],
+      notFound: [],
+    });
+    const ctx = buildDbMock({
+      docs: {
+        [DOC]: { uids: ['a1', 'op1', 'h1'] },
+        'staff/op1': { displayName: 'Nora', email: 'nora@tribetails.com' },
+        'staff/a1': { displayName: 'Dee', staffRole: 'auntie' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await listBusinessAdminsHandler(req);
+
+    expect(res.source).toBe('roster');
+    expect(res.members.map((m) => m.uid)).toEqual(['op1']);
+    expect(ctx.writes.filter((w) => w.path === DOC)).toEqual([]);
+  });
+
+  it('says so in plain words when nobody on the list is an owner account', async () => {
+    mocks.getUsers.mockResolvedValue({ users: [{ uid: 'a1', customClaims: { staffRole: 'auntie' } }], notFound: [] });
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['a1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await listBusinessAdminsHandler(req);
+
+    expect(res.source).toBe('none');
+    expect(res.members).toEqual([]);
+    expect(res.reason).toMatch(/Nobody on the business admin roster is an owner account/);
+    expect(res.reason).not.toMatch(/businessSettings|uids|provision/);
+  });
+
   it('reads a blank display name as no name rather than as an empty label', async () => {
     const ctx = buildDbMock({
       docs: {
@@ -234,7 +276,7 @@ describe('listBusinessAdmins', () => {
     expect(res.members[0]).toMatchObject({ displayName: 'Auntie Nora', email: null });
   });
 
-  it('#1564: does not read Auth when every record is complete', async () => {
+  it('#1564: the name lookup does not read Auth when every record is complete', async () => {
     const ctx = buildDbMock({
       docs: {
         [DOC]: { uids: ['op1'] },
@@ -243,7 +285,9 @@ describe('listBusinessAdmins', () => {
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     await listBusinessAdminsHandler(req);
-    expect(mocks.getUsers).not.toHaveBeenCalled();
+    // One Auth read, and it is #2223's owner-only check on the list, which
+    // has to read claims. The name lookup adds none.
+    expect(mocks.getUsers).toHaveBeenCalledTimes(1);
   });
 
   it('#1564: an Auth failure leaves the gap showing rather than failing the roster', async () => {

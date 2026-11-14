@@ -35,6 +35,23 @@ describe('approveBookingRequest', () => {
     });
   });
 
+  it('#2030: carries the note for the household, trimmed', async () => {
+    await approveBookingRequest('fam-1', 'b1', { note: '  See you Friday.  ' });
+    expect(call).toHaveBeenCalledWith('manageBookingSeries', {
+      action: 'APPROVE',
+      kinfolkId: 'fam-1',
+      batchId: 'b1',
+      note: 'See you Friday.',
+    });
+  });
+  it('#2030: withholds a blank note rather than sending an empty one', async () => {
+    await approveBookingRequest('fam-1', 'b1', { note: '   ' });
+    expect(call).toHaveBeenCalledWith('manageBookingSeries', {
+      action: 'APPROVE',
+      kinfolkId: 'fam-1',
+      batchId: 'b1',
+    });
+  });
   it('omits an override that was not granted rather than sending false', async () => {
     await approveBookingRequest('fam-1', 'b1', {
       startTimes: { 'night-1': 1 },

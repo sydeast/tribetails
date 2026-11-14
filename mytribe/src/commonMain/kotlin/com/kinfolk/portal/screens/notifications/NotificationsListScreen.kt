@@ -221,6 +221,14 @@ private fun NotificationRow(item: NotificationItem, nowMs: Long, onClick: () -> 
             if (item.description.isNotBlank()) {
                 Text(item.description, style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
             }
+            // #2030: the office's note on its answer, as written.
+            item.householdNote?.let { note ->
+                Text(
+                    note,
+                    style = type.sansMeta.copy(color = KinfolkBrand.Navy),
+                    modifier = Modifier.testTag("householdNote-${item.id}"),
+                )
+            }
         }
         Spacer(Modifier.width(KinfolkSpacing.s))
         Text(

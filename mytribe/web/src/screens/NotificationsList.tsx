@@ -9,7 +9,7 @@ import {
 import type { GetMyHomeResult } from '../api/types';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
-import { markReadInPages, notificationTarget, notificationWhen } from '../lib/notificationsList';
+import { householdNoteOf, markReadInPages, notificationTarget, notificationWhen } from '../lib/notificationsList';
 import { myHomeKey } from '../lib/portalQueryKeys';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
@@ -143,6 +143,11 @@ export function NotificationsList() {
                           {item.title || item.key}
                         </span>
                         {item.description && <span className="nl-row__desc">{item.description}</span>}
+                        {householdNoteOf(item) !== null && (
+                          <span className="nl-row__note" data-testid="notification-household-note">
+                            {householdNoteOf(item)}
+                          </span>
+                        )}
                       </span>
                       <span className="nl-row__when">{notificationWhen(item.createdAt)}</span>
                     </button>

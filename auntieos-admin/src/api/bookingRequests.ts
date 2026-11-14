@@ -68,6 +68,9 @@ export function approveBookingRequest(
     ...(options.startTimes !== undefined && { startTimes: options.startTimes }),
     ...(options.overrideBusyConflict === true && { overrideBusyConflict: true }),
     ...(options.overrideVisitConflict === true && { overrideVisitConflict: true }),
+    // #2030: the "Note for the household" box. Withheld when blank, as the
+    // decline below withholds an empty one.
+    ...(options.note !== undefined && options.note.trim() !== '' && { note: options.note.trim() }),
   });
 }
 
@@ -84,6 +87,12 @@ export interface ApproveOptions {
   startTimes?: Record<string, number>;
   overrideBusyConflict?: boolean;
   overrideVisitConflict?: boolean;
+  /**
+   * #2030: the operator's note for the household. The server stamps it on each
+   * visit it books and puts it on the confirmation, and the household reads it
+   * on the booking page. It used to be typed into the dialog and never sent.
+   */
+  note?: string;
 }
 
 /**

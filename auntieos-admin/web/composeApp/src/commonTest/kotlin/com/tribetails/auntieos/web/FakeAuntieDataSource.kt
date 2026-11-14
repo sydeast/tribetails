@@ -82,8 +82,11 @@ class FakeAuntieDataSource(
     val seriesCalls = mutableListOf<Triple<String, String, String>>() // action, kinfolkId, batchId
     var manageBookingSeriesResult: WriteResult<ManageSeriesResult> = WriteResult.Ok(ManageSeriesResult(affectedVisits = 1))
     override fun incomingKinCaresStream(): Flow<FirestoreResult<List<KinCareVisit>>> = _incoming
-    override suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String): WriteResult<ManageSeriesResult> {
+    /** #2030: the note each series call carried, in call order (null when none was sent). */
+    val seriesNotes = mutableListOf<String?>()
+    override suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String, note: String?): WriteResult<ManageSeriesResult> {
         seriesCalls += Triple(action, kinfolkId, batchId)
+        seriesNotes += note
         return manageBookingSeriesResult
     }
 

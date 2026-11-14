@@ -1,8 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
-vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  dbFn: vi.fn(),
+  getUsers: vi.fn(),
+  /**
+   * Custom claims per uid, as the Admin SDK returns them. A uid not named here
+   * is an owner (`admin: true`), so every older test below runs against owner
+   * accounts. `null` means no sign-in account exists for the uid.
+   */
+  claims: {} as Record<string, Record<string, unknown> | null>,
+}));
+vi.mock('../src/lib/firestoreAdmin', () => ({
+  db: mocks.dbFn,
+  auth: vi.fn(),
+  getAdmin: () => ({ auth: () => ({ getUsers: mocks.getUsers }) }),
+}));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError: vi.fn() }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('firebase-admin/firestore', async () => {
@@ -30,8 +43,22 @@ import {
 const ORIGINAL_ENV = process.env.AUNTIE_OPERATOR_UIDS;
 const DOC = 'businessSettings/admins';
 
+/** `getUsers` answered from `mocks.claims`. */
+async function usersFromClaims(ids: Array<{ uid: string }>) {
+  const users: Array<{ uid: string; customClaims: Record<string, unknown> }> = [];
+  const notFound: Array<{ uid: string }> = [];
+  for (const { uid } of ids) {
+    const claims = uid in mocks.claims ? mocks.claims[uid] : { admin: true };
+    if (claims === null) notFound.push({ uid });
+    else users.push({ uid, customClaims: claims });
+  }
+  return { users, notFound };
+}
+
 beforeEach(() => {
   mocks.dbFn.mockReset();
+  mocks.claims = {};
+  mocks.getUsers.mockReset().mockImplementation(usersFromClaims);
   vi.mocked(logEvent).mockClear();
   delete process.env.AUNTIE_OPERATOR_UIDS;
 });
@@ -590,5 +617,272 @@ describe('checkBusinessAdminsHandler', () => {
       uids: ['op1'],
       reason: null,
     });
+  });
+});
+
+/**
+ * #2223: business notices (payments, invoices and the rest of the office
+ * stream) are the owner's. Only owner accounts may be put on the list, and an
+ * Auntie or household account already on it receives nothing.
+ */
+const AUNTIE = { staffRole: 'auntie' };
+const DOUBLE_CLAIMED = { admin: true, staffRole: 'auntie' };
+const HOUSEHOLD = { role: 'kinfolk', kinfolkId: 'k1' };
+
+function loggedEvents(event: string) {
+  return vi
+    .mocked(logEvent)
+    .mock.calls.map((c) => c[0])
+    .filter((f) => f.event === event);
+}
+
+describe('#2223 adding to the list: owner accounts only', () => {
+  it.each([
+    ['an Auntie', AUNTIE, 'auntie-account', /An Auntie cannot be on the business admin list/],
+    ['a double-claimed Auntie', DOUBLE_CLAIMED, 'auntie-account', /An Auntie cannot be/],
+    ['a household account', HOUSEHOLD, 'household-account', /A household account cannot be/],
+    ['an account with neither claim', {}, 'not-owner-account', /Only the owner's accounts/],
+    ['a uid with no sign-in account', null, 'not-owner-account', /Only the owner's accounts/],
+  ])('add refuses %s and writes nothing', async (_label, claims, refusal, message) => {
+    mocks.claims = { someone: claims };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const err = await addBusinessAdminUids(['someone'], { reason: 'test' }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(BusinessAdminRosterError);
+    expect(err).toMatchObject({ refusal });
+    expect((err as Error).message).toMatch(message);
+    // Plain words for the operator: no account id, path or function name.
+    expect((err as Error).message).not.toMatch(/someone|businessSettings|uids|Business[A-Z]/);
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('set refuses an Auntie, even one already on the list, and writes nothing', async () => {
+    mocks.claims = { a1: AUNTIE };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1', 'a1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(setBusinessAdminUids(['op1', 'a1'], { actorUid: 'op1', reason: 'test' })).rejects.toMatchObject({
+      refusal: 'auntie-account',
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('refuses when the sign-in accounts cannot be read, and writes nothing', async () => {
+    mocks.getUsers.mockRejectedValue(new Error('auth unavailable'));
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(addBusinessAdminUids(['op2'], { reason: 'test' })).rejects.toMatchObject({
+      refusal: 'account-check-failed',
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('owner accounts are unchanged: an owner claim, and the allowlist with no claim, are both added', async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = 'op-allow';
+    mocks.claims = { 'op-claim': { admin: true }, 'op-allow': {} };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(addBusinessAdminUids(['op-claim', 'op-allow'], { reason: 'test' })).resolves.toEqual([
+      'op1',
+      'op-claim',
+      'op-allow',
+    ]);
+  });
+
+  it('an owner who also holds a household still counts as an owner', async () => {
+    mocks.claims = { op2: { admin: true, role: 'kinfolk', kinfolkId: 'k1' } };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(addBusinessAdminUids(['op2'], { reason: 'test' })).resolves.toEqual(['op1', 'op2']);
+  });
+
+  it('removing an Auntie from the list is never blocked, so a stale list can be cleaned up', async () => {
+    mocks.claims = { a1: AUNTIE };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1', 'a1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const change = await removeBusinessAdminUids(['a1'], { actorUid: 'op1', reason: 'test' });
+    expect(change.uids).toEqual(['op1']);
+  });
+
+  it('the provisioning callable refuses an Auntie with the plain message, even one with a staff record', async () => {
+    mocks.claims = { a1: AUNTIE };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1'] }, 'staff/a1': { staffRole: 'auntie' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { provisionBusinessAdminsHandler } = await import('../src/admin/provisionBusinessAdmins');
+
+    const err = await provisionBusinessAdminsHandler({ data: { uids: ['a1'] }, auth: { uid: 'op1' } } as never).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toMatchObject({ code: 'failed-precondition', details: { refusal: 'auntie-account' } });
+    expect((err as Error).message).toMatch(/An Auntie cannot be on the business admin list/);
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('the set callable refuses a household account before the staff-record check', async () => {
+    mocks.claims = { h1: HOUSEHOLD };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setBusinessAdminsHandler } = await import('../src/admin/provisionBusinessAdmins');
+
+    const err = await setBusinessAdminsHandler({ data: { uids: ['op1', 'h1'] }, auth: { uid: 'op1' } } as never).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toMatchObject({ code: 'failed-precondition', details: { refusal: 'household-account' } });
+    expect((err as Error).message).not.toMatch(/staff record/);
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('the self-heal never writes an Auntie found on the allowlist', async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = 'op1,a1';
+    mocks.claims = { a1: AUNTIE };
+    const ctx = buildDbMock({ docs: {} });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).resolves.toEqual(['op1']);
+    expect(ctx.writes.find((w) => w.path === DOC)?.data['uids']).toEqual(['op1']);
+  });
+});
+
+describe('#2223 sending: an Auntie or household already on the list gets no business notice', () => {
+  it('skips an Auntie on the list, keeps the owner, and logs a warn', async () => {
+    mocks.claims = { a1: AUNTIE };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1', 'a1', 'op2'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('recipientResolver(payment.unapplied)')).resolves.toEqual([
+      'op1',
+      'op2',
+    ]);
+
+    const [skip] = loggedEvents('businessAdmins.roster.skipped');
+    expect(skip?.severity).toBe('warn');
+    expect(skip?.extra).toMatchObject({
+      context: 'recipientResolver(payment.unapplied)',
+      skipped: [{ uid: 'a1', account: 'auntie' }],
+    });
+    // Reading is not editing: the stale entry is left for the owner to remove.
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('skips a household account and a double-claimed Auntie too', async () => {
+    mocks.claims = { h1: HOUSEHOLD, d1: DOUBLE_CLAIMED };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['h1', 'op1', 'd1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).resolves.toEqual(['op1']);
+  });
+
+  it('a list holding only an Auntie is nobody: recipients-unavailable, never an empty success', async () => {
+    mocks.claims = { a1: AUNTIE };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['a1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).rejects.toMatchObject({ code: 'recipients-unavailable' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('a list holding only an Auntie falls through to the allowlist owner, without writing', async () => {
+    process.env.AUNTIE_OPERATOR_UIDS = 'op9';
+    mocks.claims = { a1: AUNTIE, op9: {} };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['a1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).resolves.toEqual(['op9']);
+    expect(ctx.writes).toHaveLength(0);
+  });
+
+  it('keeps a uid it has no evidence against: no claims, or no sign-in account', async () => {
+    mocks.claims = { bare: {}, gone: null };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['bare', 'gone'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).resolves.toEqual(['bare', 'gone']);
+    expect(loggedEvents('businessAdmins.roster.skipped')).toHaveLength(0);
+  });
+
+  /**
+   * Review of #2223: claims can be wiped while the staff record stays. Deleting
+   * a `clients/{uid}` doc clears every claim on that login (`onClientsWrite`),
+   * and `grant-staff-role.mjs --role none` swallows a failed staff-record
+   * delete. The staff record is evidence, as it is in `staffRoles.ts`.
+   */
+  it('skips an Auntie whose claims were wiped or whose login is gone while her staff record remains', async () => {
+    mocks.claims = { wiped: {}, gone: null, bare: {} };
+    const ctx = buildDbMock({
+      docs: {
+        [DOC]: { uids: ['op1', 'wiped', 'gone', 'bare'] },
+        'staff/wiped': { staffRole: 'auntie' },
+        'staff/gone': { staffRole: 'auntie' },
+        'staff/bare': { displayName: 'Bare' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).resolves.toEqual(['op1', 'bare']);
+    expect(loggedEvents('businessAdmins.roster.skipped')[0]?.extra).toMatchObject({
+      skipped: [
+        { uid: 'wiped', account: 'auntie' },
+        { uid: 'gone', account: 'auntie' },
+      ],
+    });
+  });
+
+  it('an owner whose claims answer is never looked up in the staff records', async () => {
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1'] }, 'staff/op1': { staffRole: 'auntie' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).resolves.toEqual(['op1']);
+    expect(ctx.db.getAll).not.toHaveBeenCalled();
+  });
+
+  it('when the sign-in accounts cannot be read, the staff record still identifies an Auntie', async () => {
+    mocks.getUsers.mockRejectedValue(new Error('auth unavailable'));
+    const ctx = buildDbMock({
+      docs: { [DOC]: { uids: ['op1', 'a1'] }, 'staff/a1': { staffRole: 'auntie' }, 'staff/op1': { displayName: 'Op' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).resolves.toEqual(['op1']);
+    expect(loggedEvents('businessAdmins.accountLookupFailed')[0]?.severity).toBe('warn');
+  });
+
+  it('when neither read works, every uid is kept so the owner is not dropped', async () => {
+    mocks.getUsers.mockRejectedValue(new Error('auth unavailable'));
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1', 'a1'] } } });
+    ctx.db.getAll = vi.fn(async () => {
+      throw new Error('firestore unavailable');
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveBusinessAdminUids('t')).resolves.toEqual(['op1', 'a1']);
+    expect(loggedEvents('businessAdmins.staffRecordFallbackFailed')[0]?.severity).toBe('warn');
+  });
+
+  it('the status check reports only who actually receives', async () => {
+    mocks.claims = { a1: AUNTIE };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['op1', 'a1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { checkBusinessAdminsHandler } = await import('../src/admin/provisionBusinessAdmins');
+
+    await expect(checkBusinessAdminsHandler({ auth: { uid: 'op1' } } as never)).resolves.toMatchObject({
+      ok: true,
+      uids: ['op1'],
+    });
+  });
+
+  it('the default assignee is not filtered: an Auntie may still be assigned visits', async () => {
+    mocks.claims = { a1: AUNTIE };
+    const ctx = buildDbMock({ docs: { [DOC]: { uids: ['a1', 'op1'] } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(resolveDefaultAssigneeUid()).resolves.toBe('a1');
   });
 });

@@ -127,3 +127,38 @@ export function noteCreatedMs(note: BookingNoteEntry): number {
 export function sortNotes<T extends BookingNoteEntry>(notes: readonly T[]): T[] {
   return notes.slice().sort((a, b) => noteCreatedMs(a) - noteCreatedMs(b));
 }
+
+/**
+ * #2030: the two answer notes the office wrote the household on the request
+ * itself, as `manageBookingSeries` stamps them on the visit doc: the note on
+ * Accept and the note on Decline. They are kinfolk-facing (the household reads
+ * them on the booking through `getBookingNotes`), so the kinfolk-facing thread
+ * lists them too. Before this, a fresh accept read "No kinfolk-facing notes
+ * yet" straight after the operator had written one.
+ */
+export interface VisitAnswerFields {
+  requestAcceptNote?: unknown;
+  requestAcceptedAt?: unknown;
+  requestAcceptedBy?: unknown;
+  requestDeclineNote?: unknown;
+  requestDeclinedAt?: unknown;
+  requestDeclinedBy?: unknown;
+}
+/** The visit's answer notes as thread entries, so they render like any staff note. Blank ones are left out. */
+export function answerNoteEntries(visit: VisitAnswerFields | null | undefined): BookingNoteEntry[] {
+  if (!visit) return [];
+  const out: BookingNoteEntry[] = [];
+  const add = (id: string, body: unknown, at: unknown, by: unknown) => {
+    if (typeof body !== 'string' || body.trim() === '') return;
+    out.push({
+      _id: id,
+      body: body.trim(),
+      authorRole: 'admin',
+      authorUid: typeof by === 'string' ? by : undefined,
+      createdAt: (at ?? null) as BookingNoteEntry['createdAt'],
+    });
+  };
+  add('request-accepted', visit.requestAcceptNote, visit.requestAcceptedAt, visit.requestAcceptedBy);
+  add('request-declined', visit.requestDeclineNote, visit.requestDeclinedAt, visit.requestDeclinedBy);
+  return out;
+}

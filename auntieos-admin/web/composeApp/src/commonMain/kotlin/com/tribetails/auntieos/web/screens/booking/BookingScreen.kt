@@ -456,8 +456,8 @@ private fun BookingListScreen(
                                 series = series,
                                 busy = vm.seriesActionBatchId == series.batchId,
                                 locked = vm.seriesActionBatchId != null,
-                                onApprove = { scope.launch { vm.approveSeries(series.kinfolkId, series.batchId, series.kinfolkName) } },
-                                onCancel  = { scope.launch { vm.cancelSeries(series.kinfolkId, series.batchId, series.kinfolkName) } },
+                                onApprove = { note -> scope.launch { vm.approveSeries(series.kinfolkId, series.batchId, series.kinfolkName, note) } },
+                                onCancel  = { note -> scope.launch { vm.cancelSeries(series.kinfolkId, series.batchId, series.kinfolkName, note) } },
                                 zone      = NewBookingMath.businessTimeZone((settingsState as? FirestoreResult.Data)?.value?.timeZone),
                             )
                         }
@@ -756,13 +756,17 @@ private fun IncomingSeriesCard(
     series: BookingSeries,
     busy: Boolean,
     locked: Boolean,
-    onApprove: () -> Unit,
-    onCancel: () -> Unit,
+    /** #2030: [note] is the operator's note for the household, blank when they left none. */
+    onApprove: (note: String) -> Unit,
+    onCancel: (note: String) -> Unit,
     zone: TimeZone,
 ) {
     val c = AuntieTheme.colors
     var confirming by remember(series.kinfolkId, series.batchId) { mutableStateOf<String?>(null) }
     var detailOpen by remember(series.kinfolkId, series.batchId) { mutableStateOf(false) }
+    // #2030: what the operator writes the household with the answer. Cleared on
+    // every new confirm, so a note meant for a decline never rides an approval.
+    var householdNote by remember(series.kinfolkId, series.batchId) { mutableStateOf("") }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -779,8 +783,8 @@ private fun IncomingSeriesCard(
             Text(series.subject(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current), style = AuntieTheme.typography.bodySmall, color = c.textDim)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = { confirming = "approve" }, enabled = !locked)
-            GhostButton(label = "Cancel", onClick = { confirming = "cancel" }, enabled = !locked)
+            PrimaryButton(label = if (busy) "Working…" else "Approve series", onClick = { householdNote = ""; confirming = "approve" }, enabled = !locked)
+            GhostButton(label = "Cancel", onClick = { householdNote = ""; confirming = "cancel" }, enabled = !locked)
         }
     }
 
@@ -794,8 +798,10 @@ private fun IncomingSeriesCard(
                 label = if (confirming == "cancel") "Turn it down" else "Book it",
                 onClick = {
                     val decision = confirming
+                    val note = householdNote.trim()
                     confirming = null
-                    if (decision == "cancel") onCancel() else onApprove()
+                    householdNote = ""
+                    if (decision == "cancel") onCancel(note) else onApprove(note)
                 },
                 enabled = !locked,
             )
@@ -811,6 +817,14 @@ private fun IncomingSeriesCard(
             style = AuntieTheme.typography.bodyMedium,
             color = c.textPrimary,
         )
+        // #2030: the same two labels as the web's and Android's dialogs.
+        MultilineField(
+            value = householdNote,
+            onValueChange = { householdNote = it.take(500) },
+            label = if (confirming == "cancel") "Anything to add for the household (optional)" else "Note for the household (optional)",
+            minLines = 3,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 
     AuntieDialog(
@@ -823,6 +837,7 @@ private fun IncomingSeriesCard(
                 label = "Cancel",
                 onClick = {
                     detailOpen = false
+                    householdNote = ""
                     confirming = "cancel"
                 },
                 enabled = !locked,
@@ -831,6 +846,7 @@ private fun IncomingSeriesCard(
                 label = "Approve",
                 onClick = {
                     detailOpen = false
+                    householdNote = ""
                     confirming = "approve"
                 },
                 enabled = !locked,
@@ -1526,8 +1542,8 @@ private class FirestoreClientBookingDataSource(
     override suspend fun createBooking(booking: KinCareSession): com.tribetails.auntieos.web.data.WriteResult<String> =
         client.createBookingRequest(booking)
     override fun incomingKinCaresStream() = client.incomingKinCaresStream()
-    override suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String) =
-        client.manageBookingSeries(action, kinfolkId, batchId)
+    override suspend fun manageBookingSeries(action: String, kinfolkId: String, batchId: String, note: String?) =
+        client.manageBookingSeries(action, kinfolkId, batchId, note)
 
     override fun mediaStream(entityId: String, entityType: String) = client.mediaStream(entityId, entityType)
     override suspend fun uploadMedia(entityId: String, entityType: String, bytes: ByteArray, mimeType: String) =
