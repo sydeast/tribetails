@@ -37,11 +37,15 @@ import { vendorConfigured } from '../support/e2e-real';
  * Stripe changes them this spec fails at the card step, inside `cy.origin`,
  * which names the field.
  *
- * OPEN (#2304): in run 43625464056 (2026-11-14) Stripe served the session at
- * `/g/pay/` and its form never painted inside the Cypress frame, with the flag
- * on. The session itself was created and Stripe showed its amount. The wait
- * for `#email` now reports what the page held when it gives up; the cause is
- * not known until a run from main prints that.
+ * OPEN (#2304): since 2026-11-14 Stripe serves the session at `/g/pay/` and
+ * its form never painted inside the Cypress frame, with the flag on. Run
+ * 43629608013 printed what the page held: no field or button in the page
+ * itself, and five Stripe frames, the form's one (`elements-inner-habanero`)
+ * 388 px wide and 2 px tall. That run was Electron 146. The run is now Chrome
+ * (`e2e:real:run` in package.json), the one thing changed, and a red wait
+ * also says which browser the page saw, what it logged, and which of its
+ * requests failed. `cypress.real.config.ts` prints Chrome's own console lines
+ * for Stripe's scripts after the run.
  */
 
 const STAMP = Date.now().toString(36);
@@ -130,6 +134,31 @@ describe('paying an invoice by card (real payInvoice, Stripe test mode, real web
           return false;
         });
 
+        // What Stripe's page said while it loaded (#2304), for the failure
+        // message only. Nothing here can pass or fail the test. `watched`
+        // stays false when the page loaded before this hook was in place, so
+        // "0 console errors" is never read as "none happened".
+        let watched = false;
+        const consoleErrorLines: string[] = [];
+        const blockedByPolicy: string[] = [];
+        Cypress.on('window:before:load', (win) => {
+          try {
+            const original = win.console.error.bind(win.console);
+            win.console.error = (...args: unknown[]) => {
+              original(...args);
+              if (consoleErrorLines.length < 4) consoleErrorLines.push(args.map((a) => String(a)).join(' ').slice(0, 160));
+            };
+            win.addEventListener('securitypolicyviolation', (event) => {
+              if (blockedByPolicy.length < 4) {
+                blockedByPolicy.push(`${event.violatedDirective} ${event.blockedURI.replace(/[?#].*$/, '').slice(0, 80)}`);
+              }
+            });
+            watched = true;
+          } catch {
+            // A page that refuses the hooks is reported as not watched.
+          }
+        });
+
         // A RED RUN HERE SAYS WHAT STRIPE'S PAGE HELD (#2304). Run 43625464056
         // reached a real session at `/g/pay/` (it was `/c/pay/` in October),
         // drew the business and the amount, and left the form half as grey
@@ -139,8 +168,9 @@ describe('paying an invoice by card (real payInvoice, Stripe test mode, real web
         // merge. The wait is the same one, for the same field and the same
         // budget; only its failure message changed. It carries page facts
         // only: the path without the session id, the fields and frames by
-        // name, the first visible words, and how many opaque script errors
-        // the handler above let through.
+        // name, the first visible words, how many opaque script errors the
+        // handler above let through, the browser as the page saw it, and what
+        // the page logged, had blocked by its content policy, or was refused.
         const pageFacts = (doc: Document): string => {
           const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}...` : text);
           const fields = Array.from(doc.querySelectorAll('input, select, button')).map((el) => {
@@ -153,12 +183,28 @@ describe('paying an invoice by card (real payInvoice, Stripe test mode, real web
             return `${frame.getAttribute('name') ?? ''}|${clip(file, 48)}|${Math.round(box.width)}x${Math.round(box.height)}`;
           });
           const path = (doc.location?.pathname ?? '').split('/').slice(0, 3).join('/');
+          const view = doc.defaultView;
+          const browser = view === null ? 'unknown' : `${view.navigator.userAgent}, webdriver ${String(view.navigator.webdriver)}`;
+          // Requests the page made that came back refused. `responseStatus`
+          // is 0 for another origin's response without a timing header, so
+          // only a real 4xx or 5xx is listed.
+          const refused =
+            view === null
+              ? []
+              : (view.performance.getEntriesByType('resource') as PerformanceResourceTiming[])
+                  .filter((entry) => entry.responseStatus >= 400)
+                  .map((entry) => `${entry.responseStatus} ${entry.name.replace(/[?#].*$/, '').split('/').slice(2).join('/').slice(0, 80)}`);
           const words = clip((doc.body?.innerText ?? '').replace(/\s+/g, ' ').trim(), 300);
           return [
             `path ${path}`,
             `${fields.length} fields [${clip(fields.join(', '), 600)}]`,
             `${frames.length} frames [${clip(frames.join(', '), 900)}]`,
             `opaque script errors let through: ${opaqueScriptErrors}`,
+            `browser ${browser}`,
+            `page watched from load: ${String(watched)}`,
+            `console errors [${consoleErrorLines.join(' | ')}]`,
+            `blocked by content policy [${blockedByPolicy.join(' | ')}]`,
+            `refused requests [${clip(refused.join(', '), 400)}]`,
             `visible text: "${words}"`,
           ].join('; ');
         };
