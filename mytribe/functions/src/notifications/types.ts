@@ -344,6 +344,8 @@ export interface NotificationDispatchDoc {
   data: Record<string, unknown>;
   mode: string;
   channels: Channel[];
+  /** #2280: who the copy is addressed to. Absent on older work orders. */
+  stream?: AudienceStream;
   status: 'pending' | 'dispatched' | 'no-channels';
 }
 

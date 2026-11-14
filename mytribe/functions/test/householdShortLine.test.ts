@@ -1,0 +1,128 @@
+import { describe, it, expect } from 'vitest';
+import Handlebars from 'handlebars';
+import { SEED_CORPUS } from '../src/notifications/seedCorpus.generated';
+import { NOTIFICATION_CATALOG } from '../src/notifications/catalog';
+import { resolveChannels } from '../src/notifications/prefs';
+import { PORTAL_URL } from '../src/notifications/visitDates';
+import { sampleDataFor } from '../src/admin/previewEmailTemplate';
+import {
+  HOUSEHOLD_NOTICE_ROUTE,
+  HOUSEHOLD_SHORT_LINE_MAX,
+  HOUSEHOLD_SMS_LINK_LABEL,
+  householdPushShelfLine,
+  householdSmsMax,
+  householdSmsText,
+  parsePushTxt,
+  stripUnresolvedTokens,
+} from '../src/notifications/templateParsers';
+import {
+  HOUSEHOLD_PUSH_ROUTE,
+  HOUSEHOLD_PUSH_SHELF_MAX,
+  householdPushShelfLine as communicateShelfLine,
+} from '../src/admin/sendHouseholdPush';
+
+/**
+ * #2280, operator ruling 2026-11-14: a household's text message and push stay
+ * short, with a link to the full message in MyTribe. Email is the only channel
+ * that is on unless the household turns another on.
+ */
+
+const LINK = `${HOUSEHOLD_SMS_LINK_LABEL} ${PORTAL_URL}${HOUSEHOLD_NOTICE_ROUTE}`;
+const householdKeys = Object.values(NOTIFICATION_CATALOG).filter((d) => d.audiences.kinfolk === true);
+
+describe('the short line and its link', () => {
+  it('the link is the notifications list in MyTribe', () => {
+    expect(LINK).toBe('More in MyTribe: https://kinfolk.tribetails.com/notifications');
+    expect(HOUSEHOLD_SHORT_LINE_MAX).toBe(200);
+    expect(householdSmsMax(PORTAL_URL)).toBe(200 + 1 + LINK.length);
+  });
+
+  it('a Communicate push and a notice push are cut by one rule', () => {
+    expect(communicateShelfLine).toBe(householdPushShelfLine);
+    expect(HOUSEHOLD_PUSH_SHELF_MAX).toBe(HOUSEHOLD_SHORT_LINE_MAX);
+    expect(HOUSEHOLD_PUSH_ROUTE).toBe(HOUSEHOLD_NOTICE_ROUTE);
+  });
+
+  it('an empty render is left empty, not turned into a bare link', () => {
+    expect(householdSmsText('   ', PORTAL_URL)).toBe('');
+  });
+
+  it('line breaks become spaces, so the cut counts what the phone shows', () => {
+    expect(householdSmsText('One.\n\nTwo.', PORTAL_URL)).toBe(`One. Two. ${LINK}`);
+    expect(householdPushShelfLine('One.\n\nTwo.')).toBe('One. Two.');
+  });
+});
+
+describe('every household text message and push in the repo templates', () => {
+  /**
+   * The worst case each template can be handed: the office's note at its 500
+   * character limit, a household with many Kin, a long service name.
+   */
+  const worstCase = (key: string): Record<string, unknown> => ({
+    ...sampleDataFor(key),
+    note: 'Please leave the side gate unlatched and the porch light on. '.repeat(9).trim().slice(0, 500),
+    kinName: 'Biscuit, Mochi, Captain Whiskers, Sir Barksalot and Princess Buttercup',
+    serviceType: 'Extended Overnight Stay with Medication',
+    kinfolkName: 'Alexandria',
+    portalUrl: PORTAL_URL,
+    preview: 'x'.repeat(200),
+  });
+  const render = (tpl: string, key: string) => stripUnresolvedTokens(Handlebars.compile(tpl)(worstCase(key)));
+
+  it('there is something to check', () => {
+    expect(householdKeys.length).toBeGreaterThan(20);
+  });
+
+  for (const def of householdKeys) {
+    const seed = SEED_CORPUS.find((s) => s.key === def.templates.sms || s.key === def.templates.push);
+    if (!seed) continue;
+
+    it(`${def.key}: the text message is short and links into MyTribe`, () => {
+      const sent = householdSmsText(render(seed.smsTxt, def.key), PORTAL_URL);
+      expect(sent.length).toBeLessThanOrEqual(householdSmsMax(PORTAL_URL));
+      expect(sent).toContain(PORTAL_URL);
+      // One whole address, never a cut one.
+      expect(sent.match(/https:\/\/\S+/g)).toHaveLength(1);
+      expect(sent.match(/https:\/\/\S+/)![0]).toMatch(/^https:\/\/kinfolk\.tribetails\.com(\/notifications)?$/);
+      // No character that would force the costlier encoding.
+      expect(sent).not.toContain('…');
+    });
+
+    it(`${def.key}: the push is short`, () => {
+      const { body } = parsePushTxt(seed.pushTxt);
+      expect(householdPushShelfLine(render(body, def.key)).length).toBeLessThanOrEqual(HOUSEHOLD_SHORT_LINE_MAX);
+    });
+  }
+
+  it('the four text messages that carry the office note are cut, not sent whole', () => {
+    for (const key of ['kincare.request.declined', 'kincare.cancel.declined', 'kin.removal.declined', 'kin.removal.archived']) {
+      const seed = SEED_CORPUS.find((s) => s.key === key)!;
+      expect(seed.smsTxt, key).toContain('{{note}}');
+      const raw = render(seed.smsTxt, key);
+      expect(raw.length, key).toBeGreaterThan(500);
+      const sent = householdSmsText(raw, PORTAL_URL);
+      expect(sent.endsWith(`... ${LINK}`), key).toBe(true);
+    }
+  });
+});
+
+describe('what reaches a household that has changed no setting', () => {
+  it('no household notice forces push or text messages on', () => {
+    for (const def of householdKeys) {
+      expect(def.required.push, `${def.key} push`).toBeUndefined();
+      expect(def.required.sms, `${def.key} sms`).toBeUndefined();
+    }
+  });
+
+  it('email is the only channel on by default, on every household notice', () => {
+    for (const def of householdKeys) {
+      const channels = resolveChannels(def, {}, null, 'kinfolk');
+      expect(channels.push, `${def.key} push`).toBe(false);
+      expect(channels.sms, `${def.key} sms`).toBe(false);
+      // Marketing rows wait for an opt-in; every other row emails when it can.
+      if (!def.marketingCategory && def.allowedChannels.includes('email')) {
+        expect(channels.email, `${def.key} email`).toBe(true);
+      }
+    }
+  });
+});

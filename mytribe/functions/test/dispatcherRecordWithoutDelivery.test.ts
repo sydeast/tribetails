@@ -119,6 +119,9 @@ describe('#1505 trigger mode: every delivery channel off', () => {
     expect(orders).toHaveLength(1);
     expect(orders[0].path).toBe(`notificationDispatch/${outcome.written[0]}`);
     expect(orders[0].data).toMatchObject({ channels: ['email'], status: 'pending', mode: 'trigger' });
+    // #2280: the work order says who the copy is for, so the senders can keep
+    // a household's text message and push short.
+    expect(orders[0].data.stream).toBe('kinfolk');
     expect(events()).not.toContain('notification.record-only');
     // #1507: a channel carried it, so it is not app-only.
     expect(outcome.appOnly).toEqual([]);
@@ -204,6 +207,8 @@ describe('#1505 trigger mode: every delivery channel off', () => {
     const orders = workOrders(ctx.writes);
     expect(orders).toHaveLength(1);
     expect(orders[0].data.recipientUid).toBe('admin1');
+    // #2280: the office's copy is stamped as the office's, and is sent as written.
+    expect(orders[0].data.stream).toBe('business');
     // #1507: the household's copy is app-only; the admin's is not, and the
     // admin's email must not answer for the household. Asked per recipient the
     // helper tells them apart; asked for the whole call it says no, because one
@@ -334,6 +339,24 @@ describe('#1505 queued modes mirror the rule', () => {
     expect(records(writes)).toHaveLength(1);
     expect(workOrders(writes)).toHaveLength(1);
     expect(workOrders(writes)[0].data).toMatchObject({ channels: ['email'], status: 'pending' });
+    // A row queued before rows carried a stream has none to pass on.
+    expect(workOrders(writes)[0].data).not.toHaveProperty('stream');
+  });
+  it("#2280: promotion passes the queued row's stream to the work order", () => {
+    const writes: Write[] = [];
+    const db: any = {
+      collection: (name: string) => ({ doc: (id?: string) => ({ id: id ?? 'auto-1', path: `${name}/${id ?? 'auto-1'}` }) }),
+    };
+    const tx = { set: (ref: { path: string }, data: Record<string, unknown>) => writes.push({ path: ref.path, data }) } as any;
+    mocks.dbFn.mockReturnValue(db);
+    promoteQueuedNotification(
+      tx,
+      { key: 'pets.updated', recipientUid: 'kinUid', channels: ['sms'], stream: 'kinfolk' },
+      { mode: 'debounced-promoted' },
+    );
+    expect(workOrders(writes)[0].data.stream).toBe('kinfolk');
+    // The stream is delivery plumbing: it stays off the record the household reads.
+    expect(records(writes)[0].data).not.toHaveProperty('stream');
   });
 });
 

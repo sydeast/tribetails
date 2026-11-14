@@ -221,7 +221,7 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     key: "kincare.booking.confirm",
     emailSubject: "It's official, {{kinName}} is on my calendar",
     emailHeadline: "It's official, {{kinName}} is on my calendar",
-    emailContent: "<p>Hi {{kinfolkName}}, I've got your {{serviceType}} for {{kinName}} locked in. Here are the days:</p><ul>{{#each visits}}\n                <li>{{this.weekday}}, {{this.date}} at {{this.time}}</li>{{/each}}\n            </ul><p>I'll be there ready to go. If anything shifts on your end, just say the word and we'll work it out.</p><p>With care,<br><strong>Auntie</strong></p>",
+    emailContent: "<p>Hi {{kinfolkName}}, I've got your {{serviceType}} for {{kinName}} locked in. Here are the days:</p><ul>{{#each visits}}\n                <li>{{this.weekday}}, {{this.date}} at {{this.time}}</li>{{/each}}\n            </ul><p>{{#if note}}<strong>A note from me:</strong> {{note}}<br><br>{{/if}}I'll be there ready to go. If anything shifts on your end, just say the word and we'll work it out.</p><p>With care,<br><strong>Auntie</strong></p>",
     smsTxt: "It's Auntie. {{kinName}}'s {{serviceType}} is locked in, {{visitCount}} in all. First up {{nextVisit.weekday}} {{nextVisit.date}} at {{nextVisit.time}}. Every date: {{portalUrl}}\n",
     pushTxt: "Your booking is confirmed. {{kinName}}'s {{serviceType}} is set, {{visitCount}} in all, starting {{nextVisit.weekday}} {{nextVisit.date}}. Tap for every date.\n",
   },
