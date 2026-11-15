@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { call } from '../lib/fns';
 import {
+  careTaskLabel,
   commentAuthorLabel,
   commentInitial,
   commentAvatarVariant,
@@ -8,12 +9,15 @@ import {
   createShareLink,
   filterTales,
   initialOf,
+  kinNameList,
   loveLine,
   nextTalesCursor,
   revokeShareLink,
   shortTimestamp,
+  taleAboutLine,
   taleMetaLabel,
   taleSentLabel,
+  taleVisitDayLabel,
   threadComments,
   type KinTaleCommentDto,
 } from './kinTalesApi';
@@ -206,6 +210,65 @@ describe('taleMetaLabel', () => {
     expect(taleMetaLabel(tale({ sentAtMs, sentAtText: 'ignored' }), sentAtMs)).toBe('TODAY, 9:14 AM');
   });
 });
+// #2056: a tale says which KinCare, which day and which Kin it is about.
+describe('what a tale is about', () => {
+  const NOV_2026 = new Date(2026, 10, 14).getTime();
+
+  it('lists Kin the way a person would say them', () => {
+    expect(kinNameList(['Biscuit'])).toBe('Biscuit');
+    expect(kinNameList(['Biscuit', 'Mochi'])).toBe('Biscuit and Mochi');
+    expect(kinNameList(['Biscuit', 'Mochi', 'Pip', 'Tux'])).toBe('Biscuit, Mochi, Pip and Tux');
+  });
+
+  it('lists nothing for no names, blanks, or a value that is not a list', () => {
+    expect(kinNameList([])).toBe('');
+    expect(kinNameList(undefined)).toBe('');
+    expect(kinNameList(null)).toBe('');
+    expect(kinNameList(['', '  '])).toBe('');
+    expect(kinNameList([undefined, 'Biscuit', 7])).toBe('Biscuit');
+  });
+
+  it('names the KinCare and the Kin, or whichever it has', () => {
+    expect(taleAboutLine({ serviceLabel: '30 Minute Quick Check', kinNames: ['Biscuit', 'Mochi'] })).toBe(
+      '30 Minute Quick Check · Biscuit and Mochi',
+    );
+    expect(taleAboutLine({ serviceLabel: '30 Minute Quick Check' })).toBe('30 Minute Quick Check');
+    expect(taleAboutLine({ kinNames: ['Biscuit'] })).toBe('Biscuit');
+  });
+
+  it('an older tale with neither has no line, and never the word undefined', () => {
+    expect(taleAboutLine({})).toBe('');
+    expect(taleAboutLine({ serviceLabel: '   ', kinNames: [] })).toBe('');
+    expect(taleAboutLine(tale({}))).toBe('');
+  });
+
+  it('prints the visit day off its date key, with the year only when it is not this one', () => {
+    expect(taleVisitDayLabel('2026-11-10', NOV_2026)).toBe('Tue, Nov 10');
+    expect(taleVisitDayLabel('2025-11-10', NOV_2026)).toBe('Mon, Nov 10, 2025');
+  });
+
+  it('reads the key as a calendar day, never as UTC midnight', () => {
+    // `new Date('2026-11-01')` is Oct 31 in every zone west of Greenwich.
+    expect(taleVisitDayLabel('2026-11-01', NOV_2026)).toBe('Sun, Nov 1');
+  });
+
+  it('prints no day for a missing or unreadable key', () => {
+    expect(taleVisitDayLabel(undefined)).toBeNull();
+    expect(taleVisitDayLabel(null)).toBeNull();
+    expect(taleVisitDayLabel('')).toBeNull();
+    expect(taleVisitDayLabel('March 3')).toBeNull();
+    expect(taleVisitDayLabel('2026-13-40')).toBeNull();
+    expect(taleVisitDayLabel('2026-11-10T15:00:00.000Z')).toBeNull();
+  });
+
+  it('a care task done for named Kin says so; a once-per-visit task is just its name', () => {
+    expect(careTaskLabel({ key: 'fed', text: 'Fed', kinNames: ['Biscuit'] })).toBe('Fed for Biscuit');
+    expect(careTaskLabel({ key: 'fed', text: 'Fed', kinNames: ['Biscuit', 'Pip'] })).toBe('Fed for Biscuit and Pip');
+    expect(careTaskLabel({ key: 'lights_off', text: 'Lights turned off' })).toBe('Lights turned off');
+    expect(careTaskLabel({ key: 'fed', text: 'Fed', kinNames: [] })).toBe('Fed');
+  });
+});
+
 describe('taleSentLabel', () => {
   it('formats a migrated row like any other once the server has parsed it', () => {
     // "September 3, 2025 2:02pm" Chicago = 19:02 UTC; the label is the device-zone clock for that instant

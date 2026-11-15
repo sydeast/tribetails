@@ -36,6 +36,10 @@ describe('the allowed-from sets are the Android ones', () => {
   it('Undo arrival from ARRIVED or DEPARTED', () => {
     expect(allowedFromForLifecycle('UNDO_ARRIVAL')).toEqual(['ARRIVED', 'DEPARTED']);
   });
+
+  it('Undo departed from DEPARTED or COMPLETED (#2250)', () => {
+    expect(allowedFromForLifecycle('UNDO_DEPARTED')).toEqual(['DEPARTED', 'COMPLETED']);
+  });
 });
 
 describe('the happy paths', () => {
@@ -134,6 +138,9 @@ describe('a double clock-in is a no-op, which is what protects the stamped time'
 describe('a terminal visit has a closed clock', () => {
   for (const status of ['COMPLETED', 'CANCELLED'] as const) {
     for (const action of VISIT_LIFECYCLE_ACTIONS) {
+      // #2250: the one way back out of COMPLETED is "Undo departed", which the
+      // callable also holds to a few minutes (test/undoDeparted.test.ts).
+      if (action === 'UNDO_DEPARTED' && status === 'COMPLETED') continue;
       it(`${action} is illegal from ${status}`, () => {
         expect(evaluateVisitLifecycle({ currentStatus: status, action })).toMatchObject({
           kind: 'illegal',

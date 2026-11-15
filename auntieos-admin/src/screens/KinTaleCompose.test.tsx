@@ -104,6 +104,7 @@ import {
   isKinTaleEligibleSession,
   kinTaleSendLabel,
   scaffoldKinTaleDraft,
+  templateDefaultMessage,
   draftFromKinTaleEntry,
   pickableSessions,
   savedDraftForVisit,
@@ -255,15 +256,30 @@ describe('scaffoldKinTaleDraft / draftFromKinTaleEntry (pure)', () => {
   it('writes a blank templateId for the built-in default, never the sentinel id', () => {
     expect(scaffoldKinTaleDraft(session(), DEFAULT_KINTALE_TEMPLATE).templateId).toBe('');
   });
-  it('never lets a template prefill the headline or the body', () => {
+  // #2050: this used to assert the body stayed blank, which is the defect: the
+  // template editor promises the message "opens the recap's note".
+  it('#2050: opens the body with the template\'s default message, and leaves the headline blank', () => {
     const opinionated = decodeKinTaleTemplate({
       _id: 'tpl',
       name: 'Walks',
-      defaultEmailMessage: 'Your pet had a lovely time.',
+      defaultEmailMessage: 'Thanks for having us today!',
     });
     const draft = scaffoldKinTaleDraft(session(), opinionated);
     expect(draft.title).toBe('');
-    expect(draft.bodyCopy).toBe('');
+    expect(draft.bodyCopy).toBe('Thanks for having us today!');
+  });
+  it('#2050: a template with no default message, or one of spaces alone, opens a blank body', () => {
+    expect(scaffoldKinTaleDraft(session(), decodeKinTaleTemplate({ _id: 'tpl', name: 'Walks' })).bodyCopy).toBe('');
+    expect(
+      scaffoldKinTaleDraft(session(), decodeKinTaleTemplate({ _id: 'tpl', name: 'Walks', defaultEmailMessage: '   \n ' }))
+        .bodyCopy,
+    ).toBe('');
+    expect(scaffoldKinTaleDraft(session(), DEFAULT_KINTALE_TEMPLATE).bodyCopy).toBe('');
+  });
+  it('#2050: a template read before the field existed has no message, never the word undefined', () => {
+    expect(templateDefaultMessage({} as never)).toBe('');
+    expect(templateDefaultMessage({ defaultEmailMessage: undefined } as never)).toBe('');
+    expect(templateDefaultMessage({ defaultEmailMessage: 'Hello there' })).toBe('Hello there');
   });
 
   it('rehydrates an editable draft off an existing report, carrying its _id', () => {
@@ -828,6 +844,120 @@ function renderComposer(opts: {
   });
   return render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
 }
+/**
+ * #2050: a KinTale template's "Default message to kinfolk" never reached the
+ * composer or the sent KinTale. It opens the note once, when a new tale is
+ * started, is the Auntie's to change, and goes out as the tale's own body.
+ */
+describe('#2050 · the template\'s default message opens the note', () => {
+  const MESSAGE = 'Thanks for having us today!';
+  const noteField = () => screen.getByPlaceholderText('Tell the tale. How was the visit?');
+
+  it('a new tale opens with the template\'s default message in the note', async () => {
+    renderComposer({ templates: [templateDoc({ defaultEmailMessage: MESSAGE })] });
+    expect(await screen.findByText('Dog Walk recap')).toBeInTheDocument();
+    expect(noteField()).toHaveValue(MESSAGE);
+    expect(screen.getByLabelText(/headline/i)).toHaveValue('');
+  });
+
+  it('a template with no default message opens an empty note, with its placeholder', async () => {
+    renderComposer();
+    expect(await screen.findByText('Dog Walk recap')).toBeInTheDocument();
+    expect(noteField()).toHaveValue('');
+  });
+
+  it('opening the composer writes nothing: no draft is saved until the Auntie saves or sends', async () => {
+    renderComposer({ templates: [templateDoc({ defaultEmailMessage: MESSAGE })] });
+    await screen.findByText('Dog Walk recap');
+    expect(noteField()).toHaveValue(MESSAGE);
+    expect(saveKinTaleDraft).not.toHaveBeenCalled();
+    expect(sendKinTale).not.toHaveBeenCalled();
+  });
+
+  it('what the Auntie types replaces it, and a later template update never puts it back', async () => {
+    renderComposer({ templates: [templateDoc({ defaultEmailMessage: MESSAGE })] });
+    await screen.findByText('Dog Walk recap');
+    await user.clear(noteField());
+    await user.type(noteField(), 'Biscuit found a stick.');
+    // The template listener ticks with an edited default message, renamed so
+    // the next paint can be seen to have read it.
+    mockStreams({
+      sessions: { status: 'ready', data: [session()] },
+      templates: {
+        status: 'ready',
+        data: [templateDoc({ name: 'Dog Walk recap v2', defaultEmailMessage: 'A different default.' })],
+      },
+    });
+    await user.type(screen.getByLabelText(/headline/i), 'x');
+    expect(await screen.findByText('Dog Walk recap v2')).toBeInTheDocument();
+    expect(noteField()).toHaveValue('Biscuit found a stick.');
+  });
+
+  it('a note the Auntie emptied stays empty when the templates tick again', async () => {
+    renderComposer({ templates: [templateDoc({ defaultEmailMessage: MESSAGE })] });
+    await screen.findByText('Dog Walk recap');
+    await user.clear(noteField());
+    mockStreams({
+      sessions: { status: 'ready', data: [session()] },
+      templates: { status: 'ready', data: [templateDoc({ name: 'Dog Walk recap v2', defaultEmailMessage: MESSAGE })] },
+    });
+    await user.type(screen.getByLabelText(/headline/i), 'x');
+    expect(await screen.findByText('Dog Walk recap v2')).toBeInTheDocument();
+    expect(noteField()).toHaveValue('');
+  });
+
+  it('a saved draft reopens with its own words, never the template\'s default message', async () => {
+    mockStreams({
+      sessions: { status: 'ready', data: [session()] },
+      templates: { status: 'ready', data: [templateDoc({ defaultEmailMessage: MESSAGE })] },
+      reports: { status: 'ready', data: [report({ templateId: 'tpl_walk', bodyCopy: 'Biscuit found a stick.' })] },
+    });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    expect(await screen.findByDisplayValue('Biscuit found a stick.')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(MESSAGE)).toBeNull();
+  });
+
+  it('a saved draft whose note was left empty reopens empty', async () => {
+    mockStreams({
+      sessions: { status: 'ready', data: [session()] },
+      templates: { status: 'ready', data: [templateDoc({ defaultEmailMessage: MESSAGE })] },
+      reports: { status: 'ready', data: [report({ templateId: 'tpl_walk', title: 'Park day', bodyCopy: '' })] },
+    });
+    render(<KinTaleCompose sessionId="sess1" onClose={vi.fn()} />);
+    expect(await screen.findByDisplayValue('Park day')).toBeInTheDocument();
+    expect(noteField()).toHaveValue('');
+  });
+
+  it('sent untouched, the default message is saved as the tale\'s body and the tale is sent', async () => {
+    saveKinTaleDraft.mockResolvedValue('tale-new');
+    sendKinTale.mockResolvedValue(undefined);
+    renderComposer({ templates: [templateDoc({ defaultEmailMessage: MESSAGE })] });
+    await user.click(await screen.findByRole('button', { name: /send to the whitfields/i }));
+    await user.click(screen.getByRole('button', { name: /^send kintale$/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledTimes(1));
+    expect(saveKinTaleDraft.mock.calls[0]![0]).toEqual(
+      expect.objectContaining({ bodyCopy: MESSAGE, templateId: 'tpl_walk', sessionId: 'sess1' }),
+    );
+    await waitFor(() => expect(sendKinTale).toHaveBeenCalledWith({ reportId: 'tale-new', sessionId: 'sess1' }));
+  });
+
+  it('a save that fails keeps the note as it was and says why', async () => {
+    saveKinTaleDraft.mockRejectedValue(new Error('offline'));
+    renderComposer({ templates: [templateDoc({ defaultEmailMessage: MESSAGE })] });
+    await user.click(await screen.findByRole('button', { name: /save draft/i }));
+    expect(await screen.findByText(/couldn't save draft: offline/i)).toBeInTheDocument();
+    expect(noteField()).toHaveValue(MESSAGE);
+  });
+
+  it('a default message with markup in it is shown as the text it is', async () => {
+    const markup = 'Hi <img src=x onerror="window.__pwned = true"> <b>there</b>';
+    const { container } = renderComposer({ templates: [templateDoc({ defaultEmailMessage: markup })] });
+    await screen.findByText('Dog Walk recap');
+    expect(noteField()).toHaveValue(markup);
+    expect(container.querySelector('img[src="x"]')).toBeNull();
+    expect((window as unknown as { __pwned?: boolean }).__pwned).toBeUndefined();
+  });
+});
 describe('L20 · template selection', () => {
   it('names the template the session service type resolves to', async () => {
     renderComposer();

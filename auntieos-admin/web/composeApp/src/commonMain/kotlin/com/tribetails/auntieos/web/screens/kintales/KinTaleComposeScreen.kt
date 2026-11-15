@@ -56,6 +56,7 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.FormSchema
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
+import com.tribetails.auntieos.web.data.pickActiveTemplate
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinCareReport
@@ -163,9 +164,35 @@ fun KinTaleComposeScreen(
         if (session != null && session.kinIds.isNotEmpty()) all.filter { it._id in session.kinIds } else all
     }
 
-    val template by (session?.serviceType?.let { client.activeTemplateForService(it) }
-        ?: flowOf(DefaultKinTaleTemplate.template))
-        .collectAsState(initial = DefaultKinTaleTemplate.template)
+    // #2050: the composer waits for the template read to ANSWER before it opens.
+    // It used to open on the built-in and swap to the visit's own template when
+    // that landed, starting the tale again under whatever had been typed. A new
+    // tale now opens with its template's default message in the note, so that
+    // swap would put the message over the Auntie's words. A read that FAILED is
+    // an answer too: the built-in is then the honest template, as on admin web.
+    // After the first answer the SAME template still follows edits made
+    // elsewhere, and a later failed read keeps the last good one. A DIFFERENT
+    // template is not taken up once the composer is open: the read polls, so a
+    // first read that failed is followed by one that works, and switching then
+    // would start the tale again with that template's default message over
+    // whatever the Auntie had typed. The tale keeps the template it opened on.
+    val serviceType = session?.serviceType
+    val templatesRead by remember { client.templatesStream() }.collectAsState(initial = FirestoreResult.Loading)
+    var template by remember(serviceType) { mutableStateOf(DefaultKinTaleTemplate.template) }
+    var templateSettled by remember(serviceType) { mutableStateOf(false) }
+    LaunchedEffect(templatesRead, serviceType) {
+        when (val read = templatesRead) {
+            is FirestoreResult.Data -> {
+                if (serviceType != null) {
+                    val picked = pickActiveTemplate(read.value, serviceType)
+                    if (!templateSettled || picked._id == template._id) template = picked
+                }
+                templateSettled = true
+            }
+            is FirestoreResult.Error -> templateSettled = true
+            else -> Unit
+        }
+    }
 
     // #2040: "Send the KinTale" names only the visit. A visit that already has a
     // saved draft reopens it ([newestSavedDraft]); a blank tale here is how a
@@ -220,6 +247,16 @@ fun KinTaleComposeScreen(
                 return@ScreenScaffold
             }
             SectionHeader(title = "Loading…", subtitle = "Looking for a saved draft", icon = Lucide.ClipboardList)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                repeat(3) { ShimmerCard(height = 100.dp) }
+            }
+        }
+        return
+    }
+
+    if (!templateSettled) {
+        ScreenScaffold {
+            SectionHeader(title = "Loading…", subtitle = "Reading the KinTale template", icon = Lucide.ClipboardList)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(3) { ShimmerCard(height = 100.dp) }
             }
@@ -287,15 +324,25 @@ private fun KinTaleComposerBody(
     // the template it was written under, and a template read landing late must
     // not swap it for a blank scaffold.
     val identity = resumeFrom?._id ?: template._id
+    // #2050: a new tale exactly as it is started, the template's default message
+    // included. While the report still equals it the Auntie has added nothing,
+    // so a save she did not ask for (leaving the headline) writes no draft.
+    // Null for a reopened draft, which is hers already.
+    val startedAs = remember(session._id, identity) {
+        if (resumeFrom == null) scaffoldReport(session, template) else null
+    }
     var report by remember(session._id, identity) {
-        mutableStateOf(resumeFrom ?: scaffoldReport(session, template))
+        mutableStateOf(resumeFrom ?: startedAs ?: scaffoldReport(session, template))
     }
     // #994: the report as this screen last wrote it: the diff baseline for every
     // update, so a save sends only what changed since. Null until the first
     // create answers; `report._id` is blank until then too, so no update runs
     // without it. #2040: a reopened draft's baseline is the draft as read.
     var written by remember(session._id, identity) { mutableStateOf(resumeFrom) }
-    var bodyCopy by remember(report._id) { mutableStateOf(report.bodyCopy) }
+    // #2050: keyed on the tale's identity too. The template is read after this
+    // screen first draws; when it lands the new tale is started again from it,
+    // and the note has to open with that template's default message.
+    var bodyCopy by remember(report._id, identity) { mutableStateOf(report.bodyCopy) }
     // Auntie-authored headline for the cover. Blank uses composerTitle(...) ONLY
     // as placeholder; we never write the derived value back onto the report.
     var titleDraft by remember(report._id) { mutableStateOf(report.title) }
@@ -362,8 +409,11 @@ private fun KinTaleComposerBody(
      * Persist the in-memory draft. Only round-trips when there's actual content
      * (we don't want a ghost row in Firestore the moment Auntie opens the screen).
      */
-    fun persistDraft(latest: KinCareReport = report) {
+    fun persistDraft(latest: KinCareReport = report, asked: Boolean = false) {
         if (!hasContent(latest)) return
+        // #2050: nor a new tale that holds only its template's default message,
+        // unless the Auntie pressed Save draft herself.
+        if (!asked && isUntouchedNewTale(latest, startedAs)) return
         scope.launch {
             isSaving = true
             val res = if (latest._id.isBlank()) {
@@ -645,7 +695,8 @@ private fun KinTaleComposerBody(
                         )
                         GhostButton(
                             label   = "Save notes",
-                            onClick = { persistDraft() },
+                            // #2050: a save she pressed, so the default message alone is saved too.
+                            onClick = { persistDraft(asked = true) },
                             leading = { Icon(Lucide.Save, contentDescription = null, modifier = Modifier.size(13.dp)) },
                         )
                     }
@@ -790,7 +841,7 @@ private fun KinTaleComposerBody(
                         routeToast.show("Discarded local edits. The draft on file is unchanged.", ToastKind.Info)
                         onClose()
                     },
-                    onSaveDraft = { persistDraft() },
+                    onSaveDraft = { persistDraft(asked = true) },
                     onSend = ::onSend,
                 )
             }
@@ -1252,7 +1303,10 @@ private fun LivePreviewBlock(
     template: KinTaleTemplate,
 ) {
     val c = AuntieTheme.colors
-    val previewBody = bodyCopy.ifBlank { template.defaultEmailMessage }
+    // #2050: the preview is the message that will be sent. It used to fall back
+    // to the template's default message, which was never sent; that message now
+    // opens the note itself, and a note the Auntie emptied previews empty.
+    val previewBody = bodyCopy
     val pets = kinList.map { kin ->
         PetAvatar(initials = initialsOf(kin.name.ifBlank { "Kin" }))
     }
@@ -1357,7 +1411,17 @@ private fun initialsOf(name: String): String {
     }
 }
 
-private fun scaffoldReport(session: KinCareSession, template: KinTaleTemplate): KinCareReport =
+/**
+ * A new tale for [session], written against [template].
+ *
+ * #2050: the template's "Default message to kinfolk" opens the message. The
+ * template editor has always said "Anything typed here opens the recap's note;
+ * Auntie can still change it for each visit", and the note opened empty. It is
+ * put in once, here, where a new tale is started: a saved draft reopens as it
+ * was saved (#2040), so a message the Auntie changed or emptied is never
+ * refilled.
+ */
+internal fun scaffoldReport(session: KinCareSession, template: KinTaleTemplate): KinCareReport =
     KinCareReport(
         sessionId    = session._id,
         kinfolkId    = session.kinfolkId,
@@ -1369,8 +1433,24 @@ private fun scaffoldReport(session: KinCareSession, template: KinTaleTemplate): 
         departedAt   = session.departedAt,
         visitRouteId = session.visitRouteId,
         templateId   = template._id.takeUnless { it == DefaultKinTaleTemplate.ID }.orEmpty(),
+        bodyCopy     = template.defaultMessageForNewTale(),
         status       = "DRAFT",
     )
+
+/**
+ * #2050: the message a template opens a new tale with, as typed. A message of
+ * spaces alone is no message, so the note keeps its placeholder.
+ */
+internal fun KinTaleTemplate.defaultMessageForNewTale(): String =
+    defaultEmailMessage.takeIf { it.isNotBlank() }.orEmpty()
+
+/**
+ * #2050: true while a new, unsaved tale still holds only what it was started
+ * with ([startedAs], null for a reopened draft). Nothing of the Auntie's is in
+ * it yet, so nothing is saved for her unasked.
+ */
+internal fun isUntouchedNewTale(report: KinCareReport, startedAs: KinCareReport?): Boolean =
+    startedAs != null && report._id.isBlank() && report == startedAs
 
 private fun hasContent(report: KinCareReport): Boolean =
     report.title.isNotBlank() ||

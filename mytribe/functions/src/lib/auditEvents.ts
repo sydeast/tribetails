@@ -614,6 +614,8 @@ export const AUDIT_EVENTS = {
   VISIT_ARRIVED: 'VISIT_ARRIVED',
   VISIT_DEPARTED: 'VISIT_DEPARTED',
   VISIT_UNDO_ARRIVAL: 'VISIT_UNDO_ARRIVAL',
+  // #2250: a wrong Departed tap taken back inside its few minutes.
+  VISIT_UNDO_DEPARTED: 'VISIT_UNDO_DEPARTED',
 } as const;
 
 export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];
@@ -744,6 +746,7 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.VISIT_ARRIVED,
   AUDIT_EVENTS.VISIT_DEPARTED,
   AUDIT_EVENTS.VISIT_UNDO_ARRIVAL,
+  AUDIT_EVENTS.VISIT_UNDO_DEPARTED,
   AUDIT_EVENTS.INTEGRATION_CALENDAR_CONNECTED,
   AUDIT_EVENTS.INTEGRATION_CALENDAR_DISCONNECTED,
   AUDIT_EVENTS.INTEGRATION_CALENDAR_PUSH,
@@ -857,4 +860,5 @@ export const AUDIT_EVENT_TITLES = {
   VISIT_ARRIVED: 'Visit: arrived',
   VISIT_DEPARTED: 'Visit: departed',
   VISIT_UNDO_ARRIVAL: 'Visit: arrival undone',
+  VISIT_UNDO_DEPARTED: 'Visit: departure undone',
 } as const satisfies Partial<Record<AuditEvent, string>>;

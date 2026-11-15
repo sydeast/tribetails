@@ -181,6 +181,19 @@ class KinTaleReportViewModel(
      */
     private var reportExistsOnServer: Boolean? = null
 
+    /**
+     * #2050: the new tale exactly as it was started, template default message
+     * included. While the report still equals it, the Auntie has added nothing,
+     * so there is nothing of hers to save: opening the composer and leaving
+     * must not leave a draft behind (a draft is not created until the first
+     * content change). Null once a draft exists, and for a reopened one.
+     */
+    private var startedAs: KinCareReport? = null
+
+    /** #2050: true while a new tale still holds only what it was started with. */
+    private fun isUntouchedNewTale(report: KinCareReport): Boolean =
+        reportBaseline == null && reportExistsOnServer == null && startedAs != null && report == startedAs
+
     /** The arguments of the last [load], so [retryLoad] can repeat it exactly. */
     private var loadedSessionId: String? = null
     private var loadedReportId: String? = null
@@ -232,7 +245,9 @@ class KinTaleReportViewModel(
         val baseline = reportBaseline
         val dirty = when {
             reportExistsOnServer == false -> false // nothing here is savable anyway
-            baseline == null -> hasContent(state.report) // a new draft with content, not yet created
+            // A new draft with content, not yet created. #2050: the template's
+            // default message alone is not a change the Auntie made.
+            baseline == null -> hasContent(state.report) && !isUntouchedNewTale(state.report)
             else -> kinCareReportFieldChanges(baseline, state.report).isNotEmpty()
         }
         if (dirty != state.hasUnsavedChanges) {
@@ -344,6 +359,8 @@ class KinTaleReportViewModel(
                     reportExistsOnServer = null
                 }
             }
+            // #2050: only a tale started here has a starting point to compare to.
+            startedAs = report.takeIf { reportBaseline == null && reportExistsOnServer == null }
 
             // Hydrate uploaded media (only meaningful for resumed drafts)
             val media = if (report.id.isNotBlank() && report.mediaFileIds.isNotEmpty()) {
@@ -400,6 +417,16 @@ class KinTaleReportViewModel(
         scheduleAutosave()
     }
 
+    /**
+     * A new tale for [session], written against [template].
+     *
+     * #2050: the template's "Default message to kinfolk" opens the message. The
+     * template editor has always said "Anything typed here opens the recap's
+     * note; Auntie can still change it for each visit", and the note opened
+     * empty. It is put in ONCE, here, where a new tale is started: a saved draft
+     * is reopened as it was saved, so a message the Auntie changed or emptied
+     * is never refilled.
+     */
     private fun scaffoldReport(session: KinCareSession, template: KinTaleTemplate): KinCareReport =
         KinCareReport(
             sessionId = session.id,
@@ -412,6 +439,7 @@ class KinTaleReportViewModel(
             departedAt = session.departedAt,
             visitRouteId = session.visitRouteId,
             templateId = template.id.takeUnless { it == DefaultKinTaleTemplate.template.id } ?: "",
+            bodyCopy = template.defaultMessageForNewTale(),
             status = ReportStatus.DRAFT.name
         )
 
@@ -575,7 +603,7 @@ class KinTaleReportViewModel(
      * the "added to a KinTale" notice. Those edits wait as unsaved changes until
      * the operator presses Save changes ([saveChanges]).
      */
-    fun persistDraft() {
+    fun persistDraft(asked: Boolean = false) {
         // Every trigger funnels through here, so an immediate persist retires the
         // pending timer rather than letting it write the same edit a second time.
         // The autosave coroutine clears this reference before calling in, so this
@@ -586,7 +614,7 @@ class KinTaleReportViewModel(
             syncUnsavedMarker()
             return
         }
-        writeChanges()
+        writeChanges(asked)
     }
 
     /**
@@ -598,10 +626,15 @@ class KinTaleReportViewModel(
     fun saveChanges() {
         autosaveJob?.cancel()
         autosaveJob = null
-        writeChanges()
+        writeChanges(asked = true)
     }
 
-    private fun writeChanges() {
+    /**
+     * [asked] is true when the Auntie pressed a save button herself. #2050: a
+     * new tale holding only its template's default message is saved then, and
+     * only then; Back, blur and the autosave leave no draft behind for it.
+     */
+    private fun writeChanges(asked: Boolean) {
         val report = _uiState.value.report
         if (reportExistsOnServer == false) {
             // A blank scaffold standing in for a KinTale we failed to read. Writing
@@ -613,6 +646,9 @@ class KinTaleReportViewModel(
             return
         }
         if (!hasContent(report)) return // nothing to save yet - keep the ghost out of Firestore
+        // #2050: nor a tale that holds only its template's default message,
+        // unless she asked. Send has its own save and is not held back by this.
+        if (!asked && isUntouchedNewTale(report)) return
 
         val baseline = reportBaseline
         if (baseline != null) {
@@ -1120,6 +1156,13 @@ internal fun sentKinTaleEditNote(household: String): String {
     return "This KinTale has been sent. $who will see your changes once you save them. " +
         "New words or a new photo also send them a notice that you added to it, at most one a minute."
 }
+
+/**
+ * #2050: the message a template opens a new tale with, as typed. A message of
+ * spaces alone is no message, so the note keeps its placeholder.
+ */
+internal fun KinTaleTemplate.defaultMessageForNewTale(): String =
+    defaultEmailMessage.takeIf { it.isNotBlank() }.orEmpty()
 
 /** Whether a KinTale has anything in it worth saving or sending. The screen reads it too (#1940). */
 internal fun KinCareReport.hasKinTaleContent(): Boolean =

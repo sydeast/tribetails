@@ -5,6 +5,7 @@ import { getMyKinTales } from '../api/portal';
 import type { KinTaleDto } from '../api/types';
 import {
   addKinTaleComment,
+  careTaskLabel,
   commentAuthorLabel,
   commentAvatarVariant,
   commentBadge,
@@ -17,7 +18,9 @@ import {
   loveLine,
   nextTalesCursor,
   shortTimestamp,
+  taleAboutLine,
   taleMetaLabel,
+  taleVisitDayLabel,
   threadComments,
   toggleKinTaleLove,
   type KinTaleCommentDto,
@@ -334,12 +337,22 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
   // means no line at all, matching gpsBlock's "renders nothing" convention.
   const arrivedLabel = isoTime(tale.arrivedAtIso);
   const departedLabel = isoTime(tale.departedAtIso);
+  // #2056: the visit's day leads the line, so "Arrived 9:02 AM" says which day.
+  // It is a day only. In Time Blocks mode the household is never shown a booked
+  // clock time, and arrival and departure are the only times on a tale.
   const visitFactsParts = [
+    taleVisitDayLabel(tale.visitDate),
     arrivedLabel ? `Arrived ${arrivedLabel}` : null,
     departedLabel ? `Departed ${departedLabel}` : null,
   ].filter((p): p is string => p !== null);
-  const visitFactsBlock = visitFactsParts.length > 0 && (
-    <div className="visitfacts">{visitFactsParts.join(' · ')}</div>
+  // #2056: which KinCare and which Kin. Its own line above the visit facts;
+  // nothing at all when the tale carries neither (a tale with no visit behind it).
+  const aboutLine = taleAboutLine(tale);
+  const visitFactsBlock = (aboutLine !== '' || visitFactsParts.length > 0) && (
+    <>
+      {aboutLine !== '' && <div className="visitabout">{aboutLine}</div>}
+      {visitFactsParts.length > 0 && <div className="visitfacts">{visitFactsParts.join(' · ')}</div>}
+    </>
   );
 
   // Task checklist (task-25, P4): checked items only. `tale.checklist`
@@ -353,7 +366,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
       <div className="taskschips">
         {checklist.map((item) => (
           <span className="badge done" key={item.key}>
-            {item.text}
+            {careTaskLabel(item)}
           </span>
         ))}
       </div>

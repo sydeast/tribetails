@@ -1012,6 +1012,10 @@ data class KinCareSession(
     // required" on and no KinTale sent; every send batch writes false. Read by
     // `domain/KinTaleTask.kt#kinTaleOwed` for the "KinTales to send" group.
     var kinTaleDue: Boolean = false,
+    // #2250: when "Undo departed" closes for this visit, an ISO instant the
+    // server stamps as the departure lands. Never written from here. Read by
+    // `domain/UndoDeparted.kt`.
+    var undoDepartedUntil: String? = null,
 
     // createdAt/updatedAt hold EITHER a Firestore server Timestamp (MyTribe
     // callables write FieldValue.serverTimestamp()) OR an ISO-8601 String

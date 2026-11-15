@@ -375,6 +375,11 @@ export interface TaleThumbDto {
 export interface ChecklistItemDto {
   key: string;
   text: string;
+  /**
+   * #2056: the Kin this task was done for, by name. Absent on a once-per-visit
+   * task, when no name could be read, and from an older deployed function.
+   */
+  kinNames?: string[];
 }
 
 export interface KinTaleDto {
@@ -416,6 +421,15 @@ export interface KinTaleDto {
    * checklist and a recorded-but-empty one never render the same way.
    */
   checklist?: ChecklistItemDto[];
+  /**
+   * #2056: what the tale is about. Each is optional: a tale with no visit
+   * behind it, or an older deployed function, sends none of them.
+   * `visitDate` is the business day of the visit, `YYYY-MM-DD`; read it with
+   * `taleVisitDayLabel`, never `new Date(visitDate)`, which is UTC.
+   */
+  serviceLabel?: string;
+  visitDate?: string;
+  kinNames?: string[];
 }
 
 export interface GetMyKinTalesResult {

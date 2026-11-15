@@ -472,6 +472,7 @@ fun KinCareSessionsScreen(
                                         onPreviewNotice = { s, onAnswer -> viewModel.previewVisitNotice(s, onAnswer) },
                                         onTransition = transitionFn,
                                         onNotice = noticeFn,
+                                        onDepartureUndone = { viewModel.loadKinCareSessions() },
                                     )
                                 }
                             }
@@ -526,6 +527,7 @@ fun KinCareSessionsScreen(
                                         onPreviewNotice = { s, onAnswer -> viewModel.previewVisitNotice(s, onAnswer) },
                                         onTransition = transitionFn,
                                         onNotice = noticeFn,
+                                        onDepartureUndone = { viewModel.loadKinCareSessions() },
                                     )
                                 }
                             }
@@ -644,6 +646,8 @@ private fun PhaseGroup(
     onTransition: (String, BookingTransitionAction, String, String) -> Unit,
     /** #1580: `(message, failed)` for a note sent to the visit's internal list. */
     onNotice: (String, Boolean) -> Unit = { _, _ -> },
+    /** #2250: the screen re-reads after an undone departure. */
+    onDepartureUndone: () -> Unit = {},
     /** #1794: a clock tap that tells the household. See `clockFn`. */
     onClock: (KinCareSession, Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
         { s, patch, _, _, msg -> onPatch(s.id, patch, msg) },
@@ -711,6 +715,7 @@ private fun PhaseGroup(
                             onTransition(session.id, action, completedAt, msg)
                         },
                         onNotice = onNotice,
+                        onDepartureUndone = onDepartureUndone,
                     )
                 }
             }
@@ -756,6 +761,8 @@ private fun KinCareCard(
     onTransition: (BookingTransitionAction, String, String) -> Unit,
     /** #1580: see [PhaseGroup]'s `onNotice`. */
     onNotice: (String, Boolean) -> Unit = { _, _ -> },
+    /** #2250: the screen re-reads after an undone departure. */
+    onDepartureUndone: () -> Unit = {},
     /** #1794: `(patch, event, stampedAt, successMessage)`, bound to this session. */
     onClock: (Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
         { patch, _, _, msg -> onPatch(patch, msg) },
@@ -949,6 +956,7 @@ private fun KinCareCard(
                 onWriteKinTale = onWriteKinTale,
                 context = context,
                 onNotice = onNotice,
+                onDepartureUndone = onDepartureUndone,
             )
         }
     }
@@ -970,6 +978,8 @@ private fun ActionRow(
     context: Context,
     /** #1580: `(message, failed)` once a note to the office lands or fails. */
     onNotice: (String, Boolean) -> Unit = { _, _ -> },
+    /** #2250: the screen re-reads after an undone departure. */
+    onDepartureUndone: () -> Unit = {},
     /** #1794: see [KinCareCard]'s `onClock`. */
     onClock: (Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
         { patch, _, _, msg -> onPatch(patch, msg) },
@@ -1084,12 +1094,16 @@ private fun ActionRow(
                     modifier = Modifier.fillMaxWidth(),
                     leading = { Icon(Lucide.StickyNote, contentDescription = null, modifier = Modifier.size(14.dp)) },
                 )
+                // #2250: for a few minutes after Departed. Draws nothing otherwise.
+                UndoDepartedButton(session, session.kinfolkName, onUndone = onDepartureUndone)
             }
             // #2123: a visit is Completed at departure, so the KinTale is written
             // from the Completed card. Offered whether or not the setting requires
             // it; with it on, the card also sits in "KinTales to send".
             "COMPLETED" -> {
                 if (offersSendKinTale(session)) SendTheKinTaleButton(onWriteKinTale)
+                // #2250: a departure completes the visit, so its undo is here.
+                UndoDepartedButton(session, session.kinfolkName, onUndone = onDepartureUndone)
             }
         }
     }

@@ -438,6 +438,124 @@ describe('KinTales: visit facts', () => {
     expect(within(featured as HTMLElement).queryByText(/Arrived/)).not.toBeInTheDocument();
   });
 });
+/**
+ * #2056: the tale says which KinCare, which day and which Kin it is about, and
+ * a care task ticked for one Kin names that Kin. #2050: the template's default
+ * message arrives as the tale body and is printed as text.
+ */
+describe('what a tale is about', () => {
+  const FOUR_KIN = ['Biscuit', 'Mochi', 'Pip', 'Tux'];
+  const ARRIVED_ISO = new Date(2026, 10, 10, 9, 2).toISOString();
+  const DEPARTED_ISO = new Date(2026, 10, 10, 9, 35).toISOString();
+
+  it('the featured tale names its KinCare, its Kin and its visit day, and "Fed" names its one Kin', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [
+        tale({
+          title: 'Four at the door',
+          serviceLabel: '30 Minute Quick Check',
+          visitDate: '2026-11-10',
+          kinNames: FOUR_KIN,
+          arrivedAtIso: ARRIVED_ISO,
+          departedAtIso: DEPARTED_ISO,
+          checklist: [
+            { key: 'fed', text: 'Fed', kinNames: ['Biscuit'] },
+            { key: 'lights_off', text: 'Lights turned off' },
+          ],
+        }),
+      ],
+      hasMore: false,
+    });
+    const { container } = renderScreen();
+
+    await screen.findByText('A fine walk in the park.');
+    expect(container.querySelector('.feature .visitabout')?.textContent).toBe(
+      '30 Minute Quick Check · Biscuit, Mochi, Pip and Tux',
+    );
+    const facts = container.querySelector('.feature .visitfacts')?.textContent ?? '';
+    expect(facts).toMatch(/^Tue, Nov 10(, 2026)? · Arrived /);
+    expect(facts).toContain(`Departed ${isoTime(DEPARTED_ISO)}`);
+    const chips = container.querySelectorAll('.taskschips .badge');
+    expect(Array.from(chips).map((c) => c.textContent)).toEqual(['Fed for Biscuit', 'Lights turned off']);
+  });
+
+  it('a card under the featured one says the same', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [
+        tale({ id: 'featured', title: 'Featured' }),
+        tale({
+          id: 't2',
+          title: 'Second card',
+          serviceLabel: 'Dog Walk',
+          visitDate: '2026-11-09',
+          kinNames: ['Biscuit', 'Mochi'],
+          checklist: [{ key: 'fed', text: 'Fed', kinNames: ['Mochi'] }],
+        }),
+      ],
+      hasMore: false,
+    });
+    renderScreen();
+
+    await screen.findByText('Second card');
+    const card = screen.getByText('Second card').closest('.talecard') as HTMLElement;
+    expect(card.querySelector('.visitabout')?.textContent).toBe('Dog Walk · Biscuit and Mochi');
+    expect(card.querySelector('.visitfacts')?.textContent).toMatch(/^Mon, Nov 9(, 2026)?$/);
+    expect(within(card).getByText('Fed for Mochi')).toBeInTheDocument();
+  });
+
+  it('an older tale with none of it draws as before: no lines, and no "undefined" anywhere', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ title: 'Older tale', checklist: [{ key: 'fed', text: 'Fed' }] })],
+      hasMore: false,
+    });
+    const { container } = renderScreen();
+
+    await screen.findByText('A fine walk in the park.');
+    expect(container.querySelector('.visitabout')).toBeNull();
+    expect(container.querySelector('.visitfacts')).toBeNull();
+    expect(Array.from(container.querySelectorAll('.taskschips .badge')).map((c) => c.textContent)).toEqual(['Fed']);
+    expect(container.textContent).not.toMatch(/undefined|null|NaN/);
+  });
+
+  it('a tale with only a visit day shows the day and no empty first line', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ title: 'Day only', visitDate: '2026-11-10' })],
+      hasMore: false,
+    });
+    const { container } = renderScreen();
+
+    await screen.findByText('A fine walk in the park.');
+    expect(container.querySelector('.visitabout')).toBeNull();
+    expect(container.querySelector('.visitfacts')?.textContent).toMatch(/^Tue, Nov 10(, 2026)?$/);
+  });
+
+  it('an unreadable day and blank names are left out, not printed', async () => {
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ title: 'Odd fields', visitDate: 'March 3', kinNames: ['', ' '], serviceLabel: ' ' })],
+      hasMore: false,
+    });
+    const { container } = renderScreen();
+
+    await screen.findByText('A fine walk in the park.');
+    expect(container.querySelector('.visitabout')).toBeNull();
+    expect(container.querySelector('.visitfacts')).toBeNull();
+  });
+
+  it('a default message with markup in it is printed as text, on the featured tale and on a card', async () => {
+    const body = 'Thanks for having us! <img src=x onerror="window.__pwned = true"> <b>bold</b>';
+    mocks.getMyKinTales.mockResolvedValue({
+      tales: [tale({ id: 'a', title: 'First', body }), tale({ id: 'b', title: 'Second', body })],
+      hasMore: false,
+    });
+    const { container } = renderScreen();
+
+    await screen.findByText('Second');
+    expect(container.querySelector('.narrative')?.textContent).toBe(body);
+    expect(container.querySelector('.tcbody')?.textContent).toBe(body);
+    expect(container.querySelector('.narrative img, .tcbody img, .narrative b, .tcbody b')).toBeNull();
+    expect((window as unknown as { __pwned?: boolean }).__pwned).toBeUndefined();
+  });
+});
 // #1322: an Auntie whose display name already carries the role word used to
 // read "From Auntie TEST SANDBOX Auntie" on every byline.
 describe('KinTales: Auntie bylines say the role word once', () => {

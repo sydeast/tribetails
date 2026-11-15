@@ -221,7 +221,8 @@ describe("the operator's arrival rule still applies", () => {
     });
     const outcome = await completeDepartedSession('s1');
     expect(outcome).toMatchObject({ kind: 'refused', code: 'arrival_verification_required' });
-    expect(ctx.writes).toEqual([]);
+    // #2250: it stays Departed; the one write opens "Undo departed".
+    expect(ctx.writes.map((w) => w.data)).toEqual([{ undoDepartedUntil: expect.any(String) }]);
     expect(audits()).toEqual([
       expect.objectContaining({
         event: 'BOOKING_TRANSITION_REFUSED',
@@ -271,7 +272,8 @@ describe("the operator's arrival rule still applies", () => {
         }),
       });
       expect(await completeDepartedSession('s1')).toMatchObject({ kind: 'refused', code: 'arrival_outside_radius' });
-      expect(ctx.writes).toEqual([]);
+      // #2250: it stays Departed; the one write opens "Undo departed".
+      expect(ctx.writes.map((w) => w.data)).toEqual([{ undoDepartedUntil: expect.any(String) }]);
       mocks.writeAuditEntryFn.mockClear();
     }
   });
@@ -282,7 +284,8 @@ describe("the operator's arrival rule still applies", () => {
     });
     const outcome = await completeDepartedSession('s1');
     expect(outcome).toMatchObject({ kind: 'refused', code: 'arrival_outside_radius' });
-    expect(ctx.writes).toEqual([]);
+    // #2250: it stays Departed; the one write opens "Undo departed".
+    expect(ctx.writes.map((w) => w.data)).toEqual([{ undoDepartedUntil: expect.any(String) }]);
     expect(audits()[0]).toMatchObject({
       description: 'Could not complete the visit: arrival was recorded 2000m from the household (radius 150m)',
     });

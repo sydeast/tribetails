@@ -516,6 +516,13 @@ const CLOCK_STAMP_FIELD: Readonly<Record<string, string>> = {
 async function clockStampFromSession(args: Args): Promise<number | undefined> {
   const field = CLOCK_STAMP_FIELD[args.event];
   if (field === undefined) return undefined;
+  const row = await clockSessionOf(args);
+  if (row === undefined) return undefined;
+  const { stampMs } = await import('../lib/visitStepNotice.js');
+  return stampMs(row[field]) ?? undefined;
+}
+/** The one session this visit names, or undefined when it names none or several. */
+async function clockSessionOf(args: Args): Promise<Record<string, unknown> | undefined> {
   try {
     const sessions = db().collection('kin_care_sessions');
     const query =
@@ -527,9 +534,7 @@ async function clockStampFromSession(args: Args): Promise<number | undefined> {
       .map((d) => d.data() as Record<string, unknown>)
       .filter((row) => row['kinfolkId'] === args.familyId)
       .filter((row) => !(args.batchId && args.visitId) || row['kinCareBatchId'] === args.batchId);
-    if (rows.length !== 1) return undefined;
-    const { stampMs } = await import('../lib/visitStepNotice.js');
-    return stampMs(rows[0]![field]) ?? undefined;
+    return rows.length === 1 ? rows[0] : undefined;
   } catch (err) {
     logEvent({
       severity: 'warn',
@@ -545,6 +550,24 @@ export async function dispatchVisitNotificationHandler(
   req: CallableRequest<unknown>,
 ): Promise<DispatchVisitNotificationOutcome> {
   const args: Args = Args.parse(req.data);
+  // #2250: a departure that was announced and then undone is not announced
+  // again. The server's own send skips it (`lib/visitStepNotice.ts`), so
+  // without the same check here an installed client's call after its write
+  // would stop being the duplicate and become the second "has left".
+  if (args.event === 'departed') {
+    const session = await clockSessionOf(args);
+    const { departedNoticeAlreadyTold } = await import('../lib/visitLifecycle.js');
+    if (session !== undefined && departedNoticeAlreadyTold(session)) {
+      const { householdNoticeNotSent } = await import('../notifications/householdNotice.js');
+      return {
+        ok: true,
+        dispatchIds: [],
+        suppressed: true,
+        reason: 'already_notified',
+        notice: await householdNoticeNotSent(args.familyId, 'already_notified'),
+      };
+    }
+  }
   if (args.eventAtMs === undefined && args.event !== 'report_sent') {
     const at = await clockStampFromSession(args);
     if (at !== undefined) args.eventAtMs = at;

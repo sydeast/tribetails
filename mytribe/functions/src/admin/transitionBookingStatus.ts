@@ -481,6 +481,16 @@ export async function transitionBookingStatusHandler(
   let kinTaleDue = false;
   if (args.action === 'COMPLETE') {
     patch.completedAt = args.completedAt ?? new Date().toISOString();
+    // #2250: "Undo departed" takes back a departure, and the completion that
+    // came with it. A departure the arrival rule held at Departed still opens
+    // that undo, and Complete by hand inside those minutes would leave it
+    // open on a visit the owner had just completed, for an Auntie to take
+    // back. A hand Complete closes it. Written only when the visit carries
+    // the stamp, so every other Complete writes what it always did.
+    const stamps = (prev ?? {}) as Record<string, unknown>;
+    for (const field of ['undoDepartedUntil', 'householdStatusBeforeCompletion']) {
+      if (stamps[field] !== undefined) patch[field] = FieldValue.delete();
+    }
     const departed = typeof prev?.departedAt === 'string' && prev.departedAt.trim() !== '';
     const { isKinTaleRequired, kinTaleDueAtCompletion } = await import('../lib/kinTaleRequirement.js');
     kinTaleDue = departed && kinTaleDueAtCompletion(prev ?? {}, await isKinTaleRequired(db()));
