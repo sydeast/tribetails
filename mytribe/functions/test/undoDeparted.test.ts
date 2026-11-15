@@ -231,6 +231,8 @@ describe('undo inside the window', () => {
       completedOutsideRange: '__DEL__',
       undoDepartedUntil: '__DEL__',
       householdStatusBeforeCompletion: '__DEL__',
+      // The arrival whose "has left" the household already heard.
+      departedNoticeToldForArrival: ARRIVED_AT,
       updatedAt: '__TS__',
       updatedBy: 'uid1',
     });
@@ -334,6 +336,65 @@ describe('the household is not told', () => {
   });
 });
 
+describe('the real Departed after an undo', () => {
+  const tap = (action: string, atIso: string) =>
+    setVisitLifecycleHandler(req({ sessionId: 's1', action, atIso }));
+  const told = () => mocks.dispatch.mock.calls.map((c) => c[0].event);
+  it('the undo notes which arrival the household was told about', async () => {
+    seed({});
+    await undo();
+    expect((await storedSession())['departedNoticeToldForArrival']).toBe(ARRIVED_AT);
+  });
+  it('tells the household nothing a second time, logs the step, and says why on the card', async () => {
+    seed({});
+    await undo();
+    const res = await tap('DEPARTED', '2026-11-14T15:32:00.000Z');
+    expect(res).toMatchObject({ status: 'DEPARTED', changed: true, notified: false, notifySkipped: 'already_notified' });
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(linesOf('VISIT_DEPARTED')).toHaveLength(1);
+    const atMs = Date.parse('2026-11-14T15:32:00.000Z');
+    const record = (await ctx.db.doc(`visit_step_notices/s1__departed__${atMs}`).get()).data();
+    expect(record).toMatchObject({ notified: false, reason: 'already_notified' });
+  });
+  it("a phone's own Departed write is not announced either", async () => {
+    seed({});
+    await undo();
+    const before = await storedSession();
+    const after = { ...before, status: 'DEPARTED', departedAt: '2026-11-14T15:32:00.000Z' };
+    await onKinCareSessionLifecycleHandler({
+      id: 'evt-2',
+      params: { sessionId: 's1' },
+      data: { before: { data: () => before }, after: { data: () => after } },
+      authType: 'unauthenticated',
+      authId: '',
+    } as never);
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(linesOf('VISIT_DEPARTED')).toHaveLength(1);
+  });
+  it('a departure nobody undid is announced: the silence is the undo\'s doing', async () => {
+    seed({ session: { ...completed(), status: 'ARRIVED', departedAt: '', undoDepartedUntil: undefined } });
+    await tap('DEPARTED', '2026-11-14T15:32:00.000Z');
+    expect(told()).toEqual(['departed']);
+  });
+  it('a new arrival is a new visit to the door: its Arrived and its Departed are both announced', async () => {
+    seed({});
+    await undo();
+    await tap('UNDO_ARRIVAL', '2026-11-14T15:32:00.000Z');
+    await tap('ARRIVED', '2026-11-14T15:33:00.000Z');
+    await tap('DEPARTED', '2026-11-14T15:50:00.000Z');
+    expect(told()).toEqual(['arrived', 'departed']);
+  });
+  it('undone twice, it stays quiet for the same arrival', async () => {
+    seed({});
+    await undo();
+    await tap('DEPARTED', '2026-11-14T15:32:00.000Z');
+    await completeDepartedSession('s1');
+    await undo();
+    await tap('DEPARTED', '2026-11-14T15:33:00.000Z');
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(linesOf('VISIT_DEPARTED')).toHaveLength(2);
+  });
+});
 describe('after the window', () => {
   it('is refused in plain words, writes nothing, and the refusal is logged', async () => {
     seed({});

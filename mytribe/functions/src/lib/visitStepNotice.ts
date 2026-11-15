@@ -4,7 +4,7 @@ import { logEvent } from './logger';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS, type AuditEvent } from './auditEvents';
 import { normalizeBookingStatus } from './bookingTransitions';
-import { notificationEventFor, type VisitLifecycleAction } from './visitLifecycle';
+import { departedNoticeAlreadyTold, notificationEventFor, type VisitLifecycleAction } from './visitLifecycle';
 
 /**
  * #2037: THE HOUSEHOLD NOTICE AND THE ACTIVITY LOG LINE FOR ONE CLOCK STEP
@@ -307,7 +307,12 @@ export async function announceVisitStep(input: {
   const routing = routingOf(session);
   let outcome: VisitStepOutcome;
   let dispatchIds: string[] = [];
-  if (routing.skip !== null) {
+  if (step.action === 'DEPARTED' && departedNoticeAlreadyTold(session)) {
+    // #2250: this arrival's departure was announced once and then undone. The
+    // household heard she left; the real Departed does not tell them again.
+    // Recorded below like any other outcome, so the card says so.
+    outcome = { notified: false, notifySkipped: 'already_notified' };
+  } else if (routing.skip !== null) {
     outcome = { notified: false, notifySkipped: routing.skip };
   } else {
     try {

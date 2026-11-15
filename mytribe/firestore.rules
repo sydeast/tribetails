@@ -990,11 +990,14 @@ service cloud.firestore {
       // #2250: nor the two the departure trigger writes for "Undo departed":
       // when its few minutes end, and what the household's copy read before.
       // A caretaker who could move the first could reopen the undo on any
-      // finished visit.
+      // finished visit. And `departedNoticeToldForArrival`, which the undo
+      // writes so the household is not told "has left" a second time: a
+      // caretaker who could write it could silence that notice on any visit.
       function caretakerStartRuleHolds() {
         return !request.resource.data.diff(resource.data).affectedKeys()
                  .hasAny(['arrivalCheckedByOwner', 'completedOutsideRange',
-                          'undoDepartedUntil', 'householdStatusBeforeCompletion'])
+                          'undoDepartedUntil', 'householdStatusBeforeCompletion',
+                          'departedNoticeToldForArrival'])
                && (!startsVisit() || !arrivalRuleOn());
       }
       // #2250, operator ruling 2026-11-14: "Undo departed" puts a visit back

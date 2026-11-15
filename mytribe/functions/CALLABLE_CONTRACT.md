@@ -2942,6 +2942,16 @@ every client.
   `arrivalCheckedByOwner`) and `invoiceId`. No position is accepted.
 - **The household is not told.** No notice is sent and none is recalled.
   Result: `notified: false`, `notifySkipped: 'no_event_for_action'`.
+- **The next Departed is quiet too.** The undo writes the visit's `arrivedAt`
+  to `departedNoticeToldForArrival`. While that still equals `arrivedAt`, a
+  Departed sends the household no second "has left": `setVisitLifecycle` and
+  `dispatchVisitNotification` both answer `notified: false` /
+  `suppressed: true` with the reason `already_notified`, and the Activity Log
+  line is written as usual. A new arrival has a new `arrivedAt`, so its
+  departure is announced. A first notice that failed to send is not retried.
+- **A hand Complete closes the window.** `transitionBookingStatus` COMPLETE
+  removes `undoDepartedUntil` and `householdStatusBeforeCompletion`, so the
+  undo never takes back a Complete the owner made from the card.
 - **Refusals** (`failed-precondition`, message is plain words for the screen):
   `details.code: 'undo_departed_window_passed'` after the window or with no
   window on the visit; `'undo_departed_no_arrival'` when `arrivedAt` is blank;

@@ -62,6 +62,14 @@ describe('rules: only the callable takes a departure back', () => {
     await assertFails(doc.set({ undoDepartedUntil: '2099-01-01T00:00:00.000Z' }, { merge: true }));
     await assertFails(doc.set({ householdStatusBeforeCompletion: 'requested' }, { merge: true }));
   });
+  it("an Auntie's client cannot write the stamp that keeps a second \"has left\" from the household", async () => {
+    await seed({ status: 'ARRIVED', arrivedAt: '2026-11-14T15:00:00Z' });
+    const doc = await as('auntie1', AUNTIE);
+    await assertFails(doc.set({ departedNoticeToldForArrival: '2026-11-14T15:00:00Z' }, { merge: true }));
+    // Her departure of a visit that carries the stamp still writes: she leaves it alone.
+    await seed({ status: 'ARRIVED', arrivedAt: '2026-11-14T15:00:00Z', departedNoticeToldForArrival: '2026-11-14T15:00:00Z' });
+    await assertSucceeds(doc.set({ status: 'DEPARTED', departedAt: '2026-11-14T15:30:00Z' }, { merge: true }));
+  });
 
   it('Undo arrival on a Departed visit still writes directly, as before', async () => {
     await seed(DEPARTED);

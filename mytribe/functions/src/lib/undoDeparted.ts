@@ -3,6 +3,7 @@ import { db } from './firestoreAdmin';
 import { normalizeBookingStatus, type BookingStatus } from './bookingTransitions';
 import { COMPLETED_OUTSIDE_RANGE_FIELD } from './arrivalVerification';
 import {
+  DEPARTED_NOTICE_TOLD_FOR_ARRIVAL_FIELD,
   HOUSEHOLD_STATUS_BEFORE_COMPLETION_FIELD,
   UNDO_DEPARTED_NO_ARRIVAL_CODE,
   UNDO_DEPARTED_NO_ARRIVAL_MESSAGE,
@@ -50,6 +51,10 @@ import {
  *     the departure landed. It is not recalled and no correction follows. The
  *     restore of their copy carries an `officeNoticeStamp` so `onBookingsWrite`
  *     does not read `completed` to `confirmed` as a fresh confirmation.
+ *     Because they were told once, the undo also notes which arrival that was
+ *     (`departedNoticeToldForArrival`), and the next Departed of the same
+ *     arrival sends no second "has left". Its Activity Log line is still
+ *     written.
  *
  * THE WINDOW is the server's: `undoDepartedUntil`, stamped by the trigger from
  * its own clock. No stamp means the departure has not reached the trigger (a
@@ -157,6 +162,9 @@ export async function undoDepartedSession(args: {
         [COMPLETED_OUTSIDE_RANGE_FIELD]: FieldValue.delete(),
         [UNDO_DEPARTED_UNTIL_FIELD]: FieldValue.delete(),
         [HOUSEHOLD_STATUS_BEFORE_COMPLETION_FIELD]: FieldValue.delete(),
+        // The household was told she left when this departure landed. The
+        // next Departed of this same arrival tells them nothing again.
+        [DEPARTED_NOTICE_TOLD_FOR_ARRIVAL_FIELD]: session['arrivedAt'],
         updatedAt: FieldValue.serverTimestamp(),
         updatedBy: args.uid,
       },
