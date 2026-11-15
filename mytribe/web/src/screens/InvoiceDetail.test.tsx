@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { InvoiceDetail } from './InvoiceDetail';
+import { InvoiceDetail, checkoutReturnUrls, PAYMENT_CHECK_EVERY_MS, PAYMENT_CHECK_FOR_MS } from './InvoiceDetail';
 import type { GetMyInvoicesResult } from '../contracts/invoiceContracts.generated';
 
 /**
@@ -918,5 +918,107 @@ describe('InvoiceDetail #2090 written off', () => {
     await renderWith({ ...WRITTEN_OFF, paidCents: 0, writtenOffCents: 5000 });
     await screen.findByTestId('written-off-row');
     expect(screen.queryByText('Paid')).toBeNull();
+  });
+});
+/**
+ * #2366: the way back from Stripe. Both portals send the household to this
+ * invoice; the success address carries a marker that starts a check, and the
+ * screen never says paid until a fresh read of the bill does.
+ */
+describe('InvoiceDetail — coming back from a card checkout (#2366)', () => {
+  const PAID_INVOICE: GetMyInvoicesResult['paid'][number] = {
+    ...OPEN_INVOICE,
+    status: 'paid',
+    isPaid: true,
+    amountDue: 0,
+    paidCents: 5000,
+    payMethods: [],
+  };
+  const openRead = { open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 };
+  const paidRead = { open: [], paid: [PAID_INVOICE], credits: [], accountBalanceCents: 0 };
+  function renderAt(path: string) {
+    window.history.pushState({}, '', path);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <InvoiceDetail />
+      </QueryClientProvider>,
+    );
+  }
+  beforeEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    window.history.pushState({}, '', '/');
+  });
+  it('sends Stripe back to this invoice: the marker on success, the bare page on cancel', async () => {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(openRead);
+    payInvoice.mockRejectedValue(new Error('stop before the redirect'));
+    renderAt('/invoices/inv-open-1');
+    await userEvent.click(await screen.findByRole('button', { name: 'Pay with Credit Card' }));
+    await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(1));
+    const [invoiceId, successUrl, cancelUrl] = payInvoice.mock.calls[0]!;
+    expect(invoiceId).toBe('inv-open-1');
+    expect(successUrl).toBe(`${window.location.origin}/invoices/inv-open-1?checkout=done`);
+    expect(cancelUrl).toBe(`${window.location.origin}/invoices/inv-open-1`);
+  });
+  it('a cancelled checkout lands on the invoice unpaid, with Pay offered and no check', async () => {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(openRead);
+    renderAt('/invoices/inv-open-1');
+    expect(await screen.findByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
+    expect(screen.getByText('PENDING')).toBeInTheDocument();
+    expect(screen.queryByTestId('payment-check')).toBeNull();
+  });
+  it('a finished checkout shows "Checking payment" and holds Pay back, and never says paid on its own', async () => {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(openRead);
+    renderAt('/invoices/inv-open-1?checkout=done');
+    expect(await screen.findByText('Checking payment…')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pay with Credit Card' })).toBeNull();
+    // The server's status stands until the webhook changes it.
+    expect(screen.getByText('PENDING')).toBeInTheDocument();
+    expect(screen.queryByText('PAID')).toBeNull();
+    // The marker is spent: a reload does not start a second check.
+    await waitFor(() => expect(window.location.search).toBe(''));
+    expect(window.location.pathname).toBe('/invoices/inv-open-1');
+  });
+  it('reads the bill again until the webhook has marked it paid, then shows PAID', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockReset();
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValueOnce(openRead).mockResolvedValue(paidRead);
+    renderAt('/invoices/inv-open-1?checkout=done');
+    expect(await screen.findByText('Checking payment…')).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(PAYMENT_CHECK_EVERY_MS + 100);
+    await waitFor(() => expect(screen.getByText('PAID')).toBeInTheDocument());
+    expect(screen.queryByTestId('payment-check')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Pay with Credit Card' })).toBeNull();
+    expect(vi.mocked(invoicesApi.getMyInvoices).mock.calls.length).toBeGreaterThanOrEqual(2);
+    vi.useRealTimers();
+  });
+  it('when the payment has not shown up in time, says so, offers Pay again, and can check again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockReset();
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(openRead);
+    renderAt('/invoices/inv-open-1?checkout=done');
+    expect(await screen.findByText('Checking payment…')).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(PAYMENT_CHECK_FOR_MS + 100);
+    expect(await screen.findByTestId('payment-not-seen')).toHaveTextContent('This payment has not shown up yet.');
+    expect(screen.queryByText('PAID')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Pay with Credit Card' })).toBeInTheDocument();
+    vi.useRealTimers();
+    await userEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    expect(await screen.findByText('Checking payment…')).toBeInTheDocument();
+    expect(screen.queryByTestId('payment-not-seen')).toBeNull();
+  });
+});
+describe('checkoutReturnUrls (#2366)', () => {
+  it('builds the invoice page on the given origin, marker on success only', () => {
+    expect(checkoutReturnUrls('https://kinfolk.tribetails.com', 'inv 1')).toEqual({
+      successUrl: 'https://kinfolk.tribetails.com/invoices/inv%201?checkout=done',
+      cancelUrl: 'https://kinfolk.tribetails.com/invoices/inv%201',
+    });
   });
 });

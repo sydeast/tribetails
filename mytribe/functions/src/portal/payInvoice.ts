@@ -9,7 +9,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { refuseAuntie } from '../lib/staffGate';
 import { requireBillingActor } from '../lib/memberGate';
-import { TRIBETAILS_CORS } from '../lib/cors';
+import { requirePortalReturnUrls, TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { settingsForInvoice, stripeCheckoutMethodTypes } from '../lib/paymentMethods';
 import { readLivePayMethodSettings } from '../lib/payMethodSnapshot';
@@ -111,6 +111,9 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   refuseAuntie(req.auth, 'payInvoice');
 
   const args = Args.parse(req.data);
+  // #2366: Stripe sends the household to these two addresses, so they must be
+  // the portal's own. Refused before anything is read or written.
+  requirePortalReturnUrls(args);
   const firestore = db();
   const clientSnap = await firestore.collection('clients').doc(uid).get();
   const allowedIds: string[] = (clientSnap.data()?.kinfolkIds ?? []) as string[];
@@ -289,11 +292,12 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
    * because they now turn on the same facts.
    *
    * THE RETURN URLS ARE NOT IN THE KEY, and that is the one reuse condition
-   * left out. They are constant per client (the web portal sends
-   * `/invoices/{id}`, the KMP portal sends `/portal/payment-success`) and the
-   * key is minted client-side per submission, so one key cannot arrive with two
-   * different url pairs. Folding two full URLs into a 255-character key to
-   * restate something the key's own provenance already guarantees would buy
+   * left out. They are constant per client (since #2366 both the web portal
+   * and the Android app send `/invoices/{id}?checkout=done` and
+   * `/invoices/{id}`; an older Android build still sends
+   * `/portal/payment-success`) and the key is minted client-side per
+   * submission, so one key cannot arrive with two different url pairs.
+   * Folding two full URLs into a 255-character key to restate something the key's own provenance already guarantees would buy
    * nothing.
    *
    * `suffix` IS FOR THE FALLBACK, which sends a different body for a different
@@ -376,11 +380,11 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   //
   // EVERY OTHER CONDITION IS ABOUT HANDING BACK THE WRONG PAGE. The amount must
   // still be the balance (a session minted before a partial payment charges the
-  // old, larger figure); the return URLs must be the caller's own (the web
-  // portal sends `/invoices/{id}` and the KMP portal sends
-  // `/portal/payment-success`, so reusing one client's session from the other
-  // would land the household on a screen their app does not have); and the
-  // round must match, or the session belongs to a settlement that has closed.
+  // old, larger figure); the return URLs must be the caller's own (an
+  // Android build from before #2366 sends `/portal/payment-success`, so
+  // reusing its session from a current client would land the household on a
+  // page that does not exist); and the round must match, or the session
+  // belongs to a settlement that has closed.
   //
   // Fail-soft throughout: any doubt, including an unreadable session, mints a
   // fresh one. A household must never be unable to pay a bill because a stale
@@ -451,8 +455,8 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
 
   // `pendingCheckoutSessionId` is the ONE session the reuse above can hand
   // back. `openCheckoutSessionIds` is EVERY session this invoice has minted,
-  // because the web and Android portals send different return URLs and so each
-  // mint their own: when the invoice becomes paid, the sweep
+  // because clients that send different return URLs (an older Android build)
+  // each mint their own: when the invoice becomes paid, the sweep
   // (`triggers/onInvoicePaidExpireCheckouts.ts`) expires all of them at Stripe,
   // so a household with a second tab open cannot pay a settled bill.
   await firestore.collection('invoices').doc(args.invoiceId).set({

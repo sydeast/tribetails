@@ -194,7 +194,7 @@ describe('getMyPaymentMethodHandler', () => {
 });
 
 describe('createBillingSetupSessionHandler', () => {
-  const URLS = { successUrl: 'https://kinfolk.example/account?billing=saved', cancelUrl: 'https://kinfolk.example/account' };
+  const URLS = { successUrl: 'https://kinfolk.tribetails.com/account?billing=saved', cancelUrl: 'https://kinfolk.tribetails.com/account' };
 
   it('rejects an unauthenticated caller', async () => {
     const { createBillingSetupSessionHandler } = await import('../src/portal/billing');
@@ -430,7 +430,7 @@ describe('stripeWebhook setup-session branch', () => {
  * is refused on every card callable with the billing-action refusal.
  */
 describe('saved cards follow billing access (D-2026-09-28-BILLING-ACCESS-PAYS)', () => {
-  const URLS = { successUrl: 'https://kinfolk.example/account?billing=saved', cancelUrl: 'https://kinfolk.example/account' };
+  const URLS = { successUrl: 'https://kinfolk.tribetails.com/account?billing=saved', cancelUrl: 'https://kinfolk.tribetails.com/account' };
   const BILLING_SECONDARY = {
     role: 'SECONDARY',
     status: 'ACTIVE',
@@ -517,5 +517,20 @@ describe('saved cards follow billing access (D-2026-09-28-BILLING-ACCESS-PAYS)',
       callableRequest({ kinfolkId: 'f1' }, { uid: 'op-uid', token: { admin: true } }),
     );
     expect(res.hasPaymentMethod).toBe(false);
+  });
+});
+/** #2366: the save-card flow returns to the portal only, the same rule as payInvoice. */
+describe('createBillingSetupSession return addresses (#2366)', () => {
+  it.each([
+    ['a foreign success address', { successUrl: 'https://evil.example/ok', cancelUrl: 'https://kinfolk.tribetails.com/account' }],
+    ['a foreign cancel address', { successUrl: 'https://kinfolk.tribetails.com/account?billing=saved', cancelUrl: 'https://evil.example/no' }],
+  ])('refuses %s before opening Stripe', async (_why, urls) => {
+    mocks.dbFn.mockReturnValue(withNoCard().db);
+    const { createBillingSetupSessionHandler } = await import('../src/portal/billing');
+    await expect(createBillingSetupSessionHandler(callableRequest(urls, { uid: 'u1' }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+      details: { code: 'return_url_refused' },
+    });
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
   });
 });
