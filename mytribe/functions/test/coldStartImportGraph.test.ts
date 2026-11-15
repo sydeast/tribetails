@@ -289,13 +289,18 @@ const ALLOWED_EAGER_PACKAGES = [
  * Everything it imports (the staff wrapper, the audit writer, the audit actor)
  * was already here.
  *
- * 458 since #2331 (on top of #2287's 457): `notifications/heldNoticeBatch.ts`,
+ * 458 since #2276 (on top of #2287's 457): `lib/cardPaymentApply.ts`, where a
+ * card payment lands on its invoice, imported by `billing/stripeWebhook.ts`.
+ * It is pure, and everything it imports (`lib/paymentApply.ts`, the invoice
+ * math, the amount-due rule) was already here.
+ *
+ * 459 since #2331 (on top of #2276's 458): `notifications/heldNoticeBatch.ts`,
  * the count a timed job keeps of the notices the send switch held back. The
  * dispatcher and the three reminder jobs use it at file scope. It imports
  * nothing; the Activity Log writer behind it (`noticeAudit.ts`) still loads
  * with `await import()`, and only in a run that held something.
  */
-const MAX_OWN_EAGER_MODULES = 458;
+const MAX_OWN_EAGER_MODULES = 459;
 
 interface Edge {
   spec: string;
