@@ -274,6 +274,73 @@ describe('sendPushChannel', () => {
       await sendPushChannel({ def: def(), recipientUid: 'u1', data: {}, stream: 'kinfolk' });
       expect(sent().data['route']).toBe('/notifications');
     });
+    it('#2259: opens the thing the notice is about, and carries its target for the Android app', async () => {
+      const ctx = buildPushDbMock({ template: { title: 'Auntie has arrived', body: 'Tap for details.' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data: {},
+        stream: 'kinfolk',
+        open: { route: '/schedule/v1', data: { targetType: 'booking', targetId: 'v1', visitId: 'v1' } },
+      });
+      expect(sent().data).toEqual({
+        notificationKey: 't.k',
+        route: '/schedule/v1',
+        targetType: 'booking',
+        targetId: 'v1',
+        visitId: 'v1',
+      });
+      // The wording and the short line are untouched.
+      expect(sent().notification).toEqual({ title: 'Auntie has arrived', body: 'Tap for details.' });
+    });
+    it('#2259: a notice with nothing to open still lands on the notifications list', async () => {
+      const ctx = buildPushDbMock({ template: { title: 'A', body: 'B' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({ def: def(), recipientUid: 'u1', data: {}, stream: 'kinfolk', open: { data: {} } });
+      expect(sent().data).toEqual({ notificationKey: 't.k', route: '/notifications' });
+    });
+    it("#2259: the template's own route still wins over the target's", async () => {
+      const ctx = buildPushDbMock({ template: { title: 'A', body: 'B', dataRoute: '/kintales' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data: {},
+        stream: 'kinfolk',
+        open: { route: '/schedule/v1', data: { targetType: 'booking', targetId: 'v1' } },
+      });
+      expect(sent().data['route']).toBe('/kintales');
+    });
+    it('#2259: target data can never replace the notification key or the route', async () => {
+      const ctx = buildPushDbMock({ template: { title: 'A', body: 'B' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data: {},
+        stream: 'kinfolk',
+        open: { route: '/schedule/v1', data: { notificationKey: 'other.key', route: 'https://evil.example' } },
+      });
+      expect(sent().data).toEqual({ notificationKey: 't.k', route: '/schedule/v1' });
+    });
+    it.each(['business', 'staff'] as const)('#2100: a %s copy carries its target and still no route', async (stream) => {
+      const ctx = buildPushDbMock({ template: { title: 'Visit changed', body: 'B' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({
+        def: def({ audience: 'both', audiences: { kinfolk: true, business: true } }),
+        recipientUid: 'u1',
+        data: {},
+        stream,
+        open: { data: { targetType: 'booking', targetId: 'v1', visitId: 'v1', kinfolkId: 'fam1' } },
+      });
+      expect(sent().data).toEqual({ notificationKey: 't.k', targetType: 'booking', targetId: 'v1', visitId: 'v1', kinfolkId: 'fam1' });
+    });
     it.each(['business', 'staff', undefined] as const)('a %s copy is sent as written, with no route added', async (stream) => {
       const ctx = buildPushDbMock({ template: { title: 'Care request', body: '{{note}}' }, tokens: ['t1'] });
       mocks.dbFn.mockReturnValue(ctx.db);

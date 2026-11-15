@@ -1027,6 +1027,10 @@ async function routeByDeliveryMode(
           channels: activeChannels,
           // #2280: the senders keep a household's text message and push short.
           stream,
+          // #2259: the push sender reads only this document, and a tap on the
+          // push opens what the notice is about.
+          targetType,
+          targetId,
           status: 'pending',
           createdAt: FieldValue.serverTimestamp(),
         });
@@ -1187,6 +1191,7 @@ export async function deliverListedCopy(
     const order = await tx.get(orderRef);
     if (!record.exists) return 'no-record';
     if (order.exists) return 'already';
+    const listed = (record.data() ?? {}) as { targetType?: unknown; targetId?: unknown };
     // The shape `routeByDeliveryMode` writes, carrying the record's own data so
     // the email says what the list entry says.
     tx.set(orderRef, {
@@ -1199,6 +1204,9 @@ export async function deliverListedCopy(
       // #2280: as on an enqueue's work order, so the senders keep a household's
       // text message and push short. Without it they send the long form.
       stream,
+      // #2259: the record's own target, for what a tap on the push opens.
+      targetType: typeof listed.targetType === 'string' ? listed.targetType : '',
+      targetId: typeof listed.targetId === 'string' ? listed.targetId : '',
       status: 'pending',
       createdAt: FieldValue.serverTimestamp(),
     });

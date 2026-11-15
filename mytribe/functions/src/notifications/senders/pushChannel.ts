@@ -23,8 +23,10 @@ interface PushTemplate {
  *
  * A HOUSEHOLD'S COPY IS SHORT AND OPENS MYTRIBE (#2280, operator ruling
  * 2026-11-14): the body is cut to `HOUSEHOLD_SHORT_LINE_MAX` and the payload
- * always carries a `route`, the notifications list when the template names no
- * other. The web portal's service worker opens that route on a tap.
+ * always carries a `route`: the template's own, else the thing the notice is
+ * about (#2259), else the notifications list. The web portal's service worker
+ * opens that route on a tap. Every copy also carries its target as plain data
+ * keys (#2100), which the Android apps open from.
  *
  * Returns the message id of the first successful send, or throws if every
  * token failed (fail-loud per project policy).
@@ -33,7 +35,7 @@ interface PushTemplate {
  * or `messaging/invalid-registration-token` is deleted to keep `fcm_tokens` clean.
  */
 export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSendResult> {
-  const { def, recipientUid, data, stream } = args;
+  const { def, recipientUid, data, stream, open } = args;
   const templateId = def.templates.push;
   if (!templateId) {
     throw new Error(`pushChannel(${def.key}): catalog has no push template id`);
@@ -83,14 +85,20 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
   const title = renderPlainText(tpl.title ?? '', renderCtx);
   const renderedBody = renderPlainText(tpl.body ?? '', renderCtx);
   const templateRoute = tpl.dataRoute ? renderPlainText(tpl.dataRoute, renderCtx) : undefined;
-  // #2280: a household's push is a short line, and a tap on it opens MyTribe
-  // where the whole message is: the template's own route when it has one, else
-  // the notifications list. Staff and business copies are sent as written.
+  // #2280: a household's push is a short line, and a tap on it opens MyTribe.
+  // #2259: it opens the thing the notice is about (the visit, the KinTale, the
+  // Kin, the invoice), where the whole message is read in place. The
+  // template's own route wins when it has one; a notice that names nothing to
+  // open lands on the notifications list. Staff and business copies are sent
+  // as written, with no route: the admin apps open from the target fields.
   const household = stream === 'kinfolk';
   const body = household ? householdPushShelfLine(renderedBody) : renderedBody;
-  const dataRoute = templateRoute || (household ? HOUSEHOLD_NOTICE_ROUTE : undefined);
+  const dataRoute = templateRoute || (household ? open?.route || HOUSEHOLD_NOTICE_ROUTE : undefined);
 
   const dataPayload: Record<string, string> = {
+    // #2100: the target fields first, so the two keys below can never be
+    // overwritten by them.
+    ...(open?.data ?? {}),
     notificationKey: def.key,
   };
   if (dataRoute) dataPayload['route'] = dataRoute;
