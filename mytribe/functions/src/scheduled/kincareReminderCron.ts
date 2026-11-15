@@ -11,7 +11,7 @@ import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { isAutoReminder24hEnabled } from '../lib/autoReminder';
 import { FULL_CPU_SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 import { HOURLY_TICK } from '../lib/notificationSchedule';
-import { hourWindow, withHeldNoticeBatch, type HeldNoticeBatch } from '../notifications/heldNoticeBatch';
+import { tickMs, withHeldNoticeBatch, type HeldNoticeBatch } from '../notifications/heldNoticeBatch';
 
 const WINDOW_LOWER_MS = 24 * 60 * 60 * 1000;
 const WINDOW_UPPER_MS = 48 * 60 * 60 * 1000;
@@ -155,11 +155,13 @@ export async function processUpcomingBooking(
  * (their window is 24-48h wide, an hourly cron gets many attempts at it).
  * Absent decodes as ON; see `lib/autoReminder.ts` for why that is not optional.
  *
- * #2331: with notices to households off, the run writes ONE Activity Log line
- * for all the reminders it held back, not one per reminder. `scheduleTime` is
- * the tick's own time, which a retry of the tick repeats, so the retry writes
- * no second line. The job holds the same reminders again on the next tick
- * (nothing is stamped while held), so that is one line an hour.
+ * #2331: with notices to households off, a run writes ONE Activity Log line
+ * for the reminders it held back, not one per reminder. The job holds the same
+ * reminders again on every tick (nothing is stamped while held), so each
+ * reminder is counted once a business day: a tick's line counts only the ones
+ * not yet counted that day, and a tick with none writes nothing. `scheduleTime`
+ * is the tick's own time, which a retry of the tick repeats, so a retry that
+ * runs past midnight still counts toward the day its tick was due.
  */
 export async function runKincareReminderScan(now: number = Date.now(), scheduleTime?: string): Promise<number> {
   if (!(await isAutoReminder24hEnabled(db()))) {
@@ -172,7 +174,7 @@ export async function runKincareReminderScan(now: number = Date.now(), scheduleT
     return 0;
   }
   let reminded = 0;
-  await withHeldNoticeBatch('kincareReminderCron', hourWindow(now, scheduleTime), (heldBatch) =>
+  await withHeldNoticeBatch('kincareReminderCron', { atMs: tickMs(now, scheduleTime) }, (heldBatch) =>
     paginateQuery(
       db().collectionGroup('bookings'),
       async (docSnap) => {

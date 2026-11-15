@@ -666,7 +666,15 @@ export async function enqueueNotificationDetailed(
         // #2331: a timed job counts the copy for its one line per run and
         // writes nothing here, so no name is read and no entry is sealed.
         if (heldBatch !== undefined) {
-          countHeldNotice(heldBatch, def.key, state === 'read-failed' ? 'unreadable' : 'off');
+          // What names this copy, so the job counts it once a day however
+          // many of its runs hold it: the event and who it was for.
+          const identity = dedupeIdentityOf(args, resolveTargetRef(args));
+          countHeldNotice(
+            heldBatch,
+            def.key,
+            state === 'read-failed' ? 'unreadable' : 'off',
+            identity === '' ? '' : [def.key, identity, recipient.uid].join('\u0000'),
+          );
         } else {
           await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'held', [], undefined, state === 'read-failed');
         }
@@ -749,7 +757,8 @@ export async function enqueueNotificationDetailed(
  * held again on a later day writes it once that day.
  *
  * #2331: not called for a copy the send switch holds inside a timed job. That
- * job counts the copy and writes one line for its run (`heldNoticeBatch.ts`).
+ * job counts the copy, once a day, and writes one line for its run
+ * (`heldNoticeBatch.ts`).
  */
 async function logHouseholdCopyNotSent(
   key: string,

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
-import { writeAuditEntry } from '../lib/writeAuditEntry';
+import { auditHashableDoc, readAuditChain, stageAuditEntry, writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import {
   notificationChannelFailedWords,
@@ -14,7 +14,7 @@ import {
   notificationsHeldSummaryWords,
 } from '../lib/activityWords';
 import { notificationName } from './notificationName';
-import { heldNoticeTotal, type HeldNoticeBatch, type HeldNoticeReason } from './heldNoticeBatch';
+import { heldNoticeTotal, type HeldNoticeBatch } from './heldNoticeBatch';
 import type { AudienceStream, Channel } from './types';
 
 /**
@@ -237,20 +237,42 @@ export async function recordNoticeNotSent(input: NoticeNotSentInput): Promise<vo
 }
 
 /**
- * The fixed id of a timed job's summary line: one per job, per run, per
- * reason. A retry of the same run finds the line there and writes nothing.
+ * Where a timed job keeps what it has already counted today: one small
+ * document per job, beside the job's own run marker and under the same rule
+ * (`scheduled_runs/{jobId}`, denied to every client). It holds one business
+ * day at a time and is overwritten when the day changes, so it never grows
+ * past a day's held copies and nothing has to clean it up.
  */
-export function heldSummaryLineId(job: string, window: string, reason: HeldNoticeReason): string {
-  const digest = createHash('sha256')
-    .update(['held-summary', job, window, reason].join('\u0000'))
-    .digest('hex')
-    .slice(0, 40);
-  return `noticesheld__${digest}`;
+export function heldMarkerPath(job: string): string {
+  return `scheduled_runs/${job}__held`;
+}
+
+/** A held copy as the marker stores it: short, and with no id in the clear. */
+function heldCopyId(copy: string): string {
+  return createHash('sha256').update(copy).digest('hex').slice(0, 20);
+}
+
+function storedIds(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
 /**
- * #2331: ONE LINE FOR EVERYTHING THE SEND SWITCH HELD BACK IN ONE RUN OF A
- * TIMED JOB. `Held back 14 visit reminders: notices to households are turned off`.
+ * The business day a run belongs to. The invoice jobs already resolved it; the
+ * visit job has only its tick, so the day is read here, on the business's own
+ * clock (`businessTodayIso`, which falls back to the ruled America/Chicago),
+ * and only in a run that held something. The UTC day stands in only when no
+ * zone resolves at all.
+ */
+async function heldDay(batch: HeldNoticeBatch): Promise<string> {
+  if (batch.day !== undefined && batch.day !== '') return batch.day;
+  const { businessTodayIso } = await import('../lib/quoteDecision.js');
+  const day = await businessTodayIso(db(), batch.atMs);
+  return day !== '' ? day : dayKey(batch.atMs);
+}
+
+/**
+ * #2331: ONE LINE FOR WHAT THE SEND SWITCH HELD BACK IN ONE RUN OF A TIMED
+ * JOB. `Held back 14 visit reminders: notices to households are turned off`.
  *
  * No household and no person is named, so nothing is read to write it: the
  * per-copy line cost a `clients` read, a `kinfolk` read and a hash-chain
@@ -259,39 +281,90 @@ export function heldSummaryLineId(job: string, window: string, reason: HeldNotic
  * The count is household COPIES, one per member the notice was addressed to,
  * which is what the per-copy lines counted.
  *
- * FIRST WRITE WINS. The Activity Log is an append-only hash chain, so a line
- * is never corrected. When a run fails half way, the line carries the count it
- * reached, and the retry of that run (the same id) writes nothing more. The
- * next run counts afresh.
+ * EACH COPY IS COUNTED ONCE A BUSINESS DAY. Nothing is stamped while a notice
+ * is held, so the hourly visit job holds the same reminders every hour: 24
+ * identical lines a day if every run wrote its whole count. The job's marker
+ * (`heldMarkerPath`) remembers the copies already counted today, and a run's
+ * line counts only the ones that are new since. A run with nothing new writes
+ * nothing. The next business day counts everything still held once more.
+ *
+ * THE MARKER AND THE LINE COMMIT TOGETHER, in one transaction, so the marker
+ * is what makes a retry safe: a retried run finds its copies counted and
+ * writes no second line; a run that failed half way wrote the count it had
+ * reached, and its retry writes a line for the rest only. A line that could
+ * not be written leaves the marker as it was, so the next run counts those
+ * copies. The Activity Log is an append-only hash chain and no line is ever
+ * corrected; the lines of a day add up.
  *
  * A run whose copies were held because the switch could not be read gets its
- * own line, at `warn`: nobody turned anything off. A run that held nothing
- * writes nothing. NEVER THROWS.
+ * own line, at `warn`: nobody turned anything off. The two reasons are counted
+ * apart, so a copy already counted as "turned off" still shows in that line.
+ * NEVER THROWS.
  */
 export async function recordHeldNoticeSummary(batch: HeldNoticeBatch): Promise<void> {
   for (const reason of ['off', 'unreadable'] as const) {
-    const count = heldNoticeTotal(batch, reason);
-    if (count === 0) continue;
-    const kinds = [...batch.held[reason].entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, n]) => ({ key, name: notificationName(key), count: n }));
+    if (heldNoticeTotal(batch, reason) === 0) continue;
     try {
-      await writeAuditEntry({
-        status: 'NOT_SENT',
-        event: AUDIT_EVENTS.NOTIFICATION_NOT_SENT,
-        severity: reason === 'unreadable' ? 'warn' : 'info',
-        actorRole: 'SYSTEM',
-        description: notificationsHeldSummaryWords(kinds, reason === 'unreadable'),
-        payload: {
-          outcome: 'held',
-          summary: true,
-          job: batch.job,
-          window: batch.window,
-          count,
-          kinds: Object.fromEntries(kinds.map((k) => [k.key, k.count])),
-          ...(reason === 'unreadable' ? { reason: 'setting_unreadable' } : {}),
-        },
-        docId: heldSummaryLineId(batch.job, batch.window, reason),
+      const day = await heldDay(batch);
+      const timestampIso = new Date().toISOString();
+      const markerRef = db().doc(heldMarkerPath(batch.job));
+      await db().runTransaction(async (tx) => {
+        const stored = (await tx.get(markerRef)).data() as Record<string, unknown> | undefined;
+        // Yesterday's marker counts for nothing today.
+        const today = stored !== undefined && stored['dayIso'] === day ? stored : {};
+        const seen = new Set(storedIds(today[reason]));
+
+        const perKind = new Map<string, number>();
+        const fresh: string[] = [];
+        for (const [copy, key] of batch.held[reason]) {
+          const id = heldCopyId(copy);
+          if (seen.has(id)) continue;
+          seen.add(id);
+          fresh.push(id);
+          perKind.set(key, (perKind.get(key) ?? 0) + 1);
+        }
+        for (const [key, n] of batch.unnamed[reason]) perKind.set(key, (perKind.get(key) ?? 0) + n);
+
+        const kinds = [...perKind.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, n]) => ({ key, name: notificationName(key), count: n }));
+        const count = kinds.reduce((sum, k) => sum + k.count, 0);
+        if (count === 0) return;
+
+        const chain = await readAuditChain(db(), tx);
+        stageAuditEntry(
+          db(),
+          tx,
+          auditHashableDoc(
+            {
+              status: 'NOT_SENT',
+              event: AUDIT_EVENTS.NOTIFICATION_NOT_SENT,
+              severity: reason === 'unreadable' ? 'warn' : 'info',
+              actorRole: 'SYSTEM',
+              description: notificationsHeldSummaryWords(kinds, reason === 'unreadable'),
+              payload: {
+                outcome: 'held',
+                summary: true,
+                job: batch.job,
+                day,
+                count,
+                kinds: Object.fromEntries(kinds.map((k) => [k.key, k.count])),
+                ...(reason === 'unreadable' ? { reason: 'setting_unreadable' } : {}),
+              },
+            },
+            timestampIso,
+          ),
+          chain,
+        );
+        if (fresh.length > 0) {
+          tx.set(markerRef, {
+            dayIso: day,
+            off: storedIds(today['off']),
+            unreadable: storedIds(today['unreadable']),
+            [reason]: [...seen],
+            updatedAtMs: Date.now(),
+          });
+        }
       });
     } catch (err) {
       logEvent({
@@ -299,7 +372,7 @@ export async function recordHeldNoticeSummary(batch: HeldNoticeBatch): Promise<v
         function: 'recordHeldNoticeSummary',
         event: 'notification.not_sent.audit_failed',
         errorMessage: (err as Error)?.message,
-        extra: { job: batch.job, window: batch.window, reason, count },
+        extra: { job: batch.job, reason, count: heldNoticeTotal(batch, reason) },
       });
     }
   }

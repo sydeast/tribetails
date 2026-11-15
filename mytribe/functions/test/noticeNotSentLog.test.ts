@@ -103,7 +103,7 @@ describe('#1819 a notice the send switch held back', () => {
     expect(logLines(ctx.writes)).toHaveLength(2);
   });
 
-  // #2331: the timed jobs themselves now write one line per run (`heldNoticeSummary.test.ts`).
+  // #2331: the timed jobs themselves count each held copy once a day, on one line per run (`heldNoticeSummary.test.ts`).
   it('the same notice held again with no run count writes its line once a day, not once a call', async () => {
     const ctx = db(GATE_OFF);
     const run = () =>

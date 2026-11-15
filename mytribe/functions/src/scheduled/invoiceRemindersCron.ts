@@ -247,10 +247,10 @@ export async function runInvoiceRemindersScan(
   const todayIso = day ?? (await runDay(now, 'invoiceRemindersCron'));
   if (todayIso === null) return 0;
   let reminded = 0;
-  // #2331: one Activity Log line for every reminder the send switch held back
-  // in this run. The business day names the run: the scan happens once a day,
-  // and a retry of it carries the same day, so it writes no second line.
-  await withHeldNoticeBatch('invoiceRemindersCron', todayIso, (heldBatch) =>
+  // #2331: one Activity Log line for the reminders the send switch held back
+  // in this run. Each is counted once a business day: a second scan that day
+  // (a retry, or a day marker that did not land) writes no second line.
+  await withHeldNoticeBatch('invoiceRemindersCron', { day: todayIso, atMs: now }, (heldBatch) =>
     paginateQuery(
       db().collection('invoices'),
       async (docSnap) => {
@@ -453,7 +453,7 @@ export async function runInvoiceOverdueScan(
   if (todayIso === null) return 0;
   let notified = 0;
   // #2331: one line for the run, as in `runInvoiceRemindersScan`.
-  await withHeldNoticeBatch('invoiceOverdueCron', todayIso, (heldBatch) =>
+  await withHeldNoticeBatch('invoiceOverdueCron', { day: todayIso, atMs: now }, (heldBatch) =>
     paginateQuery(
       db().collection('invoices'),
       async (docSnap) => {

@@ -19,12 +19,10 @@ vi.mock('../src/notifications/noticeAudit', async (original) => {
 
 import { enqueueNotificationDetailed } from '../src/notifications/dispatcher';
 import {
-  countHeldNotice,
-  hourWindow,
-  startHeldNoticeBatch,
+  tickMs,
   withHeldNoticeBatch,
 } from '../src/notifications/heldNoticeBatch';
-import { heldSummaryLineId, recordHeldNoticeSummary } from '../src/notifications/noticeAudit';
+import { heldMarkerPath } from '../src/notifications/noticeAudit';
 import { notificationsHeldSummaryWords } from '../src/lib/activityWords';
 import { runKincareReminderScan } from '../src/scheduled/kincareReminderCron';
 import { runInvoiceOverdueScan, runInvoiceRemindersScan } from '../src/scheduled/invoiceRemindersCron';
@@ -50,7 +48,6 @@ const HOUR = 60 * 60 * 1000;
 type Docs = Record<string, Record<string, unknown> | null>;
 type Write = { path: string; data: Record<string, unknown> };
 const logLines = (writes: Write[]) => writes.filter((w) => w.path.startsWith('activity_log/')).map((w) => w.data);
-const logIds = (writes: Write[]) => writes.filter((w) => w.path.startsWith('activity_log/')).map((w) => w.path);
 
 const settings = (live: boolean): Docs => ({
   [HOUSEHOLD_GATE_SETTINGS_PATH]: { timeZone: 'America/Chicago', householdNotificationsLive: live },
@@ -67,21 +64,23 @@ function household(n: number): Docs {
 const households = (count: number): Docs =>
   Object.assign({}, ...Array.from({ length: count }, (_, i) => household(i + 1)));
 
-/** A confirmed visit 36 hours out: inside the reminder window. */
-const booking = (n: number) => ({
+/** A confirmed visit 36 hours out (or `hoursOut`): inside the reminder window. */
+const booking = (n: number, hoursOut = 36) => ({
   id: `bk${n}`,
   path: `families/fam${n}/bookings/bk${n}`,
-  data: { status: 'confirmed', serviceName: 'Drop-in', startTime: { toMillis: () => NOW + 36 * HOUR } },
+  data: { status: 'confirmed', serviceName: 'Drop-in', startTime: { toMillis: () => NOW + hoursOut * HOUR } },
 });
 
-function visitsDb(count: number, live = false, extra: Docs = {}) {
+function visitsDb(count: number, live = false, extra: Docs = {}, hoursOut = 36) {
+  const bookings = Array.from({ length: count }, (_, i) => booking(i + 1, hoursOut));
   const ctx = buildDbMock({
     docs: { ...settings(live), ...households(count), ...extra },
-    collectionGroupDocs: { bookings: Array.from({ length: count }, (_, i) => booking(i + 1)) },
+    collectionGroupDocs: { bookings },
     writeThrough: true,
   });
   mocks.dbFn.mockReturnValue(ctx.db);
-  return ctx;
+  // The scan reads `bookings` afresh each run, so a test can book another visit between runs.
+  return Object.assign(ctx, { bookings });
 }
 
 /** Open invoices, each for its own household. `dueDate` decides reminder (soon) or overdue (past). */
@@ -91,7 +90,13 @@ function invoicesDb(count: number, dueDate: string, live = false) {
     data: { status: 'open', amountDue: 120, amountMinor: 12000, currency: 'usd', dueDate, kinfolkId: `fam${i + 1}` },
   }));
   const ctx = buildDbMock({
-    docs: { ...settings(live), ...households(count) },
+    // Each invoice is stored as a document too, so a stamp merged onto it
+    // keeps the rest of the invoice, as Firestore does.
+    docs: {
+      ...settings(live),
+      ...households(count),
+      ...Object.fromEntries(rows.map((r) => [`invoices/${r.id}`, { ...r.data }])),
+    },
     queryDocs: { invoices: rows },
     writeThrough: true,
   });
@@ -127,7 +132,7 @@ describe('#2331 the hourly visit reminder job, with notices to households off', 
         outcome: 'held',
         summary: true,
         job: 'kincareReminderCron',
-        window: '2026-11-14T15',
+        day: '2026-11-14',
         count: 3,
         kinds: { 'kincare.upcoming.reminder': 3 },
       },
@@ -173,24 +178,81 @@ describe('#2331 the hourly visit reminder job, with notices to households off', 
     expect(logLines(ctx.writes).filter((l) => l.actionType === 'NOTIFICATION_NOT_SENT')).toEqual([]);
   });
 
-  it('a retry of the same tick writes no second line; the next tick writes its own', async () => {
+  it('a retry of the same tick writes no second line', async () => {
     const ctx = visitsDb(3);
     await runKincareReminderScan(NOW, TICK);
     // Cloud Scheduler repeats the tick's scheduleTime on a retry, minutes later.
     await runKincareReminderScan(NOW + 2 * 60 * 1000, TICK);
     expect(logLines(ctx.writes)).toHaveLength(1);
-
-    await runKincareReminderScan(NOW + HOUR, NEXT_TICK);
-    const lines = logLines(ctx.writes);
-    expect(lines).toHaveLength(2);
-    expect(lines.map((l) => l.seq)).toEqual([1, 2]);
-    expect(new Set(logIds(ctx.writes)).size).toBe(2);
   });
 
-  it('a retry that runs past the top of the hour still belongs to its own tick', () => {
-    expect(hourWindow(Date.UTC(2026, 10, 14, 16, 1, 0), TICK)).toBe('2026-11-14T15');
-    expect(hourWindow(NOW)).toBe('2026-11-14T15');
-    expect(hourWindow(NOW, 'not a time')).toBe('2026-11-14T15');
+  it('the next hour holds the same 3 reminders again and writes nothing', async () => {
+    const ctx = visitsDb(3);
+    await runKincareReminderScan(NOW, TICK);
+    await runKincareReminderScan(NOW + HOUR, NEXT_TICK);
+    await runKincareReminderScan(NOW + 2 * HOUR, '2026-11-14T17:00:00Z');
+    const lines = logLines(ctx.writes);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.description).toBe('Held back 3 visit reminders: notices to households are turned off');
+    // The chain was not touched by the runs that had nothing new to say.
+    expect(ctx.writes.filter((w) => w.path.startsWith('activity_log_chain_head/'))).toHaveLength(1);
+  });
+
+  it('a reminder that comes due later that day is the only one the next line counts', async () => {
+    const ctx = visitsDb(3, false, household(4));
+    await runKincareReminderScan(NOW, TICK);
+
+    // A fourth visit is booked into the window before the next tick.
+    ctx.bookings.push(booking(4));
+    await runKincareReminderScan(NOW + HOUR, NEXT_TICK);
+
+    const lines = logLines(ctx.writes);
+    expect(lines.map((l) => l.description)).toEqual([
+      'Held back 3 visit reminders: notices to households are turned off',
+      'Held back 1 visit reminder: notices to households are turned off',
+    ]);
+    expect(lines.map((l) => l.seq)).toEqual([1, 2]);
+    expect((lines[1]?.payload as { count?: number }).count).toBe(1);
+  });
+
+  it('the next business day counts the reminders still held once more; midnight UTC is not a new day', async () => {
+    // 47 hours out, so the visits are still inside the window a day later.
+    const ctx = visitsDb(2, false, {}, 47);
+    await runKincareReminderScan(NOW, TICK);
+
+    // 00:05 UTC on the 15th is 18:05 on the 14th in Chicago: the same business day.
+    await runKincareReminderScan(Date.UTC(2026, 10, 15, 0, 5, 0), '2026-11-15T00:00:00Z');
+    expect(logLines(ctx.writes)).toHaveLength(1);
+
+    // 07:05 UTC on the 15th is 01:05 on the 15th in Chicago: a new business day.
+    await runKincareReminderScan(Date.UTC(2026, 10, 15, 7, 5, 0), '2026-11-15T07:00:00Z');
+    const lines = logLines(ctx.writes);
+    expect(lines).toHaveLength(2);
+    expect(lines.map((l) => (l.payload as { day?: string }).day)).toEqual(['2026-11-14', '2026-11-15']);
+    expect(lines[1]?.description).toBe('Held back 2 visit reminders: notices to households are turned off');
+
+    // And once that day too.
+    await runKincareReminderScan(Date.UTC(2026, 10, 15, 8, 5, 0), '2026-11-15T08:00:00Z');
+    expect(logLines(ctx.writes)).toHaveLength(2);
+  });
+
+  it('what the job has counted today is kept on one marker, with no id in the clear', async () => {
+    const ctx = visitsDb(3);
+    await runKincareReminderScan(NOW, TICK);
+    await runKincareReminderScan(NOW + HOUR, NEXT_TICK);
+    const markers = ctx.writes.filter((w) => w.path.startsWith('scheduled_runs/'));
+    // Written once, with the line; the run with nothing new wrote nothing at all.
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.path).toBe(heldMarkerPath('kincareReminderCron'));
+    expect(markers[0]?.data).toMatchObject({ dayIso: '2026-11-14', unreadable: [] });
+    expect(markers[0]?.data.off).toHaveLength(3);
+    expect(JSON.stringify(markers[0]?.data)).not.toMatch(/kin\d|fam\d|bk\d/);
+  });
+
+  it('a retry that runs past midnight still belongs to the day its tick was due', () => {
+    expect(tickMs(Date.UTC(2026, 10, 15, 6, 1, 0), '2026-11-15T05:00:00Z')).toBe(Date.UTC(2026, 10, 15, 5, 0, 0));
+    expect(tickMs(NOW)).toBe(NOW);
+    expect(tickMs(NOW, 'not a time')).toBe(NOW);
   });
 
   it('a held reminder is still not stamped as reminded, so it goes out once notices are on', async () => {
@@ -205,7 +267,7 @@ describe('#2331 a run that fails half way', () => {
   it('still writes what it counted, and the error goes on to the scheduler', async () => {
     const ctx = visitsDb(0);
     await expect(
-      withHeldNoticeBatch('kincareReminderCron', '2026-11-14T15', async (batch) => {
+      withHeldNoticeBatch('kincareReminderCron', { atMs: NOW }, async (batch) => {
         for (const n of [1, 2]) {
           await enqueueNotificationDetailed(
             { key: 'kincare.upcoming.reminder', recipientUid: 'kinUid', data: { kinfolkId: 'fam1', bookingId: `bk${n}` } },
@@ -221,16 +283,44 @@ describe('#2331 a run that fails half way', () => {
     expect(lines[0]?.description).toBe('Held back 2 visit reminders: notices to households are turned off');
   });
 
-  it('the retry of that run adds no line: the first count stands', async () => {
+  it('the retry of that run writes a line for the rest only: the two lines add up', async () => {
     const ctx = visitsDb(3);
-    const partial = startHeldNoticeBatch('kincareReminderCron', '2026-11-14T15');
-    countHeldNotice(partial, 'kincare.upcoming.reminder', 'off');
-    await recordHeldNoticeSummary(partial);
+    // The first attempt held one reminder and died.
+    await expect(
+      withHeldNoticeBatch('kincareReminderCron', { atMs: NOW }, async (batch) => {
+        await enqueueNotificationDetailed(
+          { key: 'kincare.upcoming.reminder', recipientUid: 'kin1', data: { kinfolkId: 'fam1', bookingId: 'bk1' } },
+          batch,
+        );
+        throw new Error('DEADLINE_EXCEEDED');
+      }),
+    ).rejects.toThrow('DEADLINE_EXCEEDED');
 
+    // The retry of the tick scans all three.
     await runKincareReminderScan(NOW + 60 * 1000, TICK);
-    const lines = logLines(ctx.writes);
-    expect(lines).toHaveLength(1);
-    expect(lines[0]?.description).toBe('Held back 1 visit reminder: notices to households are turned off');
+    expect(logLines(ctx.writes).map((l) => l.description)).toEqual([
+      'Held back 1 visit reminder: notices to households are turned off',
+      'Held back 2 visit reminders: notices to households are turned off',
+    ]);
+
+    // A second retry has nothing left to count.
+    await runKincareReminderScan(NOW + 2 * 60 * 1000, TICK);
+    expect(logLines(ctx.writes)).toHaveLength(2);
+  });
+
+  it('a line that could not be written is not marked as counted: the next run writes it', async () => {
+    const ctx = visitsDb(2);
+    const real = ctx.db.runTransaction;
+    ctx.db.runTransaction = vi.fn().mockRejectedValue(new Error('UNAVAILABLE'));
+    await runKincareReminderScan(NOW, TICK);
+    expect(logLines(ctx.writes)).toEqual([]);
+    expect(ctx.writes.filter((w) => w.path.startsWith('scheduled_runs/'))).toEqual([]);
+
+    ctx.db.runTransaction = real;
+    await runKincareReminderScan(NOW + HOUR, NEXT_TICK);
+    expect(logLines(ctx.writes).map((l) => l.description)).toEqual([
+      'Held back 2 visit reminders: notices to households are turned off',
+    ]);
   });
 
   it('a summary line that cannot be written does not fail the run', async () => {
@@ -251,7 +341,7 @@ describe('#2331 the daily invoice jobs, with notices to households off', () => {
       actionType: 'NOTIFICATION_NOT_SENT',
       status: 'NOT_SENT',
       description: 'Held back 4 invoice reminders: notices to households are turned off',
-      payload: { job: 'invoiceRemindersCron', window: TODAY, count: 4, kinds: { 'invoice.reminder': 4 } },
+      payload: { job: 'invoiceRemindersCron', day: TODAY, count: 4, kinds: { 'invoice.reminder': 4 } },
     });
     expect(mocks.perCopyLine).not.toHaveBeenCalled();
   });
@@ -263,22 +353,45 @@ describe('#2331 the daily invoice jobs, with notices to households off', () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({
       description: 'Held back 2 overdue invoice notices: notices to households are turned off',
-      payload: { job: 'invoiceOverdueCron', window: TODAY, count: 2, kinds: { 'invoice.overdue': 2 } },
+      payload: { job: 'invoiceOverdueCron', day: TODAY, count: 2, kinds: { 'invoice.overdue': 2 } },
     });
     expect(mocks.perCopyLine).not.toHaveBeenCalled();
   });
 
-  it('the two jobs on the same day write a line each, and a second run that day writes none', async () => {
-    const ctx = invoicesDb(2, '2026-11-15');
+  it('a second scan the same business day writes no second line; the next day counts them once more', async () => {
+    const ctx = invoicesDb(2, '2026-11-16');
     await runInvoiceRemindersScan(NOW, TODAY);
+    // A retry, or a day marker that did not land, scans the day again.
     await runInvoiceRemindersScan(NOW + 60 * 1000, TODAY);
+    await runInvoiceRemindersScan(NOW + 3 * HOUR, TODAY);
     expect(logLines(ctx.writes)).toHaveLength(1);
 
     await runInvoiceRemindersScan(NOW + 24 * HOUR, '2026-11-15');
-    expect(logLines(ctx.writes)).toHaveLength(2);
-    expect(heldSummaryLineId('invoiceRemindersCron', TODAY, 'off')).not.toBe(
-      heldSummaryLineId('invoiceOverdueCron', TODAY, 'off'),
-    );
+    const lines = logLines(ctx.writes);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toMatchObject({
+      description: 'Held back 2 invoice reminders: notices to households are turned off',
+      payload: { day: '2026-11-15', count: 2 },
+    });
+  });
+
+  it('the overdue job, scanned twice in a day, writes one line', async () => {
+    const ctx = invoicesDb(2, '2026-11-01');
+    await runInvoiceOverdueScan(NOW, TODAY);
+    // A held overdue notice backs off for 20 hours. A scan past that which still
+    // belongs to the same business day (a late retry) holds the two again.
+    await runInvoiceOverdueScan(NOW + 21 * HOUR, TODAY);
+    expect(logLines(ctx.writes)).toHaveLength(1);
+  });
+
+  it('each job keeps its own count: the same day, a line each', async () => {
+    const ctx = invoicesDb(2, '2026-11-15');
+    await runInvoiceRemindersScan(NOW, TODAY);
+    const overdue = invoicesDb(2, '2026-11-01');
+    await runInvoiceOverdueScan(NOW, TODAY);
+    expect(logLines(ctx.writes)).toHaveLength(1);
+    expect(logLines(overdue.writes)).toHaveLength(1);
+    expect(heldMarkerPath('invoiceRemindersCron')).not.toBe(heldMarkerPath('invoiceOverdueCron'));
   });
 
   it('nothing due means no line', async () => {
@@ -387,7 +500,7 @@ describe('#2331 the switch could not be read', () => {
   it('gets its own line, at warn, and does not say anyone turned it off', async () => {
     const ctx = visitsDb(2, true);
     ctx.db.doc(HOUSEHOLD_GATE_SETTINGS_PATH).get = vi.fn().mockRejectedValue(new Error('UNAVAILABLE'));
-    await withHeldNoticeBatch('kincareReminderCron', '2026-11-14T15', async (batch) => {
+    await withHeldNoticeBatch('kincareReminderCron', { atMs: NOW }, async (batch) => {
       for (const n of [1, 2]) {
         await enqueueNotificationDetailed(
           { key: 'kincare.upcoming.reminder', recipientUid: `kin${n}`, data: { kinfolkId: `fam${n}`, bookingId: `bk${n}` } },
@@ -403,6 +516,36 @@ describe('#2331 the switch could not be read', () => {
       description: 'Held back 2 visit reminders: the setting for notices to households could not be read',
       payload: { count: 2, reason: 'setting_unreadable' },
     });
+  });
+
+  it('is counted apart from turned off: a copy already counted as off still shows in the warn line, once', async () => {
+    const ctx = visitsDb(2);
+    await runKincareReminderScan(NOW, TICK);
+    ctx.db.doc(HOUSEHOLD_GATE_SETTINGS_PATH).get = vi.fn().mockRejectedValue(new Error('UNAVAILABLE'));
+    await runKincareReminderScan(NOW + HOUR, NEXT_TICK);
+    await runKincareReminderScan(NOW + 2 * HOUR, '2026-11-14T17:00:00Z');
+    expect(logLines(ctx.writes).map((l) => [l.severity, l.description])).toEqual([
+      ['info', 'Held back 2 visit reminders: notices to households are turned off'],
+      ['warn', 'Held back 2 visit reminders: the setting for notices to households could not be read'],
+    ]);
+  });
+});
+
+describe('#2331 the run count is never stored', () => {
+  it('with notices on, nothing a timed job writes carries the count or the job', async () => {
+    const ctx = visitsDb(2, true);
+    expect(await runKincareReminderScan(NOW, TICK)).toBe(2);
+    const invoices = invoicesDb(2, '2026-11-15', true);
+    expect(await runInvoiceRemindersScan(NOW, TODAY)).toBe(2);
+
+    const stored = [...ctx.writes, ...invoices.writes];
+    // Notifications, work orders, the dedupe ledger and the stamps were all written.
+    expect(stored.length).toBeGreaterThan(4);
+    for (const w of stored) {
+      expect(Object.keys(w.data)).not.toEqual(expect.arrayContaining(['heldBatch']));
+      expect(JSON.stringify(w.data)).not.toMatch(/heldBatch|unnamed|kincareReminderCron|invoiceRemindersCron/);
+    }
+    expect(stored.filter((w) => w.path.startsWith('scheduled_runs/'))).toEqual([]);
   });
 });
 

@@ -20,6 +20,14 @@
  * happen with the switch ON, and a failed send has to stay one `FAILURE` line
  * per notice because the daily error digest reads them.
  *
+ * EACH HELD COPY IS COUNTED ONCE A BUSINESS DAY. Nothing is stamped on a
+ * visit or an invoice while its notice is held, so the hourly visit job holds
+ * the same reminders again every hour, and a daily job that is retried holds
+ * its notices again. The batch therefore remembers WHICH copies it held, not
+ * only how many, and the writer keeps one small marker per job for the day
+ * (`recordHeldNoticeSummary`): a run's line counts only the copies not yet
+ * counted that day, and a run with none of those writes nothing.
+ *
  * NOT A FIELD OF `EnqueueArgs`. Callers spread those args and parts of them
  * are stored; the batch is a second argument to `enqueueNotificationDetailed`
  * so it can never land on a notification or a work order.
@@ -31,47 +39,67 @@
 export type HeldNoticeReason = 'off' | 'unreadable';
 
 export interface HeldNoticeBatch {
-  /** The scheduled job, by its function name. Part of the summary line's fixed id. */
+  /** The scheduled job, by its function name. Names the job's marker for the day. */
   readonly job: string;
+  /** The business day of the run, when the job already resolved it. */
+  readonly day?: string;
+  /** The moment of the run, from which the writer resolves the business day when `day` is absent. */
+  readonly atMs: number;
+  /** Copies held, by reason: what names the copy, then its notification key. */
+  readonly held: Record<HeldNoticeReason, Map<string, string>>;
   /**
-   * The run this count belongs to: the job's tick, or its business day. A
-   * retry of the same run carries the same window, so it writes no second line.
+   * Copies held that nothing names (no event id on the notice), by reason,
+   * then by notification key. They cannot be told from one run to the next,
+   * so they are counted every run. None of the three timed jobs sends one.
    */
-  readonly window: string;
-  /** Copies held, by reason, then by notification key. */
-  readonly held: Record<HeldNoticeReason, Map<string, number>>;
+  readonly unnamed: Record<HeldNoticeReason, Map<string, number>>;
 }
 
-export function startHeldNoticeBatch(job: string, window: string): HeldNoticeBatch {
-  return { job, window, held: { off: new Map(), unreadable: new Map() } };
+export function startHeldNoticeBatch(job: string, run: { day?: string; atMs?: number } = {}): HeldNoticeBatch {
+  return {
+    job,
+    ...(run.day !== undefined && run.day !== '' ? { day: run.day } : {}),
+    atMs: run.atMs ?? Date.now(),
+    held: { off: new Map(), unreadable: new Map() },
+    unnamed: { off: new Map(), unreadable: new Map() },
+  };
 }
 
-/** One household copy of `key` was held. Called by the dispatcher in place of the per-copy line. */
+/**
+ * One household copy of `key` was held. Called by the dispatcher in place of
+ * the per-copy line. `copy` names it (the event and who it was for) so the
+ * same copy held again that day is not counted twice; '' when nothing does.
+ */
 export function countHeldNotice(
   batch: HeldNoticeBatch,
   key: string,
   reason: HeldNoticeReason,
+  copy = '',
 ): void {
-  const byKey = batch.held[reason];
+  if (copy !== '') {
+    batch.held[reason].set(copy, key);
+    return;
+  }
+  const byKey = batch.unnamed[reason];
   byKey.set(key, (byKey.get(key) ?? 0) + 1);
 }
 
 /** How many copies the batch holds for one reason. */
 export function heldNoticeTotal(batch: HeldNoticeBatch, reason: HeldNoticeReason): number {
-  let total = 0;
-  for (const n of batch.held[reason].values()) total += n;
+  let total = batch.held[reason].size;
+  for (const n of batch.unnamed[reason].values()) total += n;
   return total;
 }
 
 /**
- * The hour a tick belongs to, as `2026-11-14T15`. Cloud Scheduler repeats the
- * event's `scheduleTime` on a retry of the same tick, so the retry lands in
- * the same hour even when it runs past the top of the next one. With no
- * `scheduleTime` (a direct call, a test) the hour of `nowMs` stands in.
+ * The moment a tick belongs to. Cloud Scheduler repeats the event's
+ * `scheduleTime` on a retry of the same tick, so a retry that runs past
+ * midnight still belongs to the day its tick was due. With no `scheduleTime`
+ * (a direct call, a test) `nowMs` stands in.
  */
-export function hourWindow(nowMs: number, scheduleTime?: string): string {
+export function tickMs(nowMs: number, scheduleTime?: string): number {
   const scheduled = scheduleTime === undefined ? Number.NaN : Date.parse(scheduleTime);
-  return new Date(Number.isFinite(scheduled) ? scheduled : nowMs).toISOString().slice(0, 13);
+  return Number.isFinite(scheduled) ? scheduled : nowMs;
 }
 
 /**
@@ -82,10 +110,10 @@ export function hourWindow(nowMs: number, scheduleTime?: string): string {
  */
 export async function withHeldNoticeBatch<T>(
   job: string,
-  window: string,
+  when: { day?: string; atMs?: number },
   run: (batch: HeldNoticeBatch) => Promise<T>,
 ): Promise<T> {
-  const batch = startHeldNoticeBatch(job, window);
+  const batch = startHeldNoticeBatch(job, when);
   try {
     return await run(batch);
   } finally {
