@@ -158,6 +158,12 @@ that held nothing writes nothing, and a retried run writes no second line.
 - `invoiceRemindersCron` and `invoiceOverdueCron` scan once a business day, so
   each writes at most one line a day.
 
+Other paths that run on a timer still write one line per copy, because each
+finishes something a person started and tries a bounded number of times: the
+two recovery passes in `notificationScheduledSweep` (a credit payment notice or
+a payoff notice whose first send was cut short) and a marketing blast resumed
+by `outboundFanoutSweep`.
+
 If a run fails half way, its line carries the count it had reached; the retry
 adds nothing, because Activity Log entries are never rewritten. If the setting
 could not be read, the line says so in place of "turned off".

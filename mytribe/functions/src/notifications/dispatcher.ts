@@ -745,8 +745,11 @@ export async function enqueueNotificationDetailed(
  * (`noticeAudit.ts`): a line that cannot be written must not undo a dispatch.
  *
  * The line has a fixed id wherever the event has an identity, so a retry, or
- * the second path to the same clock step, writes it once, and a daily job over
- * the same invoice writes it once a day.
+ * the second path to the same clock step, writes it once, and the same event
+ * held again on a later day writes it once that day.
+ *
+ * #2331: not called for a copy the send switch holds inside a timed job. That
+ * job counts the copy and writes one line for its run (`heldNoticeBatch.ts`).
  */
 async function logHouseholdCopyNotSent(
   key: string,
