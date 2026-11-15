@@ -237,8 +237,8 @@ async function finishEventFollowup(input: {
         severity: 'info',
         actorRole: 'SYSTEM',
         familyId: input.familyId,
-        targetUid: input.invoiceId,
-        targetCollection: 'invoices',
+        // No target: the Activity Log row would end with the invoice's document
+        // id. The line names the invoice by its number; the id is in the payload.
         description: cardDeclinedAfterPaymentWords(declined.invoiceNumber, declined.reason),
         payload: { invoiceId: input.invoiceId, stripeEventId: input.eventId, reason: declined.reason },
         docId: stripeAuditDocId(input.eventId, input.kind),

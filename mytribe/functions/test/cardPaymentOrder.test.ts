@@ -570,6 +570,9 @@ describe('#2344: a decline on an invoice already paid tells the household nothin
       docId: 'stripe_evt_fail_2_declinedAfterPayment',
       payload: { invoiceId: 'inv1', stripeEventId: 'evt_fail_2', reason: 'invoice-paid' },
     });
+    // No target on the entry: the row would end with the invoice's document id.
+    expect(lines()[0]![0].targetUid).toBeUndefined();
+    expect(lines()[0]![0].targetCollection).toBeUndefined();
     expect(docs['stripeEvents/evt_fail_2']).toMatchObject({
       appliedOutcome: 'FAILED_AFTER_PAYMENT',
       noticeSkippedReason: 'declined-after-payment',
