@@ -5,11 +5,13 @@ import { logEvent } from '../lib/logger';
 import { wrapScheduled } from '../lib/wrapScheduled';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import type { EnqueueArgs } from '../notifications/types';
 import { reachedAppOnly } from '../notifications/appOnly';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
 import { isAutoReminder24hEnabled } from '../lib/autoReminder';
 import { FULL_CPU_SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
 import { HOURLY_TICK } from '../lib/notificationSchedule';
+import { tickMs, withHeldNoticeBatch, type HeldNoticeBatch } from '../notifications/heldNoticeBatch';
 
 const WINDOW_LOWER_MS = 24 * 60 * 60 * 1000;
 const WINDOW_UPPER_MS = 48 * 60 * 60 * 1000;
@@ -66,6 +68,8 @@ type BookingDoc = {
 export async function processUpcomingBooking(
   docSnap: QueryDocumentSnapshot,
   now: number,
+  /** #2331: the run's count of reminders the send switch held back. */
+  heldBatch?: HeldNoticeBatch,
 ): Promise<boolean> {
   const windowLower = now + WINDOW_LOWER_MS;
   const windowUpper = now + WINDOW_UPPER_MS;
@@ -79,7 +83,7 @@ export async function processUpcomingBooking(
   if (!familyId) return false;
   const recipientUid = await resolveKinfolkUid(familyId);
   try {
-    const outcome = await enqueueNotificationDetailed({
+    const args: EnqueueArgs = {
       key: 'kincare.upcoming.reminder',
       recipientUid: recipientUid ?? '',
       data: {
@@ -93,7 +97,11 @@ export async function processUpcomingBooking(
         serviceId: typeof data['serviceId'] === 'string' ? data['serviceId'] : null,
       },
       fireAtMs: now,
-    });
+    };
+    // A call with no batch passes one argument, as it always has.
+    const outcome = await (heldBatch === undefined
+      ? enqueueNotificationDetailed(args)
+      : enqueueNotificationDetailed(args, heldBatch));
     if (outcome.written.length > 0) {
       await docSnap.ref.set(
         { [NOTIFIED_FIELD]: now, [NOTIFIED_APP_ONLY_FIELD]: reachedAppOnly(outcome) },
@@ -146,8 +154,16 @@ export async function processUpcomingBooking(
  * switch back on still reminds about the visits that came due while it was off
  * (their window is 24-48h wide, an hourly cron gets many attempts at it).
  * Absent decodes as ON; see `lib/autoReminder.ts` for why that is not optional.
+ *
+ * #2331: with notices to households off, a run writes ONE Activity Log line
+ * for the reminders it held back, not one per reminder. The job holds the same
+ * reminders again on every tick (nothing is stamped while held), so each
+ * reminder is counted once a business day: a tick's line counts only the ones
+ * not yet counted that day, and a tick with none writes nothing. `scheduleTime`
+ * is the tick's own time, which a retry of the tick repeats, so a retry that
+ * runs past midnight still counts toward the day its tick was due.
  */
-export async function runKincareReminderScan(now: number = Date.now()): Promise<number> {
+export async function runKincareReminderScan(now: number = Date.now(), scheduleTime?: string): Promise<number> {
   if (!(await isAutoReminder24hEnabled(db()))) {
     logEvent({
       severity: 'info',
@@ -158,12 +174,14 @@ export async function runKincareReminderScan(now: number = Date.now()): Promise<
     return 0;
   }
   let reminded = 0;
-  await paginateQuery(
-    db().collectionGroup('bookings'),
-    async (docSnap) => {
-      if (await processUpcomingBooking(docSnap, now)) reminded += 1;
-    },
-    { functionName: 'kincareReminderCron' },
+  await withHeldNoticeBatch('kincareReminderCron', { atMs: tickMs(now, scheduleTime) }, (heldBatch) =>
+    paginateQuery(
+      db().collectionGroup('bookings'),
+      async (docSnap) => {
+        if (await processUpcomingBooking(docSnap, now, heldBatch)) reminded += 1;
+      },
+      { functionName: 'kincareReminderCron' },
+    ),
   );
   return reminded;
 }
@@ -212,7 +230,7 @@ export const kincareReminderCron = onSchedule(
     ...FULL_CPU_SERIAL,
     ...SCHEDULE_RETRY_PERIODIC,
   },
-  wrapScheduled('kincareReminderCron', async () => {
-    await runKincareReminderScan(Date.now());
+  wrapScheduled('kincareReminderCron', async (event: { scheduleTime?: string } | undefined) => {
+    await runKincareReminderScan(Date.now(), event?.scheduleTime);
   }),
 );

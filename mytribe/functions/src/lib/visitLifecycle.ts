@@ -209,6 +209,10 @@ export function illegalLifecycleMessage(
  * NOTHING on an undo. Undoing an arrival is an operator correcting their own
  * record; there is no second message a household should receive for it, and a
  * "never mind" push would be worse than the silence.
+ *
+ * #2038: quiet does not mean the wrong notice is left standing. The undone
+ * arrival's entry is withdrawn from the household's notifications list
+ * (`lib/arrivalNoticeWithdrawal.ts`); nothing is sent to say so.
  */
 export function notificationEventFor(
   action: VisitLifecycleAction,

@@ -6,6 +6,8 @@ import {
   cardLifecycleActionsFor,
   lifecycleActionsFor,
   lifecycleNowIso,
+  UNDO_ARRIVAL_CONFIRM,
+  UNDO_ARRIVAL_DONE,
 } from './sessionLifecycle';
 
 /**
@@ -91,6 +93,25 @@ describe('the card labels and the card action map', () => {
   });
 });
 
+describe('what the office reads about undoing an arrival (#2038)', () => {
+  const undo = lifecycleActionsFor('arrived').find((a) => a.action === 'UNDO_ARRIVAL')!;
+
+  it('the confirm says the household is sent nothing, their list entry goes, and what went out stays', () => {
+    const body = undo.confirmBody('the Wrens');
+    expect(body).toBe(UNDO_ARRIVAL_CONFIRM);
+    expect(body).toContain('The household is sent nothing about the undo.');
+    expect(body).toContain('The arrival notice comes off their notifications list.');
+    expect(body).toContain('An email, text or push already sent stays sent.');
+    expect(body).not.toContain('Nobody is notified');
+  });
+
+  it('both lines keep to the house words', () => {
+    for (const line of [UNDO_ARRIVAL_CONFIRM, UNDO_ARRIVAL_DONE]) {
+      expect(line).not.toMatch(/—|inbox|\bpet\b|\bclient\b|sitter/i);
+    }
+  });
+});
+
 describe('the confirm copy', () => {
   it('is future tense and never repeats the button the operator already pressed', () => {
     for (const state of ['scheduled', 'onMyWay', 'arrived', 'departed'] as const) {
@@ -125,7 +146,7 @@ describe('the confirm copy', () => {
 
   it('says plainly that an undo notifies nobody', () => {
     const undo = lifecycleActionsFor('arrived').find((a) => a.action === 'UNDO_ARRIVAL')!;
-    expect(undo.confirmBody('The Whitfields')).toMatch(/nobody is notified/i);
+    expect(undo.confirmBody('The Whitfields')).toMatch(/the household is sent nothing about the undo/i);
   });
 });
 

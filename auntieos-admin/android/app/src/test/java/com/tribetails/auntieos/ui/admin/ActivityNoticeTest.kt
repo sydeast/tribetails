@@ -125,6 +125,25 @@ class ActivityNoticeTest {
         assertEquals("Not sent", activityStatusWords(heldNow))
     }
 
+    /** #2331: the summary line needs no client code; this pins that it passes through untouched. */
+    @Test
+    fun `the one line a timed job writes for a run reads as the server wrote it`() {
+        val summary = heldNow.copy(
+            description = "Held back 14 visit reminders: notices to households are turned off",
+            payload = mapOf("outcome" to "held", "summary" to true, "count" to 14),
+        )
+        assertTrue(isNoticeNotSent(summary))
+        assertEquals("Notification not sent", activityEntryTitle(summary))
+        assertEquals("Held back 14 visit reminders: notices to households are turned off", activityEntryDescription(summary))
+        assertEquals("Not sent", activityStatusWords(summary))
+        for (words in listOf(
+            "Held back 1 invoice reminder: notices to households are turned off",
+            "Held back 2 overdue invoice notices: notices to households are turned off",
+            "Held back 3 visit reminders: the setting for notices to households could not be read",
+        )) {
+            assertEquals(words, activityEntryDescription(summary.copy(description = words)))
+        }
+    }
     @Test
     fun `a send that failed keeps its own status and the error tone`() {
         val failed = heldNow.copy(

@@ -47,6 +47,18 @@ export function isArchivedNotification(data: Data): boolean {
   return data['archivedAt'] !== undefined && data['archivedAt'] !== null;
 }
 
+/**
+ * #2038: a notice the office took back. "Undo arrived" withdraws the "Your
+ * Auntie has arrived" row it was wrong about (`lib/arrivalNoticeWithdrawal.ts`),
+ * which stamps `withdrawnAt` beside `archivedAt`. A withdrawn row is never
+ * listed and never counted, and unlike a row the reader filed away it does not
+ * come back: the restore callables leave it alone.
+ */
+export const WITHDRAWN_AT_FIELD = 'withdrawnAt';
+export const WITHDRAWN_REASON_FIELD = 'withdrawnReason';
+export function isWithdrawnNotification(data: Data): boolean {
+  return data[WITHDRAWN_AT_FIELD] !== undefined && data[WITHDRAWN_AT_FIELD] !== null;
+}
 /** No `readAt` on the row. The field is absent on an unread row, never blank. */
 export function isUnreadNotification(data: Data): boolean {
   return data['readAt'] === undefined || data['readAt'] === null;
@@ -64,9 +76,9 @@ export function isForTribe(data: Data, kinfolkId: string): boolean {
   return named === '' || named === kinfolkId;
 }
 
-/** Visible in the list and counted on the bell: active, and about this tribe. */
+/** Visible in the list and counted on the bell: active, not withdrawn, and about this tribe. */
 export function isVisibleNotification(data: Data, kinfolkId: string): boolean {
-  return !isArchivedNotification(data) && isForTribe(data, kinfolkId);
+  return !isArchivedNotification(data) && !isWithdrawnNotification(data) && isForTribe(data, kinfolkId);
 }
 
 /**
