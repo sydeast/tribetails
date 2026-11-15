@@ -93,46 +93,49 @@ describe('dispatchVisitNotification names each lifecycle event (#832)', () => {
   // #2250: the call an installed client still makes after its own Departed
   // write. The server's send skips a departure that was announced and then
   // undone, so this call must skip it too or it becomes the second notice.
-  it('a departure announced once and then undone is not announced again for the same arrival', async () => {
-    const arrivedAt = '2026-09-14T14:30:00.000Z';
-    await ctx.db.doc('kin_care_sessions/s1').set({
+  // #2357: it asks the same question the server's send asks, of the same
+  // records: was an earlier departure of this visit told, and was that today.
+  const visitSession = (extra: Record<string, unknown>) =>
+    ctx.db.doc('kin_care_sessions/s1').set({
       kinfolkId: 'fam1',
       kinCareBatchId: 'batch1',
       kinCareVisitId: 'visit1',
-      status: 'DEPARTED',
-      arrivedAt,
-      departedAt: '2026-09-14T15:02:00.000Z',
-      departedNoticeToldForArrival: arrivedAt,
+      arrivedAt: '2026-09-14T14:30:00.000Z',
+      ...extra,
     });
+  /** The first departure, sent by the client itself, with the record the session trigger leaves beside it. */
+  async function firstDepartureTold(): Promise<void> {
+    await visitSession({ status: 'DEPARTED', departedAt: new Date(NOW).toISOString() });
+    await tap({ event: 'departed', eventAtMs: NOW });
+    await ctx.db
+      .doc(`visit_step_notices/s1__departed__${NOW}`)
+      .set({ sessionId: 's1', event: 'departed', atMs: NOW, dispatchIds: [], recordedAtMs: NOW });
+  }
+  it('a departure announced once and then undone is not announced again the same day', async () => {
+    await firstDepartureTold();
+    vi.setSystemTime(NOW + 120_000);
+    await visitSession({ status: 'DEPARTED', departedAt: new Date(NOW + 120_000).toISOString() });
     const res = await tap({ event: 'departed', eventAtMs: NOW + 120_000 });
-    expect(household(ctx.writes, 'kincare.auntie.departed')).toHaveLength(0);
+    expect(household(ctx.writes, 'kincare.auntie.departed')).toHaveLength(1);
     expect(res).toMatchObject({ suppressed: true, reason: 'already_notified', dispatchIds: [] });
     expect(res.notice).toMatchObject({ told: false, reason: 'already_notified' });
   });
-  it('the same visit arrived at again is announced: the note names an earlier arrival', async () => {
-    await ctx.db.doc('kin_care_sessions/s1').set({
-      kinfolkId: 'fam1',
-      kinCareBatchId: 'batch1',
-      kinCareVisitId: 'visit1',
-      status: 'DEPARTED',
-      arrivedAt: '2026-09-14T14:50:00.000Z',
-      departedAt: '2026-09-14T15:02:00.000Z',
-      departedNoticeToldForArrival: '2026-09-14T14:30:00.000Z',
-    });
-    await tap({ event: 'departed', eventAtMs: NOW + 120_000 });
-    expect(household(ctx.writes, 'kincare.auntie.departed')).toHaveLength(1);
+  it('the real departure on a later business day is announced, once', async () => {
+    await firstDepartureTold();
+    const nextDay = NOW + 24 * 60 * 60_000;
+    vi.setSystemTime(nextDay);
+    await visitSession({ status: 'DEPARTED', departedAt: new Date(nextDay).toISOString() });
+    const res = await tap({ event: 'departed', eventAtMs: nextDay });
+    expect(res).toMatchObject({ suppressed: false, reason: null });
+    // A retry of the same tap is still the duplicate.
+    const again = await tap({ event: 'departed', eventAtMs: nextDay });
+    expect(again).toMatchObject({ suppressed: true, reason: 'already_notified' });
+    expect(household(ctx.writes, 'kincare.auntie.departed')).toHaveLength(2);
   });
   it('an arrival of that visit is still announced', async () => {
-    const arrivedAt = '2026-09-14T14:30:00.000Z';
-    await ctx.db.doc('kin_care_sessions/s1').set({
-      kinfolkId: 'fam1',
-      kinCareBatchId: 'batch1',
-      kinCareVisitId: 'visit1',
-      status: 'ARRIVED',
-      arrivedAt,
-      departedNoticeToldForArrival: arrivedAt,
-    });
-    await tap({ event: 'arrived', eventAtMs: NOW });
+    await firstDepartureTold();
+    await visitSession({ status: 'ARRIVED', departedAt: '' });
+    await tap({ event: 'arrived', eventAtMs: NOW + 60_000 });
     expect(household(ctx.writes, 'kincare.auntie.arrived')).toHaveLength(1);
   });
   it('two reports for one visit both send; a retry of one report does not', async () => {

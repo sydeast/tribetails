@@ -100,11 +100,47 @@ const DEPARTED: LifecycleActionDef = {
 /** #2038: what the office reads before undoing an arrival. */
 export const UNDO_ARRIVAL_CONFIRM =
   'The arrival and departure times are cleared and the visit goes back to where it was. ' +
-  'The household is sent nothing about the undo. The arrival notice comes off their notifications list. ' +
+  'The household is sent nothing about the undo. If they were told about the arrival, that notice comes off their notifications list. ' +
   'An email, text or push already sent stays sent.';
-/** #2038: what the office reads once the arrival is undone. */
-export const UNDO_ARRIVAL_DONE =
-  "No message was sent about the undo. The arrival notice is off the household's notifications list.";
+/** #2038: the undo is quiet. True of every undo, whatever was on the household's list. */
+export const UNDO_ARRIVAL_SENT_NOTHING = 'No message was sent about the undo.';
+
+/** #2357: shown while the server's record of what the undo took off the list is on its way. */
+export const UNDO_ARRIVAL_CHECKING = `${UNDO_ARRIVAL_SENT_NOTHING} Checking the household's notifications list.`;
+
+/** #2357: the notices one Undo arrival took off the household's notifications list, as the server recorded them. */
+export interface UndoneArrivalNotices {
+  arrived: boolean;
+  departed: boolean;
+}
+
+/**
+ * #2357: what the office reads once the arrival is undone. It used to say
+ * "The arrival notice is off the household's notifications list" after every
+ * undo, including one for a household that was never told. It now says an
+ * entry came off only when the server recorded that one did
+ * (`visit_step_notices/{visit}__undo_arrival__{arrival}`), and says plainly
+ * when the household was not told about the step.
+ *
+ * @param off the server's record, or null when none arrived in time: the
+ *        sentence then claims nothing about their list.
+ * @param fromDeparted the visit read Departed when it was undone, so there
+ *        was a departure the household could have been told about too.
+ */
+export function undoArrivalDoneSentence(off: UndoneArrivalNotices | null, fromDeparted: boolean): string {
+  if (off === null) return UNDO_ARRIVAL_SENT_NOTHING;
+  if (off.arrived && off.departed) {
+    return `${UNDO_ARRIVAL_SENT_NOTHING} The arrival and departure notices are off the household's notifications list.`;
+  }
+  if (off.arrived) return `${UNDO_ARRIVAL_SENT_NOTHING} The arrival notice is off the household's notifications list.`;
+  if (off.departed) {
+    return `${UNDO_ARRIVAL_SENT_NOTHING} The household was not told about the arrival. The departure notice is off their notifications list.`;
+  }
+  return fromDeparted
+    ? `${UNDO_ARRIVAL_SENT_NOTHING} The household was not told about the arrival or the departure, so nothing was on their notifications list.`
+    : `${UNDO_ARRIVAL_SENT_NOTHING} The household was not told about the arrival, so nothing was on their notifications list.`;
+}
+
 const UNDO_ARRIVAL: LifecycleActionDef = {
   action: 'UNDO_ARRIVAL',
   label: 'Undo arrival',

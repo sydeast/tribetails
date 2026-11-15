@@ -127,6 +127,8 @@ export interface VisitLifecycleSession {
   status?: string | undefined;
   /** Decides where an undone arrival goes BACK to. Never cleared by an undo. */
   onMyWayAt?: string | undefined;
+  /** #2357: the arrival an undo takes back. Its stamp names the server's record of what came off the household's list. */
+  arrivedAt?: string | undefined;
   /** The household. Absent means there is nobody to notify. */
   kinfolkId?: string | undefined;
   kinCareBatchId?: string | undefined;

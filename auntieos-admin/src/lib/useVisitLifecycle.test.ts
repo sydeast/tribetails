@@ -281,19 +281,38 @@ describe('the sentence never claims a notification it has not seen', () => {
   });
 
   // #2038: the undo is quiet, and the card says what that means for the
-  // household: nothing sent, and the arrival off their notifications list.
-  it('an undo says nobody was sent anything and the arrival notice is off their list', async () => {
-    patchVisitLifecycle.mockResolvedValue({
+  // household. #2357: it says the arrival notice is off their list only once
+  // the server has recorded that it took one off.
+  function undoResult(undone: Promise<{ arrived: boolean; departed: boolean } | null> | undefined, from = 'ARRIVED') {
+    return {
       sessionId: 's1',
       action: 'UNDO_ARRIVAL',
-      from: 'ARRIVED',
+      from,
       status: 'ON_MY_WAY',
       changed: true,
       notification: Promise.resolve({ notified: false, notifySkipped: 'no_event_for_action' }),
-    });
+      ...(undone === undefined ? {} : { undone }),
+    };
+  }
+  async function undoOn(hook: { current: ReturnType<typeof useVisitLifecycle> }) {
+    act(() => hook.current.ask(actionNamed('UNDO_ARRIVAL')));
+    act(() => hook.current.confirm());
+  }
+  it('an undo says it is checking their list, then that the arrival notice is off it', async () => {
+    let settle: (off: { arrived: boolean; departed: boolean } | null) => void = () => {};
+    patchVisitLifecycle.mockResolvedValue(undoResult(new Promise((resolve) => (settle = resolve))));
     const { result } = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
-    act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
-    act(() => result.current.confirm());
+    await undoOn(result);
+    // The wait is said, and nothing is claimed about their list yet.
+    await waitFor(() =>
+      expect(result.current.write).toEqual({
+        status: 'done',
+        message: "ARRIVED → ON_MY_WAY. No message was sent about the undo. Checking the household's notifications list.",
+      }),
+    );
+    await act(async () => {
+      settle({ arrived: true, departed: false });
+    });
     await waitFor(() =>
       expect(result.current.write).toEqual({
         status: 'done',
@@ -301,12 +320,43 @@ describe('the sentence never claims a notification it has not seen', () => {
           "ARRIVED → ON_MY_WAY. No message was sent about the undo. The arrival notice is off the household's notifications list.",
       }),
     );
-    // Still that sentence once the server's answer about the household is in.
-    await act(async () => {
-      await Promise.resolve();
-    });
     expect((result.current.write as { message?: string }).message).not.toMatch(/was notified|Checking/);
-    expect((result.current.write as { message?: string }).message).toMatch(/notifications list\.$/);
+  });
+
+  it('an undo for a household that was never told says so, and does not say a notice came off', async () => {
+    patchVisitLifecycle.mockResolvedValue(undoResult(Promise.resolve({ arrived: false, departed: false })));
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
+    await undoOn(result);
+    await waitFor(() =>
+      expect(result.current.write).toEqual({
+        status: 'done',
+        message:
+          'ARRIVED → ON_MY_WAY. No message was sent about the undo. The household was not told about the arrival, so nothing was on their notifications list.',
+      }),
+    );
+  });
+
+  it('an undo from Departed names both notices when both came off', async () => {
+    patchVisitLifecycle.mockResolvedValue(undoResult(Promise.resolve({ arrived: true, departed: true }), 'DEPARTED'));
+    const { result } = renderHook(() => useVisitLifecycle({ ...SESSION, status: 'DEPARTED' }, 'Dre East'));
+    await undoOn(result);
+    await waitFor(() =>
+      expect((result.current.write as { message?: string }).message).toBe(
+        "DEPARTED → ON_MY_WAY. No message was sent about the undo. The arrival and departure notices are off the household's notifications list.",
+      ),
+    );
+  });
+
+  it("an undo whose record never came claims nothing about the household's list", async () => {
+    patchVisitLifecycle.mockResolvedValue(undoResult(Promise.resolve(null)));
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
+    await undoOn(result);
+    await waitFor(() =>
+      expect(result.current.write).toEqual({
+        status: 'done',
+        message: 'ARRIVED → ON_MY_WAY. No message was sent about the undo.',
+      }),
+    );
   });
 
   // The no-op branch: nothing was written, so nothing is claimed about the
@@ -455,6 +505,7 @@ describe('an Auntie starting a visit while arrival verification is on', () => {
       status: 'SCHEDULED',
       changed: true,
       notification: Promise.resolve({ notified: false, notifySkipped: 'no_event_for_action' }),
+      undone: Promise.resolve({ arrived: true, departed: false }),
     });
     const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, true));
     act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
@@ -464,8 +515,10 @@ describe('an Auntie starting a visit while arrival verification is on', () => {
     expect(undoArrivalThroughServer).toHaveBeenCalledWith(SESSION);
     expect(patchVisitLifecycle).not.toHaveBeenCalled();
     expect(requestStartFix).not.toHaveBeenCalled();
-    expect((result.current.write as { message?: string }).message).toBe(
-      "ARRIVED → SCHEDULED. No message was sent about the undo. The arrival notice is off the household's notifications list.",
+    await waitFor(() =>
+      expect((result.current.write as { message?: string }).message).toBe(
+        "ARRIVED → SCHEDULED. No message was sent about the undo. The arrival notice is off the household's notifications list.",
+      ),
     );
     await waitFor(() => expect(stopVisitTracking).toHaveBeenCalledWith('s1'));
   });
