@@ -6,6 +6,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import com.kinfolk.portal.auth.parseEmailActionUrl
+import com.kinfolk.portal.push.PUSH_OPEN_EXTRA_KEYS
+import com.kinfolk.portal.push.PendingPushOpen
+import com.kinfolk.portal.push.pushOpenFromExtras
 import com.kinfolk.portal.ui.KinfolkPortalAppGuarded
 import com.kinfolk.portal.util.androidInitialClaimInviteId
 import com.kinfolk.portal.util.androidInitialSecureResetParams
@@ -17,12 +20,32 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         captureDeepLink(intent?.data)
+        // A restored activity is handed its first intent again; the tap it
+        // carried was opened the first time round.
+        if (savedInstanceState == null) capturePushTap(intent)
         setContent { KinfolkPortalAppGuarded() }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         captureDeepLink(intent.data)
+        capturePushTap(intent)
+    }
+    /**
+     * #2259: a tapped push opens what it is about. Two shapes arrive here: the
+     * intent KinfolkFcmService builds for a push it showed itself, and, for a
+     * push that came while the app was closed or in the background, the
+     * launcher intent Android fills with the push's own data keys. Both are
+     * read by [pushOpenFromExtras] into a typed target; the nav host opens it
+     * once the household is signed in. The extras are dropped after reading,
+     * so the same tap is never read twice.
+     */
+    private fun capturePushTap(intent: Intent?) {
+        val extras = intent?.extras ?: return
+        val read = PUSH_OPEN_EXTRA_KEYS.associateWith { key -> extras.getString(key) }
+        val target = pushOpenFromExtras(read) ?: return
+        PendingPushOpen.offer(target)
+        PUSH_OPEN_EXTRA_KEYS.forEach { intent.removeExtra(it) }
     }
 
     private fun captureDeepLink(uri: Uri?) {

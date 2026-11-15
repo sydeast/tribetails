@@ -99,12 +99,23 @@ sealed interface NotificationTarget {
  * and a booking row this client cannot place lands on Schedule rather than on
  * a visit page that says "not found".
  */
-fun notificationTargetOf(item: NotificationItem): NotificationTarget {
-    val id = item.targetId.trim()
-    return when (item.targetType) {
+fun notificationTargetOf(item: NotificationItem): NotificationTarget =
+    notificationTargetFor(item.targetType, item.targetId, item.visitId, item.batchId)
+/**
+ * #2259: the same decision from the four fields alone, so a tapped push
+ * (`push/PushOpen.kt`) opens exactly what its row on the list opens.
+ */
+fun notificationTargetFor(
+    targetType: String,
+    targetId: String,
+    visitId: String?,
+    batchId: String?,
+): NotificationTarget {
+    val id = targetId.trim()
+    return when (targetType) {
         "booking" -> {
-            val visitId = item.visitId?.trim().orEmpty()
-            val batchId = item.batchId?.trim().orEmpty()
+            val visitId = visitId?.trim().orEmpty()
+            val batchId = batchId?.trim().orEmpty()
             when {
                 visitId.isNotEmpty() -> NotificationTarget.Visit(visitId, batchId.ifEmpty { null })
                 batchId.isNotEmpty() -> NotificationTarget.BookingRequest(batchId)

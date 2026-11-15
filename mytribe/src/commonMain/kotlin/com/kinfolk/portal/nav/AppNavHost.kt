@@ -62,6 +62,7 @@ import com.kinfolk.portal.ui.LaunchErrorScreen
 import com.kinfolk.portal.ui.NoTribesOnboarding
 import com.kinfolk.portal.ui.NotFoundScreen
 import com.kinfolk.portal.util.openExternalUrl
+import kotlinx.coroutines.flow.first
 
 /** Dirty-flag key the detail destinations set so Schedule reloads on return. */
 private const val SCHEDULE_DIRTY = "schedule_dirty"
@@ -236,6 +237,24 @@ fun AppNavHost(
         }
     }
 
+    // #2259: a tapped push opens the thing it is about. Only once the signed-in
+    // shell is the start route, so a tap while signed out waits through
+    // sign-in, and after the start-route effect above, whose popUpTo(0) would
+    // otherwise wipe the destination. Taken once: a recomposition, a rotation
+    // or coming back to the app never opens it a second time.
+    val pendingPush by com.kinfolk.portal.push.PendingPushOpen.pending.collectAsState()
+    val shellOnScreen = startRoute is ShellGraph
+    LaunchedEffect(pendingPush, shellOnScreen) {
+        if (pendingPush == null || !shellOnScreen) return@LaunchedEffect
+        navController.currentBackStackEntryFlow.first()
+        val target = com.kinfolk.portal.push.PendingPushOpen.take() ?: return@LaunchedEffect
+        val destination = com.kinfolk.portal.push.pushOpenDestination(target)
+        if (destination == MessageAuntieRoute) {
+            openMessages()
+        } else {
+            navController.navigate(destination) { launchSingleTop = true }
+        }
+    }
     // #1281: lives above the NavHost, so it outlasts the wizard's destination
     // and reaches Schedule's. See ScheduleHandoff.
     var scheduleHandoff by remember { mutableStateOf<ScheduleHandoff?>(null) }
@@ -567,6 +586,18 @@ fun AppNavHost(
                                 onRedeem = { tgt -> invoicesController.startRedeem(invoice, tgt) },
                                 onDownloadPdf = { invoicesController.startDownloadPdf(invoice) },
                                 onBack = { navController.popBackStack() },
+                            )
+                        } else if (invoicesController.data != null) {
+                            // #2356: the invoices are loaded and this one is
+                            // not among them (an unsent draft, a removed
+                            // invoice). It used to spin here for good.
+                            com.kinfolk.portal.screens.invoices.InvoiceMissing(
+                                onBackToInvoices = {
+                                    navController.navigate(InvoicesRoute) {
+                                        popUpTo(navController.graph.findStartDestination().id)
+                                        launchSingleTop = true
+                                    }
+                                },
                             )
                         } else {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
