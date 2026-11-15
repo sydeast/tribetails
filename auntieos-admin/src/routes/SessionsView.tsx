@@ -1,5 +1,6 @@
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouteContext } from '@tanstack/react-router';
 import { Sessions } from '../screens/Sessions';
+import { isAuntieAccess } from '../lib/access';
 
 /**
  * The Auntie Time board at `/sessions`, wired to the three places a card can
@@ -24,11 +25,17 @@ import { Sessions } from '../screens/Sessions';
  * would make mounting the screen depend on having one. The screen hides either
  * KinTale button when its handler is absent, so a caller that cannot navigate
  * never draws a control that would do nothing.
+ *
+ * #2199, operator ruling 2026-11-14 ("the button is disabled but visible"): it
+ * also tells the board whether an Auntie is signed in, from the access the
+ * admin layout already resolved, so her Complete is held from the first paint.
  */
 export function SessionsView() {
   const navigate = useNavigate();
+  const { access } = useRouteContext({ from: '/admin' });
   return (
     <Sessions
+      isAuntie={isAuntieAccess(access)}
       onSelect={(id) => void navigate({ to: '/sessions/$sessionId', params: { sessionId: id } })}
       onComposeKinTale={(id) => void navigate({ to: '/kintales', search: { sessionId: id } })}
       onViewKinTale={(id) => void navigate({ to: '/kintales', search: { kinTaleId: id } })}

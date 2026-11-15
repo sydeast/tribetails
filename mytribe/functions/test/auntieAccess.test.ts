@@ -228,6 +228,29 @@ describe('#944 wrapAdminCallable enforces the table', () => {
     const src = readFileSync(resolve(__dirname, '../src/admin/createMultiDateBookingRequest.ts'), 'utf8');
     expect(src).toContain("wrapAdminCallable('createMultiDateBookingRequest', createMultiDateBookingRequestHandler)");
   });
+
+  /**
+   * #2199, operator ruling 2026-11-14 ("the button is disabled but visible"):
+   * completing a visit is the owner's. The admin web shows an Auntie Complete
+   * held, with the reason on it; this is the half that holds whatever a client
+   * draws. Pinned the same three ways as #2187 above.
+   */
+  it('#2199: REFUSES an Auntie the booking status change, Complete included, and still admits the owner', async () => {
+    expect(AUNTIE_ALLOWED_CALLABLES.has('transitionBookingStatus')).toBe(false);
+    const { wrapAdminCallable } = await import('../src/lib/wrapAdminCallable');
+    const handler = vi.fn(async () => ({ ok: true }));
+    const wrapped = wrapAdminCallable('transitionBookingStatus', handler);
+    const complete = { sessionId: 's1', action: 'COMPLETE' };
+    await expect(wrapped({ auth: auntieAuth, data: complete } as never)).rejects.toMatchObject({
+      code: 'permission-denied',
+    });
+    // Refused at the gate: the handler, and so the status write, never ran.
+    expect(handler).not.toHaveBeenCalled();
+    await expect(wrapped({ auth: ownerAuth, data: complete } as never)).resolves.toMatchObject({ ok: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+    const src = readFileSync(resolve(__dirname, '../src/admin/transitionBookingStatus.ts'), 'utf8');
+    expect(src).toContain("wrapAdminCallable('transitionBookingStatus', transitionBookingStatusHandler)");
+  });
   /**
    * #2164 / #2182: her work and her own notification choices go through two
    * narrow reads. The owner's Business Settings and Settings > Notifications

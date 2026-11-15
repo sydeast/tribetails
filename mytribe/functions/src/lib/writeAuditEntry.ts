@@ -30,7 +30,7 @@ import type { ActorRole, Severity } from './schema';
  *   - timestamp        ISO-8601 (Android keeps it as a String)
  *   - actionType       SCREAMING_SNAKE
  *   - description      Human-readable summary
- *   - status           SUCCESS | FAILURE | PENDING
+ *   - status           SUCCESS | FAILURE | PENDING | NOT_SENT (a notice held back, #1819)
  *   - actorId          uid of acting principal (or '' system)
  *   - targetId         optional target doc id
  *   - targetCollection optional target collection name
@@ -67,7 +67,12 @@ export interface WriteAuditArgs {
    * FAILURE (executePrimaryRecovery.ts, migrateFoundationV1Rollback.ts).
    * Every call site must say which one happened.
    */
-  status: 'SUCCESS' | 'FAILURE' | 'PENDING';
+  /**
+   * `NOT_SENT` (#1819) is a notice that did not go out by design: held by the
+   * send switch, turned off, or with nowhere to go. Not a failure, and never
+   * `SUCCESS`. Only `notifications/noticeAudit.ts` writes it.
+   */
+  status: 'SUCCESS' | 'FAILURE' | 'PENDING' | 'NOT_SENT';
   payload?: Record<string, unknown>;
   requestId?: string;
   clientRequestId?: string;

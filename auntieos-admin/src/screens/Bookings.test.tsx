@@ -1335,6 +1335,28 @@ describe('#2187 New booking is the owner\'s alone', () => {
     expect(screen.getByRole('button', { name: 'New booking' })).toBeInTheDocument();
   });
 });
+/**
+ * #2199, operator ruling 2026-11-14 ("the button is disabled but visible"):
+ * the same flag reaches the sheet's actions, so Mark Completed is held the
+ * moment the sheet opens. The seat read answers "owner" here; only the flag
+ * can be what holds it.
+ */
+describe('#2199 Mark Completed in the sheet, told that an Auntie is signed in', () => {
+  it('is held as the sheet opens, and ordinary for the owner', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: [entry({ _id: 'ses-42', status: 'SCHEDULED' })] });
+    const { unmount } = render(<Bookings isAuntie />);
+    await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    const held = within(screen.getByTestId('booking-detail-modal')).getByRole('button', { name: 'Mark Completed' });
+    expect(held).toHaveAttribute('aria-disabled', 'true');
+    expect(held).toHaveAccessibleDescription('Only the owner can complete a visit.');
+    unmount();
+    render(<Bookings />);
+    await userEvent.click(screen.getByRole('button', { name: /The Whitfields/i }));
+    expect(
+      within(screen.getByTestId('booking-detail-modal')).getByRole('button', { name: 'Mark Completed' }),
+    ).not.toHaveAttribute('aria-disabled');
+  });
+});
 describe('#2164 Bookings under an Auntie sign-in', () => {
   beforeEach(() => currentSessionSeat.mockResolvedValue(AUNTIE_SEAT));
 

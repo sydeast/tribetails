@@ -53,6 +53,8 @@ export async function onNotificationDispatchCreateHandler(event: any): Promise<v
           channels?: Channel[];
           mode?: string;
           status?: string;
+          stream?: unknown;
+          data?: Record<string, unknown>;
         }
       | undefined;
     if (!data) return;
@@ -85,6 +87,12 @@ export async function onNotificationDispatchCreateHandler(event: any): Promise<v
     // NOTIFICATION (not the work order) so the audit trail's Target column keeps
     // pointing at the thing an operator can actually go and look at, matching
     // the NOTIFICATION_RECEIVED entry the channel trigger writes moments later.
+    // #1905: the line names who the copy is for. A notice that goes to the
+    // household and to the office wrote two lines nobody could tell apart, so
+    // the office's email read as one sent against the household's switch.
+    const { noticeFamilyId, noticeRecipientWords, noticeStream } = await import('../noticeAudit.js');
+    const familyId = noticeFamilyId(data.data);
+    const to = await noticeRecipientWords(noticeStream(data.stream), data.recipientUid ?? '', familyId);
     await writeAuditEntry({
       status: 'SUCCESS',
       event: AUDIT_EVENTS.NOTIFICATION_DISPATCHED,
@@ -92,10 +100,12 @@ export async function onNotificationDispatchCreateHandler(event: any): Promise<v
       actorRole: 'SYSTEM',
       targetUid: notificationId,
       targetCollection: 'notifications',
+      ...(familyId !== '' ? { familyId } : {}),
       // #1752: the notification's name, not its catalog key.
       description: (await import('../../lib/activityWords.js')).notificationDispatchedWords(
         (await import('../notificationName.js')).notificationName(data.key),
         channels,
+        to,
       ),
       payload: {
         notificationId,

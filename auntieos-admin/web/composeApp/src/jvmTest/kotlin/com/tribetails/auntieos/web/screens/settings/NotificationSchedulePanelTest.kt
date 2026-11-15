@@ -95,10 +95,55 @@ class NotificationSchedulePanelTest {
         assertTrue(NOTIFICATION_HOUR_OPTIONS.contains(0))
     }
 
+    /**
+     * #1834: the walk read "no send time is set, so none will go out yet" with
+     * the switch on, while four visit notices reached the household. The send
+     * time governs invoice reminders and overdue notices only.
+     */
     @Test
-    fun `the note names sending that cannot happen, and a time that reaches nobody`() {
-        assertTrue(notificationScheduleNote(live = true, hour = null)!!.contains("no send time is set"))
-        assertTrue(notificationScheduleNote(live = false, hour = 9)!!.contains("household notices are off"))
+    fun `with sends on and no send time the note says only the two invoice jobs wait`() {
+        val note = notificationScheduleNote(live = true, hour = null)
+        assertEquals(SCHEDULE_NOTE_ON_NO_HOUR, note)
+        assertTrue(note!!.contains("go out as things happen"))
+        assertTrue(note.contains("Invoice reminders and overdue notices have no send time"))
+        assertFalse(note.contains("none will go out", ignoreCase = true))
+    }
+
+    @Test
+    fun `with a send time and sends off the note says they are held back`() {
+        val note = notificationScheduleNote(live = false, hour = 9)
+        assertEquals(SCHEDULE_NOTE_OFF_WITH_HOUR, note)
+        // A broadcast, a single email or text, an invite and a reset still go.
+        assertFalse(note!!.contains("nothing reaches", ignoreCase = true))
+    }
+
+    @Test
+    fun `a stored hour the picker cannot hold reads as no send time`() {
+        assertEquals(SCHEDULE_NOTE_ON_NO_HOUR, notificationScheduleNote(live = true, hour = usableNotificationHour(24)))
+        assertNull(notificationScheduleNote(live = false, hour = usableNotificationHour(-1)))
+    }
+
+    @Test
+    fun `the value line carries the saved switch and send time as values`() {
+        assertEquals(
+            "Notices to households: on · Invoice reminders: not scheduled · Times are in America/Chicago",
+            notificationScheduleDetail(live = true, hour = null, zone = "America/Chicago"),
+        )
+        assertEquals(
+            "Notices to households: off · Invoice reminders: 2:00 PM · Times are in America/Chicago",
+            notificationScheduleDetail(live = false, hour = 14, zone = "America/Chicago"),
+        )
+        assertEquals(
+            "Notices to households: on · Invoice reminders: 12:00 AM · Times are in America/Chicago",
+            notificationScheduleDetail(live = true, hour = 0, zone = "America/Chicago"),
+        )
+    }
+
+    @Test
+    fun `the switch line says what off holds back and what still goes`() {
+        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("notices to households are held back, a KinTale or an invoice you send included"))
+        assertTrue(HOUSEHOLD_SWITCH_TIP.contains("Four things still go: a broadcast, a single email or text message you write, an invite, a password reset"))
+        assertFalse(HOUSEHOLD_SWITCH_TIP.contains("nothing is sent", ignoreCase = true))
     }
 
     @Test

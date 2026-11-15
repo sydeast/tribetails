@@ -108,6 +108,8 @@ const arrive = () => event(session(), session({ status: 'ARRIVED', arrivedAt: AR
 const householdNotices = () =>
   ctx.writes.filter((w) => w.path.startsWith('notifications/') && w.data.recipientUid === 'uid_kinfolk');
 const linesOf = (kind: string) => mocks.lines.filter((l) => l.event === kind);
+/** #1819: every line about a notice, sent or not. */
+const noticeLines = () => mocks.lines.filter((l) => String(l.event).startsWith('NOTIFICATION_'));
 const outcomeDoc = (id: string) => ctx.writes.filter((w) => w.path === `visit_step_notices/${id}`).at(-1)?.data;
 
 beforeEach(() => {
@@ -140,7 +142,10 @@ describe('#2037 a confirmed clock-in tells the household once and logs once', ()
         description: 'Marked the arrival: scheduled to arrived',
       }),
     ]);
-    expect(linesOf('NOTIFICATION_DISPATCHED')).toHaveLength(1);
+    // #1819: a notice that went out writes no line here. "Sending ... to Dre
+    // by email" comes from the fan-out trigger, once the copy reaches its
+    // channels; this path used to add "Notification dispatched" whatever happened.
+    expect(noticeLines()).toEqual([]);
     expect(outcomeDoc(visitStepNoticeId('s1', 'arrived', Date.parse(ARRIVED_AT)))).toMatchObject({
       sessionId: 's1',
       action: 'ARRIVED',
@@ -156,7 +161,7 @@ describe('#2037 a confirmed clock-in tells the household once and logs once', ()
 
     expect(householdNotices()).toHaveLength(1);
     expect(linesOf('VISIT_ARRIVED')).toHaveLength(1);
-    expect(linesOf('NOTIFICATION_DISPATCHED')).toHaveLength(1);
+    expect(noticeLines()).toEqual([]);
     // The second run found the notice sent; the card still reads the first outcome.
     expect(outcomeDoc(visitStepNoticeId('s1', 'arrived', Date.parse(ARRIVED_AT)))).toMatchObject({ notified: true });
   });
@@ -172,7 +177,7 @@ describe('#2037 a confirmed clock-in tells the household once and logs once', ()
     await onKinCareSessionLifecycleHandler(arrive());
     await expect(oldClient()).resolves.toMatchObject({ suppressed: true, reason: 'already_notified' });
     expect(householdNotices()).toHaveLength(1);
-    expect(linesOf('NOTIFICATION_DISPATCHED')).toHaveLength(1);
+    expect(noticeLines()).toEqual([]);
 
     mocks.lines.length = 0;
     mocks.ids.clear();
@@ -180,7 +185,7 @@ describe('#2037 a confirmed clock-in tells the household once and logs once', ()
     await oldClient();
     await onKinCareSessionLifecycleHandler(arrive());
     expect(householdNotices()).toHaveLength(1);
-    expect(linesOf('NOTIFICATION_DISPATCHED')).toHaveLength(1);
+    expect(noticeLines()).toEqual([]);
     expect(linesOf('VISIT_ARRIVED')).toHaveLength(1);
   });
 
@@ -216,7 +221,7 @@ describe('#2037 a confirmed clock-in tells the household once and logs once', ()
     await oldConsole();
     await onKinCareSessionLifecycleHandler(arriveAtWallClock());
     expect(householdNotices()).toHaveLength(1);
-    expect(linesOf('NOTIFICATION_DISPATCHED')).toHaveLength(1);
+    expect(noticeLines()).toEqual([]);
   });
 
   it('a stamp-less dispatch the session cannot vouch for is sent as before, under no time', async () => {
@@ -285,6 +290,56 @@ describe('#2037 the household send gate and their preferences still decide', () 
       notified: false,
       reason: 'household_notices_off',
     });
+    // #1819: the walk read "Notification dispatched", status SUCCESS, here.
+    expect(linesOf('NOTIFICATION_DISPATCHED')).toEqual([]);
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toEqual([
+      expect.objectContaining({
+        status: 'NOT_SENT',
+        actorRole: 'SYSTEM',
+        familyId: 'fam1',
+        description: 'Held back "Your Auntie has arrived" for Dre: notices to households are turned off',
+        payload: expect.objectContaining({ key: 'kincare.auntie.arrived', outcome: 'held' }),
+      }),
+    ]);
+  });
+
+  it('gate off: a redelivered event, and an older client dispatching the same step, write the held line once', async () => {
+    seed({ [HOUSEHOLD_GATE_SETTINGS_PATH]: { householdNotificationsLive: false } });
+    await onKinCareSessionLifecycleHandler(arrive());
+    await onKinCareSessionLifecycleHandler(arrive());
+    await dispatchVisitNotificationHandler({
+      data: { familyId: 'fam1', batchId: 'batch1', visitId: 'visit1', event: 'arrived', eventAtMs: Date.parse(ARRIVED_AT) },
+      auth: { uid: 'uid_auntie', token: { name: 'TiTi' } },
+    } as never);
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toHaveLength(1);
+    expect(linesOf('NOTIFICATION_DISPATCHED')).toEqual([]);
+  });
+
+  it('gate off: the held line never carries an id or an email where a name belongs', async () => {
+    seed({
+      [HOUSEHOLD_GATE_SETTINGS_PATH]: { householdNotificationsLive: false },
+      'clients/uid_kinfolk': { displayName: 'catch@hanasamku.com' },
+      'kinfolk/fam1': { uid: 'uid_kinfolk', kinfolkName: 'The Rivera Home' },
+    });
+    await onKinCareSessionLifecycleHandler(arrive());
+    const [line] = linesOf('NOTIFICATION_NOT_SENT');
+    expect(line?.description).toBe(
+      'Held back "Your Auntie has arrived" for The Rivera Home: notices to households are turned off',
+    );
+    expect(line?.description).not.toMatch(/uid_kinfolk|fam1|@/);
+  });
+
+  it('the notification switched off in Settings is named for that', async () => {
+    seed({ 'businessSettings/notifications': { byKey: { 'kincare.auntie.arrived': { enabled: false } } } });
+    await onKinCareSessionLifecycleHandler(arrive());
+    expect(householdNotices()).toHaveLength(0);
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toEqual([
+      expect.objectContaining({
+        status: 'NOT_SENT',
+        description: 'Did not send "Your Auntie has arrived" to Dre: this notification is turned off in Settings',
+        payload: expect.objectContaining({ outcome: 'turned_off' }),
+      }),
+    ]);
   });
 
   it('a household with no portal account is named for that, with no notice', async () => {
@@ -294,6 +349,39 @@ describe('#2037 the household send gate and their preferences still decide', () 
     expect(outcomeDoc(visitStepNoticeId('s1', 'arrived', Date.parse(ARRIVED_AT)))).toMatchObject({
       reason: 'household_has_no_portal_account',
     });
+    // #1819: this branch wrote no line at all.
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toEqual([
+      expect.objectContaining({
+        status: 'NOT_SENT',
+        familyId: 'fam1',
+        description: 'Did not send "Your Auntie has arrived": nobody in the household has a MyTribe sign-in',
+        payload: expect.objectContaining({ outcome: 'no_account', recipientUid: '' }),
+      }),
+    ]);
+    // A redelivery writes it once.
+    await onKinCareSessionLifecycleHandler(arrive());
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toHaveLength(1);
+    // So does an installed client that still dispatches the step after its own
+    // write: the callable carries no fixed id, and used to add a second line.
+    await dispatchVisitNotificationHandler({
+      data: { familyId: 'fam1', batchId: 'batch1', visitId: 'visit1', event: 'arrived', eventAtMs: Date.parse(ARRIVED_AT) },
+      auth: { uid: 'uid_auntie', token: { name: 'TiTi' } },
+    } as never);
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toHaveLength(1);
+  });
+
+  it('no portal account: a later arrival on the same visit is its own line', async () => {
+    seed({ 'kinfolk/fam1': { uid: '' }, 'families/fam1/members/uid_kinfolk': null });
+    const older = (atMs: number) =>
+      dispatchVisitNotificationHandler({
+        data: { familyId: 'fam1', batchId: 'batch1', visitId: 'visit1', event: 'arrived', eventAtMs: atMs },
+        auth: { uid: 'uid_auntie', token: { name: 'TiTi' } },
+      } as never);
+    await older(Date.parse(ARRIVED_AT));
+    await older(Date.parse(ARRIVED_AT));
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toHaveLength(1);
+    await older(Date.parse(ARRIVED_AT) + 60_000);
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toHaveLength(2);
   });
 
   it('a visit linked to no booking writes the line and records why nobody was told', async () => {
@@ -427,7 +515,6 @@ describe('writerUidOf', () => {
     await onKinCareSessionLifecycleHandler(event(session(), session({ status: 'ARRIVED', arrivedAt: ARRIVED_AT }), { authId: 'owner@example.test' }));
     expect(linesOf('VISIT_ARRIVED')[0]).toMatchObject({ actorRole: 'SYSTEM' });
     expect(linesOf('VISIT_ARRIVED')[0]?.actorUid).toBeUndefined();
-    expect(linesOf('NOTIFICATION_DISPATCHED')[0]?.actorUid).toBeUndefined();
     expect(householdNotices()).toHaveLength(1);
   });
 

@@ -2,8 +2,11 @@ package com.kinfolk.portal.firebase
 
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Query
 import com.kinfolk.portal.components.RoutePoint
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -22,7 +25,7 @@ import kotlinx.coroutines.tasks.await
  * into epoch millis here so common code never sees an Android class.
  *
  * Live tracking is unchanged: `breadcrumbsStream` still goes through gitlive,
- * which is what it has always shipped on.
+ * which is what it has always shipped on. The bell's listener (#1833) is native.
  */
 class NativeAndroidFirestoreClient(
     private val streams: FirestoreClient = GitliveFirestoreClient(),
@@ -43,6 +46,29 @@ class NativeAndroidFirestoreClient(
     override fun breadcrumbsStream(sessionId: String): Flow<List<RoutePoint>> =
         streams.breadcrumbsStream(sessionId)
 
+    /**
+     * #1833: the bell's listener. Native for the same reason the document reads
+     * above are: the rows are decoded as plain maps, which gitlive cannot do on
+     * Android. The query is the one `firestore.rules` admits (own
+     * `recipientUid`) on the index the server's count already uses.
+     */
+    override fun recipientNotificationsStream(recipientUid: String, limit: Int): Flow<List<FirestoreDoc>> {
+        require(recipientUid.isNotBlank()) { "recipientNotificationsStream requires a non-blank recipientUid" }
+        return callbackFlow {
+            val registration = db.collection("notifications")
+                .whereEqualTo("recipientUid", recipientUid)
+                .orderBy("createdAt", Query.Direction.DESCENDING)
+                .limit(limit.toLong())
+                .addSnapshotListener { snap, error ->
+                    if (error != null) {
+                        close(error)
+                    } else if (snap != null) {
+                        trySend(snap.documents.map { doc -> FirestoreDoc(id = doc.id, fields = normalise(doc.data ?: emptyMap())) })
+                    }
+                }
+            awaitClose { registration.remove() }
+        }
+    }
     private fun normalise(fields: Map<String, Any?>): Map<String, Any?> = fields.mapValues { (_, v) -> value(v) }
 
     private fun value(v: Any?): Any? = when (v) {

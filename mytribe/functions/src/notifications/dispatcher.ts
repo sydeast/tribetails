@@ -14,6 +14,7 @@ import {
   type HouseholdSendGateState,
 } from './householdSendGate';
 import {
+  channelsSwitchedOffByRecipient,
   loadBusinessOverride,
   loadUserPrefs,
   notificationDisabledFor,
@@ -290,6 +291,8 @@ interface CopyDecision {
   /** Non-null when the notification is off as a whole for this copy. */
   disabled: ReturnType<typeof notificationDisabledFor>;
   channels: ResolvedChannels;
+  /** #1905: the channels the recipient's own switch turned off, for the Activity Log line. */
+  switchedOff: Channel[];
 }
 
 async function copyDecision(
@@ -305,6 +308,7 @@ async function copyDecision(
     stream,
     disabled: notificationDisabledFor(def, userPrefs, businessOverride, stream),
     channels: resolveChannels(def, userPrefs, businessOverride, stream),
+    switchedOff: channelsSwitchedOffByRecipient(def, userPrefs, businessOverride, stream),
   };
 }
 
@@ -562,6 +566,11 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
         },
       });
       outcome.suppressed.push({ recipientUid: recipient.uid, reason: 'prefs' });
+      // #1819: the Activity Log says so. Only the operator's own switch: a
+      // marketing blast already records each household it left out.
+      if (stream === 'kinfolk' && disabled === 'operator') {
+        await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'turned_off');
+      }
       continue;
     }
 
@@ -643,6 +652,9 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
           },
         });
         outcome.suppressed.push({ recipientUid: recipient.uid, reason: 'gate', gateState: state });
+        // #1819: written AFTER the copy is counted as held and nowhere near
+        // the dedupe ledger, so the position argument above is unchanged.
+        await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'held', [], undefined, state === 'read-failed');
         continue;
       }
     }
@@ -657,6 +669,12 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
       if (recordOnly) outcome.appOnly?.push(recipient.uid);
       // #1816/#1838: how this copy goes out, for an admin told who heard and how.
       if (outcome.channelsByRecipient) outcome.channelsByRecipient[recipient.uid] = activeChannelList(channels);
+      // #1905: a household that switched a channel off gets the record and no
+      // send on that channel. Said in the Activity Log, per channel.
+      const switchedOff = decision.switchedOff.filter((ch) => !channels[ch]);
+      if (stream === 'kinfolk' && switchedOff.length > 0) {
+        await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'channels_off', switchedOff, routed.id);
+      }
     } else {
       logEvent({
         severity: 'info',
@@ -706,6 +724,49 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
   return outcome;
 }
 
+/**
+ * #1819, #1905: one Activity Log line for a household copy that did not go
+ * out, or not on every channel. The writer is loaded lazily and never throws
+ * (`noticeAudit.ts`): a line that cannot be written must not undo a dispatch.
+ *
+ * The line has a fixed id wherever the event has an identity, so a retry, or
+ * the second path to the same clock step, writes it once, and a daily job over
+ * the same invoice writes it once a day.
+ */
+async function logHouseholdCopyNotSent(
+  key: string,
+  args: EnqueueArgs,
+  recipientUid: string,
+  outcome: 'held' | 'turned_off' | 'channels_off',
+  channels: Channel[] = [],
+  notificationId?: string,
+  /** For `held`: the switch could not be read (`read-failed`), which is not "turned off". */
+  gateUnreadable = false,
+): Promise<void> {
+  try {
+    const identity = dedupeIdentityOf(args, resolveTargetRef(args));
+    const { recordNoticeNotSent, noticeLineIdForEvent } = await import('./noticeAudit.js');
+    await recordNoticeNotSent({
+      key,
+      recipientUid,
+      stream: 'kinfolk',
+      outcome,
+      channels,
+      data: args.data ?? {},
+      ...(gateUnreadable ? { gateUnreadable: true } : {}),
+      ...(notificationId !== undefined ? { notificationId } : {}),
+      // A record's own id names it, except a debounced one, whose id is
+      // reused for every later event: the day is part of both ids.
+      ...(notificationId !== undefined
+        ? { docId: noticeLineIdForEvent(outcome, key, notificationId, recipientUid) }
+        : identity !== ''
+          ? { docId: noticeLineIdForEvent(outcome, key, identity, recipientUid) }
+          : {}),
+    });
+  } catch {
+    // Never fatal: see above.
+  }
+}
 type Routed =
   | { kind: 'written'; id: string }
   | { kind: 'duplicate'; identity: string; existingId: string; lastAtMs: number };
