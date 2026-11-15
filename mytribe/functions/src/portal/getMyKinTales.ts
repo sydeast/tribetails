@@ -437,9 +437,14 @@ async function resolveVisitFacts(
   checklists: (ResolvedChecklistItem[] | null)[],
 ): Promise<void> {
   if (tales.length === 0) return;
+  // A visit that says it is another household's is not read for these facts:
+  // a tale linked to the wrong visit must not carry that visit's Kin, KinCare
+  // or day to this household. The tale's own copies answer instead.
   const sessionOf = (i: number): Record<string, unknown> | null => {
     const id = sessionIdByIndex[i];
-    return id ? (sessionDataById.get(id) ?? null) : null;
+    const session = id ? (sessionDataById.get(id) ?? null) : null;
+    const owner = session?.['kinfolkId'];
+    return typeof owner === 'string' && owner.trim() !== '' && owner.trim() !== kinfolkId ? null : session;
   };
   const kinIdsOf = (i: number): string[] => {
     const own = factsByIndex[i]?.kinIds ?? [];
@@ -477,9 +482,23 @@ async function resolveVisitFacts(
   ]);
 
   const householdKinNames = new Map<string, string>();
+  // A Kin the household added in MyTribe has two ids: its own, and the office
+  // record's (`legacyKinId`, `lib/kinLink.ts`). A visit booked in the admin
+  // app carries the office one, so each Kin is named under both. An office id
+  // two Kin of different names both claim names nobody.
+  const officeIdNames = new Map<string, string | null>();
   for (const d of kinSnap?.docs ?? []) {
-    const name = (d.data() as Record<string, unknown>)['name'];
-    if (typeof name === 'string' && name.trim() !== '') householdKinNames.set(d.id, name.trim());
+    const data = d.data() as Record<string, unknown>;
+    const name = data['name'];
+    if (typeof name !== 'string' || name.trim() === '') continue;
+    householdKinNames.set(d.id, name.trim());
+    const officeId = typeof data['legacyKinId'] === 'string' ? data['legacyKinId'].trim() : '';
+    if (officeId === '' || officeId === d.id) continue;
+    const claimed = officeIdNames.get(officeId);
+    officeIdNames.set(officeId, claimed === undefined || claimed === name.trim() ? name.trim() : null);
+  }
+  for (const [officeId, name] of officeIdNames) {
+    if (name !== null && !householdKinNames.has(officeId)) householdKinNames.set(officeId, name);
   }
 
   const settings = settingsSnap && settingsSnap.exists ? (settingsSnap.data() as Record<string, unknown>) : undefined;

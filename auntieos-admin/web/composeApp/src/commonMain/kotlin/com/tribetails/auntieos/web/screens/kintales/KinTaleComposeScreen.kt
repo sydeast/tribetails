@@ -170,8 +170,12 @@ fun KinTaleComposeScreen(
     // tale now opens with its template's default message in the note, so that
     // swap would put the message over the Auntie's words. A read that FAILED is
     // an answer too: the built-in is then the honest template, as on admin web.
-    // After the first answer the template still follows edits made elsewhere,
-    // and a later failed read keeps the last good one.
+    // After the first answer the SAME template still follows edits made
+    // elsewhere, and a later failed read keeps the last good one. A DIFFERENT
+    // template is not taken up once the composer is open: the read polls, so a
+    // first read that failed is followed by one that works, and switching then
+    // would start the tale again with that template's default message over
+    // whatever the Auntie had typed. The tale keeps the template it opened on.
     val serviceType = session?.serviceType
     val templatesRead by remember { client.templatesStream() }.collectAsState(initial = FirestoreResult.Loading)
     var template by remember(serviceType) { mutableStateOf(DefaultKinTaleTemplate.template) }
@@ -179,7 +183,10 @@ fun KinTaleComposeScreen(
     LaunchedEffect(templatesRead, serviceType) {
         when (val read = templatesRead) {
             is FirestoreResult.Data -> {
-                if (serviceType != null) template = pickActiveTemplate(read.value, serviceType)
+                if (serviceType != null) {
+                    val picked = pickActiveTemplate(read.value, serviceType)
+                    if (!templateSettled || picked._id == template._id) template = picked
+                }
                 templateSettled = true
             }
             is FirestoreResult.Error -> templateSettled = true
@@ -688,7 +695,8 @@ private fun KinTaleComposerBody(
                         )
                         GhostButton(
                             label   = "Save notes",
-                            onClick = { persistDraft() },
+                            // #2050: a save she pressed, so the default message alone is saved too.
+                            onClick = { persistDraft(asked = true) },
                             leading = { Icon(Lucide.Save, contentDescription = null, modifier = Modifier.size(13.dp)) },
                         )
                     }

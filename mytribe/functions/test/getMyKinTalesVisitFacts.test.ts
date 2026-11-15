@@ -265,6 +265,79 @@ describe('getMyKinTales: what the tale is about (#2056)', () => {
     expect(JSON.stringify(res)).not.toContain('kin-id-9f3');
   });
 
+  it('a Kin the household added in MyTribe is named on a visit booked under its office id', async () => {
+    // The household copy is `famKin9`; the admin app books and ticks under the
+    // office record's id, which the household copy carries as `legacyKinId`.
+    const fieldResponses = { 'office9|fed': { fieldKey: 'fed', kinId: 'office9', boolValue: true } };
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        // The visit's own names came back short, so the pairing is not trusted.
+        'kin_care_sessions/s1': { kinfolkId: 'fam3', kinIds: ['k1', 'office9'], kinNames: ['Biscuit'] },
+      },
+      queryDocs: {
+        kin_care_reports: [
+          tale('r1', {
+            sessionId: 's1',
+            kinIds: ['k1', 'office9'],
+            fieldResponses,
+            careTasks: buildCareTaskStamp({ templateId: '', template: null, fieldResponses, now: SENT_AT, by: 'send' }),
+          }),
+        ],
+        'families/fam3/kin': [
+          { id: 'k1', data: { name: 'Biscuit', legacyKinId: 'k1' } },
+          { id: 'famKin9', data: { name: 'Tux', legacyKinId: 'office9' } },
+        ],
+      },
+    });
+    const res = await load(ctx);
+    expect(res.tales[0]!.kinNames).toEqual(['Biscuit', 'Tux']);
+    expect(res.tales[0]!.checklist).toEqual([{ key: 'fed', text: 'Fed', kinNames: ['Tux'] }]);
+    expect(JSON.stringify(res)).not.toContain('office9');
+  });
+  it('an office id two Kin of different names both claim names neither', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: {
+        kin_care_reports: [tale('r1', { kinIds: ['k1', 'office9'] })],
+        'families/fam3/kin': [
+          { id: 'k1', data: { name: 'Biscuit' } },
+          { id: 'a', data: { name: 'Tux', legacyKinId: 'office9' } },
+          { id: 'b', data: { name: 'Juniper', legacyKinId: 'office9' } },
+        ],
+      },
+    });
+    const res = await load(ctx);
+    expect(res.tales[0]!.kinNames).toEqual(['Biscuit']);
+  });
+  it("a tale linked to another household's visit carries none of that visit's Kin, KinCare or day", async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['fam3'] },
+        'kin_care_sessions/s9': {
+          kinfolkId: 'fam8',
+          serviceType: 'Overnight Stay',
+          startTime: '2026-11-02T15:00:00.000Z',
+          kinIds: ['x1', 'x2'],
+          kinNames: ['Rover', 'Fluff'],
+        },
+      },
+      queryDocs: {
+        kin_care_reports: [tale('r1', { sessionId: 's9' }), tale('r2', { sessionId: 's9', kinIds: ['x1'] })],
+        'families/fam3/kin': FOUR_KIN,
+      },
+    });
+    const res = await load(ctx);
+    for (const t of res.tales) {
+      expect(t.kinNames).toBeUndefined();
+      expect(t.serviceLabel).toBeUndefined();
+      expect(t.visitDate).toBeUndefined();
+    }
+    const wire = JSON.stringify(res);
+    expect(wire).not.toContain('Rover');
+    expect(wire).not.toContain('Fluff');
+    expect(wire).not.toContain('Overnight');
+  });
   it('a Kin read that fails leaves the names off and the tales still load', async () => {
     const ctx = buildDbMock({
       docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },

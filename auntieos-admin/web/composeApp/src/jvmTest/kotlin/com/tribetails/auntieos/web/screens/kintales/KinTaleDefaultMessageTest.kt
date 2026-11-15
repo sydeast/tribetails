@@ -2,10 +2,18 @@ package com.tribetails.auntieos.web.screens.kintales
 
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.tribetails.auntieos.web.data.DefaultKinTaleTemplate
 import com.tribetails.auntieos.web.data.FieldResponse
+import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.JvmFirestoreFixtures
 import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
@@ -13,6 +21,7 @@ import com.tribetails.auntieos.web.data.KinTaleTemplate
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.theme.AuntieAppTheme
 import com.tribetails.auntieos.web.theme.ThemeMode
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -148,5 +157,44 @@ class KinTaleDefaultMessageTest {
         show(null)
         waitForText("Send to The Whitfields")
         assertEquals(0, count(message))
+    }
+    @Test
+    fun openingANewTaleWritesNoDraftAndSaveNotesSavesTheDefaultMessage() = runDesktopComposeUiTest {
+        val created = mutableListOf<KinCareReport>()
+        JvmFirestoreFixtures.createdKinTaleReports = created
+        show(listOf(walksForDogWalk))
+        waitForText("Send to The Whitfields")
+        waitForText(message)
+        waitForIdle()
+        assertEquals(0, created.size, "opening the composer wrote a draft nobody asked for")
+        // "Save notes" is a save the Auntie pressed herself.
+        onNodeWithText("Save notes", useUnmergedTree = true).performScrollTo().performClick()
+        waitUntil(timeoutMillis = 10_000) { created.size == 1 }
+        assertEquals(message, created.single().bodyCopy)
+        assertEquals("DRAFT", created.single().status)
+    }
+    @Test
+    fun aTemplateThatLandsAfterAFailedReadNeverReplacesWhatTheAuntieTyped() = runDesktopComposeUiTest {
+        // The read polls: a first answer that failed is followed by one that works.
+        val templates = MutableStateFlow<FirestoreResult<List<KinTaleTemplate>>>(FirestoreResult.Error("offline"))
+        JvmFirestoreFixtures.sessions = listOf(session)
+        JvmFirestoreFixtures.kinfolk = listOf(Kinfolk(_id = "kf1"))
+        JvmFirestoreFixtures.allKin = emptyList()
+        JvmFirestoreFixtures.reports = emptyList()
+        JvmFirestoreFixtures.kinTaleTemplatesFlow = templates
+        setContent { AuntieAppTheme(themeMode = ThemeMode.DARK) { KinTaleComposeScreen(sessionId = "s1", onClose = {}) } }
+        waitForText("Send to The Whitfields")
+        val typed = "Biscuit found a stick."
+        onNode(
+            hasSetTextAction() and hasAnyDescendant(hasText("Tell the tale", substring = true)),
+            useUnmergedTree = true,
+        ).performScrollTo().performTextInput(typed)
+        waitForText(typed)
+        templates.value = FirestoreResult.Data(listOf(walksForDogWalk))
+        waitForIdle()
+        mainClock.advanceTimeBy(1_000)
+        waitForIdle()
+        assertTrue(count(typed) > 0, "the words the Auntie typed were replaced when the template landed")
+        assertEquals(0, count(message), "the template's default message was put over the Auntie's words")
     }
 }
