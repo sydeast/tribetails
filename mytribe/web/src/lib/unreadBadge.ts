@@ -20,7 +20,8 @@ import { useSyncExternalStore } from 'react';
  * `markNotificationRead` does not hold the badge back.
  *
  * THE PREDICATES ARE THE SERVER'S (functions/src/lib/recipientNotifications.ts):
- * archived means `archivedAt` carries a value, unread means `readAt` does not,
+ * archived means `archivedAt` carries a value (or `withdrawnAt` does: a notice
+ * the office took back, #2038), unread means `readAt` does not,
  * and a row naming another household (`data.kinfolkId`, or the older
  * `data.familyId`) belongs to that tribe's bell. A row that names none is
  * counted under every tribe. The same case table is tested on the server, here
@@ -34,6 +35,7 @@ export const UNREAD_SCAN_CAP = 100;
 export interface BadgeRow {
   id: string;
   unread: boolean;
+  /** Filed away by the reader, or withdrawn by the office. Either way it is not counted. */
   archived: boolean;
   /** The household the row names, '' when it names none. */
   tribeId: string;
@@ -54,7 +56,11 @@ export function badgeRowFromDoc(id: string, data: Record<string, unknown>): Badg
   return {
     id,
     unread: data['readAt'] === undefined || data['readAt'] === null,
-    archived: data['archivedAt'] !== undefined && data['archivedAt'] !== null,
+    archived:
+      (data['archivedAt'] !== undefined && data['archivedAt'] !== null) ||
+      // #2038: a notice the office took back ("Undo arrived"). It never counts,
+      // whatever its archive stamp reads.
+      (data['withdrawnAt'] !== undefined && data['withdrawnAt'] !== null),
     tribeId: named,
   };
 }

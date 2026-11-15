@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   patchVisitLifecycle,
   startVisitWithRangeCheck,
+  undoArrivalThroughServer,
   verifyVisitArrival,
   type StartFix,
   type VisitLifecycleAction,
@@ -14,7 +15,7 @@ import {
   requestStartFix,
   startsVisit,
 } from './visitStartRange';
-import { lifecycleNowIso, type LifecycleActionDef } from './sessionLifecycle';
+import { UNDO_ARRIVAL_DONE, lifecycleNowIso, type LifecycleActionDef } from './sessionLifecycle';
 import {
   beginVisitClockWrite,
   clearVisitClockWrite,
@@ -128,7 +129,9 @@ function messageOf(err: unknown): string {
  * the server refuses them outside the range in a sentence this hook shows as
  * it is. The rule being unknown (still loading, or the read failed) counts as
  * on: the server then decides, and with the rule off it lets her through.
- * Departed and Undo arrival are untouched. The owner keeps the direct write on
+ * Departed is untouched. Her Undo arrival goes to the server under the same
+ * switch (#2038), which also takes the arrival's notice off the household's
+ * notifications list. The owner keeps the direct write on
  * every step; an owner's arrival is measured afterwards, so one outside the
  * range is recorded on the visit and in the Activity Log.
  */
@@ -150,6 +153,13 @@ export function useVisitLifecycle(
   /** Does this Auntie's start go to the server to be measured? */
   const startIsMeasured = (action: VisitLifecycleAction): boolean =>
     auntie && startsVisit(action) && (arrivalRule !== false || rulesRefusedStart);
+  /**
+   * #2038: does this Auntie's Undo arrival go to the server? The same switch:
+   * with the rule on the rules refuse her that write from the browser, and the
+   * server rewinds the visit and withdraws the arrival's notice in one call.
+   */
+  const undoGoesToServer = (action: VisitLifecycleAction): boolean =>
+    auntie && action === 'UNDO_ARRIVAL' && (arrivalRule !== false || rulesRefusedStart);
   /**
    * The last write's outcome, held in `lib/visitClockOutcome.ts` keyed by the
    * session id rather than in this component (#1794). The board unmounts a card
@@ -191,7 +201,18 @@ export function useVisitLifecycle(
               nowIso: lifecycleNowIso(),
               fix: await (fix ?? requestStartFix()),
             })
-          : await patchVisitLifecycle(session, action, { nowIso: lifecycleNowIso() });
+          : undoGoesToServer(action)
+            ? await undoArrivalThroughServer(session)
+            : await patchVisitLifecycle(session, action, { nowIso: lifecycleNowIso() }).catch((err: unknown) => {
+                // #2038: the rules refused her own undo, so the rule was
+                // switched on after this screen last read it. An undo needs
+                // no position, so it goes straight to the server.
+                if (auntie && action === 'UNDO_ARRIVAL' && isRulesRefusal(err)) {
+                  setRulesRefusedStart(true);
+                  return undoArrivalThroughServer(session);
+                }
+                throw err;
+              });
 
       // `changed: false` is a real outcome, not a failure: the action was
       // already true and NOTHING was written, which is what stops a double
@@ -214,7 +235,10 @@ export function useVisitLifecycle(
       const checking = actionNotifiesHousehold(action)
         ? ` ${household === '' ? 'Checking who was told.' : `Checking whether ${household} was told.`}`
         : '';
-      settleVisitClockWrite(id, seq, { status: 'done', message: `${moved}${checking}` });
+      settleVisitClockWrite(id, seq, {
+        status: 'done',
+        message: action === 'UNDO_ARRIVAL' ? `${moved} ${UNDO_ARRIVAL_DONE}` : `${moved}${checking}`,
+      });
       if (onWritten) onWritten();
 
       // The sentence has up to three parts that land at different times: the
@@ -224,7 +248,8 @@ export function useVisitLifecycle(
       let said: string | null = null;
       let rangeNote = '';
       const resay = (): void => {
-        const notice = said === null ? checking.trim() : said;
+        // #2038: an undo tells the household nothing, and the card says so.
+        const notice = action === 'UNDO_ARRIVAL' ? UNDO_ARRIVAL_DONE : said === null ? checking.trim() : said;
         const message = [moved, notice, rangeNote].filter((part) => part !== '').join(' ');
         settleVisitClockWrite(id, seq, { status: 'done', message });
       };

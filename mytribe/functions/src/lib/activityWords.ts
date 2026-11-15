@@ -169,6 +169,10 @@ function actionWords(action: string): { done: string; attempt: string } {
 export function visitTransitionWords(action: string, from: string, to: string): string {
   return `${actionWords(action).done}: ${visitStatusWords(from)} to ${visitStatusWords(to)}`;
 }
+/** #2038: an undone arrival's notice came off the household's notifications list. Nothing was sent. */
+export function arrivalNoticeWithdrawnWords(): string {
+  return "Took the arrival notice off the household's notifications list. No message was sent about the undo";
+}
 /** A repeat of a step already taken: nothing was written. */
 export function visitNoopWords(action: string, at: string): string {
   return `Did not ${actionWords(action).attempt}: the visit was already ${visitStatusWords(at)}`;

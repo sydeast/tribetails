@@ -40,6 +40,7 @@ vi.mock('../lib/fns', () => ({ call }));
 import {
   patchVisitLifecycle,
   setVisitLifecycle,
+  undoArrivalThroughServer,
   updateKinCareSession,
   VISIT_LIFECYCLE_ILLEGAL_CODE,
   VISIT_NOTICE_WAIT_MS,
@@ -320,6 +321,50 @@ describe('setVisitLifecycle, kept as the server-side path', () => {
       }),
     );
     await expect(setVisitLifecycle('s1', 'DEPARTED')).rejects.toThrow(/Cannot clock out/);
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #2038: an Auntie's Undo arrival while "Verify arrival and departure" is on.
+ * The rules refuse her that write from the browser, and the server rewinds the
+ * visit and takes the arrival's notice off the household's notifications list.
+ */
+describe('undoArrivalThroughServer', () => {
+  it('asks the callable to undo, sends no position, and writes nothing directly', async () => {
+    call.mockResolvedValue({
+      ok: true,
+      sessionId: 's1',
+      action: 'UNDO_ARRIVAL',
+      from: 'ARRIVED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      notified: false,
+      notifySkipped: 'no_event_for_action',
+    });
+    const res = await undoArrivalThroughServer(ARRIVED_SESSION);
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith('setVisitLifecycle', { sessionId: 's1', action: 'UNDO_ARRIVAL' });
+    expect(updateDoc).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ from: 'ARRIVED', status: 'ON_MY_WAY', changed: true });
+    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: 'no_event_for_action' });
+  });
+
+  it('a visit that is not arrived is already undone: no call, nothing written', async () => {
+    const res = await undoArrivalThroughServer(SCHEDULED_SESSION);
+    expect(call).not.toHaveBeenCalled();
+    expect(updateDoc).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ changed: false, status: 'SCHEDULED' });
+  });
+
+  it('a completed visit is refused before any call, in the words the direct write uses', async () => {
+    await expect(undoArrivalThroughServer({ ...ARRIVED_SESSION, status: 'COMPLETED' })).rejects.toThrow();
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('hands on the server refusal as it was written', async () => {
+    call.mockRejectedValue(new Error('This visit could not be found.'));
+    await expect(undoArrivalThroughServer(ARRIVED_SESSION)).rejects.toThrow('This visit could not be found.');
     expect(updateDoc).not.toHaveBeenCalled();
   });
 });

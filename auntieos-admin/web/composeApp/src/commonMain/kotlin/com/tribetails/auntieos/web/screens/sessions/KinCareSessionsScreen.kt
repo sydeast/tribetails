@@ -1201,7 +1201,10 @@ internal fun kinCareSuccessMessage(action: AuntieTimeAction): String = when (act
     AuntieTimeAction.Arrived       -> "Arrived. GPS started."
     // #2123: the server marks the visit Completed the moment it is DEPARTED.
     AuntieTimeAction.Departed      -> "Departed. GPS saved. The visit is marked Completed."
-    AuntieTimeAction.UndoArrived   -> "Undid arrival."
+    // #2038: the undo is quiet. The server sends the household nothing and
+    // takes the arrival's notice off their notifications list, from this write.
+    AuntieTimeAction.UndoArrived   ->
+        "Arrival undone. No message was sent about the undo. The arrival notice is off the household's notifications list."
     AuntieTimeAction.MarkCompleted -> "Marked Completed."
     AuntieTimeAction.Cancel        -> "Cancelled."
 }

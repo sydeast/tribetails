@@ -273,8 +273,13 @@ describe('#2037 a confirmed clock-in tells the household once and logs once', ()
 
     expect(householdNotices()).toHaveLength(2);
     expect(linesOf('VISIT_ARRIVED')).toHaveLength(2);
+    // #2038: the undo also takes the first arrival's notice off the
+    // household's notifications list, and says so on a line of its own.
     expect(linesOf('VISIT_UNDO_ARRIVAL')).toEqual([
       expect.objectContaining({ description: 'Undid the arrival: arrived to scheduled' }),
+      expect.objectContaining({
+        description: "Took the arrival notice off the household's notifications list. No message was sent about the undo",
+      }),
     ]);
   });
 });

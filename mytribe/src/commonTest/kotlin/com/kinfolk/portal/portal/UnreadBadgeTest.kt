@@ -45,6 +45,11 @@ class UnreadBadgeTest {
         Triple("names no household", mapOf("data" to emptyMap<String, Any?>()), true),
         Triple("has no data bag at all", emptyMap(), true),
         Triple("data is not an object", mapOf("data" to "x"), true),
+        // #2038: "Undo arrived" withdraws the arrival notice it was wrong about.
+        Triple("withdrawn by the office", tribe("fam1") + ("archivedAt" to 1L) + ("withdrawnAt" to 1L), false),
+        Triple("withdrawn, its archive stamp cleared", tribe("fam1") + ("archivedAt" to null) + ("withdrawnAt" to 1L), false),
+        Triple("withdrawn after it was read", tribe("fam1") + ("readAt" to 1L) + ("archivedAt" to 2L) + ("withdrawnAt" to 2L), false),
+        Triple("withdrawnAt null", tribe("fam1") + ("withdrawnAt" to null), true),
     )
 
     @Test
@@ -95,6 +100,38 @@ class UnreadBadgeTest {
         assertEquals(LiveUnread.Live(2), badge.live())
         badge.onRows(listOf(read("a"), read("b"), read("c")))
         assertEquals(LiveUnread.Live(0), badge.live())
+    }
+
+    /**
+     * #2038: "Undo arrived" withdraws the arrival notice. The snapshot that
+     * carries the stamp is what moves the bell, with no reload.
+     */
+    @Test
+    fun goesDownWhenTheOfficeWithdrawsAnArrivalNotice_readOrUnread() {
+        val badge = UnreadBadge()
+        fun row(id: String, extra: Map<String, Any?> = emptyMap()) = badgeRowOf(doc(id, tribe("fam1") + extra))
+        badge.onRows(listOf(row("arrived"), row("invoice"), row("seen", mapOf("readAt" to 1L))))
+        assertEquals(LiveUnread.Live(2), badge.live())
+
+        badge.onRows(
+            listOf(
+                row("arrived", mapOf("archivedAt" to 2L, "withdrawnAt" to 2L, "withdrawnReason" to "arrival_undone")),
+                row("invoice"),
+                row("seen", mapOf("readAt" to 1L, "archivedAt" to 2L, "withdrawnAt" to 2L)),
+            ),
+        )
+        assertEquals(LiveUnread.Live(1), badge.live())
+    }
+
+    @Test
+    fun aWithdrawnRowTappedAMomentBeforeIsNotCountedTwiceOrHeldBack() {
+        val badge = UnreadBadge()
+        fun row(id: String, extra: Map<String, Any?> = emptyMap()) = badgeRowOf(doc(id, tribe("fam1") + extra))
+        badge.onRows(listOf(row("arrived"), row("invoice")))
+        badge.markReadLocally("arrived")
+        assertEquals(LiveUnread.Live(1), badge.live())
+        badge.onRows(listOf(row("arrived", mapOf("archivedAt" to 2L, "withdrawnAt" to 2L)), row("invoice")))
+        assertEquals(LiveUnread.Live(1), badge.live())
     }
 
     @Test
