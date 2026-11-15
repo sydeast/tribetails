@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NotificationsList } from './NotificationsList';
@@ -269,6 +269,117 @@ describe('NotificationsList tap and the live bell count (#1833)', () => {
     await screen.findByTestId('notifications-list');
     await userEvent.click(screen.getByRole('button', { name: /^New invoice/ }));
     expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 4 });
+  });
+});
+/**
+ * #2328: a re-read that fails once rows are on screen used to replace the
+ * whole list with the error screen. The rows stay; the failure is one quiet
+ * line with Try again; a failed "Show older" still says it failed.
+ */
+describe('NotificationsList keeps its rows when a later read fails (#2328)', () => {
+  const ERROR_SCREEN = "We're having trouble loading your tribe.";
+  it('a first load that fails takes the screen, with Try again', async () => {
+    mocks.list.mockRejectedValueOnce(new Error('unavailable'));
+    mocks.list.mockResolvedValueOnce(page(ROWS));
+    renderScreen();
+    expect(await screen.findByText(ERROR_SCREEN)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /Try again/ }));
+    await screen.findByTestId('notifications-list');
+    expect(screen.queryByText(ERROR_SCREEN)).toBeNull();
+  });
+  it('a failed background re-read keeps the rows on screen and says so quietly', async () => {
+    mocks.list.mockResolvedValueOnce(page(ROWS));
+    mocks.list.mockRejectedValueOnce(new Error('unavailable'));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    // The bell's listener saw a notice arrive, and the re-read failed.
+    await act(() => queryClient.invalidateQueries({ queryKey: ['myNotifications'] }));
+    const quiet = await screen.findByTestId('notifications-refresh-failed');
+    expect(quiet).toHaveTextContent('Could not check for new notifications.');
+    expect(quiet).toHaveAttribute('role', 'status');
+    expect(screen.queryByText(ERROR_SCREEN)).toBeNull();
+    expect(screen.getByRole('button', { name: /Visit confirmed/ })).toBeTruthy();
+    expect(within(screen.getByTestId('notifications-list')).getAllByRole('button')).toHaveLength(ROWS.length);
+    expect(screen.queryByTestId('notifications-loading')).toBeNull();
+    expect(screen.queryByTestId('notifications-older-failed')).toBeNull();
+  });
+  it('Try again on the quiet line reads again, shows the wait, and the line goes once it works', async () => {
+    const arrived = item({ id: 'n-omw', title: 'Your Auntie is on the way', createdAt: new Date(NOW).toISOString() });
+    let answer: (v: ListMyNotificationsResult) => void = () => undefined;
+    mocks.list.mockResolvedValueOnce(page(ROWS));
+    mocks.list.mockRejectedValueOnce(new Error('unavailable'));
+    mocks.list.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    await act(() => queryClient.invalidateQueries({ queryKey: ['myNotifications'] }));
+    await screen.findByTestId('notifications-refresh-failed');
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    const busy = await screen.findByRole('button', { name: /Checking/ });
+    expect(busy).toBeDisabled();
+    // The rows stay up while it is out.
+    expect(screen.getByRole('button', { name: /Visit confirmed/ })).toBeTruthy();
+    await act(async () => answer(page([arrived, ...ROWS])));
+    await screen.findByRole('button', { name: /Your Auntie is on the way/ });
+    expect(screen.queryByTestId('notifications-refresh-failed')).toBeNull();
+  });
+  it('a failed re-read of an empty list keeps the empty line and says so quietly', async () => {
+    mocks.list.mockResolvedValueOnce(page([]));
+    mocks.list.mockRejectedValueOnce(new Error('unavailable'));
+    renderScreen();
+    await screen.findByTestId('notifications-empty');
+    await act(() => queryClient.invalidateQueries({ queryKey: ['myNotifications'] }));
+    await screen.findByTestId('notifications-refresh-failed');
+    expect(screen.getByTestId('notifications-empty')).toHaveTextContent('No notifications yet.');
+    expect(screen.queryByText(ERROR_SCREEN)).toBeNull();
+  });
+  it('a failed "Show older" keeps the rows, says it failed, and asks again from the same place', async () => {
+    mocks.list.mockResolvedValueOnce(page([ROWS[0]!], { hasMore: true, nextBefore: 1_700_000_000_000 }));
+    mocks.list.mockRejectedValueOnce(new Error('unavailable'));
+    mocks.list.mockResolvedValueOnce(page([ROWS[3]!]));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    await userEvent.click(screen.getByRole('button', { name: 'Show older' }));
+    const failed = await screen.findByTestId('notifications-older-failed');
+    expect(failed).toHaveTextContent('Could not load older notifications.');
+    expect(failed).toHaveAttribute('role', 'alert');
+    expect(screen.queryByText(ERROR_SCREEN)).toBeNull();
+    expect(screen.getByRole('button', { name: /Visit confirmed/ })).toBeTruthy();
+    // Not the quiet line: this was asked for, and it says so plainly.
+    expect(screen.queryByTestId('notifications-refresh-failed')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Show older' }));
+    await screen.findByRole('button', { name: /New KinTale/ });
+    expect(mocks.list).toHaveBeenLastCalledWith('fam1', { limit: 50, before: 1_700_000_000_000 });
+    expect(screen.queryByTestId('notifications-older-failed')).toBeNull();
+  });
+});
+/**
+ * #2329: once the server has taken the read, the bell believes the next
+ * snapshot, so a notice the office marked unread again in between counts.
+ */
+describe("NotificationsList tap, the server's answer and the bell (#2329)", () => {
+  const live = (ids: string[]) => ids.map((id) => ({ id, unread: true, archived: false, tribeId: 'fam1', issuedAtMs: 100 }));
+  it('after the server takes the read, a snapshot that still reads unread counts the row again', async () => {
+    mocks.list.mockResolvedValue(page(ROWS));
+    setLiveRows(live(['n-visit', 'n-batch', 'n-tale', 'n-kinfolk']));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    await userEvent.click(screen.getByRole('button', { name: /Visit confirmed/ }));
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 3 });
+    await waitFor(() => expect(mocks.markRead).toHaveBeenCalledWith('n-visit'));
+    // Let the answer land before the next snapshot.
+    await act(async () => undefined);
+    setLiveRows(live(['n-visit', 'n-batch', 'n-tale', 'n-kinfolk']));
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 4 });
+  });
+  it('before the server answers, the same snapshot leaves the tap off the bell', async () => {
+    mocks.markRead.mockReturnValue(new Promise(() => undefined));
+    mocks.list.mockResolvedValue(page(ROWS));
+    setLiveRows(live(['n-visit', 'n-batch', 'n-tale', 'n-kinfolk']));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    await userEvent.click(screen.getByRole('button', { name: /Visit confirmed/ }));
+    setLiveRows(live(['n-visit', 'n-batch', 'n-tale', 'n-kinfolk']));
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 3 });
   });
 });
 describe('#1831, #1898, #1913: each notice says what happened and opens what it is about', () => {

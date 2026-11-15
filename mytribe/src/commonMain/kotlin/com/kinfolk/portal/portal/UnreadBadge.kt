@@ -43,6 +43,13 @@ data class BadgeRow(
     val archived: Boolean,
     /** The household the row names, blank when it names none. */
     val tribeId: String,
+    /**
+     * #2329: when the row was issued (`createdAt`, epoch ms), null when it
+     * carries none. The office putting a notice back on the list (a real
+     * arrival after an undone one) stamps it again, which is how a tap on the
+     * earlier issue is told apart from it.
+     */
+    val issuedAtMs: Long? = null,
 )
 
 private fun idOf(v: Any?): String = when (v) {
@@ -63,6 +70,8 @@ fun badgeRowOf(doc: FirestoreDoc): BadgeRow {
         // whatever its archive stamp reads.
         archived = doc.fields["archivedAt"] != null || doc.fields["withdrawnAt"] != null,
         tribeId = named,
+        // The native client hands a Timestamp over as epoch ms.
+        issuedAtMs = (doc.fields["createdAt"] as? Number)?.toLong(),
     )
 }
 
@@ -97,50 +106,96 @@ fun bellCount(live: LiveUnread, seeded: Int): Int = when (live) {
     LiveUnread.Waiting -> seeded.coerceAtLeast(0)
 }
 
+/**
+ * A row tapped on this device whose read has not shown up in a snapshot yet.
+ * [issuedAtMs] is the row's issue as the feed held it at the tap; [issueKnown]
+ * is false when the feed did not hold the row yet, and the first snapshot that
+ * does fills it in. [answered] is set once `markNotificationRead` came back.
+ */
+data class LocalTap(val issuedAtMs: Long?, val issueKnown: Boolean, val answered: Boolean = false)
 /** The store behind the bell. One per app, owned by the composition root. */
 class UnreadBadge {
     /** The feed and the taps not yet answered, as one value so a reader never sees half a change. */
     data class Model(
         val rows: List<BadgeRow>? = null,
         val failed: Boolean = false,
-        val locallyRead: Set<String> = emptySet(),
-        /** Snapshots after the first: the notifications list reloads when this moves. */
+        val taps: Map<String, LocalTap> = emptyMap(),
+        /** Snapshots after the first that changed a row: the notifications list reloads when this moves. */
         val revision: Int = 0,
+        /** #2329: a snapshot has come from the server at least once since sign-in. */
+        val serverAnswered: Boolean = false,
     ) {
+        /** The rows tapped here that the bell leaves out. */
+        val locallyRead: Set<String> get() = taps.keys
         fun liveFor(kinfolkId: String?): LiveUnread = when {
             failed -> LiveUnread.Failed
             rows == null || kinfolkId.isNullOrBlank() -> LiveUnread.Waiting
             else -> LiveUnread.Live(countUnreadRows(rows, kinfolkId, locallyRead))
         }
     }
-
     private val _model = MutableStateFlow(Model())
     val model: StateFlow<Model> = _model
-
-    /** A snapshot arrived. Taps the server has now answered (the row reads as read, or is gone) are forgotten. */
-    fun onRows(rows: List<BadgeRow>) = _model.update { old ->
-        val stillUnread = rows.filter { it.unread }.map { it.id }.toSet()
+    /**
+     * A snapshot arrived.
+     *
+     * A TAP IS LET GO when the snapshot shows its read (the row reads as read,
+     * or is gone), and also (#2329) when the row still reads unread but cannot
+     * be waiting on the tap any more: the office has issued it again since
+     * ([BadgeRow.issuedAtMs] moved), or `markNotificationRead` had already come
+     * back before this snapshot. Without those two the office marking a tapped
+     * notice unread before the read reached this device left the tap
+     * subtracting until the app was restarted.
+     *
+     * #2329: A SNAPSHOT FROM THE DEVICE'S CACHE BEFORE THE SERVER HAS ANSWERED
+     * ONCE IS NOT TAKEN. An empty cache (a fresh install, or an offline start)
+     * drew a confident 0 over the count the app opened with. Once the server
+     * has answered, a cached snapshot (the connection dropped) holds what the
+     * server last said and is taken as usual. The web portal's
+     * `lib/unreadBadge.ts` has the same rules.
+     */
+    fun onRows(rows: List<BadgeRow>, fromCache: Boolean = false) = _model.update { old ->
+        if (fromCache && !old.serverAnswered) return@update old
+        val byId = rows.associateBy { it.id }
+        val taps = buildMap {
+            for ((id, tap) in old.taps) {
+                val row = byId[id] ?: continue
+                if (!row.unread || tap.answered) continue
+                when {
+                    !tap.issueKnown -> put(id, tap.copy(issuedAtMs = row.issuedAtMs, issueKnown = true))
+                    tap.issuedAtMs == row.issuedAtMs -> put(id, tap)
+                }
+            }
+        }
         old.copy(
             rows = rows,
             failed = false,
-            locallyRead = old.locallyRead intersect stillUnread,
-            revision = if (old.rows == null) old.revision else old.revision + 1,
+            taps = taps,
+            revision = if (old.rows == null || old.rows == rows) old.revision else old.revision + 1,
+            serverAnswered = old.serverAnswered || !fromCache,
         )
     }
-
     /** The listener failed. The bell draws no badge from here on. */
     fun onFailed() = _model.update { it.copy(rows = null, failed = true) }
-
     /** Signed out, or a different person signed in: nothing of the last session is kept. */
     fun reset() = _model.update { Model() }
-
     /** A row was tapped: it stops counting at once, ahead of the server's answer. */
-    fun markReadLocally(id: String) = _model.update { it.copy(locallyRead = it.locallyRead + id) }
-
+    fun markReadLocally(id: String) = _model.update { m ->
+        if (id in m.taps) return@update m
+        val row = m.rows?.firstOrNull { it.id == id }
+        m.copy(taps = m.taps + (id to LocalTap(issuedAtMs = row?.issuedAtMs, issueKnown = row != null)))
+    }
+    /**
+     * #2329: the server took the read. The row keeps not counting until the
+     * next snapshot, which carries the read (or, if the office marked it
+     * unread again in between, carries that, and the row counts again).
+     */
+    fun confirmLocalRead(id: String) = _model.update { m ->
+        val tap = m.taps[id] ?: return@update m
+        m.copy(taps = m.taps + (id to tap.copy(answered = true)))
+    }
     /** The read was refused: the row counts again, which is the truth. */
-    fun undoLocalRead(id: String) = _model.update { it.copy(locallyRead = it.locallyRead - id) }
+    fun undoLocalRead(id: String) = _model.update { it.copy(taps = it.taps - id) }
 }
-
 /**
  * Feeds [badge] from the signed-in person's own rows until cancelled.
  *
@@ -159,8 +214,8 @@ suspend fun followUnreadBadge(
     log: (String) -> Unit = { println("[Bell] $it") },
 ) {
     try {
-        firestore.recipientNotificationsStream(uid, UNREAD_SCAN_CAP).collect { docs ->
-            badge.onRows(docs.map(::badgeRowOf))
+        firestore.recipientNotificationsStream(uid, UNREAD_SCAN_CAP).collect { snapshot ->
+            badge.onRows(snapshot.docs.map(::badgeRowOf), fromCache = snapshot.fromCache)
         }
     } catch (c: CancellationException) {
         throw c

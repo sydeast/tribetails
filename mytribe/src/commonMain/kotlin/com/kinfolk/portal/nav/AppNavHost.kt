@@ -136,6 +136,13 @@ fun AppNavHost(
     onNotificationReadLocally: (notificationId: String) -> Unit = {},
     /** ...and counts again if the server refused the read. */
     onNotificationReadRefused: (notificationId: String) -> Unit = {},
+    /** #2329: the server took the read; the bell believes its next snapshot. */
+    onNotificationReadConfirmed: (notificationId: String) -> Unit = {},
+    /**
+     * #2329: the scope a tapped row's read is sent from. A tap opens another
+     * screen, so the list's own scope would end before the answer came back.
+     */
+    notificationReadScope: kotlinx.coroutines.CoroutineScope? = null,
     cameFromPicker: Boolean,
     resolveTribes: suspend () -> List<TribeSummary>,
     onPick: (kinfolkId: String) -> Unit,
@@ -511,6 +518,8 @@ fun AppNavHost(
                             liveRevision = notificationsRevision,
                             onReadLocally = onNotificationReadLocally,
                             onReadRefused = onNotificationReadRefused,
+                            onReadConfirmed = onNotificationReadConfirmed,
+                            readScope = notificationReadScope,
                         )
                     }
                 }

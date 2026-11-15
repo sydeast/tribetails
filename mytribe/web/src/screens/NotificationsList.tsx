@@ -12,7 +12,7 @@ import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { householdNoteOf, markReadInPages, notificationTarget, notificationWhen } from '../lib/notificationsList';
 import { myHomeKey } from '../lib/portalQueryKeys';
-import { markReadLocally, undoLocalRead } from '../lib/unreadBadge';
+import { confirmLocalRead, markReadLocally, undoLocalRead } from '../lib/unreadBadge';
 import { PortalNav } from '../components/PortalNav';
 import { LaunchError } from './LaunchError';
 import { OfflineNotice } from '../components/OfflineNotice';
@@ -42,6 +42,12 @@ const PAGE_SIZE = 50;
  * The list is fetched when this screen opens, and again whenever the bell's
  * listener sees a row arrive or change (#1833), so the rows and the count
  * move together. The nav never fetches it.
+ *
+ * #2328: ONLY A FIRST LOAD THAT FAILED TAKES THE SCREEN. Once rows are on
+ * screen they stay there: a re-read that fails (the connection dropped as a
+ * notice arrived) says so in one quiet line with Try again, and a failed
+ * "Show older" says so next to the button, which asks again. The Android app
+ * does the same.
  */
 export function NotificationsList() {
   const kinfolkId = getActiveKinfolkId();
@@ -75,7 +81,7 @@ export function NotificationsList() {
     entryRow.current?.focus({ preventScroll: true });
   }, [entryOnList, entry]);
 
-  if (list.isError) {
+  if (list.isError && list.data === undefined) {
     return (
       <LaunchError
         onRetry={() => void list.refetch()}
@@ -87,7 +93,11 @@ export function NotificationsList() {
     );
   }
 
-  const view = viewOfQuery(list, { isEmpty: (d) => d.pages.every((p) => p.items.length === 0) });
+  // Rows already on screen are shown whatever a later read did (#2328).
+  const view = viewOfQuery(
+    list.data !== undefined ? { status: 'success', fetchStatus: list.fetchStatus, data: list.data } : list,
+    { isEmpty: (d) => d.pages.every((p) => p.items.length === 0) },
+  );
 
   function open(item: NotificationItemDto) {
     if (item.readAt === null) {
@@ -104,8 +114,13 @@ export function NotificationsList() {
       queryClient.setQueryData<GetMyHomeResult>(myHomeKey(kinfolkId), (old) =>
         old ? { ...old, unreadNotifications: Math.max(0, (old.unreadNotifications ?? 0) - 1) } : old,
       );
+      // #2329: once the server has taken the read, the next snapshot is
+      // believed even if it still reads unread: the office marked it again.
       void markNotificationRead(item.id)
-        .catch(() => undoLocalRead(item.id))
+        .then(
+          () => confirmLocalRead(item.id),
+          () => undoLocalRead(item.id),
+        )
         .then(() => queryClient.invalidateQueries({ queryKey: myHomeKey(kinfolkId) }));
     }
     const target = notificationTarget(item);
@@ -152,6 +167,19 @@ export function NotificationsList() {
         </header>
 
         <section className="glass card d1">
+          {list.isRefetchError && (
+            <p className="nl-quiet" role="status" data-testid="notifications-refresh-failed">
+              Could not check for new notifications.{' '}
+              <button
+                type="button"
+                className="nl-quiet__retry"
+                onClick={() => void list.refetch()}
+                disabled={list.isRefetching}
+              >
+                {list.isRefetching ? <BusyLabel>Checking…</BusyLabel> : 'Try again'}
+              </button>
+            </p>
+          )}
           {view.kind === 'offline' ? (
             <OfflineNotice what="your notifications" />
           ) : view.kind !== 'data' && view.kind !== 'empty' ? (
@@ -198,6 +226,11 @@ export function NotificationsList() {
             </ul>
           )}
 
+          {list.isFetchNextPageError && (
+            <p className="nl-older-failed" role="alert" data-testid="notifications-older-failed">
+              Could not load older notifications.
+            </p>
+          )}
           {list.hasNextPage && (
             <button
               className="btn ghost block"

@@ -277,6 +277,9 @@ fun KinfolkPortalAppGuarded() {
                             notificationsRevision = unreadBadgeModel.revision,
                             onNotificationReadLocally = unreadBadge::markReadLocally,
                             onNotificationReadRefused = unreadBadge::undoLocalRead,
+                            onNotificationReadConfirmed = unreadBadge::confirmLocalRead,
+                            // The app's own scope: it outlives the list a tap leaves.
+                            notificationReadScope = scope,
                             onDismissBannerPerUser = { bannerId ->
                                 // Best-effort sync; never blocks the local hide.
                                 scope.launch {

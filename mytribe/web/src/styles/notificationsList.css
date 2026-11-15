@@ -23,3 +23,11 @@
 .nl-row__when { font-family: var(--mono); font-size: 11px; letter-spacing: .04em; color: var(--navy-muted);
   white-space: nowrap; margin-top: 3px; }
 .nl-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* #2328: a failed re-read keeps the rows and says so here, quietly. */
+.nl-quiet { margin: 0 0 10px; font-size: 13px; color: var(--navy-muted); }
+.nl-quiet__retry { background: none; border: 0; padding: 0; font: inherit; color: var(--teal); text-decoration: underline;
+  cursor: pointer; }
+.nl-quiet__retry:disabled { cursor: default; text-decoration: none; }
+.nl-quiet__retry:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+/* A failed "Show older": next to the button, which asks again. */
+.nl-older-failed { margin: 16px 0 0; font-size: 13px; color: var(--coral); }

@@ -2,6 +2,7 @@ package com.kinfolk.portal.firebase
 
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Query
 import com.kinfolk.portal.components.RoutePoint
 import kotlinx.coroutines.channels.awaitClose
@@ -51,19 +52,28 @@ class NativeAndroidFirestoreClient(
      * above are: the rows are decoded as plain maps, which gitlive cannot do on
      * Android. The query is the one `firestore.rules` admits (own
      * `recipientUid`) on the index the server's count already uses.
+     *
+     * #2329: metadata changes are listened to as well, so the server's first
+     * answer is seen even when it agrees with the cache, and each snapshot
+     * says whether it came from the cache.
      */
-    override fun recipientNotificationsStream(recipientUid: String, limit: Int): Flow<List<FirestoreDoc>> {
+    override fun recipientNotificationsStream(recipientUid: String, limit: Int): Flow<NotificationsSnapshot> {
         require(recipientUid.isNotBlank()) { "recipientNotificationsStream requires a non-blank recipientUid" }
         return callbackFlow {
             val registration = db.collection("notifications")
                 .whereEqualTo("recipientUid", recipientUid)
                 .orderBy("createdAt", Query.Direction.DESCENDING)
                 .limit(limit.toLong())
-                .addSnapshotListener { snap, error ->
+                .addSnapshotListener(MetadataChanges.INCLUDE) { snap, error ->
                     if (error != null) {
                         close(error)
                     } else if (snap != null) {
-                        trySend(snap.documents.map { doc -> FirestoreDoc(id = doc.id, fields = normalise(doc.data ?: emptyMap())) })
+                        trySend(
+                            NotificationsSnapshot(
+                                docs = snap.documents.map { doc -> FirestoreDoc(id = doc.id, fields = normalise(doc.data ?: emptyMap())) },
+                                fromCache = snap.metadata.isFromCache,
+                            ),
+                        )
                     }
                 }
             awaitClose { registration.remove() }
