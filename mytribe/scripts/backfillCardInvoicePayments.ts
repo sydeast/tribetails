@@ -64,6 +64,39 @@
  * Each reported line prints the invoice, its total, what its rows come to and
  * the card payments, so the owner can settle it by hand.
  *
+ * ── CARD PAYMENTS THAT WERE CHARGED AND NEVER RECORDED (#2344) ─────────────
+ *
+ * A second pass, REPORT ONLY in both modes. Until #2344 the webhook skipped a
+ * paid event dated before the last event it had applied to the invoice, and a
+ * declined charge counted as one. A payment whose first delivery failed, and
+ * whose retry arrived after a decline on a newer checkout, was answered 200
+ * and written nowhere: no invoice row, no ledger row, no notice. All it left
+ * is its `stripeEvents/{id}` record, with `appliedOutcome:
+ * SKIPPED_OUT_OF_ORDER` and a paid event type. The first pass starts from the
+ * root ledger and so can never see one. This pass reads `stripeEvents` and
+ * prints, for each such record: the Stripe event id, its type and time, the
+ * household, the invoice, and how the invoice reads now.
+ *
+ *   skipped_paid_event:invoice_open     the invoice still asks for money the
+ *                                       household's card was charged.
+ *   skipped_paid_event:invoice_paid     the invoice has been paid some other
+ *                                       way since, so this charge is a second
+ *                                       payment that is held nowhere.
+ *   skipped_paid_event:invoice_missing  the invoice no longer exists.
+ *
+ * The record holds no amount and no PaymentIntent (the skip stored neither),
+ * so nothing can be written from it. One payment delivers two events
+ * (`checkout.session.completed` and `payment_intent.succeeded`) with the same
+ * time, so two lines for one invoice at one time are one payment.
+ *
+ * WHAT TO DO WITH A LINE: open the event in the Stripe dashboard by its id and
+ * press Resend. The webhook now decides it like a first delivery: applied to
+ * what the invoice still owes, or held for the owner when the invoice is paid.
+ * Stripe allows a resend only for some weeks after the event was created;
+ * past that, record the payment by hand from the charge in the dashboard.
+ * An event recovered by a resend no longer carries the skipped outcome and
+ * is not listed again.
+ *
  * NOT CARD PAYMENTS THIS SCRIPT CONSIDERS: a ledger row held for the owner's
  * decision or already decided (`needsAdminDecision`, `appliedToInvoice:
  * false`, `adminDecision`), which was never applied by the webhook; and a row
@@ -95,10 +128,13 @@ import {
   CARD_APPLY_FALLBACK_FIELD,
   CARD_PAYMENT_METHOD,
   CARD_PAYMENT_RECORDED_BY,
+  PAID_EVENT_TYPES,
+  SKIPPED_OUT_OF_ORDER,
   cardPaymentRowId,
 } from '../functions/src/lib/cardPaymentApply';
 
 export const PAYMENTS_COLLECTION = 'payments';
+export const STRIPE_EVENTS_COLLECTION = 'stripeEvents';
 export const INVOICES_COLLECTION = 'invoices';
 export const BACKFILLED_AT_FIELD = 'cardLedgerBackfilledAt';
 
@@ -323,6 +359,112 @@ export function planInvoiceBackfill(
   };
 }
 
+/** How the invoice a skipped paid event names reads now. */
+export type SkippedPaidInvoiceState = 'invoice_open' | 'invoice_paid' | 'invoice_missing';
+
+/** One `stripeEvents` record of a paid event the webhook skipped before #2344. */
+export interface SkippedPaidEvent {
+  eventId: string;
+  type: string;
+  /** When Stripe created the event, ISO, or '' when the record holds no time. */
+  createdIso: string;
+  invoiceId: string;
+  familyId: string;
+  invoiceState: SkippedPaidInvoiceState;
+  /** What the invoice states it is owed now, in cents. 0 when it is missing. */
+  amountDueCents: number;
+  /** What the invoice's payment rows come to now, in cents. */
+  rowsCents: number;
+}
+
+/**
+ * Whether a `stripeEvents` record is a card payment the webhook skipped for its
+ * date (#2344). The dispute handler writes the same outcome for its own events,
+ * which are not payments, and a skipped declined charge moved no money.
+ */
+export function isSkippedPaidEvent(data: Record<string, unknown>): boolean {
+  return (
+    data['appliedOutcome'] === SKIPPED_OUT_OF_ORDER &&
+    PAID_EVENT_TYPES.includes(str(data['type'])) &&
+    str(data['invoiceId']) !== ''
+  );
+}
+
+/** PURE: how the invoice reads now, from the invoice and the rows on it. */
+export function skippedPaidInvoiceState(
+  invoice: Record<string, unknown> | null,
+  existingRows: readonly StoredRow[],
+): { invoiceState: SkippedPaidInvoiceState; amountDueCents: number; rowsCents: number } {
+  const rowsCents = paidCentsFromPayments(existingRows.map((r) => r.data as PaymentAmount));
+  if (invoice === null) return { invoiceState: 'invoice_missing', amountDueCents: 0, rowsCents };
+  const amountDueCents = Math.max(0, amountDueCentsOf(invoice, rowsCents));
+  const paid = invoiceMarkedPaid(invoice) || amountDueCents <= 0;
+  return { invoiceState: paid ? 'invoice_paid' : 'invoice_open', amountDueCents, rowsCents };
+}
+
+/**
+ * The #2344 pass. READS ONLY, in every mode: `stripeEvents` paged by document
+ * id, then each named invoice and its rows. It takes no transaction and makes
+ * no write.
+ */
+export async function findSkippedPaidEvents(
+  store: Firestore,
+  pageSize: number,
+): Promise<{ scanned: number; events: SkippedPaidEvent[] }> {
+  const found: Array<{ id: string; data: Record<string, unknown> }> = [];
+  let scanned = 0;
+  let cursor: string | null = null;
+  for (;;) {
+    let query = store.collection(STRIPE_EVENTS_COLLECTION).orderBy('__name__').limit(pageSize);
+    if (cursor !== null) query = query.startAfter(cursor);
+    const page = await query.get();
+    if (page.docs.length === 0) break;
+    for (const snap of page.docs) {
+      scanned += 1;
+      cursor = snap.id;
+      const data = snap.data() as Record<string, unknown>;
+      if (isSkippedPaidEvent(data)) found.push({ id: snap.id, data });
+    }
+    if (page.docs.length < pageSize) break;
+  }
+
+  const states = new Map<string, ReturnType<typeof skippedPaidInvoiceState>>();
+  const events: SkippedPaidEvent[] = [];
+  for (const { id, data } of found) {
+    const invoiceId = str(data['invoiceId']);
+    let state = states.get(invoiceId);
+    if (!state) {
+      const invRef = store.collection(INVOICES_COLLECTION).doc(invoiceId);
+      const invSnap = await invRef.get();
+      const rowsSnap = await invRef.collection('payments').get();
+      state = skippedPaidInvoiceState(
+        invSnap.exists ? ((invSnap.data() ?? {}) as Record<string, unknown>) : null,
+        rowsSnap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> })),
+      );
+      states.set(invoiceId, state);
+    }
+    const createdMs = data['eventCreatedMs'];
+    events.push({
+      eventId: id,
+      type: str(data['type']),
+      createdIso:
+        typeof createdMs === 'number' && Number.isFinite(createdMs) && createdMs > 0
+          ? new Date(createdMs).toISOString()
+          : '',
+      invoiceId,
+      familyId: str(data['familyId']),
+      ...state,
+    });
+  }
+  events.sort(
+    (a, b) =>
+      a.invoiceId.localeCompare(b.invoiceId) ||
+      a.createdIso.localeCompare(b.createdIso) ||
+      a.eventId.localeCompare(b.eventId),
+  );
+  return { scanned, events };
+}
+
 function initAdmin(projectId: string): void {
   const usingEmulator =
     typeof process.env.FIRESTORE_EMULATOR_HOST === 'string' && process.env.FIRESTORE_EMULATOR_HOST.length > 0;
@@ -349,6 +491,10 @@ export interface RunResult {
   alreadyRecorded: number;
   reported: Record<ReportReason, number>;
   reports: Array<Extract<InvoicePlan, { action: 'report' }>>;
+  /** #2344: `stripeEvents` records read by the second pass. */
+  eventsScanned: number;
+  /** #2344: paid events the webhook skipped for their date. Reported, never written. */
+  skippedPaidEvents: SkippedPaidEvent[];
 }
 
 const usd = (cents: number) => `$${(cents / 100).toFixed(2)}`;
@@ -371,6 +517,8 @@ export async function run(mode: Mode, pageSize: number, db?: Firestore): Promise
       amount_unresolved: 0,
     },
     reports: [],
+    eventsScanned: 0,
+    skippedPaidEvents: [],
   };
 
   // Every root ledger row, paged by document id (present on every doc; `date`
@@ -470,6 +618,19 @@ export async function run(mode: Mode, pageSize: number, db?: Firestore): Promise
     }
   }
 
+  // #2344: card payments that were charged and never recorded. Read only, in
+  // both modes; the header says what a line means and what to do with it.
+  const skipped = await findSkippedPaidEvents(store, pageSize);
+  result.eventsScanned = skipped.scanned;
+  result.skippedPaidEvents = skipped.events;
+  for (const e of skipped.events) {
+    console.log(
+      `[report:skipped_paid_event:${e.invoiceState}] stripeEvents/${e.eventId} type=${e.type} ` +
+        `created=${e.createdIso || 'unknown'} invoices/${e.invoiceId} household=${e.familyId || 'unknown'} ` +
+        `owed_now=${usd(e.amountDueCents)} rows=${usd(e.rowsCents)} (charged, not recorded; not written)`,
+    );
+  }
+
   return result;
 }
 
@@ -484,6 +645,13 @@ function summarise(mode: Mode, r: RunResult): void {
   console.log(`  already recorded     : ${r.alreadyRecorded}`);
   console.log('  reported, not written:');
   for (const [reason, n] of Object.entries(r.reported)) console.log(`      ${reason.padEnd(18)}: ${n}`);
+  console.log(`  payment events scanned: ${r.eventsScanned}`);
+  console.log(`  charged, not recorded : ${r.skippedPaidEvents.length} event(s) (#2344; this script never writes them)`);
+  const invoices = [...new Set(r.skippedPaidEvents.map((e) => e.invoiceId))].sort();
+  if (invoices.length > 0) {
+    console.log(`      invoices          : ${invoices.join(', ')}`);
+    console.log('      Open each event in the Stripe dashboard and press Resend; the webhook now records it.');
+  }
 }
 
 async function main(): Promise<void> {
