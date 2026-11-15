@@ -103,7 +103,8 @@ describe('#1819 a notice the send switch held back', () => {
     expect(logLines(ctx.writes)).toHaveLength(2);
   });
 
-  it('a daily job over the same invoice writes the held line once a day, not once a run', async () => {
+  // #2331: the timed jobs themselves count each held copy once a day, on one line per run (`heldNoticeSummary.test.ts`).
+  it('the same notice held again with no run count writes its line once a day, not once a call', async () => {
     const ctx = db(GATE_OFF);
     const run = () =>
       enqueueNotificationDetailed({ key: 'invoice.overdue', recipientUid: 'kinUid', data: { invoiceId: 'inv1', kinfolkId: 'fam1' } });

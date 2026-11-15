@@ -128,6 +128,27 @@ describe('#1819 the line the server writes now', () => {
     expect(activityMatchesStatus(HELD_NOW, 'problems')).toBe(false);
   });
 
+  it('#2331 a timed job\'s one line for the run reads as the server wrote it', () => {
+    const summary = entry({
+      actionType: 'NOTIFICATION_NOT_SENT',
+      description: 'Held back 14 visit reminders: notices to households are turned off',
+      status: 'NOT_SENT',
+      payload: { outcome: 'held', summary: true, count: 14, kinds: { 'kincare.upcoming.reminder': 14 } },
+    });
+    expect(activityIsNoticeNotSent(summary)).toBe(true);
+    expect(activityEntryTitle(summary)).toBe('Notification not sent');
+    expect(activityEntryDescription(summary)).toBe('Held back 14 visit reminders: notices to households are turned off');
+    expect(activityStatusWords(summary)).toBe('Not sent');
+    expect(activityMatchesStatus(summary, 'problems')).toBe(false);
+    expect(activityMatchesQuery(summary, 'visit reminders')).toBe(true);
+    for (const words of [
+      'Held back 1 invoice reminder: notices to households are turned off',
+      'Held back 2 overdue invoice notices: notices to households are turned off',
+      'Held back 3 visit reminders: the setting for notices to households could not be read',
+    ]) {
+      expect(activityEntryDescription({ ...summary, description: words })).toBe(words);
+    }
+  });
   it('a send that failed is a problem, and keeps its own status', () => {
     const failed = entry({
       actionType: 'NOTIFICATION_NOT_SENT',

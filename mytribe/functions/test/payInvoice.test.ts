@@ -1013,6 +1013,36 @@ describe('payInvoice refuses a PAID invoice (operator ruling 2026-09-27, docket 
     expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
     expect(ctx.writes.find((w) => w.path === 'invoices/inv-1')).toBeUndefined();
   });
+  it('#2276: refuses a cancelled invoice that still states a balance, before Stripe is touched', async () => {
+    // Not a withdrawn quote (those are answered as missing): a cancelled bill
+    // whose balance was never zeroed. Charging it would turn it into a paid one.
+    const { ctx, outcome } = await callFor(
+      { status: 'cancelled', amountDue: 40, amountDueCents: 4000, total: 40 },
+      'cs_open',
+    );
+    expect((outcome as { err: unknown }).err).toMatchObject({
+      code: 'failed-precondition',
+      message: 'There is nothing to pay on this invoice.',
+      details: { code: 'invoice_cancelled' },
+    });
+    expect(mocks.stripeMock.checkout.sessions.retrieve).not.toHaveBeenCalled();
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(ctx.writes.find((w) => w.path === 'invoices/inv-1')).toBeUndefined();
+  });
+  it('#2276: refuses a cancelled invoice however the label is written, and one that states no balance', async () => {
+    const cased = await callFor({ status: ' Cancelled ', amountDue: 40, total: 40 });
+    expect((cased.outcome as { err: unknown }).err).toMatchObject({ details: { code: 'invoice_cancelled' } });
+    const second = await callFor({ invoiceStatus: 'cancelled', amountDue: 40, total: 40 });
+    expect((second.outcome as { err: unknown }).err).toMatchObject({ details: { code: 'invoice_cancelled' } });
+    const unstated = await callFor({ status: 'cancelled', total: 40 });
+    expect((unstated.outcome as { err: unknown }).err).toMatchObject({ details: { code: 'invoice_cancelled' } });
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+  it('#2276: a withdrawn quote is still answered as missing, not as cancelled', async () => {
+    const { outcome } = await callFor({ status: 'cancelled', quoteWithdrawnAt: 'ts', amountDue: 40, total: 40 });
+    expect((outcome as { err: unknown }).err).toMatchObject({ code: 'not-found' });
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+  });
   it('still charges an open invoice, and records the session in the list the paid sweep expires', async () => {
     const { ctx, outcome } = await callFor({ status: 'open', amountDue: 40, total: 40 });
     expect((outcome as { ok: { sessionId: string } }).ok.sessionId).toBe('cs_test_1');
