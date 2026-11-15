@@ -78,3 +78,19 @@ export function invoiceIsPaid(doc: InvoicePaidDoc | undefined | null, paidCents:
   if (invoiceMarkedPaid(doc)) return true;
   return invoiceStateOf(doc, paidCents) === 'paid';
 }
+
+/**
+ * #2276: stamped on an invoice the Stripe webhook marked paid outside the
+ * ordinary plan (`lib/cardPaymentApply.ts`, the fallback landing), with the
+ * reason. Its payment rows can come to less than its total while the household
+ * has paid everything it was shown, so the admin payment guards and the repair
+ * pass read this beside the label and treat the invoice as settled. The
+ * backfill clears it once the rows cover the total.
+ */
+export const CARD_APPLY_FALLBACK_FIELD = 'cardApplyFallback';
+/** Marked paid by a card payment's fallback landing: paid, whatever its rows add up to. */
+export function paidByCardFallback(doc: Record<string, unknown> | undefined | null): boolean {
+  if (!doc) return false;
+  const reason = doc[CARD_APPLY_FALLBACK_FIELD];
+  return typeof reason === 'string' && reason !== '' && invoiceMarkedPaid(doc as InvoicePaidDoc);
+}

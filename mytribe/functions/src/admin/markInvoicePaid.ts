@@ -19,6 +19,7 @@ import {
 } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
+import { paidByCardFallback } from '../lib/invoicePaidGate';
 import {
   PAYMENT_APPLIED_OWNER_AT_FIELD,
   PAYMENT_APPLIED_OWNER_FIELD,
@@ -194,9 +195,10 @@ export function claimsPaid(d: InvoiceDoc): boolean {
  *   cannot re-open a paid invoice for a second collection either.
  *
  *   LABELLED PAID WITH NO RECORDED PAYMENTS AT ALL -> refuse. This is the
- *   exception, and it is load-bearing. `stripeWebhook.ts` records card payments
- *   into the ROOT `payments` collection (`db().collection('payments')`), NOT
- *   into `invoices/{id}/payments`, and `postInvoiceEvent` can flip a status with
+ *   exception, and it is load-bearing. Until #2276 `stripeWebhook.ts` recorded
+ *   card payments into the ROOT `payments` collection only, NOT into
+ *   `invoices/{id}/payments` (it writes both now; older card payments have no
+ *   row until the backfill runs), and `postInvoiceEvent` can flip a status with
  *   no payment record whatsoever. On those invoices the subcollection sums to
  *   zero while the money genuinely arrived, so trusting the sum alone would
  *   invite an operator to collect an already-paid bill a second time. With no
@@ -218,7 +220,10 @@ export function alreadySettledRefusal(
       message: 'The payments recorded against this invoice already cover it in full.',
     };
   }
-  if (claimsPaid(d) && paymentCount === 0) {
+  // #2276: a card payment's fallback landing. The household paid everything
+  // the invoice showed, and the label is believed even though its rows fall
+  // short (an earlier payment has no row). Same answer as the no-rows case.
+  if (claimsPaid(d) && (paymentCount === 0 || paidByCardFallback(d))) {
     return {
       code: 'invoice_already_paid',
       message:

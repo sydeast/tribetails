@@ -49,6 +49,7 @@ import {
 } from './invoiceMath';
 import { invoiceStateStampOf } from './invoiceStateStamp';
 import { isWrittenOff } from './invoiceArchive';
+import { paidByCardFallback } from './invoicePaidGate';
 
 /** The fields the detector reads off a raw `invoices/{id}` doc. All optional: real docs are missing keys. */
 export interface RepairInvoiceDoc {
@@ -142,6 +143,12 @@ export function repairPlanFor(
   // deliberately.
   if (isWrittenOff(doc)) return { skipped: 'written_off' };
   if (payments.length === 0) return { skipped: 'no_payments' };
+  // #2276: paid by a card payment's fallback landing. The household paid what
+  // the invoice showed; its rows fall short because an earlier payment has no
+  // row. Reopening it would bill money that was never asked for. Counted
+  // with the invoices whose stated balance stands (no new reason: the reasons
+  // are part of the callable's answer).
+  if (paidByCardFallback(doc as Record<string, unknown>)) return { skipped: 'balance_already_correct' };
 
   const paidCents = paidCentsFromPayments(payments);
   if (paidCents <= 0) return { skipped: 'no_payments' };

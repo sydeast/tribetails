@@ -61,8 +61,8 @@ export const CARD_PAYMENT_METHOD = 'stripe';
  */
 export const CARD_PAYMENT_RECORDED_BY = 'system:stripe';
 
-/** Stamped on the invoice and the ledger row when the fallback landing was used. */
-export const CARD_APPLY_FALLBACK_FIELD = 'cardApplyFallback';
+/** Stamped on the invoice and the ledger row when the fallback landing was used. Defined beside the paid rule that reads it. */
+export { CARD_APPLY_FALLBACK_FIELD } from './invoicePaidGate';
 
 /** The fallback reason for a stated balance lower than the payment rows leave owing. */
 export const STATED_BELOW_RECORDED = 'stated_balance_below_recorded_payments';

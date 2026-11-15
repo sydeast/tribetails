@@ -12,7 +12,13 @@ import { wrapHttp } from '../lib/wrapHttp';
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed, type UnresolvedResolver } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
-import { centsToDollars, formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import {
+  centsToDollars,
+  formatUsdCents,
+  invoiceTotalCentsOf,
+  paidCentsFromPayments,
+  type PaymentAmount,
+} from '../lib/invoiceMath';
 import { stageApply } from '../lib/paymentApply';
 import {
   CARD_APPLY_FALLBACK_FIELD,
@@ -973,7 +979,15 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       const stampable = { ...patch };
       delete stampable.pendingCheckoutSessionId;
       delete stampable.pendingAt;
-      Object.assign(patch, invoiceStateStampOf({ ...(invoiceSnap.data() ?? {}), ...stampable }, paidCents));
+      //
+      // A fallback invoice is stamped as paid in full, so it freezes like any
+      // other paid invoice. Stamped from its rows it would read paid and part
+      // paid, which stays editable, and an edit works the balance out from the
+      // rows and would bring back money the household was never shown.
+      const stampDoc = { ...(invoiceSnap.data() ?? {}), ...stampable };
+      const stampPaidCents =
+        landing.kind === 'fallback' ? Math.max(paidCents, invoiceTotalCentsOf(stampDoc)) : paidCents;
+      Object.assign(patch, invoiceStateStampOf(stampDoc, stampPaidCents));
       tx.set(ref, patch, { merge: true });
     }
     // The flat `payments/{eventId}` ledger row, keyed by the event id so a

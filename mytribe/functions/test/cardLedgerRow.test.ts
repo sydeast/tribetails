@@ -70,6 +70,7 @@ import { stripeWebhookHandler } from '../src/billing/stripeWebhook';
 import { markInvoicePaidHandler } from '../src/admin/markInvoicePaid';
 import { recordPaymentHandler } from '../src/admin/recordPayment';
 import { repairInvoicePaymentsHandler } from '../src/admin/repairInvoicePayments';
+import { applyAccountCreditHandler } from '../src/admin/applyAccountCredit';
 import { sweepAbandonedSettlements, settlementLedgerRowId } from '../src/lib/settlementLedgerSweep';
 import {
   PAYMENT_APPLIED_OWNER_FIELD,
@@ -664,6 +665,45 @@ describe('#2276: invoices the ordinary plan cannot describe are still paid, and 
     expect(await deliver('intent-1')).toBe(200);
     expect(cardRows()).toHaveLength(1);
     expect(fallbackWarnings()).toHaveLength(1);
+  });
+
+  it('and that invoice, paid with rows short of its total, is not collectable again, reopened or editable', async () => {
+    // Before #2276 it had no rows at all and its paid label was believed. The
+    // one row it has now must not make it read part paid to anything.
+    docs[INVOICE] = {
+      ...OPEN,
+      total: 187.5,
+      totalCents: 18750,
+      amountDue: 50,
+      amountDueCents: 5000,
+      stripeCheckoutRound: 1,
+      stripeSettledPaymentIntentId: 'pi_0',
+    };
+    cardPayment(1, 5000, { ...META, checkoutRound: '1' });
+    await deliver('session-1');
+    expect(docs[INVOICE]).toMatchObject({ status: 'paid', editScope: 'none', paidCents: 5000 });
+
+    await expect(recordApply(13750)).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'invoice_already_paid' },
+    });
+    await expect(
+      markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 137.5, idempotencyKey: ipay(2) })),
+    ).rejects.toMatchObject({ details: { code: 'invoice_already_paid' } });
+    await expect(
+      markInvoicePaidHandler(req({ invoiceId: 'inv1', idempotencyKey: ipay(3) })),
+    ).rejects.toMatchObject({ details: { code: 'invoice_already_paid' } });
+    const credit = await applyAccountCreditHandler(req({ invoiceId: 'inv1', amountCents: 1000, idempotencyKey: 'acr_1790000000000_fallbk' })).catch(
+      (err) => ({ threw: err }),
+    );
+    expect(docs['families/fam1']!.accountBalanceCents).toBe(12000);
+    expect(credit).not.toMatchObject({ applied: true });
+
+    const res = await repairInvoicePaymentsHandler(req({ mode: 'repair' }));
+    expect(res.repaired).toBe(0);
+
+    expect(invoiceRows()).toHaveLength(1);
+    expect(docs[INVOICE]).toMatchObject({ status: 'paid', amountDueCents: 0, paidCents: 5000 });
   });
 
   it('an invoice with a balance and no total: paid, with the card row on it', async () => {
