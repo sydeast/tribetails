@@ -382,11 +382,29 @@ export function stageApply(
      * payment wants: it sends nothing itself.
      */
     noticeOwner?: string | null;
+    /**
+     * #2276: a fixed id for the `invoices/{id}/payments` row. The Stripe
+     * webhook names the row after the card payment, so the two events one
+     * charge delivers, and any retry of either, can only ever write one row.
+     * Left out, the id is minted here, as before.
+     */
+    paymentRowId?: string;
+    /** #2276: extra fields for that row (which card payment it is). Never a money field. */
+    rowExtras?: Record<string, unknown>;
+    /**
+     * #2276: extra fields for the invoice, merged in the same write. The
+     * webhook's own bookkeeping (the checkout round, the last event). Never a
+     * money or status field: those are derived above and nowhere else.
+     */
+    invoiceExtras?: Record<string, unknown>;
   },
 ): ApplyOutcome {
   const { step } = input;
   const invRef = firestore.collection('invoices').doc(step.invoiceId);
-  const paymentRef = invRef.collection('payments').doc();
+  const paymentRef =
+    input.paymentRowId !== undefined
+      ? invRef.collection('payments').doc(input.paymentRowId)
+      : invRef.collection('payments').doc();
 
   batch.set(paymentRef, {
     amount: centsToDollars(step.appliedCents),
@@ -399,6 +417,7 @@ export function stageApply(
     // row in the authority read as one payment rather than two.
     sourcePaymentId: input.sourcePaymentId,
     createdAt: FieldValue.serverTimestamp(),
+    ...(input.rowExtras ?? {}),
   });
 
   const settling = step.after.state === 'settled' || step.after.state === 'overpaid';
@@ -434,7 +453,12 @@ export function stageApply(
 
   batch.set(
     invRef,
-    { ...invoiceUpdate, ...invoiceStateStampOf({ ...step.doc, ...invoiceUpdate }, step.after.paidCents) },
+    {
+      ...invoiceUpdate,
+      ...invoiceStateStampOf({ ...step.doc, ...invoiceUpdate }, step.after.paidCents),
+      // After the stamp: the classifier reads none of these.
+      ...(input.invoiceExtras ?? {}),
+    },
     { merge: true },
   );
 

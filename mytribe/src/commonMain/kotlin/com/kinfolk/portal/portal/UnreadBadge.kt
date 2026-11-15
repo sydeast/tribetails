@@ -25,7 +25,8 @@ import kotlinx.coroutines.flow.update
  * cannot be counted twice when its snapshot lands.
  *
  * THE PREDICATES ARE THE SERVER'S (functions/src/lib/recipientNotifications.ts):
- * archived means `archivedAt` carries a value, unread means `readAt` does not,
+ * archived means `archivedAt` carries a value (or `withdrawnAt` does: a notice
+ * the office took back, #2038), unread means `readAt` does not,
  * and a row naming another household (`data.kinfolkId`, or the older
  * `data.familyId`) belongs to that tribe's bell. A row that names none is
  * counted under every tribe. One case table tests all three (UnreadBadgeTest).
@@ -38,6 +39,7 @@ const val UNREAD_SCAN_CAP = 100
 data class BadgeRow(
     val id: String,
     val unread: Boolean,
+    /** Filed away by the reader, or withdrawn by the office. Either way it is not counted. */
     val archived: Boolean,
     /** The household the row names, blank when it names none. */
     val tribeId: String,
@@ -57,7 +59,9 @@ fun badgeRowOf(doc: FirestoreDoc): BadgeRow {
     return BadgeRow(
         id = doc.id,
         unread = doc.fields["readAt"] == null,
-        archived = doc.fields["archivedAt"] != null,
+        // #2038: a notice the office took back ("Undo arrived") never counts,
+        // whatever its archive stamp reads.
+        archived = doc.fields["archivedAt"] != null || doc.fields["withdrawnAt"] != null,
         tribeId = named,
     )
 }

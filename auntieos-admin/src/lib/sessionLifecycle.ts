@@ -97,13 +97,22 @@ const DEPARTED: LifecycleActionDef = {
   confirmLabel: 'Yes, clock out',
 };
 
+/** #2038: what the office reads before undoing an arrival. */
+export const UNDO_ARRIVAL_CONFIRM =
+  'The arrival and departure times are cleared and the visit goes back to where it was. ' +
+  'The household is sent nothing about the undo. The arrival notice comes off their notifications list. ' +
+  'An email, text or push already sent stays sent.';
+/** #2038: what the office reads once the arrival is undone. */
+export const UNDO_ARRIVAL_DONE =
+  "No message was sent about the undo. The arrival notice is off the household's notifications list.";
 const UNDO_ARRIVAL: LifecycleActionDef = {
   action: 'UNDO_ARRIVAL',
   label: 'Undo arrival',
   cardLabel: 'Undo arrived',
   tone: 'ghost',
-  confirmBody: () =>
-    'The arrival and departure times are cleared and the visit goes back to where it was. Nobody is notified.',
+  // #2038: the undo is quiet. The household is sent nothing; the arrival's
+  // entry comes off their notifications list, and what already went out stays.
+  confirmBody: () => UNDO_ARRIVAL_CONFIRM,
   confirmLabel: 'Yes, undo the arrival',
 };
 

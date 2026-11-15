@@ -11,9 +11,9 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import {
   invoiceStateOf,
   invoiceEditRefusal,
-  paymentStandingOf,
   quoteAcceptanceOf,
 } from '../lib/invoiceEditPolicy';
+import { paymentStandingOfInvoice } from '../lib/invoicePaidGate';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
 import { randomUUID } from 'node:crypto';
@@ -30,7 +30,6 @@ import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponse
 import {
   computeInvoiceTotals,
   paidCentsFromPayments,
-  invoiceTotalCentsOf,
   settleInvoice,
   validateInvoiceMoney,
   centsToDollars,
@@ -268,7 +267,12 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
   // THREE states, not "has payments". A part-paid invoice stays fully editable:
   // freezing it on the first payment of any size is what left a part-collected
   // invoice with no repair path at all. See invoiceEditPolicy.ts.
-  const standing = paymentStandingOf(invoiceTotalCentsOf(data), paidCents);
+  //
+  // #2276: an invoice a card payment marked paid outside the ordinary plan has
+  // rows short of its total on purpose. Measured by its rows it would read part
+  // paid and stay editable, and the recompute below would bring back a balance
+  // the household was never shown. `paymentStandingOfInvoice` reads it settled.
+  const standing = paymentStandingOfInvoice(data, paidCents);
 
   const touchesMoney = patch.lineItems !== undefined || patch.invoiceDiscountCents !== undefined;
 

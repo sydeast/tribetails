@@ -301,6 +301,62 @@ describe('steps the range does not gate', () => {
     expect(res).toMatchObject({ status: 'SCHEDULED', changed: true });
   });
 
+  // #2038: the undo clears what was measured for the arrival it takes back,
+  // so the arrival after it stands on a measurement of its own.
+  it('an undone arrival keeps none of its measurement', async () => {
+    const ctx = seed({
+      session: {
+        status: 'ARRIVED',
+        arrivedAt: '2026-11-14T14:02:00Z',
+        arrivalDistanceMeters: 50,
+        arrivalAccuracyMeters: 8,
+        arrivalLocationCheckedAt: '2026-11-14T14:02:01Z',
+        arrivalCheckedByOwner: false,
+      },
+    });
+    await setVisitLifecycleHandler(req({ sessionId: 's1', action: 'UNDO_ARRIVAL' }, AUNTIE));
+    expect(sessionWrite(ctx)?.data).toMatchObject({
+      status: 'SCHEDULED',
+      arrivedAt: '',
+      arrivalDistanceMeters: '',
+      arrivalAccuracyMeters: '',
+      arrivalLocationCheckedAt: '',
+    });
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('re-arriving after an undo is measured again: refused across town, taken next door', async () => {
+    // The visit as an undo leaves it: back at On my way, the evidence blank.
+    const undone = {
+      status: 'ON_MY_WAY',
+      onMyWayAt: '2026-11-14T13:40:00Z',
+      arrivedAt: '',
+      arrivalDistanceMeters: '',
+      arrivalAccuracyMeters: '',
+      arrivalLocationCheckedAt: '',
+    };
+    let ctx = seed({ session: undone });
+    await expect(
+      setVisitLifecycleHandler(req({ sessionId: 's1', action: 'ARRIVED', ...ACROSS_TOWN, accuracyMeters: 10 }, AUNTIE)),
+    ).rejects.toMatchObject({ details: { code: VISIT_START_RANGE_CODE } });
+    expect(sessionWrite(ctx)).toBeUndefined();
+    // And with no position at all she is refused too: the old arrival vouches for nothing.
+    await expect(setVisitLifecycleHandler(req({ sessionId: 's1', action: 'ARRIVED' }, AUNTIE))).rejects.toMatchObject({
+      code: 'failed-precondition',
+    });
+
+    ctx = seed({ session: undone });
+    const res = await setVisitLifecycleHandler(
+      req({ sessionId: 's1', action: 'ARRIVED', atIso: '2026-11-14T14:30:00Z', ...NEXT_DOOR, accuracyMeters: 8 }, AUNTIE),
+    );
+    expect(res).toMatchObject({ status: 'ARRIVED', changed: true });
+    const data = sessionWrite(ctx)?.data as Record<string, any>;
+    expect(data.arrivedAt).toBe('2026-11-14T14:30:00Z');
+    expect(data.arrivalDistanceMeters).toBeGreaterThan(45);
+    expect(data.arrivalDistanceMeters).toBeLessThan(55);
+    expect(data.arrivalCheckedByOwner).toBe(false);
+  });
+
   it('a second Arrived tap on a started visit is the usual no-op, not a range refusal', async () => {
     seed({ session: { status: 'ARRIVED', arrivedAt: '2026-11-14T14:02:00Z' } });
     const res = await setVisitLifecycleHandler(

@@ -676,13 +676,27 @@ function makeDocRef(path: string) {
       writes.push({ path, data });
       docState[path] = { exists: true, data };
     }),
-    collection: (sub: string) => ({
-      get: vi.fn(async () => ({
-        docs: (subDocs[`${path}/${sub}`] ?? []).map((d) => ({ id: d.id, data: () => d.data })),
-      })),
+    // #2276: the webhook now WRITES a row into `invoices/{id}/payments`, so a
+    // subcollection hands out doc refs, and a row written there is read back by
+    // the next delivery beside the canned `subDocs` fixture rows.
+    collection: (sub: string): any => ({
+      doc: (id?: string): any => {
+        autoIds += 1;
+        return makeDocRef(`${path}/${sub}/${id ?? `auto-${autoIds}`}`);
+      },
+      get: vi.fn(async () => {
+        const prefix = `${path}/${sub}/`;
+        const written = Object.entries(docState)
+          .filter(([p, s]) => p.startsWith(prefix) && !p.slice(prefix.length).includes('/') && s.exists)
+          .map(([p, s]) => ({ id: p.slice(prefix.length), data: s.data ?? {} }));
+        return {
+          docs: [...(subDocs[`${path}/${sub}`] ?? []), ...written].map((d) => ({ id: d.id, data: () => d.data })),
+        };
+      }),
     }),
   };
 }
+let autoIds = 0;
 
 vi.mock('../src/lib/firestoreAdmin', () => ({
   db: () => ({
@@ -843,12 +857,14 @@ describe('stripeWebhook', () => {
     expect(warn?.[0]?.severity).toBe('warn');
   });
 
-  it('stamps paid/all when a manually-recorded partial sits in the payments SUBCOLLECTION', async () => {
+  it('#2276: a card payoff after a manually-recorded partial is a row on the invoice, and stamps paid/none', async () => {
     // A $20 manual payment was recorded against this $40 invoice, then the
-    // household paid the card link. The doc is labelled paid, but the
-    // subcollection's evidence falls short of the total, which is exactly the
-    // repairable shape invoiceEditPolicy keeps editable (paid + partial ->
-    // 'all'), so the stamp must not freeze it.
+    // household paid the card link. Before #2276 this test expected
+    // `editScope: 'all'`: the invoice read paid while its own payment rows
+    // came to $20 of $40, the shape the repair pass reopens and that
+    // `recordPayment` would collect the other $20 on a second time. That
+    // expectation was the defect. The card payment is now the second row, the
+    // rows cover the total, and the invoice freezes like any other paid one.
     docState['invoices/i1'] = {
       exists: true,
       data: { kinfolkId: 'f1', amountDue: 20, total: 40, totalCents: 4000 },
@@ -862,7 +878,14 @@ describe('stripeWebhook', () => {
     );
     const invoiceWrite = writes.find((w) => w.path === 'invoices/i1');
     expect(invoiceWrite!.data.status).toBe('paid');
-    expect(invoiceWrite!.data.editScope).toBe('all');
+    expect(invoiceWrite!.data.editScope).toBe('none');
+    expect(invoiceWrite!.data).toMatchObject({ paymentStatus: 'PAID', paidCents: 4000, amountDueCents: 0 });
+    expect(docState['invoices/i1/payments/stripe_pi_1'].data).toMatchObject({
+      amountCents: 2000,
+      method: 'stripe',
+      sourcePaymentId: 'evt_1',
+    });
+    expect(docState['payments/evt_1'].data).toMatchObject({ appliedInvoiceId: 'i1', appliedCents: 2000 });
   });
 
   it('is idempotent — a replayed event id does not re-write', async () => {
@@ -2035,6 +2058,24 @@ describe('stripeWebhook', () => {
     expect(docState['payments/evt_62a'].data!.appliedToInvoice).toBeUndefined();
     expect(docState['payments/evt_62a'].data!.duplicateCheckoutReason).toBeUndefined();
     expect(writes.find((w) => w.path === 'families/f62')).toBeUndefined();
+    // #2276: THIS FIXTURE IS THE FALLBACK LANDING, on purpose. The first card
+    // payment ($137.50, from before #2276) left no row on the invoice, so the
+    // rows say the whole $187.50 is owed while the invoice states $50.00, which
+    // is what the household was shown and paid. It stays paid, the $50.00 is
+    // still written as the invoice's row, and the reason is stamped for the
+    // owner's report (`scripts/backfillCardInvoicePayments.ts` writes the
+    // missing first row).
+    expect(docState['invoices/i62'].data).toMatchObject({
+      amountDueCents: 0,
+      paidCents: 5000,
+      cardApplyFallback: 'stated_balance_below_recorded_payments',
+    });
+    expect(docState['invoices/i62/payments/stripe_pi_62'].data).toMatchObject({ amountCents: 5000, method: 'stripe' });
+    expect(docState['payments/evt_62a'].data).toMatchObject({
+      appliedInvoiceId: 'i62',
+      appliedCents: 5000,
+      cardApplyFallback: 'stated_balance_below_recorded_payments',
+    });
   });
 
   it('ZEROES amountDueCents on the paid flip, not only the dollar field', async () => {

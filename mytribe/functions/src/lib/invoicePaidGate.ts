@@ -38,9 +38,15 @@
  * the corrupt shape the admin is meant to be able to finish collecting. That
  * path stays. This module is the household side.
  *
- * Pure: no Firestore, no Stripe. Imports only the classifier.
+ * Pure: no Firestore, no Stripe. Imports only the classifier and the invoice math.
  */
-import { invoiceStateOf, type InvoiceStateDoc } from './invoiceEditPolicy';
+import {
+  invoiceStateOf,
+  paymentStandingOf,
+  type InvoicePaymentStanding,
+  type InvoiceStateDoc,
+} from './invoiceEditPolicy';
+import { invoiceTotalCentsOf } from './invoiceMath';
 
 /** The sentence every refusal carries, so the web and Android portals print one message. */
 export const PAID_INVOICE_REFUSAL = 'This invoice is already paid, so it cannot take another payment.';
@@ -77,4 +83,53 @@ export function invoiceIsPaid(doc: InvoicePaidDoc | undefined | null, paidCents:
   if (!doc) return false;
   if (invoiceMarkedPaid(doc)) return true;
   return invoiceStateOf(doc, paidCents) === 'paid';
+}
+
+/**
+ * #2276: stamped on an invoice the Stripe webhook marked paid outside the
+ * ordinary plan (`lib/cardPaymentApply.ts`, the fallback landing), with the
+ * reason. Its payment rows can come to less than its total while the household
+ * has paid everything it was shown, so the admin payment guards and the repair
+ * pass read this beside the label and treat the invoice as settled. The
+ * backfill clears it once the rows cover the total.
+ */
+export const CARD_APPLY_FALLBACK_FIELD = 'cardApplyFallback';
+/** Marked paid by a card payment's fallback landing: paid, whatever its rows add up to. */
+export function paidByCardFallback(doc: Record<string, unknown> | undefined | null): boolean {
+  if (!doc) return false;
+  const reason = doc[CARD_APPLY_FALLBACK_FIELD];
+  return typeof reason === 'string' && reason !== '' && invoiceMarkedPaid(doc as InvoicePaidDoc);
+}
+
+/**
+ * #2276 (review): THE PAYMENT STANDING OF AN INVOICE, for the edit rule.
+ *
+ * `paymentStandingOf` measures the payment rows against the total. An invoice
+ * paid by the fallback landing has rows short of its total on purpose, and
+ * measured that way it reads paid and part paid, which `invoiceEditScope`
+ * leaves fully editable. `updateInvoice` decides from the standing, not from
+ * the stored stamp, and then works the balance out from the rows: one change
+ * of terms brought back money the household was never shown. So the stamp
+ * (`invoiceStateStampOf`), `updateInvoice` and the session linker all read the
+ * standing here, and a fallback invoice is settled for all three.
+ */
+export function paymentStandingOfInvoice(
+  doc: Record<string, unknown> & { total?: unknown; totalCents?: unknown },
+  paidCents: number,
+): InvoicePaymentStanding {
+  if (paidByCardFallback(doc)) return 'settled';
+  return paymentStandingOf(invoiceTotalCentsOf(doc), paidCents);
+}
+
+/** `HttpsError` `details.code` when the household tries to pay a cancelled invoice. */
+export const INVOICE_CANCELLED_CODE = 'invoice_cancelled';
+
+/**
+ * #2276 (review): whether the invoice is cancelled, read off the label the way
+ * `invoiceMarkedPaid` reads paid. Cancelling does not zero a stated balance, so
+ * `payInvoice` asks this before it reads one.
+ */
+export function invoiceCancelled(doc: InvoicePaidDoc | undefined | null): boolean {
+  if (!doc) return false;
+  return label(doc.status ?? doc.invoiceStatus) === 'cancelled';
 }

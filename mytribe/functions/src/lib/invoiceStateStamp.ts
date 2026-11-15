@@ -40,13 +40,12 @@
 import {
   invoiceStateOf,
   invoiceEditScope,
-  paymentStandingOf,
   quoteAcceptanceOf,
   type InvoiceState,
   type InvoiceEditScope,
   type InvoiceStateDoc,
 } from './invoiceEditPolicy';
-import { invoiceTotalCentsOf } from './invoiceMath';
+import { paymentStandingOfInvoice } from './invoicePaidGate';
 
 /**
  * What the stamp reads: the classifier's four fields plus the two the total is
@@ -85,7 +84,9 @@ export function invoiceStateStampOf(doc: InvoiceStampDoc, paidCents: number): In
   // used to be mistaken for. The stamp remains a fixpoint either way, because
   // every stamp it writes classifies to itself with or without rows.
   const status = invoiceStateOf(doc, paidCents);
-  const standing = paymentStandingOf(invoiceTotalCentsOf(doc), paidCents);
+  // #2276: an invoice paid by a card payment's fallback landing is settled
+  // whatever its rows add up to, so every re-stamp keeps it locked.
+  const standing = paymentStandingOfInvoice(doc as Record<string, unknown>, paidCents);
   // THE QUOTE ANSWER IS READ OFF THE DOC, not passed in, and that is what makes
   // the acceptance lock (issue #448) hold everywhere. Every adopter hands this
   // function the WHOLE post-write doc, so an invoice that began as an accepted
