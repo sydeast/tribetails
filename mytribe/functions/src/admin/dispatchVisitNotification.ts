@@ -523,6 +523,10 @@ async function clockStampFromSession(args: Args): Promise<number | undefined> {
 }
 /** The one session this visit names, or undefined when it names none or several. */
 async function clockSessionOf(args: Args): Promise<Record<string, unknown> | undefined> {
+  return (await clockSessionDocOf(args))?.data;
+}
+/** The same session with its id. */
+async function clockSessionDocOf(args: Args): Promise<{ id: string; data: Record<string, unknown> } | undefined> {
   try {
     const sessions = db().collection('kin_care_sessions');
     const query =
@@ -531,9 +535,9 @@ async function clockSessionOf(args: Args): Promise<Record<string, unknown> | und
         : sessions.where('sourceBookingId', '==', args.bookingId ?? '');
     const snap = await query.limit(2).get();
     const rows = snap.docs
-      .map((d) => d.data() as Record<string, unknown>)
-      .filter((row) => row['kinfolkId'] === args.familyId)
-      .filter((row) => !(args.batchId && args.visitId) || row['kinCareBatchId'] === args.batchId);
+      .map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }))
+      .filter((row) => row.data['kinfolkId'] === args.familyId)
+      .filter((row) => !(args.batchId && args.visitId) || row.data['kinCareBatchId'] === args.batchId);
     return rows.length === 1 ? rows[0] : undefined;
   } catch (err) {
     logEvent({
@@ -571,6 +575,27 @@ export async function dispatchVisitNotificationHandler(
   if (args.eventAtMs === undefined && args.event !== 'report_sent') {
     const at = await clockStampFromSession(args);
     if (at !== undefined) args.eventAtMs = at;
+  }
+  // #2038: the same for an arrival. A real arrival after an undone one is not
+  // announced twice (`lib/arrivalNoticeWithdrawal.ts`). The session trigger
+  // puts the entry back on the household's list; this call, from an installed
+  // client after its own write, only must not become the second notice.
+  if (args.event === 'arrived' && args.eventAtMs !== undefined) {
+    const session = await clockSessionDocOf(args);
+    if (session !== undefined) {
+      const { earlierArrivalNoticeId } = await import('../lib/arrivalNoticeWithdrawal.js');
+      const told = await earlierArrivalNoticeId(session.id, session.data, args.eventAtMs).catch(() => null);
+      if (told !== null) {
+        const { householdNoticeNotSent } = await import('../notifications/householdNotice.js');
+        return {
+          ok: true,
+          dispatchIds: [],
+          suppressed: true,
+          reason: 'already_notified',
+          notice: await householdNoticeNotSent(args.familyId, 'already_notified'),
+        };
+      }
+    }
   }
   return dispatchVisitNotificationCore(args, req.auth!.uid, req.auth?.token?.name);
 }

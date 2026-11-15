@@ -332,7 +332,24 @@ export async function announceVisitStep(input: {
   const routing = routingOf(session);
   let outcome: VisitStepOutcome;
   let dispatchIds: string[] = [];
-  if (step.action === 'DEPARTED' && departedNoticeAlreadyTold(session)) {
+  // #2038, lead ruling on review: a real arrival after an undone one is not
+  // announced twice. When the earlier arrival reached the household, its entry
+  // goes back on their notifications list for this arrival and nothing is
+  // sent. Recorded below with the row's id, so an undo of THIS arrival finds it.
+  const toldRowId =
+    step.action === 'ARRIVED' && step.atMs !== null
+      ? await (await import('./arrivalNoticeWithdrawal.js')).restoreToldArrivalNotice({
+          sessionId,
+          session,
+          atMs: step.atMs,
+          source: input.source,
+          line: { actorRole: actor.actorRole, actorUid: actor.uid, stamp: actor.stamp },
+        })
+      : null;
+  if (toldRowId !== null) {
+    outcome = { notified: false, notifySkipped: 'already_notified' };
+    dispatchIds = [toldRowId];
+  } else if (step.action === 'DEPARTED' && departedNoticeAlreadyTold(session)) {
     // #2250: this arrival's departure was announced once and then undone. The
     // household heard she left; the real Departed does not tell them again.
     // Recorded below like any other outcome, so the card says so.

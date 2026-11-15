@@ -260,7 +260,10 @@ describe('#2037 a confirmed clock-in tells the household once and logs once', ()
     expect(linesOf('VISIT_ARRIVED')).toHaveLength(1);
   });
 
-  it('an arrival after an undone arrival is a new step: a second notice and a second line', async () => {
+  // #2038, lead ruling on review: the household was told once that she
+  // arrived, so the real arrival is a new step with its own line and no second
+  // notice. The first notice goes back on their list (`undoArrivedNotice.test.ts`).
+  it('an arrival after an undone arrival is a new step: a second line, and no second notice', async () => {
     seed();
     await onKinCareSessionLifecycleHandler(arrive());
     await onKinCareSessionLifecycleHandler(
@@ -271,8 +274,16 @@ describe('#2037 a confirmed clock-in tells the household once and logs once', ()
       event(session({ arrivedAt: '' }), session({ status: 'ARRIVED', arrivedAt: '2026-11-10T22:01:00.000Z' })),
     );
 
-    expect(householdNotices()).toHaveLength(2);
-    expect(linesOf('VISIT_ARRIVED')).toHaveLength(2);
+    expect(householdNotices()).toHaveLength(1);
+    expect(linesOf('VISIT_ARRIVED').map((l) => l.description)).toEqual([
+      'Marked the arrival: scheduled to arrived',
+      'Marked the arrival: scheduled to arrived',
+      "Put the arrival notice back on the household's notifications list. They were told once already, so no second message was sent",
+    ]);
+    expect(outcomeDoc(visitStepNoticeId('s1', 'arrived', Date.parse('2026-11-10T22:01:00.000Z')))).toMatchObject({
+      notified: false,
+      reason: 'already_notified',
+    });
     // #2038: the undo also takes the first arrival's notice off the
     // household's notifications list, and says so on a line of its own.
     expect(linesOf('VISIT_UNDO_ARRIVAL')).toEqual([

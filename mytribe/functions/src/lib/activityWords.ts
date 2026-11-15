@@ -214,6 +214,10 @@ export function visitTransitionWords(action: string, from: string, to: string): 
 export function arrivalNoticeWithdrawnWords(): string {
   return "Took the arrival notice off the household's notifications list. No message was sent about the undo";
 }
+/** #2038: a real arrival after an undone one. The household was told once, so the entry went back and nothing was sent. */
+export function arrivalNoticeRestoredWords(): string {
+  return "Put the arrival notice back on the household's notifications list. They were told once already, so no second message was sent";
+}
 /** A repeat of a step already taken: nothing was written. */
 export function visitNoopWords(action: string, at: string): string {
   return `Did not ${actionWords(action).attempt}: the visit was already ${visitStatusWords(at)}`;

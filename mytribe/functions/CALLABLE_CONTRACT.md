@@ -2986,8 +2986,27 @@ session, which `onKinCareSessionLifecycle` reads. Both run
   (`arrivedAt`), found through `visit_step_notices/{session}__arrived__{ms}`
   and the dedupe ledger. Never every arrival row of the visit: an undo and the
   arrival after it can arrive out of order.
-- **Arriving again.** A new arrival has a new `arrivedAt`, so it is a new
-  notice and is sent once. The household's list then holds one arrival entry.
+- **Arriving again (lead ruling on review, as #2250's one "has left").** When
+  an earlier arrival of the visit reached the household (a `notifications` row
+  was written for it), the real arrival sends nothing a second time: no new
+  row, no work order, no email, text or push. The earlier row is handed to the
+  new arrival and put back on their list: `withdrawnAt` and `withdrawnReason`
+  cleared, `archivedAt: null`, `readAt: null` (unread, counted once),
+  `createdAt` the moment the real arrival reached the server, and
+  `standsForArrivalAtMs` the new `arrivedAt`. Result: `notified: false`,
+  `notifySkipped: 'already_notified'`, and the new arrival's
+  `visit_step_notices` record carries the row's id, so undoing it withdraws
+  the same row again. A row the reader had filed away before the undo stays
+  filed. `dispatchVisitNotification` (`event: 'arrived'`) answers
+  `already_notified` the same way, so an installed client's own dispatch is
+  not the second notice.
+- **Never told the first time.** If no row was ever written for the earlier
+  arrival (no member login, the household switch off, the notice turned off, a
+  failed send, or the wrong tap was undone before its notice existed), the
+  real arrival is announced as normal.
+- **A late undo.** An undo only withdraws a row that still stands for the
+  arrival being undone. Handled after the re-arrival, it leaves the entry
+  listed.
 - **Out of order.** If the undo is handled before the arrival's own notice
   exists, the trigger sends nothing for that arrival, and a notice that does
   get written for an arrival no longer on the visit is withdrawn at once.
@@ -3005,7 +3024,10 @@ session, which `onKinCareSessionLifecycle` reads. Both run
 - **Activity Log**: the `VISIT_UNDO_ARRIVAL` line ("Undid the arrival: arrived
   to scheduled"), and when a row was withdrawn a second `VISIT_UNDO_ARRIVAL`
   line ("Took the arrival notice off the household's notifications list. No
-  message was sent about the undo"), fixed id per arrival.
+  message was sent about the undo"), fixed id per arrival. When a real arrival
+  puts the entry back, a second `VISIT_ARRIVED` line ("Put the arrival notice
+  back on the household's notifications list. They were told once already, so
+  no second message was sent"), fixed id per arrival.
 
 ## Booking notes (admin + kinfolk)
 

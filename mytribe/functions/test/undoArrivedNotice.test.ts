@@ -10,7 +10,8 @@ import { buildDbMock } from './_helpers/mockDb';
  * Lead ruling, in line with the quiet "Undo departed" (#2250): the undo sends
  * the household nothing, the arrival's entry is withdrawn from their list and
  * their bell, what was already delivered is left, and a real arrival later is
- * announced once.
+ * not announced a second time: the one entry goes back on their list, unread.
+ * A household the first arrival never reached is told as normal.
  *
  * These run the session trigger over the REAL dispatcher, as the #2037 cases
  * do, so a notice here is the `notifications/` row the household's list reads
@@ -54,7 +55,7 @@ import { setVisitLifecycleHandler } from '../src/admin/setVisitLifecycle';
 import { unarchiveNotificationHandler, bulkUnarchiveNotificationsHandler } from '../src/portal/archiveNotification';
 import { isUnreadNotification, isVisibleNotification } from '../src/lib/recipientNotifications';
 import { arrivalStillStands } from '../src/lib/arrivalNoticeWithdrawal';
-import { arrivalNoticeWithdrawnWords } from '../src/lib/activityWords';
+import { arrivalNoticeRestoredWords, arrivalNoticeWithdrawnWords } from '../src/lib/activityWords';
 import { evaluateVisitLifecycle } from '../src/lib/visitLifecycle';
 import { stampMs } from '../src/lib/visitStepNotice';
 
@@ -281,41 +282,188 @@ describe('#2038 Undo arrived takes the arrival off the household list and bell',
   });
 });
 
-describe('#2038 a real arrival after the undo is announced once', () => {
-  it('re-arriving sends one new notice, and the list holds one arrival, not two', async () => {
+describe('#2038 a real arrival after the undo: told once, not twice (lead ruling on review)', () => {
+  const asAdmin = (data: unknown) => ({ data, auth: { uid: 'uid_auntie', token: { admin: true } } }) as never;
+  const UNDO_AGAIN = event(
+    session({ status: 'ARRIVED', arrivedAt: ARRIVED_AGAIN_AT }),
+    session({ status: 'SCHEDULED', arrivedAt: '' }),
+  );
+  it('re-arriving sends no second notice, email, text or push; the one entry is back on the list, unread', async () => {
+    seed();
+    await onKinCareSessionLifecycleHandler(arrive());
+    const id = rows()[0]!.id;
+    // The household read it before the office took it back.
+    docs[`notifications/${id}`] = { ...docs[`notifications/${id}`], readAt: '__READ__', createdAt: '__FIRST__' };
+    await onKinCareSessionLifecycleHandler(undo());
+    expect(listed()).toEqual([]);
+    const ordersBefore = workOrders().length;
+    vi.setSystemTime(NOW + 30 * 60_000);
+    docs[SESSION_PATH] = session({ status: 'ARRIVED', arrivedAt: ARRIVED_AGAIN_AT });
+    await onKinCareSessionLifecycleHandler(arriveAgain());
+    // Redelivered: nothing more.
+    await onKinCareSessionLifecycleHandler(arriveAgain());
+    expect(sent()).toHaveLength(1);
+    expect(workOrders()).toHaveLength(ordersBefore);
+    expect(rows()).toHaveLength(1);
+    expect(listed().map((r) => r.id)).toEqual([id]);
+    expect(bell()).toBe(1);
+    // Dated when the real arrival reached the server, not the wrong tap's time.
+    expect(rows()[0]?.data).toMatchObject({
+      archivedAt: null,
+      withdrawnAt: null,
+      withdrawnReason: null,
+      readAt: null,
+      createdAt: '__TS__',
+      standsForArrivalAtMs: Date.parse(ARRIVED_AGAIN_AT),
+    });
+    // The card reads the outcome, and the next undo finds the row by it.
+    expect(docs[`visit_step_notices/${visitStepNoticeId('s1', 'arrived', Date.parse(ARRIVED_AGAIN_AT))}`]).toMatchObject({
+      notified: false,
+      reason: 'already_notified',
+      dispatchIds: [id],
+    });
+    expect(linesOf('VISIT_ARRIVED').map((l) => l.description)).toEqual([
+      'Marked the arrival: scheduled to arrived',
+      'Marked the arrival: scheduled to arrived',
+      arrivalNoticeRestoredWords(),
+    ]);
+    expect(arrivalNoticeRestoredWords()).not.toMatch(/—|inbox|pet|client|sitter/i);
+  });
+  it('arrive, undo, arrive, undo ends with nothing listed, and a third arrival puts the one entry back', async () => {
     seed();
     await onKinCareSessionLifecycleHandler(arrive());
     await onKinCareSessionLifecycleHandler(undo());
-    vi.setSystemTime(NOW + 30 * 60_000);
+    docs[SESSION_PATH] = session({ status: 'ARRIVED', arrivedAt: ARRIVED_AGAIN_AT });
     await onKinCareSessionLifecycleHandler(arriveAgain());
-    // Redelivered: still one.
-    await onKinCareSessionLifecycleHandler(arriveAgain());
-
-    expect(sent()).toHaveLength(2);
-    expect(listed().map((r) => r.data.key)).toEqual(['kincare.auntie.arrived']);
     expect(bell()).toBe(1);
-    expect(linesOf('VISIT_ARRIVED')).toHaveLength(2);
+    docs[SESSION_PATH] = session({ status: 'SCHEDULED', arrivedAt: '' });
+    await onKinCareSessionLifecycleHandler(UNDO_AGAIN);
+    expect(listed()).toEqual([]);
+    expect(bell()).toBe(0);
+    // The second arrival's own event, redelivered after its undo, brings nothing back.
+    await onKinCareSessionLifecycleHandler(arriveAgain());
+    expect(listed()).toEqual([]);
+    const THIRD_AT = '2026-11-10T23:00:00.000Z';
+    docs[SESSION_PATH] = session({ status: 'ARRIVED', arrivedAt: THIRD_AT });
+    await onKinCareSessionLifecycleHandler(
+      event(session({ arrivedAt: '' }), session({ status: 'ARRIVED', arrivedAt: THIRD_AT })),
+    );
+    expect(sent()).toHaveLength(1);
+    expect(rows()).toHaveLength(1);
+    expect(bell()).toBe(1);
   });
-
-  it('an undo that reaches the server after the re-arrival leaves the real arrival listed', async () => {
+  it('an undo that reaches the server after the re-arrival: still one notice, and the entry stays listed', async () => {
     seed();
     await onKinCareSessionLifecycleHandler(arrive());
     vi.setSystemTime(NOW + 30 * 60_000);
     // A phone that was offline drains its queue: the re-arrival's event is
     // handled before the undo's.
+    docs[SESSION_PATH] = session({ status: 'ARRIVED', arrivedAt: ARRIVED_AGAIN_AT });
     await onKinCareSessionLifecycleHandler(arriveAgain());
     await onKinCareSessionLifecycleHandler(undo());
-
+    expect(sent()).toHaveLength(1);
     const still = listed();
     expect(still).toHaveLength(1);
     expect(bell()).toBe(1);
-    // The one left is the second arrival's.
+    expect(still[0]?.data).toMatchObject({ standsForArrivalAtMs: Date.parse(ARRIVED_AGAIN_AT) });
     const second = docs[`visit_step_notices/${visitStepNoticeId('s1', 'arrived', Date.parse(ARRIVED_AGAIN_AT))}`] as {
       dispatchIds: string[];
     };
     expect(second.dispatchIds).toEqual([still[0]!.id]);
+    // Nothing was taken off the list, so the Activity Log does not say it was.
+    expect(linesOf('VISIT_UNDO_ARRIVAL').map((l) => l.description)).toEqual(['Undid the arrival: arrived to scheduled']);
   });
-
+  it('a first arrival that never reached the household: the real arrival is announced as normal', async () => {
+    // No member login when the wrong tap was made.
+    seed({ 'kinfolk/fam1': { uid: '' }, 'families/fam1/members/uid_kinfolk': null });
+    await onKinCareSessionLifecycleHandler(arrive());
+    await onKinCareSessionLifecycleHandler(undo());
+    expect(rows()).toEqual([]);
+    docs['kinfolk/fam1'] = { uid: 'uid_kinfolk' };
+    docs['families/fam1/members/uid_kinfolk'] = { role: 'PRIMARY', status: 'ACTIVE' };
+    docs[SESSION_PATH] = session({ status: 'ARRIVED', arrivedAt: ARRIVED_AGAIN_AT });
+    await onKinCareSessionLifecycleHandler(arriveAgain());
+    expect(sent()).toHaveLength(1);
+    expect(workOrders()).toHaveLength(1);
+    expect(bell()).toBe(1);
+    expect(docs[`visit_step_notices/${visitStepNoticeId('s1', 'arrived', Date.parse(ARRIVED_AGAIN_AT))}`]).toMatchObject({
+      notified: true,
+    });
+  });
+  it('a wrong tap undone before its notice existed, then a real arrival: announced once', async () => {
+    seed();
+    docs[SESSION_PATH] = session({ status: 'SCHEDULED', arrivedAt: '' });
+    await onKinCareSessionLifecycleHandler(undo());
+    await onKinCareSessionLifecycleHandler(arrive());
+    expect(sent()).toEqual([]);
+    docs[SESSION_PATH] = session({ status: 'ARRIVED', arrivedAt: ARRIVED_AGAIN_AT });
+    await onKinCareSessionLifecycleHandler(arriveAgain());
+    expect(sent()).toHaveLength(1);
+    expect(bell()).toBe(1);
+  });
+  it('an installed client that dispatches the re-arrival itself does not become the second notice', async () => {
+    seed({ [SESSION_PATH]: { ...ARRIVED } });
+    await onKinCareSessionLifecycleHandler(arrive());
+    await onKinCareSessionLifecycleHandler(undo());
+    docs[SESSION_PATH] = session({ status: 'ARRIVED', arrivedAt: ARRIVED_AGAIN_AT });
+    const again = { familyId: 'fam1', batchId: 'batch1', visitId: 'visit1', event: 'arrived', eventAtMs: Date.parse(ARRIVED_AGAIN_AT) };
+    // Before the trigger has handled the re-arrival, and after.
+    await expect(dispatchVisitNotificationHandler(asAdmin(again))).resolves.toMatchObject({
+      suppressed: true,
+      reason: 'already_notified',
+      dispatchIds: [],
+    });
+    await onKinCareSessionLifecycleHandler(arriveAgain());
+    await expect(dispatchVisitNotificationHandler(asAdmin(again))).resolves.toMatchObject({
+      suppressed: true,
+      reason: 'already_notified',
+    });
+    expect(sent()).toHaveLength(1);
+    expect(bell()).toBe(1);
+  });
+  it('the first arrival of a visit is still dispatched by an installed client as before', async () => {
+    seed({ [SESSION_PATH]: { ...ARRIVED } });
+    const res = await dispatchVisitNotificationHandler(
+      asAdmin({ familyId: 'fam1', batchId: 'batch1', visitId: 'visit1', event: 'arrived', eventAtMs: Date.parse(ARRIVED_AT) }),
+    );
+    expect(res).toMatchObject({ suppressed: false });
+    expect(sent()).toHaveLength(1);
+  });
+  it('an entry the household filed away themselves before the undo is not put back in front of them', async () => {
+    seed();
+    await onKinCareSessionLifecycleHandler(arrive());
+    const id = rows()[0]!.id;
+    docs[`notifications/${id}`] = { ...docs[`notifications/${id}`], readAt: '__READ__', archivedAt: '__FILED__' };
+    await onKinCareSessionLifecycleHandler(undo());
+    expect(rows()[0]?.data).toMatchObject({ archivedAt: '__FILED__', withdrawnFiledAway: false });
+    docs[SESSION_PATH] = session({ status: 'ARRIVED', arrivedAt: ARRIVED_AGAIN_AT });
+    await onKinCareSessionLifecycleHandler(arriveAgain());
+    expect(sent()).toHaveLength(1);
+    expect(listed()).toEqual([]);
+    expect(rows()[0]?.data).toMatchObject({ archivedAt: '__FILED__', readAt: '__READ__', withdrawnAt: null });
+  });
+  it('another visit of the same household keeps its own arrival notice and its own send', async () => {
+    seed({
+      'families/fam1/bookings/batch1/kinCares/visit2': { serviceType: 'Dog Walk', scheduledAtMs: NOW, kinfolkId: 'fam1' },
+    });
+    await onKinCareSessionLifecycleHandler(arrive());
+    await onKinCareSessionLifecycleHandler(undo());
+    const other = (extra: Record<string, unknown>) => session({ kinCareVisitId: 'visit2', ...extra });
+    await onKinCareSessionLifecycleHandler(
+      event(other({}), other({ status: 'ARRIVED', arrivedAt: ARRIVED_AGAIN_AT }), { params: { sessionId: 's2' } } as never),
+    );
+    expect(sent()).toHaveLength(2);
+    expect(listed()).toHaveLength(1);
+    expect(listed()[0]?.data).not.toHaveProperty('standsForArrivalAtMs');
+    // And undoing the second visit's arrival leaves the first visit's withdrawn row as it is.
+    const firstId = rows().find((r) => r.data['withdrawnReason'] === 'arrival_undone')!.id;
+    await onKinCareSessionLifecycleHandler(
+      event(other({ status: 'ARRIVED', arrivedAt: ARRIVED_AGAIN_AT }), other({ arrivedAt: '' }), { params: { sessionId: 's2' } } as never),
+    );
+    expect(listed()).toEqual([]);
+    expect(rows().filter((r) => r.data['withdrawnReason'] === 'arrival_undone')).toHaveLength(2);
+    expect(docs[`notifications/${firstId}`]).not.toHaveProperty('standsForArrivalAtMs');
+  });
   it('a wrong tap undone before its notice was sent tells the household nothing at all', async () => {
     seed();
     // The undo's event is handled first and finds no row. The session already
