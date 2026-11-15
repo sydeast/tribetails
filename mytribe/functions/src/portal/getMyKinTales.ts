@@ -536,7 +536,9 @@ async function resolveVisitFacts(
       datedText(facts?.visitDate) ??
       datedText(session?.['arrivedAt']) ??
       datedText(facts?.arrivedAt);
-    const day = start === null ? null : businessDayOfStoredStart(start, zone);
+    // A bare `YYYY-MM-DD` already IS the day. Read as an instant it is UTC
+    // midnight, which is the evening before in the business's zone.
+    const day = start === null ? null : /^\d{4}-\d{2}-\d{2}$/.test(start) ? start : businessDayOfStoredStart(start, zone);
     if (day !== null) tale.visitDate = day;
   });
 }

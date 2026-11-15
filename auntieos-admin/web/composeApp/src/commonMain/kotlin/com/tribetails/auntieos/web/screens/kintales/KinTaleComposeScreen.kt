@@ -56,6 +56,7 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.FormSchema
 import com.tribetails.auntieos.web.data.appliesToSchemaIds
+import com.tribetails.auntieos.web.data.pickActiveTemplate
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinCareReport
@@ -163,9 +164,28 @@ fun KinTaleComposeScreen(
         if (session != null && session.kinIds.isNotEmpty()) all.filter { it._id in session.kinIds } else all
     }
 
-    val template by (session?.serviceType?.let { client.activeTemplateForService(it) }
-        ?: flowOf(DefaultKinTaleTemplate.template))
-        .collectAsState(initial = DefaultKinTaleTemplate.template)
+    // #2050: the composer waits for the template read to ANSWER before it opens.
+    // It used to open on the built-in and swap to the visit's own template when
+    // that landed, starting the tale again under whatever had been typed. A new
+    // tale now opens with its template's default message in the note, so that
+    // swap would put the message over the Auntie's words. A read that FAILED is
+    // an answer too: the built-in is then the honest template, as on admin web.
+    // After the first answer the template still follows edits made elsewhere,
+    // and a later failed read keeps the last good one.
+    val serviceType = session?.serviceType
+    val templatesRead by remember { client.templatesStream() }.collectAsState(initial = FirestoreResult.Loading)
+    var template by remember(serviceType) { mutableStateOf(DefaultKinTaleTemplate.template) }
+    var templateSettled by remember(serviceType) { mutableStateOf(false) }
+    LaunchedEffect(templatesRead, serviceType) {
+        when (val read = templatesRead) {
+            is FirestoreResult.Data -> {
+                if (serviceType != null) template = pickActiveTemplate(read.value, serviceType)
+                templateSettled = true
+            }
+            is FirestoreResult.Error -> templateSettled = true
+            else -> Unit
+        }
+    }
 
     // #2040: "Send the KinTale" names only the visit. A visit that already has a
     // saved draft reopens it ([newestSavedDraft]); a blank tale here is how a
@@ -220,6 +240,16 @@ fun KinTaleComposeScreen(
                 return@ScreenScaffold
             }
             SectionHeader(title = "Loading…", subtitle = "Looking for a saved draft", icon = Lucide.ClipboardList)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                repeat(3) { ShimmerCard(height = 100.dp) }
+            }
+        }
+        return
+    }
+
+    if (!templateSettled) {
+        ScreenScaffold {
+            SectionHeader(title = "Loading…", subtitle = "Reading the KinTale template", icon = Lucide.ClipboardList)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 repeat(3) { ShimmerCard(height = 100.dp) }
             }

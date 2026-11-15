@@ -180,6 +180,14 @@ describe('getMyKinTales: what the tale is about (#2056)', () => {
     expect(res.tales[0]!.visitDate).toBe('2026-11-08');
   });
 
+  it('a stored day with no time is that day, not the evening before', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },
+      queryDocs: { kin_care_reports: [tale('r1', { visitDate: '2026-11-10' })] },
+    });
+    const res = await load(ctx);
+    expect(res.tales[0]!.visitDate).toBe('2026-11-10');
+  });
   it('an old tale with none of this comes back as it always did, and costs no extra read', async () => {
     const ctx = buildDbMock({
       docs: { 'clients/u1': { kinfolkIds: ['fam3'] } },

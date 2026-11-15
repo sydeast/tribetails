@@ -1,9 +1,20 @@
 package com.tribetails.auntieos.web.screens.kintales
 
+import androidx.compose.ui.test.ComposeUiTest
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.tribetails.auntieos.web.data.DefaultKinTaleTemplate
 import com.tribetails.auntieos.web.data.FieldResponse
+import com.tribetails.auntieos.web.data.JvmFirestoreFixtures
+import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.KinTaleTemplate
+import com.tribetails.auntieos.web.data.Kinfolk
+import com.tribetails.auntieos.web.theme.AuntieAppTheme
+import com.tribetails.auntieos.web.theme.ThemeMode
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -17,7 +28,12 @@ import kotlin.test.assertTrue
  * A new tale that holds only that message has nothing of the Auntie's in it,
  * so a save she did not ask for writes no draft.
  */
+@OptIn(ExperimentalTestApi::class)
 class KinTaleDefaultMessageTest {
+    @BeforeTest
+    fun setUp() = JvmFirestoreFixtures.clear()
+    @AfterTest
+    fun tearDown() = JvmFirestoreFixtures.clear()
 
     private val message = "Thanks for having us today!"
     private val session = KinCareSession(
@@ -82,5 +98,55 @@ class KinTaleDefaultMessageTest {
         assertFalse(isUntouchedNewTale(started.copy(_id = "r1"), started))
         // Reopened (#2040): there is no starting point to compare to.
         assertFalse(isUntouchedNewTale(started, null))
+    }
+    // ── rendered ─────────────────────────────────────────────────────────────
+    private val walksForDogWalk = walks.copy(serviceTypeKeys = listOf("Dog Walk"), isActive = true)
+    private fun ComposeUiTest.show(templates: List<KinTaleTemplate>?, reports: List<KinCareReport> = emptyList()) {
+        JvmFirestoreFixtures.sessions = listOf(session)
+        JvmFirestoreFixtures.kinfolk = listOf(Kinfolk(_id = "kf1"))
+        JvmFirestoreFixtures.allKin = emptyList()
+        JvmFirestoreFixtures.reports = reports
+        JvmFirestoreFixtures.kinTaleTemplates = templates
+        setContent { AuntieAppTheme(themeMode = ThemeMode.DARK) { KinTaleComposeScreen(sessionId = "s1", onClose = {}) } }
+    }
+    private fun ComposeUiTest.waitForText(text: String) =
+        waitUntil(timeoutMillis = 10_000) { onAllNodesWithText(text, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+    private fun ComposeUiTest.count(text: String) = onAllNodesWithText(text, useUnmergedTree = true).fetchSemanticsNodes().size
+    @Test
+    fun aNewTaleOpensWithTheDefaultMessageInTheNote() = runDesktopComposeUiTest {
+        show(listOf(walksForDogWalk))
+        waitForText("Send to The Whitfields")
+        waitForText(message)
+    }
+    @Test
+    fun aTemplateWithNoDefaultMessageOpensAnEmptyNote() = runDesktopComposeUiTest {
+        show(listOf(walksForDogWalk.copy(defaultEmailMessage = "")))
+        waitForText("Send to The Whitfields")
+        assertEquals(0, count(message))
+    }
+    @Test
+    fun aSavedDraftReopensWithItsOwnWordsNeverTheDefaultMessage() = runDesktopComposeUiTest {
+        val saved = KinCareReport(
+            _id = "r-draft",
+            sessionId = "s1",
+            kinfolkId = "kf1",
+            kinfolkName = "The Whitfields",
+            templateId = "tpl_walk",
+            title = "Park day",
+            bodyCopy = "Biscuit found a stick.",
+            status = "DRAFT",
+            createdAt = "2026-11-10T15:00:00Z",
+            updatedAt = "2026-11-10T15:05:00Z",
+        )
+        show(listOf(walksForDogWalk), listOf(saved))
+        waitForText("Biscuit found a stick.")
+        assertEquals(0, count(message))
+    }
+    @Test
+    fun aTemplateReadThatFailsStillOpensTheComposerOnAnEmptyNote() = runDesktopComposeUiTest {
+        // No templates fixture: the read fails at the token check, as a real outage would.
+        show(null)
+        waitForText("Send to The Whitfields")
+        assertEquals(0, count(message))
     }
 }
