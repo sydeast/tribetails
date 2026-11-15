@@ -591,6 +591,24 @@ describe('#2348 "Your Auntie has left" follows the arrival it belongs to', () =>
     expect(listedKeys()).toEqual([ARRIVED_KEY, DEPARTED_KEY]);
     expect(rows(DEPARTED_KEY)[0]?.data).toMatchObject({ standsForDepartureAtMs: DAY1 + 30 * MIN });
     expect(rows(DEPARTED_KEY)[0]?.data).not.toHaveProperty('withdrawnAt');
+    // The household was told and still has both entries, so nothing on file
+    // says the undo found them never told.
+    expect(record('undo_arrival', DAY1)).toBeUndefined();
+  });
+
+  it('a departure the visit was already completed for is still announced: completion is not an undo', async () => {
+    seed();
+    await arrive(DAY1);
+    const before = current;
+    const departed = { ...current, status: 'DEPARTED', departedAt: iso(DAY1 + 30 * MIN) };
+    // The departure trigger completed the visit before this one ran.
+    docs[SESSION_PATH] = { ...departed, status: 'COMPLETED', completedAt: iso(DAY1 + 30 * MIN) };
+    vi.setSystemTime(DAY1 + 30 * MIN);
+    await onKinCareSessionLifecycleHandler(event(before, departed));
+
+    expect(sent(DEPARTED_KEY)).toHaveLength(1);
+    expect(record('departed', DAY1 + 30 * MIN)).toMatchObject({ notified: true, arrivalAtMs: DAY1 });
+    expect(listedKeys()).toEqual([ARRIVED_KEY, DEPARTED_KEY]);
   });
 
   it('a "has left" sent while the Undo arrival was landing is taken off as soon as it exists', async () => {
@@ -661,7 +679,9 @@ describe('#2348 "Your Auntie has left" follows the arrival it belongs to', () =>
     const old = [rec('arrived', 100), rec('departed', 150), rec('arrived', 200), rec('departed', 250)];
     expect(departuresOfArrival(old, 100).map((r) => r.atMs)).toEqual([150]);
     expect(departuresOfArrival(old, 200).map((r) => r.atMs)).toEqual([250]);
-    expect(departuresOfArrival(old, null).map((r) => r.atMs)).toEqual([150, 250]);
+    // An undo with no stamped arrival cannot tell whose departure is whose: none.
+    expect(departuresOfArrival(old, null)).toEqual([]);
+    expect(departuresOfArrival(records, null)).toEqual([]);
   });
 
   it('departureStillStands: the same stamped departure, on a visit that has left', () => {

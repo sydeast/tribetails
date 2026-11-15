@@ -200,14 +200,15 @@ async function stepRecords(sessionId: string): Promise<StepRecord[]> {
  * PURE. The departures that ended the arrival stamped `arrivalAtMs`. A record
  * from before #2357 does not name its arrival, and is given to the latest
  * arrival on record that is not after it. With no stamped arrival to go by,
- * every departure of the visit.
+ * none: an undo that cannot name its arrival cannot tell its departures from
+ * a later arrival's, and leaves them all listed.
  */
 export function departuresOfArrival<T extends Pick<StepRecord, 'event' | 'atMs' | 'arrivalAtMs'>>(
   records: readonly T[],
   arrivalAtMs: number | null,
 ): T[] {
+  if (arrivalAtMs === null) return [];
   const departures = records.filter((r) => r.event === 'departed');
-  if (arrivalAtMs === null) return departures;
   const arrivals = records.filter((r) => r.event === 'arrived').map((r) => r.atMs);
   return departures.filter((d) => {
     if (d.arrivalAtMs !== null) return d.arrivalAtMs === arrivalAtMs;
@@ -254,12 +255,12 @@ async function ledgerLookupFor(
     );
 }
 
-type RowWithdrawal = 'withdrew' | 'already' | 'no';
+type RowWithdrawal = 'withdrew' | 'already' | 'taken' | 'no';
 
 /**
  * Withdraw one row. `standsForAny` is the step, or steps, being undone: a row
- * a later step has taken over is left where it is. `already` is a row an
- * earlier run withdrew for the same reason.
+ * a later step has taken over is left where it is (`taken`). `already` is a
+ * row an earlier run withdrew for the same reason.
  */
 async function withdrawRow(kind: StepNoticeKind, id: string, standsForAny: readonly number[] | null): Promise<RowWithdrawal> {
   const ref = db().collection(NOTIFICATIONS_COLLECTION).doc(id);
@@ -271,7 +272,7 @@ async function withdrawRow(kind: StepNoticeKind, id: string, standsForAny: reado
     // A later arrival (or departure) has taken this row over: an undo of the
     // earlier one, handled late, leaves the real step's entry where it is.
     const standsFor = data[KIND[kind].standsFor];
-    if (typeof standsFor === 'number' && standsForAny !== null && !standsForAny.includes(standsFor)) return 'no';
+    if (typeof standsFor === 'number' && standsForAny !== null && !standsForAny.includes(standsFor)) return 'taken';
     if (isWithdrawnNotification(data)) return data[WITHDRAWN_REASON_FIELD] === KIND[kind].reason ? 'already' : 'no';
     const filedByReader = isArchivedNotification(data);
     tx.set(
@@ -323,13 +324,17 @@ export async function withdrawUndoneArrivalNotices(input: {
   const off: UndoneNotices = { arrived: false, departed: false };
   const withdrew: Record<StepNoticeKind, number> = { arrived: 0, departed: 0 };
   let arrivalRecorded = false;
+  // A later arrival or departure holds an entry this undo would have taken
+  // off: the undo was handled late, and the household's entry stays listed.
+  let takenOver = false;
   try {
     const records = await stepRecords(sessionId);
     const onLedger = await ledgerLookupFor(session);
     const take = async (kind: StepNoticeKind, ids: Iterable<string>, standsForAny: readonly number[] | null) => {
       for (const id of ids) {
         const outcome = await withdrawRow(kind, id, standsForAny);
-        if (outcome === 'no') continue;
+        if (outcome === 'taken') takenOver = true;
+        if (outcome === 'no' || outcome === 'taken') continue;
         off[kind] = true;
         if (outcome === 'withdrew') withdrew[kind] += 1;
       }
@@ -351,7 +356,7 @@ export async function withdrawUndoneArrivalNotices(input: {
       const depOnLedger = await onLedger('departed', dep.atMs);
       if (depOnLedger !== null) departureIds.add(depOnLedger);
     }
-    await take('departed', departureIds, atMs === null ? null : departures.map((d) => d.atMs));
+    await take('departed', departureIds, departures.map((d) => d.atMs));
   } catch (err) {
     logEvent({
       severity: 'error',
@@ -362,7 +367,11 @@ export async function withdrawUndoneArrivalNotices(input: {
     });
     return off;
   }
-  if (atMs !== null && (off.arrived || off.departed || input.settled === true || arrivalRecorded)) {
+  // Nothing came off, but only because a later step holds the entry: the
+  // household WAS told, so no record says they were not. The card then says
+  // only that no message was sent about the undo.
+  const toldButKept = takenOver && !off.arrived && !off.departed;
+  if (atMs !== null && !toldButKept && (off.arrived || off.departed || input.settled === true || arrivalRecorded)) {
     await recordUndoneArrival(sessionId, atMs, off, input.source);
   }
   for (const kind of ['arrived', 'departed'] as const) {
