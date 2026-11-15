@@ -303,20 +303,32 @@ describe('#2357 a real arrival on a later business day is announced as normal', 
     ).resolves.toEqual({ notified: false, notifySkipped: 'household_notices_off' });
   });
 
-  it('keeps the channel choices: a household that turned the notice off is not sent a later-day one', async () => {
+  it('keeps the notice switch: with the arrival notice turned off for households, a later-day one is not sent', async () => {
+    seed();
+    await arrive(DAY1);
+    await undoArrival(DAY1 + MIN);
+    docs['businessSettings/notifications'] = { byKey: { [ARRIVED_KEY]: { enabled: false } } };
+    const orders = workOrders().length;
+    await arrive(DAY2);
+    expect(record('arrived', DAY2)).toMatchObject({ notified: false, reason: 'household_prefs_suppressed' });
+    expect(sent(ARRIVED_KEY)).toHaveLength(1);
+    expect(workOrders()).toHaveLength(orders);
+  });
+  it('keeps the channel choices: a household with email, text and push off gets the entry and no message', async () => {
     seed();
     await arrive(DAY1);
     await undoArrival(DAY1 + MIN);
     docs['clients/uid_kinfolk'] = {
       displayName: 'Dre',
-      notificationPreferences: { [ARRIVED_KEY]: { inApp: false, email: false, sms: false, push: false } },
+      notificationPrefs: { byKey: { [ARRIVED_KEY]: { email: false, sms: false, push: false } } },
     };
+    const orders = workOrders().length;
     await arrive(DAY2);
-    const rec = record('arrived', DAY2)!;
-    // Whatever the dispatcher answers for their own choice, it is never "already told".
-    expect(rec['reason']).not.toBe('already_notified');
+    // Their notifications list is not a channel they can turn off (#1505).
+    expect(sent(ARRIVED_KEY)).toHaveLength(2);
+    expect(workOrders()).toHaveLength(orders);
+    expect(record('arrived', DAY2)!['reason']).not.toBe('already_notified');
   });
-
   it('day 1 told, undone; day 2 announced, undone; day 2 again: the day-2 entry is the one put back', async () => {
     seed();
     await arrive(DAY1);
@@ -601,6 +613,22 @@ describe('#2348 "Your Auntie has left" follows the arrival it belongs to', () =>
     expect(record('undo_arrival', DAY1)).toBeUndefined();
   });
 
+  it('an undo handled after the re-arrival but before the re-departure never says the household was not told she arrived', async () => {
+    seed();
+    await arrive(DAY1);
+    await depart(DAY1 + 10 * MIN);
+    const undone = event(current, { ...current, status: 'SCHEDULED', arrivedAt: '', departedAt: '' });
+    current = { ...current, status: 'SCHEDULED', arrivedAt: '', departedAt: '' };
+    await arrive(DAY1 + 20 * MIN);
+    await onKinCareSessionLifecycleHandler(undone);
+    // The arrival's entry is the re-arrival's now and stays; the old "has left" is off.
+    expect(listedKeys()).toEqual([ARRIVED_KEY]);
+    // `withdrawn: ['departed']` alone reads "not told about the arrival" on every admin client.
+    expect(record('undo_arrival', DAY1)).toBeUndefined();
+    await depart(DAY1 + 30 * MIN);
+    expect(sent(DEPARTED_KEY)).toHaveLength(1);
+    expect(listedKeys()).toEqual([ARRIVED_KEY, DEPARTED_KEY]);
+  });
   it('a departure the visit was already completed for is still announced: completion is not an undo', async () => {
     seed();
     await arrive(DAY1);
@@ -933,16 +961,28 @@ describe('#2357 a notice announced on a later business day replaces the earlier 
     expect(departedListed()).toEqual([first]);
     expect(docs[`notifications/${first}`]).not.toHaveProperty('withdrawnAt');
   });
-  it('a household with every channel of the notice off still gets its listed entry, so the first one comes off', async () => {
+  it('with the departure notice turned off for households, the later-day Departed writes no entry and the first stays', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    docs['businessSettings/notifications'] = { byKey: { [DEPARTED_KEY]: { enabled: false } } };
+    await depart(DAY2);
+    expect(record('departed', DAY2)).toMatchObject({ notified: false, reason: 'household_prefs_suppressed' });
+    expect(sent(DEPARTED_KEY)).toHaveLength(1);
+    expect(departedListed()).toEqual([first]);
+    expect(docs[`notifications/${first}`]).not.toHaveProperty('withdrawnAt');
+  });
+  it('a household with email, text and push off still gets its listed entry, so the first one comes off', async () => {
     seed();
     const first = await undoneDepartureOnDayOne();
     docs['clients/uid_kinfolk'] = {
       displayName: 'Dre',
-      notificationPreferences: { [DEPARTED_KEY]: { inApp: false, email: false, sms: false, push: false } },
+      notificationPrefs: { byKey: { [DEPARTED_KEY]: { email: false, sms: false, push: false } } },
     };
+    const orders = workOrders().length;
     await depart(DAY2);
-    // The dispatcher still writes the entry their notifications list reads.
+    // Their notifications list is not a channel they can turn off (#1505).
     expect(rows(DEPARTED_KEY)).toHaveLength(2);
+    expect(workOrders()).toHaveLength(orders);
     expect(departedListed()).toHaveLength(1);
     expect(departedListed()).not.toContain(first);
   });

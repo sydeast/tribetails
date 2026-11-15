@@ -329,13 +329,19 @@ export async function withdrawUndoneArrivalNotices(input: {
   // A later arrival or departure holds an entry this undo would have taken
   // off: the undo was handled late, and the household's entry stays listed.
   let takenOver = false;
+  // The arrival's own entry is one of them: the household WAS told she
+  // arrived, whatever else this undo takes off.
+  let arrivalTakenOver = false;
   try {
     const records = await stepRecords(sessionId);
     const onLedger = await ledgerLookupFor(session);
     const take = async (kind: StepNoticeKind, ids: Iterable<string>, standsForAny: readonly number[] | null) => {
       for (const id of ids) {
         const outcome = await withdrawRow(kind, id, standsForAny);
-        if (outcome === 'taken') takenOver = true;
+        if (outcome === 'taken') {
+          takenOver = true;
+          if (kind === 'arrived') arrivalTakenOver = true;
+        }
         if (outcome === 'no' || outcome === 'taken') continue;
         off[kind] = true;
         if (outcome === 'withdrew') withdrew[kind] += 1;
@@ -372,7 +378,10 @@ export async function withdrawUndoneArrivalNotices(input: {
   // Nothing came off, but only because a later step holds the entry: the
   // household WAS told, so no record says they were not. The card then says
   // only that no message was sent about the undo.
-  const toldButKept = takenOver && !off.arrived && !off.departed;
+  // The same when the arrival's entry is the one a later arrival holds and
+  // only an old "has left" came off: a record naming the departure alone
+  // would read "the household was not told about the arrival".
+  const toldButKept = arrivalTakenOver || (takenOver && !off.arrived && !off.departed);
   if (atMs !== null && !toldButKept && (off.arrived || off.departed || input.settled === true || arrivalRecorded)) {
     await recordUndoneArrival(sessionId, atMs, off, input.source);
   }
