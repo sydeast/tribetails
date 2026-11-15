@@ -78,6 +78,7 @@ import com.tribetails.auntieos.voice.VoiceRegistrationNotice
 import com.tribetails.auntieos.voice.VoiceTokenManager
 import com.tribetails.auntieos.voice.voiceRegistrationNotice
 import com.tribetails.auntieos.util.fcmTokenFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.tribetails.auntieos.util.runCatchingCancellable
 
@@ -387,6 +388,16 @@ fun AuntieNavHost(
             else -> app.repository.isCurrentUserAdmin().getOrDefault(false)
         }
     }
+    // #2100: a tapped push waits through sign-in, then opens. It is dropped,
+    // not kept for the next sign-in, when the owner signs out or when the
+    // account that signed in is not one this app admits (an Auntie's).
+    var signedInUid by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(authUser?.uid, adminVerified) {
+        val uid = authUser?.uid
+        if (signedInUid != null && uid != signedInUid) PendingPushOpen.clear()
+        if (uid != null && adminVerified == false) PendingPushOpen.clear()
+        signedInUid = uid
+    }
     LaunchedEffect(adminVerified, cachedFcmToken) {
         if (adminVerified == true && cachedFcmToken.isNotBlank()) {
             app.repository.saveDeviceToken(cachedFcmToken)
@@ -671,6 +682,30 @@ private fun AuthenticatedNavHost(
     LaunchedEffect(navController) {
         com.tribetails.auntieos.util.MessageStore.navigateToMessages.collect {
             navController.navigate(Screen.Messaging.route) { launchSingleTop = true }
+        }
+    }
+
+    // #2100: a tapped push opens what it is about, through the Notifications
+    // list's own Open rules (PushOpen.kt). This host only exists for a
+    // signed-in owner, so a tap made while signed out opens here after
+    // sign-in. Waits for the nav graph, then takes the tap exactly once.
+    val pendingPush by PendingPushOpen.pending.collectAsState()
+    LaunchedEffect(navController, pendingPush) {
+        if (pendingPush == null) return@LaunchedEffect
+        navController.currentBackStackEntryFlow.first()
+        val entry = PendingPushOpen.take() ?: return@LaunchedEffect
+        when (val open = pushOpenAction(entry)) {
+            is PushOpenAction.VisitRequest -> {
+                schedulingVm.focusIncomingRequest(open.kinfolkId, open.batchId)
+                navController.navigate(Screen.Calendar.route) { launchSingleTop = true }
+            }
+            is PushOpenAction.UnappliedPayment -> {
+                directoryVm.unappliedPayments.openFromNotice(open.kinfolkId, open.paymentId)
+                navController.navigate(open.route) { launchSingleTop = true }
+            }
+            is PushOpenAction.Route -> navController.navigate(open.route) { launchSingleTop = true }
+            PushOpenAction.NotificationsList ->
+                navController.navigate(Screen.AdminNotifications.route) { launchSingleTop = true }
         }
     }
 
