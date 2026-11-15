@@ -142,11 +142,40 @@ would have used. That is the list of mail the business meant to send and did not
 
 ### What the Activity Log says
 
-Each household copy the gate holds back writes one Activity Log line, titled
+A household copy the gate holds back after something a person did (a clock tap,
+an invoice sent by hand, a save) writes one Activity Log line, titled
 "Notification not sent": `Held back "<notification>" for <name>: notices to
 households are turned off`. Its status is `NOT_SENT`, never `SUCCESS`, and it is
-not listed under Problems. The same step reached twice writes the line once; a
-daily job over the same invoice writes it once a day.
+not listed under Problems. The same step reached twice writes the line once.
+
+The three jobs on a timer write one line per run, with a count and no names
+(#2331): `Held back 14 visit reminders: notices to households are turned off`.
+The count is household copies, one per member the notice was addressed to.
+
+Each held copy is counted once a business day. Nothing is stamped on a visit or
+an invoice while its notice is held, so `kincareReminderCron` holds the same
+reminders again every hour; its line counts only the copies not yet counted
+that day, and a run with none of those writes nothing. In practice that is one
+line early in the day and a short line whenever more visits come into the
+reminder window, not a line an hour. `invoiceRemindersCron` and
+`invoiceOverdueCron` scan once a business day and follow the same rule, so a
+second scan the same day writes no second line. The next business day counts
+everything still held once more.
+
+What a job has counted today is kept on `scheduled_runs/<job>__held` (one
+document per job, overwritten when the day changes, denied to every client).
+It is written in the same transaction as the line.
+
+Other paths that run on a timer still write one line per copy, because each
+finishes something a person started and tries a bounded number of times: the
+two recovery passes in `notificationScheduledSweep` (a credit payment notice or
+a payoff notice whose first send was cut short) and a marketing blast resumed
+by `outboundFanoutSweep`.
+
+If a run fails half way, its line carries the count it had reached, and the
+retry writes a line for the rest only: the lines of a day add up. A retry with
+nothing new writes nothing. If the setting could not be read, the line says so
+in place of "turned off".
 
 The other lines of the same kind: the notification is turned off in Settings, a
 channel the household switched off themselves, a household with no MyTribe
@@ -155,8 +184,9 @@ sign-in, a channel with no address on file, and a send that failed (status
 does go out writes `Sending "<notification>" to <name> by <channels>`, then one
 `Delivered` line per channel. "The office" is the business copy.
 
-During the re-upload this means one held line per household copy, beside the
-operator lines described below. The Activity Log lists the newest 200.
+During the re-upload this means one held line per household copy that a loaded
+record sets off (those come from saves, not from a timer), beside the operator
+lines described below. The Activity Log lists the newest 200.
 
 ### What the Settings panel says
 

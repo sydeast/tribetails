@@ -170,8 +170,10 @@ describe('WARNING-25: invoice reminder cron paginates past the cap', () => {
     expect(reminded).toBe(0);
     expect(ctx.writes).toEqual([{ id: 'inv-pressed', data: { reminderNotifiedAtMs: buttonSentAt } }]);
     // It looks back the button's whole window, not the dispatcher's 5 minutes.
+    // #2331: the scan also hands over its count of held notices for the run.
     expect(mocks.enqueueDetailed).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'invoice.reminder', dedupeWindowMs: 24 * 60 * 60 * 1000 }),
+      expect.objectContaining({ job: 'invoiceRemindersCron' }),
     );
   });
 

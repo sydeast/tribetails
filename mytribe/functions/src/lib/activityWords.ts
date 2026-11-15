@@ -82,6 +82,47 @@ export function notificationHeldUnreadWords(name: string, to: string): string {
   const t = to.trim();
   return `Held back ${quotedName(name)}${t === '' ? '' : ` for ${t}`}: the setting for notices to households could not be read`;
 }
+/**
+ * #2331: what a timed job's held notices are called, one and many. A key with
+ * no entry reads as its own name: `3 "Payment received" notices`, or as
+ * `3 notices` when it has no name either.
+ */
+const HELD_KIND_WORDS: Record<string, readonly [string, string]> = {
+  'kincare.upcoming.reminder': ['visit reminder', 'visit reminders'],
+  'invoice.reminder': ['invoice reminder', 'invoice reminders'],
+  'invoice.overdue': ['overdue invoice notice', 'overdue invoice notices'],
+};
+/** One kind a timed job held back: its key, its name (`notificationName`) and how many copies. */
+export interface HeldKind {
+  key: string;
+  name: string;
+  count: number;
+}
+function heldKindWords(kind: HeldKind): string {
+  const words = HELD_KIND_WORDS[kind.key];
+  if (words !== undefined) return `${kind.count} ${kind.count === 1 ? words[0] : words[1]}`;
+  const name = kind.name.trim();
+  return `${kind.count} ${name === '' ? '' : `"${name}" `}${kind.count === 1 ? 'notice' : 'notices'}`;
+}
+/**
+ * #2331: ONE LINE FOR A WHOLE RUN OF A TIMED JOB.
+ * `Held back 14 visit reminders: notices to households are turned off`.
+ * A count and a kind, no household, no id. `unreadable` is the run whose copies
+ * were held because the switch could not be read, which is not "turned off".
+ */
+export function notificationsHeldSummaryWords(kinds: readonly HeldKind[], unreadable = false): string {
+  const parts = kinds.filter((k) => k.count > 0).map(heldKindWords);
+  const what =
+    parts.length === 0
+      ? 'notices'
+      : parts.length === 1
+        ? parts[0]
+        : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  const why = unreadable
+    ? 'the setting for notices to households could not be read'
+    : 'notices to households are turned off';
+  return `Held back ${what}: ${why}`;
+}
 /** The notification as a whole is switched off in Settings. */
 export function notificationTurnedOffWords(name: string, to: string): string {
   return `Did not send ${quotedName(name)}${toWhom(to)}: this notification is turned off in Settings`;
