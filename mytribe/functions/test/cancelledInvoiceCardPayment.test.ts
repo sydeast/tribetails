@@ -522,10 +522,53 @@ describe('#2358: the owner sees the held payment and decides', () => {
           idempotencyKey: 'upd_1790000000000_abc125',
         }),
       ),
-    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'This invoice is cancelled, so a payment cannot be recorded against it.',
+      details: { code: 'apply_invoice_not_payable' },
+    });
 
     expect(docs['payments/evt_cs_1']).toMatchObject({ needsAdminDecision: true, appliedTo: 'unapplied' });
     expectStillCancelled();
+    expect(docs['families/fam1']!.accountBalanceCents).toBe(0);
+  });
+
+  it('an invoice cancelled in the legacy field only is not offered, and takes none of it back', async () => {
+    // The webhook holds a payment on this shape, so the list and the decision
+    // have to read cancelled the same way. `planApply` reads `status` alone.
+    const legacy: Record<string, any> = { ...OPEN, invoiceStatus: 'cancelled' };
+    delete legacy.status;
+    docs[INVOICE] = { ...legacy };
+    await held();
+    expect(docs['payments/evt_cs_1']).toMatchObject({
+      needsAdminDecision: true,
+      duplicateCheckoutReason: 'invoice-cancelled',
+    });
+
+    const res = await listUnappliedPaymentsHandler(ownerReq({ kinfolkId: 'fam1' }));
+    expect(res.openInvoices.map((i) => i.invoiceId)).toEqual(['inv2']);
+
+    await expect(
+      resolveUnappliedPaymentHandler(
+        ownerReq({
+          paymentId: 'evt_cs_1',
+          creditCents: 0,
+          creditReason: '',
+          applyInvoiceId: 'inv1',
+          applyCents: 4000,
+          idempotencyKey: 'upd_1790000000000_abc127',
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'This invoice is cancelled, so a payment cannot be recorded against it.',
+      details: { code: 'apply_invoice_not_payable' },
+    });
+
+    expect(docs['payments/evt_cs_1']).toMatchObject({ needsAdminDecision: true, appliedTo: 'unapplied' });
+    for (const [key, value] of Object.entries(legacy)) expect(docs[INVOICE]![key], key).toEqual(value);
+    for (const key of ['status', 'paymentStatus', 'paidCents', 'paidAt']) expect(docs[INVOICE]![key], key).toBeUndefined();
+    expect(invoiceRows()).toEqual([]);
     expect(docs['families/fam1']!.accountBalanceCents).toBe(0);
   });
 

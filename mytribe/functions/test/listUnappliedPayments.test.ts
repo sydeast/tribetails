@@ -141,6 +141,14 @@ describe('invoiceTakesDecision', () => {
     expect(invoiceTakesDecision({ status: 'open', archived: true, totalCents: 100, amountDueCents: 100 })).toBe(false);
   });
 
+  it('#2358: never a cancelled invoice, by `status` or by the legacy field alone', () => {
+    expect(invoiceTakesDecision({ status: 'cancelled', totalCents: 100, amountDueCents: 100 })).toBe(false);
+    expect(invoiceTakesDecision({ status: ' Cancelled ', totalCents: 100, amountDueCents: 100 })).toBe(false);
+    expect(invoiceTakesDecision({ invoiceStatus: 'cancelled', totalCents: 100, amountDueCents: 100 })).toBe(false);
+    // `status` wins over the legacy field, as it does for the webhook and payInvoice.
+    expect(invoiceTakesDecision({ status: 'open', invoiceStatus: 'cancelled', totalCents: 100, amountDueCents: 100 })).toBe(true);
+  });
+
   it('reads the amount due from cents, then dollars, then the total', () => {
     expect(openAmountDueCents({ amountDueCents: 250, amountDue: 9 })).toBe(250);
     expect(openAmountDueCents({ amountDue: 12.5 })).toBe(1250);

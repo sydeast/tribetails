@@ -9,7 +9,7 @@ import { refuseAuntie } from '../lib/staffGate';
 import { resolveInvoiceWriteActor, testOwnsDoc } from '../lib/testMode';
 import { validateResponse } from '../lib/callableResponse';
 import { CentsSchema, OkSchema } from '../lib/invoiceResponseSchema';
-import { invoiceIsPaid } from '../lib/invoicePaidGate';
+import { invoiceCancelled, invoiceIsPaid } from '../lib/invoicePaidGate';
 import { invoiceTotalCentsOf } from '../lib/invoiceMath';
 import { isDraftOrQuote, refusedLifecycle, type InvoiceDoc } from './markInvoicePaid';
 import { unappliedReasonLabel } from '../lib/invoiceCheckoutDedupe';
@@ -122,6 +122,9 @@ export function invoiceTakesDecision(doc: Record<string, unknown>): boolean {
   const inv = doc as InvoiceDoc;
   if (isDraftOrQuote(inv)) return false;
   if (refusedLifecycle(inv) !== null) return false;
+  // #2358: cancelled in the legacy `invoiceStatus` field only. The webhook holds
+  // a card payment on that invoice, so it is never offered as a place to put one.
+  if (invoiceCancelled(doc as never)) return false;
   if (invoiceIsPaid(doc as never)) return false;
   if (doc['archived'] === true) return false;
   return openAmountDueCents(doc) > 0;
