@@ -15,6 +15,7 @@ import com.kinfolk.portal.firebase.FakeFunctionsClient
 import com.kinfolk.portal.portal.PortalApi
 import com.kinfolk.portal.screens.setThemedContent
 import com.kinfolk.portal.util.clockTime
+import com.kinfolk.portal.util.kinTaleVisitDayLabel
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -310,6 +311,95 @@ class KinTalesScreenTest {
         waitForIdle()
         onNodeWithText("A fine walk, no checklist.").assertIsDisplayed()
         onAllNodesWithTag("kinTaleChecklistChip").assertCountEquals(0)
+    }
+
+    // #2056: the tale says which KinCare, which day and which Kin it is about,
+    // and a care task ticked for one Kin names that Kin.
+
+    @Test
+    fun about_namesTheKinCareTheKinAndTheDay_andFedNamesItsOneKin() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1")
+                    put("body", "Four at the door.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                    put("serviceLabel", "30 Minute Quick Check")
+                    put("visitDate", "2026-11-10")
+                    put("kinNames", buildJsonArray { add("Biscuit"); add("Mochi"); add("Pip"); add("Tux") })
+                    put("arrivedAtIso", "2026-11-10T15:02:00.000Z")
+                    put("checklist", buildJsonArray {
+                        add(buildJsonObject {
+                            put("key", "fed"); put("text", "Fed")
+                            put("kinNames", buildJsonArray { add("Biscuit") })
+                        })
+                        add(buildJsonObject { put("key", "lights_off"); put("text", "Lights turned off") })
+                    })
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithTag("kinTaleAbout").assertTextEquals("30 Minute Quick Check · Biscuit, Mochi, Pip and Tux")
+        onNodeWithTag("kinTaleVisitFacts").assertTextEquals(
+            "${kinTaleVisitDayLabel("2026-11-10")} · Arrived ${clockTime("2026-11-10T15:02:00.000Z")}",
+        )
+        onAllNodesWithTag("kinTaleChecklistChip").assertCountEquals(2)
+        onNodeWithText("Fed for Biscuit").assertIsDisplayed()
+        onNodeWithText("Lights turned off").assertIsDisplayed()
+    }
+
+    @Test
+    fun about_anOlderTaleWithNoneOfIt_drawsAsBefore() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1")
+                    put("title", "Park day")
+                    put("body", "An older tale.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                    put("checklist", buildJsonArray {
+                        add(buildJsonObject { put("key", "fed"); put("text", "Fed") })
+                    })
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("An older tale.").assertIsDisplayed()
+        onAllNodesWithTag("kinTaleAbout").assertCountEquals(0)
+        onAllNodesWithTag("kinTaleVisitFacts").assertCountEquals(0)
+        onNodeWithText("Fed").assertIsDisplayed()
+    }
+
+    @Test
+    fun about_aDayAloneShowsTheDayAndNoEmptyFirstLine() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t1")
+                    put("body", "Day only.")
+                    put("authorDisplayName", "Auntie Avery")
+                    put("mediaIds", buildJsonArray {})
+                    put("shared", false)
+                    put("visitDate", "2026-11-10")
+                })
+            })
+        })
+        setThemedContent { KinTalesScreen("The Foster", "3", PortalApi(fake)) }
+        waitForIdle()
+        onAllNodesWithTag("kinTaleAbout").assertCountEquals(0)
+        onNodeWithTag("kinTaleVisitFacts").assertTextEquals(kinTaleVisitDayLabel("2026-11-10")!!)
     }
 
     private fun taleJson(id: String, body: String, sentAtMs: Long) = buildJsonObject {

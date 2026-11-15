@@ -801,6 +801,12 @@ class PortalApi(
     }
 
     // -- KinTales --
+    /** #2056: a list of names off the wire. Anything that is not a non-blank string is skipped, never printed. */
+    private fun nameList(raw: JsonElement?): List<String> =
+        (raw as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content?.trim()?.takeIf { n -> n.isNotEmpty() } }
+            .orEmpty()
+
     suspend fun getMyKinTales(
         kinfolkId: String? = null,
         before: Long? = null,
@@ -843,7 +849,7 @@ class PortalApi(
                 val co = ci.jsonObject
                 val key = co["key"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
                 val text = co["text"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                KinTaleChecklistItem(key = key, text = text)
+                KinTaleChecklistItem(key = key, text = text, kinNames = nameList(co["kinNames"]))
             }.orEmpty()
             KinTale(
                 id = o["id"]?.jsonPrimitive?.contentOrNull ?: error("kinTale: missing id"),
@@ -862,6 +868,11 @@ class PortalApi(
                 arrivedAtIso = o["arrivedAtIso"]?.jsonPrimitive?.contentOrNull,
                 departedAtIso = o["departedAtIso"]?.jsonPrimitive?.contentOrNull,
                 checklist = checklist,
+                // #2056: absent on an older deployed function and on a tale with
+                // no visit behind it; each then reads as "not known".
+                serviceLabel = (o["serviceLabel"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+                visitDate = (o["visitDate"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+                kinNames = nameList(o["kinNames"]),
             )
         }.orEmpty()
         return KinTalesResult(

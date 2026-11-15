@@ -36,6 +36,12 @@ object JvmFirestoreFixtures {
     var kinByKinfolk: Map<String, List<Kin>> = emptyMap()
     var sessions: List<KinCareSession>? = null
     var reports: List<KinCareReport>? = null
+    /** #2050: the `kintale_templates` read. Null falls through to the real read. */
+    var kinTaleTemplates: List<KinTaleTemplate>? = null
+    /** #2050: the `kintale_templates` read as a live stream (a failed read, then a good one). Wins over [kinTaleTemplates]. */
+    var kinTaleTemplatesFlow: Flow<FirestoreResult<List<KinTaleTemplate>>>? = null
+    /** #2050: when set, a KinTale create is recorded here and answered without the network. */
+    var createdKinTaleReports: MutableList<KinCareReport>? = null
     var invoices: List<Invoice>? = null
     var payments: List<Payment>? = null
     var bookingTimeSlots: List<BookingTimeSlot>? = null
@@ -116,7 +122,8 @@ object JvmFirestoreFixtures {
     /** Reset everything to null (call in test teardown to avoid cross-test bleed). */
     fun clear() {
         kinfolk = null; allKin = null; kinByKinfolk = emptyMap()
-        sessions = null; reports = null; invoices = null
+        sessions = null; reports = null; invoices = null; kinTaleTemplates = null
+        kinTaleTemplatesFlow = null; createdKinTaleReports = null
         payments = null; bookingTimeSlots = null; notifications = null
         generatedDrafts = null; bookingRequests = null; sessionsForKinfolk = null
         provideUserProfile = false; userProfile = null
@@ -525,9 +532,12 @@ internal actual suspend fun platformMarkVoicemailDismissed(voicemailId: String):
     transportWrite("update failed") { JvmFirestoreRest.patchFields("voicemails", voicemailId, mapOf("replyStatus" to JsonPrimitive("dismissed"), "repliedAt" to JsonPrimitive(""), "replyLogId" to JsonPrimitive(""))) }
 
 internal actual fun platformTemplatesStream(): Flow<FirestoreResult<List<KinTaleTemplate>>> =
-    JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<KinTaleTemplate>("kintale_templates") }
+    JvmFirestoreFixtures.kinTaleTemplatesFlow
+        ?: JvmFirestoreFixtures.kinTaleTemplates?.let { fixtureFlow(it) }
+        ?: JvmFirestoreRest.pollingStream { JvmFirestoreRest.list<KinTaleTemplate>("kintale_templates") }
 internal actual suspend fun platformCreateKinTaleReport(report: KinCareReport): WriteResult<String> =
-    transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_reports", jsonOut.encodeToString(report))) }
+    JvmFirestoreFixtures.createdKinTaleReports?.let { it.add(report); WriteResult.Ok("r-created-${it.size}") }
+        ?: transportResult("create failed") { WriteResult.Ok(JvmFirestoreRest.addDoc("kin_care_reports", jsonOut.encodeToString(report))) }
 internal actual suspend fun platformMarkKinTaleReportSent(reportId: String, sessionId: String, sentVia: String, deliveryReceiptId: String, sentAtIso: String): WriteResult<Unit> {
     // WARNING-15: one atomic Firestore :commit. The report side flips status to
     // "SENT" (uppercase to match the wasm bridge + the report screen's

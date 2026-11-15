@@ -35,6 +35,12 @@ interface GpsSummaryDto {
 interface ChecklistItemDto {
   key: string;
   text: string;
+  /**
+   * #2056: the Kin this task was done for, by name, when it is a per-Kin task
+   * ("Fed") and the names can be read. Omitted for a once-per-visit task
+   * ("Lights turned off") and when no name resolves. Never an id.
+   */
+  kinNames?: string[];
 }
 
 interface KinTaleDto {
@@ -78,6 +84,20 @@ interface KinTaleDto {
    * done".
    */
   checklist?: ChecklistItemDto[];
+  /**
+   * #2056: what the tale is about. Each is omitted when it cannot be read, so
+   * a tale sent before these existed, or one with no visit behind it, renders
+   * as it always did.
+   *  - `serviceLabel`: the KinCare's name for the household, resolved the way
+   *    the schedule resolves it (`lib/serviceDisplayName.ts`).
+   *  - `visitDate`: the BUSINESS day of the visit, `YYYY-MM-DD`. A day only:
+   *    in Time Blocks mode the household is never shown a booked clock time,
+   *    and the arrival and departure above are the only times on a tale.
+   *  - `kinNames`: the Kin on the visit, by name. Never ids.
+   */
+  serviceLabel?: string;
+  visitDate?: string;
+  kinNames?: string[];
   /**
    * Preview media for the feed card's thumbnail strip: at most the first 8
    * of `mediaIds`, resolved and returned inline so the card doesn't need a
@@ -143,11 +163,14 @@ export async function getMyKinTalesHandler(
   // the same pass as `tales` so neither needs a second read of the report doc.
   const sessionIdByIndex: (string | null)[] = [];
   const templateIdByIndex: (string | null)[] = [];
-  const checkedKeysByIndex: string[][] = [];
+  const checkedByIndex: CheckedAnswer[][] = [];
+  // #2056: what each tale says about its visit, read off the report here and
+  // completed from its session in `resolveVisitFacts`.
+  const factsByIndex: ReportFacts[] = [];
   // #2058: the tale's own copy of its care tasks, when it carries one. A
   // stamped tale is never resolved against a template.
   const { readCareTaskStamp, checklistFromStamp, CARE_TASKS_FIELD } = await import('../lib/careTaskStamp.js');
-  const stampedChecklistByIndex: (ChecklistItemDto[] | null)[] = [];
+  const stampedChecklistByIndex: (ResolvedChecklistItem[] | null)[] = [];
 
   const tales: KinTaleDto[] = docs.map((d, taleIndex) => {
     const data = d.data() as Record<string, unknown>;
@@ -168,18 +191,24 @@ export async function getMyKinTalesHandler(
     // `boolValue === true` counts as "checked" here; see the checklist
     // resolution pass below for why `false` is deliberately excluded, not
     // rendered as "not done".
-    const checkedKeys: string[] = [];
+    const checked: CheckedAnswer[] = [];
     const fieldResponses = data['fieldResponses'];
     if (fieldResponses && typeof fieldResponses === 'object' && !Array.isArray(fieldResponses)) {
       for (const resp of Object.values(fieldResponses as Record<string, unknown>)) {
         if (!resp || typeof resp !== 'object') continue;
         const r = resp as Record<string, unknown>;
         if (r['boolValue'] === true && typeof r['fieldKey'] === 'string' && r['fieldKey'].length > 0) {
-          checkedKeys.push(r['fieldKey']);
+          checked.push({ key: r['fieldKey'], kinId: typeof r['kinId'] === 'string' ? r['kinId'].trim() : '' });
         }
       }
     }
-    checkedKeysByIndex.push(checkedKeys);
+    checkedByIndex.push(checked);
+    factsByIndex.push({
+      kinIds: stringList(data['kinIds']),
+      serviceType: typeof data['serviceType'] === 'string' ? data['serviceType'].trim() : '',
+      visitDate: data['visitDate'],
+      arrivedAt: data['arrivedAt'],
+    });
 
     const sentAtMs = sentAtMsByIndex[taleIndex] ?? null;
     const sentAtRaw = data['sentAt'];
@@ -245,8 +274,9 @@ export async function getMyKinTalesHandler(
   });
 
   await resolveFallbackThumbs(firestore, tales, fallbackIndices);
-  await resolveVisitTimes(firestore, tales, sessionIdByIndex);
-  await resolveChecklists(firestore, tales, checkedKeysByIndex, templateIdByIndex, stampedChecklistByIndex);
+  const sessionDataById = await resolveVisitTimes(firestore, tales, sessionIdByIndex);
+  const checklists = await resolveChecklists(firestore, checkedByIndex, templateIdByIndex, stampedChecklistByIndex);
+  await resolveVisitFacts(firestore, kinfolkId, tales, factsByIndex, sessionIdByIndex, sessionDataById, checklists);
 
   logEvent({
     severity: 'info',
@@ -315,16 +345,16 @@ async function resolveVisitTimes(
   firestore: FirebaseFirestore.Firestore,
   tales: KinTaleDto[],
   sessionIdByIndex: (string | null)[],
-): Promise<void> {
+): Promise<Map<string, Record<string, unknown>>> {
+  const sessionDataById = new Map<string, Record<string, unknown>>();
   const uniqueSessionIds = Array.from(
     new Set(sessionIdByIndex.filter((id): id is string => id !== null)),
   );
-  if (uniqueSessionIds.length === 0) return;
+  if (uniqueSessionIds.length === 0) return sessionDataById;
 
   const snaps = await firestore.getAll(
     ...uniqueSessionIds.map((id) => firestore.doc(`kin_care_sessions/${id}`)),
   );
-  const sessionDataById = new Map<string, Record<string, unknown>>();
   snaps.forEach((snap, i) => {
     if (snap.exists) sessionDataById.set(uniqueSessionIds[i]!, snap.data() as Record<string, unknown>);
   });
@@ -336,6 +366,199 @@ async function resolveVisitTimes(
     if (!sessionData) return;
     tale.arrivedAtIso = parseStoredInstant(sessionData['arrivedAt']);
     tale.departedAtIso = parseStoredInstant(sessionData['departedAt']);
+  });
+  return sessionDataById;
+}
+
+/** One ticked answer off a tale's `fieldResponses`. `kinId` is '' for a once-per-visit task. */
+interface CheckedAnswer {
+  key: string;
+  kinId: string;
+}
+
+/** A care task done, with the ids of the Kin it was done for. Ids never leave this file. */
+interface ResolvedChecklistItem {
+  key: string;
+  text: string;
+  kinIds: string[];
+}
+
+/** What a report says about its own visit. */
+interface ReportFacts {
+  kinIds: string[];
+  serviceType: string;
+  visitDate: unknown;
+  arrivedAt: unknown;
+}
+
+function stringList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim());
+}
+
+/**
+ * A stored start that opens with a real calendar date. `visitDate` on a
+ * migrated report can be free text, and `Date.parse('March 3')` answers a day
+ * in 2001, so anything that does not begin `YYYY-MM-DD` is not read at all.
+ */
+function datedText(v: unknown): string | null {
+  return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v.trim()) ? v.trim() : null;
+}
+
+/**
+ * #2056: WHICH visit a tale is about, and WHICH Kin.
+ *
+ * The household read a title, a story and "FED" with four Kin on the visit, and
+ * could not tell the day, the KinCare, or whose bowl. Everything here is read
+ * off documents the tale already points at, so a tale sent before this existed
+ * gets the same answers as a new one:
+ *  - the KinCare and the day from the visit's session (already fetched for the
+ *    arrival and departure times), falling back to the report's own copy;
+ *  - Kin names from the household's Kin, one read for the page, with the
+ *    session's `kinNames` as the fallback for a Kin since removed. That pairing
+ *    is trusted only when it is as long as `kinIds`: the field can be shorter.
+ *
+ * FAIL-SOFT, every part. A settings or Kin read that fails leaves the fields
+ * off and the tales still load. A name that cannot be read is left out; an id
+ * is never sent in its place.
+ *
+ * The day is the BUSINESS's (`businessDayOfStoredStart`), and it is a day only.
+ * In Time Blocks mode a household is never shown a booked clock time, and a
+ * session does not say which block it was booked into, so there is no window
+ * to print either.
+ */
+async function resolveVisitFacts(
+  firestore: FirebaseFirestore.Firestore,
+  kinfolkId: string,
+  tales: KinTaleDto[],
+  factsByIndex: ReportFacts[],
+  sessionIdByIndex: (string | null)[],
+  sessionDataById: Map<string, Record<string, unknown>>,
+  checklists: (ResolvedChecklistItem[] | null)[],
+): Promise<void> {
+  if (tales.length === 0) return;
+  // A visit that says it is another household's is not read for these facts:
+  // a tale linked to the wrong visit must not carry that visit's Kin, KinCare
+  // or day to this household. The tale's own copies answer instead.
+  const sessionOf = (i: number): Record<string, unknown> | null => {
+    const id = sessionIdByIndex[i];
+    const session = id ? (sessionDataById.get(id) ?? null) : null;
+    const owner = session?.['kinfolkId'];
+    return typeof owner === 'string' && owner.trim() !== '' && owner.trim() !== kinfolkId ? null : session;
+  };
+  const kinIdsOf = (i: number): string[] => {
+    const own = factsByIndex[i]?.kinIds ?? [];
+    return own.length > 0 ? own : stringList(sessionOf(i)?.['kinIds']);
+  };
+
+  const needsKin = tales.some(
+    (_t, i) => kinIdsOf(i).length > 0 || (checklists[i] ?? []).some((c) => c.kinIds.length > 0),
+  );
+  const needsSettings = tales.some((_t, i) => {
+    const f = factsByIndex[i];
+    const s = sessionOf(i);
+    return (
+      (f?.serviceType ?? '') !== '' ||
+      typeof s?.['serviceType'] === 'string' ||
+      typeof s?.['serviceName'] === 'string' ||
+      datedText(s?.['startTime']) !== null ||
+      datedText(f?.visitDate) !== null ||
+      datedText(s?.['arrivedAt']) !== null ||
+      datedText(f?.arrivedAt) !== null
+    );
+  });
+
+  const [kinSnap, settingsSnap] = await Promise.all([
+    needsKin
+      ? Promise.resolve()
+          .then(() => firestore.collection(`families/${kinfolkId}/kin`).get())
+          .catch(() => null)
+      : Promise.resolve(null),
+    needsSettings
+      ? Promise.resolve()
+          .then(() => firestore.collection('business_settings').doc('business_settings').get())
+          .catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  const householdKinNames = new Map<string, string>();
+  // A Kin the household added in MyTribe has two ids: its own, and the office
+  // record's (`legacyKinId`, `lib/kinLink.ts`). A visit booked in the admin
+  // app carries the office one, so each Kin is named under both. An office id
+  // two Kin of different names both claim names nobody.
+  const officeIdNames = new Map<string, string | null>();
+  for (const d of kinSnap?.docs ?? []) {
+    const data = d.data() as Record<string, unknown>;
+    const name = data['name'];
+    if (typeof name !== 'string' || name.trim() === '') continue;
+    householdKinNames.set(d.id, name.trim());
+    const officeId = typeof data['legacyKinId'] === 'string' ? data['legacyKinId'].trim() : '';
+    if (officeId === '' || officeId === d.id) continue;
+    const claimed = officeIdNames.get(officeId);
+    officeIdNames.set(officeId, claimed === undefined || claimed === name.trim() ? name.trim() : null);
+  }
+  for (const [officeId, name] of officeIdNames) {
+    if (name !== null && !householdKinNames.has(officeId)) householdKinNames.set(officeId, name);
+  }
+
+  const settings = settingsSnap && settingsSnap.exists ? (settingsSnap.data() as Record<string, unknown>) : undefined;
+  const { serviceDisplayName, serviceNameCatalogFrom } = await import('../lib/serviceDisplayName.js');
+  const { businessTimeZone, businessDayOfStoredStart } = await import('../lib/bookingTimeBlocks.js');
+  const catalog = serviceNameCatalogFrom(settings);
+  const zone = businessTimeZone(settings);
+
+  tales.forEach((tale, i) => {
+    const facts = factsByIndex[i];
+    const session = sessionOf(i);
+
+    // Names for this tale: the household's Kin, then the visit's own pairing.
+    const names = new Map(householdKinNames);
+    const sessionKinIds = stringList(session?.['kinIds']);
+    const sessionKinNames = Array.isArray(session?.['kinNames']) ? (session!['kinNames'] as unknown[]) : [];
+    if (sessionKinIds.length > 0 && sessionKinIds.length === sessionKinNames.length) {
+      sessionKinIds.forEach((id, n) => {
+        const name = sessionKinNames[n];
+        if (!names.has(id) && typeof name === 'string' && name.trim() !== '') names.set(id, name.trim());
+      });
+    }
+    const namesOf = (ids: string[]): string[] => {
+      const out: string[] = [];
+      for (const id of ids) {
+        const name = names.get(id);
+        if (name !== undefined && !out.includes(name)) out.push(name);
+      }
+      return out;
+    };
+
+    const kinNames = namesOf(kinIdsOf(i));
+    if (kinNames.length > 0) tale.kinNames = kinNames;
+
+    const resolved = checklists[i];
+    if (resolved && resolved.length > 0) {
+      tale.checklist = resolved.map((c) => {
+        const forKin = namesOf(c.kinIds);
+        return forKin.length > 0 ? { key: c.key, text: c.text, kinNames: forKin } : { key: c.key, text: c.text };
+      });
+    }
+
+    const label = serviceDisplayName(
+      typeof session?.['serviceType'] === 'string' && session['serviceType'].trim() !== ''
+        ? session['serviceType']
+        : (facts?.serviceType ?? ''),
+      catalog,
+      session?.['serviceName'],
+    );
+    if (label !== null && label.trim() !== '') tale.serviceLabel = label.trim();
+
+    const start =
+      datedText(session?.['startTime']) ??
+      datedText(facts?.visitDate) ??
+      datedText(session?.['arrivedAt']) ??
+      datedText(facts?.arrivedAt);
+    // A bare `YYYY-MM-DD` already IS the day. Read as an instant it is UTC
+    // midnight, which is the evening before in the business's zone.
+    const day = start === null ? null : /^\d{4}-\d{2}-\d{2}$/.test(start) ? start : businessDayOfStoredStart(start, zone);
+    if (day !== null) tale.visitDate = day;
   });
 }
 
@@ -351,6 +574,8 @@ interface TemplateChecklistItem {
   key: string;
   text: string;
   order: number;
+  /** True for a once-per-visit task, which is never named for one Kin. */
+  perVisit?: boolean;
 }
 
 /**
@@ -374,8 +599,8 @@ const DEFAULT_TEMPLATE_CHECKLIST_ITEMS: TemplateChecklistItem[] = [
   { key: 'played', text: 'Played', order: 5 },
   { key: 'litter_scooped', text: 'Litter box scooped', order: 6 },
   { key: 'walk_water_refill', text: 'Water refilled after walk', order: 7 },
-  { key: 'trash_taken_out', text: 'Trash taken out', order: 8 },
-  { key: 'lights_off', text: 'Lights turned off', order: 9 },
+  { key: 'trash_taken_out', text: 'Trash taken out', order: 8, perVisit: true },
+  { key: 'lights_off', text: 'Lights turned off', order: 9, perVisit: true },
 ];
 
 /**
@@ -407,17 +632,19 @@ const DEFAULT_TEMPLATE_CHECKLIST_ITEMS: TemplateChecklistItem[] = [
  */
 async function resolveChecklists(
   firestore: FirebaseFirestore.Firestore,
-  tales: KinTaleDto[],
-  checkedKeysByIndex: string[][],
+  checkedByIndex: CheckedAnswer[][],
   templateIdByIndex: (string | null)[],
-  stampedChecklistByIndex: (ChecklistItemDto[] | null)[],
-): Promise<void> {
+  stampedChecklistByIndex: (ResolvedChecklistItem[] | null)[],
+): Promise<(ResolvedChecklistItem[] | null)[]> {
+  // What each tale's checklist is, with the Kin each task was done for by id;
+  // `resolveVisitFacts` turns the ids into names and writes the tale. Null (not
+  // `[]`) when nothing resolves, so an empty section never stands in for "all done".
+  const out: (ResolvedChecklistItem[] | null)[] = checkedByIndex.map(() => null);
   // #2058: a tale that carries its own copy is answered from it, and its
   // template is not even read, so editing or deleting that template cannot
   // reach it. An empty copy is still an answer: nothing was done that visit.
-  tales.forEach((tale, taleIndex) => {
-    const stamped = stampedChecklistByIndex[taleIndex];
-    if (stamped && stamped.length > 0) tale.checklist = stamped;
+  stampedChecklistByIndex.forEach((stamped, taleIndex) => {
+    if (stamped && stamped.length > 0) out[taleIndex] = stamped;
   });
   const unstamped = (taleIndex: number) => !stampedChecklistByIndex[taleIndex];
   const uniqueTemplateIds = Array.from(
@@ -436,10 +663,9 @@ async function resolveChecklists(
     });
   }
 
-  tales.forEach((tale, taleIndex) => {
+  checkedByIndex.forEach((checked, taleIndex) => {
     if (!unstamped(taleIndex)) return;
-    const checkedKeys = checkedKeysByIndex[taleIndex] ?? [];
-    if (checkedKeys.length === 0) return;
+    if (checked.length === 0) return;
 
     const templateId = templateIdByIndex[taleIndex];
     const items = templateId === null
@@ -448,20 +674,29 @@ async function resolveChecklists(
     if (items.length === 0) return;
 
     const itemByKey = new Map(items.map((item) => [item.key, item]));
-    const seenKeys = new Set<string>();
+    const kinIdsByKey = new Map<string, string[]>();
     const resolved: TemplateChecklistItem[] = [];
-    for (const key of checkedKeys) {
-      if (seenKeys.has(key)) continue;
+    for (const { key, kinId } of checked) {
       const item = itemByKey.get(key);
       if (!item) continue;
-      seenKeys.add(key);
-      resolved.push(item);
+      let kinIds = kinIdsByKey.get(key);
+      if (!kinIds) {
+        kinIds = [];
+        kinIdsByKey.set(key, kinIds);
+        resolved.push(item);
+      }
+      if (kinId !== '' && item.perVisit !== true && !kinIds.includes(kinId)) kinIds.push(kinId);
     }
     if (resolved.length === 0) return;
 
     resolved.sort((a, b) => a.order - b.order);
-    tale.checklist = resolved.map((item) => ({ key: item.key, text: item.text }));
+    out[taleIndex] = resolved.map((item) => ({
+      key: item.key,
+      text: item.text,
+      kinIds: (kinIdsByKey.get(item.key) ?? []).slice().sort(),
+    }));
   });
+  return out;
 }
 
 function parseTemplateChecklistItems(data: unknown): TemplateChecklistItem[] {
@@ -476,7 +711,7 @@ function parseTemplateChecklistItems(data: unknown): TemplateChecklistItem[] {
     const text = typeof e['text'] === 'string' ? e['text'] : '';
     if (key.length === 0 || text.length === 0) return;
     const order = typeof e['order'] === 'number' ? e['order'] : index;
-    items.push({ key, text, order });
+    items.push({ key, text, order, ...(e['scope'] === 'PER_VISIT' ? { perVisit: true } : {}) });
   });
   return items;
 }
