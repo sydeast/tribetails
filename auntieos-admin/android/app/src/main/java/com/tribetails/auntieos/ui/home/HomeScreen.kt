@@ -37,6 +37,7 @@ import com.tribetails.auntieos.ui.branding.homeHeading
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.domain.ClockStep
 import com.tribetails.auntieos.ui.admin.ClockStepWarningDialog
+import com.tribetails.auntieos.ui.admin.UndoDepartedButton
 import com.tribetails.auntieos.ui.admin.clockStepWarningFor
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
 import com.tribetails.auntieos.ui.components.AuntieScreenScaffold
@@ -423,6 +424,7 @@ fun HomeScreen(
                                                     onDeparted = { viewModel.departed(card.session.id, context) },
                                                     onWriteKinTale = { onWriteKinTale(card.session.id) },
                                                     onComplete = { viewModel.complete(card.session.id) },
+                                                    onDepartureUndone = { viewModel.load() },
                                                     onLiveTrack = {
                                                         val s = card.session
                                                         onLiveTrack(s.id, s.kinfolkId, s.kinfolkName)
@@ -1028,6 +1030,8 @@ private fun TodayVisitCardView(
     onComplete: () -> Unit,
     onLiveTrack: () -> Unit = {},
     onViewRoute: () -> Unit = {},
+    /** #2250: the screen re-reads after an undone departure. */
+    onDepartureUndone: () -> Unit = {},
 ) {
     val session = card.session
     val status = runCatching { VisitStatus.valueOf(session.status) }.getOrDefault(VisitStatus.SCHEDULED)
@@ -1145,6 +1149,8 @@ private fun TodayVisitCardView(
                 enabled = !actionPending && status == VisitStatus.DEPARTED,
                 onClick = onComplete
             )
+            // #2250: for a few minutes after Departed. Draws nothing otherwise.
+            UndoDepartedButton(session, kinName, onUndone = onDepartureUndone)
 
             // Location tools. Visible while session is active or has a saved route.
             val isActive = status == VisitStatus.ARRIVED

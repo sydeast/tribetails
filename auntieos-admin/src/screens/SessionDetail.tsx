@@ -51,6 +51,7 @@ import { AsyncLoading } from '../components/AsyncRegion';
 import { Dialog } from '../components/Dialog';
 import { RouteMap } from '../components/RouteMap';
 import { ClockStepWarningLine } from '../components/ClockStepWarningLine';
+import { UndoDepartedAction } from '../components/UndoDepartedAction';
 import './SessionDetail.css';
 
 interface SessionDetailProps {
@@ -623,6 +624,8 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                 {state === 'arrived' && sessionId !== null && (
                   <VisitTrackingIndicator sessionId={sessionId} />
                 )}
+                {/* #2250: for a few minutes after Departed. Draws nothing otherwise. */}
+                <UndoDepartedAction session={entry} household={household} className="sdetail__actions" />
                 {/* Same as the board's card (Sessions.tsx): the tap waits for
                     the server, and now shows that it is waiting. Nothing is
                     painted optimistically; `clock.write` below is still what

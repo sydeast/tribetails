@@ -2171,6 +2171,25 @@ class FirestoreClient {
     suspend fun completeKinCare(sessionId: String, completedAt: String): WriteResult<Unit> =
         bookingTransition(sessionId, null, "COMPLETE", completedAt = completedAt)
 
+    /**
+     * #2250, operator ruling 2026-11-14: take back a wrong Departed tap, for a
+     * few minutes after it, through `setVisitLifecycle`. The server puts the
+     * visit back to Arrived (status, completion stamps and the household's
+     * copy together) and tells the household nothing. The rules refuse this
+     * move to every client, and the time limit is the server's; its refusal
+     * comes back as the Err message, in plain words.
+     */
+    suspend fun undoDeparted(sessionId: String): WriteResult<Unit> {
+        val payload = buildJsonObject {
+            put("sessionId", JsonPrimitive(sessionId))
+            put("action", JsonPrimitive("UNDO_DEPARTED"))
+        }
+        return when (val r = platformInvokeCallable("setVisitLifecycle", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> WriteResult.Ok(Unit)
+        }
+    }
+
     private suspend fun bookingTransition(
         bookingId: String,
         visitId: String?,
@@ -4023,6 +4042,10 @@ data class KinCareSession(
     // "KinTale required" on and no KinTale sent; the send batch writes it false.
     // Absent is false. See data/KinTaleOwed.kt.
     val kinTaleDue: Boolean = false,
+    // #2250: when "Undo departed" closes for this visit, an ISO instant the
+    // server stamps as the departure lands. Never written from here. See
+    // screens/sessions/UndoDeparted.kt.
+    val undoDepartedUntil: String = "",
     val createdAt: String = "",
     val updatedAt: String = "",
 
