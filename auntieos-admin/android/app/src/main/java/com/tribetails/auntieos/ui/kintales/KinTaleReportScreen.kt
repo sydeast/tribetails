@@ -499,7 +499,7 @@ fun KinTaleReportScreen(
                         state.saveStatus == SaveStatus.SAVED && !state.isSaving -> "Draft saved"
                         else -> "Save Draft"
                     },
-                    onClick = { viewModel.persistDraft() },
+                    onClick = { viewModel.persistDraft(asked = true) },
                     modifier = Modifier.weight(1f),
                     enabled = !state.isSaving && !state.isSending
                 )

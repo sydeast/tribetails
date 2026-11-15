@@ -13,6 +13,11 @@ data class KinTaleThumb(
 data class KinTaleChecklistItem(
     val key: String,
     val text: String,
+    /**
+     * #2056: the Kin this task was done for, by name. Empty on a once-per-visit
+     * task, when no name could be read, and from an older deployed function.
+     */
+    val kinNames: List<String> = emptyList(),
 )
 
 data class KinTale(
@@ -62,6 +67,15 @@ data class KinTale(
      * applicable to this visit"). Empty when nothing was recorded.
      */
     val checklist: List<KinTaleChecklistItem> = emptyList(),
+    /**
+     * #2056: what the tale is about. Each is absent on a tale with no visit
+     * behind it and from an older deployed function. [visitDate] is the
+     * business day of the visit, `YYYY-MM-DD`; print it with
+     * `kinTaleVisitDayLabel`. [kinNames] are names, never ids.
+     */
+    val serviceLabel: String? = null,
+    val visitDate: String? = null,
+    val kinNames: List<String> = emptyList(),
 )
 
 data class KinTalesResult(
