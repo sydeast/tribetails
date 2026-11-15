@@ -58,6 +58,21 @@ class UnappliedPaymentsSectionTest {
     }
 
     @Test
+    fun aPaymentHeldBecauseItsInvoiceWasCancelledSaysSo() {
+        // #2358
+        val held = payment.copy(invoiceNumber = "1029", amountCents = 4000, reason = "the invoice was cancelled")
+        assertEquals("\$40.00 card payment on invoice 1029", unappliedPaymentLine(held))
+        assertEquals(
+            "Sep 27, 2026. Not applied because the invoice was cancelled.",
+            unappliedPaymentDetailLine(held, utc),
+        )
+        assertEquals(
+            "Card payment of \$40.00 on invoice 1029. There are no refunds. " +
+                "Anything you do not credit or apply stays recorded on the payment.",
+            decideLeadLine(held),
+        )
+    }
+    @Test
     fun theDialogTextReadsAsTheSpecSays() {
         assertEquals("Decide what this payment becomes", DECIDE_TITLE)
         assertEquals(
