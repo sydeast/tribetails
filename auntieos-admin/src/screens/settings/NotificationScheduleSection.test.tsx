@@ -14,7 +14,11 @@ import {
   hourFieldValue,
   hourLabel,
   notificationSchedulePatch,
+  scheduleDetail,
   scheduleNote,
+  HOUSEHOLD_SWITCH_TIP,
+  SCHEDULE_NOTE_OFF_WITH_HOUR,
+  SCHEDULE_NOTE_ON_NO_HOUR,
 } from './NotificationScheduleSection';
 
 /**
@@ -117,22 +121,44 @@ describe('the pure helpers', () => {
 });
 
 describe('scheduleNote', () => {
-  it('says so when sends are on but nothing is scheduled', () => {
+  /**
+   * #1834: the walk read "no send time is set, so none will go out yet" with
+   * the switch on, while four visit notices reached the household. The send
+   * time governs invoice reminders and overdue notices only.
+   */
+  it('with sends on and no send time, says only the two invoice jobs wait', () => {
     const note = scheduleNote({
       householdNotificationsLive: true,
       householdNotificationHour: '',
       scheduleDigestHour: '',
     });
-    expect(note).toContain('no send time is set');
+    expect(note).toBe(SCHEDULE_NOTE_ON_NO_HOUR);
+    expect(note).toContain('go out as things happen');
+    expect(note).toContain('Invoice reminders and overdue notices have no send time');
+    expect(note).not.toMatch(/none will go out/i);
   });
 
-  it('says so when a time is set but sends are off', () => {
+  it('with a send time and sends off, says they are held back', () => {
     const note = scheduleNote({
       householdNotificationsLive: false,
       householdNotificationHour: '9',
       scheduleDigestHour: '',
     });
-    expect(note).toContain('household notices are off');
+    expect(note).toBe(SCHEDULE_NOTE_OFF_WITH_HOUR);
+    // A broadcast, a single email or text, an invite and a reset still go.
+    expect(note).not.toMatch(/nothing reaches/i);
+  });
+
+  it('a digest time alone raises no note: the digest is not a household notice', () => {
+    expect(
+      scheduleNote({ householdNotificationsLive: false, householdNotificationHour: '', scheduleDigestHour: '7' }),
+    ).toBeNull();
+  });
+
+  it('a send time the picker cannot hold reads as none', () => {
+    expect(
+      scheduleNote({ householdNotificationsLive: true, householdNotificationHour: '24', scheduleDigestHour: '' }),
+    ).toBe(SCHEDULE_NOTE_ON_NO_HOUR);
   });
 
   it('says nothing when the two agree', () => {
@@ -253,12 +279,69 @@ describe('the panel', () => {
     render(
       <NotificationScheduleSection data={settings({ timeZone: 'America/Chicago' })} onSave={onSave} />,
     );
-    expect(screen.getByText('Times are in America/Chicago')).toBeInTheDocument();
+    expect(screen.getByText(/Times are in America\/Chicago$/)).toBeInTheDocument();
   });
 
   it('names America/Chicago, the zone the cron reads, when no zone is saved (#1109)', () => {
     render(<NotificationScheduleSection data={settings({ timeZone: '' })} onSave={onSave} />);
-    expect(screen.getByText('Times are in America/Chicago')).toBeInTheDocument();
+    expect(screen.getByText(/Times are in America\/Chicago$/)).toBeInTheDocument();
+  });
+
+  describe('#1834 the panel says what is true', () => {
+    it('the value line carries the saved switch and send time, as values', () => {
+      expect(
+        scheduleDetail({ householdNotificationsLive: true, householdNotificationHour: null, timeZone: 'America/Chicago' }),
+      ).toBe('Notices to households: on · Invoice reminders: not scheduled · Times are in America/Chicago');
+      expect(
+        scheduleDetail({ householdNotificationsLive: false, householdNotificationHour: 14, timeZone: '' }),
+      ).toBe('Notices to households: off · Invoice reminders: 2:00 PM · Times are in America/Chicago');
+    });
+
+    it('the value line follows the saved document, not an unsaved flip', async () => {
+      render(<NotificationScheduleSection data={settings()} onSave={onSave} />);
+      expect(screen.getByText(/^Notices to households: off · Invoice reminders: not scheduled/)).toBeInTheDocument();
+      await userEvent.click(screen.getByLabelText('Toggle household notifications'));
+      expect(screen.getByText(/^Notices to households: off/)).toBeInTheDocument();
+      expect(screen.queryByText(/^Notices to households: on/)).toBeNull();
+    });
+
+    it('with the switch on and no send time, the note does not say none will go out', () => {
+      render(
+        <NotificationScheduleSection data={settings({ householdNotificationsLive: true })} onSave={onSave} />,
+      );
+      expect(screen.getByText(SCHEDULE_NOTE_ON_NO_HOUR)).toBeInTheDocument();
+      expect(screen.queryByText(/none will go out/i)).toBeNull();
+    });
+
+    it('with the switch on and a send time, there is no note', () => {
+      render(
+        <NotificationScheduleSection
+          data={settings({ householdNotificationsLive: true, householdNotificationHour: 9 })}
+          onSave={onSave}
+        />,
+      );
+      expect(screen.queryByText('Worth knowing')).toBeNull();
+    });
+
+    it('no sentence sits under the panel title', () => {
+      const { container } = render(<NotificationScheduleSection data={settings()} onSave={onSave} />);
+      expect(container.textContent).not.toContain('Whether automatic notices reach households');
+    });
+
+    it('the switch tooltip says what off holds back and what still goes', () => {
+      expect(HOUSEHOLD_SWITCH_TIP).toContain('notices to households are held back, a KinTale or an invoice you send included');
+      expect(HOUSEHOLD_SWITCH_TIP).toContain('Four things still go: a broadcast, a single email or text message you write, an invite, a password reset');
+      expect(HOUSEHOLD_SWITCH_TIP).not.toMatch(/nothing is sent/i);
+    });
+
+    it('a failed save says so and leaves the value line on the saved state', async () => {
+      onSave.mockRejectedValueOnce(new Error('You are offline.'));
+      render(<NotificationScheduleSection data={settings()} onSave={onSave} />);
+      await userEvent.click(screen.getByLabelText('Toggle household notifications'));
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+      expect(await screen.findByText('You are offline.')).toBeInTheDocument();
+      expect(screen.getByText(/^Notices to households: off/)).toBeInTheDocument();
+    });
   });
 
   /**

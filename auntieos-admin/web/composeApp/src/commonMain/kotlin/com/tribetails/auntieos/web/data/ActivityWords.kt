@@ -173,6 +173,27 @@ private val ID_SHAPES: List<Pair<Regex, (List<String>) -> String>> = listOf(
     Regex("""^OPERATOR_CROSSTENANT_ACCESS(?: uid=\S+)?(?: target=\S+)?$""") to { _ -> ActivityWords.HOUSEHOLD_OPENED },
 )
 
+/**
+ * #1819: a notice that was held back, stored before the server wrote it in
+ * words. Those rows read "NOTIFICATION_DISPATCHED uid=<id>" with the reason as
+ * a stored key in the payload. Same words as the server
+ * (`mytribe/functions/src/lib/activityWords.ts`) and the other two admin
+ * clients, except that the notification is named by its key in words.
+ */
+private val NOT_SENT_REASON_WORDS = mapOf(
+    "household_notices_off" to "notices to households are turned off",
+    "household_prefs_suppressed" to "this notification is turned off in Settings",
+    "household_has_no_portal_account" to "nobody in the household has a MyTribe sign-in",
+    "no_recipient" to "there was nobody to send it to",
+)
+
+fun noticeNotSentWords(key: String, reason: String): String {
+    val name = notificationQuoted(key)
+    val r = reason.trim()
+    val why = NOT_SENT_REASON_WORDS[r] ?: return "Did not send $name"
+    return if (r == "household_notices_off") "Held back $name: $why" else "Did not send $name: $why"
+}
+
 /** A stored description as the operator reads it. Text with no id or path passes through. */
 fun activityDescriptionWords(description: String): String {
     val text = description.trim()

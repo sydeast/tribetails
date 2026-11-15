@@ -218,6 +218,26 @@ const ID_SHAPES: readonly (readonly [RegExp, (m: RegExpExecArray) => string])[] 
   [/^OPERATOR_CROSSTENANT_ACCESS(?: uid=\S+)?(?: target=\S+)?$/, () => ACTIVITY_WORDS.householdOpened],
 ];
 
+/**
+ * #1819: a notice that was held back, stored before the server wrote it in
+ * words. Those rows read "NOTIFICATION_DISPATCHED uid=<id>" with the reason as
+ * a stored key in the payload. Same words as the server's
+ * (`mytribe/functions/src/lib/activityWords.ts`), Android and the desktop
+ * console, except that the notification is named by its key in words.
+ */
+const NOT_SENT_REASON_WORDS: Record<string, string> = {
+  household_notices_off: 'notices to households are turned off',
+  household_prefs_suppressed: 'this notification is turned off in Settings',
+  household_has_no_portal_account: 'nobody in the household has a MyTribe sign-in',
+  no_recipient: 'there was nobody to send it to',
+};
+export function noticeNotSentWords(key: string, reason: string): string {
+  const name = notificationQuoted(key);
+  const r = reason.trim();
+  if (r === 'household_notices_off') return `Held back ${name}: ${NOT_SENT_REASON_WORDS[r]}`;
+  const why = NOT_SENT_REASON_WORDS[r];
+  return why === undefined ? `Did not send ${name}` : `Did not send ${name}: ${why}`;
+}
 /** A stored description as the operator reads it. Text with no id or path passes through. */
 export function activityDescriptionWords(description: string): string {
   const text = description.trim();
