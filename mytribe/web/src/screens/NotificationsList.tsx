@@ -10,7 +10,7 @@ import {
 import type { GetMyHomeResult } from '../api/types';
 import { useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
-import { householdNoteOf, markReadInPages, notificationTarget, notificationWhen } from '../lib/notificationsList';
+import { fullMessageOf, markReadInPages, notificationTarget, notificationWhen, rowNoteOf } from '../lib/notificationsList';
 import { myHomeKey } from '../lib/portalQueryKeys';
 import { markReadLocally, undoLocalRead } from '../lib/unreadBadge';
 import { PortalNav } from '../components/PortalNav';
@@ -167,6 +167,8 @@ export function NotificationsList() {
               {items.map((item) => {
                 const unread = item.readAt === null;
                 const opened = item.id === entry;
+                const message = fullMessageOf(item);
+                const note = rowNoteOf(item);
                 return (
                   <li key={item.id}>
                     <button
@@ -184,9 +186,15 @@ export function NotificationsList() {
                           {item.title || item.key}
                         </span>
                         {item.description && <span className="nl-row__desc">{item.description}</span>}
-                        {householdNoteOf(item) !== null && (
+                        {/* #2368: the rest of a cut push, drawn as text. */}
+                        {message !== null && (
+                          <span className="nl-row__message" data-testid="notification-full-message">
+                            {message}
+                          </span>
+                        )}
+                        {note !== null && (
                           <span className="nl-row__note" data-testid="notification-household-note">
-                            {householdNoteOf(item)}
+                            {note}
                           </span>
                         )}
                       </span>

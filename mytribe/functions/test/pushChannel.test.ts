@@ -46,8 +46,13 @@ function buildPushDbMock(opts: {
   template?: { title?: string; body?: string; dataRoute?: string } | null;
   tokens?: string[];
   deletes?: string[];
+  /** #2368: every `update` made, in order, with the path it was made to. */
+  updates?: Array<{ path: string; patch: Record<string, unknown> }>;
+  /** #2368: an `update` that throws (the entry was taken back, or Firestore refused it). */
+  updateFails?: Error;
 }) {
   const deletes: string[] = opts.deletes ?? [];
+  const updates = opts.updates ?? [];
 
   const docMock = (path: string) => ({
     get: vi.fn(async () => {
@@ -58,6 +63,10 @@ function buildPushDbMock(opts: {
     }),
     delete: vi.fn(async () => {
       deletes.push(path);
+    }),
+    update: vi.fn(async (patch: Record<string, unknown>) => {
+      if (opts.updateFails) throw opts.updateFails;
+      updates.push({ path, patch });
     }),
   });
 
@@ -80,7 +89,7 @@ function buildPushDbMock(opts: {
     },
   };
 
-  return { db, deletes };
+  return { db, deletes, updates };
 }
 
 describe('sendPushChannel', () => {
@@ -353,6 +362,73 @@ describe('sendPushChannel', () => {
       });
       expect(sent().notification.body).toBe(longNote);
       expect(sent().data).toEqual({ notificationKey: 't.k' });
+    });
+    /**
+     * #2368: the entry a cut push opens shows the rest of the message. The
+     * sender keeps the message as rendered on that entry, before the push goes.
+     */
+    describe('the whole message is kept on the entry a cut push opens', () => {
+      const visit = { route: '/schedule/v1', data: { targetType: 'booking', targetId: 'v1', visitId: 'v1', batchId: 'b1' } };
+      const entry = { readInList: { route: '/notifications?entry=n1', entryId: 'n1' }, officeNote: false };
+      async function send(
+        template: { title: string; body: string },
+        args: Record<string, unknown>,
+        db: { updateFails?: Error } = {},
+      ) {
+        const order: string[] = [];
+        const updates: Array<{ path: string; patch: Record<string, unknown> }> = [];
+        const ctx = buildPushDbMock({ template, tokens: ['t1'], updates, ...db });
+        mocks.dbFn.mockReturnValue(ctx.db);
+        mocks.multicast.mockImplementation(async () => {
+          order.push(`send after ${updates.length} update(s)`);
+          return ok;
+        });
+        await sendPushChannel({ def: def(), recipientUid: 'u1', data: {}, stream: 'kinfolk', ...args } as never);
+        return { updates, order };
+      }
+      it('a cut line writes the message as rendered onto its entry, one field, before the push is sent', async () => {
+        const body = `We could not take it.\n\n{{note}}`;
+        const { updates, order } = await send({ title: 'Declined', body }, { data: { note: longNote }, open: { ...visit, ...entry } });
+        expect(updates).toEqual([
+          { path: 'notifications/n1', patch: { householdMessage: `We could not take it.\n\n${longNote}` } },
+        ]);
+        expect(order).toEqual(['send after 1 update(s)']);
+        expect(sent().notification.body.length).toBe(200);
+        expect(sent().data['route']).toBe('/notifications?entry=n1');
+      });
+      it('keeps what was typed as typed: no escaping, no decoding, a tag stays text', async () => {
+        const note = `O'Malley & Rex <b>loved</b> it, 5 > 3 &amp; all. ${'More words here. '.repeat(14)}`.trim();
+        const { updates } = await send({ title: 'Declined', body: '{{note}}' }, { data: { note }, open: { ...visit, ...entry } });
+        expect(updates[0]!.patch['householdMessage']).toBe(note);
+      });
+      it('a line that was not cut writes nothing, with or without the office note', async () => {
+        expect((await send({ title: 'A', body: 'x'.repeat(200) }, { open: { ...visit, ...entry } })).updates).toEqual([]);
+        mocks.multicast.mockClear();
+        const noted = await send({ title: 'A', body: 'Tap for details.' }, { open: { ...visit, ...entry, officeNote: true } });
+        expect(noted.updates).toEqual([]);
+        expect(sent().data['route']).toBe('/notifications?entry=n1');
+      });
+      it('a work order that names no entry writes nothing and still opens the plain list', async () => {
+        const { updates } = await send(
+          { title: 'A', body: '{{note}}' },
+          { data: { note: longNote }, open: { ...visit, readInList: { route: '/notifications' }, officeNote: false } },
+        );
+        expect(updates).toEqual([]);
+        expect(sent().data['route']).toBe('/notifications');
+      });
+      it.each(['business', 'staff'] as const)('a %s copy is never written to, however long', async (stream) => {
+        const { updates } = await send({ title: 'A', body: '{{note}}' }, { stream, data: { note: longNote }, open: { ...visit, ...entry } });
+        expect(updates).toEqual([]);
+      });
+      it('a refused write is logged and the push still goes, opening the entry', async () => {
+        const { order } = await send(
+          { title: 'A', body: '{{note}}' },
+          { data: { note: longNote }, open: { ...visit, ...entry } },
+          { updateFails: new Error('5 NOT_FOUND: no entity to update') },
+        );
+        expect(order).toEqual(['send after 0 update(s)']);
+        expect(sent().data['route']).toBe('/notifications?entry=n1');
+      });
     });
     /**
      * Ruling 2026-11-14: the short line links to the full message. A cut line,

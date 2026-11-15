@@ -3,10 +3,12 @@ import type { InfiniteData } from '@tanstack/react-query';
 import type { ListMyNotificationsResult, NotificationItemDto } from '../api/notificationsApi';
 import {
   bellAccessibleName,
+  fullMessageOf,
   markReadInPages,
   notificationTarget,
   notificationWhen,
   notificationsListSearch,
+  rowNoteOf,
   unreadBadgeLabel,
 } from './notificationsList';
 
@@ -205,5 +207,33 @@ describe('notificationsListSearch: the entry a tapped push opens the list at', (
   });
   it('ignores every other key', () => {
     expect(notificationsListSearch({ redirect: 'https://evil.example', tale: 't1' })).toEqual({});
+  });
+});
+
+/** #2368: the rest of a cut push, on the entry the tap opens. */
+describe('fullMessageOf', () => {
+  it('reads the kept message, trimmed, line breaks kept', () => {
+    expect(fullMessageOf(item({ fullMessage: '  Line one.\n\nLine two.  ' }))).toBe('Line one.\n\nLine two.');
+  });
+  it('an entry with none, a blank one, or a callable that sent another shape reads as none', () => {
+    expect(fullMessageOf(item())).toBeNull();
+    expect(fullMessageOf(item({ fullMessage: '   ' }))).toBeNull();
+    expect(fullMessageOf(item({ fullMessage: 42 as unknown as string }))).toBeNull();
+  });
+});
+
+describe('rowNoteOf', () => {
+  const note = 'We are away that week.';
+  it("shows the office's note when there is no whole message", () => {
+    expect(rowNoteOf(item({ detail: { householdNote: note } }))).toBe(note);
+  });
+  it('leaves the note off when the whole message already says it, however its spaces fell', () => {
+    expect(rowNoteOf(item({ detail: { householdNote: note }, fullMessage: 'Declined.\n\nWe are away\nthat   week.' }))).toBeNull();
+  });
+  it('keeps the note when the whole message does not carry it', () => {
+    expect(rowNoteOf(item({ detail: { householdNote: note }, fullMessage: 'Declined. Please ask again.' }))).toBe(note);
+  });
+  it('no note is no note', () => {
+    expect(rowNoteOf(item({ fullMessage: 'Declined.' }))).toBeNull();
   });
 });
