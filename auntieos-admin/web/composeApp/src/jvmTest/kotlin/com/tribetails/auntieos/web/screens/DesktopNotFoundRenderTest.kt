@@ -4,14 +4,21 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.runDesktopComposeUiTest
+import androidx.compose.runtime.remember
+import com.tribetails.auntieos.web.data.FirestoreAuntieDataSource
+import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.JvmFirestoreFixtures
+import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.screens.directory.KinEditScreen
 import com.tribetails.auntieos.web.screens.directory.KinfolkEditScreen
 import com.tribetails.auntieos.web.screens.directory.KinfolkProfileScreen
+import com.tribetails.auntieos.web.screens.kintales.KinTaleByReportScreen
 import com.tribetails.auntieos.web.screens.kintales.KinTaleComposeScreen
+import com.tribetails.auntieos.web.screens.notifications.NotificationTargetScreen
+import com.tribetails.auntieos.web.screens.notifications.notificationTargetScreen
 import com.tribetails.auntieos.web.screens.sessions.KinCareDetailScreen
 import com.tribetails.auntieos.web.theme.AuntieAppTheme
 import com.tribetails.auntieos.web.theme.ThemeMode
@@ -91,5 +98,52 @@ class DesktopNotFoundRenderTest {
             }
         }
         assertNotFoundShows("This KinCare couldn't be found. It may have been removed.")
+    }
+    // #2099: Open on a visit notification lands here, on the visit's own id.
+    @Test
+    fun aVisitNotificationOpensTheVisitEvenWhenItIsCancelled() = runDesktopComposeUiTest {
+        JvmFirestoreFixtures.sessions = listOf(
+            KinCareSession(_id = "vis_v1", kinfolkName = "The Rivera Home", status = "CANCELLED"),
+        )
+        JvmFirestoreFixtures.kinfolk = emptyList()
+        JvmFirestoreFixtures.reports = emptyList()
+        val target = notificationTargetScreen("booking", "v1") as NotificationTargetScreen.Visit
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                KinCareDetailScreen(kinCareId = target.sessionId, onBack = {})
+            }
+        }
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodesWithText("The Rivera Home", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        assert(onAllNodesWithTag(NOT_FOUND_TAG, useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+    }
+    @Test
+    fun aVisitNotificationForAVisitThatIsGoneSaysSo() = runDesktopComposeUiTest {
+        JvmFirestoreFixtures.sessions = listOf(KinCareSession(_id = "vis_other"))
+        val target = notificationTargetScreen("booking", "v-gone") as NotificationTargetScreen.Visit
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                KinCareDetailScreen(kinCareId = target.sessionId, onBack = {})
+            }
+        }
+        assertNotFoundShows("This KinCare couldn't be found. It may have been removed.")
+    }
+    // #2355: Open on a KinTale notification whose KinTale was deleted.
+    @Test
+    fun aKinTaleNotificationForAKinTaleThatIsGoneSaysSo() = runDesktopComposeUiTest {
+        JvmFirestoreFixtures.reports = listOf(KinCareReport(_id = "rep-other", sessionId = "vis_v1"))
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                val client = remember { FirestoreClient() }
+                KinTaleByReportScreen(
+                    reportId = "rep-gone",
+                    dataSource = remember { FirestoreAuntieDataSource(client) },
+                    onBack = {},
+                    client = client,
+                )
+            }
+        }
+        assertNotFoundShows("This KinTale couldn't be found. It may have been removed.")
     }
 }

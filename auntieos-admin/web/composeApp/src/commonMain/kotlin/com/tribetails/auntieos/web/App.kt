@@ -199,14 +199,18 @@ private fun SignedInApp(
     // #2028: the visit request a notification opened Bookings for (household/request id).
     var bookingsFocusRequest by remember { mutableStateOf<String?>(null) }
     // #1199: the visit an invoice's bound line opened in Auntie Time; dropped on leaving it.
-    var invoiceLineVisitId by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(current) { if (current != Destination.Sessions) invoiceLineVisitId = null }
+    // #2099: a visit notification's Open sets it too.
+    var visitToOpenId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(current) { if (current != Destination.Sessions) visitToOpenId = null }
     var reportSessionId by remember { mutableStateOf(if (initialRoute.dest == Destination.KinTales) initialRoute.detailId else null) }
     // #1594: the KinTale list's search and sort, held above the list so a
     // KinTale opened from it closes back onto the same filtered list. Leaving
     // KinTales lets it go, as the web list opens fresh from the rail.
     val kinTaleListFilter = remember { KinTaleListFilter() }
     LaunchedEffect(current) { if (current != Destination.KinTales) kinTaleListFilter.reset() }
+    // #2355: the KinTale a notification's Open named, by its report id; dropped on leaving KinTales.
+    var noticeReportId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(current) { if (current != Destination.KinTales) noticeReportId = null }
     // #1563: a stored KinTale draft handed to Communicate from KinTales or Home.
     // Communicate clears it once applied, so the next visit opens blank.
     var openDraft by remember { mutableStateOf<com.tribetails.auntieos.web.data.GeneratedDraft?>(null) }
@@ -441,7 +445,16 @@ private fun SignedInApp(
             )
             Destination.KinTales    -> {
                 val sessId = reportSessionId
-                if (sessId != null) {
+                val noticeReport = noticeReportId
+                if (noticeReport != null) {
+                    val dataSource = remember(firestoreClient) { FirestoreAuntieDataSource(firestoreClient) }
+                    com.tribetails.auntieos.web.screens.kintales.KinTaleByReportScreen(
+                        reportId   = noticeReport,
+                        dataSource = dataSource,
+                        onBack     = { noticeReportId = null },
+                        client     = firestoreClient,
+                    )
+                } else if (sessId != null) {
                     val dataSource = remember(firestoreClient) { FirestoreAuntieDataSource(firestoreClient) }
                     KinTaleReportScreen(
                         sessionId  = sessId,
@@ -460,7 +473,7 @@ private fun SignedInApp(
                 focusRequestKey = bookingsFocusRequest,
                 onFocusRequestConsumed = { bookingsFocusRequest = null },
             )
-            Destination.Sessions    -> KinCareSessionsScreen(initialKinCareId = invoiceLineVisitId)
+            Destination.Sessions    -> KinCareSessionsScreen(initialKinCareId = visitToOpenId)
             Destination.Schedule    -> ScheduleScreen()
             Destination.Invoices    -> {
                 val selId = selectedInvoiceId
@@ -468,7 +481,7 @@ private fun SignedInApp(
                     InvoiceDetailScreen(
                         invoiceId = selId,
                         onBack    = { selectedInvoiceId = null },
-                        onOpenVisit = { visitId -> invoiceLineVisitId = visitId; current = Destination.Sessions },
+                        onOpenVisit = { visitId -> visitToOpenId = visitId; current = Destination.Sessions },
                     )
                 } else {
                     InvoicesScreen(
@@ -529,14 +542,27 @@ private fun SignedInApp(
                     directoryKinfolkId = null
                     directoryKinId = null
                     directoryDecidePaymentId = null
-                    when (targetType.trim().lowercase()) {
-                        "invoice" -> { selectedInvoiceId = targetId; current = Destination.Invoices }
-                        "kintale" -> { reportSessionId = targetId; current = Destination.KinTales }
-                        "kinfolk" -> { directoryKinfolkId = targetId; current = Destination.Directory }
-                        // Bookings is a list view with no per-id deep link; land the
-                        // operator on the Bookings screen to action the request.
-                        "booking" -> { current = Destination.Bookings }
-                        else -> { /* unknown/blank target: no-op (no fake nav) */ }
+                    when (val screen = com.tribetails.auntieos.web.screens.notifications.notificationTargetScreen(targetType, targetId)) {
+                        is com.tribetails.auntieos.web.screens.notifications.NotificationTargetScreen.Invoice -> {
+                            selectedInvoiceId = screen.invoiceId; current = Destination.Invoices
+                        }
+                        // #2355: a notification names the KinTale by its report,
+                        // not by its visit; the screen finds the visit itself.
+                        is com.tribetails.auntieos.web.screens.notifications.NotificationTargetScreen.KinTale -> {
+                            noticeReportId = screen.reportId; current = Destination.KinTales
+                        }
+                        is com.tribetails.auntieos.web.screens.notifications.NotificationTargetScreen.Household -> {
+                            directoryKinfolkId = screen.kinfolkId; current = Destination.Directory
+                        }
+                        // #2099: the visit itself, on its KinCare detail, which
+                        // says so when the visit is gone. This used to drop the
+                        // id and land on the Bookings list.
+                        is com.tribetails.auntieos.web.screens.notifications.NotificationTargetScreen.Visit -> {
+                            visitToOpenId = screen.sessionId; current = Destination.Sessions
+                        }
+                        com.tribetails.auntieos.web.screens.notifications.NotificationTargetScreen.None -> {
+                            /* unknown/blank target: no-op (no fake nav) */
+                        }
                     }
                 },
                 onCreateQuote = { kinfolkId ->
