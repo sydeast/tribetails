@@ -24,6 +24,9 @@ import {
   CARD_APPLY_FALLBACK_FIELD,
   CARD_PAYMENT_METHOD,
   CARD_PAYMENT_RECORDED_BY,
+  PAID_EVENT_TYPES,
+  RECOVERED_FROM_FIELD,
+  SKIPPED_OUT_OF_ORDER,
   cardPaymentRowId,
   decideCardApply,
 } from '../lib/cardPaymentApply';
@@ -78,6 +81,11 @@ export const FOLLOWUP_TRACKED_FIELD = 'followupTracked';
 export const AUDIT_WRITTEN_FIELD = 'auditWrittenAt';
 export const NOTICE_SENT_FIELD = 'noticeSentAt';
 export const NOTICE_SKIPPED_FIELD = 'noticeSkippedReason';
+
+// #2344: the skipped-event outcome, the recovery stamp and the paid event
+// types live in `lib/cardPaymentApply.ts`, beside the rest of what the card
+// backfill script shares with this handler.
+export { PAID_EVENT_TYPES, RECOVERED_FROM_FIELD, SKIPPED_OUT_OF_ORDER };
 
 /**
  * How long the dispatcher ledger remembers this webhook's notice for one event.
@@ -405,20 +413,24 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   }
 
   // Idempotency: Stripe retries failed deliveries. Without a dedupe ledger
-  // the same event re-fires audits + notifications and can silently undo a
-  // manual admin mark-paid if a late `payment_failed` retry arrives after a
-  // successful `invoice.paid`. The transaction atomically (a) reserves the
-  // event id, (b) reads the current invoice state, (c) checks the new event
-  // is newer than the last-applied event of the opposite outcome. Skips any
-  // event that is a replay or an out-of-order older event.
+  // the same event re-fires audits + notifications. The transaction atomically
+  // (a) reserves the event id, (b) reads the current invoice state, and (c) for
+  // a FAILED event only, checks it is not older than the last event applied to
+  // the invoice. A replay is skipped; so is a failed event that arrives late.
+  //
+  // #2344: A PAID EVENT IS NEVER SKIPPED FOR ITS DATE. The card is already
+  // charged when Stripe says so. Until #2344 step (c) ran for every event, and
+  // a declined charge stamps the invoice with its own time, so a payment whose
+  // first delivery failed and whose retry arrived after a later decline on a
+  // newer checkout was answered 200 and written nowhere. Its event id was
+  // reserved by the skip, so no further retry could land it. What stops a paid
+  // event being applied twice is the per-payment claim and the per-invoice
+  // settlement check below, neither of which reads a date.
   const eventCreatedMs = ((event.created ?? 0) as number) * 1000;
   // `checkout.session.completed` is the canonical event for a `mode: 'payment'`
   // Checkout integration, which is what `payInvoice` creates. It was missing
   // here, so it fell through to the unhandled-type 202 below.
-  const isPaidEvent =
-    event.type === 'invoice.paid' ||
-    event.type === 'payment_intent.succeeded' ||
-    event.type === 'checkout.session.completed';
+  const isPaidEvent = PAID_EVENT_TYPES.includes(event.type);
   const isFailedEvent = event.type === 'invoice.payment_failed' || event.type === 'payment_intent.payment_failed';
   if (!isPaidEvent && !isFailedEvent) {
     res.status(202).json({ ok: true, ignored: true });
@@ -473,9 +485,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // One successful card payment now delivers TWO events that both mean paid —
   // `checkout.session.completed` and `payment_intent.succeeded` — carrying two
   // different `event.id`s, so `stripeEvents/{event.id}` cannot dedupe them
-  // against each other, and their `created` stamps are seconds-granular and
-  // usually equal, so the out-of-order guard (a strict `<`) lets the second
-  // through too. Unguarded, the second event writes a SECOND
+  // against each other, and no date check stands between a paid event and the
+  // invoice (#2344). Unguarded, the second event writes a SECOND
   // `payments/{eventId}` mirror doc — double-counting real money in the root
   // ledger — plus a second BILLING_INVOICE_PAID audit entry and a second
   // `invoice.payment.applied` notification to the household.
@@ -573,16 +584,32 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // #2276: why the card payment took the fallback landing, when it did. Read
   // back after the commit for the warn line, like the two above.
   let cardFallbackReason: string | null = null;
+  // #2344: this delivery is deciding a paid event an earlier build skipped.
+  let recoveredSkip = false;
   const decision = await db().runTransaction(async (tx) => {
     unresolvedAmount = false;
+    recoveredSkip = false;
     duplicateReason = null;
     unappliedCents = 0;
     cardFallbackReason = null;
     const dedupeSnap = await tx.get(dedupeRef);
-    if (dedupeSnap.exists) {
+    const storedEvent = dedupeSnap.exists ? ((dedupeSnap.data() ?? {}) as Record<string, unknown>) : null;
+    // #2344: A PAID EVENT THE OLD ORDER CHECK SKIPPED is not a replay of
+    // anything: nothing was written for it but this record. When Stripe sends
+    // it again (its own retry, or Resend in the dashboard) it is decided afresh
+    // below, like a first delivery, and this record is rewritten with what was
+    // decided. A skipped FAILED event stays skipped.
+    const recovering = isPaidEvent && storedEvent?.['appliedOutcome'] === SKIPPED_OUT_OF_ORDER;
+    recoveredSkip = recovering;
+    /** Writes this event's record: created on a first delivery, rewritten when recovering a skipped one. */
+    const reserveEvent = (data: Record<string, unknown>) => {
+      if (recovering) tx.set(dedupeRef, { ...data, [RECOVERED_FROM_FIELD]: SKIPPED_OUT_OF_ORDER });
+      else tx.create(dedupeRef, data);
+    };
+    if (storedEvent !== null && !recovering) {
       // #866: what the first delivery recorded, so a retry can finish a paid
       // event whose audit entry or household notice never went out.
-      const stored = (dedupeSnap.data() ?? {}) as Record<string, unknown>;
+      const stored = storedEvent;
       return {
         proceed: false,
         reason: 'replay' as const,
@@ -616,12 +643,15 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // (#2276) what the card payment is applied against. Read now, before the
     // first write: a Firestore transaction refuses reads after writes.
     const subPaymentsSnap = isPaidEvent ? await tx.get(ref.collection('payments')) : null;
-    const lastEventMs = invoice?.lastStripeEventAtMs ?? 0;
+    const lastEventMs =
+      typeof invoice?.lastStripeEventAtMs === 'number' && Number.isFinite(invoice.lastStripeEventAtMs)
+        ? invoice.lastStripeEventAtMs
+        : 0;
     if (claimSnap?.exists) {
       // The other event describing this same PaymentIntent already applied.
       // Reserve THIS event id so its own Stripe retries short-circuit at the
       // replay branch above, and mutate nothing else.
-      tx.create(dedupeRef, {
+      reserveEvent({
         type: event.type,
         receivedAt: FieldValue.serverTimestamp(),
         eventCreatedMs,
@@ -694,7 +724,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // a flagged row with no figure, never a guess.
       const chargeCents = eventAmountCents ?? 0;
       unappliedCents = chargeCents;
-      tx.create(dedupeRef, {
+      reserveEvent({
         type: event.type,
         receivedAt: FieldValue.serverTimestamp(),
         eventCreatedMs,
@@ -764,20 +794,24 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       return { proceed: false, reason: 'duplicate-invoice-checkout' as const };
     }
 
-    if (eventCreatedMs > 0 && eventCreatedMs < lastEventMs) {
-      // Out-of-order retry arriving after a newer event has already been
-      // applied. Reserve the id to prevent future replays but don't mutate.
+    if (isFailedEvent && eventCreatedMs > 0 && eventCreatedMs < lastEventMs) {
+      // A FAILED charge dated before the last event applied to this invoice:
+      // a late delivery of a decline the household has already got past.
+      // Reserve the id and write nothing else, so they are not told of it now.
+      //
+      // FAILED EVENTS ONLY (#2344). A paid event is money already taken, and
+      // is applied or held for the owner whatever its date.
       tx.create(dedupeRef, {
         type: event.type,
         receivedAt: FieldValue.serverTimestamp(),
         eventCreatedMs,
         familyId,
         invoiceId,
-        appliedOutcome: 'SKIPPED_OUT_OF_ORDER',
+        appliedOutcome: SKIPPED_OUT_OF_ORDER,
       });
       return { proceed: false, reason: 'out-of-order' as const };
     }
-    tx.create(dedupeRef, {
+    reserveEvent({
       type: event.type,
       receivedAt: FieldValue.serverTimestamp(),
       eventCreatedMs,
@@ -801,10 +835,11 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       });
     }
     // ── THE MONEY ─────────────────────────────────────────────────────────
-    const patch: Record<string, unknown> = {
-      lastStripeEventAtMs: eventCreatedMs,
-      lastStripeEventId: event.id,
-    };
+    // The order stamp only ever moves forward (#2344): a paid event dated
+    // before it is still applied, and must not wind it back for the failed
+    // events that are measured against it.
+    const patch: Record<string, unknown> =
+      eventCreatedMs >= lastEventMs ? { lastStripeEventAtMs: eventCreatedMs, lastStripeEventId: event.id } : {};
     if (!isPaidEvent) {
       // A failed charge changes nothing the invoice's money or state reads.
       tx.set(ref, patch, { merge: true });
@@ -1023,6 +1058,17 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       function: 'stripeWebhook',
       event: 'stripe.amount.unresolved',
       extra: { invoiceId, familyId, eventId: event.id, type: event.type },
+    });
+  }
+
+  if (recoveredSkip) {
+    // #2344: money that was charged and not recorded has now been decided.
+    // Loud, so the owner's check of the invoices it happened to has a trace.
+    logEvent({
+      severity: 'warn',
+      function: 'stripeWebhook',
+      event: 'stripe.outOfOrder.recovered',
+      extra: { invoiceId, familyId, eventId: event.id, type: event.type, paymentIntentId, reason: decision.reason },
     });
   }
 

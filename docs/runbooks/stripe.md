@@ -386,3 +386,41 @@ notification, exactly as if it had arrived on time.
 
 This is why the fix is not just forward-looking, and it is a better answer than
 hand-entering the payments.
+
+### Recovering a payment that was skipped for its date (#2344)
+
+Before #2344 the webhook skipped a paid event dated earlier than the last event
+it had applied to the same invoice, and a declined charge counted as one. A
+payment whose first delivery failed, retried after a decline on a newer checkout
+page, was answered 200 and written nowhere: the card was charged, the invoice
+stayed open, and there was no payment row, no Activity Log line and no notice.
+All it left is `stripeEvents/{eventId}` with `appliedOutcome:
+SKIPPED_OUT_OF_ORDER` and a paid event type (`checkout.session.completed`,
+`payment_intent.succeeded` or `invoice.paid`). The same outcome on a
+`payment_failed` or dispute event is normal and moved no money.
+
+To find them, run the card backfill as a dry run from `mytribe/functions`:
+
+```
+npm run backfill:card-invoice-payments
+```
+
+Its second pass prints one `[report:skipped_paid_event:...]` line per skipped
+paid event, with the Stripe event id, the invoice, the household and how the
+invoice reads now. That pass only reads, in the dry run and with `--allow-prod`
+alike. One payment sends two events with the same time, so two lines for one
+invoice at one time are one payment.
+
+To recover one, **resend the event from the Stripe dashboard** (Developers →
+Events → the event → Resend). The webhook now decides it like a first delivery:
+
+- the invoice still owes the money: the payment is applied, with its row on the
+  invoice, the ledger row, the Activity Log line and the household notice;
+- the invoice has been paid another way since: the charge is held as an
+  unapplied payment for the owner to decide, like any second charge on a paid
+  invoice. Nothing is credited or refunded.
+
+Resending the second event of the same payment changes nothing. Each recovered
+event logs `stripe.outOfOrder.recovered`, and its record gains
+`recoveredFromOutcome`. Stripe allows a resend only for some weeks after the
+event; past that, record the payment by hand from the charge in the dashboard.

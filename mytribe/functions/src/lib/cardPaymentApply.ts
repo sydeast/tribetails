@@ -64,6 +64,27 @@ export const CARD_PAYMENT_RECORDED_BY = 'system:stripe';
 /** Stamped on the invoice and the ledger row when the fallback landing was used. Defined beside the paid rule that reads it. */
 export { CARD_APPLY_FALLBACK_FIELD } from './invoicePaidGate';
 
+/**
+ * #2344. `appliedOutcome` on `stripeEvents/{id}` for an event skipped as older
+ * than the last one applied to its invoice. The webhook now writes it for a
+ * FAILED charge only (`billing/stripeDispute.ts` writes the same word for its
+ * own two lanes). A record carrying it with one of `PAID_EVENT_TYPES` is from
+ * before #2344: a card payment that was charged and written nowhere. The
+ * webhook decides such an event afresh when Stripe sends it again, and
+ * `scripts/backfillCardInvoicePayments.ts` lists them.
+ */
+export const SKIPPED_OUT_OF_ORDER = 'SKIPPED_OUT_OF_ORDER';
+
+/** Stamped on the event record when a paid event skipped before #2344 is decided on a later delivery. */
+export const RECOVERED_FROM_FIELD = 'recoveredFromOutcome';
+
+/** The Stripe event types that mean money was collected. */
+export const PAID_EVENT_TYPES: readonly string[] = [
+  'invoice.paid',
+  'payment_intent.succeeded',
+  'checkout.session.completed',
+];
+
 /** The fallback reason for a stated balance lower than the payment rows leave owing. */
 export const STATED_BELOW_RECORDED = 'stated_balance_below_recorded_payments';
 
