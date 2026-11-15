@@ -412,7 +412,9 @@ alike. One payment sends two events with the same time, so two lines for one
 invoice at one time are one payment.
 
 To recover one, **resend the event from the Stripe dashboard** (Developers →
-Events → the event → Resend). The webhook now decides it like a first delivery:
+Events → the event → Resend). **Only after the release that carries #2344 is
+live:** the build before it answers a resend 200 and changes nothing. The
+webhook then decides it like a first delivery:
 
 - the invoice still owes the money: the payment is applied, with its row on the
   invoice, the ledger row, the Activity Log line and the household notice;

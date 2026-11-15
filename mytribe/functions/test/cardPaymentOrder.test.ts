@@ -456,6 +456,26 @@ describe('#2344: a payment the old build skipped can still be landed', () => {
     ]);
   });
 
+  it('a notice that fails on the recovering delivery answers 500, and the retry sends it without a second row', async () => {
+    paid(1, 4000, 1);
+    docs[INVOICE] = { ...OPEN, lastStripeEventAtMs: ms(10), lastStripeEventId: 'evt_fail_2' };
+    docs['stripeEvents/evt_cs_1'] = skipped('checkout.session.completed');
+    hooks.enqueue.mockRejectedValueOnce(new Error('queue down'));
+
+    expect(await deliver('session-1')).toBe(500);
+    expect(invoiceRows()).toHaveLength(1);
+    expect(await deliver('session-1')).toBe(200);
+
+    expect(invoiceRows().map(([p]) => p)).toEqual([`${INVOICE}/payments/stripe_pi_1`]);
+    expect(docs[INVOICE]).toMatchObject({ status: 'paid', paidCents: 4000, amountDueCents: 0 });
+    expect(ledgerRows()).toHaveLength(1);
+    expect(outcome('evt_cs_1')).toBe('PAID');
+    // Two tries at the one notice: the first threw, the second went out.
+    expect(notices('invoice.payment.applied')).toHaveLength(2);
+    expect(audits('BILLING_INVOICE_PAID')).toHaveLength(1);
+    expect(docs['stripeEvents/evt_cs_1']!.noticeSentAt).toBeTruthy();
+  });
+
   it('and when the invoice was paid some other way meanwhile, the charge is held for the owner', async () => {
     paid(1, 4000, 1);
     docs[INVOICE] = {
