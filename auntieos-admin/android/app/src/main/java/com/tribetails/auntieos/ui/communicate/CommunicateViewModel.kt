@@ -487,7 +487,9 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                 AuntieLog.e("Content generation failed", e)
                 _uiState.value = _uiState.value.copy(
                     isGenerating = false,
-                    error = e.message ?: "Generation failed"
+                    // #2052: plain words only, never the device's or the
+                    // provider's own error text.
+                    error = com.tribetails.auntieos.ui.kintales.AskAuntieCopy.forFailure(e),
                 )
             }
         }

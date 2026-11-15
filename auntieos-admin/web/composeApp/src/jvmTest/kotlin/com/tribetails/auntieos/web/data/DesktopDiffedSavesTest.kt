@@ -1,5 +1,10 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.screens.kintales.KeptNotes
+import com.tribetails.auntieos.web.screens.kintales.askAuntieStateFor
+import com.tribetails.auntieos.web.screens.kintales.keptNotesOrNull
+import com.tribetails.auntieos.web.screens.kintales.withDraftTaken
+import com.tribetails.auntieos.web.screens.kintales.withNotesRestored
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -110,6 +115,36 @@ class DesktopDiffedSavesTest {
         assertTrue(fs.getAt(doc, listOf("fieldResponses", "k1|walked")) != null)
     }
 
+    // #2052: "Back to my notes" survives closing the composer. The notes ride
+    // on the tale, in the same write as the draft that replaced them.
+    @Test
+    fun takingAuntiesDraftWritesTheNotesWithItInOneWriteAndGoingBackClearsThem() = runBlocking<Unit> {
+        seedReport()
+        val loaded = JvmFirestoreRest.getDoc<KinCareReport>("kin_care_reports", "r1")!!
+        assertEquals("", loaded.keptNotes, "a tale saved before the notes were kept loads with none")
+        assertEquals(null, loaded.keptNotesOrNull())
+        val kept = KeptNotes(notes = loaded.bodyCopy, draftBody = "Everyone ate.")
+        val taken = loaded.withDraftTaken("Everyone ate.", kept)
+        assertEquals(WriteResult.Ok(true), FirestoreClient().updateKinTaleReport(loaded, taken))
+        assertEquals(1, masks.size, "the draft and the notes it replaced go out together")
+        assertEquals(setOf("bodyCopy", "keptNotes", "keptNotesDraft"), masks.single()!!.toSet())
+        val doc = stored("kin_care_reports/r1")
+        assertEquals(str("Everyone ate."), doc["bodyCopy"])
+        assertEquals(str(loaded.bodyCopy), doc["keptNotes"])
+        assertEquals(str("Everyone ate."), doc["keptNotesDraft"])
+        // Closed and opened again: the tale itself still says what to put back.
+        val reopened = JvmFirestoreRest.getDoc<KinCareReport>("kin_care_reports", "r1")!!
+        assertEquals(kept, reopened.keptNotesOrNull())
+        assertEquals(kept, askAuntieStateFor(reopened).kept)
+        masks.clear()
+        val restored = reopened.withNotesRestored(kept.notes)
+        assertEquals(WriteResult.Ok(true), FirestoreClient().updateKinTaleReport(reopened, restored))
+        assertEquals(setOf("bodyCopy", "keptNotes", "keptNotesDraft"), masks.single()!!.toSet())
+        val after = stored("kin_care_reports/r1")
+        assertEquals(str(loaded.bodyCopy), after["bodyCopy"])
+        assertEquals(str(""), after["keptNotes"], "cleared to blank text, never null")
+        assertEquals(str(""), after["keptNotesDraft"])
+    }
     @Test
     fun aChangedReportTimestampIsWrittenAsATimestamp() = runBlocking<Unit> {
         seedReport()

@@ -29,6 +29,8 @@ import com.tribetails.auntieos.domain.scopedKinfolkId
 import com.tribetails.auntieos.ui.admin.scheduling.CalendarSyncRun
 import com.tribetails.auntieos.ui.admin.scheduling.calendarSyncRunFrom
 import com.tribetails.auntieos.ui.directory.familyKinPathStamp
+import com.tribetails.auntieos.ui.kintales.AskAuntieCopy
+import com.tribetails.auntieos.ui.kintales.GenerateFailure
 import com.tribetails.auntieos.ui.directory.restoredKinfolkStatusFrom
 import com.tribetails.auntieos.util.AuntieLog
 import com.tribetails.auntieos.voice.VoiceAccessToken
@@ -893,7 +895,7 @@ class AuntieRepository(
             // removed together with the communicateGenerateViaFunction flag in a
             // separate flag de-gating pass) and no longer selects a backend.
             val idToken = auth.currentUser?.getIdToken(false)?.await()?.token
-                ?: error("Admin sign-in required for generate")
+                ?: throw GenerateFailure(AskAuntieCopy.SIGN_IN)
             val resp = n8n.generateViaFunction("Bearer $idToken", request)
             if (!resp.isSuccessful) {
                 // The function returns a byte-compatible GenerateResponse even on error
@@ -903,11 +905,16 @@ class AuntieRepository(
                 val parsedError = runCatching {
                     com.google.gson.Gson().fromJson(raw, GenerateResponse::class.java)?.error
                 }.getOrNull()
-                val errorMsg = parsedError ?: "generate failed with code ${resp.code()}: ${raw.take(220)}"
-                AuntieLog.e(errorMsg)
-                error(errorMsg)
+                // #2052: the raw body and the status go to the log. The screen
+                // gets the server's own plain sentence, or one of ours.
+                AuntieLog.e("generate failed with code ${resp.code()}: ${raw.take(220)}")
+                throw GenerateFailure(AskAuntieCopy.plain(parsedError, resp.code()))
             }
-            resp.body() ?: error("Empty response body from generate")
+            val body = resp.body() ?: throw GenerateFailure(AskAuntieCopy.FAILED)
+            if (body.generatedCopy.isBlank()) {
+                throw GenerateFailure(AskAuntieCopy.plain(body.error))
+            }
+            body
         }
     }.onFailure { AuntieLog.e("Error during generation", it) }
 

@@ -24,6 +24,7 @@ import {
   decodeFieldResponses,
   perPetChecklistRows,
   perVisitChecklistRows,
+  tickedCareTasks,
   setChecklistResponse,
   type ChecklistContext,
   type ChecklistRow,
@@ -206,6 +207,69 @@ export function templateDefaultMessage(template: Pick<KinTaleTemplate, 'defaultE
 }
 
 /**
+ * #2052: the Auntie's own notes, kept from the moment she took a draft so
+ * "Back to my notes" can put them back. `draftBody` is the draft as it went
+ * in, which is how a later Ask Auntie tells her notes from Auntie's words.
+ */
+export interface KeptNotes {
+  notes: string;
+  draftBody: string;
+  title: string;
+  titleGeneratedByAi: boolean;
+}
+/**
+ * #2052: put the draft Auntie offered into the tale. The note takes the draft;
+ * the headline takes Auntie's only when the Auntie has not typed one, because
+ * a headline she typed is hers.
+ */
+export function withAuntieDraft(draft: KinTaleDraft, offered: GeneratedDraft): KinTaleDraft {
+  const takeTitle = draft.title.trim() === '' && offered.title.trim() !== '';
+  return {
+    ...draft,
+    bodyCopy: offered.body,
+    title: takeTitle ? offered.title : draft.title,
+    titleGeneratedByAi: takeTitle ? true : draft.titleGeneratedByAi,
+  };
+}
+/**
+ * #2052: put the Auntie's notes back. The headline goes back too, but only
+ * while it is still the one Auntie wrote: one typed since is left alone.
+ */
+export function withNotesRestored(draft: KinTaleDraft, kept: KeptNotes): KinTaleDraft {
+  const headlineIsAunties = draft.titleGeneratedByAi && !kept.titleGeneratedByAi;
+  return {
+    ...draft,
+    bodyCopy: kept.notes,
+    title: headlineIsAunties ? kept.title : draft.title,
+    titleGeneratedByAi: headlineIsAunties ? kept.titleGeneratedByAi : draft.titleGeneratedByAi,
+  };
+}
+/**
+ * #2052: what Ask Auntie works from. Her notes, always. While the note still
+ * holds the draft exactly as Auntie wrote it, the notes are the ones kept from
+ * before, so asking again never feeds a draft back in as though the Auntie had
+ * said it. Once she has changed the note, the note is her words again.
+ */
+export function notesForAuntie(bodyCopy: string, kept: KeptNotes | null): string {
+  return kept !== null && bodyCopy === kept.draftBody ? kept.notes : bodyCopy;
+}
+/**
+ * #2052: the notes a SAVED draft still holds, for a composer that was closed
+ * and reopened. Null when it holds none. The headline comes back as it stands
+ * now, so "Back to my notes" after a reopen puts the note back and leaves the
+ * headline alone: which of the two wrote it is no longer known for certain.
+ */
+export function keptNotesOnDraft(draft: KinTaleDraft): KeptNotes | null {
+  const notes = draft.keptNotes ?? '';
+  if (notes.trim() === '') return null;
+  return {
+    notes,
+    draftBody: draft.keptNotesDraft ?? '',
+    title: draft.title,
+    titleGeneratedByAi: draft.titleGeneratedByAi,
+  };
+}
+/**
  * Rehydrate an editable draft off an already-streamed `KinTaleEntry` row.
  * Defaulted for the same reason as `scaffoldKinTaleDraft` above.
  *
@@ -232,6 +296,10 @@ export function draftFromKinTaleEntry(report: KinTaleEntry): KinTaleDraft {
     mediaFileIds: report.mediaFileIds ?? [],
     templateId: report.templateId ?? '',
     fieldResponses: decodeFieldResponses(report.fieldResponses),
+    // #2052: a draft saved before these existed has neither, and loads as
+    // "nothing to put back". Anything that is not text is read the same way.
+    keptNotes: typeof report.keptNotes === 'string' ? report.keptNotes : '',
+    keptNotesDraft: typeof report.keptNotesDraft === 'string' ? report.keptNotesDraft : '',
   };
 }
 
@@ -416,6 +484,12 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     'kintale.published',
   );
   const [banner, setBanner] = useState<Banner_ | null>(null);
+  /** #2052: the draft Auntie offered, shown beside the note until it is used or set aside. */
+  const [auntieDraft, setAuntieDraft] = useState<GeneratedDraft | null>(null);
+  /** #2052: the Auntie's notes from before she took a draft, while they can still be put back. */
+  const [keptNotes, setKeptNotes] = useState<KeptNotes | null>(null);
+  /** The last draft Auntie wrote on this tale, so asking again opens differently. */
+  const [lastAuntieDraftBody, setLastAuntieDraftBody] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
   const { showToast } = useToast();
 
@@ -457,37 +531,66 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    */
   const isSent = storedRow !== undefined && kinTaleState(storedRow.status ?? '') === 'sent';
   /**
-   * Fold a generated draft into the form.
+   * #2052: the notes that can be put back. The ones kept while this composer
+   * has been open, else the ones the saved draft carries from an earlier
+   * sitting, on this device or another.
+   */
+  // A tale already sent offers none from storage, whatever it carries: the
+  // household is reading that note, and working notes never go over it.
+  const kept = keptNotes ?? (draft !== null && !isSent ? keptNotesOnDraft(draft) : null);
+  /**
+   * #2052: hold what Auntie wrote BESIDE the note, never in it.
    *
-   * The body is replaced: asking Auntie to write is asking for a new body, and
-   * the operator asked. The TITLE is only filled when blank, because a headline
-   * the operator typed is theirs and silently overwriting it is the one thing
-   * this button must never do. `titleGeneratedByAi` records which happened, and
-   * any keystroke in the headline field clears it.
+   * This used to replace the note outright, and the notes the Auntie had typed
+   * were gone with no way back. It also made the draft look like her own
+   * words the moment it arrived, invented details and all. Now the note is not
+   * touched: the draft sits in its own panel under her notes until she takes it
+   * ("Use this draft") or sets it aside ("Keep my notes").
    */
   function applyGenerated(result: GeneratedDraft) {
-    setDraft((d) => {
-      if (!d) return d;
-      const titleIsBlank = d.title.trim() === '';
-      const takeTitle = titleIsBlank && result.title.trim() !== '';
-      return {
-        ...d,
-        bodyCopy: result.body,
-        title: takeTitle ? result.title : d.title,
-        titleGeneratedByAi: takeTitle ? true : d.titleGeneratedByAi,
-      };
-    });
+    setAuntieDraft(result);
+    setLastAuntieDraftBody(result.body);
     // The copy is in hand either way; the draft ROW failing to persist is a
     // separate fact and it stays on a persistent surface, not a toast.
     if (result.draftWriteFailed) {
       setBanner({
         tone: 'error',
-        text: 'Auntie wrote the tale, but the draft row did not save. Copy the text somewhere safe before you navigate away.',
+        text: 'Auntie wrote a draft, but it did not save to the drafts list. It is below; use it or copy it before you leave this page.',
       });
       return;
     }
     setBanner(null);
-    showToast('Auntie drafted a tale. Edit away.');
+    showToast("Auntie's draft is ready. Your notes are untouched.");
+  }
+  /** #2052: take the offered draft, keeping the notes it replaces so they can come back. */
+  function handleUseAuntieDraft() {
+    if (draft === null || auntieDraft === null) return;
+    // Notes already kept stay the notes: taking a second draft over the
+    // first must not make the first draft "her notes".
+    const notes = notesForAuntie(draft.bodyCopy, kept);
+    setKeptNotes({
+      notes,
+      draftBody: auntieDraft.body,
+      title: kept !== null && draft.titleGeneratedByAi ? kept.title : draft.title,
+      titleGeneratedByAi: kept !== null && draft.titleGeneratedByAi ? kept.titleGeneratedByAi : draft.titleGeneratedByAi,
+    });
+    // The notes ride on the draft, so the next save keeps them with the body
+    // that replaced them. A tale already sent keeps them on this screen only:
+    // a sent tale never carries working notes.
+    setDraft({
+      ...withAuntieDraft(draft, auntieDraft),
+      keptNotes: isSent ? '' : notes,
+      keptNotesDraft: isSent ? '' : auntieDraft.body,
+    });
+    setAuntieDraft(null);
+  }
+  /** #2052: put the Auntie's own notes back where the draft is. */
+  function handleRestoreNotes() {
+    if (kept === null) return;
+    const restoring = kept;
+    setDraft((d) => (d ? { ...withNotesRestored(d, restoring), keptNotes: '', keptNotesDraft: '' } : d));
+    setKeptNotes(null);
+    showToast('Your notes are back.');
   }
 
   // Reset hydration whenever the identity of what we're composing changes
@@ -498,6 +601,9 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
     setLoadedDraft(null);
     setHydrated(false);
     setResumedDraft(false);
+    setAuntieDraft(null);
+    setKeptNotes(null);
+    setLastAuntieDraftBody('');
     setBanner(null);
   }, [kinTaleId, effectiveSessionId]);
 
@@ -738,6 +844,13 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
         onRemoveMedia: handleMediaRemove,
         onGenerated: applyGenerated,
         onGenerateError: (text: string) => setBanner({ tone: 'error' as const, text }),
+        auntieDraft,
+        notesForAuntie: notesForAuntie(draft.bodyCopy, kept),
+        lastAuntieDraftBody,
+        canRestoreNotes: kept !== null,
+        onUseAuntieDraft: handleUseAuntieDraft,
+        onDismissAuntieDraft: () => setAuntieDraft(null),
+        onRestoreNotes: handleRestoreNotes,
         isSaving,
         isSending,
         banner,
@@ -933,6 +1046,17 @@ interface ComposeFormProps {
   onRemoveMedia: (mediaFileId: string) => void;
   onGenerated: (result: GeneratedDraft) => void;
   onGenerateError: (message: string) => void;
+  /** #2052: the draft Auntie offered and the Auntie has not yet taken or set aside. */
+  auntieDraft: GeneratedDraft | null;
+  /** #2052: what Ask Auntie works from. Her notes, never a draft still as Auntie wrote it. */
+  notesForAuntie: string;
+  /** The last draft Auntie wrote here, so asking again opens differently. */
+  lastAuntieDraftBody: string;
+  /** #2052: a draft is in the note and the notes it replaced can still be put back. */
+  canRestoreNotes: boolean;
+  onUseAuntieDraft: () => void;
+  onDismissAuntieDraft: () => void;
+  onRestoreNotes: () => void;
   isSaving: boolean;
   isSending: boolean;
   banner: Banner_ | null;
@@ -991,6 +1115,13 @@ function ComposeForm({
   onRemoveMedia,
   onGenerated,
   onGenerateError,
+  auntieDraft,
+  notesForAuntie: askNotes,
+  lastAuntieDraftBody,
+  canRestoreNotes,
+  onUseAuntieDraft,
+  onDismissAuntieDraft,
+  onRestoreNotes,
   isSaving,
   isSending,
   banner,
@@ -1119,16 +1250,39 @@ function ComposeForm({
               </span>
             )}
           </label>
-          <GenerateButton
-            communicationType="visit_report"
-            recipient={draft.kinfolkName}
-            rawNotes={draft.bodyCopy}
-            wantTitle
-            currentBody={draft.bodyCopy}
-            onGenerated={onGenerated}
-            onError={onGenerateError}
-            disabled={isSaving || isSending}
-          />
+          <div className="kintale-compose__ask">
+            {canRestoreNotes && (
+              <GhostButton label="Back to my notes" onClick={onRestoreNotes} disabled={isSaving || isSending} />
+            )}
+            <GenerateButton
+              communicationType="visit_report"
+              recipient={draft.kinfolkName}
+              kinfolkId={draft.kinfolkId}
+              sessionId={draft.sessionId}
+              careTasks={tickedCareTasks(template, checklistCtx, draft.fieldResponses)}
+              rawNotes={askNotes}
+              wantTitle
+              currentBody={lastAuntieDraftBody}
+              onGenerated={onGenerated}
+              onError={onGenerateError}
+              disabled={isSaving || isSending}
+            />
+          </div>
+          {/* #2052: Auntie's draft sits beside the notes, never in them. It is
+              hers until the Auntie takes it. */}
+          {auntieDraft !== null && (
+            <section className="kintale-compose__auntie-draft" aria-label="Auntie's draft">
+              <span className="kintale-compose__label">Auntie&rsquo;s draft</span>
+              {draft.title.trim() === '' && auntieDraft.title.trim() !== '' && (
+                <p className="kintale-compose__auntie-headline">{auntieDraft.title}</p>
+              )}
+              <p className="kintale-compose__auntie-body">{auntieDraft.body}</p>
+              <div className="kintale-compose__auntie-actions">
+                <GhostButton label="Keep my notes" onClick={onDismissAuntieDraft} disabled={isSaving || isSending} />
+                <PrimaryButton label="Use this draft" onClick={onUseAuntieDraft} disabled={isSaving || isSending} />
+              </div>
+            </section>
+          )}
         </DenPanel>
 
         {template && template.photoShowcaseEnabled && (

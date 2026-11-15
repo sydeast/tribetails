@@ -75,7 +75,7 @@ class N8nClient internal constructor(private val http: HttpClient) {
             }
         }
         val idToken = AuthClient().idToken(forceRefresh = false)
-            ?: throw IllegalStateException("Admin sign-in required before generate")
+            ?: throw IllegalStateException(GENERATE_SIGN_IN_COPY)
         val (response, rawBody) = readable("generate failed") {
             val r = http.post("https://auntieos-ttpc.web.app/api/generate") {
                 contentType(ContentType.Application.Json)
@@ -86,10 +86,10 @@ class N8nClient internal constructor(private val http: HttpClient) {
         }
         val parsed = runCatchingCancellable { codec.decodeFromString<GenerateResponse>(rawBody) }.getOrNull()
         if (parsed != null) return parsed
-        if (!response.status.isSuccess()) {
-            throw IllegalStateException("generate failed (${response.status.value}): ${rawBody.take(220)}")
-        }
-        throw IllegalStateException("generate returned non-JSON body")
+        // #2052: a reply that is not the generator's own shape is never shown.
+        // Its status and body are a fault report, not words for the Auntie.
+        println("generate: unreadable reply (${response.status.value})")
+        throw IllegalStateException(GENERATE_FAILED_COPY)
     }
 
     suspend fun pingProfileUpdate(draftId: String, kinfolkId: String?) {
@@ -145,6 +145,9 @@ internal fun n8nHttpClient(requestTimeoutMs: Long, protocol: URLProtocol, host: 
         }
     }
 
+/** What a failed generate says when there is nothing better to say (#2052). */
+const val GENERATE_FAILED_COPY = "Auntie could not write a draft just now. Try again in a moment."
+const val GENERATE_SIGN_IN_COPY = "Sign in again, then ask Auntie."
 @Serializable
 data class GenerateRequest(
     val communication_type: CommunicationType,
@@ -154,6 +157,29 @@ data class GenerateRequest(
     val max_length: String? = null,
     /** On regenerate: an opener the reader rejected; the generator must not reuse it. */
     val avoid_opening: String? = null,
+    /**
+     * The household's own id, when the caller holds it. The server then reads
+     * that record instead of matching [recipient] by name. Omitted when null.
+     */
+    val kinfolk_id: String? = null,
+    /**
+     * #2079: the visit a KinTale recaps. With it the server writes from that
+     * visit's own record (its Kin, its KinCare, its times) and from nothing
+     * else about the household. Omitted when null.
+     */
+    val session_id: String? = null,
+    /**
+     * #2052: the care tasks ticked on the composer. They live in the form until
+     * the tale is saved, so the server cannot read them; a task not listed is
+     * one the draft may not claim was done. Omitted when null.
+     */
+    val care_tasks: List<GenerateCareTask>? = null,
+)
+/** One ticked care task: its label, and the Kin it was for (blank for a once-a-visit task). */
+@Serializable
+data class GenerateCareTask(
+    val text: String,
+    val kin_name: String = "",
 )
 
 @Serializable
