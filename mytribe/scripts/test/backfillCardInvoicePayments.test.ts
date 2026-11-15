@@ -4,6 +4,8 @@ import {
   parseArgs,
   planInvoiceBackfill,
   isAppliedCardLedgerRow,
+  isSkippedPaidEvent,
+  skippedPaidInvoiceState,
   run,
   type StoredRow,
 } from '../backfillCardInvoicePayments';
@@ -320,5 +322,109 @@ describe('backfillCardInvoicePayments run()', () => {
     const again = await run('apply', 2, db);
     expect(again).toMatchObject({ invoicesWritten: 0, rowsWritten: 0, alreadyRecorded: 2 });
     expect(written).toEqual([]);
+  });
+});
+
+describe('backfillCardInvoicePayments: card payments charged and never recorded (#2344)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const OPEN = { ...PAID, status: 'open', amountDue: 40, amountDueCents: 4000 };
+  const skippedEvent = (type: string, invoiceId: string, over: Record<string, unknown> = {}) => ({
+    type,
+    receivedAt: '2026-11-10T12:00:05.000Z',
+    eventCreatedMs: Date.parse('2026-11-10T12:00:00.000Z'),
+    familyId: 'fam1',
+    invoiceId,
+    appliedOutcome: 'SKIPPED_OUT_OF_ORDER',
+    ...over,
+  });
+
+  it('a skipped paid event is one; a skipped decline, a skipped dispute event and an applied payment are not', () => {
+    expect(isSkippedPaidEvent(skippedEvent('checkout.session.completed', 'inv1'))).toBe(true);
+    expect(isSkippedPaidEvent(skippedEvent('payment_intent.succeeded', 'inv1'))).toBe(true);
+    expect(isSkippedPaidEvent(skippedEvent('invoice.paid', 'inv1'))).toBe(true);
+    expect(isSkippedPaidEvent(skippedEvent('payment_intent.payment_failed', 'inv1'))).toBe(false);
+    expect(isSkippedPaidEvent(skippedEvent('invoice.payment_failed', 'inv1'))).toBe(false);
+    expect(isSkippedPaidEvent({ type: 'charge.dispute.created', disputeId: 'dp_1', appliedOutcome: 'SKIPPED_OUT_OF_ORDER' })).toBe(false);
+    expect(isSkippedPaidEvent(skippedEvent('checkout.session.completed', 'inv1', { appliedOutcome: 'PAID' }))).toBe(false);
+    // Recovered by a resend: the webhook rewrote the outcome.
+    expect(
+      isSkippedPaidEvent(
+        skippedEvent('checkout.session.completed', 'inv1', { appliedOutcome: 'PAID', recoveredFromOutcome: 'SKIPPED_OUT_OF_ORDER' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('says how the invoice reads now', () => {
+    expect(skippedPaidInvoiceState(OPEN, [])).toEqual({ invoiceState: 'invoice_open', amountDueCents: 4000, rowsCents: 0 });
+    expect(skippedPaidInvoiceState(PAID, [hand('h1', 4000)])).toEqual({ invoiceState: 'invoice_paid', amountDueCents: 0, rowsCents: 4000 });
+    expect(skippedPaidInvoiceState(null, [])).toEqual({ invoiceState: 'invoice_missing', amountDueCents: 0, rowsCents: 0 });
+  });
+
+  const skippedFixture = (): Record<string, Record<string, unknown>> => ({
+    // Charged, and the invoice still asks for the money. Both events of the one payment.
+    'invoices/inv7': { ...OPEN, invoiceNumber: '1040' },
+    'stripeEvents/evt_a7': skippedEvent('checkout.session.completed', 'inv7'),
+    'stripeEvents/evt_b7': skippedEvent('payment_intent.succeeded', 'inv7'),
+    // Charged, and the invoice was paid by hand afterwards.
+    'invoices/inv8': { ...PAID, invoiceNumber: '1041' },
+    'invoices/inv8/payments/h8': hand('h8', 4000).data,
+    'stripeEvents/evt_c8': skippedEvent('checkout.session.completed', 'inv8'),
+    // The invoice is gone.
+    'stripeEvents/evt_d9': skippedEvent('checkout.session.completed', 'inv9'),
+    // Not payments, or not skipped.
+    'stripeEvents/evt_e': skippedEvent('payment_intent.payment_failed', 'inv7'),
+    'stripeEvents/evt_f': { type: 'charge.dispute.funds_withdrawn', disputeId: 'dp_1', appliedOutcome: 'SKIPPED_OUT_OF_ORDER' },
+    'stripeEvents/evt_g': skippedEvent('checkout.session.completed', 'inv8', { appliedOutcome: 'SKIPPED_DUPLICATE_PAYMENT' }),
+  });
+
+  it('lists them in a dry run and in an apply run alike, and writes nothing in either', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    for (const mode of ['dry-run', 'apply'] as const) {
+      const docs = skippedFixture();
+      const before = JSON.stringify(docs);
+      const db = fakeDb(docs, (kind, path) => {
+        throw new Error(`ILLEGAL WRITE: ${kind} ${path}`);
+      });
+
+      const result = await run(mode, 2, db);
+
+      expect(result.eventsScanned).toBe(7);
+      expect(result.skippedPaidEvents.map((e) => [e.eventId, e.invoiceId, e.invoiceState])).toEqual([
+        ['evt_a7', 'inv7', 'invoice_open'],
+        ['evt_b7', 'inv7', 'invoice_open'],
+        ['evt_c8', 'inv8', 'invoice_paid'],
+        ['evt_d9', 'inv9', 'invoice_missing'],
+      ]);
+      expect(result.skippedPaidEvents[0]).toEqual({
+        eventId: 'evt_a7',
+        type: 'checkout.session.completed',
+        createdIso: '2026-11-10T12:00:00.000Z',
+        invoiceId: 'inv7',
+        familyId: 'fam1',
+        invoiceState: 'invoice_open',
+        amountDueCents: 4000,
+        rowsCents: 0,
+      });
+      expect(result).toMatchObject({ scanned: 0, invoicesWritten: 0, rowsWritten: 0 });
+      expect(JSON.stringify(docs)).toBe(before);
+    }
+    expect(lines.filter((l) => l.startsWith('[report:skipped_paid_event:invoice_open] stripeEvents/evt_a7 '))).toHaveLength(2);
+    expect(lines.find((l) => l.includes('stripeEvents/evt_a7'))).toContain(
+      'type=checkout.session.completed created=2026-11-10T12:00:00.000Z invoices/inv7 household=fam1 owed_now=$40.00 rows=$0.00',
+    );
+  });
+
+  it('finds none on the ordinary fixture, and the first pass is unchanged by the second', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await run('dry-run', 2, fakeDb(fixture(), () => {
+      throw new Error('ILLEGAL WRITE');
+    }));
+    expect(result).toMatchObject({ scanned: 5, cardPayments: 3, invoicesWritten: 2, eventsScanned: 0, skippedPaidEvents: [] });
   });
 });

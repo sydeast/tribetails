@@ -15,6 +15,7 @@ import {
   draftOpening,
   splitSubjectLine,
   GenerateDraftError,
+  GENERATE_FAILED_COPY,
   SendMessageError,
   type GenerateDraftArgs,
   type SendPersonalizedArgs,
@@ -196,24 +197,66 @@ describe('generateDraft', () => {
     await expect(generateDraft(generateArgs)).rejects.toThrow('No Kinfolk match for "Zzz"');
   });
 
-  it('fails loud on a rate-limit 429', async () => {
+  it('says the daily limit in plain words, never the stored code (#2052)', async () => {
     authState.currentUser = fakeUser();
     fetchMock.mockResolvedValue(
       jsonResponse(429, { generated_copy: '', communication_type: 'email', error: 'generate_rate_limit_exceeded' }),
     );
-    await expect(generateDraft(generateArgs)).rejects.toThrow('generate_rate_limit_exceeded');
+    await expect(generateDraft(generateArgs)).rejects.toThrow(/written all she can for today/);
+    await expect(generateDraft(generateArgs)).rejects.not.toThrow(/rate_limit/);
+  });
+  it('shows the plain sentence the generator sends, as sent (#2052)', async () => {
+    authState.currentUser = fakeUser();
+    const copy = "Auntie's draft kept bringing up Kiwi, who is not on this visit, so it was thrown away. Your notes are untouched. Try again, or write the tale yourself.";
+    fetchMock.mockResolvedValue(
+      jsonResponse(422, { generated_copy: '', communication_type: 'visit_report', error: copy, error_code: 'draft_names_kin_not_on_visit' }),
+    );
+    await expect(generateDraft(generateArgs)).rejects.toThrow(copy);
+  });
+  it.each([
+    ['a stored code', 'anthropic_api_key_not_configured'],
+    ['the provider error an older generator passed through', 'Claude API error: 529 overloaded_error request_id=req_011'],
+    ['a record id an older generator put in its message', 'No Kinfolk with id "kf_8f2a91"'],
+    ['a server file path', 'Voice source file not found at /workspace/voice/01_Voice_Bible.md'],
+  ])('never shows %s (#2052)', async (_what, error) => {
+    authState.currentUser = fakeUser();
+    fetchMock.mockResolvedValue(jsonResponse(502, { generated_copy: '', communication_type: 'email', error }));
+    await expect(generateDraft(generateArgs)).rejects.toThrow(GENERATE_FAILED_COPY);
+  });
+  it('a sign-in the generator is closed to is told so, not told to try again', async () => {
+    authState.currentUser = fakeUser();
+    fetchMock.mockResolvedValue(jsonResponse(403, { error: 'admin_required' }));
+    await expect(generateDraft(generateArgs)).rejects.toThrow('Only the owner can ask Auntie for a draft.');
+  });
+  it('a failure with no message at all is still a plain sentence, with no status number', async () => {
+    authState.currentUser = fakeUser();
+    fetchMock.mockResolvedValue(jsonResponse(500, {}));
+    await expect(generateDraft(generateArgs)).rejects.toThrow(GENERATE_FAILED_COPY);
+  });
+  it('sends the visit and the ticked care tasks through untouched (#2079)', async () => {
+    authState.currentUser = fakeUser();
+    fetchMock.mockResolvedValue(jsonResponse(200, { generated_copy: 'ok', communication_type: 'visit_report' }));
+    await generateDraft({
+      ...generateArgs,
+      communication_type: 'visit_report',
+      session_id: 'sess1',
+      care_tasks: [{ text: 'Fed', kin_name: 'Biscuit' }],
+    });
+    const sent = JSON.parse(String((fetchMock.mock.calls.at(-1)?.[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(sent).toMatchObject({ session_id: 'sess1', care_tasks: [{ text: 'Fed', kin_name: 'Biscuit' }] });
   });
 
   it('fails loud on a network error rather than swallowing it', async () => {
     authState.currentUser = fakeUser();
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
-    await expect(generateDraft(generateArgs)).rejects.toThrow(/generate request failed: Failed to fetch/);
+    await expect(generateDraft(generateArgs)).rejects.toThrow(/could not be reached/i);
+    await expect(generateDraft(generateArgs)).rejects.not.toThrow(/Failed to fetch/);
   });
 
   it('never fabricates a success on an empty generated_copy', async () => {
     authState.currentUser = fakeUser();
     fetchMock.mockResolvedValue(jsonResponse(200, { generated_copy: '', communication_type: 'email' }));
-    await expect(generateDraft(generateArgs)).rejects.toThrow(/no draft copy/i);
+    await expect(generateDraft(generateArgs)).rejects.toThrow(GENERATE_FAILED_COPY);
   });
 
   it('passes avoid_opening through on a regenerate call', async () => {

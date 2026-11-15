@@ -93,6 +93,10 @@ export const AUDIT_EVENTS = {
   BILLING_QUOTE_WITHDRAWN: 'BILLING_QUOTE_WITHDRAWN',
   BILLING_INVOICE_PAID: 'BILLING_INVOICE_PAID',
   BILLING_INVOICE_FAILED: 'BILLING_INVOICE_FAILED',
+  // #2344: a card was declined on an invoice that was already paid, or after
+  // the payment from the same checkout had landed. The household is sent no
+  // "charge failed" notice for it; this line is what the owner sees instead.
+  BILLING_CARD_DECLINED_AFTER_PAYMENT: 'BILLING_CARD_DECLINED_AFTER_PAYMENT',
   // #884: an account credit payment notification was retried
   // CREDIT_NOTICE_MAX_ATTEMPTS times and never delivered. The name carries
   // NOTIFICATION so the admin activity feeds (web, Android, desktop) file it
@@ -667,6 +671,7 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   // Money.
   AUDIT_EVENTS.BILLING_ACCOUNT_CREDIT_APPLIED,
   AUDIT_EVENTS.BILLING_ACCOUNT_CREDIT_GIVEN,
+  AUDIT_EVENTS.BILLING_CARD_DECLINED_AFTER_PAYMENT,
   AUDIT_EVENTS.BILLING_CHECKOUT_CLOSE_RETRIED,
   AUDIT_EVENTS.BILLING_DRAFT_INVOICE_SENT,
   AUDIT_EVENTS.BILLING_INVOICE_ARCHIVED,

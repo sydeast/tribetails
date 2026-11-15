@@ -277,3 +277,40 @@ describe('a send does not decide completion', () => {
     expect(call).toHaveBeenCalledTimes(1);
   });
 });
+// #2052: the notes kept for "Back to my notes" are saved on the draft.
+describe('the notes kept from before an Ask Auntie draft was taken', () => {
+  it('go out in the same write as the note that replaced them, and only those fields', async () => {
+    setDoc.mockResolvedValue(undefined);
+    await saveKinTaleDraft(
+      draft({ _id: 'r1', bodyCopy: 'The draft.', keptNotes: 'my notes', keptNotesDraft: 'The draft.' }),
+      draft({ _id: 'r1', bodyCopy: 'my notes' }),
+    );
+    expect(setDoc).toHaveBeenCalledTimes(1);
+    const [, payload] = setDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(Object.keys(payload).sort()).toEqual(['bodyCopy', 'keptNotes', 'keptNotesDraft', 'updatedAt']);
+    expect(payload).toMatchObject({ bodyCopy: 'The draft.', keptNotes: 'my notes', keptNotesDraft: 'The draft.' });
+  });
+  it('are cleared to blank text, never null, when she goes back to them', async () => {
+    setDoc.mockResolvedValue(undefined);
+    await saveKinTaleDraft(
+      draft({ _id: 'r1', bodyCopy: 'my notes', keptNotes: '', keptNotesDraft: '' }),
+      draft({ _id: 'r1', bodyCopy: 'The draft.', keptNotes: 'my notes', keptNotesDraft: 'The draft.' }),
+    );
+    const [, payload] = setDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(payload).toMatchObject({ bodyCopy: 'my notes', keptNotes: '', keptNotesDraft: '' });
+  });
+  it('a draft loaded without them and saved without them writes neither', async () => {
+    setDoc.mockResolvedValue(undefined);
+    await saveKinTaleDraft(draft({ _id: 'r1', title: 'New' }), draft({ _id: 'r1', title: 'Old' }));
+    const [, payload] = setDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(payload).not.toHaveProperty('keptNotes');
+    expect(payload).not.toHaveProperty('keptNotesDraft');
+  });
+  it('a new draft is created with both as blank text', async () => {
+    getAuthState.mockReturnValue({ status: 'signedIn', user: { uid: 'u1', displayName: 'Pat Auntie' } });
+    addDoc.mockResolvedValue({ id: 'r9' });
+    await saveKinTaleDraft(draft({ title: 'Hi there' }));
+    const [, payload] = addDoc.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(payload).toMatchObject({ keptNotes: '', keptNotesDraft: '' });
+  });
+});

@@ -322,7 +322,7 @@ fun CommunicateScreen(
                     useFunction = featureFlags.communicateGenerateViaFunction,
                 )
                 if (resp.error != null) {
-                    showToast("Generate error: ${resp.error}", ToastKind.Error)
+                    showToast(com.tribetails.auntieos.web.screens.kintales.AskAuntieCopy.plain(resp.error), ToastKind.Error)
                 } else {
                     sentReportId = null
                     sentBefore = false
@@ -332,7 +332,8 @@ fun CommunicateScreen(
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                showToast("Generate failed: ${t.message ?: "unknown error"}", ToastKind.Error)
+                // #2052: plain words only, never the transport's own error text.
+                showToast(com.tribetails.auntieos.web.screens.kintales.AskAuntieCopy.forFailure(t), ToastKind.Error)
             } finally {
                 loading = false
             }

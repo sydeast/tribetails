@@ -41,6 +41,12 @@ data class KinTaleUiState(
     val isGenerating: Boolean = false,
     // Opener of the last generated draft; fed back as avoid_opening on regenerate.
     val lastOpening: String? = null,
+    // #2052: the draft Auntie offered, shown beside the narrative until the
+    // Auntie takes it or sets it aside. Never in the narrative on its own.
+    val auntieDraft: String? = null,
+    // #2052: the Auntie's notes from before she took a draft, while they can
+    // still be put back.
+    val keptNotes: KeptNotes? = null,
     val saveStatus: SaveStatus = SaveStatus.IDLE,
     val reportLoadFailed: Boolean = false,
     // ── Autosave, as the sitter sees it ──
@@ -384,6 +390,8 @@ class KinTaleReportViewModel(
                 // tasks, never the template as it stands now.
                 template = template.forKinTale(report),
                 report = report,
+                // #2052: notes kept on an earlier sitting can still be put back.
+                keptNotes = report.keptNotesOrNull(),
                 uploadedMedia = media,
                 gpsRoute = session.gpsSummary?.route.orEmpty(),
                 kinTaleSchemas = schemas.getOrDefault(emptyList()),
@@ -458,23 +466,34 @@ class KinTaleReportViewModel(
     }
 
     /**
-     * Generate-draft: turn the shorthand in report.bodyCopy into a full KinTale via
-     * the same generate path as Communicate (Firebase function, gated by the flag).
-     * The result drops into the editable body; manual editing still works. Regenerate
-     * passes the previous opener as avoid_opening so a re-roll genuinely varies (the
-     * "I don't like v1" path). Fail-loud via state.error.
+     * Ask Auntie: write a KinTale draft from the Auntie's notes, through the
+     * same generator as Communicate.
+     *
+     * #2052: the draft is OFFERED, in [KinTaleUiState.auntieDraft], and the
+     * narrative is not touched. It used to replace the narrative and autosave
+     * over it, so the notes were gone from the screen and from the saved draft
+     * in one step, and anything the draft made up read as the Auntie's own
+     * words. She takes it with [useAuntieDraft] or sets it aside with
+     * [dismissAuntieDraft].
+     *
+     * #2079: the visit and the ticked care tasks go with the notes, so the
+     * server writes from this visit's own Kin and nothing else.
+     *
+     * Asking again passes the last opener as avoid_opening so a second draft
+     * opens differently, and works from her notes ([notesForAuntie]), never
+     * from a draft she took. Failures are said plainly via state.error.
      */
     fun generateDraft(useFunction: Boolean = true) {
         val state = _uiState.value
         if (state.isGenerating) return
-        val notes = state.report.bodyCopy.trim()
+        val notes = notesForAuntie(state.report.bodyCopy, state.keptNotes).trim()
         if (notes.isEmpty()) {
-            _uiState.value = state.copy(error = "Jot a few notes first so Auntie has something to work with.")
+            _uiState.value = state.copy(error = AskAuntieCopy.NEEDS_NOTES)
             return
         }
         val recipient = state.kinfolk?.displayName.orEmpty()
         if (recipient.isBlank()) {
-            _uiState.value = state.copy(error = "This KinCare has no linked Kinfolk to write to.")
+            _uiState.value = state.copy(error = AskAuntieCopy.NO_KINFOLK)
             return
         }
         viewModelScope.launch {
@@ -487,13 +506,21 @@ class KinTaleReportViewModel(
                     // id and let the server read that doc directly. Without it
                     // the server re-derives the household from the display name
                     // by a case-folded startsWith scan, and a second household
-                    // with the same first name gets the wrong dossier read into
-                    // a tale that goes out under this one's name.
+                    // with the same first name gets the wrong household read
+                    // into a tale that goes out under this one's name.
                     kinfolk_id = state.kinfolk?.id?.ifBlank { null },
                     raw_notes = notes,
                     tone_hint = "",
                     max_length = "",
                     avoid_opening = state.lastOpening,
+                    session_id = (state.session?.id ?: state.report.sessionId).ifBlank { null },
+                    care_tasks = tickedCareTasks(
+                        template = state.template,
+                        session = state.session,
+                        kinList = state.kinList,
+                        kinfolk = state.kinfolk,
+                        responses = state.report.fieldResponses,
+                    ),
                 ),
                 useFunction = useFunction,
             ).onSuccess { result ->
@@ -501,20 +528,58 @@ class KinTaleReportViewModel(
                 val opener = copy.trim().takeWhile { !it.isWhitespace() }.ifBlank { null }
                 _uiState.value = _uiState.value.copy(
                     isGenerating = false,
-                    report = _uiState.value.report.copy(bodyCopy = copy),
+                    auntieDraft = copy,
                     lastOpening = opener,
                 )
-                persistDraft()
             }.onFailure { e ->
                 AuntieLog.e("KinTale generate-draft failed", e)
                 _uiState.value = _uiState.value.copy(
                     isGenerating = false,
-                    error = "Generate failed: ${e.message ?: "unknown error"}",
+                    error = AskAuntieCopy.forFailure(e),
                 )
             }
         }
     }
-
+    /**
+     * #2052: take the draft Auntie offered. The notes it replaces are kept so
+     * [restoreNotes] can put them back; notes already kept stay the notes, so
+     * taking a second draft over the first never makes the first "her notes".
+     */
+    fun useAuntieDraft() {
+        val state = _uiState.value
+        val offered = state.auntieDraft ?: return
+        val notes = notesForAuntie(state.report.bodyCopy, state.keptNotes)
+        // The notes go onto the tale with the draft that replaces them, so the
+        // one save carries both. A tale already sent keeps them on this screen
+        // only: a sent tale never carries working notes.
+        val sent = state.report.isSentReport()
+        _uiState.value = state.copy(
+            keptNotes = KeptNotes(notes = notes, draftBody = offered),
+            report = state.report.copy(
+                bodyCopy = offered,
+                keptNotes = if (sent) "" else notes,
+                keptNotesDraft = if (sent) "" else offered,
+            ),
+            auntieDraft = null,
+        )
+        syncUnsavedMarker()
+        persistDraft()
+    }
+    /** #2052: set the offered draft aside. The narrative is as the Auntie typed it. */
+    fun dismissAuntieDraft() {
+        _uiState.value = _uiState.value.copy(auntieDraft = null)
+    }
+    /** #2052: put the Auntie's own notes back where the draft is. */
+    fun restoreNotes() {
+        val state = _uiState.value
+        val kept = state.keptNotes ?: return
+        _uiState.value = state.copy(
+            report = state.report.copy(bodyCopy = kept.notes, keptNotes = "", keptNotesDraft = ""),
+            keptNotes = null,
+        )
+        syncUnsavedMarker()
+        persistDraft()
+    }
     /** Update the cover headline; autosaved on the typing pause, and on blur. */
     fun updateTitle(text: String) {
         _uiState.value = _uiState.value.copy(

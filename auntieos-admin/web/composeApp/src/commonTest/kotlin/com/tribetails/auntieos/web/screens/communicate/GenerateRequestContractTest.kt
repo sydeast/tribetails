@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.web.screens.communicate
 
 import com.tribetails.auntieos.web.data.CommunicationType
+import com.tribetails.auntieos.web.data.GenerateCareTask
 import com.tribetails.auntieos.web.data.GenerateRequest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -47,6 +48,34 @@ class GenerateRequestContractTest {
         assertContains(s, "\"avoid_opening\":\"Well\"")
     }
 
+    // #2079 / #2052: the visit, its household and the ticked care tasks ride
+    // along on a KinTale, under the names the Function reads, and are absent
+    // from every request that has none.
+    @Test
+    fun aKinTaleCarriesItsVisitHouseholdAndTickedCareTasks() {
+        val s = codec.encodeToString(
+            GenerateRequest(
+                communication_type = CommunicationType.VISIT_REPORT,
+                recipient = "Dana",
+                raw_notes = "all ate",
+                kinfolk_id = "kf1",
+                session_id = "sess1",
+                care_tasks = listOf(GenerateCareTask(text = "Fed", kin_name = "Nova"), GenerateCareTask(text = "Gate locked")),
+            ),
+        )
+        assertContains(s, "\"kinfolk_id\":\"kf1\"")
+        assertContains(s, "\"session_id\":\"sess1\"")
+        assertContains(s, "\"care_tasks\":[{\"text\":\"Fed\",\"kin_name\":\"Nova\"},{\"text\":\"Gate locked\"}]")
+    }
+    @Test
+    fun aRequestWithNoVisitSendsNoVisitFields() {
+        val s = codec.encodeToString(
+            GenerateRequest(communication_type = CommunicationType.EMAIL, recipient = "Dana", raw_notes = "hi"),
+        )
+        assertFalse(s.contains("session_id"), s)
+        assertFalse(s.contains("kinfolk_id"), s)
+        assertFalse(s.contains("care_tasks"), s)
+    }
     @Test
     fun everyCommunicationTypeHasAStableSerialName() {
         // The Function's ALLOWED set + the n8n switch both key off these exact strings.

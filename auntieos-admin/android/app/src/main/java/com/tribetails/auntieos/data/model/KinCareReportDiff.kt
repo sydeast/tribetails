@@ -52,7 +52,8 @@ package com.tribetails.auntieos.data.model
  * Fields on `kin_care_reports/{id}` a KinTale draft save may write, keyed by
  * Firestore field name.
  *
- * These six are exactly what the editor screen puts a control on. Written out by
+ * These are exactly what the editor screen puts a control on (the two kept-notes
+ * fields ride with `bodyCopy`: "Use this draft" and "Back to my notes"). Written out by
  * hand rather than reflected, so it survives R8 and reads as the contract it is;
  * `KinCareReportDiffTest` reflects over the model and fails the build if the model
  * gains a field none of the three sets names.
@@ -61,6 +62,10 @@ internal val KIN_CARE_REPORT_DIFF_FIELDS: Map<String, (KinCareReport) -> Any?> =
     linkedMapOf(
         "title" to { it.title },
         "bodyCopy" to { it.bodyCopy },
+        // #2052: the notes kept for "Back to my notes". Read as text so a
+        // stored null and a blank are the same thing and never a change.
+        "keptNotes" to { it.keptNotes.orEmpty() },
+        "keptNotesDraft" to { it.keptNotesDraft.orEmpty() },
         "fieldResponses" to { it.fieldResponses },
         "petMoodSelections" to { it.petMoodSelections },
         "mediaFileIds" to { it.mediaFileIds },

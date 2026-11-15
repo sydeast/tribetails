@@ -110,6 +110,21 @@ export interface KinTaleDraft {
    * unticking writes `false` rather than deleting the entry.
    */
   fieldResponses: Record<string, FieldResponse>;
+  /**
+   * #2052: the Auntie's own typed notes, kept from the moment she took a draft
+   * Ask Auntie wrote, so "Back to my notes" still works after the composer is
+   * closed and reopened. Blank (or absent, on a draft saved before this) means
+   * there is nothing to put back. Staff only: `kin_care_reports` has no Kinfolk
+   * read, the portal's feed copies named fields, and the send removes it.
+   */
+  keptNotes?: string;
+  /**
+   * #2052: the draft as it went into the note when she took it. Kept with
+   * `keptNotes` so asking Auntie again after a reopen still works from her
+   * notes while the note is the untouched draft, and from the note once she
+   * has changed it.
+   */
+  keptNotesDraft?: string;
 }
 
 /**
@@ -207,6 +222,10 @@ function draftFields(draft: KinTaleDraft) {
     mediaFileIds: draft.mediaFileIds,
     templateId: draft.templateId,
     fieldResponses: draft.fieldResponses,
+    // Always a string, never null: the Android model decodes a stored null
+    // into a non-null field and throws.
+    keptNotes: draft.keptNotes ?? '',
+    keptNotesDraft: draft.keptNotesDraft ?? '',
   };
 }
 
