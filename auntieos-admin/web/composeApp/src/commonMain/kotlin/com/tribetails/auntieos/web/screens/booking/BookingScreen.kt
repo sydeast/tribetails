@@ -1627,6 +1627,7 @@ internal fun BookingCreateScreen(
                                 staffNote = adminInternalNotes,
                                 formValues = bookingFormValues.toMap(),
                                 kinIds = kinChoice.kinIdsToSend(kinRoster),
+                                kinNames = kinChoice.kinNamesToStore(kinRoster),
                             )
                             saving = false
                             if (vm.errorMessage == null) onBack()

@@ -111,6 +111,18 @@ class KinChoiceTest {
     }
 
     @Test
+    fun `a narrowed choice stores the names of the Kin left chosen, and every Kin stores none`() {
+        val choice = KinChoice().toggle("k2", home)
+        val expected = home.filter { it.id != "k2" }.mapNotNull { it.name }
+        assertEquals(expected, choice.kinNamesToStore(home, chooseKin = true))
+        assertEquals(emptyList<String>(), KinChoice().kinNamesToStore(home, chooseKin = true))
+        // Choosing off: a narrowing held from before names nobody, as it sends no ids.
+        assertEquals(emptyList<String>(), choice.kinNamesToStore(home, chooseKin = false))
+        // A Kin with no name on file adds no blank name.
+        val nameless = listOf(RosterKin("k1", null), RosterKin("k2", "Maple"), RosterKin("k3", " "))
+        assertEquals(emptyList<String>(), KinChoice().toggle("k2", nameless).kinNamesToStore(nameless, chooseKin = true))
+    }
+    @Test
     fun `choosing the last unticked Kin is every Kin again`() {
         assertEquals(KinChoice(), KinChoice().toggle("k2", home).toggle("k2", home))
     }

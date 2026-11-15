@@ -72,6 +72,15 @@ data class KinChoice(val allKin: Boolean = true, val selectedIds: Set<String> = 
     fun kinIdsToSend(roster: List<RosterKin>, chooseKin: Boolean): List<String> =
         if (coversAll(chooseKin) || roster.isEmpty()) emptyList() else covered(roster, chooseKin).map { it.id }
 
+    /**
+     * The names stored beside [kinIdsToSend] on a record this app writes itself.
+     * Empty whenever the ids are, so a record for every Kin names nobody and a
+     * narrowed one never reads as "Every Kin in the home". A Kin with no name
+     * on file adds none.
+     */
+    fun kinNamesToStore(roster: List<RosterKin>, chooseKin: Boolean): List<String> =
+        if (coversAll(chooseKin) || roster.isEmpty()) emptyList()
+        else covered(roster, chooseKin).mapNotNull { k -> k.name?.takeIf { it.isNotBlank() } }
     /** True when Kin can be chosen and none is: the one state a form must not submit. */
     fun noneChosen(roster: List<RosterKin>, chooseKin: Boolean): Boolean =
         chooseKin && roster.isNotEmpty() && covered(roster, chooseKin).isEmpty()

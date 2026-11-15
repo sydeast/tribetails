@@ -115,6 +115,15 @@ class KinRosterTest {
     }
 
     @Test
+    fun `a narrowed choice stores the names of the Kin left ticked, and every Kin stores none`() {
+        val choice = KinChoice().toggle("k2", home)
+        val expected = home.filter { it.id != "k2" }.mapNotNull { it.name }
+        assertEquals(expected, choice.kinNamesToStore(ready(chooseKin = true)))
+        assertEquals(emptyList(), KinChoice().kinNamesToStore(ready(chooseKin = true)))
+        assertEquals(emptyList(), choice.kinNamesToStore(ready(chooseKin = false)))
+        assertEquals(emptyList(), choice.kinNamesToStore(KinRosterState.Failed))
+    }
+    @Test
     fun `ticking the last unticked Kin is every Kin again`() {
         assertEquals(KinChoice(), KinChoice().toggle("k2", home).toggle("k2", home))
     }

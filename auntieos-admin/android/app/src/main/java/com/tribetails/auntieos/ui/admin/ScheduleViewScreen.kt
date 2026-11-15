@@ -2865,6 +2865,8 @@ fun AddEnhancedBookingDialog(
                                         kinfolkName      = selectedKinfolk?.displayName ?: "",
                                         // #1822: empty is every Kin; the server stores the whole roster for it.
                                         kinIds           = kinChoice.kinIdsToSend(kin, chooseKin),
+                                        // Named beside the ids, so Booking details names a narrowed choice.
+                                        kinNames         = kinChoice.kinNamesToStore(kin, chooseKin),
                                         startDateTime    = LocalDateTime.of(date, startTime).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
                                         endDateTime      = LocalDateTime.of(date, endTime).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
                                         bookingMode      = bookingMode,

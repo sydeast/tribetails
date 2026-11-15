@@ -261,6 +261,19 @@ class BookingViewModelTest {
         }
     }
     @Test
+    fun saveDraftNamesANarrowedChoiceAndNamesNobodyForEveryKin() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = BookingViewModel(ds)
+        val start = listOf(1_800_000_000_000L)
+        assertEquals(1, vm.saveDraft("kf1", "", "30Minute", start, "", "", kinIds = listOf("k1", "k3"), kinNames = listOf("Biscuit", "Maple")))
+        assertEquals(listOf("k1", "k3"), ds.createdBookings.last().kinIds)
+        assertEquals(listOf("Biscuit", "Maple"), ds.createdBookings.last().kinNames)
+        // Every Kin: no ids, so no names either, whatever the caller passed.
+        assertEquals(1, vm.saveDraft("kf1", "", "30Minute", start, "", "", kinNames = listOf("Biscuit")))
+        assertEquals(emptyList(), ds.createdBookings.last().kinIds)
+        assertEquals(emptyList(), ds.createdBookings.last().kinNames)
+    }
+    @Test
     fun saveDraftWeeklyWritesOneDraftPerWeek() = runTest {
         val ds = FakeAuntieDataSource()
         val vm = BookingViewModel(ds)

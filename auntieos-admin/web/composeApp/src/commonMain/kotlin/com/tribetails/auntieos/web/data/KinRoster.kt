@@ -93,6 +93,14 @@ data class KinChoice(val allKin: Boolean = true, val selectedIds: Set<String> = 
     fun kinIdsToSend(state: KinRosterState): List<String> =
         if (allKin || !state.canChoose) emptyList() else covered(state.kin).map { it.id }
 
+    /**
+     * The names stored beside [kinIdsToSend] on a record this console writes
+     * itself (a draft). Empty whenever the ids are. A Kin with no name on file
+     * adds none.
+     */
+    fun kinNamesToStore(state: KinRosterState): List<String> =
+        if (allKin || !state.canChoose) emptyList()
+        else covered(state.kin).mapNotNull { k -> k.name?.takeIf { it.isNotBlank() } }
     /** True when Kin can be chosen and none is: the one state a form must not submit. */
     fun noneChosen(state: KinRosterState): Boolean = state.canChoose && covered(state.kin).isEmpty()
 }

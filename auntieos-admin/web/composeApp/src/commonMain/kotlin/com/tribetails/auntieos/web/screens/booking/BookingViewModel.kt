@@ -318,6 +318,8 @@ class BookingViewModel(
         formValues: Map<String, String> = emptyMap(),
         /** #1822: the Kin chosen on the form. Empty is every Kin; the approval then stores the whole roster. */
         kinIds: List<String> = emptyList(),
+        /** The names of [kinIds], so the draft names a narrowed choice before it is approved. */
+        kinNames: List<String> = emptyList(),
     ): Int {
         errorMessage = null
         if (serviceType.isBlank()) {
@@ -335,6 +337,7 @@ class BookingViewModel(
                 kinfolkId = kinfolkId,
                 kinfolkName = kinfolkName,
                 kinIds = kinIds,
+                kinNames = if (kinIds.isEmpty()) emptyList() else kinNames,
                 serviceType = serviceType,
                 startTime = kotlin.time.Instant.fromEpochMilliseconds(startMs).toString(),
                 notes = staffNote.trim(),
