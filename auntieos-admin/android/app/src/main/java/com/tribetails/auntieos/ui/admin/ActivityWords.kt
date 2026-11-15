@@ -86,6 +86,7 @@ private val ACTION_WORDS = mapOf(
     "ARRIVED" to ("Marked the arrival" to "mark the arrival"),
     "DEPARTED" to ("Marked the departure" to "mark the departure"),
     "UNDO_ARRIVAL" to ("Undid the arrival" to "undo the arrival"),
+    "UNDO_DEPARTED" to ("Undid the departure" to "undo the departure"),
 )
 private fun done(a: String): String = ACTION_WORDS[a]?.first ?: keyWords(a)
 private fun attempt(a: String): String = ACTION_WORDS[a]?.second ?: lowerKeyWords(a)
@@ -111,7 +112,7 @@ private fun editedFields(raw: String): String {
     return if (words.isEmpty()) "Edited a visit" else "Edited a visit: ${words.joinToString(", ")}"
 }
 
-private const val ACTION = "(APPROVE|REJECT|CANCEL|COMPLETE|ON_MY_WAY|ARRIVED|DEPARTED|UNDO_ARRIVAL)"
+private const val ACTION = "(APPROVE|REJECT|CANCEL|COMPLETE|ON_MY_WAY|ARRIVED|DEPARTED|UNDO_ARRIVAL|UNDO_DEPARTED)"
 
 /** Stored shape -> the words the server writes now. First match wins, so the specific shapes lead. */
 private val ID_SHAPES: List<Pair<Regex, (List<String>) -> String>> = listOf(

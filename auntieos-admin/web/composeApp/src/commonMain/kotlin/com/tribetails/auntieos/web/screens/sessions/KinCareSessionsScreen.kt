@@ -888,22 +888,30 @@ private fun ActionRow(
         // operator's arrival rule holds it back. Complete is the manual path
         // (and says why it was refused); the KinTale button no longer decides
         // anything about the visit.
-        "DEPARTED" -> Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            PrimaryButton(
-                label   = "Complete",
-                onClick = { markCompleted(session, arrivalRule, onRefused, onWrite) },
-                modifier = Modifier.weight(1f),
-                leading = { Icon(Lucide.CircleCheckBig, contentDescription = null, modifier = Modifier.size(13.dp)) },
-            )
-            KinTaleButton(session, onWriteKinTale, onViewKinTale, Modifier.weight(1f))
+        "DEPARTED" -> {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PrimaryButton(
+                    label   = "Complete",
+                    onClick = { markCompleted(session, arrivalRule, onRefused, onWrite) },
+                    modifier = Modifier.weight(1f),
+                    leading = { Icon(Lucide.CircleCheckBig, contentDescription = null, modifier = Modifier.size(13.dp)) },
+                )
+                KinTaleButton(session, onWriteKinTale, onViewKinTale, Modifier.weight(1f))
+            }
+            // #2250: for a few minutes after Departed. Draws nothing otherwise.
+            UndoDepartedButton(session, session.kinfolkName, Modifier.padding(top = 4.dp))
         }
 
         // COMPLETED: "Send the KinTale" until one is sent, then the sent tale
         // (#1804: the Report route, never a blank composer).
-        "COMPLETED" -> KinTaleButton(session, onWriteKinTale, onViewKinTale, Modifier.fillMaxWidth().padding(top = 4.dp))
+        "COMPLETED" -> {
+            KinTaleButton(session, onWriteKinTale, onViewKinTale, Modifier.fillMaxWidth().padding(top = 4.dp))
+            // #2250: a departure completes the visit, so its undo is here.
+            UndoDepartedButton(session, session.kinfolkName, Modifier.padding(top = 4.dp))
+        }
 
         // CANCELLED: no action buttons.
         else -> Unit
