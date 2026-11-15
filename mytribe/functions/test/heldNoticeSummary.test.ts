@@ -236,6 +236,22 @@ describe('#2331 the hourly visit reminder job, with notices to households off', 
     expect(logLines(ctx.writes)).toHaveLength(2);
   });
 
+  it('a retry of yesterday\'s last tick that lands after today began writes nothing and leaves today\'s count alone', async () => {
+    const ctx = visitsDb(2, false, {}, 47);
+    // Today (the 15th in Chicago) has already been counted.
+    await runKincareReminderScan(Date.UTC(2026, 10, 15, 7, 5, 0), '2026-11-15T07:00:00Z');
+    expect(logLines(ctx.writes)).toHaveLength(1);
+
+    // The 05:00 UTC tick was due at 23:00 on the 14th in Chicago; its retry runs late.
+    await runKincareReminderScan(Date.UTC(2026, 10, 15, 7, 20, 0), '2026-11-15T05:00:00Z');
+    expect(logLines(ctx.writes)).toHaveLength(1);
+
+    // Today's next tick still finds its two counted.
+    await runKincareReminderScan(Date.UTC(2026, 10, 15, 8, 5, 0), '2026-11-15T08:00:00Z');
+    expect(logLines(ctx.writes)).toHaveLength(1);
+    expect(ctx.writes.filter((w) => w.path.startsWith('scheduled_runs/'))).toHaveLength(1);
+  });
+
   it('what the job has counted today is kept on one marker, with no id in the clear', async () => {
     const ctx = visitsDb(3);
     await runKincareReminderScan(NOW, TICK);

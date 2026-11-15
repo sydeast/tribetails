@@ -310,6 +310,11 @@ export async function recordHeldNoticeSummary(batch: HeldNoticeBatch): Promise<v
       const markerRef = db().doc(heldMarkerPath(batch.job));
       await db().runTransaction(async (tx) => {
         const stored = (await tx.get(markerRef)).data() as Record<string, unknown> | undefined;
+        // A late retry of an earlier day's run, landing after today's count
+        // began: what it held is counted today, by today's runs. Writing it
+        // would wipe today's marker and count everything twice.
+        const storedDay = stored?.['dayIso'];
+        if (typeof storedDay === 'string' && storedDay > day) return;
         // Yesterday's marker counts for nothing today.
         const today = stored !== undefined && stored['dayIso'] === day ? stored : {};
         const seen = new Set(storedIds(today[reason]));
