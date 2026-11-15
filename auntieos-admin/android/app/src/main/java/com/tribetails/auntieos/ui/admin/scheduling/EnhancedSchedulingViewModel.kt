@@ -78,7 +78,9 @@ data class SchedulingState(
     // D1: kin on the household picked at wizard step 1, for the kinIds chips.
     // Loaded on demand rather than in init{}, so opening the Schedule screen does
     // not read a kin roster for a wizard nobody opened.
-    val newRequestKin: List<Kin> = emptyList(),
+    val newRequestKin: List<com.tribetails.auntieos.domain.RosterKin> = emptyList(),
+    // #1822: the "Visits: choose Kin" flag, as the server answered it with the roster. Off by default.
+    val newRequestChooseKin: Boolean = false,
     val newRequestKinLoading: Boolean = false,
     // Fail-loud, never silent: an unreadable roster says so, because "this
     // household has no kin" and "the kin could not be read" must not look the
@@ -1173,6 +1175,8 @@ class EnhancedSchedulingViewModel(
         endUtcIso: String,
         durationMinutes: Int,
         notes: String,
+        /** #1822: the Kin chosen on the form. Empty is every Kin, which is all the server stores unless choosing is on. */
+        kinIds: List<String> = emptyList(),
     ) {
         if (_state.value.isLoading) return
         if (kinfolkId.isBlank() || serviceType.isBlank()) {
@@ -1183,7 +1187,7 @@ class EnhancedSchedulingViewModel(
         viewModelScope.launch {
             kinCareRepository.createKinCareSession(
                 kinfolkId = kinfolkId,
-                kinIds = emptyList(),
+                kinIds = kinIds,
                 serviceType = serviceType,
                 startTime = startUtcIso,
                 endTime = endUtcIso,
@@ -2940,46 +2944,59 @@ class EnhancedSchedulingViewModel(
             newRequestError = null,
             newRequestBusyOverridable = false,
             newRequestKin = emptyList(),
+            newRequestChooseKin = false,
             newRequestKinError = null,
             newRequestKinLoading = false,
         )
     }
 
     /**
-     * D1 wizard step 1: the kin on [kinfolkId], for the optional `kinIds` chips.
+     * The Kin a visit for [kinfolkId] covers, for New booking's step 1 and the
+     * Schedule's New Booking form (#1822, #1862).
      *
-     * Only the ACTIVE kin, matching `KinCareRepository.createKinCareSession`'s
-     * own `status == "active"` filter, so the wizard cannot put a kin on a
-     * booking that the session writer would then drop.
+     * The server's roster (`getHouseholdKinRoster`), never this app's own read
+     * of the admin Kin records: the server stores that roster on the visit, so
+     * the form names the Kin the visit will carry. It also says whether Kin
+     * can be chosen at all; by default every visit covers every Kin.
      *
      * A blank id (the operator cleared the household) empties the list rather
-     * than reading the whole roster.
+     * than asking about nobody.
      */
     fun loadKinForNewRequest(kinfolkId: String) {
         if (kinfolkId.isBlank()) {
             _state.value = _state.value.copy(
                 newRequestKin = emptyList(),
+                newRequestChooseKin = false,
                 newRequestKinLoading = false,
                 newRequestKinError = null,
             )
             return
         }
-        _state.value = _state.value.copy(newRequestKinLoading = true, newRequestKinError = null)
+        _state.value = _state.value.copy(
+            newRequestKin = emptyList(),
+            newRequestChooseKin = false,
+            newRequestKinLoading = true,
+            newRequestKinError = null,
+        )
         viewModelScope.launch {
-            auntieRepository.getKin(kinfolkId)
-                .onSuccess { kin ->
+            kinCareRepository.getHouseholdKinRoster(kinfolkId)
+                .onSuccess { roster ->
                     _state.value = _state.value.copy(
-                        newRequestKin = kin.filter { it.status == "active" },
+                        newRequestKin = roster.kin,
+                        newRequestChooseKin = roster.chooseKin,
                         newRequestKinLoading = false,
                         newRequestKinError = null,
                     )
                 }
-                .onFailure { t ->
+                .onFailure {
+                    // Plain words, never the server's reason: the office can do
+                    // nothing with it, and the visit is booked all the same.
                     _state.value = _state.value.copy(
                         newRequestKin = emptyList(),
+                        newRequestChooseKin = false,
                         newRequestKinLoading = false,
-                        newRequestKinError = t.message
-                            ?: "The Kin roster could not be read. The booking still covers the whole household.",
+                        newRequestKinError =
+                            "The Kin of this household could not be loaded. The visit still covers every Kin in the home.",
                     )
                 }
         }
@@ -3046,6 +3063,7 @@ class EnhancedSchedulingViewModel(
                     showNewRequestDialog = false,
                     newRequestBusyOverridable = false,
                     newRequestKin = emptyList(),
+                    newRequestChooseKin = false,
                     newRequestKinError = null,
                     seriesActionMessage = "Booking request created: ${result.visitCount} visit(s) submitted for approval. " +
                         "It enters Visit requests and appears above once approved.",

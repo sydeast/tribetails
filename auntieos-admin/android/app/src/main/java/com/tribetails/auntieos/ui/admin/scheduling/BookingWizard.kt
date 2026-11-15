@@ -103,8 +103,10 @@ data class BookingWizardState(
     val kinfolkId: String = "",
     /**
      * OPERATOR RULING R1: a KinCare session covers ALL Kin in the household.
-     * That is the DEFAULT and costs the operator zero interaction; narrowing to
-     * a subset is an explicit opt-in behind a control.
+     * That is the DEFAULT and costs the operator zero interaction. Since the
+     * ruling of 2026-11-12 (#1822, #1862) it is the only choice unless the
+     * "Visits: choose Kin" feature flag is on, when step 1 shows a chip per
+     * Kin, all chosen, and unticking one turns this off.
      *
      * True (the initial value) means every Kin on the household's roster. The
      * roster is NOT stored here. [resolveKinIds] resolves it against the live
@@ -168,15 +170,23 @@ fun BookingWizardState.withKinfolk(id: String): BookingWizardState =
     if (id == kinfolkId) this else copy(kinfolkId = id, allKinMode = true, kinIds = emptyList())
 
 /**
- * Enters or leaves the specific-Kin opt-in. Leaving it DROPS the partial pick
- * rather than parking it: a selection that is not on the wire must not sit in
- * the UI looking like it is.
+ * Ticks or unticks one Kin, out of a roster where every Kin starts chosen.
+ * Choosing the last unticked Kin is "all Kin" again. See `domain/KinChoice.kt`.
  */
-fun BookingWizardState.withAllKinMode(allKin: Boolean): BookingWizardState =
-    copy(allKinMode = allKin, kinIds = emptyList())
+fun BookingWizardState.toggleKin(kinId: String, householdKinIds: List<String>): BookingWizardState {
+    val roster = householdKinIds.map { com.tribetails.auntieos.domain.RosterKin(it, null) }
+    val next = com.tribetails.auntieos.domain.KinChoice(allKin = allKinMode, selectedIds = kinIds.toSet())
+        .toggle(kinId, roster)
+    return copy(allKinMode = next.allKin, kinIds = householdKinIds.filter { it in next.selectedIds })
+}
 
-fun BookingWizardState.toggleKin(kinId: String): BookingWizardState =
-    copy(kinIds = if (kinId in kinIds) kinIds - kinId else kinIds + kinId)
+/**
+ * The state as it is reviewed and submitted. Operator ruling 2026-11-12: every
+ * visit covers every Kin, so a narrowing counts only while choosing Kin is
+ * switched on ([chooseKin], the server's answer for this household's roster).
+ */
+fun BookingWizardState.forChooseKin(chooseKin: Boolean): BookingWizardState =
+    if (chooseKin || allKinMode) this else copy(allKinMode = true, kinIds = emptyList())
 
 /**
  * The Kin this booking actually covers: the whole household by default (R1), or
@@ -374,8 +384,13 @@ fun stepBlocker(
     nowMs: Long,
     closedDayName: (LocalDate) -> String? = { null },
 ): String? = when (step) {
-    BookingWizardStep.CLIENT ->
-        if (state.kinfolkId.isBlank()) "Pick a household first." else null
+    BookingWizardStep.CLIENT -> when {
+        state.kinfolkId.isBlank() -> "Pick a household first."
+        // Only reachable with choosing Kin switched on: every Kin starts
+        // chosen, and a booking for none of them is not a booking.
+        !state.allKinMode && state.kinIds.isEmpty() -> "Choose at least one Kin."
+        else -> null
+    }
 
     BookingWizardStep.SERVICE ->
         if (state.serviceName.isBlank()) "Pick a service first." else null

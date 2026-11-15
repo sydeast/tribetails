@@ -59,6 +59,19 @@ data class FeatureFlags(
     //
     // Its exit plan is written out once, at the web catalog's copy of this key.
     val inboxWaitingSections: Boolean = true,
+    // Choosing specific Kin for a visit (operator ruling 2026-11-12, #1822 /
+    // #1862). OFF, the default: every visit covers every Kin in the home, and
+    // no booking form shows a Kin picker. ON: New booking and the Schedule's New
+    // Booking form list the Kin as chips, every one chosen to begin with.
+    //
+    // THE SERVER DECIDES. The booking writers read this flag themselves and
+    // store the whole roster while it is off, whatever they are sent, so an
+    // older installed build of this app that still shows its own picker cannot
+    // narrow a visit. The forms take their answer from `getHouseholdKinRoster`,
+    // which hands back the household's Kin and `chooseKin` together; the key is
+    // here so the Feature Flags screen has a switch for it. Shared with the
+    // admin web app, the desktop console and both MyTribe apps.
+    val visitsChooseKin: Boolean = false,
 ) {
     fun toMap(): Map<String, Boolean> = mapOf(
         KEY_COMMUNICATE_BROADCAST to communicateBroadcast,
@@ -72,6 +85,7 @@ data class FeatureFlags(
         KEY_COMMUNICATE_COMMS_RECAP to communicateCommsRecap,
         KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE to inboundCommsServerAuthoritative,
         KEY_INBOX_WAITING_SECTIONS to inboxWaitingSections,
+        KEY_VISITS_CHOOSE_KIN to visitsChooseKin,
     )
 
     companion object {
@@ -86,6 +100,7 @@ data class FeatureFlags(
         const val KEY_COMMUNICATE_COMMS_RECAP = "auntieos.communicate.commsRecap"
         const val KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE = "auntieos.inboundComms.serverAuthoritative"
         const val KEY_INBOX_WAITING_SECTIONS = "auntieos.inbox.waitingSections"
+        const val KEY_VISITS_CHOOSE_KIN = "auntieos.visits.chooseKin"
 
         /** Compile-time safe baseline. */
         val DEFAULT = FeatureFlags()
@@ -127,6 +142,7 @@ data class FeatureFlags(
                 communicateCommsRecap = v(KEY_COMMUNICATE_COMMS_RECAP, d.communicateCommsRecap),
                 inboundCommsServerAuthoritative = v(KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE, d.inboundCommsServerAuthoritative),
                 inboxWaitingSections = v(KEY_INBOX_WAITING_SECTIONS, d.inboxWaitingSections),
+                visitsChooseKin = v(KEY_VISITS_CHOOSE_KIN, d.visitsChooseKin),
             )
         }
 

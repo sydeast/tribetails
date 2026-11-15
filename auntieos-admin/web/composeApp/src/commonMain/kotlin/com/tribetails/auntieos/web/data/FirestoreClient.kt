@@ -2250,6 +2250,23 @@ class FirestoreClient {
     }
 
     /**
+     * #1822 / #1862: the Kin a visit for this household covers, as the server
+     * will store them, and whether specific ones may be chosen
+     * (`getHouseholdKinRoster`). Read-only. Err when the call fails or an older
+     * server answers with no Kin list: the form then says the Kin could not be
+     * loaded, and the visit still covers the whole home.
+     */
+    suspend fun getHouseholdKinRoster(kinfolkId: String): WriteResult<HouseholdKinRoster> {
+        if (kinfolkId.isBlank()) return WriteResult.Err("No household to ask about.")
+        val payload = buildJsonObject { put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId))) }
+        return when (val r = platformInvokeCallable("getHouseholdKinRoster", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> householdKinRosterOf(r.value)?.let { WriteResult.Ok(it) }
+                ?: WriteResult.Err("The Kin of this household could not be loaded.")
+        }
+    }
+
+    /**
      * AO-25: admin multi-date / recurring booking REQUEST via the
      * createMultiDateBookingRequest callable. Writes the envelope model
      * (families/{kinfolkId}/bookings) as 'requested', the Incoming-requests queue,
@@ -3992,6 +4009,8 @@ data class KinCareSession(
     val kinId: String = "",
     val kinfolkId: String = "",
     val kinIds: List<String> = emptyList(),
+    // #2032: the names of [kinIds], stamped on the visit by every server writer.
+    val kinNames: List<String> = emptyList(),
     val kinfolkName: String = "",
     val sourceBookingId: String = "",
     val invoiceId: String = "",            // FK -> invoices/{id} when session is attributed to an invoice

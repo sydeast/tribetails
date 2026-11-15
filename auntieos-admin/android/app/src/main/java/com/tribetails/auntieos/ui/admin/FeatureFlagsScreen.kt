@@ -46,6 +46,7 @@ internal val FLAGS: List<FlagMeta> = listOf(
     FlagMeta(FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP, "Communicate: AI comms recap", "AI-summarised 'where things last left off' box in the recipient-context panel (Phase 1)."),
     FlagMeta(FeatureFlags.KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE, "Inbound comms: server authoritative (WARNING-8)", "ON = stop this device writing inbound call/voicemail/SMS records from FCM pushes; the server Twilio webhooks become the sole writer (closes the spoofed-push vuln). Flip ON only AFTER verifying the server path, or records may be lost."),
     FlagMeta(FeatureFlags.KEY_INBOX_WAITING_SECTIONS, "Inbox: waiting/answered sections", "ON (the default): message threads sit under \"Waiting on a reply\" and \"Answered\". OFF: one flat list, the arrangement before this. Both are finished; pick either. Shared with the web admin, and it takes effect on the next app load here."),
+    FlagMeta(FeatureFlags.KEY_VISITS_CHOOSE_KIN, "Visits: choose Kin", "OFF (the default): every visit covers every Kin in the home. ON: New booking, New visit and the booking request in MyTribe list the Kin with every one chosen, so a visit can be made for some of them. It applies the next time a booking form is opened. Visits already made keep their Kin."),
 )
 
 /**

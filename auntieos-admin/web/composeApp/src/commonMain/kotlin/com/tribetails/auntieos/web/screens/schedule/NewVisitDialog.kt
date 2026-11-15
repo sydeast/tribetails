@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.data.KinChoice
+import com.tribetails.auntieos.web.data.KinRosterState
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.theme.AuntieTheme
@@ -104,6 +106,24 @@ fun NewVisitDialog(
             com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Checking,
         )
     }
+    // #1822 (operator ruling 2026-11-12): every visit covers every Kin. The form
+    // names the household's Kin from the server's roster and offers nothing to
+    // tick, unless the "Visits: choose Kin" flag is on, when each Kin is a tick
+    // box and all start ticked.
+    var kinRoster by remember { mutableStateOf<KinRosterState>(KinRosterState.Idle) }
+    var kinChoice by remember { mutableStateOf(KinChoice()) }
+    androidx.compose.runtime.LaunchedEffect(selectedKinfolk?._id) {
+        val id = selectedKinfolk?._id.orEmpty()
+        // Another household's Kin are not this one's.
+        kinChoice = KinChoice()
+        kinRoster = if (id.isBlank()) KinRosterState.Idle else KinRosterState.Loading
+        if (id.isNotBlank()) {
+            kinRoster = when (val r = client.getHouseholdKinRoster(id)) {
+                is WriteResult.Ok -> KinRosterState.Ready(r.value)
+                is WriteResult.Err -> KinRosterState.Failed
+            }
+        }
+    }
     androidx.compose.runtime.LaunchedEffect(selectedKinfolk?._id) {
         val id = selectedKinfolk?._id.orEmpty()
         confirmPreview = com.tribetails.auntieos.web.screens.HouseholdNoticePreview.Checking
@@ -120,7 +140,7 @@ fun NewVisitDialog(
         ?.let { timingOf(it, localZone, nowMs()) }
     val canCreate = selectedKinfolk != null && serviceType in serviceTypes &&
         date.length == 10 && time.length == 5 && durationMinutes > 0 &&
-        draftTiming != VisitWindowTiming.UNDERWAY
+        draftTiming != VisitWindowTiming.UNDERWAY && !kinChoice.noneChosen(kinRoster)
 
     Box(
         modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)),
@@ -175,6 +195,11 @@ fun NewVisitDialog(
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
+                        KinCoveredField(
+                            roster = kinRoster,
+                            choice = kinChoice,
+                            onToggle = { id -> kinChoice = kinChoice.toggle(id, kinRoster.kin) },
+                        )
                         when {
                             settingsState is FirestoreResult.Loading ->
                                 Text("Loading KinCare types...", style = AuntieTheme.typography.bodySmall, color = c.textDim)
@@ -253,7 +278,8 @@ fun NewVisitDialog(
                                 error = null
                                 val r = client.createKinCareSession(
                                     kinfolkId = kf._id,
-                                    kinIds = emptyList(), // KinCare covers the household; no per-kin select
+                                    // Empty is every Kin: the server stores the whole roster.
+                                    kinIds = kinChoice.kinIdsToSend(kinRoster),
                                     serviceType = serviceType,
                                     startTime = times.first,
                                     endTime = times.second,
@@ -295,3 +321,48 @@ internal fun newVisitSummary(
         "Visit scheduled.",
         com.tribetails.auntieos.web.screens.householdNoticeResultLine(notice, household),
     )
+
+/**
+ * "Kin covered" on New visit (#1822). Names the household's Kin; a tick box per
+ * Kin only while Kin can be chosen. Draws nothing until a household is picked.
+ */
+@Composable
+internal fun KinCoveredField(roster: KinRosterState, choice: KinChoice, onToggle: (String) -> Unit) {
+    if (roster is KinRosterState.Idle) return
+    val c = AuntieTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Kin covered", style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        when {
+            roster is KinRosterState.Loading ->
+                Text("Loading this household's Kin...", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            roster is KinRosterState.Failed ->
+                Text(
+                    "The Kin of this household could not be loaded. The visit still covers every Kin in the home.",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.error,
+                )
+            roster.kin.isEmpty() ->
+                Text("No Kin on this household yet.", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            !roster.canChoose -> {
+                Text("All Kin in this home", style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                Text(
+                    roster.kin.joinToString(", ") { it.label },
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textDim,
+                )
+            }
+            else -> {
+                roster.kin.forEach { k ->
+                    com.tribetails.auntieos.web.ui.components.AuntieCheckbox(
+                        checked = choice.isSelected(k.id),
+                        onCheckedChange = { onToggle(k.id) },
+                        label = k.label,
+                    )
+                }
+                if (choice.noneChosen(roster)) {
+                    Text("Tick at least one Kin.", style = AuntieTheme.typography.bodySmall, color = c.error)
+                }
+            }
+        }
+    }
+}

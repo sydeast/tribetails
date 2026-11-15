@@ -47,6 +47,20 @@ data class FeatureFlags(
      *  stale remote `false` must never re-route generation back to a dead n8n. */
     val communicateGenerateViaFunction: Boolean = true,
     val communicateCommsRecap: Boolean = false,
+    /**
+     * Choosing specific Kin for a visit (operator ruling 2026-11-12, #1822 /
+     * #1862). OFF, the default: every visit covers every Kin in the home, and
+     * no booking form shows a Kin picker. ON: New visit lists the Kin with
+     * every one ticked, and a visit can be made for some of them.
+     *
+     * THE SERVER DECIDES. The booking writers read this flag themselves and
+     * store the whole roster while it is off, whatever they are sent, and New
+     * visit takes its answer from `getHouseholdKinRoster`, which hands back the
+     * household's Kin and `chooseKin` together. The key is here so the Feature
+     * Flags screen has a switch for it. Shared with the admin web app, the
+     * admin Android app and both MyTribe apps.
+     */
+    val visitsChooseKin: Boolean = false,
 ) {
     fun toMap(): Map<String, Boolean> = mapOf(
         KEY_COMMUNICATE_BROADCAST to communicateBroadcast,
@@ -58,6 +72,7 @@ data class FeatureFlags(
         KEY_TRAINING_DOC_CREATE to trainingDocsCreate,
         KEY_COMMUNICATE_GENERATE_VIA_FUNCTION to communicateGenerateViaFunction,
         KEY_COMMUNICATE_COMMS_RECAP to communicateCommsRecap,
+        KEY_VISITS_CHOOSE_KIN to visitsChooseKin,
     )
 
     companion object {
@@ -71,6 +86,7 @@ data class FeatureFlags(
         const val KEY_TRAINING_DOC_CREATE = "auntieos.trainingDocs.create"
         const val KEY_COMMUNICATE_GENERATE_VIA_FUNCTION = "auntieos.communicate.generateViaFunction"
         const val KEY_COMMUNICATE_COMMS_RECAP = "auntieos.communicate.commsRecap"
+        const val KEY_VISITS_CHOOSE_KIN = "auntieos.visits.chooseKin"
 
         /** Compile-time safe baseline. */
         val DEFAULT = FeatureFlags()
@@ -110,6 +126,7 @@ data class FeatureFlags(
                 trainingDocsCreate = v(KEY_TRAINING_DOC_CREATE, d.trainingDocsCreate),
                 communicateGenerateViaFunction = v(KEY_COMMUNICATE_GENERATE_VIA_FUNCTION, d.communicateGenerateViaFunction),
                 communicateCommsRecap = v(KEY_COMMUNICATE_COMMS_RECAP, d.communicateCommsRecap),
+                visitsChooseKin = v(KEY_VISITS_CHOOSE_KIN, d.visitsChooseKin),
             )
         }
 

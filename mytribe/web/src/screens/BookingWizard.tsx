@@ -7,7 +7,7 @@ import { applyBookingWrite } from '../lib/bookingsCache';
 import { announceSaved } from '../lib/saveNotice';
 import type { BookingMode, GetBookingPolicyResult, ServiceDto, TimeBlockDto } from '../api/bookingApi';
 import type { RequestBookingArgsVisit, RequestBookingResult } from '../contracts/bookingContracts.generated';
-import { getMyKin } from '../api/portal';
+import { getHouseholdKinRoster, getMyKin } from '../api/portal';
 import { bookingPolicyKey, businessClosuresKey, serviceCatalogKey } from '../lib/portalQueryKeys';
 import type { KinDto } from '../api/types';
 import { useSignOut } from '../lib/auth';
@@ -104,7 +104,10 @@ function serviceIcon(s: ServiceDto): string {
   return s.isOvernight ? SERVICE_ICON_EMOJI.moon! : '\u{1F43E}';
 }
 
-function kinSubtitle(k: KinDto): string {
+/** What step 1 draws for one Kin. A Kin the office added may have a name and nothing else. */
+type WizardKin = Pick<KinDto, 'id' | 'name' | 'species' | 'breed' | 'ageYears'>;
+
+function kinSubtitle(k: WizardKin): string {
   return [k.breed ?? k.species, k.ageYears !== null ? `${k.ageYears} yrs` : null].filter((v): v is string => v !== null).join(' • ');
 }
 
@@ -244,6 +247,16 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const [modeChoice, setModeChoice] = useState<BookingMode | null>(null);
 
   const kinQuery = useQuery({ queryKey: ['myKin', kinfolkId], queryFn: () => getMyKin(kinfolkId) });
+  // #1822 / #1862: which Kin a booking covers, and whether they can be chosen,
+  // is the server's answer. Asked each time the wizard opens, never cached: the
+  // office can switch choosing on or off between two bookings.
+  const rosterQuery = useQuery({
+    queryKey: ['kinRoster', kinfolkId],
+    queryFn: () => getHouseholdKinRoster(kinfolkId),
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  });
   const servicesQuery = useQuery({ queryKey: serviceCatalogKey(kinfolkId), queryFn: () => getServiceCatalog(kinfolkId) });
 
   // C1: which dates are closed. A failed or still-loading read degrades to
@@ -330,15 +343,43 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const setSlotBlock = (slotId: string, timeBlockId: string) =>
     setSlots((prev) => prev.map((s) => (s.slotId === slotId ? { ...s, timeBlockId } : s)));
 
-  const activeKin = useMemo(() => (kinQuery.data?.kin ?? []).filter((k) => k.status === 'active'), [kinQuery.data]);
+  /**
+   * The Kin this booking can cover. The server's roster decides who is on it
+   * and in what order; `getMyKin` only fills in each one's breed and age. If
+   * the roster cannot be read the wizard still opens on the household's own
+   * active Kin, with nothing to choose, and the server books the whole home.
+   */
+  const activeKin = useMemo<WizardKin[]>(() => {
+    const own = (kinQuery.data?.kin ?? []).filter((k) => k.status === 'active');
+    const roster = rosterQuery.data?.kin;
+    if (roster === undefined) return own;
+    const byId = new Map(own.map((k) => [k.id, k]));
+    return roster.map((r) => byId.get(r.id) ?? { id: r.id, name: r.name, species: null, breed: null, ageYears: null });
+  }, [kinQuery.data, rosterQuery.data]);
+  /** Operator ruling 2026-11-12: every booking covers every Kin, unless choosing Kin is switched on. */
+  const chooseKin = rosterQuery.data?.chooseKin === true;
+  const coversAllKin = allKinMode || !chooseKin;
   const services = useMemo(() => servicesQuery.data?.services ?? [], [servicesQuery.data]);
   // D-2026-09-28-VISIT-PRICES-ARE-BILLING (#1037): a member without billing
   // access is shown no price label and no estimate row. The server has already
   // stripped the prices; this only keeps the empty rows off the screen.
   const showPrices = pricesVisibleOf(servicesQuery.data);
   // #1300: the summary names the chosen Kin ("Biscuit, Maple"), not a count.
-  const selectedKinNames = activeKin.filter((k) => selectedKinIds.has(k.id)).map((k) => k.name ?? 'Unnamed Kin');
-  const resolvedKinIds = allKinMode ? activeKin.map((k) => k.id) : [...selectedKinIds];
+  const selectedKin = activeKin.filter((k) => selectedKinIds.has(k.id));
+  const selectedKinNames = selectedKin.map((k) => k.name ?? 'Unnamed Kin');
+  const resolvedKinIds = (coversAllKin ? activeKin : selectedKin).map((k) => k.id);
+  /** Ticks or unticks one Kin. Every Kin ticked again is "all Kin" again. */
+  const toggleKin = (id: string) => {
+    const current = allKinMode ? activeKin.map((k) => k.id) : selectedKin.map((k) => k.id);
+    const next = current.includes(id) ? current.filter((k) => k !== id) : [...current, id];
+    if (next.length === activeKin.length) {
+      setAllKinMode(true);
+      setSelectedKinIds(new Set());
+    } else {
+      setAllKinMode(false);
+      setSelectedKinIds(new Set(next));
+    }
+  };
 
   // Single source of truth for the visit list, BOTH patterns; see the doc
   // comment above. Deliberately NOT keyed on a ticking clock, so it recomputes
@@ -432,7 +473,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   const canAdvance = (() => {
     switch (step) {
       case 1:
-        return allKinMode ? activeKin.length > 0 : selectedKinIds.size > 0;
+        return coversAllKin ? activeKin.length > 0 : selectedKin.length > 0;
       case 2:
         return slots.length > 0;
       case 3:
@@ -539,7 +580,10 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
   // blocks, and a KinCare added in that moment landed with no block chosen. A
   // failed or paused read still falls through to CLOCK_ONLY, as above.
   const policyFetching = policyQuery.isPending && policyQuery.fetchStatus === 'fetching';
-  if (kinView.kind !== 'data' || servicesView.kind !== 'data' || policyFetching) {
+  // Held for as well, while it is fetching: drawing step 1 first would show the
+  // household's Kin as fixed and then swap in tick boxes a moment later.
+  const rosterFetching = rosterQuery.isPending && rosterQuery.fetchStatus === 'fetching';
+  if (kinView.kind !== 'data' || servicesView.kind !== 'data' || policyFetching || rosterFetching) {
     return (
       <div className="wrap">
         <LoadingLine
@@ -549,6 +593,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
             void kinQuery.refetch();
             void servicesQuery.refetch();
             void policyQuery.refetch();
+            void rosterQuery.refetch();
           }}
         >
           Loading the booking wizard…
@@ -597,17 +642,9 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
               {step === 1 && (
                 <Step1KinSelect
                   kin={activeKin}
-                  allKinMode={allKinMode}
-                  onToggleAllMode={setAllKinMode}
-                  selectedIds={selectedKinIds}
-                  onToggle={(id) =>
-                    setSelectedKinIds((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(id)) next.delete(id);
-                      else next.add(id);
-                      return next;
-                    })
-                  }
+                  chooseKin={chooseKin}
+                  isSelected={(id) => coversAllKin || selectedKinIds.has(id)}
+                  onToggle={toggleKin}
                 />
               )}
               {step === 2 && (
@@ -660,7 +697,7 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
               {step === 4 && <Step4ExtraLoveAndContext notes={notes} onNotesChange={setNotes} />}
               {step === 5 && (
                 <Step5Review
-                  kinNames={allKinMode ? ['All Kin in this home'] : selectedKinNames}
+                  kinNames={coversAllKin ? ['All Kin in this home'] : selectedKinNames}
                   kinCareSummary={summariseSlots(slots, services)}
                   pattern={pattern}
                   visits={plannedVisits}
@@ -746,8 +783,8 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
 
                 <div className="sum-row">
                   <div className="sk">Kin</div>
-                  <div className={`sv ${allKinMode || selectedKinIds.size > 0 ? '' : 'muted'}`}>
-                    {allKinMode ? 'All Kin in this home' : selectedKinNames.length > 0 ? selectedKinNames.join(', ') : 'Not chosen yet'}
+                  <div className={`sv ${coversAllKin || selectedKinNames.length > 0 ? '' : 'muted'}`}>
+                    {coversAllKin ? 'All Kin in this home' : selectedKinNames.length > 0 ? selectedKinNames.join(', ') : 'Not chosen yet'}
                   </div>
                 </div>
 
@@ -818,75 +855,79 @@ function SelectedIndicator() {
  * printing both would rebuild the exact duplication being removed.
  */
 function Step1KinSelect(props: {
-  kin: KinDto[];
-  allKinMode: boolean;
-  onToggleAllMode: (v: boolean) => void;
-  selectedIds: Set<string>;
+  kin: WizardKin[];
+  /** The "choose Kin" feature flag, as the server answered it for this household. */
+  chooseKin: boolean;
+  isSelected: (id: string) => boolean;
   onToggle: (id: string) => void;
 }) {
-  const { kin, allKinMode, onToggleAllMode, selectedIds, onToggle } = props;
+  const { kin, chooseKin, isSelected, onToggle } = props;
   return (
     <>
-      <h3 className="title">Select Kin</h3>
+      <h3 className="title">{chooseKin ? 'Select Kin' : 'Kin on this booking'}</h3>
       <p className="sub">
-        Most bookings cover everyone. We&rsquo;ll default to all Kin in your home unless you&rsquo;d like to pick specific Kin for this visit.
+        {chooseKin
+          ? 'Every Kin in your home is included. Untick any Kin this booking is not for.'
+          : 'Every booking covers all Kin in your home.'}
       </p>
       {kin.length === 0 ? (
         <p className="sub" style={{ marginTop: 12 }}>
           No Kin on file yet. Add them first: open the menu (top right) and choose The Kin.
         </p>
-      ) : (
+      ) : !chooseKin ? (
+        // Operator ruling 2026-11-12 (#1822, #1862): every booking covers every
+        // Kin, so this names them and there is nothing to tick.
         <>
-          <button type="button" className="kinopt" style={{ marginTop: 14 }} onClick={() => onToggleAllMode(true)}>
+          <div className="kinopt is-static" style={{ marginTop: 14 }}>
             <div>
               <div className="kt">All Kin in this home</div>
-              {/* The roster below this button is the subtitle when it is shown;
-                  printing the names here as well would be the duplication #540
-                  is about. In specific-pick mode the roster is hidden, so the
-                  names line comes back. */}
-              {!allKinMode && <span className="ks">{kin.map((k) => k.name).filter(Boolean).join(', ')}</span>}
             </div>
-            {allKinMode && <SelectedIndicator />}
-          </button>
-
-          {allKinMode && (
-            <div className="kinroster">
-              {kin.map((k, i) => (
-                <div className={`kinrow ${kinVariant(i)}`} key={k.id}>
+            <SelectedIndicator />
+          </div>
+          <div className="kinroster">
+            {kin.map((k, i) => (
+              <div className={`kinrow ${kinVariant(i)}`} key={k.id}>
+                <div className="pic">{speciesEmoji(k.species)}</div>
+                <div>
+                  <b>{k.name ?? 'Unnamed Kin'}</b>
+                  {kinSubtitle(k) && <small>{kinSubtitle(k).toUpperCase()}</small>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        // Choosing Kin is switched on: one tick row per Kin, every one ticked
+        // to begin with.
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
+          {kin.map((k, i) => {
+            const selected = isSelected(k.id);
+            return (
+              <button
+                type="button"
+                key={k.id}
+                className="kinopt"
+                role="checkbox"
+                aria-checked={selected}
+                onClick={() => onToggle(k.id)}
+              >
+                <div className={`kinrow ${kinVariant(i)} is-static`}>
                   <div className="pic">{speciesEmoji(k.species)}</div>
                   <div>
                     <b>{k.name ?? 'Unnamed Kin'}</b>
                     {kinSubtitle(k) && <small>{kinSubtitle(k).toUpperCase()}</small>}
                   </div>
                 </div>
-              ))}
-            </div>
+                {selected && <SelectedIndicator />}
+              </button>
+            );
+          })}
+          {!kin.some((k) => isSelected(k.id)) && (
+            <p className="sub" role="alert">
+              Tick at least one Kin to go on.
+            </p>
           )}
-
-          <button type="button" className="btn ghost block" style={{ marginTop: 12 }} onClick={() => onToggleAllMode(!allKinMode)}>
-            {allKinMode ? 'Choose specific Kin' : 'Use All Kin instead'}
-          </button>
-
-          {!allKinMode && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
-              {kin.map((k, i) => {
-                const selected = selectedIds.has(k.id);
-                return (
-                  <button type="button" key={k.id} className="kinopt" onClick={() => onToggle(k.id)}>
-                    <div className={`kinrow ${kinVariant(i)} is-static`}>
-                      <div className="pic">{speciesEmoji(k.species)}</div>
-                      <div>
-                        <b>{k.name ?? 'Unnamed Kin'}</b>
-                        {kinSubtitle(k) && <small>{kinSubtitle(k).toUpperCase()}</small>}
-                      </div>
-                    </div>
-                    {selected && <SelectedIndicator />}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </>
+        </div>
       )}
     </>
   );

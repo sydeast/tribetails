@@ -261,6 +261,8 @@ fun BookingDetailModal(
                 DenPanel(title = "Booking") {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         FactRow("Kinfolk", session.kinfolkName.ifBlank { "Unnamed" })
+                        // #2032: which Kin the visit is for, as the visit stores them.
+                        FactRow("Kin", com.tribetails.auntieos.web.data.visitKinLine(session.kinIds, session.kinNames))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,

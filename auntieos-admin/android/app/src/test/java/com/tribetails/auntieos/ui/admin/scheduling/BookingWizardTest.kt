@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.admin.scheduling
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -54,22 +55,23 @@ class BookingWizardTest {
         assertEquals(roster, resolveKinIds(state, roster))
     }
 
+    // Operator ruling 2026-11-12 (#1822, #1862): every visit covers every Kin,
+    // and choosing specific Kin is a feature flag. With it on, every Kin starts
+    // chosen and a tap takes one off.
     @Test
-    fun `narrowing to specific kin is an explicit opt-in and sends only those`() {
-        val state = BookingWizardState()
-            .withKinfolk("kf1")
-            .withAllKinMode(false)
-            .toggleKin("kin-b")
+    fun `unticking a kin sends only the kin left chosen`() {
+        val state = BookingWizardState().withKinfolk("kf1").toggleKin("kin-a", roster)
+        assertFalse(state.allKinMode)
         assertEquals(listOf("kin-b"), resolveKinIds(state, roster))
     }
 
     @Test
-    fun `leaving the opt-in returns to the whole home and drops the partial pick`() {
+    fun `choosing the last unticked kin is every kin again and drops the partial pick`() {
         val state = BookingWizardState()
             .withKinfolk("kf1")
-            .withAllKinMode(false)
-            .toggleKin("kin-b")
-            .withAllKinMode(true)
+            .toggleKin("kin-a", roster)
+            .toggleKin("kin-a", roster)
+        assertTrue(state.allKinMode)
         assertEquals(emptyList<String>(), state.kinIds)
         assertEquals(roster, resolveKinIds(state, roster))
     }
@@ -78,10 +80,10 @@ class BookingWizardTest {
     fun `a picked kin who has left the household never reaches the wire`() {
         val state = BookingWizardState()
             .withKinfolk("kf1")
-            .withAllKinMode(false)
-            .toggleKin("kin-b")
-            .toggleKin("kin-gone")
+            .copy(allKinMode = false, kinIds = listOf("kin-b", "kin-gone"))
         assertEquals(listOf("kin-b"), resolveKinIds(state, roster))
+        // And a tap after that keeps only kin still on the roster.
+        assertEquals(listOf("kin-a", "kin-b"), state.toggleKin("kin-a", roster + "kin-c").kinIds)
     }
 
     @Test
@@ -94,10 +96,8 @@ class BookingWizardTest {
     fun `changing household drops the previous household's kin and restores the default`() {
         val state = BookingWizardState()
             .withKinfolk("kf1")
-            .withAllKinMode(false)
-            .toggleKin("kin-a")
-            .toggleKin("kin-b")
-        assertEquals(listOf("kin-a", "kin-b"), state.kinIds)
+            .toggleKin("kin-b", roster + "kin-c")
+        assertEquals(listOf("kin-a", "kin-c"), state.kinIds)
 
         val moved = state.withKinfolk("kf2")
         assertEquals(emptyList<String>(), moved.kinIds)
@@ -106,14 +106,29 @@ class BookingWizardTest {
 
     @Test
     fun `re-picking the same household keeps the kin already chosen`() {
-        val state = BookingWizardState().withKinfolk("kf1").withAllKinMode(false).toggleKin("kin-a")
+        val state = BookingWizardState().withKinfolk("kf1").toggleKin("kin-b", roster)
         assertEquals(listOf("kin-a"), state.withKinfolk("kf1").kinIds)
     }
 
     @Test
-    fun `toggling a kin twice removes it`() {
-        val state = BookingWizardState().toggleKin("kin-a").toggleKin("kin-a")
-        assertEquals(emptyList<String>(), state.kinIds)
+    fun `with no kin chosen step 1 cannot be left, and says why`() {
+        val none = BookingWizardState()
+            .withKinfolk("kf1")
+            .toggleKin("kin-a", roster)
+            .toggleKin("kin-b", roster)
+        assertEquals(emptyList<String>(), none.kinIds)
+        assertEquals("Choose at least one Kin.", stepBlocker(none, BookingWizardStep.CLIENT, now))
+    }
+
+    @Test
+    fun `with choosing off a narrowing does not count, and the booking is for every kin`() {
+        val narrowed = BookingWizardState().withKinfolk("kf1").toggleKin("kin-a", roster)
+        val off = narrowed.forChooseKin(chooseKin = false)
+        assertTrue(off.allKinMode)
+        assertEquals(roster, resolveKinIds(off, roster))
+        assertNull(stepBlocker(off, BookingWizardStep.CLIENT, now))
+        // With choosing on it is kept exactly.
+        assertEquals(narrowed, narrowed.forChooseKin(chooseKin = true))
     }
 
     // -----------------------------------------------------------------------
@@ -338,8 +353,7 @@ class BookingWizardTest {
     @Test
     fun `the happy path builds every payload field the callable takes`() {
         val state = readyState()
-            .withAllKinMode(false)
-            .toggleKin("kin-a")
+            .copy(allKinMode = false, kinIds = listOf("kin-a"))
             .toggleDate(tuesday)
             .copy(emailConfirmation = true, notes = "  Gate code 1234  ")
 

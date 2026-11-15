@@ -3,6 +3,7 @@ package com.kinfolk.portal.screens.schedule
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
@@ -54,7 +56,6 @@ import com.kinfolk.portal.portal.BookingPolicy
 import com.kinfolk.portal.portal.BookingVisit
 import com.kinfolk.portal.portal.TimeBlock
 import com.kinfolk.portal.screens.schedule.util.ReviewRow
-import com.kinfolk.portal.portal.Kin
 import com.kinfolk.portal.portal.BookingsResult
 import com.kinfolk.portal.portal.mintBookingIdempotencyKey
 import com.kinfolk.portal.portal.PortalApi
@@ -102,7 +103,9 @@ fun BookingWizardScreen(
     // the step indicator out of sight.
     val pageScroll = rememberScrollState()
     LaunchedEffect(step) { pageScroll.animateScrollTo(0) }
-    var kin by remember { mutableStateOf<List<Kin>?>(null) }
+    var kin by remember { mutableStateOf<List<BookingKin>?>(null) }
+    // #1822 / #1862: whether Kin can be chosen is the server's answer, off by default.
+    var chooseKin by remember { mutableStateOf(false) }
     var services by remember { mutableStateOf<List<Service>?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     // #1504: the wizard is open once its Kin and KinCares have loaded (step 1
@@ -123,9 +126,8 @@ fun BookingWizardScreen(
     val today = remember { Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date }
     val horizonEnd = remember(today) { bookingHorizonEnd(today) }
 
-    /** "All Kin in this home" is default; flip via Choose-specific to multi-pick. */
-    var allKinMode by remember { mutableStateOf(true) }
-    var selectedKinIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    /** Every Kin, unless the office switched choosing on and the household unticked one. */
+    var kinChoice by remember { mutableStateOf(KinChoice()) }
     // #541 / #543: a LIST of KinCares, each with its own time of day, not one
     // service and one clock. See KinCareSlot in RecurringBooking.kt.
     var slots by remember { mutableStateOf<List<KinCareSlot>>(emptyList()) }
@@ -174,13 +176,20 @@ fun BookingWizardScreen(
     // carry no minInstances, so a first open paid three cold starts in a row.
     LaunchedEffect(kinfolkId) { coroutineScope {
         val kinFetch = async { attempt { portalApi.getMyKin(kinfolkId) } }
+        val rosterFetch = async { attempt { portalApi.getHouseholdKinRoster(kinfolkId) } }
         val catalogFetch = async { attempt { portalApi.getServiceCatalog(kinfolkId) } }
         val closuresFetch = async {
             attempt { portalApi.getBusinessClosures(bookingDateKey(today), bookingDateKey(horizonEnd)) }
         }
         val policyFetch = async { attempt { portalApi.getBookingPolicy() } }
         try {
-            kin = kinFetch.await().getOrThrow().kin.filter { it.status == com.kinfolk.portal.portal.KinStatus.Active }
+            val own = kinFetch.await().getOrThrow().kin
+            // The server's roster decides who is on the booking; losing it
+            // leaves the household's own active Kin and nothing to choose, and
+            // the server books the whole home either way.
+            val roster = rosterFetch.await().getOrNull()
+            chooseKin = roster?.chooseKin == true
+            kin = bookingKin(own, roster)
             val catalogRes = catalogFetch.await().getOrThrow()
             services = catalogRes.services
             pricesVisible = catalogRes.pricesVisible
@@ -235,11 +244,7 @@ fun BookingWizardScreen(
     val canChooseMode = policy.allowTimeBlockBooking && policy.allowSpecificTimeBooking
 
     val catalog: List<Service> = services ?: emptyList()
-    val resolvedKinIds: List<String> = if (allKinMode) {
-        kin?.map { it.id } ?: emptyList()
-    } else {
-        selectedKinIds.toList()
-    }
+    val resolvedKinIds: List<String> = kinChoice.kinIds(kin ?: emptyList(), chooseKin)
     /**
      * Single source of truth for the visit list, BOTH patterns: the SAME
      * expanded list is used by the Step 3 count, the estimate, the Step 5
@@ -313,7 +318,7 @@ fun BookingWizardScreen(
     }
 
     val canAdvance = when (step) {
-        1 -> if (allKinMode) (kin?.isNotEmpty() == true) else selectedKinIds.isNotEmpty()
+        1 -> kinChoice.canAdvance(kin ?: emptyList(), chooseKin)
         2 -> slots.isNotEmpty()
         3 -> scheduleReady
         4 -> true
@@ -342,12 +347,9 @@ fun BookingWizardScreen(
         when (step) {
             1 -> Step1KinSelect(
                 kin = kin!!,
-                allKinMode = allKinMode,
-                onToggleAllMode = { allKinMode = it },
-                selectedIds = selectedKinIds,
-                onToggle = { id ->
-                    selectedKinIds = if (selectedKinIds.contains(id)) selectedKinIds - id else selectedKinIds + id
-                },
+                chooseKin = chooseKin,
+                choice = kinChoice,
+                onToggle = { id -> kinChoice = kinChoice.toggle(id, kin!!) },
             )
             2 -> Step2KinCareSelect(
                 services = services!!,
@@ -408,8 +410,8 @@ fun BookingWizardScreen(
             )
             4 -> Step4ExtraLoveAndContext(notes = notes, onNotesChange = { notes = it })
             5 -> Step5Review(
-                kinNames = if (allKinMode) listOf("All Kin in this home")
-                else kin!!.filter { it.id in selectedKinIds }.mapNotNull { it.name },
+                kinNames = if (kinChoice.coversAll(chooseKin)) listOf("All Kin in this home")
+                else kinChoice.covered(kin!!, chooseKin).map { it.label },
                 kinCareSummary = summariseSlots(slots, catalog),
                 notes = notes,
                 pattern = pattern,
@@ -588,12 +590,17 @@ private fun WizardStepIndicator(current: Int) {
     }
 }
 
+/**
+ * Step 1. Operator ruling 2026-11-12 (#1822, #1862): every booking covers
+ * every Kin, so by default this names them and there is nothing to tick. With
+ * choosing Kin switched on, each Kin is a tick row, every one ticked to begin
+ * with. The rules live in [KinChoice].
+ */
 @Composable
 private fun Step1KinSelect(
-    kin: List<Kin>,
-    allKinMode: Boolean,
-    onToggleAllMode: (Boolean) -> Unit,
-    selectedIds: Set<String>,
+    kin: List<BookingKin>,
+    chooseKin: Boolean,
+    choice: KinChoice,
     onToggle: (String) -> Unit,
 ) {
     val type = LocalKinfolkTypography.current
@@ -601,52 +608,23 @@ private fun Step1KinSelect(
         modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
         verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
     ) {
-        Text("Select Client & Pets", style = type.heritageTitle)
+        Text(if (chooseKin) "Select Kin" else "Kin on this booking", style = type.heritageTitle)
         Text(
-            "Most bookings cover everyone. We'll default to all Kin in your home unless you'd like to pick specific Kin for this visit.",
+            if (chooseKin) "Every Kin in your home is included. Untick any Kin this booking is not for."
+            else "Every booking covers all Kin in your home.",
             style = type.sansBody,
         )
         if (kin.isEmpty()) {
             Text(
-                "No Kin on file yet. Add your pets first: open the menu (top right) and choose The Kin.",
+                "No Kin on file yet. Add them first: open the menu (top right) and choose The Kin.",
                 style = type.sansBody.copy(color = KinfolkBrand.NavySoft),
             )
             return@Column
         }
 
-        // All-Kin default card
-        GlassCard(
-            modifier = Modifier.fillMaxWidth().clickable { onToggleAllMode(true) },
-            shape = RoundedCornerShape(14.dp),
-            contentPadding = PaddingValues(KinfolkSpacing.l),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text("All Kin in this home", style = type.heritageTitle)
-                    val names = kin.mapNotNull { it.name }.joinToString(", ")
-                    if (names.isNotEmpty()) Text(names, style = type.sansLabel)
-                }
-                if (allKinMode) SelectedIndicator()
-            }
-        }
-
-        // Choose-specific toggle
-        KinGhostButton(
-            label = if (allKinMode) "Choose specific Kin" else "Use All Kin instead",
-            onClick = { onToggleAllMode(!allKinMode) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        if (allKinMode) return@Column
-
-        kin.forEach { k ->
-            val sel = selectedIds.contains(k.id)
+        if (!chooseKin) {
             GlassCard(
-                modifier = Modifier.fillMaxWidth().clickable { onToggle(k.id) },
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 contentPadding = PaddingValues(KinfolkSpacing.l),
             ) {
@@ -656,15 +634,44 @@ private fun Step1KinSelect(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column {
-                        Text(k.name ?: "Unnamed Kin", style = type.heritageTitle)
-                        val sub = listOfNotNull(k.breed ?: k.species, k.ageYears?.let { "${it.toInt()} yrs" }).joinToString(" • ")
-                        if (sub.isNotEmpty()) Text(sub, style = type.sansLabel)
+                        Text("All Kin in this home", style = type.heritageTitle)
+                        Text(kin.joinToString(", ") { it.label }, style = type.sansLabel)
+                    }
+                    SelectedIndicator()
+                }
+            }
+            return@Column
+        }
+
+        kin.forEach { k ->
+            val sel = choice.isSelected(k.id, chooseKin)
+            GlassCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(value = sel, role = Role.Checkbox, onValueChange = { onToggle(k.id) }),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(KinfolkSpacing.l),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column {
+                        Text(k.label, style = type.heritageTitle)
+                        if (k.subtitle.isNotEmpty()) Text(k.subtitle, style = type.sansLabel)
                     }
                     if (sel) {
                         SelectedIndicator()
                     }
                 }
             }
+        }
+        if (!choice.canAdvance(kin, chooseKin)) {
+            Text(
+                "Tick at least one Kin to go on.",
+                style = type.sansBody.copy(color = KinfolkBrand.SnuggleCoral),
+            )
         }
     }
 }

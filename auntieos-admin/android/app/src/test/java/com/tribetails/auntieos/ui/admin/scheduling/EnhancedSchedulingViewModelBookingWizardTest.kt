@@ -3,7 +3,6 @@ package com.tribetails.auntieos.ui.admin.scheduling
 import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsBilling
 import com.tribetails.auntieos.data.contracts.CreateMultiDateBookingRequestArgsCommunication
 import com.tribetails.auntieos.data.model.BusinessSettings
-import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BOOKING_BUSY_CONFLICT_CODE
 import com.tribetails.auntieos.data.repository.BookingRepository
@@ -11,6 +10,8 @@ import com.tribetails.auntieos.data.repository.BookingRequestRefusedException
 import com.tribetails.auntieos.data.repository.COMPANY_HOLIDAY_CONFLICT_CODE
 import com.tribetails.auntieos.data.repository.GoogleCalendarConnectionState
 import com.tribetails.auntieos.data.repository.KinCareRepository
+import com.tribetails.auntieos.domain.HouseholdKinRoster
+import com.tribetails.auntieos.domain.RosterKin
 import com.tribetails.auntieos.data.repository.MultiDateBookingResult
 import com.tribetails.auntieos.data.repository.NewBookingVisit
 import com.tribetails.auntieos.data.repository.ServiceRepository
@@ -95,9 +96,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
 
     /** A complete wizard state: household, kin, service, two dates, both switches, notes. */
     private fun readySubmission(): BookingWizardSubmission = bookingSubmission(
-        BookingWizardState(kinfolkId = "kf1")
-            .withAllKinMode(false)
-            .toggleKin("kin-a")
+        BookingWizardState(kinfolkId = "kf1", allKinMode = false, kinIds = listOf("kin-a"))
             .withServiceName("Dog Walking")
             .toggleDate(monday)
             .toggleDate(monday.plusDays(1))
@@ -408,9 +407,7 @@ class EnhancedSchedulingViewModelBookingWizardTest {
         submit(vm, readySubmission())
         advanceUntilIdle()
         submit(vm, bookingSubmission(
-            BookingWizardState(kinfolkId = "kf1")
-                .withAllKinMode(false)
-                .toggleKin("kin-a")
+            BookingWizardState(kinfolkId = "kf1", allKinMode = false, kinIds = listOf("kin-a"))
                 .withServiceName("Dog Walking")
                 .toggleDate(monday)
                 .copy(emailConfirmation = true, notes = "Gate code 5678"),
@@ -503,35 +500,71 @@ class EnhancedSchedulingViewModelBookingWizardTest {
     // Step 1's kin read
     // -----------------------------------------------------------------------
 
+    // #1862: the Kin are the server's roster, never this app's own read of the
+    // admin Kin records. That read listed six Kin for a booking stored with three.
     @Test
-    fun `picking a household loads only its active kin`() = runTest(testDispatcher) {
-        coEvery { auntieRepo.getKin("kf1") } returns Result.success(
-            listOf(
-                Kin(id = "kin-a", kinfolkId = "kf1", name = "Aggie", status = "active"),
-                Kin(id = "kin-b", kinfolkId = "kf1", name = "Rex", status = "archived"),
-            ),
+    fun `picking a household asks the server for the Kin its visits cover`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getHouseholdKinRoster("kf1") } returns Result.success(
+            HouseholdKinRoster(listOf(RosterKin("kin-a", "Aggie"), RosterKin("kin-b", null)), chooseKin = false),
         )
 
         val vm = buildViewModel()
         vm.loadKinForNewRequest("kf1")
         advanceUntilIdle()
 
-        assertEquals(listOf("kin-a"), vm.state.value.newRequestKin.map { it.id })
+        assertEquals(listOf("kin-a", "kin-b"), vm.state.value.newRequestKin.map { it.id })
+        assertEquals(listOf("Aggie", "Unnamed Kin"), vm.state.value.newRequestKin.map { it.label })
+        assertFalse("choosing Kin is off unless the server says so", vm.state.value.newRequestChooseKin)
         assertFalse(vm.state.value.newRequestKinLoading)
         assertNull(vm.state.value.newRequestKinError)
+        coVerify(exactly = 0) { auntieRepo.getKin(any()) }
     }
 
     @Test
-    fun `an unreadable kin roster fails loud rather than reading as an empty household`() =
+    fun `choosing Kin is on when the server says so`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getHouseholdKinRoster("kf1") } returns Result.success(
+            HouseholdKinRoster(listOf(RosterKin("kin-a", "Aggie")), chooseKin = true),
+        )
+
+        val vm = buildViewModel()
+        vm.loadKinForNewRequest("kf1")
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.newRequestChooseKin)
+    }
+
+    @Test
+    fun `another household's answer replaces the first, choosing included`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getHouseholdKinRoster("kf1") } returns Result.success(
+            HouseholdKinRoster(listOf(RosterKin("kin-a", "Aggie")), chooseKin = true),
+        )
+        coEvery { kinCareRepo.getHouseholdKinRoster("kf2") } returns Result.failure(RuntimeException("internal"))
+
+        val vm = buildViewModel()
+        vm.loadKinForNewRequest("kf1")
+        advanceUntilIdle()
+        vm.loadKinForNewRequest("kf2")
+        advanceUntilIdle()
+
+        assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+        assertFalse(vm.state.value.newRequestChooseKin)
+    }
+
+    @Test
+    fun `Kin that cannot be loaded say so in plain words rather than reading as an empty household`() =
         runTest(testDispatcher) {
-            coEvery { auntieRepo.getKin("kf1") } returns Result.failure(RuntimeException("permission denied"))
+            coEvery { kinCareRepo.getHouseholdKinRoster("kf1") } returns Result.failure(RuntimeException("permission denied"))
 
             val vm = buildViewModel()
             vm.loadKinForNewRequest("kf1")
             advanceUntilIdle()
 
-            assertEquals(emptyList<Kin>(), vm.state.value.newRequestKin)
-            assertEquals("permission denied", vm.state.value.newRequestKinError)
+            assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+            assertEquals(
+                "The Kin of this household could not be loaded. The visit still covers every Kin in the home.",
+                vm.state.value.newRequestKinError,
+            )
+            assertFalse(vm.state.value.newRequestChooseKin)
             assertFalse(vm.state.value.newRequestKinLoading)
         }
 
@@ -541,14 +574,14 @@ class EnhancedSchedulingViewModelBookingWizardTest {
         vm.loadKinForNewRequest("")
         advanceUntilIdle()
 
-        assertEquals(emptyList<Kin>(), vm.state.value.newRequestKin)
-        coVerify(exactly = 0) { auntieRepo.getKin(any()) }
+        assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+        coVerify(exactly = 0) { kinCareRepo.getHouseholdKinRoster(any()) }
     }
 
     @Test
     fun `closing the wizard drops the kin roster and any refusal`() = runTest(testDispatcher) {
-        coEvery { auntieRepo.getKin("kf1") } returns Result.success(
-            listOf(Kin(id = "kin-a", kinfolkId = "kf1", name = "Aggie", status = "active")),
+        coEvery { kinCareRepo.getHouseholdKinRoster("kf1") } returns Result.success(
+            HouseholdKinRoster(listOf(RosterKin("kin-a", "Aggie")), chooseKin = true),
         )
 
         val vm = buildViewModel()
@@ -556,10 +589,12 @@ class EnhancedSchedulingViewModelBookingWizardTest {
         vm.loadKinForNewRequest("kf1")
         advanceUntilIdle()
         assertEquals(1, vm.state.value.newRequestKin.size)
+        assertTrue(vm.state.value.newRequestChooseKin)
 
         vm.hideNewRequestDialog()
         assertFalse(vm.state.value.showNewRequestDialog)
-        assertEquals(emptyList<Kin>(), vm.state.value.newRequestKin)
+        assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+        assertFalse(vm.state.value.newRequestChooseKin)
         assertNull(vm.state.value.newRequestKinError)
     }
 }

@@ -7,7 +7,7 @@ import org.junit.Test
 
 class FeatureFlagsTest {
 
-    @Test fun defaults_onlyCommsRecapAndInboundCommsOff() {
+    @Test fun defaults_onlyCommsRecapInboundCommsAndChooseKinOff() {
         // #3: built features default ON (they live in ALWAYS_ON); only the genuinely-gated
         // flags still ship dark. Parity with web defaults (plus the android-only WARNING-8 flag).
         val map = FeatureFlags.DEFAULT.toMap()
@@ -20,12 +20,14 @@ class FeatureFlagsTest {
             setOf(
                 FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP,
                 FeatureFlags.KEY_INBOUND_COMMS_SERVER_AUTHORITATIVE,
+                // #1822 / #1862: every visit covers every Kin unless this is switched on.
+                FeatureFlags.KEY_VISITS_CHOOSE_KIN,
             ),
             map.filterValues { !it }.keys
         )
     }
 
-    @Test fun registry_has11Keys_allNamespaced() {
+    @Test fun registry_has12Keys_allNamespaced() {
         // 29 finished/always-on flags have been retired. The latest 6 (Stage 2 Step 2)
         // were built for real, not gated, so their flags are gone:
         //   directory.lastVisit (per-kinfolk last-completed-visit date, lastVisitByKinfolk),
@@ -54,7 +56,9 @@ class FeatureFlagsTest {
         // (auntieos.inbox.waitingSections) is shared with web and makes it 11 here, 10
         // there; it is a TRIAL and is meant to be deleted once the operator picks an
         // arrangement, which is when these two numbers go back to 10 and 9.
-        assertEquals(11, FeatureFlags.KEYS.size)
+        // #1822 / #1862: auntieos.visits.chooseKin, shared with web and the desktop
+        // console, makes it 12 here.
+        assertEquals(12, FeatureFlags.KEYS.size)
         assertTrue(FeatureFlags.KEYS.all { it.startsWith("auntieos.") })
         assertEquals(FeatureFlags.KEYS.size, FeatureFlags.KEYS.toSet().size) // no dup keys
     }
@@ -211,5 +215,17 @@ class FeatureFlagsTest {
             "auntieos.settings.integrationManage",
         )
         assertTrue(FeatureFlags.KEYS.none { it in retired })
+    }
+
+    // #1822 / #1862, operator ruling 2026-11-12: every visit covers every Kin.
+    // Choosing specific Kin is off unless the operator switches it on.
+    @Test fun chooseKin_defaultsOff_hasAToggle_andRoundTrips() {
+        assertFalse(FeatureFlags().visitsChooseKin)
+        assertEquals("auntieos.visits.chooseKin", FeatureFlags.KEY_VISITS_CHOOSE_KIN)
+        assertTrue(FeatureFlags.KEY_VISITS_CHOOSE_KIN in FeatureFlags.KEYS)
+        assertFalse(FeatureFlags.KEY_VISITS_CHOOSE_KIN in FeatureFlags.ALWAYS_ON)
+        val on = FeatureFlags.fromOverrides(mapOf(FeatureFlags.KEY_VISITS_CHOOSE_KIN to true))
+        assertTrue(on.visitsChooseKin)
+        assertEquals(on, FeatureFlags.fromMap(on.toMap()))
     }
 }
