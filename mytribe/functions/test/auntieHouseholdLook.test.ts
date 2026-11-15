@@ -92,6 +92,12 @@ const PATHS: ReadonlyArray<{ name: string; load: () => Promise<Handler>; data: R
     words: 'Jane Rivers looked at Kinfolk Dre East',
   },
   {
+    name: 'getHouseholdKinRoster',
+    load: async () => (await import('../src/portal/getHouseholdKinRoster')).getHouseholdKinRosterHandler as Handler,
+    data: { kinfolkId: 'fam1' },
+    words: 'Jane Rivers looked at Kinfolk Dre East',
+  },
+  {
     name: 'listSecondaryKinfolk',
     load: async () => (await import('../src/portal/secondaryKinfolk')).listSecondaryKinfolkHandler as Handler,
     data: { kinfolkId: 'fam1' },

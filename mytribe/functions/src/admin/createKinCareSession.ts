@@ -8,7 +8,8 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { materializeKinRoster, resolveKinfolkDisplayName } from '../lib/kinRoster';
+import { kinRosterForNewVisit, resolveKinfolkDisplayName } from '../lib/kinRoster';
+import { chooseKinEnabled } from '../lib/featureFlags';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { guardVisitOverlapConflict } from '../lib/visitOverlapConflict';
@@ -233,9 +234,13 @@ export async function createKinCareSessionHandler(
     auditContext: { kinfolkId: args.kinfolkId, serviceType: args.serviceType },
   });
 
-  // R1: no kinIds stated means the whole household, materialized here rather
-  // than stored as the literal `[]` (see lib/kinRoster.ts).
-  const { kinIds, kinNames } = await materializeKinRoster(args.kinfolkId, args.kinIds);
+  // Every visit covers every Kin: the whole active roster is stored unless the
+  // choose-Kin flag is on for this caller, when the Kin named are kept. An
+  // older installed app that still sends a subset is answered the same way,
+  // with a visit for the whole home (see lib/kinRoster.ts).
+  const { kinIds, kinNames } = await kinRosterForNewVisit(args.kinfolkId, args.kinIds, {
+    chooseKin: await chooseKinEnabled(uid),
+  });
   // Stamped from `kinfolk/{kinfolkId}` rather than taken from the caller: every
   // visit list renders this field directly and this writer never set it, so
   // every ad-hoc visit read as "Unnamed Kinfolk". See `resolveKinfolkDisplayName`.

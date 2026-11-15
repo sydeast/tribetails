@@ -48,7 +48,7 @@ describe('materializeKinRoster, R1: a booking covers every Kin in the home', () 
     );
   });
 
-  it('honors an explicit subset exactly, because narrowing is a deliberate act', async () => {
+  it('keeps the Kin an existing booking already names, exactly as stored', async () => {
     const ctx = buildDbMock(household());
     mocks.dbFn.mockReturnValue(ctx.db);
     const { materializeKinRoster } = await import('../src/lib/kinRoster');
@@ -110,5 +110,116 @@ describe('materializeKinRoster, R1: a booking covers every Kin in the home', () 
     const { materializeKinRoster } = await import('../src/lib/kinRoster');
 
     expect(await materializeKinRoster('3', [])).toEqual({ kinIds: [], kinNames: [] });
+  });
+});
+
+// #1862: one booking read six Kin on the admin wizard, three on the request and
+// four on the portal, because each screen and the server counted a different
+// store. #1822: a household whose only Kin the office typed in had no roster.
+describe('readHouseholdKinRoster, the one roster every screen and writer reads', () => {
+  function twoStores() {
+    return {
+      queryDocs: {
+        'families/3/kin': [
+          // Made by the household; its admin record has a different id.
+          { id: 'fam-a', data: { name: 'Biscuit', legacyKinId: 'flat-a' } },
+          // Made by the office, so both copies share the id.
+          { id: 'both-b', data: { name: 'Gravy', status: 'active' } },
+          // The household's goodbye. Its admin record still reads active.
+          { id: 'fam-c', data: { name: 'Old Boy', status: 'noLongerWithUs', legacyKinId: 'flat-c' } },
+          // Archived by the office, which writes both copies.
+          { id: 'fam-d', data: { name: 'Ghost', status: 'archived', legacyKinId: 'flat-d' } },
+          // Tied to its admin record by the record's pointer alone.
+          { id: 'fam-e', data: { name: 'Pepper' } },
+        ],
+        kin: [
+          { id: 'flat-a', data: { name: 'Biscuit', kinfolkId: '3' } },
+          { id: 'both-b', data: { name: 'Gravy', kinfolkId: '3' } },
+          { id: 'flat-c', data: { name: 'Old Boy', kinfolkId: '3', status: 'active' } },
+          { id: 'flat-d', data: { name: 'Ghost', kinfolkId: '3', status: 'archived' } },
+          { id: 'flat-e', data: { name: 'Pepper', kinfolkId: '3', familyKinPath: 'families/3/kin/fam-e' } },
+          // The office made this Kin and no household copy exists yet.
+          { id: 'flat-f', data: { name: 'Office Cat', kinfolkId: '3' } },
+          // The office made and archived this one.
+          { id: 'flat-g', data: { name: 'Long Gone', kinfolkId: '3', status: 'archived' } },
+          // Another household's Kin.
+          { id: 'flat-z', data: { name: 'Next Door', kinfolkId: '4' } },
+        ],
+      },
+    };
+  }
+  it('lists each active Kin once, whichever store it was made in', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(twoStores()).db);
+    const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
+    expect(await readHouseholdKinRoster('3')).toEqual([
+      { id: 'fam-a', flatId: 'flat-a', name: 'Biscuit' },
+      { id: 'both-b', flatId: 'both-b', name: 'Gravy' },
+      { id: 'fam-e', flatId: 'flat-e', name: 'Pepper' },
+      { id: 'flat-f', flatId: 'flat-f', name: 'Office Cat' },
+    ]);
+  });
+  it('leaves a memorial Kin off even though its admin record still reads active', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(twoStores()).db);
+    const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
+    const ids = (await readHouseholdKinRoster('3')).map((k) => k.id);
+    expect(ids).not.toContain('fam-c');
+    expect(ids).not.toContain('flat-c');
+  });
+  it('leaves an archived Kin off, with or without a household copy', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(twoStores()).db);
+    const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
+    const ids = (await readHouseholdKinRoster('3')).map((k) => k.id);
+    for (const gone of ['fam-d', 'flat-d', 'flat-g']) expect(ids).not.toContain(gone);
+  });
+  it('never lists another household\'s Kin', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(twoStores()).db);
+    const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
+    expect((await readHouseholdKinRoster('3')).map((k) => k.name)).not.toContain('Next Door');
+  });
+  it('gives a household whose only Kin the office typed in a roster (#1822)', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({ queryDocs: { kin: [{ id: 'flat-1', data: { name: 'Solo', kinfolkId: '7' } }] } }).db,
+    );
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+    expect(await materializeKinRoster('7', [])).toEqual({ kinIds: ['flat-1'], kinNames: ['Solo'] });
+  });
+});
+describe('kinRosterForNewVisit, operator ruling 2026-11-12: every visit covers every Kin', () => {
+  it('with choosing Kin off, stores the whole roster whatever was named', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(household()).db);
+    const { kinRosterForNewVisit } = await import('../src/lib/kinRoster');
+    for (const named of [['k1'], ['k3'], ['nobody'], [], null, undefined]) {
+      expect(await kinRosterForNewVisit('3', named, { chooseKin: false })).toEqual({
+        kinIds: ['k1', 'k2'],
+        kinNames: ['Fido', 'Whiskers'],
+      });
+    }
+  });
+  it('with choosing Kin on, stores the named Kin in roster order, once each', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(household()).db);
+    const { kinRosterForNewVisit } = await import('../src/lib/kinRoster');
+    expect(await kinRosterForNewVisit('3', ['k2', 'k1', 'k2'], { chooseKin: true })).toEqual({
+      kinIds: ['k1', 'k2'],
+      kinNames: ['Fido', 'Whiskers'],
+    });
+    expect(await kinRosterForNewVisit('3', ['k2'], { chooseKin: true })).toEqual({
+      kinIds: ['k2'],
+      kinNames: ['Whiskers'],
+    });
+  });
+  it('with choosing Kin on, never stores a memorial, archived or unknown Kin', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(household()).db);
+    const { kinRosterForNewVisit } = await import('../src/lib/kinRoster');
+    expect(await kinRosterForNewVisit('3', ['k1', 'k3', 'k4', 'stale'], { chooseKin: true })).toEqual({
+      kinIds: ['k1'],
+      kinNames: ['Fido'],
+    });
+  });
+  it('with choosing Kin on, naming none, or none in care, means the whole home', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(household()).db);
+    const { kinRosterForNewVisit } = await import('../src/lib/kinRoster');
+    for (const named of [[], undefined, ['k3'], ['stale']]) {
+      expect((await kinRosterForNewVisit('3', named, { chooseKin: true })).kinIds).toEqual(['k1', 'k2']);
+    }
   });
 });

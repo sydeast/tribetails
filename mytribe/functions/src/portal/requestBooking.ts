@@ -13,7 +13,8 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { businessLabel } from '../lib/businessName';
 import { approveBookingSeriesCore } from '../admin/approveBookingSeriesCore';
 import { resolveDefaultAssignee, type Assignee } from '../lib/defaultAssignee';
-import { materializeKinRoster } from '../lib/kinRoster';
+import { kinRosterForNewVisit } from '../lib/kinRoster';
+import { chooseKinEnabled } from '../lib/featureFlags';
 import { guardBookingBusyConflict } from '../lib/bookingBusyConflict';
 import { guardCompanyHolidayConflict } from '../lib/companyHolidayConflict';
 import { assertWeeklyHoursForVisits } from '../lib/weeklyHoursRule';
@@ -865,9 +866,10 @@ export async function writeEnvelope(opts: {
   pattern: 'individual' | 'weekly';
   weeklyDays: number[] | null;
   /**
-   * The Kin the caller NAMED. Empty means the caller named none, which under
-   * R1 means the whole household and is materialized into the concrete roster
-   * below. It is never persisted as `[]`.
+   * The Kin the caller NAMED. They are kept only when the choose-Kin flag is
+   * on for `uid`; otherwise, and when none is named, the visit covers the
+   * whole household, materialized into the concrete roster below. It is never
+   * persisted as `[]`.
    */
   kinIds: string[];
   notes: string | null;
@@ -911,8 +913,10 @@ export async function writeEnvelope(opts: {
   const serviceNames = new Set(visits.map((v) => v.serviceName ?? null));
   const homogeneousServiceId = serviceIds.size === 1 ? [...serviceIds][0] : null;
   const homogeneousServiceName = serviceNames.size === 1 ? [...serviceNames][0] : null;
-  // R1: an empty `kinIds` means the WHOLE HOUSEHOLD, and is materialized into
-  // the concrete roster here rather than persisted as the literal `[]` that
+  // Every visit covers every Kin (operator ruling 2026-11-12): the household's
+  // whole active roster is stored, whatever the caller named, unless the
+  // choose-Kin flag is on for this caller, when the Kin they named are kept.
+  // Either way the concrete roster is what lands, never the literal `[]` that
   // left every reader downstream with nothing to name. See kinRoster.ts for the
   // ruling and for the roster-drift consequence this freeze-at-write accepts.
   //
@@ -920,8 +924,9 @@ export async function writeEnvelope(opts: {
   // kinIds today) and stamped on the envelope AND each visit, rather than the
   // `kinNames: []` that used to leave the portal saying "your kin" and
   // Android's Schedule with no Pets line at all.
-  const { kinIds: kinIdUnion, kinNames } = await materializeKinRoster(kinfolkId, kinIds);
-
+  const { kinIds: kinIdUnion, kinNames } = await kinRosterForNewVisit(kinfolkId, kinIds, {
+    chooseKin: await chooseKinEnabled(uid),
+  });
   const visitIds: string[] = [];
   let storedEnvelope: Record<string, unknown> | undefined;
   await firestore.runTransaction(async (tx) => {

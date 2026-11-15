@@ -9,7 +9,8 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
-import { materializeKinRoster } from '../lib/kinRoster';
+import { kinRosterForNewVisit } from '../lib/kinRoster';
+import { chooseKinEnabled } from '../lib/featureFlags';
 import { isAuntieClaim } from '../lib/staffGate';
 
 /**
@@ -76,11 +77,17 @@ export const Args = z
       .max(24 * 60)
       .optional(),
     /**
-     * R1: which Kin this visit covers. An EMPTY array is not "no Kin" -- a
-     * booking for zero animals is not a thing the business sells -- it means
-     * the whole household, and `materializeKinRoster` expands it, exactly as
-     * the create path does. `kinNames` is re-resolved in the same step so the
-     * two can never drift apart on one document.
+     * Which Kin this visit covers. Honored only while the choose-Kin flag is
+     * on for the caller (`lib/featureFlags.ts`): the named Kin that are on the
+     * household's active roster are stored, and naming none means the whole
+     * household, exactly as the create path reads it. `kinNames` is
+     * re-resolved in the same step so the two can never drift apart on one
+     * document.
+     *
+     * With the flag off, the default, every visit covers every Kin and there
+     * is nothing to choose: the key is accepted, so an older app that sends it
+     * with every save is not refused, and the Kin the visit was made for stay
+     * as they are. A past visit is never re-stamped with today's roster.
      */
     kinIds: z.array(z.string().min(1).max(120)).max(50).optional(),
   })
@@ -170,7 +177,7 @@ export async function updateKinCareSessionHandler(
     patch.serviceDurationMinutes = args.serviceDurationMinutes;
     updated.push('serviceDurationMinutes');
   }
-  if (args.kinIds !== undefined) {
+  if (args.kinIds !== undefined && (await chooseKinEnabled(uid))) {
     const kinfolkId = typeof prev.kinfolkId === 'string' ? prev.kinfolkId.trim() : '';
     if (kinfolkId === '') {
       // Without the household there is no roster to resolve against, and
@@ -182,12 +189,15 @@ export async function updateKinCareSessionHandler(
         { code: 'session_has_no_kinfolk', sessionId: args.sessionId },
       );
     }
-    const roster = await materializeKinRoster(kinfolkId, args.kinIds);
+    const roster = await kinRosterForNewVisit(kinfolkId, args.kinIds, { chooseKin: true });
     patch.kinIds = roster.kinIds;
     patch.kinNames = roster.kinNames;
     updated.push('kinIds', 'kinNames');
   }
-
+  // The Kin were the only thing sent and choosing Kin is off: nothing changes,
+  // so nothing is written. Stamping `updatedAt` here would say the visit was
+  // edited when it was not.
+  if (updated.length === 0) return { ok: true, sessionId: args.sessionId, updated: [] };
   patch.updatedAt = FieldValue.serverTimestamp();
   patch.updatedBy = uid;
 

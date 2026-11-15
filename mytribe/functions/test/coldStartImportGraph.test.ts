@@ -288,8 +288,16 @@ const ALLOWED_EAGER_PACKAGES = [
  * new FUNCTIONS entry, a staff member saving her own Account profile.
  * Everything it imports (the staff wrapper, the audit writer, the audit actor)
  * was already here.
+ *
+ * 459 since #1822 / #1862 (on top of #2287's 457):
+ * `portal/getHouseholdKinRoster.ts` is a new FUNCTIONS entry, the one Kin
+ * roster every booking screen reads, and `lib/featureFlags.ts` is the flag
+ * read it shares with `getFeatureFlags` and the booking writers (the merge
+ * `getFeatureFlags` used to carry inline, moved so the write and the screen
+ * resolve the choose-Kin flag the same way). Everything else they import was
+ * already here.
  */
-const MAX_OWN_EAGER_MODULES = 457;
+const MAX_OWN_EAGER_MODULES = 459;
 
 interface Edge {
   spec: string;

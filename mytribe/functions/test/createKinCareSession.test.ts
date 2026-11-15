@@ -77,71 +77,101 @@ describe('createKinCareSession happy path', () => {
   });
 });
 
-// The #148 half of this file: sessions carry the pets' REAL names, resolved
-// from families/{kinfolkId}/kin/{kinId}, never a hardcoded empty list. Times
-// sit a day out so the busy-conflict guard (below) has nothing to say here.
+// The #148 half of this file: sessions carry the pets' REAL names, never a
+// hardcoded empty list. Times sit a day out so the busy-conflict guard (below)
+// has nothing to say here.
+//
+// #1822 / #1862 (operator ruling 2026-11-12): every visit covers every Kin.
+// The roster is the household's active Kin, and what the caller names is kept
+// only while the choose-Kin flag is on.
 describe('createKinCareSession kin names', () => {
-  it('resolves real kin names onto the session it creates (not kinNames: [])', async () => {
-    const ctx = buildDbMock({
-      docs: {
-        'families/3/kin/k1': { name: 'Fido' },
-        'families/3/kin/k2': { name: 'Whiskers' },
+  const CHOOSE_KIN_ON = { 'business_settings/feature_flags': { flags: { 'auntieos.visits.chooseKin': true } } };
+  /** A dog and a cat in care, a memorial Kin, and a Kin the office made that has no household copy. */
+  function home(docs: Record<string, Record<string, unknown>> = {}) {
+    return buildDbMock({
+      docs,
+      queryDocs: {
+        'families/3/kin': [
+          { id: 'k1', data: { name: 'Fido', legacyKinId: 'flat1' } },
+          { id: 'k2', data: { name: 'Whiskers', status: 'active' } },
+          { id: 'k3', data: { name: 'Old Boy', status: 'noLongerWithUs' } },
+        ],
+        kin: [
+          { id: 'flat1', data: { name: 'Fido', kinfolkId: '3' } },
+          { id: 'flat9', data: { name: 'Office Cat', kinfolkId: '3' } },
+          { id: 'flat8', data: { name: 'Gone', kinfolkId: '3', status: 'archived' } },
+          { id: 'other', data: { name: 'Next Door', kinfolkId: '4' } },
+        ],
       },
     });
+  }
+  function visitFor(kinIds?: string[]) {
+    return req({
+      kinfolkId: '3',
+      ...(kinIds ? { kinIds } : {}),
+      serviceType: 'walk',
+      startTime: new Date(Date.now() + DAY).toISOString(),
+      endTime: new Date(Date.now() + DAY + 3600_000).toISOString(),
+    });
+  }
+  it('covers every active Kin in the home when none is named', async () => {
+    const ctx = home();
     mocks.dbFn.mockReturnValue(ctx.db);
-
-    await createKinCareSessionHandler(
-      req({
-        kinfolkId: '3',
-        kinIds: ['k1', 'k2'],
-        serviceType: 'walk',
-        startTime: new Date(Date.now() + DAY).toISOString(),
-        endTime: new Date(Date.now() + DAY + 3600_000).toISOString(),
-      }),
-    );
-
+    await createKinCareSessionHandler(visitFor());
     expect(sessionWrites(ctx)).toHaveLength(1);
     const written = sessionWrites(ctx)[0].data;
-    expect(written.kinIds).toEqual(['k1', 'k2']);
-    expect(written.kinNames).toEqual(['Fido', 'Whiskers']);
+    expect(written.kinIds).toEqual(['k1', 'k2', 'flat9']);
+    expect(written.kinNames).toEqual(['Fido', 'Whiskers', 'Office Cat']);
   });
-
-  it('tolerates a missing kin doc rather than failing the session creation', async () => {
-    const ctx = buildDbMock({ docs: { 'families/3/kin/k1': { name: 'Fido' } } });
+  it('with choosing Kin off, an older app that names one Kin still gets a visit for the whole home', async () => {
+    const ctx = home();
     mocks.dbFn.mockReturnValue(ctx.db);
-
-    const r = await createKinCareSessionHandler(
-      req({
-        kinfolkId: '3',
-        kinIds: ['k1', 'missing-kin'],
-        serviceType: 'walk',
-        startTime: new Date(Date.now() + DAY).toISOString(),
-        endTime: new Date(Date.now() + DAY + 3600_000).toISOString(),
-      }),
-    );
-
+    const r = await createKinCareSessionHandler(visitFor(['k2']));
     expect(r.ok).toBe(true);
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1', 'k2', 'flat9']);
+    expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Fido', 'Whiskers', 'Office Cat']);
+  });
+  it('with choosing Kin on, keeps the Kin that were named', async () => {
+    const ctx = home(CHOOSE_KIN_ON);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(visitFor(['k2']));
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k2']);
+    expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Whiskers']);
+  });
+  it('with choosing Kin on, reads an admin record id as the Kin it belongs to', async () => {
+    const ctx = home(CHOOSE_KIN_ON);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(visitFor(['flat1', 'flat9']));
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1', 'flat9']);
+    expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Fido', 'Office Cat']);
+  });
+  it('with choosing Kin on, drops a Kin that is not in care or not in this home', async () => {
+    const ctx = home(CHOOSE_KIN_ON);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(visitFor(['k1', 'k3', 'flat8', 'other', 'missing-kin']));
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1']);
     expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Fido']);
   });
-
-  it('writes kinNames: [] when no kinIds are given (no lookup attempted)', async () => {
+  it('with choosing Kin on, naming nobody who is in care means the whole home, never a visit for nobody', async () => {
+    const ctx = home(CHOOSE_KIN_ON);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(visitFor(['k3', 'missing-kin']));
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1', 'k2', 'flat9']);
+  });
+  it('a tester with the flag on their own account chooses, while it is off for everyone else', async () => {
+    const ctx = home({ 'clients/admin1': { featureFlags: { 'auntieos.visits.chooseKin': true } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createKinCareSessionHandler(visitFor(['k2']));
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k2']);
+  });
+  it('writes no Kin for a household that has none on file', async () => {
     const ctx = buildDbMock({ docs: {} });
     mocks.dbFn.mockReturnValue(ctx.db);
-
-    await createKinCareSessionHandler(
-      req({
-        kinfolkId: '3',
-        serviceType: 'walk',
-        startTime: new Date(Date.now() + DAY).toISOString(),
-        endTime: new Date(Date.now() + DAY + 3600_000).toISOString(),
-      }),
-    );
-
+    await createKinCareSessionHandler(visitFor());
     expect(sessionWrites(ctx)[0].data.kinIds).toEqual([]);
     expect(sessionWrites(ctx)[0].data.kinNames).toEqual([]);
   });
 });
-
 describe('createKinCareSession busy-conflict guard', () => {
   function seedWithBusySlot(startMs: number, endMs: number) {
     const startIso = new Date(startMs).toISOString();
@@ -224,7 +254,7 @@ describe('createKinCareSession busy-conflict guard', () => {
 // Auntie assignment and both note threads have a visit document to live on.
 describe('createKinCareSession writes the booking record the visit sheet needs', () => {
   async function create(extra: Record<string, unknown> = {}) {
-    const ctx = buildDbMock({ docs: { 'families/kf1/kin/k1': { name: 'QA-Pup' } } });
+    const ctx = buildDbMock({ queryDocs: { 'families/kf1/kin': [{ id: 'k1', data: { name: 'QA-Pup' } }] } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const start = new Date(Date.now() + DAY).toISOString();
     const end = new Date(Date.now() + DAY + 30 * 60_000).toISOString();
@@ -371,7 +401,7 @@ describe('createKinCareSession for an Android booking (enhancedBookingId)', () =
   });
 
   it('writes the booking record under ids derived from the booking, and links the session to it', async () => {
-    const ctx = buildDbMock({ docs: { 'families/kf1/kin/k1': { name: 'QA-Pup' } } });
+    const ctx = buildDbMock({ queryDocs: { 'families/kf1/kin': [{ id: 'k1', data: { name: 'QA-Pup' } }] } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await createKinCareSessionHandler(req(args()));
     expect(res.sessionId).toBe('vis_enh_eb123');

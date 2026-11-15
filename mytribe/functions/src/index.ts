@@ -260,6 +260,7 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   getMyAccess: () => require('./portal/getMyAccess'),
   getMyInvoices: () => require('./portal/getMyInvoices'),
   getMyKin: () => require('./portal/getMyKin'),
+  getHouseholdKinRoster: () => require('./portal/getHouseholdKinRoster'),
   getMyKinTales: () => require('./portal/getMyKinTales'),
   getMyBookings: () => require('./portal/getMyBookings'),
   requestBooking: () => require('./portal/requestBooking'),

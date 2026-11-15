@@ -36,7 +36,12 @@ function seed() {
     docs: {
       'kinfolk/kf1': { firstName: 'Jamie', lastName: 'Halbrook' },
       'base_services/svc_walk': { name: 'Dog Walk', priceCents: 2500 },
-      'families/kf1/kin/k1': { name: 'Fido' },
+    },
+    queryDocs: {
+      'families/kf1/kin': [
+        { id: 'k1', data: { name: 'Fido' } },
+        { id: 'k2', data: { name: 'Whiskers' } },
+      ],
     },
   });
 }
@@ -109,7 +114,7 @@ describe('createMultiDateBookingRequest happy path', () => {
     expect(env?.data.weeklyDays).toEqual([1, 3]);
   });
 
-  it('resolves real kin names via the shared writeEnvelope (same fix as requestBooking)', async () => {
+  it('books the whole home whatever Kin the wizard named, while choosing Kin is off (#1862)', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
     await createMultiDateBookingRequestHandler(
@@ -121,7 +126,38 @@ describe('createMultiDateBookingRequest happy path', () => {
     );
     const env = envelope(ctx);
     const v = visitWrites(ctx)[0];
+    expect(env?.data.kinIds).toEqual(['k1', 'k2']);
+    expect(env?.data.kinNames).toEqual(['Fido', 'Whiskers']);
+    expect(v?.data.kinIds).toEqual(['k1', 'k2']);
+    expect(v?.data.kinNames).toEqual(['Fido', 'Whiskers']);
+  });
+  it('keeps the Kin the wizard named once choosing Kin is switched on', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'kinfolk/kf1': { firstName: 'Jamie', lastName: 'Halbrook' },
+        'base_services/svc_walk': { name: 'Dog Walk', priceCents: 2500 },
+        'business_settings/feature_flags': { flags: { 'auntieos.visits.chooseKin': true } },
+      },
+      queryDocs: {
+        'families/kf1/kin': [
+          { id: 'k1', data: { name: 'Fido' } },
+          { id: 'k2', data: { name: 'Whiskers' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await createMultiDateBookingRequestHandler(
+      req({
+        kinfolkId: 'kf1',
+        kinIds: ['k1'],
+        visits: [{ startTimeMs: Date.now() + DAY, serviceName: 'Dog Walk', serviceId: 'svc_walk' }],
+      }),
+    );
+    const env = ctx.writes.find((w) => /^families\/kf1\/bookings\/[^/]+$/.test(w.path));
+    const v = ctx.writes.find((w) => /^families\/kf1\/bookings\/[^/]+\/kinCares\/[^/]+$/.test(w.path));
+    expect(env?.data.kinIds).toEqual(['k1']);
     expect(env?.data.kinNames).toEqual(['Fido']);
+    expect(v?.data.kinIds).toEqual(['k1']);
     expect(v?.data.kinNames).toEqual(['Fido']);
   });
 
@@ -315,7 +351,10 @@ describe('createMultiDateBookingRequest wizard fields (billing, communication)',
     const env = envelope(ctx);
     expect(env?.data.pattern).toBe('weekly');
     expect(env?.data.notes).toBe('Gate code 1234');
-    expect(env?.data.kinIds).toEqual(['k1']);
+    // An installed Android build still sends the Kin its own picker chose. The
+    // payload parses, and the booking covers the whole home (#1862).
+    expect(env?.data.kinIds).toEqual(['k1', 'k2']);
+    expect(env?.data.kinNames).toEqual(['Fido', 'Whiskers']);
   });
   it('carries a different service and time per visit, which the wizard now produces', async () => {
     const ctx = seed();
