@@ -98,6 +98,7 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
                 data: parent.data ?? {},
                 targetType: parent.targetType,
                 targetId: parent.targetId,
+                notificationId: parent.notificationId,
               }),
             }
           : {}),

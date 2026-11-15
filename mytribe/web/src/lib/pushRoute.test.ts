@@ -16,6 +16,7 @@ describe('pushClickUrl (#2259)', () => {
     ['/tribe', `${ORIGIN}/tribe`],
     ['/messages', `${ORIGIN}/messages`],
     ['/notifications', `${ORIGIN}/notifications`],
+    ['/notifications?entry=n1', `${ORIGIN}/notifications?entry=n1`],
   ])('opens %s, the thing the notice is about', (route, url) => {
     expect(pushClickUrl(route, ORIGIN)).toBe(url);
   });
@@ -45,7 +46,7 @@ describe('pushClickUrl (#2259)', () => {
   });
 
   it('every route the server builds also survives the sign-in redirect, so a signed-out tap opens it after sign-in', () => {
-    for (const route of ['/schedule/v1', '/schedule', '/kintales?tale=t1', '/kintales', '/invoices/inv1', '/kin/k1', '/kin', '/tribe', '/messages', '/notifications']) {
+    for (const route of ['/schedule/v1', '/schedule', '/kintales?tale=t1', '/kintales', '/invoices/inv1', '/kin/k1', '/kin', '/tribe', '/messages', '/notifications', '/notifications?entry=n1']) {
       expect(safeRedirectPath(route), route).toBe(route);
     }
   });

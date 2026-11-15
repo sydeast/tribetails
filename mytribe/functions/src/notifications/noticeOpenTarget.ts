@@ -1,4 +1,5 @@
-import { householdNoticeTarget } from './buildNotificationDetail';
+import { HOUSEHOLD_NOTE_KEYS, householdNoticeTarget } from './buildNotificationDetail';
+import { HOUSEHOLD_NOTICE_ROUTE } from './templateParsers';
 import type { AudienceStream } from './types';
 
 /**
@@ -33,6 +34,15 @@ import type { AudienceStream } from './types';
  * and never names the office's household record. An office copy keeps the
  * target the dispatcher resolved.
  *
+ * WHERE THE WHOLE MESSAGE IS (operator ruling 2026-11-14, #2030): a household's
+ * push is a short line with a way to the full message in MyTribe. When the
+ * line was cut, or the office wrote the household a note on this notice, the
+ * full message is the notice's own entry on the notifications list, so the tap
+ * opens the list at that entry (`readInList`) and not the visit or invoice.
+ * Whether the line was cut is only known once it is rendered, so the push
+ * sender makes the choice; this file says what each choice opens. An office
+ * copy has no such choice and always opens its target.
+ *
  * PURE. No reads: every value is already on the work order.
  */
 export interface NoticeOpenTarget {
@@ -40,6 +50,14 @@ export interface NoticeOpenTarget {
   route?: string;
   /** String data keys for the push payload. Blank values are left out. */
   data: Record<string, string>;
+  /**
+   * A household's copy only: the notifications list at this notice's entry,
+   * for a push whose full message has to be read there. The route alone, with
+   * no target fields, so every client follows it to the list.
+   */
+  readInList?: { route: string };
+  /** A household's copy only: the office wrote the household a note on this notice. */
+  officeNote?: boolean;
 }
 
 export interface NoticeOpenInput {
@@ -49,6 +67,16 @@ export interface NoticeOpenInput {
   data?: Record<string, unknown>;
   targetType?: unknown;
   targetId?: unknown;
+  /** The work order's `notificationId`: the id of this notice's entry on the recipient's notifications list. */
+  notificationId?: unknown;
+}
+/** The query key the notifications list reads the entry to show from. */
+export const HOUSEHOLD_NOTICE_ENTRY_PARAM = 'entry';
+/** The notifications list at one entry, or the plain list when the work order names none. */
+export function householdNoticeEntryRoute(notificationId: string): string {
+  return notificationId
+    ? `${HOUSEHOLD_NOTICE_ROUTE}?${HOUSEHOLD_NOTICE_ENTRY_PARAM}=${part(notificationId)}`
+    : HOUSEHOLD_NOTICE_ROUTE;
 }
 
 function text(v: unknown): string {
@@ -117,6 +145,13 @@ export function noticeOpenTarget(input: NoticeOpenInput): NoticeOpenTarget {
     put('stripeEventId', text(bag['stripeEventId']));
   }
 
-  const route = household ? householdRouteFor(target.targetType, target.targetId, visitId) : undefined;
-  return route ? { route, data } : { data };
+  if (!household) return { data };
+  const route = householdRouteFor(target.targetType, target.targetId, visitId);
+  return {
+    ...(route ? { route } : {}),
+    data,
+    readInList: { route: householdNoticeEntryRoute(text(input.notificationId)) },
+    // The list's own rule for showing the note (`buildNotificationDetail`).
+    officeNote: HOUSEHOLD_NOTE_KEYS.has(input.key) && text(bag['note']) !== '',
+  };
 }

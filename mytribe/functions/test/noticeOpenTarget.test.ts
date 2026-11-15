@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: vi.fn(), auth: vi.fn(), getAdmin: vi.fn() }));
 
-import { householdRouteFor, noticeOpenTarget } from '../src/notifications/noticeOpenTarget';
+import { householdNoticeEntryRoute, householdRouteFor, noticeOpenTarget } from '../src/notifications/noticeOpenTarget';
 import { toNotificationListItem } from '../src/portal/listMyNotifications';
-import { HOUSEHOLD_NOTICE_RULES } from '../src/notifications/buildNotificationDetail';
+import { HOUSEHOLD_NOTE_KEYS, HOUSEHOLD_NOTICE_RULES } from '../src/notifications/buildNotificationDetail';
 
 /**
  * #2259, #2100: a tap on a push opens what the notice is about. The route and
@@ -145,5 +145,64 @@ describe('noticeOpenTarget, an office copy (#2100)', () => {
       targetId: 42,
     });
     expect(open.data).toEqual({ targetType: 'booking', targetId: '42', visitId: '42' });
+  });
+});
+
+/**
+ * Operator ruling 2026-11-14 (#2030): a household's push is a short line with
+ * a way to the full message. When the line was cut, or the office wrote a note
+ * on the notice, the full message is the notice's entry on the notifications
+ * list. This file says where that is; the push sender decides whether to use it.
+ */
+describe('noticeOpenTarget, where a household reads the whole message', () => {
+  const household = (key: string, data: Record<string, unknown>, notificationId?: unknown) =>
+    noticeOpenTarget({ key, stream: 'kinfolk', data, targetType: 'booking', targetId: 'b1', notificationId });
+  it('names the notifications list at the entry the work order is for', () => {
+    expect(household('kincare.auntie.arrived', { visitId: 'v1' }, 'n1').readInList).toEqual({
+      route: '/notifications?entry=n1',
+    });
+  });
+  it('a work order with no entry id names the plain list', () => {
+    expect(household('kincare.auntie.arrived', { visitId: 'v1' }).readInList).toEqual({ route: '/notifications' });
+    expect(household('kincare.auntie.arrived', { visitId: 'v1' }, '   ').readInList).toEqual({ route: '/notifications' });
+    expect(household('kincare.auntie.arrived', { visitId: 'v1' }, { id: 'n1' }).readInList).toEqual({ route: '/notifications' });
+  });
+  it.each([
+    ['n1&tab=x', '/notifications?entry=n1%26tab%3Dx'],
+    ['n1#frag', '/notifications?entry=n1%23frag'],
+    ['../../account', '/notifications?entry=..%2F..%2Faccount'],
+    ['https://evil.example', '/notifications?entry=https%3A%2F%2Fevil.example'],
+  ])('an entry id of %s cannot add a path part, a second query key or another site', (id, route) => {
+    expect(householdNoticeEntryRoute(id)).toBe(route);
+    const url = new URL(route, 'https://kinfolk.tribetails.com');
+    expect(url.origin).toBe('https://kinfolk.tribetails.com');
+    expect(url.pathname).toBe('/notifications');
+    expect([...url.searchParams.keys()]).toEqual(['entry']);
+    expect(url.searchParams.get('entry')).toBe(id);
+  });
+  it.each([...HOUSEHOLD_NOTE_KEYS])("%s with the office's note on it is flagged", (key) => {
+    expect(household(key, { note: 'We are away that week.' }, 'n1').officeNote).toBe(true);
+  });
+  it.each([...HOUSEHOLD_NOTE_KEYS])('%s with no note, or a blank one, is not flagged', (key) => {
+    expect(household(key, {}, 'n1').officeNote).toBe(false);
+    expect(household(key, { note: '   ' }, 'n1').officeNote).toBe(false);
+    expect(household(key, { note: null }, 'n1').officeNote).toBe(false);
+  });
+  it("a `note` on any other notice is not the office's note to the household", () => {
+    expect(household('kincare.auntie.arrived', { note: 'gate code 1234' }, 'n1').officeNote).toBe(false);
+    expect(household('kincare.changed', { note: 'staff note' }, 'n1').officeNote).toBe(false);
+  });
+  it.each(['business', 'staff', undefined] as const)('a %s copy always opens its target: it is offered no list', (stream) => {
+    const open = noticeOpenTarget({
+      key: 'kincare.request.declined',
+      ...(stream ? { stream } : {}),
+      data: { batchId: 'b1', note: 'We are away that week.' },
+      targetType: 'booking',
+      targetId: 'b1',
+      notificationId: 'n1',
+    });
+    expect(open.readInList).toBeUndefined();
+    expect(open.officeNote).toBeUndefined();
+    expect(open.data['targetType']).toBe('booking');
   });
 });

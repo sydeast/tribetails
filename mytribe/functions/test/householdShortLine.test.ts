@@ -8,6 +8,7 @@ import {
   HOUSEHOLD_NOTICE_ROUTE,
   HOUSEHOLD_SHORT_LINE_MAX,
   HOUSEHOLD_SMS_LINK_LABEL,
+  householdPushLineIsCut,
   householdPushShelfLine,
   householdSmsMax,
   householdSmsText,
@@ -166,5 +167,21 @@ describe('what reaches a household that has changed no setting', () => {
         expect(channels.email, `${def.key} email`).toBe(true);
       }
     }
+  });
+});
+
+describe('householdPushLineIsCut: whether the push line lost any of the message', () => {
+  it('200 characters fit and 201 do not', () => {
+    expect(householdPushLineIsCut('x'.repeat(HOUSEHOLD_SHORT_LINE_MAX))).toBe(false);
+    expect(householdPushLineIsCut('x'.repeat(HOUSEHOLD_SHORT_LINE_MAX + 1))).toBe(true);
+  });
+  it('measures the line as sent: folded line breaks and outer spaces are not a cut', () => {
+    expect(householdPushLineIsCut(`  ${'x'.repeat(99)}\n\n\n\n\n${'y'.repeat(100)}  `)).toBe(false);
+    expect(householdPushLineIsCut('')).toBe(false);
+  });
+  it.each([0, 1, 199, 200, 201, 500])('agrees with the line itself at %i characters', (n) => {
+    const text = 'word '.repeat(Math.ceil(n / 5)).slice(0, n).trim();
+    const flat = text.replace(/\s+/g, ' ').trim();
+    expect(householdPushLineIsCut(text)).toBe(householdPushShelfLine(text) !== flat);
   });
 });

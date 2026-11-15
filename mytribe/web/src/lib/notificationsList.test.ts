@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { InfiniteData } from '@tanstack/react-query';
 import type { ListMyNotificationsResult, NotificationItemDto } from '../api/notificationsApi';
-import { bellAccessibleName, markReadInPages, notificationTarget, notificationWhen, unreadBadgeLabel } from './notificationsList';
+import {
+  bellAccessibleName,
+  markReadInPages,
+  notificationTarget,
+  notificationWhen,
+  notificationsListSearch,
+  unreadBadgeLabel,
+} from './notificationsList';
 
 /** #1316: the pure rules behind the bell badge and the notifications list. */
 
@@ -164,5 +171,39 @@ describe('markReadInPages', () => {
     const data = pages();
     data.pages[0]!.unreadCount = 0;
     expect(markReadInPages(data, 'a', '2026-11-01T12:00:00.000Z').pages[0]?.unreadCount).toBe(0);
+  });
+});
+
+describe('notificationsListSearch: the entry a tapped push opens the list at', () => {
+  it('keeps a plain id', () => {
+    expect(notificationsListSearch({ entry: 'n1' })).toEqual({ entry: 'n1' });
+    expect(notificationsListSearch({ entry: '  AbC_123-x  ' })).toEqual({ entry: 'AbC_123-x' });
+  });
+  it('an all-digit id, which the router reads as a number, is still an id', () => {
+    expect(notificationsListSearch({ entry: 12345 })).toEqual({ entry: '12345' });
+  });
+  it.each([
+    undefined,
+    null,
+    '',
+    '   ',
+    {},
+    ['n1'],
+    true,
+    Number.NaN,
+    'a/b',
+    '../account',
+    'https://evil.example',
+    'n1?x=1',
+    'n1&x=1',
+    'n1#x',
+    'n1 n2',
+    'a\\b',
+    'x'.repeat(201),
+  ])('drops %j, and the list opens as it always has', (entry) => {
+    expect(notificationsListSearch({ entry })).toEqual({});
+  });
+  it('ignores every other key', () => {
+    expect(notificationsListSearch({ redirect: 'https://evil.example', tale: 't1' })).toEqual({});
   });
 });

@@ -86,11 +86,29 @@ describe('onNotificationChannelCreate hands the push what a tap opens (#2259, #2
       data: { kinfolkId: 'fam1', visitId: 'v1', batchId: 'b1' },
       targetType: 'booking',
       targetId: 'v1',
+      notificationId: 'n77',
     });
     expect(mocks.pushSender.mock.calls[0]![0].open).toEqual({
       route: '/schedule/v1',
       data: { targetType: 'booking', targetId: 'v1', visitId: 'v1', batchId: 'b1' },
+      // Where its full message is, should the sender find the line was cut.
+      readInList: { route: '/notifications?entry=n77' },
+      officeNote: false,
     });
+  });
+  it("a household's push about an answer the office wrote a note on says so", async () => {
+    await run('push', {
+      key: 'kincare.request.declined',
+      recipientUid: 'cli1',
+      stream: 'kinfolk',
+      data: { kinfolkId: 'fam1', batchId: 'b1', note: 'We are away that week.' },
+      targetType: 'booking',
+      targetId: 'b1',
+      notificationId: 'n78',
+    });
+    const open = mocks.pushSender.mock.calls[0]![0].open;
+    expect(open.officeNote).toBe(true);
+    expect(open.readInList).toEqual({ route: '/notifications?entry=n78' });
   });
 
   it("the office's push carries the target and no route", async () => {
@@ -109,7 +127,11 @@ describe('onNotificationChannelCreate hands the push what a tap opens (#2259, #2
 
   it('a work order written before the target was stamped still sends, with nothing to open', async () => {
     await run('push', { key: 'broadcast.message', recipientUid: 'cli1', stream: 'kinfolk', data: {} });
-    expect(mocks.pushSender.mock.calls[0]![0].open).toEqual({ data: {} });
+    expect(mocks.pushSender.mock.calls[0]![0].open).toEqual({
+      data: {},
+      readInList: { route: '/notifications' },
+      officeNote: false,
+    });
   });
 
   it('email and text messages are handed no target: their link is unchanged', async () => {

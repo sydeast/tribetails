@@ -96,7 +96,7 @@ private fun percentDecoded(raw: String): String? {
 /**
  * The target a MyTribe web path names, or null for a path this app has no
  * screen for. The closed list of paths the server builds
- * (`householdRouteFor`), nothing else: `/schedule/book` and `/kin/new` are
+ * (`householdRouteFor`, and the notifications list at one entry), nothing else: `/schedule/book` and `/kin/new` are
  * web pages, not ids; an absolute address, `//host`, a backslash, a second
  * path part or an unknown query key is refused.
  */
@@ -116,6 +116,14 @@ fun pushTargetFromRoute(route: String?): NotificationTarget? {
         if (pairs.size != 1 || !pairs[0].startsWith("tale=")) return null
         val taleId = id(pairs[0].removePrefix("tale="))
         return if (taleId.isEmpty()) null else NotificationTarget.KinTale(taleId)
+    }
+    // The notifications list at one entry: where a household reads the whole
+    // of a push that was cut, or that carries the office's note.
+    if (parts.firstOrNull() == "notifications" && parts.size == 1 && query != null) {
+        val pairs = query.split('&')
+        if (pairs.size != 1 || !pairs[0].startsWith("entry=")) return null
+        val entryId = id(pairs[0].removePrefix("entry="))
+        return if (entryId.isEmpty()) null else NotificationTarget.Entry(entryId)
     }
     if (query != null) return null
     return when (parts.size) {
@@ -183,6 +191,8 @@ fun pushOpenDestination(target: NotificationTarget): Any = when (target) {
     NotificationTarget.KinList -> KinRoute
     NotificationTarget.Household -> TribeRoute
     NotificationTarget.Messages -> MessageAuntieRoute
+    // The list; the nav host hands it the entry to show.
+    is NotificationTarget.Entry -> NotificationsListRoute
     NotificationTarget.None -> NotificationsListRoute
 }
 
@@ -191,10 +201,28 @@ fun pushOpenDestination(target: NotificationTarget): Any = when (target) {
  * target can only open once the household is signed in and the shell is on
  * screen: a tap while signed out waits through sign-in, and a tap while the
  * app is already running is seen at once. Taken exactly once.
+ *
+ * A tap never outlives the session it was made in: signing out, or another
+ * person signing in on the same phone, drops it ([onAccount]). A tap made
+ * while nobody is signed in is kept for the sign-in that follows it.
  */
 object PendingPushOpen {
     private val state = MutableStateFlow<NotificationTarget?>(null)
     val pending: StateFlow<NotificationTarget?> = state
+    private var account: String? = null
+    /**
+     * Told who is signed in, each time that changes (null for nobody). Leaving
+     * an account, by signing out or by a different one taking its place, drops
+     * the waiting tap.
+     */
+    fun onAccount(uid: String?) {
+        if (account != null && uid != account) state.value = null
+        account = uid
+    }
+    /** Sign-out: the tap is dropped, not kept for whoever signs in next. */
+    fun clear() {
+        state.value = null
+    }
 
     /** A newer tap replaces an older one that never opened. */
     fun offer(target: NotificationTarget) {

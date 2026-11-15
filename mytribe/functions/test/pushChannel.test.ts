@@ -354,5 +354,82 @@ describe('sendPushChannel', () => {
       expect(sent().notification.body).toBe(longNote);
       expect(sent().data).toEqual({ notificationKey: 't.k' });
     });
+    /**
+     * Ruling 2026-11-14: the short line links to the full message. A cut line,
+     * or a notice with the office's note on it, opens the notifications list at
+     * its own entry; any other opens the thing it is about.
+     */
+    describe('where the tap lands when the full message is on the list', () => {
+      const visit = { route: '/schedule/v1', data: { targetType: 'booking', targetId: 'v1', visitId: 'v1', batchId: 'b1' } };
+      const list = { readInList: { route: '/notifications?entry=n1' } };
+      async function send(template: { title: string; body: string; dataRoute?: string }, args: Record<string, unknown>) {
+        mocks.dbFn.mockReturnValue(buildPushDbMock({ template, tokens: ['t1'] }).db);
+        mocks.multicast.mockResolvedValue(ok);
+        await sendPushChannel({ def: def(), recipientUid: 'u1', data: {}, stream: 'kinfolk', ...args } as never);
+        return sent();
+      }
+      it('a cut line opens the list at its entry, and carries no target for the Android app to open instead', async () => {
+        const { notification, data } = await send(
+          { title: 'Care request declined', body: 'We could not take it. {{note}}' },
+          { data: { note: longNote }, open: { ...visit, ...list, officeNote: false } },
+        );
+        expect(notification.body.endsWith('…')).toBe(true);
+        expect(data).toEqual({ notificationKey: 't.k', route: '/notifications?entry=n1' });
+      });
+      it("a short line on a notice with the office's note opens the list at its entry", async () => {
+        const { notification, data } = await send(
+          { title: 'Booking confirmed', body: 'Tap for details.' },
+          { open: { ...visit, ...list, officeNote: true } },
+        );
+        expect(notification.body).toBe('Tap for details.');
+        expect(data).toEqual({ notificationKey: 't.k', route: '/notifications?entry=n1' });
+      });
+      it('a short line with no note opens the thing it is about', async () => {
+        const { data } = await send(
+          { title: 'Auntie has arrived', body: 'Tap for details.' },
+          { open: { ...visit, ...list, officeNote: false } },
+        );
+        expect(data).toEqual({ notificationKey: 't.k', ...visit.data, route: '/schedule/v1' });
+      });
+      it('a line of exactly 200 characters was not cut, and one of 201 was', async () => {
+        const at = await send({ title: 'A', body: 'x'.repeat(200) }, { open: { ...visit, ...list, officeNote: false } });
+        expect(at.notification.body).toBe('x'.repeat(200));
+        expect(at.data['route']).toBe('/schedule/v1');
+        mocks.multicast.mockClear();
+        const over = await send({ title: 'A', body: 'x'.repeat(201) }, { open: { ...visit, ...list, officeNote: false } });
+        expect(over.notification.body.length).toBe(200);
+        expect(over.data['route']).toBe('/notifications?entry=n1');
+      });
+      it('line breaks folded into spaces are not a cut', async () => {
+        const body = `${'x'.repeat(99)}\n\n\n\n${'y'.repeat(99)}`;
+        const { notification, data } = await send({ title: 'A', body }, { open: { ...visit, ...list, officeNote: false } });
+        expect(notification.body).toBe(`${'x'.repeat(99)} ${'y'.repeat(99)}`);
+        expect(data['route']).toBe('/schedule/v1');
+      });
+      it("the list wins over the template's own route too, when the line was cut", async () => {
+        const { data } = await send(
+          { title: 'A', body: '{{note}}', dataRoute: '/kintales' },
+          { data: { note: longNote }, open: { ...visit, ...list, officeNote: false } },
+        );
+        expect(data).toEqual({ notificationKey: 't.k', route: '/notifications?entry=n1' });
+      });
+      it('a cut line with no entry to name opens the plain list', async () => {
+        const { data } = await send(
+          { title: 'A', body: '{{note}}' },
+          { data: { note: longNote }, open: { ...visit, readInList: { route: '/notifications' }, officeNote: false } },
+        );
+        expect(data).toEqual({ notificationKey: 't.k', route: '/notifications' });
+      });
+      it.each(['business', 'staff'] as const)('a %s copy opens its target however long it is and whatever note it carries', async (stream) => {
+        const office = { data: { targetType: 'booking', targetId: 'v1', visitId: 'v1', kinfolkId: 'fam1' } };
+        const { notification, data } = await send(
+          { title: 'Care request', body: '{{note}}' },
+          // Even handed the household's fields by mistake, an office copy is never sent to the list.
+          { stream, data: { note: longNote }, open: { ...office, ...list, officeNote: true } },
+        );
+        expect(notification.body).toBe(longNote);
+        expect(data).toEqual({ notificationKey: 't.k', ...office.data });
+      });
+    });
   });
 });

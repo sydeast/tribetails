@@ -33,4 +33,16 @@ class InvoiceMissingTest {
         onNodeWithText("Back to Invoices").performClick()
         assertEquals(1, backs)
     }
+
+    @Test
+    fun a_failed_read_says_so_and_offers_another_try_instead_of_a_spinner() = runComposeUiTest {
+        var retries = 0
+        setThemedContent { InvoiceReadFailed(onRetry = { retries += 1 }) }
+        onNodeWithTag("invoice-read-failed").assertIsDisplayed()
+        onNodeWithText("Couldn't load this invoice").assertIsDisplayed()
+        // Not the same as gone.
+        onNodeWithText("Invoice not found").assertDoesNotExist()
+        onNodeWithText("Try again").performClick()
+        assertEquals(1, retries)
+    }
 }

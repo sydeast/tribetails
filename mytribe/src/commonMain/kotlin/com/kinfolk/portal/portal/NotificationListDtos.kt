@@ -83,6 +83,12 @@ sealed interface NotificationTarget {
     data object Household : NotificationTarget
     /** #1874: a reply from the office opens Messages. */
     data object Messages : NotificationTarget
+    /**
+     * The notifications list itself, at one entry. Only a tapped push names
+     * it (`push/PushOpen.kt`): a push whose line was cut, or whose notice
+     * carries the office's note, is read whole on the list. A row never does.
+     */
+    data class Entry(val notificationId: String) : NotificationTarget
     data object None : NotificationTarget
 }
 

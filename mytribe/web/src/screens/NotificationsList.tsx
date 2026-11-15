@@ -1,4 +1,5 @@
-import { useNavigate } from '@tanstack/react-router';
+import { useEffect, useRef } from 'react';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useInfiniteQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import {
   listMyNotifications,
@@ -48,6 +49,14 @@ export function NotificationsList() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const queryKey = ['myNotifications', kinfolkId] as const;
+  // A tapped push whose line was cut, or whose notice carries the office's
+  // note, opens the list at that notice (`/notifications?entry=<id>`): the row
+  // is marked, brought into view and given focus, once, when it first shows.
+  // An entry that is not among the rows (archived since, or another
+  // household's id) marks nothing and the list reads as it always does.
+  const { entry } = useSearch({ strict: false }) as { entry?: string };
+  const entryRow = useRef<HTMLButtonElement | null>(null);
+  const shownEntry = useRef<string | null>(null);
 
   const list = useInfiniteQuery({
     queryKey,
@@ -56,6 +65,15 @@ export function NotificationsList() {
     initialPageParam: undefined as number | undefined,
     getNextPageParam: (last) => (last.hasMore && last.nextBefore !== null ? last.nextBefore : undefined),
   });
+
+  const items = (list.data?.pages ?? []).flatMap((p) => p.items);
+  const entryOnList = entry !== undefined && items.some((i) => i.id === entry);
+  useEffect(() => {
+    if (!entryOnList || entry === undefined || shownEntry.current === entry) return;
+    shownEntry.current = entry;
+    entryRow.current?.scrollIntoView?.({ block: 'center' });
+    entryRow.current?.focus({ preventScroll: true });
+  }, [entryOnList, entry]);
 
   if (list.isError) {
     return (
@@ -69,7 +87,6 @@ export function NotificationsList() {
     );
   }
 
-  const items = (list.data?.pages ?? []).flatMap((p) => p.items);
   const view = viewOfQuery(list, { isEmpty: (d) => d.pages.every((p) => p.items.length === 0) });
 
   function open(item: NotificationItemDto) {
@@ -149,12 +166,15 @@ export function NotificationsList() {
             <ul className="nl-list" data-testid="notifications-list">
               {items.map((item) => {
                 const unread = item.readAt === null;
+                const opened = item.id === entry;
                 return (
                   <li key={item.id}>
                     <button
                       type="button"
-                      className={`nl-row${unread ? ' nl-row--unread' : ''}`}
+                      ref={opened ? entryRow : undefined}
+                      className={`nl-row${unread ? ' nl-row--unread' : ''}${opened ? ' nl-row--opened' : ''}`}
                       data-unread={unread ? 'true' : 'false'}
+                      data-opened={opened ? 'true' : undefined}
                       onClick={() => open(item)}
                     >
                       <span className="nl-row__dot" aria-hidden="true" />

@@ -6,6 +6,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -96,8 +98,9 @@ class NotificationsListScreenTest {
     }
 
     @Composable
-    private fun Screen(fake: FakeFunctionsClient, opened: Opened) {
+    private fun Screen(fake: FakeFunctionsClient, opened: Opened, openedEntryId: String? = null) {
         NotificationsListScreen(
+            openedEntryId = openedEntryId,
             kinfolkId = "fam-1",
             portalApi = PortalApi(fake),
             onOpenVisit = { v, b -> opened.visit = v to b },
@@ -120,6 +123,37 @@ class NotificationsListScreenTest {
         return fake
     }
 
+    // ---- opened at one entry by a tapped push (ruling 2026-11-14) ----
+    @Test
+    fun aPushThatOpensTheListAtAnEntryMarksThatRowAndNoOther() = runComposeUiTest {
+        val opened = Opened()
+        setThemedContent { Screen(stubbed(), opened, openedEntryId = "n-batch") }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-batch").assertIsSelected()
+        onNodeWithTag("notificationRow-n-batch").assertIsDisplayed()
+        assertEquals(1, onAllNodes(isSelected()).fetchSemanticsNodes().size)
+        // The whole message is on the row.
+        onNodeWithText("We got your request.").assertIsDisplayed()
+        // Opening the list at an entry reads nothing and goes nowhere.
+        onNodeWithTag("unread-n-batch", useUnmergedTree = true).assertExists()
+        assertNull(opened.request)
+        assertEquals(listOf(4), opened.counts)
+    }
+    @Test
+    fun anEntryThatIsNotAmongTheHouseholdsRowsMarksNothing() = runComposeUiTest {
+        val opened = Opened()
+        setThemedContent { Screen(stubbed(), opened, openedEntryId = "another-households-entry") }
+        waitForIdle()
+        assertEquals(0, onAllNodes(isSelected()).fetchSemanticsNodes().size)
+        onNodeWithText("Visit confirmed").assertExists()
+        onNodeWithText("Booking requested").assertExists()
+    }
+    @Test
+    fun withNoEntryNoRowIsMarked() = runComposeUiTest {
+        setThemedContent { Screen(stubbed(), Opened()) }
+        waitForIdle()
+        assertEquals(0, onAllNodes(isSelected()).fetchSemanticsNodes().size)
+    }
     @Test
     fun rendersEveryRowWithTitleDescriptionAndTime_andReportsTheServersUnreadCount() = runComposeUiTest {
         val opened = Opened()

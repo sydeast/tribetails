@@ -142,3 +142,18 @@ export function householdNoteOf(item: Pick<NotificationItemDto, 'detail'>): stri
   const raw = item.detail?.['householdNote'];
   return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
 }
+
+/**
+ * `/notifications?entry=<id>`: the entry a tapped push asks the list to show
+ * (a push whose line was cut, or whose notice carries the office's note, is
+ * read whole here). The `validateSearch` for the route. The value arrives from
+ * the address bar, so it only ever picks out one of the household's own rows
+ * by id: a blank value, or anything that is not a short plain id, is dropped
+ * and the list opens as it always has. The router reads an all-digit value as
+ * a number, which is still an id.
+ */
+export function notificationsListSearch(search: Record<string, unknown>): { entry?: string } {
+  const raw = search['entry'];
+  const entry = typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : typeof raw === 'string' ? raw.trim() : '';
+  return entry !== '' && entry.length <= 200 && !/[\s/\\?#&]/.test(entry) ? { entry } : {};
+}

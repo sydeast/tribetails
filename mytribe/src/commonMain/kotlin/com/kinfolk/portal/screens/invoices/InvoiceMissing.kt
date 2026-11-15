@@ -19,19 +19,21 @@ import com.kinfolk.portal.theme.KinfolkSpacing
  * found" (screens/kin/KinScreen.kt).
  */
 /** What the invoice detail route draws. */
-enum class InvoiceDetailView { Invoice, Loading, Missing }
+enum class InvoiceDetailView { Invoice, Loading, Missing, Failed }
 
 /**
  * #2356: "not found" is said only about a FRESH read. The invoices list is
  * loaded once and kept, so an invoice sent after that load is absent from it
  * without being gone: the route reads again first ([freshlyRead]). A read
  * that failed proves nothing about the invoice either, so it never reads as
- * missing. Pure; unit-tested.
+ * missing: it reads as failed, with a way to try again, once the read is over.
+ * The spinner is only ever drawn while a read is out. Pure; unit-tested.
  */
 fun invoiceDetailView(found: Boolean, freshlyRead: Boolean, readFailed: Boolean): InvoiceDetailView = when {
     found -> InvoiceDetailView.Invoice
-    freshlyRead && !readFailed -> InvoiceDetailView.Missing
-    else -> InvoiceDetailView.Loading
+    !freshlyRead -> InvoiceDetailView.Loading
+    readFailed -> InvoiceDetailView.Failed
+    else -> InvoiceDetailView.Missing
 }
 
 @Composable
@@ -46,6 +48,23 @@ fun InvoiceMissing(onBackToInvoices: () -> Unit) {
             message = "This invoice is no longer available.",
             actionLabel = "Back to Invoices",
             onAction = onBackToInvoices,
+        )
+    }
+}
+
+/** #2356: the invoices could not be read at all (offline, or the server refused). Not the same as gone. */
+@Composable
+fun InvoiceReadFailed(onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().testTag("invoice-read-failed"),
+        verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
+    ) {
+        ScreenHeader(title = "Invoices")
+        EmptyState(
+            title = "Couldn't load this invoice",
+            message = "Check your connection and try again.",
+            actionLabel = "Try again",
+            onAction = onRetry,
         )
     }
 }
