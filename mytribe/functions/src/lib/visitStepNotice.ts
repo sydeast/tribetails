@@ -357,13 +357,14 @@ export async function announceVisitStep(input: {
   // #2357: only on the same business day. A step that lands on a later day
   // than the undone one is a later visit, not a quick mistake, and is
   // announced below like any other (`quietRepeatOf`).
-  const toldRowId =
+  const repeat =
     (step.action === 'ARRIVED' || step.action === 'DEPARTED') && step.atMs !== null
-      ? await (await import('./arrivalNoticeWithdrawal.js')).restoreToldNotice(
+      ? await (await import('./arrivalNoticeWithdrawal.js')).settleRepeat(
           step.action === 'ARRIVED' ? 'arrived' : 'departed',
           { sessionId, session, atMs: step.atMs, source: input.source, line },
         )
       : null;
+  const toldRowId = repeat?.quietId ?? null;
   if (toldRowId !== null) {
     outcome = { notified: false, notifySkipped: 'already_notified' };
     dispatchIds = [toldRowId];
@@ -419,6 +420,22 @@ export async function announceVisitStep(input: {
     // #2348: the arrival a departure ended, so an undo of that arrival finds it.
     ...(step.action === 'DEPARTED' && arrivalAtMs !== null ? { arrivalAtMs } : {}),
   });
+  // #2357, lead ruling: a step announced on a later business day replaces the
+  // earlier day's entry, which "Undo departed" alone left listed. Only once
+  // this step's own entry exists, whoever sent it (this run, or an installed
+  // client's dispatch this run was the duplicate of). After the record above,
+  // which is one of the two places the withdrawal reads that entry's id.
+  if (repeat !== null && repeat.replacedId !== null && (step.action === 'ARRIVED' || step.action === 'DEPARTED')) {
+    const { withdrawReplacedNotice } = await import('./arrivalNoticeWithdrawal.js');
+    await withdrawReplacedNotice(step.action === 'ARRIVED' ? 'arrived' : 'departed', {
+      sessionId,
+      session,
+      atMs: step.atMs,
+      replacedId: repeat.replacedId,
+      source: input.source,
+      line,
+    });
+  }
   // #2038: the undo ran while this notice was being sent, found no row and
   // withdrew nothing. The row exists now, so it is withdrawn here. After the
   // record above, which is where the withdrawal reads the row's id. #2357: and

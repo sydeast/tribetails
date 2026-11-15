@@ -2952,7 +2952,11 @@ every client.
   and the Activity Log line is written as usual. The entry, which "Undo
   departed" alone leaves listed, is handed to the new departure
   (`standsForDepartureAtMs`) and otherwise left as it is. On a later business
-  day the Departed is announced as a normal notice. A first "has left" that
+  day the Departed is announced as a normal notice, and once its row exists
+  the first day's row is withdrawn (`withdrawnReason: 'departure_undone'`), so
+  the household reads one "has left" and not two. If the later-day Departed
+  writes no row (the send gate off, the notice turned off, no member login, a
+  failed send), the first day's row stays listed. A first "has left" that
   never reached the household is not counted as told, so the real one is
   sent. The visit field `departedNoticeToldForArrival` is no longer written
   or read; the rules still refuse it to a client.
@@ -3015,6 +3019,18 @@ session, which `onKinCareSessionLifecycle` reads. Both run
   clock at both ends (`visit_step_notices.recordedAtMs` and now), never from
   a device's stamp. `lib/arrivalNoticeWithdrawal.ts#quietRepeatOf` is the one
   decision; `announceVisitStep` and `dispatchVisitNotification` both ask it.
+  "The earlier step" is the latest one on the server's clock.
+- **A later-day notice replaces the earlier day's row (#2357, lead ruling).**
+  When a step is announced on a later business day and an earlier row of the
+  same notice is still listed for the visit (after "Undo departed" alone, or
+  an Undo arrival whose withdrawal never landed), `announceVisitStep`
+  withdraws the earlier row once the new one exists
+  (`lib/arrivalNoticeWithdrawal.ts#withdrawReplacedNotice`). Nothing is sent
+  about it. The session trigger does this for every path, an installed
+  client's own dispatch included. Activity Log: a second `VISIT_ARRIVED` or
+  `VISIT_DEPARTED` line ("Took the earlier departure notice off the
+  household's notifications list. The new one replaces it"), fixed id per
+  step.
 - **"Has left" goes with its arrival (#2348).** Undo arrival, from Departed or
   after an "Undo departed", also withdraws the "Your Auntie has left" row of
   each departure that ended the undone arrival (`withdrawnReason:

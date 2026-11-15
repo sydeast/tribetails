@@ -57,7 +57,12 @@ import { setVisitLifecycleHandler } from '../src/admin/setVisitLifecycle';
 import { isUnreadNotification, isVisibleNotification } from '../src/lib/recipientNotifications';
 import { departuresOfArrival, departureStillStands, isLaterBusinessDay } from '../src/lib/arrivalNoticeWithdrawal';
 import { businessCalendarDate } from '../src/lib/bookingTimeBlocks';
-import { departureNoticeRestoredWords, departureNoticeWithdrawnWords } from '../src/lib/activityWords';
+import {
+  arrivalNoticeReplacedWords,
+  departureNoticeReplacedWords,
+  departureNoticeRestoredWords,
+  departureNoticeWithdrawnWords,
+} from '../src/lib/activityWords';
 
 /** 4:00 PM in Chicago on Tuesday the 10th. */
 const DAY1 = Date.UTC(2026, 10, 10, 22, 0, 0);
@@ -858,5 +863,277 @@ describe('#2357 what an Undo arrival took off the list is recorded for the admin
     expect(sent(ARRIVED_KEY)).toHaveLength(1);
     expect(sent(DEPARTED_KEY)).toHaveLength(1);
     expect(record('departed', DAY1 + 20 * MIN)).toMatchObject({ notified: true });
+  });
+});
+describe('#2357 a notice announced on a later business day replaces the earlier day\'s entry', () => {
+  /** Arrived and Departed on day 1, then "Undo departed" alone: "has left" stays listed (#2250). */
+  async function undoneDepartureOnDayOne(): Promise<string> {
+    await arrive(DAY1);
+    await depart(DAY1 + 30 * MIN);
+    const first = rows(DEPARTED_KEY)[0]!.id;
+    await undoDeparted(DAY1 + 31 * MIN);
+    expect(listed().map((r) => r.id)).toContain(first);
+    return first;
+  }
+  const departedListed = () => listed().filter((r) => r.data['key'] === DEPARTED_KEY).map((r) => r.id);
+  it('Undo departed alone, then Departed the next day: the household sees only the real "has left"', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    expect(bell()).toBe(2);
+    const orders = workOrders().length;
+    await depart(DAY2);
+    const second = rows(DEPARTED_KEY).find((r) => r.id !== first)!.id;
+    expect(sent(DEPARTED_KEY)).toHaveLength(2);
+    expect(workOrders()).toHaveLength(orders + 1);
+    expect(departedListed()).toEqual([second]);
+    expect(docs[`notifications/${first}`]).toMatchObject({ withdrawnReason: 'departure_undone', withdrawnFiledAway: true });
+    // The arrival's entry and the one real departure: the count did not grow by two.
+    expect(bell()).toBe(2);
+    expect(linesOf('VISIT_DEPARTED').map((l) => l.description).filter((d) => d === departureNoticeReplacedWords())).toHaveLength(1);
+    // Nothing was sent about the entry that came off.
+    expect(workOrders()).toHaveLength(orders + 1);
+  });
+  it('the bell stays right when the first entry had been read', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    docs[`notifications/${first}`] = { ...docs[`notifications/${first}`], readAt: '__READ__' };
+    expect(bell()).toBe(1);
+    await depart(DAY2);
+    expect(departedListed()).not.toContain(first);
+    expect(bell()).toBe(2);
+  });
+  it('a first entry the reader had filed away stays filed, with the time they filed it', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    docs[`notifications/${first}`] = { ...docs[`notifications/${first}`], readAt: '__READ__', archivedAt: '__FILED__' };
+    await depart(DAY2);
+    expect(docs[`notifications/${first}`]).toMatchObject({
+      archivedAt: '__FILED__',
+      withdrawnReason: 'departure_undone',
+      withdrawnFiledAway: false,
+    });
+    expect(departedListed()).toHaveLength(1);
+    expect(bell()).toBe(2);
+  });
+  it('the same day changes nothing: the first entry is the household\'s one and is never withdrawn', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    await depart(DAY1 + 40 * MIN);
+    expect(departedListed()).toEqual([first]);
+    expect(docs[`notifications/${first}`]).not.toHaveProperty('withdrawnAt');
+    expect(mocks.lines.map((l) => l.description)).not.toContain(departureNoticeReplacedWords());
+  });
+  it('a later-day Departed the household is not told about leaves the first entry listed', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    docs[SETTINGS_PATH] = { householdNotificationsLive: false };
+    await depart(DAY2);
+    expect(record('departed', DAY2)).toMatchObject({ notified: false, reason: 'household_notices_off' });
+    expect(sent(DEPARTED_KEY)).toHaveLength(1);
+    expect(departedListed()).toEqual([first]);
+    expect(docs[`notifications/${first}`]).not.toHaveProperty('withdrawnAt');
+  });
+  it('a household with every channel of the notice off still gets its listed entry, so the first one comes off', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    docs['clients/uid_kinfolk'] = {
+      displayName: 'Dre',
+      notificationPreferences: { [DEPARTED_KEY]: { inApp: false, email: false, sms: false, push: false } },
+    };
+    await depart(DAY2);
+    // The dispatcher still writes the entry their notifications list reads.
+    expect(rows(DEPARTED_KEY)).toHaveLength(2);
+    expect(departedListed()).toHaveLength(1);
+    expect(departedListed()).not.toContain(first);
+  });
+  it('an installed client that dispatches first: the first entry comes off when the trigger comes through', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    vi.setSystemTime(DAY2);
+    const before = current;
+    current = { ...current, status: 'DEPARTED', departedAt: iso(DAY2) };
+    docs[SESSION_PATH] = current;
+    await expect(clientDispatch('departed', DAY2)).resolves.toMatchObject({ suppressed: false });
+    await onKinCareSessionLifecycleHandler(event(before, current));
+    await expect(clientDispatch('departed', DAY2)).resolves.toMatchObject({ suppressed: true, reason: 'already_notified' });
+    expect(sent(DEPARTED_KEY)).toHaveLength(2);
+    expect(departedListed()).toHaveLength(1);
+    expect(departedListed()).not.toContain(first);
+    expect(docs[`notifications/${first}`]).toMatchObject({ withdrawnReason: 'departure_undone' });
+  });
+  it('a redelivered event takes nothing more off and writes no second line', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    const evt = await depart(DAY2);
+    vi.setSystemTime(DAY2 + 2 * 60 * MIN);
+    await onKinCareSessionLifecycleHandler(evt);
+    await onKinCareSessionLifecycleHandler(evt);
+    expect(sent(DEPARTED_KEY)).toHaveLength(2);
+    expect(departedListed()).toHaveLength(1);
+    expect(departedListed()).not.toContain(first);
+    expect(mocks.lines.filter((l) => l.description === departureNoticeReplacedWords())).toHaveLength(1);
+    expect(bell()).toBe(2);
+  });
+  it('Undo departed again on day 2, then Departed: the day-2 entry is reused and day 1\'s never comes back', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    await depart(DAY2);
+    const second = rows(DEPARTED_KEY).find((r) => r.id !== first)!.id;
+    await undoDeparted(DAY2 + MIN);
+    const orders = workOrders().length;
+    await depart(DAY2 + 20 * MIN);
+    expect(sent(DEPARTED_KEY)).toHaveLength(2);
+    expect(workOrders()).toHaveLength(orders);
+    expect(departedListed()).toEqual([second]);
+    expect(docs[`notifications/${first}`]).toMatchObject({ withdrawnReason: 'departure_undone' });
+    expect(record('departed', DAY2 + 20 * MIN)).toMatchObject({ reason: 'already_notified', dispatchIds: [second] });
+  });
+  it('then Undo arrival takes the real "has left" off as well, and the record names both', async () => {
+    seed();
+    await undoneDepartureOnDayOne();
+    await depart(DAY2);
+    await undoArrival(DAY2 + MIN);
+    expect(listed()).toEqual([]);
+    expect(bell()).toBe(0);
+    expect(record('undo_arrival', DAY1)).toMatchObject({ withdrawn: ['arrived', 'departed'] });
+  });
+  it('through setVisitLifecycle on the later day: the first entry comes off with the answer', async () => {
+    seed();
+    const first = await undoneDepartureOnDayOne();
+    vi.setSystemTime(DAY2);
+    await expect(
+      setVisitLifecycleHandler({
+        data: { sessionId: 's1', action: 'DEPARTED', atIso: iso(DAY2) },
+        auth: { uid: 'uid_auntie', token: { admin: true, name: 'TiTi' } },
+        rawRequest: {},
+      } as unknown as CallableRequest<unknown>),
+    ).resolves.toMatchObject({ notified: true, notifySkipped: null });
+    expect(departedListed()).toHaveLength(1);
+    expect(departedListed()).not.toContain(first);
+  });
+  it('an arrival: a first-day entry whose withdrawal never landed comes off when the next day\'s is announced', async () => {
+    seed();
+    await arrive(DAY1);
+    const first = rows(ARRIVED_KEY)[0]!.id;
+    await undoArrival(DAY1 + MIN);
+    // The undo's withdrawal did not land: the entry is still on their list.
+    const { archivedAt: _a, withdrawnAt: _w, withdrawnReason: _r, withdrawnFiledAway: _f, ...asSent } = docs[
+      `notifications/${first}`
+    ] as Row;
+    docs[`notifications/${first}`] = asSent;
+    expect(listed().map((r) => r.id)).toEqual([first]);
+    await arrive(DAY2);
+    expect(sent(ARRIVED_KEY)).toHaveLength(2);
+    expect(listed()).toHaveLength(1);
+    expect(listed().map((r) => r.id)).not.toContain(first);
+    expect(docs[`notifications/${first}`]).toMatchObject({ withdrawnReason: 'arrival_undone' });
+    expect(mocks.lines.filter((l) => l.description === arrivalNoticeReplacedWords())).toHaveLength(1);
+    expect(bell()).toBe(1);
+  });
+  it('an arrival whose first-day entry the undo already took off writes no "replaced" line', async () => {
+    seed();
+    await arrive(DAY1);
+    await undoArrival(DAY1 + MIN);
+    await arrive(DAY2);
+    expect(mocks.lines.map((l) => l.description)).not.toContain(arrivalNoticeReplacedWords());
+  });
+  it("\"latest\" is read on the server's clock: a zone-less stamp that sorts early does not bring day 1 back", async () => {
+    seed();
+    // 11:30 PM Chicago on the 10th, stamped as the instant it was.
+    const lateNight = Date.UTC(2026, 10, 11, 5, 30, 0);
+    await arrive(DAY1);
+    await depart(lateNight);
+    const first = rows(DEPARTED_KEY)[0]!.id;
+    await undoDeparted(lateNight + MIN);
+    // 1:00 AM Chicago on the 11th from the desktop console: wall clock, no
+    // zone. Read as UTC it names a moment BEFORE the first departure.
+    const oneAm = Date.UTC(2026, 10, 11, 7, 0, 0);
+    await depart(oneAm, '2026-11-11T01:00:00');
+    expect(stampMs('2026-11-11T01:00:00')!).toBeLessThan(lateNight);
+    expect(sent(DEPARTED_KEY)).toHaveLength(2);
+    const second = rows(DEPARTED_KEY).find((r) => r.id !== first)!.id;
+    await undoDeparted(oneAm + MIN);
+    // Ten minutes later, the same business day as the second one.
+    await depart(oneAm + 10 * MIN);
+    expect(sent(DEPARTED_KEY)).toHaveLength(2);
+    expect(departedListed()).toEqual([second]);
+  });
+});
+describe('#2357 the business day at midnight and across a clock change', () => {
+  const later = (a: number, b: number) => isLaterBusinessDay(a, b, 'America/Chicago', businessCalendarDate);
+  it('the last millisecond of a day and the first of the next, on an ordinary night', () => {
+    const midnight = Date.UTC(2026, 10, 11, 6, 0, 0); // 00:00 CST on the 11th
+    expect(later(midnight - 2, midnight - 1)).toBe(false);
+    expect(later(midnight - 1, midnight)).toBe(true);
+    expect(later(midnight, midnight + 1)).toBe(false);
+  });
+  it('the night the clocks go back (1 November 2026): a 25-hour day is still one day', () => {
+    const starts = Date.UTC(2026, 10, 1, 5, 0, 0); // 00:00 CDT
+    const ends = Date.UTC(2026, 10, 2, 6, 0, 0); // 00:00 CST the next day
+    expect(ends - starts).toBe(25 * 60 * MIN);
+    expect(later(starts - 1, starts)).toBe(true);
+    expect(later(starts, ends - 1)).toBe(false);
+    // 1:30 AM happens twice that night. Both are the 1st.
+    expect(later(Date.UTC(2026, 10, 1, 6, 30, 0), Date.UTC(2026, 10, 1, 7, 30, 0))).toBe(false);
+    expect(later(ends - 1, ends)).toBe(true);
+  });
+  it('the night the clocks go forward (8 March 2026): a 23-hour day is still one day', () => {
+    const starts = Date.UTC(2026, 2, 8, 6, 0, 0); // 00:00 CST
+    const ends = Date.UTC(2026, 2, 9, 5, 0, 0); // 00:00 CDT the next day
+    expect(ends - starts).toBe(23 * 60 * MIN);
+    expect(later(starts - 1, starts)).toBe(true);
+    expect(later(starts, ends - 1)).toBe(false);
+    expect(later(ends - 1, ends)).toBe(true);
+  });
+  it('the trigger just before midnight and an installed client just after: one quiet entry, nothing sent', async () => {
+    seed();
+    const midnight = Date.UTC(2026, 10, 11, 6, 0, 0);
+    await arrive(DAY1);
+    await undoArrival(DAY1 + MIN);
+    const tap = midnight - 500;
+    await arrive(tap);
+    vi.setSystemTime(midnight + 500);
+    await expect(clientDispatch('arrived', tap)).resolves.toMatchObject({ suppressed: true, reason: 'already_notified' });
+    expect(sent(ARRIVED_KEY)).toHaveLength(1);
+    expect(bell()).toBe(1);
+  });
+  it('setVisitLifecycle just before midnight and its trigger just after agree: the entry handed over stays quiet', async () => {
+    seed();
+    const midnight = Date.UTC(2026, 10, 11, 6, 0, 0);
+    await arrive(DAY1);
+    await depart(DAY1 + 30 * MIN);
+    await undoDeparted(DAY1 + 31 * MIN);
+    const tap = midnight - 500;
+    vi.setSystemTime(tap);
+    const before = current;
+    current = { ...current, status: 'DEPARTED', departedAt: iso(tap) };
+    docs[SESSION_PATH] = current;
+    const step = visitStepOf(before, current)!;
+    await expect(
+      announceVisitStep({ sessionId: 's1', session: current, step, actorUid: 'uid_auntie', source: 'setVisitLifecycle', fallbackKey: 'x' }),
+    ).resolves.toMatchObject({ notified: false, notifySkipped: 'already_notified' });
+    vi.setSystemTime(midnight + 500);
+    await onKinCareSessionLifecycleHandler(event(before, current));
+    expect(sent(DEPARTED_KEY)).toHaveLength(1);
+    expect(listed().filter((r) => r.data['key'] === DEPARTED_KEY)).toHaveLength(1);
+    expect(rows(DEPARTED_KEY)[0]!.data).not.toHaveProperty('withdrawnAt');
+  });
+  it('an installed client just before midnight and the trigger just after: told once more, never twice', async () => {
+    seed();
+    const midnight = Date.UTC(2026, 10, 11, 6, 0, 0);
+    await arrive(DAY1);
+    await undoArrival(DAY1 + MIN);
+    const tap = midnight - 500;
+    vi.setSystemTime(tap);
+    const before = current;
+    current = { ...current, status: 'ARRIVED', arrivedAt: iso(tap) };
+    docs[SESSION_PATH] = current;
+    await expect(clientDispatch('arrived', tap)).resolves.toMatchObject({ suppressed: true, reason: 'already_notified' });
+    vi.setSystemTime(midnight + 500);
+    await onKinCareSessionLifecycleHandler(event(before, current));
+    await expect(clientDispatch('arrived', tap)).resolves.toMatchObject({ suppressed: true, reason: 'already_notified' });
+    // The household has exactly one entry for the arrival, whichever side of midnight decided.
+    expect(listed().filter((r) => r.data['key'] === ARRIVED_KEY)).toHaveLength(1);
+    expect(sent(ARRIVED_KEY).length).toBeLessThanOrEqual(2);
   });
 });

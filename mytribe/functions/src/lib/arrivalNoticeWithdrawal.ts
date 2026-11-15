@@ -70,7 +70,9 @@ import {
  *      arrival, straight from Departed or after an Undo departed, withdraws
  *      the departure's entry with the arrival's. The next real Departed puts
  *      it back and sends nothing (same day), or is announced (a later day).
- *      "Undo departed" alone still leaves the entry listed, as #2250 ruled.
+ *      "Undo departed" alone still leaves the entry listed, as #2250 ruled,
+ *      until a Departed announced on a later day replaces it
+ *      ({@link withdrawReplacedNotice}).
  *   3. WHAT THE UNDO TOOK OFF IS RECORDED, at
  *      `visit_step_notices/{session}__undo_arrival__{arrivedAt ms}`, for the
  *      sentence the admin clients show after the undo. `withdrawn` lists the
@@ -497,7 +499,10 @@ export async function earlierStepNotice(
   const earlier = (await stepRecords(sessionId)).filter((rec) => rec.event === kind && rec.atMs !== atMs);
   if (earlier.length === 0) return null;
   // The latest step first: its row is the one a chain of undos carried along.
-  earlier.sort((a, b) => b.atMs - a.atMs);
+  // "Latest" on the server's clock where the record has one. A device's stamp
+  // can run hours off (the desktop console's older ones carry no zone), and a
+  // stale first-day row read as the latest would announce the step again.
+  earlier.sort((a, b) => (b.recordedAtMs ?? b.atMs) - (a.recordedAtMs ?? a.atMs));
   const onLedger = await ledgerLookupFor(session);
   for (const step of earlier) {
     const ids = new Set(step.ids);
@@ -576,13 +581,39 @@ export async function quietRepeatOf(
   atMs: number,
   nowMs: number = Date.now(),
 ): Promise<string | null> {
-  const earlier = await earlierStepNotice(kind, sessionId, session, atMs);
-  if (earlier === null) return null;
-  if (earlier.standsForThis || earlier.toldAtMs === null) return earlier.id;
-  const { businessCalendarDate } = await import('./bookingTimeBlocks.js');
-  return isLaterBusinessDay(earlier.toldAtMs, nowMs, await businessZone(), businessCalendarDate) ? null : earlier.id;
+  return (await repeatOf(kind, sessionId, session, atMs, nowMs)).quietId;
 }
-
+/** What {@link repeatOf} decided for a step that follows an undone one. */
+export interface RepeatDecision {
+  /** QUIET: the earlier entry to reuse. Null when the step is announced as normal. */
+  quietId: string | null;
+  /**
+   * ANNOUNCED on a later business day: the earlier day's entry, which the new
+   * notice replaces ({@link withdrawReplacedNotice}). Null on the quiet path
+   * and when nothing earlier reached the household.
+   */
+  replacedId: string | null;
+}
+/**
+ * The decision behind {@link quietRepeatOf}, with the earlier day's entry
+ * named when the step is announced, so the caller that replaces it does not
+ * decide the day a second time.
+ */
+export async function repeatOf(
+  kind: StepNoticeKind,
+  sessionId: string,
+  session: SessionData,
+  atMs: number,
+  nowMs: number = Date.now(),
+): Promise<RepeatDecision> {
+  const earlier = await earlierStepNotice(kind, sessionId, session, atMs);
+  if (earlier === null) return { quietId: null, replacedId: null };
+  if (earlier.standsForThis || earlier.toldAtMs === null) return { quietId: earlier.id, replacedId: null };
+  const { businessCalendarDate } = await import('./bookingTimeBlocks.js');
+  return isLaterBusinessDay(earlier.toldAtMs, nowMs, await businessZone(), businessCalendarDate)
+    ? { quietId: null, replacedId: earlier.id }
+    : { quietId: earlier.id, replacedId: null };
+}
 /** Hand the row to the step stamped `atMs` and, when it was withdrawn, put it back on the list. */
 async function restoreRow(kind: StepNoticeKind, id: string, atMs: number): Promise<'restored' | 'handed' | 'kept' | 'gone'> {
   const ref = db().collection(NOTIFICATIONS_COLLECTION).doc(id);
@@ -648,12 +679,25 @@ export async function restoreToldNotice(
   kind: StepNoticeKind,
   input: { sessionId: string; session: SessionData; atMs: number; source: string; line?: Line },
 ): Promise<string | null> {
+  return (await settleRepeat(kind, input)).quietId;
+}
+/**
+ * {@link restoreToldNotice}, answering the whole decision: the entry reused
+ * when the step stays quiet, or the earlier day's entry the announced notice
+ * is to replace. Both null when the step is simply announced.
+ */
+export async function settleRepeat(
+  kind: StepNoticeKind,
+  input: { sessionId: string; session: SessionData; atMs: number; source: string; line?: Line },
+): Promise<RepeatDecision> {
+  const none: RepeatDecision = { quietId: null, replacedId: null };
   const { sessionId, session, atMs } = input;
   let id: string | null;
   let outcome: 'restored' | 'handed' | 'kept' | 'gone';
   try {
-    id = await quietRepeatOf(kind, sessionId, session, atMs);
-    if (id === null) return null;
+    const decision = await repeatOf(kind, sessionId, session, atMs);
+    id = decision.quietId;
+    if (id === null) return decision;
     outcome = await restoreRow(kind, id, atMs);
   } catch (err) {
     logEvent({
@@ -663,11 +707,12 @@ export async function restoreToldNotice(
       extra: { sessionId, kind, source: input.source },
       errorMessage: (err as Error)?.message,
     });
-    return null;
+    return none;
   }
-  if (outcome === 'gone') return null;
+  if (outcome === 'gone') return none;
+  const quiet: RepeatDecision = { quietId: id, replacedId: null };
   // Nothing went back on the list, so the Activity Log does not say it did.
-  if (outcome !== 'restored') return id;
+  if (outcome !== 'restored') return quiet;
   logEvent({
     severity: 'info',
     function: 'restoreToldNotice',
@@ -706,5 +751,106 @@ export async function restoreToldNotice(
       errorMessage: (err as Error)?.message,
     });
   });
-  return id;
+  return quiet;
+}
+
+/**
+ * #2357, lead ruling: A NOTICE ANNOUNCED ON A LATER BUSINESS DAY REPLACES THE
+ * EARLIER DAY'S ENTRY. "Undo departed" alone leaves "Your Auntie has left"
+ * listed (#2250). When the real Departed lands on a later business day it is
+ * announced, and the household would then read two "has left" entries for one
+ * visit, the first of them for a departure that was taken back. The first
+ * comes off their notifications list, the way an undone arrival's does, and
+ * they see only the real one. Nothing is sent about it.
+ *
+ * The same for an arrival, where it is nearly always a no-op: Undo arrival
+ * has already withdrawn the first day's entry. It matters only when that
+ * withdrawal never landed.
+ *
+ * ONLY ONCE THE NEW ENTRY EXISTS. A later-day step the household is not told
+ * about (the send gate off, the notice turned off, no member login, a failed
+ * send) writes no entry, and the earlier one then stays where it is: it is
+ * the only word of the visit on their list. The new entry is found the two
+ * ways every notice here is, so an installed client that dispatched first is
+ * covered when the session trigger comes through.
+ *
+ * `replacedId` is the entry {@link repeatOf} judged a day old, for this same
+ * step. Never throws, and safe to run twice: a withdrawn row is left alone and
+ * the Activity Log line has a fixed id.
+ */
+export async function withdrawReplacedNotice(
+  kind: StepNoticeKind,
+  input: { sessionId: string; session: SessionData; atMs: number; replacedId: string; source: string; line?: Line },
+): Promise<boolean> {
+  const { sessionId, session, atMs, replacedId } = input;
+  let outcome: RowWithdrawal;
+  try {
+    const records = (await stepRecords(sessionId)).filter((rec) => rec.event === kind);
+    const own = new Set<string>();
+    for (const rec of records) if (rec.atMs === atMs) for (const id of rec.ids) own.add(id);
+    const onLedger = await (await ledgerLookupFor(session))(kind, atMs);
+    if (onLedger !== null) own.add(onLedger);
+    // The entry was handed to this step after all: it is the household's one.
+    if (own.has(replacedId)) return false;
+    let listed = false;
+    for (const id of own) {
+      const snap = await db().collection(NOTIFICATIONS_COLLECTION).doc(id).get();
+      const data = snap.exists ? ((snap.data() ?? {}) as Record<string, unknown>) : null;
+      if (data !== null && data['key'] === KIND[kind].key && !isWithdrawnNotification(data)) listed = true;
+    }
+    if (!listed) return false;
+    // A row that stands for this very step is never taken: only one that
+    // still stands for an earlier step of the visit, or for none.
+    const earlierSteps = records.filter((rec) => rec.atMs !== atMs).map((rec) => rec.atMs);
+    outcome = await withdrawRow(kind, replacedId, earlierSteps);
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'withdrawReplacedNotice',
+      event: 'visit.notice.replace.failed',
+      extra: { sessionId, kind, source: input.source },
+      errorMessage: (err as Error)?.message,
+    });
+    return false;
+  }
+  if (outcome !== 'withdrew') return outcome === 'already';
+  logEvent({
+    severity: 'info',
+    function: 'withdrawReplacedNotice',
+    event: kind === 'arrived' ? 'visit.arrival.notice.replaced' : 'visit.departure.notice.replaced',
+    extra: { sessionId, source: input.source },
+  });
+  const familyId = nonBlank(session['kinfolkId']);
+  const words = await import('./activityWords.js');
+  await writeAuditEntry({
+    event: kind === 'arrived' ? AUDIT_EVENTS.VISIT_ARRIVED : AUDIT_EVENTS.VISIT_DEPARTED,
+    severity: 'info',
+    status: 'SUCCESS',
+    actorRole: input.line?.actorRole ?? 'SYSTEM',
+    ...(input.line?.actorUid ? { actorUid: input.line.actorUid } : {}),
+    targetUid: sessionId,
+    targetCollection: 'kin_care_sessions',
+    ...(familyId !== '' ? { familyId } : {}),
+    description: kind === 'arrived' ? words.arrivalNoticeReplacedWords() : words.departureNoticeReplacedWords(),
+    payload: {
+      visitId: sessionId,
+      action: kind === 'arrived' ? 'ARRIVED' : 'DEPARTED',
+      noticeReplaced: true,
+      source: input.source,
+      ...(input.line?.stamp ?? {}),
+    },
+    docId:
+      kind === 'arrived'
+        ? `visitnoticereplaced__${sessionId}__${atMs}`
+        : `visitdeparturenoticereplaced__${sessionId}__${atMs}`,
+  }).catch((err) => {
+    logEvent({
+      severity: 'error',
+      function: 'withdrawReplacedNotice',
+      event: 'audit.write.failed',
+      extra: { sessionId, source: input.source },
+      errorMessage: (err as Error)?.message,
+    });
+  });
+  return true;
 }
