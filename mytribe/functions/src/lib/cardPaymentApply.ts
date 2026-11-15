@@ -1,0 +1,173 @@
+/**
+ * #2276: WHERE A CARD PAYMENT LANDS ON ITS INVOICE. Pure: no Firestore, no
+ * Stripe. `billing/stripeWebhook.ts` reads the invoice and its payment rows in
+ * its transaction and asks this; the backfill script
+ * (`mytribe/scripts/backfillCardInvoicePayments.ts`) uses the same row id.
+ *
+ * THE DEFECT. The webhook marked the invoice paid with nothing owed and kept
+ * the card money in the root `payments` ledger only. The invoice's own
+ * `payments` rows are what every other money path sums (`markInvoicePaid`,
+ * `recordPayment`'s apply, `updateInvoice`, the repair pass), so an invoice
+ * part paid by hand and then paid off by card had rows adding up to less than
+ * its total while it read paid. `recordPayment` and `markInvoicePaid` then
+ * accepted the card-paid part a second time, the repair pass would reopen it,
+ * and an edit recomputed the balance without the card money.
+ *
+ * THE FIX. A card payment writes one `invoices/{id}/payments` row, in the same
+ * transaction as the invoice update, through the same `planApply`/`stageApply`
+ * every admin payment uses. The row's id is made from the card payment itself
+ * (`cardPaymentRowId`), so the two events one charge delivers, and any retry,
+ * can write it once only.
+ *
+ * WHAT IS APPLIED. The card is already charged when the webhook hears of it,
+ * and there are no refunds, so nothing here refuses. The applied part stops at
+ * what the invoice's payment rows leave owing; anything over that is tip
+ * (operator ruling 2026-09-27: an overpayment is all tip, and the processor
+ * fee comes out of the tip). The tip is stored gross with the fee beside it.
+ * Account credit is never given here.
+ *
+ * THREE LANDINGS:
+ *
+ *   planned    the ordinary one. `planApply` accepted it; `stageApply` writes
+ *              the row and derives the invoice from the sum of its rows. It
+ *              settles, or, when the card was less than both what the rows
+ *              leave owing and the balance the invoice states, it leaves the
+ *              rest owing.
+ *   fallback   the plan cannot describe this invoice, or would leave owing an
+ *              invoice whose household paid everything it was shown.
+ *              `payInvoice` charges the STATED balance. When that is lower than
+ *              what the rows leave (an earlier card payment from before this
+ *              fix has no row, or a migrated part payment never had one), a
+ *              plan would reopen the invoice for money the household was never
+ *              asked for. So the invoice is marked paid as it always was, the
+ *              card row is still written, and the reason is stamped on the
+ *              invoice and the ledger row and logged, for the backfill report.
+ *   no-amount  neither Stripe nor the invoice gave a figure. No row: a row
+ *              with no amount is not a payment. The invoice is marked paid and
+ *              the ledger row is flagged, as before.
+ */
+import type { InvoiceDoc } from '../admin/markInvoicePaid';
+import { amountDueCentsOf } from './amountDueRule';
+import { invoiceTotalCentsOf, paidCentsFromPayments, settleInvoice, type PaymentAmount } from './invoiceMath';
+import { planApply, type ApplyStep } from './paymentApply';
+
+/** The `method` on a card payment's invoice row. The root ledger row has always said the same. */
+export const CARD_PAYMENT_METHOD = 'stripe';
+
+/**
+ * `recordedBy` / `paidBy` for a payment no admin recorded. Not a uid: the
+ * clients resolve these against staff accounts and show nothing for one that
+ * matches none.
+ */
+export const CARD_PAYMENT_RECORDED_BY = 'system:stripe';
+
+/** Stamped on the invoice and the ledger row when the fallback landing was used. Defined beside the paid rule that reads it. */
+export { CARD_APPLY_FALLBACK_FIELD } from './invoicePaidGate';
+
+/** The fallback reason for a stated balance lower than the payment rows leave owing. */
+export const STATED_BELOW_RECORDED = 'stated_balance_below_recorded_payments';
+
+/**
+ * The id of a card payment's `invoices/{id}/payments` row. One PaymentIntent
+ * is one charge, so it is the key; the event id stands in only when Stripe
+ * named no PaymentIntent, and then that event's own dedupe record is what
+ * keeps the row single.
+ */
+export function cardPaymentRowId(paymentIntentId: string | null, eventId: string): string {
+  return `stripe_${paymentIntentId !== null && paymentIntentId !== '' ? paymentIntentId : eventId}`;
+}
+
+export type CardApplyDecision =
+  | {
+      kind: 'planned';
+      step: ApplyStep;
+      appliedCents: number;
+      /** GROSS. What the card paid over the balance. */
+      tipCents: number;
+    }
+  | {
+      kind: 'fallback';
+      reason: string;
+      /** False only when there is no invoice document to hang a row on. */
+      writeRow: boolean;
+      appliedCents: number;
+      tipCents: number;
+      /** The invoice's rows after this one, for the invoice's `paidCents` and its state stamp. */
+      paidCents: number;
+    }
+  | { kind: 'no-amount' };
+
+export function decideCardApply(input: {
+  invoiceId: string;
+  /** Null when the invoice document does not exist. */
+  doc: InvoiceDoc | null;
+  existingPayments: readonly PaymentAmount[];
+  /** What the card was charged, in cents. Null when nothing resolved one. */
+  cardCents: number | null;
+  /** The household on the checkout. */
+  kinfolkId: string;
+}): CardApplyDecision {
+  const { doc, existingPayments } = input;
+  const cardCents = input.cardCents;
+  if (cardCents === null || !Number.isFinite(cardCents) || cardCents <= 0) return { kind: 'no-amount' };
+
+  const existingPaidCents = paidCentsFromPayments(existingPayments);
+  if (doc === null) {
+    return {
+      kind: 'fallback',
+      reason: 'apply_invoice_not_found',
+      writeRow: false,
+      appliedCents: 0,
+      tipCents: 0,
+      paidCents: existingPaidCents,
+    };
+  }
+
+  // What the payment rows leave owing: the figure every admin payment settles
+  // against. And what the invoice states it is owed: the figure `payInvoice`
+  // charged (`amountDueCentsOf` is the rule it reads the balance by).
+  const recordedDueCents = settleInvoice(invoiceTotalCentsOf(doc), existingPaidCents).amountDueCents;
+  const statedDueCents = Math.max(0, amountDueCentsOf(doc, existingPaidCents));
+
+  const fallback = (reason: string): CardApplyDecision => {
+    // The stated balance is all there is to measure against here. What the
+    // card paid over it is tip; with no stated balance it all goes on the bill.
+    const appliedCents = statedDueCents > 0 ? Math.min(cardCents, statedDueCents) : cardCents;
+    return {
+      kind: 'fallback',
+      reason,
+      writeRow: true,
+      appliedCents,
+      tipCents: cardCents - appliedCents,
+      paidCents: existingPaidCents + appliedCents,
+    };
+  };
+
+  if (recordedDueCents <= 0) return fallback('no_recorded_balance');
+
+  const appliedCents = Math.min(cardCents, recordedDueCents);
+  const plan = planApply({
+    invoice: { invoiceId: input.invoiceId, doc, existingPayments },
+    appliedCents,
+    kinfolkId: input.kinfolkId,
+    // The whole charge. The tip is what is left of it after the apply, so it
+    // is never set aside first.
+    spendableCents: cardCents,
+  });
+  if (!plan.ok) return fallback(plan.refusal.code);
+
+  const settles = plan.step.after.state === 'settled' || plan.step.after.state === 'overpaid';
+  if (!settles && cardCents >= statedDueCents) {
+    // The household paid everything the invoice said it owed, and the rows
+    // say more is owed than that. Paid, as shown; never reopened from here.
+    return {
+      kind: 'fallback',
+      reason: STATED_BELOW_RECORDED,
+      writeRow: true,
+      appliedCents: cardCents,
+      tipCents: 0,
+      paidCents: existingPaidCents + cardCents,
+    };
+  }
+  return { kind: 'planned', step: plan.step, appliedCents, tipCents: cardCents - appliedCents };
+}

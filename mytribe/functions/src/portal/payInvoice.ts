@@ -21,7 +21,13 @@ import {
 import { CheckoutIdempotencyKeyArg } from '../lib/moneyIdempotency';
 import { amountDueCentsOf, statesNoBalance } from '../lib/amountDueRule';
 import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
-import { invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
+import {
+  INVOICE_CANCELLED_CODE,
+  invoiceCancelled,
+  invoiceIsPaid,
+  PAID_INVOICE_REFUSAL,
+  PAID_INVOICE_REFUSAL_CODE,
+} from '../lib/invoicePaidGate';
 import { INVOICE_WRITTEN_OFF_CODE, isWrittenOff } from '../lib/invoiceArchive';
 import { OPEN_CHECKOUT_SESSIONS_FIELD } from '../lib/checkoutSessionSweep';
 import { hiddenFromHousehold } from '../lib/quoteDecision';
@@ -153,6 +159,16 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   if (isWrittenOff(inv as Record<string, unknown>)) {
     throw new HttpsError('failed-precondition', 'There is nothing to pay on this invoice.', {
       code: INVOICE_WRITTEN_OFF_CODE,
+    });
+  }
+  // #2276: a cancelled invoice is not collectable by any path
+  // (`lib/amountDueRule.ts`). Cancelling does not zero a balance the document
+  // states, so without this a cancelled bill that still stated one opened a
+  // checkout, and the card payment then marked it paid. A withdrawn quote
+  // never reaches here: it is answered as missing above.
+  if (invoiceCancelled(inv)) {
+    throw new HttpsError('failed-precondition', 'There is nothing to pay on this invoice.', {
+      code: INVOICE_CANCELLED_CODE,
     });
   }
   let legacyPaidCents: number | null = null;
