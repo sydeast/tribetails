@@ -380,6 +380,7 @@ private fun SignedInApp(
             routeWarn = null
             selectedInvoiceId = null
             reportSessionId = null
+            noticeReportId = null
             mediaEntityId = null
             mediaEntityType = null
             mediaEntityName = null
@@ -409,6 +410,7 @@ private fun SignedInApp(
             // Reset all detail state, then apply the search target's route.
             selectedInvoiceId = if (r.dest == Destination.Invoices) r.detailId else null
             reportSessionId = if (r.dest == Destination.KinTales) r.detailId else null
+            noticeReportId = null
             mediaEntityId = null
             mediaEntityType = null
             mediaEntityName = null

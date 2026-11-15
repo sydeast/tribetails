@@ -132,10 +132,12 @@ class MainActivity : ComponentActivity() {
      * app was closed or in the background, the launcher intent Android fills
      * with the push's own data keys. Both are read by [pushEntryFromIntent];
      * the nav host opens the result once the owner is signed in. The extras
-     * are dropped after reading, so the same tap is never read twice.
+     * are dropped after reading, and an intent Android replays from Recents
+     * is skipped, so the same tap is never opened twice.
      */
     private fun capturePushTap(intent: android.content.Intent?) {
-        val extras = intent?.extras ?: return
+        if (intent == null || intent.flags and android.content.Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val extras = intent.extras ?: return
         val read = PUSH_OPEN_EXTRA_KEYS.associateWith { key -> extras.getString(key) }
         val entry = pushEntryFromIntent(intent.action, read) ?: return
         PendingPushOpen.offer(entry)

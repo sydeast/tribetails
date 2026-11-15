@@ -566,8 +566,20 @@ fun AppNavHost(
                 Shell { mod ->
                     Box(mod) {
                         val invoiceId = entry.toRoute<InvoiceDetailRoute>().invoiceId
-                        LaunchedEffect(invoiceId) { if (invoicesController.data == null) invoicesController.reload() }
+                        // #2356: a list loaded earlier in the session does not hold
+                        // an invoice sent since, so an invoice it lacks is read
+                        // again before anything is said about it.
+                        var freshlyRead by remember(invoiceId) { mutableStateOf(false) }
+                        LaunchedEffect(invoiceId) {
+                            if (invoicesController.find(invoiceId) == null) invoicesController.reload()
+                            freshlyRead = true
+                        }
                         val invoice = invoicesController.find(invoiceId)
+                        val view = com.kinfolk.portal.screens.invoices.invoiceDetailView(
+                            found = invoice != null,
+                            freshlyRead = freshlyRead,
+                            readFailed = invoicesController.error != null,
+                        )
                         if (invoice != null) {
                             InvoiceDetailScreen(
                                 familyName = shellFamilyName,
@@ -587,10 +599,10 @@ fun AppNavHost(
                                 onDownloadPdf = { invoicesController.startDownloadPdf(invoice) },
                                 onBack = { navController.popBackStack() },
                             )
-                        } else if (invoicesController.data != null) {
-                            // #2356: the invoices are loaded and this one is
-                            // not among them (an unsent draft, a removed
-                            // invoice). It used to spin here for good.
+                        } else if (view == com.kinfolk.portal.screens.invoices.InvoiceDetailView.Missing) {
+                            // #2356: a fresh read of the invoices does not hold
+                            // this one (an unsent draft, a removed invoice). It
+                            // used to spin here for good.
                             com.kinfolk.portal.screens.invoices.InvoiceMissing(
                                 onBackToInvoices = {
                                     navController.navigate(InvoicesRoute) {

@@ -38,10 +38,12 @@ class MainActivity : ComponentActivity() {
      * launcher intent Android fills with the push's own data keys. Both are
      * read by [pushOpenFromExtras] into a typed target; the nav host opens it
      * once the household is signed in. The extras are dropped after reading,
-     * so the same tap is never read twice.
+     * and an intent Android replays from Recents is skipped, so the same tap
+     * is never opened twice.
      */
     private fun capturePushTap(intent: Intent?) {
-        val extras = intent?.extras ?: return
+        if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val extras = intent.extras ?: return
         val read = PUSH_OPEN_EXTRA_KEYS.associateWith { key -> extras.getString(key) }
         val target = pushOpenFromExtras(read) ?: return
         PendingPushOpen.offer(target)

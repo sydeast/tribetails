@@ -18,6 +18,22 @@ import com.kinfolk.portal.theme.KinfolkSpacing
  * screen used to show a spinner that never ended. Same shape as "Kin not
  * found" (screens/kin/KinScreen.kt).
  */
+/** What the invoice detail route draws. */
+enum class InvoiceDetailView { Invoice, Loading, Missing }
+
+/**
+ * #2356: "not found" is said only about a FRESH read. The invoices list is
+ * loaded once and kept, so an invoice sent after that load is absent from it
+ * without being gone: the route reads again first ([freshlyRead]). A read
+ * that failed proves nothing about the invoice either, so it never reads as
+ * missing. Pure; unit-tested.
+ */
+fun invoiceDetailView(found: Boolean, freshlyRead: Boolean, readFailed: Boolean): InvoiceDetailView = when {
+    found -> InvoiceDetailView.Invoice
+    freshlyRead && !readFailed -> InvoiceDetailView.Missing
+    else -> InvoiceDetailView.Loading
+}
+
 @Composable
 fun InvoiceMissing(onBackToInvoices: () -> Unit) {
     Column(
