@@ -361,6 +361,27 @@ describe('#2037 the household send gate and their preferences still decide', () 
     // A redelivery writes it once.
     await onKinCareSessionLifecycleHandler(arrive());
     expect(linesOf('NOTIFICATION_NOT_SENT')).toHaveLength(1);
+    // So does an installed client that still dispatches the step after its own
+    // write: the callable carries no fixed id, and used to add a second line.
+    await dispatchVisitNotificationHandler({
+      data: { familyId: 'fam1', batchId: 'batch1', visitId: 'visit1', event: 'arrived', eventAtMs: Date.parse(ARRIVED_AT) },
+      auth: { uid: 'uid_auntie', token: { name: 'TiTi' } },
+    } as never);
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toHaveLength(1);
+  });
+
+  it('no portal account: a later arrival on the same visit is its own line', async () => {
+    seed({ 'kinfolk/fam1': { uid: '' }, 'families/fam1/members/uid_kinfolk': null });
+    const older = (atMs: number) =>
+      dispatchVisitNotificationHandler({
+        data: { familyId: 'fam1', batchId: 'batch1', visitId: 'visit1', event: 'arrived', eventAtMs: atMs },
+        auth: { uid: 'uid_auntie', token: { name: 'TiTi' } },
+      } as never);
+    await older(Date.parse(ARRIVED_AT));
+    await older(Date.parse(ARRIVED_AT));
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toHaveLength(1);
+    await older(Date.parse(ARRIVED_AT) + 60_000);
+    expect(linesOf('NOTIFICATION_NOT_SENT')).toHaveLength(2);
   });
 
   it('a visit linked to no booking writes the line and records why nobody was told', async () => {

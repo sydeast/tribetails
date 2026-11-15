@@ -231,9 +231,12 @@ export async function dispatchVisitNotificationCore(
   opts: {
     /**
      * #2037: a fixed id for this step's Activity Log line, so the trigger and
-     * `setVisitLifecycle` reaching the same clock step write it once. Since
-     * #1819 the only line written here is "did not send: nobody in the
-     * household has a MyTribe sign-in"; the dispatcher writes the others.
+     * `setVisitLifecycle` reaching the same clock step write it once.
+     *
+     * NO LONGER READ. Since #1819 this function writes one line only ("did not
+     * send: nobody in the household has a MyTribe sign-in"), and that line is
+     * named by the step's own identity so the callable, which has no such id,
+     * names the same one. Kept on the signature for its callers.
      */
     auditDocId?: string;
     /**
@@ -288,16 +291,22 @@ export async function dispatchVisitNotificationCore(
       },
     });
     // #1819: the Activity Log says the notice did not go, and why. The
-    // dispatcher is never reached on this branch, so the line is written here,
-    // under the clock step's fixed id when there is one.
-    const { recordNoticeNotSent } = await import('../notifications/noticeAudit.js');
+    // dispatcher is never reached on this branch, so the line is written here.
+    //
+    // ITS ID IS THE STEP'S OWN IDENTITY (`visitDedupeKey`), the same one the
+    // dispatcher gives a held line, and not `opts.auditDocId`. Only the clock
+    // trigger passes that id; an installed client that still calls this
+    // callable after its own write does not, so the two wrote a line each for
+    // one tap. Every path to one step now names the same line.
+    const { recordNoticeNotSent, noticeLineIdForEvent } = await import('../notifications/noticeAudit.js');
+    const noAccountKey = EVENT_TO_KEY[args.event];
     await recordNoticeNotSent({
-      key: EVENT_TO_KEY[args.event],
+      key: noAccountKey,
       outcome: 'no_account',
       recipientUid: '',
       stream: 'kinfolk',
       familyId: args.familyId,
-      ...(opts.auditDocId !== undefined ? { docId: opts.auditDocId } : {}),
+      docId: noticeLineIdForEvent('no_account', noAccountKey, `key:${visitDedupeKey(visitId, args)}`, ''),
     });
     const { householdNoticeNotSent } = await import('../notifications/householdNotice.js');
     return {
