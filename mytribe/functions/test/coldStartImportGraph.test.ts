@@ -288,8 +288,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * new FUNCTIONS entry, a staff member saving her own Account profile.
  * Everything it imports (the staff wrapper, the audit writer, the audit actor)
  * was already here.
+ *
+ * 458 since #2331 (on top of #2287's 457): `notifications/heldNoticeBatch.ts`,
+ * the count a timed job keeps of the notices the send switch held back. The
+ * dispatcher and the three reminder jobs use it at file scope. It imports
+ * nothing; the Activity Log writer behind it (`noticeAudit.ts`) still loads
+ * with `await import()`, and only in a run that held something.
  */
-const MAX_OWN_EAGER_MODULES = 457;
+const MAX_OWN_EAGER_MODULES = 458;
 
 interface Edge {
   spec: string;

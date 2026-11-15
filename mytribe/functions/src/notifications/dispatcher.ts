@@ -13,6 +13,7 @@ import {
   type HouseholdSendGate,
   type HouseholdSendGateState,
 } from './householdSendGate';
+import { countHeldNotice, type HeldNoticeBatch } from './heldNoticeBatch';
 import {
   channelsSwitchedOffByRecipient,
   loadBusinessOverride,
@@ -417,7 +418,15 @@ export async function enqueueNotification(args: EnqueueArgs): Promise<string[]> 
 /**
  * `enqueueNotification`, reporting per recipient what was suppressed and why.
  */
-export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<EnqueueOutcome> {
+export async function enqueueNotificationDetailed(
+  args: EnqueueArgs,
+  /**
+   * #2331: a timed job's count of the copies the send switch held back. With
+   * one, a held copy is counted and writes no Activity Log line of its own; the
+   * job writes one line for the run. Kept out of `args` so it is never stored.
+   */
+  heldBatch?: HeldNoticeBatch,
+): Promise<EnqueueOutcome> {
   const def = getNotificationDef(args.key);
 
   // External keys are delivered by another system (e.g., Firebase Auth Console
@@ -654,7 +663,13 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
         outcome.suppressed.push({ recipientUid: recipient.uid, reason: 'gate', gateState: state });
         // #1819: written AFTER the copy is counted as held and nowhere near
         // the dedupe ledger, so the position argument above is unchanged.
-        await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'held', [], undefined, state === 'read-failed');
+        // #2331: a timed job counts the copy for its one line per run and
+        // writes nothing here, so no name is read and no entry is sealed.
+        if (heldBatch !== undefined) {
+          countHeldNotice(heldBatch, def.key, state === 'read-failed' ? 'unreadable' : 'off');
+        } else {
+          await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'held', [], undefined, state === 'read-failed');
+        }
         continue;
       }
     }

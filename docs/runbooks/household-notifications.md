@@ -142,11 +142,25 @@ would have used. That is the list of mail the business meant to send and did not
 
 ### What the Activity Log says
 
-Each household copy the gate holds back writes one Activity Log line, titled
+A household copy the gate holds back after something a person did (a clock tap,
+an invoice sent by hand, a save) writes one Activity Log line, titled
 "Notification not sent": `Held back "<notification>" for <name>: notices to
 households are turned off`. Its status is `NOT_SENT`, never `SUCCESS`, and it is
-not listed under Problems. The same step reached twice writes the line once; a
-daily job over the same invoice writes it once a day.
+not listed under Problems. The same step reached twice writes the line once.
+
+The three jobs on a timer write one line per run, with a count and no names
+(#2331): `Held back 14 visit reminders: notices to households are turned off`.
+The count is household copies, one per member the notice was addressed to. A run
+that held nothing writes nothing, and a retried run writes no second line.
+
+- `kincareReminderCron` runs hourly and holds the same reminders again each
+  hour, so it writes up to one line an hour while the gate is shut.
+- `invoiceRemindersCron` and `invoiceOverdueCron` scan once a business day, so
+  each writes at most one line a day.
+
+If a run fails half way, its line carries the count it had reached; the retry
+adds nothing, because Activity Log entries are never rewritten. If the setting
+could not be read, the line says so in place of "turned off".
 
 The other lines of the same kind: the notification is turned off in Settings, a
 channel the household switched off themselves, a household with no MyTribe
@@ -155,8 +169,9 @@ sign-in, a channel with no address on file, and a send that failed (status
 does go out writes `Sending "<notification>" to <name> by <channels>`, then one
 `Delivered` line per channel. "The office" is the business copy.
 
-During the re-upload this means one held line per household copy, beside the
-operator lines described below. The Activity Log lists the newest 200.
+During the re-upload this means one held line per household copy that a loaded
+record sets off (those come from saves, not from a timer), beside the operator
+lines described below. The Activity Log lists the newest 200.
 
 ### What the Settings panel says
 

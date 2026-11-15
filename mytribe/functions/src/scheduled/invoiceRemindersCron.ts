@@ -6,6 +6,8 @@ import { wrapScheduled } from '../lib/wrapScheduled';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { withHeldNoticeBatch, type HeldNoticeBatch } from '../notifications/heldNoticeBatch';
+import type { EnqueueArgs } from '../notifications/types';
 import { reachedAppOnly } from '../notifications/appOnly';
 import { INVOICE_REMINDER_RESEND_WINDOW_MS } from '../admin/sendInvoiceReminder';
 import { paginateQuery } from '../lib/paginateCollectionGroup';
@@ -151,6 +153,8 @@ export async function processReminderInvoice(
   docSnap: QueryDocumentSnapshot,
   now: number,
   todayIso: string,
+  /** #2331: the run's count of notices the send switch held back. */
+  heldBatch?: HeldNoticeBatch,
 ): Promise<boolean> {
   const data = docSnap.data() as InvoiceDoc;
   if (data[NOTIFIED_FIELD_REMINDER]) return false;
@@ -161,7 +165,7 @@ export async function processReminderInvoice(
   if (await chaseRefusal(docSnap, data)) return false;
   const recipientUid = await resolveBillingRecipientUid(familyId);
   try {
-    const outcome = await enqueueNotificationDetailed({
+    const args: EnqueueArgs = {
       key: 'invoice.reminder',
       recipientUid: recipientUid ?? '',
       data: {
@@ -179,7 +183,11 @@ export async function processReminderInvoice(
       // dispatcher's 5-minute default; with the default this run would send a
       // second reminder instead of recording the first.
       dedupeWindowMs: INVOICE_REMINDER_RESEND_WINDOW_MS,
-    });
+    };
+    // A call with no batch passes one argument, as it always has.
+    const outcome = await (heldBatch === undefined
+      ? enqueueNotificationDetailed(args)
+      : enqueueNotificationDetailed(args, heldBatch));
     if (outcome.written.length > 0) {
       await docSnap.ref.set(
         { [NOTIFIED_FIELD_REMINDER]: now, [NOTIFIED_APP_ONLY_FIELD_REMINDER]: reachedAppOnly(outcome) },
@@ -239,12 +247,17 @@ export async function runInvoiceRemindersScan(
   const todayIso = day ?? (await runDay(now, 'invoiceRemindersCron'));
   if (todayIso === null) return 0;
   let reminded = 0;
-  await paginateQuery(
-    db().collection('invoices'),
-    async (docSnap) => {
-      if (await processReminderInvoice(docSnap, now, todayIso)) reminded += 1;
-    },
-    { functionName: 'invoiceRemindersCron' },
+  // #2331: one Activity Log line for every reminder the send switch held back
+  // in this run. The business day names the run: the scan happens once a day,
+  // and a retry of it carries the same day, so it writes no second line.
+  await withHeldNoticeBatch('invoiceRemindersCron', todayIso, (heldBatch) =>
+    paginateQuery(
+      db().collection('invoices'),
+      async (docSnap) => {
+        if (await processReminderInvoice(docSnap, now, todayIso, heldBatch)) reminded += 1;
+      },
+      { functionName: 'invoiceRemindersCron' },
+    ),
   );
   return reminded;
 }
@@ -353,6 +366,8 @@ export async function processOverdueInvoice(
   docSnap: QueryDocumentSnapshot,
   now: number,
   todayIso: string,
+  /** #2331: the run's count of notices the send switch held back. */
+  heldBatch?: HeldNoticeBatch,
 ): Promise<boolean> {
   const data = docSnap.data() as InvoiceDoc;
   if (data[NOTIFIED_FIELD_OVERDUE]) return false;
@@ -365,7 +380,7 @@ export async function processOverdueInvoice(
   if (await chaseRefusal(docSnap, data)) return false;
   const recipientUid = await resolveBillingRecipientUid(familyId);
   try {
-    const outcome = await enqueueNotificationDetailed({
+    const args: EnqueueArgs = {
       key: 'invoice.overdue',
       recipientUid: recipientUid ?? '',
       data: {
@@ -381,7 +396,11 @@ export async function processOverdueInvoice(
       fireAtMs: now,
       dedupeKey: overdueDedupeKey(docSnap.id),
       dedupeWindowMs: OVERDUE_DEDUPE_WINDOW_MS,
-    });
+    };
+    // A call with no batch passes one argument, as it always has.
+    const outcome = await (heldBatch === undefined
+      ? enqueueNotificationDetailed(args)
+      : enqueueNotificationDetailed(args, heldBatch));
     if (outcome.written.length > 0) {
       await docSnap.ref.set(
         { [NOTIFIED_FIELD_OVERDUE]: now, [NOTIFIED_APP_ONLY_FIELD_OVERDUE]: reachedAppOnly(outcome) },
@@ -433,12 +452,15 @@ export async function runInvoiceOverdueScan(
   const todayIso = day ?? (await runDay(now, 'invoiceOverdueCron'));
   if (todayIso === null) return 0;
   let notified = 0;
-  await paginateQuery(
-    db().collection('invoices'),
-    async (docSnap) => {
-      if (await processOverdueInvoice(docSnap, now, todayIso)) notified += 1;
-    },
-    { functionName: 'invoiceOverdueCron' },
+  // #2331: one line for the run, as in `runInvoiceRemindersScan`.
+  await withHeldNoticeBatch('invoiceOverdueCron', todayIso, (heldBatch) =>
+    paginateQuery(
+      db().collection('invoices'),
+      async (docSnap) => {
+        if (await processOverdueInvoice(docSnap, now, todayIso, heldBatch)) notified += 1;
+      },
+      { functionName: 'invoiceOverdueCron' },
+    ),
   );
   return notified;
 }

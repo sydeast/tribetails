@@ -11,8 +11,10 @@ import {
   notificationHeldWords,
   notificationNoAccountWords,
   notificationTurnedOffWords,
+  notificationsHeldSummaryWords,
 } from '../lib/activityWords';
 import { notificationName } from './notificationName';
+import { heldNoticeTotal, type HeldNoticeBatch, type HeldNoticeReason } from './heldNoticeBatch';
 import type { AudienceStream, Channel } from './types';
 
 /**
@@ -37,6 +39,10 @@ import type { AudienceStream, Channel } from './types';
  *   no_account    nobody in the household can sign in         (dispatchVisitNotification)
  *   no_address    the channel has nothing to send to          (onNotificationChannelCreate)
  *   failed        the channel's send threw                    (onNotificationChannelCreate)
+ *
+ * #2331: INSIDE A TIMED JOB, `held` IS ONE LINE FOR THE RUN, NOT ONE PER COPY
+ * (`recordHeldNoticeSummary` below, counted by `heldNoticeBatch.ts`). Every
+ * other outcome, and every notice a person pressed, is one line each as above.
  *
  * "Sending" and "Delivered" stay where they were (`onNotificationCreate`,
  * `onNotificationChannelCreate`) and now name who the copy was for.
@@ -227,5 +233,74 @@ export async function recordNoticeNotSent(input: NoticeNotSentInput): Promise<vo
       errorMessage: (err as Error)?.message,
       extra: { key: input.key, outcome: input.outcome },
     });
+  }
+}
+
+/**
+ * The fixed id of a timed job's summary line: one per job, per run, per
+ * reason. A retry of the same run finds the line there and writes nothing.
+ */
+export function heldSummaryLineId(job: string, window: string, reason: HeldNoticeReason): string {
+  const digest = createHash('sha256')
+    .update(['held-summary', job, window, reason].join('\u0000'))
+    .digest('hex')
+    .slice(0, 40);
+  return `noticesheld__${digest}`;
+}
+
+/**
+ * #2331: ONE LINE FOR EVERYTHING THE SEND SWITCH HELD BACK IN ONE RUN OF A
+ * TIMED JOB. `Held back 14 visit reminders: notices to households are turned off`.
+ *
+ * No household and no person is named, so nothing is read to write it: the
+ * per-copy line cost a `clients` read, a `kinfolk` read and a hash-chain
+ * transaction for each copy, and this is one transaction for the run.
+ *
+ * The count is household COPIES, one per member the notice was addressed to,
+ * which is what the per-copy lines counted.
+ *
+ * FIRST WRITE WINS. The Activity Log is an append-only hash chain, so a line
+ * is never corrected. When a run fails half way, the line carries the count it
+ * reached, and the retry of that run (the same id) writes nothing more. The
+ * next run counts afresh.
+ *
+ * A run whose copies were held because the switch could not be read gets its
+ * own line, at `warn`: nobody turned anything off. A run that held nothing
+ * writes nothing. NEVER THROWS.
+ */
+export async function recordHeldNoticeSummary(batch: HeldNoticeBatch): Promise<void> {
+  for (const reason of ['off', 'unreadable'] as const) {
+    const count = heldNoticeTotal(batch, reason);
+    if (count === 0) continue;
+    const kinds = [...batch.held[reason].entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, n]) => ({ key, name: notificationName(key), count: n }));
+    try {
+      await writeAuditEntry({
+        status: 'NOT_SENT',
+        event: AUDIT_EVENTS.NOTIFICATION_NOT_SENT,
+        severity: reason === 'unreadable' ? 'warn' : 'info',
+        actorRole: 'SYSTEM',
+        description: notificationsHeldSummaryWords(kinds, reason === 'unreadable'),
+        payload: {
+          outcome: 'held',
+          summary: true,
+          job: batch.job,
+          window: batch.window,
+          count,
+          kinds: Object.fromEntries(kinds.map((k) => [k.key, k.count])),
+          ...(reason === 'unreadable' ? { reason: 'setting_unreadable' } : {}),
+        },
+        docId: heldSummaryLineId(batch.job, batch.window, reason),
+      });
+    } catch (err) {
+      logEvent({
+        severity: 'warn',
+        function: 'recordHeldNoticeSummary',
+        event: 'notification.not_sent.audit_failed',
+        errorMessage: (err as Error)?.message,
+        extra: { job: batch.job, window: batch.window, reason, count },
+      });
+    }
   }
 }
