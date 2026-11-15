@@ -75,7 +75,10 @@ import com.kinfolk.portal.theme.KinfolkBrand
 import com.kinfolk.portal.theme.KinfolkShapes
 import com.kinfolk.portal.theme.KinfolkSpacing
 import com.kinfolk.portal.theme.LocalKinfolkTypography
+import com.kinfolk.portal.util.careTaskLabel
 import com.kinfolk.portal.util.clockTime
+import com.kinfolk.portal.util.kinTaleAboutLine
+import com.kinfolk.portal.util.kinTaleVisitDayLabel
 import com.kinfolk.portal.util.KIN_TALE_HEADLINE_CARD_CHARS
 import com.kinfolk.portal.util.KIN_TALE_HEADLINE_FEATURED_CHARS
 import com.kinfolk.portal.util.kinTaleByline
@@ -422,12 +425,34 @@ private fun KinTaleCard(
 @Composable
 private fun KinTaleVisitFacts(tale: KinTale) {
     val type = LocalKinfolkTypography.current
+    // #2056: which KinCare and which Kin, on its own line above the visit facts.
+    // Nothing at all when the tale carries neither (a tale with no visit behind it).
+    val about = kinTaleAboutLine(tale)
+    // #2056: the visit's day leads the line, so "Arrived 9:02 AM" says which
+    // day. A day only: in Time Blocks mode the household is never shown a
+    // booked clock time, and arrival and departure are the only times on a tale.
     val parts = listOfNotNull(
+        kinTaleVisitDayLabel(tale.visitDate),
         clockTime(tale.arrivedAtIso)?.let { "Arrived $it" },
         clockTime(tale.departedAtIso)?.let { "Departed $it" },
     )
-    if (parts.isEmpty()) return
-    Text(text = parts.joinToString(" · "), style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
+    if (about.isEmpty() && parts.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (about.isNotEmpty()) {
+            Text(
+                text = about,
+                style = type.sansBody.copy(color = KinfolkBrand.Navy, fontWeight = FontWeight.SemiBold),
+                modifier = Modifier.testTag("kinTaleAbout"),
+            )
+        }
+        if (parts.isNotEmpty()) {
+            Text(
+                text = parts.joinToString(" · "),
+                style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
+                modifier = Modifier.testTag("kinTaleVisitFacts"),
+            )
+        }
+    }
 }
 
 /**
@@ -451,7 +476,7 @@ private fun KinTaleChecklistChips(items: List<KinTaleChecklistItem>) {
                     shape = KinfolkShapes.pill,
                     contentPadding = PaddingValues(horizontal = KinfolkSpacing.s, vertical = 4.dp),
                 ) {
-                    Text(text = item.text, style = type.sansMeta.copy(color = KinfolkBrand.KinTeal))
+                    Text(text = careTaskLabel(item), style = type.sansMeta.copy(color = KinfolkBrand.KinTeal))
                 }
             }
         }

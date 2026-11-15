@@ -569,6 +569,66 @@ class PortalApiTest {
         assertTrue(res.tales.first { it.id == "t-none" }.checklist.isEmpty())
     }
 
+    // #2056: which KinCare, which day, which Kin, and which Kin a task was done for.
+    @Test
+    fun `getMyKinTales decodes what a tale is about, and an older response reads as not known`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "t-new")
+                    put("body", "x")
+                    put("shared", false)
+                    put("serviceLabel", "30 Minute Quick Check")
+                    put("visitDate", "2026-11-10")
+                    put("kinNames", buildJsonArray { add("Biscuit"); add("Mochi") })
+                    put("checklist", buildJsonArray {
+                        add(buildJsonObject {
+                            put("key", "fed"); put("text", "Fed")
+                            put("kinNames", buildJsonArray { add("Biscuit") })
+                        })
+                        add(buildJsonObject { put("key", "lights_off"); put("text", "Lights turned off") })
+                    })
+                })
+                add(buildJsonObject {
+                    put("id", "t-old")
+                    put("body", "y")
+                    put("shared", false)
+                    put("checklist", buildJsonArray {
+                        add(buildJsonObject { put("key", "fed"); put("text", "Fed") })
+                    })
+                })
+                add(buildJsonObject {
+                    put("id", "t-odd")
+                    put("body", "z")
+                    put("shared", false)
+                    put("serviceLabel", "  ")
+                    put("visitDate", JsonNull)
+                    put("kinNames", buildJsonArray { add(""); add(7); add(JsonNull); add(" Pip ") })
+                })
+            })
+        })
+        val res = PortalApi(fake).getMyKinTales()
+
+        val new = res.tales.first { it.id == "t-new" }
+        assertEquals("30 Minute Quick Check", new.serviceLabel)
+        assertEquals("2026-11-10", new.visitDate)
+        assertEquals(listOf("Biscuit", "Mochi"), new.kinNames)
+        assertEquals(listOf(listOf("Biscuit"), emptyList()), new.checklist.map { it.kinNames })
+
+        val old = res.tales.first { it.id == "t-old" }
+        assertNull(old.serviceLabel)
+        assertNull(old.visitDate)
+        assertTrue(old.kinNames.isEmpty())
+        assertTrue(old.checklist.single().kinNames.isEmpty())
+
+        val odd = res.tales.first { it.id == "t-odd" }
+        assertNull(odd.serviceLabel)
+        assertNull(odd.visitDate)
+        assertEquals(listOf("Pip"), odd.kinNames)
+    }
+
     @Test
     fun `addSecondaryContact sends kin_edit and home_access true when the PRIMARY opts in`() = runTest {
         val fake = FakeFunctionsClient()

@@ -157,7 +157,7 @@ export const Result = z
 export type SetVisitLifecycleResult = z.infer<typeof Result>;
 
 /** The document field each forward action stamps. */
-const STAMP_FIELD: Readonly<Record<Exclude<VisitLifecycleAction, 'UNDO_ARRIVAL'>, string>> = {
+const STAMP_FIELD: Readonly<Record<Exclude<VisitLifecycleAction, 'UNDO_ARRIVAL' | 'UNDO_DEPARTED'>, string>> = {
   ON_MY_WAY: 'onMyWayAt',
   ARRIVED: 'arrivedAt',
   DEPARTED: 'departedAt',
@@ -227,6 +227,10 @@ export async function setVisitLifecycleHandler(
     }
     throw err;
   }
+
+  // #2250: "Undo departed" reverses a completion, so it runs in its own
+  // transaction (`lib/undoDeparted.ts`) rather than the read-then-merge below.
+  if (args.action === 'UNDO_DEPARTED') return undoDeparted(uid, args.sessionId, req.auth?.token?.name);
 
   const ref = db().doc(`kin_care_sessions/${args.sessionId}`);
   const snap = await ref.get();
@@ -535,6 +539,123 @@ export async function setVisitLifecycleHandler(
     changed: true,
     notified,
     notifySkipped,
+  });
+}
+
+/**
+ * #2250, operator ruling 2026-11-14: take back a wrong Departed tap for a few
+ * minutes. The owner and an Auntie both come through here; the rules refuse
+ * the move to every client. What it reverses, and what it leaves alone, is on
+ * `lib/undoDeparted.ts`. The household is not told: no notice is sent and the
+ * answer says `no_event_for_action`.
+ */
+async function undoDeparted(
+  uid: string,
+  sessionId: string,
+  actorName: string | undefined,
+): Promise<SetVisitLifecycleResult> {
+  const action = 'UNDO_DEPARTED' as const;
+  const [{ undoDepartedSession }, { freshOfficeNoticeStamp }, words] = await Promise.all([
+    import('../lib/undoDeparted.js'),
+    import('../notifications/householdNotice.js'),
+    import('../lib/activityWords.js'),
+  ]);
+  const outcome = await undoDepartedSession({ sessionId, uid, officeNoticeStamp: freshOfficeNoticeStamp() });
+
+  if (outcome.kind === 'not-found') {
+    await auditRefusal({ uid, sessionId, action, code: 'not_found', from: '', description: words.visitNotFoundWords(action) });
+    throw new HttpsError('not-found', 'This visit could not be found.');
+  }
+  if (outcome.kind === 'unknown-status') {
+    await auditRefusal({
+      uid,
+      sessionId,
+      action,
+      code: BOOKING_STATUS_UNKNOWN_CODE,
+      from: outcome.raw,
+      description: words.visitStatusUnreadableWords(action),
+    });
+    throw new HttpsError('failed-precondition', unknownStatusMessage(outcome.raw), {
+      code: BOOKING_STATUS_UNKNOWN_CODE,
+      sessionId,
+    });
+  }
+  if (outcome.kind === 'illegal') {
+    await auditRefusal({
+      uid,
+      sessionId,
+      action,
+      code: VISIT_LIFECYCLE_ILLEGAL_CODE,
+      from: outcome.from,
+      description: words.visitIllegalWords(action, outcome.from),
+    });
+    throw new HttpsError('failed-precondition', illegalLifecycleMessage(action, outcome.from, outcome.allowedFrom), {
+      code: VISIT_LIFECYCLE_ILLEGAL_CODE,
+      sessionId,
+      from: outcome.from,
+      allowedFrom: outcome.allowedFrom,
+    });
+  }
+  if (outcome.kind === 'refused') {
+    await auditRefusal({
+      uid,
+      sessionId,
+      action,
+      code: outcome.code,
+      from: outcome.from,
+      description: words.visitRefusedWords(action, outcome.message),
+    });
+    throw new HttpsError('failed-precondition', outcome.message, { code: outcome.code, sessionId });
+  }
+  if (outcome.kind === 'noop') {
+    // A second tap. Nothing was written the second time, and the first tap's
+    // Activity Log line stands alone.
+    return validateResponse('setVisitLifecycle', Result, {
+      ok: true as const,
+      sessionId,
+      action,
+      from: outcome.at,
+      status: outcome.at,
+      changed: false,
+      notified: false,
+      notifySkipped: 'already_in_this_state',
+    });
+  }
+
+  // The Activity Log line, by the same function and under the same fixed id
+  // the session trigger uses for this move, so it is written once. It sends
+  // nothing: `notificationEventFor('UNDO_DEPARTED')` is null.
+  const { visitStepOf, announceVisitStep } = await import('../lib/visitStepNotice.js');
+  const after: Record<string, unknown> = { ...outcome.before, status: 'ARRIVED', departedAt: '', updatedBy: uid };
+  const step = visitStepOf(outcome.before, after);
+  if (step !== null) {
+    await announceVisitStep({
+      sessionId,
+      session: after,
+      step,
+      actorUid: uid,
+      actorName,
+      source: 'setVisitLifecycle',
+      fallbackKey: String(outcome.before['undoDepartedUntil'] ?? 'unstamped'),
+    });
+  }
+  logEvent({
+    severity: 'info',
+    function: 'setVisitLifecycle',
+    event: 'admin.visit.lifecycleSet',
+    uid,
+    extra: { sessionId, action, from: outcome.from, to: 'ARRIVED', householdCopy: outcome.householdCopy, notified: false },
+  });
+
+  return validateResponse('setVisitLifecycle', Result, {
+    ok: true as const,
+    sessionId,
+    action,
+    from: outcome.from,
+    status: 'ARRIVED',
+    changed: true,
+    notified: false,
+    notifySkipped: 'no_event_for_action',
   });
 }
 

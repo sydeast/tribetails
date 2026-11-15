@@ -16,6 +16,11 @@ import {
   readArrivalSettings,
 } from '../lib/arrivalVerification';
 import { classifyArrivalDistance } from '../lib/geo';
+import {
+  HOUSEHOLD_STATUS_BEFORE_COMPLETION_FIELD,
+  UNDO_DEPARTED_UNTIL_FIELD,
+  UNDO_DEPARTED_WINDOW_MS,
+} from '../lib/visitLifecycle';
 
 /**
  * #2123 (operator ruling 2026-11-12): "Completed." A visit is Completed as
@@ -64,6 +69,13 @@ import { classifyArrivalDistance } from '../lib/geo';
  * NO NEW HOUSEHOLD NOTICE. The household already hears "Your Auntie has left"
  * from the departure tap (`dispatchVisitNotification`), and nothing sends on a
  * session or `kinCares` move to completed.
+ *
+ * #2250: IT ALSO OPENS "UNDO DEPARTED". Whether it completes the visit or the
+ * arrival rule refuses it, the same transaction stamps `undoDepartedUntil`:
+ * this server's clock plus `UNDO_DEPARTED_WINDOW_MS`. Every admin client shows
+ * "Undo departed" until that moment and `lib/undoDeparted.ts` refuses after
+ * it. A completion also keeps what the household's copy read before
+ * (`householdStatusBeforeCompletion`) so the undo can put it back.
  */
 
 type SessionData = Record<string, unknown>;
@@ -111,6 +123,14 @@ export async function completeDepartedSession(
   const arrival = await readArrivalSettings(firestore);
   const sessionRef = firestore.doc(`kin_care_sessions/${sessionId}`);
 
+  // #2250: when "Undo departed" closes for this departure, by this clock.
+  const seenMs = Date.parse(nowIso);
+  const undoStamp = {
+    [UNDO_DEPARTED_UNTIL_FIELD]: new Date(
+      (Number.isFinite(seenMs) ? seenMs : Date.now()) + UNDO_DEPARTED_WINDOW_MS,
+    ).toISOString(),
+  };
+
   let mirrored: 'completed' | null = null;
   let arrivalLocationVerdict: 'within' | 'outside' | 'unverified' | 'not_checked' = 'not_checked';
 
@@ -130,6 +150,7 @@ export async function completeDepartedSession(
     if (arrival.required) {
       const missing = missingVisitSteps(session);
       if (missing.length > 0) {
+        tx.set(sessionRef, undoStamp, { merge: true });
         return { kind: 'refused', code: ARRIVAL_VERIFICATION_CODE, description: visitMissingStepsWords(missing) };
       }
       const evidence = readArrivalEvidence(session);
@@ -151,6 +172,7 @@ export async function completeDepartedSession(
           radiusMeters: arrival.radiusMeters,
         };
       } else if (arrivalLocationVerdict === 'outside') {
+        tx.set(sessionRef, undoStamp, { merge: true });
         return {
           kind: 'refused',
           code: ARRIVAL_RADIUS_CODE,
@@ -164,11 +186,15 @@ export async function completeDepartedSession(
     const batchId = nonBlank(session['kinCareBatchId']);
     const visitId = nonBlank(session['kinCareVisitId']);
     let visitRef: FirebaseFirestore.DocumentReference | null = null;
+    let householdStatusBefore = '';
     if (kinfolkId !== '' && batchId !== '' && visitId !== '') {
       const ref = firestore.doc(`families/${kinfolkId}/bookings/${batchId}/kinCares/${visitId}`);
       const visit = await tx.get(ref);
       const current = (visit.data() as { status?: unknown } | undefined)?.status;
-      if (visit.exists && current !== 'cancelled' && current !== 'completed') visitRef = ref;
+      if (visit.exists && current !== 'cancelled' && current !== 'completed') {
+        visitRef = ref;
+        householdStatusBefore = nonBlank(current);
+      }
     }
 
     const due = kinTaleDueAtCompletion(session, kinTaleRequired);
@@ -181,6 +207,10 @@ export async function completeDepartedSession(
         updatedAt: FieldValue.serverTimestamp(),
         ...(due ? { kinTaleDue: true } : {}),
         ...(outsideRange !== undefined ? { [COMPLETED_OUTSIDE_RANGE_FIELD]: true } : {}),
+        ...undoStamp,
+        ...(householdStatusBefore !== ''
+          ? { [HOUSEHOLD_STATUS_BEFORE_COMPLETION_FIELD]: householdStatusBefore }
+          : {}),
       },
       { merge: true },
     );

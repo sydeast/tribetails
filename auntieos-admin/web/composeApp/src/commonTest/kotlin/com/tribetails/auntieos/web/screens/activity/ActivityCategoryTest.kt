@@ -44,7 +44,7 @@ class ActivityCategoryTest {
         check(ActivityCategory.KinTales, "CONTENT_KINTALE_SENT", "KINTALE_TEMPLATE_CREATED", "KINTALE_TEMPLATE_SAVED", "KINTALE_TEMPLATE_DELETED")
         check(
             ActivityCategory.Bookings,
-            "VISIT_ON_MY_WAY", "VISIT_ARRIVED", "VISIT_DEPARTED", "VISIT_UNDO_ARRIVAL",
+            "VISIT_ON_MY_WAY", "VISIT_ARRIVED", "VISIT_DEPARTED", "VISIT_UNDO_ARRIVAL", "VISIT_UNDO_DEPARTED",
             "CREATE_KINCARE_SESSION", "UPDATE_KINCARE_SESSION",
         )
         check(ActivityCategory.Notifications, "NOTIFICATION_NOT_SENT", "NOTIFICATION_MARKED_UNREAD")

@@ -346,16 +346,24 @@ export function readCareTaskStamp(raw: unknown): CareTaskStamp | null {
   };
 }
 
-/** The household feed's flat list: each task once, in the template's order. */
-export function checklistFromStamp(stamp: CareTaskStamp): Array<{ key: string; text: string }> {
-  const seen = new Set<string>();
-  const out: Array<{ key: string; text: string }> = [];
+/**
+ * The household feed's list: each task once, in the template's order, with the
+ * Kin it was done for (#2056). `kinIds` is empty for a once-per-visit task, so
+ * "Lights turned off" is never pinned on one Kin, whatever the tick carried.
+ */
+export function checklistFromStamp(stamp: CareTaskStamp): Array<{ key: string; text: string; kinIds: string[] }> {
+  const perVisit = new Set(stamp.items.filter((i) => i.scope === 'PER_VISIT').map((i) => i.key));
+  const byKey = new Map<string, { key: string; text: string; kinIds: string[] }>();
   for (const d of stamp.done) {
-    if (seen.has(d.key)) continue;
-    seen.add(d.key);
-    out.push({ key: d.key, text: d.text });
+    let row = byKey.get(d.key);
+    if (!row) {
+      row = { key: d.key, text: d.text, kinIds: [] };
+      byKey.set(d.key, row);
+    }
+    const kinId = d.kinId.trim();
+    if (kinId !== '' && !perVisit.has(d.key) && !row.kinIds.includes(kinId)) row.kinIds.push(kinId);
   }
-  return out;
+  return [...byKey.values()];
 }
 
 /**

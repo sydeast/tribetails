@@ -33,6 +33,7 @@ import { archiveDefaultRange, archiveFetchBounds, archiveRows, groupArchiveByBus
 import { businessTodayIso } from '../lib/businessZoneTime';
 import { useBusinessZone } from '../lib/useBusinessZone';
 import { ClockStepWarningLine } from '../components/ClockStepWarningLine';
+import { UndoDepartedAction } from '../components/UndoDepartedAction';
 import { useVisitNoticeReach } from '../lib/useVisitNoticeReach';
 import { actionNotifiesHousehold, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
 import { COMPLETE_OWNER_ONLY, completeRefusal } from '../lib/completeRule';
@@ -808,6 +809,9 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           )}
         </div>
       )}
+
+      {/* #2250: for a few minutes after Departed. Draws nothing otherwise. */}
+      <UndoDepartedAction session={entry} household={household} onUndone={onWritten} className="sessions__acts" />
 
       {/* THE STATUS TAP STAYS PESSIMISTIC AND NOW SAYS SO (ruling, 2026-09-12).
           The buttons above already disable while the write is away, which was

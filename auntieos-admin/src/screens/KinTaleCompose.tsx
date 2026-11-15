@@ -83,10 +83,11 @@ import './KinTaleCompose.css';
  *    Scaffolds a blank draft off the parent `kin_care_sessions` row and the
  *    template that session's service type resolves to, mirroring the wasm's
  *    `scaffoldReport(session, template)`, UNLESS the visit already has a saved
- *    draft, which reopens instead (#2040, `savedDraftForVisit`). A template supplies the checklist and
- *    the section flags, never the words: neither Kotlin composer prefills title
- *    or body from one, and a template's `defaultEmailMessage` is preview-only
- *    there (`KinTaleComposeScreen.kt:1051`), so both start blank here too.
+ *    draft, which reopens instead (#2040, `savedDraftForVisit`). A template supplies the checklist, the
+ *    section flags and, since #2050, the words the message OPENS with: its
+ *    "Default message to kinfolk" (`defaultEmailMessage`) is put in the body
+ *    once, when the new tale is started, and is the Auntie's to change from
+ *    there. The headline still starts blank. A reopened draft is never refilled.
  *  - Neither prop given: the screen shows an inline picker over
  *    `SESSIONS_QUERY`, restricted to sessions that have actually happened
  *    (DEPARTED or COMPLETED, a positive membership test, never a negation of
@@ -166,11 +167,15 @@ export function kinTaleSendLabel(recipient: string): string {
  * just blank the compose screen, it would be WRITTEN BACK to the report doc by
  * `saveKinTaleDraft`, so the default has to happen at the read.
  *
- * The template contributes exactly ONE field, `templateId`, and only after
- * `templateIdForWire` strips the built-in sentinel to `''`. It does not touch
- * `title` or `bodyCopy`: neither Kotlin composer prefills those from a template
- * either, and doing so would put a canned message where the story of this visit
- * belongs.
+ * The template contributes `templateId`, and only after `templateIdForWire`
+ * strips the built-in sentinel to `''`, and, since #2050, the message the body
+ * OPENS with ({@link templateDefaultMessage}). The template editor has always
+ * promised "Anything typed here opens the recap's note; Auntie can still
+ * change it for each visit", and no composer kept it: the note opened empty
+ * and the sent tale never carried the message. It is put in ONCE, here, where
+ * a new tale is started. Reopening a saved draft goes through
+ * `draftFromKinTaleEntry`, so a body the Auntie changed or emptied is never
+ * refilled. The headline is still hers alone.
  */
 export function scaffoldKinTaleDraft(session: SessionEntry, template: KinTaleTemplate): KinTaleDraft {
   return {
@@ -183,11 +188,21 @@ export function scaffoldKinTaleDraft(session: SessionEntry, template: KinTaleTem
     arrivedAt: session.arrivedAt ?? '',
     title: '',
     titleGeneratedByAi: false,
-    bodyCopy: '',
+    bodyCopy: templateDefaultMessage(template),
     mediaFileIds: [],
     templateId: templateIdForWire(template),
     fieldResponses: {},
   };
+}
+
+/**
+ * #2050: the message a template opens a new tale with, as typed. A message of
+ * spaces alone is no message, so the note keeps its placeholder. A template
+ * read before the field existed has none.
+ */
+export function templateDefaultMessage(template: Pick<KinTaleTemplate, 'defaultEmailMessage'>): string {
+  const message = typeof template.defaultEmailMessage === 'string' ? template.defaultEmailMessage : '';
+  return message.trim() === '' ? '' : message;
 }
 
 /**

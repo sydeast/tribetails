@@ -234,6 +234,12 @@ export interface SessionEntry {
    * send. Read through `lib/kinTaleTask.ts#kinTaleOwed`.
    */
   kinTaleDue?: boolean | undefined;
+  /**
+   * #2250: when this visit's "Undo departed" closes, an ISO instant the server
+   * stamps as the departure lands (`functions/src/lib/visitLifecycle.ts`). No
+   * client writes it. Read through `lib/undoDeparted.ts`.
+   */
+  undoDepartedUntil?: string | undefined;
 }
 
 /**
