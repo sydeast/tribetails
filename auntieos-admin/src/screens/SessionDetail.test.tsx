@@ -83,8 +83,8 @@ const { getHouseholdKinRoster } = vi.hoisted(() => ({ getHouseholdKinRoster: vi.
 vi.mock('../api/kinRoster', () => ({ getHouseholdKinRoster }));
 const CHOOSE_KIN = {
   kin: [
-    { id: 'p1', name: 'Biscuit', adminId: null },
-    { id: 'p2', name: 'Gravy', adminId: null },
+    { id: 'p1', name: 'Biscuit', householdId: null },
+    { id: 'p2', name: 'Gravy', householdId: null },
   ],
   chooseKin: true,
 };
@@ -636,11 +636,11 @@ describe('SessionDetail: editing the visit', () => {
     expect(screen.getByText(/nothing ticked means the whole household/i)).toBeInTheDocument();
   });
 
-  it('with choosing Kin on, ticks a Kin an older visit stored under its admin record', async () => {
+  it('with choosing Kin on, ticks a Kin an older visit stored under its MyTribe card id', async () => {
     getHouseholdKinRoster.mockResolvedValue({
       kin: [
-        { id: 'fam-a', name: 'Biscuit', adminId: 'p1' },
-        { id: 'p2', name: 'Gravy', adminId: null },
+        { id: 'fam-a', name: 'Biscuit', householdId: 'p1' },
+        { id: 'p2', name: 'Gravy', householdId: null },
       ],
       chooseKin: true,
     });

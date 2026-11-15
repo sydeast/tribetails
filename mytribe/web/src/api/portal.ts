@@ -141,8 +141,11 @@ export async function getMyKin(kinfolkId?: string): Promise<GetMyKinResult> {
 
 /** One Kin a booking can cover: the server's own roster entry. */
 export interface RosterKinDto {
+  /** The id a booking stores for this Kin, and the one the wizard sends back. */
   id: string;
   name: string | null;
+  /** This Kin's own card (`getMyKin`'s id). Null for a Kin the office added that has no card yet. */
+  householdId: string | null;
 }
 
 export interface GetHouseholdKinRosterResult {
@@ -171,9 +174,15 @@ export async function getHouseholdKinRoster(kinfolkId?: string): Promise<GetHous
   if (!Array.isArray(res?.kin)) throw new Error('getHouseholdKinRoster: no answer');
   const kin: RosterKinDto[] = [];
   for (const row of res.kin as unknown[]) {
-    const r = (row ?? {}) as { id?: unknown; name?: unknown };
+    const r = (row ?? {}) as { id?: unknown; name?: unknown; householdId?: unknown };
     if (typeof r.id !== 'string' || r.id === '') continue;
-    kin.push({ id: r.id, name: typeof r.name === 'string' && r.name.trim() !== '' ? r.name : null });
+    kin.push({
+      id: r.id,
+      name: typeof r.name === 'string' && r.name.trim() !== '' ? r.name : null,
+      // Sent only when it differs from the id. Absent, the id may itself be the
+      // card's, so the wizard looks the card up by it.
+      householdId: typeof r.householdId === 'string' && r.householdId !== '' ? r.householdId : r.id,
+    });
   }
   return { kin, chooseKin: res.chooseKin === true };
 }

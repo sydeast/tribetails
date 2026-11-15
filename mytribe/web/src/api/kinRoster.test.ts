@@ -28,15 +28,17 @@ describe('getHouseholdKinRoster wrapper', () => {
   it('returns the Kin in the server’s order and whether they can be chosen', async () => {
     vi.mocked(call).mockResolvedValue({
       kin: [
-        { id: 'k2', name: 'Willow' },
+        { id: 'flat2', name: 'Willow', householdId: 'k2' },
         { id: 'k1', name: 'Buddy' },
       ],
       chooseKin: true,
     } as never);
     await expect(getHouseholdKinRoster('fam1')).resolves.toEqual({
       kin: [
-        { id: 'k2', name: 'Willow' },
-        { id: 'k1', name: 'Buddy' },
+        // Stored under `id`; `householdId` is the Kin's own card.
+        { id: 'flat2', name: 'Willow', householdId: 'k2' },
+        // No separate card id sent: the id is the card's.
+        { id: 'k1', name: 'Buddy', householdId: 'k1' },
       ],
       chooseKin: true,
     });
@@ -55,17 +57,9 @@ describe('getHouseholdKinRoster wrapper', () => {
       chooseKin: false,
     } as never);
     expect((await getHouseholdKinRoster('fam1')).kin).toEqual([
-      { id: 'k1', name: null },
-      { id: 'k2', name: null },
+      { id: 'k1', name: null, householdId: 'k1' },
+      { id: 'k2', name: null, householdId: 'k2' },
     ]);
-  });
-
-  it('never passes an admin record id on to the household', async () => {
-    vi.mocked(call).mockResolvedValue({
-      kin: [{ id: 'k1', name: 'Buddy', adminId: 'flat1' }],
-      chooseKin: false,
-    } as never);
-    expect((await getHouseholdKinRoster('fam1')).kin[0]).toEqual({ id: 'k1', name: 'Buddy' });
   });
 
   it('throws when an older server answers with no Kin list, so the wizard falls back to the household’s own Kin', async () => {

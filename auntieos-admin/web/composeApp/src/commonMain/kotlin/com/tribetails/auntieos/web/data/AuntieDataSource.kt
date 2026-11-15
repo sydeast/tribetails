@@ -109,6 +109,8 @@ interface AuntieDataSource {
         idempotencyKey: String? = null,
         /** #1626: the office's private note; see FirestoreClient.createMultiDateBookingRequest. */
         staffNotes: String? = null,
+        /** #1822: the Kin chosen on the form. Null is every Kin, which is all the server stores unless choosing is on. */
+        kinIds: List<String>? = null,
     ): WriteResult<MultiDateBookingResult> = WriteResult.Err("Multi-date booking is not available here.")
 
     // 16.5: incoming MyTribe booking-envelope requests (collectionGroup kinCares,

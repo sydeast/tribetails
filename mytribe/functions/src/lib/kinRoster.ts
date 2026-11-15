@@ -36,43 +36,106 @@ import { resolveKinNames } from './resolveKinNames';
  * invoices.
  */
 
-/** One Kin on a household's roster, as the roster reader sees it. */
+/** One Kin of a household, as the roster reader sees it. */
 export interface KinRosterEntry {
   /**
-   * The id a booking stores for this Kin: the household copy's id
-   * (`families/{kinfolkId}/kin/{id}`), or the admin record's id when the
-   * office made the Kin and no household copy exists yet.
+   * The id a booking stores for this Kin: its admin record's id (`kin/{id}`)
+   * when it has one, else the household copy's id. See [readHouseholdKin] for
+   * why the admin record's id is the one stored.
    */
   id: string;
-  /** The admin record (`kin/{flatId}`) tied to this Kin, or null when it has none. */
-  flatId: string | null;
+  /** The household copy (`families/{kinfolkId}/kin/{householdId}`), or null when the office made the Kin and no copy exists yet. */
+  householdId: string | null;
   /** Null when the doc carries no usable `name`, never an empty string. */
   name: string | null;
+  /** False for a memorial or archived Kin. */
+  active: boolean;
 }
 
 function textOf(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
+
+function nameOf(data: Record<string, unknown>): string | null {
+  return textOf(data['name']) !== '' ? (data['name'] as string) : null;
+}
+
 /**
- * The household's ACTIVE Kin. THE one roster: every booking writer, the
- * `getHouseholdKinRoster` callable both admin apps, the desktop console and
- * both portal apps draw their Kin list from, all read it here (#1862).
+ * Every Kin of a household, each one once, active or not.
  *
  * A Kin lives in two places (see `lib/kinLink.ts`): the household's copy
- * `families/{kinfolkId}/kin/{kinId}` and the admin's flat `kin/{id}`. The
- * three surfaces used to count different ones. The admin wizard listed the
- * flat docs and sent their ids, the server named only the ids that happened
- * to be household copies too, and the portal listed the household copies with
- * a memorial Kin among them. One booking read six Kin, three and four.
+ * `families/{kinfolkId}/kin/{kinId}` and the admin's flat `kin/{id}`, tied by
+ * `legacyKinId` on the copy and `familyKinPath` on the record. The two ids
+ * differ for every Kin a household adds itself (`onFamilyKinWrite` mints the
+ * admin record under a new id).
  *
- * - A Kin with a household copy is on the roster under that copy's id, when
- *   the copy is active. The copy's `status` is the one that counts: an office
- *   archive writes both copies (`lib/kinArchive.ts`), and a memorial is the
- *   household's own.
- * - A Kin the office made that has no household copy yet is on the roster
- *   under its admin id, when the admin record is active. Without this a
- *   household whose only Kin the office typed in had an empty roster, and its
- *   visits covered nobody (#1822).
+ * WHICH ID A BOOKING STORES (#1862). The admin record's, when there is one.
+ * Every admin reader looks a visit's Kin up there by that id: the KinTale
+ * composer's per-Kin rows (`getKin`), the Auntie Time avatars, the 411 lookup
+ * on Android, the desktop Kin photos. No portal screen looks a Kin up by a
+ * booking's ids at all; they read `kinNames`. The writers used to store
+ * whichever id their caller happened to hold, so a visit a household asked
+ * for carried ids the composer could not find. A Kin with no admin record yet
+ * is stored under its household copy's id.
+ *
+ * WHOSE STATUS COUNTS. The household copy's, when there is one: an office
+ * archive writes both copies (`lib/kinArchive.ts`), and a memorial is the
+ * household's own. A Kin the office made that has no copy yet goes by its
+ * admin record.
+ *
+ * When two household copies claim one admin record (a crossed link,
+ * `lib/kinLink.ts`), the first keeps its id and the other is listed under its
+ * own, so no id ever names two Kin.
+ */
+export async function readHouseholdKin(kinfolkId: string): Promise<KinRosterEntry[]> {
+  const firestore = db();
+  const [familySnap, flatSnap] = await Promise.all([
+    firestore.collection('families').doc(kinfolkId).collection('kin').get(),
+    firestore.collection('kin').where('kinfolkId', '==', kinfolkId).get(),
+  ]);
+  const flatDocs = flatSnap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+  const flatIds = new Set(flatDocs.map((f) => f.id));
+  /** Admin records a household copy accounts for. */
+  const claimed = new Set<string>();
+  const all: KinRosterEntry[] = [];
+  for (const doc of familySnap.docs) {
+    const data = doc.data() as Record<string, unknown>;
+    const stamped = textOf(data['legacyKinId']);
+    const pointed = flatDocs.find((f) => textOf(f.data['familyKinPath']) === `families/${kinfolkId}/kin/${doc.id}`);
+    const linked =
+      stamped !== '' && flatIds.has(stamped) ? stamped : pointed ? pointed.id : flatIds.has(doc.id) ? doc.id : null;
+    const own = linked !== null && !claimed.has(linked) ? linked : null;
+    if (own !== null) claimed.add(own);
+    all.push({
+      id: own ?? doc.id,
+      householdId: doc.id,
+      name: nameOf(data),
+      active: !isInactiveKinStatus(data['status']),
+    });
+  }
+  for (const flat of flatDocs) {
+    if (claimed.has(flat.id)) continue;
+    all.push({
+      id: flat.id,
+      householdId: null,
+      name: nameOf(flat.data),
+      active: !isInactiveKinStatus(flat.data['status']),
+    });
+  }
+  return all;
+}
+
+/**
+ * The household's ACTIVE Kin. THE one roster: every booking writer, and the
+ * `getHouseholdKinRoster` callable both admin apps, the desktop console and
+ * both portal apps draw their Kin list from, read it here (#1862).
+ *
+ * The three surfaces used to count different Kin. The admin wizard listed the
+ * admin records and sent their ids, the server named only the ids that
+ * happened to be household copies too, and the portal listed the household
+ * copies with a memorial Kin among them. One booking read six Kin, three and
+ * four. And a household whose only Kin the office had typed in had no roster
+ * at all, so its visits covered nobody (#1822).
  *
  * Inactive means [isInactiveKinStatus]: the memorial state plus the legacy
  * AuntieOS `inactive`/`archived` spellings. A pet who is no longer with us is
@@ -82,34 +145,7 @@ function textOf(value: unknown): string {
  * per `kinStatus.ts`.
  */
 export async function readHouseholdKinRoster(kinfolkId: string): Promise<KinRosterEntry[]> {
-  const firestore = db();
-  const [familySnap, flatSnap] = await Promise.all([
-    firestore.collection('families').doc(kinfolkId).collection('kin').get(),
-    firestore.collection('kin').where('kinfolkId', '==', kinfolkId).get(),
-  ]);
-  const flatDocs = flatSnap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
-  const flatIds = new Set(flatDocs.map((f) => f.id));
-  /** Admin records a household copy accounts for, active or not. */
-  const claimed = new Set<string>();
-  const roster: KinRosterEntry[] = [];
-  for (const doc of familySnap.docs) {
-    const data = doc.data() as Record<string, unknown>;
-    const stamped = textOf(data['legacyKinId']);
-    const pointed = flatDocs.find((f) => textOf(f.data['familyKinPath']) === `families/${kinfolkId}/kin/${doc.id}`);
-    const flatId = stamped !== '' ? stamped : pointed ? pointed.id : flatIds.has(doc.id) ? doc.id : null;
-    if (flatId !== null) claimed.add(flatId);
-    if (pointed) claimed.add(pointed.id);
-    if (isInactiveKinStatus(data['status'])) continue;
-    const name = textOf(data['name']);
-    roster.push({ id: doc.id, flatId, name: name !== '' ? (data['name'] as string) : null });
-  }
-  for (const flat of flatDocs) {
-    if (claimed.has(flat.id)) continue;
-    if (isInactiveKinStatus(flat.data['status'])) continue;
-    const name = textOf(flat.data['name']);
-    roster.push({ id: flat.id, flatId: flat.id, name: name !== '' ? (flat.data['name'] as string) : null });
-  }
-  return roster;
+  return (await readHouseholdKin(kinfolkId)).filter((k) => k.active);
 }
 
 function rosterPair(entries: readonly KinRosterEntry[]): { kinIds: string[]; kinNames: string[] } {
@@ -120,13 +156,18 @@ function rosterPair(entries: readonly KinRosterEntry[]): { kinIds: string[]; kin
     kinNames: entries.map((k) => k.name).filter((n): n is string => n !== null),
   };
 }
+
 /**
  * Resolves the `kinIds` + `kinNames` pair for a booking that ALREADY EXISTS,
  * from the ids stored on it: an approval, or a visit getting its booking
  * record. A new visit goes through [kinRosterForNewVisit] instead.
  *
- * - The record names specific Kin: those ids are kept, de-duplicated, names
- *   resolved. An existing booking keeps the Kin it was made for.
+ * - The record names specific Kin: those ids are kept as they are,
+ *   de-duplicated, and named. An existing booking keeps the Kin it was made
+ *   for. A stored id may be either of a Kin's two ids (older writers stored
+ *   whichever they were sent), so each is named from the household's Kin by
+ *   either one; an id this household no longer has is looked up the old way
+ *   and, failing that, contributes no name.
  * - The record names none: R1 applies and the full active roster is
  *   materialized.
  *
@@ -140,10 +181,18 @@ export async function materializeKinRoster(
   kinIds: readonly string[] | null | undefined,
 ): Promise<{ kinIds: string[]; kinNames: string[] }> {
   const stated = [...new Set(kinIds ?? [])].filter((id) => id.length > 0);
-  if (stated.length > 0) {
-    return { kinIds: stated, kinNames: await resolveKinNames(kinfolkId, stated) };
+  const all = await readHouseholdKin(kinfolkId);
+  if (stated.length === 0) return rosterPair(all.filter((k) => k.active));
+  const known = (id: string) => all.find((k) => k.id === id || k.householdId === id);
+  const unknown = stated.filter((id) => known(id) === undefined);
+  // One batched read for the ids no current Kin answers to, in stated order.
+  const strays = unknown.length > 0 ? await resolveKinNames(kinfolkId, unknown) : [];
+  const kinNames: string[] = [];
+  for (const id of stated) {
+    const name = known(id)?.name;
+    if (typeof name === 'string') kinNames.push(name);
   }
-  return rosterPair(await readHouseholdKinRoster(kinfolkId));
+  return { kinIds: stated, kinNames: [...kinNames, ...strays] };
 }
 
 /**
@@ -157,11 +206,11 @@ export async function materializeKinRoster(
  *
  * With `chooseKin` on (the `auntieos.visits.chooseKin` feature flag) the Kin
  * the caller named are the ones stored, as long as they are on the roster. A
- * named id may be either of a Kin's two ids: the admin apps list admin records
- * and the portal lists household copies, and both mean the same animal. An id
- * that is not an active Kin of this household is dropped. Naming none, or
- * none that is on the roster, means the whole home: a visit for nobody is not
- * a thing the business sells.
+ * named id may be either of a Kin's two ids: an older admin app lists admin
+ * records and an older portal app lists household copies, and both mean the
+ * same animal. An id that is not an active Kin of this household is dropped.
+ * Naming none, or none that is on the roster, means the whole home: a visit
+ * for nobody is not a thing the business sells.
  *
  * The roster is read once, here, and frozen on the document. A Kin added
  * later is on the next visit that is made, never on this one.
@@ -174,9 +223,10 @@ export async function kinRosterForNewVisit(
   const roster = await readHouseholdKinRoster(kinfolkId);
   if (!opts.chooseKin) return rosterPair(roster);
   const named = new Set((kinIds ?? []).filter((id) => typeof id === 'string' && id.length > 0));
-  const chosen = roster.filter((k) => named.has(k.id) || (k.flatId !== null && named.has(k.flatId)));
+  const chosen = roster.filter((k) => named.has(k.id) || (k.householdId !== null && named.has(k.householdId)));
   return rosterPair(chosen.length > 0 ? chosen : roster);
 }
+
 /**
  * The household's display name, for stamping onto a session document.
  *

@@ -2820,6 +2820,11 @@ fun AddEnhancedBookingDialog(
                                     timeError = if (serviceOptions.isEmpty()) NO_KINCARE_TYPES_MESSAGE else "Pick a service."
                                     return@PrimaryButton
                                 }
+                                // #1822: reachable only with choosing Kin switched on. A visit for no Kin is not booked.
+                                if (selectedKinfolk != null && kinChoice.noneChosen(kin, chooseKin)) {
+                                    timeError = "Choose at least one Kin."
+                                    return@PrimaryButton
+                                }
                                 // #1574: never a booking in the past. Judged again
                                 // at the tap, on the clock as it is now.
                                 when (com.tribetails.auntieos.domain.newVisitTiming(date, startTime, endTime, now())) {

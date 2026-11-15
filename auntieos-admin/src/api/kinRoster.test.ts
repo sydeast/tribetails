@@ -19,15 +19,15 @@ describe('getHouseholdKinRoster', () => {
   it('returns the Kin and whether they can be chosen', async () => {
     call.mockResolvedValue({
       kin: [
-        { id: 'k1', name: 'Biscuit', adminId: 'flat1' },
+        { id: 'k1', name: 'Biscuit', householdId: 'flat1' },
         { id: 'k2', name: 'Gravy' },
       ],
       chooseKin: true,
     });
     expect(await getHouseholdKinRoster('kf1')).toEqual({
       kin: [
-        { id: 'k1', name: 'Biscuit', adminId: 'flat1' },
-        { id: 'k2', name: 'Gravy', adminId: null },
+        { id: 'k1', name: 'Biscuit', householdId: 'flat1' },
+        { id: 'k2', name: 'Gravy', householdId: null },
       ],
       chooseKin: true,
     });
@@ -46,14 +46,14 @@ describe('getHouseholdKinRoster', () => {
       chooseKin: false,
     });
     expect((await getHouseholdKinRoster('kf1')).kin).toEqual([
-      { id: 'k1', name: null, adminId: null },
-      { id: 'k2', name: null, adminId: null },
+      { id: 'k1', name: null, householdId: null },
+      { id: 'k2', name: null, householdId: null },
     ]);
   });
 
-  it('does not repeat an admin record id that is the same as the id', async () => {
-    call.mockResolvedValue({ kin: [{ id: 'k1', name: 'Biscuit', adminId: 'k1' }], chooseKin: false });
-    expect((await getHouseholdKinRoster('kf1')).kin[0]).toEqual({ id: 'k1', name: 'Biscuit', adminId: null });
+  it('does not repeat a card id that is the same as the id', async () => {
+    call.mockResolvedValue({ kin: [{ id: 'k1', name: 'Biscuit', householdId: 'k1' }], chooseKin: false });
+    expect((await getHouseholdKinRoster('kf1')).kin[0]).toEqual({ id: 'k1', name: 'Biscuit', householdId: null });
   });
 
   it('throws when an older server answers with no Kin list, so the form says it could not load them', async () => {

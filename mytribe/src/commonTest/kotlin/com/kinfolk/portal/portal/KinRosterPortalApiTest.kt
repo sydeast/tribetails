@@ -61,6 +61,20 @@ class KinRosterPortalApiTest {
     }
 
     @Test
+    fun `reads the Kin's own card id when the server sends one, else the id`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getHouseholdKinRoster", buildJsonObject {
+            put("kin", buildJsonArray {
+                add(buildJsonObject { put("id", "flat-1"); put("name", "Buddy"); put("householdId", "card-1") })
+                add(buildJsonObject { put("id", "k2"); put("name", "Willow") })
+            })
+        })
+        val kin = PortalApi(fake).getHouseholdKinRoster("fam1").kin
+        assertEquals(listOf("card-1", "k2"), kin.map { it.householdId })
+        assertEquals(listOf("flat-1", "k2"), kin.map { it.id })
+    }
+
+    @Test
     fun `choosing Kin is on only when the server says exactly true`() = runTest {
         val fake = FakeFunctionsClient()
         fake.stub("getHouseholdKinRoster", answer(chooseKin = true))

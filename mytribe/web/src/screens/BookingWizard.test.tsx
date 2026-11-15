@@ -158,8 +158,8 @@ vi.mock('../lib/activeTribe', () => ({
 
 /** The server's roster for the default household: the same two Kin `getMyKin` describes. */
 const ROSTER = [
-  { id: 'k1', name: 'Buddy' },
-  { id: 'k2', name: 'Willow' },
+  { id: 'k1', name: 'Buddy', householdId: 'k1' },
+  { id: 'k2', name: 'Willow', householdId: 'k2' },
 ];
 
 function kin(overrides: Partial<KinDto>): KinDto {
@@ -599,7 +599,7 @@ describe('BookingWizard: #540 one Kin box', () => {
     getMyKin.mockResolvedValue({
       kin: [kin({ id: 'k1', name: 'Buddy', breed: 'Labrador Retriever', ageYears: 4 })],
     });
-    getHouseholdKinRoster.mockResolvedValue({ kin: [{ id: 'k1', name: 'Buddy' }], chooseKin: false });
+    getHouseholdKinRoster.mockResolvedValue({ kin: [{ id: 'k1', name: 'Buddy', householdId: 'k1' }], chooseKin: false });
     renderWizard();
     await screen.findByText('Kin on this booking');
     expect(screen.getAllByText('Buddy')).toHaveLength(1);
@@ -610,7 +610,7 @@ describe('BookingWizard: #540 one Kin box', () => {
     getMyKin.mockResolvedValue({
       kin: [kin({ id: 'k1', name: 'Buddy', breed: 'Labrador Retriever', ageYears: 4 })],
     });
-    getHouseholdKinRoster.mockResolvedValue({ kin: [{ id: 'k1', name: 'Buddy' }], chooseKin: true });
+    getHouseholdKinRoster.mockResolvedValue({ kin: [{ id: 'k1', name: 'Buddy', householdId: 'k1' }], chooseKin: true });
     renderWizard();
     await screen.findByText('Select Kin');
     // Exactly one detail row per Kin: the read-only roster is not printed
@@ -669,9 +669,9 @@ describe('BookingWizard: the Kin a booking covers (#1822, #1862)', () => {
     // The office added Pepper and the household has no card for it yet.
     getHouseholdKinRoster.mockResolvedValue({
       kin: [
-        { id: 'k2', name: 'Willow' },
-        { id: 'k1', name: 'Buddy' },
-        { id: 'flat9', name: 'Pepper' },
+        { id: 'k2', name: 'Willow', householdId: 'k2' },
+        { id: 'k1', name: 'Buddy', householdId: 'k1' },
+        { id: 'flat9', name: 'Pepper', householdId: null },
       ],
       chooseKin: false,
     });
@@ -680,6 +680,24 @@ describe('BookingWizard: the Kin a booking covers (#1822, #1862)', () => {
     const names = Array.from(document.querySelectorAll('.kinroster .kinrow b')).map((b) => b.textContent);
     expect(names).toEqual(['Willow', 'Buddy', 'Pepper']);
     expect(screen.queryByText('Old Boy')).not.toBeInTheDocument();
+  });
+
+  it('books a Kin under the id the server gave, and describes it from its own card', async () => {
+    getMyKin.mockResolvedValue({
+      kin: [kin({ id: 'card-1', name: 'Buddy', breed: 'Labrador Retriever', ageYears: 4 })],
+    });
+    // The booking stores this Kin under another id than its card's.
+    getHouseholdKinRoster.mockResolvedValue({
+      kin: [{ id: 'flat-1', name: 'Buddy', householdId: 'card-1' }],
+      chooseKin: false,
+    });
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Kin on this booking');
+    expect(screen.getByText('LABRADOR RETRIEVER • 4 YRS')).toBeInTheDocument();
+
+    const sent = await finishAndSubmit(user);
+    expect(sent.kinIds).toEqual(['flat-1']);
   });
 
   it('HAPPY, choosing on: every Kin starts ticked and, left alone, all are booked', async () => {
@@ -1500,7 +1518,7 @@ describe('BookingWizard: #1300 / #1302 step behaviour', () => {
   });
   it('names the chosen Kin in the summary instead of counting them', async () => {
     getHouseholdKinRoster.mockResolvedValue({
-      kin: [...ROSTER, { id: 'k3', name: 'Maple' }],
+      kin: [...ROSTER, { id: 'k3', name: 'Maple', householdId: null }],
       chooseKin: true,
     });
     const user = userEvent.setup();

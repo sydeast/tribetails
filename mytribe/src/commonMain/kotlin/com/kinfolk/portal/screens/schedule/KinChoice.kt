@@ -39,10 +39,15 @@ data class BookingKin(
  */
 fun bookingKin(own: List<Kin>, roster: KinRoster?): List<BookingKin> {
     val active = own.filter { it.status == KinStatus.Active }
-    fun card(k: Kin) = BookingKin(k.id, k.name, k.species, k.breed, k.ageYears)
-    if (roster == null) return active.map(::card)
+    if (roster == null) return active.map { BookingKin(it.id, it.name, it.species, it.breed, it.ageYears) }
     val byId = active.associateBy { it.id }
-    return roster.kin.map { r -> byId[r.id]?.let(::card) ?: BookingKin(id = r.id, name = r.name) }
+    // Each Kin under the id the booking stores ([RosterKin.id]), described by
+    // its own card when the household has one.
+    return roster.kin.map { r ->
+        val card = r.householdId?.let { byId[it] }
+        if (card != null) BookingKin(r.id, card.name ?: r.name, card.species, card.breed, card.ageYears)
+        else BookingKin(id = r.id, name = r.name)
+    }
 }
 
 /** The wizard's Kin choice: every Kin, or the ticked ones. */

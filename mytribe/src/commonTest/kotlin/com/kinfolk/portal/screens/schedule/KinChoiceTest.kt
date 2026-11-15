@@ -53,8 +53,17 @@ class KinChoiceTest {
     }
 
     @Test
+    fun `a Kin is booked under the id the server gave and described from its own card`() {
+        val roster = KinRoster(listOf(RosterKin("flat-1", "Buddy", householdId = "k1")), chooseKin = false)
+        val listed = bookingKin(listOf(buddy), roster).single()
+        assertEquals("flat-1", listed.id)
+        assertEquals("Labrador Retriever • 4 yrs", listed.subtitle)
+        assertEquals(listOf("flat-1"), KinChoice().kinIds(listOf(listed), chooseKin = false))
+    }
+
+    @Test
     fun `a Kin the office added, with no card of its own, is listed by name`() {
-        val roster = KinRoster(listOf(RosterKin("k1", "Buddy"), RosterKin("flat9", "Pepper")), chooseKin = false)
+        val roster = KinRoster(listOf(RosterKin("k1", "Buddy"), RosterKin("flat9", "Pepper", householdId = null)), chooseKin = false)
         val listed = bookingKin(listOf(buddy), roster)
         assertEquals(listOf("Buddy", "Pepper"), listed.map { it.label })
         assertEquals("", listed.last().subtitle)

@@ -2534,15 +2534,17 @@ the handler.
 operator ruling 2026-11-12). Hand-typed on every client; not in the contracts
 registry.
 - req `{ kinfolkId?: string }`
-- res `{ kin: { id: string, name: string | null, adminId?: string }[], chooseKin: boolean }`.
-  `adminId` is the Kin's admin record, sent to staff only and only when it
-  differs from `id`.
+- res `{ kin: { id: string, name: string | null, householdId?: string }[], chooseKin: boolean }`.
+  `id` is the id a visit stores for the Kin: its admin record's (`kin/{id}`)
+  when it has one, since every admin screen looks a visit's Kin up there,
+  else its household card's. `householdId` is the household card
+  (`getMyKin`'s id), sent only when it differs from `id`.
 - READ-ONLY. `kin` is the household's ACTIVE Kin, the ones a new visit covers,
   from `lib/kinRoster.ts#readHouseholdKinRoster`: each Kin once, whether the
   household or the office made it. A memorial or archived Kin is not listed.
   This is the same list `requestBooking`, `createMultiDateBookingRequest` and
   `createKinCareSession` store, so a screen that draws its Kin from here names
-  the Kin the visit will carry. Names and ids only.
+  the Kin the visit will carry, under the ids it will carry. Names and ids only.
 - `chooseKin` is the `auntieos.visits.chooseKin` feature flag as resolved for
   the caller (`lib/featureFlags.ts`: the global doc, then the caller's own
   override). `false`, the default: EVERY VISIT COVERS EVERY KIN. The three

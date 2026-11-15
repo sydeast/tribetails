@@ -101,9 +101,9 @@ export function noKinChosen(choice: KinChoice, roster: KinRosterState): boolean 
 
 /**
  * The choice a saved visit's stored ids make against today's roster, for the
- * visit's own Kin row. An older visit stored the Kin's admin record id, so
+ * visit's own Kin row. Some older visits stored the Kin's MyTribe card id, so
  * either id ticks the Kin.
  */
 export function choiceFromStoredIds(storedIds: readonly string[], roster: readonly RosterKin[]): string[] {
-  return roster.filter((k) => storedIds.includes(k.id) || (k.adminId !== null && storedIds.includes(k.adminId))).map((k) => k.id);
+  return roster.filter((k) => storedIds.includes(k.id) || (k.householdId !== null && storedIds.includes(k.householdId))).map((k) => k.id);
 }

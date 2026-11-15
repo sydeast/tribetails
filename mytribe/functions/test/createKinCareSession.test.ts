@@ -121,7 +121,7 @@ describe('createKinCareSession kin names', () => {
     await createKinCareSessionHandler(visitFor());
     expect(sessionWrites(ctx)).toHaveLength(1);
     const written = sessionWrites(ctx)[0].data;
-    expect(written.kinIds).toEqual(['k1', 'k2', 'flat9']);
+    expect(written.kinIds).toEqual(['flat1', 'k2', 'flat9']);
     expect(written.kinNames).toEqual(['Fido', 'Whiskers', 'Office Cat']);
   });
 
@@ -130,7 +130,7 @@ describe('createKinCareSession kin names', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const r = await createKinCareSessionHandler(visitFor(['k2']));
     expect(r.ok).toBe(true);
-    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1', 'k2', 'flat9']);
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['flat1', 'k2', 'flat9']);
     expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Fido', 'Whiskers', 'Office Cat']);
   });
 
@@ -142,11 +142,21 @@ describe('createKinCareSession kin names', () => {
     expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Whiskers']);
   });
 
+  it('with choosing Kin on, reads a household card id as the Kin it belongs to, stored under its admin record', async () => {
+    const ctx = home(CHOOSE_KIN_ON);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await createKinCareSessionHandler(visitFor(['k1']));
+
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['flat1']);
+    expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Fido']);
+  });
+
   it('with choosing Kin on, reads an admin record id as the Kin it belongs to', async () => {
     const ctx = home(CHOOSE_KIN_ON);
     mocks.dbFn.mockReturnValue(ctx.db);
     await createKinCareSessionHandler(visitFor(['flat1', 'flat9']));
-    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1', 'flat9']);
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['flat1', 'flat9']);
     expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Fido', 'Office Cat']);
   });
 
@@ -154,7 +164,7 @@ describe('createKinCareSession kin names', () => {
     const ctx = home(CHOOSE_KIN_ON);
     mocks.dbFn.mockReturnValue(ctx.db);
     await createKinCareSessionHandler(visitFor(['k1', 'k3', 'flat8', 'other', 'missing-kin']));
-    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1']);
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['flat1']);
     expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Fido']);
   });
 
@@ -162,7 +172,7 @@ describe('createKinCareSession kin names', () => {
     const ctx = home(CHOOSE_KIN_ON);
     mocks.dbFn.mockReturnValue(ctx.db);
     await createKinCareSessionHandler(visitFor(['k3', 'missing-kin']));
-    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1', 'k2', 'flat9']);
+    expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['flat1', 'k2', 'flat9']);
   });
 
   it('a tester with the flag on their own account chooses, while it is off for everyone else', async () => {

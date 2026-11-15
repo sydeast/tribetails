@@ -11,9 +11,9 @@ import {
 } from './kinChoice';
 import type { RosterKin } from '../api/kinRoster';
 
-const BISCUIT: RosterKin = { id: 'k1', name: 'Biscuit', adminId: 'flat1' };
-const GRAVY: RosterKin = { id: 'k2', name: 'Gravy', adminId: null };
-const PEPPER: RosterKin = { id: 'k3', name: null, adminId: null };
+const BISCUIT: RosterKin = { id: 'k1', name: 'Biscuit', householdId: 'flat1' };
+const GRAVY: RosterKin = { id: 'k2', name: 'Gravy', householdId: null };
+const PEPPER: RosterKin = { id: 'k3', name: null, householdId: null };
 const KIN = [BISCUIT, GRAVY, PEPPER];
 
 const off: KinRosterState = { status: 'ready', kin: KIN, chooseKin: false };
@@ -104,7 +104,7 @@ describe('choiceFromStoredIds', () => {
     expect(choiceFromStoredIds(['k2'], KIN)).toEqual(['k2']);
   });
 
-  it('ticks a Kin an older visit stored under its admin record', () => {
+  it('ticks a Kin an older visit stored under its MyTribe card id', () => {
     expect(choiceFromStoredIds(['flat1', 'k2'], KIN)).toEqual(['k1', 'k2']);
   });
 

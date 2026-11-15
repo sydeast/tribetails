@@ -2,12 +2,12 @@ import { call } from '../lib/fns';
 
 /** One Kin a visit can cover. */
 export interface RosterKin {
-  /** The id a booking stores for this Kin. */
+  /** The id a visit stores for this Kin: its admin record's when it has one. */
   id: string;
   /** Null when the Kin has no name on file. */
   name: string | null;
-  /** The Kin's admin record, when it differs from [id]. Older visits stored this one. */
-  adminId: string | null;
+  /** The Kin's own card in MyTribe, when its id differs from [id]. Some older visits stored this one. */
+  householdId: string | null;
 }
 
 export interface HouseholdKinRoster {
@@ -37,12 +37,12 @@ export async function getHouseholdKinRoster(kinfolkId: string): Promise<Househol
   if (!Array.isArray(res?.kin)) throw new Error('getHouseholdKinRoster: no answer');
   const kin: RosterKin[] = [];
   for (const row of res.kin as unknown[]) {
-    const r = (row ?? {}) as { id?: unknown; name?: unknown; adminId?: unknown };
+    const r = (row ?? {}) as { id?: unknown; name?: unknown; householdId?: unknown };
     if (typeof r.id !== 'string' || r.id === '') continue;
     kin.push({
       id: r.id,
       name: typeof r.name === 'string' && r.name.trim() !== '' ? r.name : null,
-      adminId: typeof r.adminId === 'string' && r.adminId !== '' && r.adminId !== r.id ? r.adminId : null,
+      householdId: typeof r.householdId === 'string' && r.householdId !== '' && r.householdId !== r.id ? r.householdId : null,
     });
   }
   return { kin, chooseKin: res.chooseKin === true };

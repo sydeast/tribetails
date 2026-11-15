@@ -62,8 +62,13 @@ fun resolveKinVet(kin: Kin, householdVet: VetClinicSummary?, clinics: List<VetCl
 
 data class KinResult(val kin: List<Kin>)
 
-/** One Kin a booking can cover: the server's own roster entry. */
-data class RosterKin(val id: String, val name: String?)
+/**
+ * One Kin a booking can cover: the server's own roster entry. [id] is the id a
+ * booking stores for the Kin and the one the wizard sends back. [householdId]
+ * is the Kin's own card ([Kin.id] from `getMyKin`), null for a Kin the office
+ * added that has no card yet.
+ */
+data class RosterKin(val id: String, val name: String?, val householdId: String? = id)
 
 /**
  * The Kin a booking for this household covers, as the server will store them

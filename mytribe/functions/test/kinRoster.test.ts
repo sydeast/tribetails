@@ -152,11 +152,13 @@ describe('readHouseholdKinRoster, the one roster every screen and writer reads',
   it('lists each active Kin once, whichever store it was made in', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(twoStores()).db);
     const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
+    // Each under its admin record's id, the one every admin screen looks a
+    // visit's Kin up by, with the household's own card id beside it.
     expect(await readHouseholdKinRoster('3')).toEqual([
-      { id: 'fam-a', flatId: 'flat-a', name: 'Biscuit' },
-      { id: 'both-b', flatId: 'both-b', name: 'Gravy' },
-      { id: 'fam-e', flatId: 'flat-e', name: 'Pepper' },
-      { id: 'flat-f', flatId: 'flat-f', name: 'Office Cat' },
+      { id: 'flat-a', householdId: 'fam-a', name: 'Biscuit', active: true },
+      { id: 'both-b', householdId: 'both-b', name: 'Gravy', active: true },
+      { id: 'flat-e', householdId: 'fam-e', name: 'Pepper', active: true },
+      { id: 'flat-f', householdId: null, name: 'Office Cat', active: true },
     ]);
   });
 
@@ -181,6 +183,40 @@ describe('readHouseholdKinRoster, the one roster every screen and writer reads',
     expect((await readHouseholdKinRoster('3')).map((k) => k.name)).not.toContain('Next Door');
   });
 
+  it('lists a Kin under its household card id while it has no admin record yet', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        queryDocs: {
+          'families/7/kin': [
+            { id: 'new-1', data: { name: 'Just Added' } },
+            // Stamped with a record that is not this household's, or is gone.
+            { id: 'new-2', data: { name: 'Dangling', legacyKinId: 'not-here' } },
+          ],
+        },
+      }).db,
+    );
+    const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
+
+    expect((await readHouseholdKinRoster('7')).map((k) => k.id)).toEqual(['new-1', 'new-2']);
+  });
+
+  it('never gives two Kin one id when both claim the same admin record', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        queryDocs: {
+          'families/7/kin': [
+            { id: 'first', data: { name: 'Rex', legacyKinId: 'flat-1' } },
+            { id: 'second', data: { name: 'Rex Two', legacyKinId: 'flat-1' } },
+          ],
+          kin: [{ id: 'flat-1', data: { name: 'Rex', kinfolkId: '7' } }],
+        },
+      }).db,
+    );
+    const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
+
+    expect((await readHouseholdKinRoster('7')).map((k) => k.id)).toEqual(['flat-1', 'second']);
+  });
+
   it('gives a household whose only Kin the office typed in a roster (#1822)', async () => {
     mocks.dbFn.mockReturnValue(
       buildDbMock({ queryDocs: { kin: [{ id: 'flat-1', data: { name: 'Solo', kinfolkId: '7' } }] } }).db,
@@ -190,7 +226,107 @@ describe('readHouseholdKinRoster, the one roster every screen and writer reads',
   });
 });
 
+// An existing booking keeps the ids it was stored with. Older writers stored
+// whichever of a Kin's two ids their caller held, and the approval named only
+// the ones that were household copies: three names for six Kin (#1862).
+describe('materializeKinRoster, naming the Kin an existing booking stores', () => {
+  function home() {
+    return {
+      queryDocs: {
+        'families/3/kin': [
+          { id: 'fam-a', data: { name: 'Biscuit', legacyKinId: 'flat-a' } },
+          { id: 'fam-b', data: { name: 'Gravy', legacyKinId: 'flat-b' } },
+          { id: 'fam-c', data: { name: 'Old Boy', status: 'noLongerWithUs', legacyKinId: 'flat-c' } },
+        ],
+        kin: [
+          { id: 'flat-a', data: { name: 'Biscuit', kinfolkId: '3' } },
+          { id: 'flat-b', data: { name: 'Gravy', kinfolkId: '3' } },
+          { id: 'flat-c', data: { name: 'Old Boy', kinfolkId: '3' } },
+          { id: 'flat-f', data: { name: 'Office Cat', kinfolkId: '3' } },
+        ],
+      },
+      docs: { 'families/3/kin/stray': { name: 'Left Behind' } },
+    };
+  }
+
+  it('names a Kin stored under its admin record id', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('3', ['flat-a', 'flat-b', 'flat-f'])).toEqual({
+      kinIds: ['flat-a', 'flat-b', 'flat-f'],
+      kinNames: ['Biscuit', 'Gravy', 'Office Cat'],
+    });
+  });
+
+  it('names a Kin stored under its household card id, and leaves the stored id as it is', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('3', ['fam-b', 'flat-a'])).toEqual({
+      kinIds: ['fam-b', 'flat-a'],
+      kinNames: ['Gravy', 'Biscuit'],
+    });
+  });
+
+  it('still names a Kin the booking was made for who has since passed', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect((await materializeKinRoster('3', ['flat-c'])).kinNames).toEqual(['Old Boy']);
+  });
+
+  it('keeps an id no Kin answers to, with no name, rather than failing the approval', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('3', ['flat-a', 'gone'])).toEqual({
+      kinIds: ['flat-a', 'gone'],
+      kinNames: ['Biscuit'],
+    });
+  });
+
+  it('with no Kin stored, covers every Kin in care under the ids the admin screens read', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('3', [])).toEqual({
+      kinIds: ['flat-a', 'flat-b', 'flat-f'],
+      kinNames: ['Biscuit', 'Gravy', 'Office Cat'],
+    });
+  });
+});
+
 describe('kinRosterForNewVisit, operator ruling 2026-11-12: every visit covers every Kin', () => {
+  it('with choosing Kin on, reads either of a Kin\'s two ids as that Kin and stores the admin one', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        queryDocs: {
+          'families/3/kin': [
+            { id: 'fam-a', data: { name: 'Biscuit', legacyKinId: 'flat-a' } },
+            { id: 'fam-b', data: { name: 'Gravy', legacyKinId: 'flat-b' } },
+          ],
+          kin: [
+            { id: 'flat-a', data: { name: 'Biscuit', kinfolkId: '3' } },
+            { id: 'flat-b', data: { name: 'Gravy', kinfolkId: '3' } },
+          ],
+        },
+      }).db,
+    );
+    const { kinRosterForNewVisit } = await import('../src/lib/kinRoster');
+
+    // The portal names the household's card, the office names its record.
+    expect(await kinRosterForNewVisit('3', ['fam-b'], { chooseKin: true })).toEqual({
+      kinIds: ['flat-b'],
+      kinNames: ['Gravy'],
+    });
+    expect(await kinRosterForNewVisit('3', ['flat-a'], { chooseKin: true })).toEqual({
+      kinIds: ['flat-a'],
+      kinNames: ['Biscuit'],
+    });
+  });
+
+
   it('with choosing Kin off, stores the whole roster whatever was named', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(household()).db);
     const { kinRosterForNewVisit } = await import('../src/lib/kinRoster');

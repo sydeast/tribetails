@@ -19,8 +19,8 @@ vi.mock('../lib/sessionSeat', async (orig) => ({
 const { getHouseholdKinRoster } = vi.hoisted(() => ({ getHouseholdKinRoster: vi.fn() }));
 vi.mock('../api/kinRoster', () => ({ getHouseholdKinRoster }));
 const ROSTER = [
-  { id: 'k1', name: 'Biscuit', adminId: null },
-  { id: 'k2', name: 'Gravy', adminId: null },
+  { id: 'k1', name: 'Biscuit', householdId: null },
+  { id: 'k2', name: 'Gravy', householdId: null },
 ];
 beforeEach(() => {
   getHouseholdKinRoster.mockReset().mockResolvedValue({ kin: ROSTER, chooseKin: false });
@@ -395,7 +395,7 @@ describe('NewVisitDialog, the Kin a visit covers (#1822)', () => {
       Promise.resolve(
         id === 'kf1'
           ? { kin: ROSTER, chooseKin: true }
-          : { kin: [{ id: 'k9', name: 'Pepper', adminId: null }], chooseKin: true },
+          : { kin: [{ id: 'k9', name: 'Pepper', householdId: null }], chooseKin: true },
       ),
     );
     open();

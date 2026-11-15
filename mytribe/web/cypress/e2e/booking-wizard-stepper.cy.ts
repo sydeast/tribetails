@@ -47,9 +47,12 @@ function openWizard() {
     getBookingPolicy: POLICY,
     getBusinessClosures: { closures: [] },
     getMyBookings: { liveVisit: null, upcoming: [], recent: [], envelopes: [] },
+    // #1822: an answer with no Kin list, which the wizard reads as "the server
+    // cannot say" and opens on the seeded household's own Kin, nothing to tick.
+    getHouseholdKinRoster: {},
   });
   cy.visit('/schedule/book');
-  cy.contains('h3.title', 'Select Kin', { timeout: 30_000 }).should('be.visible');
+  cy.contains('h3.title', 'Kin on this booking', { timeout: 30_000 }).should('be.visible');
   cy.contains('Buddy 8', { timeout: 30_000 }).should('exist');
 }
 

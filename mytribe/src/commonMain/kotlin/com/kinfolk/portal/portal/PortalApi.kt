@@ -778,7 +778,12 @@ class PortalApi(
         val kin = rows.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
             val id = o["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            RosterKin(id = id, name = o["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() })
+            RosterKin(
+                id = id,
+                name = o["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+                // Sent only when it differs from the id. Absent, the id may itself be the card's.
+                householdId = o["householdId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: id,
+            )
         }
         return KinRoster(kin = kin, chooseKin = raw["chooseKin"]?.jsonPrimitive?.booleanOrNull == true)
     }

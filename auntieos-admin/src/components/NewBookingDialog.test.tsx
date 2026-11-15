@@ -61,8 +61,8 @@ function kinfolk(over: Partial<Kinfolk> = {}): Kinfolk {
 function roster(over: Partial<HouseholdKinRoster> = {}): HouseholdKinRoster {
   return {
     kin: [
-      { id: 'k1', name: 'Biscuit', adminId: null },
-      { id: 'k2', name: 'Gravy', adminId: null },
+      { id: 'k1', name: 'Biscuit', householdId: null },
+      { id: 'k2', name: 'Gravy', householdId: null },
     ],
     chooseKin: false,
     ...over,
@@ -371,7 +371,7 @@ describe('NewBookingDialog step 1: client and pets', () => {
       feed({
         kin: {
           kf1: roster({ chooseKin: true }),
-          kf2: { kin: [{ id: 'k9', name: 'Elsewhere', adminId: null }], chooseKin: true },
+          kf2: { kin: [{ id: 'k9', name: 'Elsewhere', householdId: null }], chooseKin: true },
         },
       });
       render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
@@ -384,7 +384,7 @@ describe('NewBookingDialog step 1: client and pets', () => {
     });
 
     it('a Kin with no name on file still gets a tick box', async () => {
-      feed({ kin: { kf1: { kin: [{ id: 'k1', name: null, adminId: null }], chooseKin: true } } });
+      feed({ kin: { kf1: { kin: [{ id: 'k1', name: null, householdId: null }], chooseKin: true } } });
       render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
       await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
       expect(await screen.findByRole('checkbox', { name: 'Unnamed Kin' })).toBeChecked();

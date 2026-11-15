@@ -354,7 +354,14 @@ export function BookingWizardBody(props: BookingWizardBodyProps) {
     const roster = rosterQuery.data?.kin;
     if (roster === undefined) return own;
     const byId = new Map(own.map((k) => [k.id, k]));
-    return roster.map((r) => byId.get(r.id) ?? { id: r.id, name: r.name, species: null, breed: null, ageYears: null });
+    // Each Kin under the id the booking stores (`r.id`), described by its own
+    // card when the household has one.
+    return roster.map((r) => {
+      const card = r.householdId !== null ? byId.get(r.householdId) : undefined;
+      return card
+        ? { id: r.id, name: card.name ?? r.name, species: card.species, breed: card.breed, ageYears: card.ageYears }
+        : { id: r.id, name: r.name, species: null, breed: null, ageYears: null };
+    });
   }, [kinQuery.data, rosterQuery.data]);
   /** Operator ruling 2026-11-12: every booking covers every Kin, unless choosing Kin is switched on. */
   const chooseKin = rosterQuery.data?.chooseKin === true;

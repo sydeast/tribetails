@@ -281,4 +281,40 @@ class BookingViewModelTest {
         assertEquals("Save draft failed: pick a KinCare type.", vm.errorMessage)
         assertTrue(ds.createdBookings.isEmpty())
     }
+
+    // #1822 / #1862, operator ruling 2026-11-12: every visit covers every Kin.
+    // The form names no Kin unless choosing is switched on and one was unticked.
+    @Test
+    fun aRequestNamesNoKinByDefaultSoTheServerBooksTheWholeHome() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = BookingViewModel(ds)
+        vm.submitBookingRequest("kf1", "30Minute", listOf(1_794_000_000_000L), BookingRepeat.SINGLE, emptySet(), "", "")
+        assertNull(ds.filedRequests.single().kinIds)
+    }
+
+    @Test
+    fun aRequestCarriesTheKinChosenOnTheForm() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = BookingViewModel(ds)
+        vm.submitBookingRequest(
+            kinfolkId = "kf1",
+            serviceType = "30Minute",
+            visitStartsMs = listOf(1_794_000_000_000L),
+            repeat = BookingRepeat.SINGLE,
+            weekdays = emptySet(),
+            kinfolkNote = "",
+            staffNote = "",
+            kinIds = listOf("k2"),
+        )
+        assertEquals(listOf("k2"), ds.filedRequests.single().kinIds)
+    }
+
+    @Test
+    fun aDraftKeepsTheKinChosenOnTheFormAndNamesNoneByDefault() = runTest {
+        val ds = FakeAuntieDataSource()
+        val vm = BookingViewModel(ds)
+        vm.saveDraft("kf1", "", "30Minute", listOf(1_794_000_000_000L), "", "", kinIds = listOf("k2"))
+        vm.saveDraft("kf1", "", "30Minute", listOf(1_794_000_600_000L), "", "")
+        assertEquals(listOf(listOf("k2"), emptyList()), ds.createdBookings.map { it.kinIds })
+    }
 }
