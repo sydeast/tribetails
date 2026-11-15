@@ -63,7 +63,6 @@ import com.kinfolk.portal.ui.NoTribesOnboarding
 import com.kinfolk.portal.ui.NotFoundScreen
 import com.kinfolk.portal.util.openExternalUrl
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 
 /** Dirty-flag key the detail destinations set so Schedule reloads on return. */
 private const val SCHEDULE_DIRTY = "schedule_dirty"
@@ -576,15 +575,15 @@ fun AppNavHost(
                         // #2356: a list loaded earlier in the session does not hold
                         // an invoice sent since, so an invoice it lacks is read
                         // again before anything is said about it.
-                        var freshlyRead by remember(invoiceId) { mutableStateOf(false) }
-                        LaunchedEffect(invoiceId) {
-                            if (invoicesController.find(invoiceId) == null) invoicesController.reload()
-                            freshlyRead = true
-                        }
+                        val invoiceRead = com.kinfolk.portal.screens.invoices.rememberInvoiceRead(
+                            invoiceId = invoiceId,
+                            held = { invoicesController.find(invoiceId) != null },
+                            read = { invoicesController.reload() },
+                        )
                         val invoice = invoicesController.find(invoiceId)
                         val view = com.kinfolk.portal.screens.invoices.invoiceDetailView(
                             found = invoice != null,
-                            freshlyRead = freshlyRead,
+                            freshlyRead = invoiceRead.freshlyRead,
                             readFailed = invoicesController.error != null,
                         )
                         if (invoice != null) {
@@ -621,16 +620,7 @@ fun AppNavHost(
                         } else if (view == com.kinfolk.portal.screens.invoices.InvoiceDetailView.Failed) {
                             // The read itself failed: said plainly, with a way
                             // to try again, never a spinner that does not end.
-                            val retryScope = androidx.compose.runtime.rememberCoroutineScope()
-                            com.kinfolk.portal.screens.invoices.InvoiceReadFailed(
-                                onRetry = {
-                                    retryScope.launch {
-                                        freshlyRead = false
-                                        invoicesController.reload()
-                                        freshlyRead = true
-                                    }
-                                },
-                            )
+                            com.kinfolk.portal.screens.invoices.InvoiceReadFailed(onRetry = invoiceRead::retry)
                         } else {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 CircularProgressIndicator()

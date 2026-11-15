@@ -211,9 +211,11 @@ object PendingPushOpen {
     val pending: StateFlow<NotificationTarget?> = state
     private var account: String? = null
     /**
-     * Told who is signed in, each time that changes (null for nobody). Leaving
-     * an account, by signing out or by a different one taking its place, drops
-     * the waiting tap.
+     * Told who is signed in, each time that is known for certain (null for a
+     * settled sign-out). Leaving an account, by signing out or by a different
+     * one taking its place, drops the waiting tap. Never called while the app
+     * is still finding out: a tap restarts the screen, and the tap it carried
+     * has to outlast that.
      */
     fun onAccount(uid: String?) {
         if (account != null && uid != account) state.value = null

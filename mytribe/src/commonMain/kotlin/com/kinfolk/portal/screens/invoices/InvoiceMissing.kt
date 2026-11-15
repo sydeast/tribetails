@@ -4,6 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import com.kinfolk.portal.components.EmptyState
@@ -36,6 +41,33 @@ fun invoiceDetailView(found: Boolean, freshlyRead: Boolean, readFailed: Boolean)
     else -> InvoiceDetailView.Missing
 }
 
+/**
+ * #2356: the read behind the invoice detail route. One read when the route
+ * opens on an invoice the list does not hold, and one more for each
+ * [InvoiceReadState.retry]. Held outside whatever the route is drawing, so
+ * "Try again" replacing the failed notice with the spinner cannot cancel the
+ * read it just started.
+ */
+class InvoiceReadState internal constructor() {
+    /** True once the read for the current attempt is over, whichever way it went. */
+    var freshlyRead by mutableStateOf(false)
+        internal set
+    internal var attempt by mutableStateOf(0)
+    /** Reads again. The spinner shows until that read is over. */
+    fun retry() {
+        freshlyRead = false
+        attempt += 1
+    }
+}
+@Composable
+fun rememberInvoiceRead(invoiceId: String, held: () -> Boolean, read: suspend () -> Unit): InvoiceReadState {
+    val state = remember(invoiceId) { InvoiceReadState() }
+    LaunchedEffect(state, state.attempt) {
+        if (state.attempt > 0 || !held()) read()
+        state.freshlyRead = true
+    }
+    return state
+}
 @Composable
 fun InvoiceMissing(onBackToInvoices: () -> Unit) {
     Column(
