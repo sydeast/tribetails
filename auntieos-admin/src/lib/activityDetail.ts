@@ -4,7 +4,7 @@ import { type StaffRole } from '../api/staff';
 import { businessInstantMs, businessWallClock } from './businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 import { formatTime } from './denFormat';
-import { activityDescriptionWords } from './activityWords';
+import { activityDescriptionWords, noticeNotSentWords } from './activityWords';
 
 /**
  * What an Activity Log row shows when it is OPENED.
@@ -61,7 +61,7 @@ export function activityDetailRows(
   const when = activityWhen(str(entry.timestamp), zone);
   if (when !== null) push('Business time', `${when.dayKey} ${when.clock}`);
   push('Action', str(entry.actionType));
-  push('Status', str(entry.status));
+  push('Status', activityStatusWords(entry));
   push('Severity', str(entry.severity));
   // #1592: the person by name. The uid stays on the opened record beside it,
   // because this is the evidence log and the uid is what the record holds.
@@ -194,6 +194,10 @@ export function activityMatchesQuery(
     str(entry.description),
     // #1747: the words the row shows, so a search for them finds a stored path's row.
     activityDescriptionWords(str(entry.description)),
+    // #1819: a held notice's title and sentence, as the row shows them.
+    activityEntryTitle(entry),
+    activityEntryDescription(entry),
+    activityStatusWords(entry),
     str(entry.actorId),
     names.get(str(entry.actorId).trim()) ?? '',
     str(entry.actorRole),
@@ -223,6 +227,9 @@ export function activityMatchesStatus(
   filter: ActivityStatusFilter,
 ): boolean {
   if (filter === 'all') return true;
+  // #1819: a notice that did not go out is not a success, whatever an older
+  // writer stored on it.
+  if (activityIsNoticeNotSent(entry) && !activityIsFailure(entry)) return false;
   const s = str(entry.status).trim().toUpperCase();
   if (filter === 'problems') return s === 'FAILURE' || s === 'ERROR';
   if (filter === 'success') return s === 'SUCCESS';
@@ -328,6 +335,60 @@ export function activityTitle(actionType: string): string {
 /** Whether the row prints the stored key beside its title. False for a kind with a plain title. */
 export function activityShowsCode(actionType: string): boolean {
   return actionType.trim() !== '' && activityTitle(actionType) === humanizeAction(actionType);
+}
+// ── a notice that did not go out (#1819, #1905) ──────────────────────────────
+//
+// The server writes `NOTIFICATION_NOT_SENT` with status `NOT_SENT` and a
+// sentence that says who and why. Before that it wrote a held notice as
+// `NOTIFICATION_DISPATCHED`, status SUCCESS, with the reason as a stored key in
+// the payload. Stored rows are evidence and are never rewritten, so the row
+// reads them as what they were: not sent. Android and the desktop console
+// carry the same rules (`ActivityLogScreen.kt`); change all three together.
+export const NOTICE_NOT_SENT_ACTION = 'NOTIFICATION_NOT_SENT';
+export const NOTICE_NOT_SENT_TITLE = 'Notification not sent';
+export const NOT_SENT_STATUS_WORDS = 'Not sent';
+/** The held notice an older server stored as "dispatched": a reason, and nothing dispatched. */
+function isLegacyHeldNotice(entry: ActivityLogEntry): boolean {
+  if (str(entry.actionType).trim().toUpperCase() !== 'NOTIFICATION_DISPATCHED') return false;
+  const payload = rec(entry.payload);
+  const ids = payload['dispatchIds'];
+  return str(payload['reason']).trim() !== '' && Array.isArray(ids) && ids.length === 0;
+}
+/** Is this entry a notice that did not go out, in either stored form? */
+export function activityIsNoticeNotSent(entry: ActivityLogEntry): boolean {
+  return str(entry.actionType).trim().toUpperCase() === NOTICE_NOT_SENT_ACTION || isLegacyHeldNotice(entry);
+}
+/** The row's bold line for this entry: `activityTitle`, except a held notice stored as "dispatched". */
+export function activityEntryTitle(entry: ActivityLogEntry): string {
+  return isLegacyHeldNotice(entry) ? NOTICE_NOT_SENT_TITLE : activityTitle(str(entry.actionType));
+}
+/** Whether the row prints the stored key beside the title. Never beside a title that contradicts it. */
+export function activityEntryShowsCode(entry: ActivityLogEntry): boolean {
+  return !isLegacyHeldNotice(entry) && activityShowsCode(str(entry.actionType));
+}
+/** The row's sentence: the stored description in words, or the held notice's reason in words. */
+export function activityEntryDescription(entry: ActivityLogEntry): string {
+  if (isLegacyHeldNotice(entry)) {
+    const payload = rec(entry.payload);
+    return noticeNotSentWords(str(payload['key']), str(payload['reason']));
+  }
+  return activityDescriptionWords(str(entry.description));
+}
+/** The status the opened entry shows. "Not sent" for a notice that did not go out and did not fail. */
+export function activityStatusWords(entry: ActivityLogEntry): string {
+  const status = str(entry.status);
+  const s = status.trim().toUpperCase();
+  if (s === 'NOT_SENT') return NOT_SENT_STATUS_WORDS;
+  if (isLegacyHeldNotice(entry) && s === 'SUCCESS') return NOT_SENT_STATUS_WORDS;
+  return status;
+}
+/**
+ * Whether the row may end with the entry's target path. Not on a notification
+ * row (#1905): the walk read "notifications/<id>" at the end of each one, and
+ * the opened entry already carries the target.
+ */
+export function activityRowShowsTarget(entry: ActivityLogEntry): boolean {
+  return activityCategoryOf(entry) !== 'notifications';
 }
 
 /** True when the wire status is a failure, in either spelling the writers have used. */

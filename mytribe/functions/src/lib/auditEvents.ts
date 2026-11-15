@@ -571,8 +571,10 @@ export const AUDIT_EVENTS = {
   NOTIFICATION_MARKED_UNREAD: 'NOTIFICATION_MARKED_UNREAD',
   // A payment that leaves a balance. It was written as BILLING_INVOICE_PAID.
   BILLING_PAYMENT_PARTIAL: 'BILLING_PAYMENT_PARTIAL',
-  // A notice that was held back (notices off, no portal account, already sent,
-  // turned off by the household). It was written as NOTIFICATION_DISPATCHED.
+  // A notice that did not go out, or not on every channel: held by the send
+  // switch, turned off, a channel the household switched off, no sign-in, no
+  // address, or a send that failed. It was written as NOTIFICATION_DISPATCHED
+  // (#1819) or not at all (#1905). Writer: `notifications/noticeAudit.ts`.
   NOTIFICATION_NOT_SENT: 'NOTIFICATION_NOT_SENT',
 
   // Kinfolk and Kin records. CREATE_KINFOLK, ARCHIVE_KIN and RESTORE_KIN above
@@ -612,6 +614,8 @@ export const AUDIT_EVENTS = {
   VISIT_ARRIVED: 'VISIT_ARRIVED',
   VISIT_DEPARTED: 'VISIT_DEPARTED',
   VISIT_UNDO_ARRIVAL: 'VISIT_UNDO_ARRIVAL',
+  // #2250: a wrong Departed tap taken back inside its few minutes.
+  VISIT_UNDO_DEPARTED: 'VISIT_UNDO_DEPARTED',
 } as const;
 
 export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];
@@ -628,7 +632,7 @@ export type AuditEvent = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];
  *
  * Keys not listed stay open to the owner, so a new client line needs no change
  * here. A key declared above with no server writer yet (the Kinfolk and Kin
- * record keys, `NOTIFICATION_NOT_SENT`) is not listed until a
+ * record keys) is not listed until a
  * server writer exists. `test/serverOnlyAuditEvents.test.ts` fails when a
  * writer in `src/` emits a key missing here, and when a key here has no writer
  * left.
@@ -699,6 +703,7 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.EXPIRATION_UPSERTED,
   // Notices, messages and sends.
   AUDIT_EVENTS.NOTIFICATION_DISPATCHED,
+  AUDIT_EVENTS.NOTIFICATION_NOT_SENT,
   AUDIT_EVENTS.NOTIFICATION_RECEIVED,
   AUDIT_EVENTS.NOTIFICATION_VIEWED,
   AUDIT_EVENTS.NOTIFICATIONS_ARCHIVE,
@@ -741,6 +746,7 @@ export const SERVER_ONLY_AUDIT_EVENTS: ReadonlySet<string> = new Set<string>([
   AUDIT_EVENTS.VISIT_ARRIVED,
   AUDIT_EVENTS.VISIT_DEPARTED,
   AUDIT_EVENTS.VISIT_UNDO_ARRIVAL,
+  AUDIT_EVENTS.VISIT_UNDO_DEPARTED,
   AUDIT_EVENTS.INTEGRATION_CALENDAR_CONNECTED,
   AUDIT_EVENTS.INTEGRATION_CALENDAR_DISCONNECTED,
   AUDIT_EVENTS.INTEGRATION_CALENDAR_PUSH,
@@ -854,4 +860,5 @@ export const AUDIT_EVENT_TITLES = {
   VISIT_ARRIVED: 'Visit: arrived',
   VISIT_DEPARTED: 'Visit: departed',
   VISIT_UNDO_ARRIVAL: 'Visit: arrival undone',
+  VISIT_UNDO_DEPARTED: 'Visit: departure undone',
 } as const satisfies Partial<Record<AuditEvent, string>>;

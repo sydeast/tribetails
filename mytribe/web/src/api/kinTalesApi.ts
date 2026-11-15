@@ -1,6 +1,7 @@
 import { call, type CallOptions } from '../lib/fns';
 import { auntieName, relativeDay, weekdayTime } from '../lib/portalFormat';
-import type { KinTaleDto } from './types';
+import { parseDateKey } from '../lib/bookingWizardLogic';
+import type { ChecklistItemDto, KinTaleDto } from './types';
 
 /**
  * Wrappers + pure helpers for the KinTales screen (S3). Kept out of
@@ -360,6 +361,56 @@ export function taleMetaLabel(tale: KinTaleDto, now: number = Date.now()): strin
   if (sent !== '') parts.push(sent);
   return parts.join(' · ');
 }
+// ── what a tale is about (#2056) ────────────────────────────────────────────
+//
+// The household read a title, a story and "FED" with four Kin on the visit, and
+// could not tell the KinCare, the day or whose bowl. `getMyKinTales` now sends
+// the KinCare's name, the visit's business day and the Kin's names; these turn
+// them into the two lines and the chip text the card prints. Every input is
+// optional, and a missing one is left out of the line, never printed as a
+// placeholder.
+
+const TALE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const TALE_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function cleanNames(names: readonly unknown[] | undefined | null): string[] {
+  if (!Array.isArray(names)) return [];
+  return names.filter((n): n is string => typeof n === 'string' && n.trim() !== '').map((n) => n.trim());
+}
+
+/** "Biscuit", "Biscuit and Mochi", "Biscuit, Mochi and Pip". '' for no names. */
+export function kinNameList(names: readonly unknown[] | undefined | null): string {
+  const clean = cleanNames(names);
+  if (clean.length <= 1) return clean[0] ?? '';
+  return `${clean.slice(0, -1).join(', ')} and ${clean[clean.length - 1]}`;
+}
+
+/**
+ * The visit's day off its `YYYY-MM-DD` key: "Tue, Nov 10", with the year when
+ * it is not this one ("Mon, Nov 10, 2025"). Null when the key is missing or
+ * unreadable. The key is already the business's day, so it is read as a plain
+ * calendar date and never shifted by the device's zone.
+ */
+export function taleVisitDayLabel(visitDate: string | undefined | null, now: number = Date.now()): string | null {
+  if (typeof visitDate !== 'string') return null;
+  const d = parseDateKey(visitDate.trim());
+  if (d === null || Number.isNaN(d.getTime())) return null;
+  const base = `${TALE_WEEKDAYS[d.getDay()]}, ${TALE_MONTHS[d.getMonth()]} ${d.getDate()}`;
+  return d.getFullYear() === new Date(now).getFullYear() ? base : `${base}, ${d.getFullYear()}`;
+}
+
+/** "30 Minute Quick Check · Biscuit, Mochi and Pip": the KinCare and the Kin, whichever are known. '' for neither. */
+export function taleAboutLine(tale: Pick<KinTaleDto, 'serviceLabel' | 'kinNames'>): string {
+  const service = typeof tale.serviceLabel === 'string' ? tale.serviceLabel.trim() : '';
+  return [service, kinNameList(tale.kinNames)].filter((p) => p !== '').join(' · ');
+}
+
+/** A done care task as its chip reads: "Fed for Biscuit" when it was done for named Kin, else just "Fed". */
+export function careTaskLabel(item: ChecklistItemDto): string {
+  const forKin = kinNameList(item.kinNames);
+  return forKin === '' ? item.text : `${item.text} for ${forKin}`;
+}
+
 // ── getMyKinPhotos (functions/src/portal/getMyKinPhotos.ts) ─────────────────
 //
 // The whole household's photo archive, for the Gallery screen. Distinct from

@@ -9,7 +9,7 @@ vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn(), captureFunctionError:
 vi.mock('../src/lib/writeAuditEntry', () => ({ writeAuditEntry: mocks.writeAuditEntryFn }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('firebase-admin/firestore');
-  return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
+  return { ...actual, FieldValue: { serverTimestamp: () => '__TS__', delete: () => '__DEL__' } };
 });
 
 import { transitionBookingStatusHandler } from '../src/admin/transitionBookingStatus';
@@ -127,6 +127,27 @@ describe('transitionBookingStatus happy paths', () => {
     );
   });
 
+  // #2250: a departure the arrival rule held at Departed still opens "Undo
+  // departed". Completing by hand inside those minutes closes it, so nobody
+  // takes the owner's Complete back with the undo.
+  it('COMPLETE by hand closes an open "Undo departed"', async () => {
+    const ctx = seed('DEPARTED', {
+      undoDepartedUntil: '2999-01-01T00:00:00.000Z',
+      householdStatusBeforeCompletion: 'approved',
+    });
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));
+    expect(sessionWrite(ctx)?.data).toMatchObject({
+      status: 'COMPLETED',
+      undoDepartedUntil: '__DEL__',
+      householdStatusBeforeCompletion: '__DEL__',
+    });
+  });
+  it('COMPLETE on a visit with no undo open writes neither field', async () => {
+    const ctx = seed('DEPARTED');
+    await transitionBookingStatusHandler(req({ sessionId: 's1', action: 'COMPLETE' }));
+    expect(sessionWrite(ctx)?.data).not.toHaveProperty('undoDepartedUntil');
+    expect(sessionWrite(ctx)?.data).not.toHaveProperty('householdStatusBeforeCompletion');
+  });
   it('COMPLETE stamps the caller-supplied completedAt', async () => {
     const ctx = seed('DEPARTED');
     await transitionBookingStatusHandler(

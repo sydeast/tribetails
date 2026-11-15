@@ -4,7 +4,7 @@ import { logEvent } from './logger';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS, type AuditEvent } from './auditEvents';
 import { normalizeBookingStatus } from './bookingTransitions';
-import { notificationEventFor, type VisitLifecycleAction } from './visitLifecycle';
+import { departedNoticeAlreadyTold, notificationEventFor, type VisitLifecycleAction } from './visitLifecycle';
 
 /**
  * #2037: THE HOUSEHOLD NOTICE AND THE ACTIVITY LOG LINE FOR ONE CLOCK STEP
@@ -88,7 +88,7 @@ export function stampMs(raw: unknown): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-const STAMP_FIELD: Readonly<Record<Exclude<VisitLifecycleAction, 'UNDO_ARRIVAL'>, string>> = {
+const STAMP_FIELD: Readonly<Record<Exclude<VisitLifecycleAction, 'UNDO_ARRIVAL' | 'UNDO_DEPARTED'>, string>> = {
   ON_MY_WAY: 'onMyWayAt',
   ARRIVED: 'arrivedAt',
   DEPARTED: 'departedAt',
@@ -103,6 +103,7 @@ const STAMP_FIELD: Readonly<Record<Exclude<VisitLifecycleAction, 'UNDO_ARRIVAL'>
  *   SCHEDULED or ON_MY_WAY to ARRIVED      Arrived
  *   ARRIVED to DEPARTED                    Departed
  *   ARRIVED or DEPARTED to SCHEDULED or ON_MY_WAY   Undo arrival
+ *   DEPARTED or COMPLETED to ARRIVED       Undo departed (#2250)
  * A created session (no `before`), a deleted one, an edit that leaves the
  * status alone, and the move to COMPLETED or CANCELLED (the departure trigger
  * and `transitionBookingStatus`, which log their own) are not steps.
@@ -120,11 +121,19 @@ export function visitStepOf(before: SessionData | undefined, after: SessionData 
   else if ((to === 'SCHEDULED' || to === 'ON_MY_WAY') && (from === 'ARRIVED' || from === 'DEPARTED')) {
     action = 'UNDO_ARRIVAL';
   }
+  // #2250: a departure taken back. Only `setVisitLifecycle` makes this move
+  // (the rules refuse it to every client), and it writes this line itself; the
+  // trigger names the same step so whichever is second writes nothing.
+  else if (to === 'ARRIVED' && (from === 'DEPARTED' || from === 'COMPLETED')) action = 'UNDO_DEPARTED';
   if (action === null) return null;
 
   if (action === 'UNDO_ARRIVAL') {
     // Named by the arrival it undid: each arrival can be undone once.
     return { action, from, to, atMs: stampMs(before['arrivedAt']) };
+  }
+  if (action === 'UNDO_DEPARTED') {
+    // Named by the departure it undid, for the same reason.
+    return { action, from, to, atMs: stampMs(before['departedAt']) };
   }
   const step: VisitStep = { action, from, to, atMs: stampMs(after[STAMP_FIELD[action]]) };
   if (action === 'ON_MY_WAY') {
@@ -165,6 +174,7 @@ const STEP_EVENT: Readonly<Record<VisitLifecycleAction, AuditEvent>> = {
   ARRIVED: AUDIT_EVENTS.VISIT_ARRIVED,
   DEPARTED: AUDIT_EVENTS.VISIT_DEPARTED,
   UNDO_ARRIVAL: AUDIT_EVENTS.VISIT_UNDO_ARRIVAL,
+  UNDO_DEPARTED: AUDIT_EVENTS.VISIT_UNDO_DEPARTED,
 };
 
 /** What the household was told, the shape every client already reads. */
@@ -297,7 +307,12 @@ export async function announceVisitStep(input: {
   const routing = routingOf(session);
   let outcome: VisitStepOutcome;
   let dispatchIds: string[] = [];
-  if (routing.skip !== null) {
+  if (step.action === 'DEPARTED' && departedNoticeAlreadyTold(session)) {
+    // #2250: this arrival's departure was announced once and then undone. The
+    // household heard she left; the real Departed does not tell them again.
+    // Recorded below like any other outcome, so the card says so.
+    outcome = { notified: false, notifySkipped: 'already_notified' };
+  } else if (routing.skip !== null) {
     outcome = { notified: false, notifySkipped: routing.skip };
   } else {
     try {

@@ -79,6 +79,8 @@
 .badge.done { background: rgba(10, 133, 149, .14); color: var(--teal); }
 
 /* ── Visit facts: arrival/departure + task checklist (task-25, P4) ── */
+.visitabout { font-size: 14px; font-weight: 600; color: var(--navy); margin-top: 14px; }
+.visitabout + .visitfacts { margin-top: 5px; }
 .visitfacts { font-family: var(--mono); font-size: 11.5px; color: var(--navy-muted); letter-spacing: .04em; margin-top: 14px; }
 .tasksblock { margin-top: 14px; }
 .taskslabel { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--navy-muted); margin-bottom: 9px; }
@@ -126,6 +128,6 @@
 .talecard .tcstrip .sm.s1 { background: rgba(223, 132, 49, .16); } .talecard .tcstrip .sm.s2 { background: rgba(213, 92, 135, .14); } .talecard .tcstrip .sm.s3 { background: rgba(10, 133, 149, .14); }
 .talecard .tcfoot { display: flex; align-items: center; gap: 10px; padding: 14px 20px 18px; flex-wrap: wrap; }
 .talecard .tcfoot .ct { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--navy-muted); letter-spacing: .04em; }
-.talecard .gallery, .talecard .thread, .talecard .visitfacts, .talecard .tasksblock { padding-left: 20px; padding-right: 20px; }
+.talecard .gallery, .talecard .thread, .talecard .visitabout, .talecard .visitfacts, .talecard .tasksblock { padding-left: 20px; padding-right: 20px; }
 
 .loadmore { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 30px; }

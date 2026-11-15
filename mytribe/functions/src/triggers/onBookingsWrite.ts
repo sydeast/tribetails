@@ -487,7 +487,12 @@ export const onBookingsWrite = onDocumentWritten(
         // silenced, it is sent once, by the code that knows the whole set.
         // Every other way a visit reaches `confirmed` -- batchUpdateBookings,
         // the Android schedule screen -- carries no stamp and still sends here.
-        if (!seriesApproveStampChanged(before, after)) {
+        //
+        // #2250: nor does an undone departure. `lib/undoDeparted.ts` puts the
+        // household's copy back from `completed` to what it read before, with
+        // a fresh `officeNoticeStamp`, and the operator ruled the household is
+        // not told. Without this the undo would read as a new confirmation.
+        if (!seriesApproveStampChanged(before, after) && !officeNoticeStampChanged(before, after)) {
           await dispatch('kincare.booking.confirm', await visitDateFieldsFor(after, visitId, true));
         }
       } else if (afterStatus === 'cancelled') {

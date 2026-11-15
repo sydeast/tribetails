@@ -114,7 +114,15 @@ describe('householdSendGate: the dispatcher chokepoint', () => {
 
     expect(outcome.written).toEqual([]);
     expect(outcome.suppressed).toEqual([{ recipientUid: 'kinUid', reason: 'gate', gateState: 'off' }]);
-    expect(ctx.writes.map((w) => w.path), 'no notification, no work order, NO dedupe ledger').toEqual([]);
+    // #1819: the one thing written is the Activity Log line that says it was held.
+    expect(
+      ctx.writes.map((w) => w.path).filter((path) => !path.startsWith('activity_log')),
+      'no notification, no work order, NO dedupe ledger',
+    ).toEqual([]);
+    expect(ctx.writes.find((w) => w.path.startsWith('activity_log/'))?.data).toMatchObject({
+      actionType: 'NOTIFICATION_NOT_SENT',
+      status: 'NOT_SENT',
+    });
     expect(events()).toContain('notification.gated.household');
   });
 
@@ -129,7 +137,7 @@ describe('householdSendGate: the dispatcher chokepoint', () => {
     });
 
     expect(outcome.suppressed[0]).toMatchObject({ reason: 'gate', gateState: 'absent' });
-    expect(ctx.writes).toEqual([]);
+    expect(ctx.writes.filter((w) => !w.path.startsWith('activity_log'))).toEqual([]);
   });
 
   /**
@@ -206,7 +214,12 @@ describe('householdSendGate: the dispatcher chokepoint', () => {
     });
 
     expect(outcome.suppressed[0]).toMatchObject({ reason: 'gate', gateState: 'read-failed' });
-    expect(ctx.writes).toEqual([]);
+    expect(ctx.writes.filter((w) => !w.path.startsWith('activity_log'))).toEqual([]);
+    // #1819: the line does not say "turned off" for a switch nobody turned off.
+    const line = ctx.writes.find((w) => w.path.startsWith('activity_log/'))?.data as Record<string, unknown>;
+    expect(line).toMatchObject({ actionType: 'NOTIFICATION_NOT_SENT', status: 'NOT_SENT', severity: 'warn' });
+    expect(String(line.description)).toMatch(/: the setting for notices to households could not be read$/);
+    expect(String(line.description)).not.toContain('turned off');
     expect(logFor('household.send.gate.read.failed').severity).toBe('critical');
   });
 

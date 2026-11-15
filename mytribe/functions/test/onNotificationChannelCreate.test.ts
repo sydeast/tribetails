@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   emailSender: vi.fn().mockResolvedValue({ providerMessageId: 'm-1' }),
   smsSender: vi.fn().mockResolvedValue({ providerMessageId: 's-1' }),
   pushSender: vi.fn().mockResolvedValue({ providerMessageId: 'p-1' }),
-  writeAudit: vi.fn().mockResolvedValue(undefined),
+  writeAudit: vi.fn<(args: Record<string, any>) => Promise<unknown>>().mockResolvedValue(undefined),
 }));
 
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
@@ -145,7 +145,109 @@ describe('onNotificationChannelCreate central enrichment', () => {
     expect(warn).toBeTruthy();
     expect(warn.extra.reason).toBe('recipient_no_email');
     // undelivered -> no NOTIFICATION_RECEIVED audit entry.
-    expect(mocks.writeAudit).not.toHaveBeenCalled();
+    expect(mocks.writeAudit.mock.calls.map((c) => c[0].event)).not.toContain('NOTIFICATION_RECEIVED');
+    // #1905: and one line that says this channel did not go, and why, in words.
+    expect(mocks.writeAudit).toHaveBeenCalledTimes(1);
+    expect(mocks.writeAudit.mock.calls[0]![0]).toMatchObject({
+      event: 'NOTIFICATION_NOT_SENT',
+      status: 'NOT_SENT',
+      severity: 'warn',
+      targetUid: 'notif1',
+      description: 'Could not send "Invoice payment reminder" by email: no email address on file',
+      payload: { outcome: 'no_address', channels: ['email'], skipReason: 'recipient_no_email' },
+    });
+    expect(typeof mocks.writeAudit.mock.calls[0]![0].docId).toBe('string');
+  });
+
+  it('#1905 a skipped text message to a household names the person and the missing number', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/cli1': { displayName: 'Dre East' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.smsSender.mockResolvedValueOnce({ skipped: true, skipReason: 'recipient_no_phone' });
+    const { onNotificationChannelCreateHandler } = await import(
+      '../src/notifications/triggers/onNotificationChannelCreate'
+    );
+    const { event } = makeEvent('sms', {
+      key: 'invoice.reminder',
+      recipientUid: 'cli1',
+      stream: 'kinfolk',
+      data: { invoiceId: 'inv1', kinfolkId: 'fam1' },
+    });
+    await onNotificationChannelCreateHandler(event);
+    expect(mocks.writeAudit.mock.calls.map((c) => c[0].description)).toEqual([
+      'Could not send "Invoice payment reminder" to Dre East by text message: no mobile number on file',
+    ]);
+  });
+
+  it('#1905 a delivered copy names who it went to: the person, or the office', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/cli1': { displayName: 'Dre East' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { onNotificationChannelCreateHandler } = await import(
+      '../src/notifications/triggers/onNotificationChannelCreate'
+    );
+    await onNotificationChannelCreateHandler(
+      makeEvent('email', {
+        key: 'invoice.payment.applied',
+        recipientUid: 'cli1',
+        stream: 'kinfolk',
+        data: { invoiceId: 'inv1', kinfolkId: 'fam1' },
+      }).event,
+    );
+    await onNotificationChannelCreateHandler(
+      makeEvent('email', {
+        key: 'invoice.payment.applied',
+        recipientUid: 'adminUid',
+        stream: 'business',
+        data: { invoiceId: 'inv1', kinfolkId: 'fam1' },
+      }).event,
+    );
+    expect(mocks.writeAudit.mock.calls.map((c) => c[0].description)).toEqual([
+      'Delivered "Payment or credit applied to an invoice" to Dre East by email',
+      'Delivered "Payment or credit applied to an invoice" to the office by email',
+    ]);
+  });
+
+  it('#1905 a send that throws writes a FAILURE line once, stamps the channel failed, and still rethrows', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/cli1': { displayName: 'Dre East' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.emailSender.mockRejectedValue(new Error('smtp 503'));
+    const { onNotificationChannelCreateHandler } = await import(
+      '../src/notifications/triggers/onNotificationChannelCreate'
+    );
+    const parent = {
+      key: 'invoice.reminder',
+      recipientUid: 'cli1',
+      stream: 'kinfolk',
+      data: { invoiceId: 'inv1', kinfolkId: 'fam1' },
+    };
+    const first = makeEvent('email', parent);
+    await expect(onNotificationChannelCreateHandler(first.event)).rejects.toThrow('smtp 503');
+    expect(first.setSpy.mock.calls.find((c) => (c[0] as { status?: string }).status === 'failed')).toBeTruthy();
+    await expect(onNotificationChannelCreateHandler(makeEvent('email', parent).event)).rejects.toThrow('smtp 503');
+
+    const lines = mocks.writeAudit.mock.calls.map((c) => c[0]);
+    expect(lines.map((l) => l.event)).toEqual(['NOTIFICATION_NOT_SENT', 'NOTIFICATION_NOT_SENT']);
+    expect(lines[0]).toMatchObject({
+      status: 'FAILURE',
+      severity: 'warn',
+      description: 'Could not send "Invoice payment reminder" to Dre East by email: the send failed',
+      payload: { outcome: 'failed', channels: ['email'] },
+    });
+    // The retry asks for the same line: a fixed id, so the log holds it once.
+    expect(lines[1].docId).toBe(lines[0].docId);
+    // The provider's own error text is not put on screen.
+    expect(lines[0].description).not.toContain('smtp');
+  });
+
+  it('#1905 a line that cannot be written never turns a skipped channel into a retry', async () => {
+    const ctx = buildDbMock({ docs: {} });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.emailSender.mockResolvedValueOnce({ skipped: true, skipReason: 'recipient_no_email' });
+    mocks.writeAudit.mockRejectedValueOnce(new Error('chain busy'));
+    const { onNotificationChannelCreateHandler } = await import(
+      '../src/notifications/triggers/onNotificationChannelCreate'
+    );
+    const { event } = makeEvent('email', { key: 'invoice.reminder', recipientUid: 'cli1', data: {} });
+    await expect(onNotificationChannelCreateHandler(event)).resolves.toBeUndefined();
   });
 
   it('passes enriched data to the sms sender too (same hook, all channels)', async () => {

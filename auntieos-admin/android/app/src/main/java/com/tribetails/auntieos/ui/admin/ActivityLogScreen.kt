@@ -482,7 +482,7 @@ private fun ActivityDetailModal(
     val chain = activityChainRows(entry)
     AuntieModal(
         onDismissRequest = onDismiss,
-        title = activityTitle(entry.actionType),
+        title = activityEntryTitle(entry),
         confirmButton = { GhostButton(label = "Close", onClick = onDismiss) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -585,7 +585,7 @@ internal fun activityDetailRows(
     // are shown so the two can be reconciled without doing the sum.
     activityWhen(entry.timestamp, zone)?.let { add("Business time", "${it.dayKey} ${it.clock}") }
     add("Action", entry.actionType)
-    add("Status", entry.status)
+    add("Status", activityStatusWords(entry))
     add("Severity", entry.severity)
     // #1592: the person by name; the uid stays beside it on the opened record,
     // because this is the evidence log and the uid is what the record holds.
@@ -595,7 +595,7 @@ internal fun activityDetailRows(
     add("Actor role", actorRoleFor(entry.actorRole, entry.actorId, entry.payload, roles))
     add("Household", entry.familyId)
     // #1747: a stored path reads as words; the entry itself is never rewritten.
-    add("Detail", activityDescriptionWords(entry.description))
+    add("Detail", activityEntryDescription(entry))
     // A path, not a link. Where no route exists the path is still the most useful
     // thing that can honestly be shown (spec 22 item 1: "render the path
     // read-only, do not fabricate a link").
@@ -689,7 +689,7 @@ internal fun ActivityRow(
     val tone = rowTone(entry.actionType, entry.status)
 
     AuntieEntityRow(
-        title    = activityTitle(entry.actionType),
+        title    = activityEntryTitle(entry),
         subtitle = rowContext(entry, names).ifBlank { null },
         onClick  = onClick,
         modifier = Modifier.padding(horizontal = 8.dp),
@@ -715,7 +715,7 @@ internal fun ActivityRow(
             // The mock sets the raw code beside the title; on a phone it goes
             // under it, still in the mono the mock gives it. A kind with a plain
             // title (#1839) shows no code.
-            if (activityShowsCode(entry.actionType)) {
+            if (activityEntryShowsCode(entry)) {
                 Text(
                     text  = entry.actionType,
                     style = AuntieTheme.typography.mono.copy(fontSize = 10.sp, letterSpacing = 0.4.sp),
@@ -805,6 +805,10 @@ internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<Str
         activityTitle(entry.actionType),
         entry.description,
         activityDescriptionWords(entry.description),
+        // #1819: a held notice's title, sentence and status, as the row shows them.
+        activityEntryTitle(entry),
+        activityEntryDescription(entry),
+        activityStatusWords(entry),
         entry.actorId,
         names[entry.actorId.trim()].orEmpty(),
         entry.targetId,
@@ -819,7 +823,8 @@ internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = em
     val look = isHouseholdLook(entry.actionType)
     val parts = buildList {
         // #1747: a stored path reads as words; the entry itself is never rewritten.
-        val words = activityDescriptionWords(entry.description)
+        // #1819: a held notice an older server stored as "dispatched" reads as its reason.
+        val words = activityEntryDescription(entry)
         if (words.isNotBlank()) add(words)
         // #1839: a look the server wrote in words already names the Auntie and
         // the household, so the row adds neither her name again nor the
@@ -834,6 +839,8 @@ internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = em
             return@buildList
         }
         if (entry.actorId.isNotBlank()) add(names[entry.actorId.trim()] ?: entry.actorId)
+        // #1905: a notification row ends with its sentence, not a database path.
+        if (!activityRowShowsTarget(entry)) return@buildList
         val target = when {
             entry.targetCollection.isNotBlank() && entry.targetId.isNotBlank() ->
                 "${entry.targetCollection}/${entry.targetId}"

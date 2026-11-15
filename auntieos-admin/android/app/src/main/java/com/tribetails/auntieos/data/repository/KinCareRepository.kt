@@ -377,6 +377,54 @@ class KinCareRepository(
     }.onFailure { AuntieLog.e("verifyVisitArrival failed for $sessionId", it) }
 
     /**
+     * #2250, operator ruling 2026-11-14: take back a wrong Departed tap, for a
+     * few minutes after it. The server puts the visit back to Arrived (status,
+     * completion stamps and the household's copy together) and tells the
+     * household nothing. A callable and not [patchSession] because a departure
+     * completes the visit, `firestore.rules` lets no client move a visit out
+     * of COMPLETED or from DEPARTED to ARRIVED, and the time limit is the
+     * server's. So it needs a connection; nothing is queued offline.
+     *
+     * A refusal comes back as a `FirebaseFunctionsException` whose message is
+     * the sentence to show.
+     */
+    suspend fun undoDeparted(sessionId: String): Result<Unit> = runCatchingCancellable {
+        authGate.ensureAuthenticated()
+        require(sessionId.isNotBlank()) { "sessionId required" }
+        functions.getHttpsCallable("setVisitLifecycle")
+            .call(mapOf("sessionId" to sessionId, "action" to "UNDO_DEPARTED"))
+            .awaitCallable()
+        Unit
+    }.onFailure { AuntieLog.e("Undo departed failed for $sessionId", it) }
+
+    /**
+     * #2250: one visit's status and `undoDepartedUntil`, live. The boards read
+     * their lists once, right after the Departed tap, and the server stamps
+     * when the undo closes a moment later (in the write that completes the
+     * visit). The "Undo departed" block watches a Departed visit with no stamp
+     * through this until the stamp arrives. A listener that fails just ends:
+     * the button is then not offered, which is the safe reading.
+     */
+    fun observeUndoDeparted(sessionId: String): Flow<Pair<String, String?>> = callbackFlow {
+        if (sessionId.isBlank() || !checkAuthOrCloseFlow("observeUndoDeparted")) {
+            close()
+            return@callbackFlow
+        }
+        val reg = firestore.collection("kin_care_sessions").document(sessionId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    AuntieLog.e("Undo departed listener failed for session $sessionId", error)
+                    close()
+                    return@addSnapshotListener
+                }
+                if (snapshot != null && snapshot.exists()) {
+                    trySend((snapshot.getString("status") ?: "") to snapshot.getString("undoDepartedUntil"))
+                }
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
      * A3: COMPLETE goes through [transitionBookingStatus], not [patchSession].
      *
      * The three transitions above stay direct patches because they are IN-VISIT
