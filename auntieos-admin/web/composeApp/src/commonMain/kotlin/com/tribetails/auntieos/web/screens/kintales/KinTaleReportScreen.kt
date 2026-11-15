@@ -100,6 +100,8 @@ fun KinTaleReportScreen(
     sessionId: String,
     dataSource: AuntieDataSource,
     onBack: () -> Unit,
+    /** #2355: the KinTale a notification is about, when the visit has several. Null opens the newest. */
+    initialReportId: String? = null,
 ) {
     val vm = remember(sessionId) { KinTaleReportViewModel(sessionId = sessionId, dataSource = dataSource) }
 
@@ -107,7 +109,7 @@ fun KinTaleReportScreen(
     // survive recomposition (otherwise data flickers Loading -> Data each frame).
     val reportsState by remember(vm) { vm.reportsStream() }.collectAsState(initial = FirestoreResult.Loading)
     // #1804: which sent tale the operator picked; null means the newest one.
-    var pickedReportId by remember(vm) { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    var pickedReportId by remember(vm) { androidx.compose.runtime.mutableStateOf<String?>(initialReportId) }
     val reportList = (reportsState as? FirestoreResult.Data)?.value.orEmpty()
     val sentList = reportList.filter { it.status == "SENT" }
     val reportState: FirestoreResult<KinCareReport?> = when (val rs = reportsState) {

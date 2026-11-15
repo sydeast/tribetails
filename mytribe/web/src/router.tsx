@@ -21,6 +21,7 @@ import { OfflineAccessError, clearAccess, clearFailedAccess, ensureAccess, type 
 // wrapper, not worth its own chunk.
 import { SignIn } from './screens/SignIn';
 import { signInSearch, signInSearchFor } from './lib/signInRedirect';
+import { notificationsListSearch } from './lib/notificationsList';
 import { LaunchError } from './screens/LaunchError';
 import { SessionNotice } from './components/SessionNotice';
 import { RouteError } from './components/RouteError';
@@ -461,6 +462,7 @@ const notificationsListRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/notifications',
   staticData: { title: 'Notifications' },
+  validateSearch: notificationsListSearch,
   beforeLoad: requireActiveTribe,
   component: lazyRouteComponent(() => import('./screens/NotificationsList'), 'NotificationsList'),
 });

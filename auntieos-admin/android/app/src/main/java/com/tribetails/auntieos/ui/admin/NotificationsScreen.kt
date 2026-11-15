@@ -1021,7 +1021,7 @@ internal fun notificationHeadline(entry: NotificationEntry): String {
  * onBookingEnvelopeCreate.ts. Mirrors the web build's
  * `lib/notificationActions.ts`.
  */
-private const val PENDING_BOOKING_REQUEST_KEY = "kincare.requested"
+internal const val PENDING_BOOKING_REQUEST_KEY = "kincare.requested"
 
 /** The household turned a quote down; a new quote is the natural follow-up. */
 private const val QUOTE_DENIED_KEY = "quote.denied"

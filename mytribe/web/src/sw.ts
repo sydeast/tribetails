@@ -27,6 +27,7 @@ import {
   isNeverCachedHost,
   navigationHandler,
 } from './lib/swPolicy';
+import { pushClickUrl } from './lib/pushRoute';
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>;
@@ -156,13 +157,14 @@ self.addEventListener('push', (event: PushEvent) => {
 // (navigating it to the deep-linked route), otherwise opens a new one.
 self.addEventListener('notificationclick', (event: NotificationEvent) => {
   event.notification.close();
-  const route =
-    (event.notification.data as { route?: string } | undefined)?.route ?? '/home';
-  const requested = new URL(route, self.location.origin);
-  // `route` comes from the push payload's `data.route` (backend-authored via
-  // pushTemplates/{key}.dataRoute, not attacker-settable per-recipient) — but
-  // cheap to refuse an off-origin target outright rather than trust it blindly.
-  const targetUrl = requested.origin === self.location.origin ? requested.href : self.location.origin + '/home';
+  // `route` is the push payload's `data.route`: the thing the notice is about
+  // (#2259), built by the backend and not settable per recipient. An
+  // off-origin or scriptable target is still refused outright rather than
+  // trusted; lib/pushRoute.ts holds the rule and its spec.
+  const targetUrl = pushClickUrl(
+    (event.notification.data as { route?: unknown } | undefined)?.route,
+    self.location.origin,
+  );
 
   event.waitUntil(
     (async () => {

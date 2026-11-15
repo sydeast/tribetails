@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -28,6 +30,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
@@ -98,6 +102,13 @@ fun NotificationsListScreen(
     onReadLocally: (notificationId: String) -> Unit = {},
     /** ...and counts again when the server refuses the read. */
     onReadRefused: (notificationId: String) -> Unit = {},
+    /**
+     * The entry a tapped push opened the list for: a push whose line was cut,
+     * or whose notice carries the office's note, is read whole here. That row
+     * is marked and brought into view. An id that is not among this
+     * household's rows marks nothing.
+     */
+    openedEntryId: String? = null,
     nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
     val type = LocalKinfolkTypography.current
@@ -195,6 +206,8 @@ fun NotificationsListScreen(
             NotificationTarget.KinList -> onOpenKinList()
             NotificationTarget.Household -> onOpenTribe()
             NotificationTarget.Messages -> onOpenMessages()
+            // Only a tapped push names the list itself; a row never does.
+            is NotificationTarget.Entry -> Unit
             NotificationTarget.None -> Unit
         }
     }
@@ -233,7 +246,12 @@ fun NotificationsListScreen(
                     )
                     else -> list.forEachIndexed { i, item ->
                         if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(KinfolkBrand.NavyHairline))
-                        NotificationRow(item = item, nowMs = nowMs(), onClick = { open(item) })
+                        NotificationRow(
+                            item = item,
+                            nowMs = nowMs(),
+                            opened = item.id == openedEntryId,
+                            onClick = { open(item) },
+                        )
                     }
                 }
                 if (hasMore) {
@@ -273,11 +291,25 @@ internal fun mergeNewestPage(shown: List<NotificationItem>, fresh: List<Notifica
     return fresh + older
 }
 @Composable
-private fun NotificationRow(item: NotificationItem, nowMs: Long, onClick: () -> Unit) {
+private fun NotificationRow(item: NotificationItem, nowMs: Long, opened: Boolean = false, onClick: () -> Unit) {
     val type = LocalKinfolkTypography.current
+    // The entry a tapped push opened the list for is tinted, read out as
+    // selected, and scrolled to once.
+    val bringIntoView = remember { BringIntoViewRequester() }
+    if (opened) LaunchedEffect(item.id) { bringIntoView.bringIntoView() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (opened) {
+                    Modifier
+                        .bringIntoViewRequester(bringIntoView)
+                        .background(KinfolkBrand.KinfolkOrange.copy(alpha = 0.12f))
+                        .semantics { selected = true }
+                } else {
+                    Modifier
+                },
+            )
             .clickable { onClick() }
             .padding(vertical = 12.dp, horizontal = 4.dp)
             .testTag("notificationRow-${item.id}"),

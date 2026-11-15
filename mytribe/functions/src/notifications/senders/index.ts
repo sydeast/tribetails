@@ -1,4 +1,5 @@
 import type { AudienceStream, Channel, NotificationDef } from '../types';
+import type { NoticeOpenTarget } from '../noticeOpenTarget';
 import { sendEmailChannel } from './emailChannel';
 import { sendSmsChannel } from './smsChannel';
 import { sendPushChannel } from './pushChannel';
@@ -15,6 +16,12 @@ export interface ChannelSendArgs {
    * which is then sent as written too.
    */
   stream?: AudienceStream;
+  /**
+   * #2259, #2100: what a tap on this notice opens, built by the fan-out from
+   * the work order's own target (`noticeOpenTarget`). Only the push sender
+   * reads it. Absent on a direct call, which then sends what it always did.
+   */
+  open?: NoticeOpenTarget;
 }
 
 export interface ChannelSendResult {

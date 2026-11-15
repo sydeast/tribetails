@@ -149,6 +149,15 @@ export function householdPushShelfLine(body: string): string {
     : `${cutWhole(flat, HOUSEHOLD_SHORT_LINE_MAX - 1).trimEnd()}\u2026`;
 }
 /**
+ * Whether `householdPushShelfLine` cuts this message. The same measure, on the
+ * same flattened text: a message that only had its line breaks folded was not
+ * cut. A household whose push was cut reads the rest on its notifications
+ * list, so the push sender opens the list for it. PURE.
+ */
+export function householdPushLineIsCut(body: string): boolean {
+  return body.replace(/\s+/g, ' ').trim().length > HOUSEHOLD_SHORT_LINE_MAX;
+}
+/**
  * The first `max` characters of `text`, never ending on half of a two-part
  * character. An emoji is stored as a pair; a cut between the two halves sends
  * a broken character that the phone shows as a box. PURE.

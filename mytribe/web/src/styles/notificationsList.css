@@ -10,6 +10,8 @@
   border-radius: 12px; transition: background .2s var(--ease); }
 .nl-row:hover { background: rgba(223, 132, 49, .08); }
 .nl-row:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+/* The entry a tapped push opened the list for. */
+.nl-row--opened { background: rgba(223, 132, 49, .12); }
 .nl-row__dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; background: transparent; }
 .nl-row--unread .nl-row__dot { background: var(--coral); box-shadow: 0 0 0 3px rgba(213, 83, 90, .18); }
 .nl-row__body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }

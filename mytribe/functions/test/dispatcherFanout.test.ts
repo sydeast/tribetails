@@ -133,6 +133,10 @@ describe('enqueueNotification fan-out (audience:both)', () => {
         mode: 'trigger',
         status: 'pending',
         channels: ['email'],
+        // #2259: the push sender reads only the work order, so the target a
+        // tap opens is stamped here too.
+        targetType: 'booking',
+        targetId: 'b1',
       });
       expect(w.data.notificationId).toBe(w.path.slice('notificationDispatch/'.length));
     }
