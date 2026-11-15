@@ -24,7 +24,7 @@ class AskAuntieStateKeyTest {
     @Test
     fun askAuntieStateIsKeyedOnTheVisitNotOnTheTalesId() {
         assertTrue(
-            composer.contains("var ask by remember(session._id, identity) { mutableStateOf(AskAuntieState()) }"),
+            composer.contains("var ask by remember(session._id, identity) { mutableStateOf(askAuntieStateFor(resumeFrom)) }"),
             "Ask Auntie state must be remembered under the visit and identity",
         )
         assertTrue(composer.contains("var lastOpening by remember(session._id, identity)"))

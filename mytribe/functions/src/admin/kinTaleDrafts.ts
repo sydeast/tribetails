@@ -317,6 +317,14 @@ function testScopeOf(token: Record<string, unknown>): string | null {
   return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
 }
 
+/**
+ * #2052: what the three admin composers keep on a DRAFT `kin_care_reports` doc
+ * when the Auntie takes a draft Ask Auntie wrote: her own typed notes, and the
+ * draft as it went in. They are staff-only (this collection has no Kinfolk read
+ * in the rules, and `getMyKinTales` and the share page copy named fields only),
+ * and the send removes them.
+ */
+export const KEPT_NOTES_FIELDS = ['keptNotes', 'keptNotesDraft'] as const;
 export async function sendKinTaleReportHandler(
   req: CallableRequest<unknown>,
 ): Promise<SendKinTaleReportResult> {
@@ -387,6 +395,9 @@ export async function sendKinTaleReportHandler(
       deliveryReceiptId,
       updatedAt: now,
       [CARE_TASKS_FIELD]: careTasks,
+      // #2052: the notes kept for "Back to my notes" are working material for
+      // a draft. A sent tale does not carry them.
+      ...Object.fromEntries(KEPT_NOTES_FIELDS.map((field) => [field, FieldValue.delete()])),
     });
 
     tx.update(sessionRef, {

@@ -1116,6 +1116,17 @@ data class KinCareReport(
 
     // Auntie's narrative
     var bodyCopy: String = "",
+    // #2052: the Auntie's own typed notes, kept from the moment she took a
+    // draft Ask Auntie wrote, so "Back to my notes" still works after the
+    // composer is closed and reopened. Blank means nothing to put back.
+    // Staff only: this collection has no Kinfolk read, the portal's feed
+    // copies named fields, and the send removes both. Nullable for the Class B
+    // decode rule; every write from this app is text, never null.
+    var keptNotes: String? = "",
+    // #2052: the draft as it went into the narrative when she took it. With
+    // it, asking Auntie again after a reopen still works from her notes while
+    // the narrative is the untouched draft.
+    var keptNotesDraft: String? = "",
 
     // Dynamic field responses keyed by "kinId|fieldKey" (kinId blank for non-perKin fields).
     var fieldResponses: Map<String, FieldResponse> = emptyMap(),

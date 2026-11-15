@@ -1636,3 +1636,115 @@ describe('sentKinTaleEditNote (pure, #1940)', () => {
     expect(sentKinTaleEditNote('  ')).toMatch(/^This KinTale has been sent\. The household will see/);
   });
 });
+/**
+ * #2052: "Back to my notes" survives closing and reopening the composer. The
+ * notes the Auntie typed are saved on the draft, in the same save as the draft
+ * that replaced them, and a draft opened again offers them back.
+ */
+describe('Ask Auntie: the notes she typed are saved with the draft she took', () => {
+  const NOTES = 'Biscuit had a wonderful time at the park today.';
+  const TAKEN = 'Biscuit was thrilled about breakfast.';
+  const GENERATED = {
+    generated_copy: TAKEN,
+    generated_title: '',
+    communication_type: 'visit_report',
+    kinfolk_name: 'Dana',
+    kinfolk_id: 'kf1',
+    draft_id: 'd1',
+    model: 'claude-sonnet-5-5',
+    draftWriteFailed: false,
+    warnings: [],
+  };
+  const note = () => screen.getByPlaceholderText(/tell the tale/i);
+  beforeEach(() => {
+    generateDraft.mockReset();
+    generateDraft.mockResolvedValue(GENERATED);
+    saveKinTaleDraft.mockResolvedValue('tale1');
+  });
+  async function takeDraft(stored: KinTaleEntry) {
+    mockStreams({ reports: { status: 'ready', data: [stored] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Ask Auntie' }));
+    const panel = await screen.findByRole('region', { name: "Auntie's draft" });
+    await user.click(within(panel).getByRole('button', { name: 'Use this draft' }));
+  }
+  it('saves her notes and the draft she took in the one save that changes the note', async () => {
+    await takeDraft(report());
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledTimes(1));
+    const [written, baseline] = saveKinTaleDraft.mock.calls[0]! as [KinTaleDraft, KinTaleDraft];
+    expect(written).toEqual(expect.objectContaining({ bodyCopy: TAKEN, keptNotes: NOTES, keptNotesDraft: TAKEN }));
+    expect(baseline).toEqual(expect.objectContaining({ bodyCopy: NOTES, keptNotes: '', keptNotesDraft: '' }));
+  });
+  it('a draft she only looked at, or set aside, saves no notes', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ title: 'Hi' })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Ask Auntie' }));
+    const panel = await screen.findByRole('region', { name: "Auntie's draft" });
+    await user.click(within(panel).getByRole('button', { name: 'Keep my notes' }));
+    await user.type(note(), ' More.');
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledTimes(1));
+    const [written] = saveKinTaleDraft.mock.calls[0]! as [KinTaleDraft];
+    expect(written.keptNotes).toBe('');
+    expect(written.keptNotesDraft).toBe('');
+  });
+  it('a draft opened again offers "Back to my notes" and puts back what she typed', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ bodyCopy: TAKEN, keptNotes: NOTES, keptNotesDraft: TAKEN })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByDisplayValue(TAKEN)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Back to my notes' }));
+    expect(note()).toHaveValue(NOTES);
+    expect(screen.queryByRole('button', { name: 'Back to my notes' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledTimes(1));
+    const [written] = saveKinTaleDraft.mock.calls[0]! as [KinTaleDraft];
+    expect(written).toEqual(expect.objectContaining({ bodyCopy: NOTES, keptNotes: '', keptNotesDraft: '' }));
+  });
+  it('putting the notes back after a reopen leaves the headline as it stands', async () => {
+    mockStreams({
+      reports: {
+        status: 'ready',
+        data: [report({ title: 'Park day', titleGeneratedByAi: true, bodyCopy: TAKEN, keptNotes: NOTES, keptNotesDraft: TAKEN })],
+      },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Back to my notes' }));
+    expect(screen.getByDisplayValue('Park day')).toBeInTheDocument();
+  });
+  it('asking again after a reopen works from her notes while the note is still the draft she took', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ bodyCopy: TAKEN, keptNotes: NOTES, keptNotesDraft: TAKEN })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Ask Auntie' }));
+    await waitFor(() => expect(generateDraft).toHaveBeenCalledTimes(1));
+    expect(generateDraft.mock.calls[0]?.[0]).toMatchObject({ raw_notes: NOTES });
+  });
+  it('asking again after a reopen works from the note once she has changed it', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ bodyCopy: `${TAKEN} And a nap.`, keptNotes: NOTES, keptNotesDraft: TAKEN })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: 'Ask Auntie' }));
+    await waitFor(() => expect(generateDraft).toHaveBeenCalledTimes(1));
+    expect(generateDraft.mock.calls[0]?.[0]).toMatchObject({ raw_notes: `${TAKEN} And a nap.` });
+  });
+  it('a draft saved before the notes were kept opens with nothing to put back', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report({ bodyCopy: TAKEN })] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByDisplayValue(TAKEN)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Back to my notes' })).not.toBeInTheDocument();
+  });
+  it('kept notes that are not text are read as none', async () => {
+    const odd = { ...report({ bodyCopy: TAKEN }), keptNotes: 42, keptNotesDraft: null } as unknown as KinTaleEntry;
+    mockStreams({ reports: { status: 'ready', data: [odd] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByDisplayValue(TAKEN)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Back to my notes' })).not.toBeInTheDocument();
+  });
+  it('a tale already sent never has her notes saved onto it, though they can be put back on screen', async () => {
+    await takeDraft(report({ title: 'Park day', status: 'SENT', sentAt: '2026-07-16T16:00:00.000Z', sentVia: 'pending' }));
+    expect(screen.getByRole('button', { name: 'Back to my notes' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(saveKinTaleDraft).toHaveBeenCalledTimes(1));
+    const [written] = saveKinTaleDraft.mock.calls[0]! as [KinTaleDraft];
+    expect(written).toEqual(expect.objectContaining({ bodyCopy: TAKEN, keptNotes: '', keptNotesDraft: '' }));
+  });
+});

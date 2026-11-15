@@ -254,6 +254,22 @@ export function notesForAuntie(bodyCopy: string, kept: KeptNotes | null): string
   return kept !== null && bodyCopy === kept.draftBody ? kept.notes : bodyCopy;
 }
 /**
+ * #2052: the notes a SAVED draft still holds, for a composer that was closed
+ * and reopened. Null when it holds none. The headline comes back as it stands
+ * now, so "Back to my notes" after a reopen puts the note back and leaves the
+ * headline alone: which of the two wrote it is no longer known for certain.
+ */
+export function keptNotesOnDraft(draft: KinTaleDraft): KeptNotes | null {
+  const notes = draft.keptNotes ?? '';
+  if (notes.trim() === '') return null;
+  return {
+    notes,
+    draftBody: draft.keptNotesDraft ?? '',
+    title: draft.title,
+    titleGeneratedByAi: draft.titleGeneratedByAi,
+  };
+}
+/**
  * Rehydrate an editable draft off an already-streamed `KinTaleEntry` row.
  * Defaulted for the same reason as `scaffoldKinTaleDraft` above.
  *
@@ -280,6 +296,10 @@ export function draftFromKinTaleEntry(report: KinTaleEntry): KinTaleDraft {
     mediaFileIds: report.mediaFileIds ?? [],
     templateId: report.templateId ?? '',
     fieldResponses: decodeFieldResponses(report.fieldResponses),
+    // #2052: a draft saved before these existed has neither, and loads as
+    // "nothing to put back". Anything that is not text is read the same way.
+    keptNotes: typeof report.keptNotes === 'string' ? report.keptNotes : '',
+    keptNotesDraft: typeof report.keptNotesDraft === 'string' ? report.keptNotesDraft : '',
   };
 }
 
@@ -511,6 +531,12 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    */
   const isSent = storedRow !== undefined && kinTaleState(storedRow.status ?? '') === 'sent';
   /**
+   * #2052: the notes that can be put back. The ones kept while this composer
+   * has been open, else the ones the saved draft carries from an earlier
+   * sitting, on this device or another.
+   */
+  const kept = keptNotes ?? (draft !== null ? keptNotesOnDraft(draft) : null);
+  /**
    * #2052: hold what Auntie wrote BESIDE the note, never in it.
    *
    * This used to replace the note outright, and the notes the Auntie had typed
@@ -537,22 +563,30 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
   /** #2052: take the offered draft, keeping the notes it replaces so they can come back. */
   function handleUseAuntieDraft() {
     if (draft === null || auntieDraft === null) return;
+    // Notes already kept stay the notes: taking a second draft over the
+    // first must not make the first draft "her notes".
+    const notes = notesForAuntie(draft.bodyCopy, kept);
     setKeptNotes({
-      // Notes already kept stay the notes: taking a second draft over the
-      // first must not make the first draft "her notes".
-      notes: notesForAuntie(draft.bodyCopy, keptNotes),
+      notes,
       draftBody: auntieDraft.body,
-      title: keptNotes !== null && draft.titleGeneratedByAi ? keptNotes.title : draft.title,
-      titleGeneratedByAi: keptNotes !== null && draft.titleGeneratedByAi ? keptNotes.titleGeneratedByAi : draft.titleGeneratedByAi,
+      title: kept !== null && draft.titleGeneratedByAi ? kept.title : draft.title,
+      titleGeneratedByAi: kept !== null && draft.titleGeneratedByAi ? kept.titleGeneratedByAi : draft.titleGeneratedByAi,
     });
-    setDraft(withAuntieDraft(draft, auntieDraft));
+    // The notes ride on the draft, so the next save keeps them with the body
+    // that replaced them. A tale already sent keeps them on this screen only:
+    // a sent tale never carries working notes.
+    setDraft({
+      ...withAuntieDraft(draft, auntieDraft),
+      keptNotes: isSent ? '' : notes,
+      keptNotesDraft: isSent ? '' : auntieDraft.body,
+    });
     setAuntieDraft(null);
   }
   /** #2052: put the Auntie's own notes back where the draft is. */
   function handleRestoreNotes() {
-    if (keptNotes === null) return;
-    const kept = keptNotes;
-    setDraft((d) => (d ? withNotesRestored(d, kept) : d));
+    if (kept === null) return;
+    const restoring = kept;
+    setDraft((d) => (d ? { ...withNotesRestored(d, restoring), keptNotes: '', keptNotesDraft: '' } : d));
     setKeptNotes(null);
     showToast('Your notes are back.');
   }
@@ -809,9 +843,9 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
         onGenerated: applyGenerated,
         onGenerateError: (text: string) => setBanner({ tone: 'error' as const, text }),
         auntieDraft,
-        notesForAuntie: notesForAuntie(draft.bodyCopy, keptNotes),
+        notesForAuntie: notesForAuntie(draft.bodyCopy, kept),
         lastAuntieDraftBody,
-        canRestoreNotes: keptNotes !== null,
+        canRestoreNotes: kept !== null,
         onUseAuntieDraft: handleUseAuntieDraft,
         onDismissAuntieDraft: () => setAuntieDraft(null),
         onRestoreNotes: handleRestoreNotes,

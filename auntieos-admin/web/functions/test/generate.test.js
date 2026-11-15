@@ -1239,3 +1239,47 @@ describe('generateErrorResponse: what the screen is sent when a generate fails (
     assert.strictEqual(out.body.communication_type, '');
   });
 });
+describe('review of #2052 / #2079: the paths a KinTale could still slip through', () => {
+  it('a KinTale with no household, name or visit is still grounded, with no training example', async () => {
+    const a = visitModel(['All ate and the water is topped up.']);
+    const out = await run(t1Db(), a, { communication_type: 'visit_report', raw_notes: 'all ate, water topped up' });
+    const prompt = promptOf(a);
+    assert.match(prompt, /GROUNDING\./);
+    assert.match(prompt, /Kin on this visit: none on file/);
+    assert.doesNotMatch(prompt, /Duke|VOICE TRAINING EXAMPLES|DOSSIER|411/);
+    assert.strictEqual(out.kinfolk_id, null);
+  });
+  it('a visit that names no household, sent with no name, is grounded rather than a failed name match', async () => {
+    const a = visitModel(['All ate.']);
+    const db = t1Db({ kin_care_sessions: [{ ...T1_SESSION, kinfolkId: '' }] });
+    await run(db, a, { communication_type: 'visit_report', session_id: 's1', raw_notes: 'all ate' });
+    assert.match(promptOf(a), /GROUNDING\./);
+    assert.match(promptOf(a), /KinCare: 30 Minute Quick Check/);
+  });
+  it('a name that matches no Kinfolk is a plain 404 that never repeats the name or the roster', async () => {
+    await assert.rejects(
+      () => run(t1Db(), visitModel(['x']), { communication_type: 'visit_report', recipient: 'Ghost Writer', raw_notes: 'n' }),
+      (e) => e.status === 404 && e.message === gen.ERROR_COPY.kinfolk_not_found && !/Ghost|Tess/.test(JSON.stringify([e.message, e.extra])),
+    );
+    await assert.rejects(
+      () => run(t1Db(), visitModel(['x']), { communication_type: 'email', recipient: 'Ghost Writer', raw_notes: 'n' }),
+      (e) => e.status === 404 && e.message === gen.ERROR_COPY.kinfolk_not_found,
+    );
+  });
+  it('a visit whose Kin ids match nobody in the household names no Kin, and a household name is still caught', async () => {
+    const db = t1Db({ kin_care_sessions: [{ ...T1_SESSION, kinIds: ['id-of-another-kind'] }] });
+    const a = visitModel(['Everyone ate.']);
+    await run(db, a);
+    assert.match(promptOf(a), /Kin on this visit: none on file/);
+    assert.doesNotMatch(promptOf(a), /Biscuit|Kiwi/);
+    await assert.rejects(
+      () => run(db, visitModel(['Biscuit ate.'])),
+      (e) => e.extra.code === 'draft_names_kin_not_on_visit',
+    );
+  });
+  it('the off-visit check and its retry never spend more than two body calls', async () => {
+    const a = visitModel(['Kiwi sang.', 'Kiwi sang again.', GOOD_DRAFT]);
+    await assert.rejects(() => run(t1Db(), a), (e) => e.status === 422);
+    assert.strictEqual(a.calls.length, 2);
+  });
+});

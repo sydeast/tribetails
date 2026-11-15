@@ -530,9 +530,9 @@ async function resolveKinfolk(db, v) {
   const kinfolkDocs = kfSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const kinfolk = matchKinfolk(v.recipient, kinfolkDocs);
   if (!kinfolk) {
-    throw new GenerateError(`No Kinfolk match for "${v.recipient}"`, 404, {
-      known: kinfolkDocs.map((k) => [k.firstName, k.lastName].filter(Boolean).join(' ')).filter(Boolean),
-    });
+    // #2052: the name that was typed stays off the screen and out of the log.
+    console.error('generate: no Kinfolk matches the recipient sent', { roster: kinfolkDocs.length });
+    throw plainError('kinfolk_not_found', 404);
   }
   return withoutEmergencyContacts(kinfolk);
 }
@@ -706,11 +706,32 @@ async function resolveVisitContext(db, v) {
     }
   }
 
+  const visit = visitFacts(session, session ? await readBusinessTimeZone(db) : FALLBACK_BUSINESS_TIME_ZONE);
+  // A KinTale asked for with no household at all (no id, no name, and a visit
+  // that names none) is still a KinTale: it is written under the same rule,
+  // from the notes alone, with no Kin on file. It never falls through to the
+  // general path, which carries the training examples and no grounding.
+  if (!v.kinfolk_id && !v.recipient) {
+    return {
+      grounded: true,
+      kinfolk: null,
+      kinfolkId: null,
+      kinfolkName: '',
+      dossier: null,
+      kins: [],
+      four11ByKinId: {},
+      recentLog: null,
+      trainingDocs: [],
+      visit,
+      visitKin: [],
+      offVisitKin: [],
+    };
+  }
+
   const kinfolk = await resolveKinfolk(db, v);
   const kinfolkId = kinfolk.id;
   const kinfolkName = [kinfolk.firstName, kinfolk.lastName].filter(Boolean).join(' ').trim() || v.recipient;
   const { onVisit, offVisit } = splitVisitKin(await readHouseholdKin(db, kinfolkId), session);
-  const visit = visitFacts(session, session ? await readBusinessTimeZone(db) : FALLBACK_BUSINESS_TIME_ZONE);
 
   return {
     grounded: true,
@@ -732,12 +753,13 @@ async function resolveContext(db, v) {
   // Nothing to resolve by: no id AND no name means there is no household, so
   // every kinfolk-scoped read (roster, dossier, kin, the_411, visit_logs) is
   // skipped rather than 404ing. That is the broadcast / blog / social path.
-  if (!v.recipient && !v.kinfolk_id && !v.session_id) {
+  // A KinTale is about one visit and gets that visit's facts only. This comes
+  // first: a KinTale with nothing to resolve by is still written grounded.
+  if (v.communication_type === 'visit_report') return resolveVisitContext(db, v);
+
+  if (!v.recipient && !v.kinfolk_id) {
     return emptyKinfolkContext(await loadTrainingDocs(db, v.communication_type));
   }
-
-  // A KinTale is about one visit and gets that visit's facts only.
-  if (v.communication_type === 'visit_report') return resolveVisitContext(db, v);
 
   const kinfolk = await resolveKinfolk(db, v);
   const kinfolkId = kinfolk.id;

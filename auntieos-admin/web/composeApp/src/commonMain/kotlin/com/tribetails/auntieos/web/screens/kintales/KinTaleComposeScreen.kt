@@ -361,7 +361,8 @@ private fun KinTaleComposerBody(
     // #2052: the draft Auntie offered (shown beside the note until the Auntie
     // takes it or sets it aside, never in the note on its own) and her notes
     // from before she took one, while they can still be put back.
-    var ask by remember(session._id, identity) { mutableStateOf(AskAuntieState()) }
+    // A reopened tale brings back the notes kept on an earlier sitting.
+    var ask by remember(session._id, identity) { mutableStateOf(askAuntieStateFor(resumeFrom)) }
 
     // Phase 14: KINTALE form_schemas (appliesTo == KINTALE). Admin-authored custom
     // fields, DISTINCT from the template-driven fieldResponses above. Answers live on
@@ -515,7 +516,7 @@ private fun KinTaleComposerBody(
         val (next, body) = ask.take(bodyCopy) ?: return
         ask = next
         bodyCopy = body
-        val updated = report.copy(bodyCopy = body)
+        val updated = report.withDraftTaken(body, next.kept)
         report = updated
         persistDraft(updated)
     }
@@ -524,7 +525,7 @@ private fun KinTaleComposerBody(
         val (next, body) = ask.restore() ?: return
         ask = next
         bodyCopy = body
-        val updated = report.copy(bodyCopy = body)
+        val updated = report.withNotesRestored(body)
         report = updated
         showToast("Your notes are back.", ToastKind.Success)
         persistDraft(updated)

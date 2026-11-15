@@ -6,6 +6,7 @@ import com.tribetails.auntieos.web.data.GENERATE_FAILED_COPY
 import com.tribetails.auntieos.web.data.GENERATE_SIGN_IN_COPY
 import com.tribetails.auntieos.web.data.GenerateCareTask
 import com.tribetails.auntieos.web.data.Kin
+import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.KinTaleTemplate
 import com.tribetails.auntieos.web.data.Kinfolk
@@ -65,6 +66,32 @@ data class AskAuntieState(val offered: String? = null, val kept: KeptNotes? = nu
         return copy(kept = null) to notes
     }
 }
+/**
+ * The notes a SAVED tale still holds, for a composer that was closed and
+ * reopened, here or on another device. Null when it holds none, which is every
+ * tale saved before the notes were kept.
+ */
+fun KinCareReport.keptNotesOrNull(): KeptNotes? =
+    if (keptNotes.isBlank()) null else KeptNotes(notes = keptNotes, draftBody = keptNotesDraft)
+/** What Ask Auntie holds when the composer opens on [resumed] (null for a new tale). */
+fun askAuntieStateFor(resumed: KinCareReport?): AskAuntieState = AskAuntieState(kept = resumed?.keptNotesOrNull())
+/**
+ * The tale with Auntie's draft taken as its note. [kept] goes onto the tale
+ * with it, so the one save carries the draft and the notes it replaced. A tale
+ * already sent keeps them on the screen only: a sent tale never carries
+ * working notes.
+ */
+fun KinCareReport.withDraftTaken(body: String, kept: KeptNotes?): KinCareReport {
+    val keep = kept != null && !status.trim().equals("SENT", ignoreCase = true)
+    return copy(
+        bodyCopy = body,
+        keptNotes = if (keep) kept!!.notes else "",
+        keptNotesDraft = if (keep) kept!!.draftBody else "",
+    )
+}
+/** The tale with her notes back as its note, and nothing left to put back. */
+fun KinCareReport.withNotesRestored(notes: String): KinCareReport =
+    copy(bodyCopy = notes, keptNotes = "", keptNotesDraft = "")
 /** The Ask Auntie button's words: what it will do, or that it is doing it. */
 fun askAuntieLabel(isGenerating: Boolean, hasAskedBefore: Boolean): String = when {
     isGenerating -> "Auntie is writing…"

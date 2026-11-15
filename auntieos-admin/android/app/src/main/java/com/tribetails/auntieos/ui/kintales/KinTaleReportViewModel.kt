@@ -390,6 +390,8 @@ class KinTaleReportViewModel(
                 // tasks, never the template as it stands now.
                 template = template.forKinTale(report),
                 report = report,
+                // #2052: notes kept on an earlier sitting can still be put back.
+                keptNotes = report.keptNotesOrNull(),
                 uploadedMedia = media,
                 gpsRoute = session.gpsSummary?.route.orEmpty(),
                 kinTaleSchemas = schemas.getOrDefault(emptyList()),
@@ -546,12 +548,18 @@ class KinTaleReportViewModel(
     fun useAuntieDraft() {
         val state = _uiState.value
         val offered = state.auntieDraft ?: return
+        val notes = notesForAuntie(state.report.bodyCopy, state.keptNotes)
+        // The notes go onto the tale with the draft that replaces them, so the
+        // one save carries both. A tale already sent keeps them on this screen
+        // only: a sent tale never carries working notes.
+        val sent = state.report.isSentReport()
         _uiState.value = state.copy(
-            keptNotes = KeptNotes(
-                notes = notesForAuntie(state.report.bodyCopy, state.keptNotes),
-                draftBody = offered,
+            keptNotes = KeptNotes(notes = notes, draftBody = offered),
+            report = state.report.copy(
+                bodyCopy = offered,
+                keptNotes = if (sent) "" else notes,
+                keptNotesDraft = if (sent) "" else offered,
             ),
-            report = state.report.copy(bodyCopy = offered),
             auntieDraft = null,
         )
         syncUnsavedMarker()
@@ -566,7 +574,7 @@ class KinTaleReportViewModel(
         val state = _uiState.value
         val kept = state.keptNotes ?: return
         _uiState.value = state.copy(
-            report = state.report.copy(bodyCopy = kept.notes),
+            report = state.report.copy(bodyCopy = kept.notes, keptNotes = "", keptNotesDraft = ""),
             keptNotes = null,
         )
         syncUnsavedMarker()

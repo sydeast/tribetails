@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.ChecklistScope
 import com.tribetails.auntieos.data.model.FieldResponse
 import com.tribetails.auntieos.data.model.GenerateCareTask
 import com.tribetails.auntieos.data.model.Kin
+import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.KinTaleTemplate
 import com.tribetails.auntieos.data.model.Kinfolk
@@ -34,6 +35,15 @@ data class KeptNotes(val notes: String, val draftBody: String)
  */
 fun notesForAuntie(body: String, kept: KeptNotes?): String =
     if (kept != null && body == kept.draftBody) kept.notes else body
+/**
+ * The notes a SAVED tale still holds, for a composer that was closed and
+ * reopened, on this phone or anywhere else. Null when it holds none, which is
+ * every tale saved before the notes were kept.
+ */
+fun KinCareReport.keptNotesOrNull(): KeptNotes? {
+    val notes = keptNotes.orEmpty()
+    return if (notes.isBlank()) null else KeptNotes(notes = notes, draftBody = keptNotesDraft.orEmpty())
+}
 
 /**
  * The care tasks ticked on the composer right now, in the order it shows them:

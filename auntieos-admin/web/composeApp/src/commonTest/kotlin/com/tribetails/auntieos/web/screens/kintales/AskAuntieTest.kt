@@ -5,6 +5,7 @@ import com.tribetails.auntieos.web.data.ChecklistItem
 import com.tribetails.auntieos.web.data.FieldResponse
 import com.tribetails.auntieos.web.data.GenerateCareTask
 import com.tribetails.auntieos.web.data.Kin
+import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.KinTaleTemplate
 import com.tribetails.auntieos.web.data.responseKey
@@ -206,6 +207,42 @@ class AskAuntieTest {
         assertEquals(AskAuntieCopy.SIGN_IN, AskAuntieCopy.forFailure(IllegalStateException(AskAuntieCopy.SIGN_IN)))
     }
 
+    // ── the notes are kept on the tale, so they survive a reopen ──────────────
+    @Test
+    fun aReopenedTaleOffersTheNotesItKept() {
+        val saved = KinCareReport(bodyCopy = draft, keptNotes = notes, keptNotesDraft = draft)
+        val state = askAuntieStateFor(saved)
+        assertEquals(KeptNotes(notes, draft), state.kept)
+        assertNull(state.offered)
+        assertEquals(notes, notesForAuntie(saved.bodyCopy, state.kept), "asking again works from her notes")
+        val (next, body) = assertNotNull(state.restore())
+        assertEquals(notes, body)
+        assertNull(next.kept)
+    }
+    @Test
+    fun aNewTaleOrOneSavedBeforeTheNotesWereKeptHasNothingToPutBack() {
+        assertNull(askAuntieStateFor(null).kept)
+        assertNull(askAuntieStateFor(KinCareReport(bodyCopy = draft)).kept)
+        assertNull(KinCareReport(bodyCopy = draft, keptNotes = "   ").keptNotesOrNull())
+    }
+    @Test
+    fun takingADraftPutsTheNotesOnTheTaleAndGoingBackTakesThemOff() {
+        val taken = KinCareReport(bodyCopy = notes).withDraftTaken(draft, KeptNotes(notes, draft))
+        assertEquals(draft, taken.bodyCopy)
+        assertEquals(notes, taken.keptNotes)
+        assertEquals(draft, taken.keptNotesDraft)
+        val back = taken.withNotesRestored(notes)
+        assertEquals(notes, back.bodyCopy)
+        assertEquals("", back.keptNotes)
+        assertEquals("", back.keptNotesDraft)
+    }
+    @Test
+    fun aTaleAlreadySentNeverCarriesTheNotes() {
+        val sent = KinCareReport(bodyCopy = notes, status = "SENT").withDraftTaken(draft, KeptNotes(notes, draft))
+        assertEquals(draft, sent.bodyCopy)
+        assertEquals("", sent.keptNotes)
+        assertEquals("", sent.keptNotesDraft)
+    }
     @Test
     fun noFailureCopyCarriesACodeADashOrDeveloperWording() {
         for (copy in listOf(
