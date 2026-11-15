@@ -6,6 +6,7 @@ import {
   perVisitChecklistRows,
   setChecklistResponse,
   splitChecklistScopes,
+  tickedCareTasks,
   type ChecklistContext,
 } from './kinTaleChecklist';
 import {
@@ -287,5 +288,42 @@ describe('decodeFieldResponses', () => {
   it('round-trips what setChecklistResponse wrote', () => {
     const written = setChecklistResponse({}, 'fed', 'k1', true);
     expect(decodeFieldResponses(written)).toEqual(written);
+  });
+});
+
+describe('tickedCareTasks (what Ask Auntie is told was done, #2052)', () => {
+  const tpl = template({
+    checklistEnabled: true,
+    checklistItems: [
+      makeChecklistItem({ key: 'fed', text: 'Fed', scope: 'PER_PET', order: 0 }),
+      makeChecklistItem({ key: 'gate', text: 'Gate locked', scope: 'PER_VISIT', order: 1 }),
+      makeChecklistItem({ key: 'meds', text: 'Medications given', scope: 'PER_PET', order: 2 }),
+    ],
+  });
+  const two = ctx({ kinList: [kin({ _id: 'k1', name: 'Biscuit' }), kin({ _id: 'k2', name: 'Mochi' })] });
+  const tick = (r: Record<string, FieldResponse>, key: string, kinId: string) => setChecklistResponse(r, key, kinId, true);
+  it('lists each ticked task with the Kin it was for, visit-wide tasks first', () => {
+    let r: Record<string, FieldResponse> = {};
+    r = tick(r, 'fed', 'k2');
+    r = tick(r, 'gate', '');
+    r = tick(r, 'meds', 'k1');
+    expect(tickedCareTasks(tpl, two, r)).toEqual([
+      { text: 'Gate locked', kin_name: '' },
+      { text: 'Medications given', kin_name: 'Biscuit' },
+      { text: 'Fed', kin_name: 'Mochi' },
+    ]);
+  });
+  it('a task ticked and then unticked is not reported as done', () => {
+    let r = tick({}, 'fed', 'k1');
+    r = setChecklistResponse(r, 'fed', 'k1', false);
+    expect(tickedCareTasks(tpl, two, r)).toEqual([]);
+  });
+  it('nothing ticked, no template, or the checklist switched off is an empty list', () => {
+    expect(tickedCareTasks(tpl, two, {})).toEqual([]);
+    expect(tickedCareTasks(null, two, tick({}, 'gate', ''))).toEqual([]);
+    expect(tickedCareTasks({ ...tpl, checklistEnabled: false }, two, tick({}, 'gate', ''))).toEqual([]);
+  });
+  it('a tick for a Kin that is not on this visit is not reported', () => {
+    expect(tickedCareTasks(tpl, two, tick({}, 'fed', 'k-not-here'))).toEqual([]);
   });
 });

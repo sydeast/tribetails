@@ -269,6 +269,8 @@ class KinTaleDraftLifecycleTest {
         advanceUntilIdle()
         vm.removeMedia("media-new")
         vm.generateDraft()
+        advanceUntilIdle()
+        vm.useAuntieDraft()
         advanceTimeBy(KinTaleReportViewModel.AUTOSAVE_DEBOUNCE_MS * 3)
         advanceUntilIdle()
 

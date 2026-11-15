@@ -355,7 +355,13 @@ private fun KinTaleComposerBody(
     var toastKind by remember { mutableStateOf(ToastKind.Info) }
     var isGenerating by remember { mutableStateOf(false) }
     // Opener of the last generated draft; fed back as avoid_opening on regenerate.
-    var lastOpening by remember(report._id) { mutableStateOf<String?>(null) }
+    // Keyed like [report] itself, never on the report's id: a new tale gets
+    // its id on its first save, and a key on it would forget all three here.
+    var lastOpening by remember(session._id, identity) { mutableStateOf<String?>(null) }
+    // #2052: the draft Auntie offered (shown beside the note until the Auntie
+    // takes it or sets it aside, never in the note on its own) and her notes
+    // from before she took one, while they can still be put back.
+    var ask by remember(session._id, identity) { mutableStateOf(AskAuntieState()) }
 
     // Phase 14: KINTALE form_schemas (appliesTo == KINTALE). Admin-authored custom
     // fields, DISTINCT from the template-driven fieldResponses above. Answers live on
@@ -441,23 +447,31 @@ private fun KinTaleComposerBody(
     }
 
     /**
-     * Generate-draft: turn the shorthand in [bodyCopy] into a full KinTale in
-     * Auntie's voice via the same generate path as Communicate (function or n8n,
-     * gated by FeatureFlags.communicateGenerateViaFunction). The result drops into
-     * the editable body; manual editing still works. Regenerate passes the previous
-     * opener as avoid_opening so a re-roll genuinely varies (the "I don't like v1"
-     * path). Fail-loud on error.
+     * Ask Auntie: write a KinTale draft from the Auntie's notes, through the
+     * same generator as Communicate.
+     *
+     * #2052: the draft is OFFERED, in [ask], and the note is not
+     * touched. It used to replace the note and save over it, so the notes were
+     * gone from the screen and from the saved draft in one step, and anything
+     * the draft made up read as the Auntie's own words. She takes it with
+     * [useAuntieDraft] or sets it aside.
+     *
+     * #2079: the household, the visit and the ticked care tasks go with the
+     * notes, so the server writes from this visit's own Kin and nothing else.
+     *
+     * Asking again passes the last opener as avoid_opening and works from her
+     * notes ([notesForAuntie]), never from a draft she took.
      */
     fun generateDraft() {
         if (isGenerating) return
-        val notes = bodyCopy.trim()
+        val notes = notesForAuntie(bodyCopy, ask.kept).trim()
         if (notes.isEmpty()) {
-            showToast("Jot a few notes first so Auntie has something to work with.", ToastKind.Error)
+            showToast(AskAuntieCopy.NEEDS_NOTES, ToastKind.Error)
             return
         }
         val recipient = kinfolk?.displayName.orEmpty()
         if (recipient.isBlank()) {
-            showToast("This KinCare has no linked Kinfolk to write to.", ToastKind.Error)
+            showToast(AskAuntieCopy.NO_KINFOLK, ToastKind.Error)
             return
         }
         scope.launch {
@@ -469,28 +483,51 @@ private fun KinTaleComposerBody(
                         recipient = recipient,
                         raw_notes = notes,
                         avoid_opening = lastOpening,
+                        kinfolk_id = session.kinfolkId.ifBlank { null },
+                        session_id = session._id.ifBlank { null },
+                        care_tasks = tickedCareTasks(template, session, kinList, kinfolk, report.fieldResponses),
                     ),
                     useFunction = featureFlags.communicateGenerateViaFunction,
                 )
-                if (resp.error != null) {
-                    showToast("Generate error: ${resp.error}", ToastKind.Error)
+                if (resp.error != null || resp.generated_copy.isBlank()) {
+                    showToast(AskAuntieCopy.plain(resp.error), ToastKind.Error)
                 } else {
                     val copy = resp.generated_copy
-                    bodyCopy = copy
-                    val updated = report.copy(bodyCopy = copy)
-                    report = updated
+                    ask = ask.offer(copy)
                     lastOpening = copy.trim().takeWhile { !it.isWhitespace() }.ifBlank { null }
-                    showToast("Auntie drafted a tale. Edit away.", ToastKind.Success)
-                    persistDraft(updated)
+                    showToast("Auntie's draft is ready. Your notes are untouched.", ToastKind.Success)
                 }
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                showToast("Generate failed: ${t.message ?: "unknown error"}", ToastKind.Error)
+                showToast(AskAuntieCopy.forFailure(t), ToastKind.Error)
             } finally {
                 isGenerating = false
             }
         }
+    }
+    /**
+     * #2052: take the draft Auntie offered. The notes it replaces are kept so
+     * they can be put back; notes already kept stay the notes, so taking a
+     * second draft over the first never makes the first "her notes".
+     */
+    fun useAuntieDraft() {
+        val (next, body) = ask.take(bodyCopy) ?: return
+        ask = next
+        bodyCopy = body
+        val updated = report.copy(bodyCopy = body)
+        report = updated
+        persistDraft(updated)
+    }
+    /** #2052: put the Auntie's own notes back where the draft is. */
+    fun restoreNotes() {
+        val (next, body) = ask.restore() ?: return
+        ask = next
+        bodyCopy = body
+        val updated = report.copy(bodyCopy = body)
+        report = updated
+        showToast("Your notes are back.", ToastKind.Success)
+        persistDraft(updated)
     }
 
     // #1816: Send asks first, and says who the household notice will reach,
@@ -689,10 +726,45 @@ private fun KinTaleComposerBody(
                             minLines = 6,
                         )
                         GhostButton(
-                            label   = if (isGenerating) "Auntie's writing…" else "Generate draft",
+                            label   = askAuntieLabel(isGenerating, hasAskedBefore = lastOpening != null),
                             onClick = { generateDraft() },
+                            enabled = !isGenerating,
                             leading = { Icon(Lucide.PawPrint, contentDescription = null, modifier = Modifier.size(13.dp)) },
                         )
+                        if (ask.kept != null) {
+                            GhostButton(
+                                label   = "Back to my notes",
+                                onClick = { restoreNotes() },
+                                enabled = !isGenerating,
+                            )
+                        }
+                        // #2052: Auntie's draft sits beside the notes, never in
+                        // them. It is hers until the Auntie takes it.
+                        ask.offered?.let { offered ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(1.dp, AuntieTheme.colors.primary.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    "Auntie's draft",
+                                    style = AuntieTheme.typography.labelSmall,
+                                    color = AuntieTheme.colors.textDim,
+                                )
+                                Text(
+                                    offered,
+                                    style = AuntieTheme.typography.bodyMedium,
+                                    color = AuntieTheme.colors.textPrimary,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    GhostButton(label = "Keep my notes", onClick = { ask = ask.dismiss() })
+                                    PrimaryButton(label = "Use this draft", onClick = { useAuntieDraft() })
+                                }
+                            }
+                        }
                         GhostButton(
                             label   = "Save notes",
                             // #2050: a save she pressed, so the default message alone is saved too.

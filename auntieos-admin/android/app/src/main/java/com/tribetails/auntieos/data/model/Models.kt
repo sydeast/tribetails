@@ -1507,6 +1507,24 @@ data class GenerateRequest(
     val max_length: String,
     /** On regenerate: an opener the reader rejected; the generator must not reuse it. */
     val avoid_opening: String? = null,
+    /**
+     * #2079: the visit a KinTale recaps. With it the server writes from that
+     * visit's own record (its Kin, its KinCare, its times) and from nothing
+     * else about the household. Null for every other kind of message.
+     */
+    val session_id: String? = null,
+    /**
+     * #2052: the care tasks ticked on the composer. They live in the form until
+     * the tale is saved, so the server cannot read them; a task not listed is
+     * one the draft may not claim was done. Null for every other kind of message.
+     */
+    val care_tasks: List<GenerateCareTask>? = null,
+)
+/** One ticked care task: its label, and the Kin it was for (blank for a once-a-visit task). */
+@Keep
+data class GenerateCareTask(
+    val text: String = "",
+    val kin_name: String = "",
 )
 
 @Keep

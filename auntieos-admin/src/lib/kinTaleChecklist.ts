@@ -217,3 +217,35 @@ export function decodeFieldResponses(raw: unknown): Record<string, FieldResponse
   }
   return out;
 }
+
+/** One ticked care task as Ask Auntie is told it: the label and the Kin it was for. */
+export interface TickedCareTask {
+  text: string;
+  /** `''` for a task done once for the whole visit. */
+  kin_name: string;
+}
+
+/**
+ * #2052: the care tasks ticked in the composer right now, in the order the
+ * composer shows them. Ask Auntie sends these so a draft can say what was done
+ * and cannot say what was not: the same rows the Auntie sees, so a task hidden
+ * for this visit or for this Kin is never reported. A row with a blank label
+ * is left out, since there is nothing to say about it.
+ */
+export function tickedCareTasks(
+  template: KinTaleTemplate | null,
+  ctx: ChecklistContext,
+  responses: Readonly<Record<string, FieldResponse>>,
+): TickedCareTask[] {
+  if (template === null) return [];
+  const out: TickedCareTask[] = [];
+  const add = (rows: readonly ChecklistRow[], kinName: string) => {
+    for (const row of rows) {
+      const text = row.item.text.trim();
+      if (row.checked && text !== '') out.push({ text, kin_name: kinName });
+    }
+  };
+  add(perVisitChecklistRows(template, ctx, responses), '');
+  for (const kin of ctx.kinList) add(perPetChecklistRows(template, kin, ctx, responses), kin.name.trim());
+  return out;
+}
