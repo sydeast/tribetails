@@ -400,3 +400,22 @@ export function auntieHouseholdLookWords(auntieName: unknown, householdName: unk
   const household = name === '' ? 'a Kinfolk household' : `Kinfolk ${name}`;
   return `${who} looked at ${household}`;
 }
+
+/**
+ * #2344: a card was declined on an invoice the household no longer has to pay
+ * by card: the invoice was already paid, or the payment from that same
+ * checkout has gone through. No "charge failed" notice is sent for it, and the
+ * line says so. `invoice-paid` and `payment-landed` are the two reasons the
+ * Stripe webhook stores.
+ */
+export function cardDeclinedAfterPaymentWords(invoiceNumber: unknown, reason: string): string {
+  const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
+  const invoice = n === '' ? 'an invoice' : `invoice ${n}`;
+  const why =
+    reason === 'payment-landed'
+      ? ', and the payment from the same checkout went through'
+      : n === ''
+        ? ' that was already paid'
+        : ', which was already paid';
+  return `A card was declined on ${invoice}${why}. No notice was sent to the household.`;
+}

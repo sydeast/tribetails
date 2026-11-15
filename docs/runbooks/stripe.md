@@ -172,7 +172,7 @@ working. The handler recognises exactly these:
 |---|---|
 | `checkout.session.completed` | **The canonical one.** `payInvoice` creates a `mode: 'payment'` Checkout Session, and this is what a completed one emits. |
 | `payment_intent.succeeded` | The same payment seen from the PaymentIntent. Both are handled, and a per-PaymentIntent claim at `stripePayments/{id}` makes sure one payment applies **once**. |
-| `payment_intent.payment_failed` | Writes the critical audit entry and the `invoice.charge.failed` notification. Without it a declined card is silent. |
+| `payment_intent.payment_failed` | Writes the critical audit entry and the `invoice.charge.failed` notification. Without it a declined card is silent. Since #2344, a decline on an invoice that already reads paid, or after the payment from the same checkout landed, sends no notice to anyone: it writes one Activity Log line (`BILLING_CARD_DECLINED_AFTER_PAYMENT`) and leaves the invoice untouched. |
 | `charge.dispute.created` | A chargeback. Records `stripeDisputes/{id}`, flags the invoice, writes a `critical` audit entry and sends the operator-only `invoice.payment.disputed` notification. Without it the money leaves the balance and the invoice still reads paid, with nothing anywhere saying otherwise. |
 | `charge.dispute.closed` | How the operator learns the dispute was won or lost. Updates the same record and flag. |
 | `charge.dispute.funds_withdrawn` | The money actually leaving the Stripe balance. Records `fundsState: 'withdrawn'` on the dispute and `disputeFundsState` on the invoice, plus a `critical` `BILLING_PAYMENT_DISPUTE_FUNDS_WITHDRAWN` audit entry. Without it nothing here distinguishes "a dispute was opened" from "the money is gone". |

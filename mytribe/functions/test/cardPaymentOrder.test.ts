@@ -63,6 +63,7 @@ vi.mock('firebase-admin/firestore', async () => {
 });
 
 import { stripeWebhookHandler } from '../src/billing/stripeWebhook';
+import { cardDeclinedAfterPaymentWords } from '../src/lib/activityWords';
 
 type Docs = Record<string, Record<string, any> | null>;
 let docs: Docs;
@@ -326,13 +327,13 @@ describe('#2344: a decline never undoes a payment already recorded', () => {
 
     expectPaidOnceBy(1, 'evt_cs_1');
     expect(invoiceRowsCents()).toBe(4000);
-    // Only the webhook's own event stamp moved.
-    const { lastStripeEventAtMs: _a, lastStripeEventId: _b, ...after } = docs[INVOICE]!;
-    const { lastStripeEventAtMs: _c, lastStripeEventId: _d, ...before } = invoiceBefore;
-    expect(after).toEqual(before);
+    // The decline wrote nothing to the invoice, its order stamp included.
+    expect(docs[INVOICE]).toEqual(invoiceBefore);
+    expect(outcome('evt_fail_2')).toBe('FAILED_AFTER_PAYMENT');
+    expect(notices('invoice.charge.failed')).toHaveLength(0);
   });
 
-  it('a decline dated EARLIER, heard after the payment: skipped, and the household is not told of it', async () => {
+  it('a decline dated EARLIER, heard after the payment: the household is not told of it', async () => {
     declined(1, 1);
     paid(2, 4000, 10);
 
@@ -341,14 +342,16 @@ describe('#2344: a decline never undoes a payment already recorded', () => {
     expect(await deliver('declined-1')).toBe(200);
     expect(await deliver('declined-1')).toBe(200);
 
-    expect(outcome('evt_fail_1')).toBe('SKIPPED_OUT_OF_ORDER');
+    // Paid is checked before the date: the owner gets the one line, whatever the decline's date.
+    expect(outcome('evt_fail_1')).toBe('FAILED_AFTER_PAYMENT');
     expect(JSON.stringify(docs[INVOICE])).toBe(invoiceBefore);
     expect(notices('invoice.charge.failed')).toHaveLength(0);
     expect(audits('BILLING_INVOICE_FAILED')).toHaveLength(0);
+    expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(1);
     expectPaidOnceBy(2, 'evt_cs_2');
   });
 
-  it('an older payment landing does not wind the stamp back: a still older decline stays skipped', async () => {
+  it('an older payment landing does not wind the stamp back, and a decline heard after it is not told', async () => {
     paid(1, 4000, 5);
     declined(2, 10);
     declined(3, 7);
@@ -358,9 +361,30 @@ describe('#2344: a decline never undoes a payment already recorded', () => {
     expect(docs[INVOICE]!.lastStripeEventAtMs).toBe(ms(10));
     expect(await deliver('declined-3')).toBe(200);
 
-    expect(outcome('evt_fail_3')).toBe('SKIPPED_OUT_OF_ORDER');
+    // Told once, for the decline heard while the invoice was open. The one
+    // heard after the payment is the owner's line, not a notice.
+    expect(outcome('evt_fail_3')).toBe('FAILED_AFTER_PAYMENT');
     expect(notices('invoice.charge.failed')).toHaveLength(1);
     expectPaidOnceBy(1, 'evt_cs_1');
+  });
+
+  it('on an invoice still open, an older payment does not wind the stamp back: a still older decline stays skipped', async () => {
+    // A part payment, so the invoice stays open and the date check is what decides.
+    const legacy = { familyId: 'fam1', kinfolkId: 'fam1', invoiceId: 'inv1' };
+    paid(1, 1000, 5, legacy);
+    declined(2, 10, '', legacy);
+    declined(3, 7, '', legacy);
+
+    expect(await deliver('declined-2')).toBe(200);
+    expect(await deliver('session-1')).toBe(200);
+    expect(docs[INVOICE]).toMatchObject({ paidCents: 1000, amountDueCents: 3000, lastStripeEventAtMs: ms(10) });
+    expect(docs[INVOICE]!.lastStripeEventId).toBe('evt_fail_2');
+    expect(await deliver('declined-3')).toBe(200);
+
+    expect(outcome('evt_fail_3')).toBe('SKIPPED_OUT_OF_ORDER');
+    expect(notices('invoice.charge.failed')).toHaveLength(1);
+    expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(0);
+    expect(invoiceRowsCents()).toBe(1000);
   });
 });
 
@@ -511,5 +535,340 @@ describe('#2344: a payment the old build skipped can still be landed', () => {
     expect(JSON.stringify(docs)).toBe(before);
     expect(hooks.enqueue).not.toHaveBeenCalled();
     expect(hooks.audit).not.toHaveBeenCalled();
+  });
+});
+
+describe('#2344: a decline on an invoice already paid tells the household nothing', () => {
+  const lines = () => audits('BILLING_CARD_DECLINED_AFTER_PAYMENT');
+  const PAID_BY_HAND = {
+    ...OPEN,
+    status: 'paid',
+    paymentStatus: 'PAID',
+    amountDue: 0,
+    amountDueCents: 0,
+    paidCents: 4000,
+  };
+  const legacy = { familyId: 'fam1', kinfolkId: 'fam1', invoiceId: 'inv1' };
+
+  it('a decline heard after the payment: no notice, one Activity Log line in plain words', async () => {
+    paid(1, 4000, 1);
+    declined(2, 10);
+
+    expect(await deliver('session-1')).toBe(200);
+    expect(await deliver('declined-2')).toBe(200);
+    expect(await deliver('declined-2')).toBe(200);
+
+    expect(notices('invoice.charge.failed')).toHaveLength(0);
+    expect(audits('BILLING_INVOICE_FAILED')).toHaveLength(0);
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0]![0]).toMatchObject({
+      event: 'BILLING_CARD_DECLINED_AFTER_PAYMENT',
+      severity: 'info',
+      actorRole: 'SYSTEM',
+      familyId: 'fam1',
+      description: 'A card was declined on invoice 1029, which was already paid. No notice was sent to the household.',
+      docId: 'stripe_evt_fail_2_declinedAfterPayment',
+      payload: { invoiceId: 'inv1', stripeEventId: 'evt_fail_2', reason: 'invoice-paid' },
+    });
+    expect(docs['stripeEvents/evt_fail_2']).toMatchObject({
+      appliedOutcome: 'FAILED_AFTER_PAYMENT',
+      noticeSkippedReason: 'declined-after-payment',
+      followupTracked: true,
+    });
+    expect(docs['stripeEvents/evt_fail_2']!.auditWrittenAt).toBeTruthy();
+    expectPaidOnceBy(1, 'evt_cs_1');
+  });
+
+  it('an invoice paid by hand, then declines from an old checkout page: no notice, and nothing on the invoice moves', async () => {
+    docs[INVOICE] = { ...PAID_BY_HAND };
+    docs[`${INVOICE}/payments/hand1`] = { amount: 40, amountCents: 4000, method: 'cash' };
+    declined(1, 10);
+    hooks.events['invoice-failed'] = {
+      id: 'evt_inv_fail',
+      type: 'invoice.payment_failed',
+      created: at(11),
+      data: { object: { id: 'in_9', payment_intent: 'pi_9', metadata: META } },
+    };
+    const before = JSON.stringify(docs[INVOICE]);
+
+    expect(await deliver('declined-1')).toBe(200);
+    expect(await deliver('invoice-failed')).toBe(200);
+
+    expect(JSON.stringify(docs[INVOICE])).toBe(before);
+    expect(hooks.enqueue).not.toHaveBeenCalled();
+    expect(lines()).toHaveLength(2);
+    // A decline never claims the payment it names.
+    expect(docs['stripePayments/pi_1']).toBeUndefined();
+    expect(docs['stripePayments/pi_9']).toBeUndefined();
+    expect(ledgerRows()).toEqual([]);
+  });
+
+  it('a decline on the checkout whose own payment has landed, on an invoice that still owes: no notice', async () => {
+    // A part payment through a checkout that carries no round, so the invoice stays open.
+    paid(1, 1000, 5, legacy);
+    declined(1, 1, '', legacy);
+
+    expect(await deliver('session-1')).toBe(200);
+    expect(docs[INVOICE]).toMatchObject({ paidCents: 1000, amountDueCents: 3000 });
+    const before = JSON.stringify(docs[INVOICE]);
+    expect(await deliver('declined-1')).toBe(200);
+
+    expect(outcome('evt_fail_1')).toBe('FAILED_AFTER_PAYMENT');
+    expect(notices('invoice.charge.failed')).toHaveLength(0);
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0]![0].description).toBe(
+      'A card was declined on invoice 1029, and the payment from the same checkout went through. No notice was sent to the household.',
+    );
+    expect(JSON.stringify(docs[INVOICE])).toBe(before);
+    expect(invoiceRowsCents()).toBe(1000);
+  });
+
+  it('a decline on a DIFFERENT checkout of an invoice that still owes is still told', async () => {
+    paid(1, 1000, 5, legacy);
+    declined(2, 10, '', legacy);
+
+    expect(await deliver('session-1')).toBe(200);
+    expect(await deliver('declined-2')).toBe(200);
+
+    expect(outcome('evt_fail_2')).toBe('FAILED');
+    expect(notices('invoice.charge.failed')).toHaveLength(1);
+    expect(audits('BILLING_INVOICE_FAILED')).toHaveLength(1);
+    expect(lines()).toHaveLength(0);
+    expect(docs[INVOICE]).toMatchObject({ paidCents: 1000, amountDueCents: 3000, lastStripeEventAtMs: ms(10) });
+  });
+
+  it('a decline on an open invoice is told, as before', async () => {
+    declined(1, 1);
+
+    expect(await deliver('declined-1')).toBe(200);
+
+    expect(notices('invoice.charge.failed')).toHaveLength(1);
+    expect(lines()).toHaveLength(0);
+    expectStillOpen();
+  });
+
+  it('a decline whose notice failed, retried after the payment landed: the notice is not sent, the line is written once', async () => {
+    declined(2, 10);
+    paid(1, 4000, 1);
+    hooks.enqueue.mockRejectedValueOnce(new Error('queue down'));
+
+    // The decline is recorded; its notice throws, so Stripe will try again.
+    expect(await deliver('declined-2')).toBe(500);
+    expect(outcome('evt_fail_2')).toBe('FAILED');
+    expect(docs['stripeEvents/evt_fail_2']!.noticeSentAt).toBeUndefined();
+    // The earlier payment lands before that retry.
+    expect(await deliver('session-1')).toBe(200);
+    const paidInvoice = JSON.stringify(docs[INVOICE]);
+    expect(await deliver('declined-2')).toBe(200);
+    expect(await deliver('declined-2')).toBe(200);
+
+    // One try at the notice, the one that threw. None after the invoice was paid.
+    expect(notices('invoice.charge.failed')).toHaveLength(1);
+    expect(lines()).toHaveLength(1);
+    expect(lines()[0]![0].docId).toBe('stripe_evt_fail_2_declinedAfterPayment');
+    expect(docs['stripeEvents/evt_fail_2']).toMatchObject({ noticeSkippedReason: 'declined-after-payment' });
+    expect(JSON.stringify(docs[INVOICE])).toBe(paidInvoice);
+    expectPaidOnceBy(1, 'evt_cs_1');
+  });
+
+  it('a decline whose notice failed, retried while the invoice is still open: the notice goes out', async () => {
+    declined(2, 10);
+    hooks.enqueue.mockRejectedValueOnce(new Error('queue down'));
+
+    expect(await deliver('declined-2')).toBe(500);
+    expect(await deliver('declined-2')).toBe(200);
+
+    expect(notices('invoice.charge.failed')).toHaveLength(2);
+    expect(docs['stripeEvents/evt_fail_2']!.noticeSentAt).toBeTruthy();
+    expect(lines()).toHaveLength(0);
+  });
+
+  it('the Activity Log write failing answers 500, and the retry writes the line without a notice', async () => {
+    docs[INVOICE] = { ...PAID_BY_HAND };
+    declined(1, 10);
+    hooks.audit.mockRejectedValueOnce(new Error('log down'));
+
+    expect(await deliver('declined-1')).toBe(500);
+    expect(docs['stripeEvents/evt_fail_1']!.auditWrittenAt).toBeUndefined();
+    expect(await deliver('declined-1')).toBe(200);
+    expect(await deliver('declined-1')).toBe(200);
+
+    // Two tries at the one line: the first threw, the second wrote it.
+    expect(lines()).toHaveLength(2);
+    expect(docs['stripeEvents/evt_fail_1']!.auditWrittenAt).toBeTruthy();
+    expect(hooks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('the payment landing while the decline is deciding: the decline re-reads the paid invoice and is not told', async () => {
+    paid(1, 4000, 1);
+    declined(2, 10);
+    let fired = false;
+    installOptimisticTransactions(hooks.db.current as any, docs, {
+      onRead: async (path) => {
+        if (fired || path !== INVOICE) return;
+        fired = true;
+        expect(await deliver('session-1')).toBe(200);
+      },
+    });
+
+    expect(await deliver('declined-2')).toBe(200);
+
+    expect(fired).toBe(true);
+    expect(outcome('evt_fail_2')).toBe('FAILED_AFTER_PAYMENT');
+    expect(notices('invoice.charge.failed')).toHaveLength(0);
+    expectPaidOnceBy(1, 'evt_cs_1');
+  });
+});
+
+describe('#2344: the Activity Log sentence for a decline nobody is told about', () => {
+  it('names the invoice by its number, and reads whole without one', () => {
+    expect(cardDeclinedAfterPaymentWords('1029', 'invoice-paid')).toBe(
+      'A card was declined on invoice 1029, which was already paid. No notice was sent to the household.',
+    );
+    expect(cardDeclinedAfterPaymentWords(undefined, 'invoice-paid')).toBe(
+      'A card was declined on an invoice that was already paid. No notice was sent to the household.',
+    );
+    expect(cardDeclinedAfterPaymentWords('  ', 'payment-landed')).toBe(
+      'A card was declined on an invoice, and the payment from the same checkout went through. No notice was sent to the household.',
+    );
+  });
+});
+
+describe('#2344: a paid event on an invoice that is no longer payable is never dropped', () => {
+  it('after a write-off: the charge is held for the owner, and the invoice stays written off', async () => {
+    docs[INVOICE] = {
+      ...OPEN,
+      status: 'written_off',
+      amountDue: 0,
+      amountDueCents: 0,
+      writtenOffCents: 4000,
+      lastStripeEventAtMs: ms(10),
+    };
+    paid(1, 4000, 1);
+
+    expect(await deliver('session-1')).toBe(200);
+    expect(await deliver('intent-1')).toBe(200);
+
+    expect(outcome('evt_cs_1')).toBe('SKIPPED_DUPLICATE_INVOICE');
+    expect(outcome('evt_pi_1')).toBe('SKIPPED_DUPLICATE_PAYMENT');
+    expect(ledgerRows().map(([p]) => p)).toEqual(['payments/evt_cs_1']);
+    expect(docs['payments/evt_cs_1']).toMatchObject({
+      amountCents: 4000,
+      appliedToInvoice: false,
+      needsAdminDecision: true,
+      creditedToAccountCents: 0,
+    });
+    expect(docs[INVOICE]).toMatchObject({ status: 'written_off', amountDueCents: 0, writtenOffCents: 4000 });
+    expect(invoiceRows()).toEqual([]);
+    expect(notices('invoice.payment.applied')).toHaveLength(0);
+    expect(notices('invoice.payment.unapplied')).toHaveLength(1);
+    expect(docs['families/fam1']!.accountBalanceCents).toBe(0);
+  });
+
+  it('on a cancelled invoice, from a checkout opened before it was cancelled: the charge is recorded with its amount', async () => {
+    docs[INVOICE] = { ...OPEN, status: 'cancelled', invoiceStatus: 'cancelled', lastStripeEventAtMs: ms(10) };
+    paid(1, 4000, 1);
+
+    expect(await deliver('session-1')).toBe(200);
+    expect(await deliver('intent-1')).toBe(200);
+
+    // Not dropped: one ledger row for the whole charge, one claim, one row on the invoice.
+    expect(ledgerRows().map(([p]) => p)).toEqual(['payments/evt_cs_1']);
+    expect(docs['payments/evt_cs_1']).toMatchObject({ amountCents: 4000, invoiceId: 'inv1' });
+    expect(docs['stripePayments/pi_1']).toMatchObject({ invoiceId: 'inv1' });
+    // It takes the fallback landing (#2276), named on the invoice, the ledger row and a warn line for the owner's report.
+    expect(docs[INVOICE]).toMatchObject({ cardApplyFallback: 'apply_invoice_not_payable', paidCents: 4000 });
+    expect(docs['payments/evt_cs_1']).toMatchObject({ cardApplyFallback: 'apply_invoice_not_payable', appliedCents: 4000 });
+    expect(hooks.log.mock.calls.filter((c) => c[0]?.event === 'stripe.cardApply.fallback')).toHaveLength(1);
+    expect(invoiceRowsCents()).toBe(4000);
+    expect(outcome('evt_pi_1')).toBe('SKIPPED_DUPLICATE_PAYMENT');
+    expect(docs['families/fam1']!.accountBalanceCents).toBe(0);
+  });
+});
+
+describe('#2344: a skipped payment sent again twice at once', () => {
+  const skipped = (type: string) => ({
+    type,
+    receivedAt: '__TS__',
+    eventCreatedMs: ms(1),
+    familyId: 'fam1',
+    invoiceId: 'inv1',
+    appliedOutcome: 'SKIPPED_OUT_OF_ORDER',
+  });
+
+  it('the same event twice, the second landing while the first is deciding: one row, one notice', async () => {
+    paid(1, 4000, 1);
+    docs[INVOICE] = { ...OPEN, lastStripeEventAtMs: ms(10), lastStripeEventId: 'evt_fail_2' };
+    docs['stripeEvents/evt_cs_1'] = skipped('checkout.session.completed');
+    let fired = false;
+    let inner = 0;
+    installOptimisticTransactions(hooks.db.current as any, docs, {
+      onRead: async (path) => {
+        if (fired || path !== INVOICE) return;
+        fired = true;
+        inner = await deliver('session-1');
+      },
+    });
+
+    expect(await deliver('session-1')).toBe(200);
+
+    expect(fired).toBe(true);
+    expect(inner).toBe(200);
+    expectPaidOnceBy(1, 'evt_cs_1');
+    expect(ledgerRows()).toHaveLength(1);
+    expect(docs['stripeEvents/evt_cs_1']).toMatchObject({ recoveredFromOutcome: 'SKIPPED_OUT_OF_ORDER' });
+  });
+
+  it('both events of the payment, one landing while the other is deciding: one row, one ledger row', async () => {
+    paid(1, 4000, 1);
+    docs[INVOICE] = { ...OPEN, lastStripeEventAtMs: ms(10), lastStripeEventId: 'evt_fail_2' };
+    docs['stripeEvents/evt_cs_1'] = skipped('checkout.session.completed');
+    docs['stripeEvents/evt_pi_1'] = skipped('payment_intent.succeeded');
+    let fired = false;
+    let inner = 0;
+    installOptimisticTransactions(hooks.db.current as any, docs, {
+      onRead: async (path) => {
+        if (fired || path !== INVOICE) return;
+        fired = true;
+        inner = await deliver('intent-1');
+      },
+    });
+
+    expect(await deliver('session-1')).toBe(200);
+
+    expect(inner).toBe(200);
+    expectPaidOnceBy(1, 'evt_pi_1');
+    expect(outcome('evt_cs_1')).toBe('SKIPPED_DUPLICATE_PAYMENT');
+    expect(ledgerRows()).toHaveLength(1);
+    expect(invoiceRowsCents()).toBe(4000);
+  });
+
+  it('a payment recorded by hand while the skipped event is being decided: the charge is held, not applied twice', async () => {
+    paid(1, 4000, 1);
+    docs[INVOICE] = { ...OPEN, lastStripeEventAtMs: ms(10) };
+    docs['stripeEvents/evt_cs_1'] = skipped('checkout.session.completed');
+    let fired = false;
+    installOptimisticTransactions(hooks.db.current as any, docs, {
+      onRead: (path) => {
+        if (fired || path !== INVOICE) return;
+        fired = true;
+        docs[INVOICE] = {
+          ...docs[INVOICE]!,
+          status: 'paid',
+          paymentStatus: 'PAID',
+          amountDue: 0,
+          amountDueCents: 0,
+          paidCents: 4000,
+        };
+        docs[`${INVOICE}/payments/hand1`] = { amount: 40, amountCents: 4000, method: 'cash' };
+      },
+    });
+
+    expect(await deliver('session-1')).toBe(200);
+
+    expect(outcome('evt_cs_1')).toBe('SKIPPED_DUPLICATE_INVOICE');
+    expect(invoiceRows().map(([p]) => p)).toEqual([`${INVOICE}/payments/hand1`]);
+    expect(docs['payments/evt_cs_1']).toMatchObject({ amountCents: 4000, needsAdminDecision: true, appliedToInvoice: false });
+    expect(notices('invoice.payment.applied')).toHaveLength(0);
   });
 });

@@ -6,6 +6,7 @@ import { verifyStripeWebhook, getStripe } from '../lib/stripe';
 import { TIP_BASIS_FIELD, dollarsToCents } from '../lib/paymentMoney';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { invoiceMarkedPaid } from '../lib/invoicePaidGate';
 import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
 // #1005: money notices go to a member with billing access, not the last-synced account.
@@ -113,7 +114,47 @@ export function stripeAuditDocId(eventId: string, kind: FollowupKind): string {
  * two so a crash between the commit and the notice is finished on Stripe's
  * retry instead of being lost.
  */
-export type FollowupKind = 'paid' | 'failed' | 'unapplied';
+export type FollowupKind = 'paid' | 'failed' | 'unapplied' | 'declinedAfterPayment';
+
+/**
+ * #2344: `appliedOutcome` for a declined charge on an invoice that was already
+ * paid, or whose payment from the same checkout had already landed. The
+ * household is sent NO `invoice.charge.failed` for it (they owe nothing by
+ * that card, and the notice asks them to pay). The owner gets one Activity Log
+ * line in plain words instead, and the invoice is not written at all.
+ */
+export const DECLINED_AFTER_PAYMENT = 'FAILED_AFTER_PAYMENT';
+/** Stored on the event record with `DECLINED_AFTER_PAYMENT`: which of the two it was, and the invoice's number for the line. */
+export const DECLINE_REASON_FIELD = 'declineAfterPaymentReason';
+export const DECLINE_INVOICE_NUMBER_FIELD = 'declineInvoiceNumber';
+/** `noticeSkippedReason` for a decline that is deliberately not told to anyone. */
+export const NOTICE_SKIPPED_AFTER_PAYMENT = 'declined-after-payment';
+
+/** Why a decline is not worth telling the household about. */
+export type DeclineAfterPaymentReason = 'invoice-paid' | 'payment-landed';
+export interface DeclineAfterPaymentDetail {
+  reason: DeclineAfterPaymentReason;
+  invoiceNumber: string;
+}
+
+/**
+ * PURE. Whether a declined charge has been overtaken by a payment: the
+ * PaymentIntent it names has its claim (`stripePayments/{id}`, written in the
+ * same commit as the money, so the checkout's own payment landed), or the
+ * invoice reads paid. Null when the decline still matters to the household.
+ */
+export function declineAfterPayment(
+  invoice: Record<string, unknown> | undefined | null,
+  paymentLanded: boolean,
+): DeclineAfterPaymentDetail | null {
+  const paid = invoiceMarkedPaid(invoice ?? null);
+  if (!paid && !paymentLanded) return null;
+  const number = invoice?.['invoiceNumber'];
+  return {
+    reason: paid ? 'invoice-paid' : 'payment-landed',
+    invoiceNumber: typeof number === 'string' ? number : '',
+  };
+}
 
 /** What the `unapplied` follow-up says about the charge. Stored on the event record for a retry. */
 export interface UnappliedDetail {
@@ -156,6 +197,8 @@ async function finishEventFollowup(input: {
   noticeDone: boolean;
   /** Set for `unapplied` only. */
   unapplied?: UnappliedDetail;
+  /** Set for `declinedAfterPayment` only. */
+  declined?: DeclineAfterPaymentDetail;
   /**
    * Who started the checkout: `payInvoice` stamps the caller's uid into the
    * session metadata. Since D-2026-09-28-BILLING-ACCESS-PAYS that can be a
@@ -179,6 +222,34 @@ async function finishEventFollowup(input: {
   const paid = input.kind === 'paid';
   const unapplied = input.kind === 'unapplied';
   const detail: UnappliedDetail = input.unapplied ?? { paymentIntentId: null, duplicateReason: null, unappliedCents: 0 };
+  if (input.kind === 'declinedAfterPayment') {
+    // #2344: THE OWNER'S LINE, AND NO NOTICE TO ANYONE. `info`: no money moved
+    // and nothing is asked of the owner. The notice is stamped as skipped in
+    // the same breath, so no retry of this event ever sends one.
+    const declined: DeclineAfterPaymentDetail = input.declined ?? { reason: 'invoice-paid', invoiceNumber: '' };
+    if (!input.auditDone) {
+      // Loaded here, on the one path that needs it, to keep the sentences out
+      // of every function's cold start (test/coldStartImportGraph.test.ts).
+      const { cardDeclinedAfterPaymentWords } = await import('../lib/activityWords.js');
+      await writeAuditEntry({
+        status: 'FAILURE',
+        event: AUDIT_EVENTS.BILLING_CARD_DECLINED_AFTER_PAYMENT,
+        severity: 'info',
+        actorRole: 'SYSTEM',
+        familyId: input.familyId,
+        targetUid: input.invoiceId,
+        targetCollection: 'invoices',
+        description: cardDeclinedAfterPaymentWords(declined.invoiceNumber, declined.reason),
+        payload: { invoiceId: input.invoiceId, stripeEventId: input.eventId, reason: declined.reason },
+        docId: stripeAuditDocId(input.eventId, input.kind),
+      });
+    }
+    await stamp({
+      ...(input.auditDone ? {} : { [AUDIT_WRITTEN_FIELD]: FieldValue.serverTimestamp() }),
+      ...(input.noticeDone ? {} : { [NOTICE_SKIPPED_FIELD]: NOTICE_SKIPPED_AFTER_PAYMENT }),
+    });
+    return;
+  }
   if (!input.auditDone) {
     await writeAuditEntry({
       status: paid ? 'SUCCESS' : 'FAILURE',
@@ -586,9 +657,17 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   let cardFallbackReason: string | null = null;
   // #2344: this delivery is deciding a paid event an earlier build skipped.
   let recoveredSkip = false;
+  // #2344: a decline the household is not told about, and why. Read back after
+  // the commit for the Activity Log line.
+  let declinedDetail: DeclineAfterPaymentDetail | null = null;
+  // The claim of the PaymentIntent a FAILED event names. Read, never written:
+  // a decline must not claim the id (see `paymentClaimRef`).
+  const declinedClaimRef =
+    isFailedEvent && paymentIntentId ? db().doc(`stripePayments/${paymentIntentId}`) : null;
   const decision = await db().runTransaction(async (tx) => {
     unresolvedAmount = false;
     recoveredSkip = false;
+    declinedDetail = null;
     duplicateReason = null;
     unappliedCents = 0;
     cardFallbackReason = null;
@@ -617,6 +696,11 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         followupTracked: stored[FOLLOWUP_TRACKED_FIELD] === true,
         auditDone: stored[AUDIT_WRITTEN_FIELD] != null,
         noticeDone: stored[NOTICE_SENT_FIELD] != null || stored[NOTICE_SKIPPED_FIELD] != null,
+        declined: {
+          reason: stored[DECLINE_REASON_FIELD] === 'payment-landed' ? 'payment-landed' : 'invoice-paid',
+          invoiceNumber:
+            typeof stored[DECLINE_INVOICE_NUMBER_FIELD] === 'string' ? stored[DECLINE_INVOICE_NUMBER_FIELD] : '',
+        } as DeclineAfterPaymentDetail,
         unapplied: {
           paymentIntentId: typeof stored['paymentIntentId'] === 'string' ? stored['paymentIntentId'] : null,
           duplicateReason: typeof stored['duplicateReason'] === 'string' ? stored['duplicateReason'] : null,
@@ -627,6 +711,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // Every read before the first write: a Firestore transaction refuses reads
     // after writes, so this sits with the other gets, not with its branch.
     const claimSnap = paymentClaimRef ? await tx.get(paymentClaimRef) : null;
+    const declinedClaimSnap = declinedClaimRef ? await tx.get(declinedClaimRef) : null;
     const invoiceSnap = await tx.get(ref);
     const invoice = invoiceSnap.data() as
       | {
@@ -792,6 +877,32 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         { merge: true },
       );
       return { proceed: false, reason: 'duplicate-invoice-checkout' as const };
+    }
+
+    // #2344: A DECLINE OVERTAKEN BY A PAYMENT. The invoice reads paid, or the
+    // payment from this same checkout has landed. Telling the household their
+    // charge failed would ask them to pay a bill they have paid. So: no notice,
+    // one Activity Log line for the owner (after the commit), and NOTHING
+    // written to the invoice, not even the order stamp. Ahead of the date
+    // check on purpose: it holds whatever the decline's date.
+    const overtaken = isFailedEvent
+      ? declineAfterPayment(invoiceSnap.data() as Record<string, unknown> | undefined, declinedClaimSnap?.exists === true)
+      : null;
+    if (overtaken !== null) {
+      declinedDetail = overtaken;
+      tx.create(dedupeRef, {
+        type: event.type,
+        receivedAt: FieldValue.serverTimestamp(),
+        eventCreatedMs,
+        familyId,
+        invoiceId,
+        appliedOutcome: DECLINED_AFTER_PAYMENT,
+        [DECLINE_REASON_FIELD]: overtaken.reason,
+        [DECLINE_INVOICE_NUMBER_FIELD]: overtaken.invoiceNumber,
+        [FOLLOWUP_TRACKED_FIELD]: true,
+        [NOTICE_SKIPPED_FIELD]: NOTICE_SKIPPED_AFTER_PAYMENT,
+      });
+      return { proceed: true, reason: 'declined-after-payment' as const };
     }
 
     if (isFailedEvent && eventCreatedMs > 0 && eventCreatedMs < lastEventMs) {
@@ -1156,16 +1267,57 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // repeat, not the dispatcher's default window; the audit entry's
   // deterministic id and the notice's ledger identity cover a step that
   // committed without its stamp.
-  const recoverKind: FollowupKind | null =
+  const storedKind: FollowupKind | null =
     decision.reason !== 'replay' || !decision.followupTracked || (decision.auditDone && decision.noticeDone)
       ? null
       : isPaidEvent && decision.appliedOutcome === 'PAID'
         ? 'paid'
         : isFailedEvent && decision.appliedOutcome === 'FAILED'
           ? 'failed'
-          : isPaidEvent && decision.appliedOutcome === 'SKIPPED_DUPLICATE_INVOICE'
-            ? 'unapplied'
-            : null;
+          : isFailedEvent && decision.appliedOutcome === DECLINED_AFTER_PAYMENT
+            ? 'declinedAfterPayment'
+            : isPaidEvent && decision.appliedOutcome === 'SKIPPED_DUPLICATE_INVOICE'
+              ? 'unapplied'
+              : null;
+  let recoverKind = storedKind;
+  let recoverDeclined: DeclineAfterPaymentDetail | null =
+    decision.reason === 'replay' && storedKind === 'declinedAfterPayment' ? decision.declined : null;
+  // Whether the audit entry of the kind being finished is written. A decline
+  // that changes kind below owes the new kind's line whatever the old one did.
+  let recoverAuditDone = decision.reason === 'replay' ? decision.auditDone : false;
+  if (decision.reason === 'replay' && storedKind === 'failed' && !decision.noticeDone) {
+    // #2344: A DECLINE WHOSE NOTICE NEVER WENT OUT, RETRIED AFTER THE INVOICE
+    // WAS PAID. The first delivery recorded the decline and its notice threw;
+    // a payment has landed since. Sending `invoice.charge.failed` now would
+    // tell a household that has paid to pay. The invoice is read as it stands
+    // (the event's own transaction returned before reading it): overtaken, the
+    // notice is closed as skipped and the owner gets the line instead. A read
+    // that throws answers 500 below, and Stripe tries again.
+    try {
+      const [invoiceNow, claimNow] = await Promise.all([
+        ref.get(),
+        declinedClaimRef ? declinedClaimRef.get() : Promise.resolve(null),
+      ]);
+      const overtakenNow = declineAfterPayment(
+        invoiceNow.data() as Record<string, unknown> | undefined,
+        claimNow?.exists === true,
+      );
+      if (overtakenNow !== null) {
+        recoverKind = 'declinedAfterPayment';
+        recoverDeclined = overtakenNow;
+        recoverAuditDone = false;
+      }
+    } catch (err) {
+      logEvent({
+        severity: 'error',
+        function: 'stripeWebhook',
+        event: 'stripe.followup.failed',
+        extra: { kind: 'failed', familyId, invoiceId, eventId: event.id, replay: true, err: (err as Error)?.message },
+      });
+      res.status(500).json({ error: 'followup-pending' });
+      return;
+    }
+  }
   if (recoverKind !== null && decision.reason === 'replay') {
     try {
       await finishEventFollowup({
@@ -1173,9 +1325,10 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         familyId,
         invoiceId,
         eventId: event.id,
-        auditDone: decision.auditDone,
+        auditDone: recoverAuditDone,
         noticeDone: decision.noticeDone,
         ...(recoverKind === 'unapplied' ? { unapplied: decision.unapplied } : {}),
+        ...(recoverKind === 'declinedAfterPayment' && recoverDeclined ? { declined: recoverDeclined } : {}),
         paidByUid: metadata?.uid ?? null,
       });
     } catch (err) {
@@ -1226,7 +1379,19 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // `invoice.charge.failed` ran after the commit with no guard, so a throw drew a
   // Stripe retry that stopped at the replay check and lost the notice for good.
   // Now either outcome answers 500 until its follow-up is stamped done.
-  const followupKind: FollowupKind = isPaidEvent ? 'paid' : 'failed';
+  const overtakenDecline: DeclineAfterPaymentDetail | null =
+    // The cast undoes TypeScript's narrowing: the value is set inside the
+    // transaction callback, which the compiler does not follow.
+    decision.reason === 'declined-after-payment' ? (declinedDetail as DeclineAfterPaymentDetail | null) : null;
+  const followupKind: FollowupKind = isPaidEvent ? 'paid' : overtakenDecline !== null ? 'declinedAfterPayment' : 'failed';
+  if (overtakenDecline !== null) {
+    logEvent({
+      severity: 'info',
+      function: 'stripeWebhook',
+      event: 'stripe.decline.afterPayment',
+      extra: { invoiceId, familyId, eventId: event.id, type: event.type, reason: overtakenDecline.reason },
+    });
+  }
   try {
     await finishEventFollowup({
       kind: followupKind,
@@ -1234,7 +1399,9 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       invoiceId,
       eventId: event.id,
       auditDone: false,
-      noticeDone: false,
+      // The decline's event record already says its notice is skipped.
+      noticeDone: overtakenDecline !== null,
+      ...(overtakenDecline !== null ? { declined: overtakenDecline } : {}),
       paidByUid: metadata?.uid ?? null,
     });
   } catch (err) {
