@@ -1202,9 +1202,14 @@ describe('#884 second review: the credit notice survives a crash', () => {
   it('a partial credit draw, then a card payment of the rest, sends exactly one', async () => {
     seedInvoice();
     docs['families/fam1'] = { accountBalanceCents: 1000 };
-    await draw();
+    // #2276: a $10.00 draw, as the test's name says. It used to ask for the
+    // whole $40.00, which a $10.00 credit refuses, so nothing was drawn and
+    // the old webhook marked the bill paid on $30.00 of $40.00 all the same.
+    await withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw(1000)));
+    expect(docs[INVOICE]).toMatchObject({ status: 'open', paidCents: 1000, amountDueCents: 3000 });
     expect(appliedCount()).toBe(0);
     expect(await deliver(stripeEvent('evt_1', 'checkout.session.completed', 3000))).toBe(200);
+    expect(docs[INVOICE]).toMatchObject({ paidCents: 4000, amountDueCents: 0 });
     expect(docs[INVOICE]!['status']).toBe('paid');
     expect(appliedCount()).toBe(1);
     expect(staffCount()).toBe(1);

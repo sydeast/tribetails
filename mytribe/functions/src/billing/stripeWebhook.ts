@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { verifyStripeWebhook, getStripe } from '../lib/stripe';
-import { dollarsToCents } from '../lib/paymentMoney';
+import { TIP_BASIS_FIELD, dollarsToCents } from '../lib/paymentMoney';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { logEvent } from '../lib/logger';
@@ -12,7 +12,16 @@ import { wrapHttp } from '../lib/wrapHttp';
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed, type UnresolvedResolver } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
-import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { centsToDollars, formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { stageApply } from '../lib/paymentApply';
+import {
+  CARD_APPLY_FALLBACK_FIELD,
+  CARD_PAYMENT_METHOD,
+  CARD_PAYMENT_RECORDED_BY,
+  cardPaymentRowId,
+  decideCardApply,
+} from '../lib/cardPaymentApply';
+import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
 import { FULL_CPU } from '../lib/runtimeOptions';
@@ -555,10 +564,14 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // a Firestore transaction re-runs its callback on contention.
   let duplicateReason: DuplicateCheckoutReason = null;
   let unappliedCents = 0;
+  // #2276: why the card payment took the fallback landing, when it did. Read
+  // back after the commit for the warn line, like the two above.
+  let cardFallbackReason: string | null = null;
   const decision = await db().runTransaction(async (tx) => {
     unresolvedAmount = false;
     duplicateReason = null;
     unappliedCents = 0;
+    cardFallbackReason = null;
     const dedupeSnap = await tx.get(dedupeRef);
     if (dedupeSnap.exists) {
       // #866: what the first delivery recorded, so a retry can finish a paid
@@ -593,10 +606,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
           paymentStatus?: unknown;
         }
       | undefined;
-    // The state stamp's payment standing reads the `payments` SUBCOLLECTION
-    // (Stripe's own mirror docs live in the ROOT `payments` collection, so on
-    // a card-only invoice this sums to zero; a manually-recorded partial shows
-    // up here and keeps the doc honestly repairable). Read now, before the
+    // The invoice's own `payments` rows: what has been collected on it, and
+    // (#2276) what the card payment is applied against. Read now, before the
     // first write: a Firestore transaction refuses reads after writes.
     const subPaymentsSnap = isPaidEvent ? await tx.get(ref.collection('payments')) : null;
     const lastEventMs = invoice?.lastStripeEventAtMs ?? 0;
@@ -783,134 +794,210 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         invoiceId,
       });
     }
-    // Match the flat-doc shape AuntieOS writes: free-text `status` + numeric
-    // `amountDue`. The portal renders the stored `status` stamp (ADR-0002;
-    // its money heuristic is retired) and the reminders cron still reads
-    // `amountDue <= 0` as settled, so mark both.
+    // ── THE MONEY ─────────────────────────────────────────────────────────
     const patch: Record<string, unknown> = {
       lastStripeEventAtMs: eventCreatedMs,
       lastStripeEventId: event.id,
     };
-    if (isPaidEvent) {
+    if (!isPaidEvent) {
+      // A failed charge changes nothing the invoice's money or state reads.
+      tx.set(ref, patch, { merge: true });
+      return { proceed: true, reason: 'applied' as const };
+    }
+    // NOTE-57: THE AUTHORITATIVE AMOUNT is the one on the Stripe event
+    // (`amount_paid` / `amount_received` / `amount_total`, integer cents,
+    // computed once above the transaction). Only when the event carries none
+    // is the invoice's own figure used, and only when neither yields a
+    // positive amount is the row recorded with none, flagged
+    // `amountResolved: false` and warned about. The fallback reads the stated
+    // balance first: on a part-paid invoice that is what the card was charged.
+    const invoiceForAmount = invoiceSnap.data() as { amountDue?: number; total?: number } | undefined;
+    const eventAmount = eventAmountCents;
+    const localAmount =
+      typeof invoiceForAmount?.amountDue === 'number' && invoiceForAmount.amountDue > 0
+        ? invoiceForAmount.amountDue
+        : typeof invoiceForAmount?.total === 'number' && invoiceForAmount.total > 0
+          ? invoiceForAmount.total
+          : null;
+    const amount = eventAmount ?? localAmount;
+    const amountResolved = amount !== null;
+    if (!amountResolved) {
+      unresolvedAmount = true;
+    }
+    // The event amount is already integer cents and passes through unchanged.
+    // The local-invoice fallback is the flat doc's legacy dollar float and is
+    // converted once, here, same as `recordPayment` does.
+    const amountCents =
+      eventAmount !== null ? eventAmount : localAmount !== null ? dollarsToCents(localAmount) : null;
+    // #2276: WHERE THE CARD MONEY LANDS ON THE INVOICE, decided from the
+    // invoice and the payment rows this transaction read. Every other path
+    // that puts money on an invoice reads and writes the same invoice doc in
+    // its own transaction, so they commit one after the other and this
+    // decision re-runs against whatever landed first. `lib/cardPaymentApply.ts`
+    // has the three landings and why none of them refuses.
+    const existingPayments = (subPaymentsSnap?.docs ?? []).map((d) => d.data() as PaymentAmount);
+    const landing = decideCardApply({
+      invoiceId,
+      doc: invoiceSnap.exists ? ((invoiceSnap.data() ?? {}) as InvoiceDoc) : null,
+      existingPayments,
+      cardCents: amountCents,
+      kinfolkId: familyId,
+    });
+    cardFallbackReason = landing.kind === 'fallback' ? landing.reason : null;
+    // The webhook's own bookkeeping on the invoice, written by every landing
+    // in the same write as the money.
+    //
+    // The pending pair: a session that PAID is just as finished as one that
+    // expired (the `checkout.session.expired` branch above). Not cleared on a
+    // failed charge: a declined card does not close the Checkout Session.
+    patch.pendingCheckoutSessionId = FieldValue.delete();
+    patch.pendingAt = FieldValue.delete();
+    // CLOSE THIS SETTLEMENT ROUND (issue #826), in the same write as the money.
+    //
+    //   the round     moves past every Checkout Session already minted for
+    //                 this balance, so any of them that settles later arrives
+    //                 STALE. `payInvoice` reads it back when it mints the
+    //                 next one, so a bill whose balance genuinely comes back
+    //                 (a line item added, a partial recorded elsewhere) can
+    //                 still be paid a second time.
+    //   the intent    names WHICH payment settled it, which is what lets the
+    //                 next paid event tell "the other half of my own charge"
+    //                 from "somebody else's charge on my bill" — and is the
+    //                 only one of the two that works on a session minted
+    //                 before this stamp existed.
+    patch[CHECKOUT_ROUND_FIELD] = checkoutRoundOf(invoice?.[CHECKOUT_ROUND_FIELD]) + 1;
+    if (paymentIntentId) patch[SETTLED_INTENT_FIELD] = paymentIntentId;
+    const paymentRef = db().collection('payments').doc(event.id);
+    const invoiceRowId = cardPaymentRowId(paymentIntentId, event.id);
+    const rowExtras = {
+      stripeEventId: event.id,
+      ...(paymentIntentId ? { stripePaymentIntentId: paymentIntentId } : {}),
+    };
+    // What the ledger row says about the invoice. Absent on a row with no
+    // invoice row behind it (no amount, or no invoice document).
+    let ledgerApply: Record<string, unknown> = {};
+    const ledgerApplyOf = (appliedCents: number, tipCents: number, invoiceNumber: string) => ({
+      // The same fields `recordPayment` writes for a payment it applied, so
+      // the admin ledgers read a card payment as applied to its invoice.
+      appliedInvoiceId: invoiceId,
+      appliedInvoiceNumber: invoiceNumber,
+      appliedCents,
+      // GROSS, and only ever the part of the charge over the balance (ruling
+      // 2026-09-27: an overpayment is all tip; the fee comes out of the tip).
+      // `feeCents` sits beside it; the net is derived by the readers.
+      tipCents,
+      [TIP_BASIS_FIELD]: 'gross',
+      unappliedCents: 0,
+      // What the business receives. Absent while the fee is unresolved: a
+      // figure here would claim Stripe charged nothing.
+      ...(feeResolved && feeCents !== null ? { proceedsCents: appliedCents + tipCents - feeCents } : {}),
+      creditedToAccountCents: 0,
+      invoicePaymentId: invoiceRowId,
+    });
+    if (landing.kind === 'planned') {
+      // THE ORDINARY LANDING: the row and the invoice update `recordPayment`'s
+      // apply writes, from the same helper. The invoice's status, balance and
+      // state stamp are derived from the sum of its payment rows.
+      const staged = stageApply(db(), tx, {
+        step: landing.step,
+        sourcePaymentId: event.id,
+        method: CARD_PAYMENT_METHOD,
+        reference: referenceNumber,
+        paidAtIso: new Date(eventCreatedMs > 0 ? eventCreatedMs : Date.now()).toISOString(),
+        uid: CARD_PAYMENT_RECORDED_BY,
+        // #866: this webhook sends the household's `invoice.payment.applied`
+        // below, so it names itself as the sender in the write that pays the
+        // bill, and `onInvoicesWrite` stands down for that write.
+        noticeOwner: paymentAppliedOwner('stripe', event.id),
+        paymentRowId: invoiceRowId,
+        rowExtras,
+        invoiceExtras: patch,
+      });
+      ledgerApply = {
+        ...ledgerApplyOf(landing.appliedCents, landing.tipCents, staged.invoiceNumber),
+        application: staged,
+        settlesInvoice: staged.state === 'settled' || staged.state === 'overpaid',
+      };
+    } else {
+      // THE FALLBACK AND THE NO-AMOUNT LANDINGS mark the invoice paid with
+      // nothing owed, which is what this webhook did for every payment before
+      // #2276: free-text `status` plus both balance fields (the portal renders
+      // the stored status, the reminders cron reads `amountDue <= 0`, and
+      // `payInvoice` and `getMyInvoices` prefer `amountDueCents`).
       patch.status = 'paid';
+      patch.paymentStatus = 'PAID';
       patch.amountDue = 0;
-      // THE INTEGER FIELD TOO, AND IT WAS MISSING (found while building #826).
-      //
-      // `amountDue` is the legacy dollar float; `amountDueCents` is the integer
-      // the settlement pass writes (`lib/invoiceMath.ts`) and the field every
-      // reader that knows about it PREFERS: `payInvoice`'s "Invoice is fully
-      // paid" refusal reads it first, `getMyInvoices` reads it first, and so
-      // does the owes-nothing test the new invoice-level dedupe rests on.
-      // `createInvoice` puts it on every invoice it writes, and this flip zeroed
-      // only the dollar beside it — leaving the PREFERRED figure reading the
-      // full balance on an invoice Stripe had just paid.
-      //
-      // That is not a display nit. It let `payInvoice` mint a fresh full-amount
-      // checkout for an already-paid invoice, at the CURRENT round, which
-      // nothing downstream can tell from a legitimate second payment: #826
-      // reachable through the callable with no client change at all.
       patch.amountDueCents = 0;
       patch.paidAt = FieldValue.serverTimestamp();
-      // The state stamp (ADR-0002), in the same transactional write as the
-      // flip it describes. A failed event changes nothing the classifier
-      // reads, so only the paid branch stamps.
-      const paidCents = paidCentsFromPayments(
-        (subPaymentsSnap?.docs ?? []).map((d) => d.data() as PaymentAmount),
-      );
-      Object.assign(patch, invoiceStateStampOf({ ...(invoiceSnap.data() ?? {}), ...patch }, paidCents));
-      // The other end of the `checkout.session.expired` branch above: a session
-      // that PAID is just as finished as one that expired, so the pending pair
-      // goes here too, in the same transactional write as the flip it belongs
-      // to. Applied after the stamp is computed only for tidiness — the
-      // classifier reads `status`/`amountDue`/`total`/`creditRedeemedAt` and
-      // never these, so the sentinels could not reach it either way.
-      //
-      // Deliberately NOT on the failure branch: a declined card does not close
-      // the Checkout Session, and the household may still complete it.
-      patch.pendingCheckoutSessionId = FieldValue.delete();
-      patch.pendingAt = FieldValue.delete();
-      // CLOSE THIS SETTLEMENT ROUND (issue #826). Both fields are written in the
-      // same transactional write as the flip they describe, because either one
-      // landing without the other is a window of exactly the size this fix
-      // exists to shut.
-      //
-      //   the round     moves past every Checkout Session already minted for
-      //                 this balance, so any of them that settles later arrives
-      //                 STALE. `payInvoice` reads it back when it mints the
-      //                 next one, so a bill whose balance genuinely comes back
-      //                 (a line item added, a partial recorded elsewhere) can
-      //                 still be paid a second time.
-      //   the intent    names WHICH payment settled it, which is what lets the
-      //                 next paid event tell "the other half of my own charge"
-      //                 from "somebody else's charge on my bill" — and is the
-      //                 only one of the two that works on a session minted
-      //                 before this stamp existed.
-      patch[CHECKOUT_ROUND_FIELD] = checkoutRoundOf(invoice?.[CHECKOUT_ROUND_FIELD]) + 1;
-      if (paymentIntentId) patch[SETTLED_INTENT_FIELD] = paymentIntentId;
-      // #866: this webhook sends the household's `invoice.payment.applied`
-      // below, so it names itself as the sender in the write that pays the
-      // bill, and `onInvoicesWrite` stands down for that write.
       patch[PAYMENT_APPLIED_OWNER_FIELD] = paymentAppliedOwner('stripe', event.id);
-    }
-    tx.set(ref, patch, { merge: true });
-    if (isPaidEvent) {
-      // Mirror a flat `payments/{eventId}` doc to match AuntieOS bookkeeping.
-      // Keyed by the (idempotent) event id so a Stripe retry cannot duplicate
-      // a payment record.
-      //
-      // NOTE-57: prefer the AUTHORITATIVE amount carried on the Stripe event
-      // (invoice `amount_paid` / PaymentIntent `amount_received`) over
-      // re-deriving from our local invoice doc, which may be stale or missing.
-      // Only if neither the event nor the local invoice yields a positive
-      // amount do we fall back to recording null — and then we flag the doc
-      // `amountResolved: false` and warn loudly (fail-loud), never silently.
-      const invoiceForAmount = invoiceSnap.data() as { amountDue?: number; total?: number } | undefined;
-      // `amount_total` is the Checkout Session's leg of the same ladder — the
-      // authoritative figure on the event that now marks the invoice paid when
-      // it wins the race. Without it a Session-first delivery would fall back
-      // to the local invoice doc, which is the weaker source NOTE-57 exists to
-      // avoid. Integer minor units, exactly like its two siblings.
-      //
-      // Computed once, above the transaction, because the duplicate-checkout
-      // branch credits the same figure to the household's account balance.
-      const eventAmount = eventAmountCents;
-      const localAmount =
-        typeof invoiceForAmount?.amountDue === 'number' && invoiceForAmount.amountDue > 0
-          ? invoiceForAmount.amountDue
-          : typeof invoiceForAmount?.total === 'number' && invoiceForAmount.total > 0
-            ? invoiceForAmount.total
-            : null;
-      const amount = eventAmount ?? localAmount;
-      const amountResolved = amount !== null;
-      if (!amountResolved) {
-        unresolvedAmount = true;
+      const paidCents =
+        landing.kind === 'fallback' ? landing.paidCents : paidCentsFromPayments(existingPayments);
+      if (landing.kind === 'fallback') {
+        patch[CARD_APPLY_FALLBACK_FIELD] = landing.reason;
+        if (landing.writeRow) {
+          // The card money still goes on the invoice's own rows, so every sum
+          // of them counts it.
+          patch.paidCents = paidCents;
+          patch.paymentMethod = CARD_PAYMENT_METHOD;
+          patch.paymentReference = referenceNumber;
+          patch.lastPaymentAt = FieldValue.serverTimestamp();
+          tx.set(ref.collection('payments').doc(invoiceRowId), {
+            amount: centsToDollars(landing.appliedCents),
+            amountCents: landing.appliedCents,
+            method: CARD_PAYMENT_METHOD,
+            reference: referenceNumber,
+            paidAt: new Date(eventCreatedMs > 0 ? eventCreatedMs : Date.now()).toISOString(),
+            recordedBy: CARD_PAYMENT_RECORDED_BY,
+            sourcePaymentId: event.id,
+            createdAt: FieldValue.serverTimestamp(),
+            ...rowExtras,
+          });
+          const invoiceNumber = (invoiceSnap.data() as { invoiceNumber?: unknown } | undefined)?.invoiceNumber;
+          ledgerApply = {
+            ...ledgerApplyOf(
+              landing.appliedCents,
+              landing.tipCents,
+              typeof invoiceNumber === 'string' ? invoiceNumber : '',
+            ),
+            settlesInvoice: true,
+            [CARD_APPLY_FALLBACK_FIELD]: landing.reason,
+          };
+        } else {
+          ledgerApply = { [CARD_APPLY_FALLBACK_FIELD]: landing.reason };
+        }
       }
-      // The event amount (`amount_paid` / `amount_received`) is already
-      // integer cents, the currency's native unit — it passes through
-      // unchanged. The local-invoice fallback is the flat doc's legacy dollar
-      // float and is converted once, here, same as `recordPayment` does.
-      const amountCents =
-        eventAmount !== null ? eventAmount : localAmount !== null ? dollarsToCents(localAmount) : null;
-      const paymentRef = db().collection('payments').doc(event.id);
-      tx.set(paymentRef, {
-        kinfolkId: familyId,
-        invoiceId,
-        amount,
-        amountCents,
-        amountResolved,
-        amountSource: eventAmount !== null ? 'stripe-event' : localAmount !== null ? 'local-invoice' : 'unresolved',
-        paymentMethod: 'stripe',
-        referenceNumber,
-        date: FieldValue.serverTimestamp(),
-        stripeEventId: event.id,
-        // `feeCents` is the field `recordPayment` already writes and
-        // `getInvoiceLedger` already renders — no new field there. Present
-        // ONLY when resolved: the Admin SDK rejects a literal `undefined`,
-        // and an absent field reads correctly as "unknown", never as zero.
-        ...(feeResolved ? { feeCents } : {}),
-        feeResolved,
-      });
+      // The state stamp (ADR-0002), in the same transactional write as the
+      // flip it describes, from the doc as this write leaves it. The sentinels
+      // on the pending pair never reach the classifier: it reads
+      // `status`/`amountDue`/`total`/`creditRedeemedAt`.
+      const stampable = { ...patch };
+      delete stampable.pendingCheckoutSessionId;
+      delete stampable.pendingAt;
+      Object.assign(patch, invoiceStateStampOf({ ...(invoiceSnap.data() ?? {}), ...stampable }, paidCents));
+      tx.set(ref, patch, { merge: true });
     }
+    // The flat `payments/{eventId}` ledger row, keyed by the event id so a
+    // Stripe retry cannot duplicate it. `amount` keeps the unit `amountSource`
+    // names (cents off a Stripe event); `amountCents` is what every sum reads.
+    tx.set(paymentRef, {
+      kinfolkId: familyId,
+      invoiceId,
+      amount,
+      amountCents,
+      amountResolved,
+      amountSource: eventAmount !== null ? 'stripe-event' : localAmount !== null ? 'local-invoice' : 'unresolved',
+      paymentMethod: 'stripe',
+      referenceNumber,
+      date: FieldValue.serverTimestamp(),
+      stripeEventId: event.id,
+      // `feeCents` is the field `recordPayment` already writes and
+      // `getInvoiceLedger` already renders. Present ONLY when resolved: the
+      // Admin SDK rejects a literal `undefined`, and an absent field reads
+      // correctly as "unknown", never as zero.
+      ...(feeResolved ? { feeCents } : {}),
+      feeResolved,
+      ...ledgerApply,
+    });
     return { proceed: true, reason: 'applied' as const };
   });
 
@@ -925,6 +1012,17 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     });
   }
 
+  if (decision.proceed && cardFallbackReason !== null) {
+    // #2276: the payment is recorded and the invoice reads paid, but not
+    // through the ordinary plan. Named here so the owner's report
+    // (`scripts/backfillCardInvoicePayments.ts`) is not the only trace.
+    logEvent({
+      severity: 'warn',
+      function: 'stripeWebhook',
+      event: 'stripe.cardApply.fallback',
+      extra: { invoiceId, familyId, eventId: event.id, type: event.type, reason: cardFallbackReason },
+    });
+  }
   // Gated on `decision.proceed`: a replay or out-of-order skip wrote nothing,
   // so an unresolved fee on THAT attempt is not news — only warn when a
   // payment doc actually landed without one.
