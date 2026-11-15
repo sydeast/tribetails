@@ -10,8 +10,14 @@ import {
   invoicePdfMadeWords,
   invoiceSentence,
   kinArchivedWords,
+  notificationChannelFailedWords,
+  notificationChannelSkippedWords,
+  notificationChannelsOffWords,
   notificationDeliveredWords,
   notificationDispatchedWords,
+  notificationHeldWords,
+  notificationNoAccountWords,
+  notificationTurnedOffWords,
   quoteRevisedWords,
   triageAssignedWords,
   triageBadDataWords,
@@ -43,7 +49,70 @@ describe('activity words', () => {
     );
     expect(notificationDeliveredWords('', 'sms')).toBe('Delivered a notification by text message');
     expect(notificationDispatchedWords('KinCare booking confirmed', ['email', 'push'])).toBe(
-      'Sent "KinCare booking confirmed" by email and push notification',
+      'Sending "KinCare booking confirmed" by email and push notification',
+    );
+  });
+
+  /**
+   * #1905: a payment notice goes to the household and to the office. The two
+   * lines read alike, so the office's email looked like one sent against the
+   * household's switch. Each line names who the copy is for.
+   */
+  it('names who a copy is for, by name or "the office", on the sending and delivered lines', () => {
+    expect(notificationDispatchedWords('Payment or credit applied to an invoice', ['email'], 'the office')).toBe(
+      'Sending "Payment or credit applied to an invoice" to the office by email',
+    );
+    expect(notificationDispatchedWords('Your Auntie has arrived', ['email', 'sms', 'push'], 'Dre East')).toBe(
+      'Sending "Your Auntie has arrived" to Dre East by email, text message and push notification',
+    );
+    expect(notificationDeliveredWords('Your Auntie has arrived', 'sms', 'Dre East')).toBe(
+      'Delivered "Your Auntie has arrived" to Dre East by text message',
+    );
+    // A work order from before the audience was stored names nobody, and says nothing false.
+    expect(notificationDispatchedWords('Your Auntie has arrived', ['email'], '  ')).toBe(
+      'Sending "Your Auntie has arrived" by email',
+    );
+    expect(notificationDispatchedWords('', [])).toBe('Sending a notification');
+  });
+
+  /** #1819, #1905: every way a notice does not go out has its own sentence. */
+  it('says why a notice did not go out, per channel where the reason is a channel', () => {
+    expect(notificationHeldWords('Your Auntie is on the way', 'Dre East')).toBe(
+      'Held back "Your Auntie is on the way" for Dre East: notices to households are turned off',
+    );
+    expect(notificationHeldWords('Your Auntie is on the way', '')).toBe(
+      'Held back "Your Auntie is on the way": notices to households are turned off',
+    );
+    expect(notificationTurnedOffWords('Your Auntie is on the way', 'Dre East')).toBe(
+      'Did not send "Your Auntie is on the way" to Dre East: this notification is turned off in Settings',
+    );
+    expect(notificationChannelsOffWords('Payment or credit applied to an invoice', 'Dre East', ['email'])).toBe(
+      'Did not send "Payment or credit applied to an invoice" to Dre East by email: they turned that off in their notification settings',
+    );
+    expect(notificationChannelsOffWords('Invoice sent', 'Dre East', ['email', 'push'])).toBe(
+      'Did not send "Invoice sent" to Dre East by email and push notification: they turned that off in their notification settings',
+    );
+    expect(notificationNoAccountWords('Your Auntie has arrived', 'The Rivera Home')).toBe(
+      'Did not send "Your Auntie has arrived" to The Rivera Home: nobody in the household has a MyTribe sign-in',
+    );
+    expect(notificationNoAccountWords('Your Auntie has arrived', '')).toBe(
+      'Did not send "Your Auntie has arrived": nobody in the household has a MyTribe sign-in',
+    );
+    expect(notificationChannelSkippedWords('Invoice sent', 'Dre East', 'sms', 'recipient_no_phone')).toBe(
+      'Could not send "Invoice sent" to Dre East by text message: no mobile number on file',
+    );
+    expect(notificationChannelSkippedWords('Invoice sent', 'Dre East', 'email', 'recipient_no_email')).toBe(
+      'Could not send "Invoice sent" to Dre East by email: no email address on file',
+    );
+    expect(notificationChannelSkippedWords('Invoice sent', 'the office', 'email', 'business_email_unset')).toBe(
+      'Could not send "Invoice sent" to the office by email: no business email is set in Settings',
+    );
+    // A reason this file has no words for is never printed as its stored key.
+    expect(notificationChannelSkippedWords('Invoice sent', 'Dre East', 'push', 'some_new_reason')).toBe(
+      'Could not send "Invoice sent" to Dre East by push notification: it could not go out this way',
+    );
+    expect(notificationChannelFailedWords('Invoice sent', 'Dre East', 'email')).toBe(
+      'Could not send "Invoice sent" to Dre East by email: the send failed',
     );
   });
 

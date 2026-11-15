@@ -10,7 +10,6 @@ import { useCollection } from '../lib/firestore';
 import { useStaffNames, useStaffRoles } from '../lib/useStaffNames';
 import { type StaffRole } from '../api/staff';
 import { str } from '../lib/coerce';
-import { activityDescriptionWords } from '../lib/activityWords';
 import { type Async } from '../lib/async';
 import {
   activityCategoryOf,
@@ -23,8 +22,10 @@ import {
   activityMatchesQuery,
   activityMatchesStatus,
   activityPayloadRows,
-  activityShowsCode,
-  activityTitle,
+  activityEntryDescription,
+  activityEntryShowsCode,
+  activityEntryTitle,
+  activityRowShowsTarget,
   activityWhen,
   type ActivityCategory,
   type ActivityStatusFilter,
@@ -498,7 +499,8 @@ function rowContext(entry: ActivityLogEntry, names: ReadonlyMap<string, string>)
   const parts: string[] = [];
   // #1747: a stored path reads as words; the entry itself is never rewritten.
   const raw = str(entry.description);
-  const description = activityDescriptionWords(raw);
+  // #1819: a held notice an older server stored as "dispatched" reads as its reason.
+  const description = activityEntryDescription(entry);
   if (description !== '') parts.push(description);
   const look = activityIsHouseholdLook(entry);
   // #1839: a look the server wrote in words already names the Auntie and the
@@ -515,6 +517,8 @@ function rowContext(entry: ActivityLogEntry, names: ReadonlyMap<string, string>)
     return parts.join(' · ');
   }
   if (actor !== '') parts.push(names.get(actor) ?? actor);
+  // #1905: a notification row ends with its sentence, not a database path.
+  if (!activityRowShowsTarget(entry)) return parts.join(' · ');
   const targetId = str(entry.targetId).trim();
   const targetCollection = str(entry.targetCollection).trim();
   if (targetId !== '' && targetCollection !== '') parts.push(`${targetCollection}/${targetId}`);
@@ -577,8 +581,8 @@ function ActivityRow({
         <IconTile icon={tile.glyph} size={26} tone={tile.tone} className="activity__ico" />
         <span className="activity__meta">
           <span>
-            <b className="activity__title">{activityTitle(str(entry.actionType))}</b>
-            {activityShowsCode(str(entry.actionType)) ? (
+            <b className="activity__title">{activityEntryTitle(entry)}</b>
+            {activityEntryShowsCode(entry) ? (
               <code className="activity__code">{entry.actionType}</code>
             ) : null}
           </span>

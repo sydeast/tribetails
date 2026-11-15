@@ -508,12 +508,12 @@ internal fun ActivityRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
-                    text  = activityTitle(entry.actionType),
+                    text  = activityEntryTitle(entry),
                     style = AuntieTheme.typography.titleSmall,
                     color = c.textPrimary,
                 )
                 // A kind with a plain title (#1839) shows no code.
-                if (activityShowsCode(entry.actionType)) {
+                if (activityEntryShowsCode(entry)) {
                     Text(
                         text  = entry.actionType.uppercase(),
                         style = AuntieTheme.typography.mono,
@@ -522,8 +522,9 @@ internal fun ActivityRow(
                 }
                 if (entry.status.isNotBlank()) {
                     AuntieStatusPill(
-                        label = entry.status,
-                        tone  = statusTone(entry.status),
+                        // #1819: "Not sent" on a notice that did not go out, never SUCCESS.
+                        label = activityStatusWords(entry),
+                        tone  = statusTone(activityEffectiveStatus(entry)),
                         mono  = true,
                     )
                 }
@@ -569,9 +570,9 @@ private fun ActivityDetailModal(
     val target = listOf(entry.targetCollection, entry.targetId).filter { it.isNotBlank() }.joinToString("/")
     AuntieDialog(
         visible = true,
-        title = activityTitle(entry.actionType),
+        title = activityEntryTitle(entry),
         onDismiss = onDismiss,
-        hint = entry.actionType.uppercase().takeIf { activityShowsCode(entry.actionType) },
+        hint = entry.actionType.uppercase().takeIf { activityEntryShowsCode(entry) },
         maxWidth = 460.dp,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -582,7 +583,7 @@ private fun ActivityDetailModal(
                 AuntieKeyValueRow(label = "Business time", value = "${it.dayKey} ${it.clock}", valueMono = true)
             }
             AuntieKeyValueRow(label = "Action", value = entry.actionType.ifBlank { "-" }, valueMono = true)
-            AuntieKeyValueRow(label = "Status", value = entry.status.ifBlank { "-" })
+            AuntieKeyValueRow(label = "Status", value = activityStatusWords(entry).ifBlank { "-" })
             // #1592: the person by name; the uid stays beside it, because this is
             // the evidence log and the uid is what the record holds.
             val actorName = names[entry.actorId.trim()]
@@ -596,9 +597,9 @@ private fun ActivityDetailModal(
             actorRoleFor(entry, roles).takeIf { it.isNotBlank() }?.let {
                 AuntieKeyValueRow(label = "Actor role", value = it)
             }
-            if (entry.description.isNotBlank()) {
+            activityEntryDescription(entry).takeIf { it.isNotBlank() }?.let {
                 // #1747: a stored path reads as words; the entry is never rewritten.
-                AuntieKeyValueRow(label = "Detail", value = activityDescriptionWords(entry.description))
+                AuntieKeyValueRow(label = "Detail", value = it)
             }
             AuntieKeyValueRow(label = "Target", value = target.ifBlank { "-" }, valueMono = true, showDivider = false)
         }
@@ -651,6 +652,10 @@ internal fun matchesQuery(entry: ActivityLogEntry, query: String, names: Map<Str
         activityTitle(entry.actionType),
         entry.description,
         activityDescriptionWords(entry.description),
+        // #1819: a held notice's title, sentence and status, as the row shows them.
+        activityEntryTitle(entry),
+        activityEntryDescription(entry),
+        activityStatusWords(entry),
         entry.actorId,
         names[entry.actorId.trim()].orEmpty(),
         entry.targetId,
@@ -665,7 +670,8 @@ internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = em
     val look = isHouseholdLook(entry.actionType)
     val parts = buildList {
         // #1747: a stored path reads as words; the entry itself is never rewritten.
-        val words = activityDescriptionWords(entry.description)
+        // #1819: a held notice an older server stored as "dispatched" reads as its reason.
+        val words = activityEntryDescription(entry)
         if (words.isNotBlank()) add(words)
         // #1839: a look the server wrote in words already names the Auntie and
         // the household, so the row adds neither her name again nor the
@@ -680,6 +686,8 @@ internal fun rowContext(entry: ActivityLogEntry, names: Map<String, String> = em
             return@buildList
         }
         if (entry.actorId.isNotBlank()) add(names[entry.actorId.trim()] ?: entry.actorId)
+        // #1905: a notification row ends with its sentence, not a database path.
+        if (!activityRowShowsTarget(entry)) return@buildList
         val target = when {
             entry.targetCollection.isNotBlank() && entry.targetId.isNotBlank() ->
                 "${entry.targetCollection}/${entry.targetId}"

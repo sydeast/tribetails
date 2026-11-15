@@ -2,8 +2,6 @@ import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
-import { writeAuditEntry } from '../lib/writeAuditEntry';
-import { AUDIT_EVENTS } from '../lib/auditEvents';
 import {
   contentDedupeKey,
   enqueueNotificationDetailed,
@@ -232,8 +230,13 @@ export async function dispatchVisitNotificationCore(
   actorDisplayNameFallback?: string | undefined,
   opts: {
     /**
-     * #2037: a fixed id for the "notice dispatched" line, so the trigger and
+     * #2037: a fixed id for this step's Activity Log line, so the trigger and
      * `setVisitLifecycle` reaching the same clock step write it once.
+     *
+     * NO LONGER READ. Since #1819 this function writes one line only ("did not
+     * send: nobody in the household has a MyTribe sign-in"), and that line is
+     * named by the step's own identity so the callable, which has no such id,
+     * names the same one. Kept on the signature for its callers.
      */
     auditDocId?: string;
     /**
@@ -287,6 +290,24 @@ export async function dispatchVisitNotificationCore(
         reason: 'household_has_no_portal_account',
       },
     });
+    // #1819: the Activity Log says the notice did not go, and why. The
+    // dispatcher is never reached on this branch, so the line is written here.
+    //
+    // ITS ID IS THE STEP'S OWN IDENTITY (`visitDedupeKey`), the same one the
+    // dispatcher gives a held line, and not `opts.auditDocId`. Only the clock
+    // trigger passes that id; an installed client that still calls this
+    // callable after its own write does not, so the two wrote a line each for
+    // one tap. Every path to one step now names the same line.
+    const { recordNoticeNotSent, noticeLineIdForEvent } = await import('../notifications/noticeAudit.js');
+    const noAccountKey = EVENT_TO_KEY[args.event];
+    await recordNoticeNotSent({
+      key: noAccountKey,
+      outcome: 'no_account',
+      recipientUid: '',
+      stream: 'kinfolk',
+      familyId: args.familyId,
+      docId: noticeLineIdForEvent('no_account', noAccountKey, `key:${visitDedupeKey(visitId, args)}`, ''),
+    });
     const { householdNoticeNotSent } = await import('../notifications/householdNotice.js');
     return {
       ok: true,
@@ -337,23 +358,14 @@ export async function dispatchVisitNotificationCore(
   const dispatchIds = enqueued.written;
   const reason = visitNoticeReasonFor(enqueued);
 
-  // #2037: a step the household already heard about dispatched nothing, so it
-  // writes no "dispatched" line. Since the server sends each clock step itself,
-  // that is what an installed client from before #2037 reaches when it still
-  // dispatches after its write, and a second line would be a second claim.
-  if (reason !== 'already_notified') {
-    await writeAuditEntry({
-      status: 'SUCCESS',
-      event: AUDIT_EVENTS.NOTIFICATION_DISPATCHED,
-      severity: 'info',
-      actorRole: actorUid !== '' ? 'AUNTIE' : 'SYSTEM',
-      ...(actorUid !== '' ? { actorUid } : {}),
-      familyId: args.familyId,
-      payload: { key, batchId, visitId, event: args.event, dispatchIds, reason },
-      ...(opts.auditDocId !== undefined ? { docId: opts.auditDocId } : {}),
-    });
-  }
-
+  // #1819: NO ACTIVITY LOG LINE IS WRITTEN HERE ANY MORE. This used to write
+  // "Notification dispatched", status SUCCESS, whatever the dispatcher had
+  // done, so a notice the send switch held back read as sent. The dispatcher
+  // and the delivery triggers now write the line for what happened to the
+  // household's copy: "Sending ... to <name> by email" when it went to its
+  // channels, or "Held back ..." / "Did not send ..." with the reason
+  // (`notifications/noticeAudit.ts`). A repeat of a step the household already
+  // heard about writes nothing, as before (#2037).
   logEvent({
     severity: 'info',
     function: 'dispatchVisitNotification',

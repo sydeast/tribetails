@@ -107,6 +107,19 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
           uid: parent.recipientUid,
           extra: { key: parent.key, channel, reason: result.skipReason ?? 'unknown' },
         });
+        // #1905: the Activity Log says this channel did not go, and why.
+        const { recordNoticeNotSent, noticeLineId, noticeStream } = await import('../noticeAudit.js');
+        await recordNoticeNotSent({
+          key: parent.key,
+          outcome: 'no_address',
+          recipientUid: parent.recipientUid,
+          stream: noticeStream(parent.stream),
+          channels: [channel],
+          skipReason: result.skipReason ?? 'unknown',
+          data: parent.data ?? {},
+          notificationId,
+          docId: noticeLineId('no_address', notificationId, channel),
+        });
         return;
       }
       await snap.ref.set(
@@ -145,6 +158,15 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
         description: (await import('../../lib/activityWords.js')).notificationDeliveredWords(
           (await import('../notificationName.js')).notificationName(parent.key),
           channel,
+          // #1905: who it was delivered to, by name or "the office".
+          await (async () => {
+            const { noticeFamilyId, noticeRecipientWords, noticeStream } = await import('../noticeAudit.js');
+            return noticeRecipientWords(
+              noticeStream(parent.stream),
+              parent.recipientUid ?? '',
+              noticeFamilyId(parent.data),
+            );
+          })(),
         ),
         payload: {
           notificationId,
@@ -167,6 +189,19 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
         },
         { merge: true },
       );
+      // #1905: a send that threw is a line too, written once however often
+      // the trigger retries. `recordNoticeNotSent` never throws.
+      const { recordNoticeNotSent, noticeLineId, noticeStream } = await import('../noticeAudit.js');
+      await recordNoticeNotSent({
+        key: parent.key,
+        outcome: 'failed',
+        recipientUid: parent.recipientUid,
+        stream: noticeStream(parent.stream),
+        channels: [channel],
+        data: parent.data ?? {},
+        notificationId,
+        docId: noticeLineId('failed', notificationId, channel),
+      });
       throw err;
     }
 }

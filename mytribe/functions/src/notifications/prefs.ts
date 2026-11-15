@@ -347,6 +347,35 @@ export function resolveChannels(
   return out;
 }
 
+/**
+ * #1905: the channels THIS RECIPIENT switched off for [def]: the ones that
+ * would have gone out had they made no choice of their own, and do not because
+ * of it. Decided by asking `resolveChannels` twice, with and without their
+ * per-notification and per-category choices, so it can never disagree with the
+ * send.
+ *
+ * So it is not a channel that is off by default (text message and push start
+ * off, and a saved "off" for one changes nothing), not one the operator turned
+ * off or locked, and not one the catalog requires. The Activity Log names
+ * these, so a household's copy that went to their notifications list alone
+ * says why no email followed.
+ */
+export function channelsSwitchedOffByRecipient(
+  def: NotificationDef,
+  userPrefs: UserNotificationPrefs,
+  rawBusinessOverride: BusinessNotificationOverride | null,
+  stream: AudienceStream,
+): Channel[] {
+  const withTheirs = resolveChannels(def, userPrefs, rawBusinessOverride, stream);
+  const withoutTheirs = resolveChannels(
+    def,
+    { ...userPrefs, byKey: {}, byCategory: {} },
+    rawBusinessOverride,
+    stream,
+  );
+  return ALL_CHANNELS.filter((ch) => withoutTheirs[ch] && !withTheirs[ch]);
+}
+
 /** Convenience for tests / dispatcher: loads + resolves in one call. */
 export async function computeEffectiveChannels(
   notificationKey: string,

@@ -102,7 +102,11 @@ describe('#1505 trigger mode: every delivery channel off', () => {
     // #1507: nothing written, so nothing reached them in the app either.
     expect(outcome.appOnly).toEqual([]);
     expect(reachedAppOnly(outcome)).toBe(false);
-    expect(ctx.writes.map((w) => w.path), 'no record, no work order, no dedupe ledger').toEqual([]);
+    // #1819: the one thing written is the Activity Log line that says it was held.
+    expect(
+      ctx.writes.map((w) => w.path).filter((path) => !path.startsWith('activity_log')),
+      'no record, no work order, no dedupe ledger',
+    ).toEqual([]);
     expect(events()).toContain('notification.gated.household');
   });
 
@@ -143,7 +147,8 @@ describe('#1505 trigger mode: every delivery channel off', () => {
 
     expect(outcome.written).toEqual([]);
     expect(outcome.suppressed).toEqual([{ recipientUid: 'kinUid', reason: 'prefs' }]);
-    expect(ctx.writes).toEqual([]);
+    // #1819: the one thing written is the Activity Log line that says it was not sent.
+    expect(ctx.writes.filter((w) => !w.path.startsWith('activity_log'))).toEqual([]);
     const suppressed = mocks.logEventFn.mock.calls.map((c) => c[0]).find((f) => f.event === 'notification.suppressed');
     expect(suppressed?.extra).toMatchObject({ reason: 'disabled-by-operator' });
   });

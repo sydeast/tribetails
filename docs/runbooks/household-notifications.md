@@ -140,6 +140,31 @@ For the per-recipient detail, `jsonPayload.event="notification.gated.household"`
 carries the key, the recipient uid, the gate state and the channels that copy
 would have used. That is the list of mail the business meant to send and did not.
 
+### What the Activity Log says
+
+Each household copy the gate holds back writes one Activity Log line, titled
+"Notification not sent": `Held back "<notification>" for <name>: notices to
+households are turned off`. Its status is `NOT_SENT`, never `SUCCESS`, and it is
+not listed under Problems. The same step reached twice writes the line once; a
+daily job over the same invoice writes it once a day.
+
+The other lines of the same kind: the notification is turned off in Settings, a
+channel the household switched off themselves, a household with no MyTribe
+sign-in, a channel with no address on file, and a send that failed (status
+`FAILURE`, so it is under Problems and in the daily error digest). A copy that
+does go out writes `Sending "<notification>" to <name> by <channels>`, then one
+`Delivered` line per channel. "The office" is the business copy.
+
+During the re-upload this means one held line per household copy, beside the
+operator lines described below. The Activity Log lists the newest 200.
+
+### What the Settings panel says
+
+The panel's value line shows the saved state: notices to households on or off,
+the invoice send time, and the clock. The send time governs invoice reminders
+and overdue notices only. With the switch on and no send time, every other
+household notice still goes out as it happens.
+
 ### What the gate does not cover
 
 Three paths reach a household without passing it, and all three need you to
