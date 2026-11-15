@@ -769,6 +769,14 @@ class KinTaleReportViewModelTest {
         assertEquals(listOf(mapOf<String, Any?>("bodyCopy" to "Typed over.")), writes.toList())
     }
     @Test
+    fun `a sent tale that still carries notes offers none back`() = runTest(testDispatcher) {
+        val vm = reopenedVm(takenDraft.copy(status = "SENT"))
+        assertNull(vm.uiState.value.keptNotes)
+        vm.restoreNotes()
+        advanceUntilIdle()
+        assertEquals("Everyone ate and the water is topped up.", vm.uiState.value.report.bodyCopy)
+    }
+    @Test
     fun `a tale already sent never has the notes saved onto it`() = runTest(testDispatcher) {
         coEvery { mockRepo.generate(any(), any()) } returns
             Result.success(GenerateResponse(generatedCopy = "A new draft."))

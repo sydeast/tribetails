@@ -535,7 +535,9 @@ export function KinTaleCompose({ kinTaleId, sessionId, kinfolkId, onClose }: Kin
    * has been open, else the ones the saved draft carries from an earlier
    * sitting, on this device or another.
    */
-  const kept = keptNotes ?? (draft !== null ? keptNotesOnDraft(draft) : null);
+  // A tale already sent offers none from storage, whatever it carries: the
+  // household is reading that note, and working notes never go over it.
+  const kept = keptNotes ?? (draft !== null && !isSent ? keptNotesOnDraft(draft) : null);
   /**
    * #2052: hold what Auntie wrote BESIDE the note, never in it.
    *

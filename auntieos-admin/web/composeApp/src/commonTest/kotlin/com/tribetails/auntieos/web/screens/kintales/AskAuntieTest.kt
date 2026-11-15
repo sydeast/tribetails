@@ -237,6 +237,13 @@ class AskAuntieTest {
         assertEquals("", back.keptNotesDraft)
     }
     @Test
+    fun aSentTaleThatStillCarriesNotesOffersNoneBack() {
+        val sent = KinCareReport(bodyCopy = draft, keptNotes = notes, keptNotesDraft = draft, status = "SENT")
+        assertNull(sent.keptNotesOrNull())
+        assertNull(askAuntieStateFor(sent).kept)
+        assertNull(askAuntieStateFor(sent).restore())
+    }
+    @Test
     fun aTaleAlreadySentNeverCarriesTheNotes() {
         val sent = KinCareReport(bodyCopy = notes, status = "SENT").withDraftTaken(draft, KeptNotes(notes, draft))
         assertEquals(draft, sent.bodyCopy)

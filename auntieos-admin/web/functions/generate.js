@@ -589,6 +589,9 @@ async function readHouseholdKin(db, kinfolkId) {
     const mine =
       (stamped && (stamped.pointsAt === '' || stamped.pointsAt === id) ? stamped : null) ||
       all.find((e) => e.pointsAt === id) ||
+      // A copy and a record under ONE id, with no stamp either way, are one
+      // Kin (the booking roster reads them so too), never the same Kin twice.
+      (byFlatId.has(id) && byFlatId.get(id).pointsAt === '' ? byFlatId.get(id) : null) ||
       null;
     if (mine) {
       mine.ids.add(id);

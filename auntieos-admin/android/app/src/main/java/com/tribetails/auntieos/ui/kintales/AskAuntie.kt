@@ -41,6 +41,9 @@ fun notesForAuntie(body: String, kept: KeptNotes?): String =
  * every tale saved before the notes were kept.
  */
 fun KinCareReport.keptNotesOrNull(): KeptNotes? {
+    // A tale already sent offers none, whatever it still carries: the
+    // household is reading that narrative, and working notes never go over it.
+    if (status.trim().equals("SENT", ignoreCase = true)) return null
     val notes = keptNotes.orEmpty()
     return if (notes.isBlank()) null else KeptNotes(notes = notes, draftBody = keptNotesDraft.orEmpty())
 }

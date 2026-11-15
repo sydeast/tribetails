@@ -71,8 +71,13 @@ data class AskAuntieState(val offered: String? = null, val kept: KeptNotes? = nu
  * reopened, here or on another device. Null when it holds none, which is every
  * tale saved before the notes were kept.
  */
-fun KinCareReport.keptNotesOrNull(): KeptNotes? =
-    if (keptNotes.isBlank()) null else KeptNotes(notes = keptNotes, draftBody = keptNotesDraft)
+fun KinCareReport.keptNotesOrNull(): KeptNotes? = when {
+    // A tale already sent offers none, whatever it still carries: the
+    // household is reading that note, and working notes never go over it.
+    status.trim().equals("SENT", ignoreCase = true) -> null
+    keptNotes.isBlank() -> null
+    else -> KeptNotes(notes = keptNotes, draftBody = keptNotesDraft)
+}
 /** What Ask Auntie holds when the composer opens on [resumed] (null for a new tale). */
 fun askAuntieStateFor(resumed: KinCareReport?): AskAuntieState = AskAuntieState(kept = resumed?.keptNotesOrNull())
 /**

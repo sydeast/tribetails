@@ -1739,6 +1739,17 @@ describe('Ask Auntie: the notes she typed are saved with the draft she took', ()
     expect(await screen.findByDisplayValue(TAKEN)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Back to my notes' })).not.toBeInTheDocument();
   });
+  it('a sent tale that still carries notes offers none back', async () => {
+    mockStreams({
+      reports: {
+        status: 'ready',
+        data: [report({ bodyCopy: TAKEN, keptNotes: NOTES, keptNotesDraft: TAKEN, status: 'SENT', sentAt: '2026-07-16T16:00:00.000Z', sentVia: 'pending' })],
+      },
+    });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByDisplayValue(TAKEN)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Back to my notes' })).not.toBeInTheDocument();
+  });
   it('a tale already sent never has her notes saved onto it, though they can be put back on screen', async () => {
     await takeDraft(report({ title: 'Park day', status: 'SENT', sentAt: '2026-07-16T16:00:00.000Z', sentVia: 'pending' }));
     expect(screen.getByRole('button', { name: 'Back to my notes' })).toBeInTheDocument();

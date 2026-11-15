@@ -1283,3 +1283,17 @@ describe('review of #2052 / #2079: the paths a KinTale could still slip through'
     assert.strictEqual(a.calls.length, 2);
   });
 });
+describe('review: a Kin whose household copy and office record share one id', () => {
+  it('is one Kin on the visit, named once', async () => {
+    const db = t1Db({ 'families/t1/kin': [...T1_FAMILY_KIN, { id: 'k-biscuit', name: 'Biscuit' }] });
+    const a = visitModel([GOOD_DRAFT]);
+    await run(db, a);
+    assert.match(promptOf(a), /Kin on this visit \(4\): Biscuit \(dog\), Waffle \(dog\), Mochi \(cat\), Pepper \(cat\)/);
+  });
+  it('and is held back when that copy alone says it is no longer in care', async () => {
+    const db = t1Db({ 'families/t1/kin': [...T1_FAMILY_KIN, { id: 'k-biscuit', name: 'Biscuit', status: 'nolongerwithus' }] });
+    const a = visitModel(['Waffle, Mochi and Pepper all ate.']);
+    await run(db, a);
+    assert.doesNotMatch(promptOf(a), /Biscuit/);
+  });
+});
