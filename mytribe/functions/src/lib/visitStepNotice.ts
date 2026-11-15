@@ -301,13 +301,55 @@ export async function announceVisitStep(input: {
     });
   }
 
+  // #2038: an undone arrival's notice comes off the household's notifications
+  // list. Nothing is sent about it. Here, and not in `setVisitLifecycle`,
+  // because the session trigger brings every undo through this function, a
+  // client's own write included.
+  if (step.action === 'UNDO_ARRIVAL') {
+    const { withdrawArrivalNotice } = await import('./arrivalNoticeWithdrawal.js');
+    await withdrawArrivalNotice({
+      sessionId,
+      session,
+      atMs: step.atMs,
+      source: input.source,
+      line: { actorRole: actor.actorRole, actorUid: actor.uid, stamp: actor.stamp },
+    });
+  }
+
   const event = visitStepEvent(step.action);
   if (event === null) return { notified: false, notifySkipped: 'no_event_for_action' };
+
+  // #2038: a wrong Arrived tap taken back within a second or two can reach the
+  // trigger after its own undo. That arrival is gone, so nothing is sent for it
+  // and nothing is recorded. The callable has just written the arrival itself
+  // and does not ask.
+  if (step.action === 'ARRIVED' && step.atMs !== null && input.source === 'trigger') {
+    if (!(await arrivalOnFile(sessionId, step.atMs))) {
+      return { notified: false, notifySkipped: 'no_event_for_action' };
+    }
+  }
 
   const routing = routingOf(session);
   let outcome: VisitStepOutcome;
   let dispatchIds: string[] = [];
-  if (step.action === 'DEPARTED' && departedNoticeAlreadyTold(session)) {
+  // #2038, lead ruling on review: a real arrival after an undone one is not
+  // announced twice. When the earlier arrival reached the household, its entry
+  // goes back on their notifications list for this arrival and nothing is
+  // sent. Recorded below with the row's id, so an undo of THIS arrival finds it.
+  const toldRowId =
+    step.action === 'ARRIVED' && step.atMs !== null
+      ? await (await import('./arrivalNoticeWithdrawal.js')).restoreToldArrivalNotice({
+          sessionId,
+          session,
+          atMs: step.atMs,
+          source: input.source,
+          line: { actorRole: actor.actorRole, actorUid: actor.uid, stamp: actor.stamp },
+        })
+      : null;
+  if (toldRowId !== null) {
+    outcome = { notified: false, notifySkipped: 'already_notified' };
+    dispatchIds = [toldRowId];
+  } else if (step.action === 'DEPARTED' && departedNoticeAlreadyTold(session)) {
     // #2250: this arrival's departure was announced once and then undone. The
     // household heard she left; the real Departed does not tell them again.
     // Recorded below like any other outcome, so the card says so.
@@ -352,7 +394,7 @@ export async function announceVisitStep(input: {
   }
 
   if (step.atMs === null) return outcome;
-  return recordOutcome(visitStepNoticeId(sessionId, event, step.atMs), {
+  const recorded = await recordOutcome(visitStepNoticeId(sessionId, event, step.atMs), {
     sessionId,
     action: step.action,
     event,
@@ -361,6 +403,40 @@ export async function announceVisitStep(input: {
     dispatchIds,
     source: input.source,
   });
+  // #2038: the undo ran while this notice was being sent, found no row and
+  // withdrew nothing. The row exists now, so it is withdrawn here. After the
+  // record above, which is where the withdrawal reads the row's id.
+  if (
+    step.action === 'ARRIVED' &&
+    (recorded.notified || recorded.notifySkipped === 'already_notified') &&
+    !(await arrivalOnFile(sessionId, step.atMs))
+  ) {
+    const { withdrawArrivalNotice } = await import('./arrivalNoticeWithdrawal.js');
+    await withdrawArrivalNotice({
+      sessionId,
+      session,
+      atMs: step.atMs,
+      source: input.source,
+      line: { actorRole: actor.actorRole, actorUid: actor.uid, stamp: actor.stamp },
+    });
+  }
+  return recorded;
+}
+
+/**
+ * #2038: is the arrival stamped `atMs` still the visit's arrival, on the
+ * session as it reads now? A session that cannot be read counts as standing:
+ * a passing error never withholds or withdraws a true notice.
+ */
+async function arrivalOnFile(sessionId: string, atMs: number): Promise<boolean> {
+  try {
+    const snap = await db().doc(`kin_care_sessions/${sessionId}`).get();
+    if (!snap.exists) return true;
+    const { arrivalStillStands } = await import('./arrivalNoticeWithdrawal.js');
+    return arrivalStillStands(snap.data() as SessionData, atMs, stampMs);
+  } catch {
+    return true;
+  }
 }
 
 /**

@@ -514,6 +514,50 @@ export async function startVisitWithRangeCheck(
     notification: Promise.resolve({ notified: res.notified, notifySkipped: res.notifySkipped }),
   };
 }
+/**
+ * #2038: AN AUNTIE'S UNDO ARRIVAL GOES THROUGH THE SERVER while "Verify arrival
+ * and departure" is on. `firestore.rules` refuses her that write from the
+ * browser, as it refuses her start, and `setVisitLifecycle` rewinds the visit,
+ * clears the distance measured for the arrival being undone, and takes that
+ * arrival's notice off the household's notifications list in the same call.
+ * It needs a connection. The owner, and an Auntie with the rule off, keep the
+ * direct write; the server withdraws the notice for those from the saved step.
+ *
+ * Decides against the row the screen holds first, as `patchVisitLifecycle`
+ * does, so a second tap reads the same on both paths and costs no round trip.
+ */
+export async function undoArrivalThroughServer(session: VisitLifecycleSession): Promise<PatchVisitLifecycleResult> {
+  const action = 'UNDO_ARRIVAL' as const;
+  const decision = evaluateVisitLifecycle({ status: session.status, action, onMyWayAt: session.onMyWayAt });
+  if (decision.kind === 'unreachable') {
+    throw new Error(unreachableLifecycleMessage(action, decision.raw));
+  }
+  if (decision.kind === 'illegal') {
+    throw Object.assign(
+      new Error(illegalLifecycleMessage(action, decision.from, decision.allowedFrom)),
+      { details: { code: VISIT_LIFECYCLE_ILLEGAL_CODE } },
+    );
+  }
+  if (decision.kind === 'noop') {
+    return {
+      sessionId: session._id,
+      action,
+      from: decision.at,
+      status: decision.at,
+      changed: false,
+      notification: Promise.resolve({ notified: false, notifySkipped: 'already_in_this_state' }),
+    };
+  }
+  const res = await setVisitLifecycle(session._id, action);
+  return {
+    sessionId: res.sessionId,
+    action,
+    from: res.from,
+    status: res.status,
+    changed: res.changed,
+    notification: Promise.resolve({ notified: res.notified, notifySkipped: res.notifySkipped }),
+  };
+}
 /** What `verifyVisitArrival` answers. Mirrors the server's `Result`. */
 export interface ArrivalCheckResult {
   ok: true;

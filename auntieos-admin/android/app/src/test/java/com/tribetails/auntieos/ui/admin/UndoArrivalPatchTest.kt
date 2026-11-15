@@ -88,6 +88,19 @@ class UndoArrivalPatchTest {
      * undo is only offered from ARRIVED and DEPARTED. `etaMinutesAway` is left
      * alone to match the web path, which also leaves it.
      */
+    /**
+     * #2038: the undo is quiet and the owner is told what that means for the
+     * household. The server withdraws the arrival's notice from the write.
+     */
+    @Test
+    fun `the line after an undo says nothing was sent and the notice is off their list`() {
+        assertEquals(
+            "Arrival undone. No message was sent about the undo. The arrival notice is off the household's notifications list.",
+            UNDO_ARRIVAL_DONE,
+        )
+        assertEquals(false, Regex("—|inbox|\\bpet\\b|\\bclient\\b|sitter", RegexOption.IGNORE_CASE).containsMatchIn(UNDO_ARRIVAL_DONE))
+    }
+
     @Test
     fun `undo does not touch the on-my-way leg it rewinds to`() {
         assertEquals(false, undoArrivalPatch("ON_MY_WAY").containsKey("onMyWayAt"))

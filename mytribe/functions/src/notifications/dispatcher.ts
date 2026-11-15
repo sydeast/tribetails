@@ -185,6 +185,27 @@ export async function lastDeliveredAtMs(key: string, dedupeKey: string, recipien
   return typeof v === 'number' ? v : null;
 }
 
+/**
+ * #2038: the `notifications/{id}` row the ledger holds for the notification
+ * `key` named by `dedupeKey` and this recipient, or null when it holds none.
+ * Whichever path sent the notice (the clock trigger, `setVisitLifecycle`, an
+ * installed client's own dispatch), the ledger names the one row it wrote.
+ * Reads one document and writes nothing.
+ */
+export async function deliveredNotificationId(
+  key: string,
+  dedupeKey: string,
+  recipientUid: string,
+): Promise<string | null> {
+  if (dedupeKey === '' || recipientUid === '') return null;
+  const identity = dedupeIdentityOf({ key, data: {}, dedupeKey }, { targetType: '', targetId: '' });
+  const snap = await db().collection(DEDUPE_COLLECTION).doc(dedupeDocId(key, identity, recipientUid)).get();
+  if (!snap.exists) return null;
+  const entry = snap.data() as { notificationId?: unknown; collection?: unknown };
+  return entry.collection === 'notifications' && typeof entry.notificationId === 'string' && entry.notificationId !== ''
+    ? entry.notificationId
+    : null;
+}
 /** Timestamp-likes become millis and object keys are sorted, so equal content hashes equally. */
 function canonical(value: unknown): unknown {
   if (value === undefined || value === null) return null;

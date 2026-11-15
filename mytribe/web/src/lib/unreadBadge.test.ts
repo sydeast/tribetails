@@ -40,6 +40,11 @@ const CASES: [string, Record<string, unknown>, boolean][] = [
   ['names no household', { data: {} }, true],
   ['has no data bag at all', {}, true],
   ['data is not an object', { data: 'x' }, true],
+  // #2038: "Undo arrived" withdraws the arrival notice it was wrong about.
+  ['withdrawn by the office', { archivedAt: { seconds: 1 }, withdrawnAt: { seconds: 1 }, data: { kinfolkId: 'fam1' } }, false],
+  ['withdrawn, its archive stamp cleared', { archivedAt: null, withdrawnAt: { seconds: 1 }, data: { kinfolkId: 'fam1' } }, false],
+  ['withdrawn after it was read', { readAt: { seconds: 1 }, archivedAt: { seconds: 2 }, withdrawnAt: { seconds: 2 }, data: { kinfolkId: 'fam1' } }, false],
+  ['withdrawnAt null', { withdrawnAt: null, data: { kinfolkId: 'fam1' } }, true],
 ];
 
 describe('countUnreadRows, the shared case table (#1833)', () => {
@@ -91,6 +96,33 @@ describe('the bell store (#1833)', () => {
     expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
     setLiveRows([read('a'), read('b'), read('c')]);
     expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 0 });
+  });
+
+  // #2038: "Undo arrived" withdraws the arrival notice. The snapshot that
+  // carries the stamp is what moves the bell, with no reload.
+  it('goes down when the office withdraws an arrival notice, read or unread', () => {
+    const doc = (id: string, extra: Record<string, unknown> = {}) =>
+      badgeRowFromDoc(id, { recipientUid: 'u1', data: { kinfolkId: 'fam1' }, ...extra });
+    setLiveRows([doc('arrived'), doc('invoice'), doc('seen', { readAt: { seconds: 1 } })]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
+
+    const stamp = { seconds: 2 };
+    setLiveRows([
+      doc('arrived', { archivedAt: stamp, withdrawnAt: stamp, withdrawnReason: 'arrival_undone' }),
+      doc('invoice'),
+      doc('seen', { readAt: { seconds: 1 }, archivedAt: stamp, withdrawnAt: stamp }),
+    ]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+  });
+
+  it('a withdrawn row tapped a moment before is not counted twice or held back', () => {
+    const doc = (id: string, extra: Record<string, unknown> = {}) =>
+      badgeRowFromDoc(id, { recipientUid: 'u1', data: { kinfolkId: 'fam1' }, ...extra });
+    setLiveRows([doc('arrived'), doc('invoice')]);
+    markReadLocally('arrived');
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+    setLiveRows([doc('arrived', { archivedAt: { seconds: 2 }, withdrawnAt: { seconds: 2 } }), doc('invoice')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
   });
 
   it('goes back up when the office marks one unread again', () => {

@@ -548,7 +548,7 @@ describe('SessionDetail: the visit clock', () => {
     );
     render(<SessionDetail entry={entry({ status: 'ARRIVED' })} onBack={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /^undo arrival$/i }));
-    expect(screen.getByText(/nobody is notified/i)).toBeInTheDocument();
+    expect(screen.getByText(/the household is sent nothing about the undo/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /yes, undo the arrival/i }));
     expect(patchVisitLifecycle.mock.calls[0]![1]).toBe('UNDO_ARRIVAL');
   });

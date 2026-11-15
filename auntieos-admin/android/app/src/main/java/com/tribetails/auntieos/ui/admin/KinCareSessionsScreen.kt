@@ -105,6 +105,16 @@ internal fun nowIso(): String = Instant.now().toString().substringBefore('.') + 
  * which is exactly the state an undone arrival should be in, and every reader
  * that does `.take(10)` or `.trim()` on a timestamp keeps working.
  */
+/**
+ * #2038: what the owner reads once an arrival is undone. The undo is quiet:
+ * the server sends the household nothing and takes the arrival's notice off
+ * their notifications list, from the write this screen makes
+ * (`functions/src/lib/arrivalNoticeWithdrawal.ts`). An email, text or push
+ * already sent is not recalled.
+ */
+internal const val UNDO_ARRIVAL_DONE =
+    "Arrival undone. No message was sent about the undo. The arrival notice is off the household's notifications list."
+
 internal fun undoArrivalPatch(undoTo: String): Map<String, Any> = mapOf(
     "status" to undoTo,
     "arrivedAt" to "",
@@ -1062,7 +1072,7 @@ private fun ActionRow(
                         // refused. Cleared to "" the way `arrivedAt` already is:
                         // the server reads a non-numeric value on those fields
                         // as no evidence.
-                        onPatch(undoArrivalPatch(undoTo), "Arrival undone.")
+                        onPatch(undoArrivalPatch(undoTo), UNDO_ARRIVAL_DONE)
                     },
                     modifier = Modifier.fillMaxWidth(),
                     leading = { Icon(Lucide.Undo2, contentDescription = null, modifier = Modifier.size(14.dp)) },

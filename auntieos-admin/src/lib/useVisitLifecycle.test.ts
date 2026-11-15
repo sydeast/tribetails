@@ -21,6 +21,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 const {
   patchVisitLifecycle,
   startVisitWithRangeCheck,
+  undoArrivalThroughServer,
   verifyVisitArrival,
   beginVisitTracking,
   endVisitTracking,
@@ -30,6 +31,7 @@ const {
 } = vi.hoisted(() => ({
   patchVisitLifecycle: vi.fn(),
   startVisitWithRangeCheck: vi.fn(),
+  undoArrivalThroughServer: vi.fn(),
   verifyVisitArrival: vi.fn(),
   beginVisitTracking: vi.fn(),
   endVisitTracking: vi.fn(),
@@ -37,7 +39,12 @@ const {
   useArrivalRule: vi.fn(),
   requestStartFix: vi.fn(),
 }));
-vi.mock('../api/sessionsWrite', () => ({ patchVisitLifecycle, startVisitWithRangeCheck, verifyVisitArrival }));
+vi.mock('../api/sessionsWrite', () => ({
+  patchVisitLifecycle,
+  startVisitWithRangeCheck,
+  undoArrivalThroughServer,
+  verifyVisitArrival,
+}));
 vi.mock('./visitTracking', () => ({ beginVisitTracking, endVisitTracking, stopVisitTracking }));
 // #2279: the arrival rule and the position are the two inputs the start gate
 // adds. Everything else in `visitStartRange` is the real thing.
@@ -273,7 +280,9 @@ describe('the sentence never claims a notification it has not seen', () => {
     );
   });
 
-  it('an undo, which tells nobody, adds no household sentence', async () => {
+  // #2038: the undo is quiet, and the card says what that means for the
+  // household: nothing sent, and the arrival off their notifications list.
+  it('an undo says nobody was sent anything and the arrival notice is off their list', async () => {
     patchVisitLifecycle.mockResolvedValue({
       sessionId: 's1',
       action: 'UNDO_ARRIVAL',
@@ -286,8 +295,18 @@ describe('the sentence never claims a notification it has not seen', () => {
     act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
     act(() => result.current.confirm());
     await waitFor(() =>
-      expect(result.current.write).toEqual({ status: 'done', message: 'ARRIVED → ON_MY_WAY.' }),
+      expect(result.current.write).toEqual({
+        status: 'done',
+        message:
+          "ARRIVED → ON_MY_WAY. No message was sent about the undo. The arrival notice is off the household's notifications list.",
+      }),
     );
+    // Still that sentence once the server's answer about the household is in.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect((result.current.write as { message?: string }).message).not.toMatch(/was notified|Checking/);
+    expect((result.current.write as { message?: string }).message).toMatch(/notifications list\.$/);
   });
 
   // The no-op branch: nothing was written, so nothing is claimed about the
@@ -426,7 +445,62 @@ describe('an Auntie starting a visit while arrival verification is on', () => {
     expect(patchVisitLifecycle).not.toHaveBeenCalled();
   });
 
-  it('Departed and Undo arrival stay direct writes with no position asked for', async () => {
+  // #2038: her Undo arrival goes to the server under the same switch, which
+  // is also where the arrival's notice comes off the household's list.
+  it('Undo arrival goes to the server, never straight to Firestore, and asks for no position', async () => {
+    undoArrivalThroughServer.mockResolvedValue({
+      sessionId: 's1',
+      action: 'UNDO_ARRIVAL',
+      from: 'ARRIVED',
+      status: 'SCHEDULED',
+      changed: true,
+      notification: Promise.resolve({ notified: false, notifySkipped: 'no_event_for_action' }),
+    });
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('done'));
+    expect(undoArrivalThroughServer).toHaveBeenCalledTimes(1);
+    expect(undoArrivalThroughServer).toHaveBeenCalledWith(SESSION);
+    expect(patchVisitLifecycle).not.toHaveBeenCalled();
+    expect(requestStartFix).not.toHaveBeenCalled();
+    expect((result.current.write as { message?: string }).message).toBe(
+      "ARRIVED → SCHEDULED. No message was sent about the undo. The arrival notice is off the household's notifications list.",
+    );
+    await waitFor(() => expect(stopVisitTracking).toHaveBeenCalledWith('s1'));
+  });
+
+  it('an undo the server refuses shows the server sentence and leaves the watch alone', async () => {
+    undoArrivalThroughServer.mockRejectedValue(new Error('This visit could not be found.'));
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('error'));
+    expect(result.current.write).toEqual({ status: 'error', message: 'This visit could not be found.' });
+    expect(stopVisitTracking).not.toHaveBeenCalled();
+  });
+
+  it('the rule still loading (unknown) sends her undo to the server too', async () => {
+    useArrivalRule.mockReturnValue(null);
+    undoArrivalThroughServer.mockResolvedValue(accepted('SCHEDULED', 'ARRIVED', false));
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(undoArrivalThroughServer).toHaveBeenCalledTimes(1));
+    expect(patchVisitLifecycle).not.toHaveBeenCalled();
+  });
+
+  it('the owner keeps the direct undo with the rule on', async () => {
+    patchVisitLifecycle.mockResolvedValue(accepted('SCHEDULED', 'ARRIVED', false));
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, false));
+    act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('done'));
+    expect(patchVisitLifecycle).toHaveBeenCalledTimes(1);
+    expect(undoArrivalThroughServer).not.toHaveBeenCalled();
+  });
+
+  it('Departed stays a direct write with no position asked for', async () => {
     patchVisitLifecycle.mockResolvedValue(accepted('DEPARTED', 'ARRIVED'));
     const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, true));
     act(() => result.current.ask(actionNamed('DEPARTED')));
@@ -472,6 +546,50 @@ describe('an Auntie starting a visit while arrival verification is off', () => {
     act(() => result.current.ask(actionNamed('ARRIVED')));
     act(() => result.current.confirm());
     await waitFor(() => expect(startVisitWithRangeCheck).toHaveBeenCalledTimes(1));
+  });
+
+  it('Undo arrival is the direct write it always was', async () => {
+    patchVisitLifecycle.mockResolvedValue(accepted('SCHEDULED', 'ARRIVED', false));
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('done'));
+    expect(patchVisitLifecycle).toHaveBeenCalledTimes(1);
+    expect(undoArrivalThroughServer).not.toHaveBeenCalled();
+  });
+
+  // #2038: the owner switched the rule on after this screen last read it. An
+  // undo needs no position, so the same tap is finished by the server.
+  it('an undo the rules refuse is carried out by the server in the same tap', async () => {
+    patchVisitLifecycle.mockRejectedValue(
+      Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }),
+    );
+    undoArrivalThroughServer.mockResolvedValue({
+      sessionId: 's1',
+      action: 'UNDO_ARRIVAL',
+      from: 'ARRIVED',
+      status: 'SCHEDULED',
+      changed: true,
+      notification: Promise.resolve({ notified: false, notifySkipped: 'no_event_for_action' }),
+    });
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, true));
+    act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('done'));
+    expect(patchVisitLifecycle).toHaveBeenCalledTimes(1);
+    expect(undoArrivalThroughServer).toHaveBeenCalledTimes(1);
+    expect((result.current.write as { message?: string }).message).toMatch(/^ARRIVED → SCHEDULED\. No message was sent about the undo\./);
+  });
+
+  it('the owner whose undo the rules refuse is shown the refusal, with no second try', async () => {
+    patchVisitLifecycle.mockRejectedValue(
+      Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }),
+    );
+    const { result } = renderHook(() => useVisitLifecycle(SESSION, 'the Wrens', undefined, false));
+    act(() => result.current.ask(actionNamed('UNDO_ARRIVAL')));
+    act(() => result.current.confirm());
+    await waitFor(() => expect(result.current.write.status).toBe('error'));
+    expect(undoArrivalThroughServer).not.toHaveBeenCalled();
   });
 
   it('a rules refusal on Departed is not dressed up as a range refusal', async () => {

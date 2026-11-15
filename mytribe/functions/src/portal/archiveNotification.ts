@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { staffBypass } from '../lib/staffGate';
+import { isWithdrawnNotification } from '../lib/recipientNotifications';
 
 /**
  * Archive notification(s) out of the active inbox.
@@ -244,7 +245,8 @@ export async function unarchiveNotificationHandler(
   const data = snap.exists
     ? (snap.data() as { recipientUid?: string; key?: string } | undefined)
     : undefined;
-  if (data?.recipientUid && data.recipientUid === uid) {
+  // #2038: a notice the office withdrew is not the reader's to bring back.
+  if (data?.recipientUid && data.recipientUid === uid && !isWithdrawnNotification(data as Record<string, unknown>)) {
     await ref.set({ archivedAt: null }, { merge: true });
     unarchived = 1;
   }
@@ -320,6 +322,8 @@ export async function bulkUnarchiveNotificationsHandler(
     if (!data?.recipientUid) continue;
     if (data.recipientUid !== uid) continue;
 
+    // #2038: a withdrawn notice stays withdrawn.
+    if (isWithdrawnNotification(data as Record<string, unknown>)) continue;
     await ref.set({ archivedAt: null }, { merge: true });
     unarchived += 1;
   }

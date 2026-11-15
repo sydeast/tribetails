@@ -34,6 +34,11 @@ const CASES: [string, Data, boolean][] = [
   ['names no household', { data: {} }, true],
   ['has no data bag at all', {}, true],
   ['data is not an object', { data: 'x' }, true],
+  // #2038: "Undo arrived" withdraws the arrival notice it was wrong about.
+  ['withdrawn by the office', { archivedAt: stamp, withdrawnAt: stamp, data: { kinfolkId: 'fam1' } }, false],
+  ['withdrawn, its archive stamp cleared', { archivedAt: null, withdrawnAt: stamp, data: { kinfolkId: 'fam1' } }, false],
+  ['withdrawn after it was read', { readAt: stamp, archivedAt: stamp, withdrawnAt: stamp, data: { kinfolkId: 'fam1' } }, false],
+  ['withdrawnAt null', { withdrawnAt: null, data: { kinfolkId: 'fam1' } }, true],
 ];
 
 describe('what the bell counts, the case table shared with both portal clients (#1833)', () => {

@@ -80,14 +80,34 @@ describe('rules: an Auntie cannot start a visit by direct write while arrival ve
     );
   });
 
-  it('still lets her undo an arrival, back to Scheduled and back to On my way', async () => {
+  // #2038: her Undo arrival goes through `setVisitLifecycle` while the switch
+  // is on, which is also what takes the arrival's notice off the household's
+  // notifications list.
+  it('refuses her own Undo arrival, back to Scheduled and back to On my way', async () => {
     await seed({ session: { status: 'ARRIVED', arrivedAt: '2026-11-14T09:10:00Z' }, settings: RULE_ON });
-    await assertSucceeds((await as('auntie1', AUNTIE)).set({ status: 'SCHEDULED', arrivedAt: '' }, { merge: true }));
+    await assertFails((await as('auntie1', AUNTIE)).set({ status: 'SCHEDULED', arrivedAt: '' }, { merge: true }));
     await seed({
       session: { status: 'ARRIVED', onMyWayAt: '2026-11-14T09:00:00Z', arrivedAt: '2026-11-14T09:10:00Z' },
       settings: RULE_ON,
     });
-    await assertSucceeds((await as('auntie1', AUNTIE)).set({ status: 'ON_MY_WAY', arrivedAt: '' }, { merge: true }));
+    await assertFails((await as('auntie1', AUNTIE)).set({ status: 'ON_MY_WAY', arrivedAt: '' }, { merge: true }));
+  });
+
+  it('refuses her Undo arrival from Departed, and one spelled the way the server would still read', async () => {
+    const departed = { status: 'DEPARTED', arrivedAt: '2026-11-14T09:10:00Z', departedAt: '2026-11-14T09:40:00Z' };
+    await seed({ session: departed, settings: RULE_ON });
+    await assertFails(
+      (await as('auntie1', AUNTIE)).set({ status: 'SCHEDULED', arrivedAt: '', departedAt: '' }, { merge: true }),
+    );
+    for (const status of ['scheduled', ' Scheduled ', 'on_my_way']) {
+      await seed({ session: { status: 'ARRIVED', arrivedAt: '2026-11-14T09:10:00Z' }, settings: RULE_ON });
+      await assertFails((await as('auntie1', AUNTIE)).set({ status, arrivedAt: '' }, { merge: true }));
+    }
+  });
+
+  it('still lets her edit an arrived visit without moving its status', async () => {
+    await seed({ session: { status: 'ARRIVED', arrivedAt: '2026-11-14T09:10:00Z' }, settings: RULE_ON });
+    await assertSucceeds((await as('auntie1', AUNTIE)).set({ notes: 'Gate was open' }, { merge: true }));
   });
 
   it('still lets her write the fields a KinTale send writes', async () => {
@@ -151,5 +171,21 @@ describe('rules: what the start rule leaves alone', () => {
     await assertSucceeds(
       (await as('auntie1', AUNTIE)).set({ status: 'ARRIVED', arrivedAt: '2026-11-14T09:10:00Z' }, { merge: true }),
     );
+  });
+
+  // #2038: the undo is closed to an Auntie's client only while the switch is on.
+  it('the owner undoes an arrival by direct write with the switch on', async () => {
+    await seed({ session: { status: 'ARRIVED', arrivedAt: '2026-11-14T09:10:00Z' }, settings: RULE_ON });
+    await assertSucceeds((await as('owner1', OWNER)).set({ status: 'SCHEDULED', arrivedAt: '' }, { merge: true }));
+  });
+
+  it('an Auntie undoes an arrival by direct write with the switch off, or never saved', async () => {
+    await seed({
+      session: { status: 'ARRIVED', arrivedAt: '2026-11-14T09:10:00Z' },
+      settings: { requireArrivalDepartureVerification: false },
+    });
+    await assertSucceeds((await as('auntie1', AUNTIE)).set({ status: 'SCHEDULED', arrivedAt: '' }, { merge: true }));
+    await seed({ session: { status: 'ARRIVED', onMyWayAt: '2026-11-14T09:00:00Z', arrivedAt: '2026-11-14T09:10:00Z' } });
+    await assertSucceeds((await as('auntie1', AUNTIE)).set({ status: 'ON_MY_WAY', arrivedAt: '' }, { merge: true }));
   });
 });
