@@ -142,6 +142,8 @@ describe('getKinTaleComments', () => {
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await getKinTaleCommentsHandler(req({ taleId: 't1' }, 'kin1', false));
-    expect(res.comments.map((c) => c['authorDisplayName'])).toEqual(['Sam', 'Maya', 'Pat', 'Jo', null]);
+    // #1923: an author no record names reads as the generic line, never null
+    // (which every client printed as "Kinfolk").
+    expect(res.comments.map((c) => c['authorDisplayName'])).toEqual(['Sam', 'Maya', 'Pat', 'Jo', 'A member of the household']);
   });
 });

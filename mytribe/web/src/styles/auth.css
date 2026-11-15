@@ -61,8 +61,11 @@
 .authfoot { font-family: var(--mono); font-size: 11px; color: var(--navy-muted); text-align: center; margin-top: 26px; }
 .authfoot b { background: var(--tribe-grad); -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: 500; }
 
-/* ===== claim invite (mytribe-claim-invite) ===== */
-.guest { max-width: 480px; margin: 0 auto; padding: 30px 20px 64px; position: relative; z-index: 1;
+/* ===== claim invite (mytribe-claim-invite) =====
+   The page shell is `.claimpage`, not the mock's bare `.guest`: every stylesheet
+   ships in one bundle, so a page-level `.guest` also landed on the KinTale
+   comment badge (`.badge.guest`) and drew it one screen tall (#1922). */
+.claimpage { max-width: 480px; margin: 0 auto; padding: 30px 20px 64px; position: relative; z-index: 1;
   min-height: 100vh; display: flex; flex-direction: column; }
 .guesthead { text-align: center; margin: 8px 0 26px; animation: rise .6s var(--ease) both; }
 .guesthead .wordmark { font-size: 30px; display: inline-block; }
@@ -99,7 +102,7 @@
 .errcard .eactions .btn.tiny { background: rgba(213, 83, 90, .12); color: var(--coral); box-shadow: none; }
 .errcard .eactions .btn.tiny:hover { background: rgba(213, 83, 90, .18); }
 
-.guest .footnote { margin-top: auto; padding-top: 34px; }
+.claimpage .footnote { margin-top: auto; padding-top: 34px; }
 
 /* ===== secure reset (mytribe-secure-reset) ===== */
 .secguesthead { max-width: 460px; margin: 0 auto; text-align: center; padding: 40px 24px 6px; position: relative; z-index: 1; }
