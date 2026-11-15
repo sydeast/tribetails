@@ -71,6 +71,10 @@ import { markInvoicePaidHandler } from '../src/admin/markInvoicePaid';
 import { recordPaymentHandler } from '../src/admin/recordPayment';
 import { repairInvoicePaymentsHandler } from '../src/admin/repairInvoicePayments';
 import { applyAccountCreditHandler } from '../src/admin/applyAccountCredit';
+import { updateInvoiceHandler } from '../src/admin/updateInvoice';
+import { linkInvoiceSessionsHandler } from '../src/admin/linkInvoiceSessions';
+import { invoiceStateStampOf } from '../src/lib/invoiceStateStamp';
+import { paymentStandingOfInvoice } from '../src/lib/invoicePaidGate';
 import { sweepAbandonedSettlements, settlementLedgerRowId } from '../src/lib/settlementLedgerSweep';
 import {
   PAYMENT_APPLIED_OWNER_FIELD,
@@ -704,6 +708,64 @@ describe('#2276: invoices the ordinary plan cannot describe are still paid, and 
 
     expect(invoiceRows()).toHaveLength(1);
     expect(docs[INVOICE]).toMatchObject({ status: 'paid', amountDueCents: 0, paidCents: 5000 });
+  });
+
+  it('and an edit of that invoice is refused by the server, so its balance cannot come back', async () => {
+    // The stored stamp is what the screens read. The edit itself decides from
+    // the payment rows, and those fall short of the total here: before the
+    // review fix a change of terms alone brought back $137.50 owed.
+    docs[INVOICE] = {
+      ...OPEN,
+      total: 187.5,
+      totalCents: 18750,
+      amountDue: 50,
+      amountDueCents: 5000,
+      lineItems: [{ description: 'Overnight stay', qty: 1, unitCents: 18750 }],
+      sessionIds: [],
+      stripeCheckoutRound: 1,
+      stripeSettledPaymentIntentId: 'pi_0',
+    };
+    cardPayment(1, 5000, { ...META, checkoutRound: '1' });
+    await deliver('session-1');
+    const paid = { status: 'paid', paymentStatus: 'PAID', amountDue: 0, amountDueCents: 0, editScope: 'none' };
+    expect(docs[INVOICE]).toMatchObject(paid);
+
+    await expect(
+      updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { terms: 'Due on receipt' } })),
+    ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: 'invoice_not_editable' } });
+    await expect(
+      updateInvoiceHandler(
+        req({
+          invoiceId: 'inv1',
+          patch: {
+            lineItems: [
+              { description: 'Overnight stay', qty: 1, unitCents: 18750 },
+              { description: 'Extra walk', qty: 1, unitCents: 1000 },
+            ],
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: 'invoice_not_editable' } });
+    expect(docs[INVOICE]).toMatchObject({ ...paid, total: 187.5, totalCents: 18750, paidCents: 5000 });
+
+    // Linking visits re-stamps the invoice. It stays locked.
+    await linkInvoiceSessionsHandler(req({ invoiceId: 'inv1', sessionIds: [] }));
+    expect(docs[INVOICE]).toMatchObject(paid);
+  });
+
+  it('the stamp of an invoice paid by the fallback is locked from its label, whatever its rows add up to', () => {
+    const doc = { status: 'paid', paymentStatus: 'PAID', total: 187.5, totalCents: 18750, amountDue: 0, amountDueCents: 0 };
+    // Rows short of the total with no fallback stamp: the part-paid repair path stays open.
+    expect(invoiceStateStampOf(doc, 5000)).toEqual({ status: 'paid', editScope: 'all' });
+    const fallback = { ...doc, [CARD_APPLY_FALLBACK_FIELD]: STATED_BELOW_RECORDED };
+    expect(invoiceStateStampOf(fallback, 5000)).toEqual({ status: 'paid', editScope: 'none' });
+    expect(paymentStandingOfInvoice(fallback, 5000)).toBe('settled');
+    expect(paymentStandingOfInvoice(doc, 5000)).toBe('partial');
+    expect(paymentStandingOfInvoice(doc, 0)).toBe('none');
+    // The stamp alone, on an invoice that is open again, locks nothing.
+    expect(
+      paymentStandingOfInvoice({ ...doc, status: 'open', paymentStatus: 'PARTIAL', [CARD_APPLY_FALLBACK_FIELD]: 'x' }, 5000),
+    ).toBe('partial');
   });
 
   it('an invoice with a balance and no total: paid, with the card row on it', async () => {
