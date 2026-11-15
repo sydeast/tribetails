@@ -398,6 +398,33 @@ class KinCareRepository(
     }.onFailure { AuntieLog.e("Undo departed failed for $sessionId", it) }
 
     /**
+     * #2250: one visit's status and `undoDepartedUntil`, live. The boards read
+     * their lists once, right after the Departed tap, and the server stamps
+     * when the undo closes a moment later (in the write that completes the
+     * visit). The "Undo departed" block watches a Departed visit with no stamp
+     * through this until the stamp arrives. A listener that fails just ends:
+     * the button is then not offered, which is the safe reading.
+     */
+    fun observeUndoDeparted(sessionId: String): Flow<Pair<String, String?>> = callbackFlow {
+        if (sessionId.isBlank() || !checkAuthOrCloseFlow("observeUndoDeparted")) {
+            close()
+            return@callbackFlow
+        }
+        val reg = firestore.collection("kin_care_sessions").document(sessionId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    AuntieLog.e("Undo departed listener failed for session $sessionId", error)
+                    close()
+                    return@addSnapshotListener
+                }
+                if (snapshot != null && snapshot.exists()) {
+                    trySend((snapshot.getString("status") ?: "") to snapshot.getString("undoDepartedUntil"))
+                }
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
      * A3: COMPLETE goes through [transitionBookingStatus], not [patchSession].
      *
      * The three transitions above stay direct patches because they are IN-VISIT

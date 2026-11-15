@@ -11,6 +11,9 @@ import androidx.compose.ui.test.performClick
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.emptyFlow
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -42,12 +45,37 @@ class UndoDepartedButtonTest {
         nowMs: () -> Long = { untilMs - 240_000 },
         onUndone: () -> Unit = {},
         undo: suspend (String) -> Result<Unit> = { Result.success(Unit) },
+        watch: (String) -> Flow<Pair<String, String?>> = { emptyFlow() },
     ) {
         rule.setContent {
             AuntieOSTheme {
-                UndoDepartedButton(session, session.kinfolkName, onUndone = onUndone, nowMs = nowMs, undo = undo)
+                UndoDepartedButton(
+                    session, session.kinfolkName, onUndone = onUndone, nowMs = nowMs, undo = undo, watch = watch,
+                )
             }
         }
+    }
+
+    /** The real case: the board read the row straight after the tap, before the server stamped it. */
+    @Test
+    fun aDepartedRowReadBeforeTheStampIsWatchedUntilTheStampArrives() {
+        val server = MutableSharedFlow<Pair<String, String?>>(replay = 1)
+        val watched = mutableListOf<String>()
+        show(visit(status = "DEPARTED", stamp = null), watch = { id -> watched += id; server })
+        rule.onNodeWithText("Undo departed").assertDoesNotExist()
+        assertEquals(listOf("s1"), watched)
+
+        server.tryEmit("COMPLETED" to until)
+        rule.waitForIdle()
+        rule.onNodeWithText("Undo departed").assertIsDisplayed()
+    }
+
+    @Test
+    fun aRowThatAlreadyCarriesTheStampOpensNoListener() {
+        val watched = mutableListOf<String>()
+        show(visit(), watch = { id -> watched += id; emptyFlow() })
+        rule.onNodeWithText("Undo departed").assertIsDisplayed()
+        assertEquals(emptyList<String>(), watched)
     }
 
     @Test
@@ -66,7 +94,9 @@ class UndoDepartedButtonTest {
     fun notDrawnAfterTheWindowOrWithoutOneOrBeforeDeparture() {
         var session by mutableStateOf(visit())
         rule.setContent {
-            AuntieOSTheme { UndoDepartedButton(session, "", onUndone = {}, nowMs = { untilMs + 1 }) }
+            AuntieOSTheme {
+                UndoDepartedButton(session, "", onUndone = {}, nowMs = { untilMs + 1 }, watch = { emptyFlow() })
+            }
         }
         rule.onNodeWithText("Undo departed").assertDoesNotExist()
         session = visit(stamp = null)

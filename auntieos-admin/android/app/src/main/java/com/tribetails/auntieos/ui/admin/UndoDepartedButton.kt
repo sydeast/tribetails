@@ -39,6 +39,7 @@ import com.tribetails.auntieos.ui.components.AuntieTextBtn
 import com.tribetails.auntieos.ui.components.GhostButton
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
 /**
@@ -50,11 +51,12 @@ import kotlinx.coroutines.launch
  *
  * The undo is the server's (`KinCareRepository.undoDeparted`), so it needs a
  * connection and can take several seconds on a cold start: the row with the
- * spinner is what says so. When the server stamps the window is read off the
- * visit (`undoDepartedUntil`); see `domain/UndoDeparted.kt`.
+ * spinner is what says so. When the window closes is read off the visit
+ * (`undoDepartedUntil`, the server's stamp); see `domain/UndoDeparted.kt`.
  *
  * @param onUndone called once the visit is back at Arrived, so the screen re-reads.
  * @param undo the call itself; a parameter so a test can stand in for the server.
+ * @param watch the visit's live status and stamp, for a row read before the stamp.
  */
 @Composable
 fun UndoDepartedButton(
@@ -64,8 +66,19 @@ fun UndoDepartedButton(
     modifier: Modifier = Modifier,
     nowMs: () -> Long = System::currentTimeMillis,
     undo: suspend (String) -> Result<Unit> = { AuntieOSApp.instance.kinCareRepository.undoDeparted(it) },
+    watch: (String) -> Flow<Pair<String, String?>> = { AuntieOSApp.instance.kinCareRepository.observeUndoDeparted(it) },
 ) {
-    val until = undoDepartedUntilMs(session.undoDepartedUntil)
+    // The board read this row once, straight after the Departed tap, and the
+    // server stamps the window a moment later. A Departed row with no stamp is
+    // watched until it has one. A row that carries one opens no listener.
+    val needsWatch = session.status.trim().uppercase() == "DEPARTED" && session.undoDepartedUntil.isNullOrBlank()
+    var live by remember(session.id) { mutableStateOf<Pair<String, String?>?>(null) }
+    LaunchedEffect(session.id, needsWatch) {
+        if (needsWatch) watch(session.id).collect { live = it }
+    }
+    val status = if (needsWatch) live?.first ?: session.status else session.status
+    val stamp = if (needsWatch) live?.second else session.undoDepartedUntil
+    val until = undoDepartedUntilMs(stamp)
     // Recomposes once, at the moment the window closes, so the button goes
     // while the screen is left open.
     var closedTick by remember(session.id, until) { mutableStateOf(0) }
@@ -78,9 +91,7 @@ fun UndoDepartedButton(
             }
         }
     }
-    val open = remember(session.status, until, closedTick) {
-        undoDepartedOpen(session.status, session.undoDepartedUntil, nowMs())
-    }
+    val open = remember(status, until, closedTick) { undoDepartedOpen(status, stamp, nowMs()) }
 
     var asked by remember(session.id) { mutableStateOf(false) }
     var saving by remember(session.id) { mutableStateOf(false) }
