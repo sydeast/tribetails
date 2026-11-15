@@ -2,7 +2,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { KIN_ROSTER_MAX, type Kin, type Kinfolk } from '../api/directory';
+import { type Kinfolk } from '../api/directory';
+import type { HouseholdKinRoster } from '../api/kinRoster';
 import { BOOKING_BUSY_CONFLICT_CODE, COMPANY_HOLIDAY_CONFLICT_CODE } from '../lib/bookingWizard';
 import type { CollectionSpec } from '../lib/firestore';
 
@@ -14,6 +15,11 @@ vi.mock('../api/bookingsWrite', async (orig) => ({
   ...(await orig<typeof import('../api/bookingsWrite')>()),
   createMultiDateBookingRequest,
 }));
+
+// #1862: the household's Kin come from the server's roster, never from the
+// admin `kin` records this dialog used to read for itself.
+const { getHouseholdKinRoster } = vi.hoisted(() => ({ getHouseholdKinRoster: vi.fn() }));
+vi.mock('../api/kinRoster', () => ({ getHouseholdKinRoster }));
 
 // The service list and the business hours both come from business_settings.
 const { getBusinessSettings } = vi.hoisted(() => ({ getBusinessSettings: vi.fn() }));
@@ -51,8 +57,16 @@ function kinfolk(over: Partial<Kinfolk> = {}): Kinfolk {
   };
 }
 
-function kin(over: Partial<Kin> = {}): Kin {
-  return { _id: 'k1', kinfolkId: 'kf1', name: 'Biscuit', status: 'active', ...over };
+/** What the server answers for household kf1: its Kin, and whether they can be chosen. */
+function roster(over: Partial<HouseholdKinRoster> = {}): HouseholdKinRoster {
+  return {
+    kin: [
+      { id: 'k1', name: 'Biscuit', adminId: null },
+      { id: 'k2', name: 'Gravy', adminId: null },
+    ],
+    chooseKin: false,
+    ...over,
+  };
 }
 
 /**
@@ -65,14 +79,15 @@ function refusal(code: string, message: string): Error {
 }
 
 /**
- * The wizard opens FOUR listeners: households, the Kin roster,
- * `booking_time_slots` and `kin_care_sessions`. Dispatching on the spec's path
- * rather than answering all four with one canned value is what lets a test fail
- * exactly one of them.
+ * The wizard opens THREE listeners: households, `booking_time_slots` and
+ * `kin_care_sessions`. Dispatching on the spec's path rather than answering
+ * all three with one canned value is what lets a test fail exactly one of
+ * them. The Kin are a callable, answered by `kin` per household id.
  */
 interface Feeds {
   households?: unknown;
-  kin?: unknown;
+  /** The roster for each household id, or an Error to fail the read. Absent: no Kin, choosing off. */
+  kin?: Record<string, HouseholdKinRoster | Error>;
   busySlots?: unknown;
   sessions?: unknown;
 }
@@ -80,13 +95,16 @@ function feed(feeds: Feeds = {}) {
   useCollection.mockReset().mockImplementation((spec: CollectionSpec) => {
     if (spec.path === 'booking_time_slots') return feeds.busySlots ?? { status: 'ready', data: [] };
     if (spec.path === 'kin_care_sessions') return feeds.sessions ?? { status: 'ready', data: [] };
-    if (spec.path === 'kin') return feeds.kin ?? { status: 'ready', data: [] };
     return (
       feeds.households ?? {
         status: 'ready',
         data: [kinfolk(), kinfolk({ _id: 'kf2', firstName: 'Amy', lastName: 'Adams' })],
       }
     );
+  });
+  getHouseholdKinRoster.mockReset().mockImplementation((kinfolkId: string) => {
+    const answer = feeds.kin?.[kinfolkId] ?? { kin: [], chooseKin: false };
+    return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
   });
 }
 
@@ -203,165 +221,174 @@ describe('NewBookingDialog wizard shell', () => {
 });
 
 describe('NewBookingDialog step 1: client and pets', () => {
-  /** Flips step 1 out of the whole-household default into the per-Kin picker. */
-  const chooseSpecificKin = () =>
-    userEvent.click(screen.getByRole('button', { name: 'Choose specific Kin' }));
+  /** Walks steps 2 to 5 and submits, for a test that only cares what step 1 sent. */
+  async function finishAndSubmit() {
+    await next();
+    await userEvent.type(screen.getByPlaceholderText('e.g. Dog Walk'), 'Walk');
+    await next();
+    await pickDay(/Mon, Aug 23/);
+    await toReview();
+    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
+    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
+    return createMultiDateBookingRequest.mock.calls[0]![0] as { kinIds?: string[] };
+  }
 
-  // OPERATOR RULING R1, verbatim: "all KinCare sessions covers ALL KIN in the
-  // family … I wouldn't go into a home and care for one kin while ignoring the
-  // other. All kin in the home will receive care."
-  //
-  // This replaces a test that asserted the opposite: that picking nothing sent
-  // NO kinIds. The server persisted that omission literally, so the ORDINARY
-  // booking (the whole household) was stored as covering nobody and read back
-  // downstream as "Not set" / "your kin".
-  it("covers ALL the household's Kin by default, with nothing clicked, and sends the roster", async () => {
-    feed({
-      kin: {
-        status: 'ready',
-        data: [kin(), kin({ _id: 'k2', name: 'Gravy' }), kin({ _id: 'k3', name: 'Elsewhere', kinfolkId: 'kf2' })],
-      },
+  // OPERATOR RULING 2026-11-12 (#1822, #1862): every visit covers every Kin.
+  // No Kin picker unless the "Choose Kin for a visit" feature flag is on.
+  describe('choosing Kin off, the default', () => {
+    it("names every Kin of the household, offers nothing to tick, and books them all", async () => {
+      feed({ kin: { kf1: roster() } });
+      createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      expect(await screen.findByText('All Kin in this home')).toBeInTheDocument();
+      expect(screen.getByText('Biscuit, Gravy')).toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: 'Biscuit' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Choose specific Kin' })).toBeNull();
+
+      expect((await finishAndSubmit()).kinIds).toEqual(['k1', 'k2']);
     });
-    createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
-    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
 
-    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    // The default states the coverage and names the animals. There is no picker
-    // to touch until the operator asks for one.
-    expect(screen.getByText('All Kin in this home')).toBeInTheDocument();
-    expect(screen.getByText('Biscuit, Gravy')).toBeInTheDocument();
-    expect(screen.queryByRole('checkbox', { name: 'Biscuit' })).toBeNull();
-
-    await next();
-    await userEvent.type(screen.getByPlaceholderText('e.g. Dog Walk'), 'Walk');
-    await next();
-    await pickDay(/Mon, Aug 23/);
-    await toReview();
-    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
-
-    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
-    // kf2's Kin is not on it: the roster is scoped to the chosen household.
-    expect(createMultiDateBookingRequest.mock.calls[0]![0].kinIds).toEqual(['k1', 'k2']);
-  });
-
-  it("offers the household's active Kin behind the opt-in, and sends the picked ids", async () => {
-    feed({
-      kin: {
-        status: 'ready',
-        data: [kin(), kin({ _id: 'k2', name: 'Gravy' }), kin({ _id: 'k3', name: 'Elsewhere', kinfolkId: 'kf2' })],
-      },
+    it('asks the server for the Kin of the chosen household, by its id', async () => {
+      feed({ kin: { kf1: roster() } });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      await screen.findByText('All Kin in this home');
+      expect(getHouseholdKinRoster).toHaveBeenCalledWith('kf1');
+      // The admin `kin` records are not read here at all any more (#1862).
+      expect(useCollection.mock.calls.some((c: unknown[]) => (c[0] as CollectionSpec).path === 'kin')).toBe(false);
     });
-    createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
-    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
 
-    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    await chooseSpecificKin();
-    // kf2's Kin is not offered here.
-    expect(screen.queryByRole('checkbox', { name: 'Elsewhere' })).toBeNull();
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Biscuit' }));
-    await next();
-    await userEvent.type(screen.getByPlaceholderText('e.g. Dog Walk'), 'Walk');
-    await next();
-    await pickDay(/Mon, Aug 23/);
-    await toReview();
-    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
-
-    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
-    expect(createMultiDateBookingRequest.mock.calls[0]![0].kinIds).toEqual(['k1']);
-  });
-
-  it('backing out of the opt-in returns to covering every Kin, dropping the partial pick', async () => {
-    feed({ kin: { status: 'ready', data: [kin(), kin({ _id: 'k2', name: 'Gravy' })] } });
-    createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
-    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
-
-    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    await chooseSpecificKin();
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Biscuit' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Cover all Kin instead' }));
-
-    await next();
-    await userEvent.type(screen.getByPlaceholderText('e.g. Dog Walk'), 'Walk');
-    await next();
-    await pickDay(/Mon, Aug 23/);
-    await toReview();
-    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
-
-    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
-    expect(createMultiDateBookingRequest.mock.calls[0]![0].kinIds).toEqual(['k1', 'k2']);
-  });
-
-  it('sends no kinIds only when the household genuinely has no Kin on file', async () => {
-    feed({ kin: { status: 'ready', data: [] } });
-    createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
-    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
-    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    expect(screen.getByText(/No Kin on this household yet/i)).toBeInTheDocument();
-    await next();
-    await userEvent.type(screen.getByPlaceholderText('e.g. Dog Walk'), 'Walk');
-    await next();
-    await pickDay(/Mon, Aug 23/);
-    await toReview();
-    await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
-    await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
-    expect(createMultiDateBookingRequest.mock.calls[0]![0]).not.toHaveProperty('kinIds');
-  });
-
-  it('changing household clears the Kin picked from the previous one', async () => {
-    feed({
-      kin: { status: 'ready', data: [kin(), kin({ _id: 'k3', name: 'Elsewhere', kinfolkId: 'kf2' })] },
+    it('names the same Kin on Review as on step 1', async () => {
+      feed({ kin: { kf1: roster() } });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      await screen.findByText('All Kin in this home');
+      await next();
+      await userEvent.type(screen.getByPlaceholderText('e.g. Dog Walk'), 'Walk');
+      await next();
+      await pickDay(/Mon, Aug 23/);
+      await toReview();
+      expect(screen.getByText('All Kin in this home: Biscuit, Gravy')).toBeInTheDocument();
     });
-    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
-    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    await chooseSpecificKin();
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Biscuit' }));
-    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf2');
-    await chooseSpecificKin();
-    expect(screen.getByRole('checkbox', { name: 'Elsewhere' })).not.toBeChecked();
-  });
 
-  it('fails loud, and keeps going, when the Kin roster read is denied', async () => {
-    feed({ kin: { status: 'error', message: 'permission-denied', retry: vi.fn() } });
-    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
-    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    expect(screen.getByText(/Kin roster could not be read \(permission-denied\)/)).toBeInTheDocument();
-    await next();
-    expect(screen.getByRole('heading', { name: 'Select a Service' })).toBeInTheDocument();
-  });
+    it('shows a loading line while the Kin are on their way', async () => {
+      feed();
+      getHouseholdKinRoster.mockReturnValue(new Promise(() => {}));
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      expect(screen.getByRole('status')).toHaveTextContent('Loading this household’s Kin…');
+    });
 
-  // DEFECT 5. The wizard used to stream the WHOLE `kin` collection behind one
-  // shared cap ordered by document id, so a household whose kin sit past that
-  // boundary read back as an empty roster and this step said "No Kin on this
-  // household yet" with total confidence.
-  it("asks for ONE household's roster, not the whole capped collection", async () => {
-    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
-    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    const kinSpecs = useCollection.mock.calls
-      .map((call: unknown[]) => call[0] as CollectionSpec)
-      .filter((spec: CollectionSpec) => spec.path === 'kin');
-    expect(kinSpecs.length).toBeGreaterThan(0);
-    expect(kinSpecs[kinSpecs.length - 1]!.filters).toEqual([['kinfolkId', '==', 'kf1']]);
-  });
+    it('sends no kinIds when the household has no Kin on file', async () => {
+      feed({ kin: { kf1: roster({ kin: [] }) } });
+      createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      expect(await screen.findByText(/No Kin on this household yet/i)).toBeInTheDocument();
+      expect(await finishAndSubmit()).not.toHaveProperty('kinIds');
+    });
 
-  it('says so when the roster came back AT the cap, rather than passing a page off as the whole list', async () => {
-    feed({
-      kin: {
-        status: 'ready',
-        data: Array.from({ length: KIN_ROSTER_MAX }, (_, i) =>
-          kin({ _id: `k${i}`, name: `Kin ${i}` }),
+    it('says so, in plain words, and keeps going when the Kin cannot be loaded', async () => {
+      feed({ kin: { kf1: new Error('permission-denied') } });
+      createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      expect(
+        await screen.findByText(
+          'The Kin of this household could not be loaded. The visit still covers every Kin in the home.',
         ),
-      },
+      ).toBeInTheDocument();
+      // The reason is the server's, not something to put in front of the office.
+      expect(screen.queryByText(/permission-denied/)).toBeNull();
+      // No ids to name, so none are sent, and the server books the whole home.
+      expect(await finishAndSubmit()).not.toHaveProperty('kinIds');
     });
-    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
-    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    expect(screen.getByText(/roster hit the 500-row read limit/)).toBeInTheDocument();
   });
 
-  it('says nothing about a cap for a roster that fits', async () => {
-    feed({ kin: { status: 'ready', data: [kin(), kin({ _id: 'k2', name: 'Gravy' })] } });
-    render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
-    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
-    expect(screen.queryByText(/read limit/)).toBeNull();
+  describe('choosing Kin on', () => {
+    it('offers a tick box per Kin, every one ticked to begin with', async () => {
+      feed({ kin: { kf1: roster({ chooseKin: true }) } });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      expect(await screen.findByRole('checkbox', { name: 'Biscuit' })).toBeChecked();
+      expect(screen.getByRole('checkbox', { name: 'Gravy' })).toBeChecked();
+    });
+
+    it('left alone, books every Kin', async () => {
+      feed({ kin: { kf1: roster({ chooseKin: true }) } });
+      createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      await screen.findByRole('checkbox', { name: 'Biscuit' });
+      expect((await finishAndSubmit()).kinIds).toEqual(['k1', 'k2']);
+    });
+
+    it('sends only the Kin left ticked, and Review names only them', async () => {
+      feed({ kin: { kf1: roster({ chooseKin: true }) } });
+      createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      await userEvent.click(await screen.findByRole('checkbox', { name: 'Biscuit' }));
+      expect(screen.getByRole('checkbox', { name: 'Biscuit' })).not.toBeChecked();
+
+      await next();
+      await userEvent.type(screen.getByPlaceholderText('e.g. Dog Walk'), 'Walk');
+      await next();
+      await pickDay(/Mon, Aug 23/);
+      await toReview();
+      expect(screen.getByText('Gravy')).toBeInTheDocument();
+      expect(screen.queryByText(/All Kin in this home/)).toBeNull();
+      await userEvent.click(screen.getByRole('button', { name: /create 1 visit/i }));
+      await waitFor(() => expect(createMultiDateBookingRequest).toHaveBeenCalledTimes(1));
+      expect(createMultiDateBookingRequest.mock.calls[0]![0].kinIds).toEqual(['k2']);
+    });
+
+    it('ticking a Kin back books every Kin again', async () => {
+      feed({ kin: { kf1: roster({ chooseKin: true }) } });
+      createMultiDateBookingRequest.mockResolvedValue({ batchId: 'r', visitIds: ['v'], visitCount: 1 });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      await userEvent.click(await screen.findByRole('checkbox', { name: 'Biscuit' }));
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Biscuit' }));
+      expect((await finishAndSubmit()).kinIds).toEqual(['k1', 'k2']);
+    });
+
+    it('will not go on with no Kin ticked, and says why', async () => {
+      feed({ kin: { kf1: roster({ chooseKin: true }) } });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      await userEvent.click(await screen.findByRole('checkbox', { name: 'Biscuit' }));
+      await userEvent.click(screen.getByRole('checkbox', { name: 'Gravy' }));
+      expect(screen.getAllByText('Tick at least one Kin.').length).toBeGreaterThan(0);
+      await next();
+      expect(screen.getByRole('heading', { name: 'Select Kinfolk & Kin' })).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Select a Service' })).toBeNull();
+    });
+
+    it('changing household starts the new one with every Kin ticked', async () => {
+      feed({
+        kin: {
+          kf1: roster({ chooseKin: true }),
+          kf2: { kin: [{ id: 'k9', name: 'Elsewhere', adminId: null }], chooseKin: true },
+        },
+      });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      await userEvent.click(await screen.findByRole('checkbox', { name: 'Biscuit' }));
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf2');
+      expect(await screen.findByRole('checkbox', { name: 'Elsewhere' })).toBeChecked();
+      // The first household's Kin are not offered for the second.
+      expect(screen.queryByRole('checkbox', { name: 'Gravy' })).toBeNull();
+    });
+
+    it('a Kin with no name on file still gets a tick box', async () => {
+      feed({ kin: { kf1: { kin: [{ id: 'k1', name: null, adminId: null }], chooseKin: true } } });
+      render(<NewBookingDialog onClose={vi.fn()} onCreated={vi.fn()} />);
+      await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+      expect(await screen.findByRole('checkbox', { name: 'Unnamed Kin' })).toBeChecked();
+    });
   });
 });
 

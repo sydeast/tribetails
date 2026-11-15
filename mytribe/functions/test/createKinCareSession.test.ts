@@ -114,6 +114,7 @@ describe('createKinCareSession kin names', () => {
       endTime: new Date(Date.now() + DAY + 3600_000).toISOString(),
     });
   }
+
   it('covers every active Kin in the home when none is named', async () => {
     const ctx = home();
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -123,6 +124,7 @@ describe('createKinCareSession kin names', () => {
     expect(written.kinIds).toEqual(['k1', 'k2', 'flat9']);
     expect(written.kinNames).toEqual(['Fido', 'Whiskers', 'Office Cat']);
   });
+
   it('with choosing Kin off, an older app that names one Kin still gets a visit for the whole home', async () => {
     const ctx = home();
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -131,6 +133,7 @@ describe('createKinCareSession kin names', () => {
     expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1', 'k2', 'flat9']);
     expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Fido', 'Whiskers', 'Office Cat']);
   });
+
   it('with choosing Kin on, keeps the Kin that were named', async () => {
     const ctx = home(CHOOSE_KIN_ON);
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -138,6 +141,7 @@ describe('createKinCareSession kin names', () => {
     expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k2']);
     expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Whiskers']);
   });
+
   it('with choosing Kin on, reads an admin record id as the Kin it belongs to', async () => {
     const ctx = home(CHOOSE_KIN_ON);
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -145,6 +149,7 @@ describe('createKinCareSession kin names', () => {
     expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1', 'flat9']);
     expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Fido', 'Office Cat']);
   });
+
   it('with choosing Kin on, drops a Kin that is not in care or not in this home', async () => {
     const ctx = home(CHOOSE_KIN_ON);
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -152,18 +157,21 @@ describe('createKinCareSession kin names', () => {
     expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1']);
     expect(sessionWrites(ctx)[0].data.kinNames).toEqual(['Fido']);
   });
+
   it('with choosing Kin on, naming nobody who is in care means the whole home, never a visit for nobody', async () => {
     const ctx = home(CHOOSE_KIN_ON);
     mocks.dbFn.mockReturnValue(ctx.db);
     await createKinCareSessionHandler(visitFor(['k3', 'missing-kin']));
     expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k1', 'k2', 'flat9']);
   });
+
   it('a tester with the flag on their own account chooses, while it is off for everyone else', async () => {
     const ctx = home({ 'clients/admin1': { featureFlags: { 'auntieos.visits.chooseKin': true } } });
     mocks.dbFn.mockReturnValue(ctx.db);
     await createKinCareSessionHandler(visitFor(['k2']));
     expect(sessionWrites(ctx)[0].data.kinIds).toEqual(['k2']);
   });
+
   it('writes no Kin for a household that has none on file', async () => {
     const ctx = buildDbMock({ docs: {} });
     mocks.dbFn.mockReturnValue(ctx.db);

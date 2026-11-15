@@ -69,3 +69,14 @@ export function kinCoveredLabel(
   if (names.length === 0) return `${String(kinIds.length)} (names not on file)`;
   return unnamed > 0 ? `${names.join(', ')} · ${String(unnamed)} without a name on file` : names.join(', ');
 }
+
+/**
+ * #2032: the "Kin" line on a visit's detail, from what the visit itself
+ * stores. Names where the record has them; a count where it has only ids; and
+ * for a record that names nobody, the rule every visit is made under.
+ */
+export function visitKinLine(kinIds: readonly string[], recordNames: readonly string[]): string {
+  const names = recordNames.map((n) => n.trim()).filter((n) => n !== '');
+  if (kinIds.length === 0 && names.length === 0) return 'Every Kin in the home';
+  return kinCoveredLabel(kinIds, names, () => null);
+}

@@ -194,6 +194,7 @@ export async function updateKinCareSessionHandler(
     patch.kinNames = roster.kinNames;
     updated.push('kinIds', 'kinNames');
   }
+
   // The Kin were the only thing sent and choosing Kin is off: nothing changes,
   // so nothing is written. Stamping `updatedAt` here would say the visit was
   // edited when it was not.

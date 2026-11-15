@@ -136,6 +136,7 @@ describe('editing a visit', () => {
     expect(res.updated).toEqual(['kinIds', 'kinNames']);
     expect(writeAt(ctx, 's1')?.data).toMatchObject({ kinIds: ['p1'], kinNames: ['Biscuit'] });
   });
+
   // An empty roster is the whole household, and the server is where that is
   // materialized, so no client has to know the convention.
   it('with choosing Kin on, expands an empty kinIds to the whole household rather than storing "no Kin"', async () => {
@@ -146,6 +147,7 @@ describe('editing a visit', () => {
     expect(mocks.roster).toHaveBeenCalledWith('fam1', [], { chooseKin: true });
     expect(writeAt(ctx, 's1')?.data).toMatchObject({ kinIds: ['p1', 'p2'] });
   });
+
   // Operator ruling 2026-11-12: every visit covers every Kin. With choosing
   // Kin off there is nothing to change, and a visit keeps the Kin it was made
   // for: an older app that sends the Kin with every save must not narrow a
@@ -161,6 +163,7 @@ describe('editing a visit', () => {
     expect(data).not.toHaveProperty('kinIds');
     expect(data).not.toHaveProperty('kinNames');
   });
+
   it('with choosing Kin off, a save that names only the Kin writes nothing and is not an error', async () => {
     const ctx = seed({ s1: visit() });
     mocks.dbFn.mockReturnValue(ctx.db);

@@ -173,6 +173,37 @@ describe('BookingDetailModal: the request note on a booked visit (#1579)', () =>
     expect(screen.queryByText('Office note')).not.toBeInTheDocument();
   });
 });
+// #2032: the drawer named the household, the service and the time, and never
+// said which Kin the visit is for.
+describe('BookingDetailModal: which Kin the visit is for (#2032)', () => {
+  it('names the Kin the visit stores, between Kinfolk and Address', () => {
+    open({ kinIds: ['k3'], kinNames: ['Pepper'] });
+    expect(factValue('Kin')).toHaveTextContent(/^Pepper$/);
+    const labels = Array.from(document.querySelectorAll('.bdm__facts dt')).map((dt) => dt.textContent);
+    expect(labels.slice(0, 3)).toEqual(['Kinfolk', 'Kin', 'Address']);
+  });
+
+  it('names every Kin of a visit for the whole home', () => {
+    open({ kinIds: ['k1', 'k2', 'k3'], kinNames: ['Biscuit', 'Gravy', 'Pepper'] });
+    expect(factValue('Kin')).toHaveTextContent('Biscuit, Gravy, Pepper');
+  });
+
+  it('counts a Kin the visit stores no name for, rather than dropping it', () => {
+    open({ kinIds: ['k1', 'k2'], kinNames: ['Biscuit'] });
+    expect(factValue('Kin')).toHaveTextContent('Biscuit · 1 without a name on file');
+  });
+
+  it('says a visit stored with ids alone has names missing, never a blank line', () => {
+    open({ kinIds: ['k1', 'k2'], kinNames: [] });
+    expect(factValue('Kin')).toHaveTextContent('2 (names not on file)');
+  });
+
+  it('reads an old visit that names nobody as the whole home, never as an id or a blank', () => {
+    open({ kinIds: [], kinNames: undefined });
+    expect(factValue('Kin')).toHaveTextContent(/^Every Kin in the home$/);
+  });
+});
+
 describe('BookingDetailModal fact rows', () => {
   it('#1592: names the requested service from the KinCare catalog, never the stored key', () => {
     open(

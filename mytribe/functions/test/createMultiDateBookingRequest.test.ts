@@ -131,6 +131,7 @@ describe('createMultiDateBookingRequest happy path', () => {
     expect(v?.data.kinIds).toEqual(['k1', 'k2']);
     expect(v?.data.kinNames).toEqual(['Fido', 'Whiskers']);
   });
+
   it('keeps the Kin the wizard named once choosing Kin is switched on', async () => {
     const ctx = buildDbMock({
       docs: {

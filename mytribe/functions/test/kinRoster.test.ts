@@ -148,6 +148,7 @@ describe('readHouseholdKinRoster, the one roster every screen and writer reads',
       },
     };
   }
+
   it('lists each active Kin once, whichever store it was made in', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(twoStores()).db);
     const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
@@ -158,6 +159,7 @@ describe('readHouseholdKinRoster, the one roster every screen and writer reads',
       { id: 'flat-f', flatId: 'flat-f', name: 'Office Cat' },
     ]);
   });
+
   it('leaves a memorial Kin off even though its admin record still reads active', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(twoStores()).db);
     const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
@@ -165,17 +167,20 @@ describe('readHouseholdKinRoster, the one roster every screen and writer reads',
     expect(ids).not.toContain('fam-c');
     expect(ids).not.toContain('flat-c');
   });
+
   it('leaves an archived Kin off, with or without a household copy', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(twoStores()).db);
     const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
     const ids = (await readHouseholdKinRoster('3')).map((k) => k.id);
     for (const gone of ['fam-d', 'flat-d', 'flat-g']) expect(ids).not.toContain(gone);
   });
+
   it('never lists another household\'s Kin', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(twoStores()).db);
     const { readHouseholdKinRoster } = await import('../src/lib/kinRoster');
     expect((await readHouseholdKinRoster('3')).map((k) => k.name)).not.toContain('Next Door');
   });
+
   it('gives a household whose only Kin the office typed in a roster (#1822)', async () => {
     mocks.dbFn.mockReturnValue(
       buildDbMock({ queryDocs: { kin: [{ id: 'flat-1', data: { name: 'Solo', kinfolkId: '7' } }] } }).db,
@@ -184,6 +189,7 @@ describe('readHouseholdKinRoster, the one roster every screen and writer reads',
     expect(await materializeKinRoster('7', [])).toEqual({ kinIds: ['flat-1'], kinNames: ['Solo'] });
   });
 });
+
 describe('kinRosterForNewVisit, operator ruling 2026-11-12: every visit covers every Kin', () => {
   it('with choosing Kin off, stores the whole roster whatever was named', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(household()).db);
@@ -195,6 +201,7 @@ describe('kinRosterForNewVisit, operator ruling 2026-11-12: every visit covers e
       });
     }
   });
+
   it('with choosing Kin on, stores the named Kin in roster order, once each', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(household()).db);
     const { kinRosterForNewVisit } = await import('../src/lib/kinRoster');
@@ -207,6 +214,7 @@ describe('kinRosterForNewVisit, operator ruling 2026-11-12: every visit covers e
       kinNames: ['Whiskers'],
     });
   });
+
   it('with choosing Kin on, never stores a memorial, archived or unknown Kin', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(household()).db);
     const { kinRosterForNewVisit } = await import('../src/lib/kinRoster');
@@ -215,6 +223,7 @@ describe('kinRosterForNewVisit, operator ruling 2026-11-12: every visit covers e
       kinNames: ['Fido'],
     });
   });
+
   it('with choosing Kin on, naming none, or none in care, means the whole home', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(household()).db);
     const { kinRosterForNewVisit } = await import('../src/lib/kinRoster');

@@ -2534,7 +2534,9 @@ the handler.
 operator ruling 2026-11-12). Hand-typed on every client; not in the contracts
 registry.
 - req `{ kinfolkId?: string }`
-- res `{ kin: { id: string, name: string | null }[], chooseKin: boolean }`
+- res `{ kin: { id: string, name: string | null, adminId?: string }[], chooseKin: boolean }`.
+  `adminId` is the Kin's admin record, sent to staff only and only when it
+  differs from `id`.
 - READ-ONLY. `kin` is the household's ACTIVE Kin, the ones a new visit covers,
   from `lib/kinRoster.ts#readHouseholdKinRoster`: each Kin once, whether the
   household or the office made it. A memorial or archived Kin is not listed.
@@ -2558,6 +2560,7 @@ registry.
   visit's Kin editor.
 - Callers: admin web, admin Android, the desktop console, the kinfolk portal
   web app and the kinfolk portal Android app.
+
 ### getMyBookings
 - req `{ kinfolkId?: string }` (no zod schema; read raw off `req.data`, same
   precedent as `getMyInvoicesRequest`)

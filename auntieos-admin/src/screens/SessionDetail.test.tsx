@@ -77,12 +77,24 @@ vi.mock('../lib/visitTracking', () => ({
   endVisitTracking: vi.fn(),
   stopVisitTracking: vi.fn(),
 }));
+// #1822 / #1862: the Kin that can be ticked on a visit, and whether they can
+// be, are the server's answer. Off by default: every visit covers every Kin.
+const { getHouseholdKinRoster } = vi.hoisted(() => ({ getHouseholdKinRoster: vi.fn() }));
+vi.mock('../api/kinRoster', () => ({ getHouseholdKinRoster }));
+const CHOOSE_KIN = {
+  kin: [
+    { id: 'p1', name: 'Biscuit', adminId: null },
+    { id: 'p2', name: 'Gravy', adminId: null },
+  ],
+  chooseKin: true,
+};
 import { SessionDetail } from './SessionDetail';
 import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
 beforeEach(() => {
   useVisitTracking.mockReturnValue({ phase: 'idle' });
   patchVisitLifecycle.mockReset();
   updateKinCareSession.mockReset();
+  getHouseholdKinRoster.mockReset().mockResolvedValue({ kin: CHOOSE_KIN.kin, chooseKin: false });
   listVisitInternalNotes.mockReset();
   listVisitInternalNotes.mockResolvedValue({ notes: [], canMarkAdminOnly: false, hasBookingRecord: true });
   addInternalBookingNote.mockReset();
@@ -603,37 +615,62 @@ describe('SessionDetail: editing the visit', () => {
     expect(await screen.findByText(/rate card couldn’t be read/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/service type/i)).toHaveValue('Dog Walk');
   });
-  it('edits the Kin roster, and states that unticking everything means the whole household', async () => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [
-        { _id: 'p1', kinfolkId: 'kf1', name: 'Biscuit' },
-        { _id: 'p2', kinfolkId: 'kf1', name: 'Gravy' },
-      ],
-    });
+  it('with choosing Kin on, edits the Kin of the visit', async () => {
+    getHouseholdKinRoster.mockResolvedValue(CHOOSE_KIN);
     updateKinCareSession.mockResolvedValue({ ok: true, sessionId: 'sess1', updated: ['kinIds', 'kinNames'] });
     render(<SessionDetail entry={entry({ kinIds: ['p1', 'p2'] })} onBack={vi.fn()} />);
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Gravy' }));
+    expect(getHouseholdKinRoster).toHaveBeenCalledWith('kf1');
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Gravy' }));
     await userEvent.click(screen.getByRole('button', { name: /save details/i }));
     expect(updateKinCareSession).toHaveBeenCalledWith('sess1', { kinIds: ['p1'] });
   });
-  // Unticking everything is R1's "whole household", not "no Kin" (a booking for
+
+  // Unticking everything is "whole household", not "no Kin" (a booking for
   // zero animals is not a thing the business sells), and the screen has to say
   // so where the operator can act on it.
-  it('says that unticking every Kin means the whole household, not none', async () => {
-    useCollection.mockReturnValue({
-      status: 'ready',
-      data: [
-        { _id: 'p1', kinfolkId: 'kf1', name: 'Biscuit' },
-        { _id: 'p2', kinfolkId: 'kf1', name: 'Gravy' },
-      ],
-    });
+  it('with choosing Kin on, says that unticking every Kin means the whole household, not none', async () => {
+    getHouseholdKinRoster.mockResolvedValue(CHOOSE_KIN);
     render(<SessionDetail entry={entry({ kinIds: ['p1', 'p2'] })} onBack={vi.fn()} />);
-    await userEvent.click(screen.getByRole('checkbox', { name: 'Gravy' }));
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Gravy' }));
     await userEvent.click(screen.getByRole('checkbox', { name: 'Biscuit' }));
     expect(screen.getByText(/nothing ticked means the whole household/i)).toBeInTheDocument();
   });
+
+  it('with choosing Kin on, ticks a Kin an older visit stored under its admin record', async () => {
+    getHouseholdKinRoster.mockResolvedValue({
+      kin: [
+        { id: 'fam-a', name: 'Biscuit', adminId: 'p1' },
+        { id: 'p2', name: 'Gravy', adminId: null },
+      ],
+      chooseKin: true,
+    });
+    render(<SessionDetail entry={entry({ kinIds: ['p1'] })} onBack={vi.fn()} />);
+    expect(await screen.findByRole('checkbox', { name: 'Biscuit' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Gravy' })).not.toBeChecked();
+  });
+
+  // Operator ruling 2026-11-12: every visit covers every Kin.
+  it('with choosing Kin off, names the Kin and offers nothing to tick', async () => {
+    render(
+      <SessionDetail entry={entry({ kinIds: ['p1', 'p2'], kinNames: ['Biscuit', 'Gravy'] })} onBack={vi.fn()} />,
+    );
+    await waitFor(() => expect(getHouseholdKinRoster).toHaveBeenCalled());
+    expect(screen.getByText('Biscuit, Gravy')).toBeInTheDocument();
+    expect(screen.queryByText('Kin on this visit')).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Biscuit' })).toBeNull();
+  });
+
+  it('offers nothing to tick when the server cannot be asked', async () => {
+    getHouseholdKinRoster.mockRejectedValue(new Error('internal'));
+    render(
+      <SessionDetail entry={entry({ kinIds: ['p1', 'p2'], kinNames: ['Biscuit', 'Gravy'] })} onBack={vi.fn()} />,
+    );
+    await waitFor(() => expect(getHouseholdKinRoster).toHaveBeenCalled());
+    expect(screen.getByText('Biscuit, Gravy')).toBeInTheDocument();
+    expect(screen.queryByText('Kin on this visit')).toBeNull();
+  });
 });
+
 describe('SessionDetail: internal notes (#1580)', () => {
   it('adds a note to the visit\'s one internal list, by session, and re-reads it', async () => {
     addInternalBookingNote.mockResolvedValue({ noteId: 'n9', visibility: 'shared', storedOn: 'thread' });
@@ -985,8 +1022,7 @@ describe('SessionDetail visit facts (#1581)', () => {
   it('names a Kin the record holds no name for from the household roster', () => {
     useCollection.mockReturnValue({ status: 'ready', data: [{ _id: 'p1', name: 'QA-Pup' }] });
     render(<SessionDetail entry={entry({ kinIds: ['p1'], kinNames: [] })} onBack={vi.fn()} />);
-    // Once in Kin covered, once beside its tick in the picker below.
-    expect(screen.getAllByText('QA-Pup')).toHaveLength(2);
+    expect(screen.getAllByText('QA-Pup')).toHaveLength(1);
     expect(screen.queryByText('1 (names not on file)')).toBeNull();
   });
 

@@ -13,8 +13,13 @@ interface GetHouseholdKinRosterRequest {
 }
 
 interface GetHouseholdKinRosterResult {
-  /** The household's active Kin, the ones a new visit covers. */
-  kin: Array<{ id: string; name: string | null }>;
+  /**
+   * The household's active Kin, the ones a new visit covers. `adminId` is the
+   * Kin's admin record, given to staff only and only when it differs from
+   * `id`: a visit made before 2026-11-14 may have stored that id, and the
+   * visit's Kin editor has to recognise it.
+   */
+  kin: Array<{ id: string; name: string | null; adminId?: string }>;
   /**
    * Whether this caller may choose specific Kin for a visit. False, the
    * default: every visit covers every Kin above and the screen shows no
@@ -43,7 +48,8 @@ interface GetHouseholdKinRosterResult {
  *
  * GATE: `resolveKinfolkAccess`. A household reads its own roster; the owner
  * and an Auntie (on `lib/auntieAccess.ts`, for the visit's Kin editor) read
- * the one they name. Names and ids only: no care notes, no 411.
+ * the one they name. Names and ids only: no care notes, no 411. A household
+ * is never handed an admin record id.
  */
 export async function getHouseholdKinRosterHandler(
   req: CallableRequest<GetHouseholdKinRosterRequest>,
@@ -53,7 +59,7 @@ export async function getHouseholdKinRosterHandler(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
-  const { kinfolkId } = await resolveKinfolkAccess(
+  const { kinfolkId, isOperator } = await resolveKinfolkAccess(
     uid,
     req.data?.kinfolkId,
     householdStaffFlag(req.auth, 'getHouseholdKinRoster'),
@@ -71,7 +77,14 @@ export async function getHouseholdKinRosterHandler(
     extra: { kinfolkId, count: roster.length, chooseKin },
   });
 
-  return { kin: roster.map((k) => ({ id: k.id, name: k.name })), chooseKin };
+  return {
+    kin: roster.map((k) => ({
+      id: k.id,
+      name: k.name,
+      ...(isOperator && k.flatId !== null && k.flatId !== k.id ? { adminId: k.flatId } : {}),
+    })),
+    chooseKin,
+  };
 }
 
 export const getHouseholdKinRoster = onCall(

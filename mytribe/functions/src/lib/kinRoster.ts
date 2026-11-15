@@ -49,6 +49,7 @@ export interface KinRosterEntry {
   /** Null when the doc carries no usable `name`, never an empty string. */
   name: string | null;
 }
+
 function textOf(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -110,6 +111,7 @@ export async function readHouseholdKinRoster(kinfolkId: string): Promise<KinRost
   }
   return roster;
 }
+
 function rosterPair(entries: readonly KinRosterEntry[]): { kinIds: string[]; kinNames: string[] } {
   return {
     kinIds: entries.map((k) => k.id),
@@ -143,6 +145,7 @@ export async function materializeKinRoster(
   }
   return rosterPair(await readHouseholdKinRoster(kinfolkId));
 }
+
 /**
  * The Kin a NEW visit covers (operator ruling 2026-11-12, #1822 / #1862).
  *

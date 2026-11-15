@@ -515,6 +515,13 @@ describe('step gating', () => {
     expect(canAdvance(ready(), 'client', NOW)).toBe(true);
   });
 
+  // #1822 / #1862: reachable only with the "Choose Kin for a visit" flag on.
+  it('blocks step 1 when Kin are being chosen and none is ticked', () => {
+    expect(stepBlocker(ready({ allKinMode: false, kinIds: [] }), 'client', NOW)).toBe('Tick at least one Kin.');
+    expect(stepBlocker(ready({ allKinMode: false, kinIds: ['k1'] }), 'client', NOW)).toBeNull();
+    expect(stepBlocker(ready({ allKinMode: true, kinIds: [] }), 'client', NOW)).toBeNull();
+  });
+
   it('blocks step 2 until a service is picked', () => {
     expect(stepBlocker(ready({ serviceName: '' }), 'service', NOW)).toBe('Pick a service first.');
   });

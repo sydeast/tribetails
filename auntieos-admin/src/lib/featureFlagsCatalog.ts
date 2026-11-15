@@ -60,6 +60,23 @@ export const KEY_COMMUNICATE_COMMS_RECAP = 'auntieos.communicate.commsRecap';
  *      stale doc outlives the code that read it.
  */
 export const KEY_INBOX_WAITING_SECTIONS = 'auntieos.inbox.waitingSections';
+/**
+ * Choosing specific Kin for a visit (operator ruling 2026-11-12, #1822 /
+ * #1862). OFF, the default: every visit covers every Kin in the home, and no
+ * booking form shows a Kin picker. ON: New booking, New visit, the visit's own
+ * Kin row and the household's booking request show the Kin with every one
+ * ticked, and a visit can be made for some of them.
+ *
+ * THE SERVER DECIDES, NOT THIS CLIENT. The booking writers read this flag
+ * themselves (`mytribe/functions/src/lib/featureFlags.ts`) and store the whole
+ * roster while it is off, whatever they are sent. The booking forms do not
+ * read it from this catalog either: `getHouseholdKinRoster` hands them the
+ * household's Kin and `chooseKin` in one answer, so a form can never show a
+ * picker the write would set aside. The key is here so the Feature Flags
+ * screen has a switch for it, on all three admin clients and for both portal
+ * apps at once.
+ */
+export const KEY_VISITS_CHOOSE_KIN = 'auntieos.visits.chooseKin';
 
 /** Every key this client understands. Unknown remote keys are ignored. */
 export const KEYS: readonly string[] = [
@@ -73,6 +90,7 @@ export const KEYS: readonly string[] = [
   KEY_COMMUNICATE_GENERATE_VIA_FUNCTION,
   KEY_COMMUNICATE_COMMS_RECAP,
   KEY_INBOX_WAITING_SECTIONS,
+  KEY_VISITS_CHOOSE_KIN,
 ];
 
 /** Compile-time safe baseline. Mirrors the Kotlin registries' DEFAULT. */
@@ -95,6 +113,7 @@ export const DEFAULTS: Readonly<Record<string, boolean>> = {
   // toggle row and ignores remote overrides, which are the two things an A/B
   // trial cannot do without.
   [KEY_INBOX_WAITING_SECTIONS]: true,
+  [KEY_VISITS_CHOOSE_KIN]: false,
 };
 
 /**

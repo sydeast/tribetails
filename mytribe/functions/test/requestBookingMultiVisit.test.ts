@@ -278,6 +278,7 @@ describe('requestBookingHandler — multi-visit envelope', () => {
     )!.data;
     return { parent, visit };
   }
+
   it('names every active Kin on the envelope AND every visit (not kinNames: [])', async () => {
     const { parent, visit } = await request({}, undefined);
     expect(parent.kinIds).toEqual(['k1', 'k2']);
@@ -285,11 +286,13 @@ describe('requestBookingHandler — multi-visit envelope', () => {
     expect(visit.kinIds).toEqual(['k1', 'k2']);
     expect(visit.kinNames).toEqual(['Fido', 'Whiskers']);
   });
+
   it('with choosing Kin off, a household that names one Kin still books the whole home', async () => {
     const { parent, visit } = await request({}, ['k2']);
     expect(parent.kinIds).toEqual(['k1', 'k2']);
     expect(visit.kinNames).toEqual(['Fido', 'Whiskers']);
   });
+
   it('with choosing Kin on, the request carries the Kin the household chose', async () => {
     const { parent, visit } = await request(
       { 'business_settings/feature_flags': { flags: { 'auntieos.visits.chooseKin': true } } },
@@ -300,6 +303,7 @@ describe('requestBookingHandler — multi-visit envelope', () => {
     expect(visit.kinIds).toEqual(['k2']);
     expect(visit.kinNames).toEqual(['Whiskers']);
   });
+
   it('with choosing Kin on, drops a memorial Kin and an id that is not theirs, never fails the booking', async () => {
     const { parent } = await request(
       { 'business_settings/feature_flags': { flags: { 'auntieos.visits.chooseKin': true } } },

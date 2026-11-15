@@ -65,13 +65,13 @@ describe('getHouseholdKinRoster', () => {
     ]);
   });
 
-  it('gives the office the same list for the household it names (#1862)', async () => {
+  it('gives the office the same Kin, under the same ids, for the household it names (#1862)', async () => {
     mocks.dbFn.mockReturnValue(seed().db);
 
     const asHousehold = await call({ kinfolkId: '3' }, { uid: 'u1' });
     const asOffice = await call({ kinfolkId: '3' }, OWNER);
 
-    expect(asOffice.kin).toEqual(asHousehold.kin);
+    expect(asOffice.kin.map((k) => ({ id: k.id, name: k.name }))).toEqual(asHousehold.kin);
   });
 
   it('carries names and ids only: no care notes, no office notes', async () => {
@@ -79,7 +79,21 @@ describe('getHouseholdKinRoster', () => {
 
     const res = await call({ kinfolkId: '3' }, OWNER);
 
-    for (const k of res.kin) expect(Object.keys(k).sort()).toEqual(['id', 'name']);
+    for (const k of res.kin) {
+      expect(Object.keys(k).filter((key) => key !== 'adminId').sort()).toEqual(['id', 'name']);
+    }
+  });
+
+  it('tells staff the admin record a Kin is also known by, and never tells the household', async () => {
+    mocks.dbFn.mockReturnValue(seed().db);
+
+    const asOffice = await call({ kinfolkId: '3' }, OWNER);
+    const asHousehold = await call({ kinfolkId: '3' }, { uid: 'u1' });
+
+    expect(asOffice.kin.find((k) => k.id === 'k1')).toEqual({ id: 'k1', name: 'Fido', adminId: 'flat1' });
+    // The office made this Kin: one id, so nothing more to say.
+    expect(asOffice.kin.find((k) => k.id === 'flat9')).toEqual({ id: 'flat9', name: 'Office Cat' });
+    for (const k of asHousehold.kin) expect(k).not.toHaveProperty('adminId');
   });
 
   it('says choosing Kin is off until the flag is switched on', async () => {

@@ -1,0 +1,67 @@
+/* "Kin covered" on New booking and New visit. The All Kin card and the chips
+   are the New booking wizard's own (formerly .nbw__allkin / .nbw__kin-chip in
+   NewBookingDialog.css), moved here so New visit draws the same field. */
+
+.kin-choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.kin-choice__label {
+  font-size: var(--type-body-sm-size);
+  color: var(--color-text-dim);
+  font-weight: 500;
+}
+
+.kin-choice__hint {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-text-dim);
+}
+
+.kin-choice__error {
+  font-size: var(--type-label-sm-size);
+  color: var(--color-error);
+}
+
+.kin-choice__all {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: var(--space-3);
+  border: var(--border-hairline) solid color-mix(in srgb, var(--tt-kin-teal) 40%, transparent);
+  border-radius: var(--radius-card-lg);
+  background: color-mix(in srgb, var(--tt-kin-teal) 10%, transparent);
+}
+
+.kin-choice__all-title {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.kin-choice__all-names {
+  color: var(--color-text-dim);
+  font-size: var(--type-body-sm-size);
+}
+
+.kin-choice__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.kin-choice__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-hero-bottom);
+  border: var(--border-hairline) solid var(--color-hairline);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.kin-choice__chip--on {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--tt-kinfolk-orange) 12%, transparent);
+}

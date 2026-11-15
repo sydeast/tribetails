@@ -4,15 +4,8 @@ import { createMultiDateBookingRequest } from '../api/bookingsWrite';
 import { mintBookingIdempotencyKey } from '../lib/bookingIdempotency';
 import { resolveBusinessTimeZone } from '../lib/businessOperations';
 import type { CreateMultiDateBookingRequestResult } from '../contracts/bookingContracts.generated';
-import {
-  KIN_ROSTER_MAX,
-  SORT_OPTION_DEFAULT,
-  activeKinByKinfolk,
-  filterSortKinfolk,
-  kinForHouseholdQuery,
-  kinfolkDisplayName,
-  type Kin,
-} from '../api/directory';
+import { SORT_OPTION_DEFAULT, filterSortKinfolk, kinfolkDisplayName } from '../api/directory';
+import { canChooseKin, chosenKin, rosterKinLabel, useHouseholdKinRoster } from '../lib/kinChoice';
 import {
   AVAILABILITY_BUSY_SLOTS_QUERY,
   AVAILABILITY_SESSIONS_QUERY,
@@ -38,7 +31,6 @@ import {
   initialWizardState,
   isOverridableBusyRefusal,
   plannedVisitTimes,
-  resolveKinIds,
   selectedDays,
   stepBlocker,
   stepIndex,
@@ -56,7 +48,6 @@ import {
   ReviewStep,
   ServiceStep,
   Stepper,
-  kinLabel,
 } from './NewBookingWizardSteps';
 import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
@@ -142,9 +133,10 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
   const households = useKinfolkRoster();
 
   const [state, setState] = useState<WizardState>(initialWizardState);
-  // Scoped to the chosen household, not the whole `kin` collection: a shared cap
-  // across every household is how a household past it reads as "no Kin at all".
-  const allKin = useCollection<Kin>(kinForHouseholdQuery(state.kinfolkId));
+  // #1862: the household's Kin come from the server, the list the booking is
+  // stored with. This dialog used to read the admin `kin` records itself and
+  // named six Kin for a booking the server then wrote for three.
+  const kinRoster = useHouseholdKinRoster(state.kinfolkId);
   const busySlots = useCollection<AvailabilityBusySlot>(AVAILABILITY_BUSY_SLOTS_QUERY);
   const scheduled = useCollection<AvailabilitySession>(AVAILABILITY_SESSIONS_QUERY);
 
@@ -231,29 +223,30 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
     }));
   }, [households]);
 
-  const kinForHousehold = useMemo(() => {
-    if (state.kinfolkId === '' || allKin.status !== 'ready') return null;
-    return activeKinByKinfolk(allKin.data).get(state.kinfolkId) ?? [];
-  }, [allKin, state.kinfolkId]);
-
   /**
-   * A roster that came back at exactly the cap is a page, not an answer: there
-   * may be Kin below the cut and this screen cannot tell. Disclosed rather than
-   * trusted, the same way `UninvoicedVisitsPicker` reports its own truncated
-   * read instead of presenting a short list as a complete one.
+   * Operator ruling 2026-11-12: every visit covers every Kin. A narrowing in
+   * the wizard's state counts only while the "Choose Kin for a visit" flag is
+   * on for this household's roster; otherwise the booking is for all of them.
    */
-  const kinTruncated = allKin.status === 'ready' && allKin.data.length >= KIN_ROSTER_MAX;
-
-  /**
-   * R1: the Kin ids this booking covers. Every Kin in the home by default,
-   * or the operator's explicit subset when they opted in to one. Derived from
-   * the live roster rather than mirrored into wizard state, so a roster that
-   * loads (or changes) mid-wizard is reflected in what actually gets sent.
-   */
-  const resolvedKinIds = useMemo(
-    () => resolveKinIds(state, (kinForHousehold ?? []).map((k) => k._id)),
-    [state, kinForHousehold],
+  const choosingKin = canChooseKin(kinRoster);
+  const kinChoice = choosingKin && !state.allKinMode ? state.kinIds : null;
+  /** The wizard's state as it is submitted and reviewed: for every Kin unless Kin were chosen. */
+  const bookingState = useMemo<WizardState>(
+    () => (kinChoice === null && !state.allKinMode ? { ...state, allKinMode: true, kinIds: [] } : state),
+    [state, kinChoice],
   );
+  const coveredKin = useMemo(
+    () => (kinRoster.status === 'ready' ? chosenKin(kinChoice, kinRoster.kin) : []),
+    [kinRoster, kinChoice],
+  );
+
+  /**
+   * The Kin ids this booking names. Derived from the live roster rather than
+   * mirrored into wizard state, so a roster that loads (or changes) mid-wizard
+   * is reflected in what actually gets sent. The server stores the whole
+   * roster whatever is sent while choosing is off.
+   */
+  const resolvedKinIds = useMemo(() => coveredKin.map((k) => k.id), [coveredKin]);
 
   // ── availability (unchanged from the single-page dialog) ──────────────────
 
@@ -409,7 +402,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
     submissionKey.current ??= mintBookingIdempotencyKey();
     try {
       const result = await createMultiDateBookingRequest(
-        bookingSubmission(state, resolvedKinIds, overrideBusyConflict, submissionKey.current),
+        bookingSubmission(bookingState, resolvedKinIds, overrideBusyConflict, submissionKey.current),
       );
       setSaving(false);
       submissionKey.current = null;
@@ -429,14 +422,8 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
   const visitCount = buildVisits(state).length;
   const householdLabel =
     householdOptions.find((h) => h.id === state.kinfolkId)?.label ?? 'This household';
-  // R1: the Kin this booking covers, resolved off the LIVE roster: every Kin
-  // in the home by default, or the operator's explicit subset. The same
-  // resolution feeds Review and the payload, so the names an operator confirms
-  // are the ids that get sent.
-  const resolvedKin = (kinForHousehold ?? []).filter((k) =>
-    resolvedKinIds.includes(k._id),
-  );
-  const kinLabels = resolvedKin.map(kinLabel);
+  // The names an operator confirms on Review are the Kin whose ids get sent.
+  const kinLabels = coveredKin.map(rosterKinLabel);
 
   return (
     <Dialog
@@ -516,9 +503,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
             households={householdOptions}
             householdsLoading={households.status !== 'ready'}
             householdsError={households.status === 'error' ? households.message : null}
-            kin={kinForHousehold}
-            kinError={allKin.status === 'error' ? allKin.message : null}
-            kinTruncated={kinTruncated}
+            roster={kinRoster}
           />
         )}
 
@@ -599,7 +584,7 @@ export function NewBookingDialog({ onClose, onCreated }: NewBookingDialogProps) 
 
         {step === 'review' && (
           <ReviewStep
-            state={state}
+            state={bookingState}
             onChange={update}
             options={serviceOptions ?? []}
             householdLabel={householdLabel}
