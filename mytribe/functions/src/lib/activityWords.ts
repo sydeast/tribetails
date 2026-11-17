@@ -470,17 +470,43 @@ export function auntieHouseholdLookWords(auntieName: unknown, householdName: unk
  * #2344: a card was declined on an invoice the household no longer has to pay
  * by card: the invoice was already paid, or the payment from that same
  * checkout has gone through. No "charge failed" notice is sent for it, and the
- * line says so. `invoice-paid` and `payment-landed` are the two reasons the
- * Stripe webhook stores.
+ * line says so. `invoice-paid`, `payment-landed`, `invoice-cancelled` and
+ * `invoice-written-off` are the reasons the Stripe webhook stores.
  */
 export function cardDeclinedAfterPaymentWords(invoiceNumber: unknown, reason: string): string {
   const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
   const invoice = n === '' ? 'an invoice' : `invoice ${n}`;
+  // #2361: a cancelled or written-off invoice asks nothing of the household either.
+  const state = reason === 'invoice-cancelled' ? 'cancelled' : reason === 'invoice-written-off' ? 'written off' : 'already paid';
   const why =
     reason === 'payment-landed'
       ? ', and the payment from the same checkout went through'
       : n === ''
-        ? ' that was already paid'
-        : ', which was already paid';
+        ? ` that was ${state}`
+        : `, which was ${state}`;
   return `A card was declined on ${invoice}${why}. No notice was sent to the household.`;
+}
+/**
+ * #2345: a card payment put on an invoice that was not in a state to be paid.
+ * It is recorded (the card is charged and there are no refunds) and the owner
+ * is told why the invoice should be looked at. `reason` is the
+ * `cardApplyFallback` code the Stripe webhook stores; the sentence never shows
+ * it.
+ */
+export function cardPaymentNotPayableWords(invoiceNumber: unknown, reason: string, amountCents: number): string {
+  const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
+  const amount = amountCents > 0 ? ` of ${dollars(amountCents)}` : '';
+  if (reason === 'apply_invoice_not_found') {
+    return `A card payment${amount} was recorded for an invoice that could not be found.`;
+  }
+  const invoice = n === '' ? 'an invoice' : `invoice ${n}`;
+  const why =
+    reason === 'apply_invoice_not_sent'
+      ? 'the invoice was a draft or a quote when the payment arrived'
+      : reason === 'apply_wrong_household'
+        ? 'the checkout was for a different household'
+        : reason === 'no_recorded_balance'
+          ? 'the invoice showed a balance and had no total'
+          : 'the invoice could not take a payment when it arrived';
+  return `A card payment${amount} was put on ${invoice}, but ${why}.`;
 }

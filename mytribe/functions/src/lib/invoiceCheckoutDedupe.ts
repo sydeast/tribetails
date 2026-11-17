@@ -97,6 +97,7 @@
  * run, the same way `planApply` and `planCreditDraw` are.
  */
 import { invoiceCancelled, invoiceMarkedPaid } from './invoicePaidGate';
+import { isWrittenOff } from './invoiceArchive';
 
 /**
  * `families/{kinfolkId}.accountBalanceCents`, where a duplicate charge USED TO
@@ -170,6 +171,8 @@ export interface InvoiceCheckoutState {
   paymentStatus?: unknown;
   /** The legacy spelling of `status`, read for `invoice-cancelled` only when `status` is absent. */
   invoiceStatus?: unknown;
+  /** #2363: set by a write-off, read with `status` for `invoice-written-off`. */
+  writtenOffAt?: unknown;
 }
 
 /**
@@ -217,6 +220,11 @@ export function invoiceOwesNothing(state: Pick<InvoiceCheckoutState, 'amountDueC
  *                            a second attempt at anything, but the same answer:
  *                            the card is charged, the invoice takes no payment,
  *                            and the owner decides what the money becomes.
+ * `invoice-written-off`      #2363: the owner wrote the balance off after the
+ *                            checkout page was opened. Held the same way. Asked
+ *                            ahead of the money checks, because a write-off
+ *                            zeroes the balance and would otherwise read as
+ *                            `invoice-not-owed`, "already paid", which it was not.
  *
  * ── WHY "A DIFFERENT INTENT SETTLED IT" IS NOT ON ITS OWN A REFUSAL ───────
  *
@@ -233,6 +241,7 @@ export type DuplicateCheckoutReason =
   | 'invoice-not-owed'
   | 'invoice-marked-paid'
   | 'invoice-cancelled'
+  | 'invoice-written-off'
   | null;
 
 export function duplicateCheckoutReason(input: {
@@ -267,6 +276,11 @@ export function duplicateCheckoutReason(input: {
   // same rule (`invoiceCancelled`), so the two cannot disagree.
   if (invoiceCancelled({ status: input.invoice.status, invoiceStatus: input.invoice.invoiceStatus })) {
     return 'invoice-cancelled';
+  }
+  // #2363: WRITTEN OFF. The owner gave up the balance, so the invoice is owed
+  // nothing, but it was not paid, and the owner is told which of the two.
+  if (isWrittenOff({ status: input.invoice.status, writtenOffAt: input.invoice.writtenOffAt })) {
+    return 'invoice-written-off';
   }
   // AHEAD OF THE MONEY CHECKS, because it is the only one of them that can
   // refuse a session while the invoice still shows a balance. A partial payment recorded between two
@@ -306,6 +320,8 @@ export function unappliedReasonLabel(reason: string | null): string {
       return 'the invoice was already marked paid';
     case 'invoice-cancelled':
       return 'the invoice was cancelled';
+    case 'invoice-written-off':
+      return 'the invoice was written off';
     default:
       return 'the invoice was not owed this payment';
   }

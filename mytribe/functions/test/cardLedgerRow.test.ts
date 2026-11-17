@@ -86,6 +86,7 @@ import {
   STATED_BELOW_RECORDED,
   cardPaymentRowId,
   decideCardApply,
+  fallbackNeedsOwnerLine,
 } from '../src/lib/cardPaymentApply';
 
 type Docs = Record<string, Record<string, any> | null>;
@@ -843,7 +844,37 @@ describe('#2276: where a card payment lands (decideCardApply)', () => {
       appliedCents: 1000,
       tipCents: 0,
       paidCents: 1000,
+      leftOwingCents: 0,
     });
+  });
+  it('#2345: a fallback card short of the stated balance leaves the rest owing', () => {
+    // A balance and no total: the plan cannot describe it.
+    const noTotal = { kinfolkId: 'fam1', status: 'open', amountDue: 100, amountDueCents: 10000 };
+    expect(decide({ doc: noTotal, cardCents: 6000 })).toEqual({
+      kind: 'fallback',
+      reason: 'no_recorded_balance',
+      writeRow: true,
+      appliedCents: 6000,
+      tipCents: 0,
+      paidCents: 6000,
+      leftOwingCents: 4000,
+    });
+    // Covering it, or over it: nothing left, the rest is tip.
+    expect(decide({ doc: noTotal, cardCents: 10000 })).toMatchObject({ leftOwingCents: 0, tipCents: 0 });
+    expect(decide({ doc: noTotal, cardCents: 12000 })).toMatchObject({ leftOwingCents: 0, tipCents: 2000 });
+    // No stated balance at all: the whole card goes on the bill, nothing left.
+    expect(decide({ doc: { kinfolkId: 'fam1', status: 'open' }, cardCents: 6000 })).toMatchObject({
+      reason: 'no_recorded_balance',
+      leftOwingCents: 0,
+    });
+  });
+  it('#2345: every fallback reason but the stated-below-recorded one gets the owner a line', () => {
+    for (const reason of ['no_recorded_balance', 'apply_invoice_not_sent', 'apply_wrong_household', 'apply_invoice_not_payable', 'apply_invoice_not_found']) {
+      expect(fallbackNeedsOwnerLine(reason), reason).toBe(true);
+    }
+    expect(fallbackNeedsOwnerLine(STATED_BELOW_RECORDED)).toBe(false);
+    expect(fallbackNeedsOwnerLine(null)).toBe(false);
+    expect(fallbackNeedsOwnerLine('')).toBe(false);
   });
 
   it('a cancelled invoice, a draft and a credit fall back with the plan\'s own reason', () => {

@@ -232,6 +232,20 @@ with `duplicateCheckoutReason: 'invoice-cancelled'`, the invoice stays cancelled
 with no payment row and no balance change, the household is sent nothing, and
 the owner sees it under Payments needing a decision as "Not applied because the
 invoice was cancelled."
+Since #2362 cancelling (or withdrawing a quote) expires the invoice's open
+checkout pages, as paying or writing it off does, so that hold should now be
+rare. A written-off invoice is held the same way with
+`duplicateCheckoutReason: 'invoice-written-off'` and reads "Not applied because
+the invoice was written off" (#2363). A held payment whose fee lookup failed
+writes the `stripe.fee.unresolved` warning like an applied one (#2370).
+A declined card on a cancelled or written-off invoice sends the household
+nothing and leaves the owner one Activity Log line (#2361), like a decline on a
+paid one.
+A card payment on an invoice that was otherwise not in a state to be paid (a
+draft, a quote, a credit, a balance with no total, a checkout for another
+household) is still put on the invoice, and the paid Activity Log line becomes
+a warning naming why (#2345). One short of the stated balance leaves the rest
+owing instead of marking the invoice paid.
 
 **`disputeStatus` and `disputeFundsState` are two different facts, on purpose.**
 `disputeStatus` mirrors Stripe's dispute lifecycle (`needs_response`,

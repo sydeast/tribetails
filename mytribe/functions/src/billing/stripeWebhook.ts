@@ -6,7 +6,8 @@ import { verifyStripeWebhook, getStripe } from '../lib/stripe';
 import { TIP_BASIS_FIELD, dollarsToCents } from '../lib/paymentMoney';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { invoiceMarkedPaid } from '../lib/invoicePaidGate';
+import { invoiceCancelled, invoiceMarkedPaid, type InvoicePaidDoc } from '../lib/invoicePaidGate';
+import { isWrittenOff, type WriteOffDoc } from '../lib/invoiceArchive';
 import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
 // #1005: money notices go to a member with billing access, not the last-synced account.
@@ -30,6 +31,7 @@ import {
   SKIPPED_OUT_OF_ORDER,
   cardPaymentRowId,
   decideCardApply,
+  fallbackNeedsOwnerLine,
 } from '../lib/cardPaymentApply';
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
@@ -130,8 +132,17 @@ export const DECLINE_INVOICE_NUMBER_FIELD = 'declineInvoiceNumber';
 /** `noticeSkippedReason` for a decline that is deliberately not told to anyone. */
 export const NOTICE_SKIPPED_AFTER_PAYMENT = 'declined-after-payment';
 
-/** Why a decline is not worth telling the household about. */
-export type DeclineAfterPaymentReason = 'invoice-paid' | 'payment-landed';
+/**
+ * Why a decline is not worth telling the household about. #2361: a cancelled
+ * or written-off invoice asks nothing of the household either, so a decline
+ * on a checkout page opened before the cancel or the write-off is the same
+ * owner-only line.
+ */
+export type DeclineAfterPaymentReason = 'invoice-paid' | 'payment-landed' | 'invoice-cancelled' | 'invoice-written-off';
+/** The stored reason read back on a retry. Anything unknown reads as the original `invoice-paid`. */
+export function declineReasonOf(raw: unknown): DeclineAfterPaymentReason {
+  return raw === 'payment-landed' || raw === 'invoice-cancelled' || raw === 'invoice-written-off' ? raw : 'invoice-paid';
+}
 export interface DeclineAfterPaymentDetail {
   reason: DeclineAfterPaymentReason;
   invoiceNumber: string;
@@ -141,21 +152,58 @@ export interface DeclineAfterPaymentDetail {
  * PURE. Whether a declined charge has been overtaken by a payment: the
  * PaymentIntent it names has its claim (`stripePayments/{id}`, written in the
  * same commit as the money, so the checkout's own payment landed), or the
- * invoice reads paid. Null when the decline still matters to the household.
+ * invoice reads paid, cancelled or written off (#2361). Null when the decline
+ * still matters to the household.
  */
 export function declineAfterPayment(
   invoice: Record<string, unknown> | undefined | null,
   paymentLanded: boolean,
 ): DeclineAfterPaymentDetail | null {
+  // A payment from this same checkout that has landed is said first, as
+  // before: on a cancelled invoice it is held, and the owner already has the
+  // line saying why. Otherwise cancelled and written off are asked ahead of
+  // paid, the order `duplicateCheckoutReason` asks them in.
   const paid = invoiceMarkedPaid(invoice ?? null);
-  if (!paid && !paymentLanded) return null;
+  const reason: DeclineAfterPaymentReason | null = paymentLanded
+    ? paid
+      ? 'invoice-paid'
+      : 'payment-landed'
+    : invoiceCancelled(invoice as InvoicePaidDoc | null)
+      ? 'invoice-cancelled'
+      : isWrittenOff(invoice as WriteOffDoc | null)
+        ? 'invoice-written-off'
+        : paid
+          ? 'invoice-paid'
+          : null;
+  if (reason === null) return null;
   const number = invoice?.['invoiceNumber'];
-  return {
-    reason: paid ? 'invoice-paid' : 'payment-landed',
-    invoiceNumber: typeof number === 'string' ? number : '',
-  };
+  return { reason, invoiceNumber: typeof number === 'string' ? number : '' };
 }
 
+/**
+ * #2345: a card payment put on an invoice that was not in a state to be paid
+ * (the fallback landing, for any reason `fallbackNeedsOwnerLine` accepts). The
+ * paid line in the Activity Log says so instead of reading as an ordinary
+ * payment. On a retry it is read back off the `payments/{eventId}` ledger row,
+ * written in the same commit as the money.
+ */
+export interface NotPayableDetail {
+  reason: string;
+  invoiceNumber: string;
+  amountCents: number;
+}
+/** PURE. The detail off the ledger row the paid event wrote, or null when it took no such landing. */
+export function notPayableDetailOf(row: Record<string, unknown> | undefined | null): NotPayableDetail | null {
+  const reason = row?.[CARD_APPLY_FALLBACK_FIELD];
+  if (typeof reason !== 'string' || !fallbackNeedsOwnerLine(reason)) return null;
+  const n = row?.['appliedInvoiceNumber'];
+  const cents = row?.['amountCents'];
+  return {
+    reason,
+    invoiceNumber: typeof n === 'string' ? n : '',
+    amountCents: typeof cents === 'number' && Number.isFinite(cents) ? cents : 0,
+  };
+}
 /** What the `unapplied` follow-up says about the charge. Stored on the event record for a retry. */
 export interface UnappliedDetail {
   paymentIntentId: string | null;
@@ -199,6 +247,8 @@ async function finishEventFollowup(input: {
   unapplied?: UnappliedDetail;
   /** Set for `declinedAfterPayment` only. */
   declined?: DeclineAfterPaymentDetail;
+  /** #2345: set for `paid` only, when the invoice was not in a state to be paid. */
+  notPayable?: NotPayableDetail | null;
   /**
    * Who started the checkout: `payInvoice` stamps the caller's uid into the
    * session metadata. Since D-2026-09-28-BILLING-ACCESS-PAYS that can be a
@@ -250,6 +300,10 @@ async function finishEventFollowup(input: {
     });
     return;
   }
+  const notPayable = paid ? (input.notPayable ?? null) : null;
+  // Loaded only on the rare path that needs it (test/coldStartImportGraph.test.ts).
+  const notPayableWords =
+    notPayable !== null && !input.auditDone ? (await import('../lib/activityWords.js')).cardPaymentNotPayableWords : null;
   if (!input.auditDone) {
     await writeAuditEntry({
       status: paid ? 'SUCCESS' : 'FAILURE',
@@ -258,9 +312,14 @@ async function finishEventFollowup(input: {
         : unapplied
           ? AUDIT_EVENTS.BILLING_PAYMENT_UNAPPLIED
           : AUDIT_EVENTS.BILLING_INVOICE_FAILED,
-      severity: paid ? 'info' : 'critical',
+      // #2345: `warn`, and its own sentence, for a payment the invoice was not
+      // in a state to take. The owner should look at that invoice.
+      severity: paid ? (notPayable !== null ? 'warn' : 'info') : 'critical',
       actorRole: 'SYSTEM',
       familyId: input.familyId,
+      ...(notPayable !== null && notPayableWords !== null
+        ? { description: notPayableWords(notPayable.invoiceNumber, notPayable.reason, notPayable.amountCents) }
+        : {}),
       payload: unapplied
         ? {
             invoiceId: input.invoiceId,
@@ -275,6 +334,7 @@ async function finishEventFollowup(input: {
             invoiceId: input.invoiceId,
             stripeEventId: input.eventId,
             ...(paid && input.paidByUid ? { paidByUid: input.paidByUid } : {}),
+            ...(notPayable !== null ? { cardApplyFallback: notPayable.reason } : {}),
           },
       docId: stripeAuditDocId(input.eventId, input.kind),
     });
@@ -655,6 +715,9 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // #2276: why the card payment took the fallback landing, when it did. Read
   // back after the commit for the warn line, like the two above.
   let cardFallbackReason: string | null = null;
+  // #2345: the owner's line for a card payment on an invoice that was not in a
+  // state to be paid. Read back after the commit, like the reason above.
+  let notPayableDetail: NotPayableDetail | null = null;
   // #2344: this delivery is deciding a paid event an earlier build skipped.
   let recoveredSkip = false;
   // #2344: a decline the household is not told about, and why. Read back after
@@ -671,6 +734,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     duplicateReason = null;
     unappliedCents = 0;
     cardFallbackReason = null;
+    notPayableDetail = null;
     const dedupeSnap = await tx.get(dedupeRef);
     const storedEvent = dedupeSnap.exists ? ((dedupeSnap.data() ?? {}) as Record<string, unknown>) : null;
     // #2344: A PAID EVENT THE OLD ORDER CHECK SKIPPED is not a replay of
@@ -697,7 +761,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         auditDone: stored[AUDIT_WRITTEN_FIELD] != null,
         noticeDone: stored[NOTICE_SENT_FIELD] != null || stored[NOTICE_SKIPPED_FIELD] != null,
         declined: {
-          reason: stored[DECLINE_REASON_FIELD] === 'payment-landed' ? 'payment-landed' : 'invoice-paid',
+          reason: declineReasonOf(stored[DECLINE_REASON_FIELD]),
           invoiceNumber:
             typeof stored[DECLINE_INVOICE_NUMBER_FIELD] === 'string' ? stored[DECLINE_INVOICE_NUMBER_FIELD] : '',
         } as DeclineAfterPaymentDetail,
@@ -723,6 +787,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
           status?: unknown;
           paymentStatus?: unknown;
           invoiceStatus?: unknown;
+          writtenOffAt?: unknown;
         }
       | undefined;
     // The invoice's own `payments` rows: what has been collected on it, and
@@ -778,6 +843,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
             paymentStatus: invoice?.paymentStatus,
             // #2358: a cancelled invoice takes no payment; the charge is held.
             invoiceStatus: invoice?.invoiceStatus,
+            // #2363: a written-off invoice is held with its own reason.
+            writtenOffAt: invoice?.writtenOffAt,
           },
           paymentIntentId,
           eventRound,
@@ -1083,16 +1150,40 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // #2276: free-text `status` plus both balance fields (the portal renders
       // the stored status, the reminders cron reads `amountDue <= 0`, and
       // `payInvoice` and `getMyInvoices` prefer `amountDueCents`).
-      patch.status = 'paid';
-      patch.paymentStatus = 'PAID';
-      patch.amountDue = 0;
-      patch.amountDueCents = 0;
-      patch.paidAt = FieldValue.serverTimestamp();
+      //
+      // #2345: EXCEPT A FALLBACK CARD SHORT OF THE STATED BALANCE. It leaves
+      // the rest owing, as the planned landing does: the balance fields carry
+      // what is left, the label says part paid, and no paid stamp is written.
+      // The status comes from the state stamp below, so a draft or a quote
+      // keeps its lifecycle.
+      const leftOwingCents = landing.kind === 'fallback' ? landing.leftOwingCents : 0;
+      if (leftOwingCents > 0) {
+        patch.paymentStatus = 'PARTIAL';
+        patch.amountDueCents = leftOwingCents;
+        patch.amountDue = centsToDollars(leftOwingCents);
+      } else {
+        patch.status = 'paid';
+        patch.paymentStatus = 'PAID';
+        patch.amountDue = 0;
+        patch.amountDueCents = 0;
+        patch.paidAt = FieldValue.serverTimestamp();
+      }
       patch[PAYMENT_APPLIED_OWNER_FIELD] = paymentAppliedOwner('stripe', event.id);
       const paidCents =
         landing.kind === 'fallback' ? landing.paidCents : paidCentsFromPayments(existingPayments);
       if (landing.kind === 'fallback') {
-        patch[CARD_APPLY_FALLBACK_FIELD] = landing.reason;
+        // On the invoice only when it is marked paid: the field is what keeps a
+        // fallback invoice settled whatever its rows add up to
+        // (`paidByCardFallback`), and one still owing is not settled.
+        if (leftOwingCents === 0) patch[CARD_APPLY_FALLBACK_FIELD] = landing.reason;
+        if (fallbackNeedsOwnerLine(landing.reason)) {
+          const n = (invoiceSnap.data() as { invoiceNumber?: unknown } | undefined)?.invoiceNumber;
+          notPayableDetail = {
+            reason: landing.reason,
+            invoiceNumber: typeof n === 'string' ? n : '',
+            amountCents: amountCents ?? 0,
+          };
+        }
         if (landing.writeRow) {
           // The card money still goes on the invoice's own rows, so every sum
           // of them counts it.
@@ -1118,7 +1209,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
               landing.tipCents,
               typeof invoiceNumber === 'string' ? invoiceNumber : '',
             ),
-            settlesInvoice: true,
+            settlesInvoice: leftOwingCents === 0,
             [CARD_APPLY_FALLBACK_FIELD]: landing.reason,
           };
         } else {
@@ -1138,8 +1229,11 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // paid, which stays editable, and an edit works the balance out from the
       // rows and would bring back money the household was never shown.
       const stampDoc = { ...(invoiceSnap.data() ?? {}), ...stampable };
+      // #2345: one still owing is stamped from its rows, like any part-paid bill.
       const stampPaidCents =
-        landing.kind === 'fallback' ? Math.max(paidCents, invoiceTotalCentsOf(stampDoc)) : paidCents;
+        landing.kind === 'fallback' && leftOwingCents === 0
+          ? Math.max(paidCents, invoiceTotalCentsOf(stampDoc))
+          : paidCents;
       Object.assign(patch, invoiceStateStampOf(stampDoc, stampPaidCents));
       tx.set(ref, patch, { merge: true });
     }
@@ -1203,8 +1297,9 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   }
   // Gated on `decision.proceed`: a replay or out-of-order skip wrote nothing,
   // so an unresolved fee on THAT attempt is not news — only warn when a
-  // payment doc actually landed without one.
-  if (isPaidEvent && decision.proceed && !feeResolved) {
+  // payment doc actually landed without one. #2370: a payment held for the
+  // owner lands one too, with no fee on it, and is warned about the same way.
+  if (isPaidEvent && (decision.proceed || decision.reason === 'duplicate-invoice-checkout') && !feeResolved) {
     logEvent({
       severity: 'warn',
       function: 'stripeWebhook',
@@ -1327,6 +1422,14 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   }
   if (recoverKind !== null && decision.reason === 'replay') {
     try {
+      // #2345: a paid line not yet written finds out from the event's own
+      // ledger row whether it is the ordinary line or the not-payable one.
+      const recoverNotPayable =
+        recoverKind === 'paid' && !recoverAuditDone
+          ? notPayableDetailOf(
+              (await db().collection('payments').doc(event.id).get()).data() as Record<string, unknown> | undefined,
+            )
+          : null;
       await finishEventFollowup({
         kind: recoverKind,
         familyId,
@@ -1336,6 +1439,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         noticeDone: decision.noticeDone,
         ...(recoverKind === 'unapplied' ? { unapplied: decision.unapplied } : {}),
         ...(recoverKind === 'declinedAfterPayment' && recoverDeclined ? { declined: recoverDeclined } : {}),
+        notPayable: recoverNotPayable,
         paidByUid: metadata?.uid ?? null,
       });
     } catch (err) {
@@ -1409,6 +1513,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // The decline's event record already says its notice is skipped.
       noticeDone: overtakenDecline !== null,
       ...(overtakenDecline !== null ? { declined: overtakenDecline } : {}),
+      // The cast undoes the same narrowing as `declinedDetail` above.
+      notPayable: notPayableDetail as NotPayableDetail | null,
       paidByUid: metadata?.uid ?? null,
     });
   } catch (err) {

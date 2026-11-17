@@ -42,6 +42,12 @@
  *              asked for. So the invoice is marked paid as it always was, the
  *              card row is still written, and the reason is stamped on the
  *              invoice and the ledger row and logged, for the backfill report.
+ *              #2345: a card that paid less than the stated balance does not
+ *              mark the invoice paid on this landing either: the rest stays
+ *              owing, as on the planned one. And for every reason but
+ *              `STATED_BELOW_RECORDED` (nothing is wrong there) the owner gets
+ *              an Activity Log line saying the invoice was not in a state to
+ *              take the payment (`fallbackNeedsOwnerLine`).
  *   no-amount  neither Stripe nor the invoice gave a figure. No row: a row
  *              with no amount is not a payment. The invoice is marked paid and
  *              the ledger row is flagged, as before.
@@ -87,6 +93,15 @@ export const PAID_EVENT_TYPES: readonly string[] = [
 
 /** The fallback reason for a stated balance lower than the payment rows leave owing. */
 export const STATED_BELOW_RECORDED = 'stated_balance_below_recorded_payments';
+/**
+ * #2345: whether the owner is told about a card payment that took the fallback
+ * landing. Every reason means the invoice was not in a state to be paid,
+ * except `STATED_BELOW_RECORDED`: an invoice brought over part paid and then
+ * paid off by card, where nothing is wrong and nothing needs saying.
+ */
+export function fallbackNeedsOwnerLine(reason: string | null | undefined): boolean {
+  return typeof reason === 'string' && reason !== '' && reason !== STATED_BELOW_RECORDED;
+}
 
 /**
  * The id of a card payment's `invoices/{id}/payments` row. One PaymentIntent
@@ -115,6 +130,12 @@ export type CardApplyDecision =
       tipCents: number;
       /** The invoice's rows after this one, for the invoice's `paidCents` and its state stamp. */
       paidCents: number;
+      /**
+       * #2345: what the stated balance still asks for after this card. 0 when
+       * the card covered it (or the invoice stated none), and only then is the
+       * invoice marked paid.
+       */
+      leftOwingCents: number;
     }
   | { kind: 'no-amount' };
 
@@ -141,6 +162,7 @@ export function decideCardApply(input: {
       appliedCents: 0,
       tipCents: 0,
       paidCents: existingPaidCents,
+      leftOwingCents: 0,
     };
   }
 
@@ -153,6 +175,7 @@ export function decideCardApply(input: {
   const fallback = (reason: string): CardApplyDecision => {
     // The stated balance is all there is to measure against here. What the
     // card paid over it is tip; with no stated balance it all goes on the bill.
+    // #2345: a card short of the stated balance leaves the rest owing.
     const appliedCents = statedDueCents > 0 ? Math.min(cardCents, statedDueCents) : cardCents;
     return {
       kind: 'fallback',
@@ -161,6 +184,7 @@ export function decideCardApply(input: {
       appliedCents,
       tipCents: cardCents - appliedCents,
       paidCents: existingPaidCents + appliedCents,
+      leftOwingCents: statedDueCents > 0 ? statedDueCents - appliedCents : 0,
     };
   };
 
@@ -188,6 +212,7 @@ export function decideCardApply(input: {
       appliedCents: cardCents,
       tipCents: 0,
       paidCents: existingPaidCents + cardCents,
+      leftOwingCents: 0,
     };
   }
   return { kind: 'planned', step: plan.step, appliedCents, tipCents: cardCents - appliedCents };
