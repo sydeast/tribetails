@@ -1932,6 +1932,8 @@ class PortalApi(
                 id = o["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 authorRole = role,
                 authorDisplayName = o["authorDisplayName"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+                authorUid = (o["authorUid"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() },
+                authorNameIsPerson = (o["authorNameIsPerson"] as? JsonPrimitive)?.booleanOrNull,
                 guestName = o["guestName"]?.jsonPrimitive?.contentOrNull,
                 body = o["body"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 parentCommentId = o["parentCommentId"]?.jsonPrimitive?.contentOrNull,

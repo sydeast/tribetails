@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -523,5 +524,55 @@ class KinTalesScreenTest {
         waitForIdle()
         onAllNodesWithTag(KIN_TALE_HEADLINE_TAG).assertCountEquals(0)
         onNodeWithText("FROM AUNTIE MAYA · sometime in the spring").assertIsDisplayed()
+    }
+
+    private fun commentThreadFake() = FakeFunctionsClient().apply {
+        stub("getMyKinTales", buildJsonObject {
+            put("hasMore", false)
+            put("tales", buildJsonArray { add(headlineTale("t1", "Park day", "Kai ran the loop.")) })
+        })
+        stub("getKinTaleReaction", buildJsonObject { put("loved", false); put("loveCount", 0) })
+        stub("getKinTaleComments", buildJsonObject {
+            put("comments", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "c1"); put("authorRole", "kinfolk"); put("authorUid", "me")
+                    put("authorDisplayName", "The Ortega household"); put("authorNameIsPerson", false)
+                    put("body", "So happy to see this"); put("createdAtMs", 1L)
+                })
+                add(buildJsonObject {
+                    put("id", "c2"); put("authorRole", "kinfolk"); put("authorUid", "sam")
+                    put("authorDisplayName", "Sam"); put("authorNameIsPerson", true)
+                    put("body", "Same here"); put("createdAtMs", 2L)
+                })
+            })
+        })
+    }
+
+    @Test
+    fun REGRESSION_2378_ownComment_readsYou_withTheComposersAvatar() = runComposeUiTest {
+        val fake = commentThreadFake()
+        setThemedContent {
+            KinTalesScreen("The Ortega", "3", PortalApi(fake), viewer = KinTaleViewer(uid = "me", name = "Robin"))
+        }
+        waitForIdle()
+        onNodeWithText("So happy to see this").assertExists()
+        onNodeWithText("You").assertExists()
+        onAllNodesWithText("The Ortega household").assertCountEquals(0)
+        onNodeWithText("Sam").assertExists()
+        // The composer and the reader's own comment share one avatar tone and letter.
+        onAllNodesWithTag("kintale-avatar-me").assertCountEquals(2)
+        onAllNodesWithText("R").assertCountEquals(2)
+        onAllNodesWithTag("kintale-avatar-c2").assertCountEquals(1)
+    }
+
+    @Test
+    fun noSignedInReader_marksNoCommentAsYours() = runComposeUiTest {
+        val fake = commentThreadFake()
+        setThemedContent { KinTalesScreen("The Ortega", "3", PortalApi(fake)) }
+        waitForIdle()
+        onNodeWithText("The Ortega household").assertExists()
+        onAllNodesWithText("You").assertCountEquals(0)
+        // Only the composer is "me".
+        onAllNodesWithTag("kintale-avatar-me").assertCountEquals(1)
     }
 }

@@ -48,6 +48,7 @@ import com.kinfolk.portal.screens.kin.KinAddEditScreen
 import com.kinfolk.portal.screens.kin.KinDetailHost
 import com.kinfolk.portal.screens.kin.KinScreen
 import com.kinfolk.portal.screens.kin.rememberKinController
+import com.kinfolk.portal.screens.kintales.KinTaleViewer
 import com.kinfolk.portal.screens.kintales.KinTalesScreen
 import com.kinfolk.portal.screens.notifications.NotificationSettingsScreen
 import com.kinfolk.portal.screens.schedule.BookingEnvelopeScreen
@@ -408,7 +409,18 @@ fun AppNavHost(
             }
             composable<KinTalesRoute> { entry ->
                 val taleId = entry.toRoute<KinTalesRoute>().taleId
-                Shell { mod -> Box(mod) { KinTalesScreen(shellFamilyName, kinId, portalApi, focusTaleId = taleId) } }
+                Shell { mod ->
+                    Box(mod) {
+                        KinTalesScreen(
+                            shellFamilyName,
+                            kinId,
+                            portalApi,
+                            focusTaleId = taleId,
+                            // #2378: the reader, so their own comments read "You" with the header's avatar.
+                            viewer = KinTaleViewer(uid = viewerUid, name = shellPersonName.ifBlank { shellFamilyName }),
+                        )
+                    }
+                }
             }
             composable<KinRoute> {
                 Shell { mod ->
