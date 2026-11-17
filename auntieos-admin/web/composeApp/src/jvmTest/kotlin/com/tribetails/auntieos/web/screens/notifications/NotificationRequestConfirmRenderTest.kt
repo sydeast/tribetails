@@ -129,4 +129,40 @@ class NotificationRequestConfirmRenderTest {
         waitForIdle()
         assertEquals("kf1" to "req_new", opened)
     }
+
+    // #2367: an office copy of a booking confirmation names the whole booking.
+    @Test
+    fun openOnABookingConfirmationHandsBackTheHouseholdAndBookingNotAVisit() = runDesktopComposeUiTest {
+        val confirm = NotificationEntry(
+            _id = "n9",
+            key = "kincare.booking.confirm",
+            title = "Your KinCare booking is confirmed",
+            targetType = "booking",
+            targetId = "b_booked",
+            createdAt = "2026-11-12T16:50:00Z",
+            data = buildJsonObject {
+                put("kinfolkId", JsonPrimitive("kf1"))
+                put("batchId", JsonPrimitive("b_booked"))
+            },
+        )
+        seed(confirm)
+        var opened: Pair<String, String>? = null
+        var target: Pair<String, String>? = null
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) {
+                NotificationsScreen(
+                    client = FirestoreClient(),
+                    onOpenVisitRequest = { k, b -> opened = k to b },
+                    onOpenTarget = { t, i -> target = t to i },
+                )
+            }
+        }
+        waitUntil(timeoutMillis = 10_000) {
+            onAllNodesWithContentDescription("Open linked item", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        onNodeWithContentDescription("Open linked item", useUnmergedTree = true).performClick()
+        waitForIdle()
+        assertEquals("kf1" to "b_booked", opened)
+        assertEquals(null, target)
+    }
 }

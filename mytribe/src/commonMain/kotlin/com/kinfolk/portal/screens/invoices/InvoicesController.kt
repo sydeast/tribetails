@@ -1,11 +1,13 @@
 package com.kinfolk.portal.screens.invoices
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalWindowInfo
 import com.kinfolk.portal.portal.CreditTarget
 import com.kinfolk.portal.portal.Invoice
 import com.kinfolk.portal.portal.InvoiceStatus
@@ -19,7 +21,9 @@ import com.kinfolk.portal.util.formatUsd
 import com.kinfolk.portal.util.openExternalUrl
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -52,6 +56,39 @@ private val STRIPE_ONLY_FALLBACK = listOf(
  */
 internal fun payMethodsFor(invoice: Invoice, homeMethods: List<PayMethod>): List<PayMethod> =
     invoice.payMethods ?: homeMethods
+/**
+ * #2366: WHERE STRIPE SENDS THE HOUSEHOLD BACK TO. The MyTribe web portal's
+ * own invoice page, the same two addresses the web portal sends
+ * (`InvoiceDetail.tsx` `checkoutReturnUrls`): the invoice with a marker on
+ * success, the bare invoice on cancel. This app used to send
+ * `/portal/payment-success`, a page the portal does not have.
+ *
+ * The browser shows that page, and the web portal there reads the bill again
+ * until the webhook's verdict shows. Back in this app, [InvoicesController]
+ * does the same check on its own copy (see [InvoicesController.onAppReturned]).
+ */
+internal const val PORTAL_ORIGIN = "https://kinfolk.tribetails.com"
+internal fun checkoutReturnUrls(invoiceId: String): Pair<String, String> {
+    val page = "$PORTAL_ORIGIN/invoices/${encodePathSegment(invoiceId)}"
+    return "$page?checkout=done" to page
+}
+/** Percent-encodes everything outside RFC 3986's unreserved set, as `encodeURIComponent` does for a path. */
+internal fun encodePathSegment(raw: String): String = buildString {
+    for (b in raw.encodeToByteArray()) {
+        val c = b.toInt() and 0xFF
+        val ch = c.toChar()
+        if (ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+            append(ch)
+        } else {
+            append('%')
+            append("0123456789ABCDEF"[c shr 4])
+            append("0123456789ABCDEF"[c and 0x0F])
+        }
+    }
+}
+/** How often the bill is read again while checking a payment, and for how long. Same figures as the web portal. */
+internal const val PAYMENT_CHECK_EVERY_MS = 3_000L
+internal const val PAYMENT_CHECK_FOR_MS = 60_000L
 
 /**
  * Shared invoices state holder. Both the list screen and the lifted
@@ -113,6 +150,21 @@ class InvoicesController internal constructor(
     // carries its own resolved options; see [payMethodsFor].
     var payMethods by mutableStateOf<List<PayMethod>>(STRIPE_ONLY_FALLBACK)
         private set
+    /**
+     * #2366: the invoice whose payment is being checked after the household
+     * came back from Stripe, or null. While it is set the screens hold Pay back
+     * and say "Checking payment…": the webhook decides paid, and it can land
+     * seconds after the household is back.
+     */
+    var checkingPayment by mutableStateOf<String?>(null)
+        private set
+    /** #2366: the invoice whose check ran out with the bill still owed, or null. */
+    var paymentNotSeen by mutableStateOf<String?>(null)
+        private set
+    /** The invoice handed to Stripe and not yet checked. Set on hand-off, spent on return. */
+    private var awaitingCheckout: String? = null
+    private var checkJob: Job? = null
+    private var checkToken: Any? = null
 
     /**
      * Q6: the account credit history. Loaded beside the invoices and never
@@ -235,18 +287,25 @@ class InvoicesController internal constructor(
         scope.launch {
             try {
                 val key = checkoutKeys.getOrPut(invoice.id) { mintCheckoutIdempotencyKey() }
+                val (successUrl, cancelUrl) = checkoutReturnUrls(invoice.id)
                 val res = portalApi.payInvoice(
                     invoiceId = invoice.id,
                     kinfolkId = kinfolkId,
-                    successUrl = "https://kinfolk.tribetails.com/portal/payment-success",
-                    cancelUrl = "https://kinfolk.tribetails.com/portal/payment-cancel",
+                    successUrl = successUrl,
+                    cancelUrl = cancelUrl,
                     idempotencyKey = key,
                 )
                 // Dropped BEFORE the hand-off. A household that comes back to
                 // pay a different balance later must not reuse a key Stripe
                 // still holds: the body would differ and Stripe would refuse it.
                 checkoutKeys.remove(invoice.id)
-                if (res.checkoutUrl.isNotBlank()) openUrl(res.checkoutUrl)
+                if (res.checkoutUrl.isNotBlank()) {
+                    // #2366: set BEFORE the hand-off, so the return to this
+                    // app (window focus coming back) finds it.
+                    awaitingCheckout = invoice.id
+                    paymentNotSeen = null
+                    openUrl(res.checkoutUrl)
+                }
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
@@ -257,6 +316,50 @@ class InvoicesController internal constructor(
         }
     }
 
+    /**
+     * #2366: THE HOUSEHOLD IS BACK FROM THE BROWSER. Called whenever this app's
+     * window gets focus again; does nothing unless a checkout was handed off.
+     *
+     * This app cannot see which of Stripe's two addresses the browser opened,
+     * so it cannot tell a finished payment from a cancelled one. It checks: it
+     * reads the bill again until the read shows it settled, and if that has
+     * not happened inside [PAYMENT_CHECK_FOR_MS] it stops, says the payment has
+     * not shown up, and offers Pay again. It never says paid on its own.
+     */
+    fun onAppReturned() {
+        val invoiceId = awaitingCheckout ?: return
+        awaitingCheckout = null
+        startPaymentCheck(invoiceId)
+    }
+    /** #2366: "Check again" after a check ran out, or "Tap to sync" during one. */
+    fun checkPaymentAgain(invoiceId: String) = startPaymentCheck(invoiceId)
+    private fun startPaymentCheck(invoiceId: String) {
+        checkJob?.cancel()
+        val token = Any()
+        checkToken = token
+        paymentNotSeen = null
+        checkingPayment = invoiceId
+        checkJob = scope.launch {
+            try {
+                var waited = 0L
+                while (true) {
+                    reload()
+                    val invoice = find(invoiceId)
+                    if (invoice != null && !offersPayment(invoice)) {
+                        if (invoice.isPaid || invoice.status == InvoiceStatus.Paid) statusBanner = PAYMENT_RECEIVED
+                        return@launch
+                    }
+                    if (waited >= PAYMENT_CHECK_FOR_MS) break
+                    delay(PAYMENT_CHECK_EVERY_MS)
+                    waited += PAYMENT_CHECK_EVERY_MS
+                }
+                paymentNotSeen = invoiceId
+            } finally {
+                // A newer check owns the state now; this one leaves it alone.
+                if (checkToken === token) checkingPayment = null
+            }
+        }
+    }
     /**
      * PR30: dispatches on [PayMethod.kind]. Checkout (Stripe, and the
      * Klarna/Affirm rails riding it) reuses [startPay] unchanged; Link
@@ -359,7 +462,17 @@ class InvoicesController internal constructor(
 @Composable
 fun rememberInvoicesController(kinfolkId: String, portalApi: PortalApi): InvoicesController {
     val scope = rememberCoroutineScope()
-    return remember(kinfolkId, portalApi) { InvoicesController(kinfolkId, portalApi, scope) }
+    val controller = remember(kinfolkId, portalApi) { InvoicesController(kinfolkId, portalApi, scope) }
+    // #2366: Stripe's checkout opens in the browser, which takes the window's
+    // focus. Focus coming back is the household returning to this app.
+    val focused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(controller, focused) {
+        if (focused) controller.onAppReturned()
+    }
+    return controller
 }
+/** #2366: said once the fresh read shows the bill paid, never before. */
+internal const val PAYMENT_RECEIVED = "Payment received."
+
 
 private fun formatCents(cents: Long): String = formatUsd(cents.toDouble() / 100.0)

@@ -13,6 +13,7 @@ class FirestoreAuntieDataSource(
     override suspend fun updateVetClinic(loaded: VetClinic, edited: VetClinic): WriteResult<Unit> = client.updateVetClinic(loaded, edited).let { r -> if (r is WriteResult.Err) WriteResult.Err(r.message) else WriteResult.Ok(Unit) }
     override suspend fun archiveVetClinic(id: String, archived: Boolean): WriteResult<Unit> = client.archiveVetClinic(id, archived)
     override fun sessionsStream(): Flow<FirestoreResult<List<KinCareSession>>> = client.sessionsStream()
+    override fun sessionsForKinfolkStream(kinfolkId: String): Flow<FirestoreResult<List<KinCareSession>>> = client.sessionsForKinfolkStream(kinfolkId)
     override fun sessionForIdStream(sessionId: String): Flow<FirestoreResult<KinCareSession?>> = client.sessionForIdStream(sessionId)
     override fun paymentsStream(): Flow<FirestoreResult<List<Payment>>> = client.paymentsStream()
     // #825: UNKEYED on purpose, and worth knowing before wiring a screen through

@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinGhostButton
+import com.kinfolk.portal.components.KinLoading
 import com.kinfolk.portal.components.ScreenHeader
 import com.kinfolk.portal.portal.CreditTarget
 import com.kinfolk.portal.portal.Invoice
@@ -71,6 +72,15 @@ fun InvoiceDetailScreen(
      * neutral wording; it never guesses "You".
      */
     viewerUid: String? = null,
+    /**
+     * #2366: true while the bill is read again after the household came back
+     * from Stripe. Pay is held back and the screen says so; the status above
+     * stays whatever the server last said.
+     */
+    checkingPayment: Boolean = false,
+    /** #2366: the check ran out with the bill still owed. */
+    paymentNotSeen: Boolean = false,
+    onCheckPaymentAgain: () -> Unit = {},
     onPayMethod: (PayMethod) -> Unit = {},
     /** `true` accepts the quote, `false` declines it. */
     onQuoteDecision: (Boolean) -> Unit = {},
@@ -250,7 +260,31 @@ fun InvoiceDetailScreen(
         // condition put a Pay button on a credit the household had already
         // spent (issue #449). `isPayable` is the same list the invoice list
         // uses, so the row and the detail screen cannot offer different things.
+        } else if (offersPayment(invoice) && checkingPayment) {
+            // #2366: a second payment while the first is still landing would
+            // go to account credit, and there are no refunds.
+            KinLoading(
+                text = "Checking payment…",
+                onSync = onCheckPaymentAgain,
+                modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
+            )
         } else if (offersPayment(invoice)) {
+            if (paymentNotSeen) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
+                    verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs),
+                ) {
+                    Text(
+                        "This payment has not shown up yet. If you finished paying, check again in a minute.",
+                        style = type.sansMeta,
+                    )
+                    KinGhostButton(
+                        label = "Check again",
+                        onClick = onCheckPaymentAgain,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
             PayOptions(
                 methods = payMethods,
                 amountDue = invoice.amountDue,

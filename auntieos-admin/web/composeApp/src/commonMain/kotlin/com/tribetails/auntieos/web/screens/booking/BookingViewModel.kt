@@ -33,6 +33,8 @@ class BookingViewModel(
     // 16.5: incoming MyTribe booking-envelope requests + the directory (for names).
     fun incomingKinCaresStream() = dataSource.incomingKinCaresStream()
     fun kinfolkStream() = dataSource.kinfolkStream()
+    /** #2367: one household's visits, where a whole booking is looked up once its request has left the queue. */
+    fun sessionsForKinfolkStream(kinfolkId: String) = dataSource.sessionsForKinfolkStream(kinfolkId)
 
     /** batchId currently being approved/cancelled (drives the in-flight lock). */
     var seriesActionBatchId: String? by mutableStateOf(null)

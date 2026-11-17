@@ -65,7 +65,8 @@ export interface NotificationRoute {
 export function notificationTargetRoute(rawType: unknown, rawId: unknown): NotificationRoute | null {
   const type = normalizedTargetType(rawType);
   const id = str(rawId).trim();
-  if (type === null || id === '') return null;
+  // #2367: an id that is not shaped like a record id never reaches a route.
+  if (type === null || !isRouteSafeId(id)) return null;
   switch (type) {
     case 'invoice':
       return { to: '/invoices', search: { invoiceId: id } };
@@ -76,6 +77,44 @@ export function notificationTargetRoute(rawType: unknown, rawId: unknown): Notif
     case 'booking':
       return { to: '/bookings', search: { bookingId: sessionIdForVisit(id) } };
   }
+}
+
+/**
+ * #2367: the shape a record id must have before it goes into a route. The same
+ * pattern the Android apps' `pushId` checks: letters, digits and `_ . : ~ + -`,
+ * at most 200, never `.` or `..`. A slash, a question mark or a space would let
+ * an id name a different place than the record it came from.
+ */
+const ROUTE_SAFE_ID = /^[A-Za-z0-9_.:~+-]{1,200}$/;
+export function isRouteSafeId(raw: unknown): boolean {
+  const id = str(raw).trim();
+  return ROUTE_SAFE_ID.test(id) && id !== '.' && id !== '..';
+}
+
+/**
+ * #2367: a booking notice about a WHOLE booking, by household and request.
+ *
+ * A `booking` target carries one of two ids. Most notices name one visit, and
+ * `data.visitId` is that id. The notices about a request as a whole
+ * (`kincare.requested`, `kincare.booking.confirm`, `kincare.request.declined`,
+ * the Auntie's `assignment.assigned` for an approval) name its `batchId`
+ * instead, and carry no visit id, because there is no one visit they are about.
+ * The target table read every booking id as a visit id, so Open on those looked
+ * for a `vis_{batchId}` record that never exists and said the booking was
+ * unavailable.
+ *
+ * A notice is about the whole booking when its `data.batchId` IS its target, it
+ * names its household (a request id is unique only inside one), and both ids
+ * are route-safe. A visit notice also carries `data.batchId`, but its target is
+ * the visit, so it never matches. Pure.
+ */
+export function wholeBookingOf(entry: NotificationEntry): { kinfolkId: string; batchId: string } | null {
+  if (normalizedTargetType(entry.targetType) !== 'booking') return null;
+  const batchId = str(rec(entry.data)['batchId']).trim();
+  if (batchId === '' || batchId !== str(entry.targetId).trim()) return null;
+  const kinfolkId = notificationKinfolkId(entry);
+  if (!isRouteSafeId(batchId) || !isRouteSafeId(kinfolkId)) return null;
+  return { kinfolkId, batchId };
 }
 
 /** #1003: the `section` search value that opens "Payments needing a decision". */
@@ -123,6 +162,10 @@ export function notificationOpenRoute(entry: NotificationEntry): NotificationRou
       };
     }
   }
+  // #2367: a notice about a whole booking opens it on Bookings, the same place a
+  // fresh request's notice opens (#2028), which finds its card or its visits.
+  const whole = wholeBookingOf(entry);
+  if (whole !== null) return notificationRequestRoute(whole.kinfolkId, whole.batchId);
   return notificationTargetRoute(entry.targetType, entry.targetId);
 }
 
@@ -321,7 +364,15 @@ export function applicableNotificationActions(
   // #2028: a request opens on its card, unless the live queue says it is gone
   // and the server never stamped it. Such a row may predate #532 and carry a
   // visit id, which the target table still opens as that visit.
-  const opensOnRequestCard = isAnswerableRequest && (stamped !== null || !knownAnswered);
+  // #2367: a row that names its request as its batch always opens on Bookings
+  // (`notificationOpenRoute`), answered or not; the exception above is only for
+  // a row that cannot say which it names.
+  const opensOnRequestCard =
+    wholeBookingOf(entry) === null &&
+    isAnswerableRequest &&
+    (stamped !== null || !knownAnswered) &&
+    isRouteSafeId(kinfolkId) &&
+    isRouteSafeId(targetId);
   const open = opensOnRequestCard ? notificationRequestRoute(kinfolkId, targetId) : notificationOpenRoute(entry);
   return {
     open: isAuntie && isPaymentDecision ? null : forViewer(open),

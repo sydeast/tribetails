@@ -8,7 +8,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { refuseAuntie } from '../lib/staffGate';
 import { requireBillingActor } from '../lib/memberGate';
-import { TRIBETAILS_CORS } from '../lib/cors';
+import { requirePortalReturnUrls, TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 
 /**
@@ -239,6 +239,9 @@ export async function createBillingSetupSessionHandler(
   // #984: money. An Auntie is refused here by role, not by her tribe count.
   refuseAuntie(req.auth, 'createBillingSetupSession');
   const args = parseArgs(CreateBillingSetupSessionArgs, req.data, 'createBillingSetupSession');
+  // #2366: the same rule as `payInvoice`. Stripe sends the household to
+  // these addresses, so they must be the portal's own.
+  requirePortalReturnUrls(args);
   const { kinfolkId, clientData } = await resolveOwnBillingHousehold(
     uid,
     args.kinfolkId,

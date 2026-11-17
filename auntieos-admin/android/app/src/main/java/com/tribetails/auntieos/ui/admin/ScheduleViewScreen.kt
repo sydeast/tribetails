@@ -184,13 +184,15 @@ fun ScheduleViewScreen(
     onBack: () -> Unit,
     onNavigateToCommunicate: () -> Unit,
     onOpenSchedulingOptions: () -> Unit,
-    viewModel: EnhancedSchedulingViewModel
+    viewModel: EnhancedSchedulingViewModel,
+    /** #2367: a highlighted visit of a notice's booking opens its KinCare detail, by session id. */
+    onOpenVisit: (sessionId: String) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     // #1158: everything below reads the BUSINESS's clock: today, now, the note lock.
     val zone = remember(state.businessSettings.timeZone) { businessZone(state.businessSettings.timeZone) }
     CompositionLocalProvider(LocalBusinessZone provides zone) {
-        ScheduleViewScreenContent(onBack, onNavigateToCommunicate, onOpenSchedulingOptions, viewModel)
+        ScheduleViewScreenContent(onBack, onNavigateToCommunicate, onOpenSchedulingOptions, viewModel, onOpenVisit)
     }
 }
 
@@ -199,7 +201,8 @@ private fun ScheduleViewScreenContent(
     onBack: () -> Unit,
     onNavigateToCommunicate: () -> Unit,
     onOpenSchedulingOptions: () -> Unit,
-    viewModel: EnhancedSchedulingViewModel
+    viewModel: EnhancedSchedulingViewModel,
+    onOpenVisit: (sessionId: String) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val bizZone = LocalBusinessZone.current
@@ -550,22 +553,19 @@ private fun ScheduleViewScreenContent(
                     }
                 }
             }
-            // #2028: a notification's Open named a request that is no longer
-            // waiting. Same words as the web's Visit requests queue.
-            if (state.focusedRequestGone) {
+            // #2028 / #2367: a notification's Open named a booking the request
+            // queue no longer holds. Its visits are looked up and shown
+            // highlighted here, or this says it is no longer available.
+            val focusStage = state.focusedBookingStage
+            if (focusedBookingPanelShown(focusStage)) {
                 item {
-                    AuntieBanner(
-                        tone = AuntieBannerTone.Info,
-                        title = "That request is no longer waiting",
-                        icon = Lucide.CircleAlert,
+                    FocusedBookingPanel(
+                        stage = focusStage,
+                        catalog = serviceCatalog,
+                        onOpenVisit = onOpenVisit,
                         onDismiss = { viewModel.clearFocusedRequest() },
-                    ) {
-                        Text(
-                            "It was booked, turned down or withdrawn, so there is nothing left to answer.",
-                            style = AuntieTheme.typography.bodySmall,
-                            color = AuntieTheme.colors.textDim,
-                        )
-                    }
+                        onRetry = { viewModel.retryFocusedBookingLookup() },
+                    )
                 }
             }
             state.seriesActionMessage?.let { msg ->

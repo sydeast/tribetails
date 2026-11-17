@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -54,6 +54,40 @@ import { BusinessFootnote } from '../components/BusinessFootnote';
 const STRIPE_ONLY_FALLBACK: PayMethod[] = [
   { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null },
 ];
+/**
+ * #2366: THE WAY BACK FROM STRIPE. Stripe sends the household to the success
+ * address only when the checkout finished, so the marker on it says "they
+ * paid at Stripe". It does NOT say the bill is paid: `stripeWebhook` decides
+ * that, and it can land seconds after the household is back. So the marker
+ * starts a check, never a paid claim. The cancel address is the bare invoice
+ * page, which reads the bill exactly as it stands.
+ *
+ * The MyTribe Android app sends the same two addresses (`InvoicesController`).
+ */
+export const CHECKOUT_RETURN_PARAM = 'checkout';
+export const CHECKOUT_RETURN_VALUE = 'done';
+/** How often the bill is read again while checking. */
+export const PAYMENT_CHECK_EVERY_MS = 3_000;
+/** How long the check runs before the screen stops waiting and says so. */
+export const PAYMENT_CHECK_FOR_MS = 60_000;
+/** The two Stripe return addresses for this invoice, on this origin. */
+export function checkoutReturnUrls(origin: string, invoiceId: string): { successUrl: string; cancelUrl: string } {
+  const page = `${origin}/invoices/${encodeURIComponent(invoiceId)}`;
+  return { successUrl: `${page}?${CHECKOUT_RETURN_PARAM}=${CHECKOUT_RETURN_VALUE}`, cancelUrl: page };
+}
+function cameBackFromCheckout(): boolean {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).get(CHECKOUT_RETURN_PARAM) === CHECKOUT_RETURN_VALUE;
+}
+/** Drops the marker from the address bar, so a reload or a shared link does not start another check. */
+function dropCheckoutMarker(): void {
+  if (typeof window === 'undefined') return;
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has(CHECKOUT_RETURN_PARAM)) return;
+  params.delete(CHECKOUT_RETURN_PARAM);
+  const rest = params.toString();
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
+}
 
 /**
  * Invoice document view, ported from
@@ -72,7 +106,47 @@ export function InvoiceDetail() {
   const auth = useAuth();
   const viewerUid = auth.status === 'signedIn' ? auth.user.uid : null;
 
-  const invoices = useQuery({ queryKey: myInvoicesKey(kinfolkId), queryFn: () => getMyInvoices(kinfolkId) });
+  // #2366: set when the household lands here from a finished Stripe checkout,
+  // cleared once the fresh read shows the bill settled or the check runs out.
+  const [checkingSince, setCheckingSince] = useState<number | null>(() => (cameBackFromCheckout() ? Date.now() : null));
+  const [checkRanOut, setCheckRanOut] = useState(false);
+  const checking = checkingSince !== null;
+  const invoices = useQuery({
+    queryKey: myInvoicesKey(kinfolkId),
+    queryFn: () => getMyInvoices(kinfolkId),
+    refetchInterval: checking ? PAYMENT_CHECK_EVERY_MS : false,
+  });
+  useEffect(() => {
+    if (checking) dropCheckoutMarker();
+  }, [checking]);
+  // What the latest read says about this bill: still waiting on a payment, or
+  // not (paid, or no longer a bill that takes one). Undefined until it loads.
+  const readBill = invoices.data
+    ? [...invoices.data.open, ...invoices.data.paid, ...invoices.data.credits].find((i) => i.id === invoiceId)
+    : undefined;
+  const stillOwed = readBill ? offersPayment(readBill) : null;
+  const readPaid = readBill ? readBill.isPaid || readBill.status === 'paid' : false;
+  useEffect(() => {
+    if (checkingSince === null) return;
+    // Only a read that FINISHED after the return counts: a cached copy from
+    // before the checkout says nothing about the payment.
+    if (stillOwed === false && invoices.dataUpdatedAt >= checkingSince) {
+      setCheckingSince(null);
+      if (readPaid) announceSaved('Payment received');
+      return;
+    }
+    const left = checkingSince + PAYMENT_CHECK_FOR_MS - Date.now();
+    const timer = setTimeout(() => {
+      setCheckingSince(null);
+      setCheckRanOut(true);
+    }, Math.max(0, left));
+    return () => clearTimeout(timer);
+  }, [checkingSince, stillOwed, readPaid, invoices.dataUpdatedAt]);
+  const checkAgain = () => {
+    setCheckRanOut(false);
+    setCheckingSince(Date.now());
+    void invoices.refetch();
+  };
   const business = useQuery({ queryKey: businessContactKey(), queryFn: () => getBusinessContact() });
   // PR30: `payMethods` (the resolved option list) rides the same
   // `['myHome', kinfolkId]` cache PortalNav already keeps warm on every
@@ -109,13 +183,10 @@ export function InvoiceDetail() {
   const pay = usePortalMutation({
     mutationFn: () => {
       checkoutKey.current ??= mintCheckoutIdempotencyKey();
-      return payInvoice(
-        invoiceId,
-        `${window.location.origin}/invoices/${invoiceId}`,
-        `${window.location.origin}/invoices/${invoiceId}`,
-        kinfolkId,
-        checkoutKey.current,
-      );
+      // #2366: back to this invoice either way; the success address carries
+      // the marker that starts the payment check above.
+      const { successUrl, cancelUrl } = checkoutReturnUrls(window.location.origin, invoiceId);
+      return payInvoice(invoiceId, successUrl, cancelUrl, kinfolkId, checkoutKey.current);
     },
     onSuccess: (res) => {
       // Dropped BEFORE the redirect. A household that comes back to pay a
@@ -479,7 +550,26 @@ export function InvoiceDetail() {
                 </div>
 
                 <div className="doc-actions">
-                  {payable && (
+                  {/* #2366: back from a finished checkout, the bill is read
+                      again until the webhook's verdict shows. Pay is held back
+                      meanwhile: a second payment would go to account credit,
+                      and there are no refunds. */}
+                  {payable && checking && (
+                    <div className="pay-check" data-testid="payment-check">
+                      <LoadingLine what="your payment" retry={() => void invoices.refetch()}>
+                        Checking payment…
+                      </LoadingLine>
+                    </div>
+                  )}
+                  {payable && !checking && checkRanOut && (
+                    <p className="pay-check-note" data-testid="payment-not-seen">
+                      This payment has not shown up yet. If you finished paying, check again in a minute.{' '}
+                      <button type="button" className="btn ghost" onClick={checkAgain}>
+                        Check again
+                      </button>
+                    </p>
+                  )}
+                  {payable && !checking && (
                     <PayOptions
                       methods={payMethods}
                       amountDue={amountDueCents}

@@ -463,4 +463,62 @@ class InvoiceDetailScreenTest {
         onNodeWithText("Accepted Aug", substring = true).assertIsDisplayed()
         onNodeWithText("accepted this quote", substring = true).assertDoesNotExist()
     }
+
+    // ── #2366: back from Stripe, the bill is checked, never assumed paid ──
+    private val card = PayMethod(id = "stripe", label = "Pay with Credit Card", kind = PayMethodKind.Checkout, url = null)
+    @Test
+    fun checkingPayment_holdsPayBackAndKeepsTheServersStatus() = runComposeUiTest {
+        // KinLoading's ring is an infinite transition: drive the clock by hand.
+        mainClock.autoAdvance = false
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", openInvoice(), payMethods = listOf(card), checkingPayment = true, onBack = {})
+        }
+        mainClock.advanceTimeBy(16L)
+        onNodeWithText("Checking payment…").assertIsDisplayed()
+        onNodeWithText("Pay with Credit Card").assertDoesNotExist()
+        // The status is the server's until the webhook changes it.
+        onNodeWithText("Pending").assertIsDisplayed()
+        onNodeWithText("Paid").assertDoesNotExist()
+    }
+    @Test
+    fun paymentNotSeen_saysSoAndOffersCheckAgainAndPay() = runComposeUiTest {
+        var again = 0
+        setThemedContent {
+            InvoiceDetailScreen(
+                "The Foster",
+                openInvoice(),
+                payMethods = listOf(card),
+                paymentNotSeen = true,
+                onCheckPaymentAgain = { again++ },
+                onBack = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("This payment has not shown up yet.", substring = true).assertIsDisplayed()
+        onNodeWithText("Pay with Credit Card").assertIsDisplayed()
+        onNodeWithText("Check again").performClick()
+        waitForIdle()
+        assertEquals(1, again)
+    }
+    @Test
+    fun withNoCheck_payIsOfferedAndNothingIsSaidAboutAPayment() = runComposeUiTest {
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", openInvoice(), payMethods = listOf(card), onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Pay with Credit Card").assertIsDisplayed()
+        onNodeWithText("Checking payment…").assertDoesNotExist()
+        onNodeWithText("This payment has not shown up yet.", substring = true).assertDoesNotExist()
+    }
+    @Test
+    fun aPaidInvoice_showsNoCheckEvenIfOneWasRunning() = runComposeUiTest {
+        mainClock.autoAdvance = false
+        val paid = openInvoice().copy(status = InvoiceStatus.Paid, isPaid = true, amountDue = 0.0)
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", paid, payMethods = listOf(card), checkingPayment = true, onBack = {})
+        }
+        mainClock.advanceTimeBy(16L)
+        onNodeWithText("Checking payment…").assertDoesNotExist()
+        onNodeWithText("Pay with Credit Card").assertDoesNotExist()
+    }
 }

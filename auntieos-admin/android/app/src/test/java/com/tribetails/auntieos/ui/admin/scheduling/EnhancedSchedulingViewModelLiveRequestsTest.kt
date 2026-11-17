@@ -81,6 +81,8 @@ class EnhancedSchedulingViewModelLiveRequestsTest {
             Result.success(GoogleCalendarConnectionState(GoogleCalendarConnection(), "", ""))
         coEvery { visitRequestRepo.listRescheduleRequests(any()) } returns Result.success(emptyList())
         coEvery { visitRequestRepo.listCancelRequests(any()) } returns Result.success(emptyList())
+        // #2367: a focused booking the queue does not hold reads its household's visits.
+        coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
     }
 
     @After
@@ -222,13 +224,153 @@ class EnhancedSchedulingViewModelLiveRequestsTest {
             ),
         ) { null }
         val live = SchedulingState(incomingSeries = waiting, incomingLive = true)
+        fun focused(batchId: String, lookup: FocusedBookingLookup? = null) =
+            live.copy(focusedKinfolkId = "kf1", focusedBatchId = batchId, focusedBookingLookup = lookup)
 
-        assertTrue(live.copy(focusedRequestKey = "kf1/req_gone").focusedRequestGone)
-        assertFalse("its card opens instead", live.copy(focusedRequestKey = "kf1/req_1").focusedRequestGone)
-        assertFalse("nothing asked", live.focusedRequestGone)
-        assertFalse(
-            "not known while the queue is not live",
-            live.copy(focusedRequestKey = "kf1/req_gone", incomingLive = false).focusedRequestGone,
+        // #2367: no longer "That request is no longer waiting": the household's
+        // visits are looked up, and only none found says it is gone.
+        assertEquals(FocusedBookingStage.LookingUp, focused("req_gone").focusedBookingStage)
+        assertEquals(
+            FocusedBookingStage.Gone,
+            focused("req_gone", FocusedBookingLookup.Found(emptyList())).focusedBookingStage,
         )
+        assertEquals("its card opens instead", FocusedBookingStage.OpenCard, focused("req_1").focusedBookingStage)
+        assertEquals("nothing asked", FocusedBookingStage.None, live.focusedBookingStage)
+        assertEquals(
+            "not known while the queue is not live",
+            FocusedBookingStage.Waiting,
+            focused("req_gone").copy(incomingLive = false).focusedBookingStage,
+        )
+    }
+
+    // ---- #2367: a whole booking the queue no longer holds ----
+
+    private fun session(id: String, kinfolkId: String, batchId: String?, start: String = "2026-12-03T15:00:00Z") =
+        com.tribetails.auntieos.data.model.KinCareSession(
+            id = id, kinfolkId = kinfolkId, kinCareBatchId = batchId, startTime = start,
+        )
+
+    @Test
+    fun `a booked booking shows its visits, read from that household only`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns Result.success(
+            listOf(
+                session("vis_b", "kf1", "b7", start = "2026-12-04T15:00:00Z"),
+                session("vis_a", "kf1", "b7", start = "2026-12-03T15:00:00Z"),
+                session("vis_other_booking", "kf1", "b8"),
+                session("vis_other_household", "kf2", "b7"),
+            ),
+        )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.focusIncomingRequest("kf1", "b7")
+        advanceUntilIdle()
+
+        val stage = vm.state.value.focusedBookingStage
+        assertTrue(stage is FocusedBookingStage.Booked)
+        assertEquals(listOf("vis_a", "vis_b"), (stage as FocusedBookingStage.Booked).sessions.map { it.id })
+        coVerify(exactly = 1) { kinCareRepo.getKinCareSessionsForKinfolk("kf1") }
+    }
+
+    @Test
+    fun `a booking with no visits left is no longer available`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns
+            Result.success(listOf(session("vis_x", "kf2", "b7")))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.focusIncomingRequest("kf1", "b7")
+        advanceUntilIdle()
+        assertEquals(FocusedBookingStage.Gone, vm.state.value.focusedBookingStage)
+    }
+
+    @Test
+    fun `a failed lookup says so, and Retry reads again`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns
+            Result.failure(IllegalStateException("You're offline."))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.focusIncomingRequest("kf1", "b7")
+        advanceUntilIdle()
+        assertEquals(FocusedBookingStage.LookupFailed("You're offline."), vm.state.value.focusedBookingStage)
+
+        coEvery { kinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns
+            Result.success(listOf(session("vis_a", "kf1", "b7")))
+        vm.retryFocusedBookingLookup()
+        advanceUntilIdle()
+        assertTrue(vm.state.value.focusedBookingStage is FocusedBookingStage.Booked)
+    }
+
+    @Test
+    fun `a read that throws is a failed lookup, not a crash`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getKinCareSessionsForKinfolk("kf1") } throws IllegalStateException("boom")
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.focusIncomingRequest("kf1", "b7")
+        advanceUntilIdle()
+        assertEquals(FocusedBookingStage.LookupFailed("boom"), vm.state.value.focusedBookingStage)
+    }
+
+    @Test
+    fun `a focus set before the queue loads is looked up once it goes live`() = runTest(testDispatcher) {
+        val incoming = MutableSharedFlow<Result<List<IncomingKinCare>>>()
+        every { bookingRepo.incomingKinCareRequestsStream() } returns incoming
+        coEvery { kinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns
+            Result.success(listOf(session("vis_a", "kf1", "b7")))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.focusIncomingRequest("kf1", "b7")
+        advanceUntilIdle()
+        assertEquals("waits for the queue", FocusedBookingStage.Waiting, vm.state.value.focusedBookingStage)
+        coVerify(exactly = 0) { kinCareRepo.getKinCareSessionsForKinfolk(any()) }
+
+        incoming.emit(Result.success(emptyList()))
+        advanceUntilIdle()
+        assertTrue(vm.state.value.focusedBookingStage is FocusedBookingStage.Booked)
+    }
+
+    @Test
+    fun `a request still waiting opens its card and reads no visits`() = runTest(testDispatcher) {
+        every { bookingRepo.incomingKinCareRequestsStream() } returns flowOf(
+            Result.success(
+                listOf(
+                    IncomingKinCare(
+                        familyId = "kf1", batchId = "b7", visitId = "v1", kinfolkId = "kf1",
+                        startTime = "2026-12-03T15:00:00Z", status = "requested",
+                    ),
+                ),
+            ),
+        )
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.focusIncomingRequest("kf1", "b7")
+        advanceUntilIdle()
+        assertEquals(FocusedBookingStage.OpenCard, vm.state.value.focusedBookingStage)
+        coVerify(exactly = 0) { kinCareRepo.getKinCareSessionsForKinfolk(any()) }
+    }
+
+    @Test
+    fun `Dismiss or leaving Bookings clears it, so it is not shown again`() = runTest(testDispatcher) {
+        coEvery { kinCareRepo.getKinCareSessionsForKinfolk("kf1") } returns
+            Result.success(listOf(session("vis_a", "kf1", "b7")))
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        vm.focusIncomingRequest("kf1", "b7")
+        advanceUntilIdle()
+        vm.clearFocusedRequest()
+        assertEquals(FocusedBookingStage.None, vm.state.value.focusedBookingStage)
+        assertNull(vm.state.value.focusedBookingLookup)
+        assertNull(vm.state.value.focusedKinfolkId)
+    }
+
+    @Test
+    fun `an id not shaped like an id focuses nothing and reads nothing`() = runTest(testDispatcher) {
+        val vm = buildViewModel()
+        advanceUntilIdle()
+        for ((kin, batch) in listOf("kf1/x" to "b7", "kf1" to "b7/../x", "kf1" to "b 7", "kf1" to "..", "" to "b7", "kf1" to "x".repeat(201))) {
+            vm.focusIncomingRequest(kin, batch)
+            advanceUntilIdle()
+            assertNull("$kin $batch", vm.state.value.focusedRequestKey)
+            assertEquals(FocusedBookingStage.None, vm.state.value.focusedBookingStage)
+        }
+        coVerify(exactly = 0) { kinCareRepo.getKinCareSessionsForKinfolk(any()) }
     }
 }

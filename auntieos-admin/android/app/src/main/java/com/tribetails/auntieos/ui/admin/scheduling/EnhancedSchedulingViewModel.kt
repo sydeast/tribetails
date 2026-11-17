@@ -159,6 +159,14 @@ data class SchedulingState(
      * clears this.
      */
     val focusedRequestKey: String? = null,
+    /**
+     * #2367: the household and booking behind [focusedRequestKey], held apart
+     * so neither is ever read back out of the joined key. Both shape-checked.
+     */
+    val focusedKinfolkId: String? = null,
+    val focusedBatchId: String? = null,
+    /** #2367: the focused household's visits, read once the queue has loaded without the request. */
+    val focusedBookingLookup: FocusedBookingLookup? = null,
     val seriesActionBatchId: String? = null, // batchId currently being approved/cancelled
     val seriesActionMessage: String? = null,
     /**
@@ -221,13 +229,20 @@ data class SchedulingState(
     val scheduleWriteInFlight: Boolean = false,
 ) {
     /**
-     * #2028: a notification's Open named a request the live queue does not hold
-     * (booked, turned down or withdrawn since). Bookings says so rather than
-     * landing on nothing. Unknown while the queue is not live, so false then.
+     * #2028 / #2367: what Bookings shows for the booking a notification's Open
+     * named. A request the live queue still holds opens its card; one it does
+     * not is looked up among the household's visits, which are highlighted, or
+     * Bookings says the booking is no longer available. Waiting while the queue
+     * is not live. See [focusedBookingStage].
      */
-    val focusedRequestGone: Boolean
-        get() = focusedRequestKey != null && incomingLive &&
-            incomingSeries.none { it.requestKey == focusedRequestKey }
+    val focusedBookingStage: FocusedBookingStage
+        get() = focusedBookingStage(
+            kinfolkId = focusedKinfolkId,
+            batchId = focusedBatchId,
+            incomingLive = incomingLive,
+            queueKeys = incomingSeries.mapTo(HashSet()) { it.requestKey },
+            lookup = focusedBookingLookup,
+        )
 }
 
 /**
@@ -557,14 +572,80 @@ class EnhancedSchedulingViewModel(
         }
     }
 
-    /** #2028: a notification's Open names the request to show; its card opens it. */
+    /**
+     * #2028: a notification's Open names the request to show; its card opens it.
+     * #2367: the same for a whole booking the queue no longer holds, whose
+     * visits are then looked up. An id not shaped like an id (a slash, a space,
+     * "..") focuses nothing, so it never reaches the joined key.
+     */
     fun focusIncomingRequest(kinfolkId: String, batchId: String) {
-        _state.value = _state.value.copy(focusedRequestKey = incomingRequestKey(kinfolkId, batchId))
+        val kin = com.tribetails.auntieos.ui.pushId(kinfolkId)
+        val batch = com.tribetails.auntieos.ui.pushId(batchId)
+        focusedLookupJob?.cancel()
+        focusedLookupJob = null
+        if (kin.isEmpty() || batch.isEmpty()) {
+            clearFocusedRequest()
+            return
+        }
+        _state.value = _state.value.copy(
+            focusedRequestKey = incomingRequestKey(kin, batch),
+            focusedKinfolkId = kin,
+            focusedBatchId = batch,
+            focusedBookingLookup = null,
+        )
+        lookUpFocusedBookingIfNeeded()
     }
 
-    /** #2028: the focused request's sheet is open, so arriving again does not reopen it. */
+    /**
+     * #2028: the focused request's sheet is open, so arriving again does not
+     * reopen it. #2367: also Dismiss on the booking banner, and leaving
+     * Bookings, so nothing about it is shown twice.
+     */
     fun clearFocusedRequest() {
-        _state.value = _state.value.copy(focusedRequestKey = null)
+        focusedLookupJob?.cancel()
+        focusedLookupJob = null
+        _state.value = _state.value.copy(
+            focusedRequestKey = null,
+            focusedKinfolkId = null,
+            focusedBatchId = null,
+            focusedBookingLookup = null,
+        )
+    }
+
+    /** #2367: Retry on "Couldn't look this booking up". */
+    fun retryFocusedBookingLookup() {
+        if (_state.value.focusedBookingLookup !is FocusedBookingLookup.Failed) return
+        _state.value = _state.value.copy(focusedBookingLookup = null)
+        lookUpFocusedBookingIfNeeded()
+    }
+
+    private var focusedLookupJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * #2367: stage 3. Once the queue has loaded without the focused request,
+     * read that household's visits (one household's whole `kin_care_sessions`,
+     * not a capped page of every visit) and keep the ones of this booking. Runs
+     * from both sides: a focus set while the queue is live, and the queue going
+     * live after the focus was set. A result for a focus that has since changed
+     * or been cleared is dropped.
+     */
+    private fun lookUpFocusedBookingIfNeeded() {
+        val s = _state.value
+        if (!focusedBookingNeedsLookup(s.focusedBookingStage, s.focusedBookingLookup)) return
+        val kin = s.focusedKinfolkId ?: return
+        val batch = s.focusedBatchId ?: return
+        _state.value = s.copy(focusedBookingLookup = FocusedBookingLookup.Loading)
+        focusedLookupJob = viewModelScope.launch {
+            val read = runCatchingCancellable { kinCareRepository.getKinCareSessionsForKinfolk(kin).getOrThrow() }
+            val now = _state.value
+            if (now.focusedKinfolkId != kin || now.focusedBatchId != batch) return@launch
+            _state.value = now.copy(
+                focusedBookingLookup = read.fold(
+                    onSuccess = { FocusedBookingLookup.Found(sessionsOfBooking(it, kin, batch)) },
+                    onFailure = { FocusedBookingLookup.Failed(it.message?.trim().orEmpty()) },
+                ),
+            )
+        }
     }
 
     /**
@@ -633,6 +714,8 @@ class EnhancedSchedulingViewModel(
                             incomingError = null,
                             incomingLive = true,
                         )
+                        // #2367: a focused booking the queue does not hold is looked up now.
+                        lookUpFocusedBookingIfNeeded()
                     }
                     .onFailure { e ->
                         // #2069: whatever the banner says, the list is no longer

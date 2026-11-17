@@ -4,6 +4,7 @@ import com.tribetails.auntieos.data.admin.NotificationEntry
 import com.tribetails.auntieos.ui.admin.PENDING_BOOKING_REQUEST_KEY
 import com.tribetails.auntieos.ui.admin.notificationKinfolkId
 import com.tribetails.auntieos.ui.admin.unappliedPaymentNotice
+import com.tribetails.auntieos.ui.admin.wholeBookingOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -116,7 +117,11 @@ internal sealed interface PushOpenAction {
     /** One of this app's own nav routes, built by [notificationOpenRoute]. */
     data class Route(val route: String) : PushOpenAction
 
-    /** #2028: a visit request opens its card on Bookings, which says so when it is no longer waiting. */
+    /**
+     * #2028: a visit request opens its card on Bookings. #2367: so does any
+     * whole booking; one no longer waiting shows its visits, highlighted, or
+     * says it is no longer available.
+     */
     data class VisitRequest(val kinfolkId: String, val batchId: String) : PushOpenAction
 
     /** #1003: the household profile, with that payment's Decide dialog. */
@@ -141,6 +146,9 @@ internal fun pushOpenAction(entry: NotificationEntry): PushOpenAction {
         val batchId = entry.targetId.trim()
         if (kinfolkId.isNotBlank() && batchId.isNotBlank()) return PushOpenAction.VisitRequest(kinfolkId, batchId)
     }
+    // #2367: a push about a whole booking (its target is the booking's batch
+    // id) opens Bookings on that booking, the place the request card is.
+    wholeBookingOf(entry)?.let { (kinfolkId, batchId) -> return PushOpenAction.VisitRequest(kinfolkId, batchId) }
     val route = notificationOpenRoute(entry) ?: return PushOpenAction.NotificationsList
     val unapplied = unappliedPaymentNotice(entry)
     if (unapplied != null) return PushOpenAction.UnappliedPayment(unapplied.kinfolkId, unapplied.paymentId, route)
