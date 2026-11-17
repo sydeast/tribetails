@@ -6,7 +6,8 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.Invoice
-import com.tribetails.auntieos.web.data.Payment
+import com.tribetails.auntieos.web.data.InvoiceLedgerPayment
+import com.tribetails.auntieos.web.data.InvoiceLedgerPayments
 import com.tribetails.auntieos.web.theme.AuntieAppTheme
 import com.tribetails.auntieos.web.theme.ThemeMode
 import kotlin.test.Test
@@ -24,18 +25,22 @@ class InvoicePaymentsPanelRenderTest {
     private fun SemanticsNodeInteractionsProvider.shown(text: String): Boolean =
         onAllNodesWithText(text, substring = true, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
 
-    private val payment = Payment(
-        _id = "p1",
-        kinfolkId = "k1",
+    private val payment = InvoiceLedgerPayment(
+        paymentId = "p1",
+        amountCents = 4000,
+        amountResolved = true,
+        tipCents = 0,
+        feeCents = 0,
+        tipBasis = "gross",
+        appliedCents = 4000,
+        method = "Zelle",
+        reference = "",
         date = "2026-10-12",
-        paymentMethod = "Zelle",
-        amount = 40.0,
-        invoiceId = "inv1",
     )
 
     private fun renderPanel(
         status: String,
-        linked: List<Payment>,
+        linked: List<InvoiceLedgerPayment>,
         history: String = "",
         check: SemanticsNodeInteractionsProvider.() -> Unit,
     ) = runDesktopComposeUiTest {
@@ -45,7 +50,7 @@ class InvoicePaymentsPanelRenderTest {
                 InvoicePaymentsPanel(
                     invoice = invoice,
                     actions = invoiceActionsFor(invoiceStateOrNull(invoice)),
-                    paymentsState = FirestoreResult.Data(linked),
+                    paymentsState = FirestoreResult.Data(InvoiceLedgerPayments(linked, linked)),
                     linkedPayments = linked,
                     clientPayments = linked,
                     onRecordPayment = {},

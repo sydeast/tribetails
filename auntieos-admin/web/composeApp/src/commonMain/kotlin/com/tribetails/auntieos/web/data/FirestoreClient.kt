@@ -1597,6 +1597,20 @@ class FirestoreClient {
         }
     }
 
+    /**
+     * #2333: the invoice's payments, through `getInvoiceLedger`, in cents the
+     * server resolved. See [InvoiceLedgerPayments] for why the console stopped
+     * reading the root `payments` collection for this.
+     */
+    suspend fun getInvoiceLedgerPayments(invoiceId: String): WriteResult<InvoiceLedgerPayments> {
+        val payload = invoiceLedgerPayload(invoiceId)
+        return when (val r = platformInvokeCallable("getInvoiceLedger", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message)
+            is WriteResult.Ok -> runCatchingCancellable { WriteResult.Ok(decodeInvoiceLedgerPayments(r.value)) }
+                .getOrElse { WriteResult.Err(it.message ?: "decode failed") }
+        }
+    }
+
     /** #1003: the household's card payments waiting on a decision, through `listUnappliedPayments`. */
     suspend fun listUnappliedPayments(kinfolkId: String): WriteResult<UnappliedPaymentsList> {
         val payload = listUnappliedPaymentsPayload(kinfolkId)
