@@ -62,6 +62,7 @@ import com.kinfolk.portal.ui.LaunchErrorScreen
 import com.kinfolk.portal.ui.NoTribesOnboarding
 import com.kinfolk.portal.ui.NotFoundScreen
 import com.kinfolk.portal.util.openExternalUrl
+import kotlinx.coroutines.flow.first
 
 /** Dirty-flag key the detail destinations set so Schedule reloads on return. */
 private const val SCHEDULE_DIRTY = "schedule_dirty"
@@ -236,6 +237,28 @@ fun AppNavHost(
         }
     }
 
+    // #2259: a tapped push opens the thing it is about. Only once the signed-in
+    // shell is the start route, so a tap while signed out waits through
+    // sign-in, and after the start-route effect above, whose popUpTo(0) would
+    // otherwise wipe the destination. Taken once: a recomposition, a rotation
+    // or coming back to the app never opens it a second time.
+    val pendingPush by com.kinfolk.portal.push.PendingPushOpen.pending.collectAsState()
+    val shellOnScreen = startRoute is ShellGraph
+    // The entry a push opened the notifications list for (its line was cut, or
+    // it carries the office's note). Dropped when the list leaves the screen.
+    var pushEntryId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(pendingPush, shellOnScreen) {
+        if (pendingPush == null || !shellOnScreen) return@LaunchedEffect
+        navController.currentBackStackEntryFlow.first()
+        val target = com.kinfolk.portal.push.PendingPushOpen.take() ?: return@LaunchedEffect
+        pushEntryId = (target as? com.kinfolk.portal.portal.NotificationTarget.Entry)?.notificationId
+        val destination = com.kinfolk.portal.push.pushOpenDestination(target)
+        if (destination == MessageAuntieRoute) {
+            openMessages()
+        } else {
+            navController.navigate(destination) { launchSingleTop = true }
+        }
+    }
     // #1281: lives above the NavHost, so it outlasts the wizard's destination
     // and reaches Schedule's. See ScheduleHandoff.
     var scheduleHandoff by remember { mutableStateOf<ScheduleHandoff?>(null) }
@@ -466,11 +489,13 @@ fun AppNavHost(
             // invoice, or the KinTales tab on that tale. A row about a whole
             // request with no batch to open lands on Schedule.
             composable<NotificationsListRoute> {
+                androidx.compose.runtime.DisposableEffect(Unit) { onDispose { pushEntryId = null } }
                 Shell { mod ->
                     Box(mod) {
                         com.kinfolk.portal.screens.notifications.NotificationsListScreen(
                             kinfolkId = kinId,
                             portalApi = portalApi,
+                            openedEntryId = pushEntryId,
                             onOpenVisit = { visitId, batchId -> navController.navigate(KinCareDetailRoute(batchId, visitId)) },
                             onOpenBookingRequest = { batchId -> navController.navigate(BookingEnvelopeRoute(batchId)) },
                             onOpenSchedule = { navController.navigate(ScheduleRoute) { launchSingleTop = true } },
@@ -547,8 +572,20 @@ fun AppNavHost(
                 Shell { mod ->
                     Box(mod) {
                         val invoiceId = entry.toRoute<InvoiceDetailRoute>().invoiceId
-                        LaunchedEffect(invoiceId) { if (invoicesController.data == null) invoicesController.reload() }
+                        // #2356: a list loaded earlier in the session does not hold
+                        // an invoice sent since, so an invoice it lacks is read
+                        // again before anything is said about it.
+                        val invoiceRead = com.kinfolk.portal.screens.invoices.rememberInvoiceRead(
+                            invoiceId = invoiceId,
+                            held = { invoicesController.find(invoiceId) != null },
+                            read = { invoicesController.reload() },
+                        )
                         val invoice = invoicesController.find(invoiceId)
+                        val view = com.kinfolk.portal.screens.invoices.invoiceDetailView(
+                            found = invoice != null,
+                            freshlyRead = invoiceRead.freshlyRead,
+                            readFailed = invoicesController.error != null,
+                        )
                         if (invoice != null) {
                             InvoiceDetailScreen(
                                 familyName = shellFamilyName,
@@ -568,6 +605,22 @@ fun AppNavHost(
                                 onDownloadPdf = { invoicesController.startDownloadPdf(invoice) },
                                 onBack = { navController.popBackStack() },
                             )
+                        } else if (view == com.kinfolk.portal.screens.invoices.InvoiceDetailView.Missing) {
+                            // #2356: a fresh read of the invoices does not hold
+                            // this one (an unsent draft, a removed invoice). It
+                            // used to spin here for good.
+                            com.kinfolk.portal.screens.invoices.InvoiceMissing(
+                                onBackToInvoices = {
+                                    navController.navigate(InvoicesRoute) {
+                                        popUpTo(navController.graph.findStartDestination().id)
+                                        launchSingleTop = true
+                                    }
+                                },
+                            )
+                        } else if (view == com.kinfolk.portal.screens.invoices.InvoiceDetailView.Failed) {
+                            // The read itself failed: said plainly, with a way
+                            // to try again, never a spinner that does not end.
+                            com.kinfolk.portal.screens.invoices.InvoiceReadFailed(onRetry = invoiceRead::retry)
                         } else {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 CircularProgressIndicator()

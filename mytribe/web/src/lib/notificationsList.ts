@@ -142,3 +142,41 @@ export function householdNoteOf(item: Pick<NotificationItemDto, 'detail'>): stri
   const raw = item.detail?.['householdNote'];
   return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
 }
+
+/**
+ * #2368: the whole message a household's push was cut from, kept on its entry
+ * when the push was sent, or null when the entry has none (older entries, and
+ * every entry whose push fit). Plain text: the screen draws it as text.
+ */
+export function fullMessageOf(item: Pick<NotificationItemDto, 'fullMessage'>): string | null {
+  const raw = item.fullMessage;
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
+/**
+ * The office's note as the row draws it: left off when the whole message
+ * already says it, so a cut push about a declined request does not show the
+ * same note twice.
+ */
+export function rowNoteOf(item: Pick<NotificationItemDto, 'detail' | 'fullMessage'>): string | null {
+  const note = householdNoteOf(item);
+  const message = fullMessageOf(item);
+  if (note === null || message === null) return note;
+  const flat = (t: string) => t.replace(/\s+/g, ' ').trim();
+  return flat(message).includes(flat(note)) ? null : note;
+}
+
+/**
+ * `/notifications?entry=<id>`: the entry a tapped push asks the list to show
+ * (a push whose line was cut, or whose notice carries the office's note, is
+ * read whole here). The `validateSearch` for the route. The value arrives from
+ * the address bar, so it only ever picks out one of the household's own rows
+ * by id: a blank value, or anything that is not a short plain id, is dropped
+ * and the list opens as it always has. The router reads an all-digit value as
+ * a number, which is still an id.
+ */
+export function notificationsListSearch(search: Record<string, unknown>): { entry?: string } {
+  const raw = search['entry'];
+  const entry = typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : typeof raw === 'string' ? raw.trim() : '';
+  return entry !== '' && entry.length <= 200 && !/[\s/\\?#&]/.test(entry) ? { entry } : {};
+}

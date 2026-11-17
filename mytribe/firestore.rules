@@ -943,9 +943,14 @@ service cloud.firestore {
       //
       // WHAT STAYS OPEN, on purpose. The owner, on every client, offline queue
       // included. An Auntie with the switch off, exactly as before. Departed
-      // and Undo arrival for an Auntie: an undo that rewinds an arrival to On
-      // my way is not a start, which is what the ARRIVED / DEPARTED test on the
-      // stored status is for.
+      // for an Auntie, on a visit that is Arrived.
+      //
+      // #2038: HER UNDO ARRIVAL GOES THROUGH THE SERVER TOO while the switch is
+      // on (`undoesArrival` below). `setVisitLifecycle` reads the visit before
+      // it rewinds it, clears the measured distance of the arrival being
+      // undone, and takes that arrival's notice off the household's
+      // notifications list in the same call. An undo that rewinds to On my way
+      // is still not a start: `startsVisit` reads the stored status for that.
       //
       // The `get()` costs one read, and only on an Auntie's write that starts a
       // visit: `||` stops before it everywhere else. `.data.get(key, false)`
@@ -991,14 +996,25 @@ service cloud.firestore {
       // when its few minutes end, and what the household's copy read before.
       // A caretaker who could move the first could reopen the undo on any
       // finished visit. And `departedNoticeToldForArrival`, which the undo
-      // writes so the household is not told "has left" a second time: a
-      // caretaker who could write it could silence that notice on any visit.
+      // wrote until #2357 so the household was not told "has left" a second
+      // time. The server no longer writes or reads it (that rule is now read
+      // from the departure's own `visit_step_notices` record). It stays
+      // refused here so a visit that still carries it cannot have it rewritten.
       function caretakerStartRuleHolds() {
         return !request.resource.data.diff(resource.data).affectedKeys()
                  .hasAny(['arrivalCheckedByOwner', 'completedOutsideRange',
                           'undoDepartedUntil', 'householdStatusBeforeCompletion',
                           'departedNoticeToldForArrival'])
-               && (!startsVisit() || !arrivalRuleOn());
+               && ((!startsVisit() && !undoesArrival()) || !arrivalRuleOn());
+      }
+      // #2038: an arrival taken back, Arrived or Departed written to Scheduled
+      // or On my way. Read the way the server reads a status, so `scheduled`
+      // is the same move.
+      function undoesArrival() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+               && (visitStatusIs(resource.data, 'ARRIVED') || visitStatusIs(resource.data, 'DEPARTED'))
+               && (visitStatusIs(request.resource.data, 'SCHEDULED')
+                   || visitStatusIs(request.resource.data, 'ON_MY_WAY'));
       }
       // #2250, operator ruling 2026-11-14: "Undo departed" puts a visit back
       // to Arrived for a few minutes after Departed, and only the

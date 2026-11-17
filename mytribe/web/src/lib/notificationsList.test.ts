@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { InfiniteData } from '@tanstack/react-query';
 import type { ListMyNotificationsResult, NotificationItemDto } from '../api/notificationsApi';
-import { bellAccessibleName, markReadInPages, notificationTarget, notificationWhen, unreadBadgeLabel } from './notificationsList';
+import {
+  bellAccessibleName,
+  fullMessageOf,
+  markReadInPages,
+  notificationTarget,
+  notificationWhen,
+  notificationsListSearch,
+  rowNoteOf,
+  unreadBadgeLabel,
+} from './notificationsList';
 
 /** #1316: the pure rules behind the bell badge and the notifications list. */
 
@@ -164,5 +173,67 @@ describe('markReadInPages', () => {
     const data = pages();
     data.pages[0]!.unreadCount = 0;
     expect(markReadInPages(data, 'a', '2026-11-01T12:00:00.000Z').pages[0]?.unreadCount).toBe(0);
+  });
+});
+
+describe('notificationsListSearch: the entry a tapped push opens the list at', () => {
+  it('keeps a plain id', () => {
+    expect(notificationsListSearch({ entry: 'n1' })).toEqual({ entry: 'n1' });
+    expect(notificationsListSearch({ entry: '  AbC_123-x  ' })).toEqual({ entry: 'AbC_123-x' });
+  });
+  it('an all-digit id, which the router reads as a number, is still an id', () => {
+    expect(notificationsListSearch({ entry: 12345 })).toEqual({ entry: '12345' });
+  });
+  it.each([
+    undefined,
+    null,
+    '',
+    '   ',
+    {},
+    ['n1'],
+    true,
+    Number.NaN,
+    'a/b',
+    '../account',
+    'https://evil.example',
+    'n1?x=1',
+    'n1&x=1',
+    'n1#x',
+    'n1 n2',
+    'a\\b',
+    'x'.repeat(201),
+  ])('drops %j, and the list opens as it always has', (entry) => {
+    expect(notificationsListSearch({ entry })).toEqual({});
+  });
+  it('ignores every other key', () => {
+    expect(notificationsListSearch({ redirect: 'https://evil.example', tale: 't1' })).toEqual({});
+  });
+});
+
+/** #2368: the rest of a cut push, on the entry the tap opens. */
+describe('fullMessageOf', () => {
+  it('reads the kept message, trimmed, line breaks kept', () => {
+    expect(fullMessageOf(item({ fullMessage: '  Line one.\n\nLine two.  ' }))).toBe('Line one.\n\nLine two.');
+  });
+  it('an entry with none, a blank one, or a callable that sent another shape reads as none', () => {
+    expect(fullMessageOf(item())).toBeNull();
+    expect(fullMessageOf(item({ fullMessage: '   ' }))).toBeNull();
+    expect(fullMessageOf(item({ fullMessage: 42 as unknown as string }))).toBeNull();
+  });
+});
+
+describe('rowNoteOf', () => {
+  const note = 'We are away that week.';
+  it("shows the office's note when there is no whole message", () => {
+    expect(rowNoteOf(item({ detail: { householdNote: note } }))).toBe(note);
+  });
+  it('leaves the note off when the whole message already says it, however its spaces fell', () => {
+    expect(rowNoteOf(item({ detail: { householdNote: note }, fullMessage: 'Declined.\n\nWe are away\nthat   week.' }))).toBeNull();
+  });
+  it('keeps the note when the whole message does not carry it', () => {
+    expect(rowNoteOf(item({ detail: { householdNote: note }, fullMessage: 'Declined. Please ask again.' }))).toBe(note);
+  });
+  it('no note is no note', () => {
+    expect(rowNoteOf(item({ fullMessage: 'Declined.' }))).toBeNull();
   });
 });

@@ -228,6 +228,50 @@ const val HOUSEHOLD_NOTE_MAX = 500
 /** #1003: the admin notice for a card payment that could not be applied. */
 const val UNAPPLIED_PAYMENT_NOTICE_KEY = "invoice.payment.unapplied"
 
+/**
+ * The prefix `kin_care_sessions` ids carry over the visit id they were made
+ * from. A notification's `booking` target is the VISIT id; the KinCare detail
+ * screen matches on the session id. Android (`sessionIdForVisit` in
+ * Navigation.kt) and admin web (`lib/visitIds.ts`) build the same id.
+ */
+const val VISIT_SESSION_PREFIX = "vis_"
+/** The session id for a visit id. An id that already carries the prefix is left alone. */
+fun sessionIdForVisit(visitId: String): String {
+    val id = visitId.trim()
+    return if (id.startsWith(VISIT_SESSION_PREFIX)) id else "$VISIT_SESSION_PREFIX$id"
+}
+/**
+ * #2099: the console screen a notification's target opens. Open on a visit
+ * notification used to land on the Bookings list with nothing selected: the
+ * visit id on the notification was dropped. A visit now opens its own KinCare
+ * detail, at every status it has a record for, and that screen says so in
+ * plain words when the visit is gone ("This KinCare couldn't be found").
+ * Admin web and admin Android already opened the visit.
+ *
+ * Only the four kinds of target a notification can carry, each with a real
+ * id, name a screen; anything else opens nothing. Pure; unit-tested.
+ */
+sealed class NotificationTargetScreen {
+    data class Invoice(val invoiceId: String) : NotificationTargetScreen()
+    /** The KinTale report. */
+    data class KinTale(val reportId: String) : NotificationTargetScreen()
+    data class Household(val kinfolkId: String) : NotificationTargetScreen()
+    /** The KinCare detail for a visit, by its session id. */
+    data class Visit(val sessionId: String) : NotificationTargetScreen()
+    /** An unknown kind of target, or one with no id. */
+    data object None : NotificationTargetScreen()
+}
+fun notificationTargetScreen(targetType: String, targetId: String): NotificationTargetScreen {
+    val id = targetId.trim()
+    if (id.isEmpty()) return NotificationTargetScreen.None
+    return when (targetType.trim().lowercase()) {
+        "invoice" -> NotificationTargetScreen.Invoice(id)
+        "kintale" -> NotificationTargetScreen.KinTale(id)
+        "kinfolk" -> NotificationTargetScreen.Household(id)
+        "booking" -> NotificationTargetScreen.Visit(sessionIdForVisit(id))
+        else -> NotificationTargetScreen.None
+    }
+}
 /** Where "open linked item" goes for one notification. */
 sealed class NotificationOpenRoute {
     /** The default: by the dispatcher's targetType / targetId. */

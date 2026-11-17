@@ -4157,6 +4157,16 @@ data class KinCareReport(
     val templateId: String = "",
     val title: String = "",
     val bodyCopy: String = "",
+    // #2052: the Auntie's own typed notes, kept from the moment she took a
+    // draft Ask Auntie wrote, so "Back to my notes" still works after the
+    // composer is closed and reopened. Blank means nothing to put back. Staff
+    // only: this collection has no Kinfolk read, the portal's feed copies named
+    // fields, and the send removes both. Always text, never null.
+    val keptNotes: String = "",
+    // #2052: the draft as it went into the note when she took it. With it,
+    // asking Auntie again after a reopen still works from her notes while the
+    // note is the untouched draft.
+    val keptNotesDraft: String = "",
     val fieldResponses: Map<String, FieldResponse> = emptyMap(),
     val petMoodSelections: Map<String, String> = emptyMap(),
     val mediaFileIds: List<String> = emptyList(),

@@ -40,9 +40,13 @@ vi.mock('../lib/fns', () => ({ call }));
 import {
   patchVisitLifecycle,
   setVisitLifecycle,
+  undoArrivalThroughServer,
   updateKinCareSession,
   VISIT_LIFECYCLE_ILLEGAL_CODE,
   VISIT_NOTICE_WAIT_MS,
+  awaitUndoneArrivalNotices,
+  undoneArrivalNoticesOf,
+  visitStampMs,
   visitStepNoticeId,
   visitStepRecordOutcome,
 } from './sessionsWrite';
@@ -324,6 +328,50 @@ describe('setVisitLifecycle, kept as the server-side path', () => {
   });
 });
 
+/**
+ * #2038: an Auntie's Undo arrival while "Verify arrival and departure" is on.
+ * The rules refuse her that write from the browser, and the server rewinds the
+ * visit and takes the arrival's notice off the household's notifications list.
+ */
+describe('undoArrivalThroughServer', () => {
+  it('asks the callable to undo, sends no position, and writes nothing directly', async () => {
+    call.mockResolvedValue({
+      ok: true,
+      sessionId: 's1',
+      action: 'UNDO_ARRIVAL',
+      from: 'ARRIVED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      notified: false,
+      notifySkipped: 'no_event_for_action',
+    });
+    const res = await undoArrivalThroughServer(ARRIVED_SESSION);
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith('setVisitLifecycle', { sessionId: 's1', action: 'UNDO_ARRIVAL' });
+    expect(updateDoc).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ from: 'ARRIVED', status: 'ON_MY_WAY', changed: true });
+    await expect(res.notification).resolves.toEqual({ notified: false, notifySkipped: 'no_event_for_action' });
+  });
+
+  it('a visit that is not arrived is already undone: no call, nothing written', async () => {
+    const res = await undoArrivalThroughServer(SCHEDULED_SESSION);
+    expect(call).not.toHaveBeenCalled();
+    expect(updateDoc).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ changed: false, status: 'SCHEDULED' });
+  });
+
+  it('a completed visit is refused before any call, in the words the direct write uses', async () => {
+    await expect(undoArrivalThroughServer({ ...ARRIVED_SESSION, status: 'COMPLETED' })).rejects.toThrow();
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('hands on the server refusal as it was written', async () => {
+    call.mockRejectedValue(new Error('This visit could not be found.'));
+    await expect(undoArrivalThroughServer(ARRIVED_SESSION)).rejects.toThrow('This visit could not be found.');
+    expect(updateDoc).not.toHaveBeenCalled();
+  });
+});
+
 describe('updateKinCareSession', () => {
   it('calls the callable with only the fields stated', async () => {
     call.mockResolvedValue({ ok: true, sessionId: 's1', updated: ['serviceType'] });
@@ -347,5 +395,108 @@ describe('updateKinCareSession', () => {
     call.mockRejectedValue(new Error("Session 's1' not found."));
     await expect(updateKinCareSession('s1', { notes: 'x' })).rejects.toThrow(/not found/);
     expect(updateDoc).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #2357: the card used to say "The arrival notice is off the household's
+ * notifications list" after every undo. The server now records what the undo
+ * took off (`visit_step_notices/{visit}__undo_arrival__{arrival}`), and this
+ * module only reads that record.
+ */
+describe('what an Undo arrival took off the household list is read from the server record (#2357)', () => {
+  const ARRIVED_AT = '2026-09-12T13:50:00Z';
+  const TOLD_SESSION = { ...ARRIVED_SESSION, arrivedAt: ARRIVED_AT };
+  function record(data: Record<string, unknown> | null) {
+    const [, next] = onSnapshot.mock.calls.at(-1) as [unknown, (snap: unknown) => void];
+    next({ exists: () => data !== null, data: () => data });
+  }
+
+  it('names the record by the visit and the stamp of the arrival being undone', async () => {
+    const res = await patchVisitLifecycle(TOLD_SESSION, 'UNDO_ARRIVAL', { nowIso: NOW });
+    expect(onSnapshot).toHaveBeenCalledTimes(1);
+    expect(doc.mock.calls.at(-1)?.slice(1)).toEqual(['visit_step_notices', `s1__undo_arrival__${Date.parse(ARRIVED_AT)}`]);
+    record({ withdrawn: ['arrived'] });
+    await expect(res.undone).resolves.toEqual({ arrived: true, departed: false });
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it('waits for the record: a missing document is not an answer', async () => {
+    const res = await patchVisitLifecycle(TOLD_SESSION, 'UNDO_ARRIVAL', { nowIso: NOW });
+    let settled = false;
+    void res.undone?.then(() => (settled = true));
+    record(null);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    record({ withdrawn: [] });
+    await expect(res.undone).resolves.toEqual({ arrived: false, departed: false });
+  });
+
+  it('a household that was told of both steps: both are named', async () => {
+    const res = await patchVisitLifecycle({ ...TOLD_SESSION, status: 'DEPARTED' }, 'UNDO_ARRIVAL', { nowIso: NOW });
+    record({ withdrawn: ['arrived', 'departed'] });
+    await expect(res.undone).resolves.toEqual({ arrived: true, departed: true });
+  });
+
+  it("an Auntie's undo through the server reads the same record", async () => {
+    call.mockResolvedValue({
+      ok: true,
+      sessionId: 's1',
+      action: 'UNDO_ARRIVAL',
+      from: 'ARRIVED',
+      status: 'ON_MY_WAY',
+      changed: true,
+      notified: false,
+      notifySkipped: 'no_event_for_action',
+    });
+    const res = await undoArrivalThroughServer(TOLD_SESSION);
+    expect(doc.mock.calls.at(-1)?.slice(1)).toEqual(['visit_step_notices', `s1__undo_arrival__${Date.parse(ARRIVED_AT)}`]);
+    record({ withdrawn: [] });
+    await expect(res.undone).resolves.toEqual({ arrived: false, departed: false });
+  });
+
+  it('no record in time, a refused read, or no stamp to name it: null, which claims nothing', async () => {
+    vi.useFakeTimers();
+    try {
+      const late = awaitUndoneArrivalNotices({ sessionId: 's1', arrivedAt: ARRIVED_AT });
+      vi.advanceTimersByTime(VISIT_NOTICE_WAIT_MS);
+      await expect(late).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+    const refused = awaitUndoneArrivalNotices({ sessionId: 's1', arrivedAt: ARRIVED_AT });
+    const [, , fail] = onSnapshot.mock.calls.at(-1) as [unknown, unknown, (err: Error) => void];
+    fail(new Error('Missing or insufficient permissions.'));
+    await expect(refused).resolves.toBeNull();
+
+    onSnapshot.mockClear();
+    await expect(awaitUndoneArrivalNotices({ sessionId: 's1', arrivedAt: '' })).resolves.toBeNull();
+    await expect(awaitUndoneArrivalNotices({ sessionId: 's1', arrivedAt: undefined })).resolves.toBeNull();
+    expect(onSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('a second tap that wrote nothing reads nothing', async () => {
+    const res = await patchVisitLifecycle({ ...TOLD_SESSION, status: 'SCHEDULED' }, 'UNDO_ARRIVAL', { nowIso: NOW });
+    expect(res.changed).toBe(false);
+    expect(res.undone).toBeUndefined();
+    expect(onSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('undoneArrivalNoticesOf reads only the two notices it knows', () => {
+    expect(undoneArrivalNoticesOf({ withdrawn: ['departed'] })).toEqual({ arrived: false, departed: true });
+    expect(undoneArrivalNoticesOf({ withdrawn: ['arrived', 'something_new'] })).toEqual({ arrived: true, departed: false });
+    expect(undoneArrivalNoticesOf({ withdrawn: 'arrived' })).toEqual({ arrived: false, departed: false });
+    expect(undoneArrivalNoticesOf({})).toEqual({ arrived: false, departed: false });
+  });
+
+  it("visitStampMs names a stamp as the server does, the desktop console's zone-less one included", () => {
+    expect(visitStampMs('2026-11-10T22:00:00.000Z')).toBe(Date.UTC(2026, 10, 10, 22, 0, 0));
+    expect(visitStampMs('2026-11-10T16:00:00-06:00')).toBe(Date.UTC(2026, 10, 10, 22, 0, 0));
+    // No zone: read as UTC, whatever zone this browser is in.
+    expect(visitStampMs('2026-11-10T16:00:00')).toBe(Date.UTC(2026, 10, 10, 16, 0, 0));
+    expect(visitStampMs('2026-11-10T16:00')).toBe(Date.UTC(2026, 10, 10, 16, 0, 0));
+    expect(visitStampMs('')).toBeUndefined();
+    expect(visitStampMs(undefined)).toBeUndefined();
+    expect(visitStampMs('yesterday')).toBeUndefined();
   });
 });

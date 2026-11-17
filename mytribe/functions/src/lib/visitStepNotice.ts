@@ -4,7 +4,7 @@ import { logEvent } from './logger';
 import { writeAuditEntry } from './writeAuditEntry';
 import { AUDIT_EVENTS, type AuditEvent } from './auditEvents';
 import { normalizeBookingStatus } from './bookingTransitions';
-import { departedNoticeAlreadyTold, notificationEventFor, type VisitLifecycleAction } from './visitLifecycle';
+import { notificationEventFor, type VisitLifecycleAction } from './visitLifecycle';
 
 /**
  * #2037: THE HOUSEHOLD NOTICE AND THE ACTIVITY LOG LINE FOR ONE CLOCK STEP
@@ -301,17 +301,73 @@ export async function announceVisitStep(input: {
     });
   }
 
+  const line = { actorRole: actor.actorRole, actorUid: actor.uid, stamp: actor.stamp };
+  // #2038: an undone arrival's notice comes off the household's notifications
+  // list. Nothing is sent about it. Here, and not in `setVisitLifecycle`,
+  // because the session trigger brings every undo through this function, a
+  // client's own write included. #2348: the "has left" of a departure that
+  // ended that arrival goes with it. #2357: what came off is recorded for the
+  // sentence the admin clients show.
+  if (step.action === 'UNDO_ARRIVAL') {
+    const { withdrawUndoneArrivalNotices } = await import('./arrivalNoticeWithdrawal.js');
+    await withdrawUndoneArrivalNotices({
+      sessionId,
+      session,
+      atMs: step.atMs,
+      source: input.source,
+      settled: 'ask',
+      line,
+    });
+  }
+
   const event = visitStepEvent(step.action);
   if (event === null) return { notified: false, notifySkipped: 'no_event_for_action' };
+
+  // #2038: a wrong Arrived tap taken back within a second or two can reach the
+  // trigger after its own undo. That arrival is gone, so nothing is sent for it
+  // and nothing is recorded. The callable has just written the arrival itself
+  // and does not ask.
+  if (step.action === 'ARRIVED' && step.atMs !== null && input.source === 'trigger') {
+    if (!(await arrivalOnFile(sessionId, step.atMs))) {
+      // #2357: the undo ran first and left its record to this handler, which
+      // is the one that knows the arrival was never announced.
+      const { withdrawUndoneArrivalNotices } = await import('./arrivalNoticeWithdrawal.js');
+      await withdrawUndoneArrivalNotices({ sessionId, session, atMs: step.atMs, source: input.source, settled: true, line });
+      return { notified: false, notifySkipped: 'no_event_for_action' };
+    }
+  }
+  // #2357: the same for a Departed tap taken back (Undo departed, or Undo
+  // arrival) before its notice was sent. That departure is gone, so the
+  // household is not told she left.
+  if (step.action === 'DEPARTED' && step.atMs !== null && input.source === 'trigger') {
+    if (!(await departureOnFile(sessionId, step.atMs))) {
+      return { notified: false, notifySkipped: 'no_event_for_action' };
+    }
+  }
 
   const routing = routingOf(session);
   let outcome: VisitStepOutcome;
   let dispatchIds: string[] = [];
-  if (step.action === 'DEPARTED' && departedNoticeAlreadyTold(session)) {
-    // #2250: this arrival's departure was announced once and then undone. The
-    // household heard she left; the real Departed does not tell them again.
-    // Recorded below like any other outcome, so the card says so.
+  // #2038, lead ruling on review: a real arrival after an undone one is not
+  // announced twice. When the earlier arrival reached the household, its entry
+  // goes back on their notifications list for this arrival and nothing is
+  // sent. Recorded below with the row's id, so an undo of THIS arrival finds it.
+  // #2250, #2348: the same for a real Departed after an undone one, whichever
+  // undo took it back.
+  // #2357: only on the same business day. A step that lands on a later day
+  // than the undone one is a later visit, not a quick mistake, and is
+  // announced below like any other (`quietRepeatOf`).
+  const repeat =
+    (step.action === 'ARRIVED' || step.action === 'DEPARTED') && step.atMs !== null
+      ? await (await import('./arrivalNoticeWithdrawal.js')).settleRepeat(
+          step.action === 'ARRIVED' ? 'arrived' : 'departed',
+          { sessionId, session, atMs: step.atMs, source: input.source, line },
+        )
+      : null;
+  const toldRowId = repeat?.quietId ?? null;
+  if (toldRowId !== null) {
     outcome = { notified: false, notifySkipped: 'already_notified' };
+    dispatchIds = [toldRowId];
   } else if (routing.skip !== null) {
     outcome = { notified: false, notifySkipped: routing.skip };
   } else {
@@ -352,7 +408,8 @@ export async function announceVisitStep(input: {
   }
 
   if (step.atMs === null) return outcome;
-  return recordOutcome(visitStepNoticeId(sessionId, event, step.atMs), {
+  const arrivalAtMs = step.action === 'DEPARTED' ? stampMs(session['arrivedAt']) : null;
+  const recorded = await recordOutcome(visitStepNoticeId(sessionId, event, step.atMs), {
     sessionId,
     action: step.action,
     event,
@@ -360,7 +417,73 @@ export async function announceVisitStep(input: {
     outcome,
     dispatchIds,
     source: input.source,
+    // #2348: the arrival a departure ended, so an undo of that arrival finds it.
+    ...(step.action === 'DEPARTED' && arrivalAtMs !== null ? { arrivalAtMs } : {}),
   });
+  // #2357, lead ruling: a step announced on a later business day replaces the
+  // earlier day's entry, which "Undo departed" alone left listed. Only once
+  // this step's own entry exists, whoever sent it (this run, or an installed
+  // client's dispatch this run was the duplicate of). After the record above,
+  // which is one of the two places the withdrawal reads that entry's id.
+  if (repeat !== null && repeat.replacedId !== null && (step.action === 'ARRIVED' || step.action === 'DEPARTED')) {
+    const { withdrawReplacedNotice } = await import('./arrivalNoticeWithdrawal.js');
+    await withdrawReplacedNotice(step.action === 'ARRIVED' ? 'arrived' : 'departed', {
+      sessionId,
+      session,
+      atMs: step.atMs,
+      replacedId: repeat.replacedId,
+      source: input.source,
+      line,
+    });
+  }
+  // #2038: the undo ran while this notice was being sent, found no row and
+  // withdrew nothing. The row exists now, so it is withdrawn here. After the
+  // record above, which is where the withdrawal reads the row's id. #2357: and
+  // the undo left its own record to this run, so it is written here whether
+  // or not there was a row to take off.
+  if (step.action === 'ARRIVED' && !(await arrivalOnFile(sessionId, step.atMs))) {
+    const { withdrawUndoneArrivalNotices } = await import('./arrivalNoticeWithdrawal.js');
+    await withdrawUndoneArrivalNotices({ sessionId, session, atMs: step.atMs, source: input.source, settled: true, line });
+  }
+  // #2348: the same for "has left" when the arrival it ended has been undone
+  // in the meantime. An "Undo departed" alone leaves the entry listed (#2250).
+  if (
+    step.action === 'DEPARTED' &&
+    arrivalAtMs !== null &&
+    (recorded.notified || recorded.notifySkipped === 'already_notified') &&
+    !(await arrivalOnFile(sessionId, arrivalAtMs))
+  ) {
+    const { withdrawUndoneArrivalNotices } = await import('./arrivalNoticeWithdrawal.js');
+    await withdrawUndoneArrivalNotices({ sessionId, session, atMs: arrivalAtMs, source: input.source, settled: true, line });
+  }
+  return recorded;
+}
+
+/**
+ * #2038: is the arrival stamped `atMs` still the visit's arrival, on the
+ * session as it reads now? A session that cannot be read counts as standing:
+ * a passing error never withholds or withdraws a true notice.
+ */
+async function arrivalOnFile(sessionId: string, atMs: number): Promise<boolean> {
+  try {
+    const snap = await db().doc(`kin_care_sessions/${sessionId}`).get();
+    if (!snap.exists) return true;
+    const { arrivalStillStands } = await import('./arrivalNoticeWithdrawal.js');
+    return arrivalStillStands(snap.data() as SessionData, atMs, stampMs);
+  } catch {
+    return true;
+  }
+}
+/** #2357: the same question of the departure stamped `atMs`, with the same benefit of the doubt. */
+async function departureOnFile(sessionId: string, atMs: number): Promise<boolean> {
+  try {
+    const snap = await db().doc(`kin_care_sessions/${sessionId}`).get();
+    if (!snap.exists) return true;
+    const { departureStillStands } = await import('./arrivalNoticeWithdrawal.js');
+    return departureStillStands(snap.data() as SessionData, atMs, stampMs);
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -379,6 +502,7 @@ async function recordOutcome(
     outcome: VisitStepOutcome;
     dispatchIds: string[];
     source: string;
+    arrivalAtMs?: number;
   },
 ): Promise<VisitStepOutcome> {
   const ref = db().collection(VISIT_STEP_NOTICES_COLLECTION).doc(id);
@@ -391,7 +515,11 @@ async function recordOutcome(
     reason: rec.outcome.notifySkipped,
     dispatchIds: rec.dispatchIds,
     source: rec.source,
+    ...(rec.arrivalAtMs !== undefined ? { arrivalAtMs: rec.arrivalAtMs } : {}),
     recordedAt: FieldValue.serverTimestamp(),
+    // #2357: the server's clock as a plain number, which the day rule reads
+    // (`arrivalNoticeWithdrawal.ts#quietRepeatOf`).
+    recordedAtMs: Date.now(),
   };
   try {
     if (rec.outcome.notified) {

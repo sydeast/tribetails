@@ -385,6 +385,9 @@ internal fun AuntieTimeListScreen(
                 // One writer for both lists, so an Archive card does exactly what
                 // the same card does on the board.
                 val writeFn: (String, KinCareWrite, String) -> Unit = { id, write, successMsg ->
+                    // #2357: the visit as it read BEFORE the write. An undo clears
+                    // `arrivedAt`, and that stamp names the server's record of it.
+                    val before = s.value.firstOrNull { it._id == id }
                     scope.launch {
                         // #1617: the two terminal actions go through
                         // transitionBookingStatus; the rules refuse a
@@ -410,7 +413,31 @@ internal fun AuntieTimeListScreen(
                                 val session = s.value.firstOrNull { it._id == id }
                                 val notice = (write as? KinCareWrite.Patch)?.let { visitNoticeEventOf(it.fields) }
                                 val checking = if (session != null && notice != null) visitNoticeCheckingSentence(session) else ""
-                                showToast(if (checking.isBlank()) successMsg else "$successMsg $checking", ToastKind.Success)
+                                // #2038, #2357: an undo is quiet. The server takes the
+                                // arrival's notice off the household's notifications
+                                // list from this write and records what came off. The
+                                // toast says it is checking, then says a notice came
+                                // off only when that record names one.
+                                val undone = before != null && write is KinCareWrite.Patch && isUndoArrivalPatch(write.fields)
+                                showToast(
+                                    when {
+                                        undone -> UNDO_ARRIVAL_CHECKING
+                                        checking.isBlank() -> successMsg
+                                        else -> "$successMsg $checking"
+                                    },
+                                    ToastKind.Success,
+                                )
+                                if (undone && before != null) {
+                                    val off = awaitUndoneArrivalNotices(
+                                        sessionId = id,
+                                        arrivedAtIso = before.arrivedAt,
+                                        waitMs = com.tribetails.auntieos.web.data.VISIT_NOTICE_WAIT_MS,
+                                    ) { com.tribetails.auntieos.web.data.platformVisitStepNoticeDoc(it) }
+                                    showToast(
+                                        undoArrivalDoneSentence(off, before.status.trim().uppercase() == "DEPARTED"),
+                                        ToastKind.Success,
+                                    )
+                                }
                                 if (session != null && notice != null) {
                                     val said = visitNoticeOutcomeSentence(
                                         clockNoticeOutcome(session, notice) { event, atMs ->
@@ -1201,7 +1228,12 @@ internal fun kinCareSuccessMessage(action: AuntieTimeAction): String = when (act
     AuntieTimeAction.Arrived       -> "Arrived. GPS started."
     // #2123: the server marks the visit Completed the moment it is DEPARTED.
     AuntieTimeAction.Departed      -> "Departed. GPS saved. The visit is marked Completed."
-    AuntieTimeAction.UndoArrived   -> "Undid arrival."
+    // #2038: the undo is quiet. The server sends the household nothing and
+    // takes the arrival's notice off their notifications list, from this write.
+    // #2357: whether a notice came off is the server's to say. The screen's
+    // writer reads its record and says so (`UndoArrivalNotice.kt`); this line
+    // is what is true of every undo.
+    AuntieTimeAction.UndoArrived   -> undoArrivalDoneSentence(null, fromDeparted = false)
     AuntieTimeAction.MarkCompleted -> "Marked Completed."
     AuntieTimeAction.Cancel        -> "Cancelled."
 }

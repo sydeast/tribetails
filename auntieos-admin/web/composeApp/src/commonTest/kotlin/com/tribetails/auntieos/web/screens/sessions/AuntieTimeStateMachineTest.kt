@@ -206,6 +206,12 @@ class AuntieTimeStateMachineTest {
         assertTrue(msgs.none { it.isBlank() })
         assertEquals(msgs.size, msgs.toSet().size, "toast copy must be distinguishable")
         assertEquals("Arrived. GPS started.", kinCareSuccessMessage(AuntieTimeAction.Arrived))
+        // #2038: an undo is quiet. #2357: this line claims nothing about the
+        // household's notifications list; the server's record decides that.
+        assertEquals(
+            "Arrival undone. No message was sent about the undo.",
+            kinCareSuccessMessage(AuntieTimeAction.UndoArrived),
+        )
         assertEquals("Departed. GPS saved. The visit is marked Completed.", kinCareSuccessMessage(AuntieTimeAction.Departed))
     }
 

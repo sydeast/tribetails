@@ -18,7 +18,7 @@ import { sendIdempotencyKeyRe } from '../lib/sendIdempotency';
 import { ACCOUNT_BALANCE_FIELD, readAccountBalanceCents } from '../lib/accountCredit';
 import { MAX_CREDIT_REASON_LENGTH, stageGivenCredit } from '../lib/creditLedger';
 import { planApply, stageApply, type ApplyOutcome } from '../lib/paymentApply';
-import { invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
+import { invoiceCancelled, invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
 import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { OVER_BALANCE_REFUSAL_CODE, type InvoiceDoc } from './markInvoicePaid';
 
@@ -86,6 +86,10 @@ import { OVER_BALANCE_REFUSAL_CODE, type InvoiceDoc } from './markInvoicePaid';
  */
 
 export const RESOLVE_UNAPPLIED_IDEMPOTENCY_KEY_RE = sendIdempotencyKeyRe('upd');
+
+/** #2358: the refusal for a cancelled apply target. `planApply` answers the same code and sentence. */
+export const CANCELLED_APPLY_REFUSAL_CODE = 'apply_invoice_not_payable';
+export const CANCELLED_APPLY_REFUSAL = 'This invoice is cancelled, so a payment cannot be recorded against it.';
 
 /** The ledger event id a payment's credit part is written under. One per payment, ever. */
 export function unappliedCreditEventId(paymentId: string): string {
@@ -332,6 +336,15 @@ export async function resolveUnappliedPaymentHandler(
       const invKin = str((doc as Record<string, unknown> | null)?.['kinfolkId']);
       if (invKin !== kinfolkId) {
         refuse('apply_wrong_household', 'That invoice belongs to a different household than this payment.');
+      }
+      // #2358: A CANCELLED INVOICE TAKES NO PAYMENT, read the way the webhook
+      // read it when it held the charge (`status`, then the legacy
+      // `invoiceStatus`). `planApply` reads `status` alone, so an invoice
+      // cancelled in the legacy field only gets this far, and without this
+      // would take the money and read paid. After every `planApply` refusal,
+      // so those answer as they always have.
+      if (invoiceCancelled(doc as never)) {
+        refuse(CANCELLED_APPLY_REFUSAL_CODE, CANCELLED_APPLY_REFUSAL);
       }
     }
     if (famSnap && !famSnap.exists) throw new HttpsError('not-found', 'Household not found.');

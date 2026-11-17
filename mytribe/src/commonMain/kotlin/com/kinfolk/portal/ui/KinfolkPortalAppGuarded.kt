@@ -107,6 +107,18 @@ fun KinfolkPortalAppGuarded() {
     val unreadBadge = remember { com.kinfolk.portal.portal.UnreadBadge() }
     val unreadBadgeModel by unreadBadge.model.collectAsState()
     val signedInUid = (authState as? AuthState.SignedIn)?.uid
+    // #2259: a tapped push that has not opened yet belongs to the session it
+    // was tapped in. Signing out, or another account signing in, drops it.
+    // Only a settled answer counts: while the app is still finding out who is
+    // signed in (every fresh start, which is what a tapped push causes), or
+    // could not tell, the tap is kept.
+    LaunchedEffect(authState) {
+        when (val settled = authState) {
+            is AuthState.SignedIn -> com.kinfolk.portal.push.PendingPushOpen.onAccount(settled.uid)
+            AuthState.SignedOut -> com.kinfolk.portal.push.PendingPushOpen.onAccount(null)
+            else -> Unit
+        }
+    }
     LaunchedEffect(signedInUid, firestoreClient) {
         unreadBadge.reset()
         if (signedInUid != null) {
@@ -345,6 +357,9 @@ fun KinfolkPortalAppGuarded() {
                                 home = null
                                 homeError = null
                                 claimInviteId = null
+                                // #2259: a push tapped and not yet opened is not
+                                // kept for whoever signs in next.
+                                com.kinfolk.portal.push.PendingPushOpen.clear()
                             },
                             onBackToDirectory = {
                                 pickedKinfolkId = null

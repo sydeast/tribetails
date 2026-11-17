@@ -138,6 +138,9 @@ export function promoteQueuedNotification(
     // #2280: the queued row's own stream, so the senders keep a household's
     // text message and push short. A row queued before #1898 carries none.
     ...(typeof pick('stream') === 'string' ? { stream: pick('stream') } : {}),
+    // #2259: the same target the notification above carries, for the push.
+    targetType: s(pick('targetType')),
+    targetId: s(pick('targetId')),
     status: 'pending',
     ...(opts.origin ?? {}),
     createdAt: FieldValue.serverTimestamp(),

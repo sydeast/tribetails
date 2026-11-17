@@ -358,6 +358,36 @@ fun KinCareSessionsScreen(
             )
         }
 
+    /**
+     * #2038, #2357: Undo arrival. The undo is quiet: the server sends the
+     * household nothing and takes the arrival's notice off their notifications
+     * list, from the write this screen makes. The toast says it is checking
+     * their list, then says a notice came off only when the server recorded
+     * that one did (`domain/UndoArrivalNotice.kt`).
+     */
+    val undoArrivalFn: (KinCareSession, Map<String, Any>) -> Unit = { session, patch ->
+        val fromDeparted = session.status.trim().uppercase() == "DEPARTED"
+        viewModel.undoArrival(
+            session = session,
+            patch = patch,
+            onWritten = { err ->
+                scope.launch {
+                    toastMessage = err?.let { "Couldn't update: ${it.message}" }
+                        ?: com.tribetails.auntieos.domain.UNDO_ARRIVAL_CHECKING
+                    toastKind = if (err != null) ToastKind.Error else ToastKind.Success
+                    toastVisible = true
+                }
+            },
+            onUndone = { off ->
+                scope.launch {
+                    toastMessage = com.tribetails.auntieos.domain.undoArrivalDoneSentence(off, fromDeparted)
+                    toastKind = ToastKind.Success
+                    toastVisible = true
+                }
+            },
+        )
+    }
+
     /** #1580: the toast for a note sent through `addInternalBookingNote`. */
     val noticeFn: (String, Boolean) -> Unit = { msg, failed ->
         scope.launch {
@@ -461,6 +491,7 @@ fun KinCareSessionsScreen(
                                         onLiveTrack = onLiveTrack,
                                         onPatch = patchFn,
                                         onClock = clockFn,
+                                        onUndoArrival = undoArrivalFn,
                                         omwNoticeLineFor = { s, reach ->
                                             visitNoticeConfirmLine(
                                                 VisitNotifier.Event.ON_MY_WAY,
@@ -516,6 +547,7 @@ fun KinCareSessionsScreen(
                                         onLiveTrack = onLiveTrack,
                                         onPatch = patchFn,
                                         onClock = clockFn,
+                                        onUndoArrival = undoArrivalFn,
                                         omwNoticeLineFor = { s, reach ->
                                             visitNoticeConfirmLine(
                                                 VisitNotifier.Event.ON_MY_WAY,
@@ -651,6 +683,9 @@ private fun PhaseGroup(
     /** #1794: a clock tap that tells the household. See `clockFn`. */
     onClock: (KinCareSession, Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
         { s, patch, _, _, msg -> onPatch(s.id, patch, msg) },
+    /** #2357: Undo arrival, which reads what the server took off the household's list. See `undoArrivalFn`. */
+    onUndoArrival: (KinCareSession, Map<String, Any>) -> Unit =
+        { s, patch -> onPatch(s.id, patch, com.tribetails.auntieos.domain.undoArrivalDoneSentence(null, false)) },
     /** #1794, #1840: the On The Way confirm's household line for the server's answer, or null to say nothing. */
     omwNoticeLineFor: (KinCareSession, VisitNoticeReach) -> String? = { _, _ -> null },
     /** #1840: asks the server whether a notice can reach this visit's household. */
@@ -709,6 +744,7 @@ private fun PhaseGroup(
                         onLiveTrack = { onLiveTrack(session.id, session.kinfolkId, session.kinfolkName) },
                         onPatch = { patch, msg -> onPatch(session.id, patch, msg) },
                         onClock = { patch, event, at, msg -> onClock(session, patch, event, at, msg) },
+                        onUndoArrival = { patch -> onUndoArrival(session, patch) },
                         omwNoticeLine = { reach -> omwNoticeLineFor(session, reach) },
                         onPreviewNotice = { onAnswer -> onPreviewNotice(session, onAnswer) },
                         onTransition = { action, completedAt, msg ->
@@ -766,6 +802,9 @@ private fun KinCareCard(
     /** #1794: `(patch, event, stampedAt, successMessage)`, bound to this session. */
     onClock: (Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
         { patch, _, _, msg -> onPatch(patch, msg) },
+    /** #2357: Undo arrival, bound to this session. See [PhaseGroup]'s `onUndoArrival`. */
+    onUndoArrival: (Map<String, Any>) -> Unit =
+        { patch -> onPatch(patch, com.tribetails.auntieos.domain.undoArrivalDoneSentence(null, false)) },
     /** #1794: see [PhaseGroup]'s `omwNoticeLineFor`. */
     omwNoticeLine: (VisitNoticeReach) -> String? = { null },
     /** #1840: see [PhaseGroup]'s `onPreviewNotice`. */
@@ -949,6 +988,7 @@ private fun KinCareCard(
                 session = session,
                 onPatch = onPatch,
                 onClock = onClock,
+                onUndoArrival = onUndoArrival,
                 omwNoticeLine = omwNoticeLine,
                 onPreviewNotice = onPreviewNotice,
                 onTransition = onTransition,
@@ -983,6 +1023,9 @@ private fun ActionRow(
     /** #1794: see [KinCareCard]'s `onClock`. */
     onClock: (Map<String, Any>, VisitNotifier.Event, String, String) -> Unit =
         { patch, _, _, msg -> onPatch(patch, msg) },
+    /** #2357: Undo arrival, bound to this session. See [PhaseGroup]'s `onUndoArrival`. */
+    onUndoArrival: (Map<String, Any>) -> Unit =
+        { patch -> onPatch(patch, com.tribetails.auntieos.domain.undoArrivalDoneSentence(null, false)) },
     /** #1794, #1840: the On The Way confirm's household line for the server's answer, or null to say nothing. */
     omwNoticeLine: (VisitNoticeReach) -> String? = { null },
     /** #1840: asks the server whether a notice can reach this household; the answer lands in the confirm. */
@@ -1062,7 +1105,7 @@ private fun ActionRow(
                         // refused. Cleared to "" the way `arrivedAt` already is:
                         // the server reads a non-numeric value on those fields
                         // as no evidence.
-                        onPatch(undoArrivalPatch(undoTo), "Arrival undone.")
+                        onUndoArrival(undoArrivalPatch(undoTo))
                     },
                     modifier = Modifier.fillMaxWidth(),
                     leading = { Icon(Lucide.Undo2, contentDescription = null, modifier = Modifier.size(14.dp)) },

@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn<(kinfolkId: string | undefined, opts: { limit?: number; before?: number }) => Promise<ListMyNotificationsResult>>(),
   markRead: vi.fn<(id: string) => Promise<{ ok: true }>>(),
   navigate: vi.fn(),
+  search: vi.fn<() => { entry?: string }>(() => ({})),
 }));
 
 vi.mock('../api/notificationsApi', async () => {
@@ -38,6 +39,7 @@ vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
 vi.mock('@tanstack/react-router', () => ({
   Link: ({ children, to }: { children?: ReactNode; to?: string }) => <a href={to}>{children}</a>,
   useNavigate: () => mocks.navigate,
+  useSearch: () => mocks.search(),
 }));
 
 // Real clock: the rows are stamped relative to now, and "5m ago" survives the
@@ -92,6 +94,8 @@ beforeEach(() => {
   mocks.list.mockReset();
   mocks.markRead.mockReset();
   mocks.navigate.mockReset();
+  mocks.search.mockReset();
+  mocks.search.mockReturnValue({});
   mocks.markRead.mockResolvedValue({ ok: true });
 });
 
@@ -314,3 +318,115 @@ describe('#1831, #1898, #1913: each notice says what happened and opens what it 
   });
 });
 
+
+/**
+ * A household push whose line was cut, or whose notice carries the office's
+ * note, opens the list at that notice (`/notifications?entry=<id>`), where the
+ * whole message is. jsdom draws nothing, so the row's own mark is what is read.
+ */
+describe('NotificationsList opened at one entry by a tapped push', () => {
+  const declined = item({
+    id: 'n-declined',
+    key: 'kincare.request.declined',
+    title: 'Your visit request was declined',
+    description: 'Nov 20 to Nov 22',
+    targetType: 'booking',
+    targetId: 'b1',
+    batchId: 'b1',
+    detail: { householdNote: 'We are away that week. Please ask again for December.' },
+  });
+  const other = item({ id: 'n-other', title: 'New invoice' });
+  const opened = () => document.querySelectorAll('[data-opened="true"]');
+  it('marks that entry, gives it focus, and shows its whole message', async () => {
+    mocks.search.mockReturnValue({ entry: 'n-declined' });
+    mocks.list.mockResolvedValue(page([other, declined]));
+    renderScreen();
+    const row = await screen.findByRole('button', { name: /visit request was declined/ });
+    await waitFor(() => expect(row).toHaveAttribute('data-opened', 'true'));
+    expect(opened()).toHaveLength(1);
+    await waitFor(() => expect(document.activeElement).toBe(row));
+    expect(within(row).getByTestId('notification-household-note')).toHaveTextContent(
+      'We are away that week. Please ask again for December.',
+    );
+  });
+  it('opening the list at an entry does not mark it read or leave the list', async () => {
+    mocks.search.mockReturnValue({ entry: 'n-declined' });
+    mocks.list.mockResolvedValue(page([other, declined]));
+    renderScreen();
+    const row = await screen.findByRole('button', { name: /visit request was declined/ });
+    await waitFor(() => expect(row).toHaveAttribute('data-opened', 'true'));
+    expect(row).toHaveAttribute('data-unread', 'true');
+    expect(mocks.markRead).not.toHaveBeenCalled();
+    expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+  it('an entry that is not on the list marks nothing: the list reads as it always does', async () => {
+    mocks.search.mockReturnValue({ entry: 'another-households-entry' });
+    mocks.list.mockResolvedValue(page([other, declined]));
+    renderScreen();
+    await screen.findByRole('button', { name: /visit request was declined/ });
+    expect(opened()).toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: /declined|invoice/ })).toHaveLength(2);
+  });
+  it('no entry marks nothing', async () => {
+    mocks.list.mockResolvedValue(page([other, declined]));
+    renderScreen();
+    await screen.findByRole('button', { name: /visit request was declined/ });
+    expect(opened()).toHaveLength(0);
+  });
+  it('an empty list with an entry still says there is nothing', async () => {
+    mocks.search.mockReturnValue({ entry: 'n-declined' });
+    mocks.list.mockResolvedValue(page([]));
+    renderScreen();
+    expect(await screen.findByTestId('notifications-empty')).toBeInTheDocument();
+  });
+});
+
+/**
+ * #2368: a push cut to its short line opens its entry, and the entry shows the
+ * rest of the message, as text. Older entries look as they always have.
+ */
+describe('NotificationsList shows the whole message of a cut push', () => {
+  const whole = "Your visit request was declined.\n\nO'Malley & Rex <b>loved</b> it &amp; more. We are away that week.";
+  const cut = item({
+    id: 'n-cut',
+    key: 'kincare.request.declined',
+    title: 'Your visit request was declined',
+    description: 'Nov 20 to Nov 22',
+    targetType: 'booking',
+    targetId: 'b1',
+    batchId: 'b1',
+    detail: { householdNote: 'We are away that week.' },
+    fullMessage: whole,
+  });
+  const older = item({ id: 'n-old', title: 'New invoice', description: 'An invoice is ready.' });
+  it('draws the whole message under the facts line, as typed, with no markup made of it', async () => {
+    mocks.search.mockReturnValue({ entry: 'n-cut' });
+    mocks.list.mockResolvedValue(page([older, cut]));
+    renderScreen();
+    const row = await screen.findByRole('button', { name: /visit request was declined/ });
+    const message = within(row).getByTestId('notification-full-message');
+    // textContent keeps the line breaks; the tag and the entity are text.
+    expect(message.textContent).toBe(whole);
+    expect(message.querySelector('b')).toBeNull();
+    expect(within(row).getByText('Nov 20 to Nov 22')).toBeInTheDocument();
+    // The note is in the message already, so it is not drawn twice.
+    expect(within(row).queryByTestId('notification-household-note')).toBeNull();
+    // No id reaches the screen.
+    expect(row.textContent).not.toMatch(/n-cut|\bb1\b/);
+  });
+  it('an entry with no whole message reads as before: title and facts line only', async () => {
+    mocks.list.mockResolvedValue(page([older, cut]));
+    renderScreen();
+    const row = await screen.findByRole('button', { name: /New invoice/ });
+    expect(within(row).queryByTestId('notification-full-message')).toBeNull();
+    expect(within(row).getByText('An invoice is ready.')).toBeInTheDocument();
+  });
+  it('a tap on that entry still marks it read and opens what it is about; the bell drops by one only', async () => {
+    mocks.list.mockResolvedValue(page([older, cut]));
+    renderScreen({ unreadNotifications: 2 });
+    await userEvent.click(await screen.findByRole('button', { name: /visit request was declined/ }));
+    expect(mocks.markRead).toHaveBeenCalledWith('n-cut');
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/schedule' });
+    expect(queryClient.getQueryData<GetMyHomeResult>(['myHome', 'fam1'])?.unreadNotifications).toBe(1);
+  });
+});

@@ -82,6 +82,47 @@ export function notificationHeldUnreadWords(name: string, to: string): string {
   const t = to.trim();
   return `Held back ${quotedName(name)}${t === '' ? '' : ` for ${t}`}: the setting for notices to households could not be read`;
 }
+/**
+ * #2331: what a timed job's held notices are called, one and many. A key with
+ * no entry reads as its own name: `3 "Payment received" notices`, or as
+ * `3 notices` when it has no name either.
+ */
+const HELD_KIND_WORDS: Record<string, readonly [string, string]> = {
+  'kincare.upcoming.reminder': ['visit reminder', 'visit reminders'],
+  'invoice.reminder': ['invoice reminder', 'invoice reminders'],
+  'invoice.overdue': ['overdue invoice notice', 'overdue invoice notices'],
+};
+/** One kind a timed job held back: its key, its name (`notificationName`) and how many copies. */
+export interface HeldKind {
+  key: string;
+  name: string;
+  count: number;
+}
+function heldKindWords(kind: HeldKind): string {
+  const words = HELD_KIND_WORDS[kind.key];
+  if (words !== undefined) return `${kind.count} ${kind.count === 1 ? words[0] : words[1]}`;
+  const name = kind.name.trim();
+  return `${kind.count} ${name === '' ? '' : `"${name}" `}${kind.count === 1 ? 'notice' : 'notices'}`;
+}
+/**
+ * #2331: ONE LINE FOR A WHOLE RUN OF A TIMED JOB.
+ * `Held back 14 visit reminders: notices to households are turned off`.
+ * A count and a kind, no household, no id. `unreadable` is the run whose copies
+ * were held because the switch could not be read, which is not "turned off".
+ */
+export function notificationsHeldSummaryWords(kinds: readonly HeldKind[], unreadable = false): string {
+  const parts = kinds.filter((k) => k.count > 0).map(heldKindWords);
+  const what =
+    parts.length === 0
+      ? 'notices'
+      : parts.length === 1
+        ? parts[0]
+        : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  const why = unreadable
+    ? 'the setting for notices to households could not be read'
+    : 'notices to households are turned off';
+  return `Held back ${what}: ${why}`;
+}
 /** The notification as a whole is switched off in Settings. */
 export function notificationTurnedOffWords(name: string, to: string): string {
   return `Did not send ${quotedName(name)}${toWhom(to)}: this notification is turned off in Settings`;
@@ -168,6 +209,30 @@ function actionWords(action: string): { done: string; attempt: string } {
 /** `Completed the visit: scheduled to completed`. */
 export function visitTransitionWords(action: string, from: string, to: string): string {
   return `${actionWords(action).done}: ${visitStatusWords(from)} to ${visitStatusWords(to)}`;
+}
+/** #2038: an undone arrival's notice came off the household's notifications list. Nothing was sent. */
+export function arrivalNoticeWithdrawnWords(): string {
+  return "Took the arrival notice off the household's notifications list. No message was sent about the undo";
+}
+/** #2038: a real arrival after an undone one. The household was told once, so the entry went back and nothing was sent. */
+export function arrivalNoticeRestoredWords(): string {
+  return "Put the arrival notice back on the household's notifications list. They were told once already, so no second message was sent";
+}
+/** #2348: the "has left" notice of an undone arrival came off the household's notifications list. Nothing was sent. */
+export function departureNoticeWithdrawnWords(): string {
+  return "Took the departure notice off the household's notifications list. No message was sent about the undo";
+}
+/** #2348: a real departure after an undone one, the same day. The household was told once, so the entry went back and nothing was sent. */
+export function departureNoticeRestoredWords(): string {
+  return "Put the departure notice back on the household's notifications list. They were told once already, so no second message was sent";
+}
+/** #2357: an arrival announced on a later business day. The earlier day's entry came off the list; the new one is the household's. */
+export function arrivalNoticeReplacedWords(): string {
+  return "Took the earlier arrival notice off the household's notifications list. The new one replaces it";
+}
+/** #2357: the same for a departure announced on a later business day, after an "Undo departed" left the first one listed. */
+export function departureNoticeReplacedWords(): string {
+  return "Took the earlier departure notice off the household's notifications list. The new one replaces it";
 }
 /** A repeat of a step already taken: nothing was written. */
 export function visitNoopWords(action: string, at: string): string {
@@ -399,4 +464,23 @@ export function auntieHouseholdLookWords(auntieName: unknown, householdName: unk
   const name = typeof householdName === 'string' ? householdName.trim() : '';
   const household = name === '' ? 'a Kinfolk household' : `Kinfolk ${name}`;
   return `${who} looked at ${household}`;
+}
+
+/**
+ * #2344: a card was declined on an invoice the household no longer has to pay
+ * by card: the invoice was already paid, or the payment from that same
+ * checkout has gone through. No "charge failed" notice is sent for it, and the
+ * line says so. `invoice-paid` and `payment-landed` are the two reasons the
+ * Stripe webhook stores.
+ */
+export function cardDeclinedAfterPaymentWords(invoiceNumber: unknown, reason: string): string {
+  const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
+  const invoice = n === '' ? 'an invoice' : `invoice ${n}`;
+  const why =
+    reason === 'payment-landed'
+      ? ', and the payment from the same checkout went through'
+      : n === ''
+        ? ' that was already paid'
+        : ', which was already paid';
+  return `A card was declined on ${invoice}${why}. No notice was sent to the household.`;
 }

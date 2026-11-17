@@ -697,6 +697,38 @@ class AdminDataViewModel(
     }
 
     /**
+     * #2357: Undo arrival from Auntie Time. Patch the session, then read what
+     * the server took off the household's notifications list for the toast.
+     * The server withdraws the notices from the saved write; this only waits
+     * for its record. [onUndone] gets null when no record came in time, and is
+     * not called when the write failed.
+     */
+    fun undoArrival(
+        session: com.tribetails.auntieos.data.model.KinCareSession,
+        patch: Map<String, Any>,
+        onWritten: (Throwable?) -> Unit,
+        onUndone: (com.tribetails.auntieos.domain.UndoneArrivalNotices?) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val written = kinCareRepository.patchKinCareSession(session.id, patch)
+            written.onFailure { t ->
+                _error.value = t.message ?: "Failed to update KinCare"
+                onWritten(t)
+                return@launch
+            }
+            loadKinCareSessions()
+            onWritten(null)
+            val off = try {
+                visitNotifier().awaitUndoneArrivalNotices(session.id, session.arrivedAt)
+            } catch (e: Exception) {
+                e.rethrowIfCancellation()
+                null
+            }
+            onUndone(off)
+        }
+    }
+
+    /**
      * #1794: an Auntie Time clock tap (On The Way, Arrived): patch the session,
      * then say what the household was told.
      *

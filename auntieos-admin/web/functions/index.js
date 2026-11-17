@@ -4,7 +4,14 @@ const admin = require('firebase-admin');
 const sdk = require('./firebaseServices');
 const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');
-const { runGenerate } = require('./generate');
+const {
+  runGenerate,
+  generateErrorResponse,
+  ERROR_COPY: GENERATE_ERROR_COPY,
+  MODEL_CALL_TIMEOUT_MS,
+  MODEL_MAX_RETRIES,
+} = require('./generate');
+const GENERATE_RATE_LIMIT_COPY = 'Auntie has written all she can for today. She can draft again tomorrow.';
 const { enforceGenerateRateLimit } = require('./generateRateLimit');
 const { enforceWindowedRateLimit } = require('./rateLimit');
 const { validateDocId, validateDraftPayload } = require('./draftValidation');
@@ -1035,7 +1042,8 @@ exports.generateAuntieCopy = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: fal
   const commType = (req.body && req.body.communication_type) || '';
   const apiKey = ANTHROPIC_API_KEY.value();
   if (!apiKey) {
-    res.status(500).json({ generated_copy: '', communication_type: commType, error: 'anthropic_api_key_not_configured' });
+    console.error('generate: ANTHROPIC_API_KEY is not configured');
+    res.status(500).json({ generated_copy: '', communication_type: commType, error: GENERATE_ERROR_COPY.ai_unavailable, error_code: 'anthropic_api_key_not_configured' });
     return;
   }
 
@@ -1046,16 +1054,19 @@ exports.generateAuntieCopy = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: fal
     await enforceGenerateRateLimit(sdk.firestore(), decodedToken.uid, Date.now());
   } catch (rlErr) {
     if (rlErr && rlErr.status === 429) {
-      res.status(429).json({ generated_copy: '', communication_type: commType, error: 'generate_rate_limit_exceeded' });
+      res.status(429).json({ generated_copy: '', communication_type: commType, error: GENERATE_RATE_LIMIT_COPY, error_code: 'generate_rate_limit_exceeded' });
       return;
     }
     console.error('generate rate-limit check failed', rlErr);
-    res.status(500).json({ generated_copy: '', communication_type: commType, error: 'rate_limit_check_failed' });
+    res.status(500).json({ generated_copy: '', communication_type: commType, error: GENERATE_ERROR_COPY.ai_unavailable, error_code: 'rate_limit_check_failed' });
     return;
   }
 
   const model = resolveAnthropicModel();
-  const anthropic = new Anthropic({ apiKey });
+  // #2359: the SDK's defaults (ten minutes a try, two more tries) outlast the
+  // 60 seconds this endpoint is given. runGenerate tightens each call further
+  // to what is left of the request.
+  const anthropic = new Anthropic({ apiKey, timeout: MODEL_CALL_TIMEOUT_MS, maxRetries: MODEL_MAX_RETRIES });
 
   try {
     const result = await runGenerate({ db: sdk.firestore(), anthropic, model }, req.body || {});
@@ -1063,13 +1074,9 @@ exports.generateAuntieCopy = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: fal
   } catch (err) {
     // Byte-compatible error shape: always returns a full GenerateResponse so both
     // clients deserialize cleanly; the `error` field surfaces the failure (fail-loud).
-    const status = err && err.status ? err.status : 500;
+    const { status, body } = generateErrorResponse(err, commType);
     if (status >= 500) console.error('generate failed', err);
-    res.status(status).json({
-      generated_copy: '',
-      communication_type: commType,
-      error: err && err.message ? err.message : 'generate_failed',
-    });
+    res.status(status).json(body);
   }
 });
 

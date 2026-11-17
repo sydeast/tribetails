@@ -103,6 +103,12 @@ class AuntieFirebaseMessagingService : FirebaseMessagingService() {
                 notificationId = NOTIFICATION_ID_CATALOG_BASE + (catalogKey.hashCode() and 0xFFFF),
                 action = ACTION_OPEN_CATALOG_NOTIFICATION,
                 extras = buildMap {
+                    // #2100: what a tap opens. The same data keys Android hands
+                    // MainActivity itself when the push arrives with the app
+                    // closed, so one reader (ui/PushOpen.kt) serves both.
+                    for (key in com.tribetails.auntieos.ui.PUSH_TARGET_KEYS) {
+                        remoteMessage.data[key]?.let { put(key, it) }
+                    }
                     put(EXTRA_CATALOG_KEY, catalogKey)
                     if (route != null) put(EXTRA_CATALOG_ROUTE, route)
                 }

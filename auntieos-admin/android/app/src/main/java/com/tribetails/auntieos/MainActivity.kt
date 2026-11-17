@@ -14,6 +14,9 @@ import com.tribetails.auntieos.fcm.AuntieFirebaseMessagingService
 import com.tribetails.auntieos.config.FeatureFlags
 import com.tribetails.auntieos.data.model.MessageEvent
 import com.tribetails.auntieos.ui.AuntieNavHost
+import com.tribetails.auntieos.ui.PUSH_OPEN_EXTRA_KEYS
+import com.tribetails.auntieos.ui.PendingPushOpen
+import com.tribetails.auntieos.ui.pushEntryFromIntent
 import com.tribetails.auntieos.ui.theme.AccentChoice
 import com.tribetails.auntieos.ui.theme.AuntieOSTheme
 import com.tribetails.auntieos.ui.theme.DensityChoice
@@ -56,6 +59,9 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermission()
         refreshFcmToken()
         handleIncomingIntent()
+        // A restored activity is handed its first intent again; the tap it
+        // carried was opened the first time round.
+        if (savedInstanceState == null) capturePushTap(intent)
 
         val startOnCalls = intent?.action == AuntieFirebaseMessagingService.ACTION_OPEN_CALL
                         || intent?.action == AuntieFirebaseMessagingService.ACTION_OPEN_VOICEMAIL
@@ -116,6 +122,26 @@ class MainActivity : ComponentActivity() {
             AuntieFirebaseMessagingService.ACTION_OPEN_VOICEMAIL -> handleVoicemailIntent(intent)
             AuntieFirebaseMessagingService.ACTION_OPEN_MESSAGE   -> handleMessageIntent(intent)
         }
+        capturePushTap(intent)
+    }
+
+    /**
+     * #2100: a tapped push about a visit, an invoice, a KinTale or a household
+     * opens it. Two shapes arrive here: the intent the messaging service
+     * builds for a push it showed itself, and, for a push that came while the
+     * app was closed or in the background, the launcher intent Android fills
+     * with the push's own data keys. Both are read by [pushEntryFromIntent];
+     * the nav host opens the result once the owner is signed in. The extras
+     * are dropped after reading, and an intent Android replays from Recents
+     * is skipped, so the same tap is never opened twice.
+     */
+    private fun capturePushTap(intent: android.content.Intent?) {
+        if (intent == null || intent.flags and android.content.Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val extras = intent.extras ?: return
+        val read = PUSH_OPEN_EXTRA_KEYS.associateWith { key -> extras.getString(key) }
+        val entry = pushEntryFromIntent(intent.action, read) ?: return
+        PendingPushOpen.offer(entry)
+        PUSH_OPEN_EXTRA_KEYS.forEach { intent.removeExtra(it) }
     }
 
     private fun handleIncomingIntent() {

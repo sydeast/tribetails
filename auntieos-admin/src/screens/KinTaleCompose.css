@@ -202,6 +202,51 @@
   font-size: 0.8125rem;
   line-height: 1.4;
 }
+/* #2052: Ask Auntie and, once a draft is in the note, the way back to the
+   notes it replaced. One row at the end of the note field. */
+.kintale-compose__ask {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+}
+.kintale-compose__ask .generate-button {
+  margin-top: 0;
+}
+/* #2052: the draft Auntie offered. A panel of its own under the note, so it
+   reads as hers and not as something the Auntie typed. The body keeps its line
+   breaks; nothing in it is editable until it is taken. */
+.kintale-compose__auntie-draft {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--border-hairline) dashed var(--color-primary);
+  border-radius: var(--radius-card);
+  background: var(--color-background);
+}
+.kintale-compose__auntie-headline {
+  margin: 0;
+  font-family: var(--type-display-md-family);
+  font-size: var(--type-title-md-size);
+  font-weight: var(--type-title-md-weight);
+  color: var(--color-text-primary);
+}
+.kintale-compose__auntie-body {
+  margin: 0;
+  font-family: var(--font-hanken);
+  line-height: var(--type-body-md-line);
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.kintale-compose__auntie-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
 /* Provenance note under a headline Auntie wrote. Quieter than an error: it is
    information, not a problem, and it disappears the moment the operator types.
    Its own class, NOT __hint, which is already the loading-text style. */

@@ -60,6 +60,8 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
           data?: Record<string, unknown>;
           notificationId?: string;
           stream?: unknown;
+          targetType?: unknown;
+          targetId?: unknown;
         }
       | undefined;
     if (!parent || !parent.key || !parent.recipientUid) {
@@ -85,6 +87,21 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
         data: enrichedData,
         // #2280: a household's text message and push are kept short with a link.
         ...(isAudienceStream(parent.stream) ? { stream: parent.stream } : {}),
+        // #2259, #2100: a tap on the push opens what the notice is about. From
+        // the work order's own data, not the enriched template context. Loaded
+        // here, for a push only, so it adds no module to the cold-start graph.
+        ...(channel === 'push'
+          ? {
+              open: (await import('../noticeOpenTarget.js')).noticeOpenTarget({
+                key: parent.key,
+                ...(isAudienceStream(parent.stream) ? { stream: parent.stream } : {}),
+                data: parent.data ?? {},
+                targetType: parent.targetType,
+                targetId: parent.targetId,
+                notificationId: parent.notificationId,
+              }),
+            }
+          : {}),
       });
       // Fail-soft skip (e.g. recipient has no email on file): a permanent,
       // undeliverable-on-this-channel condition that must NOT throw — throwing

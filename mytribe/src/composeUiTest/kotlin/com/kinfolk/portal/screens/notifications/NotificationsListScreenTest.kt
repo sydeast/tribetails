@@ -6,6 +6,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -96,8 +98,9 @@ class NotificationsListScreenTest {
     }
 
     @Composable
-    private fun Screen(fake: FakeFunctionsClient, opened: Opened) {
+    private fun Screen(fake: FakeFunctionsClient, opened: Opened, openedEntryId: String? = null) {
         NotificationsListScreen(
+            openedEntryId = openedEntryId,
             kinfolkId = "fam-1",
             portalApi = PortalApi(fake),
             onOpenVisit = { v, b -> opened.visit = v to b },
@@ -120,6 +123,91 @@ class NotificationsListScreenTest {
         return fake
     }
 
+    // ---- opened at one entry by a tapped push (ruling 2026-11-14) ----
+    @Test
+    fun aPushThatOpensTheListAtAnEntryMarksThatRowAndNoOther() = runComposeUiTest {
+        val opened = Opened()
+        setThemedContent { Screen(stubbed(), opened, openedEntryId = "n-batch") }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-batch").assertIsSelected()
+        onNodeWithTag("notificationRow-n-batch").assertIsDisplayed()
+        assertEquals(1, onAllNodes(isSelected()).fetchSemanticsNodes().size)
+        // The whole message is on the row.
+        onNodeWithText("We got your request.").assertIsDisplayed()
+        // Opening the list at an entry reads nothing and goes nowhere.
+        onNodeWithTag("unread-n-batch", useUnmergedTree = true).assertExists()
+        assertNull(opened.request)
+        assertEquals(listOf(4), opened.counts)
+    }
+    @Test
+    fun anEntryThatIsNotAmongTheHouseholdsRowsMarksNothing() = runComposeUiTest {
+        val opened = Opened()
+        setThemedContent { Screen(stubbed(), opened, openedEntryId = "another-households-entry") }
+        waitForIdle()
+        assertEquals(0, onAllNodes(isSelected()).fetchSemanticsNodes().size)
+        onNodeWithText("Visit confirmed").assertExists()
+        onNodeWithText("Booking requested").assertExists()
+    }
+    @Test
+    fun withNoEntryNoRowIsMarked() = runComposeUiTest {
+        setThemedContent { Screen(stubbed(), Opened()) }
+        waitForIdle()
+        assertEquals(0, onAllNodes(isSelected()).fetchSemanticsNodes().size)
+    }
+
+    // ---- #2368: the entry a cut push opens shows the rest of the message ----
+    private val wholeMessage = "Your visit request was declined.\n\nO'Malley & Rex <b>loved</b> it &amp; more. We are away that week."
+    private fun cutPushRows(): List<JsonObject> {
+        val cut = buildJsonObject {
+            row("n-cut", "Your visit request was declined", "Nov 20 to Nov 22", targetType = "booking", targetId = "b1", batchId = "b1")
+                .forEach { (k, v) -> put(k, v) }
+            put("fullMessage", wholeMessage)
+            put("detail", buildJsonObject { put("householdNote", "We are away that week.") })
+        }
+        return listOf(cut, rows[2])
+    }
+    @Test
+    fun aCutPushsEntryShowsTheWholeMessageAsTyped_andTheNoteOnlyOnce() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("listMyNotifications", page(cutPushRows()))
+        setThemedContent { Screen(fake, Opened(), openedEntryId = "n-cut") }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-cut").assertIsSelected()
+        onNodeWithTag("fullMessage-n-cut", useUnmergedTree = true).assertExists()
+        // The tag and the entity are text, line breaks and all.
+        onNodeWithText(wholeMessage, useUnmergedTree = true).assertExists()
+        onNodeWithText("Nov 20 to Nov 22", useUnmergedTree = true).assertExists()
+        // The note is inside the message, so it is not drawn a second time.
+        onNodeWithTag("householdNote-n-cut", useUnmergedTree = true).assertDoesNotExist()
+        // No id reaches the screen.
+        onNodeWithText("n-cut", substring = true, useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithText("b1", substring = true, useUnmergedTree = true).assertDoesNotExist()
+    }
+    @Test
+    fun anEntryWithNoWholeMessageReadsAsBefore() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("listMyNotifications", page(cutPushRows()))
+        setThemedContent { Screen(fake, Opened()) }
+        waitForIdle()
+        onNodeWithText("New invoice").assertExists()
+        onNodeWithTag("fullMessage-n-invoice", useUnmergedTree = true).assertDoesNotExist()
+        assertEquals(1, onAllNodesWithTag("fullMessage-n-cut", useUnmergedTree = true).fetchSemanticsNodes().size)
+    }
+    @Test
+    fun aTapOnACutPushsEntryStillMarksItReadAndOpensWhatItIsAbout() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("listMyNotifications", page(cutPushRows()))
+        fake.stub("markNotificationRead", buildJsonObject { put("ok", true) })
+        val opened = Opened()
+        setThemedContent { Screen(fake, opened) }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-cut").performClick()
+        waitForIdle()
+        assertEquals("b1", opened.request)
+        assertTrue(fake.calls.any { it.first == "markNotificationRead" })
+        // One unread on load, none after the tap: the kept message never counts twice.
+        assertEquals(listOf(1, 0), opened.counts)
+    }
     @Test
     fun rendersEveryRowWithTitleDescriptionAndTime_andReportsTheServersUnreadCount() = runComposeUiTest {
         val opened = Opened()

@@ -46,8 +46,13 @@ function buildPushDbMock(opts: {
   template?: { title?: string; body?: string; dataRoute?: string } | null;
   tokens?: string[];
   deletes?: string[];
+  /** #2368: every `update` made, in order, with the path it was made to. */
+  updates?: Array<{ path: string; patch: Record<string, unknown> }>;
+  /** #2368: an `update` that throws (the entry was taken back, or Firestore refused it). */
+  updateFails?: Error;
 }) {
   const deletes: string[] = opts.deletes ?? [];
+  const updates = opts.updates ?? [];
 
   const docMock = (path: string) => ({
     get: vi.fn(async () => {
@@ -58,6 +63,10 @@ function buildPushDbMock(opts: {
     }),
     delete: vi.fn(async () => {
       deletes.push(path);
+    }),
+    update: vi.fn(async (patch: Record<string, unknown>) => {
+      if (opts.updateFails) throw opts.updateFails;
+      updates.push({ path, patch });
     }),
   });
 
@@ -80,7 +89,7 @@ function buildPushDbMock(opts: {
     },
   };
 
-  return { db, deletes };
+  return { db, deletes, updates };
 }
 
 describe('sendPushChannel', () => {
@@ -274,6 +283,73 @@ describe('sendPushChannel', () => {
       await sendPushChannel({ def: def(), recipientUid: 'u1', data: {}, stream: 'kinfolk' });
       expect(sent().data['route']).toBe('/notifications');
     });
+    it('#2259: opens the thing the notice is about, and carries its target for the Android app', async () => {
+      const ctx = buildPushDbMock({ template: { title: 'Auntie has arrived', body: 'Tap for details.' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data: {},
+        stream: 'kinfolk',
+        open: { route: '/schedule/v1', data: { targetType: 'booking', targetId: 'v1', visitId: 'v1' } },
+      });
+      expect(sent().data).toEqual({
+        notificationKey: 't.k',
+        route: '/schedule/v1',
+        targetType: 'booking',
+        targetId: 'v1',
+        visitId: 'v1',
+      });
+      // The wording and the short line are untouched.
+      expect(sent().notification).toEqual({ title: 'Auntie has arrived', body: 'Tap for details.' });
+    });
+    it('#2259: a notice with nothing to open still lands on the notifications list', async () => {
+      const ctx = buildPushDbMock({ template: { title: 'A', body: 'B' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({ def: def(), recipientUid: 'u1', data: {}, stream: 'kinfolk', open: { data: {} } });
+      expect(sent().data).toEqual({ notificationKey: 't.k', route: '/notifications' });
+    });
+    it("#2259: the template's own route still wins over the target's", async () => {
+      const ctx = buildPushDbMock({ template: { title: 'A', body: 'B', dataRoute: '/kintales' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data: {},
+        stream: 'kinfolk',
+        open: { route: '/schedule/v1', data: { targetType: 'booking', targetId: 'v1' } },
+      });
+      expect(sent().data['route']).toBe('/kintales');
+    });
+    it('#2259: target data can never replace the notification key or the route', async () => {
+      const ctx = buildPushDbMock({ template: { title: 'A', body: 'B' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data: {},
+        stream: 'kinfolk',
+        open: { route: '/schedule/v1', data: { notificationKey: 'other.key', route: 'https://evil.example' } },
+      });
+      expect(sent().data).toEqual({ notificationKey: 't.k', route: '/schedule/v1' });
+    });
+    it.each(['business', 'staff'] as const)('#2100: a %s copy carries its target and still no route', async (stream) => {
+      const ctx = buildPushDbMock({ template: { title: 'Visit changed', body: 'B' }, tokens: ['t1'] });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.multicast.mockResolvedValue(ok);
+      await sendPushChannel({
+        def: def({ audience: 'both', audiences: { kinfolk: true, business: true } }),
+        recipientUid: 'u1',
+        data: {},
+        stream,
+        open: { data: { targetType: 'booking', targetId: 'v1', visitId: 'v1', kinfolkId: 'fam1' } },
+      });
+      expect(sent().data).toEqual({ notificationKey: 't.k', targetType: 'booking', targetId: 'v1', visitId: 'v1', kinfolkId: 'fam1' });
+    });
     it.each(['business', 'staff', undefined] as const)('a %s copy is sent as written, with no route added', async (stream) => {
       const ctx = buildPushDbMock({ template: { title: 'Care request', body: '{{note}}' }, tokens: ['t1'] });
       mocks.dbFn.mockReturnValue(ctx.db);
@@ -286,6 +362,150 @@ describe('sendPushChannel', () => {
       });
       expect(sent().notification.body).toBe(longNote);
       expect(sent().data).toEqual({ notificationKey: 't.k' });
+    });
+    /**
+     * #2368: the entry a cut push opens shows the rest of the message. The
+     * sender keeps the message as rendered on that entry, before the push goes.
+     */
+    describe('the whole message is kept on the entry a cut push opens', () => {
+      const visit = { route: '/schedule/v1', data: { targetType: 'booking', targetId: 'v1', visitId: 'v1', batchId: 'b1' } };
+      const entry = { readInList: { route: '/notifications?entry=n1', entryId: 'n1' }, officeNote: false };
+      async function send(
+        template: { title: string; body: string },
+        args: Record<string, unknown>,
+        db: { updateFails?: Error } = {},
+      ) {
+        const order: string[] = [];
+        const updates: Array<{ path: string; patch: Record<string, unknown> }> = [];
+        const ctx = buildPushDbMock({ template, tokens: ['t1'], updates, ...db });
+        mocks.dbFn.mockReturnValue(ctx.db);
+        mocks.multicast.mockImplementation(async () => {
+          order.push(`send after ${updates.length} update(s)`);
+          return ok;
+        });
+        await sendPushChannel({ def: def(), recipientUid: 'u1', data: {}, stream: 'kinfolk', ...args } as never);
+        return { updates, order };
+      }
+      it('a cut line writes the message as rendered onto its entry, one field, before the push is sent', async () => {
+        const body = `We could not take it.\n\n{{note}}`;
+        const { updates, order } = await send({ title: 'Declined', body }, { data: { note: longNote }, open: { ...visit, ...entry } });
+        expect(updates).toEqual([
+          { path: 'notifications/n1', patch: { householdMessage: `We could not take it.\n\n${longNote}` } },
+        ]);
+        expect(order).toEqual(['send after 1 update(s)']);
+        expect(sent().notification.body.length).toBe(200);
+        expect(sent().data['route']).toBe('/notifications?entry=n1');
+      });
+      it('keeps what was typed as typed: no escaping, no decoding, a tag stays text', async () => {
+        const note = `O'Malley & Rex <b>loved</b> it, 5 > 3 &amp; all. ${'More words here. '.repeat(14)}`.trim();
+        const { updates } = await send({ title: 'Declined', body: '{{note}}' }, { data: { note }, open: { ...visit, ...entry } });
+        expect(updates[0]!.patch['householdMessage']).toBe(note);
+      });
+      it('a line that was not cut writes nothing, with or without the office note', async () => {
+        expect((await send({ title: 'A', body: 'x'.repeat(200) }, { open: { ...visit, ...entry } })).updates).toEqual([]);
+        mocks.multicast.mockClear();
+        const noted = await send({ title: 'A', body: 'Tap for details.' }, { open: { ...visit, ...entry, officeNote: true } });
+        expect(noted.updates).toEqual([]);
+        expect(sent().data['route']).toBe('/notifications?entry=n1');
+      });
+      it('a work order that names no entry writes nothing and still opens the plain list', async () => {
+        const { updates } = await send(
+          { title: 'A', body: '{{note}}' },
+          { data: { note: longNote }, open: { ...visit, readInList: { route: '/notifications' }, officeNote: false } },
+        );
+        expect(updates).toEqual([]);
+        expect(sent().data['route']).toBe('/notifications');
+      });
+      it.each(['business', 'staff'] as const)('a %s copy is never written to, however long', async (stream) => {
+        const { updates } = await send({ title: 'A', body: '{{note}}' }, { stream, data: { note: longNote }, open: { ...visit, ...entry } });
+        expect(updates).toEqual([]);
+      });
+      it('a refused write is logged and the push still goes, opening the entry', async () => {
+        const { order } = await send(
+          { title: 'A', body: '{{note}}' },
+          { data: { note: longNote }, open: { ...visit, ...entry } },
+          { updateFails: new Error('5 NOT_FOUND: no entity to update') },
+        );
+        expect(order).toEqual(['send after 0 update(s)']);
+        expect(sent().data['route']).toBe('/notifications?entry=n1');
+      });
+    });
+    /**
+     * Ruling 2026-11-14: the short line links to the full message. A cut line,
+     * or a notice with the office's note on it, opens the notifications list at
+     * its own entry; any other opens the thing it is about.
+     */
+    describe('where the tap lands when the full message is on the list', () => {
+      const visit = { route: '/schedule/v1', data: { targetType: 'booking', targetId: 'v1', visitId: 'v1', batchId: 'b1' } };
+      const list = { readInList: { route: '/notifications?entry=n1' } };
+      async function send(template: { title: string; body: string; dataRoute?: string }, args: Record<string, unknown>) {
+        mocks.dbFn.mockReturnValue(buildPushDbMock({ template, tokens: ['t1'] }).db);
+        mocks.multicast.mockResolvedValue(ok);
+        await sendPushChannel({ def: def(), recipientUid: 'u1', data: {}, stream: 'kinfolk', ...args } as never);
+        return sent();
+      }
+      it('a cut line opens the list at its entry, and carries no target for the Android app to open instead', async () => {
+        const { notification, data } = await send(
+          { title: 'Care request declined', body: 'We could not take it. {{note}}' },
+          { data: { note: longNote }, open: { ...visit, ...list, officeNote: false } },
+        );
+        expect(notification.body.endsWith('…')).toBe(true);
+        expect(data).toEqual({ notificationKey: 't.k', route: '/notifications?entry=n1' });
+      });
+      it("a short line on a notice with the office's note opens the list at its entry", async () => {
+        const { notification, data } = await send(
+          { title: 'Booking confirmed', body: 'Tap for details.' },
+          { open: { ...visit, ...list, officeNote: true } },
+        );
+        expect(notification.body).toBe('Tap for details.');
+        expect(data).toEqual({ notificationKey: 't.k', route: '/notifications?entry=n1' });
+      });
+      it('a short line with no note opens the thing it is about', async () => {
+        const { data } = await send(
+          { title: 'Auntie has arrived', body: 'Tap for details.' },
+          { open: { ...visit, ...list, officeNote: false } },
+        );
+        expect(data).toEqual({ notificationKey: 't.k', ...visit.data, route: '/schedule/v1' });
+      });
+      it('a line of exactly 200 characters was not cut, and one of 201 was', async () => {
+        const at = await send({ title: 'A', body: 'x'.repeat(200) }, { open: { ...visit, ...list, officeNote: false } });
+        expect(at.notification.body).toBe('x'.repeat(200));
+        expect(at.data['route']).toBe('/schedule/v1');
+        mocks.multicast.mockClear();
+        const over = await send({ title: 'A', body: 'x'.repeat(201) }, { open: { ...visit, ...list, officeNote: false } });
+        expect(over.notification.body.length).toBe(200);
+        expect(over.data['route']).toBe('/notifications?entry=n1');
+      });
+      it('line breaks folded into spaces are not a cut', async () => {
+        const body = `${'x'.repeat(99)}\n\n\n\n${'y'.repeat(99)}`;
+        const { notification, data } = await send({ title: 'A', body }, { open: { ...visit, ...list, officeNote: false } });
+        expect(notification.body).toBe(`${'x'.repeat(99)} ${'y'.repeat(99)}`);
+        expect(data['route']).toBe('/schedule/v1');
+      });
+      it("the list wins over the template's own route too, when the line was cut", async () => {
+        const { data } = await send(
+          { title: 'A', body: '{{note}}', dataRoute: '/kintales' },
+          { data: { note: longNote }, open: { ...visit, ...list, officeNote: false } },
+        );
+        expect(data).toEqual({ notificationKey: 't.k', route: '/notifications?entry=n1' });
+      });
+      it('a cut line with no entry to name opens the plain list', async () => {
+        const { data } = await send(
+          { title: 'A', body: '{{note}}' },
+          { data: { note: longNote }, open: { ...visit, readInList: { route: '/notifications' }, officeNote: false } },
+        );
+        expect(data).toEqual({ notificationKey: 't.k', route: '/notifications' });
+      });
+      it.each(['business', 'staff'] as const)('a %s copy opens its target however long it is and whatever note it carries', async (stream) => {
+        const office = { data: { targetType: 'booking', targetId: 'v1', visitId: 'v1', kinfolkId: 'fam1' } };
+        const { notification, data } = await send(
+          { title: 'Care request', body: '{{note}}' },
+          // Even handed the household's fields by mistake, an office copy is never sent to the list.
+          { stream, data: { note: longNote }, open: { ...office, ...list, officeNote: true } },
+        );
+        expect(notification.body).toBe(longNote);
+        expect(data).toEqual({ notificationKey: 't.k', ...office.data });
+      });
     });
   });
 });

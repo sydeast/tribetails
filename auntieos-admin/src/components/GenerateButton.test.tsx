@@ -107,6 +107,45 @@ describe('GenerateButton', () => {
     expect(generateDraft.mock.calls[0]?.[0].avoid_opening).toBe('Nova met me at the door.');
   });
 
+  it('sends the household, the visit and the ticked care tasks when the caller has them (#2079)', async () => {
+    const user = userEvent.setup();
+    setup({ kinfolkId: 'kf1', sessionId: 'sess1', careTasks: [{ text: 'Fed', kin_name: 'Nova' }] });
+    await user.click(screen.getByRole('button', { name: 'Ask Auntie' }));
+    await waitFor(() => expect(generateDraft).toHaveBeenCalled());
+    expect(generateDraft.mock.calls[0]?.[0]).toMatchObject({
+      kinfolk_id: 'kf1',
+      session_id: 'sess1',
+      care_tasks: [{ text: 'Fed', kin_name: 'Nova' }],
+    });
+  });
+  it('sends no visit fields for a caller that has none', async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole('button', { name: 'Ask Auntie' }));
+    await waitFor(() => expect(generateDraft).toHaveBeenCalled());
+    const sent = generateDraft.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(sent).not.toHaveProperty('session_id');
+    expect(sent).not.toHaveProperty('kinfolk_id');
+    expect(sent).not.toHaveProperty('care_tasks');
+  });
+  it('reads "Auntie is writing…" and is off for as long as the call runs', async () => {
+    let finish: (v: typeof OK) => void = () => undefined;
+    generateDraft.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const user = userEvent.setup();
+    const { onGenerated } = setup();
+    await user.click(screen.getByRole('button', { name: 'Ask Auntie' }));
+    expect(await screen.findByRole('button', { name: 'Auntie is writing…' })).toBeDisabled();
+    finish(OK);
+    await waitFor(() => expect(onGenerated).toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: 'Ask Auntie' })).toBeEnabled();
+  });
+  it('a failure with no words of its own still says something plain', async () => {
+    generateDraft.mockRejectedValue(new Error(''));
+    const user = userEvent.setup();
+    const { onError } = setup();
+    await user.click(screen.getByRole('button', { name: 'Ask Auntie' }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringMatching(/could not write a draft/i)));
+  });
   it('names the backend failure rather than a generic message', async () => {
     generateDraft.mockRejectedValue(new Error('generate_rate_limit_exceeded'));
     const user = userEvent.setup();

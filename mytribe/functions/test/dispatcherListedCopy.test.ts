@@ -124,6 +124,9 @@ describe('#2281 review: a list-only copy the admin then asks to have sent', () =
     expect(late.data.stream).toBe('kinfolk');
     expect(late.data.channels).toEqual(ordinary.data.channels);
     expect(Object.keys(late.data).sort()).toEqual(Object.keys(ordinary.data).sort());
+    // #2259: and the same target, so a tap on the late push opens the same thing.
+    expect([late.data.targetType, late.data.targetId]).toEqual([ordinary.data.targetType, ordinary.data.targetId]);
+    expect(late.data.targetType).not.toBe('');
   });
   it('never sends it twice', async () => {
     const ctx = setup();

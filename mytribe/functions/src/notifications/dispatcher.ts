@@ -13,6 +13,7 @@ import {
   type HouseholdSendGate,
   type HouseholdSendGateState,
 } from './householdSendGate';
+import { countHeldNotice, type HeldNoticeBatch } from './heldNoticeBatch';
 import {
   channelsSwitchedOffByRecipient,
   loadBusinessOverride,
@@ -184,6 +185,27 @@ export async function lastDeliveredAtMs(key: string, dedupeKey: string, recipien
   return typeof v === 'number' ? v : null;
 }
 
+/**
+ * #2038: the `notifications/{id}` row the ledger holds for the notification
+ * `key` named by `dedupeKey` and this recipient, or null when it holds none.
+ * Whichever path sent the notice (the clock trigger, `setVisitLifecycle`, an
+ * installed client's own dispatch), the ledger names the one row it wrote.
+ * Reads one document and writes nothing.
+ */
+export async function deliveredNotificationId(
+  key: string,
+  dedupeKey: string,
+  recipientUid: string,
+): Promise<string | null> {
+  if (dedupeKey === '' || recipientUid === '') return null;
+  const identity = dedupeIdentityOf({ key, data: {}, dedupeKey }, { targetType: '', targetId: '' });
+  const snap = await db().collection(DEDUPE_COLLECTION).doc(dedupeDocId(key, identity, recipientUid)).get();
+  if (!snap.exists) return null;
+  const entry = snap.data() as { notificationId?: unknown; collection?: unknown };
+  return entry.collection === 'notifications' && typeof entry.notificationId === 'string' && entry.notificationId !== ''
+    ? entry.notificationId
+    : null;
+}
 /** Timestamp-likes become millis and object keys are sorted, so equal content hashes equally. */
 function canonical(value: unknown): unknown {
   if (value === undefined || value === null) return null;
@@ -417,7 +439,15 @@ export async function enqueueNotification(args: EnqueueArgs): Promise<string[]> 
 /**
  * `enqueueNotification`, reporting per recipient what was suppressed and why.
  */
-export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<EnqueueOutcome> {
+export async function enqueueNotificationDetailed(
+  args: EnqueueArgs,
+  /**
+   * #2331: a timed job's count of the copies the send switch held back. With
+   * one, a held copy is counted and writes no Activity Log line of its own; the
+   * job writes one line for the run. Kept out of `args` so it is never stored.
+   */
+  heldBatch?: HeldNoticeBatch,
+): Promise<EnqueueOutcome> {
   const def = getNotificationDef(args.key);
 
   // External keys are delivered by another system (e.g., Firebase Auth Console
@@ -654,7 +684,21 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
         outcome.suppressed.push({ recipientUid: recipient.uid, reason: 'gate', gateState: state });
         // #1819: written AFTER the copy is counted as held and nowhere near
         // the dedupe ledger, so the position argument above is unchanged.
-        await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'held', [], undefined, state === 'read-failed');
+        // #2331: a timed job counts the copy for its one line per run and
+        // writes nothing here, so no name is read and no entry is sealed.
+        if (heldBatch !== undefined) {
+          // What names this copy, so the job counts it once a day however
+          // many of its runs hold it: the event and who it was for.
+          const identity = dedupeIdentityOf(args, resolveTargetRef(args));
+          countHeldNotice(
+            heldBatch,
+            def.key,
+            state === 'read-failed' ? 'unreadable' : 'off',
+            identity === '' ? '' : [def.key, identity, recipient.uid].join('\u0000'),
+          );
+        } else {
+          await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'held', [], undefined, state === 'read-failed');
+        }
         continue;
       }
     }
@@ -730,8 +774,12 @@ export async function enqueueNotificationDetailed(args: EnqueueArgs): Promise<En
  * (`noticeAudit.ts`): a line that cannot be written must not undo a dispatch.
  *
  * The line has a fixed id wherever the event has an identity, so a retry, or
- * the second path to the same clock step, writes it once, and a daily job over
- * the same invoice writes it once a day.
+ * the second path to the same clock step, writes it once, and the same event
+ * held again on a later day writes it once that day.
+ *
+ * #2331: not called for a copy the send switch holds inside a timed job. That
+ * job counts the copy, once a day, and writes one line for its run
+ * (`heldNoticeBatch.ts`).
  */
 async function logHouseholdCopyNotSent(
   key: string,
@@ -1000,6 +1048,10 @@ async function routeByDeliveryMode(
           channels: activeChannels,
           // #2280: the senders keep a household's text message and push short.
           stream,
+          // #2259: the push sender reads only this document, and a tap on the
+          // push opens what the notice is about.
+          targetType,
+          targetId,
           status: 'pending',
           createdAt: FieldValue.serverTimestamp(),
         });
@@ -1160,6 +1212,7 @@ export async function deliverListedCopy(
     const order = await tx.get(orderRef);
     if (!record.exists) return 'no-record';
     if (order.exists) return 'already';
+    const listed = (record.data() ?? {}) as { targetType?: unknown; targetId?: unknown };
     // The shape `routeByDeliveryMode` writes, carrying the record's own data so
     // the email says what the list entry says.
     tx.set(orderRef, {
@@ -1172,6 +1225,9 @@ export async function deliverListedCopy(
       // #2280: as on an enqueue's work order, so the senders keep a household's
       // text message and push short. Without it they send the long form.
       stream,
+      // #2259: the record's own target, for what a tap on the push opens.
+      targetType: typeof listed.targetType === 'string' ? listed.targetType : '',
+      targetId: typeof listed.targetId === 'string' ? listed.targetId : '',
       status: 'pending',
       createdAt: FieldValue.serverTimestamp(),
     });

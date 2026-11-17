@@ -63,6 +63,11 @@ export const GENERATE_COMMUNICATION_TYPES = [
 ] as const;
 export type GenerateCommunicationType = (typeof GENERATE_COMMUNICATION_TYPES)[number];
 
+/** One ticked care task: its label, and the Kin it was for (`''` for a once-a-visit task). */
+export interface GenerateCareTask {
+  text: string;
+  kin_name: string;
+}
 export interface GenerateDraftArgs {
   communication_type: GenerateCommunicationType;
   /**
@@ -79,6 +84,18 @@ export interface GenerateDraftArgs {
    * Optional: the KinTale composer and the no-recipient types omit it.
    */
   kinfolk_id?: string;
+  /**
+   * #2079: the visit a KinTale recaps. With it the server writes from that
+   * visit's own record (its Kin, its KinCare, its times) and from nothing else
+   * about the household. Only a `visit_report` sends one.
+   */
+  session_id?: string;
+  /**
+   * #2052: the care tasks ticked in the composer. They live in the form until
+   * the tale is saved, so the server cannot read them; a task not listed here
+   * is one the draft may not claim was done.
+   */
+  care_tasks?: GenerateCareTask[];
   raw_notes: string;
   tone_hint?: string;
   max_length?: string;
@@ -118,6 +135,36 @@ export interface GenerateDraftResult {
 }
 
 export class GenerateDraftError extends Error {}
+/** What a failed generate says when the server sent nothing fit to show. */
+export const GENERATE_FAILED_COPY = 'Auntie could not write a draft just now. Try again in a moment.';
+const GENERATE_UNREACHABLE_COPY = 'Auntie could not be reached. Check the connection and try again.';
+const GENERATE_DAILY_LIMIT_COPY = 'Auntie has written all she can for today. She can draft again tomorrow.';
+/** The generator is the owner's alone (#944): it is refused to every other sign-in, and retrying will not change that. */
+const GENERATE_OWNER_ONLY_COPY = 'Only the owner can ask Auntie for a draft.';
+/**
+ * #2052: the words a failed generate puts on screen.
+ *
+ * The generator now answers in plain sentences, and those are shown as sent.
+ * This guards the other cases: a generator released before it learned to (it
+ * answered with stored codes such as `generate_rate_limit_exceeded`, with the
+ * provider's own error, and with a record id inside `No Kinfolk with id "..."`),
+ * and a reply with no message at all. None of those is shown; each becomes one
+ * plain line.
+ */
+export function plainGenerateError(error: string | null, code: string | null, status: number): string {
+  if (code === 'generate_rate_limit_exceeded' || error === 'generate_rate_limit_exceeded' || status === 429) {
+    return GENERATE_DAILY_LIMIT_COPY;
+  }
+  if (status === 403 || error === 'admin_required') return GENERATE_OWNER_ONLY_COPY;
+  const text = (error ?? '').trim();
+  if (text === '') return GENERATE_FAILED_COPY;
+  // A stored code, never a sentence.
+  if (/^[a-z0-9_]+$/i.test(text)) return GENERATE_FAILED_COPY;
+  if (/^(Claude API error|Claude returned|No Kinfolk with id|Voice source file|communication_type must|raw_notes is required)/i.test(text)) {
+    return GENERATE_FAILED_COPY;
+  }
+  return text;
+}
 export class SendMessageError extends Error {}
 
 /** Parses a fetch Response body as JSON, or `null` on a non-JSON/empty body (never throws). */
@@ -145,9 +192,9 @@ function stringField(body: Record<string, unknown> | null, key: string): string 
  * than a fabricated empty draft.
  *
  * Throws `GenerateDraftError` on any failure (no sign-in, network failure,
- * non-2xx response, or an `error` field on the response body), naming the
- * backend's own error string where one exists (e.g. `No Kinfolk match for
- * "X"`, `generate_rate_limit_exceeded`) rather than a generic message.
+ * non-2xx response, or an `error` field on the response body). The message is
+ * what the operator reads, so it is always a plain sentence: the generator's
+ * own when it sent one, else `plainGenerateError`'s (#2052).
  */
 export async function generateDraft(args: GenerateDraftArgs): Promise<GenerateDraftResult> {
   let response: Response;
@@ -161,9 +208,9 @@ export async function generateDraft(args: GenerateDraftArgs): Promise<GenerateDr
     });
   } catch (err) {
     if (err instanceof NotSignedInError) throw new GenerateDraftError(err.message);
-    throw new GenerateDraftError(
-      `generate request failed: ${err instanceof Error ? err.message : 'network error'}`,
-    );
+    // The browser's own network error ("Failed to fetch") names nothing the
+    // operator can act on.
+    throw new GenerateDraftError(GENERATE_UNREACHABLE_COPY);
   }
 
   const body = await parseJsonBody(response);
@@ -177,12 +224,14 @@ export async function generateDraft(args: GenerateDraftArgs): Promise<GenerateDr
     );
   }
   if (!response.ok || errorField !== null) {
-    throw new GenerateDraftError(errorField ?? `generate failed (${response.status})`);
+    throw new GenerateDraftError(
+      plainGenerateError(errorField, stringField(body, 'error_code'), response.status),
+    );
   }
 
   const generatedCopy = stringField(body, 'generated_copy');
   if (generatedCopy === null || generatedCopy === '') {
-    throw new GenerateDraftError('generate returned no draft copy.');
+    throw new GenerateDraftError(GENERATE_FAILED_COPY);
   }
 
   const warningsRaw = body?.['warnings'];

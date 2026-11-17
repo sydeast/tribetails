@@ -54,8 +54,27 @@ data class NotificationItem(
      * `detail.householdNote`. Null when it wrote none.
      */
     val householdNote: String? = null,
+    /**
+     * #2368: the whole message a push was cut from, kept on the entry when the
+     * push was sent, as plain text with its line breaks. Null on every other
+     * entry, older ones included. Drawn as text.
+     */
+    val fullMessage: String? = null,
 ) {
     val unread: Boolean get() = readAtMs == null
+
+    /**
+     * The office's note as the row draws it: left off when [fullMessage]
+     * already says it, so a cut push about a declined request does not show
+     * the same note twice.
+     */
+    val rowNote: String?
+        get() {
+            val note = householdNote ?: return null
+            val message = fullMessage ?: return note
+            fun flat(t: String) = t.replace(Regex("\\s+"), " ").trim()
+            return if (flat(message).contains(flat(note))) null else note
+        }
 }
 
 data class NotificationsPage(
@@ -83,6 +102,12 @@ sealed interface NotificationTarget {
     data object Household : NotificationTarget
     /** #1874: a reply from the office opens Messages. */
     data object Messages : NotificationTarget
+    /**
+     * The notifications list itself, at one entry. Only a tapped push names
+     * it (`push/PushOpen.kt`): a push whose line was cut, or whose notice
+     * carries the office's note, is read whole on the list. A row never does.
+     */
+    data class Entry(val notificationId: String) : NotificationTarget
     data object None : NotificationTarget
 }
 
@@ -99,12 +124,23 @@ sealed interface NotificationTarget {
  * and a booking row this client cannot place lands on Schedule rather than on
  * a visit page that says "not found".
  */
-fun notificationTargetOf(item: NotificationItem): NotificationTarget {
-    val id = item.targetId.trim()
-    return when (item.targetType) {
+fun notificationTargetOf(item: NotificationItem): NotificationTarget =
+    notificationTargetFor(item.targetType, item.targetId, item.visitId, item.batchId)
+/**
+ * #2259: the same decision from the four fields alone, so a tapped push
+ * (`push/PushOpen.kt`) opens exactly what its row on the list opens.
+ */
+fun notificationTargetFor(
+    targetType: String,
+    targetId: String,
+    visitId: String?,
+    batchId: String?,
+): NotificationTarget {
+    val id = targetId.trim()
+    return when (targetType) {
         "booking" -> {
-            val visitId = item.visitId?.trim().orEmpty()
-            val batchId = item.batchId?.trim().orEmpty()
+            val visitId = visitId?.trim().orEmpty()
+            val batchId = batchId?.trim().orEmpty()
             when {
                 visitId.isNotEmpty() -> NotificationTarget.Visit(visitId, batchId.ifEmpty { null })
                 batchId.isNotEmpty() -> NotificationTarget.BookingRequest(batchId)
@@ -146,6 +182,8 @@ fun decodeNotificationItem(o: JsonObject): NotificationItem? {
         createdAtMs = isoToEpochMs(o["createdAt"]?.jsonPrimitive?.contentOrNull),
         readAtMs = isoToEpochMs(o["readAt"]?.jsonPrimitive?.contentOrNull),
         householdNote = ((o["detail"] as? JsonObject)?.get("householdNote") as? JsonPrimitive)
+            ?.takeIf { it.isString }?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+        fullMessage = (o["fullMessage"] as? JsonPrimitive)
             ?.takeIf { it.isString }?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
     )
 }

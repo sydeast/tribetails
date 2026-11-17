@@ -2,6 +2,7 @@ import { getAdmin, db } from '../../lib/firestoreAdmin';
 import { logEvent } from '../../lib/logger';
 import {
   HOUSEHOLD_NOTICE_ROUTE,
+  householdPushLineIsCut,
   householdPushShelfLine,
   kinForStoredTemplate,
   renderPlainText,
@@ -16,6 +17,32 @@ interface PushTemplate {
 }
 
 /**
+ * The field on a household's `notifications/{id}` entry that holds the whole
+ * message its push was cut from (#2368). Plain text as rendered, never HTML;
+ * `listMyNotifications` hands it to the list as `fullMessage`.
+ */
+export const HOUSEHOLD_MESSAGE_FIELD = 'householdMessage';
+
+/**
+ * Writes the whole message onto the household's entry. `update`, not a merge:
+ * an entry the office took back since (#2038) stays gone instead of coming
+ * back as a stub. A refused write is logged and the push still goes; the
+ * entry then reads as it did before, its facts line.
+ */
+async function keepWholeMessage(entryId: string, message: string, key: string): Promise<void> {
+  try {
+    await db().collection('notifications').doc(entryId).update({ [HOUSEHOLD_MESSAGE_FIELD]: message.trim() });
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'pushChannel',
+      event: 'notification.push.message_not_kept',
+      extra: { key, entryId, error: err instanceof Error ? err.message : String(err) },
+    });
+  }
+}
+
+/**
  * Push channel sender (FCM via firebase-admin). Reads `pushTemplates/{key}`
  * for `title` + `body` + optional `dataRoute` deep-link, queries
  * `fcm_tokens` for all device tokens owned by recipientUid, multicasts via
@@ -23,8 +50,12 @@ interface PushTemplate {
  *
  * A HOUSEHOLD'S COPY IS SHORT AND OPENS MYTRIBE (#2280, operator ruling
  * 2026-11-14): the body is cut to `HOUSEHOLD_SHORT_LINE_MAX` and the payload
- * always carries a `route`, the notifications list when the template names no
- * other. The web portal's service worker opens that route on a tap.
+ * always carries a `route`. A push whose line was cut, or whose notice carries
+ * the office's note, opens the notifications list at that notice's entry,
+ * where the whole message is. Any other opens the template's own route, else
+ * the thing the notice is about (#2259), else the notifications list. Both
+ * MyTribe clients follow that route. Every other copy carries its target as
+ * plain data keys (#2100), which the Android apps open from.
  *
  * Returns the message id of the first successful send, or throws if every
  * token failed (fail-loud per project policy).
@@ -33,7 +64,7 @@ interface PushTemplate {
  * or `messaging/invalid-registration-token` is deleted to keep `fcm_tokens` clean.
  */
 export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSendResult> {
-  const { def, recipientUid, data, stream } = args;
+  const { def, recipientUid, data, stream, open } = args;
   const templateId = def.templates.push;
   if (!templateId) {
     throw new Error(`pushChannel(${def.key}): catalog has no push template id`);
@@ -83,14 +114,36 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
   const title = renderPlainText(tpl.title ?? '', renderCtx);
   const renderedBody = renderPlainText(tpl.body ?? '', renderCtx);
   const templateRoute = tpl.dataRoute ? renderPlainText(tpl.dataRoute, renderCtx) : undefined;
-  // #2280: a household's push is a short line, and a tap on it opens MyTribe
-  // where the whole message is: the template's own route when it has one, else
-  // the notifications list. Staff and business copies are sent as written.
+  // #2280: a household's push is a short line, and a tap on it opens MyTribe.
+  // #2259: it opens the thing the notice is about (the visit, the KinTale, the
+  // Kin, the invoice), where the whole message is read in place. The
+  // template's own route wins when it has one; a notice that names nothing to
+  // open lands on the notifications list. Staff and business copies are sent
+  // as written, with no route: the admin apps open from the target fields.
   const household = stream === 'kinfolk';
   const body = household ? householdPushShelfLine(renderedBody) : renderedBody;
-  const dataRoute = templateRoute || (household ? HOUSEHOLD_NOTICE_ROUTE : undefined);
+  // Ruling 2026-11-14: the short line links to the full message. A line that
+  // was cut, or a notice with the office's note on it, is read whole on the
+  // notifications list, at its own entry. That wins over every other route,
+  // and the target fields are left off so the Android app follows the route
+  // too (it would otherwise open the target from them).
+  const cut = household && householdPushLineIsCut(renderedBody);
+  const readInList =
+    household && open?.readInList !== undefined && (cut || open.officeNote === true)
+      ? open.readInList
+      : undefined;
+  // #2368: the entry the tap opens has to hold the rest of a cut line. Only
+  // this sender has the message as rendered, so it writes it onto the entry,
+  // before the push goes, so a tap never lands ahead of it.
+  if (cut && readInList?.entryId) await keepWholeMessage(readInList.entryId, renderedBody, def.key);
+  const dataRoute = readInList
+    ? readInList.route
+    : templateRoute || (household ? open?.route || HOUSEHOLD_NOTICE_ROUTE : undefined);
 
   const dataPayload: Record<string, string> = {
+    // #2100: the target fields first, so the two keys below can never be
+    // overwritten by them.
+    ...(readInList ? {} : (open?.data ?? {})),
     notificationKey: def.key,
   };
   if (dataRoute) dataPayload['route'] = dataRoute;

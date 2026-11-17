@@ -330,6 +330,13 @@ export interface NotificationItemDto {
   /** ISO 8601 once read, null while unread. */
   readAt: string | null;
   detail?: Record<string, unknown>;
+  /**
+   * #2368: the whole message a push was cut from, as plain text with its line
+   * breaks. Only on an entry whose push line was cut. OPTIONAL: older entries,
+   * and a callable deployed before the field, send none. Shown as text, never
+   * as HTML.
+   */
+  fullMessage?: string;
 }
 
 export interface ListMyNotificationsRequest {

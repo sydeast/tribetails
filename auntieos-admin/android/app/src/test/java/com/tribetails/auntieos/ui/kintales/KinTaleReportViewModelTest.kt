@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.ui.kintales
 
 import com.tribetails.auntieos.TestFixtures
+import com.tribetails.auntieos.data.model.GenerateCareTask
 import com.tribetails.auntieos.data.model.GenerateRequest
 import com.tribetails.auntieos.data.model.GenerateResponse
 import com.tribetails.auntieos.data.model.KinCareReport
@@ -593,60 +594,271 @@ class KinTaleReportViewModelTest {
         return vm
     }
 
+    // #2052: the draft is OFFERED. It used to replace the narrative and autosave
+    // over it, so the typed notes were gone with no way back.
     @Test
-    fun `generateDraft fills the body and tracks the opener`() = runTest(testDispatcher) {
+    fun `generateDraft offers the draft and leaves the typed notes in the narrative`() = runTest(testDispatcher) {
         val vm = loadedVmWithKinfolk()
         vm.updateBodyCopy("fed mia and milo, cleaned the boxes")
         val reqSlot = slot<GenerateRequest>()
         coEvery { mockRepo.generate(capture(reqSlot), any()) } returns
             Result.success(GenerateResponse(generatedCopy = "The cats were already at the door."))
-
         vm.generateDraft(useFunction = true)
         advanceUntilIdle()
-
         val state = vm.uiState.value
         assertFalse(state.isGenerating)
-        assertEquals("The cats were already at the door.", state.report.bodyCopy)
+        assertEquals("fed mia and milo, cleaned the boxes", state.report.bodyCopy)
+        assertEquals("The cats were already at the door.", state.auntieDraft)
+        assertNull(state.keptNotes)
         assertEquals("The", state.lastOpening)
         assertEquals("visit_report", reqSlot.captured.communication_type)
+        assertEquals("fed mia and milo, cleaned the boxes", reqSlot.captured.raw_notes)
         assertNull(reqSlot.captured.avoid_opening)
         // The linked household's real id, so the server reads that doc rather
         // than re-deriving it from the display name and risking a second
         // household with the same first name.
         assertEquals("kf1", reqSlot.captured.kinfolk_id)
+        // #2079: the visit, so the server writes from that visit's own Kin.
+        assertEquals("ses1", reqSlot.captured.session_id)
+        assertEquals(emptyList<GenerateCareTask>(), reqSlot.captured.care_tasks)
     }
-
+    // A fact the draft made up must not become the Auntie's words, or her saved
+    // draft, just by arriving.
     @Test
-    fun `generateDraft regenerate feeds the prior opener back as avoid_opening`() = runTest(testDispatcher) {
+    fun `an offered draft is never saved as the narrative`() = runTest(testDispatcher) {
+        val vm = loadedVmWithKinfolk()
+        vm.updateBodyCopy("all ate, water topped up")
+        advanceUntilIdle()
+        val writes = mutableListOf<Map<String, Any?>>()
+        coEvery { mockKinCareRepo.updateKinCareReportFields(any(), capture(writes)) } returns Result.success(Unit)
+        coEvery { mockRepo.generate(any(), any()) } returns
+            Result.success(GenerateResponse(generatedCopy = "Running late today, and I locked up on the way out."))
+        vm.generateDraft()
+        advanceUntilIdle()
+        assertEquals("all ate, water topped up", vm.uiState.value.report.bodyCopy)
+        assertTrue(writes.none { it.values.any { v -> v.toString().contains("locked up") } })
+    }
+    @Test
+    fun `useAuntieDraft puts the draft in and restoreNotes brings the typed notes back`() = runTest(testDispatcher) {
+        val vm = loadedVmWithKinfolk()
+        vm.updateBodyCopy("all ate, water topped up")
+        coEvery { mockRepo.generate(any(), any()) } returns
+            Result.success(GenerateResponse(generatedCopy = "Everyone ate and the water is topped up."))
+        vm.generateDraft()
+        advanceUntilIdle()
+        vm.useAuntieDraft()
+        advanceUntilIdle()
+        assertEquals("Everyone ate and the water is topped up.", vm.uiState.value.report.bodyCopy)
+        assertNull(vm.uiState.value.auntieDraft)
+        assertEquals("all ate, water topped up", vm.uiState.value.keptNotes?.notes)
+        vm.updateBodyCopy("Everyone ate and the water is topped up. Edited.")
+        vm.restoreNotes()
+        advanceUntilIdle()
+        assertEquals("all ate, water topped up", vm.uiState.value.report.bodyCopy)
+        assertNull(vm.uiState.value.keptNotes)
+    }
+    @Test
+    fun `dismissAuntieDraft sets the draft aside and changes nothing else`() = runTest(testDispatcher) {
+        val vm = loadedVmWithKinfolk()
+        vm.updateBodyCopy("all ate")
+        coEvery { mockRepo.generate(any(), any()) } returns
+            Result.success(GenerateResponse(generatedCopy = "Everyone ate."))
+        vm.generateDraft()
+        advanceUntilIdle()
+        vm.dismissAuntieDraft()
+        assertNull(vm.uiState.value.auntieDraft)
+        assertNull(vm.uiState.value.keptNotes)
+        assertEquals("all ate", vm.uiState.value.report.bodyCopy)
+    }
+    // #2052: "Back to my notes" survives closing the composer, because the
+    // notes are saved on the tale in the same write as the draft that replaced
+    // them.
+    @Test
+    fun `taking a draft saves the typed notes with it in one write, and going back clears them`() = runTest(testDispatcher) {
+        val vm = loadedVmWithKinfolk()
+        vm.updateBodyCopy("all ate, water topped up")
+        advanceUntilIdle()
+        val writes = mutableListOf<Map<String, Any?>>()
+        coEvery { mockKinCareRepo.updateKinCareReportFields(any(), capture(writes)) } returns Result.success(Unit)
+        coEvery { mockRepo.generate(any(), any()) } returns
+            Result.success(GenerateResponse(generatedCopy = "Everyone ate and the water is topped up."))
+        vm.generateDraft()
+        advanceUntilIdle()
+        vm.useAuntieDraft()
+        advanceUntilIdle()
+        assertEquals(
+            listOf(
+                mapOf(
+                    "bodyCopy" to "Everyone ate and the water is topped up.",
+                    "keptNotes" to "all ate, water topped up",
+                    "keptNotesDraft" to "Everyone ate and the water is topped up.",
+                ),
+            ),
+            writes.toList(),
+        )
+        writes.clear()
+        vm.restoreNotes()
+        advanceUntilIdle()
+        assertEquals(
+            listOf(mapOf("bodyCopy" to "all ate, water topped up", "keptNotes" to "", "keptNotesDraft" to "")),
+            writes.toList(),
+        )
+    }
+    private suspend fun kotlinx.coroutines.test.TestScope.reopenedVm(saved: KinCareReport): KinTaleReportViewModel {
+        coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)
+        coEvery { mockRepo.getKinfolkById(any()) } returns Result.success(TestFixtures.kinfolk1)
+        coEvery { mockRepo.getKin(any()) } returns Result.success(emptyList())
+        coEvery { mockRepo.getActiveTemplateForService(any()) } returns Result.success(null)
+        coEvery { mockRepo.getMediaFiles(any(), any()) } returns Result.success(emptyList())
+        coEvery { mockKinCareRepo.getKinCareReport(saved.id) } returns Result.success(saved)
+        coEvery { mockKinCareRepo.updateKinCareReportFields(any(), any()) } returns Result.success(Unit)
+        val vm = buildViewModel()
+        vm.load("ses1", saved.id)
+        advanceUntilIdle()
+        return vm
+    }
+    private val takenDraft = KinCareReport(
+        id = "rep9",
+        sessionId = "ses1",
+        kinfolkId = "kf1",
+        bodyCopy = "Everyone ate and the water is topped up.",
+        keptNotes = "all ate, water topped up",
+        keptNotesDraft = "Everyone ate and the water is topped up.",
+    )
+    @Test
+    fun `a tale opened again still offers the notes she typed, and puts them back`() = runTest(testDispatcher) {
+        val vm = reopenedVm(takenDraft)
+        assertEquals("all ate, water topped up", vm.uiState.value.keptNotes?.notes)
+        val writes = mutableListOf<Map<String, Any?>>()
+        coEvery { mockKinCareRepo.updateKinCareReportFields(any(), capture(writes)) } returns Result.success(Unit)
+        vm.restoreNotes()
+        advanceUntilIdle()
+        assertEquals("all ate, water topped up", vm.uiState.value.report.bodyCopy)
+        assertNull(vm.uiState.value.keptNotes)
+        assertEquals(
+            listOf(mapOf("bodyCopy" to "all ate, water topped up", "keptNotes" to "", "keptNotesDraft" to "")),
+            writes.toList(),
+        )
+    }
+    @Test
+    fun `asking again after a reopen works from her notes, or from the narrative once she changed it`() = runTest(testDispatcher) {
+        val reqs = mutableListOf<GenerateRequest>()
+        coEvery { mockRepo.generate(capture(reqs), any()) } returns
+            Result.success(GenerateResponse(generatedCopy = "Another."))
+        val vm = reopenedVm(takenDraft)
+        vm.generateDraft()
+        advanceUntilIdle()
+        assertEquals("all ate, water topped up", reqs[0].raw_notes)
+        vm.updateBodyCopy("Everyone ate and the water is topped up. And a nap.")
+        vm.generateDraft()
+        advanceUntilIdle()
+        assertEquals("Everyone ate and the water is topped up. And a nap.", reqs[1].raw_notes)
+    }
+    @Test
+    fun `a tale saved before the notes were kept opens with nothing to put back`() = runTest(testDispatcher) {
+        val old = takenDraft.copy(keptNotes = null, keptNotesDraft = null)
+        val vm = reopenedVm(old)
+        assertNull(vm.uiState.value.keptNotes)
+        val writes = mutableListOf<Map<String, Any?>>()
+        coEvery { mockKinCareRepo.updateKinCareReportFields(any(), capture(writes)) } returns Result.success(Unit)
+        vm.restoreNotes()
+        vm.updateBodyCopy("Typed over.")
+        vm.persistDraft()
+        advanceUntilIdle()
+        // A stored null and a blank are the same thing: neither is written back.
+        assertEquals(listOf(mapOf<String, Any?>("bodyCopy" to "Typed over.")), writes.toList())
+    }
+    @Test
+    fun `a sent tale that still carries notes offers none back`() = runTest(testDispatcher) {
+        val vm = reopenedVm(takenDraft.copy(status = "SENT"))
+        assertNull(vm.uiState.value.keptNotes)
+        vm.restoreNotes()
+        advanceUntilIdle()
+        assertEquals("Everyone ate and the water is topped up.", vm.uiState.value.report.bodyCopy)
+    }
+    @Test
+    fun `a tale already sent never has the notes saved onto it`() = runTest(testDispatcher) {
+        coEvery { mockRepo.generate(any(), any()) } returns
+            Result.success(GenerateResponse(generatedCopy = "A new draft."))
+        val vm = reopenedVm(
+            KinCareReport(id = "rep9", sessionId = "ses1", kinfolkId = "kf1", bodyCopy = "typed", status = "SENT"),
+        )
+        vm.generateDraft()
+        advanceUntilIdle()
+        vm.useAuntieDraft()
+        advanceUntilIdle()
+        val report = vm.uiState.value.report
+        assertEquals("A new draft.", report.bodyCopy)
+        assertEquals("", report.keptNotes)
+        assertEquals("", report.keptNotesDraft)
+        // Still on screen, so she can go back before she saves her changes.
+        assertEquals("typed", vm.uiState.value.keptNotes?.notes)
+    }
+    @Test
+    fun `asking again works from the typed notes and feeds the prior opener back`() = runTest(testDispatcher) {
         val vm = loadedVmWithKinfolk()
         vm.updateBodyCopy("fed the cats")
         val reqs = mutableListOf<GenerateRequest>()
         coEvery { mockRepo.generate(capture(reqs), any()) } returnsMany listOf(
             Result.success(GenerateResponse(generatedCopy = "Well!!!! they were great.")),
             Result.success(GenerateResponse(generatedCopy = "Nova greeted me at the door.")),
+            Result.success(GenerateResponse(generatedCopy = "Third.")),
         )
-
         vm.generateDraft()
+        advanceUntilIdle()
+        // Asked again while the first is only offered.
+        vm.generateDraft()
+        advanceUntilIdle()
+        // Asked again after TAKING a draft: still her notes, never the draft.
+        vm.useAuntieDraft()
         advanceUntilIdle()
         vm.generateDraft()
         advanceUntilIdle()
-
-        assertEquals(2, reqs.size)
+        assertEquals(3, reqs.size)
         assertNull(reqs[0].avoid_opening)
         assertEquals("Well!!!!", reqs[1].avoid_opening)
-        assertEquals("Nova", vm.uiState.value.lastOpening)
+        assertEquals("fed the cats", reqs[1].raw_notes)
+        assertEquals("fed the cats", reqs[2].raw_notes)
+        assertEquals("Nova", reqs[2].avoid_opening)
+        // A second draft taken over the first still goes back to what she typed.
+        vm.useAuntieDraft()
+        vm.restoreNotes()
+        advanceUntilIdle()
+        assertEquals("fed the cats", vm.uiState.value.report.bodyCopy)
     }
-
     @Test
     fun `generateDraft with blank notes errors and never calls the generator`() = runTest(testDispatcher) {
         val vm = loadedVmWithKinfolk()
         vm.generateDraft()
         advanceUntilIdle()
-
-        assertNotNull(vm.uiState.value.error)
+        assertEquals(AskAuntieCopy.NEEDS_NOTES, vm.uiState.value.error)
         coVerify(exactly = 0) { mockRepo.generate(any(), any()) }
     }
-
+    @Test
+    fun `a failed generate says so plainly and keeps the notes`() = runTest(testDispatcher) {
+        val vm = loadedVmWithKinfolk()
+        vm.updateBodyCopy("all ate")
+        coEvery { mockRepo.generate(any(), any()) } returnsMany listOf(
+            Result.failure(IllegalStateException("generate failed with code 502: {\"error\":\"Claude API error: overloaded req_011\"}")),
+            Result.failure(java.net.UnknownHostException("Unable to resolve host auntieos-ttpc.web.app")),
+            Result.failure(GenerateFailure("Auntie's draft kept bringing up Kiwi, who is not on this visit, so it was thrown away.")),
+        )
+        vm.generateDraft()
+        advanceUntilIdle()
+        assertEquals(AskAuntieCopy.FAILED, vm.uiState.value.error)
+        assertFalse(vm.uiState.value.isGenerating)
+        vm.generateDraft()
+        advanceUntilIdle()
+        assertEquals(AskAuntieCopy.UNREACHABLE, vm.uiState.value.error)
+        vm.generateDraft()
+        advanceUntilIdle()
+        assertEquals(
+            "Auntie's draft kept bringing up Kiwi, who is not on this visit, so it was thrown away.",
+            vm.uiState.value.error,
+        )
+        assertEquals("all ate", vm.uiState.value.report.bodyCopy)
+        assertNull(vm.uiState.value.auntieDraft)
+    }
     // ---- #1816: the send says who the household told, from the server ----
     private fun stubSendable() {
         coEvery { mockKinCareRepo.getKinCareSession("ses1") } returns Result.success(TestFixtures.session1)

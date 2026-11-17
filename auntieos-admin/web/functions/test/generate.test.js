@@ -415,7 +415,10 @@ describe('validateRequest', () => {
     assert.strictEqual(v.recipient, '');
   });
   it('rejects missing raw_notes', () => {
-    assert.throws(() => gen.validateRequest({ ...VALID, raw_notes: '   ' }), /raw_notes/i);
+    assert.throws(
+      () => gen.validateRequest({ ...VALID, raw_notes: '   ' }),
+      (e) => e.status === 400 && e.extra.code === 'raw_notes_required' && /notes/i.test(e.message),
+    );
   });
   it('rejects an unknown communication_type with status 400', () => {
     assert.throws(
@@ -494,11 +497,11 @@ describe('resolveContext with a kinfolk_id', () => {
     assert.strictEqual(ctx.kinfolkName, 'Nora Halbrook');
   });
 
-  it('404s on an id that does not exist, naming the id', async () => {
+  it('404s on an id that does not exist, in plain words that never show the id (#2052)', async () => {
     const db = fullDb();
     await assert.rejects(
       () => gen.resolveContext(db, { communication_type: 'email', recipient: 'Dana', kinfolk_id: 'ghost', raw_notes: 'x' }),
-      (e) => e.status === 404 && /ghost/.test(e.message),
+      (e) => e.status === 404 && e.extra.code === 'kinfolk_not_found' && !/ghost/.test(e.message),
     );
   });
 
@@ -862,5 +865,435 @@ describe('runGenerate', needsVoice, () => {
     // WARNING-13: failure must be unambiguous so the client can fail loud.
     assert.strictEqual(out.draftWriteFailed, true);
     assert.match(out.warnings.join(' '), /draft/i);
+  });
+});
+// ── #2052 / #2079: a KinTale is written from its own visit and nothing else ──
+// The household the walk used: two dogs, two cats, and a bird that carries the
+// INACTIVE chip and is not on the visit. Pepper is listed by the id of her
+// household copy, the others by the office's flat id, because a visit can hold
+// either. Ziggy is active but was left off this visit on purpose.
+const T1_KINFOLK = [{ id: 't1', firstName: 'Tess', lastName: 'Tester' }];
+const T1_KIN = [
+  { id: 'k-biscuit', kinfolkId: 't1', name: 'Biscuit', species: 'dog' },
+  { id: 'k-waffle', kinfolkId: 't1', name: 'Waffle', species: 'dog', status: 'active' },
+  { id: 'k-mochi', kinfolkId: 't1', name: 'Mochi', species: 'cat' },
+  { id: 'k-pepper', kinfolkId: 't1', name: 'Pepper', species: 'cat', familyKinPath: 'families/t1/kin/fam-pepper' },
+  { id: 'k-kiwi', kinfolkId: 't1', name: 'Kiwi', species: 'bird', status: 'inactive' },
+  { id: 'k-ziggy', kinfolkId: 't1', name: 'Ziggy', species: 'rabbit' },
+  { id: 'k-other', kinfolkId: 'someone-else', name: 'Rogue', species: 'dog' },
+];
+const T1_FAMILY_KIN = [
+  { id: 'fam-pepper', name: 'Pepper', legacyKinId: 'k-pepper' },
+];
+const T1_SESSION = {
+  id: 's1',
+  kinfolkId: 't1',
+  kinIds: ['k-biscuit', 'k-waffle', 'k-mochi', 'fam-pepper', 'k-kiwi'],
+  serviceType: '30 Minute Quick Check',
+  startTime: '2026-11-10T20:00:00.000Z',
+  arrivedAt: '2026-11-10T20:05:00.000Z',
+  departedAt: '2026-11-10T20:38:00.000Z',
+};
+const T1_DOSSIER = { id: 't1', kinfolkId: 't1', rawSummary: 'Tess likes a note about breakfast.', householdNotes: 'Lock the side gate on the way out.' };
+const T1_411 = [{ id: '411_k-kiwi', kinId: 'k-kiwi', rawSummary: 'Kiwi chirps from the perch by the couch.' }];
+const T1_LOGS = [{ id: 'l1', kinfolkId: 't1', auntieNotes: 'Running late today, Kiwi sang the whole time.', submitted: 'November 3, 2026' }];
+const T1_TRAINING = [{ id: 'tr1', communicationType: 'visit_report', title: 'Gold', content: 'Duke met me at the door.' }];
+function t1Db(extra = {}) {
+  return makeDb({
+    kinfolk: T1_KINFOLK,
+    kin: T1_KIN,
+    'families/t1/kin': T1_FAMILY_KIN,
+    kin_care_sessions: [T1_SESSION],
+    dossiers: [T1_DOSSIER],
+    the_411: T1_411,
+    visit_logs: T1_LOGS,
+    training_documents: T1_TRAINING,
+    business_settings: [{ id: 'business_settings', timeZone: 'America/Chicago' }],
+    ...extra,
+  });
+}
+/** A model double that answers each call in turn and keeps what it was sent. */
+function visitModel(replies) {
+  const calls = [];
+  let i = 0;
+  return {
+    calls,
+    messages: {
+      async create(req) {
+        calls.push(req);
+        const reply = replies[Math.min(i, replies.length - 1)];
+        i += 1;
+        return typeof reply === 'string'
+          ? { content: [{ type: 'text', text: reply }], stop_reason: 'end_turn', usage: {} }
+          : reply;
+      },
+    },
+  };
+}
+const T1_REQUEST = {
+  communication_type: 'visit_report',
+  recipient: 'Tess Tester',
+  session_id: 's1',
+  raw_notes: 'all ate, water topped up, quick play',
+  care_tasks: [{ text: 'Fresh water', kin_name: '' }, { text: 'Fed breakfast', kin_name: 'Mochi' }],
+};
+const GOOD_DRAFT = 'Biscuit, Waffle, Mochi and Pepper all ate, the water is topped up, and we had a quick play.';
+const run = (db, anthropic, body = T1_REQUEST) =>
+  gen.runGenerate({ db, anthropic, model: 'm', voiceSource: 'VOICE' }, body);
+const promptOf = (anthropic, n = 0) => anthropic.calls[n].messages[0].content;
+describe('isInactiveKinStatus', () => {
+  it('counts the memorial state and both office spellings, whatever the case', () => {
+    for (const s of ['inactive', 'INACTIVE', 'archived', 'noLongerWithUs', ' Inactive ']) {
+      assert.strictEqual(gen.isInactiveKinStatus(s), true, s);
+    }
+  });
+  it('a missing, blank or active status is in care', () => {
+    for (const s of [undefined, null, '', 'active', 'prospect', 7]) {
+      assert.strictEqual(gen.isInactiveKinStatus(s), false, String(s));
+    }
+  });
+});
+describe('normalizeCareTasks', () => {
+  it('keeps the label and the Kin it was for, trimmed', () => {
+    assert.deepStrictEqual(
+      gen.normalizeCareTasks([{ text: '  Fed\n breakfast ', kin_name: ' Mochi ' }, { text: 'Fresh water' }]),
+      [{ text: 'Fed breakfast', kin_name: 'Mochi' }, { text: 'Fresh water', kin_name: '' }],
+    );
+  });
+  it('drops anything that is not a labelled task', () => {
+    assert.deepStrictEqual(gen.normalizeCareTasks([null, 'Fed', { text: '   ' }, { kin_name: 'Mochi' }, 4]), []);
+    assert.deepStrictEqual(gen.normalizeCareTasks('Fed'), []);
+    assert.deepStrictEqual(gen.normalizeCareTasks(undefined), []);
+  });
+  it('is bounded in count and in length', () => {
+    const many = Array.from({ length: 500 }, () => ({ text: 'x'.repeat(5000) }));
+    const out = gen.normalizeCareTasks(many);
+    assert.strictEqual(out.length, 80);
+    assert.strictEqual(out[0].text.length, 200);
+  });
+});
+describe('validateRequest with a visit', () => {
+  it('carries the visit id on a KinTale', () => {
+    assert.strictEqual(gen.validateRequest(T1_REQUEST).session_id, 's1');
+  });
+  it('ignores a visit id on any other kind of message', () => {
+    assert.strictEqual(gen.validateRequest({ ...T1_REQUEST, communication_type: 'email' }).session_id, null);
+  });
+  it('never reads a visit id as a path', () => {
+    for (const bad of ['a/b', '', '   ', 7, null, { id: 's1' }]) {
+      assert.strictEqual(gen.validateRequest({ ...T1_REQUEST, session_id: bad }).session_id, null);
+    }
+  });
+});
+describe('the Kin a KinTale may speak about (#2079)', () => {
+  it('is the visit\'s own list, minus any Kin not in active care', async () => {
+    const ctx = await gen.resolveContext(t1Db(), gen.validateRequest(T1_REQUEST));
+    assert.deepStrictEqual(ctx.visitKin.map((k) => k.name), ['Biscuit', 'Waffle', 'Mochi', 'Pepper']);
+  });
+  it('holds back the inactive Kin even though the visit names it, and the Kin left off the visit', async () => {
+    const ctx = await gen.resolveContext(t1Db(), gen.validateRequest(T1_REQUEST));
+    assert.deepStrictEqual(ctx.offVisitKin.map((k) => k.name).sort(), ['Kiwi', 'Ziggy']);
+  });
+  it('finds a Kin the visit lists by the id of its household copy', async () => {
+    const ctx = await gen.resolveContext(t1Db(), gen.validateRequest(T1_REQUEST));
+    assert.ok(ctx.visitKin.some((k) => k.name === 'Pepper'));
+  });
+  it('a Kin marked inactive on the household copy alone is still held back', async () => {
+    const db = t1Db({ 'families/t1/kin': [{ id: 'fam-pepper', name: 'Pepper', legacyKinId: 'k-pepper', status: 'noLongerWithUs' }] });
+    const ctx = await gen.resolveContext(db, gen.validateRequest(T1_REQUEST));
+    assert.ok(!ctx.visitKin.some((k) => k.name === 'Pepper'));
+    assert.ok(ctx.offVisitKin.some((k) => k.name === 'Pepper'));
+  });
+  it('a Kin that lives only in the household copy is found', async () => {
+    const db = t1Db({
+      'families/t1/kin': [...T1_FAMILY_KIN, { id: 'fam-new', name: 'Noodle', species: 'ferret' }],
+      kin_care_sessions: [{ ...T1_SESSION, kinIds: ['fam-new'] }],
+    });
+    const ctx = await gen.resolveContext(db, gen.validateRequest(T1_REQUEST));
+    assert.deepStrictEqual(ctx.visitKin.map((k) => k.name), ['Noodle']);
+  });
+  it('two Kin claiming one office record stay two Kin', () => {
+    const { onVisit, offVisit } = gen.splitVisitKin(
+      [
+        { ids: new Set(['flat1', 'famA']), name: 'Rex', inactive: true },
+        { ids: new Set(['famB']), name: 'Rex', inactive: false },
+      ],
+      { kinIds: ['famB'] },
+    );
+    assert.strictEqual(onVisit.length, 1);
+    assert.strictEqual(offVisit.length, 1);
+  });
+  it('a visit that names no Kin covers the active household, never the inactive one', async () => {
+    const db = t1Db({ kin_care_sessions: [{ ...T1_SESSION, kinIds: [] }] });
+    const ctx = await gen.resolveContext(db, gen.validateRequest(T1_REQUEST));
+    assert.deepStrictEqual(ctx.visitKin.map((k) => k.name).sort(), ['Biscuit', 'Mochi', 'Pepper', 'Waffle', 'Ziggy']);
+  });
+  it('a build that sends no visit still gets active Kin only', async () => {
+    const { session_id: _s, ...old } = T1_REQUEST;
+    const ctx = await gen.resolveContext(t1Db(), gen.validateRequest(old));
+    assert.ok(!ctx.visitKin.some((k) => k.name === 'Kiwi'));
+    assert.strictEqual(ctx.visit, null);
+  });
+  it('never takes a Kin from another household', async () => {
+    const ctx = await gen.resolveContext(t1Db(), gen.validateRequest(T1_REQUEST));
+    assert.ok(![...ctx.visitKin, ...ctx.offVisitKin].some((k) => k.name === 'Rogue'));
+  });
+  it('the household is the visit\'s, not whichever name was typed', async () => {
+    const db = t1Db({ kinfolk: [...T1_KINFOLK, { id: 'x9', firstName: 'Tess', lastName: 'Twin' }] });
+    const ctx = await gen.resolveContext(db, gen.validateRequest({ ...T1_REQUEST, recipient: 'Tess Twin' }));
+    assert.strictEqual(ctx.kinfolkId, 't1');
+  });
+  it('refuses a visit that belongs to a different household than the one named', async () => {
+    await assert.rejects(
+      () => gen.resolveContext(t1Db(), gen.validateRequest({ ...T1_REQUEST, kinfolk_id: 'x9' })),
+      (e) => e.status === 400 && e.extra.code === 'visit_household_mismatch',
+    );
+  });
+  it('a visit that does not exist is a plain 404 that never shows the id', async () => {
+    await assert.rejects(
+      () => gen.resolveContext(t1Db(), gen.validateRequest({ ...T1_REQUEST, session_id: 'ghost-visit' })),
+      (e) => e.status === 404 && e.extra.code === 'visit_not_found' && !/ghost-visit/.test(e.message),
+    );
+  });
+  it('an inactive Kin is left out of every other kind of message too', async () => {
+    const ctx = await gen.resolveContext(t1Db(), gen.validateRequest({ ...T1_REQUEST, communication_type: 'email' }));
+    assert.ok(!ctx.kins.some((k) => k.name === 'Kiwi'));
+    assert.ok(ctx.kins.some((k) => k.name === 'Biscuit'));
+  });
+});
+describe('what the model is given for a KinTale (#2052)', () => {
+  it('gets the Kin on the visit, the KinCare, the times, the ticked tasks and the notes', async () => {
+    const a = visitModel([GOOD_DRAFT]);
+    await run(t1Db(), a);
+    const prompt = promptOf(a);
+    assert.match(prompt, /Kin on this visit \(4\): Biscuit \(dog\), Waffle \(dog\), Mochi \(cat\), Pepper \(cat\)/);
+    assert.match(prompt, /KinCare: 30 Minute Quick Check/);
+    assert.match(prompt, /Day: Tuesday, November 10, 2026/);
+    assert.match(prompt, /Auntie arrived: 2:05\sPM/);
+    assert.match(prompt, /Auntie left: 2:38\sPM/);
+    assert.match(prompt, /- Fresh water\n- Fed breakfast \(for Mochi\)/);
+    assert.match(prompt, /all ate, water topped up, quick play$/);
+  });
+  it('is never told about the inactive Kin or the Kin left off the visit', async () => {
+    const a = visitModel([GOOD_DRAFT]);
+    await run(t1Db(), a);
+    assert.doesNotMatch(promptOf(a), /Kiwi|Ziggy/);
+  });
+  it('gets no dossier, no 411, no earlier visit and no training example', async () => {
+    const a = visitModel([GOOD_DRAFT]);
+    await run(t1Db(), a);
+    const prompt = promptOf(a);
+    assert.doesNotMatch(prompt, /breakfast\.|side gate|perch|couch|Running late|Duke|DOSSIER|411|PRIOR VISIT/);
+  });
+  it('is told to state nothing beyond them, in the last word before the notes', async () => {
+    const a = visitModel([GOOD_DRAFT]);
+    await run(t1Db(), a);
+    const prompt = promptOf(a);
+    assert.ok(prompt.includes(gen.GROUNDING_RULES));
+    assert.match(gen.GROUNDING_RULES, /State nothing those three do not say/);
+    assert.match(gen.GROUNDING_RULES, /Speak only about the Kin listed as on this visit/);
+    assert.ok(prompt.indexOf(gen.GROUNDING_RULES) < prompt.indexOf("THE AUNTIE'S NOTES"));
+    assert.ok(prompt.indexOf(gen.GROUNDING_RULES) > prompt.indexOf('CARE TASKS TICKED'));
+  });
+  it('says so when nothing was ticked, rather than leaving a gap to fill', async () => {
+    const a = visitModel([GOOD_DRAFT]);
+    await run(t1Db(), a, { ...T1_REQUEST, care_tasks: [] });
+    assert.match(promptOf(a), /CARE TASKS TICKED THIS VISIT[^\n]*\n<DATA_START>\nNone ticked\.\n<DATA_END>/);
+  });
+  it('the booked start is a day, never a clock time', async () => {
+    const db = t1Db({ kin_care_sessions: [{ ...T1_SESSION, arrivedAt: '', departedAt: '' }] });
+    const a = visitModel([GOOD_DRAFT]);
+    await run(db, a);
+    assert.match(promptOf(a), /Day: Tuesday, November 10, 2026/);
+    assert.doesNotMatch(promptOf(a), /2:00\sPM|arrived|Auntie left/);
+  });
+  it('keeps the model and the thinking setting it had', async () => {
+    const a = visitModel([GOOD_DRAFT]);
+    await gen.runGenerate({ db: t1Db(), anthropic: a, model: 'claude-sonnet-5-5', voiceSource: 'VOICE' }, T1_REQUEST);
+    assert.strictEqual(a.calls[0].model, 'claude-sonnet-5-5');
+    assert.deepStrictEqual(a.calls[0].thinking, { type: 'between_tools' });
+  });
+  it('the other kinds of message keep their household context', async () => {
+    const a = visitModel(['Hello Tess.']);
+    await run(t1Db(), a, { communication_type: 'email', recipient: 'Tess', raw_notes: 'say hi' });
+    assert.match(promptOf(a), /KINFOLK DOSSIER/);
+    assert.doesNotMatch(promptOf(a), /GROUNDING/);
+  });
+});
+describe('a draft that names a Kin who is not on the visit (#2079)', () => {
+  const BIRD = 'Biscuit and Waffle ate. Kiwi chirped along from the sidelines like a very small announcer.';
+  it('offVisitKinNamed finds the name as a word, possessive included, and not inside another word', () => {
+    const ctx = { visitKin: [{ name: 'Biscuit' }], offVisitKin: [{ name: 'Kiwi' }, { name: 'Al' }] };
+    assert.deepStrictEqual(gen.offVisitKinNamed("Kiwi's cage was quiet.", ctx, ''), ['Kiwi']);
+    assert.deepStrictEqual(gen.offVisitKinNamed('Biscuit ate it all. Also a walk.', ctx, ''), []);
+    assert.deepStrictEqual(gen.offVisitKinNamed('A kiwi-green toy.', ctx, ''), []);
+  });
+  it('lets a name through when an on-visit Kin carries it too', () => {
+    const ctx = { visitKin: [{ name: 'Rex' }], offVisitKin: [{ name: 'Rex' }] };
+    assert.deepStrictEqual(gen.offVisitKinNamed('Rex ate.', ctx, ''), []);
+  });
+  it('lets a name through when the Auntie typed it herself', () => {
+    const ctx = { visitKin: [{ name: 'Biscuit' }], offVisitKin: [{ name: 'Kiwi' }] };
+    assert.deepStrictEqual(gen.offVisitKinNamed('Kiwi watched.', ctx, 'Kiwi watched from the cage'), []);
+  });
+  it('is written again once with the name called out, and the clean draft is what comes back', async () => {
+    const a = visitModel([BIRD, GOOD_DRAFT]);
+    const db = t1Db();
+    const out = await run(db, a);
+    assert.strictEqual(a.calls.length, 2);
+    assert.match(promptOf(a, 1), /CORRECTION: your last draft named Kiwi, who is not on this visit/);
+    assert.strictEqual(out.generated_copy, GOOD_DRAFT);
+    assert.doesNotMatch(JSON.stringify(db._drafts), /chirped/);
+  });
+  it('is rejected when the second draft does it too: no copy, and nothing in the drafts list', async () => {
+    const a = visitModel([BIRD, BIRD]);
+    const db = t1Db();
+    await assert.rejects(
+      () => run(db, a),
+      (e) => e.status === 422 && e.extra.code === 'draft_names_kin_not_on_visit',
+    );
+    assert.strictEqual(a.calls.length, 2);
+    assert.strictEqual(db._drafts.length, 0);
+  });
+  it('the rejection names the Kin and never quotes the draft', async () => {
+    const a = visitModel([BIRD, BIRD]);
+    await assert.rejects(
+      () => run(t1Db(), a),
+      (e) => /Kiwi/.test(e.message) && /notes are untouched/.test(e.message) && !/chirped|announcer|k-kiwi/.test(e.message),
+    );
+  });
+  it('an active Kin left off the visit is rejected the same way', async () => {
+    const a = visitModel(['Ziggy hopped over to say hello.']);
+    await assert.rejects(() => run(t1Db(), a), (e) => e.extra.code === 'draft_names_kin_not_on_visit');
+  });
+  it('a clean draft is one call and is saved as before', async () => {
+    const a = visitModel([GOOD_DRAFT]);
+    const db = t1Db();
+    const out = await run(db, a);
+    assert.strictEqual(a.calls.length, 1);
+    assert.strictEqual(out.kinfolk_id, 't1');
+    assert.strictEqual(db._drafts.length, 1);
+    assert.strictEqual(db._drafts[0].raw_notes, T1_REQUEST.raw_notes);
+  });
+});
+describe('a generate that fails says so plainly (#2052)', () => {
+  const noLeak = (e) => !/overloaded|sk-ant|k-kiwi|\bt1\b|\bs1\b|Error:|undefined/.test(e.message);
+  it('a provider failure is a plain sentence, with the provider\'s words kept out', async () => {
+    const a = { messages: { async create() { throw new Error('overloaded_error: sk-ant-secret request_id=abc'); } } };
+    await assert.rejects(
+      () => run(t1Db(), a),
+      (e) => e.status === 502 && e.extra.code === 'ai_unavailable' && e.message === gen.ERROR_COPY.ai_unavailable && noLeak(e),
+    );
+  });
+  it('a refusal is not handed over as a draft', async () => {
+    const a = visitModel([{ content: [{ type: 'text', text: 'I cannot write that because...' }], stop_reason: 'refusal' }]);
+    const db = t1Db();
+    await assert.rejects(() => run(db, a), (e) => e.extra.code === 'ai_refused' && !/cannot write that/.test(e.message));
+    assert.strictEqual(db._drafts.length, 0);
+  });
+  it('a reply cut off at the length limit is not handed over as a draft', async () => {
+    const a = visitModel([{ content: [{ type: 'text', text: 'Biscuit and Waf' }], stop_reason: 'max_tokens' }]);
+    await assert.rejects(() => run(t1Db(), a), (e) => e.extra.code === 'ai_cut_short' && !/Waf/.test(e.message));
+  });
+  it('an empty reply is a plain failure', async () => {
+    const a = visitModel([{ content: [], stop_reason: 'end_turn' }]);
+    await assert.rejects(() => run(t1Db(), a), (e) => e.extra.code === 'ai_empty_result');
+  });
+  it('a draft row that fails to save warns in plain words, without the store\'s own error', async () => {
+    const db = t1Db();
+    db.collection = ((orig) => (name) => {
+      if (name === 'generated_drafts') {
+        return { doc: () => ({ id: 'x', set: async () => { throw new Error('PERMISSION_DENIED: generated_drafts/abc123'); } }) };
+      }
+      return orig(name);
+    })(db.collection);
+    const out = await run(db, visitModel([GOOD_DRAFT]));
+    assert.strictEqual(out.draftWriteFailed, true);
+    assert.doesNotMatch(out.warnings.join(' '), /PERMISSION_DENIED|abc123/);
+  });
+  it('every piece of error copy is a sentence, with no code, dash or id in it', () => {
+    for (const [code, copy] of Object.entries(gen.ERROR_COPY)) {
+      assert.match(copy, /^[A-Z].*\.$/, code);
+      assert.doesNotMatch(copy, /_|—|–|\bid\b|Claude|model/i, code);
+    }
+  });
+});
+describe('generateErrorResponse: what the screen is sent when a generate fails (#2052)', () => {
+  it('a known failure sends its own plain sentence, its code and its status', () => {
+    const out = gen.generateErrorResponse(new gen.GenerateError(gen.ERROR_COPY.visit_not_found, 404, { code: 'visit_not_found' }), 'visit_report');
+    assert.deepStrictEqual(out, {
+      status: 404,
+      body: { generated_copy: '', communication_type: 'visit_report', error: gen.ERROR_COPY.visit_not_found, error_code: 'visit_not_found' },
+    });
+  });
+  it('a fault nobody planned for never sends its own message', () => {
+    const out = gen.generateErrorResponse(new Error('5 NOT_FOUND: no document kinfolk/kf_8f2a91 (firestore.googleapis.com)'), 'email');
+    assert.strictEqual(out.status, 500);
+    assert.strictEqual(out.body.error, gen.ERROR_COPY.ai_unavailable);
+    assert.strictEqual(out.body.error_code, 'generate_failed');
+    assert.doesNotMatch(JSON.stringify(out), /kf_8f2a91|NOT_FOUND|firestore/);
+  });
+  it('a thrown non-error still answers with the full shape', () => {
+    const out = gen.generateErrorResponse(undefined, undefined);
+    assert.deepStrictEqual(Object.keys(out.body).sort(), ['communication_type', 'error', 'error_code', 'generated_copy']);
+    assert.strictEqual(out.body.communication_type, '');
+  });
+});
+describe('review of #2052 / #2079: the paths a KinTale could still slip through', () => {
+  it('a KinTale with no household, name or visit is still grounded, with no training example', async () => {
+    const a = visitModel(['All ate and the water is topped up.']);
+    const out = await run(t1Db(), a, { communication_type: 'visit_report', raw_notes: 'all ate, water topped up' });
+    const prompt = promptOf(a);
+    assert.match(prompt, /GROUNDING\./);
+    assert.match(prompt, /Kin on this visit: none on file/);
+    assert.doesNotMatch(prompt, /Duke|VOICE TRAINING EXAMPLES|DOSSIER|411/);
+    assert.strictEqual(out.kinfolk_id, null);
+  });
+  it('a visit that names no household, sent with no name, is grounded rather than a failed name match', async () => {
+    const a = visitModel(['All ate.']);
+    const db = t1Db({ kin_care_sessions: [{ ...T1_SESSION, kinfolkId: '' }] });
+    await run(db, a, { communication_type: 'visit_report', session_id: 's1', raw_notes: 'all ate' });
+    assert.match(promptOf(a), /GROUNDING\./);
+    assert.match(promptOf(a), /KinCare: 30 Minute Quick Check/);
+  });
+  it('a name that matches no Kinfolk is a plain 404 that never repeats the name or the roster', async () => {
+    await assert.rejects(
+      () => run(t1Db(), visitModel(['x']), { communication_type: 'visit_report', recipient: 'Ghost Writer', raw_notes: 'n' }),
+      (e) => e.status === 404 && e.message === gen.ERROR_COPY.kinfolk_not_found && !/Ghost|Tess/.test(JSON.stringify([e.message, e.extra])),
+    );
+    await assert.rejects(
+      () => run(t1Db(), visitModel(['x']), { communication_type: 'email', recipient: 'Ghost Writer', raw_notes: 'n' }),
+      (e) => e.status === 404 && e.message === gen.ERROR_COPY.kinfolk_not_found,
+    );
+  });
+  it('a visit whose Kin ids match nobody in the household names no Kin, and a household name is still caught', async () => {
+    const db = t1Db({ kin_care_sessions: [{ ...T1_SESSION, kinIds: ['id-of-another-kind'] }] });
+    const a = visitModel(['Everyone ate.']);
+    await run(db, a);
+    assert.match(promptOf(a), /Kin on this visit: none on file/);
+    assert.doesNotMatch(promptOf(a), /Biscuit|Kiwi/);
+    await assert.rejects(
+      () => run(db, visitModel(['Biscuit ate.'])),
+      (e) => e.extra.code === 'draft_names_kin_not_on_visit',
+    );
+  });
+  it('the off-visit check and its retry never spend more than two body calls', async () => {
+    const a = visitModel(['Kiwi sang.', 'Kiwi sang again.', GOOD_DRAFT]);
+    await assert.rejects(() => run(t1Db(), a), (e) => e.status === 422);
+    assert.strictEqual(a.calls.length, 2);
+  });
+});
+describe('review: a Kin whose household copy and office record share one id', () => {
+  it('is one Kin on the visit, named once', async () => {
+    const db = t1Db({ 'families/t1/kin': [...T1_FAMILY_KIN, { id: 'k-biscuit', name: 'Biscuit' }] });
+    const a = visitModel([GOOD_DRAFT]);
+    await run(db, a);
+    assert.match(promptOf(a), /Kin on this visit \(4\): Biscuit \(dog\), Waffle \(dog\), Mochi \(cat\), Pepper \(cat\)/);
+  });
+  it('and is held back when that copy alone says it is no longer in care', async () => {
+    const db = t1Db({ 'families/t1/kin': [...T1_FAMILY_KIN, { id: 'k-biscuit', name: 'Biscuit', status: 'nolongerwithus' }] });
+    const a = visitModel(['Waffle, Mochi and Pepper all ate.']);
+    await run(db, a);
+    assert.doesNotMatch(promptOf(a), /Biscuit/);
   });
 });

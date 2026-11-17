@@ -11,11 +11,11 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveInvoiceWriteActor, testOwnsDoc } from '../lib/testMode';
 import {
   invoiceStateOf,
-  paymentStandingOf,
   invoiceEditScope,
   quoteAcceptanceOf,
 } from '../lib/invoiceEditPolicy';
-import { paidCentsFromPayments, invoiceTotalCentsOf, type PaymentAmount } from '../lib/invoiceMath';
+import { paymentStandingOfInvoice } from '../lib/invoicePaidGate';
+import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
 import { refuseIfArchived } from '../lib/invoiceArchive';
 import {
@@ -238,7 +238,8 @@ export async function linkInvoiceSessionsHandler(
     const state = invoiceStateOf(data);
     const scope = invoiceEditScope(
       state,
-      paymentStandingOf(invoiceTotalCentsOf(data), paidCents),
+      // #2276: settled when a card payment's fallback landing paid it, whatever its rows add up to.
+      paymentStandingOfInvoice(data, paidCents),
       // Re-stamped, never refused: linking sessions is attribution, not an edit
       // of what the household was asked for, so an accepted quote's lock is
       // carried forward here rather than blocking the link.

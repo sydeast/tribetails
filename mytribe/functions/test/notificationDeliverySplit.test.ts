@@ -251,6 +251,9 @@ describe('promoteQueuedNotification', () => {
       status: 'pending',
       channels: ['email', 'push'],
       originScheduledId: 's1',
+      // #2259: the push sender reads only the work order.
+      targetType: 'booking',
+      targetId: 'b1',
     });
     // Id-matched, so the pair is navigable without a query.
     expect(order!.path.slice('notificationDispatch/'.length)).toBe(

@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -302,6 +303,12 @@ fun KinTaleReportScreen(
                             onBlur = viewModel::persistDraft,
                             isGenerating = state.isGenerating,
                             onGenerate = { viewModel.generateDraft(flags.communicateGenerateViaFunction) },
+                            auntieDraft = state.auntieDraft,
+                            hasAskedBefore = state.lastOpening != null,
+                            canRestoreNotes = state.keptNotes != null,
+                            onUseDraft = viewModel::useAuntieDraft,
+                            onDismissDraft = viewModel::dismissAuntieDraft,
+                            onRestoreNotes = viewModel::restoreNotes,
                         )
                     }
 
@@ -672,6 +679,14 @@ private fun NarrativeSection(
     onBlur: () -> Unit,
     isGenerating: Boolean,
     onGenerate: () -> Unit,
+    /** #2052: the draft Auntie offered, or null. Shown under the narrative, never in it. */
+    auntieDraft: String?,
+    hasAskedBefore: Boolean,
+    /** #2052: a draft is in the narrative and the notes it replaced can be put back. */
+    canRestoreNotes: Boolean,
+    onUseDraft: () -> Unit,
+    onDismissDraft: () -> Unit,
+    onRestoreNotes: () -> Unit,
 ) {
     DenPanel(
         title = "KinTale Narrative",
@@ -697,12 +712,64 @@ private fun NarrativeSection(
             )
         }
         Spacer(Modifier.height(8.dp))
-        GhostButton(
-            label = if (isGenerating) "Auntie's writing…" else "Generate draft",
-            onClick = onGenerate,
-            enabled = !isGenerating,
-        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            GhostButton(
+                label = askAuntieLabel(isGenerating, hasAskedBefore),
+                onClick = onGenerate,
+                enabled = !isGenerating,
+            )
+            if (isGenerating) {
+                AuntieSpinner(
+                    modifier = Modifier.size(18.dp).testTag(ASK_AUNTIE_SPINNER_TAG),
+                    color = AuntieTheme.colors.kinfolkOrange,
+                    strokeWidth = 2.dp,
+                )
+            }
+            if (canRestoreNotes) {
+                GhostButton(label = "Back to my notes", onClick = onRestoreNotes, enabled = !isGenerating)
+            }
+        }
+        // #2052: Auntie's draft sits beside the notes, never in them. It is
+        // hers until the Auntie takes it.
+        auntieDraft?.let { offered ->
+            Spacer(Modifier.height(12.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(AUNTIE_DRAFT_TAG)
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, AuntieTheme.colors.primary.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Auntie's draft",
+                    style = AuntieTheme.typography.labelSmall,
+                    color = AuntieTheme.colors.textDim,
+                )
+                Text(
+                    offered,
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GhostButton(label = "Keep my notes", onClick = onDismissDraft)
+                    PrimaryButton(label = "Use this draft", onClick = onUseDraft)
+                }
+            }
+        }
     }
+}
+internal const val AUNTIE_DRAFT_TAG = "kintale-auntie-draft"
+internal const val ASK_AUNTIE_SPINNER_TAG = "kintale-ask-auntie-spinner"
+/** The Ask Auntie button's words: what it will do, or that it is doing it. */
+internal fun askAuntieLabel(isGenerating: Boolean, hasAskedBefore: Boolean): String = when {
+    isGenerating -> "Auntie is writing…"
+    hasAskedBefore -> "Ask Auntie again"
+    else -> "Ask Auntie"
 }
 
 // ───────────────────────────── Photos ─────────────────────────────

@@ -2951,7 +2951,9 @@ which is the question the trail exists for.
 
 **What did NOT move.** The in-visit lifecycle (`ON_MY_WAY` / `ARRIVED` /
 `DEPARTED`, and Undo Arrival back to `SCHEDULED`) is still a direct client patch
-from the field app, and `firestore.rules` still permits it. That app is
+from the field app, and `firestore.rules` still permits it (an Auntie's start
+and her Undo arrival excepted while "Verify arrival and departure" is on:
+#2279, #2038). That app is
 regularly offline mid-visit, and Firestore's offline write queue is what makes
 those writes land at all.
 
@@ -2976,13 +2978,22 @@ every client.
   `arrivalCheckedByOwner`) and `invoiceId`. No position is accepted.
 - **The household is not told.** No notice is sent and none is recalled.
   Result: `notified: false`, `notifySkipped: 'no_event_for_action'`.
-- **The next Departed is quiet too.** The undo writes the visit's `arrivedAt`
-  to `departedNoticeToldForArrival`. While that still equals `arrivedAt`, a
-  Departed sends the household no second "has left": `setVisitLifecycle` and
-  `dispatchVisitNotification` both answer `notified: false` /
-  `suppressed: true` with the reason `already_notified`, and the Activity Log
-  line is written as usual. A new arrival has a new `arrivedAt`, so its
-  departure is announced. A first notice that failed to send is not retried.
+- **The next Departed is quiet too, the same business day (#2357).** When an
+  earlier departure of the visit reached the household (a `notifications` row
+  was written for it), a Departed on the same business day sends no second
+  "has left": `setVisitLifecycle` and `dispatchVisitNotification` both answer
+  `notified: false` / `suppressed: true` with the reason `already_notified`,
+  and the Activity Log line is written as usual. The entry, which "Undo
+  departed" alone leaves listed, is handed to the new departure
+  (`standsForDepartureAtMs`) and otherwise left as it is. On a later business
+  day the Departed is announced as a normal notice, and once its row exists
+  the first day's row is withdrawn (`withdrawnReason: 'departure_undone'`), so
+  the household reads one "has left" and not two. If the later-day Departed
+  writes no row (the send gate off, the notice turned off, no member login, a
+  failed send), the first day's row stays listed. A first "has left" that
+  never reached the household is not counted as told, so the real one is
+  sent. The visit field `departedNoticeToldForArrival` is no longer written
+  or read; the rules still refuse it to a client.
 - **A hand Complete closes the window.** `transitionBookingStatus` COMPLETE
   removes `undoDepartedUntil` and `householdStatusBeforeCompletion`, so the
   undo never takes back a Complete the owner made from the card.
@@ -2995,6 +3006,108 @@ every client.
   having written nothing.
 - **Activity Log**: one `VISIT_UNDO_DEPARTED` line ("Undid the departure:
   completed to arrived"), fixed id per departure.
+
+**Undo arrival and the household's notice (#2038).** Undoing an arrival is
+quiet, as "Undo departed" is. It reaches the server two ways: the
+`setVisitLifecycle` action `UNDO_ARRIVAL`, or a client's own write of the
+session, which `onKinCareSessionLifecycle` reads. Both run
+`lib/visitStepNotice.ts#announceVisitStep`, so the rules below hold for either.
+
+- **Nothing is sent.** No correction, on any channel. Result:
+  `notified: false`, `notifySkipped: 'no_event_for_action'`.
+- **The arrival's entry is withdrawn.** The `notifications/{id}` row written
+  for the undone arrival ("Your Auntie has arrived") gets `archivedAt`,
+  `withdrawnAt` and `withdrawnReason: 'arrival_undone'`
+  (`lib/arrivalNoticeWithdrawal.ts`). `listMyNotifications`, `getMyHome` and
+  the bell on both MyTribe clients leave it out, read or unread. The row is
+  not deleted, and `unarchiveNotification` / `bulkUnarchiveNotifications`
+  leave a withdrawn row alone.
+- **What already went out stays out.** The row's `notificationDispatch` work
+  order and its channel records are not touched. An email, text or push
+  cannot be recalled.
+- **Which row.** The one sent under the undone arrival's stamped time
+  (`arrivedAt`), found through `visit_step_notices/{session}__arrived__{ms}`
+  and the dedupe ledger. Never every arrival row of the visit: an undo and the
+  arrival after it can arrive out of order.
+- **Arriving again (lead ruling on review, as #2250's one "has left").** When
+  an earlier arrival of the visit reached the household (a `notifications` row
+  was written for it), the real arrival sends nothing a second time: no new
+  row, no work order, no email, text or push. The earlier row is handed to the
+  new arrival and put back on their list: `withdrawnAt` and `withdrawnReason`
+  cleared, `archivedAt: null`, `readAt: null` (unread, counted once),
+  `createdAt` the moment the real arrival reached the server, and
+  `standsForArrivalAtMs` the new `arrivedAt`. Result: `notified: false`,
+  `notifySkipped: 'already_notified'`, and the new arrival's
+  `visit_step_notices` record carries the row's id, so undoing it withdraws
+  the same row again. A row the reader had filed away before the undo stays
+  filed. `dispatchVisitNotification` (`event: 'arrived'`) answers
+  `already_notified` the same way, so an installed client's own dispatch is
+  not the second notice.
+- **Only the same business day (#2357, lead ruling).** The quiet rule covers a
+  quick mistake, not a later visit. A real arrival or departure that reaches
+  the server on a later business day than the undone one was recorded is
+  announced as a normal notice: a new row, a work order, and an email, text
+  or push by the household's own channels, with the household send gate
+  applied as for any notice. The day is read on the business's clock
+  (`business_settings.timeZone`, else `America/Chicago`) from the server's
+  clock at both ends (`visit_step_notices.recordedAtMs` and now), never from
+  a device's stamp. `lib/arrivalNoticeWithdrawal.ts#quietRepeatOf` is the one
+  decision; `announceVisitStep` and `dispatchVisitNotification` both ask it.
+  "The earlier step" is the latest one on the server's clock.
+- **A later-day notice replaces the earlier day's row (#2357, lead ruling).**
+  When a step is announced on a later business day and an earlier row of the
+  same notice is still listed for the visit (after "Undo departed" alone, or
+  an Undo arrival whose withdrawal never landed), `announceVisitStep`
+  withdraws the earlier row once the new one exists
+  (`lib/arrivalNoticeWithdrawal.ts#withdrawReplacedNotice`). Nothing is sent
+  about it. The session trigger does this for every path, an installed
+  client's own dispatch included. Activity Log: a second `VISIT_ARRIVED` or
+  `VISIT_DEPARTED` line ("Took the earlier departure notice off the
+  household's notifications list. The new one replaces it"), fixed id per
+  step.
+- **"Has left" goes with its arrival (#2348).** Undo arrival, from Departed or
+  after an "Undo departed", also withdraws the "Your Auntie has left" row of
+  each departure that ended the undone arrival (`withdrawnReason:
+  'departure_undone'`), found through the departure's `visit_step_notices`
+  record (which names its arrival in `arrivalAtMs`) and the dedupe ledger.
+  The next real Departed puts it back unread and sends nothing (same day), or
+  is announced (a later day). Result either way as for an arrival.
+- **What the undo took off is recorded (#2357).**
+  `visit_step_notices/{session}__undo_arrival__{arrivedAt ms}` carries
+  `withdrawn`, the notices now off the household's list (`'arrived'`,
+  `'departed'`, both, or none), with `notified: false` and
+  `reason: 'no_event_for_action'`. The admin clients read it for the
+  sentence after the undo and only say an entry came off when it names one.
+  `withdrawn` only grows. The record is written once the arrival's own notice
+  is settled, so it never says "none" for a notice still on its way.
+- **Never told the first time.** If no row was ever written for the earlier
+  arrival (no member login, the household switch off, the notice turned off, a
+  failed send, or the wrong tap was undone before its notice existed), the
+  real arrival is announced as normal.
+- **A late undo.** An undo only withdraws a row that still stands for the
+  arrival being undone. Handled after the re-arrival, it leaves the entry
+  listed.
+- **Out of order.** If the undo is handled before the arrival's own notice
+  exists, the trigger sends nothing for that arrival, and a notice that does
+  get written for an arrival no longer on the visit is withdrawn at once.
+- **"On my way".** The undo sends nothing new. A visit that had declared On my
+  way goes back to `ON_MY_WAY`, its notice stays listed, and On my way from
+  there is a no-op that writes and sends nothing.
+- **Re-measured.** The undo clears `arrivalDistanceMeters`,
+  `arrivalAccuracyMeters` and `arrivalLocationCheckedAt`. With "Verify arrival
+  and departure" on, an Auntie's next Arrived is measured again and refused
+  outside the range.
+- **Rules.** With "Verify arrival and departure" on, an Auntie's client cannot
+  write an Arrived or Departed visit back to Scheduled or On my way; her undo
+  is the callable. The owner, and an Auntie with the switch off, keep the
+  direct write.
+- **Activity Log**: the `VISIT_UNDO_ARRIVAL` line ("Undid the arrival: arrived
+  to scheduled"), and when a row was withdrawn a second `VISIT_UNDO_ARRIVAL`
+  line ("Took the arrival notice off the household's notifications list. No
+  message was sent about the undo"), fixed id per arrival. When a real arrival
+  puts the entry back, a second `VISIT_ARRIVED` line ("Put the arrival notice
+  back on the household's notifications list. They were told once already, so
+  no second message was sent"), fixed id per arrival.
 
 ## Booking notes (admin + kinfolk)
 

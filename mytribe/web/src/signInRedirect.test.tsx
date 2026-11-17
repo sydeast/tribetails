@@ -61,6 +61,11 @@ vi.mock('./api/portal', () => ({ getMyAccess, getMyHome, setActiveTribe }));
 /** The destination of the deep link, stubbed: whether it mounts is the question. */
 vi.mock('./screens/BookingDetail', () => ({ BookingDetail: () => <div>THE BOOKING</div> }));
 vi.mock('./screens/Home', () => ({ Home: () => <div>PORTAL HOME</div> }));
+/** #2259: the other screens a tapped push opens. */
+vi.mock('./screens/KinTales', () => ({ KinTalesRoute: () => <div>THE KINTALES</div> }));
+vi.mock('./screens/InvoiceDetail', () => ({ InvoiceDetail: () => <div>THE INVOICE</div> }));
+vi.mock('./screens/KinDetail', () => ({ KinDetail: () => <div>THE KIN</div> }));
+vi.mock('./screens/Messages', () => ({ Messages: () => <div>THE MESSAGES</div> }));
 
 /** jsdom reports a live connection by default; these two say otherwise. */
 function setOnline(online: boolean): void {
@@ -180,6 +185,22 @@ describe('#1384 portal sign-in keeps the deep link', () => {
     expect(await screen.findByText('THE BOOKING')).toBeInTheDocument();
     expect(window.location.pathname).toBe('/schedule/bk-2291');
     expect(window.location.search).toBe('?from=email');
+    expect(screen.queryByText('PORTAL HOME')).toBeNull();
+  });
+  it.each([
+    ['a visit', '/schedule/v1', 'THE BOOKING'],
+    ['a KinTale', '/kintales?tale=t1', 'THE KINTALES'],
+    ['an invoice', '/invoices/inv1', 'THE INVOICE'],
+    ['a Kin', '/kin/k1', 'THE KIN'],
+    ['Messages', '/messages', 'THE MESSAGES'],
+  ])('#2259: a push about %s tapped while signed out opens it after sign-in', async (_label, route, landed) => {
+    window.history.replaceState(null, '', route);
+    await boot();
+    await waitFor(() => expect(window.location.pathname).toBe('/signin'));
+    expect(new URLSearchParams(window.location.search).get('redirect')).toBe(route);
+    await fillAndSubmit();
+    expect(await screen.findByText(landed)).toBeInTheDocument();
+    expect(window.location.pathname + window.location.search).toBe(route);
     expect(screen.queryByText('PORTAL HOME')).toBeNull();
   });
   it('still lands on Home when the household went to /signin directly', async () => {

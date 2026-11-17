@@ -10,12 +10,16 @@
   border-radius: 12px; transition: background .2s var(--ease); }
 .nl-row:hover { background: rgba(223, 132, 49, .08); }
 .nl-row:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+/* The entry a tapped push opened the list for. */
+.nl-row--opened { background: rgba(223, 132, 49, .12); }
 .nl-row__dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; background: transparent; }
 .nl-row--unread .nl-row__dot { background: var(--coral); box-shadow: 0 0 0 3px rgba(213, 83, 90, .18); }
 .nl-row__body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .nl-row__title { font-weight: 500; color: var(--navy); }
 .nl-row--unread .nl-row__title { font-weight: 600; }
 .nl-row__desc { color: var(--navy-muted); font-size: 13px; }
+/* #2368: the whole message a push was cut from, with its line breaks. */
+.nl-row__message { color: var(--navy); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* #2030: the office's own note on an answer, kept as written. */
 .nl-row__note { color: var(--navy); font-size: 13px; white-space: pre-wrap; }
 .nl-row__when { font-family: var(--mono); font-size: 11px; letter-spacing: .04em; color: var(--navy-muted);

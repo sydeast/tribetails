@@ -107,6 +107,31 @@ Channel and length rules belong in `voice/02_Channel_Playbook.md` §2. The
 per-type lines in `SYSTEM_FRAMING` (`web/functions/generate.js`) must agree with
 that table; when they disagree, the table is right and the prompt is the bug.
 
+### Names in the samples
+
+The model reads the samples with placeholder names. `voice/corpus/exemplars.md`
+says which names to replace, in one comment block:
+
+```
+<!-- sample-names
+kin: Biscuit
+kin: Sir Waffle | Waffle | SW
+kinfolk: Dana
+-->
+```
+
+One line per Kin or person, with `|` between the other ways the same name is
+written. List every name that appears in any of the three voice files, not only
+the samples. Before the model reads them, `generate.js` swaps each name for
+`[Kin]`, `[Kin 2]` or `[Kinfolk]` and cuts the block. After the model answers,
+a draft that uses a listed name is thrown away unless the request itself
+carries that name (a Kin of that household, or the Auntie's own notes).
+
+A samples file without the block stops every generate with a 500
+(`voice_sample_names_missing`), because the names in it cannot be replaced.
+When a new sample brings a new name, add the line in `voice/`, then sync. An
+`auntie:` line is replaced in the samples but never refused in a draft.
+
 ## Deploying, and why the site names read backwards
 
 The admin ships as step 6 of the production release (`npm run deploy:bg` from

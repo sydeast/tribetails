@@ -14,6 +14,9 @@ import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.kinfolk.portal.push.DroppedPushLog
+import com.kinfolk.portal.push.PUSH_EXTRA_CATALOG_KEY
+import com.kinfolk.portal.push.PUSH_EXTRA_CATALOG_ROUTE
+import com.kinfolk.portal.push.PUSH_OPEN_EXTRA_KEYS
 import com.kinfolk.portal.push.notificationBlockReasonNow
 import com.kinfolk.portal.MainActivity
 import kotlin.coroutines.cancellation.CancellationException
@@ -32,7 +35,10 @@ import kotlin.coroutines.cancellation.CancellationException
  * Message handling:
  *   - Catalog-dispatched (`data.notificationKey` present) → posts a system
  *     notification with title/body from the FCM notification payload.
- *     `data.route` optionally carries a deep-link route for tap handling.
+ *     A tap opens what the notice is about (#2259): the push's target fields
+ *     and `data.route` ride on the tap intent, and MainActivity reads them
+ *     through push/PushOpen.kt. That reader also covers the push Android
+ *     shows by itself while the app is closed, which never reaches this class.
  *   - Other types → logs and drops (kinfolk app currently has no Twilio/SMS flow).
  *
  * Fail-loud per project policy: registration failures log to Sentry-eligible
@@ -69,7 +75,13 @@ class KinfolkFcmService : FirebaseMessagingService() {
             ?: remoteMessage.data["body"]
             ?: ""
         val route = remoteMessage.data["route"]
-        showCatalogNotification(catalogKey, title, body, route)
+        // #2259: what a tap opens. The same data keys Android hands MainActivity
+        // itself when the push arrives with the app closed, so one reader
+        // (push/PushOpen.kt) serves both.
+        val target = PUSH_OPEN_EXTRA_KEYS
+            .mapNotNull { key -> remoteMessage.data[key]?.let { key to it } }
+            .toMap()
+        showCatalogNotification(catalogKey, title, body, route, target)
     }
 
     private fun registerToken(token: String) {
@@ -97,9 +109,11 @@ class KinfolkFcmService : FirebaseMessagingService() {
         title: String,
         body: String,
         route: String?,
+        target: Map<String, String> = emptyMap(),
     ) {
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            target.forEach { (k, v) -> putExtra(k, v) }
             putExtra(EXTRA_CATALOG_KEY, catalogKey)
             if (route != null) putExtra(EXTRA_CATALOG_ROUTE, route)
         }
@@ -138,8 +152,8 @@ class KinfolkFcmService : FirebaseMessagingService() {
     companion object {
         private const val TAG = "KinfolkFcm"
         const val CHANNEL_ID = "mytribe-catalog"
-        const val EXTRA_CATALOG_KEY = "CATALOG_KEY"
-        const val EXTRA_CATALOG_ROUTE = "CATALOG_ROUTE"
+        const val EXTRA_CATALOG_KEY = PUSH_EXTRA_CATALOG_KEY
+        const val EXTRA_CATALOG_ROUTE = PUSH_EXTRA_CATALOG_ROUTE
         private const val NOTIFICATION_ID_BASE = 4000
 
         fun ensureChannel(ctx: Context) {

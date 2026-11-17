@@ -3,16 +3,35 @@ import type { Response } from 'express';
 import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../lib/firestoreAdmin';
 import { verifyStripeWebhook, getStripe } from '../lib/stripe';
-import { dollarsToCents } from '../lib/paymentMoney';
+import { TIP_BASIS_FIELD, dollarsToCents } from '../lib/paymentMoney';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { invoiceMarkedPaid } from '../lib/invoicePaidGate';
 import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
 // #1005: money notices go to a member with billing access, not the last-synced account.
 import { resolveBillingRecipientUid } from '../lib/resolveBillingRecipientUid';
 import { enqueueNotificationDetailed, type UnresolvedResolver } from '../notifications/dispatcher';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
-import { formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import {
+  centsToDollars,
+  formatUsdCents,
+  invoiceTotalCentsOf,
+  paidCentsFromPayments,
+  type PaymentAmount,
+} from '../lib/invoiceMath';
+import { stageApply } from '../lib/paymentApply';
+import {
+  CARD_APPLY_FALLBACK_FIELD,
+  CARD_PAYMENT_METHOD,
+  CARD_PAYMENT_RECORDED_BY,
+  PAID_EVENT_TYPES,
+  RECOVERED_FROM_FIELD,
+  SKIPPED_OUT_OF_ORDER,
+  cardPaymentRowId,
+  decideCardApply,
+} from '../lib/cardPaymentApply';
+import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
 import { FULL_CPU } from '../lib/runtimeOptions';
@@ -64,6 +83,11 @@ export const AUDIT_WRITTEN_FIELD = 'auditWrittenAt';
 export const NOTICE_SENT_FIELD = 'noticeSentAt';
 export const NOTICE_SKIPPED_FIELD = 'noticeSkippedReason';
 
+// #2344: the skipped-event outcome, the recovery stamp and the paid event
+// types live in `lib/cardPaymentApply.ts`, beside the rest of what the card
+// backfill script shares with this handler.
+export { PAID_EVENT_TYPES, RECOVERED_FROM_FIELD, SKIPPED_OUT_OF_ORDER };
+
 /**
  * How long the dispatcher ledger remembers this webhook's notice for one event.
  * Stripe retries a failed delivery for up to three days; a day more is margin.
@@ -90,7 +114,47 @@ export function stripeAuditDocId(eventId: string, kind: FollowupKind): string {
  * two so a crash between the commit and the notice is finished on Stripe's
  * retry instead of being lost.
  */
-export type FollowupKind = 'paid' | 'failed' | 'unapplied';
+export type FollowupKind = 'paid' | 'failed' | 'unapplied' | 'declinedAfterPayment';
+
+/**
+ * #2344: `appliedOutcome` for a declined charge on an invoice that was already
+ * paid, or whose payment from the same checkout had already landed. The
+ * household is sent NO `invoice.charge.failed` for it (they owe nothing by
+ * that card, and the notice asks them to pay). The owner gets one Activity Log
+ * line in plain words instead, and the invoice is not written at all.
+ */
+export const DECLINED_AFTER_PAYMENT = 'FAILED_AFTER_PAYMENT';
+/** Stored on the event record with `DECLINED_AFTER_PAYMENT`: which of the two it was, and the invoice's number for the line. */
+export const DECLINE_REASON_FIELD = 'declineAfterPaymentReason';
+export const DECLINE_INVOICE_NUMBER_FIELD = 'declineInvoiceNumber';
+/** `noticeSkippedReason` for a decline that is deliberately not told to anyone. */
+export const NOTICE_SKIPPED_AFTER_PAYMENT = 'declined-after-payment';
+
+/** Why a decline is not worth telling the household about. */
+export type DeclineAfterPaymentReason = 'invoice-paid' | 'payment-landed';
+export interface DeclineAfterPaymentDetail {
+  reason: DeclineAfterPaymentReason;
+  invoiceNumber: string;
+}
+
+/**
+ * PURE. Whether a declined charge has been overtaken by a payment: the
+ * PaymentIntent it names has its claim (`stripePayments/{id}`, written in the
+ * same commit as the money, so the checkout's own payment landed), or the
+ * invoice reads paid. Null when the decline still matters to the household.
+ */
+export function declineAfterPayment(
+  invoice: Record<string, unknown> | undefined | null,
+  paymentLanded: boolean,
+): DeclineAfterPaymentDetail | null {
+  const paid = invoiceMarkedPaid(invoice ?? null);
+  if (!paid && !paymentLanded) return null;
+  const number = invoice?.['invoiceNumber'];
+  return {
+    reason: paid ? 'invoice-paid' : 'payment-landed',
+    invoiceNumber: typeof number === 'string' ? number : '',
+  };
+}
 
 /** What the `unapplied` follow-up says about the charge. Stored on the event record for a retry. */
 export interface UnappliedDetail {
@@ -133,6 +197,8 @@ async function finishEventFollowup(input: {
   noticeDone: boolean;
   /** Set for `unapplied` only. */
   unapplied?: UnappliedDetail;
+  /** Set for `declinedAfterPayment` only. */
+  declined?: DeclineAfterPaymentDetail;
   /**
    * Who started the checkout: `payInvoice` stamps the caller's uid into the
    * session metadata. Since D-2026-09-28-BILLING-ACCESS-PAYS that can be a
@@ -156,6 +222,34 @@ async function finishEventFollowup(input: {
   const paid = input.kind === 'paid';
   const unapplied = input.kind === 'unapplied';
   const detail: UnappliedDetail = input.unapplied ?? { paymentIntentId: null, duplicateReason: null, unappliedCents: 0 };
+  if (input.kind === 'declinedAfterPayment') {
+    // #2344: THE OWNER'S LINE, AND NO NOTICE TO ANYONE. `info`: no money moved
+    // and nothing is asked of the owner. The notice is stamped as skipped in
+    // the same breath, so no retry of this event ever sends one.
+    const declined: DeclineAfterPaymentDetail = input.declined ?? { reason: 'invoice-paid', invoiceNumber: '' };
+    if (!input.auditDone) {
+      // Loaded here, on the one path that needs it, to keep the sentences out
+      // of every function's cold start (test/coldStartImportGraph.test.ts).
+      const { cardDeclinedAfterPaymentWords } = await import('../lib/activityWords.js');
+      await writeAuditEntry({
+        status: 'FAILURE',
+        event: AUDIT_EVENTS.BILLING_CARD_DECLINED_AFTER_PAYMENT,
+        severity: 'info',
+        actorRole: 'SYSTEM',
+        familyId: input.familyId,
+        // No target: the Activity Log row would end with the invoice's document
+        // id. The line names the invoice by its number; the id is in the payload.
+        description: cardDeclinedAfterPaymentWords(declined.invoiceNumber, declined.reason),
+        payload: { invoiceId: input.invoiceId, stripeEventId: input.eventId, reason: declined.reason },
+        docId: stripeAuditDocId(input.eventId, input.kind),
+      });
+    }
+    await stamp({
+      ...(input.auditDone ? {} : { [AUDIT_WRITTEN_FIELD]: FieldValue.serverTimestamp() }),
+      ...(input.noticeDone ? {} : { [NOTICE_SKIPPED_FIELD]: NOTICE_SKIPPED_AFTER_PAYMENT }),
+    });
+    return;
+  }
   if (!input.auditDone) {
     await writeAuditEntry({
       status: paid ? 'SUCCESS' : 'FAILURE',
@@ -390,20 +484,24 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   }
 
   // Idempotency: Stripe retries failed deliveries. Without a dedupe ledger
-  // the same event re-fires audits + notifications and can silently undo a
-  // manual admin mark-paid if a late `payment_failed` retry arrives after a
-  // successful `invoice.paid`. The transaction atomically (a) reserves the
-  // event id, (b) reads the current invoice state, (c) checks the new event
-  // is newer than the last-applied event of the opposite outcome. Skips any
-  // event that is a replay or an out-of-order older event.
+  // the same event re-fires audits + notifications. The transaction atomically
+  // (a) reserves the event id, (b) reads the current invoice state, and (c) for
+  // a FAILED event only, checks it is not older than the last event applied to
+  // the invoice. A replay is skipped; so is a failed event that arrives late.
+  //
+  // #2344: A PAID EVENT IS NEVER SKIPPED FOR ITS DATE. The card is already
+  // charged when Stripe says so. Until #2344 step (c) ran for every event, and
+  // a declined charge stamps the invoice with its own time, so a payment whose
+  // first delivery failed and whose retry arrived after a later decline on a
+  // newer checkout was answered 200 and written nowhere. Its event id was
+  // reserved by the skip, so no further retry could land it. What stops a paid
+  // event being applied twice is the per-payment claim and the per-invoice
+  // settlement check below, neither of which reads a date.
   const eventCreatedMs = ((event.created ?? 0) as number) * 1000;
   // `checkout.session.completed` is the canonical event for a `mode: 'payment'`
   // Checkout integration, which is what `payInvoice` creates. It was missing
   // here, so it fell through to the unhandled-type 202 below.
-  const isPaidEvent =
-    event.type === 'invoice.paid' ||
-    event.type === 'payment_intent.succeeded' ||
-    event.type === 'checkout.session.completed';
+  const isPaidEvent = PAID_EVENT_TYPES.includes(event.type);
   const isFailedEvent = event.type === 'invoice.payment_failed' || event.type === 'payment_intent.payment_failed';
   if (!isPaidEvent && !isFailedEvent) {
     res.status(202).json({ ok: true, ignored: true });
@@ -458,9 +556,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // One successful card payment now delivers TWO events that both mean paid —
   // `checkout.session.completed` and `payment_intent.succeeded` — carrying two
   // different `event.id`s, so `stripeEvents/{event.id}` cannot dedupe them
-  // against each other, and their `created` stamps are seconds-granular and
-  // usually equal, so the out-of-order guard (a strict `<`) lets the second
-  // through too. Unguarded, the second event writes a SECOND
+  // against each other, and no date check stands between a paid event and the
+  // invoice (#2344). Unguarded, the second event writes a SECOND
   // `payments/{eventId}` mirror doc — double-counting real money in the root
   // ledger — plus a second BILLING_INVOICE_PAID audit entry and a second
   // `invoice.payment.applied` notification to the household.
@@ -555,15 +652,43 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // a Firestore transaction re-runs its callback on contention.
   let duplicateReason: DuplicateCheckoutReason = null;
   let unappliedCents = 0;
+  // #2276: why the card payment took the fallback landing, when it did. Read
+  // back after the commit for the warn line, like the two above.
+  let cardFallbackReason: string | null = null;
+  // #2344: this delivery is deciding a paid event an earlier build skipped.
+  let recoveredSkip = false;
+  // #2344: a decline the household is not told about, and why. Read back after
+  // the commit for the Activity Log line.
+  let declinedDetail: DeclineAfterPaymentDetail | null = null;
+  // The claim of the PaymentIntent a FAILED event names. Read, never written:
+  // a decline must not claim the id (see `paymentClaimRef`).
+  const declinedClaimRef =
+    isFailedEvent && paymentIntentId ? db().doc(`stripePayments/${paymentIntentId}`) : null;
   const decision = await db().runTransaction(async (tx) => {
     unresolvedAmount = false;
+    recoveredSkip = false;
+    declinedDetail = null;
     duplicateReason = null;
     unappliedCents = 0;
+    cardFallbackReason = null;
     const dedupeSnap = await tx.get(dedupeRef);
-    if (dedupeSnap.exists) {
+    const storedEvent = dedupeSnap.exists ? ((dedupeSnap.data() ?? {}) as Record<string, unknown>) : null;
+    // #2344: A PAID EVENT THE OLD ORDER CHECK SKIPPED is not a replay of
+    // anything: nothing was written for it but this record. When Stripe sends
+    // it again (its own retry, or Resend in the dashboard) it is decided afresh
+    // below, like a first delivery, and this record is rewritten with what was
+    // decided. A skipped FAILED event stays skipped.
+    const recovering = isPaidEvent && storedEvent?.['appliedOutcome'] === SKIPPED_OUT_OF_ORDER;
+    recoveredSkip = recovering;
+    /** Writes this event's record: created on a first delivery, rewritten when recovering a skipped one. */
+    const reserveEvent = (data: Record<string, unknown>) => {
+      if (recovering) tx.set(dedupeRef, { ...data, [RECOVERED_FROM_FIELD]: SKIPPED_OUT_OF_ORDER });
+      else tx.create(dedupeRef, data);
+    };
+    if (storedEvent !== null && !recovering) {
       // #866: what the first delivery recorded, so a retry can finish a paid
       // event whose audit entry or household notice never went out.
-      const stored = (dedupeSnap.data() ?? {}) as Record<string, unknown>;
+      const stored = storedEvent;
       return {
         proceed: false,
         reason: 'replay' as const,
@@ -571,6 +696,11 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         followupTracked: stored[FOLLOWUP_TRACKED_FIELD] === true,
         auditDone: stored[AUDIT_WRITTEN_FIELD] != null,
         noticeDone: stored[NOTICE_SENT_FIELD] != null || stored[NOTICE_SKIPPED_FIELD] != null,
+        declined: {
+          reason: stored[DECLINE_REASON_FIELD] === 'payment-landed' ? 'payment-landed' : 'invoice-paid',
+          invoiceNumber:
+            typeof stored[DECLINE_INVOICE_NUMBER_FIELD] === 'string' ? stored[DECLINE_INVOICE_NUMBER_FIELD] : '',
+        } as DeclineAfterPaymentDetail,
         unapplied: {
           paymentIntentId: typeof stored['paymentIntentId'] === 'string' ? stored['paymentIntentId'] : null,
           duplicateReason: typeof stored['duplicateReason'] === 'string' ? stored['duplicateReason'] : null,
@@ -581,6 +711,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // Every read before the first write: a Firestore transaction refuses reads
     // after writes, so this sits with the other gets, not with its branch.
     const claimSnap = paymentClaimRef ? await tx.get(paymentClaimRef) : null;
+    const declinedClaimSnap = declinedClaimRef ? await tx.get(declinedClaimRef) : null;
     const invoiceSnap = await tx.get(ref);
     const invoice = invoiceSnap.data() as
       | {
@@ -591,20 +722,22 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
           [SETTLED_INTENT_FIELD]?: unknown;
           status?: unknown;
           paymentStatus?: unknown;
+          invoiceStatus?: unknown;
         }
       | undefined;
-    // The state stamp's payment standing reads the `payments` SUBCOLLECTION
-    // (Stripe's own mirror docs live in the ROOT `payments` collection, so on
-    // a card-only invoice this sums to zero; a manually-recorded partial shows
-    // up here and keeps the doc honestly repairable). Read now, before the
+    // The invoice's own `payments` rows: what has been collected on it, and
+    // (#2276) what the card payment is applied against. Read now, before the
     // first write: a Firestore transaction refuses reads after writes.
     const subPaymentsSnap = isPaidEvent ? await tx.get(ref.collection('payments')) : null;
-    const lastEventMs = invoice?.lastStripeEventAtMs ?? 0;
+    const lastEventMs =
+      typeof invoice?.lastStripeEventAtMs === 'number' && Number.isFinite(invoice.lastStripeEventAtMs)
+        ? invoice.lastStripeEventAtMs
+        : 0;
     if (claimSnap?.exists) {
       // The other event describing this same PaymentIntent already applied.
       // Reserve THIS event id so its own Stripe retries short-circuit at the
       // replay branch above, and mutate nothing else.
-      tx.create(dedupeRef, {
+      reserveEvent({
         type: event.type,
         receivedAt: FieldValue.serverTimestamp(),
         eventCreatedMs,
@@ -643,6 +776,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
             amountDue: invoice?.amountDue,
             status: invoice?.status,
             paymentStatus: invoice?.paymentStatus,
+            // #2358: a cancelled invoice takes no payment; the charge is held.
+            invoiceStatus: invoice?.invoiceStatus,
           },
           paymentIntentId,
           eventRound,
@@ -667,6 +802,10 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // session charges a balance that has since moved, and deciding what the
       // difference becomes is the same admin decision.
       //
+      // #2358: `invoice-cancelled` too. A checkout page opened before the
+      // invoice was cancelled can still be paid on. The invoice stays
+      // cancelled, exactly as stored: no row on it, no balance moved.
+      //
       // NOT DONE HERE, all deliberate: no second `status: 'paid'` stamp, no
       // BILLING_INVOICE_PAID audit, and no `invoice.payment.applied` to the
       // household. The invoice was not paid again.
@@ -677,7 +816,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // a flagged row with no figure, never a guess.
       const chargeCents = eventAmountCents ?? 0;
       unappliedCents = chargeCents;
-      tx.create(dedupeRef, {
+      reserveEvent({
         type: event.type,
         receivedAt: FieldValue.serverTimestamp(),
         eventCreatedMs,
@@ -747,20 +886,50 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       return { proceed: false, reason: 'duplicate-invoice-checkout' as const };
     }
 
-    if (eventCreatedMs > 0 && eventCreatedMs < lastEventMs) {
-      // Out-of-order retry arriving after a newer event has already been
-      // applied. Reserve the id to prevent future replays but don't mutate.
+    // #2344: A DECLINE OVERTAKEN BY A PAYMENT. The invoice reads paid, or the
+    // payment from this same checkout has landed. Telling the household their
+    // charge failed would ask them to pay a bill they have paid. So: no notice,
+    // one Activity Log line for the owner (after the commit), and NOTHING
+    // written to the invoice, not even the order stamp. Ahead of the date
+    // check on purpose: it holds whatever the decline's date.
+    const overtaken = isFailedEvent
+      ? declineAfterPayment(invoiceSnap.data() as Record<string, unknown> | undefined, declinedClaimSnap?.exists === true)
+      : null;
+    if (overtaken !== null) {
+      declinedDetail = overtaken;
       tx.create(dedupeRef, {
         type: event.type,
         receivedAt: FieldValue.serverTimestamp(),
         eventCreatedMs,
         familyId,
         invoiceId,
-        appliedOutcome: 'SKIPPED_OUT_OF_ORDER',
+        appliedOutcome: DECLINED_AFTER_PAYMENT,
+        [DECLINE_REASON_FIELD]: overtaken.reason,
+        [DECLINE_INVOICE_NUMBER_FIELD]: overtaken.invoiceNumber,
+        [FOLLOWUP_TRACKED_FIELD]: true,
+        [NOTICE_SKIPPED_FIELD]: NOTICE_SKIPPED_AFTER_PAYMENT,
+      });
+      return { proceed: true, reason: 'declined-after-payment' as const };
+    }
+
+    if (isFailedEvent && eventCreatedMs > 0 && eventCreatedMs < lastEventMs) {
+      // A FAILED charge dated before the last event applied to this invoice:
+      // a late delivery of a decline the household has already got past.
+      // Reserve the id and write nothing else, so they are not told of it now.
+      //
+      // FAILED EVENTS ONLY (#2344). A paid event is money already taken, and
+      // is applied or held for the owner whatever its date.
+      tx.create(dedupeRef, {
+        type: event.type,
+        receivedAt: FieldValue.serverTimestamp(),
+        eventCreatedMs,
+        familyId,
+        invoiceId,
+        appliedOutcome: SKIPPED_OUT_OF_ORDER,
       });
       return { proceed: false, reason: 'out-of-order' as const };
     }
-    tx.create(dedupeRef, {
+    reserveEvent({
       type: event.type,
       receivedAt: FieldValue.serverTimestamp(),
       eventCreatedMs,
@@ -783,134 +952,219 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         invoiceId,
       });
     }
-    // Match the flat-doc shape AuntieOS writes: free-text `status` + numeric
-    // `amountDue`. The portal renders the stored `status` stamp (ADR-0002;
-    // its money heuristic is retired) and the reminders cron still reads
-    // `amountDue <= 0` as settled, so mark both.
-    const patch: Record<string, unknown> = {
-      lastStripeEventAtMs: eventCreatedMs,
-      lastStripeEventId: event.id,
+    // ── THE MONEY ─────────────────────────────────────────────────────────
+    // The order stamp only ever moves forward (#2344): a paid event dated
+    // before it is still applied, and must not wind it back for the failed
+    // events that are measured against it.
+    const patch: Record<string, unknown> =
+      eventCreatedMs >= lastEventMs ? { lastStripeEventAtMs: eventCreatedMs, lastStripeEventId: event.id } : {};
+    if (!isPaidEvent) {
+      // A failed charge changes nothing the invoice's money or state reads.
+      tx.set(ref, patch, { merge: true });
+      return { proceed: true, reason: 'applied' as const };
+    }
+    // NOTE-57: THE AUTHORITATIVE AMOUNT is the one on the Stripe event
+    // (`amount_paid` / `amount_received` / `amount_total`, integer cents,
+    // computed once above the transaction). Only when the event carries none
+    // is the invoice's own figure used, and only when neither yields a
+    // positive amount is the row recorded with none, flagged
+    // `amountResolved: false` and warned about. The fallback reads the stated
+    // balance first: on a part-paid invoice that is what the card was charged.
+    const invoiceForAmount = invoiceSnap.data() as { amountDue?: number; total?: number } | undefined;
+    const eventAmount = eventAmountCents;
+    const localAmount =
+      typeof invoiceForAmount?.amountDue === 'number' && invoiceForAmount.amountDue > 0
+        ? invoiceForAmount.amountDue
+        : typeof invoiceForAmount?.total === 'number' && invoiceForAmount.total > 0
+          ? invoiceForAmount.total
+          : null;
+    const amount = eventAmount ?? localAmount;
+    const amountResolved = amount !== null;
+    if (!amountResolved) {
+      unresolvedAmount = true;
+    }
+    // The event amount is already integer cents and passes through unchanged.
+    // The local-invoice fallback is the flat doc's legacy dollar float and is
+    // converted once, here, same as `recordPayment` does.
+    const amountCents =
+      eventAmount !== null ? eventAmount : localAmount !== null ? dollarsToCents(localAmount) : null;
+    // #2276: WHERE THE CARD MONEY LANDS ON THE INVOICE, decided from the
+    // invoice and the payment rows this transaction read. Every other path
+    // that puts money on an invoice reads and writes the same invoice doc in
+    // its own transaction, so they commit one after the other and this
+    // decision re-runs against whatever landed first. `lib/cardPaymentApply.ts`
+    // has the three landings and why none of them refuses.
+    const existingPayments = (subPaymentsSnap?.docs ?? []).map((d) => d.data() as PaymentAmount);
+    const landing = decideCardApply({
+      invoiceId,
+      doc: invoiceSnap.exists ? ((invoiceSnap.data() ?? {}) as InvoiceDoc) : null,
+      existingPayments,
+      cardCents: amountCents,
+      kinfolkId: familyId,
+    });
+    cardFallbackReason = landing.kind === 'fallback' ? landing.reason : null;
+    // The webhook's own bookkeeping on the invoice, written by every landing
+    // in the same write as the money.
+    //
+    // The pending pair: a session that PAID is just as finished as one that
+    // expired (the `checkout.session.expired` branch above). Not cleared on a
+    // failed charge: a declined card does not close the Checkout Session.
+    patch.pendingCheckoutSessionId = FieldValue.delete();
+    patch.pendingAt = FieldValue.delete();
+    // CLOSE THIS SETTLEMENT ROUND (issue #826), in the same write as the money.
+    //
+    //   the round     moves past every Checkout Session already minted for
+    //                 this balance, so any of them that settles later arrives
+    //                 STALE. `payInvoice` reads it back when it mints the
+    //                 next one, so a bill whose balance genuinely comes back
+    //                 (a line item added, a partial recorded elsewhere) can
+    //                 still be paid a second time.
+    //   the intent    names WHICH payment settled it, which is what lets the
+    //                 next paid event tell "the other half of my own charge"
+    //                 from "somebody else's charge on my bill" — and is the
+    //                 only one of the two that works on a session minted
+    //                 before this stamp existed.
+    patch[CHECKOUT_ROUND_FIELD] = checkoutRoundOf(invoice?.[CHECKOUT_ROUND_FIELD]) + 1;
+    if (paymentIntentId) patch[SETTLED_INTENT_FIELD] = paymentIntentId;
+    const paymentRef = db().collection('payments').doc(event.id);
+    const invoiceRowId = cardPaymentRowId(paymentIntentId, event.id);
+    const rowExtras = {
+      stripeEventId: event.id,
+      ...(paymentIntentId ? { stripePaymentIntentId: paymentIntentId } : {}),
     };
-    if (isPaidEvent) {
+    // What the ledger row says about the invoice. Absent on a row with no
+    // invoice row behind it (no amount, or no invoice document).
+    let ledgerApply: Record<string, unknown> = {};
+    const ledgerApplyOf = (appliedCents: number, tipCents: number, invoiceNumber: string) => ({
+      // The same fields `recordPayment` writes for a payment it applied, so
+      // the admin ledgers read a card payment as applied to its invoice.
+      appliedInvoiceId: invoiceId,
+      appliedInvoiceNumber: invoiceNumber,
+      appliedCents,
+      // GROSS, and only ever the part of the charge over the balance (ruling
+      // 2026-09-27: an overpayment is all tip; the fee comes out of the tip).
+      // `feeCents` sits beside it; the net is derived by the readers.
+      tipCents,
+      [TIP_BASIS_FIELD]: 'gross',
+      unappliedCents: 0,
+      // What the business receives. Absent while the fee is unresolved: a
+      // figure here would claim Stripe charged nothing.
+      ...(feeResolved && feeCents !== null ? { proceedsCents: appliedCents + tipCents - feeCents } : {}),
+      creditedToAccountCents: 0,
+      invoicePaymentId: invoiceRowId,
+    });
+    if (landing.kind === 'planned') {
+      // THE ORDINARY LANDING: the row and the invoice update `recordPayment`'s
+      // apply writes, from the same helper. The invoice's status, balance and
+      // state stamp are derived from the sum of its payment rows.
+      const staged = stageApply(db(), tx, {
+        step: landing.step,
+        sourcePaymentId: event.id,
+        method: CARD_PAYMENT_METHOD,
+        reference: referenceNumber,
+        paidAtIso: new Date(eventCreatedMs > 0 ? eventCreatedMs : Date.now()).toISOString(),
+        uid: CARD_PAYMENT_RECORDED_BY,
+        // #866: this webhook sends the household's `invoice.payment.applied`
+        // below, so it names itself as the sender in the write that pays the
+        // bill, and `onInvoicesWrite` stands down for that write.
+        noticeOwner: paymentAppliedOwner('stripe', event.id),
+        paymentRowId: invoiceRowId,
+        rowExtras,
+        invoiceExtras: patch,
+      });
+      ledgerApply = {
+        ...ledgerApplyOf(landing.appliedCents, landing.tipCents, staged.invoiceNumber),
+        application: staged,
+        settlesInvoice: staged.state === 'settled' || staged.state === 'overpaid',
+      };
+    } else {
+      // THE FALLBACK AND THE NO-AMOUNT LANDINGS mark the invoice paid with
+      // nothing owed, which is what this webhook did for every payment before
+      // #2276: free-text `status` plus both balance fields (the portal renders
+      // the stored status, the reminders cron reads `amountDue <= 0`, and
+      // `payInvoice` and `getMyInvoices` prefer `amountDueCents`).
       patch.status = 'paid';
+      patch.paymentStatus = 'PAID';
       patch.amountDue = 0;
-      // THE INTEGER FIELD TOO, AND IT WAS MISSING (found while building #826).
-      //
-      // `amountDue` is the legacy dollar float; `amountDueCents` is the integer
-      // the settlement pass writes (`lib/invoiceMath.ts`) and the field every
-      // reader that knows about it PREFERS: `payInvoice`'s "Invoice is fully
-      // paid" refusal reads it first, `getMyInvoices` reads it first, and so
-      // does the owes-nothing test the new invoice-level dedupe rests on.
-      // `createInvoice` puts it on every invoice it writes, and this flip zeroed
-      // only the dollar beside it — leaving the PREFERRED figure reading the
-      // full balance on an invoice Stripe had just paid.
-      //
-      // That is not a display nit. It let `payInvoice` mint a fresh full-amount
-      // checkout for an already-paid invoice, at the CURRENT round, which
-      // nothing downstream can tell from a legitimate second payment: #826
-      // reachable through the callable with no client change at all.
       patch.amountDueCents = 0;
       patch.paidAt = FieldValue.serverTimestamp();
-      // The state stamp (ADR-0002), in the same transactional write as the
-      // flip it describes. A failed event changes nothing the classifier
-      // reads, so only the paid branch stamps.
-      const paidCents = paidCentsFromPayments(
-        (subPaymentsSnap?.docs ?? []).map((d) => d.data() as PaymentAmount),
-      );
-      Object.assign(patch, invoiceStateStampOf({ ...(invoiceSnap.data() ?? {}), ...patch }, paidCents));
-      // The other end of the `checkout.session.expired` branch above: a session
-      // that PAID is just as finished as one that expired, so the pending pair
-      // goes here too, in the same transactional write as the flip it belongs
-      // to. Applied after the stamp is computed only for tidiness — the
-      // classifier reads `status`/`amountDue`/`total`/`creditRedeemedAt` and
-      // never these, so the sentinels could not reach it either way.
-      //
-      // Deliberately NOT on the failure branch: a declined card does not close
-      // the Checkout Session, and the household may still complete it.
-      patch.pendingCheckoutSessionId = FieldValue.delete();
-      patch.pendingAt = FieldValue.delete();
-      // CLOSE THIS SETTLEMENT ROUND (issue #826). Both fields are written in the
-      // same transactional write as the flip they describe, because either one
-      // landing without the other is a window of exactly the size this fix
-      // exists to shut.
-      //
-      //   the round     moves past every Checkout Session already minted for
-      //                 this balance, so any of them that settles later arrives
-      //                 STALE. `payInvoice` reads it back when it mints the
-      //                 next one, so a bill whose balance genuinely comes back
-      //                 (a line item added, a partial recorded elsewhere) can
-      //                 still be paid a second time.
-      //   the intent    names WHICH payment settled it, which is what lets the
-      //                 next paid event tell "the other half of my own charge"
-      //                 from "somebody else's charge on my bill" — and is the
-      //                 only one of the two that works on a session minted
-      //                 before this stamp existed.
-      patch[CHECKOUT_ROUND_FIELD] = checkoutRoundOf(invoice?.[CHECKOUT_ROUND_FIELD]) + 1;
-      if (paymentIntentId) patch[SETTLED_INTENT_FIELD] = paymentIntentId;
-      // #866: this webhook sends the household's `invoice.payment.applied`
-      // below, so it names itself as the sender in the write that pays the
-      // bill, and `onInvoicesWrite` stands down for that write.
       patch[PAYMENT_APPLIED_OWNER_FIELD] = paymentAppliedOwner('stripe', event.id);
-    }
-    tx.set(ref, patch, { merge: true });
-    if (isPaidEvent) {
-      // Mirror a flat `payments/{eventId}` doc to match AuntieOS bookkeeping.
-      // Keyed by the (idempotent) event id so a Stripe retry cannot duplicate
-      // a payment record.
-      //
-      // NOTE-57: prefer the AUTHORITATIVE amount carried on the Stripe event
-      // (invoice `amount_paid` / PaymentIntent `amount_received`) over
-      // re-deriving from our local invoice doc, which may be stale or missing.
-      // Only if neither the event nor the local invoice yields a positive
-      // amount do we fall back to recording null — and then we flag the doc
-      // `amountResolved: false` and warn loudly (fail-loud), never silently.
-      const invoiceForAmount = invoiceSnap.data() as { amountDue?: number; total?: number } | undefined;
-      // `amount_total` is the Checkout Session's leg of the same ladder — the
-      // authoritative figure on the event that now marks the invoice paid when
-      // it wins the race. Without it a Session-first delivery would fall back
-      // to the local invoice doc, which is the weaker source NOTE-57 exists to
-      // avoid. Integer minor units, exactly like its two siblings.
-      //
-      // Computed once, above the transaction, because the duplicate-checkout
-      // branch credits the same figure to the household's account balance.
-      const eventAmount = eventAmountCents;
-      const localAmount =
-        typeof invoiceForAmount?.amountDue === 'number' && invoiceForAmount.amountDue > 0
-          ? invoiceForAmount.amountDue
-          : typeof invoiceForAmount?.total === 'number' && invoiceForAmount.total > 0
-            ? invoiceForAmount.total
-            : null;
-      const amount = eventAmount ?? localAmount;
-      const amountResolved = amount !== null;
-      if (!amountResolved) {
-        unresolvedAmount = true;
+      const paidCents =
+        landing.kind === 'fallback' ? landing.paidCents : paidCentsFromPayments(existingPayments);
+      if (landing.kind === 'fallback') {
+        patch[CARD_APPLY_FALLBACK_FIELD] = landing.reason;
+        if (landing.writeRow) {
+          // The card money still goes on the invoice's own rows, so every sum
+          // of them counts it.
+          patch.paidCents = paidCents;
+          patch.paymentMethod = CARD_PAYMENT_METHOD;
+          patch.paymentReference = referenceNumber;
+          patch.lastPaymentAt = FieldValue.serverTimestamp();
+          tx.set(ref.collection('payments').doc(invoiceRowId), {
+            amount: centsToDollars(landing.appliedCents),
+            amountCents: landing.appliedCents,
+            method: CARD_PAYMENT_METHOD,
+            reference: referenceNumber,
+            paidAt: new Date(eventCreatedMs > 0 ? eventCreatedMs : Date.now()).toISOString(),
+            recordedBy: CARD_PAYMENT_RECORDED_BY,
+            sourcePaymentId: event.id,
+            createdAt: FieldValue.serverTimestamp(),
+            ...rowExtras,
+          });
+          const invoiceNumber = (invoiceSnap.data() as { invoiceNumber?: unknown } | undefined)?.invoiceNumber;
+          ledgerApply = {
+            ...ledgerApplyOf(
+              landing.appliedCents,
+              landing.tipCents,
+              typeof invoiceNumber === 'string' ? invoiceNumber : '',
+            ),
+            settlesInvoice: true,
+            [CARD_APPLY_FALLBACK_FIELD]: landing.reason,
+          };
+        } else {
+          ledgerApply = { [CARD_APPLY_FALLBACK_FIELD]: landing.reason };
+        }
       }
-      // The event amount (`amount_paid` / `amount_received`) is already
-      // integer cents, the currency's native unit — it passes through
-      // unchanged. The local-invoice fallback is the flat doc's legacy dollar
-      // float and is converted once, here, same as `recordPayment` does.
-      const amountCents =
-        eventAmount !== null ? eventAmount : localAmount !== null ? dollarsToCents(localAmount) : null;
-      const paymentRef = db().collection('payments').doc(event.id);
-      tx.set(paymentRef, {
-        kinfolkId: familyId,
-        invoiceId,
-        amount,
-        amountCents,
-        amountResolved,
-        amountSource: eventAmount !== null ? 'stripe-event' : localAmount !== null ? 'local-invoice' : 'unresolved',
-        paymentMethod: 'stripe',
-        referenceNumber,
-        date: FieldValue.serverTimestamp(),
-        stripeEventId: event.id,
-        // `feeCents` is the field `recordPayment` already writes and
-        // `getInvoiceLedger` already renders — no new field there. Present
-        // ONLY when resolved: the Admin SDK rejects a literal `undefined`,
-        // and an absent field reads correctly as "unknown", never as zero.
-        ...(feeResolved ? { feeCents } : {}),
-        feeResolved,
-      });
+      // The state stamp (ADR-0002), in the same transactional write as the
+      // flip it describes, from the doc as this write leaves it. The sentinels
+      // on the pending pair never reach the classifier: it reads
+      // `status`/`amountDue`/`total`/`creditRedeemedAt`.
+      const stampable = { ...patch };
+      delete stampable.pendingCheckoutSessionId;
+      delete stampable.pendingAt;
+      //
+      // A fallback invoice is stamped as paid in full, so it freezes like any
+      // other paid invoice. Stamped from its rows it would read paid and part
+      // paid, which stays editable, and an edit works the balance out from the
+      // rows and would bring back money the household was never shown.
+      const stampDoc = { ...(invoiceSnap.data() ?? {}), ...stampable };
+      const stampPaidCents =
+        landing.kind === 'fallback' ? Math.max(paidCents, invoiceTotalCentsOf(stampDoc)) : paidCents;
+      Object.assign(patch, invoiceStateStampOf(stampDoc, stampPaidCents));
+      tx.set(ref, patch, { merge: true });
     }
+    // The flat `payments/{eventId}` ledger row, keyed by the event id so a
+    // Stripe retry cannot duplicate it. `amount` keeps the unit `amountSource`
+    // names (cents off a Stripe event); `amountCents` is what every sum reads.
+    tx.set(paymentRef, {
+      kinfolkId: familyId,
+      invoiceId,
+      amount,
+      amountCents,
+      amountResolved,
+      amountSource: eventAmount !== null ? 'stripe-event' : localAmount !== null ? 'local-invoice' : 'unresolved',
+      paymentMethod: 'stripe',
+      referenceNumber,
+      date: FieldValue.serverTimestamp(),
+      stripeEventId: event.id,
+      // `feeCents` is the field `recordPayment` already writes and
+      // `getInvoiceLedger` already renders. Present ONLY when resolved: the
+      // Admin SDK rejects a literal `undefined`, and an absent field reads
+      // correctly as "unknown", never as zero.
+      ...(feeResolved ? { feeCents } : {}),
+      feeResolved,
+      ...ledgerApply,
+    });
     return { proceed: true, reason: 'applied' as const };
   });
 
@@ -925,6 +1179,28 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     });
   }
 
+  if (recoveredSkip) {
+    // #2344: money that was charged and not recorded has now been decided.
+    // Loud, so the owner's check of the invoices it happened to has a trace.
+    logEvent({
+      severity: 'warn',
+      function: 'stripeWebhook',
+      event: 'stripe.outOfOrder.recovered',
+      extra: { invoiceId, familyId, eventId: event.id, type: event.type, paymentIntentId, reason: decision.reason },
+    });
+  }
+
+  if (decision.proceed && cardFallbackReason !== null) {
+    // #2276: the payment is recorded and the invoice reads paid, but not
+    // through the ordinary plan. Named here so the owner's report
+    // (`scripts/backfillCardInvoicePayments.ts`) is not the only trace.
+    logEvent({
+      severity: 'warn',
+      function: 'stripeWebhook',
+      event: 'stripe.cardApply.fallback',
+      extra: { invoiceId, familyId, eventId: event.id, type: event.type, reason: cardFallbackReason },
+    });
+  }
   // Gated on `decision.proceed`: a replay or out-of-order skip wrote nothing,
   // so an unresolved fee on THAT attempt is not news — only warn when a
   // payment doc actually landed without one.
@@ -998,16 +1274,57 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // repeat, not the dispatcher's default window; the audit entry's
   // deterministic id and the notice's ledger identity cover a step that
   // committed without its stamp.
-  const recoverKind: FollowupKind | null =
+  const storedKind: FollowupKind | null =
     decision.reason !== 'replay' || !decision.followupTracked || (decision.auditDone && decision.noticeDone)
       ? null
       : isPaidEvent && decision.appliedOutcome === 'PAID'
         ? 'paid'
         : isFailedEvent && decision.appliedOutcome === 'FAILED'
           ? 'failed'
-          : isPaidEvent && decision.appliedOutcome === 'SKIPPED_DUPLICATE_INVOICE'
-            ? 'unapplied'
-            : null;
+          : isFailedEvent && decision.appliedOutcome === DECLINED_AFTER_PAYMENT
+            ? 'declinedAfterPayment'
+            : isPaidEvent && decision.appliedOutcome === 'SKIPPED_DUPLICATE_INVOICE'
+              ? 'unapplied'
+              : null;
+  let recoverKind = storedKind;
+  let recoverDeclined: DeclineAfterPaymentDetail | null =
+    decision.reason === 'replay' && storedKind === 'declinedAfterPayment' ? decision.declined : null;
+  // Whether the audit entry of the kind being finished is written. A decline
+  // that changes kind below owes the new kind's line whatever the old one did.
+  let recoverAuditDone = decision.reason === 'replay' ? decision.auditDone : false;
+  if (decision.reason === 'replay' && storedKind === 'failed' && !decision.noticeDone) {
+    // #2344: A DECLINE WHOSE NOTICE NEVER WENT OUT, RETRIED AFTER THE INVOICE
+    // WAS PAID. The first delivery recorded the decline and its notice threw;
+    // a payment has landed since. Sending `invoice.charge.failed` now would
+    // tell a household that has paid to pay. The invoice is read as it stands
+    // (the event's own transaction returned before reading it): overtaken, the
+    // notice is closed as skipped and the owner gets the line instead. A read
+    // that throws answers 500 below, and Stripe tries again.
+    try {
+      const [invoiceNow, claimNow] = await Promise.all([
+        ref.get(),
+        declinedClaimRef ? declinedClaimRef.get() : Promise.resolve(null),
+      ]);
+      const overtakenNow = declineAfterPayment(
+        invoiceNow.data() as Record<string, unknown> | undefined,
+        claimNow?.exists === true,
+      );
+      if (overtakenNow !== null) {
+        recoverKind = 'declinedAfterPayment';
+        recoverDeclined = overtakenNow;
+        recoverAuditDone = false;
+      }
+    } catch (err) {
+      logEvent({
+        severity: 'error',
+        function: 'stripeWebhook',
+        event: 'stripe.followup.failed',
+        extra: { kind: 'failed', familyId, invoiceId, eventId: event.id, replay: true, err: (err as Error)?.message },
+      });
+      res.status(500).json({ error: 'followup-pending' });
+      return;
+    }
+  }
   if (recoverKind !== null && decision.reason === 'replay') {
     try {
       await finishEventFollowup({
@@ -1015,9 +1332,10 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         familyId,
         invoiceId,
         eventId: event.id,
-        auditDone: decision.auditDone,
+        auditDone: recoverAuditDone,
         noticeDone: decision.noticeDone,
         ...(recoverKind === 'unapplied' ? { unapplied: decision.unapplied } : {}),
+        ...(recoverKind === 'declinedAfterPayment' && recoverDeclined ? { declined: recoverDeclined } : {}),
         paidByUid: metadata?.uid ?? null,
       });
     } catch (err) {
@@ -1068,7 +1386,19 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
   // `invoice.charge.failed` ran after the commit with no guard, so a throw drew a
   // Stripe retry that stopped at the replay check and lost the notice for good.
   // Now either outcome answers 500 until its follow-up is stamped done.
-  const followupKind: FollowupKind = isPaidEvent ? 'paid' : 'failed';
+  const overtakenDecline: DeclineAfterPaymentDetail | null =
+    // The cast undoes TypeScript's narrowing: the value is set inside the
+    // transaction callback, which the compiler does not follow.
+    decision.reason === 'declined-after-payment' ? (declinedDetail as DeclineAfterPaymentDetail | null) : null;
+  const followupKind: FollowupKind = isPaidEvent ? 'paid' : overtakenDecline !== null ? 'declinedAfterPayment' : 'failed';
+  if (overtakenDecline !== null) {
+    logEvent({
+      severity: 'info',
+      function: 'stripeWebhook',
+      event: 'stripe.decline.afterPayment',
+      extra: { invoiceId, familyId, eventId: event.id, type: event.type, reason: overtakenDecline.reason },
+    });
+  }
   try {
     await finishEventFollowup({
       kind: followupKind,
@@ -1076,7 +1406,9 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       invoiceId,
       eventId: event.id,
       auditDone: false,
-      noticeDone: false,
+      // The decline's event record already says its notice is skipped.
+      noticeDone: overtakenDecline !== null,
+      ...(overtakenDecline !== null ? { declined: overtakenDecline } : {}),
       paidByUid: metadata?.uid ?? null,
     });
   } catch (err) {

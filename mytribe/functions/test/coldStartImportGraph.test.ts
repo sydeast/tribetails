@@ -289,7 +289,18 @@ const ALLOWED_EAGER_PACKAGES = [
  * Everything it imports (the staff wrapper, the audit writer, the audit actor)
  * was already here.
  *
- * 459 since #1822 / #1862 (on top of #2287's 457):
+ * 458 since #2276 (on top of #2287's 457): `lib/cardPaymentApply.ts`, where a
+ * card payment lands on its invoice, imported by `billing/stripeWebhook.ts`.
+ * It is pure, and everything it imports (`lib/paymentApply.ts`, the invoice
+ * math, the amount-due rule) was already here.
+ *
+ * 459 since #2331 (on top of #2276's 458): `notifications/heldNoticeBatch.ts`,
+ * the count a timed job keeps of the notices the send switch held back. The
+ * dispatcher and the three reminder jobs use it at file scope. It imports
+ * nothing; the Activity Log writer behind it (`noticeAudit.ts`) still loads
+ * with `await import()`, and only in a run that held something.
+ *
+ * 461 since #1822 / #1862 (on top of #2331's 459):
  * `portal/getHouseholdKinRoster.ts` is a new FUNCTIONS entry, the one Kin
  * roster every booking screen reads, and `lib/featureFlags.ts` is the flag
  * read it shares with `getFeatureFlags` and the booking writers (the merge
@@ -297,7 +308,7 @@ const ALLOWED_EAGER_PACKAGES = [
  * resolve the choose-Kin flag the same way). Everything else they import was
  * already here.
  */
-const MAX_OWN_EAGER_MODULES = 459;
+const MAX_OWN_EAGER_MODULES = 461;
 
 interface Edge {
   spec: string;

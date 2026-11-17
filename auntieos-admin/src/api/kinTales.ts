@@ -80,6 +80,10 @@ export interface KinTaleEntry {
   /** Provenance of `title`: written by Auntie's generator rather than typed. */
   titleGeneratedByAi?: boolean | undefined;
   bodyCopy?: string | undefined;
+  /** #2052: the Auntie's notes from before she took an Ask Auntie draft. See `KinTaleDraft.keptNotes`. */
+  keptNotes?: string | undefined;
+  /** #2052: that draft as it went in. See `KinTaleDraft.keptNotesDraft`. */
+  keptNotesDraft?: string | undefined;
   mediaFileIds?: string[] | undefined;
   /**
    * The `kintale_templates` doc this recap was composed against. BLANK means
