@@ -146,11 +146,24 @@ A household copy the gate holds back after something a person did (a clock tap,
 an invoice sent by hand, a save) writes one Activity Log line, titled
 "Notification not sent": `Held back "<notification>" for <name>: notices to
 households are turned off`. Its status is `NOT_SENT`, never `SUCCESS`, and it is
-not listed under Problems. The same step reached twice writes the line once.
+not listed under Problems. The same step reached twice writes the line once,
+and the same notice held again later the same business day (Chicago time, not
+UTC) writes no second line. Asking again for a payment confirmation that so far
+sits only on the household's notifications list writes the same line when it is
+held back (#2332).
 
 The three jobs on a timer write one line per run, with a count and no names
 (#2331): `Held back 14 visit reminders: notices to households are turned off`.
 The count is household copies, one per member the notice was addressed to.
+With the switch on and one of those notifications turned off in Settings, the
+job writes the same kind of line for it (#2341): `Did not send 14 invoice
+reminders: this notification is turned off in Settings`.
+
+A marketing blast writes one line for its whole audience the same way (#2340):
+`Held back 180 notices from a marketing blast: notices to households are turned
+off`, or `Did not send 180 notices from a marketing blast: this notification is
+turned off in Settings`. A blast that `outboundFanoutSweep` picks up again
+writes one line for the part that run held.
 
 Each held copy is counted once a business day. Nothing is stamped on a visit or
 an invoice while its notice is held, so `kincareReminderCron` holds the same
@@ -164,13 +177,14 @@ everything still held once more.
 
 What a job has counted today is kept on `scheduled_runs/<job>__held` (one
 document per job, overwritten when the day changes, denied to every client).
-It is written in the same transaction as the line.
+Every marketing blast shares one, `scheduled_runs/marketingBlast__held`, and
+each copy on it is named by its blast, so two blasts the same day get a line
+each. It is written in the same transaction as the line.
 
 Other paths that run on a timer still write one line per copy, because each
 finishes something a person started and tries a bounded number of times: the
 two recovery passes in `notificationScheduledSweep` (a credit payment notice or
-a payoff notice whose first send was cut short) and a marketing blast resumed
-by `outboundFanoutSweep`.
+a payoff notice whose first send was cut short).
 
 If a run fails half way, its line carries the count it had reached, and the
 retry writes a line for the rest only: the lines of a day add up. A retry with
@@ -184,9 +198,11 @@ sign-in, a channel with no address on file, and a send that failed (status
 does go out writes `Sending "<notification>" to <name> by <channels>`, then one
 `Delivered` line per channel. "The office" is the business copy.
 
-During the re-upload this means one held line per household copy that a loaded
-record sets off (those come from saves, not from a timer), beside the operator
-lines described below. The Activity Log lists the newest 200.
+During the re-upload this still means one held line per household copy that a
+loaded record sets off, beside the operator lines described below. Each loaded
+record fires its own trigger, and nothing on a record tells a loaded one from
+one a person saved, so these lines are not rolled up yet (#2340). The Activity
+Log lists the newest 200.
 
 ### What the Settings panel says
 

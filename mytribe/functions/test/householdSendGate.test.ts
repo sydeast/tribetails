@@ -242,7 +242,10 @@ describe('householdSendGate: the dispatcher chokepoint', () => {
       recipientUid: 'kinUid',
       data: { bookingId: 'b1', kinfolkId: 'kf1' },
     });
-    expect(reads.mock.calls.length, 'one read for the whole fan-out').toBe(1);
+    // One read for the gate, for the whole fan-out. The household copy it held
+    // writes its "not sent" line, and that line is dated by the business day
+    // (#2346), read from the same settings document: the second read.
+    expect(reads.mock.calls.length, 'one gate read for the fan-out, one for the held line').toBe(2);
   });
 });
 

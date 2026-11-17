@@ -7,7 +7,8 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
-import { enqueueNotification } from '../notifications/dispatcher';
+import { enqueueNotificationDetailed } from '../notifications/dispatcher';
+import { withHeldNoticeBatch, type HeldNoticeBatch } from '../notifications/heldNoticeBatch';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 import {
@@ -46,6 +47,17 @@ export const BLASTS_COLLECTION = 'marketingBlasts';
  * that guard exists to catch.
  */
 export const MARKETING_KEYS = ['newsletter.announcement', 'survey.event', 'marketing.optin'] as const;
+/**
+ * #2340: the name a blast's fan-out runs count their held copies under. One
+ * name for every blast, so the day's marker is one document
+ * (`scheduled_runs/marketingBlast__held`), not one per blast; each copy is
+ * named by its blast (`blast:<id>`) and its household, so two blasts the same
+ * day are counted apart. A run that holds copies writes one line,
+ * `Held back 180 notices from a marketing blast: notices to households are
+ * turned off`. A fan-out the sweep resumes writes one line for what that run
+ * held.
+ */
+const BLAST_HELD_JOB = 'marketingBlast';
 export type MarketingKey = (typeof MARKETING_KEYS)[number];
 
 /**
@@ -213,16 +225,24 @@ function replayBlast(
  * here. The resumable fan-out in `lib/fanoutResume.ts` therefore takes this
  * closure as an argument rather than importing the dispatcher itself.
  */
-export function blastSender(ctx: {
-  blastId: string;
-  key: MarketingKey;
-  data: Record<string, unknown>;
-  fireAtMs: number;
-  actorUid: string;
-}): (uid: string) => Promise<RecipientOutcome> {
+export function blastSender(
+  ctx: {
+    blastId: string;
+    key: MarketingKey;
+    data: Record<string, unknown>;
+    fireAtMs: number;
+    actorUid: string;
+  },
+  /**
+   * #2340: the fan-out run's count of household copies held back (the send
+   * switch is off, or the campaign is turned off in Settings). With one, the
+   * run writes ONE Activity Log line for them, not one per household.
+   */
+  heldBatch?: HeldNoticeBatch,
+): (uid: string) => Promise<RecipientOutcome> {
   return async (uid: string): Promise<RecipientOutcome> => {
     try {
-      const ids = await enqueueNotification({
+      const { written: ids } = await enqueueNotificationDetailed({
         key: ctx.key,
         recipientUid: uid,
         // `blastId` is what `cancelMarketingBlast` queries on, and `audienceUid`
@@ -236,7 +256,7 @@ export function blastSender(ctx: {
         dedupeKey: `blast:${ctx.blastId}`,
         fireAtMs: ctx.fireAtMs,
         actorUid: ctx.actorUid,
-      });
+      }, heldBatch);
       return ids.length === 0 ? 'suppressed' : 'sent';
     } catch (err) {
       logEvent({
@@ -276,19 +296,24 @@ export async function resumeBlastFanout(opts: {
   if (!(MARKETING_KEYS as readonly string[]).includes(key as string)) {
     throw new Error(`marketingBlasts/${blastId} carries an unknown campaign key.`);
   }
-  const run = await runFanout({
-    ref,
-    workerId,
-    deadlineMs,
-    sendOne: blastSender({
-      blastId,
-      key: key as MarketingKey,
-      data: (row['data'] ?? {}) as Record<string, unknown>,
-      fireAtMs: storedCount(row, 'fireAtMs'),
-      actorUid: typeof row['scheduledByUid'] === 'string' ? row['scheduledByUid'] : '',
+  const run = await withHeldNoticeBatch(BLAST_HELD_JOB, {}, (heldBatch) =>
+    runFanout({
+      ref,
+      workerId,
+      deadlineMs,
+      sendOne: blastSender(
+        {
+          blastId,
+          key: key as MarketingKey,
+          data: (row['data'] ?? {}) as Record<string, unknown>,
+          fireAtMs: storedCount(row, 'fireAtMs'),
+          actorUid: typeof row['scheduledByUid'] === 'string' ? row['scheduledByUid'] : '',
+        },
+        heldBatch,
+      ),
+      fnName: 'outboundFanoutSweep',
     }),
-    fnName: 'outboundFanoutSweep',
-  });
+  );
   if (run.ran) {
     await releaseFanoutLease({
       ref,
@@ -441,17 +466,22 @@ export async function scheduleMarketingBlastHandler(
   });
   await ref.set(roster.fields, { merge: true });
 
-  const run = await runFanout({
-    ref,
-    workerId,
-    armed: { row: { ...row, ...roster.fields }, chunks: roster.chunks },
-    // THE INLINE BUDGET, measured against the CLIENT's, not the platform's, and
-    // from the REQUEST's start rather than the fan-out's. See `enteredAtMs`.
-    deadlineMs: enteredAtMs + INLINE_FANOUT_BUDGET_MS,
-    sendOne: blastSender({ blastId: ref.id, key: args.key, data: args.data, fireAtMs: args.fireAtMs, actorUid }),
-    fnName: 'scheduleMarketingBlast',
-    leaseHeld: true,
-  });
+  const run = await withHeldNoticeBatch(BLAST_HELD_JOB, { atMs: startedAtMs }, (heldBatch) =>
+    runFanout({
+      ref,
+      workerId,
+      armed: { row: { ...row, ...roster.fields }, chunks: roster.chunks },
+      // THE INLINE BUDGET, measured against the CLIENT's, not the platform's, and
+      // from the REQUEST's start rather than the fan-out's. See `enteredAtMs`.
+      deadlineMs: enteredAtMs + INLINE_FANOUT_BUDGET_MS,
+      sendOne: blastSender(
+        { blastId: ref.id, key: args.key, data: args.data, fireAtMs: args.fireAtMs, actorUid },
+        heldBatch,
+      ),
+      fnName: 'scheduleMarketingBlast',
+      leaseHeld: true,
+    }),
+  );
 
   await releaseFanoutLease({
     ref,

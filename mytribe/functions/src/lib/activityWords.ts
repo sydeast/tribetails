@@ -91,6 +91,10 @@ const HELD_KIND_WORDS: Record<string, readonly [string, string]> = {
   'kincare.upcoming.reminder': ['visit reminder', 'visit reminders'],
   'invoice.reminder': ['invoice reminder', 'invoice reminders'],
   'invoice.overdue': ['overdue invoice notice', 'overdue invoice notices'],
+  // #2340: the three marketing blast keys (`MARKETING_KEYS`).
+  'newsletter.announcement': ['notice from a marketing blast', 'notices from a marketing blast'],
+  'survey.event': ['notice from a marketing blast', 'notices from a marketing blast'],
+  'marketing.optin': ['notice from a marketing blast', 'notices from a marketing blast'],
 };
 /** One kind a timed job held back: its key, its name (`notificationName`) and how many copies. */
 export interface HeldKind {
@@ -104,6 +108,14 @@ function heldKindWords(kind: HeldKind): string {
   const name = kind.name.trim();
   return `${kind.count} ${name === '' ? '' : `"${name}" `}${kind.count === 1 ? 'notice' : 'notices'}`;
 }
+function heldKindsWords(kinds: readonly HeldKind[]): string {
+  const parts = kinds.filter((k) => k.count > 0).map(heldKindWords);
+  return parts.length === 0
+    ? 'notices'
+    : parts.length === 1
+      ? (parts[0] as string)
+      : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
 /**
  * #2331: ONE LINE FOR A WHOLE RUN OF A TIMED JOB.
  * `Held back 14 visit reminders: notices to households are turned off`.
@@ -111,17 +123,19 @@ function heldKindWords(kind: HeldKind): string {
  * were held because the switch could not be read, which is not "turned off".
  */
 export function notificationsHeldSummaryWords(kinds: readonly HeldKind[], unreadable = false): string {
-  const parts = kinds.filter((k) => k.count > 0).map(heldKindWords);
-  const what =
-    parts.length === 0
-      ? 'notices'
-      : parts.length === 1
-        ? parts[0]
-        : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
   const why = unreadable
     ? 'the setting for notices to households could not be read'
     : 'notices to households are turned off';
-  return `Held back ${what}: ${why}`;
+  return `Held back ${heldKindsWords(kinds)}: ${why}`;
+}
+/**
+ * #2341: ONE LINE FOR A RUN'S COPIES OF A NOTIFICATION TURNED OFF IN SETTINGS.
+ * `Did not send 14 invoice reminders: this notification is turned off in Settings`.
+ * The per-notice line it stands for is `notificationTurnedOffWords`.
+ */
+export function notificationsTurnedOffSummaryWords(kinds: readonly HeldKind[]): string {
+  const many = kinds.filter((k) => k.count > 0).length > 1;
+  return `Did not send ${heldKindsWords(kinds)}: ${many ? 'these notifications are' : 'this notification is'} turned off in Settings`;
 }
 /** The notification as a whole is switched off in Settings. */
 export function notificationTurnedOffWords(name: string, to: string): string {

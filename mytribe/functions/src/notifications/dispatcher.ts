@@ -598,8 +598,14 @@ export async function enqueueNotificationDetailed(
       outcome.suppressed.push({ recipientUid: recipient.uid, reason: 'prefs' });
       // #1819: the Activity Log says so. Only the operator's own switch: a
       // marketing blast already records each household it left out.
+      // #2341: a timed job (or a blast's fan-out) counts the copy for its one
+      // line per run instead, as it does for a copy the send switch holds.
       if (stream === 'kinfolk' && disabled === 'operator') {
-        await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'turned_off');
+        if (heldBatch !== undefined) {
+          countHeldNotice(heldBatch, def.key, 'turnedOff', heldCopyName(def.key, args, recipient.uid));
+        } else {
+          await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'turned_off');
+        }
       }
       continue;
     }
@@ -687,14 +693,11 @@ export async function enqueueNotificationDetailed(
         // #2331: a timed job counts the copy for its one line per run and
         // writes nothing here, so no name is read and no entry is sealed.
         if (heldBatch !== undefined) {
-          // What names this copy, so the job counts it once a day however
-          // many of its runs hold it: the event and who it was for.
-          const identity = dedupeIdentityOf(args, resolveTargetRef(args));
           countHeldNotice(
             heldBatch,
             def.key,
             state === 'read-failed' ? 'unreadable' : 'off',
-            identity === '' ? '' : [def.key, identity, recipient.uid].join('\u0000'),
+            heldCopyName(def.key, args, recipient.uid),
           );
         } else {
           await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'held', [], undefined, state === 'read-failed');
@@ -769,6 +772,16 @@ export async function enqueueNotificationDetailed(
 }
 
 /**
+ * What names one held copy in a timed job's count, so the job counts it once a
+ * day however many of its runs hold it: the event and who it was for. '' when
+ * the event has no identity.
+ */
+function heldCopyName(key: string, args: EnqueueArgs, recipientUid: string): string {
+  const identity = dedupeIdentityOf(args, resolveTargetRef(args));
+  return identity === '' ? '' : [key, identity, recipientUid].join('\u0000');
+}
+
+/**
  * #1819, #1905: one Activity Log line for a household copy that did not go
  * out, or not on every channel. The writer is loaded lazily and never throws
  * (`noticeAudit.ts`): a line that cannot be written must not undo a dispatch.
@@ -777,13 +790,15 @@ export async function enqueueNotificationDetailed(
  * the second path to the same clock step, writes it once, and the same event
  * held again on a later day writes it once that day.
  *
- * #2331: not called for a copy the send switch holds inside a timed job. That
- * job counts the copy, once a day, and writes one line for its run
- * (`heldNoticeBatch.ts`).
+ * #2331, #2341: not called for a copy the send switch holds, or one turned off
+ * in Settings, inside a timed job. That job counts the copy, once a day, and
+ * writes one line for its run (`heldNoticeBatch.ts`).
+ *
+ * #2346: "the same day" is the business day, not the UTC day.
  */
 async function logHouseholdCopyNotSent(
   key: string,
-  args: EnqueueArgs,
+  args: Pick<EnqueueArgs, 'key' | 'data' | 'dedupeKey'>,
   recipientUid: string,
   outcome: 'held' | 'turned_off' | 'channels_off',
   channels: Channel[] = [],
@@ -806,9 +821,9 @@ async function logHouseholdCopyNotSent(
       // A record's own id names it, except a debounced one, whose id is
       // reused for every later event: the day is part of both ids.
       ...(notificationId !== undefined
-        ? { docId: noticeLineIdForEvent(outcome, key, notificationId, recipientUid) }
+        ? { docId: await noticeLineIdForEvent(outcome, key, notificationId, recipientUid) }
         : identity !== ''
-          ? { docId: noticeLineIdForEvent(outcome, key, identity, recipientUid) }
+          ? { docId: await noticeLineIdForEvent(outcome, key, identity, recipientUid) }
           : {}),
     });
   } catch {
@@ -1176,7 +1191,8 @@ export type ListedCopyDelivery = 'sent' | 'already' | 'no-record' | 'off' | 'no-
  * when none exists, in one transaction, so two calls at once send one copy and
  * a copy that already went out on a channel is never sent again. The
  * recipient's settings, the operator's switch and the household send gate are
- * read exactly as an enqueue reads them.
+ * read exactly as an enqueue reads them, and a household copy they hold back
+ * writes the line an enqueue would (#2332).
  *
  * Trigger-mode keys only: the other modes have no record to attach to yet.
  */
@@ -1188,15 +1204,35 @@ export async function deliverListedCopy(
   if (def.external === true || def.deliveryMode !== 'trigger' || args.recipientUid === '') return none('no-record');
   const recipient = (await resolveRecipients(def, args)).find((r) => r.uid === args.recipientUid);
   if (recipient === undefined) return none('no-record');
-  const [userPrefs, businessOverride] = await Promise.all([
-    loadUserPrefs(recipient.uid, recipient.collection),
-    loadBusinessOverride(def.key),
-  ]);
-  const stream = streamForRecipient(def, recipient.collection);
-  if (notificationDisabledFor(def, userPrefs, businessOverride, stream) !== null) return none('off');
-  const channels = activeChannelList(resolveChannels(def, userPrefs, businessOverride, stream));
-  if (channels.length === 0) return none('no-channels');
-  if (stream === 'kinfolk' && !(await loadHouseholdSendGate(db())).live) return none('gated');
+  // The same prefs answers an enqueue reads (`copyDecision`).
+  const decision = await copyDecision(def, recipient);
+  const { stream } = decision;
+  // #2332: a household copy held back here writes the same Activity Log line
+  // an enqueue writes for it, with the same id, so a second press the same
+  // business day writes nothing more. A person pressed this: one line each.
+  if (decision.disabled !== null) {
+    if (stream === 'kinfolk' && decision.disabled === 'operator') {
+      await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'turned_off');
+    }
+    return none('off');
+  }
+  const channels = activeChannelList(decision.channels);
+  if (channels.length === 0) {
+    // Only the channels the household switched off themselves: a channel the
+    // operator's own settings leave off is not "they turned that off".
+    if (stream === 'kinfolk' && decision.switchedOff.length > 0) {
+      await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'channels_off', decision.switchedOff);
+    }
+    return none('no-channels');
+  }
+  if (stream === 'kinfolk') {
+    const gate = await loadHouseholdSendGate(db());
+    if (!gate.live) {
+      const unreadable = gate.state === 'read-failed';
+      await logHouseholdCopyNotSent(def.key, args, recipient.uid, 'held', [], undefined, unreadable);
+      return none('gated');
+    }
+  }
 
   const identity = dedupeIdentityOf(args, resolveTargetRef(args));
   if (identity === '') return none('no-record');

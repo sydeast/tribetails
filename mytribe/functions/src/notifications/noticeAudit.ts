@@ -12,9 +12,10 @@ import {
   notificationNoAccountWords,
   notificationTurnedOffWords,
   notificationsHeldSummaryWords,
+  notificationsTurnedOffSummaryWords,
 } from '../lib/activityWords';
 import { notificationName } from './notificationName';
-import { heldNoticeTotal, type HeldNoticeBatch } from './heldNoticeBatch';
+import { HELD_NOTICE_REASONS, heldNoticeTotal, type HeldNoticeBatch, type HeldNoticeReason } from './heldNoticeBatch';
 import type { AudienceStream, Channel } from './types';
 
 /**
@@ -41,8 +42,10 @@ import type { AudienceStream, Channel } from './types';
  *   failed        the channel's send threw                    (onNotificationChannelCreate)
  *
  * #2331: INSIDE A TIMED JOB, `held` IS ONE LINE FOR THE RUN, NOT ONE PER COPY
- * (`recordHeldNoticeSummary` below, counted by `heldNoticeBatch.ts`). Every
- * other outcome, and every notice a person pressed, is one line each as above.
+ * (`recordHeldNoticeSummary` below, counted by `heldNoticeBatch.ts`), and so,
+ * since #2341, is `turned_off`; a marketing blast's fan-out counts the same
+ * way (#2340). Every other outcome, and every notice a person pressed, is one
+ * line each as above.
  *
  * "Sending" and "Delivered" stay where they were (`onNotificationCreate`,
  * `onNotificationChannelCreate`) and now name who the copy was for.
@@ -126,9 +129,27 @@ export async function noticeHouseholdName(familyId: string): Promise<string> {
   }
 }
 
-/** UTC day, so a line with a coarse identity is written once a day, not once ever. */
-function dayKey(nowMs: number = Date.now()): string {
+/** UTC day: the last resort when no business zone resolves at all. */
+function utcDayKey(nowMs: number = Date.now()): string {
   return new Date(nowMs).toISOString().slice(0, 10);
+}
+
+/**
+ * #2346: the BUSINESS day, so a line with a coarse identity is written once a
+ * day as the business counts days, not once ever and not once a UTC day (which
+ * turns over at 6 or 7 PM in Chicago). Read on the business's own clock
+ * (`businessTodayIso`, which falls back to the ruled America/Chicago); the UTC
+ * day stands in only when no zone resolves or the settings read throws.
+ */
+async function businessDayKey(nowMs: number = Date.now()): Promise<string> {
+  try {
+    const { businessTodayIso } = await import('../lib/quoteDecision.js');
+    const day = await businessTodayIso(db(), nowMs);
+    if (day !== '') return day;
+  } catch {
+    // The UTC day below: a line id must never fail the send beside it.
+  }
+  return utcDayKey(nowMs);
 }
 
 /**
@@ -140,14 +161,15 @@ export function noticeLineId(outcome: NoticeNotSentOutcome, ...parts: string[]):
   return `noticenotsent__${digest}`;
 }
 
-/** The id for a line about an event with an identity but no notification record: once a day. */
-export function noticeLineIdForEvent(
+/** The id for a line about an event with an identity but no notification record: once a business day. */
+export async function noticeLineIdForEvent(
   outcome: NoticeNotSentOutcome,
   key: string,
   identity: string,
   recipientUid: string,
-): string {
-  return noticeLineId(outcome, key, identity, recipientUid, dayKey());
+  nowMs: number = Date.now(),
+): Promise<string> {
+  return noticeLineId(outcome, key, identity, recipientUid, await businessDayKey(nowMs));
 }
 
 export interface NoticeNotSentInput {
@@ -267,7 +289,22 @@ async function heldDay(batch: HeldNoticeBatch): Promise<string> {
   if (batch.day !== undefined && batch.day !== '') return batch.day;
   const { businessTodayIso } = await import('../lib/quoteDecision.js');
   const day = await businessTodayIso(db(), batch.atMs);
-  return day !== '' ? day : dayKey(batch.atMs);
+  return day !== '' ? day : utcDayKey(batch.atMs);
+}
+
+/** The summary line's sentence, outcome and severity for one reason. */
+function summaryLine(
+  reason: HeldNoticeReason,
+  kinds: Parameters<typeof notificationsHeldSummaryWords>[0],
+): { description: string; outcome: 'held' | 'turned_off'; severity: 'info' | 'warn' } {
+  if (reason === 'turnedOff') {
+    return { description: notificationsTurnedOffSummaryWords(kinds), outcome: 'turned_off', severity: 'info' };
+  }
+  return {
+    description: notificationsHeldSummaryWords(kinds, reason === 'unreadable'),
+    outcome: 'held',
+    severity: reason === 'unreadable' ? 'warn' : 'info',
+  };
 }
 
 /**
@@ -297,12 +334,15 @@ async function heldDay(batch: HeldNoticeBatch): Promise<string> {
  * corrected; the lines of a day add up.
  *
  * A run whose copies were held because the switch could not be read gets its
- * own line, at `warn`: nobody turned anything off. The two reasons are counted
- * apart, so a copy already counted as "turned off" still shows in that line.
+ * own line, at `warn`: nobody turned anything off. #2341: a run's copies of a
+ * notification turned off in Settings get their own line too, `Did not send
+ * 14 invoice reminders: this notification is turned off in Settings`, outcome
+ * `turned_off`. The reasons are counted apart, so a copy already counted under
+ * one reason still shows in another reason's line.
  * NEVER THROWS.
  */
 export async function recordHeldNoticeSummary(batch: HeldNoticeBatch): Promise<void> {
-  for (const reason of ['off', 'unreadable'] as const) {
+  for (const reason of HELD_NOTICE_REASONS) {
     if (heldNoticeTotal(batch, reason) === 0) continue;
     try {
       const day = await heldDay(batch);
@@ -336,6 +376,7 @@ export async function recordHeldNoticeSummary(batch: HeldNoticeBatch): Promise<v
         const count = kinds.reduce((sum, k) => sum + k.count, 0);
         if (count === 0) return;
 
+        const line = summaryLine(reason, kinds);
         const chain = await readAuditChain(db(), tx);
         stageAuditEntry(
           db(),
@@ -344,11 +385,11 @@ export async function recordHeldNoticeSummary(batch: HeldNoticeBatch): Promise<v
             {
               status: 'NOT_SENT',
               event: AUDIT_EVENTS.NOTIFICATION_NOT_SENT,
-              severity: reason === 'unreadable' ? 'warn' : 'info',
+              severity: line.severity,
               actorRole: 'SYSTEM',
-              description: notificationsHeldSummaryWords(kinds, reason === 'unreadable'),
+              description: line.description,
               payload: {
-                outcome: 'held',
+                outcome: line.outcome,
                 summary: true,
                 job: batch.job,
                 day,
@@ -362,10 +403,11 @@ export async function recordHeldNoticeSummary(batch: HeldNoticeBatch): Promise<v
           chain,
         );
         if (fresh.length > 0) {
+          // Every reason's list is carried over, so writing one never wipes another's.
+          const lists = Object.fromEntries(HELD_NOTICE_REASONS.map((r) => [r, storedIds(today[r])]));
           tx.set(markerRef, {
             dayIso: day,
-            off: storedIds(today['off']),
-            unreadable: storedIds(today['unreadable']),
+            ...lists,
             [reason]: [...seen],
             updatedAtMs: Date.now(),
           });
