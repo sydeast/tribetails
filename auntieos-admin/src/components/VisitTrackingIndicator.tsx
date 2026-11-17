@@ -1,4 +1,7 @@
 import { useVisitTracking, type VisitTrackingStatus } from '../lib/visitTracking';
+import { useBreadcrumbs } from '../lib/breadcrumbs';
+import { useBusinessZone } from '../lib/useBusinessZone';
+import { businessWallClock } from '../lib/businessZoneTime';
 import './VisitTrackingIndicator.css';
 
 /**
@@ -14,15 +17,18 @@ import './VisitTrackingIndicator.css';
 export function VisitTrackingIndicator({
   sessionId,
   idleText,
+  idleLive = true,
 }: {
   sessionId: string;
   /** What to show when this tab is not tracking. Omit to render nothing. */
   idleText?: string;
+  /** Whether the idle line carries the live dot. */
+  idleLive?: boolean;
 }) {
   const status = useVisitTracking(sessionId);
   const text = trackingLine(status, idleText);
   if (text === null) return null;
-  const live = status.phase === 'on' || status.phase === 'idle';
+  const live = status.phase === 'on' || (status.phase === 'idle' && idleLive);
   return (
     <p
       className={`vtrack vtrack--${status.phase}`}
@@ -66,4 +72,39 @@ export function routeEmptyTextWhileArrived(status: VisitTrackingStatus): string 
     case 'idle':
       return 'Waiting for the first GPS ping. The field app writes one about every five seconds while a visit is in flight.';
   }
+}
+/**
+ * #2338: the Arrived card's GPS line. When this tab is the tracker it says so
+ * (above). Otherwise this browser cannot know whether a phone is still
+ * tracking: "Undo departed" puts a visit back to Arrived with no device
+ * tracking it, and the mock's "GPS tracking · live route" was then false. So
+ * the line says what the visit's own route shows, the last ping and its time,
+ * or that none has landed. No live dot: nothing here knows it is live.
+ */
+export function VisitRouteIndicator({ sessionId }: { sessionId: string }) {
+  const crumbs = useBreadcrumbs(sessionId);
+  const zone = useBusinessZone();
+  const line = routeLastPingLine(crumbs, zone);
+  return line === null ? (
+    <VisitTrackingIndicator sessionId={sessionId} />
+  ) : (
+    <VisitTrackingIndicator sessionId={sessionId} idleText={line} idleLive={false} />
+  );
+}
+/**
+ * PURE. What the visit's breadcrumbs say about its route, or null while they
+ * load or when the read failed (the card then says nothing rather than guess).
+ */
+export function routeLastPingLine(
+  crumbs: { points: ReadonlyArray<{ t?: number }>; error: string | null; ready: boolean },
+  businessZone: string,
+): string | null {
+  if (!crumbs.ready || crumbs.error !== null) return null;
+  let last: number | null = null;
+  for (const p of crumbs.points) {
+    if (typeof p.t === 'number' && Number.isFinite(p.t) && (last === null || p.t > last)) last = p.t;
+  }
+  if (crumbs.points.length === 0) return 'No GPS pings yet';
+  if (last === null) return 'GPS route recorded';
+  return `GPS route · last ping ${businessWallClock(last, businessZone).hhmm}`;
 }

@@ -55,6 +55,8 @@ import com.tribetails.auntieos.ui.admin.scheduling.businessToday
 import com.tribetails.auntieos.data.repository.BookingTransitionAction
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
 import com.tribetails.auntieos.location.LocationTrackingService
+import com.tribetails.auntieos.domain.GpsLine
+import com.tribetails.auntieos.domain.gpsLineFor
 import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.domain.VisitNoticeReach
 import com.tribetails.auntieos.domain.ClockStep
@@ -896,18 +898,34 @@ private fun KinCareCard(
                 )
             }
 
-            // ---- Live GPS indicator (only while ARRIVED + tracking) ----
+            // The session's breadcrumbs, for the GPS line and the route map.
+            // Null until the first read lands, so "loading" never reads as "no pings".
+            val crumbsResult: Result<List<com.tribetails.auntieos.data.model.LocationPoint>>? = if (isInFlight) {
+                val r by remember(session.id) { breadcrumbsFor(session.id) }
+                    .collectAsState(initial = null)
+                r
+            } else {
+                null
+            }
+
+            // ---- GPS line while ARRIVED (#2338: says only what this phone knows) ----
             if (isArrived) {
-                GpsLiveRow()
+                val trackingAny by LocationTrackingService.isTracking.collectAsState()
+                val route by LocationTrackingService.currentRoute.collectAsState()
+                GpsLiveRow(
+                    gpsLineFor(
+                        trackingHere = trackingAny && route?.kinCareSessionId == session.id,
+                        crumbs = crumbsResult?.getOrNull(),
+                        zone = LocalBusinessZone.current,
+                    ),
+                )
             }
 
             // ---- Today's-route map (§A.10): render the live/replay RouteMap inline for
             // in-flight visits, fed by the session's breadcrumb subcollection. Only shown
             // once at least one crumb exists (no empty canvas / fake route). ----
             if (isInFlight) {
-                val crumbsResult by remember(session.id) { breadcrumbsFor(session.id) }
-                    .collectAsState(initial = Result.success(emptyList<com.tribetails.auntieos.data.model.LocationPoint>()))
-                val crumbs = crumbsResult.getOrDefault(emptyList())
+                val crumbs = crumbsResult?.getOrNull().orEmpty()
                 if (crumbs.isNotEmpty()) {
                     com.tribetails.auntieos.ui.components.RouteMap(
                         points = crumbs.map {
@@ -1305,20 +1323,24 @@ private fun ContactIconButton(icon: ImageVector, label: String, onClick: () -> U
 // ── Live GPS row (mockup .gpslive: pulsing teal dot + label) ────────────────────
 
 @Composable
-private fun GpsLiveRow() {
+private fun GpsLiveRow(line: GpsLine?) {
+    if (line == null) return
     val c = AuntieTheme.colors
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        AuntieStatusPill(
-            label = "",
-            tone = AuntieStatusTone.Teal,
-            dotOnly = true,
-            glow = true,
-        )
+        // The pulsing dot only when this phone is the tracker: nothing else here knows it is live.
+        if (line.live) {
+            AuntieStatusPill(
+                label = "",
+                tone = AuntieStatusTone.Teal,
+                dotOnly = true,
+                glow = true,
+            )
+        }
         Text(
-            text = "GPS tracking · live route",
+            text = line.text,
             style = AuntieTheme.typography.mono,
             color = c.accent,
         )

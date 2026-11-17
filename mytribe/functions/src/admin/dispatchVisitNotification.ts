@@ -389,7 +389,7 @@ export async function dispatchVisitNotificationCore(
 /** Why a confirm may not promise the household a notice, or null when it may. */
 export type VisitNoticePreviewReason = Extract<
   VisitNoticeReason,
-  'household_has_no_portal_account' | 'household_notices_off'
+  'household_has_no_portal_account' | 'household_notices_off' | 'already_notified'
 >;
 
 export interface PreviewVisitNotificationOutcome {
@@ -440,6 +440,13 @@ const PreviewArgs = z
      * result cannot disagree about an unlinked or unconfirmed visit.
      */
     sessionId: z.string().trim().min(1).max(200).optional(),
+    /**
+     * #2339: the clock step an Arrived or Departed confirm is about. With a
+     * `sessionId` (and no `key`) the answer also says whether this step is a
+     * repeat of an undone one the household already heard about, the same
+     * decision the send makes (`quietRepeatOf`).
+     */
+    step: z.enum(['arrived', 'departed']).optional(),
   })
   .refine((a) => a.familyId !== undefined || (a.sessionId !== undefined && a.key !== undefined), {
     message: 'Provide familyId, or a sessionId with a key.',
@@ -456,8 +463,9 @@ const PreviewArgs = z
  * a household nobody had claimed, and no client can check membership itself.
  *
  * Read-only. It does not predict a notice the household turned off for
- * themselves or a repeat of a step already sent; the result line, which is the
- * dispatch's own answer, names those.
+ * themselves; the result line, which is the dispatch's own answer, names that.
+ * With a `sessionId` and a `step` it does name a repeat of an undone step the
+ * household already heard about (#2339), as `already_notified`.
  *
  * WITH A `key` (#1816, #1838, #2027, #1841) it answers for that notice in
  * full: the dispatcher's own dry run (`previewHouseholdCopy`) adds the
@@ -468,7 +476,7 @@ const PreviewArgs = z
 export async function previewVisitNotificationHandler(
   req: CallableRequest<unknown>,
 ): Promise<PreviewVisitNotificationOutcome | PreviewHouseholdNoticeOutcome> {
-  const { familyId: givenFamilyId, key, sessionId } = PreviewArgs.parse(req.data);
+  const { familyId: givenFamilyId, key, sessionId, step } = PreviewArgs.parse(req.data);
   if (key !== undefined) {
     const notices = await import('../notifications/householdNotice.js');
     if (sessionId !== undefined && (key === 'kincare.booking.cancel' || key === 'kincare.changed')) {
@@ -479,6 +487,12 @@ export async function previewVisitNotificationHandler(
     return { ok: true, ...(await notices.previewHouseholdNotice(givenFamilyId, key)) };
   }
   const familyId = givenFamilyId!;
+  // #2339: checked first, where the send checks it (`dispatchVisitNotificationHandler`,
+  // `lib/visitStepNotice.ts`): a step the household already heard about is
+  // not sent again, whatever the switch now says.
+  if (step !== undefined && sessionId !== undefined && (await alreadyToldOfStep(step, sessionId, familyId))) {
+    return { ok: true, willNotify: false, reason: 'already_notified' };
+  }
   const recipientUid = await householdRecipientUid(familyId);
   if (!recipientUid) {
     return { ok: true, willNotify: false, reason: 'household_has_no_portal_account' };
@@ -488,6 +502,34 @@ export async function previewVisitNotificationHandler(
   return { ok: true, willNotify: true, reason: null };
 }
 
+/**
+ * READ-ONLY. Would this Arrived or Departed tap, made now, be the quiet repeat
+ * of an undone step the household was already told about (#2339)? Asks the
+ * same `quietRepeatOf` the send does, with a time no step record holds (the
+ * tap has not happened), and never hands the row over: only the send does that.
+ * A visit of another household, a missing visit, or a failed read answers
+ * false, which leaves the confirm's ordinary line.
+ */
+async function alreadyToldOfStep(step: 'arrived' | 'departed', sessionId: string, familyId: string): Promise<boolean> {
+  try {
+    const snap = await db().collection('kin_care_sessions').doc(sessionId).get();
+    if (!snap.exists) return false;
+    const data = (snap.data() ?? {}) as Record<string, unknown>;
+    if (data['kinfolkId'] !== familyId) return false;
+    const { quietRepeatOf } = await import('../lib/arrivalNoticeWithdrawal.js');
+    return (await quietRepeatOf(step, sessionId, data, PREVIEW_STEP_AT_MS)) !== null;
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'previewVisitNotification',
+      event: 'visit.preview.repeat.failed',
+      errorMessage: (err as Error)?.message,
+    });
+    return false;
+  }
+}
+/** A step time no `visit_step_notices` record carries, for a tap not yet made. */
+const PREVIEW_STEP_AT_MS = -1;
 export const previewVisitNotification = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   wrapAdminCallable('previewVisitNotification', previewVisitNotificationHandler),

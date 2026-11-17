@@ -14,6 +14,7 @@ vi.mock('../lib/visitTracking', () => ({ useVisitTracking }));
 import {
   VisitTrackingIndicator,
   routeEmptyTextWhileArrived,
+  routeLastPingLine,
   trackingLine,
 } from './VisitTrackingIndicator';
 
@@ -109,5 +110,32 @@ describe('routeEmptyTextWhileArrived', () => {
 
   it('keeps the field-app sentence when this tab is not the tracker', () => {
     expect(routeEmptyTextWhileArrived({ phase: 'idle' })).toMatch(/The field app writes one/);
+  });
+});
+describe('#2338: the Arrived card line when this browser is not the tracker', () => {
+  const ZONE = 'America/Chicago';
+  // 2026-11-17 20:05 UTC is 14:05 in Chicago.
+  const AT = Date.UTC(2026, 10, 17, 20, 5);
+  it('names the last ping and its time, in 24 hours, in the business zone', () => {
+    expect(
+      routeLastPingLine({ points: [{ t: AT - 60_000 }, { t: AT }, { t: AT - 120_000 }], error: null, ready: true }, ZONE),
+    ).toBe('GPS route · last ping 14:05');
+  });
+  it('says no ping has landed, rather than claiming a live route', () => {
+    expect(routeLastPingLine({ points: [], error: null, ready: true }, ZONE)).toBe('No GPS pings yet');
+  });
+  it('says nothing while loading or when the read failed', () => {
+    expect(routeLastPingLine({ points: [], error: null, ready: false }, ZONE)).toBeNull();
+    expect(routeLastPingLine({ points: [{ t: AT }], error: 'denied', ready: true }, ZONE)).toBeNull();
+  });
+  it('an undated route is still a recorded route', () => {
+    expect(routeLastPingLine({ points: [{}], error: null, ready: true }, ZONE)).toBe('GPS route recorded');
+  });
+  it('the idle line can go without the live dot', () => {
+    withStatus({ phase: 'idle' });
+    render(<VisitTrackingIndicator sessionId="s1" idleText="No GPS pings yet" idleLive={false} />);
+    const line = screen.getByTestId('visit-tracking');
+    expect(line).toHaveTextContent('No GPS pings yet');
+    expect(line.querySelector('.vtrack__dot')).toBeNull();
   });
 });

@@ -29,10 +29,17 @@ class LocationTrackingService : Service() {
         const val ACTION_STOP_TRACKING = "STOP_TRACKING"
         const val ACTION_PAUSE_TRACKING = "PAUSE_TRACKING"
         const val ACTION_RESUME_TRACKING = "RESUME_TRACKING"
+        /**
+         * #2338: start again on a visit whose departure was undone, carrying
+         * on its saved route ([UndoneDepartureTracking]).
+         */
+        const val ACTION_RESUME_ROUTE = "RESUME_ROUTE"
 
         const val EXTRA_SESSION_ID = "session_id"
         const val EXTRA_KINFOLK_ID = "kinfolk_id"
         const val EXTRA_HOME_LOCATION = "home_location"
+        /** #2338: the `visit_routes` id the resumed route keeps. */
+        const val EXTRA_ROUTE_ID = "route_id"
 
         private const val NOTIFICATION_ID = 2001
         private const val CHANNEL_ID = "location_tracking_channel"
@@ -102,6 +109,11 @@ class LocationTrackingService : Service() {
                         longitude = it.getDouble("lng")
                     )
                 })
+            }
+            ACTION_RESUME_ROUTE -> {
+                val sessionId = intent.getStringExtra(EXTRA_SESSION_ID) ?: return START_NOT_STICKY
+                val kinfolkId = intent.getStringExtra(EXTRA_KINFOLK_ID).orEmpty()
+                resumeRoute(sessionId, kinfolkId, intent.getStringExtra(EXTRA_ROUTE_ID).orEmpty())
             }
             ACTION_STOP_TRACKING -> stopTracking()
             ACTION_PAUSE_TRACKING -> pauseTracking()
@@ -199,6 +211,54 @@ class LocationTrackingService : Service() {
         }
     }
 
+    /**
+     * #2338: the visit's departure was undone and this phone was its tracker.
+     * Unlike [startTracking], the route's first part is kept: the points are
+     * read back from the breadcrumbs this service wrote, and the saved
+     * `visit_routes` document is carried on, so the next Departed saves one
+     * route and one `gpsSummary` for the whole visit.
+     */
+    private fun resumeRoute(sessionId: String, kinfolkId: String, routeId: String) {
+        AuntieLog.i("Resuming location tracking after Undo departed: $sessionId")
+        if (!hasLocationPermissions()) {
+            AuntieLog.w("Not resuming tracking on $sessionId: no location permission")
+            stopSelf()
+            return
+        }
+        // Inside the five seconds the platform allows a foreground service.
+        startForeground(NOTIFICATION_ID, createTrackingNotification())
+        serviceScope.launch {
+            val settings = repository.getBusinessSettings().getOrNull()
+            if (settings == null || !settings.enableGPSTrackingForAllVisits) {
+                AuntieLog.w("Not resuming tracking on $sessionId: GPS tracking is off in settings")
+                stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return@launch
+            }
+            businessSettings = settings
+            val earlier = kinCareRepository.getBreadcrumbs(sessionId).getOrDefault(emptyList())
+            val saved = if (routeId.isNotBlank()) repository.getVisitRoute(routeId).getOrNull() else null
+            val route = UndoneDepartureTracking.resumedRoute(saved, sessionId, kinfolkId, getCurrentTimestamp())
+            currentSessionId = sessionId
+            currentKinfolkId = route.kinfolkId.ifBlank { kinfolkId }
+            homeLocation = route.homeLocation
+            routePoints.clear()
+            routePoints.addAll(UndoneDepartureTracking.seedPoints(earlier, MapboxConfig.MAX_ROUTE_POINTS))
+            isCurrentlyTracking = true
+            trackingStartTime = System.currentTimeMillis()
+            _isTracking.value = true
+            startLocationUpdates()
+            val id = if (route.id.isNotBlank()) {
+                route.id
+            } else {
+                repository.saveVisitRoute(route).getOrElse { e ->
+                    AuntieLog.e("Failed to persist route shell on resume", e)
+                    ""
+                }
+            }
+            _currentRoute.value = route.copy(id = id)
+        }
+    }
     private fun stopTracking() {
         AuntieLog.i("Stopping location tracking session: $currentSessionId")
         isCurrentlyTracking = false

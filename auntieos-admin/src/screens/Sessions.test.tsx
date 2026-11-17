@@ -453,9 +453,12 @@ describe('Auntie Time: one fully populated action card', () => {
       within(card).getByText('Dog Walk · Biscuit & Gravy · Today · 09:00 to 09:30'),
     ).toBeInTheDocument();
     expect(card.querySelector('.den-pill')).toBeNull();
-    // Status pill, GPS live route, address, household note, invoice chip.
+    // Status pill, GPS line, address, household note, invoice chip.
     expect(within(card).getByText('ARRIVED')).toBeInTheDocument();
-    expect(within(card).getByText(/GPS tracking · live route/)).toBeInTheDocument();
+    // #2338: this browser is not the tracker and the route has no ping, so the
+    // line says that instead of claiming a live route nobody may be recording.
+    expect(within(card).getByText('No GPS pings yet')).toBeInTheDocument();
+    expect(within(card).queryByText(/live route/)).toBeNull();
     expect(within(card).getByText(/82 Creekside Ln/)).toBeInTheDocument();
     expect(within(card).getByText('Side gate, harness on the hook.')).toBeInTheDocument();
     expect(within(card).getByText('Invoice linked')).toBeInTheDocument();

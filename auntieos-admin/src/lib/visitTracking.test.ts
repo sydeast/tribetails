@@ -30,6 +30,7 @@ import {
   breadcrumbFromPosition,
   endVisitTracking,
   getVisitTrackingStatus,
+  isVisitTrackingParked,
   resetVisitTrackingForTests,
   resumeVisitTracking,
   shouldWriteFix,
@@ -37,6 +38,7 @@ import {
 } from './visitTracking';
 
 const STORAGE_KEY = 'auntieos.visitTracking.sessionId';
+const PARKED_KEY = 'auntieos.visitTracking.parkedSessionId';
 
 type SuccessCb = (p: GeolocationPosition) => void;
 type ErrorCb = (e: GeolocationPositionError) => void;
@@ -458,5 +460,138 @@ describe('resumeVisitTracking after a reload', () => {
     docCallback()({ exists: () => true, data: () => ({ status: 'COMPLETED' }) });
     expect(geo.clearWatch).toHaveBeenCalledWith(7);
     expect(getVisitTrackingStatus('s1')).toEqual({ phase: 'idle' });
+  });
+});
+describe('#2338: an undone departure resumes on the tab that was tracking, and only there', () => {
+  type Snap = { exists: () => boolean; data: () => unknown; metadata?: { fromCache: boolean } };
+  const snap = (data: unknown, fromCache = false): Snap => ({
+    exists: () => true,
+    data: () => data,
+    metadata: { fromCache },
+  });
+  const docCb = () => docCallback() as unknown as (s: Snap) => void;
+  async function arriveTracked() {
+    geo.getCurrentPosition.mockImplementation((ok) => ok(position(30.2672, -97.7431, 10_000)));
+    beginVisitTracking('s1', Promise.resolve(true));
+    await flush();
+    addDoc.mockClear();
+  }
+  it('HAPPY: departed from another device, then undone: the watch starts again here, with no prompt', async () => {
+    await arriveTracked();
+    geo.getCurrentPosition.mockClear();
+    docCb()(snap({ status: 'COMPLETED' }));
+    expect(geo.clearWatch).toHaveBeenCalledWith(7);
+    expect(isVisitTrackingParked('s1')).toBe(true);
+    expect(sessionStorage.getItem(PARKED_KEY)).toBe('s1');
+    geo.watchPosition.mockClear();
+    docCb()(snap({ status: 'ARRIVED' }));
+    expect(geo.watchPosition).toHaveBeenCalledTimes(1);
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
+    expect(getVisitTrackingStatus('s1')).toEqual({ phase: 'on', fixes: 0 });
+    expect(isVisitTrackingParked('s1')).toBe(false);
+    expect(sessionStorage.getItem(STORAGE_KEY)).toBe('s1');
+    expect(sessionStorage.getItem(PARKED_KEY)).toBeNull();
+  });
+  it('the second part writes to the same route: the next fix lands in the same breadcrumbs', async () => {
+    await arriveTracked();
+    docCb()(snap({ status: 'DEPARTED' }));
+    docCb()(snap({ status: 'ARRIVED' }));
+    watchCallbacks().onFix(position(30.27, -97.75, 60_000));
+    await flush();
+    expect(addDoc).toHaveBeenCalledTimes(1);
+    expect(addDoc.mock.calls[0]?.[0]).toMatchObject({ path: ['kin_care_sessions', 's1', 'breadcrumbs'] });
+  });
+  it("this tab's own Departed: a cached Arrived from before the write is not an undo", async () => {
+    await arriveTracked();
+    endVisitTracking('s1', Promise.resolve(true));
+    await flush();
+    expect(isVisitTrackingParked('s1')).toBe(true);
+    geo.watchPosition.mockClear();
+    docCb()(snap({ status: 'ARRIVED' }, true));
+    expect(geo.watchPosition).not.toHaveBeenCalled();
+    docCb()(snap({ status: 'DEPARTED' }, true));
+    docCb()(snap({ status: 'ARRIVED' }));
+    expect(geo.watchPosition).toHaveBeenCalledTimes(1);
+  });
+  it('NEGATIVE: a tab that was not tracking starts nothing when the visit is undone', async () => {
+    // Nothing tracked here: the owner at a desk taps Undo departed.
+    expect(isVisitTrackingParked('s1')).toBe(false);
+    expect(onSnapshot).not.toHaveBeenCalled();
+    expect(geo.watchPosition).not.toHaveBeenCalled();
+  });
+  it('SAD: the undo window closes and the wait ends, so a later Arrived starts nothing', async () => {
+    await arriveTracked();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const until = new Date(Date.now() + 5 * 60_000).toISOString();
+      docCb()(snap({ status: 'COMPLETED', undoDepartedUntil: until }));
+      expect(isVisitTrackingParked('s1')).toBe(true);
+      vi.advanceTimersByTime(5 * 60_000);
+      expect(isVisitTrackingParked('s1')).toBe(true);
+      vi.advanceTimersByTime(60_000 + 1);
+      expect(isVisitTrackingParked('s1')).toBe(false);
+      expect(sessionStorage.getItem(PARKED_KEY)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('with no window stamped yet, the wait is still bounded', async () => {
+    await arriveTracked();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      docCb()(snap({ status: 'DEPARTED' }));
+      expect(isVisitTrackingParked('s1')).toBe(true);
+      vi.advanceTimersByTime(30 * 60_000 + 1);
+      expect(isVisitTrackingParked('s1')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('a cancelled or deleted visit ends the wait', async () => {
+    await arriveTracked();
+    docCb()(snap({ status: 'DEPARTED' }));
+    docCb()(snap({ status: 'CANCELLED' }));
+    expect(isVisitTrackingParked('s1')).toBe(false);
+    await arriveTracked();
+    docCb()(snap({ status: 'DEPARTED' }));
+    docCb()({ exists: () => false, data: () => undefined });
+    expect(isVisitTrackingParked('s1')).toBe(false);
+  });
+  it('arriving another visit ends the wait: one visit per tab', async () => {
+    await arriveTracked();
+    docCb()(snap({ status: 'DEPARTED' }));
+    geo.getCurrentPosition.mockImplementation((ok) => ok(position(30.2672, -97.7431, 10_000)));
+    beginVisitTracking('s2', Promise.resolve(true));
+    await flush();
+    expect(isVisitTrackingParked('s1')).toBe(false);
+  });
+  it('a stop that is not a departure (undo arrival, a refused write) does not wait', async () => {
+    await arriveTracked();
+    stopVisitTracking('s1');
+    expect(isVisitTrackingParked('s1')).toBe(false);
+    await arriveTracked();
+    docCb()(snap({ status: 'ON_MY_WAY' }));
+    expect(isVisitTrackingParked('s1')).toBe(false);
+  });
+  it('a reload while waiting keeps waiting when location is allowed, and not when it would prompt', async () => {
+    Object.defineProperty(navigator, 'permissions', {
+      configurable: true,
+      writable: true,
+      value: { query: vi.fn().mockResolvedValue({ state: 'granted' }) },
+    });
+    waitForAuthReady.mockResolvedValue({ status: 'signedIn' });
+    sessionStorage.setItem(PARKED_KEY, 's1');
+    await resumeVisitTracking();
+    expect(isVisitTrackingParked('s1')).toBe(true);
+    docCb()(snap({ status: 'ARRIVED' }));
+    expect(geo.watchPosition).toHaveBeenCalledTimes(1);
+    resetVisitTrackingForTests();
+    (navigator as unknown as { permissions: { query: ReturnType<typeof vi.fn> } }).permissions.query.mockResolvedValue({
+      state: 'prompt',
+    });
+    sessionStorage.setItem(PARKED_KEY, 's1');
+    await resumeVisitTracking();
+    expect(isVisitTrackingParked('s1')).toBe(false);
+    expect(sessionStorage.getItem(PARKED_KEY)).toBeNull();
   });
 });

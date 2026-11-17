@@ -745,17 +745,25 @@ private fun KinCareCard(
                 KebabMenu(session = session, arrivalRule = arrivalRule, onRefused = onRefused, onWrite = onWrite)
             }
 
-            // ---- Live GPS indicator (only while ARRIVED + tracking) ----
+            // The session's breadcrumbs, for the GPS line and the route map.
+            val crumbsState = if (isInFlight) {
+                val r by remember(session._id) { breadcrumbsFor(session._id) }
+                    .collectAsState(initial = FirestoreResult.Loading)
+                r
+            } else {
+                null
+            }
+
+            // ---- GPS line while ARRIVED (#2338). The console never tracks a visit
+            // itself, so it says when the route last pinged, never "live". ----
             if (isArrived) {
-                GpsLiveRow()
+                GpsLiveRow(gpsLineFor(trackingHere = false, crumbs = (crumbsState as? FirestoreResult.Data)?.value, zone = LocalAuntieTimeZone.current))
             }
 
             // ---- Today's-route map (§A.10): render the live/replay RouteMap inline for
             // in-flight visits, fed by the session's breadcrumb subcollection. Only shown
             // once at least one crumb exists (no empty canvas / fake route). ----
             if (isInFlight) {
-                val crumbsState by remember(session._id) { breadcrumbsFor(session._id) }
-                    .collectAsState(initial = FirestoreResult.Loading)
                 val crumbs = (crumbsState as? FirestoreResult.Data)?.value.orEmpty()
                 if (crumbs.isNotEmpty()) {
                     RouteMap(breadcrumbs = crumbs, live = isArrived)
@@ -1025,21 +1033,25 @@ private fun KebabMenu(
 // ---------- Live GPS row (mockup .gpslive: pulsing teal dot + label) ----------
 
 @Composable
-private fun GpsLiveRow() {
+private fun GpsLiveRow(line: GpsLine?) {
+    if (line == null) return
     val c = AuntieTheme.colors
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Reuse the Den status LED in glow mode for the pulsing "live" dot.
-        AuntieStatusPill(
-            label   = "",
-            tone    = AuntieStatusTone.Teal,
-            dotOnly = true,
-            glow    = true,
-        )
+        // Reuse the Den status LED in glow mode for the pulsing "live" dot,
+        // only when the line is about a live tracker.
+        if (line.live) {
+            AuntieStatusPill(
+                label   = "",
+                tone    = AuntieStatusTone.Teal,
+                dotOnly = true,
+                glow    = true,
+            )
+        }
         Text(
-            text  = "GPS tracking · live route",
+            text  = line.text,
             style = AuntieTheme.typography.mono,
             color = c.accent,
         )

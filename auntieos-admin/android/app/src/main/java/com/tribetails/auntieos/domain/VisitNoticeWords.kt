@@ -139,6 +139,10 @@ fun visitNoticeConfirmLine(
                 "$name will not be told, because they have no portal account."
             reach.reason == "household_notices_off" ->
                 "$name will not be told, because notices to households are off in Settings."
+            // #2339: a repeat of a step undone after the household heard about it.
+            // The same words as web's `lib/visitNotice.ts`.
+            reach.reason == "already_notified" ->
+                "$name was already told $what, so they will not be told again."
             // A reason this build has no words for. It promises nothing.
             else -> null
         }

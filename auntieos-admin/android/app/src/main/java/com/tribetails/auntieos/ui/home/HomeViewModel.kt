@@ -29,6 +29,7 @@ import com.tribetails.auntieos.domain.visitRoutingSkip
 import com.tribetails.auntieos.location.ArrivalFixProvider
 import com.tribetails.auntieos.location.FusedArrivalFixProvider
 import com.tribetails.auntieos.location.LocationTrackingService
+import com.tribetails.auntieos.location.UndoneDepartureTracking
 import com.tribetails.auntieos.notifications.VisitNotifier
 import com.tribetails.auntieos.util.AuntieLog
 import kotlinx.coroutines.Job
@@ -302,6 +303,9 @@ class HomeViewModel(
      */
     fun load(keepActionError: String? = null) {
         AuntieLog.d("Loading dashboard data")
+        // #2338: a wait for an Undo departed that outlived the process, or a
+        // resume the system refused while the app was in the background.
+        runCatching { UndoneDepartureTracking.watch(com.tribetails.auntieos.AuntieOSApp.instance) }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true)
             try {
@@ -717,6 +721,9 @@ class HomeViewModel(
         runOnSession(sessionId) { card ->
             kinCareRepo.markSessionDeparted(sessionId).onSuccess { departedAt ->
                 // #2037: the server writes "Visit departed" from this write.
+                // #2338: this phone was tracking this visit, so it waits for
+                // an Undo departed and resumes the same route if one comes.
+                parkIfTrackingHere(context, sessionId)
                 if (_uiState.value.businessSettings.enableGPSTrackingForAllVisits) {
                     stopGpsTracking(context)
                 }
@@ -778,6 +785,16 @@ class HomeViewModel(
         }
     }
 
+    /** #2338: remember the visit this phone tracked until its Departed (read before the stop clears it). */
+    private fun parkIfTrackingHere(context: Context, sessionId: String) {
+        val route = LocationTrackingService.currentRoute.value
+        if (!LocationTrackingService.isTracking.value || route?.kinCareSessionId != sessionId) return
+        UndoneDepartureTracking.park(
+            context,
+            UndoneDepartureTracking.Parked(sessionId, route.kinfolkId, route.id, System.currentTimeMillis()),
+        )
+        UndoneDepartureTracking.watch(context)
+    }
     private fun startGpsForSession(context: Context, session: KinCareSession) {
         val intent = Intent(context, LocationTrackingService::class.java).apply {
             action = LocationTrackingService.ACTION_START_TRACKING
