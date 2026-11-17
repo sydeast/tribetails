@@ -223,6 +223,17 @@ describe('the bell store, a tap the office answered first, and the cache (#2329)
     setLiveRows([unread('a'), unread('b')]);
     expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
   });
+  it("a tap the server took stays off the bell through a cached snapshot, and counts again on the server's", () => {
+    setLiveRows([unread('a'), unread('b')]);
+    markReadLocally('a');
+    confirmLocalRead('a');
+    // The connection dropped before the read came back: the cache still has it unread.
+    setLiveRows([unread('a'), unread('b')], { fromCache: true });
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+    // The server says it is unread: the office marked it again.
+    setLiveRows([unread('a'), unread('b')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
+  });
   it('a tap the server has not answered stays off the bell while the row still reads unread', () => {
     setLiveRows([unread('a'), unread('b')]);
     markReadLocally('a');

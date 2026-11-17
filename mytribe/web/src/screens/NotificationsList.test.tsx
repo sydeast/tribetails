@@ -351,6 +351,21 @@ describe('NotificationsList keeps its rows when a later read fails (#2328)', () 
     expect(mocks.list).toHaveBeenLastCalledWith('fam1', { limit: 50, before: 1_700_000_000_000 });
     expect(screen.queryByTestId('notifications-older-failed')).toBeNull();
   });
+  it('a good re-read after a failed "Show older" takes the failed line away', async () => {
+    mocks.list.mockResolvedValueOnce(page([ROWS[0]!], { hasMore: true, nextBefore: 1_700_000_000_000 }));
+    mocks.list.mockRejectedValueOnce(new Error('unavailable'));
+    renderScreen();
+    await screen.findByTestId('notifications-list');
+    await userEvent.click(screen.getByRole('button', { name: 'Show older' }));
+    await screen.findByTestId('notifications-older-failed');
+    // A notice arrived and the newest page now holds everything there is.
+    mocks.list.mockResolvedValue(page([ROWS[0]!, ROWS[3]!]));
+    await act(() => queryClient.invalidateQueries({ queryKey: ['myNotifications'] }));
+    await screen.findByRole('button', { name: /New KinTale/ });
+    expect(screen.queryByTestId('notifications-older-failed')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Show older' })).toBeNull();
+    expect(screen.queryByTestId('notifications-refresh-failed')).toBeNull();
+  });
 });
 /**
  * #2329: once the server has taken the read, the bell believes the next

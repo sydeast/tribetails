@@ -142,7 +142,9 @@ class UnreadBadge {
      * or is gone), and also (#2329) when the row still reads unread but cannot
      * be waiting on the tap any more: the office has issued it again since
      * ([BadgeRow.issuedAtMs] moved), or `markNotificationRead` had already come
-     * back before this snapshot. Without those two the office marking a tapped
+     * back before this snapshot and this snapshot is the server's (one from
+     * the cache, the connection having dropped, may predate the read).
+     * Without those two the office marking a tapped
      * notice unread before the read reached this device left the tap
      * subtracting until the app was restarted.
      *
@@ -152,14 +154,17 @@ class UnreadBadge {
      * has answered, a cached snapshot (the connection dropped) holds what the
      * server last said and is taken as usual. The web portal's
      * `lib/unreadBadge.ts` has the same rules.
+     *
+     * [rowsChanged] is false for a snapshot that changed no row (only where it
+     * came from); the open list is not re-read for it.
      */
-    fun onRows(rows: List<BadgeRow>, fromCache: Boolean = false) = _model.update { old ->
+    fun onRows(rows: List<BadgeRow>, fromCache: Boolean = false, rowsChanged: Boolean = true) = _model.update { old ->
         if (fromCache && !old.serverAnswered) return@update old
         val byId = rows.associateBy { it.id }
         val taps = buildMap {
             for ((id, tap) in old.taps) {
                 val row = byId[id] ?: continue
-                if (!row.unread || tap.answered) continue
+                if (!row.unread || (tap.answered && !fromCache)) continue
                 when {
                     !tap.issueKnown -> put(id, tap.copy(issuedAtMs = row.issuedAtMs, issueKnown = true))
                     tap.issuedAtMs == row.issuedAtMs -> put(id, tap)
@@ -170,7 +175,7 @@ class UnreadBadge {
             rows = rows,
             failed = false,
             taps = taps,
-            revision = if (old.rows == null || old.rows == rows) old.revision else old.revision + 1,
+            revision = if (old.rows == null || !rowsChanged) old.revision else old.revision + 1,
             serverAnswered = old.serverAnswered || !fromCache,
         )
     }
@@ -215,7 +220,7 @@ suspend fun followUnreadBadge(
 ) {
     try {
         firestore.recipientNotificationsStream(uid, UNREAD_SCAN_CAP).collect { snapshot ->
-            badge.onRows(snapshot.docs.map(::badgeRowOf), fromCache = snapshot.fromCache)
+            badge.onRows(snapshot.docs.map(::badgeRowOf), fromCache = snapshot.fromCache, rowsChanged = snapshot.rowsChanged)
         }
     } catch (c: CancellationException) {
         throw c

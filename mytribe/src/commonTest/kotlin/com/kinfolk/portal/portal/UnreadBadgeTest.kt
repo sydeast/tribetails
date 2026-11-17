@@ -247,6 +247,17 @@ class UnreadBadgeTest {
         assertEquals(LiveUnread.Live(2), badge.live())
     }
     @Test
+    fun aTapTheServerTook_staysOffTheBellThroughACachedSnapshot_andCountsAgainOnTheServers() {
+        val badge = UnreadBadge()
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        badge.markReadLocally("a")
+        badge.confirmLocalRead("a")
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")), fromCache = true)
+        assertEquals(LiveUnread.Live(1), badge.live())
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        assertEquals(LiveUnread.Live(2), badge.live())
+    }
+    @Test
     fun aTapTheServerHasNotAnswered_staysOffTheBellWhileTheRowStillReadsUnread() {
         val badge = UnreadBadge()
         badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
@@ -313,8 +324,11 @@ class UnreadBadgeTest {
     fun aSnapshotThatChangesNoRow_doesNotReloadTheList() {
         val badge = UnreadBadge()
         badge.onRows(listOf(unreadAt("a")))
-        badge.onRows(listOf(unreadAt("a")), fromCache = true)
+        badge.onRows(listOf(unreadAt("a")), fromCache = true, rowsChanged = false)
         assertEquals(0, badge.model.value.revision)
+        // A notice whose words changed in place is a change, though the count is not.
+        badge.onRows(listOf(unreadAt("a")), rowsChanged = true)
+        assertEquals(1, badge.model.value.revision)
     }
     @Test
     fun aNewSignInWaitsForTheServerAgain() {

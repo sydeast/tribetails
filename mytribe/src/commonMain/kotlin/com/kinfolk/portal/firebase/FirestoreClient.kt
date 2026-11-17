@@ -48,6 +48,8 @@ interface FirestoreClient {
 data class NotificationsSnapshot(
     val docs: List<FirestoreDoc>,
     val fromCache: Boolean = false,
+    /** A row arrived, left or changed. False for a snapshot that only says where it came from. */
+    val rowsChanged: Boolean = true,
 )
 
 data class FirestoreDoc(

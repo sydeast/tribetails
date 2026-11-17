@@ -207,6 +207,8 @@ fun NotificationsListScreen(
             unread = page.unreadCount
             onUnreadCount(page.unreadCount)
             refreshFailed = false
+            // The list is current again, as the web's is after a good re-read.
+            olderFailed = false
         } catch (c: CancellationException) {
             throw c
         } catch (_: Throwable) {

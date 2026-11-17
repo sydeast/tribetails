@@ -72,6 +72,8 @@ class NativeAndroidFirestoreClient(
                             NotificationsSnapshot(
                                 docs = snap.documents.map { doc -> FirestoreDoc(id = doc.id, fields = normalise(doc.data ?: emptyMap())) },
                                 fromCache = snap.metadata.isFromCache,
+                                // Document changes only, not metadata ones.
+                                rowsChanged = snap.documentChanges.isNotEmpty(),
                             ),
                         )
                     }

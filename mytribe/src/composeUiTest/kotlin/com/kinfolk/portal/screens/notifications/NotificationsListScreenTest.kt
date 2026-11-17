@@ -600,6 +600,27 @@ class NotificationsListScreenTest {
         onNodeWithText("Visit confirmed").assertExists()
         onNodeWithTag("notificationsOlderFailed").assertDoesNotExist()
     }
+    @Test
+    fun aGoodReReadAfterAFailedShowOlder_takesTheFailedLineAway() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("listMyNotifications", page(listOf(rows[0]), unreadCount = 1, hasMore = true, nextBefore = 1_700_000_000_000L))
+        var revision by androidx.compose.runtime.mutableStateOf(0)
+        setThemedContent {
+            NotificationsListScreen(kinfolkId = "fam-1", portalApi = PortalApi(fake), liveRevision = revision, nowMs = { now })
+        }
+        waitForIdle()
+        fake.stubError("listMyNotifications", IllegalStateException("notifications unavailable"))
+        onNodeWithTag("notificationsOlder").performClick()
+        waitForIdle()
+        onNodeWithTag("notificationsOlderFailed").assertExists()
+        // A notice arrived and the newest page now holds everything there is.
+        fake.stub("listMyNotifications", page(listOf(rows[0], rows[3]), unreadCount = 2))
+        revision = 1
+        waitForIdle()
+        onNodeWithTag("notificationsOlderFailed").assertDoesNotExist()
+        onNodeWithTag("notificationsOlder").assertDoesNotExist()
+        onNodeWithText("New KinTale").assertExists()
+    }
     // ---- #2329: the server's answer to a tap reaches the bell ----
     @Test
     fun aReadTheServerTookIsReported() = runComposeUiTest {

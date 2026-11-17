@@ -125,7 +125,8 @@ function tappedIds(): ReadonlySet<string> {
  * is gone), and also (#2329) when the row still reads unread but cannot be
  * waiting on the tap any more: the office has issued it again since
  * (`issuedAtMs` moved), or `markNotificationRead` had already come back
- * before this snapshot. Without those two the office marking a tapped notice
+ * before this snapshot and this snapshot is the server's (one from the
+ * cache, the connection having dropped, may predate the read). Without those two the office marking a tapped notice
  * unread before the read reached this browser left the tap subtracting until
  * a reload.
  *
@@ -138,12 +139,13 @@ function tappedIds(): ReadonlySet<string> {
  */
 export function setLiveRows(rows: readonly BadgeRow[], opts: { fromCache?: boolean } = {}): boolean {
   if (opts.fromCache === true && !serverAnswered) return false;
-  if (opts.fromCache !== true) serverAnswered = true;
+  const fromServer = opts.fromCache !== true;
+  if (fromServer) serverAnswered = true;
   const byId = new Map(rows.map((r) => [r.id, r]));
   const kept = new Map<string, Tap>();
   for (const [id, tap] of taps) {
     const row = byId.get(id);
-    if (row === undefined || !row.unread || tap.answered) continue;
+    if (row === undefined || !row.unread || (tap.answered && fromServer)) continue;
     const issued = row.issuedAtMs ?? null;
     if (tap.issuedAtMs === undefined) kept.set(id, { ...tap, issuedAtMs: issued });
     else if (tap.issuedAtMs === issued) kept.set(id, tap);
