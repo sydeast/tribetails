@@ -153,4 +153,24 @@ class KinTaleLogsDraftsTest {
         assertEquals("gd1", reviewTarget(listOf(Draft(id = "gd1"), Draft(id = "gd2"))))
         assertNull(reviewTarget(emptyList()))
     }
+    @Test
+    fun `#2293 a held Push draft is listed under Drafts again, a sent one is not`() {
+        val held = draftFromFields(
+            "held",
+            mapOf(
+                "status" to "approved", "communication_type" to "push", "kinfolk_id" to "kf1",
+                "generated_copy" to "Hi", "pushOutcome" to "held", "pushReason" to "household_notices_off",
+                "createdOn" to "2026-11-14T00:00:00Z",
+            ),
+        )
+        assertTrue(held.isHeldPush)
+        assertEquals("household_notices_off", held.pushReason)
+        assertFalse(held.isUnsent)
+        val sent = held.copy(id = "sent", pushOutcome = "sent")
+        val listedOnly = held.copy(id = "listed", pushOutcome = "listed")
+        val noStamp = held.copy(id = "nostamp", pushOutcome = "")
+        val sms = held.copy(id = "sms", communicationType = "sms")
+        assertEquals(listOf("held"), unsentGeneratedDrafts(listOf(held, sent, listedOnly, noStamp, sms)).map { it.id })
+    }
 }
+

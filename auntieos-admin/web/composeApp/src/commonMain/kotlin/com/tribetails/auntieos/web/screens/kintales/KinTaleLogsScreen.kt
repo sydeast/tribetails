@@ -59,7 +59,7 @@ import com.composables.icons.lucide.X
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.GeneratedDraft
-import com.tribetails.auntieos.web.data.draftsAwaitingReview
+import com.tribetails.auntieos.web.data.kinTaleListDrafts
 import com.tribetails.auntieos.web.data.KinCareReport
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.WriteResult
@@ -146,12 +146,13 @@ fun KinTaleLogsScreen(
     val state by remember { client.reportsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val kinfolkState by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
     // #1563: the other half of a KinTale. A KinTale in draft state is a
-    // `generated_drafts` doc (ruling D-2026-08-04); only the unsent ones are listed.
+    // `generated_drafts` doc (ruling D-2026-08-04); only the unsent ones are
+    // listed, and (#2293) an approved Push draft the server held.
     val draftsState by remember { client.generatedDraftsStream() }.collectAsState(initial = FirestoreResult.Loading)
     // #1592: rows name their service from the KinCare catalog, never `visit_60`.
     val kinCareSettings by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val kinCareRates = (kinCareSettings as? FirestoreResult.Data)?.value?.serviceRates.orEmpty()
-    val unsentDrafts = draftsAwaitingReview((draftsState as? FirestoreResult.Data)?.value.orEmpty())
+    val unsentDrafts = kinTaleListDrafts((draftsState as? FirestoreResult.Data)?.value.orEmpty())
 
     val scope = rememberReportingScope()
     var dialog by remember { mutableStateOf<TriageDialogState?>(null) }

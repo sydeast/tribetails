@@ -24,7 +24,11 @@ import { toNotificationListItem } from '../src/portal/listMyNotifications';
  */
 
 const ACTIVE_PRIMARY = { role: 'PRIMARY', status: 'ACTIVE' };
+/** The approved Push draft the office is sending, written for fam1 (generate.js spelling). */
+const DRAFT = { communication_type: 'push', kinfolk_id: 'fam1', status: 'approved', generated_copy: 'Biscuit had a great walk today.' };
+const draftPath = 'generated_drafts/draft1';
 const HOUSEHOLD = {
+  [draftPath]: DRAFT,
   'kinfolk/fam1': { uid: 'uid_kin', firstName: 'Test', lastName: 'One' },
   'families/fam1/members/uid_kin': ACTIVE_PRIMARY,
 };
@@ -86,7 +90,9 @@ describe('sendHouseholdPush (#2061)', () => {
 
     expect(res).toEqual({ ok: true, outcome: 'held', reason: 'household_notices_off' });
     expect(mocks.multicast).not.toHaveBeenCalled();
-    expect(ctx.writes).toEqual([]);
+    // Nothing for the household; the draft remembers the answer (#2293).
+    expect(ctx.writes.map((w) => w.path)).toEqual([draftPath]);
+    expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'held', pushReason: 'household_notices_off' });
   });
 
   it('SAD: the gate absent (the pre-launch default) holds the push too', async () => {
@@ -96,10 +102,10 @@ describe('sendHouseholdPush (#2061)', () => {
   });
 
   it('SAD: a household nobody has signed in to is named first, before the gate', async () => {
-    const ctx = seed({ 'kinfolk/fam1': { firstName: 'Test' }, 'business_settings/business_settings': { householdNotificationsLive: false } });
+    const ctx = seed({ [draftPath]: DRAFT, 'kinfolk/fam1': { firstName: 'Test' }, 'business_settings/business_settings': { householdNotificationsLive: false } });
     const res = await sendHouseholdPushHandler(req());
     expect(res).toEqual({ ok: true, outcome: 'held', reason: 'household_has_no_portal_account' });
-    expect(ctx.writes).toEqual([]);
+    expect(ctx.writes.map((w) => w.path)).toEqual([draftPath]);
   });
 
   it('SAD: the operator turned household message notices off, so nothing is written', async () => {
@@ -110,7 +116,7 @@ describe('sendHouseholdPush (#2061)', () => {
     });
     const res = await sendHouseholdPushHandler(req());
     expect(res).toEqual({ ok: true, outcome: 'held', reason: 'notice_turned_off' });
-    expect(ctx.writes).toEqual([]);
+    expect(ctx.writes.map((w) => w.path)).toEqual([draftPath]);
     expect(mocks.multicast).not.toHaveBeenCalled();
   });
 
@@ -119,8 +125,9 @@ describe('sendHouseholdPush (#2061)', () => {
     const res = await sendHouseholdPushHandler(req());
     expect(res).toEqual({ ok: true, outcome: 'listed', reason: 'household_push_off' });
     expect(mocks.multicast).not.toHaveBeenCalled();
-    // The notice, then its pushOutcome stamp: nothing else is written.
-    expect([...new Set(ctx.writes.map((w) => w.path))]).toEqual([noticePath]);
+    // The notice, its pushOutcome stamp, and the draft's: nothing else is written.
+    expect([...new Set(ctx.writes.map((w) => w.path))]).toEqual([noticePath, draftPath]);
+    expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'listed', pushReason: 'household_push_off' });
   });
 
   it('SAD: no device signed in for push, so it is listed and not pushed', async () => {
@@ -211,5 +218,75 @@ describe('sendHouseholdPush (#2061)', () => {
     await expect(sendHouseholdPushHandler(req({ body: '<p></p>' }))).rejects.toMatchObject({ code: 'invalid-argument' });
     await expect(sendHouseholdPushHandler(req({ draftId: '../x' }))).rejects.toMatchObject({ code: 'invalid-argument' });
     expect(mocks.multicast).not.toHaveBeenCalled();
+  });
+});
+describe('sendHouseholdPush checks its draft (#2295)', () => {
+  const LIVE = { 'business_settings/business_settings': { householdNotificationsLive: true } };
+  async function refused(draft: Record<string, unknown> | null, code: string, data: Record<string, unknown> = {}) {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: draft });
+    await expect(sendHouseholdPushHandler(req(data))).rejects.toMatchObject({ code });
+    // A refusal leaves nothing behind: no notice, no push, no write of any kind.
+    expect(ctx.writes).toEqual([]);
+    expect(ctx.docs[noticePath]).toBeUndefined();
+    expect(mocks.multicast).not.toHaveBeenCalled();
+  }
+  it('NEGATIVE: refuses a draft written for another household', async () => {
+    await refused({ ...DRAFT, kinfolk_id: 'fam2' }, 'permission-denied');
+  });
+  it('NEGATIVE: refuses a draft written for another household in the older spelling', async () => {
+    await refused({ communication_type: 'push', kinfolkId: 'fam2', status: 'approved' }, 'permission-denied');
+  });
+  it('NEGATIVE: refuses a draft whose two household fields disagree', async () => {
+    await refused({ ...DRAFT, kinfolkId: 'fam2' }, 'permission-denied');
+  });
+  it('NEGATIVE: refuses a draft with no household on it', async () => {
+    await refused({ ...DRAFT, kinfolk_id: '' }, 'permission-denied');
+  });
+  it('NEGATIVE: refuses a draft that is not there', async () => {
+    await refused(null, 'not-found');
+  });
+  it('NEGATIVE: refuses a draft that is not a push', async () => {
+    await refused({ ...DRAFT, communication_type: 'visit_report' }, 'failed-precondition');
+  });
+  it('NEGATIVE: refuses a push draft nobody approved', async () => {
+    await refused({ ...DRAFT, status: 'generated' }, 'failed-precondition');
+  });
+  it('HAPPY: the older camelCase spelling of the same household sends', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { communicationType: 'push', kinfolkId: 'fam1', status: 'approved' } });
+    expect((await sendHouseholdPushHandler(req())).outcome).toBe('sent');
+    expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'sent', pushReason: '' });
+  });
+  it('HAPPY: the notice names the draft it was sent from', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE });
+    await sendHouseholdPushHandler(req());
+    expect(ctx.docs[noticePath]).toMatchObject({ data: { kinfolkId: 'fam1', draftId: 'draft1' } });
+  });
+  it('HAPPY (#2293): a held push is stamped held on its draft, then sent on a later try', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, 'business_settings/business_settings': { householdNotificationsLive: false } });
+    expect((await sendHouseholdPushHandler(req())).outcome).toBe('held');
+    expect(ctx.docs[draftPath]).toMatchObject({ status: 'approved', pushOutcome: 'held', pushReason: 'household_notices_off' });
+    expect(typeof ctx.docs[draftPath]!['pushAttemptedAt']).toBe('string');
+    ctx.docs['business_settings/business_settings'] = { householdNotificationsLive: true };
+    expect((await sendHouseholdPushHandler(req())).outcome).toBe('sent');
+    expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'sent', pushReason: '' });
+    // A third try finds it sent and the draft still reads sent, never null.
+    expect((await sendHouseholdPushHandler(req())).outcome).toBe('already_sent');
+    expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'sent', pushReason: '' });
+  });
+  it('ERROR: a draft stamp that fails never changes the answer', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE });
+    const realCollection = ctx.db.collection.bind(ctx.db);
+    vi.spyOn(ctx.db, 'collection').mockImplementation(((name: string) => {
+      const col = realCollection(name);
+      if (name !== 'generated_drafts') return col;
+      return {
+        ...col,
+        doc: (id: string) => {
+          const ref = col.doc(id);
+          return { ...ref, get: ref.get, set: vi.fn(async () => { throw new Error('write refused'); }) };
+        },
+      };
+    }) as any);
+    expect(await sendHouseholdPushHandler(req())).toEqual({ ok: true, outcome: 'sent', reason: null });
   });
 });
