@@ -787,6 +787,36 @@ export async function recordPaymentHandler(
           };
         }
       }
+      // #2296 review: A ROW WRITTEN BEFORE THE STAMP EXISTED. A row from before
+      // this deploy names the settlement but the settlement does not name it
+      // back, so it is found by the settlement id it carries. Only
+      // `recordPayment` and the sweep write that id on a ledger row, and the
+      // sweep's stand-in is replaced below, not answered from. One equality
+      // filter, so no composite index; the rest is checked here.
+      const earlier = await tx.get(
+        db().collection('payments').where('settledByInvoicePaymentId', '==', args.settledByInvoicePaymentId),
+      );
+      const legacy = earlier.docs
+        .filter((d) => {
+          const r = (d.data() ?? {}) as Record<string, unknown>;
+          return (
+            d.id !== ref.id &&
+            r['invoiceId'] === args.invoiceId &&
+            r['kinfolkId'] === kinfolkId &&
+            r['recordedByServer'] !== SETTLEMENT_LEDGER_SWEEP_WRITER
+          );
+        })
+        .sort((a, b) => (a.createTime?.toMillis?.() ?? 0) - (b.createTime?.toMillis?.() ?? 0))[0];
+      if (legacy !== undefined) {
+        return {
+          replayed: (legacy.data() ?? {}) as Record<string, unknown>,
+          replayedRef: legacy.ref as DocumentReference | null,
+          application: null as ApplyOutcome | null,
+          settlesInvoice: false,
+          replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
+          possibleDuplicateOf: null as string | null,
+        };
+      }
     }
     let claimedOwner = linkedInvoice
       ? claimableMarkInvoicePaidOwner(linkedInvoice, kinfolkId, args.settledByInvoicePaymentId, Date.now())

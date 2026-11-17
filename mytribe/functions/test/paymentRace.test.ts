@@ -1161,6 +1161,19 @@ describe('#2296: a second call naming a settlement that already has its ledger r
     expect(subcollectionRows()).toBe(1);
     expectBalanceMatchesPayments();
   });
+  it('a row from before the stamp existed is still found: no second row, no second credit', async () => {
+    const tx = installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    const first = await step2(settled.paymentId);
+    // What a row written before this deploy looks like: the settlement does not name it.
+    const { ledgerPaymentId: _dropped, ...unstamped } = docs[`${INVOICE}/payments/${settled.paymentId}`]!;
+    docs[`${INVOICE}/payments/${settled.paymentId}`] = unstamped;
+    const second = await step2(settled.paymentId, { amount: 55, creditToAccountCents: 1000, idempotencyKey: pay(2) });
+    expect(second).toEqual(first);
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
+    expect(tx.committed().filter((p) => p === 'families/fam1')).toHaveLength(0);
+    expect(subcollectionRows()).toBe(1);
+  });
   it('a keyless second call is answered from the first row too', async () => {
     installOptimisticTransactions(ctx.db, docs);
     const settled = await step1();
