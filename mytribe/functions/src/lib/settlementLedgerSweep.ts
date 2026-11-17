@@ -80,6 +80,7 @@ import {
   SETTLEMENT_LEDGER_PENDING_FIELD,
   SETTLEMENT_LEDGER_SWEEP_GRACE_MS,
   SETTLEMENT_LEDGER_SWEEP_WRITER,
+  SETTLEMENT_NOTICE_HELD_FIELD,
   SETTLEMENT_NOTICE_UID_FIELD,
   settlementLedgerRowId,
 } from './paymentAppliedOwner';
@@ -235,6 +236,40 @@ async function stageLedgerRow(firestore: Firestore, invoiceId: string): Promise<
   });
 }
 
+/**
+ * Gives up on the notice once SETTLEMENT_LEDGER_MAX_ATTEMPTS runs have tried
+ * it: the pending stamp is cleared as 'gave-up' and the error is logged. The
+ * ledger row stays. Every step that can leave a settlement pending checks this
+ * (#2327), so no step is retried without end. True when it gave up. Never
+ * throws: a failed clear is tried again on the next run.
+ */
+async function giveUpAtCap(
+  firestore: Firestore,
+  invoiceId: string,
+  staged: { owner: string; attempts: number },
+  extra: Record<string, unknown>,
+  step: 'recipient' | 'notice',
+): Promise<boolean> {
+  if (staged.attempts < SETTLEMENT_LEDGER_MAX_ATTEMPTS) return false;
+  try {
+    await clearPending(firestore, invoiceId, staged.owner, { [SETTLEMENT_LEDGER_SKIPPED_FIELD]: 'gave-up' });
+  } catch (err) {
+    logEvent({
+      severity: 'warn',
+      function: 'settlementLedgerSweep',
+      event: 'settlement.notice.give_up.failed',
+      extra: { ...extra, step, err: (err as Error)?.message },
+    });
+    return false;
+  }
+  logEvent({
+    severity: 'error',
+    function: 'settlementLedgerSweep',
+    event: 'settlement.notice.gave_up',
+    extra: { ...extra, attempts: staged.attempts, step },
+  });
+  return true;
+}
 /** Clears the pending stamp, only while it is still this settlement's. */
 async function clearPending(
   firestore: Firestore,
@@ -332,7 +367,8 @@ export async function finishAbandonedSettlement(firestore: Firestore, invoiceId:
       event: 'settlement.ledger.recipient.stamp.failed',
       extra: { ...extra, err: (err as Error)?.message },
     });
-    return false;
+    // #2327: this step counts against the same cap as the send.
+    return giveUpAtCap(firestore, invoiceId, staged, extra, 'recipient');
   }
   const sent = await sendPaymentConfirmation({
     kinfolkId: staged.kinfolkId,
@@ -344,29 +380,37 @@ export async function finishAbandonedSettlement(firestore: Firestore, invoiceId:
     officeDue: true,
     householdOnPayoff: true,
   });
-  const done = (sent.household || sent.office || sent.skipped === true) && !sent.officePending;
+  // #2343: a household copy held because the send switch could not be READ is
+  // still owed, so the settlement stays pending and is tried again under the
+  // cap. One held because the switch is off is finished: the row says so.
+  const done =
+    (sent.household || sent.office || sent.skipped === true) &&
+    !sent.officePending &&
+    sent.householdHeld !== 'read-failed';
   try {
     if (sent.household || sent.office || sent.skipped) {
       // Throws when a late second call has replaced the row in the meantime
       // (#2281 review). That call cleared the pending stamp and owns the row
       // now; what it still sends goes out under this row's id, so the
       // dispatcher's ledger drops it as a copy of the one just sent.
-      await firestore.collection('payments').doc(staged.rowId).update(noticeStamps(sent));
+      await firestore
+        .collection('payments')
+        .doc(staged.rowId)
+        .update({
+          ...noticeStamps(sent),
+          // #2343: why the household was not told. Never read as "told", and
+          // not carried onto a row that replaces this one, so a late second
+          // call that owes the household its copy still sends it.
+          ...(sent.householdHeld === 'off' || sent.householdHeld === 'absent'
+            ? { [SETTLEMENT_NOTICE_HELD_FIELD]: sent.householdHeld }
+            : {}),
+        });
     }
     if (done) {
       await clearPending(firestore, invoiceId, staged.owner);
       return true;
     }
-    if (staged.attempts >= SETTLEMENT_LEDGER_MAX_ATTEMPTS) {
-      await clearPending(firestore, invoiceId, staged.owner, { [SETTLEMENT_LEDGER_SKIPPED_FIELD]: 'gave-up' });
-      logEvent({
-        severity: 'error',
-        function: 'settlementLedgerSweep',
-        event: 'settlement.notice.gave_up',
-        extra: { ...extra, attempts: staged.attempts },
-      });
-      return true;
-    }
+    if (await giveUpAtCap(firestore, invoiceId, staged, extra, 'notice')) return true;
   } catch (err) {
     logEvent({
       severity: 'warn',

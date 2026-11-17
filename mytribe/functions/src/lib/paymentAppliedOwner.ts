@@ -81,6 +81,13 @@ export const PAYMENT_APPLIED_PENDING_AT_FIELD = 'paymentAppliedNoticePendingAtMs
 export const PAYMENT_APPLIED_SENT_AT_FIELD = 'paymentAppliedNoticeSentAt';
 export const PAYMENT_APPLIED_SKIPPED_FIELD = 'paymentAppliedNoticeSkippedReason';
 /**
+ * #2343: the credit payment notice went out to the office and the household's
+ * copy was held back by the household send switch. Stamped in place of
+ * PAYMENT_APPLIED_SENT_AT_FIELD, with the switch's state ('off' or 'absent').
+ * The notice is finished: it is not sent to the household later.
+ */
+export const PAYMENT_APPLIED_HOUSEHOLD_HELD_FIELD = 'paymentAppliedNoticeHouseholdHeld';
+/**
  * #884 third review: retries of a pending credit notice claimed so far (a
  * redelivered pass or a sweep), and the short code of the last failure. After
  * `CREDIT_NOTICE_MAX_ATTEMPTS` the notice gives up (SKIPPED 'gave-up') and the
@@ -205,6 +212,22 @@ export const SETTLEMENT_LEDGER_SWEEP_WRITER = 'settlementLedgerSweep';
  * Written before the sweep sends, so it survives a lost notice stamp.
  */
 export const SETTLEMENT_NOTICE_UID_FIELD = 'householdNoticeUid';
+/**
+ * #2296: on a `markInvoicePaid` settlement row (`invoices/{id}/payments/{id}`),
+ * the root `payments` row a `recordPayment` naming that settlement wrote. A
+ * later call naming the same settlement under another key, or none, is the
+ * same payment again and is answered from that row: one ledger row per
+ * settlement. Every such call reads and writes this doc in its transaction,
+ * so two of them racing cannot both miss it. The sweep's own row is found by
+ * its fixed id instead (`settlementLedgerRowId`) and never stamps this.
+ */
+export const SETTLEMENT_LEDGER_ROW_FIELD = 'ledgerPaymentId';
+/**
+ * #2343: on the sweep's ledger row, the household's payoff copy was held back
+ * by the household send switch ('off' or 'absent', as the dispatcher reports
+ * the switch). Not a "told" stamp: a late second call still owes that copy.
+ */
+export const SETTLEMENT_NOTICE_HELD_FIELD = 'householdNoticeHeld';
 const MARK_INVOICE_PAID_OWNER_PREFIX = 'markInvoicePaid:';
 /**
  * #2281 review: THE `markInvoicePaid` SETTLEMENT A LEDGER ROW FOR THIS INVOICE
