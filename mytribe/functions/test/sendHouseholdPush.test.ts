@@ -276,6 +276,9 @@ describe('sendHouseholdPush checks its draft (#2295)', () => {
   it('ERROR: a draft stamp that fails never changes the answer', async () => {
     const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE });
     const realCollection = ctx.db.collection.bind(ctx.db);
+    const refusedSet = vi.fn(async () => {
+      throw new Error('write refused');
+    });
     vi.spyOn(ctx.db, 'collection').mockImplementation(((name: string) => {
       const col = realCollection(name);
       if (name !== 'generated_drafts') return col;
@@ -283,10 +286,12 @@ describe('sendHouseholdPush checks its draft (#2295)', () => {
         ...col,
         doc: (id: string) => {
           const ref = col.doc(id);
-          return { ...ref, get: ref.get, set: vi.fn(async () => { throw new Error('write refused'); }) };
+          return { ...ref, get: ref.get, set: refusedSet };
         },
       };
     }) as any);
     expect(await sendHouseholdPushHandler(req())).toEqual({ ok: true, outcome: 'sent', reason: null });
+    expect(refusedSet).toHaveBeenCalledTimes(1);
+    expect(ctx.docs[draftPath]!['pushOutcome']).toBeUndefined();
   });
 });
