@@ -4,7 +4,13 @@ const admin = require('firebase-admin');
 const sdk = require('./firebaseServices');
 const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');
-const { runGenerate, generateErrorResponse, ERROR_COPY: GENERATE_ERROR_COPY } = require('./generate');
+const {
+  runGenerate,
+  generateErrorResponse,
+  ERROR_COPY: GENERATE_ERROR_COPY,
+  MODEL_CALL_TIMEOUT_MS,
+  MODEL_MAX_RETRIES,
+} = require('./generate');
 const GENERATE_RATE_LIMIT_COPY = 'Auntie has written all she can for today. She can draft again tomorrow.';
 const { enforceGenerateRateLimit } = require('./generateRateLimit');
 const { enforceWindowedRateLimit } = require('./rateLimit');
@@ -1057,7 +1063,10 @@ exports.generateAuntieCopy = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: fal
   }
 
   const model = resolveAnthropicModel();
-  const anthropic = new Anthropic({ apiKey });
+  // #2359: the SDK's defaults (ten minutes a try, two more tries) outlast the
+  // 60 seconds this endpoint is given. runGenerate tightens each call further
+  // to what is left of the request.
+  const anthropic = new Anthropic({ apiKey, timeout: MODEL_CALL_TIMEOUT_MS, maxRetries: MODEL_MAX_RETRIES });
 
   try {
     const result = await runGenerate({ db: sdk.firestore(), anthropic, model }, req.body || {});
