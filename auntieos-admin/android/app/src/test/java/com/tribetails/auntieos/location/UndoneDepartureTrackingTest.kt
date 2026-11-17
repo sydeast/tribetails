@@ -31,6 +31,12 @@ class UndoneDepartureTrackingTest {
     }
 
     @Test
+    fun `NEGATIVE - a phone already tracking the next visit does not resume, so that route is kept`() {
+        assertEquals(Decision.DROP, UndoneDepartureTracking.decide(parked, "ARRIVED", null, now, trackingNow = true))
+        // Right after Departed the stop may not have landed: the wait goes on.
+        assertEquals(Decision.WAIT, UndoneDepartureTracking.decide(parked, "DEPARTED", null, now, trackingNow = true))
+    }
+    @Test
     fun `while the undo is still offered the phone keeps waiting`() {
         val until = "2026-11-17T20:09:00.000Z"
         assertEquals(Decision.WAIT, UndoneDepartureTracking.decide(parked, "COMPLETED", until, now))
@@ -101,6 +107,10 @@ class UndoneDepartureTrackingTest {
         val fresh = UndoneDepartureTracking.resumedRoute(null, "s1", "kf1", "2026-11-17T20:05:00Z")
         assertEquals("", fresh.id)
         assertEquals("s1", fresh.kinCareSessionId)
+        // A failed read of a known route keeps its id: one visit_routes document, never two.
+        val kept = UndoneDepartureTracking.resumedRoute(null, "s1", "kf1", "2026-11-17T20:05:00Z", "route1")
+        assertEquals("route1", kept.id)
+        assertEquals("route1", UndoneDepartureTracking.resumedRoute(saved.copy(id = ""), "s1", "kf1", "x", "route1").id)
     }
 
     private val chicago = ZoneId.of("America/Chicago")

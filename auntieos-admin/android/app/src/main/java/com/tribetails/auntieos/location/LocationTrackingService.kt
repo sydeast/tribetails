@@ -220,13 +220,26 @@ class LocationTrackingService : Service() {
      */
     private fun resumeRoute(sessionId: String, kinfolkId: String, routeId: String) {
         AuntieLog.i("Resuming location tracking after Undo departed: $sessionId")
-        if (!hasLocationPermissions()) {
+        // Inside the five seconds the platform allows a foreground service, and
+        // before any stopSelf: a service started with startForegroundService
+        // that stops without it is a crash. Android 14 refuses a location
+        // foreground service without the permission, so the refusal is caught.
+        val foreground = runCatching { startForeground(NOTIFICATION_ID, createTrackingNotification()) }
+        if (foreground.isFailure || !hasLocationPermissions()) {
             AuntieLog.w("Not resuming tracking on $sessionId: no location permission")
-            stopSelf()
+            if (!isCurrentlyTracking && !_isTracking.value) {
+                if (foreground.isSuccess) stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
             return
         }
-        // Inside the five seconds the platform allows a foreground service.
-        startForeground(NOTIFICATION_ID, createTrackingNotification())
+        // Already tracking: this visit (nothing to resume) or the next one the
+        // Auntie clocked into inside the undo window, whose route a resume would
+        // wipe. Either way the running route is left exactly as it is.
+        if (isCurrentlyTracking || _isTracking.value) {
+            AuntieLog.w("Not resuming tracking on $sessionId: already tracking $currentSessionId")
+            return
+        }
         serviceScope.launch {
             val settings = repository.getBusinessSettings().getOrNull()
             if (settings == null || !settings.enableGPSTrackingForAllVisits) {
@@ -236,9 +249,16 @@ class LocationTrackingService : Service() {
                 return@launch
             }
             businessSettings = settings
-            val earlier = kinCareRepository.getBreadcrumbs(sessionId).getOrDefault(emptyList())
+            // Without the first part the next Departed would save a summary of
+            // the second part only (#2338), so an unreadable route is not resumed.
+            val earlier = kinCareRepository.getBreadcrumbs(sessionId).getOrElse { e ->
+                AuntieLog.e("Not resuming tracking on $sessionId: its breadcrumbs could not be read", e)
+                stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return@launch
+            }
             val saved = if (routeId.isNotBlank()) repository.getVisitRoute(routeId).getOrNull() else null
-            val route = UndoneDepartureTracking.resumedRoute(saved, sessionId, kinfolkId, getCurrentTimestamp())
+            val route = UndoneDepartureTracking.resumedRoute(saved, sessionId, kinfolkId, getCurrentTimestamp(), routeId)
             currentSessionId = sessionId
             currentKinfolkId = route.kinfolkId.ifBlank { kinfolkId }
             homeLocation = route.homeLocation

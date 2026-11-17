@@ -63,12 +63,23 @@ object UndoneDepartureTracking {
      *
      * @param status the visit's status, or null when it could not be read
      *        (gone, or no signal): the phone keeps waiting, up to the cap.
+     * @param trackingNow this phone is already tracking a visit (the next one,
+     *        clocked into inside the undo window). A resume would wipe that
+     *        route, so the wait ends instead.
      */
-    fun decide(parked: Parked, status: String?, undoDepartedUntil: String?, nowMs: Long): Decision {
+    fun decide(
+        parked: Parked,
+        status: String?,
+        undoDepartedUntil: String?,
+        nowMs: Long,
+        trackingNow: Boolean = false,
+    ): Decision {
         if (nowMs - parked.parkedAtMs > PARK_CAP_MS) return Decision.DROP
         val s = status?.trim()?.uppercase() ?: return Decision.WAIT
         return when (s) {
-            "ARRIVED" -> Decision.RESUME
+            // Only asked at the undo: right after Departed the stop may not have
+            // landed yet, and the wait must not end on that.
+            "ARRIVED" -> if (trackingNow) Decision.DROP else Decision.RESUME
             "DEPARTED", "COMPLETED" -> {
                 val until = untilMs(undoDepartedUntil)
                 if (until != null && nowMs > until + PARK_GRACE_MS) Decision.DROP else Decision.WAIT
@@ -101,11 +112,20 @@ object UndoneDepartureTracking {
      * PURE. The route the resumed service carries: the saved one kept whole
      * (its id, start and arrival), with the departure and end cleared because
      * the visit is under way again. A route that could not be read starts a
-     * fresh shell for the same visit.
+     * fresh shell for the same visit, under the parked [routeId] when there is
+     * one, so a failed read never writes a second `visit_routes` document.
      */
-    fun resumedRoute(saved: VisitRoute?, sessionId: String, kinfolkId: String, nowIso: String): VisitRoute =
-        saved?.copy(departureTime = "", endTime = "")
-            ?: VisitRoute(kinCareSessionId = sessionId, kinfolkId = kinfolkId, startTime = nowIso)
+    fun resumedRoute(
+        saved: VisitRoute?,
+        sessionId: String,
+        kinfolkId: String,
+        nowIso: String,
+        routeId: String = "",
+    ): VisitRoute {
+        val keptId = saved?.id?.takeIf { it.isNotBlank() } ?: routeId
+        return saved?.copy(id = keptId, departureTime = "", endTime = "")
+            ?: VisitRoute(id = routeId, kinCareSessionId = sessionId, kinfolkId = kinfolkId, startTime = nowIso)
+    }
 
     fun park(context: Context, parked: Parked) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -145,7 +165,15 @@ object UndoneDepartureTracking {
             while (true) {
                 val parked = parked(app) ?: return@launch
                 val session = AuntieOSApp.instance.kinCareRepository.getKinCareSession(parked.sessionId).getOrNull()
-                when (decide(parked, session?.status, session?.undoDepartedUntil, System.currentTimeMillis())) {
+                when (
+                    decide(
+                        parked,
+                        session?.status,
+                        session?.undoDepartedUntil,
+                        System.currentTimeMillis(),
+                        trackingNow = LocationTrackingService.isTracking.value,
+                    )
+                ) {
                     Decision.DROP -> {
                         clear(app)
                         return@launch
