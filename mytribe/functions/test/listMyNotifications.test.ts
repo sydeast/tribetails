@@ -420,3 +420,52 @@ describe('recipientNotifications helpers', () => {
     });
   });
 });
+
+/**
+ * #2368: a household push cut to its short line opens the entry, and the entry
+ * shows the rest. The push sender keeps the message as rendered on the entry
+ * (`householdMessage`); the list hands it on as `fullMessage`.
+ */
+describe('toNotificationListItem, the whole message of a cut push', () => {
+  const whole = "Your request for Rex was declined.\n\nO'Malley & Rex <b>loved</b> it. We are away that week.";
+  const declined = (extra: Record<string, unknown>) => ({
+    recipientUid: 'kin1',
+    key: 'kincare.request.declined',
+    title: 'Care request declined',
+    householdLine: 'Drop-in visit for Rex',
+    data: { kinfolkId: 'fam1', batchId: 'b1' },
+    targetType: 'booking',
+    targetId: 'b1',
+    createdAt: at(1),
+    ...extra,
+  });
+  it('an entry the sender kept the message on carries it, as stored, line breaks and all', () => {
+    const item = toNotificationListItem('n1', declined({ householdMessage: `  ${whole}  ` }));
+    expect(item.fullMessage).toBe(whole);
+    // The facts line and the tap target are what they were.
+    expect(item.description).toBe('Drop-in visit for Rex');
+    expect(item.targetType).toBe('booking');
+  });
+  it('an older entry, or one whose push was not cut, carries no such field at all', () => {
+    expect(toNotificationListItem('n1', declined({}))).not.toHaveProperty('fullMessage');
+    expect(toNotificationListItem('n1', declined({ householdMessage: '   ' }))).not.toHaveProperty('fullMessage');
+    expect(toNotificationListItem('n1', declined({ householdMessage: 42 }))).not.toHaveProperty('fullMessage');
+    expect(toNotificationListItem('n1', declined({ householdMessage: { text: whole } }))).not.toHaveProperty('fullMessage');
+  });
+  it('a message that reads the same as the facts line is not repeated under it', () => {
+    const item = toNotificationListItem('n1', declined({ householdMessage: 'Drop-in visit\n for   Rex ' }));
+    expect(item).not.toHaveProperty('fullMessage');
+  });
+  it("an office copy never carries it, even if the field were there", () => {
+    const item = toNotificationListItem('n1', { ...declined({ householdMessage: whole }), key: 'zz.office.only' });
+    expect(item).not.toHaveProperty('fullMessage');
+  });
+  it('the bell count is the same with or without the kept message', async () => {
+    const plain = [0, 1, 2].map((i) => ({ id: `n${i}`, data: declined({ createdAt: at(i) }) }));
+    const kept = plain.map((r, i) => (i === 0 ? { ...r, data: { ...r.data, householdMessage: whole } } : r));
+    const count = async (docs: typeof plain) =>
+      countUnreadNotifications(buildDbMock({ queryDocs: { notifications: docs } }).db, 'kin1', 'fam1');
+    expect(await count(kept)).toBe(await count(plain));
+    expect(await count(kept)).toBe(3);
+  });
+});

@@ -10,6 +10,7 @@ import {
   unreachableLifecycleMessage,
   type VisitLifecycleSession,
 } from '../lib/visitLifecyclePatch';
+import type { UndoneArrivalNotices } from '../lib/sessionLifecycle';
 
 /**
  * The WRITE half of the Auntie Time surface (#397 L19), which `api/sessions.ts`
@@ -181,6 +182,12 @@ export interface PatchVisitLifecycleResult {
    * alone is the exact lie this codebase keeps warning about.
    */
   notification: Promise<VisitNotifyOutcome>;
+  /**
+   * #2357: on an Undo arrival that was written, what the server took off the
+   * household's notifications list, or null when its record did not arrive in
+   * time. NEVER REJECTS. Absent on every other action.
+   */
+  undone?: Promise<UndoneArrivalNotices | null>;
 }
 
 const SESSIONS_COLLECTION = 'kin_care_sessions';
@@ -266,6 +273,78 @@ export function awaitStepNotice(args: {
         // household: the notice is the server's either way.
         console.warn('[visitLifecycle] could not read what the household was told', err);
         finish({ notified: false, notifySkipped: 'notice_pending' });
+      },
+    );
+    if (done) stop();
+    else unsubscribe = stop;
+  });
+}
+
+/** The `event` of the server's record of one Undo arrival. Mirrors `UNDO_ARRIVAL_RECORD_EVENT` on the server. */
+export const UNDO_ARRIVAL_RECORD_EVENT = 'undo_arrival';
+
+/**
+ * PURE. A stamped clock time as the server names a record by it
+ * (`functions/src/lib/visitStepNotice.ts#stampMs`): an instant as it is, and
+ * the desktop console's wall clock with no zone read as UTC. `Date.parse`
+ * alone would read that second shape in this browser's zone and build an id
+ * the server never wrote.
+ */
+export function visitStampMs(raw: string | undefined): number | undefined {
+  const iso = (raw ?? '').trim();
+  if (iso === '') return undefined;
+  const zoneless = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(iso);
+  const ms = Date.parse(zoneless ? `${iso}Z` : iso);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/** PURE. The server's record of one Undo arrival as the notices it took off the list. */
+export function undoneArrivalNoticesOf(data: { withdrawn?: unknown }): UndoneArrivalNotices {
+  const withdrawn = Array.isArray(data.withdrawn) ? data.withdrawn : [];
+  return { arrived: withdrawn.includes('arrived'), departed: withdrawn.includes('departed') };
+}
+
+/**
+ * #2357: what one Undo arrival took off the household's notifications list,
+ * as the SERVER recorded it at
+ * `visit_step_notices/{visit}__undo_arrival__{the undone arrival's stamp}`.
+ *
+ * The server withdraws the notices from the saved undo, whoever wrote it, and
+ * records which came off. It writes the record only once the arrival's own
+ * notice is settled, so "none" here means the household was never told.
+ * Never rejects. With no stamp to name the record, no record after
+ * {@link VISIT_NOTICE_WAIT_MS}, or a read that fails, it answers null and the
+ * card claims nothing about their list.
+ */
+export function awaitUndoneArrivalNotices(args: {
+  sessionId: string;
+  /** `arrivedAt` as the visit held it BEFORE the undo cleared it. */
+  arrivedAt: string | undefined;
+  waitMs?: number;
+}): Promise<UndoneArrivalNotices | null> {
+  const atMs = visitStampMs(args.arrivedAt);
+  if (atMs === undefined) return Promise.resolve(null);
+  const ref = doc(db, VISIT_STEP_NOTICES_COLLECTION, visitStepNoticeId(args.sessionId, UNDO_ARRIVAL_RECORD_EVENT, atMs));
+  return new Promise<UndoneArrivalNotices | null>((resolve) => {
+    let done = false;
+    let unsubscribe: (() => void) | null = null;
+    const finish = (outcome: UndoneArrivalNotices | null): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (unsubscribe !== null) unsubscribe();
+      resolve(outcome);
+    };
+    const timer = setTimeout(() => finish(null), args.waitMs ?? VISIT_NOTICE_WAIT_MS);
+    const stop = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) return;
+        finish(undoneArrivalNoticesOf(snap.data() as { withdrawn?: unknown }));
+      },
+      (err) => {
+        console.warn("[visitLifecycle] could not read what the undo took off the household's list", err);
+        finish(null);
       },
     );
     if (done) stop();
@@ -398,6 +477,11 @@ export async function patchVisitLifecycle(
       // the server names its record of this step.
       eventAtMs: Number.isFinite(Date.parse(options.nowIso)) ? Date.parse(options.nowIso) : undefined,
     }),
+    // #2357: the server withdraws the notices from this saved undo and records
+    // which came off; the card waits for that record before it says so.
+    ...(action === 'UNDO_ARRIVAL'
+      ? { undone: awaitUndoneArrivalNotices({ sessionId: session._id, arrivedAt: session.arrivedAt }) }
+      : {}),
   };
 }
 
@@ -556,6 +640,10 @@ export async function undoArrivalThroughServer(session: VisitLifecycleSession): 
     status: res.status,
     changed: res.changed,
     notification: Promise.resolve({ notified: res.notified, notifySkipped: res.notifySkipped }),
+    // #2357: the same record the direct write waits for, so both paths say the same.
+    ...(res.changed
+      ? { undone: awaitUndoneArrivalNotices({ sessionId: session._id, arrivedAt: session.arrivedAt }) }
+      : {}),
   };
 }
 /** What `verifyVisitArrival` answers. Mirrors the server's `Result`. */

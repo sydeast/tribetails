@@ -49,6 +49,24 @@ class UnappliedPaymentTest {
     }
 
     @Test
+    fun `2358 a payment held because its invoice was cancelled says so`() {
+        val held = payment.copy(invoiceNumber = "1029", amountCents = 4000L, reason = "the invoice was cancelled")
+        assertEquals("$40.00 card payment on invoice 1029", unappliedPaymentHeadline(held))
+        assertEquals("Sep 27, 2026. Not applied because the invoice was cancelled.", unappliedPaymentDetail(held, zone))
+        assertEquals(
+            "Card payment of $40.00 on invoice 1029. There are no refunds. " +
+                "Anything you do not credit or apply stays recorded on the payment.",
+            decidePaymentLead(held),
+        )
+        // An invoice with no number: the lines still read whole.
+        val unnumbered = held.copy(invoiceNumber = "")
+        assertEquals("$40.00 card payment", unappliedPaymentHeadline(unnumbered))
+        assertEquals(
+            "Sep 27, 2026. Not applied because the invoice was cancelled.",
+            unappliedPaymentDetail(unnumbered, zone),
+        )
+    }
+    @Test
     fun `a reason that already ends in a period is not doubled`() {
         assertEquals(
             "Sep 27, 2026. Not applied because it was a duplicate.",

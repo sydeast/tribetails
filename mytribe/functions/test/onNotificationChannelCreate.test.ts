@@ -92,7 +92,7 @@ describe('onNotificationChannelCreate hands the push what a tap opens (#2259, #2
       route: '/schedule/v1',
       data: { targetType: 'booking', targetId: 'v1', visitId: 'v1', batchId: 'b1' },
       // Where its full message is, should the sender find the line was cut.
-      readInList: { route: '/notifications?entry=n77' },
+      readInList: { route: '/notifications?entry=n77', entryId: 'n77' },
       officeNote: false,
     });
   });
@@ -108,7 +108,7 @@ describe('onNotificationChannelCreate hands the push what a tap opens (#2259, #2
     });
     const open = mocks.pushSender.mock.calls[0]![0].open;
     expect(open.officeNote).toBe(true);
-    expect(open.readInList).toEqual({ route: '/notifications?entry=n78' });
+    expect(open.readInList).toEqual({ route: '/notifications?entry=n78', entryId: 'n78' });
   });
 
   it("the office's push carries the target and no route", async () => {

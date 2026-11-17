@@ -96,7 +96,7 @@
  * Pure on purpose: every boundary below is a unit test rather than an emulator
  * run, the same way `planApply` and `planCreditDraw` are.
  */
-import { invoiceMarkedPaid } from './invoicePaidGate';
+import { invoiceCancelled, invoiceMarkedPaid } from './invoicePaidGate';
 
 /**
  * `families/{kinfolkId}.accountBalanceCents`, where a duplicate charge USED TO
@@ -168,6 +168,8 @@ export interface InvoiceCheckoutState {
   status?: unknown;
   /** `markInvoicePaid`'s second label. Same treatment as `status`. */
   paymentStatus?: unknown;
+  /** The legacy spelling of `status`, read for `invoice-cancelled` only when `status` is absent. */
+  invoiceStatus?: unknown;
 }
 
 /**
@@ -210,6 +212,11 @@ export function invoiceOwesNothing(state: Pick<InvoiceCheckoutState, 'amountDueC
  *                            named: it was settled by `markInvoicePaid` or by
  *                            the account-credit auto-apply, neither of which
  *                            moves the round.
+ * `invoice-cancelled`        #2358: the invoice was cancelled (or its quote
+ *                            withdrawn) after the checkout page was opened. Not
+ *                            a second attempt at anything, but the same answer:
+ *                            the card is charged, the invoice takes no payment,
+ *                            and the owner decides what the money becomes.
  *
  * ── WHY "A DIFFERENT INTENT SETTLED IT" IS NOT ON ITS OWN A REFUSAL ───────
  *
@@ -225,6 +232,7 @@ export type DuplicateCheckoutReason =
   | 'settled-by-other-intent'
   | 'invoice-not-owed'
   | 'invoice-marked-paid'
+  | 'invoice-cancelled'
   | null;
 
 export function duplicateCheckoutReason(input: {
@@ -248,8 +256,20 @@ export function duplicateCheckoutReason(input: {
   // correctly applied.
   if (settled !== null && input.paymentIntentId !== null && settled === input.paymentIntentId) return null;
 
-  // FIRST, because it is the only branch that can refuse a session while the
-  // invoice still shows a balance. A partial payment recorded between two
+  // #2358: A CANCELLED INVOICE TAKES NO PAYMENT, and it is asked ahead of the
+  // rest so the owner is told the reason that matters. Cancelling does not
+  // zero a balance the document states, so until this branch a card payment
+  // from a checkout page opened before the cancel passed every check below,
+  // took `decideCardApply`'s fallback landing and marked the invoice paid, and
+  // the household was told their payment was applied. A cancelled invoice that
+  // states no balance used to stop at `invoice-not-owed`, whose sentence says
+  // it "had already been paid". `payInvoice` refuses a cancelled invoice by the
+  // same rule (`invoiceCancelled`), so the two cannot disagree.
+  if (invoiceCancelled({ status: input.invoice.status, invoiceStatus: input.invoice.invoiceStatus })) {
+    return 'invoice-cancelled';
+  }
+  // AHEAD OF THE MONEY CHECKS, because it is the only one of them that can
+  // refuse a session while the invoice still shows a balance. A partial payment recorded between two
   // sessions leaves the second one charging the OLD, larger figure at a moment
   // when the bill is genuinely still owed something.
   const storedRound = checkoutRoundOf(input.invoice.round);
@@ -284,6 +304,8 @@ export function unappliedReasonLabel(reason: string | null): string {
       return 'the invoice had already been paid';
     case 'invoice-marked-paid':
       return 'the invoice was already marked paid';
+    case 'invoice-cancelled':
+      return 'the invoice was cancelled';
     default:
       return 'the invoice was not owed this payment';
   }

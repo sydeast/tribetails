@@ -768,27 +768,35 @@ describe('#2344: a paid event on an invoice that is no longer payable is never d
     expect(docs['families/fam1']!.accountBalanceCents).toBe(0);
   });
 
-  it('on a cancelled invoice, from a checkout opened before it was cancelled: the charge is recorded with its amount', async () => {
+  it('on a cancelled invoice, from a checkout opened before it was cancelled: the charge is held for the owner', async () => {
+    // #2358: until then this took the fallback landing (#2276) and the invoice
+    // read paid. `cancelledInvoiceCardPayment.test.ts` has the whole story;
+    // this is the #2344 half of it: dated before the last event, never dropped.
     docs[INVOICE] = { ...OPEN, status: 'cancelled', invoiceStatus: 'cancelled', lastStripeEventAtMs: ms(10) };
     paid(1, 4000, 1);
-
     expect(await deliver('session-1')).toBe(200);
     expect(await deliver('intent-1')).toBe(200);
-
-    // Not dropped: one ledger row for the whole charge, one claim, one row on the invoice.
-    expect(ledgerRows().map(([p]) => p)).toEqual(['payments/evt_cs_1']);
-    expect(docs['payments/evt_cs_1']).toMatchObject({ amountCents: 4000, invoiceId: 'inv1' });
-    expect(docs['stripePayments/pi_1']).toMatchObject({ invoiceId: 'inv1' });
-    // It takes the fallback landing (#2276), named on the invoice, the ledger row and a warn line for the owner's report.
-    expect(docs[INVOICE]).toMatchObject({ cardApplyFallback: 'apply_invoice_not_payable', paidCents: 4000 });
-    expect(docs['payments/evt_cs_1']).toMatchObject({ cardApplyFallback: 'apply_invoice_not_payable', appliedCents: 4000 });
-    expect(hooks.log.mock.calls.filter((c) => c[0]?.event === 'stripe.cardApply.fallback')).toHaveLength(1);
-    expect(invoiceRowsCents()).toBe(4000);
+    expect(outcome('evt_cs_1')).toBe('SKIPPED_DUPLICATE_INVOICE');
     expect(outcome('evt_pi_1')).toBe('SKIPPED_DUPLICATE_PAYMENT');
+    expect(ledgerRows().map(([p]) => p)).toEqual(['payments/evt_cs_1']);
+    expect(docs['payments/evt_cs_1']).toMatchObject({
+      amountCents: 4000,
+      invoiceId: 'inv1',
+      appliedToInvoice: false,
+      needsAdminDecision: true,
+      duplicateCheckoutReason: 'invoice-cancelled',
+    });
+    expect(docs['stripePayments/pi_1']).toMatchObject({ invoiceId: 'inv1' });
+    expect(docs[INVOICE]).toMatchObject({ status: 'cancelled', invoiceStatus: 'cancelled', amountDueCents: 4000, lastStripeEventAtMs: ms(10) });
+    expect(docs[INVOICE]!.cardApplyFallback).toBeUndefined();
+    expect(docs[INVOICE]!.paidCents).toBeUndefined();
+    expect(invoiceRows()).toEqual([]);
+    expect(hooks.log.mock.calls.filter((c) => c[0]?.event === 'stripe.cardApply.fallback')).toHaveLength(0);
+    expect(notices('invoice.payment.applied')).toHaveLength(0);
+    expect(notices('invoice.payment.unapplied')).toHaveLength(1);
     expect(docs['families/fam1']!.accountBalanceCents).toBe(0);
   });
 });
-
 describe('#2344: a skipped payment sent again twice at once', () => {
   const skipped = (type: string) => ({
     type,

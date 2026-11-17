@@ -442,8 +442,16 @@ private fun NotificationRow(item: NotificationItem, nowMs: Long, opened: Boolean
                     modifier = Modifier.testTag("notificationLine-${item.id}"),
                 )
             }
+            // #2368: the rest of a cut push, as text.
+            item.fullMessage?.let { message ->
+                Text(
+                    message,
+                    style = type.sansMeta.copy(color = KinfolkBrand.Navy),
+                    modifier = Modifier.testTag("fullMessage-${item.id}"),
+                )
+            }
             // #2030: the office's note on its answer, as written.
-            item.householdNote?.let { note ->
+            item.rowNote?.let { note ->
                 Text(
                     note,
                     style = type.sansMeta.copy(color = KinfolkBrand.Navy),

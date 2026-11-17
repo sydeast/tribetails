@@ -144,6 +144,29 @@ export function householdNoteOf(item: Pick<NotificationItemDto, 'detail'>): stri
 }
 
 /**
+ * #2368: the whole message a household's push was cut from, kept on its entry
+ * when the push was sent, or null when the entry has none (older entries, and
+ * every entry whose push fit). Plain text: the screen draws it as text.
+ */
+export function fullMessageOf(item: Pick<NotificationItemDto, 'fullMessage'>): string | null {
+  const raw = item.fullMessage;
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
+/**
+ * The office's note as the row draws it: left off when the whole message
+ * already says it, so a cut push about a declined request does not show the
+ * same note twice.
+ */
+export function rowNoteOf(item: Pick<NotificationItemDto, 'detail' | 'fullMessage'>): string | null {
+  const note = householdNoteOf(item);
+  const message = fullMessageOf(item);
+  if (note === null || message === null) return note;
+  const flat = (t: string) => t.replace(/\s+/g, ' ').trim();
+  return flat(message).includes(flat(note)) ? null : note;
+}
+
+/**
  * `/notifications?entry=<id>`: the entry a tapped push asks the list to show
  * (a push whose line was cut, or whose notice carries the office's note, is
  * read whole here). The `validateSearch` for the route. The value arrives from

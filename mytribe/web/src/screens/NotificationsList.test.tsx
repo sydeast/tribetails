@@ -506,3 +506,53 @@ describe('NotificationsList opened at one entry by a tapped push', () => {
     expect(await screen.findByTestId('notifications-empty')).toBeInTheDocument();
   });
 });
+
+/**
+ * #2368: a push cut to its short line opens its entry, and the entry shows the
+ * rest of the message, as text. Older entries look as they always have.
+ */
+describe('NotificationsList shows the whole message of a cut push', () => {
+  const whole = "Your visit request was declined.\n\nO'Malley & Rex <b>loved</b> it &amp; more. We are away that week.";
+  const cut = item({
+    id: 'n-cut',
+    key: 'kincare.request.declined',
+    title: 'Your visit request was declined',
+    description: 'Nov 20 to Nov 22',
+    targetType: 'booking',
+    targetId: 'b1',
+    batchId: 'b1',
+    detail: { householdNote: 'We are away that week.' },
+    fullMessage: whole,
+  });
+  const older = item({ id: 'n-old', title: 'New invoice', description: 'An invoice is ready.' });
+  it('draws the whole message under the facts line, as typed, with no markup made of it', async () => {
+    mocks.search.mockReturnValue({ entry: 'n-cut' });
+    mocks.list.mockResolvedValue(page([older, cut]));
+    renderScreen();
+    const row = await screen.findByRole('button', { name: /visit request was declined/ });
+    const message = within(row).getByTestId('notification-full-message');
+    // textContent keeps the line breaks; the tag and the entity are text.
+    expect(message.textContent).toBe(whole);
+    expect(message.querySelector('b')).toBeNull();
+    expect(within(row).getByText('Nov 20 to Nov 22')).toBeInTheDocument();
+    // The note is in the message already, so it is not drawn twice.
+    expect(within(row).queryByTestId('notification-household-note')).toBeNull();
+    // No id reaches the screen.
+    expect(row.textContent).not.toMatch(/n-cut|\bb1\b/);
+  });
+  it('an entry with no whole message reads as before: title and facts line only', async () => {
+    mocks.list.mockResolvedValue(page([older, cut]));
+    renderScreen();
+    const row = await screen.findByRole('button', { name: /New invoice/ });
+    expect(within(row).queryByTestId('notification-full-message')).toBeNull();
+    expect(within(row).getByText('An invoice is ready.')).toBeInTheDocument();
+  });
+  it('a tap on that entry still marks it read and opens what it is about; the bell drops by one only', async () => {
+    mocks.list.mockResolvedValue(page([older, cut]));
+    renderScreen({ unreadNotifications: 2 });
+    await userEvent.click(await screen.findByRole('button', { name: /visit request was declined/ }));
+    expect(mocks.markRead).toHaveBeenCalledWith('n-cut');
+    expect(mocks.navigate).toHaveBeenCalledWith({ to: '/schedule' });
+    expect(queryClient.getQueryData<GetMyHomeResult>(['myHome', 'fam1'])?.unreadNotifications).toBe(1);
+  });
+});

@@ -220,4 +220,35 @@ class NotificationsListPortalApiTest {
         assertNull(decodeNotificationItem(blank)?.householdNote)
         assertNull(decodeNotificationItem(row("n3"))?.householdNote)
     }
+
+    @Test
+    fun `reads the whole message of a cut push, as typed, and none on an older entry (2368)`() {
+        val typed = "Declined.\n\nO'Malley & Rex <b>loved</b> it &amp; more."
+        val kept = buildJsonObject {
+            row("n1").forEach { (k, v) -> put(k, v) }
+            put("fullMessage", "  $typed  ")
+        }
+        assertEquals(typed, decodeNotificationItem(kept)?.fullMessage)
+        assertNull(decodeNotificationItem(row("n2"))?.fullMessage)
+        val blank = buildJsonObject {
+            row("n3").forEach { (k, v) -> put(k, v) }
+            put("fullMessage", "   ")
+        }
+        assertNull(decodeNotificationItem(blank)?.fullMessage)
+        val wrongShape = buildJsonObject {
+            row("n4").forEach { (k, v) -> put(k, v) }
+            put("fullMessage", 42)
+        }
+        assertNull(decodeNotificationItem(wrongShape)?.fullMessage)
+    }
+
+    @Test
+    fun `the office note is drawn once, left off when the whole message already says it (2368)`() {
+        val note = "We are away that week."
+        val base = decodeNotificationItem(row("n1"))!!.copy(householdNote = note)
+        assertEquals(note, base.rowNote)
+        assertNull(base.copy(fullMessage = "Declined.\n\nWe are away\nthat   week.").rowNote)
+        assertEquals(note, base.copy(fullMessage = "Declined. Please ask again.").rowNote)
+        assertNull(base.copy(householdNote = null, fullMessage = "Declined.").rowNote)
+    }
 }

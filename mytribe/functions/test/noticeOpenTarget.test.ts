@@ -160,6 +160,8 @@ describe('noticeOpenTarget, where a household reads the whole message', () => {
   it('names the notifications list at the entry the work order is for', () => {
     expect(household('kincare.auntie.arrived', { visitId: 'v1' }, 'n1').readInList).toEqual({
       route: '/notifications?entry=n1',
+      // #2368: the entry the push sender keeps the whole message on.
+      entryId: 'n1',
     });
   });
   it('a work order with no entry id names the plain list', () => {

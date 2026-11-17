@@ -996,8 +996,10 @@ service cloud.firestore {
       // when its few minutes end, and what the household's copy read before.
       // A caretaker who could move the first could reopen the undo on any
       // finished visit. And `departedNoticeToldForArrival`, which the undo
-      // writes so the household is not told "has left" a second time: a
-      // caretaker who could write it could silence that notice on any visit.
+      // wrote until #2357 so the household was not told "has left" a second
+      // time. The server no longer writes or reads it (that rule is now read
+      // from the departure's own `visit_step_notices` record). It stays
+      // refused here so a visit that still carries it cannot have it rewritten.
       function caretakerStartRuleHolds() {
         return !request.resource.data.diff(resource.data).affectedKeys()
                  .hasAny(['arrivalCheckedByOwner', 'completedOutsideRange',

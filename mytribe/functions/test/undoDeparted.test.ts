@@ -38,8 +38,16 @@ vi.mock('../src/lib/writeAuditEntry', () => ({
   }),
 }));
 // Every way a household is told: the clock-step notice and the booking notices.
-vi.mock('../src/admin/dispatchVisitNotification', () => ({ dispatchVisitNotificationCore: mocks.dispatch }));
-vi.mock('../src/notifications/dispatcher', () => ({ enqueueNotification: mocks.enqueue }));
+vi.mock('../src/admin/dispatchVisitNotification', () => ({
+  dispatchVisitNotificationCore: mocks.dispatch,
+  visitDedupeKey: (visitId: string, args: { event: string; eventAtMs?: number }) =>
+    `visit:${visitId}:${args.event}:${args.eventAtMs ?? ''}`,
+}));
+vi.mock('../src/notifications/dispatcher', () => ({
+  enqueueNotification: mocks.enqueue,
+  // The dedupe ledger: these tests name a notice by its step record instead.
+  deliveredNotificationId: async () => null,
+}));
 vi.mock('../src/lib/resolveKinfolkUid', () => ({ resolveKinfolkUid: mocks.resolveKinfolkUid }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('firebase-admin/firestore');
@@ -67,6 +75,8 @@ const ARRIVED_AT = '2026-11-14T15:00:00.000Z';
 const DEPARTED_AT = '2026-11-14T15:30:00.000Z';
 /** Four minutes left. */
 const UNTIL = '2026-11-14T15:35:00.000Z';
+const TOLD_RECORD = `visit_step_notices/s1__departed__${Date.parse(DEPARTED_AT)}`;
+const TOLD_ROW = 'notifications/n-left';
 
 const OWNER = { admin: true, name: 'Owner' };
 const AUNTIE = { staffRole: 'auntie', name: 'Auntie Jo' };
@@ -97,11 +107,32 @@ function seed(opts: {
   session?: Record<string, unknown> | null;
   visit?: Record<string, unknown> | null;
   settings?: Record<string, unknown>;
+  /**
+   * #2357: the household was told "has left" when the seeded departure landed,
+   * as the server leaves it on file: the step's record and the entry on their
+   * notifications list. `toldAtMs` is when (the server's clock).
+   */
+  told?: boolean;
+  toldAtMs?: number;
 }) {
   const docs: Record<string, Record<string, unknown>> = {};
   if (opts.session !== null) docs[SESSION] = opts.session ?? completed();
   if (opts.visit !== null) docs[VISIT] = opts.visit ?? { status: 'completed' };
   if (opts.settings) docs[SETTINGS] = opts.settings;
+  if (opts.told) {
+    docs[TOLD_RECORD] = {
+      sessionId: 's1',
+      action: 'DEPARTED',
+      event: 'departed',
+      atMs: Date.parse(DEPARTED_AT),
+      arrivalAtMs: Date.parse(ARRIVED_AT),
+      notified: true,
+      reason: null,
+      dispatchIds: ['n-left'],
+      recordedAtMs: opts.toldAtMs ?? Date.parse(DEPARTED_AT),
+    };
+    docs[TOLD_ROW] = { key: 'kincare.auntie.departed', recipientUid: 'uid-kinfolk', data: { kinfolkId: 'kf1' } };
+  }
   ctx = buildDbMock({ docs, writeThrough: true });
   mocks.dbFn.mockReset().mockReturnValue(ctx.db);
   return ctx;
@@ -231,8 +262,6 @@ describe('undo inside the window', () => {
       completedOutsideRange: '__DEL__',
       undoDepartedUntil: '__DEL__',
       householdStatusBeforeCompletion: '__DEL__',
-      // The arrival whose "has left" the household already heard.
-      departedNoticeToldForArrival: ARRIVED_AT,
       updatedAt: '__TS__',
       updatedBy: 'uid1',
     });
@@ -340,13 +369,15 @@ describe('the real Departed after an undo', () => {
   const tap = (action: string, atIso: string) =>
     setVisitLifecycleHandler(req({ sessionId: 's1', action, atIso }));
   const told = () => mocks.dispatch.mock.calls.map((c) => c[0].event);
-  it('the undo notes which arrival the household was told about', async () => {
-    seed({});
+  const leftRow = async () => ((await ctx.db.doc(TOLD_ROW).get()).data() ?? {}) as Record<string, unknown>;
+  it('the undo leaves "has left" on the household list and makes no mark on the visit', async () => {
+    seed({ told: true });
     await undo();
-    expect((await storedSession())['departedNoticeToldForArrival']).toBe(ARRIVED_AT);
+    expect((await storedSession())['departedNoticeToldForArrival']).toBeUndefined();
+    expect(await leftRow()).toEqual({ key: 'kincare.auntie.departed', recipientUid: 'uid-kinfolk', data: { kinfolkId: 'kf1' } });
   });
   it('tells the household nothing a second time, logs the step, and says why on the card', async () => {
-    seed({});
+    seed({ told: true });
     await undo();
     const res = await tap('DEPARTED', '2026-11-14T15:32:00.000Z');
     expect(res).toMatchObject({ status: 'DEPARTED', changed: true, notified: false, notifySkipped: 'already_notified' });
@@ -354,13 +385,21 @@ describe('the real Departed after an undo', () => {
     expect(linesOf('VISIT_DEPARTED')).toHaveLength(1);
     const atMs = Date.parse('2026-11-14T15:32:00.000Z');
     const record = (await ctx.db.doc(`visit_step_notices/s1__departed__${atMs}`).get()).data();
-    expect(record).toMatchObject({ notified: false, reason: 'already_notified' });
+    expect(record).toMatchObject({ notified: false, reason: 'already_notified', dispatchIds: ['n-left'] });
+    // The entry was never off the list, so it is handed over as it stands.
+    expect(await leftRow()).toEqual({
+      key: 'kincare.auntie.departed',
+      recipientUid: 'uid-kinfolk',
+      data: { kinfolkId: 'kf1' },
+      standsForDepartureAtMs: atMs,
+    });
   });
   it("a phone's own Departed write is not announced either", async () => {
-    seed({});
+    seed({ told: true });
     await undo();
     const before = await storedSession();
     const after = { ...before, status: 'DEPARTED', departedAt: '2026-11-14T15:32:00.000Z' };
+    await ctx.db.doc(SESSION).set(after);
     await onKinCareSessionLifecycleHandler({
       id: 'evt-2',
       params: { sessionId: 's1' },
@@ -370,22 +409,43 @@ describe('the real Departed after an undo', () => {
     } as never);
     expect(mocks.dispatch).not.toHaveBeenCalled();
     expect(linesOf('VISIT_DEPARTED')).toHaveLength(1);
+    const record = (
+      await ctx.db.doc(`visit_step_notices/s1__departed__${Date.parse('2026-11-14T15:32:00.000Z')}`).get()
+    ).data();
+    expect(record).toMatchObject({ notified: false, reason: 'already_notified' });
   });
   it('a departure nobody undid is announced: the silence is the undo\'s doing', async () => {
     seed({ session: { ...completed(), status: 'ARRIVED', departedAt: '', undoDepartedUntil: undefined } });
     await tap('DEPARTED', '2026-11-14T15:32:00.000Z');
     expect(told()).toEqual(['departed']);
   });
-  it('a new arrival is a new visit to the door: its Arrived and its Departed are both announced', async () => {
+  it('a first "has left" that never reached the household is not counted as told: the real Departed is announced', async () => {
     seed({});
     await undo();
-    await tap('UNDO_ARRIVAL', '2026-11-14T15:32:00.000Z');
-    await tap('ARRIVED', '2026-11-14T15:33:00.000Z');
-    await tap('DEPARTED', '2026-11-14T15:50:00.000Z');
-    expect(told()).toEqual(['arrived', 'departed']);
+    await tap('DEPARTED', '2026-11-14T15:32:00.000Z');
+    expect(told()).toEqual(['departed']);
   });
-  it('undone twice, it stays quiet for the same arrival', async () => {
-    seed({});
+  // #2348: this used to send a second "has left", because the undo's mark
+  // named the first arrival and the visit had arrived again.
+  it('Undo departed, Undo arrival, then the visit again the same day: one "has left", not two', async () => {
+    seed({ told: true });
+    await undo();
+    await tap('UNDO_ARRIVAL', '2026-11-14T15:32:00.000Z');
+    expect(await leftRow()).toMatchObject({ withdrawnAt: '__TS__', withdrawnReason: 'departure_undone' });
+    await tap('ARRIVED', '2026-11-14T15:33:00.000Z');
+    const res = await tap('DEPARTED', '2026-11-14T15:50:00.000Z');
+    // The seeded arrival left no record, so the new one is announced; the departure is not.
+    expect(told()).toEqual(['arrived']);
+    expect(res).toMatchObject({ notified: false, notifySkipped: 'already_notified' });
+    expect(await leftRow()).toMatchObject({
+      withdrawnAt: null,
+      archivedAt: null,
+      readAt: null,
+      standsForDepartureAtMs: Date.parse('2026-11-14T15:50:00.000Z'),
+    });
+  });
+  it('undone twice, it stays quiet the same day', async () => {
+    seed({ told: true });
     await undo();
     await tap('DEPARTED', '2026-11-14T15:32:00.000Z');
     await completeDepartedSession('s1');
@@ -393,6 +453,33 @@ describe('the real Departed after an undo', () => {
     await tap('DEPARTED', '2026-11-14T15:33:00.000Z');
     expect(mocks.dispatch).not.toHaveBeenCalled();
     expect(linesOf('VISIT_DEPARTED')).toHaveLength(2);
+  });
+  // #2357, lead ruling: the quiet rule covers a quick mistake, not a later visit.
+  it('a real Departed on a later business day is announced as normal', async () => {
+    // Told at 9:30 AM Chicago on the 14th; she leaves at 9 AM Chicago on the 15th.
+    seed({ told: true });
+    await undo();
+    vi.setSystemTime(Date.parse('2026-11-15T15:00:00.000Z'));
+    const res = await tap('DEPARTED', '2026-11-15T15:00:00.000Z');
+    expect(told()).toEqual(['departed']);
+    expect(res).toMatchObject({ notified: true, notifySkipped: null });
+  });
+  it('a later UTC date that is still the same business day stays quiet', async () => {
+    // Told at 5 PM Chicago on the 14th (23:00Z); she leaves at 9 PM Chicago, which is 03:00Z on the 15th.
+    seed({ told: true, toldAtMs: Date.parse('2026-11-14T23:00:00.000Z') });
+    await undo();
+    vi.setSystemTime(Date.parse('2026-11-15T03:00:00.000Z'));
+    const res = await tap('DEPARTED', '2026-11-15T03:00:00.000Z');
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ notified: false, notifySkipped: 'already_notified' });
+  });
+  it('the day is the business\'s own: the same two moments are two days in Tokyo', async () => {
+    seed({ told: true, toldAtMs: Date.parse('2026-11-14T14:00:00.000Z'), settings: { timeZone: 'Asia/Tokyo' } });
+    await undo();
+    // Told at 23:00 on the 14th in Tokyo; she leaves at 00:31 on the 15th. Both are the 14th in Chicago.
+    vi.setSystemTime(Date.parse('2026-11-14T15:31:30.000Z'));
+    await tap('DEPARTED', '2026-11-14T15:31:30.000Z');
+    expect(told()).toEqual(['departed']);
   });
 });
 describe('after the window', () => {

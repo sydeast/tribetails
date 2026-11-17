@@ -218,6 +218,22 @@ export function arrivalNoticeWithdrawnWords(): string {
 export function arrivalNoticeRestoredWords(): string {
   return "Put the arrival notice back on the household's notifications list. They were told once already, so no second message was sent";
 }
+/** #2348: the "has left" notice of an undone arrival came off the household's notifications list. Nothing was sent. */
+export function departureNoticeWithdrawnWords(): string {
+  return "Took the departure notice off the household's notifications list. No message was sent about the undo";
+}
+/** #2348: a real departure after an undone one, the same day. The household was told once, so the entry went back and nothing was sent. */
+export function departureNoticeRestoredWords(): string {
+  return "Put the departure notice back on the household's notifications list. They were told once already, so no second message was sent";
+}
+/** #2357: an arrival announced on a later business day. The earlier day's entry came off the list; the new one is the household's. */
+export function arrivalNoticeReplacedWords(): string {
+  return "Took the earlier arrival notice off the household's notifications list. The new one replaces it";
+}
+/** #2357: the same for a departure announced on a later business day, after an "Undo departed" left the first one listed. */
+export function departureNoticeReplacedWords(): string {
+  return "Took the earlier departure notice off the household's notifications list. The new one replaces it";
+}
 /** A repeat of a step already taken: nothing was written. */
 export function visitNoopWords(action: string, at: string): string {
   return `Did not ${actionWords(action).attempt}: the visit was already ${visitStatusWords(at)}`;

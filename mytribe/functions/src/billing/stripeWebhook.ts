@@ -722,6 +722,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
           [SETTLED_INTENT_FIELD]?: unknown;
           status?: unknown;
           paymentStatus?: unknown;
+          invoiceStatus?: unknown;
         }
       | undefined;
     // The invoice's own `payments` rows: what has been collected on it, and
@@ -775,6 +776,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
             amountDue: invoice?.amountDue,
             status: invoice?.status,
             paymentStatus: invoice?.paymentStatus,
+            // #2358: a cancelled invoice takes no payment; the charge is held.
+            invoiceStatus: invoice?.invoiceStatus,
           },
           paymentIntentId,
           eventRound,
@@ -798,6 +801,10 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // Every reason is treated the same, `stale-round` included: a stale
       // session charges a balance that has since moved, and deciding what the
       // difference becomes is the same admin decision.
+      //
+      // #2358: `invoice-cancelled` too. A checkout page opened before the
+      // invoice was cancelled can still be paid on. The invoice stays
+      // cancelled, exactly as stored: no row on it, no balance moved.
       //
       // NOT DONE HERE, all deliberate: no second `status: 'paid'` stamp, no
       // BILLING_INVOICE_PAID audit, and no `invoice.payment.applied` to the

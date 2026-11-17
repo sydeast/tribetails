@@ -18,6 +18,8 @@
 .nl-row__title { font-weight: 500; color: var(--navy); }
 .nl-row--unread .nl-row__title { font-weight: 600; }
 .nl-row__desc { color: var(--navy-muted); font-size: 13px; }
+/* #2368: the whole message a push was cut from, with its line breaks. */
+.nl-row__message { color: var(--navy); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* #2030: the office's own note on an answer, kept as written. */
 .nl-row__note { color: var(--navy); font-size: 13px; white-space: pre-wrap; }
 .nl-row__when { font-family: var(--mono); font-size: 11px; letter-spacing: .04em; color: var(--navy-muted);

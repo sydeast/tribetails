@@ -15,7 +15,13 @@ import {
   requestStartFix,
   startsVisit,
 } from './visitStartRange';
-import { UNDO_ARRIVAL_DONE, lifecycleNowIso, type LifecycleActionDef } from './sessionLifecycle';
+import {
+  UNDO_ARRIVAL_CHECKING,
+  undoArrivalDoneSentence,
+  lifecycleNowIso,
+  type LifecycleActionDef,
+  type UndoneArrivalNotices,
+} from './sessionLifecycle';
 import {
   beginVisitClockWrite,
   clearVisitClockWrite,
@@ -235,9 +241,16 @@ export function useVisitLifecycle(
       const checking = actionNotifiesHousehold(action)
         ? ` ${household === '' ? 'Checking who was told.' : `Checking whether ${household} was told.`}`
         : '';
+      // #2357: what an undo took off the household's notifications list is
+      // the server's to say. `undefined` is "still checking", `null` is "no
+      // record came", and the sentence claims an entry came off only when the
+      // record names one.
+      let undone: UndoneArrivalNotices | null | undefined = res.undone === undefined ? null : undefined;
+      const undoNotice = (): string =>
+        undone === undefined ? UNDO_ARRIVAL_CHECKING : undoArrivalDoneSentence(undone, res.from === 'DEPARTED');
       settleVisitClockWrite(id, seq, {
         status: 'done',
-        message: action === 'UNDO_ARRIVAL' ? `${moved} ${UNDO_ARRIVAL_DONE}` : `${moved}${checking}`,
+        message: action === 'UNDO_ARRIVAL' ? `${moved} ${undoNotice()}` : `${moved}${checking}`,
       });
       if (onWritten) onWritten();
 
@@ -249,7 +262,7 @@ export function useVisitLifecycle(
       let rangeNote = '';
       const resay = (): void => {
         // #2038: an undo tells the household nothing, and the card says so.
-        const notice = action === 'UNDO_ARRIVAL' ? UNDO_ARRIVAL_DONE : said === null ? checking.trim() : said;
+        const notice = action === 'UNDO_ARRIVAL' ? undoNotice() : said === null ? checking.trim() : said;
         const message = [moved, notice, rangeNote].filter((part) => part !== '').join(' ');
         settleVisitClockWrite(id, seq, { status: 'done', message });
       };
@@ -262,6 +275,14 @@ export function useVisitLifecycle(
         said = visitNoticeOutcomeSentence(outcome, household, auntie);
         resay();
       });
+
+      // #2357: and, for an undo, what came off their notifications list.
+      if (action === 'UNDO_ARRIVAL' && res.undone !== undefined) {
+        void res.undone.then((off) => {
+          undone = off;
+          resay();
+        });
+      }
 
       // #2279: the owner's arrival is measured AFTER it lands, best effort, as
       // Android Home does. It cannot fail or undo the arrival. An Auntie's
