@@ -461,6 +461,26 @@ class KinCareRepository(
             .map { raw -> com.tribetails.auntieos.domain.householdNoticeOf(raw["notice"]) }
             .onFailure { AuntieLog.e("Failed to cancel session $sessionId", it) }
 
+    /**
+     * #1822 / #1862: the Kin a visit for this household covers, as the server
+     * will store them, and whether specific ones may be chosen
+     * (`getHouseholdKinRoster`). Read-only.
+     *
+     * Fails when the call does, and when an older server answers with no Kin
+     * list: the form then says the Kin could not be loaded, and the visit
+     * still covers the whole home.
+     */
+    suspend fun getHouseholdKinRoster(kinfolkId: String): Result<com.tribetails.auntieos.domain.HouseholdKinRoster> =
+        runCatchingCancellable {
+            authGate.ensureAuthenticated()
+            val mode = authGate.requireTestMode()
+            val payload = mapOf("kinfolkId" to mode.scopedKinfolkId(kinfolkId))
+            @Suppress("UNCHECKED_CAST")
+            val raw = functions.getHttpsCallable("getHouseholdKinRoster").call(payload).awaitCallable().data as? Map<String, Any?>
+            com.tribetails.auntieos.domain.householdKinRosterOf(raw)
+                ?: error("The Kin of this household could not be loaded.")
+        }.onFailure { AuntieLog.e("getHouseholdKinRoster failed", it) }
+
     // ---- Care-ops session callables (1E §A.9) ----
 
     /**

@@ -43,7 +43,7 @@ function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unkn
 
 describe('createKinCareSession', () => {
   it('HAPPY: creates a SCHEDULED session doc + returns its id', async () => {
-    const ctx = buildDbMock({});
+    const ctx = buildDbMock({ queryDocs: { 'families/kf1/kin': [{ id: 'k1', data: { name: 'Biscuit' } }] } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await createKinCareSessionHandler(req({
       kinfolkId: 'kf1', kinIds: ['k1'], serviceType: 'Dog Walking',

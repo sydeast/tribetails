@@ -50,6 +50,9 @@
   border-radius: 14px; cursor: pointer; border: 1px solid var(--glass-border); background: var(--glass);
   box-shadow: var(--shadow-card); transition: .2s var(--ease); text-align: left; font: inherit; color: inherit; }
 .kinopt:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+/* The All-Kin line when there is nothing to choose: it states, it is not pressed. */
+.kinopt.is-static { cursor: default; }
+.kinopt.is-static:hover { transform: none; box-shadow: var(--shadow-card); }
 .kinopt .kt { font-family: var(--serif); font-size: 17px; font-weight: 400; }
 .kinopt .ks { display: block; font-size: 12.5px; color: var(--navy-muted); margin-top: 3px; }
 .selected-indicator { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 11px; color: var(--teal); white-space: nowrap; }

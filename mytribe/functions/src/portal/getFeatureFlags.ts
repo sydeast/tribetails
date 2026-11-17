@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { db } from '../lib/firestoreAdmin';
+import { resolveFeatureFlags } from '../lib/featureFlags';
 import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
@@ -10,16 +10,6 @@ interface FeatureFlagsDto {
    *  applies these over its own compile-time defaults, so only flags actually
    *  set somewhere need to appear here. */
   flags: Record<string, boolean>;
-}
-
-/** Keeps only boolean-valued entries from an arbitrary object. */
-function boolMap(v: unknown): Record<string, boolean> {
-  if (!v || typeof v !== 'object') return {};
-  const out: Record<string, boolean> = {};
-  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (typeof val === 'boolean') out[k] = val;
-  }
-  return out;
 }
 
 /**
@@ -41,15 +31,7 @@ export async function getFeatureFlagsHandler(
   const uid = req.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
 
-  const [globalSnap, clientSnap] = await Promise.all([
-    db().collection('business_settings').doc('feature_flags').get(),
-    db().collection('clients').doc(uid).get(),
-  ]);
-
-  const globalData = globalSnap.data() ?? {};
-  const global = boolMap((globalData as Record<string, unknown>)['flags'] ?? globalData);
-  const perUser = boolMap((clientSnap.data() ?? {})['featureFlags']);
-  const flags = { ...global, ...perUser };
+  const flags = await resolveFeatureFlags(uid);
 
   logEvent({
     severity: 'info',

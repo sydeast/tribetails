@@ -21,6 +21,9 @@ import type { CollectionSpec } from '../lib/firestore';
 
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
+vi.mock('../api/kinRoster', () => ({
+  getHouseholdKinRoster: vi.fn().mockResolvedValue({ kin: [], chooseKin: false }),
+}));
 const { createMultiDateBookingRequest } = vi.hoisted(() => ({ createMultiDateBookingRequest: vi.fn() }));
 vi.mock('../api/bookingsWrite', async (orig) => ({
   ...(await orig<typeof import('../api/bookingsWrite')>()),

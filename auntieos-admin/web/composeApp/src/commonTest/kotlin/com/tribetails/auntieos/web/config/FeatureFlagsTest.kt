@@ -121,4 +121,16 @@ class FeatureFlagsTest {
         val on = FeatureFlags.fromOverrides(mapOf(FeatureFlags.KEY_COMMUNICATE_COMMS_RECAP to true))
         assertTrue(on.communicateCommsRecap)
     }
+
+    // #1822 / #1862, operator ruling 2026-11-12: every visit covers every Kin.
+    // Choosing specific Kin is off unless the operator switches it on.
+    @Test fun chooseKin_defaults_off_has_a_toggle_and_round_trips() {
+        assertFalse(FeatureFlags().visitsChooseKin)
+        assertEquals("auntieos.visits.chooseKin", FeatureFlags.KEY_VISITS_CHOOSE_KIN)
+        assertTrue(FeatureFlags.KEY_VISITS_CHOOSE_KIN in FeatureFlags.KEYS)
+        assertFalse(FeatureFlags.KEY_VISITS_CHOOSE_KIN in FeatureFlags.ALWAYS_ON)
+        val on = FeatureFlags.fromOverrides(mapOf(FeatureFlags.KEY_VISITS_CHOOSE_KIN to true))
+        assertTrue(on.visitsChooseKin)
+        assertEquals(on, FeatureFlags.fromMap(on.toMap()))
+    }
 }

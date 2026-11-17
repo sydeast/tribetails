@@ -80,6 +80,7 @@ describe('requestBookingHandler — multi-visit envelope', () => {
         'clients/u1': { kinfolkIds: ['3'] },
         'base_services/s1': { name: "Auntie's In", priceCents: 1500 },
       },
+      queryDocs: { 'families/3/kin': [{ id: 'k1', data: { name: 'Fido' } }, { id: 'k2', data: { name: 'Whiskers' } }] },
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { requestBookingHandler } = await import('../src/portal/requestBooking');
@@ -249,63 +250,68 @@ describe('requestBookingHandler — multi-visit envelope', () => {
     ).rejects.toThrow();
   });
 
-  it('resolves real kin names onto the envelope AND every visit (not kinNames: [])', async () => {
-    const ctx = buildDbMock({
-      docs: {
-        'clients/u1': { kinfolkIds: ['3'] },
-        'families/3/kin/k1': { name: 'Fido' },
-        'families/3/kin/k2': { name: 'Whiskers' },
-      },
-    });
+  // #1822 / #1862, operator ruling 2026-11-12: every visit covers every Kin.
+  const HOME = {
+    'families/3/kin': [
+      { id: 'k1', data: { name: 'Fido' } },
+      { id: 'k2', data: { name: 'Whiskers' } },
+      { id: 'k3', data: { name: 'Old Boy', status: 'noLongerWithUs' } },
+    ],
+  };
+  async function request(docs: Record<string, Record<string, unknown>>, kinIds: string[] | undefined) {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] }, ...docs }, queryDocs: HOME });
     mocks.dbFn.mockReturnValue(ctx.db);
     const { requestBookingHandler } = await import('../src/portal/requestBooking');
     const future = Date.now() + 86400_000;
     const res: any = await requestBookingHandler({
       data: {
         kinfolkId: '3',
-        kinIds: ['k1', 'k2'],
+        ...(kinIds ? { kinIds } : {}),
         pattern: 'individual',
         visits: [{ startTimeMs: future, serviceId: 's1', serviceName: 'Walk', priceCents: 100 }],
       },
       auth: { uid: 'u1' },
     } as any);
-
     const parent = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`)!.data;
     const visit = ctx.writes.find((w) =>
       w.path.startsWith(`families/3/bookings/${res.batchId}/kinCares/`),
     )!.data;
+    return { parent, visit };
+  }
+
+  it('names every active Kin on the envelope AND every visit (not kinNames: [])', async () => {
+    const { parent, visit } = await request({}, undefined);
+    expect(parent.kinIds).toEqual(['k1', 'k2']);
     expect(parent.kinNames).toEqual(['Fido', 'Whiskers']);
+    expect(visit.kinIds).toEqual(['k1', 'k2']);
     expect(visit.kinNames).toEqual(['Fido', 'Whiskers']);
   });
 
-  it('tolerates a missing kin doc: resolves the ones that exist, drops the rest, never fails the booking', async () => {
-    const ctx = buildDbMock({
-      docs: {
-        'clients/u1': { kinfolkIds: ['3'] },
-        'families/3/kin/k1': { name: 'Fido' },
-        // k2 has no doc: deleted kin, or a stale id from the client.
-      },
-    });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    const { requestBookingHandler } = await import('../src/portal/requestBooking');
-    const future = Date.now() + 86400_000;
-    const res: any = await requestBookingHandler({
-      data: {
-        kinfolkId: '3',
-        kinIds: ['k1', 'k2'],
-        pattern: 'individual',
-        visits: [{ startTimeMs: future, serviceId: 's1', serviceName: 'Walk', priceCents: 100 }],
-      },
-      auth: { uid: 'u1' },
-    } as any);
-
-    const parent = ctx.writes.find((w) => w.path === `families/3/bookings/${res.batchId}`)!.data;
-    // kinIds still carries both (nothing here about a missing pet), only
-    // kinNames narrows to what actually resolved.
+  it('with choosing Kin off, a household that names one Kin still books the whole home', async () => {
+    const { parent, visit } = await request({}, ['k2']);
     expect(parent.kinIds).toEqual(['k1', 'k2']);
-    expect(parent.kinNames).toEqual(['Fido']);
+    expect(visit.kinNames).toEqual(['Fido', 'Whiskers']);
   });
 
+  it('with choosing Kin on, the request carries the Kin the household chose', async () => {
+    const { parent, visit } = await request(
+      { 'business_settings/feature_flags': { flags: { 'auntieos.visits.chooseKin': true } } },
+      ['k2'],
+    );
+    expect(parent.kinIds).toEqual(['k2']);
+    expect(parent.kinNames).toEqual(['Whiskers']);
+    expect(visit.kinIds).toEqual(['k2']);
+    expect(visit.kinNames).toEqual(['Whiskers']);
+  });
+
+  it('with choosing Kin on, drops a memorial Kin and an id that is not theirs, never fails the booking', async () => {
+    const { parent } = await request(
+      { 'business_settings/feature_flags': { flags: { 'auntieos.visits.chooseKin': true } } },
+      ['k1', 'k3', 'stale-id'],
+    );
+    expect(parent.kinIds).toEqual(['k1']);
+    expect(parent.kinNames).toEqual(['Fido']);
+  });
   it('legacy single-visit shape still works (backward compat)', async () => {
     const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] } } });
     mocks.dbFn.mockReturnValue(ctx.db);

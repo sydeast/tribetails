@@ -10,7 +10,7 @@ vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/writeAuditEntry', () => ({
   writeAuditEntry: vi.fn().mockResolvedValue('audit-1'),
 }));
-vi.mock('../src/lib/kinRoster', () => ({ materializeKinRoster: mocks.roster }));
+vi.mock('../src/lib/kinRoster', () => ({ kinRosterForNewVisit: mocks.roster }));
 vi.mock('firebase-admin/firestore', async () => {
   const actual = await vi.importActual<any>('firebase-admin/firestore');
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
@@ -57,9 +57,11 @@ const visit = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-function seed(sessions: Record<string, Record<string, unknown> | null>) {
+function seed(sessions: Record<string, Record<string, unknown> | null>, opts: { chooseKin?: boolean } = {}) {
   const docs: Record<string, Record<string, unknown> | null> = {};
   for (const [id, data] of Object.entries(sessions)) docs[`kin_care_sessions/${id}`] = data;
+  // #1822 / #1862: the visit's Kin can be changed only while choosing Kin is on.
+  if (opts.chooseKin) docs['business_settings/feature_flags'] = { flags: { 'auntieos.visits.chooseKin': true } };
   return buildDbMock({ docs });
 }
 
@@ -125,31 +127,51 @@ describe('editing a visit', () => {
     });
   });
 
-  it('re-resolves the Kin names in the same write, so the pair cannot drift', async () => {
-    const ctx = seed({ s1: visit() });
+  it('with choosing Kin on, re-resolves the Kin names in the same write, so the pair cannot drift', async () => {
+    const ctx = seed({ s1: visit() }, { chooseKin: true });
     mocks.dbFn.mockReturnValue(ctx.db);
     mocks.roster.mockResolvedValue({ kinIds: ['p1'], kinNames: ['Biscuit'] });
-
     const res = await updateKinCareSessionHandler(req({ sessionId: 's1', kinIds: ['p1'] }));
-
-    expect(mocks.roster).toHaveBeenCalledWith('fam1', ['p1']);
+    expect(mocks.roster).toHaveBeenCalledWith('fam1', ['p1'], { chooseKin: true });
     expect(res.updated).toEqual(['kinIds', 'kinNames']);
     expect(writeAt(ctx, 's1')?.data).toMatchObject({ kinIds: ['p1'], kinNames: ['Biscuit'] });
   });
 
-  // R1: an empty roster is the whole household, and the server is where that is
+  // An empty roster is the whole household, and the server is where that is
   // materialized, so no client has to know the convention.
-  it('expands an empty kinIds to the whole household rather than storing "no Kin"', async () => {
-    const ctx = seed({ s1: visit() });
+  it('with choosing Kin on, expands an empty kinIds to the whole household rather than storing "no Kin"', async () => {
+    const ctx = seed({ s1: visit() }, { chooseKin: true });
     mocks.dbFn.mockReturnValue(ctx.db);
     mocks.roster.mockResolvedValue({ kinIds: ['p1', 'p2'], kinNames: ['Biscuit', 'Gravy'] });
-
     await updateKinCareSessionHandler(req({ sessionId: 's1', kinIds: [] }));
-
-    expect(mocks.roster).toHaveBeenCalledWith('fam1', []);
+    expect(mocks.roster).toHaveBeenCalledWith('fam1', [], { chooseKin: true });
     expect(writeAt(ctx, 's1')?.data).toMatchObject({ kinIds: ['p1', 'p2'] });
   });
 
+  // Operator ruling 2026-11-12: every visit covers every Kin. With choosing
+  // Kin off there is nothing to change, and a visit keeps the Kin it was made
+  // for: an older app that sends the Kin with every save must not narrow a
+  // visit, and must not re-stamp a past one with today's roster either.
+  it('with choosing Kin off, leaves the Kin of the visit as they are and saves the rest', async () => {
+    const ctx = seed({ s1: visit() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await updateKinCareSessionHandler(req({ sessionId: 's1', kinIds: ['p1'], notes: 'Gate fixed.' }));
+    expect(mocks.roster).not.toHaveBeenCalled();
+    expect(res.updated).toEqual(['notes']);
+    const data = writeAt(ctx, 's1')?.data ?? {};
+    expect(data).toMatchObject({ notes: 'Gate fixed.' });
+    expect(data).not.toHaveProperty('kinIds');
+    expect(data).not.toHaveProperty('kinNames');
+  });
+
+  it('with choosing Kin off, a save that names only the Kin writes nothing and is not an error', async () => {
+    const ctx = seed({ s1: visit() });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await updateKinCareSessionHandler(req({ sessionId: 's1', kinIds: ['p1'] }));
+    expect(res).toEqual({ ok: true, sessionId: 's1', updated: [] });
+    expect(writeAt(ctx, 's1')).toBeUndefined();
+    expect(writeAuditEntry).not.toHaveBeenCalled();
+  });
   it('records the field NAMES in the audit, never the free text', async () => {
     const ctx = seed({ s1: visit() });
     mocks.dbFn.mockReturnValue(ctx.db);
@@ -201,7 +223,7 @@ describe('what it refuses', () => {
   });
 
   it('a Kin edit on a session with no household, rather than leaving kinNames stale', async () => {
-    const ctx = seed({ s1: { status: 'SCHEDULED', startTime: '2026-08-24T14:00:00Z' } });
+    const ctx = seed({ s1: { status: 'SCHEDULED', startTime: '2026-08-24T14:00:00Z' } }, { chooseKin: true });
     mocks.dbFn.mockReturnValue(ctx.db);
     const err = await updateKinCareSessionHandler(req({ sessionId: 's1', kinIds: ['p1'] })).catch(
       (e: unknown) => e,

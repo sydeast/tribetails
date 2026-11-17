@@ -21,6 +21,7 @@ import type {
   RequestBookingResult,
 } from '../contracts/bookingContracts.generated';
 import type { GetMyKinResult, KinDto } from '../api/types';
+import type { GetHouseholdKinRosterResult } from '../api/portal';
 import { dateKey, MAX_RECURRING_VISITS, startOfDay } from '../lib/bookingWizardLogic';
 import { warmSave } from '../lib/warmSave';
 
@@ -134,8 +135,11 @@ const getBusinessClosures = vi.fn<(req: GetBusinessClosuresRequest) => Promise<G
 const getBookingPolicy = vi.fn<() => Promise<GetBookingPolicyResult>>();
 
 const getMyBookings = vi.fn<(kinfolkId?: string) => Promise<GetMyBookingsResult>>();
+// #1822 / #1862: the Kin a booking covers, and whether they can be chosen, are the server's answer.
+const getHouseholdKinRoster = vi.fn<(kinfolkId?: string) => Promise<GetHouseholdKinRosterResult>>();
 vi.mock('../api/portal', () => ({
   getMyKin: () => getMyKin(),
+  getHouseholdKinRoster: (kinfolkId?: string) => getHouseholdKinRoster(kinfolkId),
   getMyBookings: (kinfolkId?: string) => getMyBookings(kinfolkId),
 }));
 vi.mock('../api/bookingApi', async () => {
@@ -151,6 +155,12 @@ vi.mock('../api/bookingApi', async () => {
 vi.mock('../lib/activeTribe', () => ({
   getActiveKinfolkId: () => 'fam1',
 }));
+
+/** The server's roster for the default household: the same two Kin `getMyKin` describes. */
+const ROSTER = [
+  { id: 'k1', name: 'Buddy', householdId: 'k1' },
+  { id: 'k2', name: 'Willow', householdId: 'k2' },
+];
 
 function kin(overrides: Partial<KinDto>): KinDto {
   return {
@@ -220,7 +230,7 @@ function renderWizard(onComplete = vi.fn(), queryClient = new QueryClient({ defa
 }
 
 async function goToStep2(user: ReturnType<typeof userEvent.setup>) {
-  await screen.findByText('Select Kin');
+  await screen.findByText('Kin on this booking');
   await user.click(screen.getByRole('button', { name: 'Next' }));
   await screen.findByText('Choose KinCare Duration');
 }
@@ -274,6 +284,8 @@ beforeEach(() => {
   // exactly as it did before, and the tests that care set their own policy.
   getBookingPolicy.mockResolvedValue(CLOCK_ONLY_POLICY);
   getMyKin.mockResolvedValue({ kin: [kin({ id: 'k1', name: 'Buddy' }), kin({ id: 'k2', name: 'Willow', species: 'cat' })] });
+  getHouseholdKinRoster.mockReset();
+  getHouseholdKinRoster.mockResolvedValue({ kin: ROSTER, chooseKin: false });
   getServiceCatalog.mockResolvedValue({ services: [SERVICE_A, SERVICE_B] });
   requestBooking.mockResolvedValue({ batchId: 'batch-1', bookingIds: ['batch-1'], bookingId: 'batch-1', envelope: null });
   // Default: nothing closed, so every pre-existing test's dates stay pickable
@@ -538,7 +550,7 @@ describe('BookingWizard: #546/#547 the estimate follows the plan', () => {
     const user = userEvent.setup();
     const { container } = renderWizard();
     const cols = () => container.querySelector('.cols')!;
-    await screen.findByText('Select Kin'); // step 1
+    await screen.findByText('Kin on this booking'); // step 1
     expect(screen.getByText('Booking summary')).toBeInTheDocument();
     expect(cols()).not.toHaveClass('cols-review');
     await goToStep2(user);
@@ -578,7 +590,7 @@ describe('BookingWizard: #546/#547 the estimate follows the plan', () => {
 describe('BookingWizard: #540 one Kin box', () => {
   it('has no second read-only Kin panel beside Select Kin', async () => {
     renderWizard();
-    await screen.findByText('Select Kin');
+    await screen.findByText('Kin on this booking');
     expect(screen.queryByText('Booking for')).not.toBeInTheDocument();
     expect(screen.queryByText('Pick which Kin to include in step 1.')).not.toBeInTheDocument();
   });
@@ -587,24 +599,180 @@ describe('BookingWizard: #540 one Kin box', () => {
     getMyKin.mockResolvedValue({
       kin: [kin({ id: 'k1', name: 'Buddy', breed: 'Labrador Retriever', ageYears: 4 })],
     });
+    getHouseholdKinRoster.mockResolvedValue({ kin: [{ id: 'k1', name: 'Buddy', householdId: 'k1' }], chooseKin: false });
     renderWizard();
-    await screen.findByText('Select Kin');
+    await screen.findByText('Kin on this booking');
     expect(screen.getAllByText('Buddy')).toHaveLength(1);
     expect(screen.getByText('LABRADOR RETRIEVER • 4 YRS')).toBeInTheDocument();
   });
 
-  it('shows the same detail on the pickable rows once specific Kin are being chosen', async () => {
+  it('shows the same detail on the tick rows once Kin can be chosen', async () => {
     getMyKin.mockResolvedValue({
       kin: [kin({ id: 'k1', name: 'Buddy', breed: 'Labrador Retriever', ageYears: 4 })],
     });
+    getHouseholdKinRoster.mockResolvedValue({ kin: [{ id: 'k1', name: 'Buddy', householdId: 'k1' }], chooseKin: true });
+    renderWizard();
+    await screen.findByText('Select Kin');
+    // Exactly one detail row per Kin: the read-only roster is not printed
+    // alongside the tick rows, which would rebuild the duplication #540 is
+    // about.
+    expect(screen.getAllByText('LABRADOR RETRIEVER • 4 YRS')).toHaveLength(1);
+  });
+});
+
+// Operator ruling 2026-11-12 (#1822, #1862): every booking covers every Kin.
+// No Kin picker unless the office has switched choosing Kin on.
+describe('BookingWizard: the Kin a booking covers (#1822, #1862)', () => {
+  /** Walks steps 2 to 5 and submits, for a test that only cares what step 1 sent. */
+  async function finishAndSubmit(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Choose KinCare Duration');
+    await addKinCare(user, 'Daily Visit');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByRole('heading', { name: 'Schedule Dates' });
+    await pickDay(user, TOMORROW);
+    await setKinCareTime(user, 1, 'Daily Visit', '09:00');
+    await goToReview(user);
+    await user.click(screen.getByRole('button', { name: 'Create Booking' }));
+    await vi.waitFor(() => expect(requestBooking).toHaveBeenCalledTimes(1));
+    return requestBooking.mock.calls[0]![0];
+  }
+
+  it('asks the server for the Kin of this household', async () => {
+    renderWizard();
+    await screen.findByText('Kin on this booking');
+    expect(getHouseholdKinRoster).toHaveBeenCalledWith('fam1');
+  });
+
+  it('HAPPY, choosing off: names every Kin, offers nothing to tick, and books them all', async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Kin on this booking');
+    expect(screen.getByText('Every booking covers all Kin in your home.')).toBeInTheDocument();
+    expect(screen.getByText('Buddy')).toBeInTheDocument();
+    expect(screen.getByText('Willow')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Choose specific Kin/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+
+    const sent = await finishAndSubmit(user);
+    expect(sent.kinIds).toEqual(['k1', 'k2']);
+  });
+
+  it('lists the Kin the server names, in its order, and leaves a memorial Kin off', async () => {
+    getMyKin.mockResolvedValue({
+      kin: [
+        kin({ id: 'k1', name: 'Buddy' }),
+        kin({ id: 'k2', name: 'Willow', species: 'cat' }),
+        kin({ id: 'k3', name: 'Old Boy', status: 'noLongerWithUs' }),
+      ],
+    });
+    // The office added Pepper and the household has no card for it yet.
+    getHouseholdKinRoster.mockResolvedValue({
+      kin: [
+        { id: 'k2', name: 'Willow', householdId: 'k2' },
+        { id: 'k1', name: 'Buddy', householdId: 'k1' },
+        { id: 'flat9', name: 'Pepper', householdId: null },
+      ],
+      chooseKin: false,
+    });
+    renderWizard();
+    await screen.findByText('Kin on this booking');
+    const names = Array.from(document.querySelectorAll('.kinroster .kinrow b')).map((b) => b.textContent);
+    expect(names).toEqual(['Willow', 'Buddy', 'Pepper']);
+    expect(screen.queryByText('Old Boy')).not.toBeInTheDocument();
+  });
+
+  it('books a Kin under the id the server gave, and describes it from its own card', async () => {
+    getMyKin.mockResolvedValue({
+      kin: [kin({ id: 'card-1', name: 'Buddy', breed: 'Labrador Retriever', ageYears: 4 })],
+    });
+    // The booking stores this Kin under another id than its card's.
+    getHouseholdKinRoster.mockResolvedValue({
+      kin: [{ id: 'flat-1', name: 'Buddy', householdId: 'card-1' }],
+      chooseKin: false,
+    });
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Kin on this booking');
+    expect(screen.getByText('LABRADOR RETRIEVER • 4 YRS')).toBeInTheDocument();
+
+    const sent = await finishAndSubmit(user);
+    expect(sent.kinIds).toEqual(['flat-1']);
+  });
+
+  it('HAPPY, choosing on: every Kin starts ticked and, left alone, all are booked', async () => {
+    getHouseholdKinRoster.mockResolvedValue({ kin: ROSTER, chooseKin: true });
     const user = userEvent.setup();
     renderWizard();
     await screen.findByText('Select Kin');
-    await user.click(screen.getByRole('button', { name: /Choose specific Kin/ }));
-    // Exactly one detail row per Kin: the read-only roster is not printed
-    // alongside the pickable list, which would rebuild the duplication #540
-    // is about.
-    expect(screen.getAllByText('LABRADOR RETRIEVER • 4 YRS')).toHaveLength(1);
+    expect(screen.getByRole('checkbox', { name: /Buddy/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Willow/ })).toBeChecked();
+    const rail = screen.getByText('Booking summary').closest('section')!;
+    expect(rail).toHaveTextContent('All Kin in this home');
+
+    const sent = await finishAndSubmit(user);
+    expect(sent.kinIds).toEqual(['k1', 'k2']);
+  });
+
+  it('choosing on: unticking a Kin books only the Kin left ticked, and the summary names them', async () => {
+    getHouseholdKinRoster.mockResolvedValue({ kin: ROSTER, chooseKin: true });
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Select Kin');
+    await user.click(screen.getByRole('checkbox', { name: /Buddy/ }));
+    expect(screen.getByRole('checkbox', { name: /Buddy/ })).not.toBeChecked();
+    const rail = screen.getByText('Booking summary').closest('section')!;
+    expect(rail).toHaveTextContent('Willow');
+    expect(rail).not.toHaveTextContent('All Kin in this home');
+
+    const sent = await finishAndSubmit(user);
+    expect(sent.kinIds).toEqual(['k2']);
+  });
+
+  it('choosing on: ticking the Kin back is "all Kin" again', async () => {
+    getHouseholdKinRoster.mockResolvedValue({ kin: ROSTER, chooseKin: true });
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Select Kin');
+    await user.click(screen.getByRole('checkbox', { name: /Buddy/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Buddy/ }));
+    const rail = screen.getByText('Booking summary').closest('section')!;
+    expect(rail).toHaveTextContent('All Kin in this home');
+  });
+
+  it('SAD, choosing on: with no Kin ticked it says so and Next does nothing', async () => {
+    getHouseholdKinRoster.mockResolvedValue({ kin: ROSTER, chooseKin: true });
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Select Kin');
+    await user.click(screen.getByRole('checkbox', { name: /Buddy/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Willow/ }));
+    expect(screen.getByText('Tick at least one Kin to go on.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+  });
+
+  it('ERROR: when the server cannot say, the wizard opens on the household\'s own Kin with nothing to tick', async () => {
+    getHouseholdKinRoster.mockRejectedValue(new Error('internal'));
+    getMyKin.mockResolvedValue({
+      kin: [kin({ id: 'k1', name: 'Buddy' }), kin({ id: 'k3', name: 'Old Boy', status: 'noLongerWithUs' })],
+    });
+    const user = userEvent.setup();
+    renderWizard();
+    await screen.findByText('Kin on this booking');
+    expect(screen.getByText('Buddy')).toBeInTheDocument();
+    expect(screen.queryByText('Old Boy')).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+
+    const sent = await finishAndSubmit(user);
+    expect(sent.kinIds).toEqual(['k1']);
+  });
+
+  it('holds the wizard on its loading line until the server has answered, so step 1 never swaps under a thumb', async () => {
+    getHouseholdKinRoster.mockReturnValue(new Promise(() => {}));
+    renderWizard();
+    expect(await screen.findByText('Loading the booking wizard…')).toBeInTheDocument();
+    expect(screen.queryByText('Kin on this booking')).not.toBeInTheDocument();
+    expect(screen.queryByText('Select Kin')).not.toBeInTheDocument();
   });
 });
 
@@ -618,7 +786,7 @@ describe('BookingWizard: #542 KinCare Duration wording', () => {
   it('labels the step and the heading as KinCare Duration', async () => {
     const user = userEvent.setup();
     renderWizard();
-    await screen.findByText('Select Kin');
+    await screen.findByText('Kin on this booking');
     // Stepper label, before anything is chosen. (The summary rail's own row is
     // "KinCare" since #541/#543 made it a list rather than one duration.)
     expect(screen.getByText('KinCare Duration')).toBeInTheDocument();
@@ -1239,7 +1407,7 @@ describe('BookingWizard, signal lost with the tab open', () => {
     expect(screen.getByText(/the booking wizard has not loaded/)).toBeInTheDocument();
     // None of the wizard itself, and above all no way to submit a booking
     // against a roster and a catalog that were never read.
-    expect(screen.queryByText('Select Kin')).not.toBeInTheDocument();
+    expect(screen.queryByText('Kin on this booking')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Create Booking/ })).not.toBeInTheDocument();
   });
@@ -1327,7 +1495,7 @@ describe('BookingWizard: #1300 / #1302 step behaviour', () => {
     Element.prototype.scrollIntoView = scroll;
     const user = userEvent.setup();
     renderWizard();
-    await screen.findByText('Select Kin');
+    await screen.findByText('Kin on this booking');
     expect(scroll).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await screen.findByText('Choose KinCare Duration');
@@ -1338,7 +1506,7 @@ describe('BookingWizard: #1300 / #1302 step behaviour', () => {
   it('marks the current step in the step row (#1933)', async () => {
     const user = userEvent.setup();
     renderWizard();
-    await screen.findByText('Select Kin');
+    await screen.findByText('Kin on this booking');
     const items = within(screen.getByRole('list', { name: 'Booking steps' })).getAllByRole('listitem');
     expect(items).toHaveLength(5);
     expect(items[0]).toHaveAttribute('aria-current', 'step');
@@ -1349,12 +1517,14 @@ describe('BookingWizard: #1300 / #1302 step behaviour', () => {
     expect(items[0]).not.toHaveAttribute('aria-current');
   });
   it('names the chosen Kin in the summary instead of counting them', async () => {
+    getHouseholdKinRoster.mockResolvedValue({
+      kin: [...ROSTER, { id: 'k3', name: 'Maple', householdId: null }],
+      chooseKin: true,
+    });
     const user = userEvent.setup();
     renderWizard();
     await screen.findByText('Select Kin');
-    await user.click(screen.getByRole('button', { name: /Choose specific Kin/ }));
-    await user.click(screen.getByText('Buddy'));
-    await user.click(screen.getByText('Willow'));
+    await user.click(screen.getByRole('checkbox', { name: /Maple/ }));
     const rail = screen.getByText('Booking summary').closest('section')!;
     expect(rail).toHaveTextContent('Buddy, Willow');
     expect(rail).not.toHaveTextContent('2 chosen');

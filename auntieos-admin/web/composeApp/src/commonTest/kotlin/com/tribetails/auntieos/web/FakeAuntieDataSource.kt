@@ -214,6 +214,7 @@ class FakeAuntieDataSource(
         val pattern: String,
         val weeklyDays: List<Int>?,
         val staffNotes: String?,
+        val kinIds: List<String>? = null,
     )
     val filedRequests = mutableListOf<FiledRequest>()
     override suspend fun createMultiDateBookingRequest(
@@ -224,8 +225,9 @@ class FakeAuntieDataSource(
         weeklyDays: List<Int>?,
         idempotencyKey: String?,
         staffNotes: String?,
+        kinIds: List<String>?,
     ): WriteResult<com.tribetails.auntieos.web.data.MultiDateBookingResult> {
-        filedRequests += FiledRequest(kinfolkId, visits, notes, pattern, weeklyDays, staffNotes)
+        filedRequests += FiledRequest(kinfolkId, visits, notes, pattern, weeklyDays, staffNotes, kinIds)
         return WriteResult.Ok(
             com.tribetails.auntieos.web.data.MultiDateBookingResult(
                 batchId = "req_fake_${filedRequests.size}",

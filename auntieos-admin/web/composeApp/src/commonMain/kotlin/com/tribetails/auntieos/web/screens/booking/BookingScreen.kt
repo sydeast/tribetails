@@ -1371,6 +1371,21 @@ internal fun BookingCreateScreen(
     // "dateTtime" string, which the server already reads in that zone.
     val businessZone = NewBookingMath.businessTimeZone((settingsResult as? FirestoreResult.Data)?.value?.timeZone)
     val today = remember(businessZone) { Clock.System.todayIn(businessZone) }
+    var kinRoster by remember { mutableStateOf<com.tribetails.auntieos.web.data.KinRosterState>(com.tribetails.auntieos.web.data.KinRosterState.Idle) }
+    var kinChoice by remember { mutableStateOf(com.tribetails.auntieos.web.data.KinChoice()) }
+    androidx.compose.runtime.LaunchedEffect(selectedKinfolk?._id) {
+        val id = selectedKinfolk?._id.orEmpty()
+        // Another household's Kin are not this one's.
+        kinChoice = com.tribetails.auntieos.web.data.KinChoice()
+        kinRoster = if (id.isBlank()) com.tribetails.auntieos.web.data.KinRosterState.Idle
+        else com.tribetails.auntieos.web.data.KinRosterState.Loading
+        if (id.isNotBlank()) {
+            kinRoster = when (val r = client.getHouseholdKinRoster(id)) {
+                is WriteResult.Ok -> com.tribetails.auntieos.web.data.KinRosterState.Ready(r.value)
+                is WriteResult.Err -> com.tribetails.auntieos.web.data.KinRosterState.Failed
+            }
+        }
+    }
     var kinfolkAdditionalInfo by remember { mutableStateOf("") }
     var adminInternalNotes    by remember { mutableStateOf("") }
     var saving          by remember { mutableStateOf(false) }
@@ -1448,7 +1463,7 @@ internal fun BookingCreateScreen(
 
         ReadStatusBanner(kinfolkRead, "kinfolk")
 
-        DenPanel(title = "Details", subtitle = "KinCare applies to the whole household.") {
+        DenPanel(title = "Details") {
             // ── Kinfolk selector ───────────────────────────────────────────────
             AuntieFieldLabel(text = "Kinfolk")
             if (selectedKinfolk != null) {
@@ -1506,9 +1521,20 @@ internal fun BookingCreateScreen(
                 }
                 Spacer(Modifier.height(7.dp))
                 Text(
-                    text  = "Type a name to search. KinCare applies to the whole household, so there is no per-kin selection.",
+                    text  = "Type a name to search.",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
+                )
+            }
+            // #1822 (operator ruling 2026-11-12): every visit covers every Kin. The
+            // form names the household's Kin from the server's roster; a tick box
+            // per Kin only with the "Visits: choose Kin" flag on.
+            if (selectedKinfolk != null) {
+                Spacer(Modifier.height(14.dp))
+                com.tribetails.auntieos.web.screens.schedule.KinCoveredField(
+                    roster = kinRoster,
+                    choice = kinChoice,
+                    onToggle = { id -> kinChoice = kinChoice.toggle(id, kinRoster.kin) },
                 )
             }
             Spacer(Modifier.height(20.dp))
@@ -1723,7 +1749,8 @@ internal fun BookingCreateScreen(
             // record, so it can be staffed and noted once approved. A blank time is
             // the field's own 09:00 placeholder, as it already was for several dates.
             val requestVisits = buildStartTimesMs(repeatMode, startDate, extraDates, startTime, weekdays, weeks, businessZone)
-            val canSubmit   = hasKinfolk && hasService && hasDate && requestVisits.isNotEmpty()
+            val canSubmit   = hasKinfolk && hasService && hasDate && requestVisits.isNotEmpty() &&
+                !kinChoice.noneChosen(kinRoster)
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1747,6 +1774,8 @@ internal fun BookingCreateScreen(
                                 kinfolkNote = kinfolkAdditionalInfo,
                                 staffNote = adminInternalNotes,
                                 formValues = bookingFormValues.toMap(),
+                                kinIds = kinChoice.kinIdsToSend(kinRoster),
+                                kinNames = kinChoice.kinNamesToStore(kinRoster),
                             )
                             saving = false
                             if (vm.errorMessage == null) onBack()
@@ -1769,6 +1798,7 @@ internal fun BookingCreateScreen(
                                 weekdays = weekdays,
                                 kinfolkNote = kinfolkAdditionalInfo,
                                 staffNote = adminInternalNotes,
+                                kinIds = kinChoice.kinIdsToSend(kinRoster),
                             )
                             saving = false
                             if (vm.errorMessage == null) onBack()

@@ -9,6 +9,7 @@ import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { useRecordTitle } from '../lib/pageTitle';
 import { serviceOptionsFromRates, type ServiceOption } from '../lib/newBooking';
 import { useCollection, useDocById } from '../lib/firestore';
+import { canChooseKin, choiceFromStoredIds, rosterKinLabel, useHouseholdKinRoster } from '../lib/kinChoice';
 import { updateKinCareSession } from '../api/sessionsWrite';
 import { lifecycleActionsFor, savedVisitFieldsMessage } from '../lib/sessionLifecycle';
 import { VisitInternalNotes } from '../components/VisitInternalNotes';
@@ -389,12 +390,23 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
   // nothing, which is exactly right (see `kinForHouseholdQuery`).
   const roster = useCollection<Kin>(kinForHouseholdQuery(str(entry?.kinfolkId)));
 
+  // #1822 / #1862: the Kin that can be ticked, and whether they can be at all,
+  // are the server's answer. Every visit covers every Kin unless the "Choose
+  // Kin for a visit" feature flag is on; off, the row below names the Kin and
+  // there is nothing to tick.
+  const kinRoster = useHouseholdKinRoster(str(entry?.kinfolkId));
+  const choosingKin = canChooseKin(kinRoster);
+
   const savedKinIds = arr<string>(entry?.kinIds);
-  const effectiveKinIds = kinSelection ?? savedKinIds;
+  // The saved Kin as today's roster knows them: an older visit stored a Kin's
+  // admin record id, and that is the same Kin.
+  const savedChoice = kinRoster.status === 'ready' ? choiceFromStoredIds(savedKinIds, kinRoster.kin) : [];
+  const effectiveKinIds = kinSelection ?? savedChoice;
   const kinDirty =
+    choosingKin &&
     kinSelection !== null &&
-    (kinSelection.length !== savedKinIds.length ||
-      kinSelection.some((id) => !savedKinIds.includes(id)));
+    (kinSelection.length !== savedChoice.length ||
+      kinSelection.some((id) => !savedChoice.includes(id)));
   const durationDirty = duration !== (typeof currentDuration === 'number' ? String(currentDuration) : '');
   const serviceDirty = serviceType !== currentServiceType;
   const editDirty = serviceDirty || durationDirty || kinDirty;
@@ -820,50 +832,37 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
                     })}
                   />
 
-                  <fieldset className="sdetail__row sdetail__row--stack sdetail__kin-picker">
-                    <legend className="sdetail__row-key">Kin on this visit</legend>
-                    {roster.status === 'error' ? (
-                      <ErrorHint>
-                        Couldn&rsquo;t read this household&rsquo;s Kin. {roster.message} The Kin already
-                          on this visit are unchanged.
-                      </ErrorHint>
-                    ) : roster.status === 'loading' ? (
-                      <p className="sdetail__hint">Loading this household&rsquo;s Kin&hellip;</p>
-                    ) : roster.data.length === 0 ? (
-                      <EmptyHint>
-                        No Kin are on file for this household, so there is nothing to choose from.
-                      </EmptyHint>
-                    ) : (
-                      <>
-                        {roster.data.map((k) => (
-                          <label key={k._id} className="sdetail__check">
-                            <input
-                              type="checkbox"
-                              checked={effectiveKinIds.includes(k._id)}
-                              onChange={(e) => {
-                                const next = e.target.checked
-                                  ? [...effectiveKinIds, k._id]
-                                  : effectiveKinIds.filter((id) => id !== k._id);
-                                setKinSelection(next);
-                              }}
-                            />
-                            <span>{str(k.name).trim() === '' ? k._id : str(k.name)}</span>
-                          </label>
-                        ))}
-                        {/* R1, stated where the operator can act on it: an empty
-                            selection is not "no Kin", it is the whole household,
-                            and the server expands it that way. Saying so here
-                            stops "I unticked everything" from reading as a way
-                            to book a visit for nobody. */}
-                        {effectiveKinIds.length === 0 && (
-                          <p className="sdetail__hint">
-                            Nothing ticked means the whole household: a KinCare covers every Kin in the
-                            home unless the booking was narrowed.
-                          </p>
-                        )}
-                      </>
-                    )}
-                  </fieldset>
+                  {choosingKin && kinRoster.status === 'ready' && (
+                    <fieldset className="sdetail__row sdetail__row--stack sdetail__kin-picker">
+                      <legend className="sdetail__row-key">Kin on this visit</legend>
+                      {kinRoster.kin.map((k) => (
+                        <label key={k.id} className="sdetail__check">
+                          <input
+                            type="checkbox"
+                            checked={effectiveKinIds.includes(k.id)}
+                            onChange={(e) => {
+                              const next = e.target.checked
+                                ? [...effectiveKinIds, k.id]
+                                : effectiveKinIds.filter((id) => id !== k.id);
+                              setKinSelection(next);
+                            }}
+                          />
+                          <span>{rosterKinLabel(k)}</span>
+                        </label>
+                      ))}
+                      {/* Stated where the operator can act on it: an empty
+                          selection is not "no Kin", it is the whole household,
+                          and the server expands it that way. Saying so here
+                          stops "I unticked everything" from reading as a way
+                          to book a visit for nobody. */}
+                      {effectiveKinIds.length === 0 && (
+                        <p className="sdetail__hint">
+                          Nothing ticked means the whole household: a KinCare covers every Kin in the
+                          home unless the booking was narrowed.
+                        </p>
+                      )}
+                    </fieldset>
+                  )}
 
                   {/* Present only once the visit has been billed, the same
                       rule as the board's "Invoice linked" chip: an unbilled

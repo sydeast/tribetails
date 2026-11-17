@@ -19,6 +19,8 @@ import {
   withHouseholdLine,
 } from '../lib/householdNoticeWords';
 import './NewVisitDialog.css';
+import { KinChoiceField } from './KinChoiceField';
+import { kinIdsToSend, noKinChosen, useHouseholdKinRoster, type KinChoice } from '../lib/kinChoice';
 
 export interface HouseholdOption {
   id: string;
@@ -81,9 +83,12 @@ interface NewVisitDialogProps {
  * the household; one already under way can be neither and says so. The server
  * (`lib/pastVisit.ts`) makes the same call and refuses anything else.
  *
- * KIN ARE NOT PICKED HERE (operator ruling R1: a KinCare covers every Kin in the
- * household). `kinIds: []` tells the server to materialize the whole roster,
- * which is what it stores; the desktop `NewVisitDialog.kt` sends the same.
+ * EVERY VISIT COVERS EVERY KIN (operator ruling 2026-11-12, #1822). The form
+ * names the household's Kin, from the server's own roster, and offers nothing
+ * to tick: `kinIds: []` tells the server to store the whole roster. With the
+ * "Choose Kin for a visit" feature flag on, each Kin is a tick box, all ticked
+ * to begin with, and the ticked ids are what is sent. The desktop
+ * `NewVisitDialog.kt` and the Android New visit form do the same.
  */
 export function NewVisitDialog({
   households,
@@ -102,6 +107,9 @@ export function NewVisitDialog({
   const auntie = useIsAuntie();
 
   const [kinfolkId, setKinfolkId] = useState('');
+  // #1822: `null` is every Kin, the only choice unless choosing Kin is switched on.
+  const [kinChoice, setKinChoice] = useState<KinChoice>(null);
+  const kinRoster = useHouseholdKinRoster(kinfolkId);
   const [serviceType, setServiceType] = useState('');
   const [date, setDate] = useState(initialDate);
   const [time, setTime] = useState('09:00');
@@ -143,6 +151,7 @@ export function NewVisitDialog({
     time.trim() !== '' &&
     durationOk &&
     timing !== 'underway' &&
+    !noKinChosen(kinChoice, kinRoster) &&
     !saving;
 
   function pickService(option: ServiceOption) {
@@ -174,7 +183,7 @@ export function NewVisitDialog({
     try {
       const res = await createKinCareSession({
         kinfolkId,
-        kinIds: [],
+        kinIds: kinIdsToSend(kinChoice, kinRoster),
         serviceType,
         startTime: times.startTime,
         endTime: times.endTime,
@@ -240,7 +249,11 @@ export function NewVisitDialog({
             id="new-visit-household"
             className="new-visit__select"
             value={kinfolkId}
-            onChange={(e) => setKinfolkId(e.target.value)}
+            onChange={(e) => {
+              setKinfolkId(e.target.value);
+              // Another household's Kin are not this one's.
+              setKinChoice(null);
+            }}
           >
             <option value="">Pick a household…</option>
             {households.map((h) => (
@@ -255,6 +268,14 @@ export function NewVisitDialog({
             </p>
           )}
         </div>
+
+        <KinChoiceField
+          idPrefix="new-visit"
+          labelClassName="new-visit__label"
+          roster={kinRoster}
+          choice={kinChoice}
+          onChange={setKinChoice}
+        />
 
         <div className="new-visit__field">
           <label className="new-visit__label" htmlFor="new-visit-service">

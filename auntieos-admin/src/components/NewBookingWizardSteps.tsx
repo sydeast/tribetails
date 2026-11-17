@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { KIN_ROSTER_MAX, type Kin } from '../api/directory';
 import {
   type ServiceOption,
   WEEKDAY_LABELS,
@@ -30,8 +29,9 @@ import { shortDayLabel } from '../lib/bookingAvailability';
 import { businessWallClock } from '../lib/businessZoneTime';
 import { useRovingTabs } from '../lib/useRovingTabs';
 import { useIsAuntie } from '../lib/useIsAuntie';
-import { Banner } from './Banner';
+import { type KinRosterState } from '../lib/kinChoice';
 import { GhostButton } from './Buttons';
+import { KinChoiceField } from './KinChoiceField';
 
 /**
  * The five step bodies of the New Booking wizard, split out of
@@ -102,36 +102,17 @@ export function Stepper({ current, reachable, onJump }: StepperProps) {
 
 // ── step 1: kinfolk and kin ──────────────────────────────────────────────────
 
-/** One Kin's display name, never blank. */
-export function kinLabel(k: Kin): string {
-  const name = (k.name ?? '').trim();
-  return name === '' ? 'Unnamed Kin' : name;
-}
-
-/**
- * The household's whole roster on one line, so "All Kin in this home" names the
- * animals instead of asserting a coverage the operator cannot check.
- */
-export function kinRosterLabel(kin: readonly Kin[]): string {
-  return kin.map(kinLabel).join(', ');
-}
-
 export interface ClientStepProps {
   state: WizardState;
   onChange: (next: WizardState) => void;
   households: { id: string; label: string }[];
   householdsLoading: boolean;
   householdsError: string | null;
-  /** Active Kin for the chosen household. Null while the roster is still loading. */
-  kin: Kin[] | null;
-  kinError: string | null;
   /**
-   * The roster read came back AT its cap, so there may be Kin it did not return.
-   * Said out loud rather than swallowed: a truncated read that renders as a
-   * short list, or worse as "no Kin on this household yet", is the silent-cap
-   * failure this repo treats as a bug wherever it appears.
+   * The chosen household's Kin as the server will store them, and whether they
+   * may be narrowed (#1822, #1862). `idle` until a household is picked.
    */
-  kinTruncated: boolean;
+  roster: KinRosterState;
 }
 
 export function ClientStep({
@@ -140,9 +121,7 @@ export function ClientStep({
   households,
   householdsLoading,
   householdsError,
-  kin,
-  kinError,
-  kinTruncated,
+  roster,
 }: ClientStepProps) {
   return (
     <div className="nbw__body">
@@ -178,88 +157,20 @@ export function ClientStep({
         )}
       </div>
 
+      {/* Operator ruling 2026-11-12: every visit covers every Kin, so this
+          names them and offers nothing to tick. With the "Choose Kin for a
+          visit" feature flag on it is a tick box per Kin, all ticked. The
+          names are the server's roster, the Kin the booking will carry. */}
       {state.kinfolkId !== '' && (
-        <div className="new-booking__field">
-          <span className="new-booking__label" id="new-booking-kin-label">
-            Kin covered
-          </span>
-          {kinError !== null ? (
-            <span className="new-booking__error" role="alert">
-              The Kin roster could not be read ({kinError}). The booking still covers the whole
-              household.
-            </span>
-          ) : kin === null ? (
-            <span className="new-booking__hint">Loading this household&rsquo;s Kin…</span>
-          ) : kin.length === 0 ? (
-            <span className="new-booking__hint">
-              No Kin on this household yet. The booking covers the household.
-            </span>
-          ) : (
-            <div role="group" aria-labelledby="new-booking-kin-label">
-              {/* R1, the operator's ruling: KinCare covers EVERY Kin in the home.
-                  "I wouldn't go into a home and care for one kin while ignoring
-                  the other." So all of them is the default and takes no click;
-                  narrowing to a subset is the thing you have to ask for. Same
-                  shape the Kinfolk portal's wizard has always had
-                  (mytribe/web/src/screens/BookingWizard.tsx Step1KinSelect). */}
-              <div className="nbw__allkin">
-                <div className="nbw__allkin-title">All Kin in this home</div>
-                <span className="nbw__allkin-names">{kinRosterLabel(kin)}</span>
-              </div>
-
-              <GhostButton
-                label={state.allKinMode ? 'Choose specific Kin' : 'Cover all Kin instead'}
-                onClick={() =>
-                  // Leaving specific-Kin mode drops the partial pick rather than
-                  // parking it: a selection that is not on the wire must not sit
-                  // in the UI looking like it is.
-                  onChange({ ...state, allKinMode: !state.allKinMode, kinIds: [] })
-                }
-                className="nbw__allkin-toggle"
-              />
-
-              {!state.allKinMode && (
-                <div className="nbw__kin">
-                  {kin.map((k) => {
-                    const picked = state.kinIds.includes(k._id);
-                    return (
-                      <label
-                        key={k._id}
-                        className={picked ? 'nbw__kin-chip nbw__kin-chip--on' : 'nbw__kin-chip'}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={picked}
-                          onChange={() =>
-                            onChange({
-                              ...state,
-                              kinIds: picked
-                                ? state.kinIds.filter((id) => id !== k._id)
-                                : [...state.kinIds, k._id],
-                            })
-                          }
-                        />
-                        <span>{kinLabel(k)}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-          {kinTruncated && (
-            <Banner tone="warning" title="More Kin than fit">
-              This household&rsquo;s roster hit the {KIN_ROSTER_MAX}-row read limit, so Kin may be
-              missing above and &ldquo;All Kin in this home&rdquo; can only cover the ones it read.
-              Check the household&rsquo;s Kin list before booking.
-            </Banner>
-          )}
-          {!state.allKinMode && kin !== null && kin.length > 0 && state.kinIds.length === 0 && (
-            <span className="new-booking__hint">
-              No Kin picked yet. Pick at least one, or go back to covering all of them.
-            </span>
-          )}
-        </div>
+        <KinChoiceField
+          idPrefix="new-booking"
+          labelClassName="new-booking__label"
+          roster={roster}
+          choice={state.allKinMode ? null : state.kinIds}
+          onChange={(next) =>
+            onChange({ ...state, allKinMode: next === null, kinIds: next === null ? [] : [...next] })
+          }
+        />
       )}
     </div>
   );

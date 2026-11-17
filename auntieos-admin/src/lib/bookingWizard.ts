@@ -91,8 +91,10 @@ export interface WizardState {
   kinfolkId: string;
   /**
    * OPERATOR RULING R1: a KinCare session covers ALL Kin in the household. That
-   * is the DEFAULT and costs the operator zero interaction; narrowing to a
-   * subset is an explicit opt-in behind a control.
+   * is the DEFAULT and costs the operator zero interaction. Since the ruling of
+   * 2026-11-12 (#1822, #1862) it is the only choice unless the "Choose Kin for
+   * a visit" feature flag is on, when step 1 shows a tick box per Kin, all
+   * ticked, and unticking one turns this off.
    *
    * True (the initial value) means every Kin on the household's roster. The
    * roster itself is NOT stored here. [resolveKinIds] resolves it at submit
@@ -590,7 +592,10 @@ export function stepBlocker(
 ): string | null {
   switch (step) {
     case 'client':
-      return state.kinfolkId === '' ? 'Pick a household first.' : null;
+      if (state.kinfolkId === '') return 'Pick a household first.';
+      // Only reachable with the "Choose Kin for a visit" flag on: every Kin is
+      // ticked to begin with, and a booking for none of them is not a booking.
+      return !state.allKinMode && state.kinIds.length === 0 ? 'Tick at least one Kin.' : null;
     case 'service':
       return state.serviceName.trim() === '' ? 'Pick a service first.' : null;
     case 'dates': {

@@ -304,8 +304,16 @@ const ALLOWED_EAGER_PACKAGES = [
  * one rule for naming who wrote a KinTale comment, shared by the in-app thread,
  * the public share page and the comment notice, which each carried their own
  * copy before. It imports only `lib/firestoreAdmin.ts`, already here.
+ *
+ * 462 since #1822 / #1862 (on top of #1923's 460):
+ * `portal/getHouseholdKinRoster.ts` is a new FUNCTIONS entry, the one Kin
+ * roster every booking screen reads, and `lib/featureFlags.ts` is the flag
+ * read it shares with `getFeatureFlags` and the booking writers (the merge
+ * `getFeatureFlags` used to carry inline, moved so the write and the screen
+ * resolve the choose-Kin flag the same way). Everything else they import was
+ * already here.
  */
-const MAX_OWN_EAGER_MODULES = 460;
+const MAX_OWN_EAGER_MODULES = 462;
 
 interface Edge {
   spec: string;

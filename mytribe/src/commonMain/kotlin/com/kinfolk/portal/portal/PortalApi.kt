@@ -763,6 +763,31 @@ class PortalApi(
         return getMyKinViaCallable(kinfolkId)
     }
 
+    /**
+     * The Kin a booking for this household covers, and whether they may be
+     * chosen (#1822, #1862). A callable, never a direct read: the list is the
+     * server's own, the one `requestBooking` stores and the office's booking
+     * forms show, so the three cannot name different Kin for one booking.
+     *
+     * Throws when an older server answers with no `kin` list, so the wizard
+     * falls back to the household's own Kin rather than drawing an empty home.
+     */
+    suspend fun getHouseholdKinRoster(kinfolkId: String? = null): KinRoster {
+        val raw = fns.call("getHouseholdKinRoster", kinfolkId?.let { buildJsonObject { put("kinfolkId", it) } })
+        val rows = raw["kin"] as? JsonArray ?: error("getHouseholdKinRoster: no answer")
+        val kin = rows.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val id = o["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            RosterKin(
+                id = id,
+                name = o["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
+                // Sent only when it differs from the id. Absent, the id may itself be the card's.
+                householdId = o["householdId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: id,
+            )
+        }
+        return KinRoster(kin = kin, chooseKin = raw["chooseKin"]?.jsonPrimitive?.booleanOrNull == true)
+    }
+
     private suspend fun getMyKinViaCallable(kinfolkId: String?): KinResult {
         val raw = fns.call("getMyKin", kinfolkId?.let { buildJsonObject { put("kinfolkId", it) } })
         val list = (raw["kin"] as? JsonArray)?.map { el ->

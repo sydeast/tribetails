@@ -139,6 +139,54 @@ export async function getMyKin(kinfolkId?: string): Promise<GetMyKinResult> {
   return call<GetMyKinRequest, GetMyKinResult>('getMyKin', payload);
 }
 
+/** One Kin a booking can cover: the server's own roster entry. */
+export interface RosterKinDto {
+  /** The id a booking stores for this Kin, and the one the wizard sends back. */
+  id: string;
+  name: string | null;
+  /** This Kin's own card (`getMyKin`'s id). Null for a Kin the office added that has no card yet. */
+  householdId: string | null;
+}
+
+export interface GetHouseholdKinRosterResult {
+  /** The household's Kin in care: the ones a new booking covers. */
+  kin: RosterKinDto[];
+  /**
+   * Whether specific Kin can be chosen for a booking. False, the default:
+   * every booking covers every Kin and the wizard shows no picker.
+   */
+  chooseKin: boolean;
+}
+
+/**
+ * The Kin a booking for this household covers, as the server will store them,
+ * and whether they may be narrowed (#1822, #1862).
+ *
+ * A callable, never a direct read: the list is the server's own, the same one
+ * `requestBooking` stores and the office's booking forms show, so the three
+ * cannot name different Kin for one booking.
+ */
+export async function getHouseholdKinRoster(kinfolkId?: string): Promise<GetHouseholdKinRosterResult> {
+  const res = await call<{ kinfolkId?: string }, { kin?: unknown; chooseKin?: unknown }>(
+    'getHouseholdKinRoster',
+    kinfolkId !== undefined ? { kinfolkId } : {},
+  );
+  if (!Array.isArray(res?.kin)) throw new Error('getHouseholdKinRoster: no answer');
+  const kin: RosterKinDto[] = [];
+  for (const row of res.kin as unknown[]) {
+    const r = (row ?? {}) as { id?: unknown; name?: unknown; householdId?: unknown };
+    if (typeof r.id !== 'string' || r.id === '') continue;
+    kin.push({
+      id: r.id,
+      name: typeof r.name === 'string' && r.name.trim() !== '' ? r.name : null,
+      // Sent only when it differs from the id. Absent, the id may itself be the
+      // card's, so the wizard looks the card up by it.
+      householdId: typeof r.householdId === 'string' && r.householdId !== '' ? r.householdId : r.id,
+    });
+  }
+  return { kin, chooseKin: res.chooseKin === true };
+}
+
 /**
  * Adds a new kin to the roster. The `kin_edit` permission is enforced
  * server-side, same as updateKin; a denial throws and must surface (fail loud).

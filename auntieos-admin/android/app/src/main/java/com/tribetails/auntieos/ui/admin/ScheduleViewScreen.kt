@@ -951,7 +951,15 @@ private fun ScheduleViewScreenContent(
                 },
                 // #1841: what the confirmation would reach, from the server.
                 confirmationPreview = state.newVisitPreview,
-                onHouseholdPicked = { kinfolkId -> viewModel.loadNewVisitPreview(kinfolkId) },
+                onHouseholdPicked = { kinfolkId ->
+                    viewModel.loadNewVisitPreview(kinfolkId)
+                    // #1822: the Kin this visit covers, from the server's roster.
+                    viewModel.loadKinForNewRequest(kinfolkId.orEmpty())
+                },
+                kin = state.newRequestKin,
+                kinLoading = state.newRequestKinLoading,
+                kinError = state.newRequestKinError,
+                chooseKin = state.newRequestChooseKin,
                 auntieSignedIn = state.auntieSignedIn,
                 // #1574: a window that has ended is recorded as Completed, never booked.
                 onRecordCompleted = { visit ->
@@ -963,6 +971,7 @@ private fun ScheduleViewScreenContent(
                         endUtcIso = visit.endUtcIso,
                         durationMinutes = visit.durationMinutes,
                         notes = visit.notes,
+                        kinIds = visit.kinIds,
                     )
                     viewModel.hideAddBookingDialog()
                 },
@@ -996,6 +1005,7 @@ private fun ScheduleViewScreenContent(
                 kin             = state.newRequestKin,
                 kinLoading      = state.newRequestKinLoading,
                 kinError        = state.newRequestKinError,
+                chooseKin       = state.newRequestChooseKin,
                 serviceRates    = state.businessSettings.serviceRates,
                 serviceDurations = state.businessSettings.serviceDurations,
                 availability    = availability,
@@ -2523,6 +2533,8 @@ data class RecordCompletedVisit(
     val endUtcIso: String,
     val durationMinutes: Int,
     val notes: String,
+    /** #1822: the Kin chosen on the form. Empty is every Kin. */
+    val kinIds: List<String> = emptyList(),
 )
 
 /** #1703: said when Settings has no KinCare types to book a visit against. */
@@ -2549,6 +2561,15 @@ fun AddEnhancedBookingDialog(
     confirmationPreview: com.tribetails.auntieos.domain.HouseholdNoticePreview =
         com.tribetails.auntieos.domain.HouseholdNoticePreview.Unknown,
     onHouseholdPicked: (String?) -> Unit = {},
+    /**
+     * #1822 (operator ruling 2026-11-12): the picked household's Kin, from the
+     * server's roster. Every visit covers every Kin, so the form names them;
+     * with [chooseKin] on each is a chip, all chosen to begin with.
+     */
+    kin: List<com.tribetails.auntieos.domain.RosterKin> = emptyList(),
+    kinLoading: Boolean = false,
+    kinError: String? = null,
+    chooseKin: Boolean = false,
     auntieSignedIn: Boolean = false,
     bookingSchemas: List<FormSchema> = emptyList(),
     schemaError: String? = null,
@@ -2587,6 +2608,8 @@ fun AddEnhancedBookingDialog(
     var publishImmediately by remember { mutableStateOf(false) }
     // #1841: on by default; offered only for a visit confirmed now and still ahead.
     var sendConfirmation by remember { mutableStateOf(true) }
+    // `KinChoice()` is every Kin. Another household's Kin are not this one's.
+    var kinChoice by remember(selectedKinfolk?.id) { mutableStateOf(com.tribetails.auntieos.domain.KinChoice()) }
     LaunchedEffect(selectedKinfolk?.id) { onHouseholdPicked(selectedKinfolk?.id) }
     val draftTiming: com.tribetails.auntieos.domain.VisitWindowTiming? = run {
         val epochDay = datePickerState.selectedDateMillis?.let { it / 86_400_000L } ?: initialDate.toEpochDay()
@@ -2623,6 +2646,18 @@ fun AddEnhancedBookingDialog(
                         label       = "KINFOLK",
                         modifier    = Modifier.fillMaxWidth()
                     )
+                }
+                if (selectedKinfolk != null) {
+                    item {
+                        com.tribetails.auntieos.ui.admin.scheduling.KinCoveredField(
+                            kin = kin,
+                            loading = kinLoading,
+                            error = kinError,
+                            chooseKin = chooseKin,
+                            choice = kinChoice,
+                            onToggle = { id -> kinChoice = kinChoice.toggle(id, kin) },
+                        )
+                    }
                 }
                 item {
                     AuntieDropdownField(
@@ -2785,6 +2820,11 @@ fun AddEnhancedBookingDialog(
                                     timeError = if (serviceOptions.isEmpty()) NO_KINCARE_TYPES_MESSAGE else "Pick a service."
                                     return@PrimaryButton
                                 }
+                                // #1822: reachable only with choosing Kin switched on. A visit for no Kin is not booked.
+                                if (selectedKinfolk != null && kinChoice.noneChosen(kin, chooseKin)) {
+                                    timeError = "Choose at least one Kin."
+                                    return@PrimaryButton
+                                }
                                 // #1574: never a booking in the past. Judged again
                                 // at the tap, on the clock as it is now.
                                 when (com.tribetails.auntieos.domain.newVisitTiming(date, startTime, endTime, now())) {
@@ -2807,6 +2847,7 @@ fun AddEnhancedBookingDialog(
                                                 endUtcIso = com.tribetails.auntieos.domain.wallClockToUtcIso(date, endTime, businessZone),
                                                 durationMinutes = java.time.Duration.between(startTime, endTime).toMinutes().toInt(),
                                                 notes = notes,
+                                                kinIds = kinChoice.kinIdsToSend(kin, chooseKin),
                                             ),
                                         )
                                         return@PrimaryButton
@@ -2822,6 +2863,10 @@ fun AddEnhancedBookingDialog(
                                         baseServiceTitle = svc.name,
                                         kinfolkId        = selectedKinfolk?.id ?: "",
                                         kinfolkName      = selectedKinfolk?.displayName ?: "",
+                                        // #1822: empty is every Kin; the server stores the whole roster for it.
+                                        kinIds           = kinChoice.kinIdsToSend(kin, chooseKin),
+                                        // Named beside the ids, so Booking details names a narrowed choice.
+                                        kinNames         = kinChoice.kinNamesToStore(kin, chooseKin),
                                         startDateTime    = LocalDateTime.of(date, startTime).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
                                         endDateTime      = LocalDateTime.of(date, endTime).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
                                         bookingMode      = bookingMode,
@@ -2968,9 +3013,8 @@ fun BookingDetailsDialog(
                 }
                 Text("Service: ${booking.baseServiceTitle.ifBlank { "Not set" }}", color = AuntieTheme.colors.textPrimary)
                 Text("Kinfolk: ${booking.kinfolkName.ifBlank { "Not set" }}", color = AuntieTheme.colors.textPrimary)
-                if (booking.kinNames.isNotEmpty()) {
-                    Text("Kin: ${booking.kinNames.joinToString(", ")}", color = AuntieTheme.colors.textPrimary)
-                }
+                // #2032: always says which Kin the visit is for.
+                Text("Kin: ${com.tribetails.auntieos.domain.visitKinLine(booking.kinNames)}", color = AuntieTheme.colors.textPrimary)
                 Text("Status: ${booking.status.name}", color = AuntieTheme.colors.textPrimary)
                 Text("Start: ${booking.startDateTime}", color = AuntieTheme.colors.textPrimary)
                 Text("End: ${booking.endDateTime}", color = AuntieTheme.colors.textPrimary)

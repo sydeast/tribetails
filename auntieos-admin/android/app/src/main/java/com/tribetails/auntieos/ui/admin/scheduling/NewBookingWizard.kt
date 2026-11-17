@@ -40,9 +40,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.tribetails.auntieos.data.model.Kin
 import com.tribetails.auntieos.data.repository.NewBookingVisit
 import com.tribetails.auntieos.data.model.Kinfolk
+import com.tribetails.auntieos.domain.KinChoice
+import com.tribetails.auntieos.domain.RosterKin
 import com.tribetails.auntieos.ui.admin.ServiceOption
 import com.tribetails.auntieos.ui.admin.serviceChipLabel
 import com.tribetails.auntieos.ui.admin.serviceOptionsFromRates
@@ -119,9 +120,12 @@ import java.time.YearMonth
 @Composable
 fun NewBookingWizard(
     allKinfolk: List<Kinfolk>,
-    kin: List<Kin>,
+    /** The chosen household's Kin as the server will store them (#1862). */
+    kin: List<RosterKin>,
     kinLoading: Boolean,
     kinError: String?,
+    /** #1822: the "Visits: choose Kin" flag, as the server answered it with [kin]. Off by default. */
+    chooseKin: Boolean = false,
     serviceRates: Map<String, String>,
     /** Stated lengths, sparse; a type absent here falls back to the parse of its name. */
     serviceDurations: Map<String, String> = emptyMap(),
@@ -152,7 +156,7 @@ fun NewBookingWizard(
 
     val nowMs = System.currentTimeMillis()
     val closedDayName: (LocalDate) -> String? = { availability.closedDayName(it) }
-    val blocker = stepBlocker(state, step, nowMs, closedDayName)
+    val blocker = stepBlocker(state.forChooseKin(chooseKin), step, nowMs, closedDayName)
     val visits = remember(state) { buildVisits(state) }
     val serviceOptions =
         remember(serviceRates, serviceDurations) { serviceOptionsFromRates(serviceRates, serviceDurations) }
@@ -183,7 +187,7 @@ fun NewBookingWizard(
         // R1: the roster is resolved off the LIVE `kin` read, never off wizard
         // state, so what the operator confirmed on Review is what goes on the
         // wire even when the roster finished loading mid-wizard.
-        onCreate(bookingSubmission(state, kin.map { it.id }, override))
+        onCreate(bookingSubmission(state.forChooseKin(chooseKin), kin.map { it.id }, override))
     }
 
     BackHandler(enabled = !inFlight) { goBack() }
@@ -246,6 +250,7 @@ fun NewBookingWizard(
                         kin = kin,
                         kinLoading = kinLoading,
                         kinError = kinError,
+                        chooseKin = chooseKin,
                         onState = { state = it },
                         onKinfolkSelected = onKinfolkSelected,
                     )
@@ -263,7 +268,7 @@ fun NewBookingWizard(
                     )
                     BookingWizardStep.INVOICE -> invoiceStep()
                     BookingWizardStep.REVIEW -> reviewStep(
-                        state = state,
+                        state = state.forChooseKin(chooseKin),
                         visits = visits,
                         allKinfolk = allKinfolk,
                         kin = kin,
@@ -417,9 +422,10 @@ private fun WizardFooter(
 private fun LazyListScope.clientStep(
     state: BookingWizardState,
     allKinfolk: List<Kinfolk>,
-    kin: List<Kin>,
+    kin: List<RosterKin>,
     kinLoading: Boolean,
     kinError: String?,
+    chooseKin: Boolean,
     onState: (BookingWizardState) -> Unit,
     onKinfolkSelected: (String) -> Unit,
 ) {
@@ -446,62 +452,85 @@ private fun LazyListScope.clientStep(
             HintText("No households loaded. The booking needs one, so check the Directory first.")
         }
     }
-    item("client-kin-label") {
-        AuntieFieldLabel("Kin covered")
-    }
-    when {
-        state.kinfolkId.isBlank() -> item("client-kin-none") {
-            HintText("Pick a household to see its kin.")
+    if (state.kinfolkId.isBlank()) {
+        item("client-kin-none") {
+            Column {
+                AuntieFieldLabel("Kin covered")
+                HintText("Pick a household to see its Kin.")
+            }
         }
-        kinLoading -> item("client-kin-loading") { HintText("Reading the Kin roster…") }
-        kinError != null -> item("client-kin-error") {
-            AuntieBanner(tone = AuntieBannerTone.Warning, title = "Kin could not be read") {
+    } else {
+        item("client-kin") {
+            val choice = state.forChooseKin(chooseKin)
+            KinCoveredField(
+                kin = kin,
+                loading = kinLoading,
+                error = kinError,
+                chooseKin = chooseKin,
+                choice = KinChoice(allKin = choice.allKinMode, selectedIds = choice.kinIds.toSet()),
+                onToggle = { id -> onState(choice.toggleKin(id, kin.map { it.id })) },
+            )
+        }
+    }
+}
+
+/**
+ * "Kin covered" on New booking and on the Schedule's New Booking form (#1822,
+ * #1862). Operator ruling 2026-11-12: every visit covers every Kin, so by
+ * default this NAMES the household's Kin and offers nothing to tap. With the
+ * "Visits: choose Kin" feature flag on, each Kin is a chip, every one chosen
+ * to begin with.
+ *
+ * The names are the server's own roster, the list the visit is stored with, so
+ * this field and the visit it makes cannot disagree.
+ */
+@Composable
+internal fun KinCoveredField(
+    kin: List<RosterKin>,
+    loading: Boolean,
+    error: String?,
+    chooseKin: Boolean,
+    choice: KinChoice,
+    onToggle: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        AuntieFieldLabel("Kin covered")
+        when {
+            loading -> HintText("Loading this household's Kin…")
+            error != null -> AuntieBanner(tone = AuntieBannerTone.Warning, title = "Kin could not be loaded") {
                 Text(
-                    "$kinError The booking still covers the whole household.",
+                    error,
                     style = AuntieTheme.typography.bodyMedium,
                     color = AuntieTheme.colors.textPrimary,
                 )
             }
-        }
-        kin.isEmpty() -> item("client-kin-empty") {
-            HintText("No Kin on this household yet. The booking covers the household.")
-        }
-        // R1, the operator's ruling: KinCare covers EVERY Kin in the home.
-        // "I wouldn't go into a home and care for one kin while ignoring the
-        // other." So all of them is the default and takes no tap; narrowing is
-        // the thing you have to ask for. Same shape as web's ClientStep and as
-        // the Kinfolk portal's own Step1KinSelect.
-        else -> {
-            item("client-kin-all") {
-                AuntieCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(
-                            "All Kin in this home",
-                            style = AuntieTheme.typography.titleSmall,
-                            color = AuntieTheme.colors.textPrimary,
-                        )
-                        Text(
-                            kin.joinToString(", ") { it.name.ifBlank { "Unnamed Kin" } },
-                            style = AuntieTheme.typography.bodySmall,
-                            color = AuntieTheme.colors.textDim,
-                        )
-                    }
+            kin.isEmpty() -> HintText("No Kin on this household yet.")
+            !chooseKin -> AuntieCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        "All Kin in this home",
+                        style = AuntieTheme.typography.titleSmall,
+                        color = AuntieTheme.colors.textPrimary,
+                    )
+                    Text(
+                        kin.joinToString(", ") { it.label },
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textDim,
+                    )
                 }
             }
-            item("client-kin-toggle") {
-                GhostButton(
-                    label = if (state.allKinMode) "Choose specific Kin" else "Cover all Kin instead",
-                    onClick = { onState(state.withAllKinMode(!state.allKinMode)) },
-                    modifier = Modifier.fillMaxWidth(),
+            else -> {
+                FlowChips(
+                    items = kin,
+                    label = { it.label },
+                    selected = { choice.isSelected(it.id, chooseKin) },
+                    onToggle = { onToggle(it.id) },
                 )
-            }
-            if (!state.allKinMode) {
-                item("client-kin-chips") {
-                    FlowChips(
-                        items = kin,
-                        label = { it.name.ifBlank { "Unnamed Kin" } },
-                        selected = { it.id in state.kinIds },
-                        onToggle = { onState(state.toggleKin(it.id)) },
+                if (choice.noneChosen(kin, chooseKin)) {
+                    Text(
+                        "Choose at least one Kin.",
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.error,
                     )
                 }
             }
@@ -791,7 +820,7 @@ private fun LazyListScope.reviewStep(
     state: BookingWizardState,
     visits: List<NewBookingVisit>,
     allKinfolk: List<Kinfolk>,
-    kin: List<Kin>,
+    kin: List<RosterKin>,
     error: String?,
     busyOverridable: Boolean,
     inFlight: Boolean,
@@ -828,7 +857,7 @@ private fun LazyListScope.reviewStep(
         // R1: names the Kin either way, resolved exactly as the payload is, so
         // Review can never report a coverage the request does not carry.
         val coveredKinIds = resolveKinIds(state, kin.map { it.id })
-        val kinNames = kin.filter { it.id in coveredKinIds }.map { it.name.ifBlank { "Unnamed Kin" } }
+        val kinNames = kin.filter { it.id in coveredKinIds }.map { it.label }
         // Read off the BUILT visits, never off state.serviceName: jumping back to
         // step 2 rewrites the template but not days already snapshotted, and a
         // summary that reported the header field would name a service the
@@ -1004,7 +1033,7 @@ private fun SelectPill(
 }
 
 @Composable
-private fun <T> FlowChips(
+internal fun <T> FlowChips(
     items: List<T>,
     label: (T) -> String,
     selected: (T) -> Boolean,

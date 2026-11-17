@@ -3,6 +3,7 @@ import { getFeatureFlags, setFeatureFlags, type FeatureFlags as Flags } from '..
 import {
   KEY_COMMUNICATE_COMMS_RECAP,
   KEY_INBOX_WAITING_SECTIONS,
+  KEY_VISITS_CHOOSE_KIN,
 } from '../lib/featureFlagsCatalog';
 import { type Async } from '../lib/async';
 import { DenScreenHeading, DenPanel } from '../components/DenScreenKit';
@@ -38,6 +39,12 @@ export const FLAGS: readonly FlagMeta[] = [
     label: 'Inbox: waiting/answered sections',
     detail:
       'ON (the default): message threads sit under "Waiting on a reply" and "Answered", each still grouped by day. OFF: one flat list grouped by day, the arrangement before this. Both are finished; pick either. Open the Inbox to see the change, no reload needed.',
+  },
+  {
+    key: KEY_VISITS_CHOOSE_KIN,
+    label: 'Visits: choose Kin',
+    detail:
+      'OFF (the default): every visit covers every Kin in the home. ON: New booking, New visit and the booking request in MyTribe list the Kin with every one ticked, so a visit can be made for some of them. It applies the next time a booking form is opened. Visits already made keep their Kin.',
   },
 ];
 

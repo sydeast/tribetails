@@ -33,6 +33,7 @@ import {
 import { rescheduleIntoPastRefusal } from '../lib/pastVisit';
 import { bookingServiceName, EMPTY_BOOKING_CATALOG, type BookingCatalog } from '../lib/bookingFormat';
 import { sessionHousehold, sessionState, sessionStateInfo } from '../lib/sessionFormat';
+import { visitKinLine } from '../lib/visitFacts';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
 import { PrimaryButton, GhostButton } from './Buttons';
@@ -213,6 +214,9 @@ export function BookingDetailModal({
                 household
               )}
             </Fact>
+            {/* #2032: which Kin the visit is for, as the visit stores them. The
+                request card and the notice named them; this drawer did not. */}
+            <Fact label="Kin">{visitKinLine(arr<string>(entry.kinIds), arr<string>(entry.kinNames))}</Fact>
             <Fact label="Address">
               <AddressValue kinfolkId={kinfolkId} />
             </Fact>

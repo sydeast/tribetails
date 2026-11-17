@@ -43,6 +43,10 @@ vi.mock('../api/sessionsWrite', () => ({
   updateKinCareSession: vi.fn(),
 }));
 vi.mock('../api/bookingsWrite', () => ({ transitionBookingStatus: vi.fn() }));
+// #1822: the visit sheet asks the server whether Kin can be chosen. Off here.
+vi.mock('../api/kinRoster', () => ({
+  getHouseholdKinRoster: vi.fn().mockResolvedValue({ kin: [], chooseKin: false }),
+}));
 vi.mock('../api/settings', () => ({
   getBusinessSettings: vi.fn().mockResolvedValue({ serviceRates: {}, serviceDurations: {} }),
 }));

@@ -127,6 +127,10 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   //   requestBookingCancellation, requestBookingReschedule: the household
   //     asking. She answers through the admin resolve callables (rule 7).
   'getMyKinTaleMedia', // admin web KinTale detail (api/kinTaleDetail.ts)
+  // #1822 / #1862: the Kin a visit covers, names and ids only. The visit's Kin
+  // editor on Auntie Time reads it (she corrects the roster on site, through
+  // updateKinCareSession above) when choosing Kin is switched on.
+  'getHouseholdKinRoster',
   // 2026-09-27 Q3: the secondary kinfolk on a household (no portal account).
   // Household information, so she may read and add; removing is destructive
   // (rule 6), so removeSecondaryKinfolk is left out.

@@ -15,6 +15,16 @@ vi.mock('../lib/sessionSeat', async (orig) => ({
   ...(await orig<typeof import('../lib/sessionSeat')>()),
   currentSessionSeat: async () => ({ uid: 'u1', caretaker: seat.caretaker }),
 }));
+// #1822: the household's Kin, and whether they can be chosen, are the server's answer.
+const { getHouseholdKinRoster } = vi.hoisted(() => ({ getHouseholdKinRoster: vi.fn() }));
+vi.mock('../api/kinRoster', () => ({ getHouseholdKinRoster }));
+const ROSTER = [
+  { id: 'k1', name: 'Biscuit', householdId: null },
+  { id: 'k2', name: 'Gravy', householdId: null },
+];
+beforeEach(() => {
+  getHouseholdKinRoster.mockReset().mockResolvedValue({ kin: ROSTER, chooseKin: false });
+});
 import { NewVisitDialog } from './NewVisitDialog';
 
 // #1838/#2027/#1841: the confirms ask the server who a household notice reaches.
@@ -149,7 +159,7 @@ describe('NewVisitDialog', () => {
       kinfolkId: 'kf1',
       serviceType: '30Minute',
       serviceDurationMinutes: 30,
-      // R1: no per-kin picker; the server materializes the whole household.
+      // Every visit covers every Kin: nothing named, the server stores them all.
       kinIds: [],
     });
   });
@@ -322,5 +332,110 @@ describe('NewVisitDialog, the household confirmation (#1841)', () => {
     await fillHouseholdAndService();
     await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
     expect(onCreated).toHaveBeenCalledWith('sess-9', 'Visit scheduled.');
+  });
+});
+
+// #1822, operator ruling 2026-11-12: every visit covers every Kin. New visit
+// names the household's Kin and has no picker, unless the "Choose Kin for a
+// visit" feature flag is on.
+describe('NewVisitDialog, the Kin a visit covers (#1822)', () => {
+  it('shows nothing about Kin until a household is picked', () => {
+    open();
+    expect(screen.queryByText('Kin covered')).toBeNull();
+    expect(getHouseholdKinRoster).not.toHaveBeenCalled();
+  });
+
+  it('HAPPY, choosing off: names every Kin of the household and offers nothing to tick', async () => {
+    open();
+    await fillHouseholdAndService();
+    expect(getHouseholdKinRoster).toHaveBeenCalledWith('kf1');
+    expect(await screen.findByText('All Kin in this home')).toBeInTheDocument();
+    expect(screen.getByText('Biscuit, Gravy')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Biscuit' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    expect(createKinCareSession.mock.calls[0]![0]).toMatchObject({ kinfolkId: 'kf1', kinIds: [] });
+  });
+
+  it('HAPPY, choosing on: every Kin is ticked, and left alone the visit is for all of them', async () => {
+    getHouseholdKinRoster.mockResolvedValue({ kin: ROSTER, chooseKin: true });
+    open();
+    await fillHouseholdAndService();
+    expect(await screen.findByRole('checkbox', { name: 'Biscuit' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Gravy' })).toBeChecked();
+
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    expect(createKinCareSession.mock.calls[0]![0]).toMatchObject({ kinIds: [] });
+  });
+
+  it('choosing on: unticking a Kin sends only the Kin left ticked', async () => {
+    getHouseholdKinRoster.mockResolvedValue({ kin: ROSTER, chooseKin: true });
+    open();
+    await fillHouseholdAndService();
+    await user.click(await screen.findByRole('checkbox', { name: 'Biscuit' }));
+
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    expect(createKinCareSession.mock.calls[0]![0]).toMatchObject({ kinIds: ['k2'] });
+  });
+
+  it('SAD, choosing on: with no Kin ticked it says so and will not schedule', async () => {
+    getHouseholdKinRoster.mockResolvedValue({ kin: ROSTER, chooseKin: true });
+    open();
+    await fillHouseholdAndService();
+    await user.click(await screen.findByRole('checkbox', { name: 'Biscuit' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Gravy' }));
+
+    expect(screen.getByText('Tick at least one Kin.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Schedule visit' })).toBeDisabled();
+    expect(createKinCareSession).not.toHaveBeenCalled();
+  });
+
+  it('NEGATIVE: picking another household starts over with all of its Kin', async () => {
+    getHouseholdKinRoster.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === 'kf1'
+          ? { kin: ROSTER, chooseKin: true }
+          : { kin: [{ id: 'k9', name: 'Pepper', householdId: null }], chooseKin: true },
+      ),
+    );
+    open();
+    await fillHouseholdAndService();
+    await user.click(await screen.findByRole('checkbox', { name: 'Biscuit' }));
+    await user.selectOptions(screen.getByLabelText('Household'), 'kf2');
+
+    expect(await screen.findByRole('checkbox', { name: 'Pepper' })).toBeChecked();
+    expect(screen.queryByRole('checkbox', { name: 'Gravy' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    expect(createKinCareSession.mock.calls[0]![0]).toMatchObject({ kinfolkId: 'kf2', kinIds: [] });
+  });
+
+  it('shows a loading line while the Kin are on their way', async () => {
+    getHouseholdKinRoster.mockReturnValue(new Promise(() => {}));
+    open();
+    await fillHouseholdAndService();
+    expect(screen.getByText('Loading this household’s Kin…')).toBeInTheDocument();
+  });
+
+  it('ERROR: when the Kin cannot be loaded it says so, and the visit can still be scheduled for the whole home', async () => {
+    getHouseholdKinRoster.mockRejectedValue(new Error('internal'));
+    open();
+    await fillHouseholdAndService();
+    expect(
+      await screen.findByText(
+        'The Kin of this household could not be loaded. The visit still covers every Kin in the home.',
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    expect(createKinCareSession.mock.calls[0]![0]).toMatchObject({ kinIds: [] });
+  });
+
+  it('says a household has no Kin on file, and still schedules the visit', async () => {
+    getHouseholdKinRoster.mockResolvedValue({ kin: [], chooseKin: true });
+    open();
+    await fillHouseholdAndService();
+    expect(await screen.findByText('No Kin on this household yet.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Schedule visit' }));
+    expect(createKinCareSession).toHaveBeenCalledTimes(1);
   });
 });

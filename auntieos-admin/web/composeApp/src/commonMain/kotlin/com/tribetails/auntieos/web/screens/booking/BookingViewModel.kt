@@ -221,6 +221,8 @@ class BookingViewModel(
         weeklyDays: List<Int>?,
         /** #1626: the form's "Admin internal notes", staff-only. */
         staffNotes: String? = null,
+        /** #1822: the Kin chosen on the form. Empty is every Kin. */
+        kinIds: List<String> = emptyList(),
     ): MultiDateBookingResult? {
         errorMessage = null
         // #644: one key per submission, not per press. Held while the booking
@@ -228,12 +230,13 @@ class BookingViewModel(
         // after a failure names the booking the first attempt may already have
         // made; re-minted the moment the booking itself changes, because a held
         // key would then replay the OLD booking and report it as the new one.
-        val key = requestKeyFor(listOf(kinfolkId, pattern, notes, staffNotes, weeklyDays, visits).toString())
+        val key = requestKeyFor(listOf(kinfolkId, pattern, notes, staffNotes, weeklyDays, visits, kinIds).toString())
         return when (
             val r = dataSource.createMultiDateBookingRequest(
                 kinfolkId, visits, notes, pattern, weeklyDays,
                 idempotencyKey = key,
                 staffNotes = staffNotes,
+                kinIds = kinIds.takeIf { it.isNotEmpty() },
             )
         ) {
             is WriteResult.Ok -> {
@@ -271,6 +274,8 @@ class BookingViewModel(
         weekdays: Set<Int>,
         kinfolkNote: String,
         staffNote: String,
+        /** #1822: the Kin chosen on the form. Empty is every Kin. */
+        kinIds: List<String> = emptyList(),
     ): MultiDateBookingResult? {
         if (visitStartsMs.isEmpty()) {
             errorMessage = "Pick a date for the visit."
@@ -284,6 +289,7 @@ class BookingViewModel(
             pattern = if (weekly) "weekly" else "individual",
             weeklyDays = if (weekly) weekdays.sorted() else null,
             staffNotes = staffNote.ifBlank { null },
+            kinIds = kinIds,
         )
     }
 
@@ -312,6 +318,10 @@ class BookingViewModel(
         kinfolkNote: String,
         staffNote: String,
         formValues: Map<String, String> = emptyMap(),
+        /** #1822: the Kin chosen on the form. Empty is every Kin; the approval then stores the whole roster. */
+        kinIds: List<String> = emptyList(),
+        /** The names of [kinIds], so the draft names a narrowed choice before it is approved. */
+        kinNames: List<String> = emptyList(),
     ): Int {
         errorMessage = null
         if (serviceType.isBlank()) {
@@ -328,6 +338,8 @@ class BookingViewModel(
             val draft = KinCareSession(
                 kinfolkId = kinfolkId,
                 kinfolkName = kinfolkName,
+                kinIds = kinIds,
+                kinNames = if (kinIds.isEmpty()) emptyList() else kinNames,
                 serviceType = serviceType,
                 startTime = kotlin.time.Instant.fromEpochMilliseconds(startMs).toString(),
                 notes = staffNote.trim(),

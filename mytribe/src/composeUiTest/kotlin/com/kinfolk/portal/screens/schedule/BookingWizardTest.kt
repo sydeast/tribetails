@@ -106,10 +106,19 @@ class BookingWizardTest {
         onNodeWithText("Next").assertIsEnabled()
     }
 
+    // #1822 / #1862, operator ruling 2026-11-12: every booking covers every Kin.
+    // Step 1 names them and has no picker unless the office switched choosing on.
     @Test
-    fun step1_chooseSpecificRequiresSelection() = runComposeUiTest {
+    fun step1_namesEveryKinAndOffersNothingToTick() = runComposeUiTest {
         val fake = FakeFunctionsClient()
         stubKinAndServices(fake)
+        fake.stub("getHouseholdKinRoster", buildJsonObject {
+            put("kin", buildJsonArray {
+                add(buildJsonObject { put("id", "k1"); put("name", "Buddy") })
+                add(buildJsonObject { put("id", "k2"); put("name", "Willow") })
+            })
+            put("chooseKin", false)
+        })
         setThemedContent {
             BookingWizardScreen(
                 kinfolkId = "3",
@@ -119,11 +128,63 @@ class BookingWizardTest {
             )
         }
         waitForIdle()
-        onNodeWithText("Choose specific Kin").performClick()
+        onNodeWithText("Kin on this booking").assertIsDisplayed()
+        onNodeWithText("Buddy, Willow").assertIsDisplayed()
+        check(onAllNodesWithText("Choose specific Kin").fetchSemanticsNodes().isEmpty())
+        check(onAllNodesWithText("Buddy").fetchSemanticsNodes().isEmpty()) { "no tick row per Kin while choosing is off" }
+        onNodeWithText("Next").assertIsEnabled()
+    }
+
+    @Test
+    fun step1_withChoosingOn_everyKinStartsTickedAndNoneLeftBlocksNext() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubKinAndServices(fake)
+        fake.stub("getHouseholdKinRoster", buildJsonObject {
+            put("kin", buildJsonArray {
+                add(buildJsonObject { put("id", "k1"); put("name", "Buddy") })
+                add(buildJsonObject { put("id", "k2"); put("name", "Willow") })
+            })
+            put("chooseKin", true)
+        })
+        setThemedContent {
+            BookingWizardScreen(
+                kinfolkId = "3",
+                portalApi = PortalApi(fake),
+                onClose = {},
+                onComplete = {},
+            )
+        }
         waitForIdle()
+        onNodeWithText("Select Kin").assertIsDisplayed()
+        onNodeWithText("Next").assertIsEnabled()
+        onNodeWithText("Buddy").performClick()
+        waitForIdle()
+        onNodeWithText("Next").assertIsEnabled()
+        onNodeWithText("Willow").performClick()
+        waitForIdle()
+        onNodeWithText("Tick at least one Kin to go on.").assertIsDisplayed()
         onNodeWithText("Next").assertIsNotEnabled()
         onNodeWithText("Buddy").performClick()
         waitForIdle()
+        onNodeWithText("Next").assertIsEnabled()
+    }
+
+    @Test
+    fun step1_whenTheServerCannotSay_opensOnTheHouseholdsOwnKinWithNothingToTick() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubKinAndServices(fake)
+        fake.stubError("getHouseholdKinRoster", IllegalStateException("internal"))
+        setThemedContent {
+            BookingWizardScreen(
+                kinfolkId = "3",
+                portalApi = PortalApi(fake),
+                onClose = {},
+                onComplete = {},
+            )
+        }
+        waitForIdle()
+        onNodeWithText("Kin on this booking").assertIsDisplayed()
+        onNodeWithText("Buddy, Willow").assertIsDisplayed()
         onNodeWithText("Next").assertIsEnabled()
     }
 
