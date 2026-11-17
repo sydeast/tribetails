@@ -207,6 +207,54 @@ class VisitNotifier(
     }
 
     /**
+     * #2357: what one Undo arrival took off the household's notifications
+     * list, as the SERVER recorded it at
+     * `visit_step_notices/{visit}__undo_arrival__{the undone arrival's stamp}`.
+     *
+     * The server withdraws the notices from the saved undo and records which
+     * came off. It writes the record only once the arrival's own notice is
+     * settled, so "none" means the household was never told. Null when there
+     * is no stamp to name the record, none arrived within [waitMs], or the
+     * read failed: the toast then claims nothing about their list. Never fails.
+     *
+     * @param arrivedAtIso `arrivedAt` as the visit held it BEFORE the undo cleared it.
+     */
+    suspend fun awaitUndoneArrivalNotices(
+        sessionId: String,
+        arrivedAtIso: String?,
+        waitMs: Long = VISIT_NOTICE_WAIT_MS,
+    ): com.tribetails.auntieos.domain.UndoneArrivalNotices? {
+        val id = com.tribetails.auntieos.domain.undoArrivalRecordId(sessionId, arrivedAtIso) ?: return null
+        return try {
+            withTimeoutOrNull(waitMs) {
+                suspendCancellableCoroutine<com.tribetails.auntieos.domain.UndoneArrivalNotices?> { cont ->
+                    var registration: ListenerRegistration? = null
+                    registration = firestore().collection(VISIT_STEP_NOTICES_COLLECTION).document(id)
+                        .addSnapshotListener { snap, err ->
+                            if (!cont.isActive) return@addSnapshotListener
+                            if (err != null) {
+                                AuntieLog.e("VisitNotifier: could not read what the undo took off the household's list", err)
+                                registration?.remove()
+                                cont.resume(null)
+                                return@addSnapshotListener
+                            }
+                            if (snap == null || !snap.exists()) return@addSnapshotListener
+                            registration?.remove()
+                            cont.resume(
+                                com.tribetails.auntieos.domain.undoneArrivalNoticesOf(snap.get("withdrawn") as? List<*>),
+                            )
+                        }
+                    cont.invokeOnCancellation { registration?.remove() }
+                }
+            }
+        } catch (e: Exception) {
+            e.rethrowIfCancellation()
+            AuntieLog.e("VisitNotifier: could not read what the undo took off the household's list", e)
+            null
+        }
+    }
+
+    /**
      * @param eventAtIso the `onMyWayAt` / `arrivedAt` / `departedAt` the caller
      *   just wrote. Sent as `eventAtMs`: the server names the household
      *   notification by it, so a re-arrival after an undo is a new message and a

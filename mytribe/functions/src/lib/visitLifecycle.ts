@@ -266,28 +266,21 @@ export const UNDO_DEPARTED_UNTIL_FIELD = 'undoDepartedUntil';
  */
 export const HOUSEHOLD_STATUS_BEFORE_COMPLETION_FIELD = 'householdStatusBeforeCompletion';
 
-/**
- * #2250, lead ruling on review: the arrival whose departure was taken back.
- * "Undo departed" writes the visit's `arrivedAt` here. The household heard
- * "Your Auntie has left" when that departure landed and the undo is quiet, so
- * the next Departed of the SAME arrival tells them nothing a second time
- * ({@link departedNoticeAlreadyTold}). Never cleared: a new arrival carries a
- * new `arrivedAt`, stops matching, and its departure is announced as usual.
- * Server-written only; the rules refuse it to an Auntie's client.
+/*
+ * #2250, lead ruling on review: the household heard "Your Auntie has left"
+ * when a departure landed and "Undo departed" is quiet, so the next Departed
+ * tells them nothing a second time.
+ *
+ * #2357: that used to be a mark the undo left on the visit
+ * (`departedNoticeToldForArrival`, the arrival whose departure was taken
+ * back). It carried no date, and it stopped matching once the arrival was
+ * undone too, which sent a second "has left" (#2348). The rule is now read
+ * from what the earlier departure's own send left on file, with the same-day
+ * limit, in `lib/arrivalNoticeWithdrawal.ts#quietRepeatOf`. The field is no
+ * longer written or read. `firestore.rules` still refuses it to an Auntie's
+ * client, which costs nothing.
  */
-export const DEPARTED_NOTICE_TOLD_FOR_ARRIVAL_FIELD = 'departedNoticeToldForArrival';
-/**
- * PURE. True when this visit's current arrival already had a departure that
- * was announced and then undone, so a Departed now sends the household
- * nothing. Read by every path that sends "has left": `announceVisitStep` (the
- * callable and the session trigger) and the `dispatchVisitNotification`
- * callable an installed client still calls after its own write.
- */
-export function departedNoticeAlreadyTold(session: Record<string, unknown>): boolean {
-  const told = session[DEPARTED_NOTICE_TOLD_FOR_ARRIVAL_FIELD];
-  const arrivedAt = session['arrivedAt'];
-  return typeof told === 'string' && told.trim() !== '' && told === arrivedAt;
-}
+
 /** Refusal codes of "Undo departed", read by every admin client. */
 export const UNDO_DEPARTED_WINDOW_CODE = 'undo_departed_window_passed';
 export const UNDO_DEPARTED_NO_ARRIVAL_CODE = 'undo_departed_no_arrival';

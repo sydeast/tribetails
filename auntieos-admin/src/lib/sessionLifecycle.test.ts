@@ -7,7 +7,8 @@ import {
   lifecycleActionsFor,
   lifecycleNowIso,
   UNDO_ARRIVAL_CONFIRM,
-  UNDO_ARRIVAL_DONE,
+  UNDO_ARRIVAL_CHECKING,
+  undoArrivalDoneSentence,
 } from './sessionLifecycle';
 
 /**
@@ -100,13 +101,36 @@ describe('what the office reads about undoing an arrival (#2038)', () => {
     const body = undo.confirmBody('the Wrens');
     expect(body).toBe(UNDO_ARRIVAL_CONFIRM);
     expect(body).toContain('The household is sent nothing about the undo.');
-    expect(body).toContain('The arrival notice comes off their notifications list.');
+    expect(body).toContain('If they were told about the arrival, that notice comes off their notifications list.');
     expect(body).toContain('An email, text or push already sent stays sent.');
     expect(body).not.toContain('Nobody is notified');
   });
 
-  it('both lines keep to the house words', () => {
-    for (const line of [UNDO_ARRIVAL_CONFIRM, UNDO_ARRIVAL_DONE]) {
+  // #2357: the sentence used to say the arrival notice was off the household's
+  // list after every undo, told or not.
+  const SENT_NOTHING = 'No message was sent about the undo.';
+  const afterUndo: Array<[string, { arrived: boolean; departed: boolean } | null, boolean, string]> = [
+    ['the arrival notice came off', { arrived: true, departed: false }, false, `${SENT_NOTHING} The arrival notice is off the household's notifications list.`],
+    ['both came off', { arrived: true, departed: true }, true, `${SENT_NOTHING} The arrival and departure notices are off the household's notifications list.`],
+    ['only the departure notice came off', { arrived: false, departed: true }, true, `${SENT_NOTHING} The household was not told about the arrival. The departure notice is off their notifications list.`],
+    ['the household was never told', { arrived: false, departed: false }, false, `${SENT_NOTHING} The household was not told about the arrival, so nothing was on their notifications list.`],
+    ['never told, undone from Departed', { arrived: false, departed: false }, true, `${SENT_NOTHING} The household was not told about the arrival or the departure, so nothing was on their notifications list.`],
+    ['no record came in time', null, false, SENT_NOTHING],
+  ];
+  it.each(afterUndo)('after the undo, %s', (_what, off, fromDeparted, sentence) => {
+    expect(undoArrivalDoneSentence(off, fromDeparted)).toBe(sentence);
+  });
+
+  it('says an entry is off the list only when the server recorded one', () => {
+    for (const [, off, fromDeparted] of afterUndo) {
+      const claims = /\bis off\b|\bare off\b/.test(undoArrivalDoneSentence(off, fromDeparted));
+      expect(claims).toBe(off !== null && (off.arrived || off.departed));
+    }
+  });
+
+  it('every line keeps to the house words', () => {
+    const lines = [UNDO_ARRIVAL_CONFIRM, UNDO_ARRIVAL_CHECKING, ...afterUndo.map(([, off, from]) => undoArrivalDoneSentence(off, from))];
+    for (const line of lines) {
       expect(line).not.toMatch(/—|inbox|\bpet\b|\bclient\b|sitter/i);
     }
   });

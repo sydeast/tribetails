@@ -554,37 +554,24 @@ export async function dispatchVisitNotificationHandler(
   req: CallableRequest<unknown>,
 ): Promise<DispatchVisitNotificationOutcome> {
   const args: Args = Args.parse(req.data);
-  // #2250: a departure that was announced and then undone is not announced
-  // again. The server's own send skips it (`lib/visitStepNotice.ts`), so
-  // without the same check here an installed client's call after its write
-  // would stop being the duplicate and become the second "has left".
-  if (args.event === 'departed') {
-    const session = await clockSessionOf(args);
-    const { departedNoticeAlreadyTold } = await import('../lib/visitLifecycle.js');
-    if (session !== undefined && departedNoticeAlreadyTold(session)) {
-      const { householdNoticeNotSent } = await import('../notifications/householdNotice.js');
-      return {
-        ok: true,
-        dispatchIds: [],
-        suppressed: true,
-        reason: 'already_notified',
-        notice: await householdNoticeNotSent(args.familyId, 'already_notified'),
-      };
-    }
-  }
   if (args.eventAtMs === undefined && args.event !== 'report_sent') {
     const at = await clockStampFromSession(args);
     if (at !== undefined) args.eventAtMs = at;
   }
-  // #2038: the same for an arrival. A real arrival after an undone one is not
-  // announced twice (`lib/arrivalNoticeWithdrawal.ts`). The session trigger
-  // puts the entry back on the household's list; this call, from an installed
-  // client after its own write, only must not become the second notice.
-  if (args.event === 'arrived' && args.eventAtMs !== undefined) {
+  // #2038, #2250: a real arrival or departure after an undone one is not
+  // announced twice (`lib/arrivalNoticeWithdrawal.ts`). The server's own send
+  // (`lib/visitStepNotice.ts`) puts the entry back on the household's list;
+  // this call, from an installed client after its own write, only must not
+  // become the second notice.
+  // #2357: the same one decision the server's send makes (`quietRepeatOf`), so
+  // a step that lands on a later business day than the undone one goes on to
+  // the core here too, where its dedupe key makes whichever of this call and
+  // the server's send is second the duplicate.
+  if ((args.event === 'arrived' || args.event === 'departed') && args.eventAtMs !== undefined) {
     const session = await clockSessionDocOf(args);
     if (session !== undefined) {
-      const { earlierArrivalNoticeId } = await import('../lib/arrivalNoticeWithdrawal.js');
-      const told = await earlierArrivalNoticeId(session.id, session.data, args.eventAtMs).catch(() => null);
+      const { quietRepeatOf } = await import('../lib/arrivalNoticeWithdrawal.js');
+      const told = await quietRepeatOf(args.event, session.id, session.data, args.eventAtMs).catch(() => null);
       if (told !== null) {
         const { householdNoticeNotSent } = await import('../notifications/householdNotice.js');
         return {
