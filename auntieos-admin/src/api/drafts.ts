@@ -94,6 +94,13 @@ export interface GeneratedDraftRow {
    * for review. See `api/kinTaleDraftActions.ts`.
    */
   publishedReportId?: string | undefined;
+  /**
+   * #2293: what the last `sendHouseholdPush` attempt answered for a Push draft
+   * (`sent`, `listed` or `held`), and why, stamped by the server on every
+   * attempt. `held` means nothing reached the household yet.
+   */
+  pushOutcome?: string | undefined;
+  pushReason?: string | undefined;
 }
 
 /**

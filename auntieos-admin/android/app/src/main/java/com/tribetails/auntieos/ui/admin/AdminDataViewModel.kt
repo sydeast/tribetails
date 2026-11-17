@@ -1518,10 +1518,13 @@ internal fun isNotificationUnread(entry: com.tribetails.auntieos.data.admin.Noti
  * (`generated` from generate.js, `pending` from the n8n era, or blank). The
  * same positive match the web list makes (`draftStatusAsKinTaleStatus`). Newest
  * first. Pure; tested.
+ *
+ * #2293: an approved Push draft the server held ([Draft.isHeldPush]) is listed
+ * here too, the web list's rule, so it can be opened and sent again.
  */
 internal fun unsentGeneratedDrafts(drafts: List<Draft>): List<Draft> =
     drafts
-        .filter { it.isUnsent }
+        .filter { it.isUnsent || it.isHeldPush }
         .sortedByDescending { it.createdOn }
 /**
  * #1675: what the notifications screen says after answering a waiting request

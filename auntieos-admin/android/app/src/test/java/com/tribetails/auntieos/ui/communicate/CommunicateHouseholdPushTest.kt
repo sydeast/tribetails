@@ -156,4 +156,57 @@ class CommunicateHouseholdPushTest {
         assertEquals("held", decodeHouseholdPushResult(mapOf("outcome" to "bogus")).outcome)
         assertEquals(HouseholdPushResult("listed", "no_device"), decodeHouseholdPushResult(mapOf("outcome" to "listed", "reason" to "no_device")))
     }
+    // ── #2293: a held Push draft opened again later ────────────────────────
+    private val heldDraft = com.tribetails.auntieos.data.model.Draft(
+        id = "gd1",
+        status = "approved",
+        communicationType = "push",
+        kinfolkId = "kf1",
+        kinfolkName = "Rosa",
+        generatedCopy = "Biscuit says hi from the park.",
+        pushOutcome = "held",
+        pushReason = "household_notices_off",
+    )
+    @Test fun `a held Push draft opens approved, says why, and Try again sends the approved words`() = runTest(testDispatcher) {
+        coEvery { repo.getGeneratedDraft("gd1") } returns Result.success(heldDraft)
+        coEvery { repo.sendHouseholdPush(any(), any(), any()) } returns Result.success(HouseholdPushResult("sent", null))
+        val vm = CommunicateViewModel(repo = repo)
+        advanceUntilIdle()
+        vm.loadDraft("gd1")
+        advanceUntilIdle()
+        val opened = vm.uiState.value
+        assertEquals("gd1", opened.savedDraftId)
+        assertEquals("Not sent", opened.pushNotice?.title)
+        assertTrue(opened.pushNotice!!.body.contains("Notices to households are switched off"))
+        assertTrue(opened.pushNotice!!.retryable)
+        vm.retryHouseholdPush()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { repo.sendHouseholdPush("kf1", "gd1", "Biscuit says hi from the park.") }
+        coVerify(exactly = 0) { repo.approveDraft(any(), any(), any()) }
+        assertEquals("Push sent", vm.uiState.value.pushNotice?.title)
+        assertFalse(vm.uiState.value.pushNotice!!.retryable)
+    }
+    @Test fun `a held Push draft still held keeps its Try again, and a failed call never claims a send`() = runTest(testDispatcher) {
+        coEvery { repo.getGeneratedDraft("gd1") } returns Result.success(heldDraft)
+        coEvery { repo.sendHouseholdPush(any(), any(), any()) } returns
+            Result.failure(RuntimeException("This draft was written for a different household."))
+        val vm = CommunicateViewModel(repo = repo)
+        advanceUntilIdle()
+        vm.loadDraft("gd1")
+        advanceUntilIdle()
+        vm.retryHouseholdPush()
+        advanceUntilIdle()
+        val notice = vm.uiState.value.pushNotice!!
+        assertFalse(notice.title == "Push sent")
+        assertTrue(notice.body.contains("different household"))
+    }
+    @Test fun `a Push draft that went out opens as a plain draft with no notice`() = runTest(testDispatcher) {
+        coEvery { repo.getGeneratedDraft("gd1") } returns Result.success(heldDraft.copy(pushOutcome = "sent", pushReason = ""))
+        val vm = CommunicateViewModel(repo = repo)
+        advanceUntilIdle()
+        vm.loadDraft("gd1")
+        advanceUntilIdle()
+        assertNull(vm.uiState.value.pushNotice)
+        assertNull(vm.uiState.value.savedDraftId)
+    }
 }
