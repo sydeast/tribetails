@@ -225,6 +225,13 @@ true`), adds the event id to the invoice's `unappliedPaymentIds`, writes a
 by itself: account credit happens only when the admin enters an amount (#988),
 and there are no refunds. `report:duplicate-checkout-credits` lists the charges
 the old branch did credit.
+A cancelled invoice is held the same way (#2358). `payInvoice` opens no checkout
+for one, but a checkout page opened before the cancel can still be paid on:
+cancelling does not expire it. The charge is recorded as an unapplied payment
+with `duplicateCheckoutReason: 'invoice-cancelled'`, the invoice stays cancelled
+with no payment row and no balance change, the household is sent nothing, and
+the owner sees it under Payments needing a decision as "Not applied because the
+invoice was cancelled."
 
 **`disputeStatus` and `disputeFundsState` are two different facts, on purpose.**
 `disputeStatus` mirrors Stripe's dispute lifecycle (`needs_response`,

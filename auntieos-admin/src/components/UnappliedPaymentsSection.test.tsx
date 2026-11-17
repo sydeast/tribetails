@@ -98,6 +98,19 @@ describe('Payments needing a decision: the list (#1003)', () => {
     expect(api.listUnappliedPayments).toHaveBeenCalledWith('fam1');
   });
 
+  it('#2358: a payment held on a cancelled invoice is a row with a Decide action, in plain words', async () => {
+    const base = listed();
+    api.listUnappliedPayments.mockResolvedValue({
+      ...base,
+      payments: [{ ...base.payments[0]!, invoiceNumber: '1029', amountCents: 4000, reason: 'the invoice was cancelled' }],
+    });
+    render(<AccountCreditPanel kinfolkId="fam1" />);
+    expect(await screen.findByText('$40.00 card payment on invoice 1029')).toBeInTheDocument();
+    expect(screen.getByText('Sep 27, 2026. Not applied because the invoice was cancelled.')).toBeInTheDocument();
+    expect(screen.queryByText(/applied to/i)).toBeNull();
+    const { dialog } = await openDecide();
+    expect(within(dialog).getByText(/Card payment of \$40\.00 on invoice 1029\. There are no refunds\./)).toBeInTheDocument();
+  });
   it('is hidden when nothing is waiting', async () => {
     api.listUnappliedPayments.mockResolvedValue(listed({ payments: [] }));
     render(<AccountCreditPanel kinfolkId="fam1" />);
