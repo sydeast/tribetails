@@ -146,6 +146,12 @@
     ),
     linear-gradient(160deg, var(--color-panel-top), var(--color-panel-bottom));
 }
+/* #2367: the visits of the booking a notice opened. A ring outside the card's
+   own hairline, so it still reads on a card that is also picked. */
+.bookings__row--focused {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
+}
 
 .bookings__row-pick {
   display: grid;

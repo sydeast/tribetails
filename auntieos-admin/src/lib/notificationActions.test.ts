@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   applicableNotificationActions,
+  isRouteSafeId,
+  wholeBookingOf,
   notificationRequestRoute,
   notificationOpenRoute,
   notificationQuoteRoute,
@@ -494,5 +496,96 @@ describe('Open on a booking request goes to its card (#2028)', () => {
       to: '/bookings',
       search: { bookingId: 'vis_req_1' },
     });
+  });
+});
+/**
+ * #2367: Open on a notice about a WHOLE booking (`kincare.booking.confirm`,
+ * an Auntie's `assignment.assigned`) looked for a `vis_{batchId}` record that
+ * never exists and said the booking was unavailable. It now opens the booking
+ * on Bookings, by household and request, the same place a request opens.
+ */
+describe('Open on a whole booking goes to it on Bookings (#2367)', () => {
+  const confirm = entry({
+    key: 'kincare.booking.confirm',
+    targetType: 'booking',
+    targetId: 'b1',
+    data: { kinfolkId: 'kf1', batchId: 'b1', bookingId: 'b1' },
+  });
+  const assigned = entry({
+    key: 'assignment.assigned',
+    targetType: 'booking',
+    targetId: 'b1',
+    data: { kinfolkId: 'kf1', batchId: 'b1', assignedAuntieUid: 'au1' },
+  });
+  const onBookings = { to: '/bookings', search: { requestId: 'b1', requestKinfolkId: 'kf1' } };
+  it('opens a confirmed booking and an assignment on Bookings, not as a visit', () => {
+    expect(wholeBookingOf(confirm)).toEqual({ kinfolkId: 'kf1', batchId: 'b1' });
+    expect(notificationOpenRoute(confirm)).toEqual(onBookings);
+    expect(applicableNotificationActions(confirm).open).toEqual(onBookings);
+    expect(applicableNotificationActions(assigned).open).toEqual(onBookings);
+    // An Auntie gets the same Open; Bookings is hers too.
+    expect(applicableNotificationActions(assigned, { isAuntie: true }).open).toEqual(onBookings);
+  });
+  it('reads the household from familyId when kinfolkId is absent', () => {
+    const legacy = entry({ ...confirm, data: { familyId: 'kf1', batchId: 'b1' } });
+    expect(notificationOpenRoute(legacy)).toEqual(onBookings);
+  });
+  it('still opens a visit notice as that visit', () => {
+    const visit = entry({
+      key: 'kincare.booking.cancel',
+      targetType: 'booking',
+      targetId: 'v1',
+      data: { kinfolkId: 'kf1', batchId: 'b1', visitId: 'v1' },
+    });
+    expect(wholeBookingOf(visit)).toBeNull();
+    expect(applicableNotificationActions(visit).open).toEqual({ to: '/bookings', search: { bookingId: 'vis_v1' } });
+  });
+  it('opens a request that names its batch on Bookings even after the queue lost it', () => {
+    const answered = entry({
+      key: 'kincare.requested',
+      targetType: 'booking',
+      targetId: 'b1',
+      data: { kinfolkId: 'kf1', batchId: 'b1' },
+    });
+    // Not waiting, never stamped: Bookings finds its visits or says it is gone.
+    expect(applicableNotificationActions(answered, { pendingRequests: new Set() }).open).toEqual(onBookings);
+    // Still waiting: the same place, and Approve / Deny are untouched.
+    const waiting = applicableNotificationActions(answered, { pendingRequests: new Set(['kf1/b1']) });
+    expect(waiting.open).toEqual(onBookings);
+    expect(waiting.bookingId).toBe('b1');
+  });
+  it('keeps the visit fallback for an older request row that names no batch', () => {
+    const old = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'v7', data: { kinfolkId: 'kf1' } });
+    expect(applicableNotificationActions(old, { pendingRequests: new Set() }).open).toEqual({
+      to: '/bookings',
+      search: { bookingId: 'vis_v7' },
+    });
+  });
+  it('needs a household: without one a request id cannot be placed', () => {
+    const anon = entry({ ...confirm, data: { batchId: 'b1' } });
+    expect(wholeBookingOf(anon)).toBeNull();
+  });
+  it('opens nothing for an id that is not shaped like a record id', () => {
+    for (const bad of ['a/b', 'b1?x=1', 'b 1', '..', '.', 'x'.repeat(201), 'https://evil.example']) {
+      const e = entry({ ...confirm, targetId: bad, data: { kinfolkId: 'kf1', batchId: bad } });
+      expect(wholeBookingOf(e)).toBeNull();
+      expect(applicableNotificationActions(e).open).toBeNull();
+      const visit = entry({ key: 'kincare.booking.cancel', targetType: 'booking', targetId: bad, data: { kinfolkId: 'kf1' } });
+      expect(applicableNotificationActions(visit).open).toBeNull();
+    }
+    const badHousehold = entry({ ...confirm, data: { kinfolkId: 'kf/1', batchId: 'b1' } });
+    expect(wholeBookingOf(badHousehold)).toBeNull();
+    const badRequest = entry({ key: 'kincare.requested', targetType: 'booking', targetId: 'r1', data: { kinfolkId: 'kf 1' } });
+    expect(applicableNotificationActions(badRequest, { pendingRequests: new Set(['kf 1/r1']) }).open).toEqual({
+      to: '/bookings',
+      search: { bookingId: 'vis_r1' },
+    });
+  });
+  it('accepts the id shapes the stores hold', () => {
+    for (const ok of ['b1', 'AbC123xyz', 'vis_v1', 'kf-1', 'a.b', 'a:b', 'a~b', 'a+b', 'x'.repeat(200)]) {
+      expect(isRouteSafeId(ok)).toBe(true);
+    }
+    expect(isRouteSafeId('')).toBe(false);
+    expect(isRouteSafeId(undefined)).toBe(false);
   });
 });
