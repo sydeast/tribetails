@@ -94,6 +94,14 @@ data class KinTaleComment(
     val id: String,
     val authorRole: CommentAuthorRole,
     val authorDisplayName: String?,
+    /** The writer's sign-in uid, for marking the reader's own comment (#2378). Null for a guest. */
+    val authorUid: String? = null,
+    /**
+     * False when [authorDisplayName] is the household's name rather than the
+     * person's, so the reader's own comment reads "You" (#2378). Null from a
+     * server that does not say.
+     */
+    val authorNameIsPerson: Boolean? = null,
     /** Set when authorRole=Guest (unauth shared-link viewer). */
     val guestName: String? = null,
     val body: String,

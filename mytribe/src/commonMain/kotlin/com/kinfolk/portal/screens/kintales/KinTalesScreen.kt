@@ -107,6 +107,8 @@ fun KinTalesScreen(
     portalApi: PortalApi,
     /** #1363: a tale to open. It takes the first slot; the feed pages until it is found. */
     focusTaleId: String? = null,
+    /** #2378: who is reading, so their own comments read "You" and share the composer's avatar. */
+    viewer: KinTaleViewer = KinTaleViewer.Unknown,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -214,7 +216,7 @@ fun KinTalesScreen(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
                             verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
                         ) {
-                            filtered!!.forEach { tale -> KinTaleCard(tale, kinfolkId, portalApi, headlineChars(tale)) }
+                            filtered!!.forEach { tale -> KinTaleCard(tale, kinfolkId, portalApi, headlineChars(tale), viewer = viewer) }
                         }
                     } else {
                         Row(
@@ -227,7 +229,7 @@ fun KinTalesScreen(
                                     modifier = Modifier.weight(1f),
                                     verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.m),
                                 ) {
-                                    columnTales.forEach { tale -> KinTaleCard(tale, kinfolkId, portalApi, headlineChars(tale)) }
+                                    columnTales.forEach { tale -> KinTaleCard(tale, kinfolkId, portalApi, headlineChars(tale), viewer = viewer) }
                                 }
                             }
                         }
@@ -280,6 +282,7 @@ private fun KinTaleCard(
     portalApi: PortalApi,
     headlineChars: Int = KIN_TALE_HEADLINE_CARD_CHARS,
     modifier: Modifier = Modifier,
+    viewer: KinTaleViewer = KinTaleViewer.Unknown,
 ) {
     val type = LocalKinfolkTypography.current
     var expanded by remember(tale.id) { mutableStateOf(false) }
@@ -398,7 +401,7 @@ private fun KinTaleCard(
                 )
             }
             KinTaleReactionRow(taleId = tale.id, kinfolkId = kinfolkId, portalApi = portalApi)
-            KinTaleComments(taleId = tale.id, kinfolkId = kinfolkId, portalApi = portalApi)
+            KinTaleComments(taleId = tale.id, kinfolkId = kinfolkId, portalApi = portalApi, viewer = viewer)
         }
     }
 
@@ -589,6 +592,7 @@ private fun KinTaleComments(
     taleId: String,
     kinfolkId: String,
     portalApi: PortalApi,
+    viewer: KinTaleViewer,
 ) {
     val type = LocalKinfolkTypography.current
     val scope = rememberCoroutineScope()
@@ -615,6 +619,9 @@ private fun KinTaleComments(
 
     Spacer(Modifier.height(KinfolkSpacing.s))
     val count = comments?.size ?: 0
+    // #2378: one person, one avatar. The composer and the reader's own comments
+    // share the header's tribe gradient and letter.
+    val ownInitial = ownKinTaleCommentInitial(comments.orEmpty(), viewer)
     Text("Comments ($count)", style = type.sansMeta)
 
     when {
@@ -634,16 +641,31 @@ private fun KinTaleComments(
             val repliesByParent = all
                 .filter { !it.parentCommentId.isNullOrBlank() }
                 .groupBy { it.parentCommentId!! }
+            var avatarIndex = 0
             Column(verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.s)) {
                 topLevel.forEach { parent ->
-                    CommentRow(comment = parent, indent = false, onReply = {
-                        replyParentId = parent.id
-                        replyInput = ""
-                    })
+                    CommentRow(
+                        comment = parent,
+                        indent = false,
+                        viewerUid = viewer.uid,
+                        ownInitial = ownInitial,
+                        avatarIndex = avatarIndex++,
+                        onReply = {
+                            replyParentId = parent.id
+                            replyInput = ""
+                        },
+                    )
                     repliesByParent[parent.id].orEmpty()
                         .sortedBy { it.createdAtMs ?: 0L }
                         .forEach { reply ->
-                            CommentRow(comment = reply, indent = true, onReply = null)
+                            CommentRow(
+                                comment = reply,
+                                indent = true,
+                                viewerUid = viewer.uid,
+                                ownInitial = ownInitial,
+                                avatarIndex = avatarIndex++,
+                                onReply = null,
+                            )
                         }
                     if (replyParentId == parent.id) {
                         ReplyComposer(
@@ -687,14 +709,21 @@ private fun KinTaleComments(
     }
 
     Spacer(Modifier.height(KinfolkSpacing.xs))
-    OutlinedTextField(
-        value = topInput,
-        onValueChange = { topInput = it },
-        placeholder = { Text("Say something nice…") },
-        minLines = 2,
-        enabled = !posting,
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+        verticalAlignment = Alignment.Top,
         modifier = Modifier.fillMaxWidth(),
-    )
+    ) {
+        KinTaleCommentAvatar(initial = ownInitial, tone = KinTaleAvatarTone.Me)
+        OutlinedTextField(
+            value = topInput,
+            onValueChange = { topInput = it },
+            placeholder = { Text("Say something nice…") },
+            minLines = 2,
+            enabled = !posting,
+            modifier = Modifier.weight(1f),
+        )
+    }
     if (postError != null) {
         Text(postError!!, style = type.sansMeta.copy(color = KinfolkBrand.PackPink))
     }
@@ -750,32 +779,45 @@ internal fun kinTaleCommentAuthorLabel(comment: KinTaleComment): String {
 private fun CommentRow(
     comment: KinTaleComment,
     indent: Boolean,
+    viewerUid: String?,
+    ownInitial: String,
+    avatarIndex: Int,
     onReply: (() -> Unit)?,
 ) {
     val type = LocalKinfolkTypography.current
     val start = if (indent) KinfolkSpacing.l else 0.dp
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = start),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(KinfolkSpacing.s),
+        verticalAlignment = Alignment.Top,
     ) {
-        val authorLabel = kinTaleCommentAuthorLabel(comment)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        KinTaleCommentAvatar(
+            initial = kinTaleCommentInitial(comment, viewerUid, ownInitial),
+            tone = kinTaleCommentAvatarTone(comment, viewerUid, avatarIndex),
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(authorLabel, style = type.sansLabel.copy(fontWeight = FontWeight.SemiBold))
-            Text(relativeTime(comment.createdAtMs), style = type.sansMeta)
-        }
-        Text(richTextToAnnotatedString(comment.body), style = type.sansBody.copy(color = KinfolkBrand.NavySoft))
-        if (onReply != null) {
-            Text(
-                "Reply",
-                style = type.sansMeta.copy(color = KinfolkBrand.KinTeal),
-                modifier = Modifier.clickable { onReply() },
-            )
+            val authorLabel = kinTaleCommentRowLabel(comment, viewerUid)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(authorLabel, style = type.sansLabel.copy(fontWeight = FontWeight.SemiBold))
+                Text(relativeTime(comment.createdAtMs), style = type.sansMeta)
+            }
+            Text(richTextToAnnotatedString(comment.body), style = type.sansBody.copy(color = KinfolkBrand.NavySoft))
+            if (onReply != null) {
+                Text(
+                    "Reply",
+                    style = type.sansMeta.copy(color = KinfolkBrand.KinTeal),
+                    modifier = Modifier.clickable { onReply() },
+                )
+            }
         }
     }
 }
