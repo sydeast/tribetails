@@ -310,7 +310,7 @@ describe('#2345: a card payment on an invoice that was not in a state to be paid
     expect(paidLines()).toHaveLength(1);
     expect(paidLines()[0]![0]).toMatchObject({
       severity: 'warn',
-      description: 'A card payment of $60.00 was put on invoice 1029, but the invoice showed a balance and had no total.',
+      description: "A card payment of $60.00 was put on invoice 1029, but nothing was owed on the invoice's total.",
       payload: { invoiceId: 'inv1', stripeEventId: 'evt_cs_1', cardApplyFallback: 'no_recorded_balance' },
     });
     expect(notices('invoice.payment.applied')).toHaveLength(1);

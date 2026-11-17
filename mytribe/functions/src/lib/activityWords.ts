@@ -506,7 +506,7 @@ export function cardPaymentNotPayableWords(invoiceNumber: unknown, reason: strin
       : reason === 'apply_wrong_household'
         ? 'the checkout was for a different household'
         : reason === 'no_recorded_balance'
-          ? 'the invoice showed a balance and had no total'
+          ? "nothing was owed on the invoice's total"
           : 'the invoice could not take a payment when it arrived';
   return `A card payment${amount} was put on ${invoice}, but ${why}.`;
 }
