@@ -54,8 +54,27 @@ data class NotificationItem(
      * `detail.householdNote`. Null when it wrote none.
      */
     val householdNote: String? = null,
+    /**
+     * #2368: the whole message a push was cut from, kept on the entry when the
+     * push was sent, as plain text with its line breaks. Null on every other
+     * entry, older ones included. Drawn as text.
+     */
+    val fullMessage: String? = null,
 ) {
     val unread: Boolean get() = readAtMs == null
+
+    /**
+     * The office's note as the row draws it: left off when [fullMessage]
+     * already says it, so a cut push about a declined request does not show
+     * the same note twice.
+     */
+    val rowNote: String?
+        get() {
+            val note = householdNote ?: return null
+            val message = fullMessage ?: return note
+            fun flat(t: String) = t.replace(Regex("\\s+"), " ").trim()
+            return if (flat(message).contains(flat(note))) null else note
+        }
 }
 
 data class NotificationsPage(
@@ -163,6 +182,8 @@ fun decodeNotificationItem(o: JsonObject): NotificationItem? {
         createdAtMs = isoToEpochMs(o["createdAt"]?.jsonPrimitive?.contentOrNull),
         readAtMs = isoToEpochMs(o["readAt"]?.jsonPrimitive?.contentOrNull),
         householdNote = ((o["detail"] as? JsonObject)?.get("householdNote") as? JsonPrimitive)
+            ?.takeIf { it.isString }?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
+        fullMessage = (o["fullMessage"] as? JsonPrimitive)
             ?.takeIf { it.isString }?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
     )
 }

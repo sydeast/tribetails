@@ -17,6 +17,32 @@ interface PushTemplate {
 }
 
 /**
+ * The field on a household's `notifications/{id}` entry that holds the whole
+ * message its push was cut from (#2368). Plain text as rendered, never HTML;
+ * `listMyNotifications` hands it to the list as `fullMessage`.
+ */
+export const HOUSEHOLD_MESSAGE_FIELD = 'householdMessage';
+
+/**
+ * Writes the whole message onto the household's entry. `update`, not a merge:
+ * an entry the office took back since (#2038) stays gone instead of coming
+ * back as a stub. A refused write is logged and the push still goes; the
+ * entry then reads as it did before, its facts line.
+ */
+async function keepWholeMessage(entryId: string, message: string, key: string): Promise<void> {
+  try {
+    await db().collection('notifications').doc(entryId).update({ [HOUSEHOLD_MESSAGE_FIELD]: message.trim() });
+  } catch (err) {
+    logEvent({
+      severity: 'error',
+      function: 'pushChannel',
+      event: 'notification.push.message_not_kept',
+      extra: { key, entryId, error: err instanceof Error ? err.message : String(err) },
+    });
+  }
+}
+
+/**
  * Push channel sender (FCM via firebase-admin). Reads `pushTemplates/{key}`
  * for `title` + `body` + optional `dataRoute` deep-link, queries
  * `fcm_tokens` for all device tokens owned by recipientUid, multicasts via
@@ -101,10 +127,15 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
   // notifications list, at its own entry. That wins over every other route,
   // and the target fields are left off so the Android app follows the route
   // too (it would otherwise open the target from them).
+  const cut = household && householdPushLineIsCut(renderedBody);
   const readInList =
-    household && open?.readInList !== undefined && (householdPushLineIsCut(renderedBody) || open.officeNote === true)
+    household && open?.readInList !== undefined && (cut || open.officeNote === true)
       ? open.readInList
       : undefined;
+  // #2368: the entry the tap opens has to hold the rest of a cut line. Only
+  // this sender has the message as rendered, so it writes it onto the entry,
+  // before the push goes, so a tap never lands ahead of it.
+  if (cut && readInList?.entryId) await keepWholeMessage(readInList.entryId, renderedBody, def.key);
   const dataRoute = readInList
     ? readInList.route
     : templateRoute || (household ? open?.route || HOUSEHOLD_NOTICE_ROUTE : undefined);

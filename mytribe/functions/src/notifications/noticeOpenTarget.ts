@@ -54,8 +54,12 @@ export interface NoticeOpenTarget {
    * A household's copy only: the notifications list at this notice's entry,
    * for a push whose full message has to be read there. The route alone, with
    * no target fields, so every client follows it to the list.
+   *
+   * `entryId` is that entry's own id, when the work order names one (#2368):
+   * the push sender writes the whole message onto that entry when it cuts the
+   * line, so the entry the tap opens shows the rest of it.
    */
-  readInList?: { route: string };
+  readInList?: { route: string; entryId?: string };
   /** A household's copy only: the office wrote the household a note on this notice. */
   officeNote?: boolean;
 }
@@ -147,10 +151,11 @@ export function noticeOpenTarget(input: NoticeOpenInput): NoticeOpenTarget {
 
   if (!household) return { data };
   const route = householdRouteFor(target.targetType, target.targetId, visitId);
+  const entryId = text(input.notificationId);
   return {
     ...(route ? { route } : {}),
     data,
-    readInList: { route: householdNoticeEntryRoute(text(input.notificationId)) },
+    readInList: { route: householdNoticeEntryRoute(entryId), ...(entryId ? { entryId } : {}) },
     // The list's own rule for showing the note (`buildNotificationDetail`).
     officeNote: HOUSEHOLD_NOTE_KEYS.has(input.key) && text(bag['note']) !== '',
   };

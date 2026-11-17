@@ -86,6 +86,12 @@ export interface NotificationListItem {
   /** ISO 8601 when read, null while unread. */
   readAt: string | null;
   detail?: Record<string, unknown>;
+  /**
+   * #2368: the whole message a household's push was cut from, as plain text
+   * with its line breaks. Only on an entry whose push line was cut, and left
+   * off when it reads the same as `description`. Show it as text, never as HTML.
+   */
+  fullMessage?: string;
 }
 
 export interface ListMyNotificationsResult {
@@ -132,6 +138,18 @@ function householdLineOf(key: string, data: Data): string {
   return key === 'broadcast.message' ? str(data['description']).trim() : '';
 }
 /**
+ * #2368: the whole message the push sender kept on the entry when it cut the
+ * push line (`householdMessage`, senders/pushChannel.ts). Undefined for every
+ * other entry, older ones included, and when it says no more than `line`.
+ */
+function fullMessageOf(data: Data, line: string): string | undefined {
+  const raw = data['householdMessage'];
+  if (typeof raw !== 'string') return undefined;
+  const message = raw.trim();
+  const flat = (t: string) => t.replace(/\s+/g, ' ').trim();
+  return message === '' || flat(message) === flat(line) ? undefined : message;
+}
+/**
  * One row as the household reads it (#1831, #1898, #1913).
  *
  * - `title`: the household's title for the key ({@link householdTitleTemplate}),
@@ -160,12 +178,14 @@ export function toNotificationListItem(id: string, data: Data, businessName?: st
   };
   const titleTemplate = householdTitleTemplate(key);
   const target = householdNoticeTarget(row);
+  const description = household ? householdLineOf(key, data) : str(data['description']);
+  const fullMessage = household ? fullMessageOf(data, description) : undefined;
   return {
     id,
     key,
     category: str(data['category']),
     title: titleTemplate !== null ? fillBusinessPlaceholders(titleTemplate, businessName) : str(data['title']),
-    description: household ? householdLineOf(key, data) : str(data['description']),
+    description,
     actorName: str(data['actorName']),
     actorPhotoUrl: str(data['actorPhotoUrl']),
     targetType: target.targetType,
@@ -175,6 +195,7 @@ export function toNotificationListItem(id: string, data: Data, businessName?: st
     createdAt: toIsoOrNull(data['createdAt']),
     readAt: toIsoOrNull(data['readAt']),
     ...(typeof detail === 'object' && detail !== null ? { detail: detail as Record<string, unknown> } : {}),
+    ...(fullMessage !== undefined ? { fullMessage } : {}),
   };
 }
 
