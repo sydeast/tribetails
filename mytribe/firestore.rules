@@ -1699,9 +1699,22 @@ service cloud.firestore {
     // NOT apply — this is a bespoke branch. RULE ALONE IS NOT ENOUGH: the client's
     // list listen MUST also constrain the query to where(kinfolk_id == testScope) or
     // an unfiltered list is still denied (see generatedDraftsStream). Writes admin-only.
+    //
+    // #2295: a Push draft is the owner's. Communicate sends are the owner's and
+    // `sendHouseholdPush` sends only an approved Push draft, so an Auntie never
+    // creates one, approves one, edits one or turns another draft into one. Both
+    // spellings of the type are read, trimmed and lowercased the way the server
+    // reads them; a type that is not a string refuses her write.
+    function isPushDraftData(d) {
+      return d.get('communication_type', '').trim().lower() == 'push'
+             || d.get('communicationType', '').trim().lower() == 'push';
+    }
     match /generated_drafts/{id} {
       allow read: if isStaff() || (isTestAdmin() && resource.data.kinfolk_id == testScope());
-      allow write: if isStaff();
+      allow create: if isOwner() || (isCaretaker() && !isPushDraftData(request.resource.data));
+      allow update: if isOwner()
+                    || (isCaretaker() && !isPushDraftData(resource.data) && !isPushDraftData(request.resource.data));
+      allow delete: if isOwner() || (isCaretaker() && !isPushDraftData(resource.data));
     }
     match /household_data/{id}                  { allow read, write: if isStaff(); }
  // The household bank (issue #461): the household's own reconciled record, the
