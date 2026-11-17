@@ -47,7 +47,6 @@ import {
   SETTLEMENT_LEDGER_PENDING_FIELD,
   SETTLEMENT_LEDGER_ROW_FIELD,
   SETTLEMENT_LEDGER_SWEEP_WRITER,
-  SETTLEMENT_NOTICE_HELD_FIELD,
   SETTLEMENT_NOTICE_UID_FIELD,
   claimableMarkInvoicePaidOwner,
   markInvoicePaidSettlementOf,
@@ -678,44 +677,6 @@ export async function recordPaymentHandler(
         };
       }
     }
-    // #2296: THE SETTLEMENT THIS CALL NAMES ALREADY HAS ITS LEDGER ROW. A call
-    // naming a settlement records that one payment's row, and a settlement is
-    // one payment. An older two-call build that sends its second step again
-    // with a new key (or none) is that same payment, so it is answered from
-    // the row the first call wrote: no second row, no second credit. Not
-    // refused, because those builds cannot read a new refusal and the payment
-    // is recorded. The settlement row carries the id
-    // (SETTLEMENT_LEDGER_ROW_FIELD) and every call naming it writes it below,
-    // so two such calls racing conflict on it and the second re-runs and
-    // finds the first's row. The sweep's stand-in row is not found this way:
-    // it is replaced, as below.
-    const namedSettlementRef =
-      !args.apply && args.invoiceId !== '' && args.settledByInvoicePaymentId !== undefined && twoStep?.known === true
-        ? db().collection('invoices').doc(args.invoiceId).collection('payments').doc(args.settledByInvoicePaymentId)
-        : null;
-    const namedSettlementSnap = namedSettlementRef ? await tx.get(namedSettlementRef) : null;
-    if (namedSettlementSnap?.exists) {
-      const priorId = (namedSettlementSnap.data() ?? {})[SETTLEMENT_LEDGER_ROW_FIELD];
-      if (typeof priorId === 'string' && priorId !== '' && priorId !== ref.id) {
-        const priorRef = db().collection('payments').doc(priorId);
-        const priorSnap = await tx.get(priorRef);
-        const prior = (priorSnap.data() ?? {}) as Record<string, unknown>;
-        if (
-          priorSnap.exists &&
-          prior['settledByInvoicePaymentId'] === args.settledByInvoicePaymentId &&
-          prior['invoiceId'] === args.invoiceId
-        ) {
-          return {
-            replayed: prior,
-            replayedRef: priorRef as DocumentReference | null,
-            application: null as ApplyOutcome | null,
-            settlesInvoice: false,
-            replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
-            possibleDuplicateOf: null as string | null,
-          };
-        }
-      }
-    }
     // #866: DID THIS SUBMISSION'S OWN `markInvoicePaid` STEP PAY THE INVOICE OFF?
     // Both admin clients settle with `markInvoicePaid` and then call this with
     // the invoice as a display link, passing the payment id that step returned.
@@ -781,6 +742,52 @@ export async function recordPaymentHandler(
     const linkedInvoice = linkedInvoiceSnap?.exists
       ? ((linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>)
       : undefined;
+    // #2296: THE SETTLEMENT THIS CALL NAMES ALREADY HAS ITS LEDGER ROW. A call
+    // naming a settlement records that one payment's row, and a settlement is
+    // one payment. An older two-call build that sends its second step again
+    // with a new key (or none) is that same payment, so it is answered from
+    // the row the first call wrote: no second row, no second credit. Not
+    // refused, because those builds cannot read a new refusal and the payment
+    // is recorded. The settlement row carries the id
+    // (SETTLEMENT_LEDGER_ROW_FIELD) and every call naming it writes it below,
+    // so two such calls racing conflict on it and the second re-runs and
+    // finds the first's row. The sweep's stand-in row is not found this way:
+    // it is replaced, as below.
+    // Only for the household the invoice belongs to: a call for another
+    // household naming this settlement neither stamps it nor is answered
+    // from its row.
+    const namedSettlementRef =
+      linkedInvoiceRef !== null &&
+      args.settledByInvoicePaymentId !== undefined &&
+      twoStep?.known === true &&
+      kinfolkId !== '' &&
+      linkedInvoice?.['kinfolkId'] === kinfolkId
+        ? db().collection('invoices').doc(args.invoiceId).collection('payments').doc(args.settledByInvoicePaymentId)
+        : null;
+    const namedSettlementSnap = namedSettlementRef ? await tx.get(namedSettlementRef) : null;
+    if (namedSettlementSnap?.exists) {
+      const priorId = (namedSettlementSnap.data() ?? {})[SETTLEMENT_LEDGER_ROW_FIELD];
+      if (typeof priorId === 'string' && priorId !== '' && priorId !== ref.id) {
+        const priorRef = db().collection('payments').doc(priorId);
+        const priorSnap = await tx.get(priorRef);
+        const prior = (priorSnap.data() ?? {}) as Record<string, unknown>;
+        if (
+          priorSnap.exists &&
+          prior['settledByInvoicePaymentId'] === args.settledByInvoicePaymentId &&
+          prior['invoiceId'] === args.invoiceId &&
+          prior['kinfolkId'] === kinfolkId
+        ) {
+          return {
+            replayed: prior,
+            replayedRef: priorRef as DocumentReference | null,
+            application: null as ApplyOutcome | null,
+            settlesInvoice: false,
+            replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
+            possibleDuplicateOf: null as string | null,
+          };
+        }
+      }
+    }
     let claimedOwner = linkedInvoice
       ? claimableMarkInvoicePaidOwner(linkedInvoice, kinfolkId, args.settledByInvoicePaymentId, Date.now())
       : null;
@@ -1345,14 +1352,16 @@ export async function recordPaymentHandler(
  * WHY THE SETTLEMENT ROW, AND NOT A REFUSAL OF `autoApply`. The row step 1 wrote
  * (`invoices/{invoiceId}/payments/{settledByInvoicePaymentId}`) records exactly
  * what was applied, in the units `paidCentsFromPayments` reads, and nothing ever
- * rewrites it. With it the leftover is exact, so a genuine overpayment ($200 in
+ * rewrites its amounts. With it the leftover is exact, so a genuine overpayment ($200 in
  * for a $127.50 bill and a $10 tip) still reaches the household's credit as she
  * asked. Refusing would throw that away, or throw away the ledger row with it,
  * and the ledger row is written after the money has already moved.
  *
  * Read OUTSIDE the transaction, for the reason the apply plan is: the row is
  * written once, by a `create`/`set` in `markInvoicePaid`'s own transaction, and
- * never updated, so there is nothing a transactional read would protect.
+ * its amounts are never updated, so there is nothing a transactional read would
+ * protect. (The one later write, #2296's `SETTLEMENT_LEDGER_ROW_FIELD`, is read
+ * and written in the transaction below.)
  *
  * `known: false` means the call is linked to an invoice and the applied part
  * could not be read: no `settledByInvoicePaymentId` (an install from before
@@ -1523,11 +1532,6 @@ export function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown>
     ...(sent.household && sent.householdAppOnly ? { confirmationAppOnly: true } : {}),
     ...(sent.office ? { officeNoticeSentAt: FieldValue.serverTimestamp() } : {}),
     ...(sent.skipped ? { officeNoticeSkippedReason: 'no-recipients' } : {}),
-    // #2343: says why the household was not told. Never read as "told", so a
-    // later call that owes the household its copy still sends it.
-    ...(sent.householdHeld === 'off' || sent.householdHeld === 'absent'
-      ? { [SETTLEMENT_NOTICE_HELD_FIELD]: sent.householdHeld }
-      : {}),
   };
 }
 

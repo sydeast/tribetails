@@ -1219,6 +1219,30 @@ describe('#2296: a second call naming a settlement that already has its ledger r
     );
     expect(ledgerRows().sort()).toEqual([`payments/${pay(1)}`, `payments/${pay(3)}`].sort());
   });
+  it('a call for another household naming this settlement neither stamps it nor steals its answer', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    await step2(settled.paymentId, { kinfolkId: 'fam2', idempotencyKey: pay(3), sendConfirmationEmail: false });
+    expect(docs[`${INVOICE}/payments/${settled.paymentId}`]!['ledgerPaymentId']).toBeUndefined();
+    // The right household's call records its own row and is not answered from the other one.
+    const mine = await step2(settled.paymentId);
+    expect(mine).toMatchObject({ paymentId: pay(1), kinfolkId: 'fam1' });
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ kinfolkId: 'fam1', settlesInvoice: true });
+    expect(docs[`${INVOICE}/payments/${settled.paymentId}`]).toMatchObject({ ledgerPaymentId: pay(1) });
+    // And a second key for the right household is answered from its own row.
+    expect(await step2(settled.paymentId, { idempotencyKey: pay(2) })).toMatchObject({ paymentId: pay(1) });
+    expect(docs[`payments/${pay(2)}`]).toBeUndefined();
+  });
+
+  it('a same-key retry of the first step after the stamp still answers as it did', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const settled = await step1();
+    await step2(settled.paymentId);
+    expect(await step1()).toEqual(settled);
+    expect(subcollectionRows()).toBe(1);
+    expectBalanceMatchesPayments();
+  });
+
   it('a stamp naming a row that is gone does not stop the payment being recorded', async () => {
     installOptimisticTransactions(ctx.db, docs);
     const settled = await step1();
@@ -1304,6 +1328,8 @@ describe('#2343: the sweep\'s payoff when the household send switch holds the ho
       data: { paymentId: settleRow },
     });
     expect(docs[`payments/${pay(1)}`]).toMatchObject({ confirmationAppOnly: true });
+    // The held note was the sweep row's; the row that took its place has told them.
+    expect(docs[`payments/${pay(1)}`]!['householdNoticeHeld']).toBeUndefined();
   });
   it('a switch that could not be read leaves it pending, and the next run tells the household', async () => {
     await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 40, idempotencyKey: ipay(1) }));

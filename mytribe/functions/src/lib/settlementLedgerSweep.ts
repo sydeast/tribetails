@@ -80,6 +80,7 @@ import {
   SETTLEMENT_LEDGER_PENDING_FIELD,
   SETTLEMENT_LEDGER_SWEEP_GRACE_MS,
   SETTLEMENT_LEDGER_SWEEP_WRITER,
+  SETTLEMENT_NOTICE_HELD_FIELD,
   SETTLEMENT_NOTICE_UID_FIELD,
   settlementLedgerRowId,
 } from './paymentAppliedOwner';
@@ -392,7 +393,18 @@ export async function finishAbandonedSettlement(firestore: Firestore, invoiceId:
       // (#2281 review). That call cleared the pending stamp and owns the row
       // now; what it still sends goes out under this row's id, so the
       // dispatcher's ledger drops it as a copy of the one just sent.
-      await firestore.collection('payments').doc(staged.rowId).update(noticeStamps(sent));
+      await firestore
+        .collection('payments')
+        .doc(staged.rowId)
+        .update({
+          ...noticeStamps(sent),
+          // #2343: why the household was not told. Never read as "told", and
+          // not carried onto a row that replaces this one, so a late second
+          // call that owes the household its copy still sends it.
+          ...(sent.householdHeld === 'off' || sent.householdHeld === 'absent'
+            ? { [SETTLEMENT_NOTICE_HELD_FIELD]: sent.householdHeld }
+            : {}),
+        });
     }
     if (done) {
       await clearPending(firestore, invoiceId, staged.owner);
