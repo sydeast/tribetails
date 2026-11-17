@@ -20,9 +20,23 @@ import { badgeRowFromDoc, UNREAD_SCAN_CAP, type BadgeRow } from './unreadBadge';
  *
  * Read only. Marking a row read stays with `markNotificationRead`.
  */
+/** One snapshot of those rows, as the bell needs it. */
+export interface UnreadSnapshot {
+  rows: BadgeRow[];
+  /** #2329: read from this browser's cache, not (yet) from the server. */
+  fromCache: boolean;
+  /** A row arrived, left or changed. False for a snapshot that only says where it came from. */
+  rowsChanged: boolean;
+}
+/**
+ * #2329: metadata changes are listened to as well, so the moment the server
+ * first answers is seen even when it agrees with what the cache said (an
+ * offline start with nothing unread). Without them that answer raises no
+ * snapshot, and the bell would stay on the count the portal opened with.
+ */
 export function subscribeUnreadRows(
   uid: string,
-  onRows: (rows: BadgeRow[]) => void,
+  onSnapshotRows: (snapshot: UnreadSnapshot) => void,
   onError: (err: unknown) => void,
 ): () => void {
   const q = query(
@@ -33,7 +47,13 @@ export function subscribeUnreadRows(
   );
   return onSnapshot(
     q,
-    (snapshot) => onRows(snapshot.docs.map((doc) => badgeRowFromDoc(doc.id, doc.data() as Record<string, unknown>))),
+    { includeMetadataChanges: true },
+    (snapshot) =>
+      onSnapshotRows({
+        rows: snapshot.docs.map((doc) => badgeRowFromDoc(doc.id, doc.data() as Record<string, unknown>)),
+        fromCache: snapshot.metadata.fromCache,
+        rowsChanged: snapshot.docChanges().length > 0,
+      }),
     onError,
   );
 }

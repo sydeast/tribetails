@@ -549,7 +549,28 @@ class NotificationsListScreenTest {
         onNodeWithTag("notificationRow-n-tale").assertExists()
     }
     @Test
-    fun aFailedQuietReloadKeepsTheRowsOnScreen_andShowsNoError() = runComposeUiTest {
+    fun aFailedQuietReloadKeepsTheRowsOnScreen_andSaysSoQuietly() = runComposeUiTest {
+        val fake = stubbed()
+        var revision by androidx.compose.runtime.mutableStateOf(0)
+        setThemedContent {
+            NotificationsListScreen(kinfolkId = "fam-1", portalApi = PortalApi(fake), liveRevision = revision, nowMs = { now })
+        }
+        waitForIdle()
+        onNodeWithTag("notificationsRefreshFailed").assertDoesNotExist()
+        fake.stubError("listMyNotifications", IllegalStateException("notifications unavailable"))
+        revision = 1
+        waitForIdle()
+        onNodeWithText("Visit confirmed").assertExists()
+        onNodeWithTag("notificationRow-n-kinfolk").assertExists()
+        onNodeWithTag("notificationsError").assertDoesNotExist()
+        // #2328: one quiet line, the same words as the web portal, and no raw message.
+        onNodeWithTag("notificationsRefreshFailed").assertExists()
+        onNodeWithText("Could not check for new notifications.").assertExists()
+        onNodeWithText("notifications unavailable").assertDoesNotExist()
+        onNodeWithTag("notificationsOlderFailed").assertDoesNotExist()
+    }
+    @Test
+    fun tryAgainOnTheQuietLineReadsAgain_andTheLineGoesOnceItWorks() = runComposeUiTest {
         val fake = stubbed()
         var revision by androidx.compose.runtime.mutableStateOf(0)
         setThemedContent {
@@ -559,8 +580,181 @@ class NotificationsListScreenTest {
         fake.stubError("listMyNotifications", IllegalStateException("notifications unavailable"))
         revision = 1
         waitForIdle()
+        onNodeWithTag("notificationsRefreshFailed").assertExists()
+        // Try again while the server still says no: the line stays, the rows stay.
+        onNodeWithTag("notificationsRefreshRetry", useUnmergedTree = true).performClick()
+        waitForIdle()
+        assertEquals(3, fake.calls.count { it.first == "listMyNotifications" })
+        onNodeWithTag("notificationsRefreshFailed").assertExists()
+        onNodeWithText("Visit confirmed").assertExists()
+        // The server answers: the new notice is listed and the line goes.
+        val arrived = row("n-omw", "Your Auntie is on the way", minutesAgo = 0)
+        fake.stub("listMyNotifications", page(listOf(arrived) + rows))
+        onNodeWithTag("notificationsRefreshRetry", useUnmergedTree = true).performClick()
+        waitForIdle()
+        onNodeWithTag("notificationsRefreshFailed").assertDoesNotExist()
+        onNodeWithText("Your Auntie is on the way").assertExists()
+    }
+    @Test
+    fun tryAgainShowsItsWaitWhileTheReadIsOut() = runComposeUiTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var mode = "ok"
+        val client = object : FunctionsClient {
+            override suspend fun call(name: String, payload: JsonObject?): JsonObject = when (mode) {
+                "fail" -> throw IllegalStateException("unavailable")
+                "hold" -> {
+                    gate.await()
+                    page(rows)
+                }
+                else -> page(rows)
+            }
+        }
+        var revision by androidx.compose.runtime.mutableStateOf(0)
+        setThemedContent {
+            NotificationsListScreen(kinfolkId = "fam-1", portalApi = PortalApi(client), liveRevision = revision, nowMs = { now })
+        }
+        waitForIdle()
+        mode = "fail"
+        revision = 1
+        waitForIdle()
+        mode = "hold"
+        onNodeWithTag("notificationsRefreshRetry", useUnmergedTree = true).performClick()
+        waitForIdle()
+        onNodeWithTag("notificationsRefreshing", useUnmergedTree = true).assertExists()
+        onNodeWithText("Checking…", useUnmergedTree = true).assertExists()
+        onNodeWithTag("notificationsRefreshRetry", useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithText("Visit confirmed").assertExists()
+        gate.complete(Unit)
+        waitForIdle()
+        onNodeWithTag("notificationsRefreshFailed").assertDoesNotExist()
+    }
+    @Test
+    fun aFailedShowOlderKeepsTheRows_saysItFailed_andAsksAgainFromTheSamePlace() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("listMyNotifications", page(listOf(rows[0]), unreadCount = 1, hasMore = true, nextBefore = 1_700_000_000_000L))
+        setThemedContent { Screen(fake, Opened()) }
+        waitForIdle()
+        fake.stubError("listMyNotifications", IllegalStateException("notifications unavailable"))
+        onNodeWithTag("notificationsOlder").performClick()
+        waitForIdle()
+        // The row on screen stays, and the failure says so next to the button.
         onNodeWithText("Visit confirmed").assertExists()
         onNodeWithTag("notificationsError").assertDoesNotExist()
+        onNodeWithTag("notificationsOlderFailed").assertExists()
+        onNodeWithText("Could not load older notifications.").assertExists()
+        onNodeWithText("notifications unavailable").assertDoesNotExist()
+        onNodeWithTag("notificationsRefreshFailed").assertDoesNotExist()
+        // The button asks again, from the same cursor.
+        fake.stub("listMyNotifications", page(listOf(rows[3]), unreadCount = 1))
+        onNodeWithTag("notificationsOlder").performClick()
+        waitForIdle()
+        val asked = fake.calls.filter { it.first == "listMyNotifications" }
+        assertEquals("1700000000000", asked.last().second!!["before"]!!.jsonPrimitive.content)
+        onNodeWithText("New KinTale").assertExists()
+        onNodeWithText("Visit confirmed").assertExists()
+        onNodeWithTag("notificationsOlderFailed").assertDoesNotExist()
+    }
+    @Test
+    fun aGoodReReadAfterAFailedShowOlder_takesTheFailedLineAway() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("listMyNotifications", page(listOf(rows[0]), unreadCount = 1, hasMore = true, nextBefore = 1_700_000_000_000L))
+        var revision by androidx.compose.runtime.mutableStateOf(0)
+        setThemedContent {
+            NotificationsListScreen(kinfolkId = "fam-1", portalApi = PortalApi(fake), liveRevision = revision, nowMs = { now })
+        }
+        waitForIdle()
+        fake.stubError("listMyNotifications", IllegalStateException("notifications unavailable"))
+        onNodeWithTag("notificationsOlder").performClick()
+        waitForIdle()
+        onNodeWithTag("notificationsOlderFailed").assertExists()
+        // A notice arrived and the newest page now holds everything there is.
+        fake.stub("listMyNotifications", page(listOf(rows[0], rows[3]), unreadCount = 2))
+        revision = 1
+        waitForIdle()
+        onNodeWithTag("notificationsOlderFailed").assertDoesNotExist()
+        onNodeWithTag("notificationsOlder").assertDoesNotExist()
+        onNodeWithText("New KinTale").assertExists()
+    }
+    // ---- #2329: the server's answer to a tap reaches the bell ----
+    @Test
+    fun aReadTheServerTookIsReported() = runComposeUiTest {
+        val confirmed = mutableListOf<String>()
+        val refused = mutableListOf<String>()
+        setThemedContent {
+            NotificationsListScreen(
+                kinfolkId = "fam-1",
+                portalApi = PortalApi(stubbed()),
+                onReadConfirmed = { confirmed += it },
+                onReadRefused = { refused += it },
+                nowMs = { now },
+            )
+        }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-visit").performClick()
+        waitForIdle()
+        assertEquals(listOf("n-visit"), confirmed)
+        assertTrue(refused.isEmpty())
+    }
+    @Test
+    fun aRefusedReadIsNotReportedAsTaken() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("listMyNotifications", page(rows))
+        fake.stubError("markNotificationRead", IllegalStateException("permission-denied"))
+        val confirmed = mutableListOf<String>()
+        setThemedContent {
+            NotificationsListScreen(
+                kinfolkId = "fam-1",
+                portalApi = PortalApi(fake),
+                onReadConfirmed = { confirmed += it },
+                nowMs = { now },
+            )
+        }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-tale").performClick()
+        waitForIdle()
+        assertTrue(confirmed.isEmpty())
+    }
+    @Test
+    fun theAnswerToATapReachesTheBellAfterTheTapHasLeftTheList() = runComposeUiTest {
+        // The tap opens the visit, which takes the list off screen before the
+        // server answers. The read is sent from the app's scope, so its answer
+        // still arrives.
+        val answer = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val client = object : FunctionsClient {
+            override suspend fun call(name: String, payload: JsonObject?): JsonObject = when (name) {
+                "markNotificationRead" -> {
+                    answer.await()
+                    buildJsonObject { put("ok", true) }
+                }
+                else -> page(rows)
+            }
+        }
+        val confirmed = mutableListOf<String>()
+        val refused = mutableListOf<String>()
+        var showList by androidx.compose.runtime.mutableStateOf(true)
+        setThemedContent {
+            val appScope = androidx.compose.runtime.rememberCoroutineScope()
+            if (showList) {
+                NotificationsListScreen(
+                    kinfolkId = "fam-1",
+                    portalApi = PortalApi(client),
+                    onOpenVisit = { _, _ -> showList = false },
+                    onReadConfirmed = { confirmed += it },
+                    onReadRefused = { refused += it },
+                    readScope = appScope,
+                    nowMs = { now },
+                )
+            }
+        }
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-visit").performClick()
+        waitForIdle()
+        onNodeWithTag("notificationRow-n-visit").assertDoesNotExist()
+        assertTrue(confirmed.isEmpty())
+        answer.complete(Unit)
+        waitForIdle()
+        assertEquals(listOf("n-visit"), confirmed)
+        assertTrue(refused.isEmpty())
     }
     @Test
     fun mergeNewestPage_putsFreshRowsFirst_keepsOlderPages_andDropsRowsNoLongerListed() {
