@@ -1,5 +1,6 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
+import type { DocumentReference } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -37,13 +38,16 @@ import {
   hasDeliveredCopy,
   type ListedCopyDelivery,
 } from '../notifications/dispatcher';
+import type { HouseholdSendGateState } from '../notifications/householdSendGate';
 import { reachedAppOnly } from '../notifications/appOnly';
 import { isNoRecipientsError } from '../notifications/recipientErrors';
 import {
   PAYMENT_APPLIED_CLAIM_FIELD,
   SETTLEMENT_LEDGER_PENDING_AT_FIELD,
   SETTLEMENT_LEDGER_PENDING_FIELD,
+  SETTLEMENT_LEDGER_ROW_FIELD,
   SETTLEMENT_LEDGER_SWEEP_WRITER,
+  SETTLEMENT_NOTICE_HELD_FIELD,
   SETTLEMENT_NOTICE_UID_FIELD,
   claimableMarkInvoicePaidOwner,
   markInvoicePaidSettlementOf,
@@ -666,11 +670,50 @@ export async function recordPaymentHandler(
         assertSameCaller(stored, actor.uid, 'recordedBy');
         return {
           replayed: stored,
+          replayedRef: ref as DocumentReference | null,
           application: null as ApplyOutcome | null,
           settlesInvoice: false,
           replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
           possibleDuplicateOf: null as string | null,
         };
+      }
+    }
+    // #2296: THE SETTLEMENT THIS CALL NAMES ALREADY HAS ITS LEDGER ROW. A call
+    // naming a settlement records that one payment's row, and a settlement is
+    // one payment. An older two-call build that sends its second step again
+    // with a new key (or none) is that same payment, so it is answered from
+    // the row the first call wrote: no second row, no second credit. Not
+    // refused, because those builds cannot read a new refusal and the payment
+    // is recorded. The settlement row carries the id
+    // (SETTLEMENT_LEDGER_ROW_FIELD) and every call naming it writes it below,
+    // so two such calls racing conflict on it and the second re-runs and
+    // finds the first's row. The sweep's stand-in row is not found this way:
+    // it is replaced, as below.
+    const namedSettlementRef =
+      !args.apply && args.invoiceId !== '' && args.settledByInvoicePaymentId !== undefined && twoStep?.known === true
+        ? db().collection('invoices').doc(args.invoiceId).collection('payments').doc(args.settledByInvoicePaymentId)
+        : null;
+    const namedSettlementSnap = namedSettlementRef ? await tx.get(namedSettlementRef) : null;
+    if (namedSettlementSnap?.exists) {
+      const priorId = (namedSettlementSnap.data() ?? {})[SETTLEMENT_LEDGER_ROW_FIELD];
+      if (typeof priorId === 'string' && priorId !== '' && priorId !== ref.id) {
+        const priorRef = db().collection('payments').doc(priorId);
+        const priorSnap = await tx.get(priorRef);
+        const prior = (priorSnap.data() ?? {}) as Record<string, unknown>;
+        if (
+          priorSnap.exists &&
+          prior['settledByInvoicePaymentId'] === args.settledByInvoicePaymentId &&
+          prior['invoiceId'] === args.invoiceId
+        ) {
+          return {
+            replayed: prior,
+            replayedRef: priorRef as DocumentReference | null,
+            application: null as ApplyOutcome | null,
+            settlesInvoice: false,
+            replacedSweepRow: null as { id: string; data: Record<string, unknown> } | null,
+            possibleDuplicateOf: null as string | null,
+          };
+        }
       }
     }
     // #866: DID THIS SUBMISSION'S OWN `markInvoicePaid` STEP PAY THE INVOICE OFF?
@@ -993,23 +1036,54 @@ export async function recordPaymentHandler(
       );
     }
     if (replacedSweepRow !== null) tx.delete(db().collection('payments').doc(replacedSweepRow.id));
+    // #2296: this row is the settlement's ledger row now.
+    if (namedSettlementRef && namedSettlementSnap?.exists) {
+      tx.set(namedSettlementRef, { [SETTLEMENT_LEDGER_ROW_FIELD]: ref.id }, { merge: true });
+    }
     // `create` WHEN THERE IS A KEY, so two attempts that somehow reach the
     // write together are refereed by the server rather than by the read above.
     // A keyless call keeps `set`: its id is server-minted and cannot collide.
     if (args.idempotencyKey !== undefined) tx.create(ref, row);
     else tx.set(ref, row);
-    return { replayed: null, application: staged, settlesInvoice, replacedSweepRow, possibleDuplicateOf };
+    return {
+      replayed: null,
+      replayedRef: null,
+      application: staged,
+      settlesInvoice,
+      replacedSweepRow,
+      possibleDuplicateOf,
+    };
   });
 
-  if (committed.replayed !== null) {
-    logEvent({
-      severity: 'info',
-      function: 'recordPayment',
-      event: 'admin.payment.recorded.replay',
-      uid: actor.uid,
-      extra: { paymentId: ref.id, kinfolkId, idempotencyKey: args.idempotencyKey, raced: true },
-    });
-    return replayWithConfirmation(ref, committed.replayed, args.sendConfirmationEmail, actor.uid);
+  if (committed.replayed !== null && committed.replayedRef !== null) {
+    const answeredRef = committed.replayedRef;
+    if (answeredRef.id !== ref.id) {
+      // #2296: a second call for a settlement that has its row. Nothing was
+      // written, and any credit it asked for was not given.
+      logEvent({
+        severity: 'warn',
+        function: 'recordPayment',
+        event: 'settlement.ledger.second_call.answered',
+        uid: actor.uid,
+        extra: {
+          paymentId: answeredRef.id,
+          idempotencyKey: args.idempotencyKey ?? null,
+          kinfolkId,
+          invoiceId: args.invoiceId,
+          settledByInvoicePaymentId: args.settledByInvoicePaymentId ?? null,
+          creditToAccountCentsRequested: args.creditToAccountCents ?? null,
+        },
+      });
+    } else {
+      logEvent({
+        severity: 'info',
+        function: 'recordPayment',
+        event: 'admin.payment.recorded.replay',
+        uid: actor.uid,
+        extra: { paymentId: ref.id, kinfolkId, idempotencyKey: args.idempotencyKey, raced: true },
+      });
+    }
+    return replayWithConfirmation(answeredRef, committed.replayed, args.sendConfirmationEmail, actor.uid);
   }
   const application = committed.application;
   const replacedSweepRow = committed.replacedSweepRow;
@@ -1449,6 +1523,11 @@ export function noticeStamps(sent: ConfirmationOutcome): Record<string, unknown>
     ...(sent.household && sent.householdAppOnly ? { confirmationAppOnly: true } : {}),
     ...(sent.office ? { officeNoticeSentAt: FieldValue.serverTimestamp() } : {}),
     ...(sent.skipped ? { officeNoticeSkippedReason: 'no-recipients' } : {}),
+    // #2343: says why the household was not told. Never read as "told", so a
+    // later call that owes the household its copy still sends it.
+    ...(sent.householdHeld === 'off' || sent.householdHeld === 'absent'
+      ? { [SETTLEMENT_NOTICE_HELD_FIELD]: sent.householdHeld }
+      : {}),
   };
 }
 
@@ -1660,6 +1739,12 @@ export interface ConfirmationOutcome {
    * from here.
    */
   householdDuplicate?: boolean;
+  /**
+   * #2343: the household copy was held back by the household send switch, and
+   * what the switch said. 'read-failed' is a failed read, not a choice: the
+   * copy is still owed and a retry may send it.
+   */
+  householdHeld?: HouseholdSendGateState;
   /** The office copy was enqueued: it rides every enqueue, unless its roster lookup failed. */
   office: boolean;
   /**
@@ -1783,6 +1868,9 @@ export async function sendPaymentConfirmation(input: {
     return {
       household,
       householdDuplicate: household && householdSuppressed?.reason === 'duplicate',
+      ...(recipientUid !== null && householdSuppressed?.reason === 'gate'
+        ? { householdHeld: householdSuppressed.gateState ?? 'off' }
+        : {}),
       // Per recipient: the office's channels are not the household's.
       // #1973: a list-only copy is app-only by construction.
       householdAppOnly: household && recipientUid !== null && (listOnly || reachedAppOnly(outcome, recipientUid)),
