@@ -5343,6 +5343,13 @@ internal fun decodeVisitInternalNotes(json: String): VisitInternalNotes {
 @Serializable
 data class KinTaleComment(
     val _id: String = "",
+    /**
+     * Who wrote it, worked out by the getKinTaleComments callable on every read
+     * (mytribe/functions/src/lib/kinTaleCommentAuthor.ts, #1923): a household
+     * member's first name, else the household's name, else "A member of the
+     * household"; a guest's typed name. Never an email. Null when unnamed.
+     */
+    val authorDisplayName: String? = null,
     val authorRole: String = "",
     val authorUid: String? = null,
     val guestName: String? = null,

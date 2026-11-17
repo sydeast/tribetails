@@ -29,6 +29,11 @@ interface FirestoreClient {
      * every change: a notice arriving, one being read or marked unread, one
      * being archived. A refused or broken listen fails the flow.
      *
+     * #2329: each snapshot says whether it came from the device's cache, and
+     * one is also emitted when only that changes (the server's first answer
+     * agreeing with the cache), so the bell can tell a cached guess from the
+     * server's word.
+     *
      * `firestore.rules` admits this read for the recipient only, and only as a
      * query carrying the `recipientUid` filter; nobody writes from a client.
      *
@@ -37,8 +42,15 @@ interface FirestoreClient {
      * Kotlin/JS reference build, emits nothing: its bell keeps the count the
      * app opened with, as it did before.
      */
-    fun recipientNotificationsStream(recipientUid: String, limit: Int): Flow<List<FirestoreDoc>> = emptyFlow()
+    fun recipientNotificationsStream(recipientUid: String, limit: Int): Flow<NotificationsSnapshot> = emptyFlow()
 }
+/** #2329: one snapshot of the bell's rows, and whether it came from the device's cache. */
+data class NotificationsSnapshot(
+    val docs: List<FirestoreDoc>,
+    val fromCache: Boolean = false,
+    /** A row arrived, left or changed. False for a snapshot that only says where it came from. */
+    val rowsChanged: Boolean = true,
+)
 
 data class FirestoreDoc(
     val id: String,

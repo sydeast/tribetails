@@ -74,20 +74,24 @@ export function commentAuthorRole(authorRole: string): CommentAuthorRole {
 /**
  * Friendly author label for a comment row. `'Auntie'` for staff (the same
  * fallback `api/kinTalesWrite.ts#saveKinTaleDraft` uses for a nameless admin
- * account), the real `guestName` or `'Kinfolk'` for a household reply, the
- * guest's own name or `'Guest'` for a share-link note, and
- * `'Someone'` for an unrecognized role, never a fabricated identity.
+ * account). For a household reply and a share-link guest, the name the server
+ * resolved (`authorDisplayName`, #1923), else the guest's typed name, else the
+ * role word `'Kinfolk'` / `'Guest'`, a stand-in only where no name is known.
+ * `'Someone'` for an unrecognized role, never a fabricated identity. Same label
+ * as admin Android and the desktop console.
  */
-export function commentAuthorLabel(comment: Pick<KinTaleComment, 'authorRole' | 'guestName'>): string {
+export function commentAuthorLabel(
+  comment: Pick<KinTaleComment, 'authorRole' | 'guestName' | 'authorDisplayName'>,
+): string {
+  const resolved = (comment.authorDisplayName ?? '').trim();
+  const typed = (comment.guestName ?? '').trim();
   switch (commentAuthorRole(comment.authorRole)) {
     case 'admin':
       return 'Auntie';
     case 'kinfolk':
-      return (comment.guestName ?? '').trim() || 'Kinfolk';
-    // #1333: a note from a share-link guest carries the name they typed. Same
-    // label and fallback as admin Android and the desktop console.
+      return resolved || typed || 'Kinfolk';
     case 'guest':
-      return (comment.guestName ?? '').trim() || 'Guest';
+      return resolved || typed || 'Guest';
     case 'unknown':
       return 'Someone';
   }

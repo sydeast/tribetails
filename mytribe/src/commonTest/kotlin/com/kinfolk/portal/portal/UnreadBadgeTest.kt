@@ -4,6 +4,7 @@ import com.kinfolk.portal.components.RoutePoint
 import com.kinfolk.portal.firebase.FakeFirestoreClient
 import com.kinfolk.portal.firebase.FirestoreClient
 import com.kinfolk.portal.firebase.FirestoreDoc
+import com.kinfolk.portal.firebase.NotificationsSnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -212,14 +213,150 @@ class UnreadBadgeTest {
         assertEquals(0, bellCount(LiveUnread.Failed, seeded = 6))
     }
 
+    // ---- #2329: a tap the office answered first, and the cache ----
+    // The bell undercounted by one until a restart when the office put a
+    // tapped notice back on the list before the read reached this device, and
+    // an empty cache drew 0 over the count the app opened with.
+    private fun unreadAt(id: String, issued: Long? = 100L) = BadgeRow(id, unread = true, archived = false, tribeId = "fam1", issuedAtMs = issued)
+    private fun readAt(id: String, issued: Long? = 100L) = BadgeRow(id, unread = false, archived = false, tribeId = "fam1", issuedAtMs = issued)
+    @Test
+    fun readsTheIssueTimeOffCreatedAt_andNullWhenThereIsNone() {
+        assertEquals(1_700_000_000_123L, badgeRowOf(doc("a", mapOf("createdAt" to 1_700_000_000_123L))).issuedAtMs)
+        assertEquals(null, badgeRowOf(doc("a")).issuedAtMs)
+        assertEquals(null, badgeRowOf(doc("a", mapOf("createdAt" to "yesterday"))).issuedAtMs)
+    }
+    @Test
+    fun aTapThenItsRead_oneLess_andNoJumpInBetween() {
+        val badge = UnreadBadge()
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        badge.markReadLocally("a")
+        assertEquals(LiveUnread.Live(1), badge.live())
+        badge.onRows(listOf(readAt("a"), unreadAt("b")))
+        assertEquals(LiveUnread.Live(1), badge.live())
+        badge.confirmLocalRead("a")
+        badge.onRows(listOf(readAt("a"), unreadAt("b")))
+        assertEquals(LiveUnread.Live(1), badge.live())
+    }
+    @Test
+    fun aTapTheServerTook_thenASnapshotThatStillReadsUnread_countsTheRowAgain() {
+        val badge = UnreadBadge()
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        badge.markReadLocally("a")
+        badge.confirmLocalRead("a")
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        assertEquals(LiveUnread.Live(2), badge.live())
+    }
+    @Test
+    fun aTapTheServerTook_staysOffTheBellThroughACachedSnapshot_andCountsAgainOnTheServers() {
+        val badge = UnreadBadge()
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        badge.markReadLocally("a")
+        badge.confirmLocalRead("a")
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")), fromCache = true)
+        assertEquals(LiveUnread.Live(1), badge.live())
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        assertEquals(LiveUnread.Live(2), badge.live())
+    }
+    @Test
+    fun aTapTheServerHasNotAnswered_staysOffTheBellWhileTheRowStillReadsUnread() {
+        val badge = UnreadBadge()
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        badge.markReadLocally("a")
+        badge.onRows(listOf(unreadAt("new"), unreadAt("a"), unreadAt("b")))
+        assertEquals(LiveUnread.Live(2), badge.live())
+    }
+    @Test
+    fun theOfficeIssuingTheNoticeAgain_countsItAtOnce_evenBeforeTheServerAnswersTheTap() {
+        val badge = UnreadBadge()
+        badge.onRows(listOf(unreadAt("arrived", 100L), unreadAt("b")))
+        badge.markReadLocally("arrived")
+        assertEquals(LiveUnread.Live(1), badge.live())
+        badge.onRows(listOf(unreadAt("arrived", 900L), unreadAt("b")))
+        assertEquals(LiveUnread.Live(2), badge.live())
+        badge.confirmLocalRead("arrived")
+        badge.onRows(listOf(readAt("arrived", 900L), unreadAt("b")))
+        assertEquals(LiveUnread.Live(1), badge.live())
+    }
+    @Test
+    fun aTapBeforeTheFeedHeldTheRow_takesTheIssueFromTheFirstSnapshotThatDoes() {
+        val badge = UnreadBadge()
+        badge.markReadLocally("a")
+        badge.onRows(listOf(unreadAt("a", 100L), unreadAt("b")))
+        assertEquals(LiveUnread.Live(1), badge.live())
+        badge.onRows(listOf(unreadAt("a", 900L), unreadAt("b")))
+        assertEquals(LiveUnread.Live(2), badge.live())
+    }
+    @Test
+    fun aRefusedReadStillPutsTheRowBack_answeredOrNot() {
+        val badge = UnreadBadge()
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        badge.markReadLocally("a")
+        badge.undoLocalRead("a")
+        badge.confirmLocalRead("a")
+        assertEquals(LiveUnread.Live(2), badge.live())
+    }
+    @Test
+    fun anEmptyCachedSnapshotBeforeTheServerAnswered_isNotTaken_soTheBellKeepsItsOpeningCount() {
+        val badge = UnreadBadge()
+        badge.onRows(emptyList(), fromCache = true)
+        assertEquals(LiveUnread.Waiting, badge.live())
+        assertEquals(6, bellCount(badge.live(), seeded = 6))
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        assertEquals(LiveUnread.Live(2), badge.live())
+        // The server's first answer is the first snapshot taken: nothing to reload for.
+        assertEquals(0, badge.model.value.revision)
+    }
+    @Test
+    fun theServerAnsweringWithNothingUnread_isTaken_andIsZero() {
+        val badge = UnreadBadge()
+        badge.onRows(emptyList(), fromCache = true)
+        badge.onRows(emptyList())
+        assertEquals(LiveUnread.Live(0), badge.live())
+    }
+    @Test
+    fun onceTheServerAnswered_aCachedSnapshotIsTaken() {
+        val badge = UnreadBadge()
+        badge.onRows(listOf(unreadAt("a"), unreadAt("b")))
+        badge.onRows(listOf(unreadAt("a"), readAt("b")), fromCache = true)
+        assertEquals(LiveUnread.Live(1), badge.live())
+    }
+    @Test
+    fun aSnapshotThatChangesNoRow_doesNotReloadTheList() {
+        val badge = UnreadBadge()
+        badge.onRows(listOf(unreadAt("a")))
+        badge.onRows(listOf(unreadAt("a")), fromCache = true, rowsChanged = false)
+        assertEquals(0, badge.model.value.revision)
+        // A notice whose words changed in place is a change, though the count is not.
+        badge.onRows(listOf(unreadAt("a")), rowsChanged = true)
+        assertEquals(1, badge.model.value.revision)
+    }
+    @Test
+    fun aNewSignInWaitsForTheServerAgain() {
+        val badge = UnreadBadge()
+        badge.onRows(listOf(unreadAt("a")))
+        badge.reset()
+        badge.onRows(emptyList(), fromCache = true)
+        assertEquals(LiveUnread.Waiting, badge.live())
+    }
+    @Test
+    fun followUnreadBadgePassesTheCacheFlagThrough() = runTest(UnconfinedTestDispatcher()) {
+        val snapshots = MutableSharedFlow<NotificationsSnapshot>()
+        val badge = UnreadBadge()
+        val job = launch { followUnreadBadge(Streaming(snapshots), "u1", badge) }
+        snapshots.emit(NotificationsSnapshot(emptyList(), fromCache = true))
+        assertEquals(LiveUnread.Waiting, badge.live())
+        snapshots.emit(NotificationsSnapshot(listOf(doc("a", tribe("fam1"))), fromCache = false))
+        assertEquals(LiveUnread.Live(1), badge.live())
+        job.cancel()
+    }
     // ---- followUnreadBadge: the listener's lifecycle ----
 
-    private class Streaming(private val stream: Flow<List<FirestoreDoc>>) : FirestoreClient {
+    private class Streaming(private val stream: Flow<NotificationsSnapshot>) : FirestoreClient {
         val asked = mutableListOf<Pair<String, Int>>()
         override suspend fun getDocument(collection: String, documentId: String): Map<String, Any?>? = null
         override suspend fun listDocuments(collection: String): List<FirestoreDoc> = emptyList()
         override fun breadcrumbsStream(sessionId: String): Flow<List<RoutePoint>> = flowOf(emptyList())
-        override fun recipientNotificationsStream(recipientUid: String, limit: Int): Flow<List<FirestoreDoc>> {
+        override fun recipientNotificationsStream(recipientUid: String, limit: Int): Flow<NotificationsSnapshot> {
             asked += recipientUid to limit
             return stream
         }
@@ -227,20 +364,20 @@ class UnreadBadgeTest {
 
     @Test
     fun followsTheSignedInPersonsNewest100_andCountsEachSnapshot() = runTest(UnconfinedTestDispatcher()) {
-        val snapshots = MutableSharedFlow<List<FirestoreDoc>>()
+        val snapshots = MutableSharedFlow<NotificationsSnapshot>()
         val client = Streaming(snapshots)
         val badge = UnreadBadge()
         val job = launch { followUnreadBadge(client, "u1", badge) }
         assertEquals(listOf("u1" to 100), client.asked)
         assertEquals(LiveUnread.Waiting, badge.live())
 
-        snapshots.emit((1..6).map { doc("n$it", tribe("fam1")) })
+        snapshots.emit(NotificationsSnapshot((1..6).map { doc("n$it", tribe("fam1")) }))
         assertEquals(LiveUnread.Live(6), badge.live())
         // The Auntie taps "OMW": a seventh row, no reload.
-        snapshots.emit(listOf(doc("omw", tribe("fam1"))) + (1..6).map { doc("n$it", tribe("fam1")) })
+        snapshots.emit(NotificationsSnapshot(listOf(doc("omw", tribe("fam1"))) + (1..6).map { doc("n$it", tribe("fam1")) }))
         assertEquals(LiveUnread.Live(7), badge.live())
         // Every row marked read at once.
-        snapshots.emit((listOf("omw") + (1..6).map { "n$it" }).map { doc(it, tribe("fam1") + ("readAt" to 9L)) })
+        snapshots.emit(NotificationsSnapshot((listOf("omw") + (1..6).map { "n$it" }).map { doc(it, tribe("fam1") + ("readAt" to 9L)) }))
         assertEquals(LiveUnread.Live(0), badge.live())
         job.cancel()
     }
@@ -249,7 +386,7 @@ class UnreadBadgeTest {
     fun aFailedListenerIsQuietOnScreenAndLogged() = runTest(UnconfinedTestDispatcher()) {
         val logged = mutableListOf<String>()
         val client = Streaming(flow {
-            emit(listOf(doc("a")))
+            emit(NotificationsSnapshot(listOf(doc("a"))))
             throw IllegalStateException("PERMISSION_DENIED")
         })
         val badge = UnreadBadge()

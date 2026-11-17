@@ -13,8 +13,10 @@ import { subscribeUnreadRows } from '../lib/unreadNotificationsListener';
  * on each navigation and the badge would blink. Keyed on the signed-in uid;
  * signing out closes it and forgets what it held.
  *
- * Each snapshot after the first also refreshes the notifications list when it
- * is open, so the rows and the count change together.
+ * Each snapshot after the first that changes a row also refreshes the
+ * notifications list when it is open, so the rows and the count change
+ * together. A snapshot the store does not take (#2329: the cache's, before the
+ * server has answered) does neither.
  *
  * A FAILED LISTENER IS QUIET IN THE HEADER AND LOUD IN THE LOGS, the same
  * ruling as the admin rail's count (auntieos-admin/src/lib/useUnreadInbox.ts):
@@ -34,9 +36,9 @@ export function UnreadNotificationsBridge(): null {
     let first = true;
     const stop = subscribeUnreadRows(
       uid,
-      (rows) => {
-        setLiveRows(rows);
-        if (!first) void queryClient.invalidateQueries({ queryKey: ['myNotifications'] });
+      ({ rows, fromCache, rowsChanged }) => {
+        if (!setLiveRows(rows, { fromCache })) return;
+        if (!first && rowsChanged) void queryClient.invalidateQueries({ queryKey: ['myNotifications'] });
         first = false;
       },
       (err) => {

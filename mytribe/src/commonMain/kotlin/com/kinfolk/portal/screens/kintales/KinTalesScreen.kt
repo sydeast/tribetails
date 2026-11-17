@@ -732,17 +732,24 @@ private fun KinTaleComments(
 }
 
 /**
- * Who wrote a comment, from the name the server resolved: an Auntie reads
- * "Auntie Maya" (via [auntieName], so the role word is said once), a household
- * member their first name, a guest the name they typed. With no resolved name it
- * falls back to the role word. Mirrors `commentAuthorLabel` in kinTalesApi.ts,
- * minus the "(you)" suffix, which needs the signed-in uid this screen does not hold.
+ * Who wrote a comment, from the name the server resolved (#1923): an Auntie
+ * reads "Auntie Maya" (via [auntieName], so the role word is said once), a
+ * household member their first name, else the household's name, else "A member
+ * of the household" (never an email: getKinTaleComments.ts refuses one), and a
+ * guest the name they typed with "(guest)" after it. This screen draws no role
+ * badges, so that suffix is the one guest marker here, where the web row has its
+ * GUEST badge instead (#1922). With no resolved name it falls back to the role
+ * word. Mirrors `commentAuthorLabel` in kinTalesApi.ts, minus the "(you)"
+ * suffix, which needs the signed-in uid this screen does not hold.
  */
 internal fun kinTaleCommentAuthorLabel(comment: KinTaleComment): String {
     val name = comment.authorDisplayName?.trim().orEmpty()
     return when (comment.authorRole) {
         CommentAuthorRole.Admin -> auntieName(name) ?: "Auntie"
-        CommentAuthorRole.Guest -> "${comment.guestName?.takeIf { it.isNotBlank() } ?: name.ifEmpty { "Guest" }} (guest)"
+        CommentAuthorRole.Guest -> {
+            val typed = comment.guestName?.trim()?.takeIf { it.isNotEmpty() } ?: name
+            if (typed.isEmpty()) "Guest" else "$typed (guest)"
+        }
         CommentAuthorRole.Kinfolk -> name.ifEmpty { "Kinfolk" }
     }
 }

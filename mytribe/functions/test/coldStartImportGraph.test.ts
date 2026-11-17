@@ -300,7 +300,12 @@ const ALLOWED_EAGER_PACKAGES = [
  * nothing; the Activity Log writer behind it (`noticeAudit.ts`) still loads
  * with `await import()`, and only in a run that held something.
  *
- * 461 since #1822 / #1862 (on top of #2331's 459):
+ * 460 since #1923 (on top of #2331's 459): `lib/kinTaleCommentAuthor.ts`, the
+ * one rule for naming who wrote a KinTale comment, shared by the in-app thread,
+ * the public share page and the comment notice, which each carried their own
+ * copy before. It imports only `lib/firestoreAdmin.ts`, already here.
+ *
+ * 462 since #1822 / #1862 (on top of #1923's 460):
  * `portal/getHouseholdKinRoster.ts` is a new FUNCTIONS entry, the one Kin
  * roster every booking screen reads, and `lib/featureFlags.ts` is the flag
  * read it shares with `getFeatureFlags` and the booking writers (the merge
@@ -308,7 +313,7 @@ const ALLOWED_EAGER_PACKAGES = [
  * resolve the choose-Kin flag the same way). Everything else they import was
  * already here.
  */
-const MAX_OWN_EAGER_MODULES = 461;
+const MAX_OWN_EAGER_MODULES = 462;
 
 interface Edge {
   spec: string;
