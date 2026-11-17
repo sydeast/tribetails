@@ -23,7 +23,7 @@ function compounds(css: string): string[] {
 }
 /** True when a compound is the tone class alone, like `.guest` or `.guest:hover`. */
 function isBareTone(compound: string, tone: string): boolean {
-  const classes = compound.match(/\.[\w-]+/g) ?? [];
+  const classes: string[] = compound.match(/\.[\w-]+/g) ?? [];
   const elementOrId = /^[a-z*#]/i.test(compound);
   return classes.includes(`.${tone}`) && classes.length === 1 && !elementOrId;
 }

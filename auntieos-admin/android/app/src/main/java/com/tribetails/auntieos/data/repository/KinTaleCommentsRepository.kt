@@ -4,9 +4,12 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.functions.FirebaseFunctions
 import com.tribetails.auntieos.util.AuntieLog
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.mapLatest
 import com.tribetails.auntieos.util.runCatchingCancellable
 
 /**
@@ -18,6 +21,11 @@ import com.tribetails.auntieos.util.runCatchingCancellable
  *   matching kinfolk). A listener error surfaces fail-loud as a [CommentsState.Error]
  *   (never a silent emptyList), so the UI can show a banner instead of pretending
  *   the thread is empty.
+ * - Names (#1923): the listener carries no author name, and the comment doc holds
+ *   none (a household member's record holds their sign-in email). Each snapshot
+ *   asks the `getKinTaleComments` callable, which names every author on the
+ *   server, and joins its names onto the rows by comment id. A failed name read
+ *   still shows the thread, with the role word as the stand-in.
  * - Write: the `addKinTaleComment` callable. The server forces authorRole='admin'
  *   and requires an explicit kinfolkId for admin callers. parentCommentId carries a
  *   1-level reply. The onKinTaleCommentCreate trigger notifies the kinfolk.
@@ -36,6 +44,8 @@ class KinTaleCommentsRepository(
 
     data class KinTaleComment(
         val id: String = "",
+        /** Who wrote it, as the server named them (#1923). Never an email. Null when unnamed. */
+        val authorDisplayName: String? = null,
         val authorRole: String = "",
         val authorUid: String? = null,
         val guestName: String? = null,
@@ -54,8 +64,20 @@ class KinTaleCommentsRepository(
         data class Error(val message: String) : CommentsState
     }
 
-    /** Live thread for a SENT report, oldest first. Emits Loading, then Data / Error. */
-    fun streamComments(taleId: String): Flow<CommentsState> = callbackFlow {
+    /** Live thread for a SENT report, oldest first, each author named by the server. Emits Loading, then Data / Error. */
+    fun streamComments(taleId: String): Flow<CommentsState> =
+        nameComments(rawComments(taleId)) { fetchAuthorNames(taleId) }
+
+    /** Who wrote each comment, by comment id, from the `getKinTaleComments` callable. */
+    private suspend fun fetchAuthorNames(taleId: String): Map<String, String?> {
+        val raw = functions.getHttpsCallable("getKinTaleComments")
+            .call(mapOf("taleId" to taleId))
+            .awaitCallable()
+            .data
+        return parseAuthorNames(raw)
+    }
+
+    private fun rawComments(taleId: String): Flow<CommentsState> = callbackFlow {
         require(taleId.isNotBlank()) { "streamComments requires a non-blank taleId" }
         trySend(CommentsState.Loading)
         val ref = firestore
@@ -114,6 +136,39 @@ class KinTaleCommentsRepository(
     }.onFailure { AuntieLog.e("KinTaleCommentsRepository.addComment failed", it) }
 
     companion object {
+        /**
+         * Joins the server's author names onto each snapshot (#1923). A newer
+         * snapshot cancels a name read still in flight for an older one, so the
+         * rows never go back in time. A failed name read keeps the rows as they
+         * are, unnamed, rather than hiding the thread.
+         */
+        @OptIn(ExperimentalCoroutinesApi::class)
+        internal fun nameComments(
+            states: Flow<CommentsState>,
+            fetchNames: suspend () -> Map<String, String?>,
+        ): Flow<CommentsState> = states.mapLatest { state ->
+            if (state !is CommentsState.Data || state.comments.isEmpty()) return@mapLatest state
+            val names = try {
+                fetchNames()
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                AuntieLog.e("KinTaleCommentsRepository: author names unavailable", t)
+                emptyMap()
+            }
+            CommentsState.Data(state.comments.map { it.copy(authorDisplayName = names[it.id]?.takeIf { n -> n.isNotBlank() }) })
+        }
+
+        /** `{ comments: [{ id, authorDisplayName }, ...] }` from getKinTaleComments, as id -> name. */
+        internal fun parseAuthorNames(raw: Any?): Map<String, String?> {
+            val comments = (raw as? Map<*, *>)?.get("comments") as? List<*> ?: return emptyMap()
+            return comments.mapNotNull { row ->
+                val o = row as? Map<*, *> ?: return@mapNotNull null
+                val id = o["id"] as? String ?: return@mapNotNull null
+                id to (o["authorDisplayName"] as? String)
+            }.toMap()
+        }
+
         /**
          * Groups a flat, chronological comment list into a 1-level thread: each
          * top-level comment (parentCommentId null/blank) followed by its direct

@@ -111,7 +111,7 @@ class KinTaleReportScreenCommentTest {
         every { comments.streamComments("demo-report-1") } returns flowOf(
             CommentsState.Data(
                 listOf(
-                    KinTaleComment(id = "c1", authorRole = "kinfolk", body = "Thank you so much!", createdAtMs = 1),
+                    KinTaleComment(id = "c1", authorDisplayName = "Casey", authorRole = "kinfolk", body = "Thank you so much!", createdAtMs = 1),
                 ),
             ),
         )
@@ -127,6 +127,8 @@ class KinTaleReportScreenCommentTest {
 
         // The kinfolk comment row renders.
         compose.onNodeWithText("Thank you so much!").performScrollTo().assertIsDisplayed()
+        // #1923: the household reply reads by the name the server resolved.
+        compose.onNodeWithText("Casey").performScrollTo().assertIsDisplayed()
 
         // Tap Reply to set the reply target.
         compose.onNodeWithText("Reply").performScrollTo().performClick()
