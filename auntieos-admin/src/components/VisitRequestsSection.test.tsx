@@ -1374,6 +1374,24 @@ describe('VisitRequestsSection opens the request a notice named (#2028)', () => 
     expect(screen.queryByText('That request is no longer waiting')).toBeNull();
   });
 
+  // #2367: Bookings says what became of the booking (its visits, or gone).
+  it('hands a request it does not hold back to the caller, once, and draws no note', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking({ batchId: 'b-other' })] });
+    const onFocusNotWaiting = vi.fn();
+    render(<VisitRequestsSection focusRequest={{ kinfolkId: 'fam-3', batchId: 'b3' }} onFocusNotWaiting={onFocusNotWaiting} />);
+    await waitFor(() => expect(onFocusNotWaiting).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('That request is no longer waiting')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('does not hand a waiting request back: its card opens as before', async () => {
+    listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
+    const onFocusNotWaiting = vi.fn();
+    render(<VisitRequestsSection focusRequest={{ kinfolkId: 'fam-3', batchId: 'b3' }} onFocusNotWaiting={onFocusNotWaiting} />);
+    expect(await screen.findByRole('dialog', { name: 'New request from The Rivera Home' })).toBeInTheDocument();
+    expect(onFocusNotWaiting).not.toHaveBeenCalled();
+  });
+
   it('opens the card once: closing it does not bring it back when the queue reads again', async () => {
     listPendingBookingRequests.mockResolvedValue({ requests: [newBooking()] });
     const { rerender } = render(<VisitRequestsSection focusRequest={{ kinfolkId: 'fam-3', batchId: 'b3' }} />);

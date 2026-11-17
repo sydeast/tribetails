@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   listRescheduleRequests,
   resolveBookingRescheduleRequest,
@@ -170,7 +170,17 @@ export interface FocusRequest {
 export function VisitRequestsSection({
   refreshKey = 0,
   focusRequest,
-}: { refreshKey?: number; focusRequest?: FocusRequest } = {}) {
+  onFocusNotWaiting,
+}: {
+  refreshKey?: number;
+  focusRequest?: FocusRequest;
+  /**
+   * #2367: the queue has read and does not hold `focusRequest`. When given, the
+   * caller says what became of the booking (its visits, or that it is gone),
+   * and this section draws no note of its own and folds back to its banner.
+   */
+  onFocusNotWaiting?: () => void;
+} = {}) {
   // #1744: a request names its KinCare off the catalog, never a stored key.
   const catalog = useBookingCatalog();
   // #1607: the waiting count stayed at 6 after a new request until a reload,
@@ -214,6 +224,15 @@ export function VisitRequestsSection({
   /** #2028: the notice named a request this queue no longer holds. */
   const focusMissing =
     focusPending && focusKey !== null && loaded.status === 'ready' && focusedRow === null;
+  const onFocusNotWaitingRef = useRef(onFocusNotWaiting);
+  onFocusNotWaitingRef.current = onFocusNotWaiting;
+  const handsOffMissing = onFocusNotWaiting !== undefined;
+  useEffect(() => {
+    if (!focusMissing || !handsOffMissing) return;
+    setFocusPending(false);
+    setOpen(false);
+    onFocusNotWaitingRef.current?.();
+  }, [focusMissing, handsOffMissing]);
   /**
    * #704: the queue reads as ONE compact banner until asked to open.
    *
@@ -269,7 +288,7 @@ export function VisitRequestsSection({
 
   const rows = loaded.data.requests.filter((r) => !resolvedKeys.has(requestKey(r)));
   const { failures } = loaded.data;
-  const missingNotice = focusMissing ? (
+  const missingNotice = focusMissing && !handsOffMissing ? (
     <Banner
       tone="info"
       title="That request is no longer waiting"

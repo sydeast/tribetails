@@ -32,6 +32,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import kotlinx.coroutines.flow.first
+import com.tribetails.auntieos.web.screens.notifications.parseVisitRequestKey
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -330,18 +336,34 @@ private fun BookingListScreen(
         groupIncomingBySeries(visits) { names[it] }
     }
     // #2028: what became of the request a notice opened this screen for, once
-    // the queue has answered: open its card, or say it is no longer waiting.
+    // the queue has answered: open its card, or look the booking up.
     val focus = focusRequestOutcome(focusRequestKey, incomingState, incomingSeries)
     var focusedKey by remember { mutableStateOf<String?>(null) }
-    var focusNotice by remember { mutableStateOf<String?>(null) }
+    // #2367: the booking (household, request id) a notice opened, once the queue
+    // has loaded without it. Held here because consuming the key clears it in the
+    // App, so leaving Bookings and coming back does not show this again.
+    var bookingLookup by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var bookingLookupGeneration by remember { mutableStateOf(0) }
+    var bookingLookupRead by remember { mutableStateOf<FirestoreResult<List<KinCareSession>>>(FirestoreResult.Loading) }
     androidx.compose.runtime.LaunchedEffect(focusRequestKey, focus) {
         when (focus) {
             FocusRequestOutcome.Waiting -> Unit
             FocusRequestOutcome.Open -> { focusedKey = focusRequestKey; onFocusRequestConsumed() }
-            FocusRequestOutcome.NotWaiting -> { focusNotice = FOCUS_REQUEST_NOT_WAITING; onFocusRequestConsumed() }
+            FocusRequestOutcome.LookUpBooking -> { bookingLookup = parseVisitRequestKey(focusRequestKey); onFocusRequestConsumed() }
             FocusRequestOutcome.None -> Unit
         }
     }
+    // #2367: the household's own visits, read once (the household read polls;
+    // the first answer settles it, so the banner and highlight do not shift).
+    androidx.compose.runtime.LaunchedEffect(bookingLookup, bookingLookupGeneration) {
+        val (kinfolkId, _) = bookingLookup ?: return@LaunchedEffect
+        bookingLookupRead = FirestoreResult.Loading
+        bookingLookupRead = runCatchingCancellable {
+            vm.sessionsForKinfolkStream(kinfolkId).first { it !is FirestoreResult.Loading }
+        }.getOrElse { FirestoreResult.Error(it.message?.takeIf { m -> m.isNotBlank() } ?: BOOKING_LOOKUP_FAILED_FALLBACK) }
+    }
+    val bookingLookupStage = bookingLookup?.let { (kinfolkId, batchId) -> bookingLookupStage(kinfolkId, batchId, bookingLookupRead) }
+    val highlightedIds: Set<String> = (bookingLookupStage as? BookingLookupStage.Booked)?.sessionIds.orEmpty().toSet()
 
     ScreenScaffold {
         DenScreenHeading(
@@ -467,6 +489,11 @@ private fun BookingListScreen(
         // the books, so it sits with Scheduled rather than in History.
         val scheduled = sessions.filter { isOnTheBooks(it.status) }
         val history   = sessions.filter { !isOnTheBooks(it.status) && it.status.trim().uppercase() !in setOf("DRAFT", "PENDING") }
+        val buckets   = bookingHistoryBuckets(history)
+        // #2367: the first highlighted card in the order the sections draw, brought into view.
+        val firstHighlightedId = if (highlightedIds.isEmpty()) null
+            else (pending + scheduled + buckets.completed + buckets.cancelled + buckets.other)
+                .firstOrNull { it._id in highlightedIds }?._id
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -497,14 +524,42 @@ private fun BookingListScreen(
         }
         Spacer(Modifier.height(20.dp))
 
-        focusNotice?.let { msg ->
-            com.tribetails.auntieos.web.ui.components.AuntieBanner(
-                tone = com.tribetails.auntieos.web.ui.components.AuntieBannerTone.Info,
-                title = "Request answered",
-                onDismiss = { focusNotice = null },
-                body = { Text(msg, style = AuntieTheme.typography.bodySmall, color = c.textDim) },
-            )
-            Spacer(Modifier.height(16.dp))
+        // #2367: what the household's visits say about the booking a notice opened.
+        when (val stage = bookingLookupStage) {
+            null -> Unit
+            BookingLookupStage.LookingUp -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.tribetails.auntieos.web.ui.components.AuntieSpinner(modifier = Modifier.size(14.dp))
+                    Text(BOOKING_LOOKUP_LOADING, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+            is BookingLookupStage.Booked -> {
+                AuntieBanner(
+                    tone = AuntieBannerTone.Info,
+                    title = BOOKING_FOUND_TITLE,
+                    onDismiss = { bookingLookup = null },
+                    body = { Text(bookingFoundBody(stage.sessionIds.size), style = AuntieTheme.typography.bodySmall, color = c.textDim) },
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+            BookingLookupStage.Gone -> {
+                AuntieBanner(
+                    tone = AuntieBannerTone.Info,
+                    title = BOOKING_GONE_TITLE,
+                    onDismiss = { bookingLookup = null },
+                    body = { Text(BOOKING_GONE_BODY, style = AuntieTheme.typography.bodySmall, color = c.textDim) },
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+            is BookingLookupStage.Failed -> {
+                com.tribetails.auntieos.web.ui.components.LoadErrorBanner(
+                    title = BOOKING_LOOKUP_FAILED_TITLE,
+                    message = stage.message,
+                    onRetry = { bookingLookupGeneration++ },
+                )
+                Spacer(Modifier.height(16.dp))
+            }
         }
         // #2028: a notice that opened a request whose queue is still loading says so.
         if (focus == FocusRequestOutcome.Waiting) {
@@ -569,6 +624,8 @@ private fun BookingListScreen(
                             onOpenDetail = { selectedBooking = booking },
                             timeBlockLabel = timeBlockLabelFor(booking),
                             serviceRates = kinCareRates,
+                            highlighted = booking._id in highlightedIds,
+                            bringIntoView = booking._id == firstHighlightedId,
                         )
                     }
                 }
@@ -602,6 +659,8 @@ private fun BookingListScreen(
                             onOpenDetail = { selectedBooking = booking },
                             timeBlockLabel = timeBlockLabelFor(booking),
                             serviceRates = kinCareRates,
+                            highlighted = booking._id in highlightedIds,
+                            bringIntoView = booking._id == firstHighlightedId,
                         )
                     }
                 }
@@ -638,8 +697,6 @@ private fun BookingListScreen(
         // carries, split by outcome, and cap each subsection (Show more) so the full
         // legacy import never renders at once. The trailing count is the real size,
         // not a literal "recent".
-        val buckets = bookingHistoryBuckets(history)
-
         DenPanel(
             title    = "History",
             subtitle = "Completed and cancelled visits, most recent first.",
@@ -653,9 +710,9 @@ private fun BookingListScreen(
                 history.isEmpty() ->
                     AuntieBannerEmpty()
                 else -> Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    HistorySubsection("Completed", buckets.completed, selecting, timeBlockLabelFor, kinCareRates) { selectedBooking = it }
-                    HistorySubsection("Cancelled", buckets.cancelled, selecting, timeBlockLabelFor, kinCareRates) { selectedBooking = it }
-                    HistorySubsection("Other", buckets.other, selecting, timeBlockLabelFor, kinCareRates) { selectedBooking = it }
+                    HistorySubsection("Completed", buckets.completed, selecting, timeBlockLabelFor, kinCareRates, highlightedIds, firstHighlightedId) { selectedBooking = it }
+                    HistorySubsection("Cancelled", buckets.cancelled, selecting, timeBlockLabelFor, kinCareRates, highlightedIds, firstHighlightedId) { selectedBooking = it }
+                    HistorySubsection("Other", buckets.other, selecting, timeBlockLabelFor, kinCareRates, highlightedIds, firstHighlightedId) { selectedBooking = it }
                 }
             }
         }
@@ -687,11 +744,16 @@ private fun HistorySubsection(
     selecting: Boolean,
     timeBlockLabelFor: (KinCareSession) -> String?,
     serviceRates: Map<String, String>,
+    /** #2367: the visits of the booking a notice opened. */
+    highlighted: Set<String>,
+    bringIntoViewId: String?,
     onOpenDetail: (KinCareSession) -> Unit,
 ) {
     if (bookings.isEmpty()) return
     var expanded by remember(label, bookings.size) { mutableStateOf(false) }
-    val visible = if (expanded) bookings else bookings.take(HISTORY_PAGE)
+    // #2367: a highlighted visit past the first page is shown, never left behind "Show more".
+    val highlightHidden = bookings.drop(HISTORY_PAGE).any { it._id in highlighted }
+    val visible = if (expanded || highlightHidden) bookings else bookings.take(HISTORY_PAGE)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -714,9 +776,11 @@ private fun HistorySubsection(
                 onOpenDetail = { onOpenDetail(booking) },
                 timeBlockLabel = timeBlockLabelFor(booking),
                 serviceRates = serviceRates,
+                highlighted = booking._id in highlighted,
+                bringIntoView = booking._id == bringIntoViewId,
             )
         }
-        if (bookings.size > HISTORY_PAGE) {
+        if (bookings.size > HISTORY_PAGE && !highlightHidden) {
             GhostButton(
                 label   = if (expanded) "Show less" else "Show ${bookings.size - HISTORY_PAGE} more",
                 onClick = { expanded = !expanded },
@@ -997,17 +1061,19 @@ internal fun SeriesDecisionDialog(
     }
 }
 
-/** #2028: what the request a notification opened Bookings for came to. */
-internal enum class FocusRequestOutcome { None, Waiting, Open, NotWaiting }
-
-/** #2028: said when the request a notice opened has already been answered. */
-internal const val FOCUS_REQUEST_NOT_WAITING =
-    "That request is no longer waiting. It was answered or withdrawn, so there is nothing to approve."
+/**
+ * #2028: what the request queue says about the booking a notification opened
+ * Bookings for. #2367: [LookUpBooking] (the queue loaded without it) used to end
+ * on "That request is no longer waiting"; a booked request has visits, so the
+ * household's visits are now looked up ([bookingLookupStage]).
+ */
+internal enum class FocusRequestOutcome { None, Waiting, Open, LookUpBooking }
 
 /**
  * #2028: open the request's card once the live queue holds it; while the queue
- * is loading, wait; once it has loaded without it (or failed), say it is not
- * waiting rather than opening an empty sheet. Pure; unit-tested.
+ * is loading, wait; once it has loaded without it, look the booking up. A
+ * failed queue paints its own error on the Visit requests panel, so nothing
+ * more is done. Pure; unit-tested.
  */
 internal fun focusRequestOutcome(
     focusKey: String?,
@@ -1018,8 +1084,60 @@ internal fun focusRequestOutcome(
     incoming is FirestoreResult.Loading -> FocusRequestOutcome.Waiting
     incoming is FirestoreResult.Error -> FocusRequestOutcome.None
     focusKey in com.tribetails.auntieos.web.screens.notifications.pendingRequestKeys(series) -> FocusRequestOutcome.Open
-    else -> FocusRequestOutcome.NotWaiting
+    else -> FocusRequestOutcome.LookUpBooking
 }
+
+/** #2367: what a household's visits say about a booking that has left the request queue. */
+internal sealed interface BookingLookupStage {
+    /** The household read has not answered yet. */
+    data object LookingUp : BookingLookupStage
+    /** It was booked: these visits (session ids), earliest first, are highlighted. */
+    data class Booked(val sessionIds: List<String>) : BookingLookupStage
+    /** No visit of the household carries it: turned down, withdrawn or removed. */
+    data object Gone : BookingLookupStage
+    /** The household read failed, with its own words. */
+    data class Failed(val message: String) : BookingLookupStage
+}
+
+/**
+ * #2367: the booking's visits are the household's `kin_care_sessions` whose
+ * `kinCareBatchId` is [batchId]. Both the household AND the request id must
+ * match: a request id is only unique within a household. Pure; unit-tested.
+ */
+internal fun bookingLookupStage(
+    kinfolkId: String,
+    batchId: String,
+    read: FirestoreResult<List<KinCareSession>>,
+): BookingLookupStage = when (read) {
+    FirestoreResult.Loading -> BookingLookupStage.LookingUp
+    is FirestoreResult.Error -> BookingLookupStage.Failed(read.message)
+    is FirestoreResult.Data -> {
+        val household = kinfolkId.trim()
+        val booking = batchId.trim()
+        val ids = if (household.isEmpty() || booking.isEmpty()) emptyList()
+        else read.value
+            .filter { it.kinfolkId.trim() == household && it.kinCareBatchId?.trim() == booking }
+            .sortedBy { it.startTime }
+            .map { it._id }
+            .distinct()
+        if (ids.isEmpty()) BookingLookupStage.Gone else BookingLookupStage.Booked(ids)
+    }
+}
+
+/** #2367: the cue while the household's visits are read. */
+internal const val BOOKING_LOOKUP_LOADING = "Looking this booking up…"
+internal const val BOOKING_FOUND_TITLE = "This booking"
+internal const val BOOKING_GONE_TITLE = "This booking is no longer available"
+internal const val BOOKING_GONE_BODY = "It was turned down, withdrawn or removed, so there is nothing to open."
+internal const val BOOKING_LOOKUP_FAILED_TITLE = "Couldn't look this booking up"
+/** #2367: said when a failed read brought no words of its own. */
+internal const val BOOKING_LOOKUP_FAILED_FALLBACK = "The household's visits did not load."
+/** #2367: the test tag on a visit card of the booking a notice opened. */
+const val BOOKING_HIGHLIGHT_TAG = "booking-highlight"
+
+/** #2367: the banner body under "This booking". */
+internal fun bookingFoundBody(count: Int): String =
+    if (count == 1) "Its visit is highlighted below." else "Its $count visits are highlighted below."
 
 @Composable
 private fun IncomingFact(label: String, value: String) {
@@ -1043,13 +1161,36 @@ private fun BookingCard(
     onToggleSelect: (() -> Unit)? = null,
     /** #1592: the KinCare catalog the service is named against. */
     serviceRates: Map<String, String> = emptyMap(),
+    /** #2367: a visit of the booking a notice opened: outlined and labelled. */
+    highlighted: Boolean = false,
+    /** #2367: the first such visit is scrolled into view. */
+    bringIntoView: Boolean = false,
 ) {
     val c    = AuntieTheme.colors
     val tone = bookingStatusTone(booking.status)
     val notePreview = booking.kinfolkNotes.ifBlank { booking.notes }
     val hasName = booking.kinfolkName.isNotBlank()
+    val viewRequester = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    if (bringIntoView) {
+        LaunchedEffect(booking._id) {
+            androidx.compose.runtime.withFrameNanos { }
+            viewRequester.bringIntoView()
+        }
+    }
 
-    GlassSurface(cornerRadius = 18.dp, modifier = Modifier.fillMaxWidth()) {
+    GlassSurface(
+        cornerRadius = 18.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (highlighted) Modifier
+                    .border(2.dp, c.accent, RoundedCornerShape(18.dp))
+                    .testTag(BOOKING_HIGHLIGHT_TAG)
+                    .semantics { stateDescription = BOOKING_FOUND_TITLE }
+                else Modifier,
+            )
+            .then(if (bringIntoView) Modifier.bringIntoViewRequester(viewRequester) else Modifier),
+    ) {
         // Single Column so the row body, status pill, and note flow vertically
         // instead of z-stacking inside the GlassSurface Box (the old overlap bug).
         // Tap the card body to open its detail (B2). Disabled in select-mode so the
@@ -1111,7 +1252,14 @@ private fun BookingCard(
             }
 
             Spacer(Modifier.height(9.dp))
-            AuntieStatusPill(label = bookingStatusLabel(booking.status), tone = tone, mono = true)
+            if (highlighted) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AuntieStatusPill(label = bookingStatusLabel(booking.status), tone = tone, mono = true)
+                    AuntieStatusPill(label = BOOKING_FOUND_TITLE, tone = AuntieStatusTone.Teal)
+                }
+            } else {
+                AuntieStatusPill(label = bookingStatusLabel(booking.status), tone = tone, mono = true)
+            }
             if (notePreview.isNotBlank()) {
                 Spacer(Modifier.height(7.dp))
                 Text(
@@ -1684,6 +1832,8 @@ private class FirestoreClientBookingDataSource(
     override fun invoicesStream() = client.invoicesStream()
     override fun kinfolkStream()  = client.kinfolkStream()
     override fun sessionsStream() = client.sessionsStream()
+    // #2367: the household read a whole booking is looked up in.
+    override fun sessionsForKinfolkStream(kinfolkId: String) = client.sessionsForKinfolkStream(kinfolkId)
     override fun paymentsStream() = client.paymentsStream()
     override suspend fun recordPayment(payment: com.tribetails.auntieos.web.data.Payment) = client.recordPayment(payment)
 

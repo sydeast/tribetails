@@ -46,6 +46,23 @@ interface AuntieDataSource {
     fun sessionsStream(): Flow<FirestoreResult<List<KinCareSession>>>
 
     /**
+     * #2367: one household's `kin_care_sessions`, the per-household read Bookings
+     * looks a whole booking up in once its request has left the queue. Default
+     * filters [sessionsStream] so existing test fakes keep working; the
+     * FirestoreClient-backed sources override it with the household read.
+     */
+    fun sessionsForKinfolkStream(kinfolkId: String): Flow<FirestoreResult<List<KinCareSession>>> =
+        kotlinx.coroutines.flow.flow {
+            sessionsStream().collect { res ->
+                when (res) {
+                    is FirestoreResult.Data -> emit(FirestoreResult.Data(res.value.filter { it.kinfolkId == kinfolkId }))
+                    is FirestoreResult.Error -> emit(FirestoreResult.Error(res.message))
+                    FirestoreResult.Loading -> emit(FirestoreResult.Loading)
+                }
+            }
+        }
+
+    /**
      * Live single session for [sessionId] (carries the persisted [GpsSummary]).
      * Default derives off [sessionsStream] so existing test fakes that only
      * provide a sessions list keep working; the production data source can
