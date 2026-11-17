@@ -113,6 +113,7 @@ fun InvoicesScreen(
                     data = controller.data,
                     error = error,
                     payingId = controller.paying,
+                    checkingId = controller.checkingPayment,
                     onPay = { controller.startPay(it) },
                     onOpenInvoice = onOpenInvoice,
                     viewerUid = viewerUid,
@@ -210,6 +211,7 @@ private fun OpenInvoicesCard(
     data: com.kinfolk.portal.portal.InvoicesResult?,
     error: String?,
     payingId: String?,
+    checkingId: String?,
     onPay: (Invoice) -> Unit,
     onOpenInvoice: (String) -> Unit,
     viewerUid: String?,
@@ -232,6 +234,7 @@ private fun OpenInvoicesCard(
                     OpenInvoiceRow(
                         invoice = inv,
                         paying = payingId == inv.id,
+                        checking = checkingId == inv.id,
                         onPay = { onPay(inv) },
                         onClick = { onOpenInvoice(inv.id) },
                         viewerUid = viewerUid,
@@ -272,6 +275,7 @@ private fun PaidHistoryCard(
 private fun OpenInvoiceRow(
     invoice: Invoice,
     paying: Boolean,
+    checking: Boolean,
     onPay: () -> Unit,
     onClick: () -> Unit,
     viewerUid: String?,
@@ -315,11 +319,16 @@ private fun OpenInvoiceRow(
         // `offersPayment`, not `isPayable` alone: a paid invoice takes no payment
         // whatever its status label says (operator ruling 2026-09-27, docket Q5).
         if (offersPayment(invoice)) {
+            // #2366: held back while a payment just made is still landing.
             KinButton(
-                label = if (paying) "Opening checkout…" else "Pay ${formatUsd(invoice.amountDue)}",
+                label = when {
+                    checking -> "Checking payment…"
+                    paying -> "Opening checkout…"
+                    else -> "Pay ${formatUsd(invoice.amountDue)}"
+                },
                 onClick = onPay,
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !paying && invoice.amountDue > 0.0,
+                enabled = !paying && !checking && invoice.amountDue > 0.0,
             )
         }
     }

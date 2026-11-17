@@ -168,8 +168,8 @@ async function portalIds(): Promise<string[]> {
 const payArgs = (invoiceId: string) => ({
   invoiceId,
   kinfolkId: 'fam1',
-  successUrl: 'https://portal.example/invoices/x',
-  cancelUrl: 'https://portal.example/invoices/x',
+  successUrl: 'https://kinfolk.tribetails.com/invoices/x',
+  cancelUrl: 'https://kinfolk.tribetails.com/invoices/x',
 });
 
 describe('#1906 an unsent draft invoice is the office\'s alone', () => {
