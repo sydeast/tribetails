@@ -68,6 +68,7 @@
 .thread .thlabel { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--navy-muted); margin-bottom: 18px; display: flex; align-items: center; gap: 8px; }
 .cmt { display: flex; gap: 13px; padding: 4px 0 18px; }
 .cmt .cav { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; font-family: var(--serif); font-size: 17px; color: #fff; flex: 0 0 auto; box-shadow: var(--shadow-card); }
+.cmt .cav.me { background: var(--tribe-grad); box-shadow: var(--shadow-warm); }
 .cmt .cav.c1 { background: var(--orange-pink); } .cmt .cav.c2 { background: var(--teal-purple); } .cmt .cav.c3 { background: linear-gradient(to bottom right, var(--purple), var(--coral)); }
 .cmt .cbody { flex: 1; min-width: 0; }
 .cmt .chead { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }

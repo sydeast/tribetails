@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { BOOKINGS_QUERY, type BookingEntry } from '../api/bookings';
 import {
@@ -27,6 +27,7 @@ import { BookingDetailModal } from '../components/BookingDetailModal';
 import { BookingStatusActions, type BookingActionKind } from './BookingActions';
 import { NewBookingDialog } from '../components/NewBookingDialog';
 import { VisitRequestsSection, type FocusRequest } from '../components/VisitRequestsSection';
+import { BookingBatchFocus } from '../components/BookingBatchFocus';
 import { KinRemovalRequestsSection } from '../components/KinRemovalRequests';
 import {
   approveBooking,
@@ -368,6 +369,17 @@ export function Bookings({
   // History is open like every other section, and grows a page at a time. It
   // used to be closed behind "Show N finished", which the mock does not do.
   const [historyShown, setHistoryShown] = useState(HISTORY_PAGE_SIZE);
+  /**
+   * #2367: the booking a notice opened, once the request queue has said it is
+   * no longer waiting; `BookingBatchFocus` finds its visits or says it is gone.
+   * `focusedIds` are those visits, highlighted on the list until dismissed.
+   */
+  const [batchFocus, setBatchFocus] = useState<FocusRequest | null>(null);
+  const [focusedIds, setFocusedIds] = useState<ReadonlySet<string>>(new Set());
+  function dismissBatchFocus() {
+    setBatchFocus(null);
+    setFocusedIds(new Set());
+  }
   // The overlay's own selection state, used only when no external
   // onSelectBooking is supplied (see BookingsProps's doc above). Seeded from the
   // deep link so `/bookings?bookingId=<id>` opens the sheet on arrival.
@@ -728,7 +740,17 @@ export function Bookings({
           compact banner rather than an open list of request cards, because the
           mock puts the three status sections directly under the heading and a
           queue that is usually empty was pushing the first one to y=580. */}
-      <VisitRequestsSection refreshKey={requestsRefresh} {...(focusRequest ? { focusRequest } : {})} />
+      <VisitRequestsSection
+        refreshKey={requestsRefresh}
+        {...(focusRequest ? { focusRequest, onFocusNotWaiting: () => setBatchFocus(focusRequest) } : {})}
+      />
+      {batchFocus !== null && (
+        <BookingBatchFocus
+          focus={batchFocus}
+          onHighlight={(ids) => setFocusedIds(new Set(ids))}
+          onDismiss={dismissBatchFocus}
+        />
+      )}
       {/* #1408: the other household request waiting on the office. */}
       <KinRemovalRequestsSection {...(kinRemovalRequestId ? { focusRequestId: kinRemovalRequestId } : {})} />
       {outcome !== null && <BulkOutcomeBanner outcome={outcome} onDismiss={() => setOutcome(null)} />}
@@ -783,6 +805,7 @@ export function Bookings({
               selecting={selecting}
               selectedIds={selectedIds}
               onTogglePick={toggleRow}
+              focusedIds={focusedIds}
             />
           ))
         }
@@ -913,6 +936,8 @@ interface BookingSectionBlockProps {
   selecting: boolean;
   selectedIds: ReadonlySet<string>;
   onTogglePick: (bookingId: string) => void;
+  /** #2367: the visits of the booking a notice opened, highlighted. */
+  focusedIds: ReadonlySet<string>;
 }
 
 /**
@@ -951,11 +976,15 @@ function BookingSectionBlock({
   selecting,
   selectedIds,
   onTogglePick,
+  focusedIds,
 }: BookingSectionBlockProps) {
   const headingId = `bookings-section-${section.key}`;
   // Non-null: SECTIONS is what produced this section's key.
   const def = SECTIONS.find((s) => s.key === section.key)!;
-  const shown = limit === null ? section.rows : section.rows.slice(0, limit);
+  // #2367: a highlighted visit is never left behind "Load more".
+  const lastFocused = section.rows.reduce((last, r, i) => (focusedIds.has(r._id) ? i : last), -1);
+  const drawn = limit === null ? null : Math.max(limit, lastFocused + 1);
+  const shown = drawn === null ? section.rows : section.rows.slice(0, drawn);
   const remaining = section.rows.length - shown.length;
 
   return (
@@ -982,6 +1011,7 @@ function BookingSectionBlock({
               selecting={selecting}
               picked={selectedIds.has(v.entry._id)}
               onTogglePick={onTogglePick}
+              focused={focusedIds.has(v.entry._id)}
             />
           ))}
         </ul>
@@ -1226,6 +1256,8 @@ interface BookingRowProps {
   selecting: boolean;
   picked: boolean;
   onTogglePick: (bookingId: string) => void;
+  /** #2367: one of the visits of the booking a notice opened. */
+  focused?: boolean;
 }
 
 /**
@@ -1288,8 +1320,17 @@ function BookingRow({
   selecting,
   picked,
   onTogglePick,
+  focused = false,
 }: BookingRowProps) {
   const { entry, state } = view;
+  // #2367: the first highlighted visit is brought into view once.
+  const rowRef = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (!focused) return;
+    const el = rowRef.current;
+    if (el === null || el.ownerDocument.querySelector('.bookings__row--focused') !== el) return;
+    el.scrollIntoView?.({ block: 'center' });
+  }, [focused]);
   const info = bookingStateInfo(state);
   // `?? ''` on every field read, matching sessionFormat.ts's convention.
   // BookingEntry is a CAST over raw Firestore data, not a validation of it, and
@@ -1351,7 +1392,11 @@ function BookingRow({
   // names sit on the `className` line itself: `tokenUsage.test.ts` discovers
   // who wears `lift` by scanning exactly those lines.
   return (
-    <li className={['bookings__row', picked && 'bookings__row--picked', onSelectBooking && 'lift'].filter(Boolean).join(' ')}>
+    <li
+      ref={rowRef}
+      className={['bookings__row', picked && 'bookings__row--picked', focused && 'bookings__row--focused', onSelectBooking && 'lift'].filter(Boolean).join(' ')}
+      {...(focused ? { 'aria-current': 'true' as const } : {})}
+    >
       {selecting && (
         <label className="bookings__row-pick">
           <input

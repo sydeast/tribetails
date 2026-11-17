@@ -1233,6 +1233,23 @@ private fun CommentThreadSection(
     }
 }
 
+/**
+ * Who wrote a comment, for the row's name and avatar. Staff read "Auntie". A
+ * household reply and a guest note read by the name the server resolved (#1923),
+ * else the guest's typed name, else the role word ("Kinfolk" / "Guest"), which
+ * is a stand-in only where no name is known. Same label as the admin web and the
+ * desktop console. Pure; unit-tested.
+ */
+internal fun kinTaleCommentAuthorLabel(comment: KinTaleCommentsRepository.KinTaleComment): String {
+    val resolved = comment.authorDisplayName?.trim().orEmpty()
+    val typed = comment.guestName?.trim().orEmpty()
+    return when (comment.authorRole) {
+        "admin" -> "Auntie"
+        "guest" -> resolved.ifEmpty { typed.ifEmpty { "Guest" } }
+        else -> resolved.ifEmpty { typed.ifEmpty { "Kinfolk" } }
+    }
+}
+
 /** One comment row: avatar + author label + body + relative time + a Reply affordance. */
 @Composable
 private fun CommentRowView(
@@ -1242,11 +1259,7 @@ private fun CommentRowView(
 ) {
     val c = AuntieTheme.colors
     val comment = row.comment
-    val authorLabel = when (comment.authorRole) {
-        "admin" -> "Auntie"
-        "guest" -> comment.guestName?.takeIf { it.isNotBlank() } ?: "Guest"
-        else -> "Kinfolk"
-    }
+    val authorLabel = kinTaleCommentAuthorLabel(comment)
     Row(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier

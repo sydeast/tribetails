@@ -30,6 +30,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +51,7 @@ import com.kinfolk.portal.theme.LocalKinfolkTypography
 import com.kinfolk.portal.util.relativeTime
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 private const val PAGE_SIZE = 50
@@ -67,6 +71,11 @@ private const val PAGE_SIZE = 50
  *
  * Every wait has a cue: the spinner while the first page is out, the button's
  * own label while an older page is.
+ *
+ * #2328: ONLY A FIRST LOAD THAT FAILED TAKES THE CARD. Once rows are on screen
+ * they stay there: a re-read that fails says so in one quiet line with Try
+ * again, and a failed "Show older" says so next to the button, which asks
+ * again. The web portal does the same.
  */
 @Composable
 fun NotificationsListScreen(
@@ -103,6 +112,17 @@ fun NotificationsListScreen(
     /** ...and counts again when the server refuses the read. */
     onReadRefused: (notificationId: String) -> Unit = {},
     /**
+     * #2329: the server took the read. The bell then believes its next
+     * snapshot, so a notice the office marked unread again in between counts.
+     */
+    onReadConfirmed: (notificationId: String) -> Unit = {},
+    /**
+     * #2329: where the read is sent from. A tap opens another screen, which
+     * ends this screen's own scope and with it the wait for the answer, so the
+     * app hands over a scope that outlives the list. Null: this screen's own.
+     */
+    readScope: CoroutineScope? = null,
+    /**
      * The entry a tapped push opened the list for: a push whose line was cut,
      * or whose notice carries the office's note, is read whole here. That row
      * is marked and brought into view. An id that is not among this
@@ -123,12 +143,16 @@ fun NotificationsListScreen(
     // #1833: true once "Show older" has added a page; the paging cursor then
     // belongs to the oldest row on screen and a re-read of the newest page must not move it.
     var pagedOlder by remember { mutableStateOf(false) }
-
-    suspend fun load(before: Long?) {
+    // #2328: the last re-read of the newest page failed (rows stay), a re-read
+    // asked for with Try again is out, and the last "Show older" failed.
+    var refreshFailed by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
+    var olderFailed by remember { mutableStateOf(false) }
+    suspend fun loadFirst() {
         try {
-            val page = portalApi.listMyNotifications(kinfolkId = kinfolkId, limit = PAGE_SIZE, before = before)
-            items = if (before == null) page.items else items.orEmpty() + page.items
-            pagedOlder = before != null
+            val page = portalApi.listMyNotifications(kinfolkId = kinfolkId, limit = PAGE_SIZE, before = null)
+            items = page.items
+            pagedOlder = false
             hasMore = page.hasMore
             nextBefore = page.nextBefore
             unread = page.unreadCount
@@ -140,21 +164,33 @@ fun NotificationsListScreen(
             error = t.message ?: "Could not load notifications."
         }
     }
-
-    LaunchedEffect(kinfolkId) { load(null) }
-    // #1833: a row arrived or changed while the list is open. Quiet on
-    // purpose: the rows stay on screen while the newest page is re-read, and a
-    // failed re-read leaves them as they were (the first load reports its own).
-    var seenRevision by remember { mutableStateOf(liveRevision) }
-    LaunchedEffect(liveRevision) {
-        if (liveRevision == seenRevision) return@LaunchedEffect
-        seenRevision = liveRevision
-        if (items == null) return@LaunchedEffect
+    suspend fun loadOlder() {
+        try {
+            val page = portalApi.listMyNotifications(kinfolkId = kinfolkId, limit = PAGE_SIZE, before = nextBefore)
+            items = items.orEmpty() + page.items
+            pagedOlder = true
+            hasMore = page.hasMore
+            nextBefore = page.nextBefore
+            unread = page.unreadCount
+            onUnreadCount(page.unreadCount)
+            olderFailed = false
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) {
+            // #2328: the rows on screen stay, and the button asks again.
+            olderFailed = true
+        }
+    }
+    // #1833: the newest page read again while the list is open. Quiet on
+    // purpose: the rows stay on screen while it is out. #2328: a failed
+    // re-read leaves them as they were and says so in one line.
+    suspend fun refreshNewest() {
+        if (items == null) return
         try {
             val page = portalApi.listMyNotifications(kinfolkId = kinfolkId, limit = PAGE_SIZE, before = null)
             // Read what is on screen now, not what was there before the call:
             // "Show older" may have added a page while this one was in flight.
-            val shown = items ?: return@LaunchedEffect
+            val shown = items ?: return
             if (pagedOlder || loadingMore) {
                 // The older pages stay underneath (or are on their way, asked
                 // for with the cursor already held), and the cursor stays with
@@ -170,12 +206,23 @@ fun NotificationsListScreen(
             }
             unread = page.unreadCount
             onUnreadCount(page.unreadCount)
+            refreshFailed = false
+            // The list is current again, as the web's is after a good re-read.
+            olderFailed = false
         } catch (c: CancellationException) {
             throw c
         } catch (_: Throwable) {
+            refreshFailed = true
         }
     }
-
+    LaunchedEffect(kinfolkId) { loadFirst() }
+    // #1833: a row arrived or changed while the list is open.
+    var seenRevision by remember { mutableStateOf(liveRevision) }
+    LaunchedEffect(liveRevision) {
+        if (liveRevision == seenRevision) return@LaunchedEffect
+        seenRevision = liveRevision
+        refreshNewest()
+    }
     fun open(item: NotificationItem) {
         if (item.unread) {
             val readAt = nowMs()
@@ -183,9 +230,10 @@ fun NotificationsListScreen(
             unread = (unread - 1).coerceAtLeast(0)
             onUnreadCount(unread)
             onReadLocally(item.id)
-            scope.launch {
+            (readScope ?: scope).launch {
                 try {
                     portalApi.markNotificationRead(item.id)
+                    onReadConfirmed(item.id)
                 } catch (c: CancellationException) {
                     throw c
                 } catch (_: Throwable) {
@@ -225,8 +273,21 @@ fun NotificationsListScreen(
             Column {
                 val list = items
                 val failure = error
+                if (list != null && refreshFailed) {
+                    RefreshFailedLine(refreshing = refreshing) {
+                        scope.launch {
+                            refreshing = true
+                            try {
+                                refreshNewest()
+                            } finally {
+                                refreshing = false
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(KinfolkSpacing.s))
+                }
                 when {
-                    failure != null -> Text(
+                    list == null && failure != null -> Text(
                         failure,
                         style = type.sansBody.copy(color = KinfolkBrand.SnuggleCoral),
                         modifier = Modifier.testTag("notificationsError"),
@@ -254,6 +315,14 @@ fun NotificationsListScreen(
                         )
                     }
                 }
+                if (olderFailed && list != null) {
+                    Spacer(Modifier.height(KinfolkSpacing.m))
+                    Text(
+                        "Could not load older notifications.",
+                        style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
+                        modifier = Modifier.testTag("notificationsOlderFailed").semantics { liveRegion = LiveRegionMode.Assertive },
+                    )
+                }
                 if (hasMore) {
                     Spacer(Modifier.height(KinfolkSpacing.m))
                     KinButton(
@@ -264,7 +333,7 @@ fun NotificationsListScreen(
                             scope.launch {
                                 loadingMore = true
                                 try {
-                                    load(nextBefore)
+                                    loadOlder()
                                 } finally {
                                     loadingMore = false
                                 }
@@ -277,6 +346,41 @@ fun NotificationsListScreen(
     }
 }
 
+/**
+ * #2328: a re-read that failed while rows are on screen. One muted line and a
+ * Try again that shows its own wait; the rows below stay as they were.
+ */
+@Composable
+private fun RefreshFailedLine(refreshing: Boolean, onRetry: () -> Unit) {
+    val type = LocalKinfolkTypography.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.testTag("notificationsRefreshFailed").semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Text(
+            "Could not check for new notifications.",
+            style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted),
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Spacer(Modifier.width(KinfolkSpacing.s))
+        if (refreshing) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("notificationsRefreshing")) {
+                KinSpinner(size = 14.dp)
+                Spacer(Modifier.width(4.dp))
+                Text("Checking…", style = type.sansMeta.copy(color = KinfolkBrand.NavyMuted))
+            }
+        } else {
+            Text(
+                "Try again",
+                style = type.sansMeta.copy(color = KinfolkBrand.Navy, fontWeight = FontWeight.SemiBold),
+                modifier = Modifier
+                    .clickable(onClickLabel = "Check for new notifications again", role = Role.Button) { onRetry() }
+                    .padding(vertical = 4.dp)
+                    .testTag("notificationsRefreshRetry"),
+            )
+        }
+    }
+}
 /**
  * #1833: the newest page read again, laid over what is on screen. The fresh
  * rows come first, as the server ordered them; rows already shown that are

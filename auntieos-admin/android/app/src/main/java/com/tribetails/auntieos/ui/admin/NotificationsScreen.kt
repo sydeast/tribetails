@@ -390,7 +390,8 @@ fun NotificationsScreen(
                                         viewModel.toggleNotificationRead(entry.id, isNotificationUnread(entry))
                                     },
                                     onOpen = { entry ->
-                                        val request = requestCardOf(entry, pendingKeys)
+                                        // #2367: a whole-booking notice opens on Bookings too.
+                                        val request = requestCardOf(entry, pendingKeys) ?: wholeBookingOf(entry)
                                         if (request != null && onOpenRequest != null) {
                                             onOpenRequest(request.first, request.second)
                                         } else {
@@ -1119,7 +1120,15 @@ internal fun applicableNotificationActions(
     return base.copy(
         // #1003: the unapplied-payment notice opens the household, so it can
         // open whenever the household is known, whatever its target says.
-        canOpen = base.canOpen || unappliedPaymentNotice(entry) != null || kinRemovalNoticeRequestId(entry) != null,
+        // #2367: a whole booking opens on Bookings only when it names its
+        // household and both ids are shaped like ids; any booking target whose
+        // id is not shaped like one opens nothing.
+        canOpen = when {
+            unappliedPaymentNotice(entry) != null || kinRemovalNoticeRequestId(entry) != null -> true
+            isWholeBookingTarget(entry) -> wholeBookingOf(entry) != null
+            type == "booking" -> base.canOpen && com.tribetails.auntieos.ui.pushId(targetId).isNotEmpty()
+            else -> base.canOpen
+        },
         canApproveDeny = isPendingBookingRequest,
         canCreateQuote = quoteEligible,
         outcome = outcome,
@@ -1151,9 +1160,42 @@ internal fun requestCardOf(entry: NotificationEntry, pendingRequests: Set<String
     val kinfolkId = notificationKinfolkId(entry)
     val batchId = entry.targetId.trim()
     if (kinfolkId.isBlank() || batchId.isBlank()) return null
+    // #2367: an id not shaped like an id never reaches the Bookings focus key.
+    if (com.tribetails.auntieos.ui.pushId(kinfolkId).isEmpty() || com.tribetails.auntieos.ui.pushId(batchId).isEmpty()) return null
     val stamped = requestOutcomeLabel(entry) != null
     val waiting = pendingRequests?.contains(incomingRequestKey(kinfolkId, batchId)) == true
     if (!stamped && pendingRequests != null && !waiting) return null
+    return kinfolkId to batchId
+}
+
+/**
+ * #2367: the notice targets a WHOLE BOOKING, not one visit: a `booking` target
+ * whose id is the booking's own batch id (`data.batchId`). The server sends
+ * these for `kincare.requested`, `kincare.booking.confirm`,
+ * `kincare.request.declined` and `assignment.assigned`; a visit notice names
+ * the visit (`data.visitId`) instead. A batch id is no visit, so it never
+ * goes into the visit route (`vis_{batchId}` matches nothing). Pure;
+ * unit-tested.
+ */
+internal fun isWholeBookingTarget(entry: NotificationEntry): Boolean {
+    if (entry.targetType.trim().lowercase() != "booking") return false
+    val batchId = dataString(entry, "batchId")
+    return batchId.isNotEmpty() && batchId == entry.targetId.trim()
+}
+
+/**
+ * #2367: the household and booking a whole-booking notice opens on Bookings,
+ * the same place a `kincare.requested` row's Open goes (#2028): its request
+ * card while it waits, else that booking's visits, highlighted, or a line that
+ * it is no longer available. Null when the notice is not a whole booking, or
+ * names no household, or either id is not shaped like an id ([pushId]): then
+ * nothing opens rather than a route built from it. Pure; unit-tested.
+ */
+internal fun wholeBookingOf(entry: NotificationEntry): Pair<String, String>? {
+    if (!isWholeBookingTarget(entry)) return null
+    val kinfolkId = com.tribetails.auntieos.ui.pushId(notificationKinfolkId(entry))
+    val batchId = com.tribetails.auntieos.ui.pushId(entry.targetId)
+    if (kinfolkId.isEmpty() || batchId.isEmpty()) return null
     return kinfolkId to batchId
 }
 

@@ -60,6 +60,55 @@ fun notificationIsRead(entry: NotificationEntry): Boolean = entry.isRead
 fun visitRequestKey(kinfolkId: String, batchId: String): String = "${kinfolkId.trim()}/${batchId.trim()}"
 
 /**
+ * #2367: the shape every id must have before it goes into a route, a screen or
+ * a [visitRequestKey]: 1 to 200 of `A-Z a-z 0-9 _ . : ~ + -`, and not "." or
+ * "..". The same rule as Android's `pushId` (ui/PushOpen.kt). A slash, a `?`,
+ * a space or a blank never passes, so a `household/request` key can always be
+ * split back into its two ids. Checks the trimmed id. Pure; unit-tested.
+ */
+fun isSafeNoticeId(id: String): Boolean {
+    val t = id.trim()
+    return t != "." && t != ".." && SAFE_NOTICE_ID.matches(t)
+}
+
+private val SAFE_NOTICE_ID = Regex("^[A-Za-z0-9_.:~+-]{1,200}$")
+
+/**
+ * #2367: the household and request id a [visitRequestKey] was built from, or
+ * null when the key is not exactly two ids that pass [isSafeNoticeId]. Pure.
+ */
+fun parseVisitRequestKey(key: String?): Pair<String, String>? {
+    val parts = key?.trim()?.split('/') ?: return null
+    if (parts.size != 2) return null
+    val (kinfolkId, batchId) = parts
+    if (!isSafeNoticeId(kinfolkId) || !isSafeNoticeId(batchId)) return null
+    return kinfolkId.trim() to batchId.trim()
+}
+
+/**
+ * #2367: the household and booking a WHOLE-BOOKING notice names, or null when
+ * [entry] is not one. A whole booking is a `booking` target whose `data.batchId`
+ * is its targetId (`kincare.requested`, `kincare.booking.confirm`,
+ * `kincare.request.declined`, `assignment.assigned`), with a household id, both
+ * ids passing [isSafeNoticeId]. Its targetId is a request id, not a visit id, so
+ * the visit route built `vis_{batchId}`, which matches no KinCare. Pure.
+ */
+fun wholeBookingTarget(entry: NotificationEntry): Pair<String, String>? {
+    if (!isBatchTarget(entry)) return null
+    val batchId = entry.dataString("batchId")
+    val kinfolkId = notificationRequestKinfolkId(entry)
+    if (!isSafeNoticeId(kinfolkId) || !isSafeNoticeId(batchId)) return null
+    return kinfolkId to batchId
+}
+
+/** #2367: a `booking` target whose targetId is its `data.batchId`: it names a whole booking, not a visit. */
+private fun isBatchTarget(entry: NotificationEntry): Boolean {
+    if (entry.targetType.trim().lowercase() != "booking") return false
+    val batchId = entry.dataString("batchId")
+    return batchId.isNotEmpty() && batchId == entry.targetId.trim()
+}
+
+/**
  * #2069: every request still waiting, read off the live incoming-requests queue
  * (collectionGroup kinCares, status == requested) that Bookings lists. Pure.
  */
@@ -114,10 +163,15 @@ fun applicableActions(entry: NotificationEntry, pending: Set<String>? = null): L
     actions += if (notificationIsRead(entry)) NotificationAction.MarkUnread
     else NotificationAction.MarkRead
 
-    val hasTarget = entry.targetId.isNotBlank() &&
-        entry.targetType.trim().lowercase() in NAVIGABLE_TARGET_TYPES
-    val route = notificationOpenRoute(entry)
-    if (hasTarget || route is NotificationOpenRoute.UnappliedPayment || route is NotificationOpenRoute.VisitRequest) {
+    // #2367: Open shows exactly when Open would land somewhere. A booking id that
+    // fails [isSafeNoticeId] opens nothing, so it offers no button either.
+    val opens = when (val route = notificationOpenRoute(entry)) {
+        is NotificationOpenRoute.Target ->
+            notificationTargetScreen(route.targetType, route.targetId) != NotificationTargetScreen.None
+        is NotificationOpenRoute.UnappliedPayment, is NotificationOpenRoute.VisitRequest -> true
+        NotificationOpenRoute.None -> false
+    }
+    if (opens) {
         actions += NotificationAction.OpenTarget
     }
 
@@ -268,7 +322,8 @@ fun notificationTargetScreen(targetType: String, targetId: String): Notification
         "invoice" -> NotificationTargetScreen.Invoice(id)
         "kintale" -> NotificationTargetScreen.KinTale(id)
         "kinfolk" -> NotificationTargetScreen.Household(id)
-        "booking" -> NotificationTargetScreen.Visit(sessionIdForVisit(id))
+        // #2367: an id with a slash, a `?` or the like names no visit; open nothing.
+        "booking" -> if (isSafeNoticeId(id)) NotificationTargetScreen.Visit(sessionIdForVisit(id)) else NotificationTargetScreen.None
         else -> NotificationTargetScreen.None
     }
 }
@@ -290,6 +345,9 @@ sealed class NotificationOpenRoute {
      * old booking route had nothing to open.
      */
     data class VisitRequest(val kinfolkId: String, val batchId: String) : NotificationOpenRoute()
+
+    /** #2367: a booking target whose ids fail [isSafeNoticeId]: Open goes nowhere. */
+    data object None : NotificationOpenRoute()
 }
 
 private fun NotificationEntry.dataString(key: String): String =
@@ -300,10 +358,28 @@ private fun NotificationEntry.dataString(key: String): String =
  * its data is overridden (its server targetType is `invoice`, but the decision
  * lives on the household); the notice's `stripeEventId` IS the paymentId. Every
  * other key keeps the targetType / targetId route. Pure; unit-tested.
+ *
+ * #2367: a whole-booking notice ([wholeBookingTarget]) opens Bookings on that
+ * booking, the same place a `kincare.requested` row goes, checked before the
+ * target table. A booking target whose ids fail [isSafeNoticeId] opens nothing.
  */
 fun notificationOpenRoute(entry: NotificationEntry): NotificationOpenRoute {
+    wholeBookingTarget(entry)?.let { (kinfolkId, batchId) ->
+        return NotificationOpenRoute.VisitRequest(kinfolkId, batchId)
+    }
+    // A whole booking naming its household, with an id that is not a plain id:
+    // never a route built from it (the visit route would only build `vis_{batchId}`).
+    if (isBatchTarget(entry) && notificationRequestKinfolkId(entry).isNotEmpty()) {
+        return NotificationOpenRoute.None
+    }
     if (notificationRequestKey(entry) != null) {
-        return NotificationOpenRoute.VisitRequest(notificationRequestKinfolkId(entry), entry.targetId.trim())
+        val kinfolkId = notificationRequestKinfolkId(entry)
+        val batchId = entry.targetId.trim()
+        if (!isSafeNoticeId(kinfolkId) || !isSafeNoticeId(batchId)) return NotificationOpenRoute.None
+        return NotificationOpenRoute.VisitRequest(kinfolkId, batchId)
+    }
+    if (entry.targetType.trim().lowercase() == "booking" && !isSafeNoticeId(entry.targetId)) {
+        return NotificationOpenRoute.None
     }
     if (entry.key.trim() == UNAPPLIED_PAYMENT_NOTICE_KEY) {
         val kinfolkId = entry.dataString("kinfolkId")

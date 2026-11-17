@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   badgeRowFromDoc,
   bellCount,
+  confirmLocalRead,
   countUnreadRows,
   liveUnreadOf,
   markReadLocally,
@@ -187,6 +188,109 @@ describe('the bell store (#1833)', () => {
   });
 });
 
+/**
+ * #2329: the bell undercounted by one until a reload when the office put a
+ * tapped notice back on the list before the read reached this browser (the
+ * listener only ever saw the row unread, so the tap kept subtracting), and an
+ * offline start drew 0 from the empty cache over the count the portal opened
+ * with.
+ */
+describe('the bell store, a tap the office answered first, and the cache (#2329)', () => {
+  const unread = (id: string, issuedAtMs: number | null = 100): BadgeRow => ({ id, unread: true, archived: false, tribeId: 'fam1', issuedAtMs });
+  const read = (id: string, issuedAtMs: number | null = 100): BadgeRow => ({ id, unread: false, archived: false, tribeId: 'fam1', issuedAtMs });
+  beforeEach(() => resetUnreadBadge());
+  it('reads the issue time off createdAt, a Timestamp or a number, and null when there is none', () => {
+    expect(badgeRowFromDoc('a', { createdAt: { toMillis: () => 1_700_000_000_123 } }).issuedAtMs).toBe(1_700_000_000_123);
+    expect(badgeRowFromDoc('a', { createdAt: 42 }).issuedAtMs).toBe(42);
+    expect(badgeRowFromDoc('a', {}).issuedAtMs).toBeNull();
+    expect(badgeRowFromDoc('a', { createdAt: 'yesterday' }).issuedAtMs).toBeNull();
+  });
+  it('a tap and then its read: one less, and no jump in between', () => {
+    setLiveRows([unread('a'), unread('b')]);
+    markReadLocally('a');
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+    setLiveRows([read('a'), unread('b')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+    confirmLocalRead('a');
+    setLiveRows([read('a'), unread('b')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+  });
+  it('a tap the server took, and then a snapshot that still reads unread, counts the row again', () => {
+    setLiveRows([unread('a'), unread('b')]);
+    markReadLocally('a');
+    confirmLocalRead('a');
+    // The office marked it unread again before this browser saw the read.
+    setLiveRows([unread('a'), unread('b')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
+  });
+  it("a tap the server took stays off the bell through a cached snapshot, and counts again on the server's", () => {
+    setLiveRows([unread('a'), unread('b')]);
+    markReadLocally('a');
+    confirmLocalRead('a');
+    // The connection dropped before the read came back: the cache still has it unread.
+    setLiveRows([unread('a'), unread('b')], { fromCache: true });
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+    // The server says it is unread: the office marked it again.
+    setLiveRows([unread('a'), unread('b')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
+  });
+  it('a tap the server has not answered stays off the bell while the row still reads unread', () => {
+    setLiveRows([unread('a'), unread('b')]);
+    markReadLocally('a');
+    setLiveRows([unread('new'), unread('a'), unread('b')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
+  });
+  it('the office issuing the notice again counts it at once, even before the server answers the tap', () => {
+    setLiveRows([unread('arrived', 100), unread('b')]);
+    markReadLocally('arrived');
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+    // A real arrival after an undone one: unread again, stamped again.
+    setLiveRows([unread('arrived', 900), unread('b')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
+    // The read the tap sent lands afterwards: nothing is taken off twice.
+    confirmLocalRead('arrived');
+    setLiveRows([read('arrived', 900), unread('b')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+  });
+  it('a tap before the feed held the row takes the issue from the first snapshot that does', () => {
+    markReadLocally('a');
+    setLiveRows([unread('a', 100), unread('b')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+    setLiveRows([unread('a', 900), unread('b')]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
+  });
+  it('a refused read still puts the row back, answered or not', () => {
+    setLiveRows([unread('a'), unread('b')]);
+    markReadLocally('a');
+    undoLocalRead('a');
+    confirmLocalRead('a');
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
+  });
+  it('an empty snapshot from the cache before the server has answered is not taken: the bell keeps its opening count', () => {
+    expect(setLiveRows([], { fromCache: true })).toBe(false);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'waiting' });
+    expect(bellCount(liveUnreadOf('fam1'), 6)).toBe(6);
+    // Back online: the server's answer is taken, whatever it says.
+    expect(setLiveRows([unread('a'), unread('b')])).toBe(true);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 2 });
+  });
+  it('the server answering with nothing unread is taken, and is 0', () => {
+    setLiveRows([], { fromCache: true });
+    setLiveRows([]);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 0 });
+  });
+  it('once the server has answered, a snapshot from the cache (the connection dropped) is taken', () => {
+    setLiveRows([unread('a'), unread('b')]);
+    expect(setLiveRows([unread('a'), read('b')], { fromCache: true })).toBe(true);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'live', count: 1 });
+  });
+  it('a new sign-in waits for the server again', () => {
+    setLiveRows([unread('a')]);
+    resetUnreadBadge();
+    expect(setLiveRows([], { fromCache: true })).toBe(false);
+    expect(liveUnreadOf('fam1')).toEqual({ kind: 'waiting' });
+  });
+});
 describe('bellCount (#1833)', () => {
   it('is the live count once there is one, 0 included', () => {
     expect(bellCount({ kind: 'live', count: 7 }, 6)).toBe(7);

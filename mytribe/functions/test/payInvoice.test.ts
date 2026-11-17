@@ -92,7 +92,7 @@ const BILLING_FULL_SECONDARY = {
   },
 };
 const PRIMARY_MEMBER = { role: 'PRIMARY', status: 'ACTIVE', permissions: {} };
-const payData = { invoiceId: 'inv-1', successUrl: 'https://x/ok', cancelUrl: 'https://x/cancel' };
+const payData = { invoiceId: 'inv-1', successUrl: 'https://kinfolk.tribetails.com/invoices/inv-1?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/inv-1' };
 
 describe('payInvoice billing-access gate (D-2026-09-28-BILLING-ACCESS-PAYS)', () => {
   it('DENIES a secondary without billing access, logs the refusal, and never creates a Checkout Session', async () => {
@@ -198,7 +198,7 @@ describe('payInvoiceHandler', () => {
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await expect(
       payInvoiceHandler({
-        data: { invoiceId: '1', successUrl: 'https://x', cancelUrl: 'https://y' },
+        data: { invoiceId: '1', successUrl: 'https://kinfolk.tribetails.com/invoices/x?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/x' },
         auth: undefined,
       } as any),
     ).rejects.toMatchObject({ code: 'unauthenticated' });
@@ -210,7 +210,7 @@ describe('payInvoiceHandler', () => {
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await expect(
       payInvoiceHandler({
-        data: { invoiceId: 'missing', successUrl: 'https://x', cancelUrl: 'https://y' },
+        data: { invoiceId: 'missing', successUrl: 'https://kinfolk.tribetails.com/invoices/x?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/x' },
         auth: { uid: 'u1' },
       } as any),
     ).rejects.toMatchObject({ code: 'not-found' });
@@ -227,7 +227,7 @@ describe('payInvoiceHandler', () => {
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await expect(
       payInvoiceHandler({
-        data: { invoiceId: 'inv-9', successUrl: 'https://x', cancelUrl: 'https://y' },
+        data: { invoiceId: 'inv-9', successUrl: 'https://kinfolk.tribetails.com/invoices/x?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/x' },
         auth: { uid: 'u1' },
       } as any),
     ).rejects.toMatchObject({ code: 'permission-denied' });
@@ -244,7 +244,7 @@ describe('payInvoiceHandler', () => {
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await expect(
       payInvoiceHandler({
-        data: { invoiceId: 'inv-paid', successUrl: 'https://x', cancelUrl: 'https://y' },
+        data: { invoiceId: 'inv-paid', successUrl: 'https://kinfolk.tribetails.com/invoices/x?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/x' },
         auth: { uid: 'u1' },
       } as any),
     ).rejects.toMatchObject({ code: 'failed-precondition' });
@@ -269,7 +269,7 @@ describe('payInvoiceHandler', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     const res = await payInvoiceHandler({
-      data: { invoiceId: 'inv-legacy', successUrl: 'https://x', cancelUrl: 'https://y' },
+      data: { invoiceId: 'inv-legacy', successUrl: 'https://kinfolk.tribetails.com/invoices/x?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/x' },
       auth: { uid: 'u1' },
     } as any);
     expect(res.checkoutUrl).toContain('checkout.stripe.com');
@@ -297,7 +297,7 @@ describe('payInvoiceHandler', () => {
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await expect(
       payInvoiceHandler({
-        data: { invoiceId: 'inv-legacy-paid', successUrl: 'https://x', cancelUrl: 'https://y' },
+        data: { invoiceId: 'inv-legacy-paid', successUrl: 'https://kinfolk.tribetails.com/invoices/x?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/x' },
         auth: { uid: 'u1' },
       } as any),
     ).rejects.toMatchObject({ code: 'failed-precondition' });
@@ -315,7 +315,7 @@ describe('payInvoiceHandler', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await payInvoiceHandler({
-      data: { invoiceId: 'inv-legacy-part', successUrl: 'https://x', cancelUrl: 'https://y' },
+      data: { invoiceId: 'inv-legacy-part', successUrl: 'https://kinfolk.tribetails.com/invoices/x?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/x' },
       auth: { uid: 'u1' },
     } as any);
     const callArg = mocks.stripeMock.checkout.sessions.create.mock.calls[0]![0];
@@ -332,7 +332,7 @@ describe('payInvoiceHandler', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     const res = await payInvoiceHandler({
-      data: { invoiceId: 'inv-1', successUrl: 'https://x/ok', cancelUrl: 'https://x/cancel' },
+      data: { invoiceId: 'inv-1', successUrl: 'https://kinfolk.tribetails.com/invoices/inv-1?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/inv-1' },
       auth: { uid: 'u1' },
     } as any);
     expect(res.checkoutUrl).toContain('checkout.stripe.com');
@@ -371,7 +371,7 @@ describe('payInvoiceHandler', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     const { payInvoiceHandler } = await import('../src/portal/payInvoice');
     await payInvoiceHandler({
-      data: { invoiceId: 'inv-1', successUrl: 'https://x/ok', cancelUrl: 'https://x/cancel' },
+      data: { invoiceId: 'inv-1', successUrl: 'https://kinfolk.tribetails.com/invoices/inv-1?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/inv-1' },
       auth: { uid: 'u1' },
     } as any);
 
@@ -724,8 +724,8 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
   };
   const args = {
     invoiceId: 'inv-1',
-    successUrl: 'https://x/ok',
-    cancelUrl: 'https://x/cancel',
+    successUrl: 'https://kinfolk.tribetails.com/invoices/inv-1?checkout=done',
+    cancelUrl: 'https://kinfolk.tribetails.com/invoices/inv-1',
     idempotencyKey: 'chk_1757700000000_ab12cd',
   };
   const invoice = (over: Record<string, unknown> = {}) => ({
@@ -746,8 +746,8 @@ describe('payInvoice Stripe idempotency key (#825) against the #826 reuse', () =
   it('sends no request options at all when the caller supplied no key', async () => {
     const key = await mint({ 'invoices/inv-1': invoice() }, {
       invoiceId: 'inv-1',
-      successUrl: 'https://x/ok',
-      cancelUrl: 'https://x/cancel',
+      successUrl: 'https://kinfolk.tribetails.com/invoices/inv-1?checkout=done',
+      cancelUrl: 'https://kinfolk.tribetails.com/invoices/inv-1',
     });
     expect(key).toBeUndefined();
   });
@@ -843,7 +843,7 @@ describe('payInvoice checkout round and session reuse (issue #826)', () => {
     'clients/u1': { kinfolkIds: ['3'] },
     'families/3/members/u1': PRIMARY_MEMBER,
   };
-  const args = { invoiceId: 'inv-1', successUrl: 'https://x/ok', cancelUrl: 'https://x/cancel' };
+  const args = { invoiceId: 'inv-1', successUrl: 'https://kinfolk.tribetails.com/invoices/inv-1?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/inv-1' };
   /** An open session Stripe would hand back for this invoice at this balance. */
   function openSession(over: Record<string, unknown> = {}) {
     return {
@@ -904,8 +904,8 @@ describe('payInvoice checkout round and session reuse (issue #826)', () => {
     ['the session has expired', { status: 'expired', url: null }],
     ['it expires within the minute', { expires_at: Math.floor(Date.now() / 1000) + 30 }],
     ['it charges a stale amount', { amount_total: 5000 }],
-    ['it would return to a different screen', { success_url: 'https://other/ok' }],
-    ['it would cancel to a different screen', { cancel_url: 'https://other/cancel' }],
+    ['it would return to a different screen', { success_url: 'https://kinfolk.tribetails.com/portal/payment-success' }],
+    ['it would cancel to a different screen', { cancel_url: 'https://kinfolk.tribetails.com/portal/payment-cancel' }],
     ['it belongs to a settlement round that has closed', { metadata: { invoiceId: 'inv-1', checkoutRound: '1' } }],
     ['it belongs to a different invoice', { metadata: { invoiceId: 'inv-9', checkoutRound: '0' } }],
   ])('mints a fresh session when %s', async (_why, over) => {
@@ -1050,5 +1050,66 @@ describe('payInvoice refuses a PAID invoice (operator ruling 2026-09-27, docket 
     expect(w!.data.pendingCheckoutSessionId).toBe('cs_test_1');
     const { FieldValue } = await import('firebase-admin/firestore');
     expect(w!.data.openCheckoutSessionIds).toEqual(FieldValue.arrayUnion('cs_test_1'));
+  });
+});
+/**
+ * #2366: Stripe sends the household to the two return addresses, so the server
+ * accepts only the portal's own origins, and refuses before it reads or writes
+ * anything.
+ */
+describe('payInvoice return addresses (#2366)', () => {
+  const OPEN_DOCS = {
+    'clients/u1': { kinfolkIds: ['3'] },
+    'invoices/inv-1': { kinfolkId: '3', amountDue: 12.5 },
+    'families/3/members/u1': PRIMARY_MEMBER,
+  };
+  it('hands Stripe the invoice page the household paid, with the return marker on success only', async () => {
+    const ctx = buildDbMock({ docs: OPEN_DOCS });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await payInvoiceHandler({ data: payData, auth: { uid: 'u1' } } as any);
+    const params = mocks.stripeMock.checkout.sessions.create.mock.calls[0]![0];
+    expect(params.success_url).toBe('https://kinfolk.tribetails.com/invoices/inv-1?checkout=done');
+    expect(params.cancel_url).toBe('https://kinfolk.tribetails.com/invoices/inv-1');
+  });
+  it('still takes the address an older Android build sends, so that household can pay', async () => {
+    const ctx = buildDbMock({ docs: OPEN_DOCS });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({
+      data: {
+        invoiceId: 'inv-1',
+        successUrl: 'https://kinfolk.tribetails.com/portal/payment-success',
+        cancelUrl: 'https://kinfolk.tribetails.com/portal/payment-cancel',
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    expect(res.sessionId).toBe('cs_test_1');
+  });
+  it.each([
+    ['a foreign success address', { successUrl: 'https://evil.example/ok' }],
+    ['a foreign cancel address', { cancelUrl: 'https://evil.example/no' }],
+    ['a lookalike host', { successUrl: 'https://kinfolk.tribetails.com.evil.example/invoices/inv-1' }],
+    ['a user part hiding the host', { successUrl: 'https://kinfolk.tribetails.com@evil.example/invoices/inv-1' }],
+    ['plain http', { cancelUrl: 'http://kinfolk.tribetails.com/invoices/inv-1' }],
+    ['a loopback address outside the emulator', { successUrl: 'http://127.0.0.1:5173/invoices/inv-1' }],
+  ])('refuses %s before reading or writing anything', async (_why, over) => {
+    delete process.env.FUNCTIONS_EMULATOR;
+    const ctx = buildDbMock({ docs: OPEN_DOCS });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await expect(
+      payInvoiceHandler({ data: { ...payData, ...over }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({ code: 'invalid-argument', details: { code: 'return_url_refused' } });
+    expect(mocks.dbFn).not.toHaveBeenCalled();
+    expect(mocks.stripeMock.checkout.sessions.retrieve).not.toHaveBeenCalled();
+    expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('refuses an unauthenticated caller before looking at the addresses', async () => {
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    await expect(
+      payInvoiceHandler({ data: { ...payData, successUrl: 'https://evil.example/ok' }, auth: undefined } as any),
+    ).rejects.toMatchObject({ code: 'unauthenticated' });
   });
 });

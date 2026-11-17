@@ -52,15 +52,17 @@ export interface GetKinTaleCommentsRequest {
 }
 
 /**
- * `authorDisplayName` is who wrote it, resolved server-side (getKinTaleComments.ts):
- * the Auntie's staff name (print it through `auntieName`), a household member's
- * first name, or the name a guest typed. Null when the author cannot be
- * resolved, and absent from an older deployed function; both fall back to the
- * role label in `commentAuthorLabel`.
+ * `authorDisplayName` is who wrote it, resolved server-side (getKinTaleComments.ts,
+ * `lib/kinTaleCommentAuthor.ts` for the order): the Auntie's staff name (print it
+ * through `auntieName`), the name a guest typed, or for a household member their
+ * first name, else the household's name, else "A member of the household". It is
+ * never an email. `authorNameIsPerson` is false when the name is the household's
+ * or the generic line, so the reader's own comment can say "You" instead.
  */
 export interface KinTaleCommentDto {
   id: string;
   authorDisplayName?: string | null;
+  authorNameIsPerson?: boolean;
   authorRole: string;
   authorUid: string | null;
   guestName: string | null;
@@ -284,23 +286,37 @@ export function threadComments(comments: KinTaleCommentDto[]): ThreadedComments 
 }
 
 /**
- * Display label for a comment author, the name the server resolved:
+ * Display label for a comment author, the name the server resolved (#1923):
  * an Auntie -> "Auntie Maya" (via `auntieName`, so "Auntie" is said once),
- * a guest -> "<name> (Guest)", a household member -> their first name, and
- * the signed-in user's own comment -> "<name> (you)". With no resolved name it
- * falls back to the role word: "Auntie", "You", "Kinfolk".
+ * a guest -> the name they typed (the GUEST badge says the rest, #1922), a
+ * household member -> their first name, and the signed-in user's own comment
+ * -> "<name> (you)", or "You" when the server knows only the household's name.
+ * With no name at all it falls back to the role word: "Auntie", "Guest",
+ * "Kinfolk".
  */
 export function commentAuthorLabel(comment: KinTaleCommentDto, currentUid: string | null): string {
   const name = (comment.authorDisplayName ?? '').trim();
-  if (comment.authorRole === 'admin') return auntieName(name) ?? 'Auntie';
-  if (comment.guestName) return `${comment.guestName} (Guest)`;
-  if (currentUid && comment.authorUid === currentUid) return name ? `${name} (you)` : 'You';
+  const role = commentRole(comment);
+  if (role === 'admin') return auntieName(name) ?? 'Auntie';
+  if (role === 'guest') return name || (comment.guestName ?? '').trim() || 'Guest';
+  if (isOwnComment(comment, currentUid)) return name && comment.authorNameIsPerson !== false ? `${name} (you)` : 'You';
   return name || 'Kinfolk';
 }
+/** Which side wrote a comment. A note carrying a guest name is a guest's, whatever its role says. */
+export function commentRole(comment: KinTaleCommentDto): 'admin' | 'guest' | 'kinfolk' {
+  if (comment.authorRole === 'admin') return 'admin';
+  if (comment.authorRole === 'guest' || (comment.guestName ?? '').trim() !== '') return 'guest';
+  return 'kinfolk';
+}
+/** True for the signed-in user's own comment. */
+export function isOwnComment(comment: KinTaleCommentDto, currentUid: string | null): boolean {
+  return currentUid !== null && comment.authorUid === currentUid && commentRole(comment) === 'kinfolk';
+}
 /**
- * The letter on a comment's avatar: the author's NAME, never the "(you)" or
- * "(Guest)" suffix and never the "You" fallback word, so one person shows one
- * letter wherever they appear (their comments and their own composer).
+ * The letter on a comment's avatar: the author's NAME, never the "(you)"
+ * suffix and never the "You" fallback word, so one person shows one letter
+ * wherever they appear (their comments and their own composer). The reader's
+ * own comment takes the composer's letter unless the server named the person.
  */
 export function commentInitial(
   comment: KinTaleCommentDto,
@@ -308,9 +324,10 @@ export function commentInitial(
   ownInitial: string = initialOf('You'),
 ): string {
   const name = (comment.authorDisplayName ?? '').trim();
-  if (comment.authorRole === 'admin') return initialOf(name || 'Auntie');
-  if (comment.guestName) return initialOf(comment.guestName);
-  if (currentUid && comment.authorUid === currentUid && !name) return ownInitial;
+  const role = commentRole(comment);
+  if (role === 'admin') return initialOf(name || 'Auntie');
+  if (role === 'guest') return initialOf(name || comment.guestName || 'Guest');
+  if (isOwnComment(comment, currentUid) && (!name || comment.authorNameIsPerson === false)) return ownInitial;
   return initialOf(name || 'Kinfolk');
 }
 export interface CommentBadge {
@@ -320,8 +337,17 @@ export interface CommentBadge {
 
 /** Badge chip for a comment row, per the mockup's `.badge.kin` / `.badge.guest`. */
 export function commentBadge(comment: KinTaleCommentDto): CommentBadge {
-  if (comment.guestName && comment.authorRole !== 'admin') return { label: 'Guest', tone: 'guest' };
-  return { label: comment.authorRole === 'admin' ? 'Auntie' : 'Kinfolk', tone: 'kin' };
+  const role = commentRole(comment);
+  if (role === 'guest') return { label: 'Guest', tone: 'guest' };
+  return { label: role === 'admin' ? 'Auntie' : 'Kinfolk', tone: 'kin' };
+}
+/**
+ * Avatar colour class for a comment row. The reader's own comments take `me`,
+ * the composer's colour (#1923: one person, one avatar); every other row cycles
+ * the mockup's c1/c2/c3 by row index.
+ */
+export function commentAvatarClass(comment: KinTaleCommentDto, currentUid: string | null, index: number): string {
+  return isOwnComment(comment, currentUid) ? 'me' : commentAvatarVariant(index);
 }
 
 /** Cycles the mockup's `.cav` c1/c2/c3 avatar color variants by row index. */

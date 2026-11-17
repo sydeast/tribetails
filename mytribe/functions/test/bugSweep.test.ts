@@ -69,7 +69,7 @@ describe('BUG SWEEP — payInvoice', () => {
     // payInvoice currently checks amountDue > 0; missing → 0 → fails (correct: nothing to charge).
     await expect(
       payInvoiceHandler({
-        data: { invoiceId: 'inv-x', successUrl: 'https://x', cancelUrl: 'https://y' },
+        data: { invoiceId: 'inv-x', successUrl: 'https://kinfolk.tribetails.com/invoices/inv-x?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/inv-x' },
         auth: { uid: 'u1' },
       } as any),
     ).rejects.toMatchObject({ code: 'failed-precondition' });

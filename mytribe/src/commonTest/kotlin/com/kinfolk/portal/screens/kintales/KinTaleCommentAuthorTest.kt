@@ -15,6 +15,7 @@ class KinTaleCommentAuthorTest {
         assertEquals("Auntie Maya", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Admin, "Maya")))
         assertEquals("Auntie Maya", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Admin, "Auntie Maya")))
     }
+
     @Test
     fun householdMember_showsTheirName() {
         assertEquals("Sam", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Kinfolk, "Sam")))
@@ -27,7 +28,20 @@ class KinTaleCommentAuthorTest {
     fun noResolvedName_fallsBackToTheRoleWord() {
         assertEquals("Auntie", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Admin)))
         assertEquals("Kinfolk", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Kinfolk, "  ")))
-        assertEquals("Guest (guest)", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Guest)))
+        assertEquals("Guest", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Guest)))
+    }
+
+    @Test
+    fun guest_isMarkedOnce_evenWhenTheServerSentTheNameTwice() {
+        // #1922: the name the server resolved and the typed name are the same person.
+        assertEquals("Pat (guest)", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Guest, name = "Pat", guest = "Pat")))
+        assertEquals("Pat (guest)", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Guest, name = "Pat")))
+    }
+    @Test
+    fun householdMember_printsTheServerFallbackAsSent_neverKinfolk() {
+        // #1923: the server always names a household author; "Kinfolk" is only for a missing name.
+        assertEquals("A member of the household", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Kinfolk, "A member of the household")))
+        assertEquals("The Ortega household", kinTaleCommentAuthorLabel(comment(CommentAuthorRole.Kinfolk, "The Ortega household")))
     }
     @Test
     fun loveDescription_saysSavingWhileInFlight() {

@@ -43,6 +43,8 @@ vi.mock('../lib/auth', () => ({
   useSignOut: () => ({ signOut: vi.fn(), signingOut: false }),
 }));
 vi.mock('../components/PortalNav', () => ({ PortalNav: () => null }));
+// The header's identity (the top-bar avatar letter), which the composer matches.
+vi.mock('../lib/identity', () => ({ usePortalIdentity: () => ({ name: 'Kim', firstName: 'Kim', initial: 'K', settled: true }) }));
 
 const SHARE_BUTTON = /Share/;
 
@@ -628,13 +630,53 @@ describe('KinTales: who wrote each comment (#1328)', () => {
     const { container } = renderScreen();
     expect(await screen.findByText('Auntie Maya')).toBeInTheDocument();
     expect(screen.getByText('Sam')).toBeInTheDocument();
-    expect(screen.getByText('Pat (Guest)')).toBeInTheDocument();
+    expect(screen.getByText('Pat', { selector: 'b' })).toBeInTheDocument();
+    expect(screen.queryByText(/\(Guest\)/)).not.toBeInTheDocument();
     expect(screen.getByText('Casey (you)')).toBeInTheDocument();
     expect(screen.queryByText('Kinfolk', { selector: 'b' })).not.toBeInTheDocument();
     // Her own comment and her composer show the same letter.
     const avatars = Array.from(container.querySelectorAll('.cmt .cav')).map((n) => n.textContent);
     expect(avatars).toEqual(['M', 'S', 'P', 'C']);
     expect(container.querySelector('.postbox .cav')?.textContent).toBe('C');
+    // #1923: and the same colour. Only her own row carries the composer's.
+    const classes = Array.from(container.querySelectorAll('.cmt .cav')).map((n) => n.className);
+    expect(classes).toEqual(['cav c1', 'cav c2', 'cav c3', 'cav me']);
+  });
+  it('#1923 REGRESSION: her own comment never shows an email; with no name on file it reads "You"', async () => {
+    mocks.getMyKinTaleComments.mockResolvedValue({
+      comments: [
+        {
+          id: 'c1', authorRole: 'kinfolk', authorUid: 'u1', guestName: null,
+          authorDisplayName: 'A member of the household', authorNameIsPerson: false,
+          body: 'mine', parentCommentId: null, createdAtMs: 1,
+        },
+      ],
+    });
+    const { container } = renderScreen();
+    expect(await screen.findByText('You', { selector: 'b' })).toBeInTheDocument();
+    expect(container.textContent).not.toContain('@');
+    // The composer and her comment both show the header's letter and colour.
+    expect(container.querySelector('.cmt .cav')?.textContent).toBe('K');
+    expect(container.querySelector('.cmt .cav')?.className).toBe('cav me');
+    expect(container.querySelector('.postbox .cav')?.textContent).toBe('K');
+  });
+  it('#1922: a guest note carries one GUEST marker, and its text renders as text', async () => {
+    mocks.getMyKinTaleComments.mockResolvedValue({
+      comments: [
+        {
+          id: 'g1', authorRole: 'guest', authorUid: null, guestName: 'Grandma Rose', authorDisplayName: 'Grandma Rose',
+          body: '<img src=x onerror=alert(1)> see you at the <side gate>', parentCommentId: null, createdAtMs: 1,
+        },
+      ],
+    });
+    const { container } = renderScreen();
+    expect(await screen.findByText('Grandma Rose', { selector: 'b' })).toBeInTheDocument();
+    const head = container.querySelector('.cmt .chead');
+    expect(head?.querySelectorAll('.badge.guest')).toHaveLength(1);
+    expect(head?.textContent?.match(/guest/gi)).toHaveLength(1);
+    const text = container.querySelector('.cmt .ctext');
+    expect(text?.textContent).toBe('<img src=x onerror=alert(1)> see you at the <side gate>');
+    expect(text?.querySelector('img')).toBeNull();
   });
 });
 describe('KinTales: opening a tale from Home (#1329)', () => {

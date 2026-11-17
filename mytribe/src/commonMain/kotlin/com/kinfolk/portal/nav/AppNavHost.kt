@@ -137,6 +137,13 @@ fun AppNavHost(
     onNotificationReadLocally: (notificationId: String) -> Unit = {},
     /** ...and counts again if the server refused the read. */
     onNotificationReadRefused: (notificationId: String) -> Unit = {},
+    /** #2329: the server took the read; the bell believes its next snapshot. */
+    onNotificationReadConfirmed: (notificationId: String) -> Unit = {},
+    /**
+     * #2329: the scope a tapped row's read is sent from. A tap opens another
+     * screen, so the list's own scope would end before the answer came back.
+     */
+    notificationReadScope: kotlinx.coroutines.CoroutineScope? = null,
     cameFromPicker: Boolean,
     resolveTribes: suspend () -> List<TribeSummary>,
     onPick: (kinfolkId: String) -> Unit,
@@ -523,6 +530,8 @@ fun AppNavHost(
                             liveRevision = notificationsRevision,
                             onReadLocally = onNotificationReadLocally,
                             onReadRefused = onNotificationReadRefused,
+                            onReadConfirmed = onNotificationReadConfirmed,
+                            readScope = notificationReadScope,
                         )
                     }
                 }
@@ -611,6 +620,9 @@ fun AppNavHost(
                                 decidingQuote = invoicesController.decidingQuote == invoice.id,
                                 quoteError = invoicesController.quoteErrorFor(invoice.id),
                                 viewerUid = viewerUid,
+                                checkingPayment = invoicesController.checkingPayment == invoice.id,
+                                paymentNotSeen = invoicesController.paymentNotSeen == invoice.id,
+                                onCheckPaymentAgain = { invoicesController.checkPaymentAgain(invoice.id) },
                                 onPayMethod = { method -> invoicesController.startPayMethod(invoice, method) },
                                 onQuoteDecision = { accept -> invoicesController.startQuoteDecision(invoice, accept) },
                                 onRedeem = { tgt -> invoicesController.startRedeem(invoice, tgt) },

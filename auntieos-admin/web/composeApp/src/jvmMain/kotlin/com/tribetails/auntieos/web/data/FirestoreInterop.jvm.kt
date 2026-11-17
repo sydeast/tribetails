@@ -830,13 +830,14 @@ internal actual fun platformKinTaleCommentsStream(
 }
 
 /** Parse a getKinTaleComments callable `result` string ({comments:[...]}) into models, ordered by createdAtMs. */
-private fun parseCommentsResult(resultJson: String): List<KinTaleComment> {
+internal fun parseCommentsResult(resultJson: String): List<KinTaleComment> {
     val obj = jsonOut.parseToJsonElement(resultJson).jsonObject
     val arr = obj["comments"]?.jsonArray ?: return emptyList()
     return arr.map { el ->
         val o = el.jsonObject
         KinTaleComment(
             _id = o["id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            authorDisplayName = o["authorDisplayName"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() },
             authorRole = o["authorRole"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             authorUid = o["authorUid"]?.jsonPrimitive?.contentOrNull,
             guestName = o["guestName"]?.jsonPrimitive?.contentOrNull,

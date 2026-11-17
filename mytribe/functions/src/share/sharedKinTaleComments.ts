@@ -1,4 +1,5 @@
 import { db } from '../lib/firestoreAdmin';
+import { nameOrNull, resolveHouseholdAuthors } from '../lib/kinTaleCommentAuthor';
 
 /**
  * The comment thread as a GUEST may see it, for the public shared-KinTale page.
@@ -93,12 +94,11 @@ export const AUNTIE_FALLBACK_NAME = 'Auntie';
 /** Signatures resolved for one thread, keyed by author uid. */
 type Signatures = { household: Map<string, string>; staff: Map<string, string> };
 /**
- * Resolve comment authors to signatures in ONE batched read per thread:
- * household members (member record first, `clients` record for accounts that
- * predate the member model, same order as `getKinTaleComments`) and staff
- * (`staff/{uid}`, as `getKinTaleComments` reads it) share a single getAll. A
- * failed or empty lookup leaves the author unnamed, so the note reads "The
- * family" / "Auntie" rather than failing the page.
+ * Resolve comment authors to signatures, once per thread: household members
+ * through `lib/kinTaleCommentAuthor.ts` (the one order every reader of this
+ * thread shares, #1923) and staff from `staff/{uid}`, as `getKinTaleComments`
+ * reads it. A failed or empty lookup leaves the author unnamed, so the note
+ * reads "The family" / "Auntie" rather than failing the page.
  */
 async function resolveSignatures(taleId: string, docs: CommentDoc[]): Promise<Signatures> {
   const out: Signatures = { household: new Map(), staff: new Map() };
@@ -118,20 +118,21 @@ async function resolveSignatures(taleId: string, docs: CommentDoc[]): Promise<Si
       const id = (taleSnap.data() as { kinfolkId?: unknown } | undefined)?.kinfolkId;
       if (typeof id === 'string' && id) kinfolkId = id;
     }
-    const hUids = kinfolkId ? householdUids : [];
-    const snaps = await firestore.getAll(
-      ...hUids.map((u) => firestore.doc(`families/${kinfolkId}/members/${u}`)),
-      ...hUids.map((u) => firestore.doc(`clients/${u}`)),
-      ...staffUids.map((u) => firestore.doc(`staff/${u}`)),
-    );
-    const nameOf = (s: { data(): unknown } | undefined): unknown =>
-      (s?.data() as { displayName?: unknown } | undefined)?.displayName;
-    hUids.forEach((u, i) => {
-      const sig = householdSignature(nameOf(snaps[i])) ?? householdSignature(nameOf(snaps[i + hUids.length]));
+    // #1923: the same records, in the same order, as the in-app thread, and
+    // the same refusal of an email or an id. Only a PERSON's name is signed
+    // here. The household's name never is: it is often the primary's full
+    // name, which #1407 keeps off a public page.
+    const [authors, staffSnaps] = await Promise.all([
+      kinfolkId ? resolveHouseholdAuthors(kinfolkId, householdUids) : null,
+      staffUids.length > 0 ? firestore.getAll(...staffUids.map((u) => firestore.doc(`staff/${u}`))) : [],
+    ]);
+    for (const u of householdUids) {
+      const sig = householdSignature(authors?.byUid.get(u)?.personName ?? null);
       if (sig) out.household.set(u, sig);
-    });
+    }
     staffUids.forEach((u, i) => {
-      const sig = staffSignature(nameOf(snaps[hUids.length * 2 + i]));
+      const name = (staffSnaps[i]?.data() as { displayName?: unknown } | undefined)?.displayName;
+      const sig = staffSignature(nameOrNull(name, [u]));
       if (sig) out.staff.set(u, sig);
     });
   } catch {
@@ -154,7 +155,8 @@ export function toPublicComment(
   if (body === '') return null;
 
   const fromGuest = data.authorRole === 'guest';
-  const guestName = (data.guestName ?? '').trim();
+  // A guest who typed an address where their name goes is signed as unnamed.
+  const guestName = nameOrNull(data.guestName) ?? '';
 
   return {
     name: fromGuest

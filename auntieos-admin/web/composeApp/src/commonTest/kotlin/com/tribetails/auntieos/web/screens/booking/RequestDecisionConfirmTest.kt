@@ -10,7 +10,7 @@ import kotlin.test.assertEquals
  * #1875: the confirm step for answering a request names the household (its
  * title), the day and time, and who will be told, before anything is sent.
  * #2028: a request a notification opened shows its card once the live queue
- * holds it, and says so when it is no longer waiting.
+ * holds it, and (#2367) looks the booking up once it is no longer waiting.
  */
 class RequestDecisionConfirmTest {
 
@@ -63,8 +63,9 @@ class RequestDecisionConfirmTest {
     }
 
     @Test
-    fun aFocusedRequestTheQueueDoesNotHoldIsNotWaiting() {
-        assertEquals(FocusRequestOutcome.NotWaiting, focusRequestOutcome("kf1/gone", FirestoreResult.Data(emptyList<KinCareVisit>()), listOf(one)))
+    fun aFocusedRequestTheQueueDoesNotHoldIsLookedUp() {
+        // #2367: a booked or declined request has left the queue; Bookings looks the booking up.
+        assertEquals(FocusRequestOutcome.LookUpBooking, focusRequestOutcome("kf1/gone", FirestoreResult.Data(emptyList<KinCareVisit>()), listOf(one)))
     }
 
     @Test

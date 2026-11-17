@@ -118,6 +118,8 @@ fun NotificationsScreen(
             is NotificationOpenRoute.UnappliedPayment -> onOpenUnappliedPayment(r.kinfolkId, r.paymentId)
             is NotificationOpenRoute.VisitRequest -> onOpenVisitRequest(r.kinfolkId, r.batchId)
             is NotificationOpenRoute.Target -> onOpenTarget(r.targetType, r.targetId)
+            // #2367: a malformed booking id; the row offers no Open for it.
+            NotificationOpenRoute.None -> Unit
         }
     }
     val scope = rememberReportingScope()

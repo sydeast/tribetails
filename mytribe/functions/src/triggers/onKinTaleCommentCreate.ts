@@ -4,6 +4,7 @@ import { wrapTrigger } from '../lib/wrapTrigger';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { db } from '../lib/firestoreAdmin';
+import { firstWord, nameOrNull, resolveHouseholdAuthors } from '../lib/kinTaleCommentAuthor';
 
 type CommentDoc = {
   authorUid?: string;
@@ -24,8 +25,7 @@ function textOf(v: unknown): string {
  * unnamed.
  */
 export async function commentAuthorName(kinfolkId: string, comment: CommentDoc): Promise<string> {
-  const guest = textOf(comment.guestName);
-  if (guest) return guest;
+  if (comment.authorRole === 'guest' || textOf(comment.guestName)) return nameOrNull(comment.guestName) ?? '';
   const uid = textOf(comment.authorUid);
   if (!uid) return '';
   try {
@@ -35,13 +35,11 @@ export async function commentAuthorName(kinfolkId: string, comment: CommentDoc):
       if (!name || name.includes('@')) return '';
       return /^auntie\b/i.test(name) ? name : `Auntie ${name}`;
     }
-    const [member, client] = await db().getAll(
-      db().doc(`families/${kinfolkId}/members/${uid}`),
-      db().doc(`clients/${uid}`),
-    );
-    const name = textOf(member?.data()?.displayName) || textOf(client?.data()?.displayName);
-    const first = name.split(/\s+/)[0] ?? '';
-    return first.includes('@') ? '' : first;
+    // #1923: the same records, in the same order, as the thread. The
+    // household's name and the generic line stay out of the notice: unnamed
+    // means '' here, and the notice counts the comments instead.
+    const person = (await resolveHouseholdAuthors(kinfolkId, [uid])).byUid.get(uid)?.personName;
+    return person ? firstWord(person) : '';
   } catch {
     return '';
   }

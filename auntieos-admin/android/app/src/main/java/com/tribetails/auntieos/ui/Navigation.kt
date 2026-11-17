@@ -346,7 +346,8 @@ internal fun visitIdForSession(sessionId: String): String {
 internal fun notificationTargetRoute(targetType: String, targetId: String): String? {
     val id = targetId.trim()
     return when (targetType.trim().lowercase()) {
-        "booking" -> if (id.isNotBlank()) Screen.KinCareDetail.createRoute(sessionIdForVisit(id)) else null
+        // #2367: only an id shaped like an id goes into the route.
+        "booking" -> pushId(id).takeIf { it.isNotEmpty() }?.let { Screen.KinCareDetail.createRoute(sessionIdForVisit(it)) }
         "invoice" -> if (id.isNotBlank()) Screen.InvoiceDetail.createRoute(id) else null
         "kinfolk" -> if (id.isNotBlank()) Screen.KinfolkProfile.createRoute(id) else null
         "kintale" -> if (id.isNotBlank()) Screen.KinTaleByReport.createRoute(id) else null
@@ -367,6 +368,9 @@ internal fun notificationOpenRoute(entry: com.tribetails.auntieos.data.admin.Not
     // household profile its target names.
     val removalRequestId = kinRemovalNoticeRequestId(entry)
     if (removalRequestId != null) return Screen.KinRemovalRequests.createRoute(removalRequestId)
+    // #2367: a whole booking's id is its batch id, not a visit's, so it has no
+    // route here: it opens on Bookings ([wholeBookingOf]), never `vis_{batchId}`.
+    if (com.tribetails.auntieos.ui.admin.isWholeBookingTarget(entry)) return null
     return notificationTargetRoute(entry.targetType, entry.targetId)
 }
 
@@ -914,7 +918,13 @@ private fun AuthenticatedNavHost(
                      onOpenSchedulingOptions = {
                          navController.navigate(Screen.AdminSchedule.route)
                      },
-                     viewModel = schedulingVm
+                     viewModel = schedulingVm,
+                     // #2367: a highlighted visit of a notice's booking opens its detail.
+                     onOpenVisit = { sessionId ->
+                         pushId(sessionId).takeIf { it.isNotEmpty() }?.let { id ->
+                             navController.navigate(Screen.KinCareDetail.createRoute(id)) { launchSingleTop = true }
+                         }
+                     },
                  )
              }
              composable(Screen.AuntieTime.route) {

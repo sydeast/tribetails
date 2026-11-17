@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
-import { render as rtlRender, screen, waitFor, within } from '@testing-library/react';
+import { act, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement, ReactNode } from 'react';
 import type { Timestamp } from 'firebase/firestore';
@@ -232,6 +232,86 @@ describe('Bookings opens the request a notice named (#2028)', () => {
     visitRequestsProps.length = 0;
     render(<Bookings />);
     expect(visitRequestsProps.at(-1)).not.toHaveProperty('focusRequest');
+  });
+});
+
+/**
+ * #2367: Open on a booking that is no longer a waiting request (confirmed, or
+ * an Auntie's assignment) lands on its visits, highlighted, and says so; a
+ * booking with no visits left says it is no longer available.
+ */
+describe('Bookings finds a booked request by its visits (#2367)', () => {
+  const focus = { kinfolkId: 'kf1', batchId: 'b1' };
+  const listRows = [
+    entry({ _id: 'vis_v1', kinfolkName: 'The Rivera Home', kinCareBatchId: 'b1' }),
+    entry({ _id: 'vis_v9', kinfolkName: 'The Wrens', kinfolkId: 'kf2', kinCareBatchId: 'b9' }),
+  ];
+  /** The Bookings page, and the household's own sessions read, by spec. */
+  function reads(household: Async<BookingEntry[]>) {
+    useCollection.mockImplementation((spec: { filters?: unknown[] }) =>
+      spec.filters && spec.filters.length > 0 ? household : { status: 'ready', data: listRows },
+    );
+  }
+  /** The queue has read and does not hold the request. */
+  function queueSaysNotWaiting() {
+    const props = visitRequestsProps.at(-1) as { onFocusNotWaiting?: () => void };
+    expect(props.onFocusNotWaiting).toBeTypeOf('function');
+    act(() => props.onFocusNotWaiting?.());
+  }
+  function rowOf(name: string): HTMLElement {
+    return screen.getByText(name).closest('li') as HTMLElement;
+  }
+
+  it('looks nothing up while the request may still be waiting', () => {
+    reads({ status: 'ready', data: [listRows[0]!] });
+    visitRequestsProps.length = 0;
+    render(<Bookings focusRequest={focus} />);
+    expect(screen.queryByText('This booking')).toBeNull();
+    expect(rowOf('The Rivera Home')).not.toHaveAttribute('aria-current');
+  });
+
+  it('highlights the booked visits and says so, then lets it go on Dismiss', async () => {
+    reads({ status: 'ready', data: [listRows[0]!] });
+    visitRequestsProps.length = 0;
+    render(<Bookings focusRequest={focus} />);
+    queueSaysNotWaiting();
+    expect(await screen.findByText('This booking')).toBeInTheDocument();
+    expect(screen.getByText('Its visit is highlighted below.')).toBeInTheDocument();
+    expect(rowOf('The Rivera Home')).toHaveAttribute('aria-current', 'true');
+    expect(rowOf('The Rivera Home')).toHaveClass('bookings__row--focused');
+    expect(rowOf('The Wrens')).not.toHaveAttribute('aria-current');
+    expect(screen.queryByText('Booking unavailable')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText('This booking')).toBeNull();
+    expect(rowOf('The Rivera Home')).not.toHaveAttribute('aria-current');
+  });
+
+  it('says the booking is no longer available when no visit carries it', async () => {
+    reads({ status: 'ready', data: [] });
+    visitRequestsProps.length = 0;
+    render(<Bookings focusRequest={focus} />);
+    queueSaysNotWaiting();
+    expect(await screen.findByText('This booking is no longer available')).toBeInTheDocument();
+    expect(rowOf('The Rivera Home')).not.toHaveAttribute('aria-current');
+  });
+
+  it('shows a cue while it looks, and says so when the read fails', async () => {
+    reads({ status: 'loading' });
+    visitRequestsProps.length = 0;
+    const { unmount } = render(<Bookings focusRequest={focus} />);
+    queueSaysNotWaiting();
+    expect(screen.getByText('Looking this booking up…')).toBeInTheDocument();
+    unmount();
+
+    const retry = vi.fn();
+    reads({ status: 'error', message: 'You appear to be offline.', retry });
+    visitRequestsProps.length = 0;
+    render(<Bookings focusRequest={focus} />);
+    queueSaysNotWaiting();
+    expect(await screen.findByText("Couldn't look this booking up")).toBeInTheDocument();
+    expect(screen.queryByText('This booking is no longer available')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 });
 describe('Bookings screen', () => {

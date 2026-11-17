@@ -298,7 +298,7 @@ function genericMetaTags(): string {
  * The date is rendered in UTC on purpose. The server has no idea what timezone
  * the reader is in, and a wrong local time is worse than an explicit one.
  */
-function renderComment(c: PublicComment): string {
+export function renderComment(c: PublicComment): string {
   const when =
     c.createdAtMs === null
       ? ''
