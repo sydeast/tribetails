@@ -7,7 +7,7 @@ import {
   addKinTaleComment,
   careTaskLabel,
   commentAuthorLabel,
-  commentAvatarVariant,
+  commentAvatarClass,
   commentBadge,
   commentInitial,
   filterTales,
@@ -15,6 +15,7 @@ import {
   getMyKinTaleComments,
   getMyKinTaleMedia,
   initialOf,
+  isOwnComment,
   loveLine,
   nextTalesCursor,
   shortTimestamp,
@@ -29,6 +30,7 @@ import {
 import { useAuth, useSignOut } from '../lib/auth';
 import { getActiveKinfolkId } from '../lib/activeTribe';
 import { auntieName, isoTime } from '../lib/portalFormat';
+import { usePortalIdentity } from '../lib/identity';
 import { PortalNav } from '../components/PortalNav';
 import { ShareKinTaleDialog } from '../components/ShareKinTaleDialog';
 import { FallbackImage, PHOTO_UNAVAILABLE_GLYPH } from '../components/FallbackImage';
@@ -580,6 +582,7 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
   const { taleId, kinfolkId } = props;
   const authState = useAuth();
   const currentUid = authState.status === 'signedIn' ? authState.user.uid : null;
+  const identity = usePortalIdentity();
   const queryClient = useQueryClient();
 
   const commentsQuery = useQuery({
@@ -651,14 +654,14 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
   const commentsView = viewOfQuery(commentsQuery);
   const comments = commentsQuery.data?.comments ?? [];
   const { topLevel, repliesByParent } = threadComments(comments);
-  // One person, one letter: the composer avatar uses the name the server gave
-  // this user's own comments (or the signed-in account's name/email before
-  // they have posted), the same source the comment rows use.
-  const ownName = comments.find((c) => currentUid !== null && c.authorUid === currentUid && c.authorDisplayName)?.authorDisplayName;
-  const accountLabel =
-    authState.status === 'signedIn' ? authState.user.displayName || authState.user.email || 'M' : 'M';
-  const myInitial = initialOf(ownName || accountLabel);
-
+  // One person, one avatar (#1923): the composer and the reader's own comments
+  // share a colour (`.cav.me`) and a letter. The letter is the name the server
+  // gave this user's own comments when it names the person, else the header's
+  // letter, so the composer matches the avatar in the top bar.
+  const ownName = comments.find(
+    (c) => isOwnComment(c, currentUid) && c.authorNameIsPerson !== false && (c.authorDisplayName ?? '').trim() !== '',
+  )?.authorDisplayName;
+  const myInitial = ownName ? initialOf(ownName) : identity.initial;
   return (
     <div className="thread">
       <div className="thlabel">Comments {'·'} {comments.length}</div>
@@ -690,7 +693,7 @@ function TaleComments(props: { taleId: string; kinfolkId: string | undefined }) 
             ))}
             {replyParentId === c.id && (
               <div className="postbox" style={{ marginLeft: 55, borderTop: 'none', paddingTop: 0 }}>
-                <div className="cav">{initialOf('Reply')}</div>
+                <div className="cav">{myInitial}</div>
                 <div className="field">
                   <textarea
                     value={replyInput}
@@ -763,7 +766,7 @@ function CommentRow(props: {
 
   return (
     <div className={`cmt${nested ? ' nested' : ''}`}>
-      <div className={`cav ${commentAvatarVariant(avatarIndex)}`}>{commentInitial(comment, currentUid, ownInitial)}</div>
+      <div className={`cav ${commentAvatarClass(comment, currentUid, avatarIndex)}`}>{commentInitial(comment, currentUid, ownInitial)}</div>
       <div className="cbody">
         <div className="chead">
           <b>{label}</b>

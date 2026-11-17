@@ -108,6 +108,20 @@ describe('commentAuthorLabel', () => {
   it('labels an unrecognized role "Someone", never guessing which side', () => {
     expect(commentAuthorLabel({ authorRole: 'robot', guestName: null })).toBe('Someone');
   });
+  it('#1923: prints the name the server resolved for a household comment, never "Kinfolk" when one is sent', () => {
+    expect(commentAuthorLabel({ authorRole: 'kinfolk', guestName: null, authorDisplayName: 'Casey' })).toBe('Casey');
+    expect(commentAuthorLabel({ authorRole: 'kinfolk', guestName: null, authorDisplayName: 'The Ortega household' })).toBe(
+      'The Ortega household',
+    );
+    expect(commentAuthorLabel({ authorRole: 'kinfolk', guestName: null, authorDisplayName: 'A member of the household' })).toBe(
+      'A member of the household',
+    );
+    expect(commentAuthorLabel({ authorRole: 'kinfolk', guestName: null, authorDisplayName: '  ' })).toBe('Kinfolk');
+  });
+  it('#1923: a guest reads by the server name, and staff stay "Auntie"', () => {
+    expect(commentAuthorLabel({ authorRole: 'guest', guestName: null, authorDisplayName: 'Grandma Rose' })).toBe('Grandma Rose');
+    expect(commentAuthorLabel({ authorRole: 'admin', guestName: null, authorDisplayName: 'Maya' })).toBe('Auntie');
+  });
 });
 
 describe('loveSummaryLabel', () => {

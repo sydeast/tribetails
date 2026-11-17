@@ -385,6 +385,26 @@ describe('KinTaleDetail: comment thread', () => {
     expect(screen.getByText('Kinfolk')).toBeInTheDocument();
   });
 
+  it('#1923 REGRESSION: a household reply reads by the name the server resolved, not "Kinfolk", and its text stays text', async () => {
+    getKinTaleComments.mockResolvedValue([
+      {
+        id: 'c1',
+        authorRole: 'kinfolk',
+        authorUid: 'kf-uid',
+        authorDisplayName: 'Casey',
+        guestName: null,
+        body: '<b>so</b> good, see you at the <side gate>',
+        parentCommentId: null,
+        createdAtMs: Date.parse('2026-07-16T19:32:00.000Z'),
+      },
+    ]);
+    const { container } = render(<KinTaleDetail kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByText('Casey')).toBeInTheDocument();
+    expect(screen.queryByText('Kinfolk', { selector: '.kintale-detail__comment-author' })).toBeNull();
+    const body = container.querySelector('.kintale-detail__comment-body');
+    expect(body?.textContent).toBe('<b>so</b> good, see you at the <side gate>');
+    expect(body?.querySelector('b')).toBeNull();
+  });
   it("names a share-link guest's note by the name they typed, never \"Someone\" (#1333)", async () => {
     getKinTaleComments.mockResolvedValue([
       {

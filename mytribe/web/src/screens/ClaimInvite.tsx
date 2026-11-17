@@ -183,7 +183,7 @@ export function ClaimInvite() {
   }
 
   return (
-    <main className="guest">
+    <main className="claimpage">
       <header className="guesthead">
         <div className="wordmark">
           My<span className="grad">Tribe</span>

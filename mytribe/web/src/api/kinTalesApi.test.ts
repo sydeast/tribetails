@@ -4,6 +4,7 @@ import {
   careTaskLabel,
   commentAuthorLabel,
   commentInitial,
+  commentAvatarClass,
   commentAvatarVariant,
   commentBadge,
   createShareLink,
@@ -113,8 +114,15 @@ describe('commentAuthorLabel', () => {
     expect(commentAuthorLabel(comment({ authorRole: 'admin' }), null)).toBe('Auntie');
   });
 
-  it('labels guest comments with their name', () => {
-    expect(commentAuthorLabel(comment({ guestName: 'Grandma Rose' }), null)).toBe('Grandma Rose (Guest)');
+  it('labels guest comments with their name alone: the GUEST badge says the rest (#1922)', () => {
+    expect(commentAuthorLabel(comment({ guestName: 'Grandma Rose' }), null)).toBe('Grandma Rose');
+    expect(commentAuthorLabel(comment({ authorRole: 'guest', guestName: 'Pat', authorDisplayName: 'Pat' }), null)).toBe('Pat');
+  });
+  it('a guest the server left unnamed is "Guest", never "Kinfolk"', () => {
+    const unnamed = comment({ authorRole: 'guest', guestName: null, authorDisplayName: null });
+    expect(commentAuthorLabel(unnamed, null)).toBe('Guest');
+    expect(commentBadge(unnamed)).toEqual({ label: 'Guest', tone: 'guest' });
+    expect(commentInitial(unnamed, null)).toBe('G');
   });
 
   it('labels the current user’s own comment as You', () => {
@@ -132,6 +140,20 @@ describe('commentAuthorLabel', () => {
     expect(commentAuthorLabel(comment({ authorUid: 'k9', authorDisplayName: 'Sam' }), 'me')).toBe('Sam');
     expect(commentAuthorLabel(comment({ authorUid: 'me', authorDisplayName: 'Casey' }), 'me')).toBe('Casey (you)');
   });
+  it('#1923: the reader\'s own comment says "You" when the server knows only the household', () => {
+    expect(
+      commentAuthorLabel(comment({ authorUid: 'me', authorDisplayName: 'The Ortega household', authorNameIsPerson: false }), 'me'),
+    ).toBe('You');
+    expect(
+      commentAuthorLabel(comment({ authorUid: 'me', authorDisplayName: 'A member of the household', authorNameIsPerson: false }), 'me'),
+    ).toBe('You');
+    expect(commentAuthorLabel(comment({ authorUid: 'me', authorDisplayName: 'Casey', authorNameIsPerson: true }), 'me')).toBe('Casey (you)');
+  });
+  it('#1923: another member the server could not name reads as the server said', () => {
+    expect(
+      commentAuthorLabel(comment({ authorUid: 'k9', authorDisplayName: 'A member of the household', authorNameIsPerson: false }), 'me'),
+    ).toBe('A member of the household');
+  });
   it('ignores a blank name', () => {
     expect(commentAuthorLabel(comment({ authorUid: 'k9', authorDisplayName: '  ' }), 'me')).toBe('Kinfolk');
   });
@@ -144,6 +166,7 @@ describe('commentInitial', () => {
   });
   it('an unnamed own comment takes the composer’s letter, not Y', () => {
     expect(commentInitial(comment({ authorUid: 'me' }), 'me', 'K')).toBe('K');
+    expect(commentInitial(comment({ authorUid: 'me', authorDisplayName: 'The Ortega household', authorNameIsPerson: false }), 'me', 'K')).toBe('K');
   });
 });
 
@@ -158,6 +181,14 @@ describe('commentBadge', () => {
   });
 });
 
+describe('commentAvatarClass (#1923)', () => {
+  it('the reader\'s own comment takes the composer colour, every other row cycles', () => {
+    expect(commentAvatarClass(comment({ authorUid: 'me' }), 'me', 0)).toBe('me');
+    expect(commentAvatarClass(comment({ authorUid: 'me' }), 'me', 1)).toBe('me');
+    expect(commentAvatarClass(comment({ authorUid: 'k9' }), 'me', 1)).toBe('c2');
+    expect(commentAvatarClass(comment({ authorUid: 'me' }), null, 0)).toBe('c1');
+  });
+});
 describe('commentAvatarVariant', () => {
   it('cycles c1/c2/c3', () => {
     expect([0, 1, 2, 3, 4].map(commentAvatarVariant)).toEqual(['c1', 'c2', 'c3', 'c1', 'c2']);

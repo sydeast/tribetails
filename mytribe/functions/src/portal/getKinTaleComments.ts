@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
+import { inAppAuthorName, nameOrNull, resolveHouseholdAuthors, type InAppAuthor } from '../lib/kinTaleCommentAuthor';
 
 const Args = z.object({
   kinfolkId: z.string().optional(),
@@ -21,64 +22,47 @@ type CommentDoc = {
   parentCommentId?: string | null;
   createdAtMs?: number;
 };
-
-type AuthorNames = { staff: Map<string, string>; household: Map<string, string> };
-
-const firstToken = (name: string): string => name.trim().split(/\s+/)[0] ?? '';
-const textOf = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
-
+const isStaffComment = (c: CommentDoc): boolean => c.authorRole === 'admin';
+const isGuestComment = (c: CommentDoc): boolean =>
+  c.authorRole === 'guest' || (typeof c.guestName === 'string' && c.guestName.trim() !== '');
 /**
- * Who wrote each comment, for the household reading the thread. An Auntie is
- * named by her `staff` display name (the client prefixes "Auntie"); a household
- * member by the FIRST name on their member record, falling back to their
- * `clients` record for accounts that predate the member model. Reads are batched
- * per distinct author, never per comment, and a failed or empty lookup leaves
- * the author unnamed rather than failing the thread.
+ * An Auntie's `staff` display name per uid (the client prefixes "Auntie"). A
+ * staff name that is really an email is not a name, so she reads as a bare
+ * "Auntie". Best-effort: a failed read names nobody.
  */
-async function resolveAuthorNames(kinfolkId: string, comments: CommentDoc[]): Promise<AuthorNames> {
-  const staffUids = new Set<string>();
-  const householdUids = new Set<string>();
-  for (const c of comments) {
-    if (!c.authorUid || c.guestName) continue;
-    (c.authorRole === 'admin' ? staffUids : householdUids).add(c.authorUid);
-  }
-  const names: AuthorNames = { staff: new Map(), household: new Map() };
-  const firestore = db();
+async function resolveStaffNames(comments: CommentDoc[]): Promise<Map<string, string>> {
+  const uids = [...new Set(comments.filter((c) => isStaffComment(c) && c.authorUid).map((c) => c.authorUid as string))];
+  const names = new Map<string, string>();
+  if (uids.length === 0) return names;
   try {
-    if (staffUids.size > 0) {
-      const snaps = await firestore.getAll(...[...staffUids].map((u) => firestore.doc(`staff/${u}`)));
-      snaps.forEach((s, i) => {
-        const n = textOf((s.data() as { displayName?: unknown } | undefined)?.displayName);
-        if (n) names.staff.set([...staffUids][i]!, n);
-      });
-    }
-    if (householdUids.size > 0) {
-      const uids = [...householdUids];
-      const refs = [
-        ...uids.map((u) => firestore.doc(`families/${kinfolkId}/members/${u}`)),
-        ...uids.map((u) => firestore.doc(`clients/${u}`)),
-      ];
-      const snaps = await firestore.getAll(...refs);
-      uids.forEach((u, i) => {
-        const n =
-          textOf((snaps[i]?.data() as { displayName?: unknown } | undefined)?.displayName) ||
-          textOf((snaps[i + uids.length]?.data() as { displayName?: unknown } | undefined)?.displayName);
-        if (n) names.household.set(u, firstToken(n));
-      });
-    }
+    const firestore = db();
+    const snaps = await firestore.getAll(...uids.map((u) => firestore.doc(`staff/${u}`)));
+    snaps.forEach((s, i) => {
+      const n = nameOrNull((s.data() as { displayName?: unknown } | undefined)?.displayName, [uids[i]!]);
+      if (n) names.set(uids[i]!, n);
+    });
   } catch {
-    // Best-effort: an unresolvable author shows as a role label, not an error.
+    // An unresolvable Auntie shows as "Auntie", not an error.
   }
   return names;
 }
-
-function commentAuthorName(c: CommentDoc, names: AuthorNames): string | null {
-  const guest = textOf(c.guestName);
-  if (guest) return guest;
-  if (!c.authorUid) return null;
-  return (c.authorRole === 'admin' ? names.staff : names.household).get(c.authorUid) ?? null;
+/**
+ * Who wrote each household comment (#1923; `lib/kinTaleCommentAuthor.ts` has the
+ * order and why the first fix did not hold): a first name, else the household's
+ * name, else "A member of the household". Never an email, never "Kinfolk",
+ * never empty. The records are read once per thread.
+ */
+async function resolveHouseholdNames(kinfolkId: string, comments: CommentDoc[]): Promise<(c: CommentDoc) => InAppAuthor> {
+  const household = comments.filter((c) => !isStaffComment(c) && !isGuestComment(c));
+  const resolved =
+    household.length > 0
+      ? await resolveHouseholdAuthors(kinfolkId, household.map((c) => c.authorUid ?? '').filter((u) => u !== ''))
+      : null;
+  return (c) => {
+    const author = c.authorUid ? resolved?.byUid.get(c.authorUid) : undefined;
+    return inAppAuthorName(author ?? { personName: null, householdName: resolved?.householdName ?? null });
+  };
 }
-
 export async function getKinTaleCommentsHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ comments: Array<Record<string, unknown>> }> {
@@ -102,15 +86,33 @@ export async function getKinTaleCommentsHandler(
 
   const docs = snap.docs.map((d) => ({ id: d.id, data: d.data() as CommentDoc }));
 
-  const names = await resolveAuthorNames(kinfolkId, docs.map((d) => d.data));
-
+  const all = docs.map((d) => d.data);
+  const [staffNames, householdName] = await Promise.all([
+    resolveStaffNames(all),
+    resolveHouseholdNames(kinfolkId, all),
+  ]);
   const comments = docs.map(({ id, data }) => {
+    // A guest's typed name is printed as typed, unless they typed an address.
+    const guestName = nameOrNull(data.guestName);
+    const role = isStaffComment(data) ? 'admin' : isGuestComment(data) ? 'guest' : 'kinfolk';
+    let author: InAppAuthor | null;
+    if (role === 'admin') {
+      const staff = data.authorUid ? staffNames.get(data.authorUid) ?? null : null;
+      author = staff === null ? null : { name: staff, isPerson: true };
+    } else if (role === 'guest') {
+      author = guestName === null ? null : { name: guestName, isPerson: true };
+    } else {
+      author = householdName(data);
+    }
     return {
       id,
-      authorDisplayName: commentAuthorName(data, names),
-      authorRole: data.authorRole ?? 'kinfolk',
+      authorDisplayName: author?.name ?? null,
+      // True only when the name is the person's own (a household name or the
+      // generic line is not), so the portal can say "You" on its own comment.
+      authorNameIsPerson: author?.isPerson ?? false,
+      authorRole: role,
       authorUid: data.authorUid ?? null,
-      guestName: data.guestName ?? null,
+      guestName,
       body: data.body ?? '',
       parentCommentId: data.parentCommentId ?? null,
       createdAtMs: data.createdAtMs ?? null,

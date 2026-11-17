@@ -71,9 +71,15 @@ import { call } from '../lib/fns';
  * `addKinTaleComment` ever writes (the handler never sets it). It is set on
  * notes from the public share page (`addGuestKinTaleComment`, `authorRole:
  * 'guest'`), which this screen labels with that name (#1333).
+ * `authorDisplayName` is who wrote it, worked out by the server on every read
+ * (`functions/src/lib/kinTaleCommentAuthor.ts`, #1923): for a household comment
+ * a first name, else the household's name, else "A member of the household";
+ * for a guest the name they typed. Never an email. Null only when the server
+ * could not name the author, or from a server older than #1923.
  */
 export interface KinTaleComment {
   id: string;
+  authorDisplayName?: string | null;
   authorRole: string;
   authorUid: string | null;
   guestName: string | null;
