@@ -312,8 +312,12 @@ const ALLOWED_EAGER_PACKAGES = [
  * `getFeatureFlags` used to carry inline, moved so the write and the screen
  * resolve the choose-Kin flag the same way). Everything else they import was
  * already here.
+ *
+ * 463 (on top of the 462 above): `lib/generatedDraftType.ts`, the reading of a
+ * generated draft's type, used by `admin/kinTaleDrafts.ts` at file scope and by
+ * `admin/sendHouseholdPush.ts`. It is three pure functions and imports nothing.
  */
-const MAX_OWN_EAGER_MODULES = 462;
+const MAX_OWN_EAGER_MODULES = 463;
 
 interface Edge {
   spec: string;
