@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.ui.components.AuntieCheckbox
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -1811,7 +1812,7 @@ private fun BookingSectionCard(
                     if (notePreview.isNotBlank()) {
                         Spacer(Modifier.height(7.dp))
                         Text(
-                            text = "Note: ${notePreview.take(120)}",
+                            text = "Note: ${cutWhole(notePreview, 120)}",
                             style = AuntieTheme.typography.bodySmall,
                             color = c.textDim,
                         )

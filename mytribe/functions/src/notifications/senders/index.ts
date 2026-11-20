@@ -18,8 +18,9 @@ export interface ChannelSendArgs {
   stream?: AudienceStream;
   /**
    * #2259, #2100: what a tap on this notice opens, built by the fan-out from
-   * the work order's own target (`noticeOpenTarget`). Only the push sender
-   * reads it. Absent on a direct call, which then sends what it always did.
+   * the work order's own target (`noticeOpenTarget`). The push sender reads
+   * it, and the text sender reads its `readInList` entry for the link (#2371).
+   * Absent on a direct call, which then sends what it always did.
    */
   open?: NoticeOpenTarget;
 }

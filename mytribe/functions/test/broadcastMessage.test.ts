@@ -27,6 +27,7 @@ import { broadcastMessageHandler } from '../src/admin/broadcastMessage';
 import { getBroadcastProgressHandler, stopBroadcastHandler } from '../src/admin/broadcastProgress';
 import { outboundFanoutSweepCore } from '../src/scheduled/outboundFanoutSweep';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
+import { logEvent } from '../src/lib/logger';
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -127,7 +128,14 @@ describe('broadcastMessage happy path', () => {
     mocks.dbFn.mockReturnValue(ctx.db);
     await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['email', 'sms'], subject: 'S', body: 'B' }));
     expect(mocks.sendTemplatedEmail.mock.calls[0][0].bodyTemplate).toContain('reply STOP' /* footer text */);
-    expect(mocks.twilioCreate.mock.calls[0][0].body).toBe('B');
+    // #2316: a text message carries a link into MyTribe, to the entry that
+    // holds the message. In-app was not chosen, so the entry is written for
+    // the link and not counted as a channel.
+    const entry = ctx.writes.find((x) => x.path.startsWith('notifications/'));
+    expect(entry?.data.description).toBe('B');
+    expect(mocks.twilioCreate.mock.calls[0][0].body).toBe(
+      `B More in MyTribe: https://kinfolk.tribetails.com/notifications?entry=${entry!.path.split('/')[1]}`,
+    );
   });
 
   /**
@@ -683,9 +691,15 @@ describe('broadcastMessage fills merge fields per household (#1610)', () => {
     const inapp = ctx.writes.find((x) => x.path.startsWith('notifications/'));
     expect(inapp?.data.title).toBe('For Kinfolk');
     expect(inapp?.data.description).toBe('Hi Kinfolk,');
-    expect(mocks.twilioCreate).toHaveBeenCalledWith(expect.objectContaining({ body: 'Hi Kinfolk,' }));
+    const entry = `/notifications?entry=${inapp!.path.split('/')[1]}`;
+    expect(mocks.twilioCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ body: `Hi Kinfolk, More in MyTribe: https://kinfolk.tribetails.com${entry}` }),
+    );
     expect(mocks.multicast).toHaveBeenCalledWith(
-      expect.objectContaining({ notification: expect.objectContaining({ title: 'For Kinfolk', body: 'Hi Kinfolk,' }) }),
+      expect.objectContaining({
+        notification: expect.objectContaining({ title: 'For Kinfolk', body: 'Hi Kinfolk,' }),
+        data: expect.objectContaining({ route: entry }),
+      }),
     );
     const email = mocks.sendTemplatedEmail.mock.calls[0]?.[0];
     expect(email.data.firstName).toBe('Kinfolk');
@@ -698,7 +712,282 @@ describe('broadcastMessage fills merge fields per household (#1610)', () => {
     });
     mocks.dbFn.mockReturnValue(ctx.db);
     await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: 'Hi {{firstName}},' }));
-    expect(mocks.twilioCreate).toHaveBeenCalledWith(expect.objectContaining({ body: 'Hi Dana,' }));
+    const entry = ctx.writes.find((x) => x.path.startsWith('notifications/'));
+    expect(entry?.data.description).toBe('Hi Dana,');
+    expect(mocks.twilioCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: `Hi Dana, More in MyTribe: https://kinfolk.tribetails.com/notifications?entry=${entry!.path.split('/')[1]}`,
+      }),
+    );
+  });
+  describe('#2316: a long blast is short on a text and a push, and links to its entry', () => {
+    const LONG = `${'Spring hours change on Monday. '.repeat(12)}Thank you!`;
+    it('cuts the text and the push, links both to the entry, and keeps the whole message on the entry', async () => {
+      const ctx = namedDb();
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await broadcastMessageHandler(
+        req({ criteria: { kind: 'all' }, channels: ['inapp', 'email', 'sms', 'push'], subject: 'Hours', body: LONG }),
+      );
+      const inapp = ctx.writes.find((x) => x.path.startsWith('notifications/'));
+      expect(inapp?.data.description).toBe(LONG);
+      const entry = `/notifications?entry=${inapp!.path.split('/')[1]}`;
+      const sms: string = mocks.twilioCreate.mock.calls[0][0].body;
+      expect(sms.endsWith(`... More in MyTribe: https://kinfolk.tribetails.com${entry}`)).toBe(true);
+      expect(sms.indexOf('...')).toBeLessThanOrEqual(197);
+      const push = mocks.multicast.mock.calls[0][0];
+      expect(push.notification.body.length).toBeLessThanOrEqual(200);
+      expect(push.notification.body.endsWith('\u2026')).toBe(true);
+      expect(push.data).toEqual({ notificationKey: 'broadcast.message', route: entry });
+      // The email is the whole message.
+      expect(mocks.sendTemplatedEmail.mock.calls[0][0].bodyTemplate).toContain('Thank you!');
+    });
+    /** The broadcast's own entries on a household's list. */
+    const entries = (ctx: { writes: Array<{ path: string; data: any }> }) =>
+      ctx.writes.filter((x) => x.path.startsWith('notifications/'));
+    it('with In-app not chosen, the whole message is still on the list and both links open it', async () => {
+      const ctx = namedDb();
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await broadcastMessageHandler(
+        req({ criteria: { kind: 'all' }, channels: ['sms', 'push'], subject: 'Hours', body: LONG }),
+      );
+      // One entry, with the message whole, written before either send.
+      expect(entries(ctx)).toHaveLength(1);
+      expect(entries(ctx)[0]!.data).toMatchObject({ recipientUid: 'u1', title: 'Hours', description: LONG, key: 'broadcast.message' });
+      const entry = `/notifications?entry=${entries(ctx)[0]!.path.split('/')[1]}`;
+      expect(mocks.twilioCreate.mock.calls[0][0].body.endsWith(`... More in MyTribe: https://kinfolk.tribetails.com${entry}`)).toBe(true);
+      expect(mocks.multicast.mock.calls[0][0].data.route).toBe(entry);
+      // In-app was not chosen, so it is not counted as sent.
+      expect(res.perChannel.inapp).toEqual({ sent: 0, skipped: 0, failed: 0 });
+      expect(res.perChannel.sms).toEqual({ sent: 1, skipped: 0, failed: 0 });
+      expect(res.perChannel.push).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    });
+    it('a short text gets the entry too, so its link opens the message', async () => {
+      const ctx = namedDb();
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: 'Closed Monday.' }));
+      expect(entries(ctx)).toHaveLength(1);
+      expect(mocks.twilioCreate.mock.calls[0][0].body).toBe(
+        `Closed Monday. More in MyTribe: https://kinfolk.tribetails.com/notifications?entry=${entries(ctx)[0]!.path.split('/')[1]}`,
+      );
+    });
+    it('a household that gets neither the text nor the push is given no entry', async () => {
+      // The household keeps texts and push off, and email is the one channel that goes.
+      const ctx = buildDbMock({ writeThrough: true,
+        docs: { 'clients/u1': prefsDoc({ email: true, sms: false, push: false }) },
+        queryDocs: {
+          kinfolk: [{ id: 'k1', data: { status: 'active', email: 'catch@hanasamku.com', phoneNumber: '+14155552671', uid: 'u1' } }],
+          fcm_tokens: [{ id: 'tok1', data: { uid: 'u1' } }],
+        },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await broadcastMessageHandler(
+        req({ criteria: { kind: 'all' }, channels: ['email', 'sms', 'push'], subject: 'Hours', body: LONG }),
+      );
+      expect(entries(ctx)).toHaveLength(0);
+      expect(mocks.twilioCreate).not.toHaveBeenCalled();
+      expect(mocks.multicast).not.toHaveBeenCalled();
+      expect(res.perChannel.sms).toEqual({ sent: 0, skipped: 1, failed: 0 });
+      expect(res.perChannel.push).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    });
+    it('a push with no device signed in writes no entry and is skipped', async () => {
+      const ctx = buildDbMock({ writeThrough: true,
+        docs: { 'clients/u1': prefsDoc({ push: true }) },
+        queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'active', uid: 'u1' } }] },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await expect(
+        broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['push'], subject: 'Hours', body: LONG })),
+      ).resolves.toMatchObject({ perChannel: { push: { sent: 0, skipped: 1, failed: 0 } } });
+      expect(entries(ctx)).toHaveLength(0);
+    });
+    it('a household with no MyTribe account gets the short text with a link to the list', async () => {
+      const ctx = buildDbMock({ writeThrough: true,
+        // No account, so no settings of their own: the operator set texts on
+        // for this notice and locked it, the one way such a household is texted.
+        docs: {
+          'businessSettings/notifications': {
+            byKey: { 'broadcast.message': { channels: { sms: true }, locked: { sms: true } } },
+          },
+        },
+        queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'active', phoneNumber: '+14155552671', uid: '' } }] },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: LONG }));
+      expect(entries(ctx)).toHaveLength(0);
+      expect(mocks.twilioCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.twilioCreate.mock.calls[0][0].body).toMatch(/\.\.\. More in MyTribe: https:\/\/kinfolk\.tribetails\.com\/notifications$/);
+    });
+    it('a refused entry write is logged, and the text and push still go with a link to the list', async () => {
+      const ctx = namedDb();
+      const collection = ctx.db.collection;
+      ctx.db.collection = (path: string) => {
+        const real = collection(path);
+        if (path !== 'notifications') return real;
+        return { ...real, doc: () => ({ id: 'refused', set: async () => { throw new Error('14 UNAVAILABLE'); } }) };
+      };
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await broadcastMessageHandler(
+        req({ criteria: { kind: 'all' }, channels: ['sms', 'push'], subject: 'Hours', body: LONG }),
+      );
+      expect(mocks.twilioCreate.mock.calls[0][0].body).toMatch(/\.\.\. More in MyTribe: https:\/\/kinfolk\.tribetails\.com\/notifications$/);
+      expect(mocks.multicast.mock.calls[0][0].data.route).toBe('/notifications');
+      expect(res.perChannel.sms.sent).toBe(1);
+      expect(res.perChannel.push.sent).toBe(1);
+      expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ event: 'inapp.write.failed', severity: 'warn' }));
+    });
+    it('with In-app chosen and its write refused, In-app counts as failed and the links open the list', async () => {
+      const ctx = namedDb();
+      const collection = ctx.db.collection;
+      ctx.db.collection = (path: string) => {
+        const real = collection(path);
+        if (path !== 'notifications') return real;
+        return { ...real, doc: () => ({ id: 'refused', set: async () => { throw new Error('14 UNAVAILABLE'); } }) };
+      };
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await broadcastMessageHandler(
+        req({ criteria: { kind: 'all' }, channels: ['inapp', 'sms'], subject: 'Hours', body: LONG }),
+      );
+      expect(res.perChannel.inapp).toEqual({ sent: 0, skipped: 0, failed: 1 });
+      expect(mocks.twilioCreate.mock.calls[0][0].body).toMatch(/More in MyTribe: https:\/\/kinfolk\.tribetails\.com\/notifications$/);
+    });
+    it('never ends the push on half of an emoji joined with others', async () => {
+      const ctx = namedDb();
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}';
+      const body = `${'a'.repeat(196)}${family} and more words after it`;
+      await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['push'], subject: 'Hours', body }));
+      expect(mocks.multicast.mock.calls[0][0].notification.body).toBe(`${'a'.repeat(196)}\u2026`);
+    });
+    /** The entries still on the household's list once the send is over. */
+    const kept = (ctx: { writes: Array<{ path: string; data: any }>; deletes: string[] }) =>
+      entries(ctx).filter((x) => !ctx.deletes.includes(x.path));
+    const removed = (ctx: { deletes: string[] }) => ctx.deletes.filter((p) => p.startsWith('notifications/'));
+    describe('an entry written only for the link is taken back when nothing that links to it went', () => {
+      it('a text the provider refused leaves no entry, so "every send failed" still means nobody has it', async () => {
+        const ctx = namedDb();
+        mocks.dbFn.mockReturnValue(ctx.db);
+        mocks.twilioCreate.mockRejectedValue(new Error('Twilio 20003'));
+        await expect(
+          broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: LONG })),
+        ).rejects.toMatchObject({ code: 'unavailable', message: 'broadcast_all_failed' });
+        expect(entries(ctx)).toHaveLength(1);
+        expect(kept(ctx)).toHaveLength(0);
+      });
+      it('a push no device took leaves no entry', async () => {
+        const ctx = namedDb();
+        mocks.dbFn.mockReturnValue(ctx.db);
+        mocks.multicast.mockResolvedValue({ successCount: 0, responses: [{ success: false }] });
+        await expect(
+          broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['push'], subject: 'Hours', body: LONG })),
+        ).rejects.toMatchObject({ message: 'broadcast_all_failed' });
+        expect(kept(ctx)).toHaveLength(0);
+      });
+      it('a push that threw leaves no entry', async () => {
+        const ctx = namedDb();
+        mocks.dbFn.mockReturnValue(ctx.db);
+        mocks.multicast.mockRejectedValue(new Error('fcm down'));
+        await expect(
+          broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['push'], subject: 'Hours', body: LONG })),
+        ).rejects.toMatchObject({ message: 'broadcast_all_failed' });
+        expect(kept(ctx)).toHaveLength(0);
+      });
+      it('an email that went does not keep it: the household was sent no link to it', async () => {
+        const ctx = namedDb();
+        mocks.dbFn.mockReturnValue(ctx.db);
+        mocks.twilioCreate.mockRejectedValue(new Error('Twilio 20003'));
+        const res = await broadcastMessageHandler(
+          req({ criteria: { kind: 'all' }, channels: ['email', 'sms'], subject: 'Hours', body: LONG }),
+        );
+        expect(res.perChannel.email.sent).toBe(1);
+        expect(res.perChannel.sms.failed).toBe(1);
+        expect(kept(ctx)).toHaveLength(0);
+      });
+      it('one of the two going keeps it', async () => {
+        const ctx = namedDb();
+        mocks.dbFn.mockReturnValue(ctx.db);
+        mocks.twilioCreate.mockRejectedValue(new Error('Twilio 20003'));
+        const res = await broadcastMessageHandler(
+          req({ criteria: { kind: 'all' }, channels: ['sms', 'push'], subject: 'Hours', body: LONG }),
+        );
+        expect(res.perChannel.push.sent).toBe(1);
+        expect(kept(ctx)).toHaveLength(1);
+        expect(removed(ctx)).toHaveLength(0);
+      });
+      it('with In-app chosen the entry stays whatever the text did', async () => {
+        const ctx = namedDb();
+        mocks.dbFn.mockReturnValue(ctx.db);
+        mocks.twilioCreate.mockRejectedValue(new Error('Twilio 20003'));
+        const res = await broadcastMessageHandler(
+          req({ criteria: { kind: 'all' }, channels: ['inapp', 'sms'], subject: 'Hours', body: LONG }),
+        );
+        expect(res.perChannel.inapp.sent).toBe(1);
+        expect(kept(ctx)).toHaveLength(1);
+        expect(removed(ctx)).toHaveLength(0);
+      });
+      it('sending again after every text failed leaves one entry, not two', async () => {
+        const ctx = namedDb();
+        mocks.dbFn.mockReturnValue(ctx.db);
+        const send = { criteria: { kind: 'all' }, channels: ['sms'], body: LONG, idempotencyKey: 'bcast_1757700000002_cd56ef' };
+        mocks.twilioCreate.mockRejectedValueOnce(new Error('Twilio 20003'));
+        await expect(broadcastMessageHandler(req(send))).rejects.toMatchObject({ message: 'broadcast_all_failed' });
+        const retry = await broadcastMessageHandler(req(send));
+        expect(retry.perChannel.sms.sent).toBe(1);
+        expect(kept(ctx)).toHaveLength(1);
+        // The text that went links to the entry that is still there.
+        const body: string = mocks.twilioCreate.mock.calls[1][0].body;
+        expect(body.endsWith(`/notifications?entry=${kept(ctx)[0]!.path.split('/')[1]}`)).toBe(true);
+      });
+      it('a take-back the database refused is logged', async () => {
+        const ctx = namedDb();
+        const collection = ctx.db.collection;
+        ctx.db.collection = (path: string) => {
+          const real = collection(path);
+          if (path !== 'notifications') return real;
+          return {
+            ...real,
+            doc: () => ({ id: 'stuck', set: async () => undefined, delete: async () => { throw new Error('14 UNAVAILABLE'); } }),
+          };
+        };
+        mocks.dbFn.mockReturnValue(ctx.db);
+        mocks.twilioCreate.mockRejectedValue(new Error('Twilio 20003'));
+        await expect(
+          broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: LONG })),
+        ).rejects.toMatchObject({ message: 'broadcast_all_failed' });
+        expect(logEvent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            event: 'inapp.remove.failed',
+            severity: 'error',
+            extra: expect.objectContaining({ kinfolkId: 'k1', entryId: 'stuck' }),
+          }),
+        );
+      });
+    });
+    describe('an entry written for a text or a push with no subject still has a title a household can read', () => {
+      it('is the notice title with the business name, never blank', async () => {
+        const ctx = buildDbMock({ writeThrough: true,
+          docs: {
+            'clients/u1': prefsDoc({ sms: true }),
+            'business_settings/business_settings': { businessName: 'Test Business' },
+          },
+          queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'active', phoneNumber: '+14155552671', uid: 'u1' } }] },
+        });
+        mocks.dbFn.mockReturnValue(ctx.db);
+        await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: 'Closed Monday.' }));
+        expect(entries(ctx)[0]!.data.title).toBe('Announcements from Test Business');
+      });
+      it('says "your Auntie" when the business has no name set', async () => {
+        const ctx = namedDb();
+        mocks.dbFn.mockReturnValue(ctx.db);
+        await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: 'Closed Monday.' }));
+        expect(entries(ctx)[0]!.data.title).toBe('Announcements from your Auntie');
+      });
+      it('a subject, when one was written, is the title as before', async () => {
+        const ctx = namedDb();
+        mocks.dbFn.mockReturnValue(ctx.db);
+        await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], subject: 'Hours', body: 'Closed Monday.' }));
+        expect(entries(ctx)[0]!.data.title).toBe('Hours');
+      });
+    });
   });
   it('refuses a field it cannot fill before reading the audience or writing anything', async () => {
     const ctx = namedDb();

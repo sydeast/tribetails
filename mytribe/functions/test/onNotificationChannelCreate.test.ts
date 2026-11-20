@@ -134,7 +134,7 @@ describe('onNotificationChannelCreate hands the push what a tap opens (#2259, #2
     });
   });
 
-  it('email and text messages are handed no target: their link is unchanged', async () => {
+  it('an email is handed no target: its link is unchanged', async () => {
     const parent = {
       key: 'kincare.auntie.arrived',
       recipientUid: 'cli1',
@@ -144,9 +144,22 @@ describe('onNotificationChannelCreate hands the push what a tap opens (#2259, #2
       targetId: 'v1',
     };
     await run('email', parent);
-    await run('sms', parent);
     expect(mocks.emailSender.mock.calls[0]![0].open).toBeUndefined();
-    expect(mocks.smsSender.mock.calls[0]![0].open).toBeUndefined();
+  });
+  it('#2371: a household text message is handed its own entry on the notifications list', async () => {
+    await run('sms', {
+      key: 'kincare.auntie.arrived',
+      recipientUid: 'cli1',
+      stream: 'kinfolk',
+      data: { kinfolkId: 'fam1', visitId: 'v1' },
+      targetType: 'booking',
+      targetId: 'v1',
+      notificationId: 'n-77',
+    });
+    expect(mocks.smsSender.mock.calls[0]![0].open.readInList).toEqual({
+      route: '/notifications?entry=n-77',
+      entryId: 'n-77',
+    });
   });
 });
 

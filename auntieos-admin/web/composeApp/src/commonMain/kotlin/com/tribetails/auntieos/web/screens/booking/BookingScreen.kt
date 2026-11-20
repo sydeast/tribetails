@@ -36,6 +36,7 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import com.tribetails.auntieos.web.screens.cutWhole
 import kotlinx.coroutines.flow.first
 import com.tribetails.auntieos.web.screens.notifications.parseVisitRequestKey
 import androidx.compose.ui.text.font.FontStyle
@@ -1263,7 +1264,7 @@ private fun BookingCard(
             if (notePreview.isNotBlank()) {
                 Spacer(Modifier.height(7.dp))
                 Text(
-                    text  = "Note: ${notePreview.take(120)}",
+                    text  = "Note: ${cutWhole(notePreview, 120)}",
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )

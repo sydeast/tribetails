@@ -5,6 +5,7 @@ import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
 import { db } from '../lib/firestoreAdmin';
 import { firstWord, nameOrNull, resolveHouseholdAuthors } from '../lib/kinTaleCommentAuthor';
+import { cutWhole } from '../lib/cutText';
 
 type CommentDoc = {
   authorUid?: string;
@@ -82,7 +83,7 @@ export async function onKinTaleCommentCreateHandler(event: any): Promise<void> {
         // #1898: what the household's notice names: who wrote it, on which tale.
         authorName: await commentAuthorName(kinfolkId, comment),
         taleTitle: textOf(report?.title),
-        preview: (comment.body ?? '').slice(0, 200),
+        preview: cutWhole(comment.body ?? '', 200),
       },
     });
   } catch (err) {

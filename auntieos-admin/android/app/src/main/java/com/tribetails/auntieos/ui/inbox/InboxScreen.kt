@@ -30,6 +30,7 @@ import com.tribetails.auntieos.data.model.CallLog
 import com.tribetails.auntieos.data.model.EmailMessage
 import com.tribetails.auntieos.data.model.SmsMessage
 import com.tribetails.auntieos.data.model.VoicemailLog
+import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.ui.components.*
 import com.tribetails.auntieos.ui.components.AuntiePullRefresh
 import com.tribetails.auntieos.ui.theme.*
@@ -533,7 +534,7 @@ internal fun VoicemailLog.toEntry() = InboxEntry(
     timestamp   = timestamp,
     kinfolkName = kinfolkName,
     counterpart = callerNumber,
-    preview     = transcript.take(120),
+    preview     = cutWhole(transcript, 120),
     direction   = "",
     // Three states are carried rather than collapsed to "". `dismissed` has to
     // reach the row (so the list can say somebody closed this out, as opposed
@@ -569,7 +570,7 @@ private fun CallLog.toEntry() = InboxEntry(
     timestamp   = timestamp,
     kinfolkName = kinfolkName,
     counterpart = counterpartNumber,
-    preview     = transcript.take(120).ifBlank {
+    preview     = cutWhole(transcript, 120).ifBlank {
         when (status.lowercase()) {
             "missed"    -> "Missed call"
             "voicemail" -> "Left a voicemail"
@@ -592,7 +593,7 @@ private fun SmsMessage.toEntry() = InboxEntry(
     timestamp   = timestamp,
     kinfolkName = kinfolkName,
     counterpart = counterpartNumber,
-    preview     = body.take(140),
+    preview     = cutWhole(body, 140),
     direction   = direction,
     statusHint  = "",
     mediaCount  = mediaUrls.size,
@@ -611,7 +612,7 @@ private fun EmailMessage.toEntry(): InboxEntry {
         timestamp   = timestamp,
         kinfolkName = kinfolkName,
         counterpart = person,
-        preview     = previewText.take(160),
+        preview     = cutWhole(previewText, 160),
         direction   = direction,
         statusHint  = "",
         mediaCount  = attachmentUrls.size,
