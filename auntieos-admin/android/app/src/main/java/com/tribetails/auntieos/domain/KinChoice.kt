@@ -88,10 +88,20 @@ data class KinChoice(val allKin: Boolean = true, val selectedIds: Set<String> = 
 
 /**
  * #2032: the "Kin" line on a visit's detail, from what the visit itself
- * stores. Names where it has them, and for a visit that names nobody, the rule
- * every visit is made under.
+ * stores. Names where it has them; a count where it has only ids; and for a
+ * visit that names nobody, the rule every visit is made under.
+ *
+ * #2404: the ids are read as well as the names. A Kin with no name on file is
+ * stored as an id alone, so a booking narrowed to that Kin read "Every Kin in
+ * the home" from its names. Same words as the admin web app (`visitFacts.ts`)
+ * and the desktop console (`KinRoster.kt`).
  */
-fun visitKinLine(kinNames: List<String>): String {
+fun visitKinLine(kinIds: List<String>, kinNames: List<String>): String {
     val names = kinNames.map { it.trim() }.filter { it.isNotEmpty() }
-    return if (names.isEmpty()) "Every Kin in the home" else names.joinToString(", ")
+    if (names.isEmpty()) {
+        return if (kinIds.isEmpty()) "Every Kin in the home" else "${kinIds.size} (names not on file)"
+    }
+    val unnamed = (kinIds.size - names.size).coerceAtLeast(0)
+    val joined = names.joinToString(", ")
+    return if (unnamed > 0) "$joined · $unnamed without a name on file" else joined
 }
