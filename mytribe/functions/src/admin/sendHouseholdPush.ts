@@ -7,6 +7,7 @@ import { initSentry } from '../lib/sentry';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { loadBusinessName } from '../lib/businessName';
 import { sanitizePlainText } from '../lib/richText';
+import { isPushDraft } from '../lib/generatedDraftType';
 import { getNotificationDef } from '../notifications/catalog';
 import {
   HOUSEHOLD_NOTICE_ROUTE,
@@ -197,11 +198,11 @@ export async function approvedPushDraftFor(
   if (owners.size !== 1 || !owners.has(kinfolkId)) {
     throw new HttpsError('permission-denied', 'This draft was written for a different household.');
   }
-  const type = draftField(d, 'communication_type', 'communicationType');
-  if ((type.snake || type.camel).toLowerCase() !== 'push') {
+  // The type and the status are read exactly as stored (`lib/generatedDraftType.ts`).
+  if (!isPushDraft(d)) {
     throw new HttpsError('failed-precondition', 'This draft is not a push.');
   }
-  if (String(d['status'] ?? '').trim().toLowerCase() !== 'approved') {
+  if (d['status'] !== 'approved') {
     throw new HttpsError('failed-precondition', 'Approve this draft before sending it.');
   }
   return ref;

@@ -88,12 +88,13 @@ const AUNTIE_ALLOWED_ENDPOINTS = new Set([
 //   getTrainingDoc     `/api/draft/write`, `/api/draft/get` or
 //                      `/api/training-doc`; the composer reaches
 //                      `generated_drafts` and `training_documents` as direct
-//                      client reads and writes, which the rules already grant a
-//                      caretaker (`isStaff()`, spec §8 lines 1050-1051, 1126).
-//                      So this is "no caller", not "the ruling says no": she is
-//                      not blocked from the data, only from three unused HTTP
-//                      front doors that carry a shared rate-limit budget.
-//                      Opening them would add reachable surface for zero gain.
+//                      client reads, under the rules. Those give a caretaker
+//                      KinTale drafts only (type exactly `visit_report`): a
+//                      draft is the owner's to create and delete, and every
+//                      other type is the owner's to read. These endpoints hand
+//                      back or write a draft of any type, so they stay with the
+//                      owner; opening them would add reachable surface for
+//                      zero gain.
 
 /**
  * Does this decoded token carry the caretaker role?

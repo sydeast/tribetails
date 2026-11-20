@@ -18,6 +18,8 @@ vi.mock('firebase/firestore', () => ({
 
 import { useCollection, useDocById, type CollectionSpec } from './firestore';
 import { setTestScope } from './testScope';
+import { setCaretakerScope } from './caretakerScope';
+import { GENERATED_DRAFTS_QUERY } from '../api/drafts';
 
 type NextFn = (snap: { docs: { id: string; data: () => unknown }[] }) => void;
 type ErrFn = (e: Error) => void;
@@ -40,6 +42,7 @@ beforeEach(() => {
   // Module-level state on testScope.ts: clear it so one test's sandbox claim
   // cannot scope or suppress another test's query.
   setTestScope(null);
+  setCaretakerScope(false);
 });
 
 const SPEC: CollectionSpec = { path: 'c', order: ['seq', 'desc'], max: 10 };
@@ -139,6 +142,65 @@ describe('useCollection', () => {
 });
 
 /**
+ * The drafts list Home and KinTales share. An Auntie reads KinTale drafts only,
+ * and rules refuse a list that does not name that type, so her listener has to
+ * carry it; the owner's reads every type and carries nothing.
+ */
+describe('useCollection: the drafts list', () => {
+  it('HAPPY: an Auntie\'s listener names the KinTale type, still sorted and capped', () => {
+    captureCallbacks();
+    setCaretakerScope(true);
+    renderHook(() => useCollection(GENERATED_DRAFTS_QUERY));
+    expect(where).toHaveBeenCalledTimes(1);
+    expect(where).toHaveBeenCalledWith('communication_type', '==', 'visit_report');
+    expect(orderBy).toHaveBeenCalledWith('createdOn', 'desc');
+    expect(limit).toHaveBeenCalledWith(50);
+    expect(onSnapshot).toHaveBeenCalledOnce();
+  });
+  it('HAPPY: the owner\'s listener carries no type', () => {
+    captureCallbacks();
+    renderHook(() => useCollection(GENERATED_DRAFTS_QUERY));
+    expect(where).not.toHaveBeenCalled();
+    expect(onSnapshot).toHaveBeenCalledOnce();
+  });
+  it('an Auntie\'s other lists are not narrowed', () => {
+    captureCallbacks();
+    setCaretakerScope(true);
+    renderHook(() => useCollection({ path: 'kin_care_reports', order: ['createdAt', 'desc'], max: 200 }));
+    expect(where).not.toHaveBeenCalled();
+  });
+  it('SAD: her rows come back as the ready list, an empty one included', () => {
+    const cb = captureCallbacks();
+    setCaretakerScope(true);
+    const { result } = renderHook(() => useCollection<{ _id: string }>(GENERATED_DRAFTS_QUERY));
+    expect(result.current.status).toBe('loading');
+    act(() => cb.next!({ docs: [] }));
+    expect(result.current).toEqual({ status: 'ready', data: [] });
+  });
+  it('ERROR: a refused or failed drafts read is an error with a retry, never an empty list', () => {
+    const cb = captureCallbacks();
+    setCaretakerScope(true);
+    const { result } = renderHook(() => useCollection(GENERATED_DRAFTS_QUERY));
+    act(() => cb.err!(new Error('The query requires an index.')));
+    expect(result.current.status).toBe('error');
+    if (result.current.status === 'error') {
+      expect(result.current.message).toBe('The query requires an index.');
+      expect(typeof result.current.retry).toBe('function');
+    }
+  });
+  it('a session that changes from Auntie to owner re-subscribes without the type', () => {
+    const cb = captureCallbacks();
+    setCaretakerScope(true);
+    const { rerender } = renderHook(() => useCollection(GENERATED_DRAFTS_QUERY));
+    expect(where).toHaveBeenCalledTimes(1);
+    setCaretakerScope(false);
+    rerender();
+    expect(cb.unsub).toHaveBeenCalledOnce();
+    expect(where).toHaveBeenCalledTimes(1);
+    expect(onSnapshot).toHaveBeenCalledTimes(2);
+  });
+});
+/**
  * The by-id read behind every notification deep link (issue #389). A list query
  * answers "what is in the window"; a link names a record, and those are
  * different questions. Resolving the second with the first is what put the
@@ -192,6 +254,15 @@ describe('useDocById', () => {
     expect(result.current).toEqual({ status: 'ready', data: null });
   });
 
+  it('NEGATIVE: a draft an Auntie may not read opens as not there', () => {
+    // A Communicate draft (email, text, push) is the owner's. Rules refuse her
+    // the read, and the screen says the draft is no longer here.
+    const cb = captureDocCallbacks();
+    setCaretakerScope(true);
+    const { result } = renderHook(() => useDocById('generated_drafts', 'an-email-draft'));
+    act(() => cb.err!({ code: 'permission-denied', message: 'Missing or insufficient permissions.' }));
+    expect(result.current).toEqual({ status: 'ready', data: null });
+  });
   it('surfaces any other read failure as an error WITH a retry', () => {
     const cb = captureDocCallbacks();
     const { result } = renderHook(() => useDocById('invoices', 'inv9'));
