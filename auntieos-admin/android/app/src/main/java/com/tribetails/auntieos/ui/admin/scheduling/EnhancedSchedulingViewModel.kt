@@ -3009,7 +3009,16 @@ class EnhancedSchedulingViewModel(
     }
 
     fun hideAddBookingDialog() {
-        _state.value = _state.value.copy(showAddBookingDialog = false)
+        // #2403: this form draws the same Kin list as New booking, so closing it
+        // drops the list and any answer still on the way.
+        kinRosterAsk++
+        _state.value = _state.value.copy(
+            showAddBookingDialog = false,
+            newRequestKin = emptyList(),
+            newRequestChooseKin = false,
+            newRequestKinError = null,
+            newRequestKinLoading = false,
+        )
     }
 
     fun showNewRequestDialog() {
@@ -3022,6 +3031,7 @@ class EnhancedSchedulingViewModel(
 
     fun hideNewRequestDialog() {
         if (_state.value.newRequestInFlight) return
+        kinRosterAsk++
         _state.value = _state.value.copy(
             showNewRequestDialog = false,
             newRequestError = null,
@@ -3044,8 +3054,19 @@ class EnhancedSchedulingViewModel(
      *
      * A blank id (the operator cleared the household) empties the list rather
      * than asking about nobody.
+     *
+     * #2403: only the latest ask may write. Picking a second household before
+     * the first answer is back used to apply both in arrival order, so the form
+     * could list one household's Kin under another. Each ask takes a number,
+     * and an answer whose number is no longer current is dropped whole: the
+     * newer ask owns the list, the error and the loading cue. A number rather
+     * than the household id, so picking the first household again cannot let
+     * its earlier answer in, and rather than cancelling alone, because a call
+     * already on the wire can still come back.
      */
     fun loadKinForNewRequest(kinfolkId: String) {
+        val ask = ++kinRosterAsk
+        kinRosterJob?.cancel()
         if (kinfolkId.isBlank()) {
             _state.value = _state.value.copy(
                 newRequestKin = emptyList(),
@@ -3061,8 +3082,10 @@ class EnhancedSchedulingViewModel(
             newRequestKinLoading = true,
             newRequestKinError = null,
         )
-        viewModelScope.launch {
-            kinCareRepository.getHouseholdKinRoster(kinfolkId)
+        kinRosterJob = viewModelScope.launch {
+            val answer = kinCareRepository.getHouseholdKinRoster(kinfolkId)
+            if (ask != kinRosterAsk) return@launch
+            answer
                 .onSuccess { roster ->
                     _state.value = _state.value.copy(
                         newRequestKin = roster.kin,
@@ -3084,6 +3107,10 @@ class EnhancedSchedulingViewModel(
                 }
         }
     }
+
+    /** #2403: the number of the latest Kin ask, or of the close that ended it. */
+    private var kinRosterAsk = 0
+    private var kinRosterJob: kotlinx.coroutines.Job? = null
 
     /**
      * AO-25: create a multi-date / recurring booking REQUEST via
@@ -3141,6 +3168,7 @@ class EnhancedSchedulingViewModel(
                 idempotencyKey = idempotencyKey,
             ).onSuccess { result ->
                 pendingRequestKey = null
+                kinRosterAsk++
                 _state.value = _state.value.copy(
                     newRequestInFlight = false,
                     showNewRequestDialog = false,
@@ -3148,6 +3176,7 @@ class EnhancedSchedulingViewModel(
                     newRequestKin = emptyList(),
                     newRequestChooseKin = false,
                     newRequestKinError = null,
+                    newRequestKinLoading = false,
                     seriesActionMessage = "Booking request created: ${result.visitCount} visit(s) submitted for approval. " +
                         "It enters Visit requests and appears above once approved.",
                 )

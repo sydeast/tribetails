@@ -18,7 +18,7 @@ auntie: Joss
 **Why it works:** Cap drives the story and Juniper gets the last word.
 
 ### Gold 2, Tofu (Marlowe), evening walk
-> "Tofu and I took the long way round. Tell Marlowe the gate is latched."
+> "Tofu and I took the long way round. TOFU!!! Not one of your tofus, a proper tofu. Tell Marlowe the gate is latched, the Marlowes like it shut."
 
 ## DIAL: Professional
 
