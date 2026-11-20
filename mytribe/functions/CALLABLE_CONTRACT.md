@@ -3350,6 +3350,52 @@ these two; none of them writes the send itself.
   draft, or the household doc is gone), `invalid-argument` (blank body).
 - Delete refuses a published draft (`failed-precondition`). Both write an
   audit entry: `KINTALE_DRAFT_PUBLISHED`, `KINTALE_DRAFT_DELETED`.
+- #2428: delete also refuses every other draft a household was sent
+  (`failed-precondition`, `details.code: 'draft_already_sent'`): an Email or
+  Text that is approved or stamped `sentAt`, and a Push whose `pushOutcome` is
+  `sent` or `listed`. A held Push and one with no `pushOutcome` are deleted.
+  `firestore.rules` refuses a direct delete of the same drafts.
+
+## Communicate Email and Text drafts (#2428, owner)
+
+`src/admin/sendGeneratedDraft.ts`, exported from `src/admin/sendExternalMessage.ts`.
+Admin web, Android and the desktop console all call it to approve and send an
+Email or Text draft; none of them writes the approve or calls
+`sendExternalMessage` for a draft any more.
+
+| Callable | Input | Output | Gate |
+|---|---|---|---|
+| `sendGeneratedDraft` | `{ draftId, kinfolkId, body, subject? }` | `{ ok, outcome, channel, recipientRedacted, sentAt }` | admin only |
+
+- `outcome` is `sent` (this call sent it) or `already_sent` (it went out
+  before, or may have; nothing new was sent). `channel` is `email` or `sms`,
+  read from the draft's type. `recipientRedacted` and `sentAt` are blank on
+  `already_sent` for a draft an older client sent.
+- There is no address in the request. The server sends to `email` or
+  `phoneNumber` on `kinfolk/{kinfolkId}`, and refuses unless the draft was
+  written for that household (`permission-denied`).
+- One transaction checks the draft and claims it: `status: 'approved'`,
+  `generatedCopy` (the words in `body`), `subject` (Email), `approvedAt`,
+  `approvedBy`, `sendClaimedAt`. After the provider takes the message the draft
+  is stamped `sentAt`, `sentChannel`, `sentTo` (masked) and
+  `sentProviderMessageId`, and `sendClaimedAt` is removed.
+- Only a draft that is not `approved` and has no `sentAt` is sent. A call for
+  any other answers `already_sent`, except while a claim is under 120 seconds
+  old, which is `aborted` with `details.code: 'draft_send_in_flight'`.
+- When the provider refuses (or the address is hard-bounced) the claim is let
+  go, the draft returns to the status it had with `sendFailedAt` set, and the
+  provider's error is rethrown. Nothing else lets a claim go.
+- Refusals: `not-found` (no draft), `permission-denied` (another household's
+  draft), `failed-precondition` (not an Email or Text, no address on file, an
+  address that cannot be sent to, the household doc is gone),
+  `invalid-argument` (blank words, an Email with no subject).
+- The send is recorded as `sendExternalMessage` records one:
+  `external_messages` and the `EXTERNAL_MESSAGE_SENT` audit entry, whose payload
+  also names `draftId` and `kinfolkId`. Like `sendExternalMessage`, it does not
+  read `householdNotificationsLive`.
+- `firestore.rules` refuses a client update to an Email or Text draft that is
+  `approved` or has `sentAt`, so a client that still approves with its own
+  write cannot approve, and so cannot send, the same draft twice.
 
 ## Notifications inbox (recipient or admin)
 

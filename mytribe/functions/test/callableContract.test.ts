@@ -158,6 +158,7 @@ import { GOOGLE_OAUTH_REDIRECT_URI, GOOGLE_OAUTH_SECRETS } from '../src/lib/goog
 // silent rename here is a privacy regression, not only a broken client.
 import { Args as SendExternalMessageArgs } from '../src/admin/sendExternalMessage';
 import { Args as SendHouseholdPushArgs } from '../src/admin/sendHouseholdPush';
+import { Args as SendGeneratedDraftArgs } from '../src/admin/sendGeneratedDraft';
 import { MIRROR_SKIPPED } from '../src/lib/smsChannelMirror';
 
 /**
@@ -577,6 +578,14 @@ const FROZEN_DEEP_SHAPES: Record<string, { schema: z.ZodTypeAny; signature: stri
   sendHouseholdPush: {
     schema: SendHouseholdPushArgs,
     signature: ['body', 'draftId', 'kinfolkId', 'title'],
+  },
+  // #2428: web admin `api/draftSend.ts`, Android
+  // `AuntieRepository.sendGeneratedDraft` and the desktop console's
+  // `FirestoreClient.sendGeneratedDraft` hand-mirror this request. There is no
+  // address in it on purpose: the server reads the household's own.
+  sendGeneratedDraft: {
+    schema: SendGeneratedDraftArgs,
+    signature: ['body', 'draftId', 'kinfolkId', 'subject'],
   },
 };
 

@@ -1724,6 +1724,38 @@ service cloud.firestore {
         'generatedCopy', 'generated_copy', 'generatedTitle', 'generated_title', 'subject'
       ]);
     }
+    // #2428: A DRAFT THAT WENT OUT IS A RECORD, AND AN EMAIL OR TEXT GOES OUT
+    // ONCE. An Email or Text draft is sent by `sendGeneratedDraft`, which marks
+    // it `approved` and sends it in one call. Every client installed before
+    // that approved the draft with its own update here and then sent the
+    // message itself, and nothing recorded the send, so the same draft could be
+    // approved and sent again. That update is the one thing such a client does
+    // before it sends, so it is refused once the draft is approved: an
+    // installed client cannot send an Email or Text draft a second time.
+    //
+    // The type counts when EITHER spelling carries it. A Push is not covered by
+    // the update rule: `sendHouseholdPush` already sends one once per draft.
+    //
+    // A draft a household was sent is kept: a KinTale (`publishedReportId`), an
+    // approved Email or Text, and a Push that reached their notifications list
+    // or their phone (`pushOutcome` `sent` or `listed`). The owner's delete goes
+    // through `deleteGeneratedDraft`, which refuses the same drafts; this is
+    // the same refusal for a delete made directly.
+    function draftTypeIsOneOf(d, types) {
+      return d.get('communication_type', '') in types || d.get('communicationType', '') in types;
+    }
+    function draftHasText(d, field) {
+      return d.get(field, '') is string && d.get(field, '') != '';
+    }
+    function isApprovedMessageDraftData(d) {
+      return draftTypeIsOneOf(d, ['email', 'sms'])
+             && (d.get('status', '') == 'approved' || draftHasText(d, 'sentAt'));
+    }
+    function draftWentOutData(d) {
+      return isApprovedMessageDraftData(d)
+             || draftHasText(d, 'publishedReportId')
+             || (draftTypeIsOneOf(d, ['push']) && d.get('pushOutcome', '') in ['sent', 'listed']);
+    }
     match /generated_drafts/{id} {
       allow get: if isOwner()
                  || (isCaretaker() && isKinTaleDraftData(resource.data))
@@ -1731,8 +1763,9 @@ service cloud.firestore {
       allow list: if isOwner()
                   || (isCaretaker() && resource.data.communication_type == 'visit_report')
                   || (isTestAdmin() && resource.data.kinfolk_id == testScope());
-      allow create, delete: if isOwner();
-      allow update: if isOwner()
+      allow create: if isOwner();
+      allow delete: if isOwner() && !draftWentOutData(resource.data);
+      allow update: if (isOwner() && !isApprovedMessageDraftData(resource.data))
                     || (isCaretaker()
                         && isKinTaleDraftData(resource.data)
                         && isKinTaleDraftData(request.resource.data)
