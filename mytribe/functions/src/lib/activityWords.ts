@@ -484,21 +484,33 @@ export function auntieHouseholdLookWords(auntieName: unknown, householdName: unk
  * #2344: a card was declined on an invoice the household no longer has to pay
  * by card: the invoice was already paid, or the payment from that same
  * checkout has gone through. No "charge failed" notice is sent for it, and the
- * line says so. `invoice-paid`, `payment-landed`, `invoice-cancelled` and
- * `invoice-written-off` are the reasons the Stripe webhook stores.
+ * line says so. `invoice-paid`, `payment-landed`, `invoice-cancelled`,
+ * `invoice-written-off`, `invoice-not-found` and `invoice-other-household` are
+ * the reasons the Stripe webhook stores.
  */
 export function cardDeclinedAfterPaymentWords(invoiceNumber: unknown, reason: string): string {
+  const sent = 'No notice was sent to the household.';
+  // The checkout named an invoice that is not there, so there is no number to give.
+  if (reason === 'invoice-not-found') return `A card was declined on an invoice that could not be found. ${sent}`;
   const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
   const invoice = n === '' ? 'an invoice' : `invoice ${n}`;
-  // #2361: a cancelled or written-off invoice asks nothing of the household either.
-  const state = reason === 'invoice-cancelled' ? 'cancelled' : reason === 'invoice-written-off' ? 'written off' : 'already paid';
+  // #2361: a cancelled or written-off invoice asks nothing of the household
+  // either. Nor does one that is another household's than the checkout's.
+  const state =
+    reason === 'invoice-cancelled'
+      ? 'was cancelled'
+      : reason === 'invoice-written-off'
+        ? 'was written off'
+        : reason === 'invoice-other-household'
+          ? 'belongs to a different household'
+          : 'was already paid';
   const why =
     reason === 'payment-landed'
       ? ', and the payment from the same checkout went through'
       : n === ''
-        ? ` that was ${state}`
-        : `, which was ${state}`;
-  return `A card was declined on ${invoice}${why}. No notice was sent to the household.`;
+        ? ` that ${state}`
+        : `, which ${state}`;
+  return `A card was declined on ${invoice}${why}. ${sent}`;
 }
 /**
  * #2345: a card payment put on an invoice that was not in a state to be paid.

@@ -34,6 +34,7 @@ import {
   decideCardApply,
   fallbackNeedsOwnerLine,
   heldAsDuplicate,
+  invoiceOfAnotherHousehold,
 } from '../lib/cardPaymentApply';
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
@@ -138,12 +139,26 @@ export const NOTICE_SKIPPED_AFTER_PAYMENT = 'declined-after-payment';
  * Why a decline is not worth telling the household about. #2361: a cancelled
  * or written-off invoice asks nothing of the household either, so a decline
  * on a checkout page opened before the cancel or the write-off is the same
- * owner-only line.
+ * owner-only line. So is a decline on a checkout whose invoice no longer
+ * exists, or is not one of the checkout household's: a declined checkout
+ * touches only its own household's invoice.
  */
-export type DeclineAfterPaymentReason = 'invoice-paid' | 'payment-landed' | 'invoice-cancelled' | 'invoice-written-off';
+export type DeclineAfterPaymentReason =
+  | 'invoice-paid'
+  | 'payment-landed'
+  | 'invoice-cancelled'
+  | 'invoice-written-off'
+  | 'invoice-not-found'
+  | 'invoice-other-household';
 /** The stored reason read back on a retry. Anything unknown reads as the original `invoice-paid`. */
 export function declineReasonOf(raw: unknown): DeclineAfterPaymentReason {
-  return raw === 'payment-landed' || raw === 'invoice-cancelled' || raw === 'invoice-written-off' ? raw : 'invoice-paid';
+  return raw === 'payment-landed' ||
+    raw === 'invoice-cancelled' ||
+    raw === 'invoice-written-off' ||
+    raw === 'invoice-not-found' ||
+    raw === 'invoice-other-household'
+    ? raw
+    : 'invoice-paid';
 }
 export interface DeclineAfterPaymentDetail {
   reason: DeclineAfterPaymentReason;
@@ -154,29 +169,37 @@ export interface DeclineAfterPaymentDetail {
  * PURE. Whether a declined charge has been overtaken by a payment: the
  * PaymentIntent it names has its claim (`stripePayments/{id}`, written in the
  * same commit as the money, so the checkout's own payment landed), or the
- * invoice reads paid, cancelled or written off (#2361). Null when the decline
- * still matters to the household.
+ * invoice reads paid, cancelled or written off (#2361), or it does not exist
+ * or is not one of the checkout household's (`checkoutKinfolkId`, by
+ * `invoiceOfAnotherHousehold`). Null when the decline still matters to the
+ * household.
  */
 export function declineAfterPayment(
   invoice: Record<string, unknown> | undefined | null,
   paymentLanded: boolean,
+  checkoutKinfolkId = '',
 ): DeclineAfterPaymentDetail | null {
   // A payment from this same checkout that has landed is said first, as
   // before: on a cancelled invoice it is held, and the owner already has the
-  // line saying why. Otherwise cancelled and written off are asked ahead of
-  // paid, the order `duplicateCheckoutReason` asks them in.
+  // line saying why. Otherwise whose the invoice is comes ahead of what it
+  // says about itself, then cancelled and written off ahead of paid, the
+  // order `cardHoldReason` asks them in.
   const paid = invoiceMarkedPaid(invoice ?? null);
   const reason: DeclineAfterPaymentReason | null = paymentLanded
     ? paid
       ? 'invoice-paid'
       : 'payment-landed'
-    : invoiceCancelled(invoice as InvoicePaidDoc | null)
-      ? 'invoice-cancelled'
-      : isWrittenOff(invoice as WriteOffDoc | null)
-        ? 'invoice-written-off'
-        : paid
-          ? 'invoice-paid'
-          : null;
+    : invoice === undefined || invoice === null
+      ? 'invoice-not-found'
+      : invoiceOfAnotherHousehold(invoice, checkoutKinfolkId)
+        ? 'invoice-other-household'
+        : invoiceCancelled(invoice as InvoicePaidDoc | null)
+          ? 'invoice-cancelled'
+          : isWrittenOff(invoice as WriteOffDoc | null)
+            ? 'invoice-written-off'
+            : paid
+              ? 'invoice-paid'
+              : null;
   if (reason === null) return null;
   const number = invoice?.['invoiceNumber'];
   return { reason, invoiceNumber: typeof number === 'string' ? number : '' };
@@ -1028,8 +1051,17 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // one Activity Log line for the owner (after the commit), and NOTHING
     // written to the invoice, not even the order stamp. Ahead of the date
     // check on purpose: it holds whatever the decline's date.
+    //
+    // The same for a checkout whose invoice does not exist (the order stamp
+    // would make an invoice out of nothing) or is not one of the checkout
+    // household's: a declined checkout touches only its own household's
+    // invoice, as a paid one does (`cardHoldReason`).
     const overtaken = isFailedEvent
-      ? declineAfterPayment(invoiceSnap.data() as Record<string, unknown> | undefined, declinedClaimSnap?.exists === true)
+      ? declineAfterPayment(
+          invoiceSnap.data() as Record<string, unknown> | undefined,
+          declinedClaimSnap?.exists === true,
+          familyId,
+        )
       : null;
     if (overtaken !== null) {
       declinedDetail = overtaken;
@@ -1480,6 +1512,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       const overtakenNow = declineAfterPayment(
         invoiceNow.data() as Record<string, unknown> | undefined,
         claimNow?.exists === true,
+        familyId,
       );
       if (overtakenNow !== null) {
         recoverKind = 'declinedAfterPayment';

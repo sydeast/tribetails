@@ -790,7 +790,9 @@ describe('#2276: invoices the ordinary plan cannot describe are paid and flagged
   });
 
   it('no amount from Stripe or the invoice: paid and flagged, with no invoice row invented', async () => {
-    docs[INVOICE] = { kinfolkId: 'fam1', status: 'open' };
+    // Owed on its total, which is kept in cents only: the dollar fields the
+    // charge would be read from are not there.
+    docs[INVOICE] = { kinfolkId: 'fam1', status: 'open', totalCents: 4000 };
     hooks.events['bare'] = {
       id: 'evt_bare',
       type: 'payment_intent.succeeded',
@@ -803,7 +805,34 @@ describe('#2276: invoices the ordinary plan cannot describe are paid and flagged
     expect(invoiceRows()).toHaveLength(0);
     expect(docs['payments/evt_bare']).toMatchObject({ amountResolved: false, amountCents: null });
     expect(docs['payments/evt_bare']!.appliedInvoiceId).toBeUndefined();
+    expect(docs['payments/evt_bare']!.needsAdminDecision).toBeUndefined();
     expect(docs[INVOICE]).toMatchObject({ status: 'paid', amountDueCents: 0 });
+  });
+
+  it('no amount from Stripe, and an invoice with no total: held for the owner, not marked paid (#2345)', async () => {
+    const before = { kinfolkId: 'fam1', invoiceNumber: '1029', status: 'open' };
+    docs[INVOICE] = { ...before };
+    hooks.events['bare'] = {
+      id: 'evt_bare',
+      type: 'payment_intent.succeeded',
+      created: 1_763_000_000,
+      data: { object: { id: 'pi_bare', metadata: META } },
+    };
+
+    expect(await deliver('bare')).toBe(200);
+
+    expect(invoiceRows()).toHaveLength(0);
+    expect(docs['payments/evt_bare']).toMatchObject({
+      amountResolved: false,
+      amountCents: null,
+      appliedTo: 'unapplied',
+      needsAdminDecision: true,
+      duplicateCheckoutReason: 'invoice-no-balance',
+    });
+    expect(docs[INVOICE]).toMatchObject(before);
+    expect(docs[INVOICE]!.paidAt).toBeUndefined();
+    expect(docs[INVOICE]!.amountDueCents).toBeUndefined();
+    expect(paidNotices()).toHaveLength(0);
   });
 
   it('a household on the checkout that is not the invoice\'s: held for that household, and the invoice is untouched (#2345)', async () => {

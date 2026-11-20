@@ -53,7 +53,9 @@
  *              `STATED_BELOW_RECORDED` is applied on this landing.
  *   no-amount  neither Stripe nor the invoice gave a figure. No row: a row
  *              with no amount is not a payment. The invoice is marked paid and
- *              the ledger row is flagged, as before.
+ *              the ledger row is flagged, as before. Only an invoice with
+ *              something owed on its total gets here: `cardHoldReason` holds
+ *              the rest, figure or no figure.
  */
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { amountDueCentsOf } from './amountDueRule';
@@ -250,7 +252,8 @@ export function decideCardApply(input: {
  *      nothing owed on the invoice's total.
  *
  * None of 1 to 4 reads the amount, so a payment Stripe gave no figure for is
- * held on those invoices too.
+ * held on those invoices too. So is one on an invoice with nothing owed on its
+ * total (6), which is asked without the landing when there is no figure.
  */
 export function cardHoldReason(input: {
   /** Null when the invoice document does not exist. */
@@ -265,14 +268,35 @@ export function cardHoldReason(input: {
 }): DuplicateCheckoutReason {
   const { doc } = input;
   if (doc === null) return 'invoice-not-found';
-  const invoiceKin = typeof doc.kinfolkId === 'string' ? doc.kinfolkId : '';
-  if (input.kinfolkId !== '' && invoiceKin !== '' && invoiceKin !== input.kinfolkId) return 'invoice-other-household';
+  if (invoiceOfAnotherHousehold(doc, input.kinfolkId)) return 'invoice-other-household';
   if (input.duplicate === 'invoice-cancelled' || input.duplicate === 'invoice-written-off') return input.duplicate;
-  const state = invoiceStateOf(doc, paidCentsFromPayments(input.existingPayments));
+  const paidCents = paidCentsFromPayments(input.existingPayments);
+  const state = invoiceStateOf(doc, paidCents);
   if (state === 'draft' || state === 'quote') return 'invoice-not-sent';
   if (state === 'credit' || state === 'redeemed') return 'invoice-credit';
   if (input.duplicate !== null) return input.duplicate;
-  return input.landing?.kind === 'fallback' ? heldReasonForCardFallback(input.landing.reason) : null;
+  if (input.landing?.kind === 'fallback') return heldReasonForCardFallback(input.landing.reason);
+  // A payment with no figure has no landing to read, so the total is asked
+  // here by the fallback's own rule (`no_recorded_balance`): nothing owed on
+  // it is held with or without an amount.
+  if (input.landing?.kind === 'no-amount' && settleInvoice(invoiceTotalCentsOf(doc), paidCents).amountDueCents <= 0) {
+    return 'invoice-no-balance';
+  }
+  return null;
+}
+
+/**
+ * Whether the invoice is another household's than the one on the checkout:
+ * both name a household and they differ (`planApply`'s rule). One that names
+ * none, on either side, is not another household's. Read by the held check
+ * above and by the webhook's decline check, so the two cannot disagree.
+ */
+export function invoiceOfAnotherHousehold(
+  doc: { kinfolkId?: unknown } | null | undefined,
+  checkoutKinfolkId: string,
+): boolean {
+  const invoiceKin = typeof doc?.kinfolkId === 'string' ? doc.kinfolkId : '';
+  return checkoutKinfolkId !== '' && invoiceKin !== '' && invoiceKin !== checkoutKinfolkId;
 }
 
 /**

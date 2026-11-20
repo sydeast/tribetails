@@ -115,13 +115,13 @@ function paid(n: number, cents: number, meta: Record<string, string> = META) {
   };
 }
 
-function declined(n: number) {
+function declined(n: number, meta: Record<string, string> = META) {
   hooks.events[`declined-${n}`] = {
     id: `evt_fail_${n}`,
     type: 'payment_intent.payment_failed',
     created: T0 + n,
     data: {
-      object: { id: `pi_${n}`, amount: 4000, amount_received: 0, last_payment_error: { code: 'card_declined' }, metadata: META },
+      object: { id: `pi_${n}`, amount: 4000, amount_received: 0, last_payment_error: { code: 'card_declined' }, metadata: meta },
     },
   };
 }
@@ -241,7 +241,118 @@ describe('#2361: a declined card on an invoice that was cancelled or written off
     expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(0);
   });
 
+  describe("a declined checkout touches only its own household's invoice", () => {
+    const OTHER = { ...META, familyId: 'fam2', kinfolkId: 'fam2' };
+    const LINE = 'A card was declined on invoice 1029, which belongs to a different household. No notice was sent to the household.';
+
+    it.each([
+      ['still owed', { ...OPEN }],
+      ['already paid', { ...OPEN, status: 'paid', amountDue: 0, amountDueCents: 0 }],
+      ['cancelled', { ...CANCELLED }],
+      ['a draft', { ...OPEN, status: 'draft' }],
+    ])('%s: no notice is sent, the invoice is not written, and the owner gets one line', async (_label, invoice) => {
+      docs[INVOICE] = { ...invoice };
+      declined(1, OTHER);
+
+      expect(await deliver('declined-1')).toBe(200);
+      expect(await deliver('declined-1')).toBe(200);
+
+      expect(hooks.enqueue).not.toHaveBeenCalled();
+      expect(audits('BILLING_INVOICE_FAILED')).toHaveLength(0);
+      expect(hooks.audit).toHaveBeenCalledTimes(1);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')[0]![0]).toMatchObject({
+        severity: 'info',
+        familyId: 'fam2',
+        description: LINE,
+        payload: { invoiceId: 'inv1', stripeEventId: 'evt_fail_1', reason: 'invoice-other-household' },
+      });
+      expect(docs['stripeEvents/evt_fail_1']).toMatchObject({
+        appliedOutcome: 'FAILED_AFTER_PAYMENT',
+        familyId: 'fam2',
+        declineAfterPaymentReason: 'invoice-other-household',
+        noticeSkippedReason: 'declined-after-payment',
+      });
+      // Not even the order stamp: the invoice is exactly as stored.
+      expect(docs[INVOICE]).toEqual(invoice);
+    });
+
+    it('a retry after the line failed writes it with the same reason', async () => {
+      declined(1, OTHER);
+      hooks.audit.mockRejectedValueOnce(new Error('activity log unavailable'));
+
+      expect(await deliver('declined-1')).toBe(500);
+      expect(await deliver('declined-1')).toBe(200);
+
+      const lines = audits('BILLING_CARD_DECLINED_AFTER_PAYMENT');
+      expect(lines).toHaveLength(2);
+      expect(lines[1]![0]).toMatchObject({ description: LINE, payload: { reason: 'invoice-other-household' } });
+      expect(hooks.enqueue).not.toHaveBeenCalled();
+      expect(docs[INVOICE]).toEqual(OPEN);
+    });
+
+    it('a decline whose notice never went out, retried after the invoice moved household, is closed as the owner line', async () => {
+      declined(1);
+      hooks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
+
+      expect(await deliver('declined-1')).toBe(500);
+      docs[INVOICE] = { ...docs[INVOICE]!, kinfolkId: 'fam2' };
+      expect(await deliver('declined-1')).toBe(200);
+
+      // The one try at the notice is the failed one; nothing after the move.
+      expect(notices('invoice.charge.failed')).toHaveLength(1);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(1);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')[0]![0].payload.reason).toBe('invoice-other-household');
+    });
+
+    it("an invoice that names no household is not another household's: the household is still told", async () => {
+      docs[INVOICE] = { ...OPEN, kinfolkId: '' };
+      declined(1);
+
+      expect(await deliver('declined-1')).toBe(200);
+
+      expect(notices('invoice.charge.failed')).toHaveLength(1);
+      expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(0);
+    });
+  });
+
+  it('no invoice document: no notice, no invoice made out of nothing, and the owner gets one line', async () => {
+    docs[INVOICE] = null;
+    declined(1);
+
+    expect(await deliver('declined-1')).toBe(200);
+    expect(await deliver('declined-1')).toBe(200);
+
+    expect(hooks.enqueue).not.toHaveBeenCalled();
+    expect(hooks.audit).toHaveBeenCalledTimes(1);
+    expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')[0]![0]).toMatchObject({
+      familyId: 'fam1',
+      description: 'A card was declined on an invoice that could not be found. No notice was sent to the household.',
+      payload: { invoiceId: 'inv1', reason: 'invoice-not-found' },
+    });
+    expect(docs[INVOICE] ?? null).toBeNull();
+  });
+
+  it('a decline whose notice never went out, retried after the invoice was deleted, is closed as the owner line', async () => {
+    declined(1);
+    hooks.enqueue.mockRejectedValueOnce(new Error('dispatcher down'));
+
+    expect(await deliver('declined-1')).toBe(500);
+    docs[INVOICE] = null;
+    expect(await deliver('declined-1')).toBe(200);
+
+    expect(notices('invoice.charge.failed')).toHaveLength(1);
+    expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')).toHaveLength(1);
+    expect(audits('BILLING_CARD_DECLINED_AFTER_PAYMENT')[0]![0].payload.reason).toBe('invoice-not-found');
+    expect(docs[INVOICE] ?? null).toBeNull();
+  });
+
   it('the line reads plainly with no invoice number', () => {
+    expect(cardDeclinedAfterPaymentWords('', 'invoice-other-household')).toBe(
+      'A card was declined on an invoice that belongs to a different household. No notice was sent to the household.',
+    );
+    expect(cardDeclinedAfterPaymentWords('1029', 'invoice-not-found')).toBe(
+      'A card was declined on an invoice that could not be found. No notice was sent to the household.',
+    );
     expect(cardDeclinedAfterPaymentWords('', 'invoice-cancelled')).toBe(
       'A card was declined on an invoice that was cancelled. No notice was sent to the household.',
     );
@@ -756,6 +867,14 @@ describe('#2345: why a card payment is held (the decision, on its own)', () => {
     for (const duplicate of ['stale-round', 'settled-by-other-intent', 'invoice-not-owed', 'invoice-marked-paid'] as const) {
       expect(ask({ ...OPEN }, { duplicate })).toBe(duplicate);
     }
+  });
+
+  it('holds a payment with no figure when nothing is owed on the total, and not when something is', () => {
+    const noAmount: CardApplyDecision = { kind: 'no-amount' };
+    expect(ask({ kinfolkId: 'fam1', status: 'open' } as InvoiceDoc, { landing: noAmount })).toBe('invoice-no-balance');
+    expect(ask({ ...OPEN }, { landing: noAmount, existingPayments: [{ amountCents: 4000 }] })).toBe('invoice-no-balance');
+    expect(ask({ ...OPEN }, { landing: noAmount, existingPayments: [{ amountCents: 1500 }] })).toBeNull();
+    expect(ask({ kinfolkId: 'fam1', status: 'open', totalCents: 4000 } as InvoiceDoc, { landing: noAmount })).toBeNull();
   });
 
   it('holds what the landing could not describe, and applies an invoice paid as shown', () => {

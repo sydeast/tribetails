@@ -837,8 +837,10 @@ describe('stripeWebhook', () => {
   });
 
   it('NOTE-57: flags amountResolved:false + warns (does NOT silently store null) when no amount resolves', async () => {
-    // No amount on the event and none on the invoice doc.
-    docState['invoices/i4'] = { exists: true, data: { kinfolkId: 'f4' } };
+    // No amount on the event, and none the invoice doc can give: its total is
+    // kept in cents only. (#2345: an invoice with nothing owed on its total
+    // holds the payment.)
+    docState['invoices/i4'] = { exists: true, data: { kinfolkId: 'f4', totalCents: 4200 } };
     const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
     const status = vi.fn().mockReturnThis();
     const json = vi.fn();

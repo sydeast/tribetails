@@ -260,7 +260,12 @@ checkout, and listed under that household. The invoice it named is not written
 at all, and the owner's decision cannot put the money on it. In every other
 case the invoice gains only `unappliedPaymentIds` and the two
 `duplicateCheckout` fields, as a cancelled one does. A held payment on a draft
-can be applied to that invoice by the owner once it is sent.
+can be applied to that invoice by the owner once it is sent. A payment Stripe
+gave no amount for is held on all of these too, with no figure on the row.
+A declined card touches only its own household's invoice: on a checkout whose
+invoice does not exist, or belongs to a different household than the checkout,
+the decline writes nothing to an invoice, sends no notice, and leaves the owner
+one Activity Log line.
 One invoice still takes a card payment the ordinary rules cannot describe: one
 brought over part paid, whose stated balance is lower than its payment rows
 leave. The household paid what it was shown, so the invoice is marked paid
