@@ -16,7 +16,18 @@ import com.tribetails.auntieos.web.data.LEDGER_AMOUNT_UNREAD
 import com.tribetails.auntieos.web.data.Payment
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.decodeInvoiceLedgerPayments
+import com.tribetails.auntieos.web.data.InvoiceLedgerPayment
 import com.tribetails.auntieos.web.data.ledgerPaymentAmountLabel
+import com.tribetails.auntieos.web.data.ledgerRowAppliedLabel
+import com.tribetails.auntieos.web.data.ledgerRowAppliedTo
+import com.tribetails.auntieos.web.data.ledgerRowBalanceLabel
+import com.tribetails.auntieos.web.data.ledgerRowBalanceNote
+import com.tribetails.auntieos.web.data.ledgerRowCaveat
+import com.tribetails.auntieos.web.data.ledgerRowDateLabel
+import com.tribetails.auntieos.web.data.ledgerRowFeeLabel
+import com.tribetails.auntieos.web.data.ledgerRowMethodLabel
+import com.tribetails.auntieos.web.data.ledgerRowTipLabel
+import com.tribetails.auntieos.web.data.ledgerRowTipNote
 import com.tribetails.auntieos.web.theme.AuntieAppTheme
 import com.tribetails.auntieos.web.theme.ThemeMode
 import kotlinx.coroutines.runBlocking
@@ -57,12 +68,19 @@ class InvoicePaymentAmountUnitsTest {
         feeCents: Long = 0,
         resolved: Boolean = true,
         method: String = "card",
+        appliedCents: Long = amountCents - tipCents,
+        unappliedCents: Long = amountCents - appliedCents - tipCents,
+        tipBasis: String = "gross",
+        reconciles: Boolean = true,
+        autoApply: Boolean = false,
+        appliedNumber: String = "1029",
+        date: String = "2026-10-12",
     ) = """
         {"paymentId":"$id","amountCents":$amountCents,"amountResolved":$resolved,"tipCents":$tipCents,
-         "feeCents":$feeCents,"tipBasis":"gross","reconciles":true,"appliedCents":$amountCents,
-         "unappliedCents":0,"proceedsCents":${amountCents - feeCents},"autoApply":false,
-         "appliedInvoiceId":"inv1","appliedInvoiceNumber":"1029","method":"$method","reference":"",
-         "date":"2026-10-12","notes":"","recordedBy":null}
+         "feeCents":$feeCents,"tipBasis":"$tipBasis","reconciles":$reconciles,"appliedCents":$appliedCents,
+         "unappliedCents":$unappliedCents,"proceedsCents":${amountCents - feeCents},"autoApply":$autoApply,
+         "appliedInvoiceId":"${if (appliedNumber.isEmpty()) "" else "inv1"}","appliedInvoiceNumber":"$appliedNumber",
+         "method":"$method","reference":"","date":"$date","notes":"","recordedBy":null}
     """.trimIndent()
 
     private fun ledger(linked: List<String>, unlinked: List<String> = emptyList()) = """
@@ -190,7 +208,150 @@ class InvoicePaymentAmountUnitsTest {
     @Test
     fun anUnreadableRowOnTheScreenSaysSo() = render(ledger(listOf(row("p1", 0, resolved = false)))) {
         waitUntil(timeoutMillis = 10_000) { shown(LEDGER_AMOUNT_UNREAD) }
-        assertFalse(shown("\$0.00"), "an unread amount is not a payment of nothing")
+        // The amount and the balance worked out from it both say so. Tip and
+        // fee are read from their own fields and do print $0.00 here.
+        assertEquals(2, onAllNodesWithText(LEDGER_AMOUNT_UNREAD, useUnmergedTree = true).fetchSemanticsNodes().size)
+        assertTrue(shown("Some of these rows cannot be reconciled"))
+    }
+
+    @Test
+    fun anUnreadableRowWithMoneyAppliedShowsNoBalanceOnTheScreen() = render(
+        // What the server sends for such a row: amount floored at 0, so the
+        // balance it worked out is 0 - 127.50.
+        ledger(listOf(row("p1", 0, resolved = false, appliedCents = 12750, unappliedCents = -12750))),
+    ) {
+        waitUntil(timeoutMillis = 10_000) { shown(LEDGER_AMOUNT_UNREAD) }
+        assertEquals(2, onAllNodesWithText(LEDGER_AMOUNT_UNREAD, useUnmergedTree = true).fetchSemanticsNodes().size)
+        assertTrue(shown("\$127.50"), "what was applied is its own stored figure and still shows")
+        assertFalse(shown("-\$127.50"), "never a balance worked out from an amount nobody could read")
+        assertTrue(shown("The amount on this row could not be read"))
+        assertFalse(shown("More was applied"), "an unread amount is not an over-application")
+    }
+
+    // ── #2391: the breakdown, and #2390: the whole date ─────────────────────
+
+    private fun one(json: String): InvoiceLedgerPayment = decodeInvoiceLedgerPayments(ledger(listOf(json))).linked.single()
+
+    @Test
+    fun aTippedPaymentBreaksDownAsAppliedGrossTipFeeAndBalance() {
+        val p = one(row("p1", 13750, tipCents = 1000, feeCents = 271))
+        assertEquals("\$127.50", ledgerRowAppliedLabel(p))
+        assertEquals("#1029", ledgerRowAppliedTo(p))
+        assertEquals("\$10.00", ledgerRowTipLabel(p), "the gross tip, not the net after the fee")
+        assertEquals("gross", ledgerRowTipNote(p))
+        assertEquals("\$2.71", ledgerRowFeeLabel(p))
+        assertEquals("\$0.00", ledgerRowBalanceLabel(p))
+        assertEquals(null, ledgerRowBalanceNote(p))
+        assertEquals("", ledgerRowCaveat(p))
+    }
+
+    @Test
+    fun aPaymentThatTouchedNoBalanceSaysNotApplied() {
+        val p = one(row("p1", 4200, appliedCents = 0, appliedNumber = ""))
+        assertEquals("not applied", ledgerRowAppliedLabel(p))
+        assertEquals("", ledgerRowAppliedTo(p))
+        assertEquals("\$42.00", ledgerRowBalanceLabel(p))
+    }
+
+    @Test
+    fun aLeftoverMovedToCreditSaysSo() {
+        val p = one(row("p1", 5000, appliedCents = 4000, autoApply = true))
+        assertEquals("\$10.00", ledgerRowBalanceLabel(p))
+        assertEquals("held as credit", ledgerRowBalanceNote(p))
+    }
+
+    @Test
+    fun aLeftoverNotMovedToCreditCarriesNoNote() {
+        val p = one(row("p1", 5000, appliedCents = 4000, autoApply = false))
+        assertEquals("\$10.00", ledgerRowBalanceLabel(p))
+        assertEquals(null, ledgerRowBalanceNote(p))
+    }
+
+    @Test
+    fun aMigratedRowWithoutItsFeeIsMarkedAndNotGuessed() {
+        val p = one(row("p1", 13750, tipCents = 729, tipBasis = "unknown", reconciles = false))
+        assertEquals("not recorded", ledgerRowFeeLabel(p))
+        assertEquals("\$7.29", ledgerRowTipLabel(p), "the stored tip as it is, no gross worked back from it")
+        assertEquals(null, ledgerRowTipNote(p), "an unknown-basis tip is not called gross")
+        assertTrue(ledgerRowCaveat(p).startsWith("This row was migrated without its processor fee"))
+    }
+
+    @Test
+    fun aRowWithNoFeeChargedShowsZeroNotNotRecorded() {
+        val p = one(row("p1", 4200))
+        assertEquals("\$0.00", ledgerRowFeeLabel(p))
+        assertEquals(null, ledgerRowTipNote(p), "a zero tip is not marked gross")
+    }
+
+    @Test
+    fun aRowMissingItsBreakdownKeysIsNotClaimedToBalance() {
+        val p = decodeInvoiceLedgerPayments(
+            """{"ledgerPayments":[{"paymentId":"p1","amountCents":4200,"amountResolved":true}]}""",
+        ).linked.single()
+        assertFalse(p.reconciles, "an absent reconciles is not a checked row")
+        assertEquals("not recorded", ledgerRowFeeLabel(p))
+        assertEquals("not applied", ledgerRowAppliedLabel(p))
+    }
+
+    @Test
+    fun anOverAppliedRowDoesNotRenderAsBalanced() {
+        val p = one(row("p1", 4000, appliedCents = 5000))
+        assertEquals("-\$10.00", ledgerRowBalanceLabel(p))
+        assertTrue(ledgerRowCaveat(p).startsWith("More was applied"))
+    }
+
+    @Test
+    fun anUnreadableRowWithMoneyAppliedIsNotCalledOverApplied() {
+        val p = one(row("p1", 0, resolved = false, appliedCents = 12750, unappliedCents = -12750))
+        assertEquals(-12750L, p.unappliedCents, "the decoder keeps the server's signed figure")
+        assertEquals(LEDGER_AMOUNT_UNREAD, ledgerRowBalanceLabel(p))
+        assertEquals(null, ledgerRowBalanceNote(p))
+        assertTrue(ledgerRowCaveat(p).startsWith("The amount on this row could not be read"))
+    }
+
+    @Test
+    fun aHandWrittenDateShowsWhole() {
+        assertEquals("February 17, 2026", ledgerRowDateLabel(one(row("p1", 100, date = "February 17, 2026"))))
+    }
+
+    @Test
+    fun anIsoDateReadsInTheMediumStyle() {
+        assertEquals("Oct 12, 2026", ledgerRowDateLabel(one(row("p1", 100, date = "2026-10-12"))))
+        assertEquals("Oct 12, 2026", ledgerRowDateLabel(one(row("p1", 100, date = "2026-10-12T15:04:05.000Z"))))
+        assertEquals("Oct 12, 2026", ledgerRowDateLabel(one(row("p1", 100, date = "2026-10-12 15:04"))))
+    }
+
+    @Test
+    fun textThatOnlyStartsLikeADayIsShownAsStored() {
+        assertEquals("2026-10-12th", ledgerRowDateLabel(one(row("p1", 100, date = "2026-10-12th"))))
+        assertEquals("2026-10-123", ledgerRowDateLabel(one(row("p1", 100, date = "2026-10-123"))))
+        assertEquals("2026-02-30", ledgerRowDateLabel(one(row("p1", 100, date = "2026-02-30"))), "not a real day")
+        assertEquals("10/12/2026", ledgerRowDateLabel(one(row("p1", 100, date = "10/12/2026"))))
+    }
+
+    @Test
+    fun aMissingDateOrMethodSaysSo() {
+        val p = one(row("p1", 100, date = "", method = ""))
+        assertEquals("no date recorded", ledgerRowDateLabel(p))
+        assertEquals("no method recorded", ledgerRowMethodLabel(p))
+    }
+
+    @Test
+    fun theScreenShowsTheBreakdownAndTheWholeDate() = render(
+        ledger(listOf(row("p2", 13750, tipCents = 1000, feeCents = 271, method = "Venmo", date = "February 17, 2026"))),
+    ) {
+        waitUntil(timeoutMillis = 10_000) { shown("\$137.50") }
+        assertTrue(shown("February 17, 2026"), "the whole date, not \"February 1\"")
+        assertTrue(shown("APPLIED TO"))
+        assertTrue(shown("\$127.50"))
+        assertTrue(shown("#1029"))
+        assertTrue(shown("\$10.00"), "the gross tip")
+        assertTrue(shown("gross"))
+        assertTrue(shown("\$2.71"), "the fee beside it")
+        assertTrue(shown("BALANCE"))
+        assertFalse(shown("\$147.50"), "the tip sits beside the amount, never on top of it")
+        assertFalse(shown("\$7.29"), "the gross tip, never the net after the fee")
+        assertFalse(shown("Some of these rows cannot be reconciled"), "a balanced row raises no caveat")
     }
 
     @Test

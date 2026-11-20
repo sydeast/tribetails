@@ -55,6 +55,16 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.InvoiceLedgerPayment
 import com.tribetails.auntieos.web.data.InvoiceLedgerPayments
 import com.tribetails.auntieos.web.data.ledgerPaymentAmountLabel
+import com.tribetails.auntieos.web.data.ledgerCaveats
+import com.tribetails.auntieos.web.data.ledgerRowAppliedLabel
+import com.tribetails.auntieos.web.data.ledgerRowAppliedTo
+import com.tribetails.auntieos.web.data.ledgerRowBalanceLabel
+import com.tribetails.auntieos.web.data.ledgerRowBalanceNote
+import com.tribetails.auntieos.web.data.ledgerRowDateLabel
+import com.tribetails.auntieos.web.data.ledgerRowFeeLabel
+import com.tribetails.auntieos.web.data.ledgerRowMethodLabel
+import com.tribetails.auntieos.web.data.ledgerRowTipLabel
+import com.tribetails.auntieos.web.data.ledgerRowTipNote
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.lastReminderLabel
 import com.tribetails.auntieos.web.data.LINK_ADDS_NO_PRICE_TEXT
@@ -980,6 +990,7 @@ internal fun InvoicePaymentsPanel(
                         linkedPayments.forEachIndexed { idx, p ->
                             PaymentRow(p, showDivider = idx > 0)
                         }
+                        LedgerCaveatBanner(linkedPayments)
                     }
                 // No invoice-linked payment yet. Show the disclosed kinfolk-level
                 // payment match as a clearly-labeled fallback (always on now);
@@ -1000,6 +1011,7 @@ internal fun InvoicePaymentsPanel(
                         clientPayments.forEachIndexed { idx, p ->
                             PaymentRow(p, showDivider = idx > 0)
                         }
+                        LedgerCaveatBanner(clientPayments)
                     }
                 }
                 invoice.paymentsHistory.isBlank() ->
@@ -1106,9 +1118,11 @@ private fun PaymentRow(payment: InvoiceLedgerPayment, showDivider: Boolean) {
     val c = AuntieTheme.colors
     val hairline = AuntieTheme.dims.borderHairline
     val ruleColor = c.borderSoft
-    val dateLabel = payment.date.take(10).ifBlank { "-" }
-    val method = payment.method.ifBlank { "payment" }
-    Row(
+    // #2390: the whole date, never its first ten characters.
+    val dateLabel = ledgerRowDateLabel(payment)
+    val method = ledgerRowMethodLabel(payment)
+    val appliedTo = ledgerRowAppliedTo(payment)
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .drawBehind {
@@ -1122,22 +1136,106 @@ private fun PaymentRow(payment: InvoiceLedgerPayment, showDivider: Boolean) {
                     )
                 }
             }
-            .padding(vertical = 9.dp),
+            .padding(top = if (showDivider) 14.dp else 9.dp, bottom = 9.dp),
+    ) {
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(method, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                Text(dateLabel, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+            }
+            // #2333: the server's cents alone. The gross tip is already inside the
+            // amount, so adding it counted the gratuity twice. A row the server
+            // could not read gets no dollar figure, as on web and Android.
+            Text(
+                ledgerPaymentAmountLabel(payment),
+                style = if (payment.amountResolved) AuntieTheme.typography.bodyMedium else AuntieTheme.typography.bodySmall,
+                color = if (payment.amountResolved) c.success else c.textDim,
+            )
+        }
+        // #2391: the breakdown web and Android show for the same payment, every
+        // figure from the server. The tip is the gross; the fee comes out of it.
+        Column(modifier = Modifier.padding(top = 6.dp)) {
+            LedgerFactRow(
+                label = "Applied to",
+                value = ledgerRowAppliedLabel(payment),
+                dim   = appliedTo.isEmpty(),
+                note  = appliedTo.ifEmpty { null },
+            )
+            LedgerFactRow(label = "Tip", value = ledgerRowTipLabel(payment), note = ledgerRowTipNote(payment))
+            LedgerFactRow(
+                label = "Fee",
+                value = ledgerRowFeeLabel(payment),
+                dim   = payment.feeCents == 0L && !payment.reconciles,
+            )
+            LedgerFactRow(
+                label       = "Balance",
+                value       = ledgerRowBalanceLabel(payment),
+                dim         = !payment.amountResolved,
+                note        = ledgerRowBalanceNote(payment),
+                showDivider = false,
+            )
+        }
+    }
+}
+
+/** One line of a payment's breakdown: dim label left, figure right, a short note beside it. */
+@Composable
+private fun LedgerFactRow(
+    label: String,
+    value: String,
+    dim: Boolean = false,
+    note: String? = null,
+    showDivider: Boolean = true,
+) {
+    val c = AuntieTheme.colors
+    val hairline = AuntieTheme.dims.borderHairline
+    val ruleColor = c.borderSoft
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                if (showDivider) {
+                    val h = hairline.toPx()
+                    val y = size.height - (h / 2f)
+                    drawLine(color = ruleColor, start = Offset(0f, y), end = Offset(size.width, y), strokeWidth = h)
+                }
+            }
+            .padding(vertical = 4.dp),
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(method, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
-            Text(dateLabel, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Text(label.uppercase(), style = AuntieTheme.typography.labelSmall, color = c.textDim)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (note != null) {
+                Text(note, style = AuntieTheme.typography.labelSmall, color = c.textDim)
+            }
+            Text(
+                value,
+                style = AuntieTheme.typography.bodySmall,
+                color = if (dim) c.textDim else c.textPrimary,
+            )
         }
-        // #2333: the server's cents alone. The gross tip is already inside the
-        // amount, so adding it counted the gratuity twice. A row the server
-        // could not read gets no dollar figure, as on web and Android.
-        Text(
-            ledgerPaymentAmountLabel(payment),
-            style = if (payment.amountResolved) AuntieTheme.typography.bodyMedium else AuntieTheme.typography.bodySmall,
-            color = if (payment.amountResolved) c.success else c.textDim,
-        )
+    }
+}
+
+/** Why some rows cannot be reconciled, said once under the list. Nothing when every row balances. */
+@Composable
+private fun LedgerCaveatBanner(rows: List<InvoiceLedgerPayment>) {
+    val caveats = ledgerCaveats(rows)
+    if (caveats.isEmpty()) return
+    val c = AuntieTheme.colors
+    AuntieBanner(
+        tone  = AuntieBannerTone.Warning,
+        title = "Some of these rows cannot be reconciled",
+        icon  = Lucide.CircleAlert,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            caveats.forEach { Text(it, style = AuntieTheme.typography.bodySmall, color = c.textDim) }
+        }
     }
 }
 

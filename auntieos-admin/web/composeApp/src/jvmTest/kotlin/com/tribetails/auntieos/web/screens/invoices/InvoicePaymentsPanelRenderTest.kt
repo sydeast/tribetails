@@ -36,6 +36,11 @@ class InvoicePaymentsPanelRenderTest {
         method = "Zelle",
         reference = "",
         date = "2026-10-12",
+        reconciles = true,
+        unappliedCents = 0,
+        autoApply = false,
+        appliedInvoiceId = "inv1",
+        appliedInvoiceNumber = "1029",
     )
 
     private fun renderPanel(
