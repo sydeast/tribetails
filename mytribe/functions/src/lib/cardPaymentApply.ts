@@ -47,13 +47,18 @@
  *              owing, as on the planned one. And for every reason but
  *              `STATED_BELOW_RECORDED` (nothing is wrong there) the owner gets
  *              an Activity Log line saying the invoice was not in a state to
- *              take the payment (`fallbackNeedsOwnerLine`).
+ *              take the payment (`fallbackNeedsOwnerLine`). Since the lead
+ *              ruling of 2026-11-17 the webhook HOLDS every such payment for
+ *              the owner instead (`cardHoldReason`, below), so only
+ *              `STATED_BELOW_RECORDED` is applied on this landing.
  *   no-amount  neither Stripe nor the invoice gave a figure. No row: a row
  *              with no amount is not a payment. The invoice is marked paid and
  *              the ledger row is flagged, as before.
  */
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { amountDueCentsOf } from './amountDueRule';
+import { heldReasonForCardFallback, type DuplicateCheckoutReason } from './invoiceCheckoutDedupe';
+import { invoiceStateOf } from './invoiceEditPolicy';
 import { invoiceTotalCentsOf, paidCentsFromPayments, settleInvoice, type PaymentAmount } from './invoiceMath';
 import { planApply, type ApplyStep } from './paymentApply';
 
@@ -216,4 +221,73 @@ export function decideCardApply(input: {
     };
   }
   return { kind: 'planned', step: plan.step, appliedCents, tipCents: cardCents - appliedCents };
+}
+
+/**
+ * #2345 (lead ruling 2026-11-17): WHY A CARD PAYMENT IS HELD FOR THE OWNER AND
+ * NOT APPLIED, or null when it is applied. Pure. The card is already charged
+ * and there are no refunds, so a payment the invoice cannot take is recorded
+ * whole as an unapplied payment (the gross charge with the fee beside it),
+ * nothing goes on the invoice, no credit is given, and the household is sent
+ * nothing. The owner decides what it becomes (`resolveUnappliedPayment`), as
+ * for a second charge on a paid invoice (docket Q5) or one on a cancelled
+ * invoice (#2358).
+ *
+ * ASKED IN THIS ORDER, so the owner is given the reason that matters:
+ *
+ *   1. the invoice does not exist. Nothing to compare the payment against.
+ *   2. the invoice is another household's (`planApply`'s rule: both name a
+ *      household and they differ). Asked ahead of everything the invoice says
+ *      about itself: the payment is held for the household on the checkout,
+ *      and that invoice is not written at all.
+ *   3. cancelled or written off (`duplicateCheckoutReason`'s own first two).
+ *   4. a draft or a quote: not a bill yet. A credit, by its label or by a
+ *      negative balance or total (`invoiceStateOf`): money owed TO the
+ *      household. Ahead of the paid checks, which read a credit's balance as
+ *      "nothing owed" and would say it had already been paid.
+ *   5. the rest of `duplicateCheckoutReason`: a closed round, or nothing owed.
+ *   6. what the landing could not describe (`heldReasonForCardFallback`):
+ *      nothing owed on the invoice's total.
+ *
+ * None of 1 to 4 reads the amount, so a payment Stripe gave no figure for is
+ * held on those invoices too.
+ */
+export function cardHoldReason(input: {
+  /** Null when the invoice document does not exist. */
+  doc: InvoiceDoc | null;
+  existingPayments: readonly PaymentAmount[];
+  /** The household on the checkout. */
+  kinfolkId: string;
+  /** `duplicateCheckoutReason`'s answer for this event. */
+  duplicate: DuplicateCheckoutReason;
+  /** `decideCardApply`'s answer for this event. */
+  landing: CardApplyDecision | null;
+}): DuplicateCheckoutReason {
+  const { doc } = input;
+  if (doc === null) return 'invoice-not-found';
+  const invoiceKin = typeof doc.kinfolkId === 'string' ? doc.kinfolkId : '';
+  if (input.kinfolkId !== '' && invoiceKin !== '' && invoiceKin !== input.kinfolkId) return 'invoice-other-household';
+  if (input.duplicate === 'invoice-cancelled' || input.duplicate === 'invoice-written-off') return input.duplicate;
+  const state = invoiceStateOf(doc, paidCentsFromPayments(input.existingPayments));
+  if (state === 'draft' || state === 'quote') return 'invoice-not-sent';
+  if (state === 'credit' || state === 'redeemed') return 'invoice-credit';
+  if (input.duplicate !== null) return input.duplicate;
+  return input.landing?.kind === 'fallback' ? heldReasonForCardFallback(input.landing.reason) : null;
+}
+
+/**
+ * The held reasons that are `duplicateCheckoutReason`'s own: a second attempt
+ * at a payment the invoice already took, or one on a cancelled or written-off
+ * invoice. Only these name the payment that settled the invoice on the held
+ * row (`duplicateOfPaymentIntentId`); the others are not a duplicate of it.
+ */
+export function heldAsDuplicate(reason: DuplicateCheckoutReason): boolean {
+  return (
+    reason === 'stale-round' ||
+    reason === 'settled-by-other-intent' ||
+    reason === 'invoice-not-owed' ||
+    reason === 'invoice-marked-paid' ||
+    reason === 'invoice-cancelled' ||
+    reason === 'invoice-written-off'
+  );
 }

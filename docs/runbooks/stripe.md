@@ -241,11 +241,30 @@ writes the `stripe.fee.unresolved` warning like an applied one (#2370).
 A declined card on a cancelled or written-off invoice sends the household
 nothing and leaves the owner one Activity Log line (#2361), like a decline on a
 paid one.
-A card payment on an invoice that was otherwise not in a state to be paid (a
-draft, a quote, a credit, a balance with no total, a checkout for another
-household) is still put on the invoice, and the paid Activity Log line becomes
-a warning naming why (#2345). One short of the stated balance leaves the rest
-owing instead of marking the invoice paid.
+A card payment on an invoice that cannot take it for any other reason is held
+the same way (#2345): the whole charge on one unapplied row with the fee beside
+it, nothing on the invoice, no credit, nothing sent to the household. The
+reasons, as `duplicateCheckoutReason` stores them and as the owner reads them
+after "Not applied because":
+
+| Stored reason | The invoice | Sentence |
+| --- | --- | --- |
+| `invoice-not-sent` | is a draft or a quote | the invoice was a draft or a quote |
+| `invoice-credit` | is a credit (by its label, or a negative balance or total) | the invoice was a credit, not a bill |
+| `invoice-no-balance` | has nothing owed on its total (no total, or its payments already cover it) | nothing was owed on the invoice's total |
+| `invoice-other-household` | belongs to a different household than the checkout | the invoice belongs to a different household |
+| `invoice-not-found` | does not exist | the invoice could not be found |
+
+A checkout for one household's invoice is held for the household on the
+checkout, and listed under that household. The invoice it named is not written
+at all, and the owner's decision cannot put the money on it. In every other
+case the invoice gains only `unappliedPaymentIds` and the two
+`duplicateCheckout` fields, as a cancelled one does. A held payment on a draft
+can be applied to that invoice by the owner once it is sent.
+One invoice still takes a card payment the ordinary rules cannot describe: one
+brought over part paid, whose stated balance is lower than its payment rows
+leave. The household paid what it was shown, so the invoice is marked paid
+(`cardApplyFallback: stated_balance_below_recorded_payments`).
 
 **`disputeStatus` and `disputeFundsState` are two different facts, on purpose.**
 `disputeStatus` mirrors Stripe's dispute lifecycle (`needs_response`,

@@ -491,7 +491,9 @@ export function cardDeclinedAfterPaymentWords(invoiceNumber: unknown, reason: st
  * It is recorded (the card is charged and there are no refunds) and the owner
  * is told why the invoice should be looked at. `reason` is the
  * `cardApplyFallback` code the Stripe webhook stores; the sentence never shows
- * it.
+ * it. Since the lead ruling of 2026-11-17 such a payment is held for the owner
+ * and never put on the invoice, so this line is written only for one an
+ * earlier build applied, when a retry finds its line unwritten.
  */
 export function cardPaymentNotPayableWords(invoiceNumber: unknown, reason: string, amountCents: number): string {
   const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';

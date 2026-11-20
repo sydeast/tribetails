@@ -242,7 +242,52 @@ export type DuplicateCheckoutReason =
   | 'invoice-marked-paid'
   | 'invoice-cancelled'
   | 'invoice-written-off'
+  // #2345: not a second attempt at anything. The invoice could not take the
+  // payment at all (`lib/cardPaymentApply.ts#cardHoldReason`). Held the same
+  // way, never applied.
+  | 'invoice-not-found'
+  | 'invoice-other-household'
+  | 'invoice-not-sent'
+  | 'invoice-credit'
+  | 'invoice-no-balance'
+  | 'invoice-not-payable'
   | null;
+
+/**
+ * #2345 (lead ruling 2026-11-17): A CARD PAYMENT ON AN INVOICE THAT COULD NOT
+ * TAKE IT IS HELD FOR THE OWNER, the way one on a cancelled invoice is
+ * (#2358). This maps what `decideCardApply`'s fallback landing could not
+ * describe to the held reason it becomes. `cardHoldReason` asks about the
+ * invoice itself first (missing, another household's, a draft or a quote, a
+ * credit), so what reaches here in practice is `no_recorded_balance`: nothing
+ * was owed on the invoice's total, so there was nothing to apply the money to.
+ * The other cases are mapped as well, so no refusal `planApply` can give is
+ * ever applied by way of this landing.
+ *
+ * Null for `stated_balance_below_recorded_payments` (an invoice brought over
+ * part paid and then paid off by card: nothing is wrong, and it is applied)
+ * and for anything that is not a fallback reason.
+ */
+export function heldReasonForCardFallback(reason: string | null | undefined): DuplicateCheckoutReason {
+  switch (reason) {
+    case undefined:
+    case null:
+    case '':
+    case 'stated_balance_below_recorded_payments':
+      return null;
+    case 'apply_invoice_not_found':
+      return 'invoice-not-found';
+    case 'apply_wrong_household':
+      return 'invoice-other-household';
+    case 'apply_invoice_not_sent':
+      return 'invoice-not-sent';
+    case 'no_recorded_balance':
+      return 'invoice-no-balance';
+    default:
+      // Every other refusal `planApply` can give.
+      return 'invoice-not-payable';
+  }
+}
 
 export function duplicateCheckoutReason(input: {
   /** The invoice as stored, read inside the webhook's transaction. */
@@ -322,6 +367,18 @@ export function unappliedReasonLabel(reason: string | null): string {
       return 'the invoice was cancelled';
     case 'invoice-written-off':
       return 'the invoice was written off';
+    case 'invoice-not-found':
+      return 'the invoice could not be found';
+    case 'invoice-other-household':
+      return 'the invoice belongs to a different household';
+    case 'invoice-not-sent':
+      return 'the invoice was a draft or a quote';
+    case 'invoice-credit':
+      return 'the invoice was a credit, not a bill';
+    case 'invoice-no-balance':
+      return "nothing was owed on the invoice's total";
+    case 'invoice-not-payable':
+      return 'the invoice could not take a payment';
     default:
       return 'the invoice was not owed this payment';
   }

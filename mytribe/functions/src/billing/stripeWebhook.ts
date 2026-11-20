@@ -29,9 +29,11 @@ import {
   PAID_EVENT_TYPES,
   RECOVERED_FROM_FIELD,
   SKIPPED_OUT_OF_ORDER,
+  cardHoldReason,
   cardPaymentRowId,
   decideCardApply,
   fallbackNeedsOwnerLine,
+  heldAsDuplicate,
 } from '../lib/cardPaymentApply';
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
@@ -186,6 +188,11 @@ export function declineAfterPayment(
  * paid line in the Activity Log says so instead of reading as an ordinary
  * payment. On a retry it is read back off the `payments/{eventId}` ledger row,
  * written in the same commit as the money.
+ *
+ * Since the lead ruling of 2026-11-17 no new payment lands this way: it is
+ * held for the owner (`cardHoldReason`) and gets the unapplied line and notice
+ * instead. This detail is what a retry reads for a payment an earlier build
+ * did put on such an invoice, when its Activity Log line was never written.
  */
 export interface NotPayableDetail {
   reason: string;
@@ -397,6 +404,25 @@ async function finishEventFollowup(input: {
  * for the callers and the test that import it from this module.
  */
 export { unappliedReasonLabel };
+
+/**
+ * NOTE-57: what the card was charged, in cents. Stripe's own figure, else the
+ * invoice's stated balance, else its total (the flat doc's legacy dollar
+ * floats, converted once). Null when none of them is positive. #2345: one
+ * rule, read by the held check and by the apply, so the two cannot disagree.
+ */
+function cardChargeCents(eventAmountCents: number | null, invoiceData: unknown): number | null {
+  if (eventAmountCents !== null) return eventAmountCents;
+  const d = invoiceData as { amountDue?: number; total?: number } | undefined;
+  const local =
+    typeof d?.amountDue === 'number' && d.amountDue > 0
+      ? d.amountDue
+      : typeof d?.total === 'number' && d.total > 0
+        ? d.total
+        : null;
+  return local !== null ? dollarsToCents(local) : null;
+}
+
 export async function stripeWebhookHandler(req: Request, res: Response): Promise<void> {
   if (req.method !== 'POST') { res.status(405).end(); return; }
   const sig = req.headers['stripe-signature'] as string | undefined;
@@ -832,7 +858,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // `lib/invoiceCheckoutDedupe.ts` holds the decision and the reasoning,
     // including why a key of `invoiceId` alone would refuse a household's real
     // second payment.
-    duplicateReason = isPaidEvent
+    const duplicate = isPaidEvent
       ? duplicateCheckoutReason({
           invoice: {
             round: invoice?.[CHECKOUT_ROUND_FIELD],
@@ -849,6 +875,27 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
           paymentIntentId,
           eventRound,
         })
+      : null;
+    // #2345 (lead ruling 2026-11-17): WHETHER THE INVOICE CAN TAKE THIS PAYMENT
+    // AT ALL, decided here, ahead of the held branch. One that cannot (it does
+    // not exist, it is another household's, a draft or a quote, a credit, or
+    // nothing is owed on its total) HOLDS the payment for the owner, exactly
+    // as a cancelled one does, and nothing is applied. `cardHoldReason` has
+    // the cases and the order they are asked in. The apply further down uses
+    // the same landing, decided once on the same reads.
+    const invoiceDoc = invoiceSnap.exists ? ((invoiceSnap.data() ?? {}) as InvoiceDoc) : null;
+    const rowsRead = (subPaymentsSnap?.docs ?? []).map((d) => d.data() as PaymentAmount);
+    const cardLanding = isPaidEvent
+      ? decideCardApply({
+          invoiceId,
+          doc: invoiceDoc,
+          existingPayments: rowsRead,
+          cardCents: cardChargeCents(eventAmountCents, invoiceSnap.data()),
+          kinfolkId: familyId,
+        })
+      : null;
+    duplicateReason = isPaidEvent
+      ? cardHoldReason({ doc: invoiceDoc, existingPayments: rowsRead, kinfolkId: familyId, duplicate, landing: cardLanding })
       : null;
     if (duplicateReason !== null) {
       // THE MONEY IS ALREADY GONE FROM THE CARD. Stripe collected it before it
@@ -872,6 +919,10 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // #2358: `invoice-cancelled` too. A checkout page opened before the
       // invoice was cancelled can still be paid on. The invoice stays
       // cancelled, exactly as stored: no row on it, no balance moved.
+      //
+      // #2345: and an invoice that could not take the payment at all (a draft
+      // or a quote, a credit, nothing owed on its total, another household's,
+      // or no invoice). Nothing is applied and nothing is credited.
       //
       // NOT DONE HERE, all deliberate: no second `status: 'paid'` stamp, no
       // BILLING_INVOICE_PAID audit, and no `invoice.payment.applied` to the
@@ -933,23 +984,41 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
         needsAdminDecision: true,
         creditedToAccountCents: 0,
         duplicateCheckoutReason: duplicateReason,
+        // #2345: a payment held because the invoice could not take it is not a
+        // duplicate of the last payment the invoice took.
         duplicateOfPaymentIntentId:
-          typeof invoice?.[SETTLED_INTENT_FIELD] === 'string' ? invoice[SETTLED_INTENT_FIELD] : null,
+          heldAsDuplicate(duplicateReason) && typeof invoice?.[SETTLED_INTENT_FIELD] === 'string'
+            ? invoice[SETTLED_INTENT_FIELD]
+            : null,
+        // #2345: the number of the invoice the checkout named, when it is not
+        // one of this household's. The owner's list of payments waiting for a
+        // decision looks numbers up among the household's own invoices, and
+        // would otherwise have only the document id to show.
+        ...(duplicateReason === 'invoice-other-household' && typeof invoiceDoc?.invoiceNumber === 'string'
+          ? { invoiceNumber: invoiceDoc.invoiceNumber }
+          : {}),
       });
       // The invoice records that it happened and nothing else: no money field,
       // no status, no state stamp. An admin looking at the bill can see the
       // second charge from here rather than having to find it in a collection.
-      tx.set(
-        ref,
-        {
-          duplicateCheckoutPaymentIntentIds: paymentIntentId
-            ? FieldValue.arrayUnion(paymentIntentId)
-            : FieldValue.arrayUnion(event.id),
-          lastDuplicateCheckoutAt: FieldValue.serverTimestamp(),
-          unappliedPaymentIds: FieldValue.arrayUnion(event.id),
-        },
-        { merge: true },
-      );
+      //
+      // #2345: NOT when there is no invoice document (a merge would create a
+      // stub invoice out of nothing), and NOT on another household's invoice:
+      // the payment is held for the household on the checkout, the row above
+      // carries that household, and the invoice is left exactly as stored.
+      if (invoiceDoc !== null && duplicateReason !== 'invoice-other-household') {
+        tx.set(
+          ref,
+          {
+            duplicateCheckoutPaymentIntentIds: paymentIntentId
+              ? FieldValue.arrayUnion(paymentIntentId)
+              : FieldValue.arrayUnion(event.id),
+            lastDuplicateCheckoutAt: FieldValue.serverTimestamp(),
+            unappliedPaymentIds: FieldValue.arrayUnion(event.id),
+          },
+          { merge: true },
+        );
+      }
       return { proceed: false, reason: 'duplicate-invoice-checkout' as const };
     }
 
@@ -1053,8 +1122,7 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // The event amount is already integer cents and passes through unchanged.
     // The local-invoice fallback is the flat doc's legacy dollar float and is
     // converted once, here, same as `recordPayment` does.
-    const amountCents =
-      eventAmount !== null ? eventAmount : localAmount !== null ? dollarsToCents(localAmount) : null;
+    const amountCents = cardChargeCents(eventAmount, invoiceSnap.data());
     // #2276: WHERE THE CARD MONEY LANDS ON THE INVOICE, decided from the
     // invoice and the payment rows this transaction read. Every other path
     // that puts money on an invoice reads and writes the same invoice doc in
@@ -1062,7 +1130,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // decision re-runs against whatever landed first. `lib/cardPaymentApply.ts`
     // has the three landings and why none of them refuses.
     const existingPayments = (subPaymentsSnap?.docs ?? []).map((d) => d.data() as PaymentAmount);
-    const landing = decideCardApply({
+    // #2345: the decision the held check above already made, on the same reads.
+    const landing = cardLanding ?? decideCardApply({
       invoiceId,
       doc: invoiceSnap.exists ? ((invoiceSnap.data() ?? {}) as InvoiceDoc) : null,
       existingPayments,
@@ -1150,6 +1219,14 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
       // #2276: free-text `status` plus both balance fields (the portal renders
       // the stored status, the reminders cron reads `amountDue <= 0`, and
       // `payInvoice` and `getMyInvoices` prefer `amountDueCents`).
+      //
+      // #2345 (lead ruling 2026-11-17): every fallback reason but
+      // `stated_balance_below_recorded_payments` is held above and never
+      // reaches here, and that one always covers the stated balance. So no
+      // new payment takes the short-card branch or sets the owner's line
+      // below. They are kept as the guard under the hold (payment code is
+      // never deleted). The line itself is still written on a retry of a
+      // payment an earlier build applied this way (`notPayableDetailOf`).
       //
       // #2345: EXCEPT A FALLBACK CARD SHORT OF THE STATED BALANCE. It leaves
       // the rest owing, as the planned landing does: the balance fields carry

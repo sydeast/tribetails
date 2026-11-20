@@ -797,7 +797,7 @@ describe('stripeWebhook', () => {
   });
 
   it('resolves the family from legacy kinfolkId metadata when familyId absent', async () => {
-    docState['invoices/i2'] = { exists: true, data: { kinfolkId: 'f2', amountDue: 10 } };
+    docState['invoices/i2'] = { exists: true, data: { kinfolkId: 'f2', amountDue: 10, total: 10 } };
     const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
     const status = vi.fn().mockReturnThis();
     const json = vi.fn();
@@ -814,8 +814,9 @@ describe('stripeWebhook', () => {
   });
 
   it('NOTE-57: records the amount from the Stripe event (amount_paid) over local invoice derivation', async () => {
-    // Local invoice has NO usable amount; the event carries amount_paid=4200.
-    docState['invoices/i3'] = { exists: true, data: { kinfolkId: 'f3' } };
+    // The local invoice says $50.00; the event carries amount_paid=4200.
+    // (#2345: an invoice with nothing owed on its total holds the payment.)
+    docState['invoices/i3'] = { exists: true, data: { kinfolkId: 'f3', total: 50 } };
     const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
     const status = vi.fn().mockReturnThis();
     const json = vi.fn();
@@ -909,7 +910,7 @@ describe('stripeWebhook', () => {
   // PaymentIntent fetch with a nested expand, since the webhook payload never
   // carries `balance_transaction` itself.
   it('stores the processor fee from the balance transaction', async () => {
-    docState['invoices/i5'] = { exists: true, data: { kinfolkId: 'f5' } };
+    docState['invoices/i5'] = { exists: true, data: { kinfolkId: 'f5', total: 137.5 } };
     stripeMock.paymentIntentsRetrieve.mockResolvedValue({
       latest_charge: { balance_transaction: { fee: 271 } },
     });
@@ -937,7 +938,7 @@ describe('stripeWebhook', () => {
   });
 
   it('records the payment with the fee unset when Stripe does not return one, and says so', async () => {
-    docState['invoices/i6'] = { exists: true, data: { kinfolkId: 'f6' } };
+    docState['invoices/i6'] = { exists: true, data: { kinfolkId: 'f6', total: 137.5 } };
     stripeMock.paymentIntentsRetrieve.mockRejectedValue(new Error('not available'));
     const { stripeWebhookHandler } = await import('../src/billing/stripeWebhook');
     const status = vi.fn().mockReturnThis();
@@ -960,7 +961,7 @@ describe('stripeWebhook', () => {
   });
 
   it('resolves the fee on a payment_intent.succeeded event (the shape payInvoice actually produces)', async () => {
-    docState['invoices/i7'] = { exists: true, data: { kinfolkId: 'f7' } };
+    docState['invoices/i7'] = { exists: true, data: { kinfolkId: 'f7', total: 137.5 } };
     stripeMock.paymentIntentsRetrieve.mockResolvedValue({
       latest_charge: { balance_transaction: { fee: 271 } },
     });
