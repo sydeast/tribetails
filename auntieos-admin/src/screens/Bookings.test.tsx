@@ -474,6 +474,47 @@ describe('Bookings shows a booked request’s visits when the list page does not
     await userEvent.click(selectToggle());
     expect(await within(rowOf('Rivera vis_v1')).findByText(/Drop-in Visit/)).toBeInTheDocument();
   });
+  it('keeps a picked visit on the list and in the count when the lookup fails after finding it', async () => {
+    const pending = entry({ _id: 'ses_p', kinfolkName: 'The Wrens', kinfolkId: 'kf2', status: 'PENDING' });
+    reads({ status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00', { status: 'PENDING' })] }, [pending]);
+    open();
+    await screen.findByText('Its visit is highlighted below.');
+    await pick('Rivera vis_v1');
+    // The household's live read fails; the next render of the screen shows it.
+    reads({ status: 'error', message: 'You appear to be offline.' }, [pending]);
+    await userEvent.click(screen.getByRole('checkbox', { name: /Select The Wrens/ }));
+    expect(screen.getByText("Couldn't look this booking up")).toBeInTheDocument();
+    expect(rowOf('Rivera vis_v1')).toHaveAttribute('aria-current', 'true');
+    expect(within(screen.getByRole('group', { name: 'Bulk actions' })).getByText('2')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(screen.getByText(/Reject 2 bookings\?/)).toBeInTheDocument();
+  });
+  it('keeps an open visit open when the lookup fails after finding it', async () => {
+    reads({ status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00')] });
+    open();
+    await screen.findByText('Its visit is highlighted below.');
+    await userEvent.click(within(rowOf('Rivera vis_v1')).getByRole('button', { name: /Rivera vis_v1/ }));
+    reads({ status: 'error', message: 'You appear to be offline.' });
+    await userEvent.click(selectToggle());
+    expect(screen.getByText("Couldn't look this booking up")).toBeInTheDocument();
+    expect(screen.getByTestId('booking-detail-modal')).toHaveAttribute('data-entry-id', 'vis_v1');
+    expect(screen.queryByText('Booking unavailable')).toBeNull();
+  });
+  it('drops a picked visit from the selection when the booking no longer holds it', async () => {
+    const pending = entry({ _id: 'ses_p', kinfolkName: 'The Wrens', kinfolkId: 'kf2', status: 'PENDING' });
+    reads({ status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00', { status: 'PENDING' })] }, [pending]);
+    open();
+    await screen.findByText('Its visit is highlighted below.');
+    await pick('Rivera vis_v1');
+    // The household's read answers again without the visit.
+    reads({ status: 'ready', data: [] }, [pending]);
+    await userEvent.click(screen.getByRole('checkbox', { name: /Select The Wrens/ }));
+    expect(await screen.findByText('This booking is no longer available')).toBeInTheDocument();
+    expect(screen.queryByText('Rivera vis_v1')).toBeNull();
+    expect(within(screen.getByRole('group', { name: 'Bulk actions' })).getByText('1')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(screen.getByText(/Reject 1 booking\?/)).toBeInTheDocument();
+  });
 });
 describe('withFocusedRows (#2397)', () => {
   const a = entry({ _id: 'a' });

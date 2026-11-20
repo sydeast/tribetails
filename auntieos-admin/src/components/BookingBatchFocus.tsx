@@ -109,11 +109,22 @@ export function BookingBatchFocus({
   foundRef.current = found;
   const onHighlightRef = useRef(onHighlight);
   onHighlightRef.current = onHighlight;
+  // Another booking was opened: the last one's visits are not this one's.
+  const focusKey = `${focus.kinfolkId}\n${focus.batchId}`;
   useEffect(() => {
+    onHighlightRef.current([]);
+  }, [focusKey]);
+  const read = sessions.status === 'ready';
+  useEffect(() => {
+    // Only a finished read says what the booking holds. While the lookup has
+    // failed or is being read again, the visits it last found stay on the
+    // list: taking them off would drop a card the office has picked, and close
+    // an open visit as unavailable, over a booking that is still there.
+    if (!read) return;
     // Nothing found hands up nothing: a booking whose visits are gone has
     // none to draw, and the banner below says so.
     onHighlightRef.current(foundKey === '' ? [] : foundRef.current);
-  }, [foundKey]);
+  }, [foundKey, read]);
 
   switch (state.kind) {
     case 'looking':

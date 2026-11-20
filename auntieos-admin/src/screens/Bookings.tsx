@@ -404,16 +404,6 @@ export function Bookings({
    */
   const rows = useMemo(() => withFocusedRows(page, focusedRows), [page, focusedRows]);
   function dismissBatchFocus() {
-    // #2397: a picked visit that was drawn from outside the page leaves the
-    // list here, so it leaves the selection too. The bulk bar counts what is
-    // picked, and must never count a card that is no longer on screen.
-    const leaving = rows.status === 'ready' && page.status === 'ready'
-      ? new Set(rows.data.slice(page.data.length).map((r) => r._id))
-      : new Set<string>();
-    if (leaving.size > 0) {
-      setSelectedIds((prev) => new Set([...prev].filter((id) => !leaving.has(id))));
-      setConfirmAction(null);
-    }
     setBatchFocus(null);
     setFocusedRows([]);
   }
@@ -516,6 +506,26 @@ export function Bookings({
   // CANCEL is not undoable and the per-row surface asks first, so this asks too
   // rather than making "many at once" the one path with no second thought.
   const [confirmAction, setConfirmAction] = useState<BatchBookingAction | null>(null);
+  /**
+   * #2397: a picked visit that was drawn from outside the page leaves the
+   * selection when it leaves the list: on Dismiss, or when the booking no
+   * longer holds it. The bulk bar counts what is picked, and must never count
+   * a card that is no longer on screen. Judged only while the page is read, so
+   * a page that is loading again takes nothing out of the selection.
+   */
+  const drawnFromOutside = useRef<readonly string[]>([]);
+  useEffect(() => {
+    if (rows.status !== 'ready' || page.status !== 'ready') return;
+    const listed = new Set(rows.data.map((r) => r._id));
+    const left = drawnFromOutside.current.filter((id) => !listed.has(id));
+    drawnFromOutside.current = rows.data.slice(page.data.length).map((r) => r._id);
+    if (left.length === 0) return;
+    setSelectedIds((prev) => {
+      const kept = [...prev].filter((id) => !left.includes(id));
+      return kept.length === prev.size ? prev : new Set(kept);
+    });
+    setConfirmAction(null);
+  }, [rows, page]);
   const [running, setRunning] = useState(false);
   const [outcome, setOutcome] = useState<BulkOutcome | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
