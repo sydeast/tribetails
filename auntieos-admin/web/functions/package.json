@@ -8,7 +8,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test",
-    "sync:voice": "cp ../../voice/01_Voice_Bible.md voice/01_Voice_Bible.md && cp ../../voice/02_Channel_Playbook.md voice/02_Channel_Playbook.md && cp ../../voice/corpus/exemplars.md voice/corpus/exemplars.md"
+    "check:voice": "node checkVoice.js",
+    "sync:voice": "cp ../../voice/01_Voice_Bible.md voice/01_Voice_Bible.md && cp ../../voice/02_Channel_Playbook.md voice/02_Channel_Playbook.md && cp ../../voice/corpus/exemplars.md voice/corpus/exemplars.md && node checkVoice.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.4.0",
