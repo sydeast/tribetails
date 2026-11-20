@@ -151,7 +151,8 @@ describe('recordPayment TestMode scoping (server-side, replacing the client-side
   const testToken = { testTribeId: 'test-kinfolk-001' };
 
   it("stamps the sandbox kinfolkId no matter what the caller sent", async () => {
-    const ctx = seed();
+    // The linked invoice is the sandbox's own: a payment links only to its own household's invoice.
+    const ctx = seed({ invoice: { kinfolkId: 'test-kinfolk-001', status: 'open', total: 127.5, invoiceNumber: '1029' } });
     mocks.dbFn.mockReturnValue(ctx.db);
     const res = await recordPaymentHandler(
       req({ ...fullArgs, kinfolkId: 'fam1' }, 'testuser1', testToken),
@@ -166,6 +167,18 @@ describe('recordPayment TestMode scoping (server-side, replacing the client-side
     );
   });
 
+  it('a sandbox payment cannot be linked to a live household\'s invoice', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      recordPaymentHandler(req({ ...fullArgs, kinfolkId: 'fam1' }, 'testuser1', testToken)),
+    ).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'Invoice 1029 belongs to a different household than this payment.',
+      details: { code: 'link_wrong_household' },
+    });
+    expect(paymentWriteOf(ctx)).toBeUndefined();
+  });
   it('staff keep the kinfolkId they sent', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);

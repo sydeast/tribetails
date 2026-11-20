@@ -611,3 +611,66 @@ describe('enrichTemplateData: {{serviceType}} names the KinCare (#1749)', () => 
     expect(out.serviceType).toBe('Drop-in visit');
   });
 });
+
+describe('enrichTemplateData: an invoice is read only for its own household', () => {
+  const OTHER = {
+    invoiceNumber: 'TT-2002',
+    total: 310,
+    amountDue: 310,
+    dueDate: 'Dec 1, 2026',
+    date: 'Nov 20, 2026',
+    kinfolkName: 'The Okafor Home',
+    kinfolkId: 'fam2',
+  };
+  const seed = (invoice: Record<string, unknown>) => {
+    const ctx = buildDbMock({
+      docs: { 'invoices/inv2': invoice, 'families/fam1': { displayName: 'The Rivera Home', primaryUid: 'cli1' } },
+      queryDocs: { kin: [] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+  };
+  const ALL = ['invoiceNumber', 'amount', 'dueDate', 'bookingDate', 'kinfolkName'];
+  it.each(['invoice.payment.applied', 'invoice.new', 'invoice.overdue'])(
+    '%s: another household\'s invoice fills nothing, and the household is named from its own record',
+    async (key) => {
+      seed(OTHER);
+      const out = await enrichTemplateData(key, 'cli1', { invoiceId: 'inv2', kinfolkId: 'fam1' }, ALL);
+      expect(out.invoiceNumber).toBeUndefined();
+      expect(out.amount).toBeUndefined();
+      expect(out.dueDate).toBeUndefined();
+      expect(out.bookingDate).toBeUndefined();
+      expect(out.kinfolkName).toBe('The Rivera Home');
+      expect(JSON.stringify(out)).not.toMatch(/TT-2002|310|Okafor|Dec 1/);
+      expect(mocks.logEventFn).toHaveBeenCalledWith(
+        expect.objectContaining({ severity: 'warn', event: 'enrich.invoice.other_household' }),
+      );
+    },
+  );
+  it('the office copy is held to the same rule', async () => {
+    seed(OTHER);
+    const out = await enrichTemplateData('invoice.payment.applied', 'admin1', { invoiceId: 'inv2', familyId: 'fam1' }, ALL);
+    expect(out.invoiceNumber).toBeUndefined();
+    expect(out.amount).toBeUndefined();
+  });
+  it('the emitter\'s own amount still shows', async () => {
+    seed(OTHER);
+    const out = await enrichTemplateData('invoice.reminder', 'cli1', { invoiceId: 'inv2', kinfolkId: 'fam1', amountMinor: 4550 }, ALL);
+    expect(out.amount).toBe('$45.50');
+    expect(out.invoiceNumber).toBeUndefined();
+  });
+  it('the household\'s own invoice fills as before', async () => {
+    seed({ ...OTHER, kinfolkId: 'fam1' });
+    const out = await enrichTemplateData('invoice.payment.applied', 'cli1', { invoiceId: 'inv2', kinfolkId: 'fam1' }, ALL);
+    expect(out).toMatchObject({ invoiceNumber: 'TT-2002', amount: '$310.00', dueDate: 'Dec 1, 2026' });
+    expect(mocks.logEventFn).not.toHaveBeenCalledWith(expect.objectContaining({ event: 'enrich.invoice.other_household' }));
+  });
+  it('a notice that names no household, and an invoice that carries none, fill as before', async () => {
+    seed(OTHER);
+    const noHousehold = await enrichTemplateData('invoice.payment.applied', 'cli1', { invoiceId: 'inv2' }, ALL);
+    expect(noHousehold).toMatchObject({ invoiceNumber: 'TT-2002', amount: '$310.00' });
+    const { kinfolkId: _dropped, ...legacy } = OTHER;
+    seed(legacy);
+    const legacyOut = await enrichTemplateData('invoice.payment.applied', 'cli1', { invoiceId: 'inv2', kinfolkId: 'fam1' }, ALL);
+    expect(legacyOut).toMatchObject({ invoiceNumber: 'TT-2002', amount: '$310.00' });
+  });
+});

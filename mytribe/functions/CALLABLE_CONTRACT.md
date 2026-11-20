@@ -954,6 +954,10 @@ handler until ADR-0001 codegen replaces the hand-mirror).
     throw here would offer a retry that collects again.
   - Refuses `tip_exceeds_amount` (`invalid-argument`) and every `apply_*` code
     (`failed-precondition`) BEFORE writing anything.
+  - Refuses `link_wrong_household` (`failed-precondition`) BEFORE writing
+    anything when `invoiceId` names an invoice of a different household than
+    `kinfolkId`. A payment with no household and an invoice that carries none
+    are not refused.
 - req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
 - res `{ ok: true, invoiceId: string, skipped: ''|'invoice_missing'|'invoice_not_collectable'|'no_household'|'no_credit', appliedCents: number, amountDueCents: number, accountBalanceCents: number }`
 - **DISABLED (#1872, operator ruling 2026-11-11).** Account credit is never

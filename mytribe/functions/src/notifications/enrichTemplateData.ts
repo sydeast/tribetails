@@ -365,7 +365,25 @@ export async function enrichTemplateData(
       // The flat top-level collection is the ONLY invoice store. See #932 and
       // the header of scripts/backfillNestedInvoices.ts.
       const flat = await firestore.doc(`invoices/${invoiceId}`).get();
-      if (flat.exists) return (invoice = (flat.data() as Doc) ?? null);
+      if (flat.exists) {
+        const found = (flat.data() as Doc) ?? null;
+        // ONE HOUSEHOLD. A notice about a household is filled only from that
+        // household's invoice. When both are known and differ, the invoice is
+        // left out whole: its number, amount, dates and name fill nothing, for
+        // the household's copy and the office's alike. An invoice that carries
+        // no household (older rows) and a notice that names none read as before.
+        const invoiceKin = str(found?.kinfolkId);
+        if (familyId && invoiceKin && invoiceKin !== familyId) {
+          logEvent({
+            severity: 'warn',
+            function: 'enrichTemplateData',
+            event: 'enrich.invoice.other_household',
+            extra: { key, entity: 'invoice', id: invoiceId, familyId },
+          });
+          return (invoice = null);
+        }
+        return (invoice = found);
+      }
       logInvoiceNotFound();
     } catch (err) {
       logErr('invoice', invoiceId, err);
