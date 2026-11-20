@@ -170,7 +170,30 @@ class KinTaleLogsDraftsTest {
         val listedOnly = held.copy(id = "listed", pushOutcome = "listed")
         val noStamp = held.copy(id = "nostamp", pushOutcome = "")
         val sms = held.copy(id = "sms", communicationType = "sms")
-        assertEquals(listOf("held"), unsentGeneratedDrafts(listOf(held, sent, listedOnly, noStamp, sms)).map { it.id })
+        // #2381: the approved push with no answer on it is listed too.
+        assertEquals(listOf("held", "nostamp"), unsentGeneratedDrafts(listOf(held, sent, listedOnly, noStamp, sms)).map { it.id })
+    }
+    @Test
+    fun `#2381 an approved Push draft whose send never answered stays under Drafts`() {
+        val unanswered = draftFromFields(
+            "unanswered",
+            mapOf(
+                "status" to "approved", "communication_type" to "push", "kinfolk_id" to "kf1",
+                "generatedCopy" to "Hi", "createdOn" to "2026-11-14T00:00:00Z",
+            ),
+        )
+        assertTrue(unanswered.isUnansweredPush)
+        assertFalse(unanswered.isHeldPush)
+        assertFalse(unanswered.isUnsent)
+        // Any answer on it, another type, or a push nobody approved: not unanswered.
+        listOf("sent", "listed", "held").forEach { assertFalse(it, unanswered.copy(pushOutcome = it).isUnansweredPush) }
+        assertFalse(unanswered.copy(communicationType = "email").isUnansweredPush)
+        assertFalse(unanswered.copy(communicationType = "visit_report").isUnansweredPush)
+        assertFalse(unanswered.copy(status = "generated").isUnansweredPush)
+        val approvedEmail = unanswered.copy(id = "email", communicationType = "email")
+        assertEquals(listOf("unanswered"), unsentGeneratedDrafts(listOf(unanswered, approvedEmail)).map { it.id })
+        // Home's count is unchanged.
+        assertEquals(0, com.tribetails.auntieos.data.model.pendingDraftCountOf(listOf(unanswered)))
     }
 }
 

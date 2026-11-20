@@ -543,11 +543,12 @@ private fun ComposePanel(
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )
-                    if (state.draftId != null && !sent && state.savedDraftId == null) {
+                    // #2381: an approved Push that did not go out keeps its Delete.
+                    if (canDeleteDraft(state.draftId != null, sent, state.savedDraftId != null, state.pushNotice)) {
                         GhostButton(
                             label = if (state.isDeletingDraft) "Deleting…" else "Delete draft",
                             onClick = { confirmDelete = true },
-                            enabled = !state.isSaving && !state.isGenerating && !state.isDeletingDraft,
+                            enabled = !state.isSaving && !state.isGenerating && !state.isDeletingDraft && !state.isRetryingPush,
                         )
                     }
                 }
@@ -595,7 +596,7 @@ private fun ComposePanel(
                     },
                 ) {
                     Text(
-                        text = "It has not been sent. Deleting it cannot be undone.",
+                        text = deleteDraftConfirmLine(state.pushNotice),
                         style = AuntieTheme.typography.bodyMedium,
                         color = c.textPrimary,
                     )

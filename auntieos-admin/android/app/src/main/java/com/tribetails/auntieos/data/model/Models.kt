@@ -1446,6 +1446,16 @@ data class Draft(
         communicationType.trim().lowercase() == "push" &&
             status.trim().lowercase() == "approved" &&
             pushOutcome.trim() == "held"
+    /**
+     * #2381: an approved Push draft with no answer on it. Its send was cut off
+     * (a dropped connection, a timeout) before the server could say what
+     * happened, so it is listed under Drafts and opens with Try again, like a
+     * held one. Not part of [isUnsent] either.
+     */
+    val isUnansweredPush: Boolean get() =
+        communicationType.trim().lowercase() == "push" &&
+            status.trim().lowercase() == "approved" &&
+            pushOutcome.isBlank()
 
     /**
      * #1563: waiting on a decision. Not sent, and in a status that means nobody
