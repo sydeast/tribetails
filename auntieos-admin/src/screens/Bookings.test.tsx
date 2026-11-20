@@ -410,6 +410,39 @@ describe('Bookings shows a booked request’s visits when the list page does not
     await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
     expect(screen.getByText(/Reject 1 booking\?/)).toBeInTheDocument();
   });
+  it('never says highlighted below over a list that is not drawn', async () => {
+    const household: Async<BookingEntry[]> = { status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00')] };
+    const listOf = (list: Async<BookingEntry[]>) =>
+      useCollection.mockImplementation((spec: { filters?: unknown[] }) =>
+        spec.filters && spec.filters.length > 0 ? household : list,
+      );
+    // The list's own read failed: its error is what the screen says.
+    listOf({ status: 'error', message: 'You appear to be offline.' });
+    const { unmount } = open();
+    expect(screen.queryByText('This booking')).toBeNull();
+    expect(screen.queryByText(/highlighted below/)).toBeNull();
+    expect(screen.queryByText('This booking is no longer available')).toBeNull();
+    expect(screen.getByText(/You appear to be offline\./)).toBeInTheDocument();
+    unmount();
+    // Still loading: it is still looking.
+    listOf({ status: 'loading' });
+    open();
+    expect(screen.queryByText(/highlighted below/)).toBeNull();
+    expect(screen.getByText('Looking this booking up…')).toBeInTheDocument();
+  });
+  it('drops a picked visit from the selection when Dismiss takes it off the list', async () => {
+    const pending = entry({ _id: 'ses_p', kinfolkName: 'The Wrens', kinfolkId: 'kf2', status: 'PENDING' });
+    reads({ status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00', { status: 'PENDING' })] }, [pending]);
+    open();
+    await screen.findByText('Its visit is highlighted below.');
+    await pick('Rivera vis_v1', 'The Wrens');
+    expect(within(screen.getByRole('group', { name: 'Bulk actions' })).getByText('2')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText('Rivera vis_v1')).toBeNull();
+    expect(within(screen.getByRole('group', { name: 'Bulk actions' })).getByText('1')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(screen.getByText(/Reject 1 booking\?/)).toBeInTheDocument();
+  });
   it('takes them off the list again on Dismiss, and keeps the page', async () => {
     reads({ status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00')] });
     open();

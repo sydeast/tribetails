@@ -82,10 +82,18 @@ export const BATCH_FAILED_TITLE = "Couldn't look this booking up";
 
 export function BookingBatchFocus({
   focus,
+  listStatus,
   onHighlight,
   onDismiss,
 }: {
   focus: FocusRequest;
+  /**
+   * #2397: where the list's own read stands. The found visits are drawn on the
+   * list, so "highlighted below" is only said once the list is drawn. While it
+   * loads this keeps looking; when it failed this says nothing, and the list's
+   * own error and Retry are what is on screen.
+   */
+  listStatus: Async<unknown>['status'];
   /**
    * The visits to highlight on the list, once found, and again whenever one of
    * them changes. The records, so the list can draw one its page does not hold.
@@ -126,6 +134,14 @@ export function BookingBatchFocus({
         </Banner>
       );
     case 'booked':
+      if (listStatus === 'error') return null;
+      if (listStatus === 'loading') {
+        return (
+          <p className="bookings__hint" role="status" aria-live="polite">
+            {BATCH_LOOKING_LABEL}
+          </p>
+        );
+      }
       return (
         <Banner tone="info" title={BATCH_BOOKED_TITLE} onDismiss={onDismiss}>
           <span role="status">{bookedLine(state.sessionIds.length)}</span>

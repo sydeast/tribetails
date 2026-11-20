@@ -404,6 +404,16 @@ export function Bookings({
    */
   const rows = useMemo(() => withFocusedRows(page, focusedRows), [page, focusedRows]);
   function dismissBatchFocus() {
+    // #2397: a picked visit that was drawn from outside the page leaves the
+    // list here, so it leaves the selection too. The bulk bar counts what is
+    // picked, and must never count a card that is no longer on screen.
+    const leaving = rows.status === 'ready' && page.status === 'ready'
+      ? new Set(rows.data.slice(page.data.length).map((r) => r._id))
+      : new Set<string>();
+    if (leaving.size > 0) {
+      setSelectedIds((prev) => new Set([...prev].filter((id) => !leaving.has(id))));
+      setConfirmAction(null);
+    }
     setBatchFocus(null);
     setFocusedRows([]);
   }
@@ -774,6 +784,7 @@ export function Bookings({
       {batchFocus !== null && (
         <BookingBatchFocus
           focus={batchFocus}
+          listStatus={page.status}
           onHighlight={setFocusedRows}
           onDismiss={dismissBatchFocus}
         />
