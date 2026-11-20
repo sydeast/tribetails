@@ -878,16 +878,19 @@ describe('#2281 review: a second call that arrives after the sweep', () => {
     expect(docs[`payments/${pay(1)}`]).toMatchObject({ settlesInvoice: false, settledByInvoicePaymentId: '' });
     expect(hooks.deliver).not.toHaveBeenCalled();
   });
-  it('a call for another household naming this settlement leaves the sweep row alone', async () => {
+  it('a call for another household naming this settlement is refused and leaves the sweep row alone', async () => {
     installOptimisticTransactions(ctx.db, docs);
     const settled = await step1();
     expect(await sweepAbandonedSettlements(ctx.db as never, later())).toBe(1);
     const before = { ...docs[`payments/${settleRow}`]! };
     const invoiceBefore = { ...docs[INVOICE]! };
-    await step2(settled.paymentId, { kinfolkId: 'fam2', sendConfirmationEmail: false });
+    await expect(step2(settled.paymentId, { kinfolkId: 'fam2', sendConfirmationEmail: false })).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'link_wrong_household' },
+    });
     expect(docs[`payments/${settleRow}`]).toEqual(before);
     expect(docs[INVOICE]).toEqual(invoiceBefore);
-    expect(docs[`payments/${pay(1)}`]!.replacedSettlementLedgerRowId).toBeUndefined();
+    expect(docs[`payments/${pay(1)}`]).toBeUndefined();
   });
   it('after a reopen and a second payoff, the late retry replaces only its own settlement\'s row and takes nothing from the later one', async () => {
     installOptimisticTransactions(ctx.db, docs);
@@ -1232,10 +1235,13 @@ describe('#2296: a second call naming a settlement that already has its ledger r
     );
     expect(ledgerRows().sort()).toEqual([`payments/${pay(1)}`, `payments/${pay(3)}`].sort());
   });
-  it('a call for another household naming this settlement neither stamps it nor steals its answer', async () => {
+  it('a call for another household naming this settlement is refused: it neither stamps it nor steals its answer', async () => {
     installOptimisticTransactions(ctx.db, docs);
     const settled = await step1();
-    await step2(settled.paymentId, { kinfolkId: 'fam2', idempotencyKey: pay(3), sendConfirmationEmail: false });
+    await expect(
+      step2(settled.paymentId, { kinfolkId: 'fam2', idempotencyKey: pay(3), sendConfirmationEmail: false }),
+    ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: 'link_wrong_household' } });
+    expect(docs[`payments/${pay(3)}`]).toBeUndefined();
     expect(docs[`${INVOICE}/payments/${settled.paymentId}`]!['ledgerPaymentId']).toBeUndefined();
     // The right household's call records its own row and is not answered from the other one.
     const mine = await step2(settled.paymentId);
@@ -1354,5 +1360,148 @@ describe('#2343: the sweep\'s payoff when the household send switch holds the ho
     expect(hooks.enqueue).toHaveBeenCalledTimes(2);
     expect(docs[`payments/${settleRow}`]).toMatchObject({ confirmationAppOnly: true });
     expect(docs[INVOICE]![SETTLEMENT_LEDGER_PENDING_FIELD]).toBe('');
+  });
+});
+
+describe('a payment links only to its own household\'s invoice', () => {
+  const INVOICE2 = 'invoices/inv2';
+  /** A row added by hand: a display link to an invoice, nothing applied. */
+  const linked = (over: Record<string, unknown> = {}) =>
+    recordPaymentHandler(
+      req({
+        kinfolkId: 'fam2',
+        date: '2026-11-14',
+        paymentMethod: 'cash',
+        amount: 10,
+        invoiceId: 'inv1',
+        invoiceNumber: '1029',
+        sendConfirmationEmail: true,
+        idempotencyKey: pay(1),
+        ...over,
+      }),
+    );
+  const refusalOf = async (call: Promise<unknown>) => {
+    try {
+      await call;
+      return null;
+    } catch (err) {
+      const e = err as { code?: string; message?: string; details?: Record<string, unknown> };
+      return { status: e.code, message: e.message ?? '', ...(e.details ?? {}) } as Record<string, unknown>;
+    }
+  };
+  const ledgerRows = () => Object.keys(docs).filter((p) => p.startsWith('payments/') && docs[p] != null);
+  const nothingRecordedOrSent = () => {
+    expect(ledgerRows()).toEqual([]);
+    expect(docs[INVOICE]).toEqual({ ...OPEN });
+    expect(docs['families/fam1']!.accountBalanceCents).toBe(12000);
+    expect(docs['families/fam2']!.accountBalanceCents).toBe(0);
+    expect(hooks.billingUid).not.toHaveBeenCalled();
+    expect(hooks.enqueue).not.toHaveBeenCalled();
+    expect(hooks.deliver).not.toHaveBeenCalled();
+  };
+  beforeEach(() => {
+    docs['families/fam2'] = { accountBalanceCents: 0 };
+    docs[INVOICE2] = { ...OPEN, kinfolkId: 'fam2', kinfolkName: 'The Okafors', invoiceNumber: '1030' };
+  });
+  it('a link to another household\'s invoice is refused in plain words, with nothing recorded and nobody told', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    expect(await refusalOf(linked())).toEqual({
+      status: 'failed-precondition',
+      code: 'link_wrong_household',
+      message: 'Invoice 1029 belongs to a different household than this payment.',
+    });
+    nothingRecordedOrSent();
+  });
+  it('the refusal never shows a stored id when the invoice has no number', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    docs[INVOICE] = { ...OPEN, invoiceNumber: '' };
+    const refusal = await refusalOf(linked());
+    expect(refusal).toMatchObject({ code: 'link_wrong_household' });
+    expect(refusal!.message).toBe('That invoice belongs to a different household than this payment.');
+    expect(ledgerRows()).toEqual([]);
+  });
+  it('the rule is held on the read the row is written from: an invoice that changes household mid-call is refused', async () => {
+    // The invoice is this payment's household's when the call starts, so the
+    // check ahead of the transaction passes. It changes hands before the
+    // commit, the attempt runs again, and its own read refuses.
+    docs[INVOICE] = { ...OPEN, kinfolkId: 'fam2' };
+    let moved = false;
+    const tx = installOptimisticTransactions(ctx.db, docs, {
+      onRead: (path) => {
+        if (path !== INVOICE || moved) return;
+        moved = true;
+        docs[INVOICE] = { ...docs[INVOICE]!, kinfolkId: 'fam1' };
+      },
+    });
+    expect(await refusalOf(linked())).toEqual({
+      status: 'failed-precondition',
+      code: 'link_wrong_household',
+      message: 'Invoice 1029 belongs to a different household than this payment.',
+    });
+    expect(moved).toBe(true);
+    expect(tx.attempts()).toBe(2);
+    expect(tx.committed()).toEqual([]);
+    expect(ledgerRows()).toEqual([]);
+    expect(hooks.enqueue).not.toHaveBeenCalled();
+  });
+  it('with account credit entered it is still the household refusal, and no credit is given', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    expect(await refusalOf(linked({ creditToAccountCents: 500 }))).toMatchObject({ code: 'link_wrong_household' });
+    const settled = await markInvoicePaidHandler(req({ invoiceId: 'inv1', amount: 40, idempotencyKey: ipay(1) }));
+    hooks.enqueue.mockClear();
+    hooks.billingUid.mockClear();
+    const invoiceBefore = { ...docs[INVOICE]! };
+    expect(
+      await refusalOf(linked({ amount: 55, settledByInvoicePaymentId: settled.paymentId, creditToAccountCents: 1500 })),
+    ).toMatchObject({ code: 'link_wrong_household' });
+    expect(ledgerRows()).toEqual([]);
+    expect(docs[INVOICE]).toEqual(invoiceBefore);
+    expect(docs['families/fam2']!.accountBalanceCents).toBe(0);
+    expect(hooks.enqueue).not.toHaveBeenCalled();
+  });
+  it('a payment applied to its own invoice cannot carry a link to another household\'s', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const refusal = await refusalOf(
+      linked({ amount: 40, apply: { invoiceId: 'inv2', invoiceNumber: '1030', amount: 40 } }),
+    );
+    expect(refusal).toMatchObject({ status: 'failed-precondition', code: 'link_wrong_household' });
+    expect(docs[INVOICE2]).toMatchObject({ status: 'open', amountDueCents: 4000 });
+    expect(Object.keys(docs).filter((p) => p.startsWith(`${INVOICE2}/payments/`))).toEqual([]);
+    nothingRecordedOrSent();
+  });
+  it('a link to the household\'s own invoice is recorded as before', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const res = await linked({ kinfolkId: 'fam1' });
+    expect(res).toMatchObject({ paymentId: pay(1), kinfolkId: 'fam1' });
+    expect(docs[`payments/${pay(1)}`]).toMatchObject({ kinfolkId: 'fam1', invoiceId: 'inv1', amountCents: 1000 });
+    expect(hooks.enqueue).toHaveBeenCalled();
+  });
+  it('a payment applied to its own invoice and linked to it is recorded as before', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const res = await linked({
+      amount: 40,
+      invoiceId: 'inv2',
+      invoiceNumber: '1030',
+      apply: { invoiceId: 'inv2', invoiceNumber: '1030', amount: 40 },
+    });
+    expect(res).toMatchObject({ paymentId: pay(1), kinfolkId: 'fam2' });
+    expect(docs[INVOICE2]).toMatchObject({ amountDueCents: 0 });
+  });
+  it('a payment with no household, an invoice with none, and a link to no stored invoice are not refused', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    await linked({ kinfolkId: '', sendConfirmationEmail: false });
+    docs['invoices/inv3'] = { ...OPEN, kinfolkId: '', invoiceNumber: '1031' };
+    await linked({ invoiceId: 'inv3', invoiceNumber: '1031', idempotencyKey: pay(2), sendConfirmationEmail: false });
+    await linked({ invoiceId: 'inv_gone', invoiceNumber: '', idempotencyKey: pay(3), sendConfirmationEmail: false });
+    expect(ledgerRows().sort()).toEqual([`payments/${pay(1)}`, `payments/${pay(2)}`, `payments/${pay(3)}`].sort());
+  });
+  it('a retry of a row stored before the rule is still answered from that row', async () => {
+    installOptimisticTransactions(ctx.db, docs);
+    const first = await linked({ kinfolkId: 'fam1', sendConfirmationEmail: false });
+    // As an older build stored it: the row names the other household.
+    docs[`payments/${pay(1)}`] = { ...docs[`payments/${pay(1)}`]!, kinfolkId: 'fam2' };
+    const again = await linked({ sendConfirmationEmail: false });
+    expect(again).toMatchObject({ paymentId: first.paymentId, kinfolkId: 'fam2' });
+    expect(ledgerRows()).toEqual([`payments/${pay(1)}`]);
   });
 });
