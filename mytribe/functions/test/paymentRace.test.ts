@@ -1420,6 +1420,30 @@ describe('a payment links only to its own household\'s invoice', () => {
     expect(refusal!.message).toBe('That invoice belongs to a different household than this payment.');
     expect(ledgerRows()).toEqual([]);
   });
+  it('the rule is held on the read the row is written from: an invoice that changes household mid-call is refused', async () => {
+    // The invoice is this payment's household's when the call starts, so the
+    // check ahead of the transaction passes. It changes hands before the
+    // commit, the attempt runs again, and its own read refuses.
+    docs[INVOICE] = { ...OPEN, kinfolkId: 'fam2' };
+    let moved = false;
+    const tx = installOptimisticTransactions(ctx.db, docs, {
+      onRead: (path) => {
+        if (path !== INVOICE || moved) return;
+        moved = true;
+        docs[INVOICE] = { ...docs[INVOICE]!, kinfolkId: 'fam1' };
+      },
+    });
+    expect(await refusalOf(linked())).toEqual({
+      status: 'failed-precondition',
+      code: 'link_wrong_household',
+      message: 'Invoice 1029 belongs to a different household than this payment.',
+    });
+    expect(moved).toBe(true);
+    expect(tx.attempts()).toBe(2);
+    expect(tx.committed()).toEqual([]);
+    expect(ledgerRows()).toEqual([]);
+    expect(hooks.enqueue).not.toHaveBeenCalled();
+  });
   it('with account credit entered it is still the household refusal, and no credit is given', async () => {
     installOptimisticTransactions(ctx.db, docs);
     expect(await refusalOf(linked({ creditToAccountCents: 500 }))).toMatchObject({ code: 'link_wrong_household' });
