@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tribetails.auntieos.data.model.Draft
 import com.tribetails.auntieos.data.model.VisitStatus
+import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.ui.branding.brandIdentity
 import com.tribetails.auntieos.ui.admin.ServiceCatalog
 import com.tribetails.auntieos.ui.admin.bookingServiceTone
@@ -997,7 +998,7 @@ private fun TaleRow(draft: Draft, index: Int, onOpen: () -> Unit) {
             // item 6: blurb = first line of the real draft copy (was a redundant
             // second copy of kinfolkName, which then repeated in the meta line).
             Text(
-                draft.generatedCopy.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(80)
+                draft.generatedCopy.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.let { cutWhole(it, 80) }
                     ?.ifBlank { null } ?: "No copy yet",
                 style = AuntieTheme.typography.bodySmall, color = c.textDim,
                 maxLines = 1,

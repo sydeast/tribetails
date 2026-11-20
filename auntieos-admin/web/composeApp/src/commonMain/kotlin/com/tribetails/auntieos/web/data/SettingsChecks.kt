@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.web.data
 
+import com.tribetails.auntieos.web.screens.cutWhole
+
 /**
  * #1593: the field checks the Settings panels run before Save, the desktop
  * copy of `mytribe/functions/src/lib/businessSettingsChecks.ts`.
@@ -153,7 +155,7 @@ object SettingsChecks {
             val name = raw.trim()
             when {
                 name.isEmpty() -> KINCARE_NAME_REQUIRED
-                name.length > MAX_KINCARE_NAME_LENGTH -> "Keep the name \"${name.take(20)}...\" under $MAX_KINCARE_NAME_LENGTH characters."
+                name.length > MAX_KINCARE_NAME_LENGTH -> "Keep the name \"${cutWhole(name, 20)}...\" under $MAX_KINCARE_NAME_LENGTH characters."
                 !seen.add(name.lowercase()) -> "Two KinCare types are both called \"$name\"."
                 else -> null
             }

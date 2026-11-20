@@ -1,4 +1,5 @@
 import { str, arr } from './coerce';
+import { cutWhole } from './cutText';
 import { sessionTimeOf } from './sessionFormat';
 import { machineWhen, tsToDate } from './time';
 import type { CallRow, EmailRow, SmsRow, VoicemailRow } from '../api/inboxChannels';
@@ -165,7 +166,7 @@ export const PREVIEW_MAX = 140;
 function preview(text: string): string {
   const trimmed = text.trim();
   if (trimmed.length <= PREVIEW_MAX) return trimmed;
-  return `${trimmed.slice(0, PREVIEW_MAX).trimEnd()}…`;
+  return `${cutWhole(trimmed, PREVIEW_MAX).trimEnd()}…`;
 }
 
 /** `kinfolkId` is written as a literal `null` on a no-match, so read it defensively. */

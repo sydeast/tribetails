@@ -25,6 +25,8 @@ import { unsubscribeFooter, suppressionDocId } from './sendExternalMessage';
 import { loadBusinessName } from '../lib/businessName';
 import { broadcastMergeData, renderBroadcastCopy, unsupportedMergeFields } from '../lib/broadcastMerge';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
+import { householdNoticeEntryRoute, householdPushShelfLine, householdSmsText } from '../notifications/templateParsers';
+import { PORTAL_URL } from '../notifications/visitDates';
 import {
   BroadcastIdempotencyKeyArg,
   assertSameCaller,
@@ -59,7 +61,13 @@ import type { ResolvedChannels, UserNotificationPrefs } from '../notifications/t
  *              catalog, because there is no template for ad-hoc broadcast copy.
  *   - email -> SendGrid per kinfolk with an email on file, honoring opt-outs.
  *   - sms   -> Twilio per kinfolk with a phone on file, honoring opt-outs.
+ *              Short, with a link to the in-app entry (#2316).
  *   - push  -> FCM multicast to the kinfolk's `fcm_tokens` (resolved via uid).
+ *              Short, and a tap opens the in-app entry (#2316).
+ *
+ * The in-app entry is where a text or push is read whole, so a household with
+ * a MyTribe account that is sent either one gets the entry even when In-app
+ * was not chosen (#2316). It is counted under In-app only when In-app was.
  *
  * Fan-out semantics are honest partial-success: a kinfolk missing a channel's
  * contact (no email / no phone / no uid / no tokens) or opted-out is COUNTED as
@@ -463,44 +471,79 @@ export function broadcastSender(ctx: {
       return { outcome: 'suppressed' as RecipientOutcome, detail };
     }
 
+    // #2316 (ruling 2026-11-14): the household's text message and push are a
+    // short line with a link to the whole message in MyTribe. The whole message
+    // is this broadcast's entry on their notifications list, and the link opens
+    // that entry. So the entry is written for every household a text or a push
+    // is about to go to, whether or not In-app was chosen: the link has to open
+    // the message. Who the text and the push will go to is worked out first, so
+    // a household that gets neither is not given an entry nobody chose.
+    let smsTo = '';
+    if (channels.includes('sms') && allowed.sms) {
+      const e164 = normalizeE164((k.phoneNumber ?? '').trim());
+      if (e164 && !(await isSuppressed(e164))) smsTo = e164;
+    }
+    let pushTokens: string[] = [];
+    let pushLookupFailed = false;
+    if (channels.includes('push') && allowed.push && k.uid) {
+      try {
+        const tokensSnap = await db().collection('fcm_tokens').where('uid', '==', k.uid).get();
+        pushTokens = tokensSnap.docs.map((d) => d.id);
+      } catch (err) {
+        pushLookupFailed = true;
+        logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'push.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
+      }
+    }
+    const inappChosen = channels.includes('inapp');
+    const linkNeedsEntry = smsTo !== '' || pushTokens.length > 0;
+    let entryId = '';
     // ---- in-app -------------------------------------------------------------
-    if (channels.includes('inapp')) {
-      if (!k.uid) {
-        mark('inapp', 'skipped'); // no linked MyTribe install -> cannot target an in-app inbox.
-      } else {
-        try {
-          await db().collection('notifications').doc().set({
-            key: BROADCAST_NOTIFICATION_KEY,
-            // The CATALOG row's category (#386). It used to say 'broadcast',
-            // a bucket in no catalog, so every catalog-driven surface filed
-            // broadcasts under a category it had never heard of. `title` and
-            // `description` below stay the operator's own words rather than the
-            // catalog label/description, because the copy is authored per send.
-            category: def.category,
-            recipientUid: k.uid,
-            actorUid: uid,
-            data: { kinfolkId: k.id },
-            title: copy.subject,
-            // `description` is the field every card renderer already reads for
-            // the second line (it carries the catalog description on dispatched
-            // notifications). `body` alone was written by nothing else and read
-            // by nothing, so a broadcast landed in the inbox as a bare subject.
-            description: copy.body,
-            body: copy.body,
-            broadcast: true,
-            targetType: 'kinfolk',
-            targetId: k.id,
-            createdAt: FieldValue.serverTimestamp(),
-          });
+    if (!k.uid) {
+      // No linked MyTribe account: there is no notifications list to write to.
+      if (inappChosen) mark('inapp', 'skipped');
+    } else if (inappChosen || linkNeedsEntry) {
+      try {
+        const entryRef = db().collection('notifications').doc();
+        await entryRef.set({
+          key: BROADCAST_NOTIFICATION_KEY,
+          // The CATALOG row's category (#386). It used to say 'broadcast',
+          // a bucket in no catalog, so every catalog-driven surface filed
+          // broadcasts under a category it had never heard of. `title` and
+          // `description` below stay the operator's own words rather than the
+          // catalog label/description, because the copy is authored per send.
+          category: def.category,
+          recipientUid: k.uid,
+          actorUid: uid,
+          data: { kinfolkId: k.id },
+          title: copy.subject,
+          // `description` is the field every card renderer already reads for
+          // the second line (it carries the catalog description on dispatched
+          // notifications). `body` alone was written by nothing else and read
+          // by nothing, so a broadcast landed in the inbox as a bare subject.
+          description: copy.body,
+          body: copy.body,
+          broadcast: true,
+          targetType: 'kinfolk',
+          targetId: k.id,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        entryId = entryRef.id;
+        // Counted as the In-app channel only when In-app was chosen. Written
+        // for the link alone, it is where the text or push is read whole, and
+        // the household counts as reached only if that text or push goes.
+        if (inappChosen) {
           mark('inapp', 'sent');
           detail.reached = true;
-        } catch (err) {
-          mark('inapp', 'failed');
-          logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'inapp.write.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
         }
+      } catch (err) {
+        if (inappChosen) mark('inapp', 'failed');
+        logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'inapp.write.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
       }
     }
 
+    // With no entry (no MyTribe account, or the write was refused) the link
+    // opens the notifications list.
+    const householdRoute = householdNoticeEntryRoute(entryId);
     // ---- email --------------------------------------------------------------
     if (channels.includes('email')) {
       const email = (k.email ?? '').trim();
@@ -542,17 +585,18 @@ export function broadcastSender(ctx: {
 
     // ---- sms ----------------------------------------------------------------
     if (channels.includes('sms')) {
-      const e164 = normalizeE164((k.phoneNumber ?? '').trim());
-      if (!allowed.sms) {
-        mark('sms', 'skipped'); // gate or household preference says no SMS.
-      } else if (!e164) {
-        mark('sms', 'skipped');
-      } else if (await isSuppressed(e164)) {
+      if (smsTo === '') {
+        // The gate or the household's own setting says no text, there is no
+        // phone on file, or the number opted out (worked out above).
         mark('sms', 'skipped');
       } else {
         try {
           const twilio = await getTwilio();
-          await twilio.messages.create({ from: getTwilioFromNumber(), to: e164, body: copy.body });
+          await twilio.messages.create({
+            from: getTwilioFromNumber(),
+            to: smsTo,
+            body: householdSmsText(copy.body, PORTAL_URL, householdRoute),
+          });
           mark('sms', 'sent');
           detail.reached = true;
         } catch (err) {
@@ -567,7 +611,7 @@ export function broadcastSender(ctx: {
             uid,
             extra: {
               kinfolkId: k.id,
-              err: providerFailureMessage('Twilio', err, { plain: e164, masked: redactRecipient('sms', e164) }),
+              err: providerFailureMessage('Twilio', err, { plain: smsTo, masked: redactRecipient('sms', smsTo) }),
               ...providerFailureFields(err),
             },
           });
@@ -577,34 +621,35 @@ export function broadcastSender(ctx: {
 
     // ---- push ---------------------------------------------------------------
     if (channels.includes('push')) {
-      if (!allowed.push) {
-        mark('push', 'skipped'); // gate or household preference says no push.
-      } else if (!k.uid) {
+      if (!allowed.push || !k.uid) {
+        mark('push', 'skipped'); // gate or household preference says no push, or no MyTribe account.
+      } else if (pushLookupFailed) {
+        mark('push', 'failed'); // the device read failed above, and was logged there.
+      } else if (pushTokens.length === 0) {
         mark('push', 'skipped');
       } else {
         try {
-          const tokensSnap = await db().collection('fcm_tokens').where('uid', '==', k.uid).get();
-          const tokens = tokensSnap.docs.map((d) => d.id);
-          if (tokens.length === 0) {
-            mark('push', 'skipped');
+          const resp = await getAdmin()
+            .messaging()
+            .sendEachForMulticast({
+              tokens: pushTokens,
+              // #1381: the business name from settings; no title at all when both are unset.
+              notification: {
+                title: copy.subject || businessName || undefined,
+                body: householdPushShelfLine(copy.body),
+              },
+              // #2316: both MyTribe clients open `route`, here the entry that
+              // holds the whole message.
+              data: { notificationKey: BROADCAST_NOTIFICATION_KEY, route: householdRoute },
+            });
+          // Counts are per-RECIPIENT-reached (consistent with email/sms/in-app
+          // where one recipient == one send), not per-token. A kinfolk with
+          // several devices counts once if any token took the push.
+          if (resp.successCount > 0) {
+            mark('push', 'sent');
+            detail.reached = true;
           } else {
-            const resp = await getAdmin()
-              .messaging()
-              .sendEachForMulticast({
-                tokens,
-                // #1381: the business name from settings; no title at all when both are unset.
-                notification: { title: copy.subject || businessName || undefined, body: copy.body },
-                data: { notificationKey: BROADCAST_NOTIFICATION_KEY },
-              });
-            // Counts are per-RECIPIENT-reached (consistent with email/sms/in-app
-            // where one recipient == one send), not per-token. A kinfolk with
-            // several devices counts once if any token took the push.
-            if (resp.successCount > 0) {
-              mark('push', 'sent');
-              detail.reached = true;
-            } else {
-              mark('push', 'failed');
-            }
+            mark('push', 'failed');
           }
         } catch (err) {
           mark('push', 'failed');

@@ -2,7 +2,8 @@ import { db } from '../../lib/firestoreAdmin';
 import { getTwilio, getTwilioFromNumber } from '../../lib/twilio';
 import { describeProviderFailure } from '../../lib/providerFailure';
 import { redactRecipient } from '../../lib/suppressions';
-import { householdSmsText, kinForStoredTemplate, renderPlainText } from '../templateParsers';
+import { HOUSEHOLD_NOTICE_ROUTE, householdSms, kinForStoredTemplate, renderPlainText } from '../templateParsers';
+import { keepWholeMessage } from './pushChannel';
 import { PORTAL_URL } from '../visitDates';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
 
@@ -33,7 +34,8 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
  * A HOUSEHOLD'S COPY IS SHORT AND CARRIES A LINK (#2280, operator ruling
  * 2026-11-14): the rendered text is cut to a short line and ends with a link to
  * MyTribe, where the notifications list holds the whole message. See
- * `householdSmsText` in templateParsers.ts.
+ * `householdSms` in templateParsers.ts. The link opens the notice's own entry
+ * on that list, and a message that was cut is kept whole on that entry (#2371).
  *
  * Phone format expectation: E.164 (`+15551234567`). Documents missing the
  * leading `+` are passed through to Twilio which will reject with a 21211
@@ -41,7 +43,7 @@ import type { ChannelSendArgs, ChannelSendResult } from './index';
  * source-of-truth phone capture flow gets corrected upstream.
  */
 export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSendResult> {
-  const { def, recipientUid, data, stream } = args;
+  const { def, recipientUid, data, stream, open } = args;
   const templateId = def.templates.sms;
   if (!templateId) {
     throw new Error(`smsChannel(${def.key}): catalog has no sms template id`);
@@ -84,7 +86,15 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
   });
   // #2280: a household's text message is short and links into MyTribe, where
   // the whole message is. Staff and business copies are sent as written.
-  const body = stream === 'kinfolk' ? householdSmsText(rendered, PORTAL_URL) : rendered;
+  // #2371: the link opens this notice's entry, and a cut message is written
+  // onto it first, so the rest is there when the link is followed.
+  let body = rendered;
+  if (stream === 'kinfolk') {
+    const entry = open?.readInList;
+    const sms = householdSms(rendered, PORTAL_URL, entry?.route ?? HOUSEHOLD_NOTICE_ROUTE);
+    if (sms.cut && entry?.entryId) await keepWholeMessage('sms', entry.entryId, rendered, def.key);
+    body = sms.text;
+  }
   const twilio = await getTwilio();
   let message: { sid: string };
   try {

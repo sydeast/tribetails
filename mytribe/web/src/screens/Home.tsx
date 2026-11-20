@@ -32,6 +32,7 @@ import {
   visitVariant,
 } from '../lib/portalFormat';
 import { BusinessFootnote } from '../components/BusinessFootnote';
+import { cutWhole } from '../lib/cutText';
 
 /**
  * Home, ported from ui-ideas/mytribe-home-2026-05-31.html. `getMyHome` only
@@ -286,7 +287,7 @@ export function Home() {
                   <Link className={`tale a${(i % 3) + 1}`} to="/kintales" search={{ tale: t.id }} key={t.id}>
                     <div className="photo">{'\u{1F43E}'}</div>
                     <div className="tb">
-                      <b>{t.title || t.body.slice(0, 60)}</b>
+                      <b>{t.title || cutWhole(t.body, 60)}</b>
                       <p>{t.body}</p>
                       <div className="meta">
                         {`FROM ${(auntieName(t.authorDisplayName) ?? 'Your Auntie').toUpperCase()}${t.sentAtMs !== null ? ` · ${relativeDay(t.sentAtMs).toUpperCase()}` : t.sentAtText ? ` · ${t.sentAtText}` : ''}`}

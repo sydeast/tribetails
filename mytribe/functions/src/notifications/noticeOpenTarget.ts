@@ -1,5 +1,5 @@
 import { HOUSEHOLD_NOTE_KEYS, householdNoticeTarget } from './buildNotificationDetail';
-import { HOUSEHOLD_NOTICE_ROUTE } from './templateParsers';
+import { householdNoticeEntryRoute } from './templateParsers';
 import type { AudienceStream } from './types';
 
 /**
@@ -74,14 +74,9 @@ export interface NoticeOpenInput {
   /** The work order's `notificationId`: the id of this notice's entry on the recipient's notifications list. */
   notificationId?: unknown;
 }
-/** The query key the notifications list reads the entry to show from. */
-export const HOUSEHOLD_NOTICE_ENTRY_PARAM = 'entry';
-/** The notifications list at one entry, or the plain list when the work order names none. */
-export function householdNoticeEntryRoute(notificationId: string): string {
-  return notificationId
-    ? `${HOUSEHOLD_NOTICE_ROUTE}?${HOUSEHOLD_NOTICE_ENTRY_PARAM}=${part(notificationId)}`
-    : HOUSEHOLD_NOTICE_ROUTE;
-}
+// #2316: the entry route lives beside `HOUSEHOLD_NOTICE_ROUTE` so the broadcast
+// sender builds it without loading this file. Named here as before.
+export { HOUSEHOLD_NOTICE_ENTRY_PARAM, householdNoticeEntryRoute } from './templateParsers';
 
 function text(v: unknown): string {
   if (typeof v === 'string') return v.trim();
