@@ -201,6 +201,26 @@ class HouseholdPushTest {
         assertFalse(editReturnsToUnapproved(null))
     }
     @Test
+    fun theScreenDropsAHeldNoticeOnARealEditAndKeepsItOtherwise() {
+        val held = householdPushNotice(HouseholdPushResult("held", "notice_turned_off"), "Dana")
+        val sent = householdPushNotice(HouseholdPushResult("sent", null), "Dana")
+        // An edit: back to unapproved, so the Approve button is live and Try again is gone.
+        assertNull(pushNoticeAfterEdit(held, "Hi", "Hi there"))
+        // The same words set again (a fresh result landing) is not an edit.
+        assertEquals(held, pushNoticeAfterEdit(held, "Hi", "Hi"))
+        // A push that went out stays as it is, whatever is typed.
+        assertEquals(sent, pushNoticeAfterEdit(sent, "Hi", "Hi there"))
+        assertNull(pushNoticeAfterEdit(null, "Hi", "Hi there"))
+    }
+    @Test
+    fun anAnswerThatRefusesTheWordsLeavesNoNoticeAndEveryOtherAnswerIsShown() {
+        assertNull(pushNoticeAfterAnswer(householdPushCallFailed(PUSH_WORDS_CHANGED_CODE, null)))
+        val busy = householdPushCallFailed(PUSH_IN_FLIGHT_CODE, null)
+        assertEquals(busy, pushNoticeAfterAnswer(busy))
+        val sent = householdPushNotice(HouseholdPushResult("sent", null), "Dana")
+        assertEquals(sent, pushNoticeAfterAnswer(sent))
+    }
+    @Test
     fun aPushAnotherScreenIsSendingComesBackWithItsCodeAndSaysToWait() = runBlocking {
         val message = "This push is being sent right now. Wait a moment, then try again."
         JvmFirestoreFixtures.callableErrors = mapOf("sendHouseholdPush" to message)

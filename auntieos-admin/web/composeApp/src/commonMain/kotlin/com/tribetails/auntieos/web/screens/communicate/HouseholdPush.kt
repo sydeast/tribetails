@@ -99,6 +99,18 @@ internal fun canDeleteDraft(hasDraft: Boolean, sent: Boolean, approved: Boolean,
  * no others, so editing them returns the draft to unapproved.
  */
 internal fun editReturnsToUnapproved(notice: HouseholdPushNotice?): Boolean = notice?.retryable == true
+/**
+ * #2389: the notice the screen holds after the draft editor changes from
+ * [before] to [after]. Null means the draft reads as unapproved again.
+ */
+internal fun pushNoticeAfterEdit(notice: HouseholdPushNotice?, before: String, after: String): HouseholdPushNotice? =
+    if (before != after && editReturnsToUnapproved(notice)) null else notice
+/**
+ * #2389: the notice the screen holds after a push attempt answered. Null when
+ * the server refused the words: the draft reads as unapproved again and the
+ * answer's body is shown as the reason.
+ */
+internal fun pushNoticeAfterAnswer(answer: HouseholdPushNotice): HouseholdPushNotice? = answer.takeUnless { it.needsApproval }
 /** The delete confirm's line. It says "not sent" only when that is known. */
 internal fun deleteDraftConfirmLine(notice: HouseholdPushNotice?): String =
     if (notice == null || notice.title == "Not sent") "It has not been sent. Deleting it cannot be undone."

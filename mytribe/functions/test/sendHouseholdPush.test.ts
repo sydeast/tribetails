@@ -348,6 +348,24 @@ describe('sendHouseholdPush: the approved words, once, and a deleted draft stays
     expect(ctx.docs[noticePath]).toBeUndefined();
     expect(mocks.multicast).not.toHaveBeenCalled();
   });
+  it('HAPPY: a push that only reached their list, then edited and approved again, shows the new words on the list and pushes them', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...LIVE, [draftPath]: APPROVED });
+    expect((await sendHouseholdPushHandler(req({ body: 'See you Friday at ten.' }))).outcome).toBe('listed');
+    expect(ctx.docs[noticePath]).toMatchObject({ householdLine: 'See you Friday at ten.' });
+    // The owner edits the words and approves again; the household turns pushes on.
+    ctx.docs[draftPath] = { ...ctx.docs[draftPath], generatedCopy: 'See you Saturday at ten.' };
+    ctx.docs['clients/uid_kin'] = PUSH_ON['clients/uid_kin'];
+    expect((await sendHouseholdPushHandler(req({ body: 'See you Saturday at ten.' }))).outcome).toBe('sent');
+    expect(mocks.multicast.mock.calls[0]![0].notification.body).toBe('See you Saturday at ten.');
+    expect(ctx.docs[noticePath]).toMatchObject({
+      householdLine: 'See you Saturday at ten.',
+      description: 'See you Saturday at ten.',
+      body: 'See you Saturday at ten.',
+      pushOutcome: 'sent',
+    });
+    // Still one notice: it was created once and its words were updated.
+    expect(ctx.writes.filter((w) => w.path === noticePath && w.merge === false)).toHaveLength(1);
+  });
   it('NEGATIVE: an approved draft with no words stored is refused', async () => {
     const { generated_copy: _dropped, ...noWords } = DRAFT;
     const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { ...noWords, generatedCopy: '  ' } });

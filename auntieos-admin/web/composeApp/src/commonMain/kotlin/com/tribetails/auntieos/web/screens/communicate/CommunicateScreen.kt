@@ -449,12 +449,8 @@ fun CommunicateScreen(
      * refused the words, the draft goes back to unapproved and says why.
      */
     fun showPushAnswer(notice: HouseholdPushNotice) {
-        if (notice.needsApproval) {
-            pushNotice = null
-            showToast(notice.body, ToastKind.Error)
-        } else {
-            pushNotice = notice
-        }
+        pushNotice = pushNoticeAfterAnswer(notice)
+        if (notice.needsApproval) showToast(notice.body, ToastKind.Error)
     }
     /**
      * The draft editor. #2389: an approved Push that has not gone out sends its
@@ -462,7 +458,7 @@ fun CommunicateScreen(
      * unapproved and the next step is Approve and send.
      */
     fun editCopy(next: String) {
-        if (next != editedCopy && editReturnsToUnapproved(pushNotice)) pushNotice = null
+        pushNotice = pushNoticeAfterEdit(pushNotice, editedCopy, next)
         editedCopy = next
     }
     fun approveDraft() {

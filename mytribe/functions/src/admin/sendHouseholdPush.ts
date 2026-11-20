@@ -401,12 +401,17 @@ async function deliverHouseholdPush(
   } catch (err) {
     // ALREADY_EXISTS: this draft reached their list before.
     if ((err as { code?: unknown })?.code !== 6 && !/already exists/i.test((err as Error)?.message ?? '')) throw err;
-    const prior = (await noticeRef.get()).data() as { pushOutcome?: unknown } | undefined;
+    const prior = (await noticeRef.get()).data() as { pushOutcome?: unknown; householdLine?: unknown } | undefined;
     if (prior?.pushOutcome === 'sent') {
       log('household.push.duplicate', { draftId: args.draftId });
       return { ok: true, outcome: 'already_sent', reason: null };
     }
     log('household.push.retry', { draftId: args.draftId });
+    // #2389: the draft was edited and approved again since the notice was
+    // written. Their list says the words about to be pushed, not the old ones.
+    if (prior !== undefined && prior.householdLine !== body) {
+      await noticeRef.update({ description: body, body, householdLine: body });
+    }
   }
 
   const result = await attemptPush();
