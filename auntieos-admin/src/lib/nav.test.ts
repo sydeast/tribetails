@@ -130,8 +130,8 @@ describe('rail composition', () => {
   });
 
   // #2163, then #2200 / #2201: an Auntie's rail drops exactly Settings and
-  // Templates, and Packages, Invoices, Marketing blasts and Activity Log,
-  // nothing else.
+  // Templates, and Packages, Invoices, Marketing blasts and Activity Log.
+  // Tribal Intel is the owner's notes screen and is off it too. Nothing else.
   it('leaves exactly the owner screens off an Auntie rail', () => {
     const owner = railEntries().map((e) => e.slug);
     const auntie = railEntries(true).map((e) => e.slug);
@@ -141,6 +141,7 @@ describe('rail composition', () => {
       'marketing-blasts',
       'activity',
       'settings',
+      'tribal-intel',
       'templates',
     ]);
     expect(auntie).toContain('kintale-templates');
@@ -160,6 +161,8 @@ describe('rail composition', () => {
       '/templates',
       '/template-bank',
       '/notification-gate',
+      '/tribal-intel',
+      '/training-docs',
     ]) {
       expect(isOwnerOnlyPath(to)).toBe(true);
     }

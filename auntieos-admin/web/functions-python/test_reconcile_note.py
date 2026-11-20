@@ -351,6 +351,137 @@ def test_reconcile_pass_untargeted_channel_still_writes_dossier_and_all_411s():
     assert db.data.get("household_bank", {}) == {}
 
 
+# ---------- a 411 takes notes from its own household only ----------
+
+def seed_two_households():
+    """seed_household plus a second home, kf2, whose Kin k9 already has a 411."""
+    db = seed_household()
+    db.data["kinfolk"]["kf2"] = {"firstName": "Sam", "lastName": "Ortiz"}
+    db.data["kin"]["k9"] = {"kinfolkId": "kf2", "name": "Milo", "species": "Dog"}
+    db.data["the_411"] = {
+        "411_k9": {"kinId": "k9", "rawSummary": "Milo eats at 7.", "lastReconcileSourceLogIds": []},
+    }
+    return db
+
+
+def test_kin_belongs_to_household_compares_the_kins_own_household():
+    assert rc.kin_belongs_to_household({"kinfolkId": "kf1"}, "kf1") is True
+    assert rc.kin_belongs_to_household({"kinfolkId": " kf1 "}, "kf1") is True
+    assert rc.kin_belongs_to_household({"kinfolkId": "kf2"}, "kf1") is False
+
+
+def test_kin_belongs_to_household_accepts_a_kin_with_no_household_on_record():
+    """The save callables accept a note about a Kin whose record names no
+    household, and so does the pipeline: there is no second home to cross into."""
+    assert rc.kin_belongs_to_household({}, "kf1") is True
+    assert rc.kin_belongs_to_household({"kinfolkId": ""}, "kf1") is True
+    assert rc.kin_belongs_to_household({"kinfolkId": None}, "kf1") is True
+
+
+def test_reconcile_pass_kin_target_in_another_household_writes_nothing():
+    """A note filed under one household that names another household's Kin
+    lands nowhere, and says why."""
+    db = seed_two_households()
+    db.data["training_documents"] = {
+        "n7": {
+            "targetType": "KIN", "targetKinfolkId": "kf1", "targetKinId": "k9",
+            "content": "Give the evening pill with food.", "reconcileStatus": "pending",
+        }
+    }
+    rc.reconcile_pass(db, max_per_run=25, use_stub=True)
+
+    note = db.data["training_documents"]["n7"]
+    assert note["reconcileStatus"] == "error"
+    assert "kin/k9" in note["reconcileNotes"]
+    assert "another household" in note["reconcileNotes"]
+    # The note's own row never names the other home.
+    assert "kf2" not in note["reconcileNotes"]
+
+    # The other household's 411 is exactly as it was.
+    assert db.data["the_411"] == {
+        "411_k9": {"kinId": "k9", "rawSummary": "Milo eats at 7.", "lastReconcileSourceLogIds": []},
+    }
+    assert db.data.get("dossiers", {}) == {}
+    assert db.data.get("household_bank", {}) == {}
+
+
+def test_reconcile_pass_kintale_skips_only_the_kin_from_another_household():
+    """A KinTale listing two Kin, one of them from another home: its own Kin's
+    411 and its household's dossier are written, the other Kin's 411 is not."""
+    db = seed_two_households()
+    db.data["kin_care_reports"] = {
+        "r2": {
+            "kinfolkId": "kf1", "kinIds": ["k1", "k9"],
+            "summary": "Long walk, ate everything.", "reconcileStatus": "pending",
+        },
+    }
+    rc.reconcile_pass(db, max_per_run=25, use_stub=True)
+
+    report = db.data["kin_care_reports"]["r2"]
+    # 'applied', not 'partial': a later pass could never land the skipped Kin.
+    assert report["reconcileStatus"] == "applied"
+    assert "the_411/411_k1" in report["reconcileNotes"]
+    assert "skipped kin/k9 (another household)" in report["reconcileNotes"]
+    assert "ERROR(" not in report["reconcileNotes"]
+    assert "kf2" not in report["reconcileNotes"]
+
+    assert "kin_care_reports/r2" in db.data["the_411"]["411_k1"]["lastReconcileSourceLogIds"]
+    assert db.data["the_411"]["411_k9"] == {
+        "kinId": "k9", "rawSummary": "Milo eats at 7.", "lastReconcileSourceLogIds": [],
+    }
+    assert "kin_care_reports/r2" in db.data["dossiers"]["kf1"]["lastReconcileSourceLogIds"]
+
+
+def test_reconcile_pass_kintale_naming_only_another_households_kin_keeps_the_dossier():
+    db = seed_two_households()
+    db.data["kin_care_reports"] = {
+        "r3": {"kinfolkId": "kf1", "kinIds": ["k9"], "summary": "Quiet visit.", "reconcileStatus": "pending"},
+    }
+    rc.reconcile_pass(db, max_per_run=25, use_stub=True)
+
+    report = db.data["kin_care_reports"]["r3"]
+    assert report["reconcileStatus"] == "applied"
+    assert "dossiers/kf1" in report["reconcileNotes"]
+    assert "skipped kin/k9 (another household)" in report["reconcileNotes"]
+    assert db.data["the_411"]["411_k9"]["rawSummary"] == "Milo eats at 7."
+
+
+def test_reconcile_pass_kin_with_no_household_on_record_still_takes_its_note():
+    db = seed_household()
+    db.data["kin"]["k7"] = {"name": "Pip", "species": "Rabbit"}
+    db.data["training_documents"] = {
+        "n8": {
+            "targetType": "KIN", "targetKinfolkId": "kf1", "targetKinId": "k7",
+            "content": "Pip likes cilantro.", "reconcileStatus": "pending",
+        }
+    }
+    rc.reconcile_pass(db, max_per_run=25, use_stub=True)
+
+    note = db.data["training_documents"]["n8"]
+    assert note["reconcileStatus"] == "applied"
+    assert "the_411/411_k7" in note["reconcileNotes"]
+
+
+def test_dry_run_merges_nothing_for_a_kin_from_another_household(capsys):
+    db = seed_two_households()
+    db.data["training_documents"] = {
+        "n9": {
+            "targetType": "KIN", "targetKinfolkId": "kf1", "targetKinId": "k9",
+            "content": "Give the evening pill with food.", "reconcileStatus": "pending",
+        }
+    }
+    rc.reconcile_pass(db, max_per_run=25, use_stub=True, dry_run=True)
+
+    out = capsys.readouterr().out
+    assert "kin/k9" in out
+    assert "another household" in out
+    # No merge was computed against the other household's 411, so none is printed.
+    assert "NEW_411" not in out
+    assert "Milo eats at 7." not in out
+    assert db.data["training_documents"]["n9"]["reconcileStatus"] == "pending"
+    assert db.data["the_411"]["411_k9"]["rawSummary"] == "Milo eats at 7."
+
+
 # ---------- household bank upsert (peer of upsert_dossier / upsert_kin411) ----------
 
 def test_new_household_bank_doc_id_equals_household_id():
