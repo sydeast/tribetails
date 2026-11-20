@@ -2221,6 +2221,53 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 1b (continued). Ask Auntie's voice files, BEFORE anything deploys.
+# ---------------------------------------------------------------------------
+# The admin functions codebase uploads auntieos-admin/web/functions/voice/ with
+# it. generate.js refuses to draft from a samples file whose sample names it
+# cannot replace in full, so a file like that turns every Ask Auntie draft into
+# an error from the moment it ships. checkVoice.js asks the question
+# generate.js asks on its first request, here, where a no still costs nothing.
+#
+# The files are gitignored. A checkout without them (the hosted runner, a
+# fresh clone) is reported and NOT refused: that is #2399, it is the state
+# such a release was already in, and the deployed function answers every
+# draft with an error rather than guess. This step only stops files that are
+# present and unusable.
+#
+# The checker prints a reason and counts, never a line of a voice file.
+STEP="checking Ask Auntie's voice files"
+if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
+  VOICE_CHECK="$ROOT/auntieos-admin/web/functions/checkVoice.js"
+  VOICE_RC=0
+  node "$VOICE_CHECK" || VOICE_RC=$?
+  case "$VOICE_RC" in
+    0) grn "voice: the files this release uploads are usable" ;;
+    3)
+      ylw "voice: NOT IN THIS CHECKOUT. The admin functions will ship without"
+      ylw "  auntieos-admin/web/functions/voice/, and Ask Auntie will answer every"
+      ylw "  draft with an error until a release from a checkout that has the"
+      ylw "  files (#2399). From such a checkout: npm run sync:voice --prefix"
+      ylw "  auntieos-admin/web/functions"
+      ;;
+    *)
+      red "REFUSED: Ask Auntie's voice files cannot be used (see the line above)."
+      red ""
+      red "  generate.js would refuse them too, on every draft, so shipping them"
+      red "  ships a broken Ask Auntie. Refusing now, before any deploy."
+      red ""
+      red "  Fix the sample-names block in auntieos-admin/voice/corpus/exemplars.md"
+      red "  (auntieos-admin/README.md, \"Names in the samples\"), then:"
+      red "    npm run sync:voice --prefix auntieos-admin/web/functions"
+      exit 1
+      ;;
+  esac
+else
+  ylw "voice: not looked at. RELEASE_INCLUDE_ADMIN_FUNCTIONS is off, so this run"
+  ylw "  does not upload Ask Auntie's voice files."
+fi
+
+# ---------------------------------------------------------------------------
 # 1c. Assemble the Android release, BEFORE anything ships.
 # ---------------------------------------------------------------------------
 banner "1c. Android release build"

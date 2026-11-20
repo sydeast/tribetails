@@ -123,12 +123,40 @@ kinfolk: Dana
 One line per Kin or person, with `|` between the other ways the same name is
 written. List every name that appears in any of the three voice files, not only
 the samples. Before the model reads them, `generate.js` swaps each name for
-`[Kin]`, `[Kin 2]` or `[Kinfolk]` and cuts the block. After the model answers,
-a draft that uses a listed name is thrown away unless the request itself
-carries that name (a Kin of that household, or the Auntie's own notes).
+`[Kin]`, `[Kin 2]` or `[Kinfolk]` and cuts the block.
 
-A samples file without the block stops every generate with a 500
-(`voice_sample_names_missing`), because the names in it cannot be replaced.
+A name is replaced however it is written: `BISCUIT`, `biscuit`, `Biscuits` and
+`Biscuit's` are all Biscuit. A name that is also an everyday word is replaced
+as the word too, so a sample that says "a biscuit" reads "a [Kin]". The voice
+training examples (`training_documents`) get the same replacement before they
+are sent.
+
+The voice files are used only when the block is in order. Otherwise every
+generate stops with a 500 and nothing is sent:
+
+| Code | What is wrong |
+|---|---|
+| `voice_sample_names_missing` | The voice files have no block. |
+| `voice_sample_names_empty` | The block has no `kin:` and no `kinfolk:` line. |
+| `voice_sample_names_invalid` | There is more than one block, the block does not open and close as a comment of its own, a line is not `kin:`, `kinfolk:` or `auntie:`, or one name is on two lines. |
+| `voice_sample_names_left` | A listed name is still in the text after replacing. |
+
+`npm run check:voice` in `web/functions` asks the same question without a
+deploy. It prints the reason and counts, never a name. `npm run sync:voice`
+runs it after copying. A release that ships the admin functions runs it before
+anything deploys, and stops on voice files that are present and fail. A
+checkout with no voice files is reported and not stopped (#2399).
+
+After the model answers, a draft that uses a listed name in any of those forms
+is thrown away unless the request itself carries the name:
+
+- A Kin of that household, its Kinfolk and the recipient carry their names
+  however they are stored or typed.
+- Anywhere else in the request (the Auntie's notes, the dossier, a 411) a
+  capital has to be matched by a capital. "Biscuit" in the notes lets the draft
+  say Biscuit. "a biscuit after the walk" lets the draft say "a biscuit" and
+  no more than that.
+
 When a new sample brings a new name, add the line in `voice/`, then sync. An
 `auntie:` line is replaced in the samples but never refused in a draft.
 
