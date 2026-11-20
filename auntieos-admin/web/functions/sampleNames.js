@@ -115,7 +115,18 @@ function parseSampleNames(text) {
     forms.forEach((f) => listed.add(fold(f)));
     entries.push({ role, forms });
   });
-  return { declared: true, entries, body: source.slice(0, m.index) + source.slice(m.index + m[0].length) };
+  const body = source.slice(0, m.index) + source.slice(m.index + m[0].length);
+  // The block ends at the first "-->", so one written inside it (in a comment
+  // line, say) would leave the rest of the list in the text. What gives that
+  // away is a comment closing afterwards that nothing opened.
+  let open = 0;
+  for (const [mark] of body.matchAll(/<!--|-->/g)) {
+    if (mark === '<!--') open += 1;
+    else if (open === 0) {
+      throw new SampleNamesError('a comment closes in this file that nothing opened: the sample-names block may have ended early');
+    } else open -= 1;
+  }
+  return { declared: true, entries, body };
 }
 
 /**

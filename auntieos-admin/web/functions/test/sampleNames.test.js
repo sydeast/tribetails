@@ -117,6 +117,17 @@ describe('parseSampleNames: the names a samples file declares', () => {
       );
     }
   });
+  it('refuses a block that closes before its last line', () => {
+    const early = '<!-- sample-names\nkin: Tofu\n# was a cat --> now a dog\nkinfolk: Marlowe\n-->\nbody';
+    assert.throws(
+      () => names.parseSampleNames(early),
+      (e) => e instanceof names.SampleNamesError && e.code === 'voice_sample_names_invalid' &&
+        /ended early/.test(e.message) && !ANY_FIXTURE_NAME.test(e.message),
+    );
+    // Another comment in the file, opened and closed, is nobody's business.
+    const fine = names.parseSampleNames('<!-- a note -->\n<!-- sample-names\nkin: Tofu\n-->\nbody <!-- more --> end');
+    assert.strictEqual(fine.body, '<!-- a note -->\nbody <!-- more --> end');
+  });
   it('refuses one name listed on two lines, however each is capitalised', () => {
     for (const bad of ['kin: Tofu\nkinfolk: tofu', 'kin: Tofu | Cap\nauntie: CAP']) {
       assert.throws(
@@ -409,6 +420,10 @@ describe('readVoice: what the model is given from the voice files (corpus not ne
       await refusedWith(voiceDirWith((s) => s, { '02_Channel_Playbook.md': (t) => second + t })),
       'voice_sample_names_invalid',
     );
+  });
+  it('refuses a declaration that closes before its last line', async () => {
+    const dir = voiceDirWith((s) => s.replace('kin: Tofu', '# cats --> dogs\nkin: Tofu'));
+    assert.strictEqual(await refusedWith(dir), 'voice_sample_names_invalid');
   });
   it('refuses a declaration that never closes', async () => {
     assert.strictEqual(
