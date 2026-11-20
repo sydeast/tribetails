@@ -500,8 +500,47 @@ function buildUserMessage(o) {
   return parts.join('\n\n');
 }
 
-// Voice training examples key off communication_type, NOT off the recipient, so
-// they load in both the Kinfolk and the no-Kinfolk path. Optional context: a
+/**
+ * `training_documents` holds two kinds of row, and only one of them is a voice
+ * example.
+ *
+ *   voice example     a piece of writing kept for its style. It belongs to no
+ *                     household and says what it is: `documentKind` is
+ *                     `voice_example`.
+ *   Tribal Intel note what the office knows about one household, one Kinfolk
+ *                     or one Kin. It names them in `targetType`,
+ *                     `targetKinfolkId`, `targetKinId` and `kinfolkRef`, and is
+ *                     read into that household's own records by the nightly
+ *                     reconcile, never by this file.
+ *
+ * `communicationType` does not tell them apart. It is free text on a note, so
+ * a note can be filed under "email" as readily as an example can.
+ */
+const VOICE_EXAMPLE_KIND = 'voice_example';
+/** The fields a row uses to name a household, a Kinfolk or a Kin. */
+const HOUSEHOLD_FIELDS = ['targetType', 'targetKinfolkId', 'targetKinId', 'kinfolkRef'];
+
+/** Absent, or text with nothing in it. Anything that is not text is not blank. */
+function isBlankField(value) {
+  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+}
+
+/**
+ * Is this row a voice example? It must say so itself, exactly, and name no
+ * household. A row that says nothing about its kind is not one: it is a note,
+ * or an import nobody has sorted, and neither is sent on a guess.
+ */
+function isVoiceExample(row) {
+  if (!row || row.documentKind !== VOICE_EXAMPLE_KIND) return false;
+  return HOUSEHOLD_FIELDS.every((field) => isBlankField(row[field]));
+}
+
+// Voice examples key off communication_type, NOT off the recipient, so they
+// load in both the Kinfolk and the no-Kinfolk path. A household's notes are
+// never among them, the household being written to included: what a note says
+// reaches a draft through the dossier and the 411s it is folded into. The kind
+// is checked here in memory rather than as a second `where`, so a missing
+// index cannot turn into an empty list nobody notices. Optional context: a
 // failure here is never fatal to a generate.
 async function loadTrainingDocs(db, communicationType) {
   try {
@@ -509,7 +548,10 @@ async function loadTrainingDocs(db, communicationType) {
       .collection('training_documents')
       .where('communicationType', '==', communicationType)
       .get();
-    return tSnap.docs.map((d) => d.data()).filter((t) => t.content && String(t.content).trim());
+    return tSnap.docs
+      .map((d) => d.data())
+      .filter(isVoiceExample)
+      .filter((t) => t.content && String(t.content).trim());
   } catch (_) {
     return [];
   }
@@ -1220,6 +1262,8 @@ module.exports = {
   validateRequest,
   matchKinfolk,
   buildUserMessage,
+  VOICE_EXAMPLE_KIND,
+  isVoiceExample,
   resolveContext,
   callClaude,
   runGenerate,

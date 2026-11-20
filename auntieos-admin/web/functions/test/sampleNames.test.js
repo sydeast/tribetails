@@ -261,7 +261,7 @@ function householdDb(extra = {}) {
     kin_care_sessions: [{ id: 's1', kinfolkId: 'h1', kinIds: ['k1'], serviceType: '30 Minute Quick Check' }],
     dossiers: [{ id: 'h1', kinfolkId: 'h1', rawSummary: 'Dana likes a short note.' }],
     training_documents: [
-      { id: 't1', communicationType: 'email', title: 'Gold', content: 'Hi Marlowe, Tofu did great.' },
+      { id: 't1', documentKind: 'voice_example', communicationType: 'email', title: 'Gold', content: 'Hi Marlowe, Tofu did great.' },
     ],
     ...extra,
   });
