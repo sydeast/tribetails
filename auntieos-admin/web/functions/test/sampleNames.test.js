@@ -696,9 +696,9 @@ describe('a draft that carries a name out of the writing samples (#2359)', () =>
   it('the training examples are sent with the same names replaced, title included', async () => {
     const db = householdDb({
       training_documents: [
-        { id: 't1', communicationType: 'email', title: 'Gold for MARLOWE', content: 'Hi Marlowe, Tofu did great. tofu naps. Both Tofus.' },
-        { id: 't2', communicationType: 'email', title: 'Second', content: 'Juniper says hi to Dana.' },
-        { id: 't3', communicationType: 'email', content: 'No title on this one, Marlowe.' },
+        { id: 't1', documentKind: 'voice_example', communicationType: 'email', title: 'Gold for MARLOWE', content: 'Hi Marlowe, Tofu did great. tofu naps. Both Tofus.' },
+        { id: 't2', documentKind: 'voice_example', communicationType: 'email', title: 'Second', content: 'Juniper says hi to Dana.' },
+        { id: 't3', documentKind: 'voice_example', communicationType: 'email', content: 'No title on this one, Marlowe.' },
       ],
     });
     const a = model(['Hi Dana, all set for next week.']);
@@ -713,7 +713,7 @@ describe('a draft that carries a name out of the writing samples (#2359)', () =>
   it('so are the examples for a post written for no household', async () => {
     const db = householdDb({
       training_documents: [
-        { id: 't4', communicationType: 'blog_post', title: 'Nibbles in August', content: 'CAPTAIN NIBBLES slowed right down.' },
+        { id: 't4', documentKind: 'voice_example', communicationType: 'blog_post', title: 'Nibbles in August', content: 'CAPTAIN NIBBLES slowed right down.' },
       ],
     });
     const a = model(['August was slow for everyone.']);
