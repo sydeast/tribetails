@@ -22,12 +22,14 @@ import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -597,4 +599,215 @@ class EnhancedSchedulingViewModelBookingWizardTest {
         assertFalse(vm.state.value.newRequestChooseKin)
         assertNull(vm.state.value.newRequestKinError)
     }
+
+    // -----------------------------------------------------------------------
+    // #2403: an answer for a household that is no longer the one picked
+    // -----------------------------------------------------------------------
+
+    private val aggieHome = HouseholdKinRoster(listOf(RosterKin("kin-a", "Aggie"), RosterKin("kin-b", "Bo")), chooseKin = true)
+    private val pepperHome = HouseholdKinRoster(listOf(RosterKin("kin-p", "Pepper")), chooseKin = false)
+
+    /**
+     * Holds the server's answer for [kinfolkId] until the test releases it. The
+     * wait runs under [NonCancellable], as a call already on the wire does: the
+     * answer still comes back after the form has moved on, so these tests prove
+     * the late answer is dropped, not merely that the wait was cancelled.
+     */
+    private fun heldRoster(kinfolkId: String): CompletableDeferred<Result<HouseholdKinRoster>> {
+        val gate = CompletableDeferred<Result<HouseholdKinRoster>>()
+        coEvery { kinCareRepo.getHouseholdKinRoster(kinfolkId) } coAnswers { withContext(NonCancellable) { gate.await() } }
+        return gate
+    }
+
+    @Test
+    fun `a first household's Kin arriving after the second's are dropped`() = runTest(testDispatcher) {
+        val first = heldRoster("kf1")
+        val second = heldRoster("kf2")
+
+        val vm = buildViewModel()
+        vm.showNewRequestDialog()
+        vm.loadKinForNewRequest("kf1")
+        vm.loadKinForNewRequest("kf2")
+        second.complete(Result.success(pepperHome))
+        advanceUntilIdle()
+        assertEquals(listOf("kin-p"), vm.state.value.newRequestKin.map { it.id })
+
+        first.complete(Result.success(aggieHome))
+        advanceUntilIdle()
+
+        assertEquals("the second household's Kin stay", listOf("kin-p"), vm.state.value.newRequestKin.map { it.id })
+        assertFalse("and so does its answer on choosing Kin", vm.state.value.newRequestChooseKin)
+        assertFalse(vm.state.value.newRequestKinLoading)
+        assertNull(vm.state.value.newRequestKinError)
+    }
+
+    @Test
+    fun `a first household's Kin arriving while the second's load are dropped, and the wait goes on`() =
+        runTest(testDispatcher) {
+            val first = heldRoster("kf1")
+            val second = heldRoster("kf2")
+
+            val vm = buildViewModel()
+            vm.loadKinForNewRequest("kf1")
+            vm.loadKinForNewRequest("kf2")
+            first.complete(Result.success(aggieHome))
+            advanceUntilIdle()
+
+            assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+            assertFalse(vm.state.value.newRequestChooseKin)
+            assertTrue("the second household is still loading", vm.state.value.newRequestKinLoading)
+
+            second.complete(Result.success(pepperHome))
+            advanceUntilIdle()
+
+            assertEquals(listOf("kin-p"), vm.state.value.newRequestKin.map { it.id })
+            assertFalse(vm.state.value.newRequestKinLoading)
+        }
+
+    @Test
+    fun `a first household's late failure leaves the second household's Kin alone`() = runTest(testDispatcher) {
+        val first = heldRoster("kf1")
+        val second = heldRoster("kf2")
+
+        val vm = buildViewModel()
+        vm.loadKinForNewRequest("kf1")
+        vm.loadKinForNewRequest("kf2")
+        second.complete(Result.success(aggieHome))
+        advanceUntilIdle()
+
+        first.complete(Result.failure(RuntimeException("internal")))
+        advanceUntilIdle()
+
+        assertEquals(listOf("kin-a", "kin-b"), vm.state.value.newRequestKin.map { it.id })
+        assertTrue(vm.state.value.newRequestChooseKin)
+        assertNull("no error under a household whose Kin loaded", vm.state.value.newRequestKinError)
+        assertFalse(vm.state.value.newRequestKinLoading)
+    }
+
+    @Test
+    fun `picking the first household again shows its fresh answer, never the earlier one`() = runTest(testDispatcher) {
+        val gates = ArrayDeque<CompletableDeferred<Result<HouseholdKinRoster>>>()
+        coEvery { kinCareRepo.getHouseholdKinRoster("kf1") } coAnswers {
+            val gate = CompletableDeferred<Result<HouseholdKinRoster>>().also { gates.addLast(it) }
+            withContext(NonCancellable) { gate.await() }
+        }
+        heldRoster("kf2")
+
+        val vm = buildViewModel()
+        vm.loadKinForNewRequest("kf1")
+        vm.loadKinForNewRequest("kf2")
+        vm.loadKinForNewRequest("kf1")
+        assertEquals(2, gates.size)
+        // The first ask's answer is the stale one, even though it names the household now picked.
+        gates[0].complete(Result.success(pepperHome))
+        advanceUntilIdle()
+
+        assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+        assertTrue(vm.state.value.newRequestKinLoading)
+
+        gates[1].complete(Result.success(aggieHome))
+        advanceUntilIdle()
+
+        assertEquals(listOf("kin-a", "kin-b"), vm.state.value.newRequestKin.map { it.id })
+        assertFalse(vm.state.value.newRequestKinLoading)
+    }
+
+    @Test
+    fun `Kin arriving after the household is cleared are dropped`() = runTest(testDispatcher) {
+        val first = heldRoster("kf1")
+
+        val vm = buildViewModel()
+        vm.loadKinForNewRequest("kf1")
+        vm.loadKinForNewRequest("")
+        first.complete(Result.success(aggieHome))
+        advanceUntilIdle()
+
+        assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+        assertFalse(vm.state.value.newRequestChooseKin)
+        assertFalse(vm.state.value.newRequestKinLoading)
+    }
+
+    @Test
+    fun `Kin arriving after New booking is closed do not stay in the screen's state`() = runTest(testDispatcher) {
+        val first = heldRoster("kf1")
+
+        val vm = buildViewModel()
+        vm.showNewRequestDialog()
+        vm.loadKinForNewRequest("kf1")
+        vm.hideNewRequestDialog()
+        first.complete(Result.success(aggieHome))
+        advanceUntilIdle()
+
+        assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+        assertFalse(vm.state.value.newRequestChooseKin)
+        assertFalse(vm.state.value.newRequestKinLoading)
+        assertNull(vm.state.value.newRequestKinError)
+    }
+
+    @Test
+    fun `a failure arriving after New booking is closed leaves no error behind`() = runTest(testDispatcher) {
+        val first = heldRoster("kf1")
+
+        val vm = buildViewModel()
+        vm.showNewRequestDialog()
+        vm.loadKinForNewRequest("kf1")
+        vm.hideNewRequestDialog()
+        first.complete(Result.failure(RuntimeException("internal")))
+        advanceUntilIdle()
+
+        assertNull(vm.state.value.newRequestKinError)
+        assertFalse(vm.state.value.newRequestKinLoading)
+    }
+
+    // The Schedule's New Booking form draws the same list.
+    @Test
+    fun `closing the Schedule's New Booking form drops its Kin and any answer still on the way`() =
+        runTest(testDispatcher) {
+            coEvery { kinCareRepo.getHouseholdKinRoster("kf1") } returns Result.success(aggieHome)
+            val second = heldRoster("kf2")
+
+            val vm = buildViewModel()
+            vm.showAddBookingDialog()
+            vm.loadKinForNewRequest("kf1")
+            advanceUntilIdle()
+            assertEquals(2, vm.state.value.newRequestKin.size)
+            vm.loadKinForNewRequest("kf2")
+            vm.hideAddBookingDialog()
+            assertFalse(vm.state.value.showAddBookingDialog)
+            assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+            assertFalse(vm.state.value.newRequestKinLoading)
+
+            second.complete(Result.success(pepperHome))
+            advanceUntilIdle()
+
+            assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+            assertFalse(vm.state.value.newRequestChooseKin)
+            assertFalse(vm.state.value.newRequestKinLoading)
+            assertNull(vm.state.value.newRequestKinError)
+        }
+
+    @Test
+    fun `Kin arriving after the booking request is created do not come back into the closed form`() =
+        runTest(testDispatcher) {
+            coEvery {
+                bookingRepo.createMultiDateBookingRequest(
+                    any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                )
+            } returns Result.success(MultiDateBookingResult("batch1", listOf("v1", "v2"), 2))
+            val first = heldRoster("kf1")
+
+            val vm = buildViewModel()
+            vm.showNewRequestDialog()
+            vm.loadKinForNewRequest("kf1")
+            submit(vm, readySubmission())
+            advanceUntilIdle()
+            assertFalse(vm.state.value.showNewRequestDialog)
+
+            first.complete(Result.success(aggieHome))
+            advanceUntilIdle()
+
+            assertEquals(emptyList<RosterKin>(), vm.state.value.newRequestKin)
+            assertFalse(vm.state.value.newRequestChooseKin)
+            assertFalse(vm.state.value.newRequestKinLoading)
+        }
 }

@@ -593,11 +593,11 @@ describe('resolveContext without a recipient (broadcast / blog / social)', () =>
     assert.deepStrictEqual(ctx.four11ByKinId, {});
     assert.strictEqual(ctx.recentLog, null);
   });
-  it('still loads training docs, which key off communication_type, not the recipient', async () => {
+  it('still loads voice examples, which key off communication_type, not the recipient', async () => {
     const db = makeDb({
       training_documents: [
-        { id: 't1', communicationType: 'blog_post', title: 'Summer', content: 'a long warm story' },
-        { id: 't2', communicationType: 'sms', title: 'Nope', content: 'wrong channel' },
+        { id: 't1', documentKind: 'voice_example', communicationType: 'blog_post', title: 'Summer', content: 'a long warm story' },
+        { id: 't2', documentKind: 'voice_example', communicationType: 'sms', title: 'Nope', content: 'wrong channel' },
       ],
     });
     const ctx = await gen.resolveContext(db, { communication_type: 'blog_post', recipient: '', raw_notes: 'x' });
@@ -897,7 +897,11 @@ const T1_SESSION = {
 const T1_DOSSIER = { id: 't1', kinfolkId: 't1', rawSummary: 'Tess likes a note about breakfast.', householdNotes: 'Lock the side gate on the way out.' };
 const T1_411 = [{ id: '411_k-kiwi', kinId: 'k-kiwi', rawSummary: 'Kiwi chirps from the perch by the couch.' }];
 const T1_LOGS = [{ id: 'l1', kinfolkId: 't1', auntieNotes: 'Running late today, Kiwi sang the whole time.', submitted: 'November 3, 2026' }];
-const T1_TRAINING = [{ id: 'tr1', communicationType: 'visit_report', title: 'Gold', content: 'Duke met me at the door.' }];
+// A real voice example, of the kind a KinTale asks for, so "no training
+// example" below is about the KinTale rule and not about an unmarked row.
+const T1_TRAINING = [
+  { id: 'tr1', documentKind: 'voice_example', communicationType: 'visit_report', title: 'Gold', content: 'Duke met me at the door.' },
+];
 function t1Db(extra = {}) {
   return makeDb({
     kinfolk: T1_KINFOLK,
@@ -1295,5 +1299,185 @@ describe('review: a Kin whose household copy and office record share one id', ()
     const a = visitModel(['Waffle, Mochi and Pepper all ate.']);
     await run(db, a);
     assert.doesNotMatch(promptOf(a), /Biscuit/);
+  });
+});
+// ── Which `training_documents` rows are voice examples ──────────────────────
+// The collection holds two kinds of row. A voice example is a piece of writing
+// kept for its style and belongs to no household. A Tribal Intel note is about
+// one household, one Kinfolk or one Kin. Only the first kind is ever sent as a
+// "VOICE TRAINING EXAMPLE", and only when the row says so itself.
+const AB_KINFOLK = [
+  { id: 'hA', firstName: 'Ada', lastName: 'Ames' },
+  { id: 'hB', firstName: 'Bea', lastName: 'Boyd' },
+];
+const AB_KIN = [
+  { id: 'kA1', kinfolkId: 'hA', name: 'Pickle', species: 'dog' },
+  { id: 'kB1', kinfolkId: 'hB', name: 'Sprout', species: 'cat' },
+];
+const EXAMPLE = (type) => ({
+  id: `v-${type}`, documentKind: 'voice_example', communicationType: type,
+  title: 'Porch hello', content: 'Just a quick hello from the porch.',
+});
+/** Household A's notes as the save writes them, one per target, filed under `type`. */
+const NOTES_FOR_A = (type) => [
+  {
+    id: `nA-house-${type}`, documentKind: 'note', communicationType: type, title: 'Alarm',
+    content: 'The alarm panel is behind the coat rack.',
+    targetType: 'HOUSEHOLD', targetKinfolkId: 'hA', targetKinId: '', kinfolkRef: 'hA',
+  },
+  {
+    id: `nA-person-${type}`, documentKind: 'note', communicationType: type, title: 'Hours',
+    content: 'Ada works nights at the clinic.',
+    targetType: 'KINFOLK', targetKinfolkId: 'hA', targetKinId: '', kinfolkRef: 'hA',
+  },
+  {
+    id: `nA-kin-${type}`, documentKind: 'note', communicationType: type, title: 'Pill',
+    content: 'Pickle takes a pill at noon.',
+    targetType: 'KIN', targetKinfolkId: 'hA', targetKinId: 'kA1', kinfolkRef: 'hA',
+  },
+];
+/** Rows from before the save stamped a kind: one naming a person, one naming nobody. */
+const OLD_ROWS = (type) => [
+  { id: `old-named-${type}`, communicationType: type, title: 'Later slot', content: 'Ada asked for a later slot.', kinfolkRef: 'Ada Ames' },
+  { id: `old-bare-${type}`, communicationType: type, title: 'Back door', content: 'The back door sticks in the cold.', kinfolkRef: '' },
+];
+const NOTE_TEXT = /alarm panel|coat rack|works nights|pill at noon|later slot|back door|Alarm\]|Hours\]|Pill\]/;
+function abDb(type, extra = {}) {
+  return makeDb({
+    kinfolk: AB_KINFOLK,
+    kin: AB_KIN,
+    training_documents: [EXAMPLE(type), ...NOTES_FOR_A(type), ...OLD_ROWS(type)],
+    ...extra,
+  });
+}
+describe('isVoiceExample: what a training document must say to be sent as one', () => {
+  const example = EXAMPLE('email');
+  it('a row marked as a voice example and tied to no household is one', () => {
+    assert.strictEqual(gen.isVoiceExample(example), true);
+    assert.strictEqual(gen.VOICE_EXAMPLE_KIND, 'voice_example');
+  });
+  it('blank household fields are the same as absent ones', () => {
+    assert.strictEqual(
+      gen.isVoiceExample({ ...example, targetType: '', targetKinfolkId: '  ', targetKinId: null, kinfolkRef: '' }),
+      true,
+    );
+  });
+  it('a note is not one, whatever kind of message it is filed under', () => {
+    for (const note of NOTES_FOR_A('email')) assert.strictEqual(gen.isVoiceExample(note), false, note.id);
+  });
+  it('a row that does not say what it is is not one', () => {
+    for (const row of OLD_ROWS('email')) assert.strictEqual(gen.isVoiceExample(row), false, row.id);
+    assert.strictEqual(gen.isVoiceExample({ communicationType: 'email', content: 'x' }), false);
+  });
+  it('the mark is exact: no other spelling or value counts', () => {
+    for (const documentKind of ['Voice_Example', 'voice example', 'voice_example ', 'note', '', true, 1, null]) {
+      assert.strictEqual(gen.isVoiceExample({ ...example, documentKind }), false, String(documentKind));
+    }
+  });
+  it('a marked row that still names a household, a Kinfolk or a Kin is not one', () => {
+    const ties = [
+      { targetType: 'HOUSEHOLD' },
+      { targetKinfolkId: 'hA' },
+      { targetKinId: 'kA1' },
+      { kinfolkRef: 'Ada Ames' },
+      { kinfolkRef: 'hA' },
+      // Anything that is not text is not read as blank.
+      { targetKinfolkId: 9 },
+      { kinfolkRef: { id: 'hA' } },
+    ];
+    for (const tie of ties) {
+      assert.strictEqual(gen.isVoiceExample({ ...example, ...tie }), false, JSON.stringify(tie));
+    }
+  });
+  it('nothing at all is not one', () => {
+    assert.strictEqual(gen.isVoiceExample(null), false);
+    assert.strictEqual(gen.isVoiceExample(undefined), false);
+  });
+  it('what a Tribal Intel save writes is never one (read from the MyTribe source)', () => {
+    // The two callables deploy in MyTribe's bundle, so the kind they stamp is
+    // read out of their source, the way TITLE_INSTRUCTION is above.
+    const dir = path.join(__dirname, '..', '..', '..', '..', 'mytribe', 'functions', 'src', 'admin');
+    const create = fs.readFileSync(path.join(dir, 'createTrainingDocument.ts'), 'utf8');
+    const update = fs.readFileSync(path.join(dir, 'updateTrainingDocument.ts'), 'utf8');
+    const noteKind = extractStringConst(create, 'TRAINING_DOCUMENT_KIND_NOTE');
+    assert.notStrictEqual(noteKind, gen.VOICE_EXAMPLE_KIND);
+    assert.strictEqual(gen.isVoiceExample({ ...example, documentKind: noteKind }), false);
+    for (const src of [create, update]) assert.match(src, /documentKind: TRAINING_DOCUMENT_KIND_NOTE,/);
+  });
+});
+describe('a household note is never sent as a voice example', () => {
+  const emailTo = (id, name) => ({ communication_type: 'email', recipient: name, kinfolk_id: id, raw_notes: 'confirming next week' });
+  it('a message for another household gets the voice example and none of the notes', async () => {
+    const a = visitModel(['Hi Bea, all set for next week.']);
+    await run(abDb('email'), a, emailTo('hB', 'Bea'));
+    const prompt = promptOf(a);
+    assert.match(prompt, /RECIPIENT \(Kinfolk\): Bea Boyd/);
+    assert.match(prompt, /VOICE TRAINING EXAMPLES[^\n]*\n<DATA_START>\n\[Porch hello\]\nJust a quick hello from the porch\.\n<DATA_END>/);
+    assert.doesNotMatch(prompt, NOTE_TEXT);
+    assert.doesNotMatch(prompt, /Ada|Ames|Pickle/);
+  });
+  it('a message for the household the notes are about does not get them as examples either', async () => {
+    const a = visitModel(['Hi Ada, all set for next week.']);
+    await run(abDb('email'), a, emailTo('hA', 'Ada'));
+    const prompt = promptOf(a);
+    assert.match(prompt, /RECIPIENT \(Kinfolk\): Ada Ames/);
+    assert.match(prompt, /Just a quick hello from the porch\./);
+    assert.doesNotMatch(prompt, NOTE_TEXT);
+  });
+  it('a message for no household gets the voice example and none of the notes', async () => {
+    const a = visitModel(['August was slow for everyone.']);
+    await run(abDb('blog_post'), a, { communication_type: 'blog_post', recipient: '', raw_notes: 'slow hot month' });
+    const prompt = promptOf(a);
+    assert.match(prompt, /Just a quick hello from the porch\./);
+    assert.doesNotMatch(prompt, NOTE_TEXT);
+    assert.doesNotMatch(prompt, /Ada|Ames|Pickle/);
+  });
+  it('holds for every kind of message a note could be filed under', async () => {
+    for (const type of gen.ALLOWED_TYPES) {
+      if (type === 'visit_report') continue; // its own rule, below
+      const ctx = await gen.resolveContext(abDb(type), { communication_type: type, recipient: 'Bea', kinfolk_id: 'hB', raw_notes: 'x' });
+      assert.deepStrictEqual(ctx.trainingDocs.map((t) => t.id), [`v-${type}`], type);
+    }
+  });
+  it('with no voice example on file the block is left out, never filled from the notes', async () => {
+    const db = abDb('email', { training_documents: [...NOTES_FOR_A('email'), ...OLD_ROWS('email')] });
+    const a = visitModel(['Hi Bea, all set for next week.']);
+    await run(db, a, emailTo('hB', 'Bea'));
+    assert.doesNotMatch(promptOf(a), /VOICE TRAINING EXAMPLES/);
+    assert.doesNotMatch(promptOf(a), NOTE_TEXT);
+  });
+  it('a voice example with nothing written in it is left out', async () => {
+    const db = abDb('email', { training_documents: [{ ...EXAMPLE('email'), content: '   ' }] });
+    const ctx = await gen.resolveContext(db, { communication_type: 'email', recipient: '', raw_notes: 'x' });
+    assert.deepStrictEqual(ctx.trainingDocs, []);
+  });
+  it('a KinTale gets neither: it is written from its own visit', async () => {
+    const a = visitModel(['Sprout ate and the water is topped up.']);
+    await run(abDb('visit_report'), a, { communication_type: 'visit_report', recipient: 'Bea Boyd', kinfolk_id: 'hB', raw_notes: 'ate, water topped up' });
+    const prompt = promptOf(a);
+    assert.match(prompt, /GROUNDING\./);
+    assert.doesNotMatch(prompt, /VOICE TRAINING EXAMPLES|quick hello from the porch/);
+    assert.doesNotMatch(prompt, NOTE_TEXT);
+    assert.doesNotMatch(prompt, /Ada|Ames|Pickle/);
+  });
+  it('a KinTale never opens the collection at all', async () => {
+    const db = abDb('visit_report');
+    const opened = [];
+    const inner = db.collection;
+    db.collection = (name) => { opened.push(name); return inner(name); };
+    await run(db, visitModel(['Sprout ate.']), { communication_type: 'visit_report', recipient: 'Bea Boyd', kinfolk_id: 'hB', raw_notes: 'ate' });
+    assert.ok(!opened.includes('training_documents'));
+  });
+  it('a failed read sends no example and the draft is still written', async () => {
+    const db = abDb('email');
+    const inner = db.collection;
+    db.collection = (name) => {
+      if (name === 'training_documents') throw new Error('unavailable');
+      return inner(name);
+    };
+    const a = visitModel(['Hi Bea, all set for next week.']);
+    const out = await run(db, a, emailTo('hB', 'Bea'));
+    assert.strictEqual(out.generated_copy, 'Hi Bea, all set for next week.');
+    assert.doesNotMatch(promptOf(a), /VOICE TRAINING EXAMPLES/);
   });
 });

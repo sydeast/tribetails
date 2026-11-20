@@ -3015,7 +3015,7 @@ fun BookingDetailsDialog(
                 Text("Service: ${booking.baseServiceTitle.ifBlank { "Not set" }}", color = AuntieTheme.colors.textPrimary)
                 Text("Kinfolk: ${booking.kinfolkName.ifBlank { "Not set" }}", color = AuntieTheme.colors.textPrimary)
                 // #2032: always says which Kin the visit is for.
-                Text("Kin: ${com.tribetails.auntieos.domain.visitKinLine(booking.kinNames)}", color = AuntieTheme.colors.textPrimary)
+                Text("Kin: ${com.tribetails.auntieos.domain.visitKinLine(booking.kinIds, booking.kinNames)}", color = AuntieTheme.colors.textPrimary)
                 Text("Status: ${booking.status.name}", color = AuntieTheme.colors.textPrimary)
                 Text("Start: ${booking.startDateTime}", color = AuntieTheme.colors.textPrimary)
                 Text("End: ${booking.endDateTime}", color = AuntieTheme.colors.textPrimary)
