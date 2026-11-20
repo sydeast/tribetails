@@ -59,6 +59,7 @@ class InvoicePaymentsPanelRenderTest {
                     linkedPayments = linked,
                     clientPayments = linked,
                     onRecordPayment = {},
+                    onRetryPayments = {},
                 )
             }
         }

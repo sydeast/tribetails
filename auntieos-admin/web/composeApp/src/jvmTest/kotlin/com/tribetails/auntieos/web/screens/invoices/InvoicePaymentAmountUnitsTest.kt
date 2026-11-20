@@ -373,6 +373,30 @@ class InvoicePaymentAmountUnitsTest {
     }
 
     @Test
+    fun aFailedLedgerReadCanBeTriedAgain() = runDesktopComposeUiTest {
+        JvmFirestoreFixtures.invoices = listOf(invoice)
+        JvmFirestoreFixtures.sessionsForKinfolk = emptyList()
+        JvmFirestoreFixtures.callableErrors = mapOf("getInvoiceLedger" to "The service is unavailable.")
+        setContent {
+            AuntieAppTheme(themeMode = ThemeMode.DARK) { InvoiceDetailScreen(invoiceId = "inv1") }
+        }
+        waitUntil(timeoutMillis = 10_000) { shown("Couldn't load payments: The service is unavailable.") }
+        fun ledgerReads() = JvmFirestoreFixtures.callablePayloads.count { it.first == "getInvoiceLedger" }
+        assertEquals(1, ledgerReads(), "the invoice has not changed, so nothing asks again by itself")
+        // The next read answers.
+        JvmFirestoreFixtures.callableErrors = emptyMap()
+        JvmFirestoreFixtures.callableResponses = mapOf("getInvoiceLedger" to ledger(listOf(row("p1", 4200))))
+        // Other panels on this screen can offer their own Try again; the
+        // Payments panel sits above them, so its button is the first.
+        fun retries() = onAllNodesWithText("Try again").fetchSemanticsNodes().size
+        val before = retries()
+        onAllNodesWithText("Try again")[0].performScrollTo().performClick()
+        waitUntil(timeoutMillis = 10_000) { shown("\$42.00") }
+        assertEquals(2, ledgerReads())
+        assertFalse(shown("Couldn't load payments"), "the failure is gone once the read answers")
+        assertEquals(before - 1, retries(), "the Payments panel's Try again leaves with the failure")
+    }
+    @Test
     fun recordingAPaymentReadsTheLedgerAgain() = render(ledger(listOf(row("p1", 4200)))) {
         waitUntil(timeoutMillis = 10_000) { shown("\$42.00") }
         fun ledgerReads() = JvmFirestoreFixtures.callablePayloads.count { it.first == "getInvoiceLedger" }

@@ -912,6 +912,12 @@ private fun InvoiceDetailBody(
             linkedPayments  = linkedPayments,
             clientPayments  = clientPayments,
             onRecordPayment = { showRecordPayment = true },
+            // The read is one-shot, so a failed one stays failed until asked
+            // again. The shimmer shows while it runs.
+            onRetryPayments = {
+                paymentsState = FirestoreResult.Loading
+                ledgerReload += 1
+            },
         )
 
         // ── Account credit (#1872) ─────────────────────────────────────────────
@@ -955,6 +961,7 @@ internal fun InvoicePaymentsPanel(
     linkedPayments: List<InvoiceLedgerPayment>,
     clientPayments: List<InvoiceLedgerPayment>,
     onRecordPayment: () -> Unit,
+    onRetryPayments: () -> Unit,
 ) {
     val c = AuntieTheme.colors
     DenPanel(
@@ -980,11 +987,13 @@ internal fun InvoicePaymentsPanel(
             when {
                 paymentsState is FirestoreResult.Loading ->
                     repeat(2) { ShimmerCard(height = 40.dp) }
-                paymentsState is FirestoreResult.Error ->
+                paymentsState is FirestoreResult.Error -> {
                     EmptyHint(
                         "Couldn't load payments: ${paymentsState.message}",
                         error = true,
                     )
+                    GhostButton(label = "Try again", onClick = onRetryPayments)
+                }
                 linkedPayments.isNotEmpty() ->
                     Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                         linkedPayments.forEachIndexed { idx, p ->
