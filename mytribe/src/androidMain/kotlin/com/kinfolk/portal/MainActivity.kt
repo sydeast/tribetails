@@ -9,11 +9,13 @@ import com.kinfolk.portal.auth.parseEmailActionUrl
 import com.kinfolk.portal.push.PUSH_OPEN_EXTRA_KEYS
 import com.kinfolk.portal.push.PendingPushOpen
 import com.kinfolk.portal.push.pushOpenFromExtras
+import com.kinfolk.portal.screens.invoices.PendingCheckoutReturn
 import com.kinfolk.portal.ui.KinfolkPortalAppGuarded
 import com.kinfolk.portal.util.androidInitialClaimInviteId
 import com.kinfolk.portal.util.androidInitialSecureResetParams
 import com.kinfolk.portal.util.androidInitialShareToken
 import com.kinfolk.portal.util.androidInitialUnknownLink
+import com.kinfolk.portal.util.checkoutReturnOf
 import com.kinfolk.portal.util.deepLinkIsRecognized
 
 class MainActivity : ComponentActivity() {
@@ -22,7 +24,10 @@ class MainActivity : ComponentActivity() {
         captureDeepLink(intent?.data)
         // A restored activity is handed its first intent again; the tap it
         // carried was opened the first time round.
-        if (savedInstanceState == null) capturePushTap(intent)
+        if (savedInstanceState == null) {
+            capturePushTap(intent)
+            captureCheckoutReturn(intent)
+        }
         setContent { KinfolkPortalAppGuarded() }
     }
 
@@ -30,6 +35,24 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         captureDeepLink(intent.data)
         capturePushTap(intent)
+        captureCheckoutReturn(intent)
+    }
+    /**
+     * #2401: Stripe sent the household back to an address this app claims
+     * (`/app/invoices/<id>` on the portal host, or `mytribe://invoices/<id>`
+     * from the portal's signed-out return page). It is read into a typed
+     * return and held for the nav host, which opens that invoice once the
+     * household is signed in and, after a finished checkout, has the bill
+     * checked.
+     *
+     * Read once, like a push tap: a restored activity is handed its first
+     * intent again, and so is one Android replays from Recents, and neither is
+     * the household coming back from paying.
+     */
+    private fun captureCheckoutReturn(intent: Intent?) {
+        if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val ret = checkoutReturnOf(intent.data) ?: return
+        PendingCheckoutReturn.offer(ret)
     }
     /**
      * #2259: a tapped push opens what it is about. Two shapes arrive here: the
@@ -77,6 +100,8 @@ class MainActivity : ComponentActivity() {
             pathSegments = listOfNotNull(uri.host.takeIf { uri.scheme == "mytribe" }) + pathParts,
             inviteQuery = uri.getQueryParameter("invite"),
             isEmailAction = emailAction != null,
+            // #2401: a card payment coming back is a link this app can place.
+            isCheckoutReturn = checkoutReturnOf(uri) != null,
         )
     }
 

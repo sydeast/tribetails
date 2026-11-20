@@ -56,6 +56,31 @@
                 <data android:scheme="mytribe" />
                 <data android:host="share" />
             </intent-filter>
+            <!-- #2401: where Stripe returns a card payment made from this app.
+                 https://kinfolk.tribetails.com/app/invoices/<id>[?checkout=done].
+                 NOT the web portal's own /invoices/: claiming that would pull the
+                 web portal's return from Stripe, and every invoice link in an
+                 email, out of the browser. Verified by the same assetlinks.json as
+                 the filters above. The server only accepts a return address on
+                 the portal's origins, so this is the address Stripe is given. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="kinfolk.tribetails.com" />
+                <data android:pathPrefix="/app/invoices/" />
+            </intent-filter>
+            <!-- The same return in the app's own scheme, mytribe://invoices/<id>.
+                 The portal's signed-out return page uses it for its Open MyTribe
+                 button when the browser kept the https address. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="mytribe" />
+                <data android:host="invoices" />
+            </intent-filter>
             <!-- #905: Firebase email action links. The project has ONE action URL,
                  https://kinfolk.tribetails.com/account/secure-reset, and the portal
                  web page also answers at /account/action. Every auth email (reset,
