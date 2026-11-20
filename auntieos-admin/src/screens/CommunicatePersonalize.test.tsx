@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type Async } from '../lib/async';
 import { type Kinfolk } from '../api/directory';
@@ -787,6 +787,136 @@ describe('reopening a held Push draft (#2293)', () => {
     await screen.findByLabelText(/edit before approving/i);
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     expect(screen.queryByText('Not sent')).toBeNull();
+  });
+
+  // ── #2381 ────────────────────────────────────────────────────────────────
+  it('HAPPY: a held Push draft can be deleted, through the server', async () => {
+    const user = setup();
+    stored(HELD);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await screen.findByText('Not sent');
+    await user.click(screen.getByRole('button', { name: 'Delete draft' }));
+    expect(await screen.findByText(/cannot be undone/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(deleteGeneratedDraft).toHaveBeenCalledWith('gd1'));
+    expect(await screen.findByText('Draft deleted.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(sendHouseholdPush).not.toHaveBeenCalled();
+  });
+  it('ERROR: a refused delete keeps the held draft, its Try again and its Delete', async () => {
+    const user = setup();
+    deleteGeneratedDraft.mockImplementation(() => Promise.reject(new Error('The draft could not be deleted.')));
+    stored(HELD);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await screen.findByText('Not sent');
+    await user.click(screen.getByRole('button', { name: 'Delete draft' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('The draft could not be deleted.')).toBeInTheDocument();
+    expect(screen.queryByText('Draft deleted.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+  it('HAPPY: an approved Push whose send never answered opens as not confirmed, with Try again and Delete', async () => {
+    const user = setup();
+    sendHouseholdPush.mockReset().mockResolvedValue({ outcome: 'already_sent', reason: null });
+    const { pushOutcome: _o, pushReason: _r, ...UNANSWERED } = HELD;
+    stored(UNANSWERED);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    expect(await screen.findByText('Not confirmed')).toBeInTheDocument();
+    expect(screen.getByText(/it is not known whether this push reached Dana Halbrook/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing reached/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete draft' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve and send' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(sendHouseholdPush).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('This push already went to Dana Halbrook. Nothing new was sent.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+  });
+  // ── #2389 ────────────────────────────────────────────────────────────────
+  it('HAPPY: editing a held Push returns it to unapproved, and Approve and send stores the new words before sending them', async () => {
+    const user = setup();
+    sendHouseholdPush.mockReset().mockResolvedValue({ outcome: 'sent', reason: null });
+    approveGeneratedDraft.mockImplementation(async (a: { deliver?: () => Promise<string | null> }) => {
+      const providerId = a.deliver ? await a.deliver() : null;
+      return { ok: true, auditWarning: null, providerId, delivered: a.deliver !== undefined };
+    });
+    stored(HELD);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await screen.findByText('Not sent');
+    await user.type(screen.getByLabelText(/edit before approving/i), ' See you soon.');
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.queryByText('Not sent')).toBeNull();
+    expect(screen.getByText('needs approval')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    await waitFor(() => expect(sendHouseholdPush).toHaveBeenCalledTimes(1));
+    const words = 'Nova says hi from the park. See you soon.';
+    expect(approveGeneratedDraft).toHaveBeenCalledWith(expect.objectContaining({ draftId: 'gd1', editedCopy: words }));
+    expect(sendHouseholdPush).toHaveBeenCalledWith({ kinfolkId: 'kf1', draftId: 'gd1', body: words });
+    expect(await screen.findByText("Sent to Dana Halbrook's phone. It is on their notifications list too.")).toBeInTheDocument();
+  });
+  it('NEGATIVE: when the server refuses the words, the draft goes back to unapproved and says why', async () => {
+    const user = setup();
+    const refusal = Object.assign(new Error('The words changed after this draft was approved. Approve it again to send them.'), {
+      code: 'functions/failed-precondition',
+      details: { code: 'push_words_changed' },
+    });
+    sendHouseholdPush.mockReset().mockRejectedValue(refusal);
+    stored(HELD);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await user.click(await screen.findByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText(refusal.message)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Approve and send' })).toBeEnabled();
+  });
+  it('NEGATIVE: a push another screen is sending keeps Try again and says to wait', async () => {
+    const user = setup();
+    const refusal = Object.assign(new Error('This push is being sent right now. Wait a moment, then try again.'), {
+      code: 'functions/aborted',
+      details: { code: 'push_in_flight' },
+    });
+    sendHouseholdPush.mockReset().mockRejectedValue(refusal);
+    stored(HELD);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await user.click(await screen.findByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText(refusal.message)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Approve and send' })).toBeNull();
+  });
+  it('NEGATIVE: two taps on Try again in the same moment send once', async () => {
+    setup();
+    let answer: (r: { outcome: string; reason: null }) => void = () => undefined;
+    sendHouseholdPush.mockReset().mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    stored(HELD);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    const retry = await screen.findByRole('button', { name: 'Try again' });
+    // Two clicks before React draws the disabled button.
+    act(() => {
+      retry.click();
+      retry.click();
+    });
+    expect(sendHouseholdPush).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('button', { name: 'Trying again…' })).toBeDisabled();
+    await act(async () => answer({ outcome: 'sent', reason: null }));
+    expect(await screen.findByText("Sent to Dana Halbrook's phone. It is on their notifications list too.")).toBeInTheDocument();
+    expect(sendHouseholdPush).toHaveBeenCalledTimes(1);
+  });
+  it('NEGATIVE: two taps on Send now in the same moment approve and send once', async () => {
+    const user = setup();
+    sendHouseholdPush.mockReset().mockResolvedValue({ outcome: 'sent', reason: null });
+    approveGeneratedDraft.mockImplementation(async (a: { deliver?: () => Promise<string | null> }) => {
+      const providerId = a.deliver ? await a.deliver() : null;
+      return { ok: true, auditWarning: null, providerId, delivered: a.deliver !== undefined };
+    });
+    stored({ ...HELD, status: 'generated', pushOutcome: '', pushReason: '' });
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await user.click(await screen.findByRole('button', { name: 'Approve and send' }));
+    const sendNow = await screen.findByRole('button', { name: 'Send now' });
+    await act(async () => {
+      sendNow.click();
+      sendNow.click();
+    });
+    await waitFor(() => expect(sendHouseholdPush).toHaveBeenCalledTimes(1));
+    expect(approveGeneratedDraft).toHaveBeenCalledTimes(1);
   });
 });
 

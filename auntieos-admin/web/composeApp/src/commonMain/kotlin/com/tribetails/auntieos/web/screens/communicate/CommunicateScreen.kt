@@ -291,9 +291,14 @@ fun CommunicateScreen(
         sentBefore = d.isPublished
         // #2293: a held Push draft opens where it was left: approved, with the
         // held notice and its Try again.
-        pushNotice = if (d.isHeldPush) {
-            householdPushNotice(HouseholdPushResult("held", d.pushReason.ifBlank { null }), d.household().ifBlank { "the household" })
-        } else null
+        // #2381: so does one whose send never answered.
+        pushNotice = when {
+            d.isHeldPush ->
+                householdPushNotice(HouseholdPushResult("held", d.pushReason.ifBlank { null }), d.household().ifBlank { "the household" })
+            d.isUnansweredPush ->
+                householdPushNotice(HouseholdPushResult(PUSH_UNANSWERED, null), d.household().ifBlank { "the household" })
+            else -> null
+        }
         selectedKinfolk = null
         openedHouseholdId = d.householdId().ifBlank { null }
         onDraftConsumed()
@@ -400,6 +405,8 @@ fun CommunicateScreen(
     /** #1563: delete the open, unsent draft. The server refuses one already sent. */
     fun deleteDraft() {
         val draftId = result?.draft_id ?: return
+        // #2389: one delete at a time, and never across a send in flight.
+        if (deleting || saving || retryingPush) return
         deleting = true
         scope.launch {
             try {
@@ -429,13 +436,34 @@ fun CommunicateScreen(
         return try {
             when (val w = firestore.sendHouseholdPush(kinfolkId, draftId, copy)) {
                 is WriteResult.Ok -> householdPushNotice(decodeHouseholdPushResult(w.value), who)
-                is WriteResult.Err -> householdPushCallFailed(w.message, who)
+                is WriteResult.Err -> householdPushCallFailed(w.code, w.message)
             }
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            householdPushCallFailed(t.message, who)
+            householdPushCallFailed(null, t.message)
         }
+    }
+    /**
+     * What the screen holds after a push attempt. #2389: when the server
+     * refused the words, the draft goes back to unapproved and says why.
+     */
+    fun showPushAnswer(notice: HouseholdPushNotice) {
+        if (notice.needsApproval) {
+            pushNotice = null
+            showToast(notice.body, ToastKind.Error)
+        } else {
+            pushNotice = notice
+        }
+    }
+    /**
+     * The draft editor. #2389: an approved Push that has not gone out sends its
+     * approved words and no others, so editing them returns the draft to
+     * unapproved and the next step is Approve and send.
+     */
+    fun editCopy(next: String) {
+        if (next != editedCopy && editReturnsToUnapproved(pushNotice)) pushNotice = null
+        editedCopy = next
     }
     fun approveDraft() {
         approveConfirmOpen = false
@@ -503,7 +531,7 @@ fun CommunicateScreen(
                 // #2294: a Push goes out after the approve, and the notice says
                 // what reached the household, never a generic "approved".
                 if (messageType == MessageType.Push && outcome == ApproveOutcome.Approved && pushTo != null) {
-                    pushNotice = sendPushNow(pushTo, draftId, copy, recipient?.displayName ?: r.kinfolk_name)
+                    showPushAnswer(sendPushNow(pushTo, draftId, copy, recipient?.displayName ?: r.kinfolk_name))
                     return@launch
                 }
                 showToast(
@@ -528,11 +556,11 @@ fun CommunicateScreen(
         val r = result ?: return
         val draftId = r.draft_id ?: return
         val kinfolkId = r.kinfolk_id?.ifBlank { null } ?: approveRecipient(r)?._id?.ifBlank { null } ?: return
-        if (retryingPush || pushNotice?.retryable != true) return
+        if (retryingPush || saving || deleting || pushNotice?.retryable != true) return
         retryingPush = true
         scope.launch {
             try {
-                pushNotice = sendPushNow(kinfolkId, draftId, editedCopy, approveRecipient(r)?.displayName ?: r.kinfolk_name)
+                showPushAnswer(sendPushNow(kinfolkId, draftId, editedCopy, approveRecipient(r)?.displayName ?: r.kinfolk_name))
             } finally {
                 retryingPush = false
             }
@@ -670,7 +698,7 @@ fun CommunicateScreen(
                             length = length, onLength = { length = it },
                             loading = loading, saving = saving,
                             result = result,
-                            editedCopy = editedCopy, onEditedCopy = { editedCopy = it },
+                            editedCopy = editedCopy, onEditedCopy = ::editCopy,
                             onGenerate = ::generate, onApprove = ::requestApprove,
                             firestore = firestore,
                             onToast = { msg, kind -> showToast(msg, kind) },
@@ -722,7 +750,7 @@ fun CommunicateScreen(
                         length = length, onLength = { length = it },
                         loading = loading, saving = saving,
                         result = result,
-                        editedCopy = editedCopy, onEditedCopy = { editedCopy = it },
+                        editedCopy = editedCopy, onEditedCopy = ::editCopy,
                         onGenerate = ::generate, onApprove = ::requestApprove,
                         firestore = firestore,
                         onToast = { msg, kind -> showToast(msg, kind) },
@@ -803,7 +831,7 @@ fun CommunicateScreen(
         },
     ) {
         Text(
-            text = "It has not been sent. Deleting it cannot be undone.",
+            text = deleteDraftConfirmLine(pushNotice),
             style = AuntieTheme.typography.bodyMedium,
             color = c.textPrimary,
         )
@@ -1042,11 +1070,12 @@ private fun ComposePanel(
                     style = AuntieTheme.typography.bodySmall,
                     color = c.textDim,
                 )
-                if (onDelete != null && result?.draft_id != null && !sent && pushNotice == null) {
+                // #2381: an approved Push that did not go out keeps its Delete.
+                if (onDelete != null && canDeleteDraft(result?.draft_id != null, sent, pushNotice != null, pushNotice)) {
                     GhostButton(
                         label = if (deleting) "Deleting…" else "Delete draft",
                         onClick = onDelete,
-                        enabled = !saving && !deleting,
+                        enabled = !saving && !deleting && !retryingPush,
                     )
                 }
             }

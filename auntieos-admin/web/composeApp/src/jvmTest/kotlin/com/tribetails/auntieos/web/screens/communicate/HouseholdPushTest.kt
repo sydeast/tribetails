@@ -61,10 +61,17 @@ class HouseholdPushTest {
         JvmFirestoreFixtures.callableErrors = mapOf("sendHouseholdPush" to "This draft was written for a different household.")
         val r = FirestoreClient().sendHouseholdPush("kf1", "gd1", "x")
         assertTrue(r is WriteResult.Err)
-        val notice = householdPushCallFailed((r as WriteResult.Err).message, "Dana")
-        assertEquals("Not sent", notice.title)
-        assertTrue(notice.body.contains("different household"))
-        assertTrue(notice.body.endsWith("Nothing reached Dana."))
+        val err = r as WriteResult.Err
+        val notice = householdPushCallFailed(err.code, err.message)
+        // #2381: a failed call may be a send that went out and lost its reply,
+        // so it never says what did or did not reach the household.
+        assertEquals("Not confirmed", notice.title)
+        assertEquals(
+            "The draft is approved, but the push was not confirmed: This draft was written for a different household. " +
+                "Try again. A push that already went out is not sent twice.",
+            notice.body,
+        )
+        assertFalse(notice.body.contains("Nothing reached"))
         assertTrue(notice.retryable)
     }
 
@@ -114,7 +121,120 @@ class HouseholdPushTest {
         val sms = held.copy(_id = "sms", communication_type = "sms")
         val pending = GeneratedDraft(_id = "pending", status = "generated", communication_type = "push", createdOn = "2026-11-16T00:00:00Z")
         val all = listOf(held, sent, noStamp, sms, pending)
-        assertEquals(listOf("held", "pending"), kinTaleListDrafts(all).map { it._id })
+        // #2381: the approved push with no answer on it is listed too.
+        assertEquals(listOf("held", "nostamp", "pending"), kinTaleListDrafts(all).map { it._id })
         assertEquals(listOf("pending"), draftsAwaitingReview(all).map { it._id })
+    }
+    // ── #2381: delete, and a send that never answered ────────────────────────
+    @Test
+    fun anApprovedPushWhoseSendNeverAnsweredStaysUnderDraftsAndOpensNotConfirmed() {
+        // `pushClaimedAt` is the server's claim (#2389); the console reads past it.
+        val unanswered = json.decodeFromString(
+            GeneratedDraft.serializer(),
+            """{"_id":"u1","status":"approved","communication_type":"push","kinfolk_id":"kf1",
+               "generatedCopy":"Hi","pushClaimedAt":"2026-11-17T10:00:00.000Z","createdOn":"2026-11-17T09:00:00.000Z"}""",
+        )
+        assertTrue(unanswered.isUnansweredPush)
+        assertFalse(unanswered.isHeldPush)
+        assertFalse(unanswered.isUnsent)
+        listOf("sent", "listed", "held").forEach { assertFalse(unanswered.copy(pushOutcome = it).isUnansweredPush, it) }
+        assertFalse(unanswered.copy(communication_type = "email").isUnansweredPush)
+        assertFalse(unanswered.copy(communication_type = "visit_report").isUnansweredPush)
+        assertFalse(unanswered.copy(status = "generated").isUnansweredPush)
+        val approvedEmail = unanswered.copy(_id = "email", communication_type = "email")
+        assertEquals(listOf("u1"), kinTaleListDrafts(listOf(unanswered, approvedEmail)).map { it._id })
+        assertEquals(emptyList(), draftsAwaitingReview(listOf(unanswered)).map { it._id })
+        val notice = householdPushNotice(HouseholdPushResult(PUSH_UNANSWERED, null), "Dana")
+        assertEquals("Not confirmed", notice.title)
+        assertEquals(
+            "The last send did not answer, so it is not known whether this push reached Dana. " +
+                "Try again. A push that already went out is not sent twice.",
+            notice.body,
+        )
+        assertTrue(notice.retryable)
+        // Never the server's word.
+        assertEquals("held", decodeHouseholdPushResult("""{"outcome":"unanswered"}""").outcome)
+    }
+    @Test
+    fun aPushThatDidNotGoOutKeepsItsDeleteAndOneThatReachedTheHouseholdDoesNot() {
+        val held = householdPushNotice(HouseholdPushResult("held", "household_notices_off"), "Dana")
+        val unanswered = householdPushNotice(HouseholdPushResult(PUSH_UNANSWERED, null), "Dana")
+        val sent = householdPushNotice(HouseholdPushResult("sent", null), "Dana")
+        val listed = householdPushNotice(HouseholdPushResult("listed", "no_device"), "Dana")
+        assertTrue(canDeleteDraft(hasDraft = true, sent = false, approved = false, notice = null))
+        assertTrue(canDeleteDraft(hasDraft = true, sent = false, approved = true, notice = held))
+        assertTrue(canDeleteDraft(hasDraft = true, sent = false, approved = true, notice = unanswered))
+        assertFalse(canDeleteDraft(hasDraft = true, sent = false, approved = true, notice = sent))
+        assertFalse(canDeleteDraft(hasDraft = true, sent = false, approved = true, notice = listed))
+        assertFalse(canDeleteDraft(hasDraft = true, sent = true, approved = false, notice = null))
+        assertFalse(canDeleteDraft(hasDraft = false, sent = false, approved = false, notice = null))
+        // The confirm says "not sent" only when that is known.
+        assertEquals("It has not been sent. Deleting it cannot be undone.", deleteDraftConfirmLine(null))
+        assertEquals("It has not been sent. Deleting it cannot be undone.", deleteDraftConfirmLine(held))
+        assertEquals("Deleting it cannot be undone.", deleteDraftConfirmLine(unanswered))
+    }
+    @Test
+    fun deletingAHeldPushDraftGoesThroughTheOwnerOnlyCallable() = runBlocking {
+        JvmFirestoreFixtures.callableResponses = mapOf("deleteGeneratedDraft" to """{"ok":true,"draftId":"gd1"}""")
+        val r = FirestoreClient().deleteGeneratedDraft(" gd1 ")
+        assertTrue(r is WriteResult.Ok)
+        assertEquals("deleteGeneratedDraft", JvmFirestoreFixtures.lastCallableName)
+        val sent = Json.parseToJsonElement(JvmFirestoreFixtures.lastCallablePayloadJson!!).jsonObject
+        assertEquals("gd1", sent["draftId"]?.jsonPrimitive?.content)
+    }
+    @Test
+    fun aRefusedDeleteSurfacesTheServersWords() = runBlocking {
+        JvmFirestoreFixtures.callableErrors = mapOf("deleteGeneratedDraft" to "This draft no longer exists. It may already have been deleted.")
+        val r = FirestoreClient().deleteGeneratedDraft("gd1")
+        assertTrue(r is WriteResult.Err)
+        assertEquals("This draft no longer exists. It may already have been deleted.", (r as WriteResult.Err).message)
+    }
+    // ── #2389: the approved words, one push per draft ────────────────────────
+    @Test
+    fun editingAPushThatDidNotGoOutReturnsItToUnapprovedAndNothingElseDoes() {
+        assertTrue(editReturnsToUnapproved(householdPushNotice(HouseholdPushResult("held", "notice_turned_off"), "Dana")))
+        assertTrue(editReturnsToUnapproved(householdPushNotice(HouseholdPushResult(PUSH_UNANSWERED, null), "Dana")))
+        assertTrue(editReturnsToUnapproved(householdPushCallFailed(null, "timeout")))
+        assertFalse(editReturnsToUnapproved(householdPushNotice(HouseholdPushResult("sent", null), "Dana")))
+        assertFalse(editReturnsToUnapproved(householdPushNotice(HouseholdPushResult("already_sent", null), "Dana")))
+        assertFalse(editReturnsToUnapproved(householdPushNotice(HouseholdPushResult("listed", "no_device"), "Dana")))
+        assertFalse(editReturnsToUnapproved(null))
+    }
+    @Test
+    fun aPushAnotherScreenIsSendingComesBackWithItsCodeAndSaysToWait() = runBlocking {
+        val message = "This push is being sent right now. Wait a moment, then try again."
+        JvmFirestoreFixtures.callableErrors = mapOf("sendHouseholdPush" to message)
+        JvmFirestoreFixtures.callableErrorCodes = mapOf("sendHouseholdPush" to PUSH_IN_FLIGHT_CODE)
+        val err = FirestoreClient().sendHouseholdPush("kf1", "gd1", "x") as WriteResult.Err
+        assertEquals(HouseholdPushNotice("Sending now", message, retryable = true), householdPushCallFailed(err.code, err.message))
+    }
+    @Test
+    fun wordsEditedAfterApprovalComeBackWithTheirCodeAndSendTheDraftBackToUnapproved() = runBlocking {
+        val message = "The words changed after this draft was approved. Approve it again to send them."
+        JvmFirestoreFixtures.callableErrors = mapOf("sendHouseholdPush" to message)
+        JvmFirestoreFixtures.callableErrorCodes = mapOf("sendHouseholdPush" to PUSH_WORDS_CHANGED_CODE)
+        val err = FirestoreClient().sendHouseholdPush("kf1", "gd1", "x") as WriteResult.Err
+        val notice = householdPushCallFailed(err.code, err.message)
+        assertTrue(notice.needsApproval)
+        assertEquals(message, notice.body)
+    }
+    @Test
+    fun theServersTwoRefusalsAreReadByTheirCodeAndAnythingElseIsNotConfirmed() {
+        val words = householdPushCallFailed(PUSH_WORDS_CHANGED_CODE, "The words changed after this draft was approved. Approve it again to send them.")
+        assertTrue(words.needsApproval)
+        assertFalse(words.retryable)
+        assertEquals("The words changed after this draft was approved. Approve it again to send them.", words.body)
+        val busy = householdPushCallFailed(PUSH_IN_FLIGHT_CODE, "This push is being sent right now. Wait a moment, then try again.")
+        assertEquals("Sending now", busy.title)
+        assertTrue(busy.retryable)
+        assertFalse(busy.needsApproval)
+        val silent = householdPushCallFailed(null, null)
+        assertEquals(
+            "The draft is approved, but the push was not confirmed: the server did not answer. " +
+                "Try again. A push that already went out is not sent twice.",
+            silent.body,
+        )
+        assertTrue(silent.retryable)
+        listOf(words, busy, silent).forEach { assertFalse(it.body.contains("Nothing reached") || it.body.startsWith("Sent"), it.body) }
     }
 }

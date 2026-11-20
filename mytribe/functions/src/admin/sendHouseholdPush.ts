@@ -63,9 +63,19 @@ import { loadBusinessOverride, loadUserPrefs, notificationDisabledFor, resolveCh
  * Every client approves (status `approved`) before it calls this.
  *
  * ── THE DRAFT REMEMBERS THE ANSWER (#2293) ───────────────────────────────────
- * Every attempt stamps `pushOutcome`, `pushReason` and `pushAttemptedAt` on the
- * draft, held sends included. That is how a held push is listed again under
+ * Every attempt that answers stamps `pushOutcome`, `pushReason` and
+ * `pushAttemptedAt` on the draft, held sends included. An approved Push draft
+ * with no `pushOutcome` is one whose send never answered (#2381); the clients
+ * keep it under Drafts with its Try again. That is how a held push is listed again under
  * Drafts and opens with its Try again after the screen was closed.
+ *
+ * ── ONE PUSH, THE APPROVED WORDS, NO RESURRECTION (#2389) ────────────────────
+ * The draft check and a claim on the draft (`pushClaimedAt`) are one
+ * transaction, so two taps at once push once: the second finds the claim and
+ * is refused. The words pushed are the draft's stored copy (what approve
+ * wrote), and a body that differs is refused, so an edit after approval is
+ * never what goes out. Every write to the draft after the send is an update
+ * of a draft that is still there, so a draft deleted mid-send stays deleted.
  *
  * Owner-only (not on the Auntie list): Communicate sends are the owner's.
  *
@@ -165,10 +175,85 @@ export async function sendHouseholdPushHandler(req: CallableRequest<unknown>): P
 
   // #2295: the draft is checked before anything is read or written for the
   // household, so a draft written for one household never sends to another.
-  const draftRef = await approvedPushDraftFor(args.kinfolkId, args.draftId);
-  const result = await deliverHouseholdPush(uid, args, body);
-  await stampDraft(draftRef, result, uid);
+  // #2389: the same transaction takes the draft's claim, so two taps (or two
+  // screens) at once push once, and the words pushed are the ones stored at
+  // approval, never a later edit.
+  const claim = await claimPushDraft(args.kinfolkId, args.draftId, body, Date.now());
+  if (claim.kind === 'already_sent') {
+    logEvent({ severity: 'info', function: 'sendHouseholdPush', event: 'household.push.duplicate', uid, extra: { draftId: args.draftId } });
+    return { ok: true, outcome: 'already_sent', reason: null };
+  }
+  let result: SendHouseholdPushResult;
+  try {
+    result = await deliverHouseholdPush(uid, args, claim.copy);
+  } catch (err) {
+    // Let go of the claim, so a retry is not refused by an attempt that is over.
+    await writeDraftIfPresent(claim.ref, { pushClaimedAt: '' }, uid, 'household.push.claim_release.failed');
+    throw err;
+  }
+  await stampDraft(claim.ref, result, uid);
   return result;
+}
+/**
+ * #2389: how long a send's claim on its draft holds off a second send. Longer
+ * than the callable's own limit (60 seconds, the default), so a claim outlives
+ * the attempt that took it, and a crashed attempt frees its draft after this.
+ */
+export const PUSH_CLAIM_LEASE_MS = 120_000;
+/**
+ * The two #2389 refusals, named in `details.code` so every client can tell
+ * them from any other refusal: the words are not the approved ones (the screen
+ * goes back to unapproved), and another attempt holds the claim (wait).
+ */
+export const PUSH_WORDS_CHANGED_CODE = 'push_words_changed';
+export const PUSH_IN_FLIGHT_CODE = 'push_in_flight';
+/** The `generatedCopy` approve writes, else the `generated_copy` the generator wrote. */
+function approvedCopyOf(d: Record<string, unknown>): string {
+  const camel = typeof d['generatedCopy'] === 'string' ? d['generatedCopy'] : '';
+  const snake = typeof d['generated_copy'] === 'string' ? d['generated_copy'] : '';
+  return sanitizePlainText(camel.trim() !== '' ? camel : snake);
+}
+export type PushDraftClaim =
+  | { kind: 'claimed'; ref: FirebaseFirestore.DocumentReference; copy: string }
+  | { kind: 'already_sent' };
+/**
+ * #2389: the draft check (#2295) and the claim, in one transaction.
+ *
+ *   - A draft already stamped `sent` answers `already_sent` and claims nothing.
+ *   - The words pushed are the draft's stored copy. A body that differs from
+ *     it was edited after approval and is refused: approve again to send it.
+ *   - A claim younger than [PUSH_CLAIM_LEASE_MS] means another attempt is
+ *     sending this draft now; this one is refused and pushes nothing.
+ */
+export async function claimPushDraft(
+  kinfolkId: string,
+  draftId: string,
+  typedBody: string,
+  nowMs: number,
+): Promise<PushDraftClaim> {
+  const ref = db().collection('generated_drafts').doc(draftId);
+  return db().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const d = checkApprovedPushDraft(snap, kinfolkId);
+    if (d['pushOutcome'] === 'sent') return { kind: 'already_sent' } as const;
+    const copy = approvedCopyOf(d);
+    if (copy === '') {
+      throw new HttpsError('failed-precondition', 'This draft has no words in it. Write the message, then approve it again.');
+    }
+    if (copy !== typedBody) {
+      throw new HttpsError('failed-precondition', 'The words changed after this draft was approved. Approve it again to send them.', {
+        code: PUSH_WORDS_CHANGED_CODE,
+      });
+    }
+    const claimedAt = Date.parse(typeof d['pushClaimedAt'] === 'string' ? d['pushClaimedAt'] : '');
+    if (Number.isFinite(claimedAt) && nowMs - claimedAt < PUSH_CLAIM_LEASE_MS) {
+      throw new HttpsError('aborted', 'This push is being sent right now. Wait a moment, then try again.', {
+        code: PUSH_IN_FLIGHT_CODE,
+      });
+    }
+    tx.update(ref, { pushClaimedAt: new Date(nowMs).toISOString() });
+    return { kind: 'claimed', ref, copy } as const;
+  });
 }
 
 /** Both spellings of a draft field, trimmed (`generate.js` writes snake_case, older writers camelCase). */
@@ -182,14 +267,9 @@ function draftField(d: Record<string, unknown>, snake: string, camel: string): {
  * #2295: the `generated_drafts` doc behind this send, refused unless it is an
  * approved Push draft written for this same household. Fails closed: a missing
  * draft, a draft with no household, or one whose two household spellings
- * disagree is refused like a draft for another household.
+ * disagree is refused like a draft for another household. Returns its fields.
  */
-export async function approvedPushDraftFor(
-  kinfolkId: string,
-  draftId: string,
-): Promise<FirebaseFirestore.DocumentReference> {
-  const ref = db().collection('generated_drafts').doc(draftId);
-  const snap = await ref.get();
+function checkApprovedPushDraft(snap: FirebaseFirestore.DocumentSnapshot, kinfolkId: string): Record<string, unknown> {
   if (!snap.exists) throw new HttpsError('not-found', 'This draft is no longer here. It may have been deleted.');
   const d = (snap.data() ?? {}) as Record<string, unknown>;
 
@@ -205,33 +285,54 @@ export async function approvedPushDraftFor(
   if (d['status'] !== 'approved') {
     throw new HttpsError('failed-precondition', 'Approve this draft before sending it.');
   }
-  return ref;
+  return d;
 }
 
 /**
- * #2293: what the last attempt answered, on the draft itself. Never a null
- * field: the console and phone models decode these as strings.
+ * #2293: what the last attempt answered, on the draft itself, and the claim
+ * let go. Never a null field: the console and phone models decode these as
+ * strings.
  */
 async function stampDraft(
   ref: FirebaseFirestore.DocumentReference,
   result: SendHouseholdPushResult,
   uid: string,
 ): Promise<void> {
+  await writeDraftIfPresent(
+    ref,
+    {
+      pushOutcome: result.outcome === 'already_sent' ? 'sent' : result.outcome,
+      pushReason: result.reason ?? '',
+      pushAttemptedAt: new Date().toISOString(),
+      pushClaimedAt: '',
+    },
+    uid,
+    'household.push.draft_stamp.failed',
+  );
+}
+/**
+ * #2389: a write to the draft after its send, only while the draft is still
+ * there. A merge `set` here brought back a draft deleted while its push was in
+ * flight, as a near-empty doc. Never throws: the stamp only steers the lists,
+ * and the answer is already true.
+ */
+async function writeDraftIfPresent(
+  ref: FirebaseFirestore.DocumentReference,
+  fields: Record<string, unknown>,
+  uid: string,
+  failedEvent: string,
+): Promise<void> {
   try {
-    await ref.set(
-      {
-        pushOutcome: result.outcome === 'already_sent' ? 'sent' : result.outcome,
-        pushReason: result.reason ?? '',
-        pushAttemptedAt: new Date().toISOString(),
-      },
-      { merge: true },
-    );
+    await db().runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      tx.update(ref, fields);
+    });
   } catch (err) {
-    // The stamp only steers the lists; the answer is already true.
     logEvent({
       severity: 'warn',
       function: 'sendHouseholdPush',
-      event: 'household.push.draft_stamp.failed',
+      event: failedEvent,
       uid,
       errorMessage: (err as Error)?.message,
     });
