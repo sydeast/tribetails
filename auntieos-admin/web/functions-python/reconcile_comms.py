@@ -800,8 +800,14 @@ def kin_belongs_to_household(kin_doc: dict, kinfolk_id: str) -> bool:
     record names a household must name this one. A Kin whose record names none
     is accepted, as it is there, because there is no second household for the
     note to cross into.
+
+    A `kinfolkId` that is not text names no household either, which is how the
+    callables read it (`str()` there returns '' for anything that is not a
+    string). It must not raise here: this runs after the log is claimed, so an
+    exception would end the pass and leave the log `in_progress`.
     """
-    owner = (kin_doc.get("kinfolkId") or "").strip()
+    stored = kin_doc.get("kinfolkId")
+    owner = stored.strip() if isinstance(stored, str) else ""
     return owner == "" or owner == kinfolk_id
 
 

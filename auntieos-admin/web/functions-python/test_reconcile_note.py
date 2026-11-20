@@ -378,6 +378,31 @@ def test_kin_belongs_to_household_accepts_a_kin_with_no_household_on_record():
     assert rc.kin_belongs_to_household({"kinfolkId": None}, "kf1") is True
 
 
+def test_kin_belongs_to_household_reads_a_household_that_is_not_text_as_none():
+    """Read the way the save callables read it, and never an exception: the
+    check runs after the log is claimed."""
+    for stored in (7, 0, True, ["kf2"], {"id": "kf2"}):
+        assert rc.kin_belongs_to_household({"kinfolkId": stored}, "kf1") is True
+
+
+def test_reconcile_pass_finishes_the_log_when_a_kins_household_is_not_text():
+    """A claimed log is always retired. A stray value on the Kin's record must
+    not end the pass and leave the note waiting forever."""
+    db = seed_household()
+    db.data["kin"]["k7"] = {"kinfolkId": 7, "name": "Pip", "species": "Rabbit"}
+    db.data["training_documents"] = {
+        "n10": {
+            "targetType": "KIN", "targetKinfolkId": "kf1", "targetKinId": "k7",
+            "content": "Pip likes cilantro.", "reconcileStatus": "pending",
+        }
+    }
+    rc.reconcile_pass(db, max_per_run=25, use_stub=True)
+
+    note = db.data["training_documents"]["n10"]
+    assert note["reconcileStatus"] == "applied"
+    assert "the_411/411_k7" in note["reconcileNotes"]
+
+
 def test_reconcile_pass_kin_target_in_another_household_writes_nothing():
     """A note filed under one household that names another household's Kin
     lands nowhere, and says why."""
