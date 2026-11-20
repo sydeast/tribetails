@@ -2,6 +2,7 @@ import { getIdTokenResult, type User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { allowIntoApp, caretakerFromClaim, testModeFromClaim } from './gate';
 import { setTestScope } from './testScope';
+import { setCaretakerScope } from './caretakerScope';
 import { useAuth } from './auth';
 import { reportError } from './sentry';
 
@@ -94,6 +95,10 @@ export async function resolveAccess(user: User, forceRefresh = false): Promise<A
   // the claim. Without it a test admin is permission-denied on every screen
   // (verified live 2026-07-20). See lib/testScope.ts.
   setTestScope(access.status === 'testAdmin' ? access.testTribeId : null);
+  // An Auntie lists only part of some collections, and her query has to say
+  // which part or the rules refuse the whole read. Set here for the same reason
+  // as the sandbox pin above. See lib/caretakerScope.ts.
+  setCaretakerScope(access.status === 'caretaker');
   return access;
 }
 

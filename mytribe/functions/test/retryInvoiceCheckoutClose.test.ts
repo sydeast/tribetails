@@ -118,6 +118,14 @@ describe('retryInvoiceCheckoutClose', () => {
     ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: 'invoice_not_paid' } });
     expect(api.expire).not.toHaveBeenCalled();
   });
+  it('#2362: Try again works on a cancelled invoice, whose links are no way to pay anything', async () => {
+    const ctx = seed({ ...STUCK, status: 'cancelled', invoiceStatus: 'cancelled', amountDue: 40 });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const api = stripe({ cs_b: 'open' });
+    const res = await retryInvoiceCheckoutCloseHandler(req({ invoiceId: 'inv1' }), { sessions: async () => api });
+    expect(res).toEqual({ ok: true, invoiceId: 'inv1', closedCount: 1, failedCount: 0 });
+    expect(api.expire).toHaveBeenCalledWith('cs_b');
+  });
   it('404s a missing invoice and rejects a bad argument', async () => {
     mocks.dbFn.mockReturnValue(seed(null).db);
     await expect(retryInvoiceCheckoutCloseHandler(req({ invoiceId: 'inv1' }))).rejects.toMatchObject({ code: 'not-found' });

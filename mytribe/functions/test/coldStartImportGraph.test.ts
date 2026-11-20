@@ -318,8 +318,12 @@ const ALLOWED_EAGER_PACKAGES = [
  * on half an emoji. `lib/richText.ts`, `lib/conversations.ts` and
  * `notifications/templateParsers.ts` each cut by storage units before, and
  * templateParsers carried its own copy. It is pure and imports nothing.
+ *
+ * 464 (on top of #2323's 463): `lib/generatedDraftType.ts`, the reading of a
+ * generated draft's type, used by `admin/kinTaleDrafts.ts` at file scope and by
+ * `admin/sendHouseholdPush.ts`. It is three pure functions and imports nothing.
  */
-const MAX_OWN_EAGER_MODULES = 463;
+const MAX_OWN_EAGER_MODULES = 464;
 
 interface Edge {
   spec: string;

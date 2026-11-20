@@ -484,17 +484,57 @@ export function auntieHouseholdLookWords(auntieName: unknown, householdName: unk
  * #2344: a card was declined on an invoice the household no longer has to pay
  * by card: the invoice was already paid, or the payment from that same
  * checkout has gone through. No "charge failed" notice is sent for it, and the
- * line says so. `invoice-paid` and `payment-landed` are the two reasons the
- * Stripe webhook stores.
+ * line says so. `invoice-paid`, `payment-landed`, `invoice-cancelled`,
+ * `invoice-written-off`, `invoice-not-found` and `invoice-other-household` are
+ * the reasons the Stripe webhook stores.
  */
 export function cardDeclinedAfterPaymentWords(invoiceNumber: unknown, reason: string): string {
+  const sent = 'No notice was sent to the household.';
+  // The checkout named an invoice that is not there, so there is no number to give.
+  if (reason === 'invoice-not-found') return `A card was declined on an invoice that could not be found. ${sent}`;
   const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
   const invoice = n === '' ? 'an invoice' : `invoice ${n}`;
+  // #2361: a cancelled or written-off invoice asks nothing of the household
+  // either. Nor does one that is another household's than the checkout's.
+  const state =
+    reason === 'invoice-cancelled'
+      ? 'was cancelled'
+      : reason === 'invoice-written-off'
+        ? 'was written off'
+        : reason === 'invoice-other-household'
+          ? 'belongs to a different household'
+          : 'was already paid';
   const why =
     reason === 'payment-landed'
       ? ', and the payment from the same checkout went through'
       : n === ''
-        ? ' that was already paid'
-        : ', which was already paid';
-  return `A card was declined on ${invoice}${why}. No notice was sent to the household.`;
+        ? ` that ${state}`
+        : `, which ${state}`;
+  return `A card was declined on ${invoice}${why}. ${sent}`;
+}
+/**
+ * #2345: a card payment put on an invoice that was not in a state to be paid.
+ * It is recorded (the card is charged and there are no refunds) and the owner
+ * is told why the invoice should be looked at. `reason` is the
+ * `cardApplyFallback` code the Stripe webhook stores; the sentence never shows
+ * it. Since the lead ruling of 2026-11-17 such a payment is held for the owner
+ * and never put on the invoice, so this line is written only for one an
+ * earlier build applied, when a retry finds its line unwritten.
+ */
+export function cardPaymentNotPayableWords(invoiceNumber: unknown, reason: string, amountCents: number): string {
+  const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
+  const amount = amountCents > 0 ? ` of ${dollars(amountCents)}` : '';
+  if (reason === 'apply_invoice_not_found') {
+    return `A card payment${amount} was recorded for an invoice that could not be found.`;
+  }
+  const invoice = n === '' ? 'an invoice' : `invoice ${n}`;
+  const why =
+    reason === 'apply_invoice_not_sent'
+      ? 'the invoice was a draft or a quote when the payment arrived'
+      : reason === 'apply_wrong_household'
+        ? 'the checkout was for a different household'
+        : reason === 'no_recorded_balance'
+          ? "nothing was owed on the invoice's total"
+          : 'the invoice could not take a payment when it arrived';
+  return `A card payment${amount} was put on ${invoice}, but ${why}.`;
 }

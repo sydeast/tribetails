@@ -18,6 +18,7 @@ import {
   CLOSED_CHECKOUT_SESSIONS_FIELD,
   OPEN_CHECKOUT_SESSIONS_FIELD,
   sessionsToClose,
+  type SweepDoc,
 } from '../src/lib/checkoutSessionSweep';
 import {
   closeCheckoutSession,
@@ -101,6 +102,18 @@ describe('sessionsToClose (pure)', () => {
     ).toEqual(['cs_9']);
   });
 
+  it('#2362: lists every open session once the invoice is cancelled, a withdrawn quote and the legacy label included', () => {
+    const before = { status: 'open', amountDue: 40, total: 40, pendingCheckoutSessionId: 'cs_2', [OPEN_CHECKOUT_SESSIONS_FIELD]: ['cs_1', 'cs_2'] };
+    // Cancelling does not zero the balance the invoice states.
+    const cancelled = { ...before, status: 'cancelled', invoiceStatus: 'cancelled' };
+    expect(sessionsToClose(before, cancelled)).toEqual(['cs_1', 'cs_2']);
+    expect(sessionsToClose(before, { ...cancelled, quoteWithdrawnAt: 'ts' } as SweepDoc)).toEqual(['cs_1', 'cs_2']);
+    expect(sessionsToClose(before, { ...before, status: undefined, invoiceStatus: 'cancelled' })).toEqual(['cs_1', 'cs_2']);
+  });
+  it('#2362: an invoice still owed keeps its sessions, whatever else changes on it', () => {
+    const before = { status: 'open', amountDue: 40, total: 40, [OPEN_CHECKOUT_SESSIONS_FIELD]: ['cs_1'] };
+    expect(sessionsToClose(before, { ...before, status: 'sent', notes: 'edited' } as SweepDoc)).toEqual([]);
+  });
   it('a deleted invoice closes nothing', () => {
     expect(sessionsToClose({ status: 'paid', pendingCheckoutSessionId: 'cs_1' }, undefined)).toEqual([]);
   });
@@ -170,6 +183,18 @@ describe('onInvoicePaidExpireCheckoutsHandler', () => {
     expect(mocks.set).not.toHaveBeenCalled();
   });
 
+  it('#2362: expires every open session when the invoice is cancelled', async () => {
+    const { api, state } = fakeStripe({ cs_web: 'open', cs_android: 'open', cs_paid: 'open' });
+    const cancelledAfter = { ...openBefore, status: 'cancelled', invoiceStatus: 'cancelled' };
+    await onInvoicePaidExpireCheckoutsHandler(event(openBefore, cancelledAfter), { sessions: async () => api });
+    expect(state).toEqual({ cs_web: 'expired', cs_android: 'expired', cs_paid: 'expired' });
+    expect(mocks.set).toHaveBeenCalledTimes(1);
+    const [data] = mocks.set.mock.calls[0]!;
+    expect(data[CLOSED_CHECKOUT_SESSIONS_FIELD]).toEqual(FieldValue.arrayUnion('cs_web', 'cs_android', 'cs_paid'));
+    // What the invoice detail's "Open payment links closed" line reads.
+    expect(data.checkoutSweep.expiredIds).toEqual(FieldValue.arrayUnion('cs_web', 'cs_android', 'cs_paid'));
+    expect(data.checkoutSweep.failed).toEqual([]);
+  });
   it('does nothing on an unpaid invoice', async () => {
     const { api } = fakeStripe({ cs_web: 'open' });
     await onInvoicePaidExpireCheckoutsHandler(event(undefined, openBefore), { sessions: async () => api });

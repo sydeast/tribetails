@@ -248,8 +248,40 @@ describe('sendHouseholdPush checks its draft (#2295)', () => {
   it('NEGATIVE: refuses a draft that is not a push', async () => {
     await refused({ ...DRAFT, communication_type: 'visit_report' }, 'failed-precondition');
   });
+  /** Types that are not exactly `push`. */
+  const NOT_EXACTLY_PUSH: unknown[] = [
+    'Push', 'PUSH', ' push', 'push ', 'push\t', '\u00a0push', 'push\u2028', '\u3000push', '\ufeffpush', '', 7, null,
+  ];
+  it('NEGATIVE: refuses a draft whose type is not exactly push, in either spelling', async () => {
+    const { communication_type: _dropped, ...rest } = DRAFT;
+    for (const type of NOT_EXACTLY_PUSH) {
+      await refused({ ...DRAFT, communication_type: type }, 'failed-precondition');
+      await refused({ ...rest, communicationType: type }, 'failed-precondition');
+    }
+  });
+  it('NEGATIVE: refuses a draft with no type on it', async () => {
+    const { communication_type: _dropped, ...rest } = DRAFT;
+    await refused(rest, 'failed-precondition');
+  });
+  it('NEGATIVE: refuses a draft whose two type fields disagree, whichever says push', async () => {
+    await refused({ ...DRAFT, communicationType: 'visit_report' }, 'failed-precondition');
+    await refused({ ...DRAFT, communication_type: 'visit_report', communicationType: 'push' }, 'failed-precondition');
+    await refused({ ...DRAFT, communicationType: ' push' }, 'failed-precondition');
+    await refused({ ...DRAFT, communicationType: '' }, 'failed-precondition');
+  });
+  it('HAPPY: both type fields saying push sends', async () => {
+    seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { ...DRAFT, communicationType: 'push' } });
+    expect((await sendHouseholdPushHandler(req())).outcome).toBe('sent');
+  });
   it('NEGATIVE: refuses a push draft nobody approved', async () => {
     await refused({ ...DRAFT, status: 'generated' }, 'failed-precondition');
+  });
+  it('NEGATIVE: refuses a push draft whose status is not exactly approved', async () => {
+    const { status: _dropped, ...rest } = DRAFT;
+    await refused(rest, 'failed-precondition');
+    for (const status of ['Approved', ' approved', 'approved\u00a0', true, null]) {
+      await refused({ ...rest, status }, 'failed-precondition');
+    }
   });
   it('HAPPY: the older camelCase spelling of the same household sends', async () => {
     const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { communicationType: 'push', kinfolkId: 'fam1', status: 'approved' } });
