@@ -871,7 +871,7 @@ describe('reopening a held Push draft (#2293)', () => {
   it('NEGATIVE: a push another screen is sending keeps Try again and says to wait', async () => {
     const user = setup();
     const refusal = Object.assign(new Error('This push is being sent right now. Wait a moment, then try again.'), {
-      code: 'functions/aborted',
+      code: 'functions/failed-precondition',
       details: { code: 'push_in_flight' },
     });
     sendHouseholdPush.mockReset().mockRejectedValue(refusal);

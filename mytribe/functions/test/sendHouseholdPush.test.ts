@@ -380,7 +380,8 @@ describe('sendHouseholdPush: the approved words, once, and a deleted draft stays
     const first = sendHouseholdPushHandler(req());
     await vi.waitFor(() => expect(mocks.multicast).toHaveBeenCalledTimes(1));
     await expect(sendHouseholdPushHandler(req())).rejects.toMatchObject({
-      code: 'aborted',
+      // A user-fault code: `wrapCallable` sends `aborted` to Sentry as a server fault.
+      code: 'failed-precondition',
       message: 'This push is being sent right now. Wait a moment, then try again.',
       details: { code: 'push_in_flight' },
     });
@@ -395,7 +396,10 @@ describe('sendHouseholdPush: the approved words, once, and a deleted draft stays
   it('NEGATIVE: a claim another screen holds refuses the send and writes nothing', async () => {
     const claimedAt = new Date(Date.now() - 5_000).toISOString();
     const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { ...DRAFT, pushClaimedAt: claimedAt } });
-    await expect(sendHouseholdPushHandler(req())).rejects.toMatchObject({ code: 'aborted' });
+    await expect(sendHouseholdPushHandler(req())).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'push_in_flight' },
+    });
     expect(ctx.writes).toEqual([]);
     expect(mocks.multicast).not.toHaveBeenCalled();
   });

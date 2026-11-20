@@ -87,7 +87,7 @@ describe('a Push draft that did not go out (#2381, #2389)', () => {
   it('only a refusal of the words sends the screen back to unapproved', () => {
     expect(pushRefusalNeedsApproval({ code: 'functions/failed-precondition', details: { code: 'push_words_changed' } })).toBe(true);
     expect(pushRefusalNeedsApproval({ code: 'functions/failed-precondition' })).toBe(false);
-    expect(pushRefusalNeedsApproval({ code: 'functions/aborted', details: { code: 'push_in_flight' } })).toBe(false);
+    expect(pushRefusalNeedsApproval({ code: 'functions/failed-precondition', details: { code: 'push_in_flight' } })).toBe(false);
     expect(pushRefusalNeedsApproval(new Error('unavailable'))).toBe(false);
     expect(pushRefusalNeedsApproval(null)).toBe(false);
   });

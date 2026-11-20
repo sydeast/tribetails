@@ -247,7 +247,10 @@ export async function claimPushDraft(
     }
     const claimedAt = Date.parse(typeof d['pushClaimedAt'] === 'string' ? d['pushClaimedAt'] : '');
     if (Number.isFinite(claimedAt) && nowMs - claimedAt < PUSH_CLAIM_LEASE_MS) {
-      throw new HttpsError('aborted', 'This push is being sent right now. Wait a moment, then try again.', {
+      // `failed-precondition`, not `aborted`: a second tap is an ordinary state
+      // the screens handle, and `wrapCallable` reports `aborted` as a server
+      // fault (an error line and a Sentry event for every double tap).
+      throw new HttpsError('failed-precondition', 'This push is being sent right now. Wait a moment, then try again.', {
         code: PUSH_IN_FLIGHT_CODE,
       });
     }
