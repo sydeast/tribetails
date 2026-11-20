@@ -99,8 +99,11 @@ object PendingCheckoutReturn {
     private val state = MutableStateFlow<CheckoutReturn?>(null)
     val pending: StateFlow<CheckoutReturn?> = state
     private var account: String? = null
-    private var finished: String? = null
-    private var cancelled: String? = null
+    // One answer PER INVOICE. With a single slot each, a link for one invoice
+    // overwrote what was known about another: a finished link naming any other
+    // id made a cancel for this one believable again.
+    private val finished = mutableSetOf<String>()
+    private val cancelled = mutableSetOf<String>()
     /** Told who is signed in, each time that is known for certain (null for a settled sign-out). */
     fun onAccount(uid: String?) {
         if (account != null && uid != account) clear()
@@ -109,8 +112,8 @@ object PendingCheckoutReturn {
     /** Sign-out: nothing is kept for whoever signs in next. */
     fun clear() {
         state.value = null
-        finished = null
-        cancelled = null
+        finished.clear()
+        cancelled.clear()
     }
     /** A newer link replaces an older one that never opened. */
     fun offer(ret: CheckoutReturn) {
@@ -141,23 +144,23 @@ object PendingCheckoutReturn {
      */
     /** A checkout for [invoiceId] is being handed to the browser: nothing an earlier link said answers for it. */
     fun handedOff(invoiceId: String) {
-        if (finished == invoiceId) finished = null
-        if (cancelled == invoiceId) cancelled = null
+        finished -= invoiceId
+        cancelled -= invoiceId
     }
     /** Stripe's success address came back for [invoiceId]. From here no cancel link is believed for it. */
     fun markFinished(invoiceId: String) {
-        finished = invoiceId
-        if (cancelled == invoiceId) cancelled = null
+        finished += invoiceId
+        cancelled -= invoiceId
     }
     /**
      * Stripe's cancel address came back for [invoiceId]. Answers whether it is
      * believed: false when a finished link was already seen for this checkout.
      */
     fun markCancelled(invoiceId: String): Boolean {
-        if (finished == invoiceId) return false
-        cancelled = invoiceId
+        if (invoiceId in finished) return false
+        cancelled += invoiceId
         return true
     }
     /** True when the checkout for [invoiceId] was cancelled and nothing since says it was paid. */
-    fun wasCancelled(invoiceId: String): Boolean = cancelled == invoiceId && finished != invoiceId
+    fun wasCancelled(invoiceId: String): Boolean = invoiceId in cancelled && invoiceId !in finished
 }

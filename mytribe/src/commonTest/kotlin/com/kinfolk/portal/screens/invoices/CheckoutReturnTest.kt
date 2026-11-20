@@ -701,6 +701,173 @@ class CheckoutReturnTest {
         advanceUntilIdle()
     }
 
+    // ── A link for ANOTHER invoice never takes the hold off this one ──
+    //
+    // There is one check at a time. A finished link naming any other id, real
+    // or not, used to replace the check that was running, and Pay came back on
+    // the bill whose payment was still landing.
+
+    private val strangerLink = CheckoutReturn("inv-9", finished = true)
+
+    private fun twoOwed(): JsonObject = buildJsonObject {
+        put("accountBalanceCents", 0L)
+        put("open", buildJsonArray {
+            add(row("inv-1", "open", 50.0, false))
+            add(row("inv-2", "open", 50.0, false))
+        })
+        put("paid", buildJsonArray {})
+        put("credits", buildJsonArray {})
+    }
+
+    @Test
+    fun `a finished link for an invoice this window never sent to Stripe leaves a running check alone`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", owed())
+        val c = paidAtStripe(fake)
+        val before = fake.reads()
+
+        c.onCheckoutReturn(finishedLink)
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment)
+
+        c.onCheckoutReturn(strangerLink)
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment, "the bill whose payment is landing is still held back")
+        val paysBefore = fake.pays()
+        c.startPay(assertNotNull(c.find("inv-1")))
+        runCurrent()
+        assertEquals(paysBefore, fake.pays(), "no second checkout opens for it")
+
+        // The check runs its full course; the other link cost one read and nothing else.
+        advanceUntilIdle()
+        assertEquals("inv-1", c.paymentNotSeen)
+        assertNull(c.statusBanner)
+        assertEquals(fullCheck + 1, fake.reads() - before)
+    }
+
+    @Test
+    fun `nor does it replace a check that focus started`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", owed())
+        val c = paidAtStripe(fake)
+
+        c.onAppReturned()
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment)
+        c.onCheckoutReturn(strangerLink)
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment)
+
+        fake.stub("getMyInvoices", settled())
+        advanceUntilIdle()
+        assertNull(c.checkingPayment)
+        assertEquals(PAYMENT_RECEIVED, c.statusBanner)
+    }
+
+    @Test
+    fun `a finished link for an invoice this window did send to Stripe takes the check, as coming back by hand does`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", twoOwed())
+        val c = paidAtStripe(fake)
+        c.onAppReturned()
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment)
+
+        // The household pays a second bill while the first is still being checked.
+        c.startPay(assertNotNull(c.find("inv-2")))
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment, "nothing changes until they are back")
+
+        c.onCheckoutReturn(CheckoutReturn("inv-2", finished = true))
+        runCurrent()
+        assertEquals("inv-2", c.checkingPayment)
+        advanceUntilIdle()
+        assertEquals("inv-2", c.paymentNotSeen)
+    }
+
+    @Test
+    fun `with no check running, a finished link for an unknown invoice still starts its own check`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", owed())
+        val c = InvoicesController("kin-1", PortalApi(fake), this) {}
+
+        c.onCheckoutReturn(strangerLink)
+        runCurrent()
+        assertEquals("inv-9", c.checkingPayment)
+        advanceUntilIdle()
+        assertNull(c.statusBanner)
+        assertTrue(offersPayment(assertNotNull(c.find("inv-1"))))
+    }
+
+    @Test
+    fun `a link for another invoice does not lift the hold left by a check that read nothing`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", owed())
+        val c = paidAtStripe(fake)
+        fake.stubError("getMyInvoices", IllegalStateException("network down"))
+        c.onAppReturned()
+        advanceUntilIdle()
+        assertEquals("inv-1", c.paymentNotChecked)
+
+        c.onCheckoutReturn(strangerLink)
+        runCurrent()
+        assertEquals("inv-1", c.paymentNotChecked, "nothing has been read, so Pay stays held back")
+        val paysBefore = fake.pays()
+        c.startPay(assertNotNull(c.find("inv-1")))
+        runCurrent()
+        assertEquals(paysBefore, fake.pays())
+
+        // The first read that gets through settles it the ordinary way.
+        fake.stub("getMyInvoices", owed())
+        advanceTimeBy(PAYMENT_CHECK_EVERY_MS + 1)
+        assertNull(c.paymentNotChecked)
+        assertEquals("inv-1", c.paymentNotSeen)
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `a finished link for another invoice does not make a cancel for this one believable again`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", owed())
+        val paidFrom = paidAtStripe(fake)
+        // Android opened the links in a second window.
+        val openedByLink = InvoicesController("kin-1", PortalApi(fake), this) {}
+        openedByLink.onCheckoutReturn(finishedLink)
+        runCurrent()
+        openedByLink.onCheckoutReturn(strangerLink)
+        runCurrent()
+        openedByLink.onCheckoutReturn(cancelledLink)
+        runCurrent()
+        assertEquals("inv-1", openedByLink.checkingPayment)
+        assertFalse(PendingCheckoutReturn.wasCancelled("inv-1"))
+
+        // The window underneath still checks the bill itself.
+        paidFrom.onAppReturned()
+        runCurrent()
+        assertEquals("inv-1", paidFrom.checkingPayment)
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `what the links said is kept for each invoice, and a new checkout forgets only its own`() {
+        PendingCheckoutReturn.markFinished("inv-1")
+        PendingCheckoutReturn.markFinished("inv-9")
+        assertFalse(PendingCheckoutReturn.markCancelled("inv-1"), "a finished link was seen for it")
+        assertFalse(PendingCheckoutReturn.markCancelled("inv-9"))
+        assertTrue(PendingCheckoutReturn.markCancelled("inv-2"))
+        assertTrue(PendingCheckoutReturn.wasCancelled("inv-2"))
+
+        PendingCheckoutReturn.handedOff("inv-1")
+        assertTrue(PendingCheckoutReturn.markCancelled("inv-1"), "a new checkout starts from nothing")
+        assertFalse(PendingCheckoutReturn.markCancelled("inv-9"), "and leaves the other invoice's answer alone")
+        assertTrue(PendingCheckoutReturn.wasCancelled("inv-2"))
+
+        PendingCheckoutReturn.clear()
+        assertFalse(PendingCheckoutReturn.wasCancelled("inv-1"))
+        assertFalse(PendingCheckoutReturn.wasCancelled("inv-2"))
+        assertTrue(PendingCheckoutReturn.markCancelled("inv-9"), "sign-out keeps nothing")
+    }
+
     @Test
     fun `the list row checks again, and never pays, after a check that read nothing`() {
         assertEquals(

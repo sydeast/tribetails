@@ -432,16 +432,28 @@ class InvoicesController internal constructor(
      * again, so a forged or stale cancel cannot put a live Pay button in front
      * of a payment that is still landing. The one wait it can end is the one
      * that began on a guess, focus coming back.
+     *
+     * NOR MAY A LINK TAKE THE HOLD OFF ANOTHER BILL. There is one check at a
+     * time, and a new one replaces the one running. A finished link naming any
+     * other id (it needs no real one) used to do exactly that, and Pay came
+     * back on the bill whose payment was still landing. So a finished link
+     * replaces a check running on another invoice only when THIS window handed
+     * that link's invoice to Stripe, which no link can fake: it takes a tap on
+     * Pay here. Any other link for another invoice costs one read.
      */
     fun onCheckoutReturn(ret: CheckoutReturn) {
-        if (awaitingCheckout == ret.invoiceId) awaitingCheckout = null
+        val handedOffHere = awaitingCheckout == ret.invoiceId
+        if (handedOffHere) awaitingCheckout = null
         if (ret.finished) {
             PendingCheckoutReturn.markFinished(ret.invoiceId)
-            if (checkingPayment == ret.invoiceId) {
+            val running = checkingPayment
+            when {
                 // Stripe's own address confirms the check focus started.
-                checkStartedByFocus = false
-            } else {
-                startPaymentCheck(ret.invoiceId, byFocus = false)
+                running == ret.invoiceId -> checkStartedByFocus = false
+                // Another bill is being checked and this window never sent
+                // this one to Stripe. The running check keeps its place.
+                running != null && !handedOffHere -> scope.launch { read(quietFailure = true) }
+                else -> startPaymentCheck(ret.invoiceId, byFocus = false)
             }
             return
         }
@@ -467,7 +479,10 @@ class InvoicesController internal constructor(
         checkToken = token
         checkStartedByFocus = byFocus
         paymentNotSeen = null
-        paymentNotChecked = null
+        // Only this invoice's own hold is lifted here. Another bill's check
+        // that read nothing stays held until a read gets through
+        // ([settleUncheckedPayment]), whatever this check was started for.
+        if (paymentNotChecked == invoiceId) paymentNotChecked = null
         checkingPayment = invoiceId
         checkJob = scope.launch {
             try {
