@@ -367,9 +367,12 @@ fun notificationOpenRoute(entry: NotificationEntry): NotificationOpenRoute {
     wholeBookingTarget(entry)?.let { (kinfolkId, batchId) ->
         return NotificationOpenRoute.VisitRequest(kinfolkId, batchId)
     }
-    // A whole booking naming its household, with an id that is not a plain id:
-    // never a route built from it (the visit route would only build `vis_{batchId}`).
-    if (isBatchTarget(entry) && notificationRequestKinfolkId(entry).isNotEmpty()) {
+    // A whole booking whose ids are not plain ids, or (#2398) that names no
+    // household at all: never a route built from it. Its id is a request id,
+    // so the visit route would only build `vis_{batchId}` and end on "This
+    // KinCare couldn't be found". Admin web and admin Android offer no Open
+    // for it either.
+    if (isBatchTarget(entry)) {
         return NotificationOpenRoute.None
     }
     if (notificationRequestKey(entry) != null) {

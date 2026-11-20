@@ -565,6 +565,32 @@ describe('Open on a whole booking goes to it on Bookings (#2367)', () => {
     const anon = entry({ ...confirm, data: { batchId: 'b1' } });
     expect(wholeBookingOf(anon)).toBeNull();
   });
+  // #2398: Open used to fall through to the visit table and build
+  // `/bookings?bookingId=vis_b1`, which ended on "Booking unavailable".
+  it('offers no Open for a whole booking that names no household (#2398)', () => {
+    for (const data of [{ batchId: 'b1' }, { batchId: 'b1', kinfolkId: '   ' }, { batchId: 'b1', familyId: '' }]) {
+      for (const key of ['kincare.booking.confirm', 'assignment.assigned', 'kincare.request.declined', 'kincare.requested']) {
+        const anon = entry({ key, targetType: 'booking', targetId: 'b1', data });
+        expect(notificationOpenRoute(anon)).toBeNull();
+        expect(applicableNotificationActions(anon).open).toBeNull();
+        expect(applicableNotificationActions(anon, { pendingRequests: new Set() }).open).toBeNull();
+        expect(applicableNotificationActions(anon, { isAuntie: true }).open).toBeNull();
+        // Nothing to answer either: a request is answered by household and id.
+        expect(applicableNotificationActions(anon, { pendingRequests: new Set(['/b1']) }).bookingId).toBe('');
+      }
+    }
+  });
+  it('offers no Open for a whole booking whose household id is not a plain id (#2398)', () => {
+    for (const bad of ['kf/1', 'kf 1', 'kf1?x=1', '..']) {
+      const e = entry({ ...confirm, data: { kinfolkId: bad, batchId: 'b1' } });
+      expect(notificationOpenRoute(e)).toBeNull();
+      expect(applicableNotificationActions(e).open).toBeNull();
+    }
+  });
+  it('still opens a visit notice with no household as that visit (#2398)', () => {
+    const visit = entry({ key: 'kincare.booking.cancel', targetType: 'booking', targetId: 'v1', data: { batchId: 'b1', visitId: 'v1' } });
+    expect(applicableNotificationActions(visit).open).toEqual({ to: '/bookings', search: { bookingId: 'vis_v1' } });
+  });
   it('opens nothing for an id that is not shaped like a record id', () => {
     for (const bad of ['a/b', 'b1?x=1', 'b 1', '..', '.', 'x'.repeat(201), 'https://evil.example']) {
       const e = entry({ ...confirm, targetId: bad, data: { kinfolkId: 'kf1', batchId: bad } });

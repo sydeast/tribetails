@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { batchFocusOf, bookedLine } from './BookingBatchFocus';
+import { batchFocusOf, batchSessionsOf, bookedLine } from './BookingBatchFocus';
 import type { SessionEntry } from '../api/sessions';
 
 /**
@@ -20,6 +20,18 @@ describe('batchFocusOf', () => {
     expect(batchFocusOf({ status: 'ready', data }, focus)).toEqual({ kind: 'booked', sessionIds: ['vis_v1', 'vis_v2'] });
   });
 
+  it('hands back the records themselves, so the list can draw one its page lacks (#2397)', () => {
+    const mine = s({ _id: 'vis_v1', kinfolkId: 'kf1', kinCareBatchId: 'b1', startTime: '2026-03-02T09:00:00' });
+    const data = [
+      mine,
+      s({ _id: 'vis_v3', kinfolkId: 'kf1', kinCareBatchId: 'b2' }),
+      s({ _id: 'vis_o1', kinfolkId: 'kf2', kinCareBatchId: 'b1' }),
+    ];
+    const found = batchSessionsOf(data, focus);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toBe(mine);
+    expect(batchSessionsOf([], focus)).toEqual([]);
+  });
   it('never takes another household’s visit with the same request id', () => {
     const data = [s({ _id: 'vis_o1', kinfolkId: 'kf2', kinCareBatchId: 'b1' })];
     expect(batchFocusOf({ status: 'ready', data }, focus)).toEqual({ kind: 'gone' });

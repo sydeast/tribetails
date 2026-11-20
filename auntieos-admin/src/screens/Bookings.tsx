@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { BOOKINGS_QUERY, type BookingEntry } from '../api/bookings';
 import {
@@ -16,6 +16,7 @@ import {
 import { useWorkSettingsRead } from '../lib/useWorkSettings';
 import { WorkSettingsNotice } from '../components/WorkSettingsNotice';
 import { useCollection, useDocById } from '../lib/firestore';
+import type { Async } from '../lib/async';
 import { DenScreenHeading, EmptyHint, InfoTip, StatusPill, type DenTone } from '../components/DenScreenKit';
 import { LoadingRow } from '../components/LoadingRow';
 import { AsyncRegion } from '../components/AsyncRegion';
@@ -310,6 +311,23 @@ interface BookingsProps {
   focusRequest?: FocusRequest;
 }
 
+/**
+ * #2397: the list page with the opened booking's visits added where the page
+ * does not hold them. The page is the 200 most recently created visits of
+ * every household, so an older booking's visits are not on it, and the banner
+ * that counts them as highlighted would point at nothing. A visit the page
+ * does hold keeps the page's copy. While the page is loading or has failed it
+ * is passed through as it is. Pure; unit-tested.
+ */
+export function withFocusedRows(
+  page: Async<BookingEntry[]>,
+  focused: readonly BookingEntry[],
+): Async<BookingEntry[]> {
+  if (page.status !== 'ready' || focused.length === 0) return page;
+  const onPage = new Set(page.data.map((r) => r._id));
+  const missing = focused.filter((r) => !onPage.has(r._id));
+  return missing.length === 0 ? page : { status: 'ready', data: [...page.data, ...missing] };
+}
 /** One row's derived display facts, computed once per render pass. */
 interface RowView {
   entry: BookingEntry;
@@ -366,7 +384,7 @@ export function Bookings({
   isAuntie = false,
 }: BookingsProps) {
   const navigate = useNavigate();
-  const rows = useCollection<BookingEntry>(BOOKINGS_QUERY);
+  const page = useCollection<BookingEntry>(BOOKINGS_QUERY);
   // History is open like every other section, and grows a page at a time. It
   // used to be closed behind "Show N finished", which the mock does not do.
   const [historyShown, setHistoryShown] = useState(HISTORY_PAGE_SIZE);
@@ -376,10 +394,18 @@ export function Bookings({
    * `focusedIds` are those visits, highlighted on the list until dismissed.
    */
   const [batchFocus, setBatchFocus] = useState<FocusRequest | null>(null);
-  const [focusedIds, setFocusedIds] = useState<ReadonlySet<string>>(new Set());
+  const [focusedRows, setFocusedRows] = useState<readonly BookingEntry[]>([]);
+  const focusedIds = useMemo<ReadonlySet<string>>(() => new Set(focusedRows.map((r) => r._id)), [focusedRows]);
+  /**
+   * #2397: what the list draws, and what every action on it reads: the page,
+   * plus the opened booking's visits the page does not hold. Selecting, bulk
+   * actions and the detail sheet all read this, so a visit drawn from outside
+   * the page opens and acts like any other card.
+   */
+  const rows = useMemo(() => withFocusedRows(page, focusedRows), [page, focusedRows]);
   function dismissBatchFocus() {
     setBatchFocus(null);
-    setFocusedIds(new Set());
+    setFocusedRows([]);
   }
   // The overlay's own selection state, used only when no external
   // onSelectBooking is supplied (see BookingsProps's doc above). Seeded from the
@@ -748,7 +774,7 @@ export function Bookings({
       {batchFocus !== null && (
         <BookingBatchFocus
           focus={batchFocus}
-          onHighlight={(ids) => setFocusedIds(new Set(ids))}
+          onHighlight={setFocusedRows}
           onDismiss={dismissBatchFocus}
         />
       )}

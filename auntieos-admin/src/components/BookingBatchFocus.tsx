@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import type { BookingEntry } from '../api/bookings';
 import { sessionsForKinfolkQuery, type SessionEntry } from '../api/sessions';
 import { useCollection } from '../lib/firestore';
 import { str } from '../lib/coerce';
@@ -22,6 +23,14 @@ import type { FocusRequest } from './VisitRequestsSection';
  * here from the household's own sessions read, not from the Bookings page,
  * which is the 200 newest records and cannot prove a booking is gone. Found,
  * the list highlights them; none, the booking is no longer available.
+ *
+ * #2397: THE VISITS THEMSELVES GO UP, NOT ONLY THEIR IDS. The list draws the
+ * 200 most recently created visits of every household, and a booking older
+ * than that page has none of its visits on it, so highlighting by id matched
+ * nothing while the banner still counted them. The records found here are
+ * handed to the list, which draws the ones its page does not hold, so every
+ * visit the banner counts is on the screen. They are the same
+ * `kin_care_sessions` records the list reads, from a live read.
  */
 
 /** What became of the booking, from the household's sessions. Pure; unit-tested. */
@@ -36,12 +45,28 @@ export function batchFocusOf(sessions: Async<SessionEntry[]>, focus: FocusReques
   if (sessions.status === 'error') {
     return { kind: 'failed', message: sessions.message, ...(sessions.retry ? { retry: sessions.retry } : {}) };
   }
+  const sessionIds = batchSessionsOf(sessions.data, focus).map((s) => s._id);
+  return sessionIds.length > 0 ? { kind: 'booked', sessionIds } : { kind: 'gone' };
+}
+/** The household's visits that carry this booking's id, in the order read. Pure; unit-tested. */
+export function batchSessionsOf<T extends SessionEntry>(sessions: readonly T[], focus: FocusRequest): T[] {
   const batchId = focus.batchId.trim();
   const kinfolkId = focus.kinfolkId.trim();
-  const sessionIds = sessions.data
-    .filter((s) => str(s.kinCareBatchId).trim() === batchId && str(s.kinfolkId).trim() === kinfolkId)
-    .map((s) => s._id);
-  return sessionIds.length > 0 ? { kind: 'booked', sessionIds } : { kind: 'gone' };
+  return sessions.filter(
+    (s) => str(s.kinCareBatchId).trim() === batchId && str(s.kinfolkId).trim() === kinfolkId,
+  );
+}
+/**
+ * Changes whenever the found visits do, in id or in content, so the list is
+ * handed a fresh copy when one of them is moved or cancelled while the banner
+ * is up. A record that cannot be written out falls back to its id.
+ */
+function contentKeyOf(found: readonly SessionEntry[]): string {
+  try {
+    return JSON.stringify(found);
+  } catch {
+    return found.map((s) => s._id).join('\n');
+  }
 }
 
 /** The banner line for a booked request's visits. */
@@ -61,17 +86,25 @@ export function BookingBatchFocus({
   onDismiss,
 }: {
   focus: FocusRequest;
-  /** The visits to highlight on the list, once found. */
-  onHighlight: (sessionIds: string[]) => void;
+  /**
+   * The visits to highlight on the list, once found, and again whenever one of
+   * them changes. The records, so the list can draw one its page does not hold.
+   */
+  onHighlight: (sessions: BookingEntry[]) => void;
   onDismiss: () => void;
 }) {
-  const sessions = useCollection<SessionEntry>(sessionsForKinfolkQuery(focus.kinfolkId));
+  const sessions = useCollection<BookingEntry>(sessionsForKinfolkQuery(focus.kinfolkId));
   const state = batchFocusOf(sessions, focus);
-  const foundKey = state.kind === 'booked' ? state.sessionIds.join('\n') : '';
+  const found = sessions.status === 'ready' ? batchSessionsOf(sessions.data, focus) : [];
+  const foundKey = found.length > 0 ? contentKeyOf(found) : '';
+  const foundRef = useRef(found);
+  foundRef.current = found;
   const onHighlightRef = useRef(onHighlight);
   onHighlightRef.current = onHighlight;
   useEffect(() => {
-    if (foundKey !== '') onHighlightRef.current(foundKey.split('\n'));
+    // Nothing found hands up nothing: a booking whose visits are gone has
+    // none to draw, and the banner below says so.
+    onHighlightRef.current(foundKey === '' ? [] : foundRef.current);
   }, [foundKey]);
 
   switch (state.kind) {

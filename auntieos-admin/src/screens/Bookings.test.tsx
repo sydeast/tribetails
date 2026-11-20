@@ -158,7 +158,7 @@ vi.mock('../components/BookingDetailModal', () => ({
 
 // #1608: BookingStatusActions reads the arrival rule; keep it off Firestore.
 vi.mock('../lib/useArrivalRule', () => ({ useArrivalRule: () => null }));
-import { Bookings, groupBookingsByStatus } from './Bookings';
+import { Bookings, groupBookingsByStatus, withFocusedRows } from './Bookings';
 import { AUNTIE_SEAT, OWNER_SEAT, staffOnlyCall } from '../testing/staffWorkSettings';
 import { WORK_SETTINGS_FAILED, WORK_SETTINGS_LOADING } from '../components/WorkSettingsNotice';
 
@@ -312,6 +312,155 @@ describe('Bookings finds a booked request by its visits (#2367)', () => {
     expect(screen.queryByText('This booking is no longer available')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(retry).toHaveBeenCalledTimes(1);
+  });
+});
+/**
+ * #2397: the list page is the 200 most recently created visits of every
+ * household. A booking older than that has none of its visits on the page, and
+ * the banner said "Its N visits are highlighted below" over a list that
+ * highlighted nothing. The booking's visits are drawn whatever the page holds.
+ */
+describe('Bookings shows a booked request’s visits when the list page does not hold them (#2397)', () => {
+  const focus = { kinfolkId: 'kf1', batchId: 'b1' };
+  /** The page: another household's newer visits, and none of booking b1's. */
+  const page = [
+    entry({ _id: 'vis_v9', kinfolkName: 'The Wrens', kinfolkId: 'kf2', kinCareBatchId: 'b9' }),
+    entry({ _id: 'vis_v8', kinfolkName: 'The Okafors', kinfolkId: 'kf3', kinCareBatchId: 'b8' }),
+  ];
+  const older = (id: string, startTime: string, over: Partial<BookingEntry> = {}) =>
+    entry({ _id: id, kinfolkName: `Rivera ${id}`, kinCareBatchId: 'b1', startTime, ...over });
+  function reads(household: Async<BookingEntry[]>, listed: BookingEntry[] = page) {
+    useCollection.mockImplementation((spec: { filters?: unknown[] }) =>
+      spec.filters && spec.filters.length > 0 ? household : { status: 'ready', data: listed },
+    );
+  }
+  function open() {
+    visitRequestsProps.length = 0;
+    const view = render(<Bookings focusRequest={focus} />);
+    const props = visitRequestsProps.at(-1) as { onFocusNotWaiting?: () => void };
+    act(() => props.onFocusNotWaiting?.());
+    return view;
+  }
+  function rowOf(name: string): HTMLElement {
+    return screen.getByText(name).closest('li') as HTMLElement;
+  }
+  const focusedRows = () => document.querySelectorAll('li[aria-current="true"]');
+  it('draws and highlights every visit the banner counts, though none is on the page', async () => {
+    reads({
+      status: 'ready',
+      data: [
+        older('vis_v1', '2026-03-02T09:00:00'),
+        older('vis_v2', '2026-03-03T09:00:00'),
+        older('vis_v3', '2026-03-04T09:00:00'),
+        // The household's other booking is not this one, and is not drawn.
+        entry({ _id: 'vis_x1', kinfolkName: 'Rivera other', kinCareBatchId: 'b2' }),
+      ],
+    });
+    open();
+    expect(await screen.findByText('Its 3 visits are highlighted below.')).toBeInTheDocument();
+    for (const id of ['vis_v1', 'vis_v2', 'vis_v3']) {
+      expect(rowOf(`Rivera ${id}`)).toHaveAttribute('aria-current', 'true');
+      expect(rowOf(`Rivera ${id}`)).toHaveClass('bookings__row--focused');
+    }
+    expect(focusedRows()).toHaveLength(3);
+    expect(screen.queryByText('Rivera other')).toBeNull();
+    // The page's own rows are still there, and not highlighted.
+    expect(rowOf('The Wrens')).not.toHaveAttribute('aria-current');
+    expect(rowOf('The Okafors')).not.toHaveAttribute('aria-current');
+  });
+  it('draws the ones the page lacks beside the ones it holds, each once', async () => {
+    const onPage = older('vis_v1', '2026-03-02T09:00:00');
+    reads(
+      { status: 'ready', data: [onPage, older('vis_v2', '2026-03-03T09:00:00')] },
+      [...page, onPage],
+    );
+    open();
+    expect(await screen.findByText('Its 2 visits are highlighted below.')).toBeInTheDocument();
+    expect(screen.getAllByText('Rivera vis_v1')).toHaveLength(1);
+    expect(rowOf('Rivera vis_v1')).toHaveAttribute('aria-current', 'true');
+    expect(rowOf('Rivera vis_v2')).toHaveAttribute('aria-current', 'true');
+    expect(focusedRows()).toHaveLength(2);
+  });
+  it('never leaves a counted visit behind Load more', async () => {
+    // Enough finished visits on the page to fill History past its first page.
+    const finished = Array.from({ length: 60 }, (_, i) =>
+      entry({ _id: `done_${String(i)}`, kinfolkName: `Done ${String(i)}`, kinfolkId: 'kf2', status: 'COMPLETED', completedAt: '2026-07-10T10:00:00' }),
+    );
+    reads(
+      { status: 'ready', data: [older('vis_v1', '2026-01-02T09:00:00', { status: 'COMPLETED', completedAt: '2026-01-02T10:00:00' })] },
+      finished,
+    );
+    open();
+    expect(await screen.findByText('Its visit is highlighted below.')).toBeInTheDocument();
+    expect(rowOf('Rivera vis_v1')).toHaveAttribute('aria-current', 'true');
+  });
+  it('opens the detail sheet of a visit drawn from outside the page', async () => {
+    reads({ status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00')] });
+    open();
+    await screen.findByText('Its visit is highlighted below.');
+    await userEvent.click(within(rowOf('Rivera vis_v1')).getByRole('button', { name: /Rivera vis_v1/ }));
+    expect(screen.getByTestId('booking-detail-modal')).toHaveAttribute('data-entry-id', 'vis_v1');
+    expect(screen.queryByText('Booking unavailable')).toBeNull();
+  });
+  it('lets a visit drawn from outside the page be picked and acted on in bulk', async () => {
+    reads({ status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00', { status: 'PENDING' })] });
+    open();
+    await screen.findByText('Its visit is highlighted below.');
+    await pick('Rivera vis_v1');
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(screen.getByText(/Reject 1 booking\?/)).toBeInTheDocument();
+  });
+  it('takes them off the list again on Dismiss, and keeps the page', async () => {
+    reads({ status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00')] });
+    open();
+    await screen.findByText('Its visit is highlighted below.');
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText('Rivera vis_v1')).toBeNull();
+    expect(screen.getByText('The Wrens')).toBeInTheDocument();
+  });
+  it('draws nothing extra when the booking is gone, or while it is still looking', async () => {
+    reads({ status: 'ready', data: [entry({ _id: 'vis_x1', kinfolkName: 'Rivera other', kinCareBatchId: 'b2' })] });
+    const { unmount } = open();
+    expect(await screen.findByText('This booking is no longer available')).toBeInTheDocument();
+    expect(screen.queryByText('Rivera other')).toBeNull();
+    expect(focusedRows()).toHaveLength(0);
+    unmount();
+    reads({ status: 'loading' });
+    open();
+    expect(screen.getByText('Looking this booking up…')).toBeInTheDocument();
+    expect(focusedRows()).toHaveLength(0);
+  });
+  it('follows a change to a found visit while the banner is up', async () => {
+    reads({ status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00', { serviceType: 'Dog Walking' })] });
+    open();
+    await screen.findByText('Its visit is highlighted below.');
+    expect(within(rowOf('Rivera vis_v1')).getByText(/Dog Walking/)).toBeInTheDocument();
+    // The household's live read answers again with the visit changed; any
+    // render of the screen (Select, here) picks that up.
+    reads({ status: 'ready', data: [older('vis_v1', '2026-03-02T09:00:00', { serviceType: 'Drop-in Visit' })] });
+    await userEvent.click(selectToggle());
+    expect(await within(rowOf('Rivera vis_v1')).findByText(/Drop-in Visit/)).toBeInTheDocument();
+  });
+});
+describe('withFocusedRows (#2397)', () => {
+  const a = entry({ _id: 'a' });
+  const b = entry({ _id: 'b' });
+  it('adds only the visits the page does not hold, after the page', () => {
+    const merged = withFocusedRows({ status: 'ready', data: [a] }, [a, b]);
+    expect(merged).toEqual({ status: 'ready', data: [a, b] });
+  });
+  it('keeps the page’s own copy of a visit it holds', () => {
+    const stale = entry({ _id: 'a', status: 'PENDING' });
+    const merged = withFocusedRows({ status: 'ready', data: [a] }, [stale]);
+    expect(merged.status === 'ready' && merged.data).toEqual([a]);
+  });
+  it('passes the page through with nothing to add, or while it is not read', () => {
+    const ready: Async<BookingEntry[]> = { status: 'ready', data: [a] };
+    expect(withFocusedRows(ready, [])).toBe(ready);
+    const loading: Async<BookingEntry[]> = { status: 'loading' };
+    expect(withFocusedRows(loading, [b])).toBe(loading);
+    const failed: Async<BookingEntry[]> = { status: 'error', message: 'offline' };
+    expect(withFocusedRows(failed, [b])).toBe(failed);
   });
 });
 describe('Bookings screen', () => {
