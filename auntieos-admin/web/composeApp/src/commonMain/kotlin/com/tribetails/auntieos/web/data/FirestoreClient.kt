@@ -4150,6 +4150,14 @@ data class GeneratedDraft(
      */
     val isHeldPush: Boolean get() =
         type().lowercase() == "push" && status.trim().lowercase() == "approved" && pushOutcome.trim() == "held"
+    /**
+     * #2381: an approved Push draft with no answer on it. Its send was cut off
+     * (a dropped connection, a timeout) before the server could say what
+     * happened, so it is listed under Drafts and opens with Try again, like a
+     * held one. Not part of [isUnsent] either.
+     */
+    val isUnansweredPush: Boolean get() =
+        type().lowercase() == "push" && status.trim().lowercase() == "approved" && pushOutcome.isBlank()
 
     fun householdId(): String = kinfolkId.trim().ifBlank { kinfolk_id.trim() }
     fun household(): String = kinfolkName.trim().ifBlank { kinfolk_name.trim() }
@@ -4177,10 +4185,11 @@ fun draftsAwaitingReview(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
 /**
  * #2293: the drafts KinTales files under Drafts: every one awaiting review, plus
  * an approved Push draft the server held, so it can be opened and sent again.
+ * #2381: and one whose send never answered, which used to drop off this list.
  * Home keeps [draftsAwaitingReview]. Pure; tested.
  */
 fun kinTaleListDrafts(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
-    drafts.filter { it.isUnsent || it.isHeldPush }.sortedByDescending { it.created() }
+    drafts.filter { it.isUnsent || it.isHeldPush || it.isUnansweredPush }.sortedByDescending { it.created() }
 
 /**
  * KinCareReport - the "KinTale" visit recap that goes home to a kinfolk after a

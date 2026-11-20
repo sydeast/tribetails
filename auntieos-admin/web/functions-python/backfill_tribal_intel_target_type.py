@@ -26,6 +26,15 @@ Deliberately narrow: it writes `targetType` and nothing else. It never touches a
 row that already carries any `targetType` value, never invents a `targetKinId`,
 and never rewrites an anchor.
 
+VOICE EXAMPLES ARE NOT NOTES, AND ARE NEVER CLAIMED. The collection also holds
+writing kept for its style (`documentKind: 'voice_example'`). Such a row belongs
+to no household and carries no target on purpose, so to a check that reads
+`targetType` alone it looks exactly like an untargeted legacy note. Stamping it
+would file a writing sample as a household note, and the copy generator would
+stop using it as an example, because it only takes rows that name no household
+(`auntieos-admin/web/functions/generate.js#isVoiceExample`). The row says what
+it is, so it is skipped and counted on its own line.
+
 Idempotent: a second run finds nothing to do. Writes a `_targetTypeBackfillAt`
 marker so backfilled rows stay identifiable. Never touches `_demo:true` docs.
 
@@ -63,6 +72,17 @@ try:
 except ImportError:  # pragma: no cover - only when run outside the package dir
     LEGACY_UNTARGETED_TARGET = "HOUSEHOLD"
 
+# What a writing sample calls itself. The same value the copy generator reads
+# (`auntieos-admin/web/functions/generate.js#VOICE_EXAMPLE_KIND`). The save
+# callables never write it: everything they save is `documentKind: 'note'`.
+VOICE_EXAMPLE_KIND = "voice_example"
+
+# What this script does with one row. `row_decision` returns exactly one.
+DECISION_DEMO          = "demo"
+DECISION_ALREADY       = "already"
+DECISION_VOICE_EXAMPLE = "voice_example"
+DECISION_BACKFILL      = "backfill"
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -78,6 +98,37 @@ def needs_backfill(d: dict) -> bool:
     overwrite, and the pipeline already treats it as household.
     """
     return not str(d.get("targetType") or "").strip()
+
+
+def is_voice_example(d: dict) -> bool:
+    """True when the row says it is a writing sample, not a note.
+
+    Read from `documentKind` and nothing else. Whether the row also carries an
+    anchor is not weighed: a row that calls itself a voice example and names a
+    household contradicts itself, and settling that is a person's call in the
+    editor (a save there stamps `documentKind: 'note'` along with the target),
+    not this script's. A value that is not text is not a voice example.
+    """
+    kind = d.get("documentKind")
+    return isinstance(kind, str) and kind.strip() == VOICE_EXAMPLE_KIND
+
+
+def row_decision(d: dict) -> str:
+    """The whole decision for one row, in the order `main` applies it.
+
+    Only DECISION_BACKFILL is ever written. A voice example is checked AFTER the
+    targetType test, so one that somehow carries a targetType is reported as
+    "already", the same as any other row this script leaves alone for that
+    reason, and the voice-example line counts only the rows the kind check saved
+    from a stamp.
+    """
+    if d.get("_demo") is True:
+        return DECISION_DEMO
+    if not needs_backfill(d):
+        return DECISION_ALREADY
+    if is_voice_example(d):
+        return DECISION_VOICE_EXAMPLE
+    return DECISION_BACKFILL
 
 
 def init_firebase(allow_prod: bool):
@@ -116,17 +167,21 @@ def main() -> None:
     db = init_firebase(args.allow_prod and not args.dry_run)
     now = utc_now_iso()
 
-    total = already = demo = backfilled = 0
+    total = already = demo = voice = backfilled = 0
     samples: list[str] = []
 
     for doc in db.collection(COLLECTION).stream():
         total += 1
         d = doc.to_dict() or {}
-        if d.get("_demo") is True:
+        decision = row_decision(d)
+        if decision == DECISION_DEMO:
             demo += 1
             continue
-        if not needs_backfill(d):
+        if decision == DECISION_ALREADY:
             already += 1
+            continue
+        if decision == DECISION_VOICE_EXAMPLE:
+            voice += 1
             continue
         backfilled += 1
         if len(samples) < 12:
@@ -145,6 +200,7 @@ def main() -> None:
     print(f"  total docs scanned            : {total}")
     print(f"  already have a targetType     : {already}")
     print(f"  _demo (skipped)               : {demo}")
+    print(f"  voice examples (skipped)      : {voice}")
     print(f"  UNTARGETED (-> {LEGACY_UNTARGETED_TARGET:<9}) : {backfilled}")
     print("\n  sample mappings:")
     print("\n".join(samples) if samples else "    (none)")

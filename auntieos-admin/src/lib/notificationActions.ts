@@ -109,14 +109,23 @@ export function isRouteSafeId(raw: unknown): boolean {
  * the visit, so it never matches. Pure.
  */
 export function wholeBookingOf(entry: NotificationEntry): { kinfolkId: string; batchId: string } | null {
-  if (normalizedTargetType(entry.targetType) !== 'booking') return null;
+  if (!isWholeBookingTarget(entry)) return null;
   const batchId = str(rec(entry.data)['batchId']).trim();
-  if (batchId === '' || batchId !== str(entry.targetId).trim()) return null;
   const kinfolkId = notificationKinfolkId(entry);
   if (!isRouteSafeId(batchId) || !isRouteSafeId(kinfolkId)) return null;
   return { kinfolkId, batchId };
 }
 
+/**
+ * #2367: the notice targets a WHOLE booking, not one visit: a `booking` target
+ * whose id is the booking's own `data.batchId`. Such an id is never a visit
+ * id, so it never goes into the visit route. Pure.
+ */
+export function isWholeBookingTarget(entry: NotificationEntry): boolean {
+  if (normalizedTargetType(entry.targetType) !== 'booking') return false;
+  const batchId = str(rec(entry.data)['batchId']).trim();
+  return batchId !== '' && batchId === str(entry.targetId).trim();
+}
 /** #1003: the `section` search value that opens "Payments needing a decision". */
 export const UNAPPLIED_PAYMENTS_SECTION = 'unapplied-payments';
 
@@ -166,6 +175,12 @@ export function notificationOpenRoute(entry: NotificationEntry): NotificationRou
   // fresh request's notice opens (#2028), which finds its card or its visits.
   const whole = wholeBookingOf(entry);
   if (whole !== null) return notificationRequestRoute(whole.kinfolkId, whole.batchId);
+  // #2398: a whole booking that cannot say whose it is, or whose ids are not
+  // plain ids, has no place to open. Its id is a request id, so the visit
+  // table below would only build `vis_{batchId}` and end on "Booking
+  // unavailable". No Open, the same answer admin Android and the desktop
+  // console give.
+  if (isWholeBookingTarget(entry)) return null;
   return notificationTargetRoute(entry.targetType, entry.targetId);
 }
 
