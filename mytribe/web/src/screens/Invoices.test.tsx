@@ -79,6 +79,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditTarget: null,
   creditRedeemedAtMs: null,
   writtenOffCents: null,
+  // #2410: null on an invoice that can be paid.
+  payBlockedReason: null,
   // Issue #409: how this bill can be paid, resolved server-side off the
   // options it was issued with. The card needs nothing configured, so a
   // believable invoice always carries at least this one.

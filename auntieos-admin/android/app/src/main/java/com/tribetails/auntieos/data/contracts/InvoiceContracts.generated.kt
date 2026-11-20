@@ -115,6 +115,7 @@ data class InvoiceDto(
     /** Null when the payload omits the key. */
     val lineItems: List<InvoiceLineItemDto>? = null,
     val payMethods: List<InvoiceDtoPayMethod>,
+    val payBlockedReason: String?,
 )
 
 /**
@@ -152,6 +153,7 @@ internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
         writtenOffCents = (raw?.get("writtenOffCents") as? Number)?.toLong(),
         lineItems = (raw?.get("lineItems") as? List<*>)?.mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceLineItemDto(nested) } },
         payMethods = (raw?.get("payMethods") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayMethod(nested) } },
+        payBlockedReason = raw?.get("payBlockedReason") as? String,
     )
 
 // ---------- acceptQuote ----------

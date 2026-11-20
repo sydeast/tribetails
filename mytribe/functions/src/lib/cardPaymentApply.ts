@@ -59,8 +59,15 @@
  */
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { amountDueCentsOf } from './amountDueRule';
-import { heldReasonForCardFallback, type DuplicateCheckoutReason } from './invoiceCheckoutDedupe';
+import {
+  checkoutRoundOf,
+  duplicateCheckoutReason,
+  heldReasonForCardFallback,
+  invoiceCheckoutStateOf,
+  type DuplicateCheckoutReason,
+} from './invoiceCheckoutDedupe';
 import { invoiceStateOf } from './invoiceEditPolicy';
+import { PAID_INVOICE_REFUSAL } from './invoicePaidGate';
 import { invoiceTotalCentsOf, paidCentsFromPayments, settleInvoice, type PaymentAmount } from './invoiceMath';
 import { planApply, type ApplyStep } from './paymentApply';
 
@@ -283,6 +290,98 @@ export function cardHoldReason(input: {
     return 'invoice-no-balance';
   }
   return null;
+}
+
+/**
+ * #2410: WHY NO CHECKOUT IS OPENED FOR THIS INVOICE, or null when one may be.
+ * Pure. The card is not charged yet, so this is the one moment a payment the
+ * invoice cannot take can still be refused, and there are no refunds.
+ *
+ * IT IS THE WEBHOOK'S OWN ANSWER, ASKED EARLY. `payInvoice` charges the balance
+ * the invoice states (`amountDueCentsOf`), so this takes that figure and asks
+ * the three functions the webhook asks, in the webhook's order, what a card
+ * payment of it made right now would become: `duplicateCheckoutReason` for a
+ * session of the invoice's current round, `decideCardApply` for where the
+ * money would land, and `cardHoldReason` over both. A reason means the webhook
+ * would keep that payment off the invoice, so the household is not sent to
+ * Stripe at all. The two sides cannot disagree, because there is one rule and
+ * this only calls it.
+ *
+ * WHAT IT REFUSES THAT `payInvoice` USED TO OPEN:
+ *
+ *   a balance with no total   the invoice states a balance and nothing is owed
+ *                             on its total (`invoice-no-balance`);
+ *   rows cover the total      the same reason: the payment rows already cover
+ *                             the total while a balance is still stated;
+ *   a credit                  one that states a positive balance
+ *                             (`invoice-credit`);
+ *   a quote                   one the household has not answered, or has
+ *                             declined (`invoice-not-sent`, #2264). An accepted
+ *                             quote is an open invoice and pays as one.
+ *
+ * WHAT IT DOES NOT REFUSE: an invoice brought over part paid, whose stated
+ * balance is lower than its rows leave owing. The webhook applies that one
+ * (`STATED_BELOW_RECORDED`), so it stays payable here.
+ *
+ * `existingPayments` are the invoice's own `payments` rows. `payInvoice` reads
+ * them for every call; `getMyInvoices` reads them for each invoice it would
+ * otherwise offer Pay on, so the screens hide Pay by this same answer.
+ */
+export function cardCheckoutRefusal(input: {
+  invoiceId: string;
+  doc: InvoiceDoc;
+  existingPayments: readonly PaymentAmount[];
+  /** The household the checkout would be opened for. */
+  kinfolkId: string;
+}): DuplicateCheckoutReason {
+  const { doc, existingPayments } = input;
+  const chargeCents = amountDueCentsOf(doc, paidCentsFromPayments(existingPayments));
+  const duplicate = duplicateCheckoutReason({
+    invoice: invoiceCheckoutStateOf(doc),
+    // No payment exists yet, and the session would be minted in the round the
+    // invoice is in now, so neither the same-payment nor the stale-round
+    // branch can answer for it.
+    paymentIntentId: null,
+    eventRound: checkoutRoundOf(invoiceCheckoutStateOf(doc).round),
+  });
+  const landing = decideCardApply({
+    invoiceId: input.invoiceId,
+    doc,
+    existingPayments,
+    cardCents: chargeCents > 0 ? chargeCents : null,
+    kinfolkId: input.kinfolkId,
+  });
+  return cardHoldReason({ doc, existingPayments, kinfolkId: input.kinfolkId, duplicate, landing });
+}
+
+/** `HttpsError` `details.code` when `payInvoice` refuses on `cardCheckoutRefusal`. */
+export const INVOICE_CANNOT_TAKE_PAYMENT_CODE = 'invoice_cannot_take_payment';
+
+/** The sentence for an invoice that states a balance it cannot be paid on. Printed by both portals. */
+export const INVOICE_CANNOT_TAKE_PAYMENT = 'This invoice cannot take a payment right now. Please ask your Auntie to check it.';
+
+/**
+ * #2410: the sentence the HOUSEHOLD is given for a `cardCheckoutRefusal`
+ * reason, by `payInvoice` when it refuses and by `getMyInvoices` beside an
+ * invoice it offers no way to pay. Plain words: nothing here names a field, a
+ * code or what the office does with a payment.
+ */
+export function cardCheckoutRefusalSentence(reason: Exclude<DuplicateCheckoutReason, null>): string {
+  switch (reason) {
+    case 'invoice-not-sent':
+      return 'This quote has not been accepted, so there is nothing to pay yet.';
+    case 'invoice-credit':
+      return 'This is a credit, not a bill, so there is nothing to pay.';
+    case 'invoice-marked-paid':
+      return PAID_INVOICE_REFUSAL;
+    case 'invoice-cancelled':
+    case 'invoice-written-off':
+    case 'invoice-not-owed':
+    case 'settled-by-other-intent':
+      return 'There is nothing to pay on this invoice.';
+    default:
+      return INVOICE_CANNOT_TAKE_PAYMENT;
+  }
 }
 
 /**

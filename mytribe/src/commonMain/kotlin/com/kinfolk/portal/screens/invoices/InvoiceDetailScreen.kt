@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.components.KinButton
 import com.kinfolk.portal.components.KinGhostButton
@@ -292,6 +293,19 @@ fun InvoiceDetailScreen(
                 onPayMethod = onPayMethod,
                 modifier = Modifier.padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s),
             )
+        } else {
+            // #2410: an open bill the server says cannot take a payment. No
+            // pay option is drawn, and its sentence goes where they would be.
+            payBlockedReason(invoice)?.let { why ->
+                Text(
+                    why,
+                    style = type.sansMeta,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = KinfolkSpacing.l, vertical = KinfolkSpacing.s)
+                        .testTag("invoice-pay-blocked"),
+                )
+            }
         }
 
         // 16.2 LIVE: renders the invoice PDF server-side (getMyInvoicePdf) and

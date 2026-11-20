@@ -2292,6 +2292,9 @@ class PortalApi(
             // reads as "ask the home list instead". An EMPTY array is a real
             // answer — a settled bill offers nothing — and stays empty.
             payMethods = (o["payMethods"] as? JsonArray)?.let { decodePayMethods(it) },
+            // #2410: absent from an older server and null on a payable bill;
+            // both read as null. A blank sentence is no sentence.
+            payBlockedReason = (o["payBlockedReason"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() },
         )
     }
 

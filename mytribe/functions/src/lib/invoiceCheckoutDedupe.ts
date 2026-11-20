@@ -176,6 +176,27 @@ export interface InvoiceCheckoutState {
 }
 
 /**
+ * The fields `duplicateCheckoutReason` reads, off an invoice document as
+ * stored. One reader for the webhook and for the checkout's own check
+ * (`lib/cardPaymentApply.ts#cardCheckoutRefusal`, #2410), so the two cannot
+ * read different fields off the same invoice.
+ */
+export function invoiceCheckoutStateOf(doc: Record<string, unknown> | null | undefined): InvoiceCheckoutState {
+  return {
+    round: doc?.[CHECKOUT_ROUND_FIELD],
+    settledPaymentIntentId: doc?.[SETTLED_INTENT_FIELD],
+    amountDueCents: doc?.['amountDueCents'],
+    amountDue: doc?.['amountDue'],
+    status: doc?.['status'],
+    paymentStatus: doc?.['paymentStatus'],
+    // #2358: a cancelled invoice takes no payment; the charge is held.
+    invoiceStatus: doc?.['invoiceStatus'],
+    // #2363: a written-off invoice is held with its own reason.
+    writtenOffAt: doc?.['writtenOffAt'],
+  };
+}
+
+/**
  * Does this invoice owe anything right now?
  *
  * EXPLICIT EVIDENCE ONLY, and that is the whole design of this function. An

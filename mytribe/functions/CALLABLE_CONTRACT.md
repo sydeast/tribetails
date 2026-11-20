@@ -476,6 +476,27 @@ at warn (`portal.invoices.stampMissing`). Mirror:
 `mytribe/web/src/api/invoicesApi.ts` (updated field-for-field with the
 handler until ADR-0001 codegen replaces the hand-mirror).
 
+**No checkout for a payment the invoice could not take (#2410).** `payInvoice`
+asks `lib/cardPaymentApply.ts#cardCheckoutRefusal` before it touches Stripe:
+the webhook's own three decisions (`duplicateCheckoutReason`,
+`decideCardApply`, `cardHoldReason`) run on the balance it is about to charge.
+A reason means the webhook would keep that payment off the invoice, so the
+call is refused `failed-precondition` with `details.code`
+`invoice_cannot_take_payment` and a plain sentence, and no session is created,
+reused or stored. Refused this way: an invoice that states a balance while
+nothing is owed on its total (no total, or its payment rows already cover it),
+a credit that states a positive balance, and a quote the household has not
+accepted (#2264). The earlier refusals (written off, cancelled, paid, no
+balance) keep their order, sentences and codes. `payInvoice` now reads the
+`payments` subcollection on every call. `getMyInvoices` ships the same answer
+as `payBlockedReason: string | null` on each invoice: the sentence for an
+invoice that is stamped `open`, has a balance and is not paid but would be
+refused, with `payMethods: []` beside it; null on every other invoice. It reads
+the `payments` rows of those candidate invoices only, in parallel; a read that
+fails ships null and `payInvoice` still refuses. Both portals offer no way to
+pay and print the sentence when it is set, and read an absent key (an older
+server) as null.
+
 ### createInvoice
 - req `{ familyId: string, kinfolkName?: string, invoiceNumber: string, client?: string, address?: string, date?: string, terms?: string, dueDate?: string, discount?: string, total: number, amountDue: number, status?: string, sessionIds?: string[], lineItems?: Array<{ description: string /* 1..200 */, qty: number /* >0, <=999 */, unitCents: number /* int 0..10_000_000 */, discountCents?: number /* int >=0 */ }> /* max 100 */, invoiceDiscountCents?: number /* int >=0 */, idempotencyKey?: string /* #825, `inv_<millis>_<suffix>`; becomes the `invoices/{key}` document id, and a replay never reaches the number counter */ }`
 - res `{ ok: true, invoiceId: string }`
