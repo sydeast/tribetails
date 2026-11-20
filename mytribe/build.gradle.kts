@@ -109,10 +109,10 @@ kotlin {
         val firebaseMain by creating {
             dependsOn(commonMain.get())
             dependencies {
-                implementation("dev.gitlive:firebase-auth:2.7.0")
-                implementation("dev.gitlive:firebase-firestore:2.7.0")
-                implementation("dev.gitlive:firebase-functions:2.7.0")
-                implementation("dev.gitlive:firebase-messaging:2.7.0")
+                implementation("dev.gitlive:firebase-auth:2.8.0")
+                implementation("dev.gitlive:firebase-firestore:2.8.0")
+                implementation("dev.gitlive:firebase-functions:2.8.0")
+                implementation("dev.gitlive:firebase-messaging:2.8.0")
             }
         }
         // firebaseMain = gitlive client SDK source set, only for android + js.
@@ -241,7 +241,7 @@ kotlin {
             implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
             // Sentry — crash reporting. Init gated in KinfolkPortalApplication
             // on a non-blank DSN + non-robolectric fingerprint.
-            implementation("io.sentry:sentry-android:8.62.0")
+            implementation("io.sentry:sentry-android:8.63.0")
             // Mapbox Maps SDK, android only. It is what puts streets and
             // landmarks under the KinCare route instead of the bare polyline a
             // kinfolk sees today (issue #520). Same 11.10.0 as
