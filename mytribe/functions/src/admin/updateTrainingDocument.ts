@@ -8,7 +8,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { AttachmentSchema } from './createTrainingDocument';
+import { AttachmentSchema, TRAINING_DOCUMENT_KIND_NOTE } from './createTrainingDocument';
 import { assertTribalIntelTargetResolves } from '../lib/resolveTribalIntelTarget';
 
 /**
@@ -90,6 +90,9 @@ export async function updateTrainingDocumentHandler(
       title: args.title,
       content: args.content,
       notes: args.notes,
+      // Every save through here is a note about its target, and says so. See
+      // TRAINING_DOCUMENT_KIND_NOTE for why this is stamped on an edit too.
+      documentKind: TRAINING_DOCUMENT_KIND_NOTE,
       communicationType: args.communicationType,
       targetType: args.targetType,
       targetKinfolkId: args.targetKinfolkId,

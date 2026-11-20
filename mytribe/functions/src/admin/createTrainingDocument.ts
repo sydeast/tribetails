@@ -59,6 +59,29 @@ import { assertTribalIntelTargetResolves } from '../lib/resolveTribalIntelTarget
  * NOTE on attachments: the reconcile LLM cannot read image bytes; attachments are
  * cited as provenance (URLs) only and never claimed to have been analyzed.
  */
+
+/**
+ * ── WHAT KIND OF ROW A SAVE WRITES ────────────────────────────────────────
+ * `training_documents` holds two kinds of row. A Tribal Intel note is about one
+ * household, one Kinfolk or one Kin. A voice example is a piece of writing kept
+ * for its style, belongs to no household, and is the only kind the copy
+ * generator sends to the model as an example
+ * (`auntieos-admin/web/functions/generate.js#isVoiceExample`, which reads
+ * `documentKind: 'voice_example'`).
+ *
+ * Both write callables require a target, so everything they save is a note,
+ * and each save says so in `documentKind`. The value is stamped here and is
+ * not an argument: zod drops a `documentKind` a caller sends, so no request
+ * can file a note as a voice example. `communicationType` stays what it is on
+ * a note, the free-text label the Tribal Intel list groups by. It decides
+ * nothing about where a note is read.
+ *
+ * The update callable stamps the same value on purpose. It merges, so without
+ * the stamp a row that arrived marked as a voice example and was then given a
+ * target in the editor would keep the old mark.
+ */
+export const TRAINING_DOCUMENT_KIND_NOTE = 'note';
+
 export const AttachmentSchema = z.object({
   storageUrl: z.string().url(),
   cloudinaryPublicId: z.string().min(1).max(300),
@@ -119,6 +142,7 @@ export async function createTrainingDocumentHandler(
     title: args.title,
     content: args.content,
     notes: args.notes,
+    documentKind: TRAINING_DOCUMENT_KIND_NOTE,
     communicationType: args.communicationType,
     targetType: args.targetType,
     targetKinfolkId: args.targetKinfolkId,

@@ -354,6 +354,14 @@ A save leaves the doc at `reconcileStatus: 'pending'`. The nightly reconcile pas
 is what folds it into the household Dossier and the pet Kin411, so client copy
 must say "next reconcile pass", never "instantly".
 
+Create and update both stamp `documentKind: 'note'` on the stored doc. It is not
+a request field, and one a caller sends is dropped. The copy generator
+(`auntieos-admin/web/functions/generate.js`) sends a `training_documents` row to
+the model as a voice example only when the row carries
+`documentKind: 'voice_example'` and names no household, so nothing these
+callables write is ever one. `communicationType` is the label the list groups
+by and decides nothing about where a note is read.
+
 ### createTrainingDocument
 - req `{ title: string /* <=200 */, content: string /* <=20000 */, notes: string /* <=4000 */, communicationType: string /* <=120, clients send 'note' */, targetType: 'KINFOLK'|'KIN', targetKinfolkId: string /* 1..120 */, targetKinId?: string /* <=120, required when targetType is KIN */, attachments: Array<{ storageUrl: string /* url */, cloudinaryPublicId: string /* 1..300 */, fileType: string /* <=20 */, mimeType: string /* <=120 */, fileName: string /* <=300 */ }> /* <=25 */ }`
 - res `{ ok: true, docId: string }`
