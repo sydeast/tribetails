@@ -182,3 +182,98 @@ describe('#2281 review: a list-only copy the admin then asks to have sent', () =
     expect(ctx.writes).toHaveLength(writes);
   });
 });
+
+/**
+ * #2332: A LISTED COPY HELD BACK WHEN THE ADMIN ASKS FOR IT WRITES THE LINE
+ * EVERY OTHER HELD HOUSEHOLD COPY WRITES (#2330), with who it was for and why.
+ * A person pressed it, so it is one line each; a second press the same
+ * business day writes nothing more.
+ */
+describe('#2332 a listed copy held back writes a "not sent" line', () => {
+  const notSent = (writes: Write[]) =>
+    writes
+      .filter((w) => w.path.startsWith('activity_log/') && w.data.actionType === 'NOTIFICATION_NOT_SENT')
+      .map((w) => w.data);
+  const KIN = { 'clients/kinUid': { displayName: 'Dre East' } };
+
+  it('notices to households off: "Held back ... for Dre East", once however often it is pressed', async () => {
+    const ctx = setup(KIN);
+    await listOnly();
+    ctx.docs[HOUSEHOLD_GATE_SETTINGS_PATH] = { householdNotificationsLive: false };
+    expect((await deliver()).outcome).toBe('gated');
+    vi.setSystemTime(BASE_MS + 60 * 60 * 1000);
+    expect((await deliver()).outcome).toBe('gated');
+    const lines = notSent(ctx.writes);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      status: 'NOT_SENT',
+      severity: 'info',
+      familyId: 'fam1',
+      description: expect.stringMatching(/^Held back "[^"]+" for Dre East: notices to households are turned off$/),
+      payload: { key: KEY, outcome: 'held', recipientUid: 'kinUid' },
+    });
+  });
+
+  it('the switch could not be read: says so, at warn, and not that it is off', async () => {
+    const ctx = setup(KIN);
+    await listOnly();
+    ctx.db.doc(HOUSEHOLD_GATE_SETTINGS_PATH).get = vi.fn().mockRejectedValue(new Error('UNAVAILABLE'));
+    expect((await deliver()).outcome).toBe('gated');
+    const lines = notSent(ctx.writes);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      severity: 'warn',
+      description: expect.stringMatching(/could not be read$/),
+      payload: { outcome: 'held', reason: 'setting_unreadable' },
+    });
+  });
+
+  it('the notification turned off in Settings: "Did not send ... to Dre East"', async () => {
+    const ctx = setup(KIN);
+    await listOnly();
+    ctx.docs['businessSettings/notifications'] = { byKey: { [KEY]: { enabled: false } } };
+    expect((await deliver()).outcome).toBe('off');
+    const lines = notSent(ctx.writes);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      status: 'NOT_SENT',
+      description: expect.stringMatching(/^Did not send "[^"]+" to Dre East: this notification is turned off in Settings$/),
+      payload: { key: KEY, outcome: 'turned_off', recipientUid: 'kinUid' },
+    });
+  });
+
+  it('every channel off by the household: names the channels they turned off', async () => {
+    const ctx = setup({
+      'clients/kinUid': {
+        displayName: 'Dre East',
+        notificationPrefs: { byKey: { [KEY]: { email: false, sms: false, push: false } } },
+      },
+    });
+    await listOnly();
+    const before = notSent(ctx.writes).length;
+    expect((await deliver()).outcome).toBe('no-channels');
+    const lines = notSent(ctx.writes).slice(before);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      description: expect.stringMatching(/^Did not send "[^"]+" to Dre East by email.*: they turned that off in their notification settings$/),
+      payload: { key: KEY, outcome: 'channels_off', channels: expect.arrayContaining(['email']) },
+    });
+  });
+
+  it('a copy that goes out writes no "not sent" line', async () => {
+    const ctx = setup(KIN);
+    await listOnly();
+    expect((await deliver()).outcome).toBe('sent');
+    expect(notSent(ctx.writes)).toEqual([]);
+  });
+
+  it('a line that cannot be written does not change the answer', async () => {
+    const ctx = setup(KIN);
+    await listOnly();
+    ctx.docs[HOUSEHOLD_GATE_SETTINGS_PATH] = { householdNotificationsLive: false };
+    const realRun = ctx.db.runTransaction.bind(ctx.db);
+    ctx.db.runTransaction = vi.fn().mockRejectedValue(new Error('ABORTED'));
+    expect(await deliver()).toEqual({ outcome: 'gated', channels: [] });
+    ctx.db.runTransaction = realRun;
+  });
+});

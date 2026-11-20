@@ -3,6 +3,7 @@ import {
   draftBody,
   draftIdFromListRowId,
   isPublishedDraft,
+  isHeldPushDraft,
   draftCreatedAt,
   draftHousehold,
   draftKinfolkId,
@@ -379,3 +380,24 @@ describe('kinTaleListRows with the legacy rows', () => {
     expect(kinTaleListRows([report()], [], { startIso: null }).map((r) => r._id)).toEqual(['r1']);
   });
 });
+describe('isHeldPushDraft (#2293)', () => {
+  const held = { communicationType: 'push', status: 'approved', pushOutcome: 'held', pushReason: 'household_notices_off' };
+  it('an approved push the server held is listed under Drafts again', () => {
+    expect(isHeldPushDraft(draft(held))).toBe(true);
+    expect(kinTaleState(rowFromDraft(draft(held)).status ?? '')).toBe('draft');
+  });
+  it('reads the snake_case type generate.js writes', () => {
+    expect(isHeldPushDraft(draft({ ...held, communicationType: undefined, communication_type: 'push' }))).toBe(true);
+  });
+  it('a push that went out, or reached their list, is not held', () => {
+    expect(isHeldPushDraft(draft({ ...held, pushOutcome: 'sent' }))).toBe(false);
+    expect(isHeldPushDraft(draft({ ...held, pushOutcome: 'listed' }))).toBe(false);
+    expect(kinTaleState(rowFromDraft(draft({ ...held, pushOutcome: 'sent' })).status ?? '')).toBe('unknown');
+  });
+  it('an approved push with no answer on it, and a held stamp on another type, are not held', () => {
+    expect(isHeldPushDraft(draft({ ...held, pushOutcome: undefined }))).toBe(false);
+    expect(isHeldPushDraft(draft({ ...held, communicationType: 'sms' }))).toBe(false);
+    expect(isHeldPushDraft(draft({ ...held, status: 'generated' }))).toBe(false);
+  });
+});
+

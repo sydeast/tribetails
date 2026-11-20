@@ -141,6 +141,19 @@ export function draftStatusAsKinTaleStatus(status: string): string {
 export function isPublishedDraft(draft: GeneratedDraftRow): boolean {
   return str(draft.publishedReportId).trim() !== '';
 }
+/**
+ * #2293: an approved Push draft the server held back (household notices off,
+ * or message notices turned off). Nothing reached the household, so it is
+ * listed under Drafts again and opens with its Try again. Its own predicate:
+ * the pending counts on Home do not change.
+ */
+export function isHeldPushDraft(draft: GeneratedDraftRow): boolean {
+  return (
+    either(draft.communicationType, draft.communication_type).toLowerCase() === 'push' &&
+    str(draft.status).trim().toLowerCase() === 'approved' &&
+    str(draft.pushOutcome).trim() === 'held'
+  );
+}
 /** The prefix `rowFromDraft` puts on a draft row's `_id`. */
 export const DRAFT_ROW_PREFIX = 'generated_drafts/';
 /**
@@ -189,7 +202,7 @@ export function rowFromDraft(draft: GeneratedDraftRow): KinTaleListRow {
     kinfolkName: draftHousehold(draft),
     title: draftTitle(draft),
     bodyCopy: draftBody(draft),
-    status: draftStatusAsKinTaleStatus(str(draft.status)),
+    status: isHeldPushDraft(draft) ? 'DRAFT' : draftStatusAsKinTaleStatus(str(draft.status)),
     createdAt: draftCreatedAt(draft),
     ...(type !== '' ? { draftType: type } : {}),
   };

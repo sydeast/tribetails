@@ -772,3 +772,50 @@ describe('rules: #1580 admin-only visit notes are the owner\'s alone', () => {
     await assertFails(asAuntie(env).firestore().doc(`${VISIT}/adminNotes/n3`).set({ body: 'x' }));
   });
 });
+describe('rules: #2295 a Push draft is the owner\'s', () => {
+  afterEach(async () => cleanup());
+  afterAll(async () => shutdown());
+  const PUSH = 'generated_drafts/push-1';
+  const TALE = 'generated_drafts/tale-1';
+  const push = { kinfolk_id: 'f1', communication_type: 'push', generated_copy: 'Hello', status: 'generated' };
+  const tale = { kinfolk_id: 'f1', communication_type: 'visit_report', generated_copy: 'A visit', status: 'generated' };
+  it('the owner creates, approves and deletes a Push draft', async () => {
+    const env = await getEnv();
+    const db = asOwner(env).firestore();
+    await assertSucceeds(db.doc(PUSH).set(push));
+    await assertSucceeds(db.doc(PUSH).update({ status: 'approved', generatedCopy: 'Hello' }));
+    await assertSucceeds(db.doc(PUSH).delete());
+  });
+  it('an Auntie still approves a KinTale draft', async () => {
+    const env = await getEnv();
+    await seed(TALE, tale);
+    await assertSucceeds(asAuntie(env).firestore().doc(TALE).update({ status: 'approved', generatedCopy: 'A visit' }));
+  });
+  it('an Auntie is refused writing a Push draft, in either spelling and any case', async () => {
+    const env = await getEnv();
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc(PUSH).set({ ...push, status: 'approved' }));
+    await assertFails(db.doc(PUSH).set({ kinfolkId: 'f1', communicationType: ' Push ', status: 'approved' }));
+    await assertFails(db.doc(PUSH).set({ kinfolk_id: 'f1', communication_type: 7, status: 'approved' }));
+  });
+  it('an Auntie is refused approving, editing or deleting a stored Push draft', async () => {
+    const env = await getEnv();
+    await seed(PUSH, push);
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc(PUSH).update({ status: 'approved' }));
+    await assertFails(db.doc(PUSH).update({ kinfolk_id: 'f2', generatedCopy: 'Other words' }));
+    await assertFails(db.doc(PUSH).update({ communication_type: 'email' }));
+    await assertFails(db.doc(PUSH).delete());
+  });
+  it('an Auntie is refused turning a KinTale draft into a Push draft', async () => {
+    const env = await getEnv();
+    await seed(TALE, tale);
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc(TALE).update({ communication_type: 'push', status: 'approved' }));
+    await assertFails(db.doc(TALE).update({ communicationType: 'PUSH', status: 'approved' }));
+  });
+  it('a double-claimed account degrades to the Auntie and is refused', async () => {
+    const env = await getEnv();
+    await assertFails(asDoubleClaimed(env).firestore().doc(PUSH).set({ ...push, status: 'approved' }));
+  });
+});

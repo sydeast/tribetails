@@ -52,8 +52,19 @@ import { loadBusinessOverride, loadUserPrefs, notificationDisabledFor, resolveCh
  * never puts a second notice on their list. The notice records whether the
  * push went out (`pushOutcome`): a retry after a push that went out sends
  * nothing and says so; a retry after one that did not (push off, no device, a
- * refused send) tries the push again. A held send writes nothing, so trying
- * again after the operator switches household notices on goes through.
+ * refused send) tries the push again. A held send writes nothing for the
+ * household, so trying again after the operator switches household notices on
+ * goes through.
+ *
+ * ── THE DRAFT IS CHECKED FIRST (#2295) ───────────────────────────────────────
+ * Before anything else the `generated_drafts` doc is read and the send is
+ * refused unless it is an approved Push draft written for this same household.
+ * Every client approves (status `approved`) before it calls this.
+ *
+ * ── THE DRAFT REMEMBERS THE ANSWER (#2293) ───────────────────────────────────
+ * Every attempt stamps `pushOutcome`, `pushReason` and `pushAttemptedAt` on the
+ * draft, held sends included. That is how a held push is listed again under
+ * Drafts and opens with its Try again after the screen was closed.
  *
  * Owner-only (not on the Auntie list): Communicate sends are the owner's.
  *
@@ -151,6 +162,86 @@ export async function sendHouseholdPushHandler(req: CallableRequest<unknown>): P
   const body = sanitizePlainText(args.body);
   if (body === '') throw new HttpsError('invalid-argument', 'The push has no words in it.');
 
+  // #2295: the draft is checked before anything is read or written for the
+  // household, so a draft written for one household never sends to another.
+  const draftRef = await approvedPushDraftFor(args.kinfolkId, args.draftId);
+  const result = await deliverHouseholdPush(uid, args, body);
+  await stampDraft(draftRef, result, uid);
+  return result;
+}
+
+/** Both spellings of a draft field, trimmed (`generate.js` writes snake_case, older writers camelCase). */
+function draftField(d: Record<string, unknown>, snake: string, camel: string): { snake: string; camel: string } {
+  const s = typeof d[snake] === 'string' ? (d[snake] as string).trim() : '';
+  const c = typeof d[camel] === 'string' ? (d[camel] as string).trim() : '';
+  return { snake: s, camel: c };
+}
+
+/**
+ * #2295: the `generated_drafts` doc behind this send, refused unless it is an
+ * approved Push draft written for this same household. Fails closed: a missing
+ * draft, a draft with no household, or one whose two household spellings
+ * disagree is refused like a draft for another household.
+ */
+export async function approvedPushDraftFor(
+  kinfolkId: string,
+  draftId: string,
+): Promise<FirebaseFirestore.DocumentReference> {
+  const ref = db().collection('generated_drafts').doc(draftId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError('not-found', 'This draft is no longer here. It may have been deleted.');
+  const d = (snap.data() ?? {}) as Record<string, unknown>;
+
+  const household = draftField(d, 'kinfolk_id', 'kinfolkId');
+  const owners = new Set([household.snake, household.camel].filter((v) => v !== ''));
+  if (owners.size !== 1 || !owners.has(kinfolkId)) {
+    throw new HttpsError('permission-denied', 'This draft was written for a different household.');
+  }
+  const type = draftField(d, 'communication_type', 'communicationType');
+  if ((type.snake || type.camel).toLowerCase() !== 'push') {
+    throw new HttpsError('failed-precondition', 'This draft is not a push.');
+  }
+  if (String(d['status'] ?? '').trim().toLowerCase() !== 'approved') {
+    throw new HttpsError('failed-precondition', 'Approve this draft before sending it.');
+  }
+  return ref;
+}
+
+/**
+ * #2293: what the last attempt answered, on the draft itself. Never a null
+ * field: the console and phone models decode these as strings.
+ */
+async function stampDraft(
+  ref: FirebaseFirestore.DocumentReference,
+  result: SendHouseholdPushResult,
+  uid: string,
+): Promise<void> {
+  try {
+    await ref.set(
+      {
+        pushOutcome: result.outcome === 'already_sent' ? 'sent' : result.outcome,
+        pushReason: result.reason ?? '',
+        pushAttemptedAt: new Date().toISOString(),
+      },
+      { merge: true },
+    );
+  } catch (err) {
+    // The stamp only steers the lists; the answer is already true.
+    logEvent({
+      severity: 'warn',
+      function: 'sendHouseholdPush',
+      event: 'household.push.draft_stamp.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
+  }
+}
+
+async function deliverHouseholdPush(
+  uid: string,
+  args: z.infer<typeof Args>,
+  body: string,
+): Promise<SendHouseholdPushResult> {
   const log = (event: string, extra: Record<string, unknown>) =>
     logEvent({ severity: 'info', function: 'sendHouseholdPush', event, uid, extra: { kinfolkId: args.kinfolkId, ...extra } });
 
