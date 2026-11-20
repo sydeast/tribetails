@@ -138,16 +138,22 @@ function householdLineOf(key: string, data: Data): string {
   return key === 'broadcast.message' ? str(data['description']).trim() : '';
 }
 /**
- * #2368: the whole message the push sender kept on the entry when it cut the
- * push line (`householdMessage`, senders/pushChannel.ts). Undefined for every
- * other entry, older ones included, and when it says no more than `line`.
+ * #2368, #2371: the whole message a sender kept on the entry when it cut the
+ * short line: the push's (`householdMessage`) and the text message's
+ * (`householdTextMessage`), both written by `keepWholeMessage` in
+ * senders/pushChannel.ts. The two are rendered
+ * from their own templates and written at the same time, so when both were
+ * cut the longer one is shown, which is the same answer whichever finished
+ * first. Undefined for every other entry, older ones included, and when it
+ * says no more than `line`.
  */
 function fullMessageOf(data: Data, line: string): string | undefined {
-  const raw = data['householdMessage'];
-  if (typeof raw !== 'string') return undefined;
-  const message = raw.trim();
   const flat = (t: string) => t.replace(/\s+/g, ' ').trim();
-  return message === '' || flat(message) === flat(line) ? undefined : message;
+  const kept = [data['householdMessage'], data['householdTextMessage']]
+    .map((raw) => (typeof raw === 'string' ? raw.trim() : ''))
+    .filter((m) => m !== '' && flat(m) !== flat(line));
+  if (kept.length === 0) return undefined;
+  return kept.reduce((a, b) => (b.length > a.length ? b : a));
 }
 /**
  * One row as the household reads it (#1831, #1898, #1913).

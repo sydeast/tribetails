@@ -5,6 +5,7 @@ import com.tribetails.auntieos.data.model.PAYMENT_METHOD_CATALOGUE
 import com.tribetails.auntieos.data.model.PaymentDraft
 import com.tribetails.auntieos.data.model.PaymentHandleField
 import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.util.isValidEmail
 import com.tribetails.auntieos.util.isValidPhone
 import java.time.Clock
@@ -171,7 +172,7 @@ fun kinCareRowProblems(rows: List<KinCareTypeRow>): Map<Int, KinCareRowProblems>
         if (abandonedAdd) return@forEachIndexed
         val nameProblem = when {
             name.isEmpty() -> KINCARE_NAME_REQUIRED
-            name.length > 80 -> "Keep the name \"${name.take(20)}...\" under 80 characters."
+            name.length > 80 -> "Keep the name \"${cutWhole(name, 20)}...\" under 80 characters."
             !seen.add(name.lowercase()) -> "Two KinCare types are both called \"$name\"."
             else -> null
         }

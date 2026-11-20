@@ -2,6 +2,7 @@ import { threadHouseholdName, threadPreviewText } from './inboxFormat';
 import { sessionState, sessionDayKey, sessionHousehold, shiftDayIso } from './sessionFormat';
 import { formatCentsUsd, isoDatePrefixOrNull } from './invoiceFormat';
 import { str, arr } from './coerce';
+import { cutWhole } from './cutText';
 import { businessInstantMs } from './businessZoneTime';
 import { DEFAULT_BUSINESS_TIME_ZONE } from './businessOperations';
 import { isKinInCare } from '../api/directory';
@@ -862,7 +863,7 @@ export function pendingTaleRows(
       return {
         id: d._id,
         title: type === '' ? 'Visit report' : type,
-        blurb: firstLine === '' ? 'No copy yet' : firstLine.slice(0, 120),
+        blurb: firstLine === '' ? 'No copy yet' : cutWhole(firstLine, 120),
         meta,
       };
     });

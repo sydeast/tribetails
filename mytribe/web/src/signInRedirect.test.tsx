@@ -66,6 +66,7 @@ vi.mock('./screens/KinTales', () => ({ KinTalesRoute: () => <div>THE KINTALES</d
 vi.mock('./screens/InvoiceDetail', () => ({ InvoiceDetail: () => <div>THE INVOICE</div> }));
 vi.mock('./screens/KinDetail', () => ({ KinDetail: () => <div>THE KIN</div> }));
 vi.mock('./screens/Messages', () => ({ Messages: () => <div>THE MESSAGES</div> }));
+vi.mock('./screens/NotificationsList', () => ({ NotificationsList: () => <div>THE NOTIFICATIONS</div> }));
 
 /** jsdom reports a live connection by default; these two say otherwise. */
 function setOnline(online: boolean): void {
@@ -193,6 +194,8 @@ describe('#1384 portal sign-in keeps the deep link', () => {
     ['an invoice', '/invoices/inv1', 'THE INVOICE'],
     ['a Kin', '/kin/k1', 'THE KIN'],
     ['Messages', '/messages', 'THE MESSAGES'],
+    // #2371: a cut text message links to its own notice entry.
+    ['a notice entry', '/notifications?entry=n1', 'THE NOTIFICATIONS'],
   ])('#2259: a push about %s tapped while signed out opens it after sign-in', async (_label, route, landed) => {
     window.history.replaceState(null, '', route);
     await boot();

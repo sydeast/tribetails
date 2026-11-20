@@ -452,6 +452,19 @@ describe('toNotificationListItem, the whole message of a cut push', () => {
     expect(toNotificationListItem('n1', declined({ householdMessage: 42 }))).not.toHaveProperty('fullMessage');
     expect(toNotificationListItem('n1', declined({ householdMessage: { text: whole } }))).not.toHaveProperty('fullMessage');
   });
+  it('#2371: a cut text message kept on the entry is its whole message too', () => {
+    const item = toNotificationListItem('n1', declined({ householdTextMessage: whole }));
+    expect(item.fullMessage).toBe(whole);
+  });
+  it('#2371: with both kept, the longer one shows, whichever sender wrote first', () => {
+    const shorter = 'Your request for Rex was declined. We are away that week.';
+    expect(toNotificationListItem('n1', declined({ householdMessage: shorter, householdTextMessage: whole })).fullMessage).toBe(whole);
+    expect(toNotificationListItem('n1', declined({ householdMessage: whole, householdTextMessage: shorter })).fullMessage).toBe(whole);
+    // One that only repeats the facts line never wins over a real message.
+    expect(
+      toNotificationListItem('n1', declined({ householdMessage: 'Drop-in visit for Rex', householdTextMessage: shorter })).fullMessage,
+    ).toBe(shorter);
+  });
   it('a message that reads the same as the facts line is not repeated under it', () => {
     const item = toNotificationListItem('n1', declined({ householdMessage: 'Drop-in visit\n for   Rex ' }));
     expect(item).not.toHaveProperty('fullMessage');
