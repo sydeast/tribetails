@@ -725,3 +725,68 @@ describe('a Push draft (#2061)', () => {
     expect(sendHouseholdPush).not.toHaveBeenCalled();
   });
 });
+/**
+ * #2293: a held Push draft could be tried again only while the screen stayed
+ * open. The server now stamps the answer on the draft, so opening it again
+ * from KinTales > Drafts lands on the same "Not sent" with its Try again.
+ */
+describe('reopening a held Push draft (#2293)', () => {
+  const HELD = {
+    _id: 'gd1',
+    status: 'approved',
+    communication_type: 'push',
+    kinfolk_id: 'kf1',
+    kinfolk_name: 'Dana Halbrook',
+    generated_copy: 'Nova says hi.',
+    // The approve write keeps the edited copy in the camelCase field.
+    generatedCopy: 'Nova says hi from the park.',
+    pushOutcome: 'held',
+    pushReason: 'household_notices_off',
+  };
+  function stored(row: Record<string, unknown>) {
+    useDocById.mockImplementation((path: string, id: string | null) =>
+      path === 'generated_drafts' && id === 'gd1' ? { status: 'ready', data: row } : { status: 'ready', data: null },
+    );
+  }
+  it('opens as not sent, with Try again sending the approved words, and no second approve', async () => {
+    const user = setup();
+    sendHouseholdPush.mockReset().mockResolvedValue({ outcome: 'sent', reason: null });
+    stored(HELD);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    expect(await screen.findByText('Not sent')).toBeInTheDocument();
+    expect(screen.getByText(/Notices to households are switched off/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve and send' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(sendHouseholdPush).toHaveBeenCalledTimes(1));
+    expect(sendHouseholdPush).toHaveBeenCalledWith({ kinfolkId: 'kf1', draftId: 'gd1', body: 'Nova says hi from the park.' });
+    expect(approveGeneratedDraft).not.toHaveBeenCalled();
+    expect(await screen.findByText("Sent to Dana Halbrook's phone. It is on their notifications list too.")).toBeInTheDocument();
+  });
+  it('a held push that is still held says so again and keeps Try again', async () => {
+    const user = setup();
+    sendHouseholdPush.mockReset().mockResolvedValue({ outcome: 'held', reason: 'notice_turned_off' });
+    stored(HELD);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await user.click(await screen.findByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText(/Message notices to households are turned off/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+  });
+  it('reports a failed retry call and never claims a send', async () => {
+    const user = setup();
+    sendHouseholdPush.mockReset().mockRejectedValue(new Error('This draft was written for a different household.'));
+    stored(HELD);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await user.click(await screen.findByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('This draft was written for a different household.')).toBeInTheDocument();
+    expect(screen.queryByText(/Sent to Dana Halbrook's phone/)).toBeNull();
+  });
+  it('a Push draft that went out opens as an ordinary approved draft, with no Try again', async () => {
+    setup();
+    stored({ ...HELD, pushOutcome: 'sent', pushReason: '' });
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await screen.findByLabelText(/edit before approving/i);
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.queryByText('Not sent')).toBeNull();
+  });
+});
+

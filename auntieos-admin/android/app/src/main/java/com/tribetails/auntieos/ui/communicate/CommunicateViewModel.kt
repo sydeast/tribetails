@@ -598,6 +598,13 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                 val type = commTypeOfDraft(draft.communicationType)
                 val kinfolkId = draft.kinfolkId.orEmpty()
                 val household = _uiState.value.kinfolkList.find { it.id == kinfolkId }
+                // #2293: a held Push draft opens where it was left: approved,
+                // with the held notice and its Try again.
+                val heldNotice = if (draft.isHeldPush) {
+                    val name = household?.displayName?.ifBlank { null }
+                        ?: draft.kinfolkName?.ifBlank { null } ?: "the household"
+                    householdPushNotice(HouseholdPushResult("held", draft.pushReason.ifBlank { null }), name)
+                } else null
                 _uiState.value = _uiState.value.copy(
                     draftLoading         = false,
                     commType             = type,
@@ -608,8 +615,8 @@ class CommunicateViewModel(private val repo: AuntieRepository) : ViewModel() {
                     generatedKinfolkName = draft.kinfolkName.orEmpty(),
                     generatedCommType    = type,
                     generatedModel       = draft.model,
-                    savedDraftId         = null,
-                    pushNotice           = null,
+                    savedDraftId         = if (heldNotice != null) draft.id else null,
+                    pushNotice           = heldNotice,
                     publishedReportId    = draft.publishedReportId.ifBlank { null },
                     publishedBefore      = draft.isPublished,
                     pendingKinfolkId     = if (household == null && kinfolkId.isNotBlank()) kinfolkId else null,

@@ -5,7 +5,7 @@ import { str } from '../lib/coerce';
 import { kinfolkDisplayName, type Kinfolk } from '../api/directory';
 import { type GeneratedDraftRow } from '../api/drafts';
 import { publishGeneratedDraft, deleteGeneratedDraft } from '../api/kinTaleDraftActions';
-import { draftBody, draftKinfolkId, draftHousehold, draftTitle, isPublishedDraft } from '../lib/kinTaleList';
+import { draftBody, draftKinfolkId, draftHousehold, draftTitle, isHeldPushDraft, isPublishedDraft } from '../lib/kinTaleList';
 import { GENERATE_COMMUNICATION_TYPES, type GenerateCommunicationType } from '../api/communicateGenerate';
 import {
   PERSONALIZE_MESSAGE_TYPES,
@@ -180,8 +180,15 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
       warnings: [],
     });
     setDraftText(body);
-    setApproved(null);
-    setPushResult(null);
+    // #2293: a held Push draft opens where it was left, approved with its Try
+    // again, so it can be sent after the screen was closed.
+    if (isHeldPushDraft(row)) {
+      setApproved({ ok: true, auditWarning: null, providerId: null, delivered: true });
+      setPushResult({ outcome: 'held', reason: (str(row.pushReason).trim() || null) as HouseholdPushResult['reason'] });
+    } else {
+      setApproved(null);
+      setPushResult(null);
+    }
     setApproveError(null);
     setFormError(null);
     setDeleted(false);

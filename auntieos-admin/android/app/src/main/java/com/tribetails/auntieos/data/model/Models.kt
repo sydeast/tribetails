@@ -1429,9 +1429,23 @@ data class Draft(
     // with status "published": the household has that report now.
     var generatedTitle: String = "",
     var publishedReportId: String = "",
+    // #2293: what the last `sendHouseholdPush` attempt answered for a Push
+    // draft (sent, listed or held) and why. Stamped by the server, never null.
+    var pushOutcome: String = "",
+    var pushReason: String = "",
 ) {
     /** #1563: already sent to the household as a KinTale; the report is its record now. */
     val isPublished: Boolean get() = publishedReportId.isNotBlank()
+    /**
+     * #2293: an approved Push draft the server held back. Nothing reached the
+     * household, so the KinTales list files it under Drafts again and
+     * Communicate opens it with its Try again. Not part of [isUnsent], so
+     * Home's pending count is unchanged.
+     */
+    val isHeldPush: Boolean get() =
+        communicationType.trim().lowercase() == "push" &&
+            status.trim().lowercase() == "approved" &&
+            pushOutcome.trim() == "held"
 
     /**
      * #1563: waiting on a decision. Not sent, and in a status that means nobody
@@ -1475,6 +1489,8 @@ fun draftFromFields(id: String, data: Map<String, Any?>): Draft {
         approvedBy = str("approvedBy"),
         generatedTitle = either("generatedTitle", "generated_title"),
         publishedReportId = str("publishedReportId"),
+        pushOutcome = str("pushOutcome"),
+        pushReason = str("pushReason"),
     )
 }
 

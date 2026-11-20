@@ -121,6 +121,21 @@ class FirestoreClient {
                 ?: WriteResult.Err("publishGeneratedDraft returned no reportId")
         }
     }
+    /**
+     * #2061/#2293: send an approved Push draft to its household through the
+     * `sendHouseholdPush` callable. The server checks the draft belongs to the
+     * household, applies the send gate and the household's settings, and says
+     * what happened. Returns the callable's raw answer; decode it with
+     * `decodeHouseholdPushResult`.
+     */
+    suspend fun sendHouseholdPush(kinfolkId: String, draftId: String, body: String): WriteResult<String> {
+        val payload = buildJsonObject {
+            put("kinfolkId", JsonPrimitive(kinfolkId.trim()))
+            put("draftId", JsonPrimitive(draftId.trim()))
+            put("body", JsonPrimitive(body.trim()))
+        }
+        return platformInvokeCallable("sendHouseholdPush", callableJson.encodeToString(JsonObject.serializer(), payload))
+    }
     /** #1563: delete an unsent generated draft. The server refuses one already sent. */
     suspend fun deleteGeneratedDraft(draftId: String): WriteResult<Unit> {
         val payload = buildJsonObject { put("draftId", JsonPrimitive(draftId.trim())) }
@@ -4121,7 +4136,21 @@ data class GeneratedDraft(
     val generated_title: String = "",
     /** #1563: the kin_care_reports id this draft was sent as; set by `publishGeneratedDraft`. */
     val publishedReportId: String = "",
+    /**
+     * #2293: what the last `sendHouseholdPush` attempt answered for a Push
+     * draft (sent, listed or held) and why. Stamped by the server, never null.
+     */
+    val pushOutcome: String = "",
+    val pushReason: String = "",
 ) {
+    /**
+     * #2293: an approved Push draft the server held back. Nothing reached the
+     * household, so KinTales lists it under Drafts again and Communicate opens
+     * it with its Try again. Not part of [isUnsent]: Home's count is unchanged.
+     */
+    val isHeldPush: Boolean get() =
+        type().lowercase() == "push" && status.trim().lowercase() == "approved" && pushOutcome.trim() == "held"
+
     fun householdId(): String = kinfolkId.trim().ifBlank { kinfolk_id.trim() }
     fun household(): String = kinfolkName.trim().ifBlank { kinfolk_name.trim() }
     fun body(): String = generatedCopy.ifBlank { generated_copy }
@@ -4144,6 +4173,14 @@ data class GeneratedDraft(
  */
 fun draftsAwaitingReview(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
     drafts.filter { it.isUnsent }.sortedByDescending { it.created() }
+
+/**
+ * #2293: the drafts KinTales files under Drafts: every one awaiting review, plus
+ * an approved Push draft the server held, so it can be opened and sent again.
+ * Home keeps [draftsAwaitingReview]. Pure; tested.
+ */
+fun kinTaleListDrafts(drafts: List<GeneratedDraft>): List<GeneratedDraft> =
+    drafts.filter { it.isUnsent || it.isHeldPush }.sortedByDescending { it.created() }
 
 /**
  * KinCareReport - the "KinTale" visit recap that goes home to a kinfolk after a
