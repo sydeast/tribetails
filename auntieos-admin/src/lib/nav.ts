@@ -108,7 +108,10 @@ export const NAV: readonly NavEntry[] = [
   // #2163, operator ruling 2026-11-13: an Auntie sees neither Settings nor
   // Templates (email, SMS, push). KinTale templates below stays hers.
   { dest: 'settings', title: 'Settings', group: 'more', slug: 'settings', ownerOnly: true },
-  { dest: 'trainingDocs', title: 'Tribal Intel', group: 'more', slug: 'tribal-intel' },
+  // The owner's notes about a household, a Kinfolk or a Kin. They feed the
+  // dossiers, the household records and the 411s, and only the owner reads or
+  // writes them: an Auntie reads the 411 a note about a Kin ends up in.
+  { dest: 'trainingDocs', title: 'Tribal Intel', group: 'more', slug: 'tribal-intel', ownerOnly: true },
   { dest: 'templates', title: 'Templates', group: 'more', slug: 'templates', ownerOnly: true },
   // The visit-recap / checklist template editor (kintale_templates), distinct
   // from the email "Templates" above. Reachable from KinTales conceptually; a

@@ -449,6 +449,9 @@ const tribalIntelRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'tribal-intel',
   staticData: { title: navTitle('trainingDocs') },
+  // The owner's notes: `training_documents` is owner-read in the rules, and
+  // its three save callables are the owner's too.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./screens/TribalIntel'), 'TribalIntel'),
 });
 

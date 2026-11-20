@@ -419,7 +419,7 @@ listing a site that does not exist or omitting one that does.
 | 1118 | `payments delete` | `isOwner()` | money |
 | 1120 | `sms_messages read+write` | `isOwner()` | business phone, unruled |
 | 1121 | `the_411` | read/write split | read isStaff(), write isOwner(): the ruling grants the read; the feed writes it on the Admin SDK |
-| 1126 | `training_documents read` | `isStaff()` | staff training material |
+| 1126 | `training_documents read` | `isOwner()` | the owner's Tribal Intel notes, the source text for dossiers, household banks and 411s |
 | 1127 | `users read+write` | `isOwner()`; read also an Auntie's own record | account administration; her own Home layout (#2215) |
 | 1128 | `visit_logs read+write` | `isStaff()` | her visits |
 | 1129 | `visit_routes read+write` | `isStaff()` | her visits |
