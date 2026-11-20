@@ -8,6 +8,7 @@ import {
   duplicateCheckoutReason,
   invoiceOwesNothing,
   roundFromMetadata,
+  unappliedReasonLabel,
 } from '../src/lib/invoiceCheckoutDedupe';
 import { ACCOUNT_BALANCE_FIELD as ACCOUNT_CREDIT_FIELD } from '../src/lib/accountCredit';
 
@@ -140,6 +141,29 @@ describe('duplicateCheckoutReason', () => {
     ).toBe('invoice-not-owed');
   });
 
+  it('#2363: a written-off invoice is held as written off, not as already paid', () => {
+    // A write-off zeroes the balance, which used to read as `invoice-not-owed`.
+    for (const over of [
+      { status: 'written_off', amountDue: 0, amountDueCents: 0, writtenOffAt: 'ts' },
+      { status: ' Written_Off ', amountDueCents: 0 },
+      // Stamped with the time only: an older write of the status.
+      { status: 'open', amountDueCents: 0, writtenOffAt: 'ts' },
+    ]) {
+      expect(
+        duplicateCheckoutReason({ invoice: invoice(over), paymentIntentId: 'pi_2', eventRound: null }),
+      ).toBe('invoice-written-off');
+    }
+    expect(unappliedReasonLabel('invoice-written-off')).toBe('the invoice was written off');
+  });
+  it('#2363: cancelled is still asked first', () => {
+    expect(
+      duplicateCheckoutReason({
+        invoice: invoice({ status: 'cancelled', writtenOffAt: 'ts', amountDueCents: 0 }),
+        paymentIntentId: 'pi_2',
+        eventRound: null,
+      }),
+    ).toBe('invoice-cancelled');
+  });
   it('APPLIES a second payment minted after the last one settled', () => {
     // The case a key of `invoiceId` alone gets wrong. `payInvoice` has no amount
     // argument — it always charges the full remaining balance — so a second
