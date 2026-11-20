@@ -3556,6 +3556,41 @@ describe('InvoiceDetail open payment links (#1113)', () => {
     expect(line()).toHaveTextContent('Could not close an open payment link: You cannot expire this Checkout Session.');
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
   });
+  it('#2362: a cancelled invoice shows the same line, and its tooltip says cancelled', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({
+          status: 'cancelled',
+          editScope: 'none',
+          amountDue: 40,
+          total: 40,
+          checkoutSweep: { expiredIds: ['cs_a'], failed: [] },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(line()).toHaveTextContent('Open payment links closed (1)');
+    expect(line()?.getAttribute('title')).toBe(
+      'Stripe payment links that were still open when this invoice was cancelled',
+    );
+  });
+  it('#2362: a link still open on a cancelled invoice offers Try again', () => {
+    render(
+      <InvoiceDetail
+        invoice={entry({
+          status: 'cancelled',
+          editScope: 'none',
+          checkoutSweep: {
+            expiredIds: [],
+            failed: [{ sessionId: 'cs_b', reason: 'Stripe could not be reached from the server.' }],
+          },
+        })}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(line()?.getAttribute('data-checkout-links')).toBe('failed');
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
+  });
   it('Try again calls the callable and reports a failure it returns', async () => {
     retryInvoiceCheckoutClose.mockResolvedValue({ ok: true, invoiceId: 'inv1', closedCount: 0, failedCount: 1 });
     render(

@@ -20,12 +20,15 @@ vi.mock('./auth', () => ({ useAuth }));
 vi.mock('./sentry', () => ({ reportError }));
 vi.mock('./testScope', () => ({ setTestScope }));
 
-import { useAdminAccess } from './access';
+import { resolveAccess, useAdminAccess } from './access';
+import { isCaretakerScope, setCaretakerScope } from './caretakerScope';
+import { type User } from 'firebase/auth';
 
 const user = { uid: 'op-1' };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setCaretakerScope(false);
   useAuth.mockReturnValue({ status: 'signedIn', user });
 });
 
@@ -63,5 +66,38 @@ describe('useAdminAccess', () => {
     const { result } = renderHook(() => useAdminAccess());
     expect(result.current).toBeNull();
     expect(getIdTokenResult).not.toHaveBeenCalled();
+  });
+});
+/**
+ * An Auntie's drafts list has to name the KinTale type (`lib/caretakerScope.ts`).
+ * The switch is set where access is decided, so it cannot drift from the claim.
+ */
+describe('resolveAccess sets what an Auntie\'s lists carry', () => {
+  const asUser = user as unknown as User;
+  it('HAPPY: turns it on for an Auntie', async () => {
+    getIdTokenResult.mockResolvedValue({ claims: { staffRole: 'auntie' } });
+    expect(await resolveAccess(asUser)).toEqual({ status: 'caretaker' });
+    expect(isCaretakerScope()).toBe(true);
+  });
+  it('an account carrying both roles is the Auntie here too', async () => {
+    getIdTokenResult.mockResolvedValue({ claims: { admin: true, staffRole: 'auntie' } });
+    await resolveAccess(asUser);
+    expect(isCaretakerScope()).toBe(true);
+  });
+  it.each([
+    ['the owner', { admin: true }],
+    ['a sandbox account', { testTribeId: 'test-kinfolk-001' }],
+    ['an account with no access', {}],
+  ])('leaves it off for %s, and turns it off after an Auntie signed out', async (_label, claims) => {
+    setCaretakerScope(true);
+    getIdTokenResult.mockResolvedValue({ claims });
+    await resolveAccess(asUser);
+    expect(isCaretakerScope()).toBe(false);
+  });
+  it('ERROR: a token that cannot be read leaves the last answer in place and rejects', async () => {
+    setCaretakerScope(true);
+    getIdTokenResult.mockRejectedValue(new Error('Failed to fetch'));
+    await expect(resolveAccess(asUser)).rejects.toThrow('Failed to fetch');
+    expect(isCaretakerScope()).toBe(true);
   });
 });

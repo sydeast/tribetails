@@ -25,7 +25,7 @@
  *
  * Pure: the trigger does the reads and the Stripe calls.
  */
-import { invoiceIsPaid, type InvoicePaidDoc } from './invoicePaidGate';
+import { invoiceCancelled, invoiceIsPaid, type InvoicePaidDoc } from './invoicePaidGate';
 import { isWrittenOff } from './invoiceArchive';
 
 export const OPEN_CHECKOUT_SESSIONS_FIELD = 'openCheckoutSessionIds';
@@ -47,15 +47,26 @@ function oneId(v: unknown): string[] {
 }
 
 /**
+ * Whether the invoice is past taking a card payment: paid, written off (#2090),
+ * or cancelled, which includes a withdrawn quote (#2362). Before #2362 a
+ * cancel closed nothing, so a checkout page the household had open kept
+ * working for up to a day and a card could still be charged on it.
+ */
+export function invoiceTakesNoPayment(doc: SweepDoc): boolean {
+  return invoiceIsPaid(doc) || isWrittenOff(doc) || invoiceCancelled(doc);
+}
+/**
  * The session ids to close for this write, or `[]`.
  *
- * Only when the invoice is paid AFTER the write. A write that leaves an unpaid
- * invoice unpaid closes nothing: those sessions are the household's way to pay.
+ * Only when the invoice is paid, written off or cancelled AFTER the write. A
+ * write that leaves an owed invoice owed closes nothing: those sessions are the
+ * household's way to pay.
  */
 export function sessionsToClose(before: SweepDoc | undefined, after: SweepDoc | undefined): string[] {
   // #2090: a written-off invoice owes nothing either, so a checkout the
-  // household opened before the write-off is closed the same way.
-  if (!after || !(invoiceIsPaid(after) || isWrittenOff(after))) return [];
+  // household opened before the write-off is closed the same way. #2362: and
+  // a cancelled one, so a page opened before the cancel cannot be paid on.
+  if (!after || !invoiceTakesNoPayment(after)) return [];
   const closed = new Set(idList(after[CLOSED_CHECKOUT_SESSIONS_FIELD]));
   const all = [
     ...idList(after[OPEN_CHECKOUT_SESSIONS_FIELD]),

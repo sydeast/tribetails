@@ -377,13 +377,14 @@ describe('#2090: nothing asks the household for a written-off balance', () => {
   });
 
   it('a card payment from a checkout opened before the write-off lands as unapplied, for the owner to decide', () => {
+    // #2363: held as written off, not as `invoice-not-owed` ("already paid").
     expect(
       duplicateCheckoutReason({
         invoice: { amountDueCents: 0, amountDue: 0, status: 'written_off' } as never,
         paymentIntentId: 'pi_1',
         eventRound: null,
       }),
-    ).toBe('invoice-not-owed');
+    ).toBe('invoice-written-off');
   });
 
   it('closes the checkouts the household left open', () => {

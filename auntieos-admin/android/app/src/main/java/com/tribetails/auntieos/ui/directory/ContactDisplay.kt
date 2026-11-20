@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.directory
 
+import com.tribetails.auntieos.domain.cutWhole
+
 /** Contact channels we recognize in a (possibly messy) preferredContactMethod string.
  *  Order is the display order; none is a substring of another so matching stays clean. */
 private val CONTACT_CHANNELS = listOf("Email", "Text", "SMS", "Phone", "Call", "Push")
@@ -21,5 +23,5 @@ fun preferredContactSummary(raw: String): String {
     val channels = CONTACT_CHANNELS.filter { trimmed.contains(it, ignoreCase = true) }
     if (channels.isNotEmpty()) return channels.joinToString(", ")
     val collapsed = trimmed.replace(Regex("\\s+"), " ")
-    return if (collapsed.length <= 40) collapsed else collapsed.take(39).trimEnd() + "…"
+    return if (collapsed.length <= 40) collapsed else cutWhole(collapsed, 39).trimEnd() + "…"
 }

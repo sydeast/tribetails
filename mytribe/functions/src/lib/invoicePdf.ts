@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { businessLabel, loadBusinessName } from './businessName';
+import { cutWhole } from './cutText';
 import {
   METHOD_SPECS,
   isMethodEnabled,
@@ -289,7 +290,7 @@ export async function renderInvoicePdf(inv: InvoiceForPdf): Promise<Uint8Array> 
     for (const li of inv.lineItems) {
       // The description is the only unbounded field on the row, so it is the
       // only one truncated. Truncating a number would misstate money.
-      const desc = li.description.length > 46 ? `${li.description.slice(0, 45)}…` : li.description;
+      const desc = li.description.length > 46 ? `${cutWhole(li.description, 45)}…` : li.description;
       line(desc, { size: 10 });
       line(formatQty(li.qty), { size: 10, x: qtyX });
       line(usdCents(li.unitCents), { size: 10, x: unitX });

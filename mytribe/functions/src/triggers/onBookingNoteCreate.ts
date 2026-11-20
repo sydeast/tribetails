@@ -3,6 +3,7 @@ import { logEvent } from '../lib/logger';
 import { wrapTrigger } from '../lib/wrapTrigger';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { enqueueNotification } from '../notifications/dispatcher';
+import { cutWhole } from '../lib/cutText';
 
 type NoteDoc = {
   authorUid?: string;
@@ -53,7 +54,7 @@ export const onBookingNoteCreate = onDocumentCreated(
           visitId,
           noteId,
           authorUid: note.authorUid ?? null,
-          preview: (note.body ?? '').slice(0, 200),
+          preview: cutWhole(note.body ?? '', 200),
         },
       });
     } catch (err) {

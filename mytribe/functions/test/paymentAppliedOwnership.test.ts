@@ -35,6 +35,8 @@ const mocks = vi.hoisted(() => ({
   resolveUid: vi.fn(),
   audit: vi.fn(),
   roster: { state: 'on' as 'on' | 'empty' | 'readError' },
+  /** #2343: the household send switch, as the dispatcher reads it. */
+  gate: { state: 'live' as 'live' | 'off' | 'absent' | 'read-failed' },
 }));
 
 vi.mock('../src/lib/firestoreAdmin', () => ({ db: () => mocks.db.current, auth: vi.fn(), getAdmin: vi.fn() }));
@@ -96,7 +98,7 @@ let appOnlyUids: string[];
 
 type FakeOutcome = {
   written: string[];
-  suppressed: never[];
+  suppressed: Array<{ recipientUid: string; reason: 'gate'; gateState: string }>;
   unresolved: Array<{ resolver: string; error: string }>;
   appOnly: string[];
 };
@@ -120,7 +122,14 @@ function fakeEnqueue(args: EnqueueArgs): FakeOutcome {
   const windowMs = dedupeWindowOf(args);
   const ids: string[] = [];
   const appOnly: string[] = [];
+  const suppressed: FakeOutcome['suppressed'] = [];
   for (const r of recipients) {
+    // As the real dispatcher does: the switch holds the household's copy back
+    // before the ledger, and the office copy goes.
+    if (r.household && mocks.gate.state !== 'live') {
+      suppressed.push({ recipientUid: r.uid, reason: 'gate', gateState: mocks.gate.state });
+      continue;
+    }
     const k = `${args.key}|${identity}|${r.uid}`;
     const last = ledger.get(k);
     if (identity !== '' && last !== undefined && Date.now() - last < windowMs) continue;
@@ -132,7 +141,7 @@ function fakeEnqueue(args: EnqueueArgs): FakeOutcome {
     // As the real dispatcher does (#1507): reported only for a record written.
     if (appOnlyUids.includes(r.uid) || listOnly) appOnly.push(r.uid);
   }
-  return { written: ids, suppressed: [], unresolved, appOnly };
+  return { written: ids, suppressed, unresolved, appOnly };
 }
 
 beforeEach(() => {
@@ -140,6 +149,7 @@ beforeEach(() => {
   ledger = new Map();
   appOnlyUids = [];
   mocks.roster.state = 'on';
+  mocks.gate.state = 'live';
   mocks.enqueue.mockReset().mockImplementation(async (args: EnqueueArgs) => fakeEnqueue(args));
   mocks.resolveUid.mockReset().mockResolvedValue('kin-uid-1');
   mocks.audit.mockReset().mockImplementation((args: Parameters<typeof realAudit>[0]) => realAudit(args));
@@ -1395,6 +1405,91 @@ describe('#884 third review: the credit notice sweep cannot get stuck', () => {
   });
 });
 
+describe('#2343: a credit payment notice the household send switch holds back', () => {
+  const draw = () => withTrigger(() => drawAccountCredit(mocks.db.current as any, creditDraw()));
+  const sweep = () => sweepPendingCreditNotices(mocks.db.current as any, Date.now());
+  const pending = () => docs[INVOICE]!['paymentAppliedNoticePending'];
+  function seedPayable() {
+    seedInvoice();
+    docs['families/fam1'] = { accountBalanceCents: 5000 };
+  }
+  it('the draw\'s own send: the office is told, and the notice says held, not sent', async () => {
+    seedPayable();
+    mocks.gate.state = 'off';
+    await draw();
+    expect(docs[INVOICE]!['status']).toBe('paid');
+    expect(appliedCount()).toBe(0);
+    expect(staffCount()).toBe(1);
+    expect(pending()).toBe('');
+    expect(docs[INVOICE]!['paymentAppliedNoticeSentAt']).toBeUndefined();
+    expect(docs[INVOICE]!['paymentAppliedNoticeHouseholdHeld']).toBe('off');
+    expect(typeof docs[INVOICE]!['paymentAppliedNoticePendingAtMs']).not.toBe('number');
+  });
+  it('a switch never set is held the same way', async () => {
+    seedPayable();
+    mocks.gate.state = 'absent';
+    await draw();
+    expect(docs[INVOICE]!['paymentAppliedNoticeHouseholdHeld']).toBe('absent');
+    expect(docs[INVOICE]!['paymentAppliedNoticeSentAt']).toBeUndefined();
+  });
+  it('the sweep\'s resend after a crash is held the same way, and is not tried again', async () => {
+    seedPayable();
+    mocks.gate.state = 'off';
+    mocks.resolveUid.mockRejectedValueOnce(new Error('instance stopped'));
+    await draw();
+    expect(pending()).toMatch(/^accountCredit:.+/);
+    later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+    expect(await sweep()).toBe(1);
+    expect(staffCount()).toBe(1);
+    expect(appliedCount()).toBe(0);
+    expect(docs[INVOICE]!['paymentAppliedNoticeSentAt']).toBeUndefined();
+    expect(docs[INVOICE]!['paymentAppliedNoticeHouseholdHeld']).toBe('off');
+    const calls = mocks.enqueue.mock.calls.length;
+    later(HOUR);
+    expect(await sweep()).toBe(0);
+    expect(mocks.enqueue.mock.calls.length).toBe(calls);
+  });
+  it('a redelivered pass that finds the switch off finishes it as held', async () => {
+    seedPayable();
+    mocks.resolveUid.mockRejectedValueOnce(new Error('instance stopped'));
+    await draw();
+    mocks.gate.state = 'off';
+    expect((await draw()).replayed).toBe(true);
+    expect(pending()).toBe('');
+    expect(docs[INVOICE]!['paymentAppliedNoticeHouseholdHeld']).toBe('off');
+  });
+  it('a switch that could not be read is not a choice: left pending, and the household is told once it reads', async () => {
+    seedPayable();
+    mocks.gate.state = 'read-failed';
+    await draw();
+    expect(staffCount()).toBe(1);
+    expect(appliedCount()).toBe(0);
+    expect(pending()).toMatch(/^accountCredit:.+/);
+    expect(docs[INVOICE]!['paymentAppliedNoticeSentAt']).toBeUndefined();
+    expect(docs[INVOICE]!['paymentAppliedNoticeHouseholdHeld']).toBeUndefined();
+    expect(docs[INVOICE]!['paymentAppliedNoticeLastError']).toBe('household-switch-unread');
+    mocks.gate.state = 'live';
+    later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+    expect(await sweep()).toBe(1);
+    expect(appliedCount()).toBe(1);
+    // The office was told once: the ledger drops the second office copy.
+    expect(staffCount()).toBe(1);
+    expect(pending()).toBe('');
+    expect(docs[INVOICE]!['paymentAppliedNoticeSentAt']).toBeTruthy();
+  });
+  it('a switch that stays unreadable gives up after the cap, as any failure does', async () => {
+    seedPayable();
+    mocks.gate.state = 'read-failed';
+    await draw();
+    for (let i = 0; i <= CREDIT_NOTICE_MAX_ATTEMPTS; i += 1) {
+      later(CREDIT_NOTICE_SWEEP_GRACE_MS + MIN);
+      await sweep();
+    }
+    expect(pending()).toBe('');
+    expect(docs[INVOICE]!['paymentAppliedNoticeSkippedReason']).toBe('gave-up');
+    expect(appliedCount()).toBe(0);
+  });
+});
 describe('#884 review: the credit draw owns its notice', () => {
   it('a legacy invoice with a total and no amountDue, paid off by account credit, sends exactly one', async () => {
     // invoiceStateOf reads this doc as paid before the draw, so the trigger sees

@@ -94,6 +94,7 @@ import {
   PAYMENT_APPLIED_PENDING_FIELD,
   PAYMENT_APPLIED_SENT_AT_FIELD,
   PAYMENT_APPLIED_SKIPPED_FIELD,
+  PAYMENT_APPLIED_HOUSEHOLD_HELD_FIELD,
   paymentAppliedOwner,
 } from './paymentAppliedOwner';
 import { auditHashableDoc, readAuditChain, stageAuditEntry, writeAuditEntry } from './writeAuditEntry';
@@ -892,7 +893,26 @@ async function deliverCreditPaymentNotice(
       await recordCreditNoticeError(invRef, extra, 'recipients-unresolved');
       return false;
     }
-    finished = { [PAYMENT_APPLIED_SENT_AT_FIELD]: FieldValue.serverTimestamp() };
+    // #2343: THE HOUSEHOLD SEND SWITCH HELD THE HOUSEHOLD'S COPY BACK. Only the
+    // office copy went, so the notice is not stamped as sent. A switch that
+    // could not be READ is a failure like any other and is tried again under
+    // the cap: the household's copy may be due. A switch that is off (or not
+    // set yet) is the operator's choice, and the notice is finished as held. It
+    // is not sent to the household later: like a booking confirmation, a
+    // payment notice is about one moment, and the switch exists so a household
+    // is never told late about money moved while notices were off.
+    const held = outcome.suppressed.find(
+      (s) => s.reason === 'gate' && recipientUid !== null && s.recipientUid === recipientUid,
+    );
+    if (held !== undefined && held.gateState === 'read-failed') {
+      logEvent({ severity: 'warn', function: 'accountCredit', event: 'credit.notice.gate.unread', extra });
+      await recordCreditNoticeError(invRef, extra, 'household-switch-unread');
+      return false;
+    }
+    finished =
+      held !== undefined
+        ? { [PAYMENT_APPLIED_HOUSEHOLD_HELD_FIELD]: held.gateState ?? 'off' }
+        : { [PAYMENT_APPLIED_SENT_AT_FIELD]: FieldValue.serverTimestamp() };
   } catch (err) {
     if (!isNoRecipientsError(err)) {
       logEvent({

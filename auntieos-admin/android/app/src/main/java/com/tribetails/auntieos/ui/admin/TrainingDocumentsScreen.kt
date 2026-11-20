@@ -33,6 +33,7 @@ import com.composables.icons.lucide.Search
 import com.composables.icons.lucide.TriangleAlert
 import com.tribetails.auntieos.config.LocalFeatureFlags
 import com.tribetails.auntieos.data.model.TrainingDocument
+import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
@@ -397,7 +398,7 @@ private fun DocRow(
             ) {
                 if (doc.content.isNotBlank()) {
                     val preview = if (!expanded && doc.content.length > 200) {
-                        doc.content.take(200) + "..."
+                        cutWhole(doc.content, 200) + "..."
                     } else {
                         doc.content
                     }

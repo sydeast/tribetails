@@ -49,6 +49,11 @@ class UnappliedPaymentTest {
     }
 
     @Test
+    fun `2363 a payment held because its invoice was written off says written off`() {
+        val held = payment.copy(invoiceNumber = "1029", amountCents = 4000L, reason = "the invoice was written off")
+        assertEquals("Sep 27, 2026. Not applied because the invoice was written off.", unappliedPaymentDetail(held, zone))
+    }
+    @Test
     fun `2358 a payment held because its invoice was cancelled says so`() {
         val held = payment.copy(invoiceNumber = "1029", amountCents = 4000L, reason = "the invoice was cancelled")
         assertEquals("$40.00 card payment on invoice 1029", unappliedPaymentHeadline(held))

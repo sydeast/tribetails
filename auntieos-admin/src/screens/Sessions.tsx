@@ -42,6 +42,7 @@ import { useIsAuntie } from '../lib/useIsAuntie';
 import { usePagedCollection } from '../lib/usePagedCollection';
 import { useCollection, useDocById } from '../lib/firestore';
 import { str, arr } from '../lib/coerce';
+import { cutWhole } from '../lib/cutText';
 import { bookingServiceName, type BookingCatalog } from '../lib/bookingFormat';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
 import { directionsHref } from '../lib/directions';
@@ -668,7 +669,7 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
   // note second. Truncated the way Android's card truncates it: a run sheet
   // shows enough to recognize the instruction, and the detail sheet has the rest.
   const rawNote = str(entry.kinfolkNotes).trim() || str(entry.notes).trim();
-  const note = rawNote.length > 120 ? `${rawNote.slice(0, 120)}…` : rawNote;
+  const note = rawNote.length > 120 ? `${cutWhole(rawNote, 120)}…` : rawNote;
 
   const kin = arr<string>(entry.kinIds)
     .map((id) => kinById.get(id))

@@ -1,4 +1,5 @@
 import { DAY_NAMES } from './businessHours';
+import { cutWhole } from './cutText';
 import { parseClosureEntry } from './closureRecurrence';
 import { calendarIdProblem } from './calendarSyncId';
 import { isValidPrivacyPolicyUrl, PRIVACY_POLICY_URL_MAX_LENGTH } from './privacyPolicyUrl';
@@ -357,7 +358,7 @@ const checkServiceRates: Check = (v) => {
     if (trimmed !== name)
       return `"${trimmed}" has spaces around its name. Remove them and save again.`;
     if (trimmed.length > 80)
-      return `Keep the name "${trimmed.slice(0, 20)}..." under 80 characters.`;
+      return `Keep the name "${cutWhole(trimmed, 20)}..." under 80 characters.`;
     const lowered = trimmed.toLowerCase();
     if (seen.has(lowered)) return `Two KinCare types are both called "${trimmed}".`;
     seen.add(lowered);

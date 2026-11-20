@@ -7,6 +7,7 @@ import { listPublicComments, type PublicComment } from './sharedKinTaleComments'
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { readUnlockCookies, unlockSetCookie } from '../lib/shareUnlock';
 import { addGuestKinTaleCommentHandler } from '../public/addGuestKinTaleComment';
+import { cutWhole } from '../lib/cutText';
 
 /**
  * getSharedKinTalePage, public HTTPS endpoint.
@@ -60,7 +61,7 @@ export function escapeHtml(input: string): string {
 function truncateForDescription(body: string, max = DESCRIPTION_MAX_CHARS): string {
   const trimmed = body.trim();
   if (trimmed.length <= max) return trimmed;
-  return `${trimmed.slice(0, max).trimEnd()}…`;
+  return `${cutWhole(trimmed, max).trimEnd()}…`;
 }
 
 /** Escaped plain text with `\n` -> `<br>`. Never treats `body` as trusted HTML. */

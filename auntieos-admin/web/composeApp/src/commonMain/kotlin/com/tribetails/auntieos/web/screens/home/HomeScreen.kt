@@ -27,6 +27,7 @@ import com.tribetails.auntieos.web.observability.rememberReportingScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
+import com.tribetails.auntieos.web.screens.cutWhole
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -885,7 +886,7 @@ private fun TaleRow(draft: GeneratedDraft, index: Int, onOpen: () -> Unit) {
             // item 6: blurb = first line of the real draft copy (was a redundant
             // second copy of kinfolkName, which then repeated in the meta line).
             Text(
-                draft.body().lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(80)
+                draft.body().lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.let { cutWhole(it, 80) }
                     ?.ifBlank { null } ?: "No copy yet",
                 style = AuntieTheme.typography.bodySmall, color = c.textDim,
                 maxLines = 1,
