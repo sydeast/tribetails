@@ -22,7 +22,7 @@ import {
 } from './audienceCriteria';
 import { SEGMENTS_COLLECTION } from './audienceSegments';
 import { unsubscribeFooter, suppressionDocId } from './sendExternalMessage';
-import { loadBusinessName } from '../lib/businessName';
+import { fillBusinessPlaceholders, loadBusinessName } from '../lib/businessName';
 import { broadcastMergeData, renderBroadcastCopy, unsupportedMergeFields } from '../lib/broadcastMerge';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
 import { householdNoticeEntryRoute, householdPushShelfLine, householdSmsText } from '../notifications/templateParsers';
@@ -67,7 +67,9 @@ import type { ResolvedChannels, UserNotificationPrefs } from '../notifications/t
  *
  * The in-app entry is where a text or push is read whole, so a household with
  * a MyTribe account that is sent either one gets the entry even when In-app
- * was not chosen (#2316). It is counted under In-app only when In-app was.
+ * was not chosen (#2316). It is counted under In-app only when In-app was, and
+ * an entry written for the link alone is taken back when neither the text nor
+ * the push went, so a household the send did not reach is left holding nothing.
  *
  * Fan-out semantics are honest partial-success: a kinfolk missing a channel's
  * contact (no email / no phone / no uid / no tokens) or opted-out is COUNTED as
@@ -497,6 +499,10 @@ export function broadcastSender(ctx: {
     const inappChosen = channels.includes('inapp');
     const linkNeedsEntry = smsTo !== '' || pushTokens.length > 0;
     let entryId = '';
+    // A text or a push that links to the entry went. Decides, at the end,
+    // whether an entry written for the link alone stays.
+    let linkSent = false;
+    let writtenEntry: FirebaseFirestore.DocumentReference | null = null;
     // ---- in-app -------------------------------------------------------------
     if (!k.uid) {
       // No linked MyTribe account: there is no notifications list to write to.
@@ -515,7 +521,10 @@ export function broadcastSender(ctx: {
           recipientUid: k.uid,
           actorUid: uid,
           data: { kinfolkId: k.id },
-          title: copy.subject,
+          // A text or a push needs no subject, and both MyTribe lists draw the
+          // stored key in place of a blank title. With none written, the title
+          // is the one a household reads for this notice in its own settings.
+          title: copy.subject.trim() || fillBusinessPlaceholders(def.householdTitle ?? '', businessName),
           // `description` is the field every card renderer already reads for
           // the second line (it carries the catalog description on dispatched
           // notifications). `body` alone was written by nothing else and read
@@ -528,6 +537,7 @@ export function broadcastSender(ctx: {
           createdAt: FieldValue.serverTimestamp(),
         });
         entryId = entryRef.id;
+        writtenEntry = entryRef;
         // Counted as the In-app channel only when In-app was chosen. Written
         // for the link alone, it is where the text or push is read whole, and
         // the household counts as reached only if that text or push goes.
@@ -599,6 +609,7 @@ export function broadcastSender(ctx: {
           });
           mark('sms', 'sent');
           detail.reached = true;
+          linkSent = true;
         } catch (err) {
           mark('sms', 'failed');
           // #1524: as the email line above. Twilio's body text never names
@@ -648,6 +659,7 @@ export function broadcastSender(ctx: {
           if (resp.successCount > 0) {
             mark('push', 'sent');
             detail.reached = true;
+            linkSent = true;
           } else {
             mark('push', 'failed');
           }
@@ -655,6 +667,19 @@ export function broadcastSender(ctx: {
           mark('push', 'failed');
           logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'push.send.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
         }
+      }
+    }
+
+    // An entry written for the link alone (In-app not chosen) is where a text
+    // or a push is read whole. With neither sent, nothing links to it: left in
+    // place, a household the report counts as not reached would hold the whole
+    // message, and "every send failed, so sending again cannot double anything"
+    // (the same-key re-run in the handler) would put a second copy on its list.
+    if (writtenEntry !== null && !inappChosen && !linkSent) {
+      try {
+        await writtenEntry.delete();
+      } catch (err) {
+        logEvent({ severity: 'error', function: 'broadcastMessage', event: 'inapp.remove.failed', uid, extra: { kinfolkId: k.id, entryId, err: (err as Error)?.message } });
       }
     }
 
