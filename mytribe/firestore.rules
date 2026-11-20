@@ -1881,10 +1881,63 @@ service cloud.firestore {
  // this line open on purpose, because the desktop admin was still writing
  // `media_files` from the client. It no longer is (#577), so the line closes
  // here, in the same change that removes the last client writer.
+ //
+ // WHO READS WHICH FILE. One collection holds every upload, told apart by
+ // `entityType`, and the two staff roles do not read the same set:
+ //
+ //   the owner    every file.
+ //   an Auntie    the files of her own work: a visit's KinTale photos
+ //                (VISIT_LOG), a Kin's photos (KIN) and a household's photos
+ //                (KINFOLK). The Gallery is those, and nothing else is hers:
+ //                not a Tribal Intel attachment (TRIBAL_INTEL, the owner's
+ //                notes, see `training_documents` below), not company media
+ //                (BUSINESS), and not another person's account photo (USER).
+ //
+ // It is a list of what she reads, never a list of what she does not, so a
+ // type added later is the owner's until somebody writes it in here. The type
+ // is compared as stored, with no case folding: `kin` and `kinfolk` are in the
+ // list because the desktop console's Gallery writes them that way. A file
+ // with no `entityType` at all (rows older than the field) is the owner's.
+ //
+ // HER LIST MUST CARRY THE TYPE, the same way her drafts list does
+ // (`generated_drafts` above): a list is allowed only when the query itself
+ // says `entityType in [...]` with nothing outside these five values. Admin web
+ // adds it for her in `lib/caretakerScope.ts`; an unfiltered list is refused
+ // whole. The `list` rule spells the five values out and `caretakerMediaType`
+ // holds the same five; `test/rules/mediaFilesRead.test.ts` runs every one of
+ // them through both.
+ //
+ // She writes what she reads: an upload or a caption on one of those three
+ // kinds, and an update can move a file neither into nor out of them. The one
+ // file she writes outside them is her own account photo (USER, on her own
+ // id), which her Account page uploads and `setMediaProfilePhoto` then reads on
+ // the server; she reads that one back by id.
+    function caretakerMediaType(t) {
+      return t in ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk'];
+    }
+    function caretakerOwnPhoto(d) {
+      return d.get('entityType', null) == 'USER'
+             && d.get('entityId', null) == request.auth.uid;
+    }
+    function caretakerMedia(d) {
+      return caretakerMediaType(d.get('entityType', null)) || caretakerOwnPhoto(d);
+    }
     match /media_files/{id} {
-      allow read: if isStaff() || testOwnsExisting();
-      allow create: if isStaff() || testOwnsIncoming();
-      allow update: if (isStaff() || testOwnsExisting())
+      allow get: if isOwner()
+                 || (isCaretaker() && caretakerMedia(resource.data))
+                 || testOwnsExisting();
+      allow list: if isOwner()
+                  || (isCaretaker()
+                      && resource.data.entityType in ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk'])
+                  || testOwnsExisting();
+      allow create: if isOwner()
+                    || (isCaretaker() && caretakerMedia(request.resource.data))
+                    || testOwnsIncoming();
+      allow update: if (isOwner()
+                        || (isCaretaker()
+                            && caretakerMedia(resource.data)
+                            && caretakerMedia(request.resource.data))
+                        || testOwnsExisting())
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['taggedKinIds']);
       allow delete: if false;
     }
