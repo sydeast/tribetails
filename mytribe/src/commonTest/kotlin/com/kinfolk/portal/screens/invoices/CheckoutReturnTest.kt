@@ -417,23 +417,127 @@ class CheckoutReturnTest {
     }
 
     @Test
-    fun `when a second window took the finished link, the window underneath shows the bill without a second check`() = runTest {
+    fun `when a second window took the finished link, the window underneath still checks the bill itself`() = runTest {
         val fake = FakeFunctionsClient()
         fake.stub("getMyInvoices", owed())
         val paidFrom = paidAtStripe(fake)
-        fake.stub("getMyInvoices", settled())
+        // Android opened the link in a second window. The webhook has not landed.
         val openedByLink = InvoicesController("kin-1", PortalApi(fake), this) {}
         openedByLink.onCheckoutReturn(finishedLink)
-        advanceUntilIdle()
-        assertEquals(PAYMENT_RECEIVED, openedByLink.statusBanner)
+        runCurrent()
+        assertEquals("inv-1", openedByLink.checkingPayment)
+
+        // The household backs out to the first window while the payment is
+        // still landing. That window must not show Pay on the strength of one read.
         val before = fake.reads()
+        paidFrom.onAppReturned()
+        runCurrent()
+        assertEquals("inv-1", paidFrom.checkingPayment, "Pay is held back here too")
+        assertNull(paidFrom.statusBanner)
+        assertEquals(1, fake.reads() - before)
+
+        fake.stub("getMyInvoices", settled())
+        advanceUntilIdle()
+        assertNull(paidFrom.checkingPayment)
+        assertNull(paidFrom.paymentNotSeen)
+        assertTrue(assertNotNull(paidFrom.find("inv-1")).isPaid)
+        assertEquals(PAYMENT_RECEIVED, paidFrom.statusBanner)
+    }
+
+    @Test
+    fun `once a finished link was seen, a later cancelled link does not make the window underneath stand down`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", owed())
+        val paidFrom = paidAtStripe(fake)
+        val openedByLink = InvoicesController("kin-1", PortalApi(fake), this) {}
+        openedByLink.onCheckoutReturn(finishedLink)
+        runCurrent()
+        // A stale or forged cancel for the same checkout.
+        openedByLink.onCheckoutReturn(cancelledLink)
+        runCurrent()
+        assertEquals("inv-1", openedByLink.checkingPayment, "the cancel did not call off the check the finished link started")
 
         paidFrom.onAppReturned()
         runCurrent()
-        assertNull(paidFrom.checkingPayment)
+        assertEquals("inv-1", paidFrom.checkingPayment)
         advanceUntilIdle()
-        assertEquals(1, fake.reads() - before)
-        assertTrue(assertNotNull(paidFrom.find("inv-1")).isPaid)
+    }
+
+    @Test
+    fun `a cancelled link cannot call off a check that a finished link started`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", owed())
+        val c = paidAtStripe(fake)
+        val before = fake.reads()
+
+        c.onCheckoutReturn(finishedLink)
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment)
+        c.onCheckoutReturn(cancelledLink)
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment, "Pay stays held back while the payment may still be landing")
+
+        // The check runs its full course; the cancel cost one extra read and nothing else.
+        advanceUntilIdle()
+        assertEquals("inv-1", c.paymentNotSeen)
+        assertEquals(fullCheck + 1, fake.reads() - before)
+    }
+
+    @Test
+    fun `a cancelled link cannot call off a check that a finished link confirmed`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", owed())
+        val c = paidAtStripe(fake)
+
+        // Focus started it, then Stripe's success address confirmed it.
+        c.onAppReturned()
+        runCurrent()
+        c.onCheckoutReturn(finishedLink)
+        runCurrent()
+        c.onCheckoutReturn(cancelledLink)
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment)
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `a cancelled link does not call off a check the household asked for`() = runTest {
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", owed())
+        val c = paidAtStripe(fake)
+        c.onAppReturned()
+        advanceUntilIdle()
+        assertEquals("inv-1", c.paymentNotSeen)
+
+        c.checkPaymentAgain("inv-1")
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment)
+        c.onCheckoutReturn(cancelledLink)
+        runCurrent()
+        assertEquals("inv-1", c.checkingPayment)
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `a cancelled link and then a finished one is a payment to check`() = runTest {
+        // The household backed out of checkout, went forward again and paid.
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", owed())
+        val paidFrom = paidAtStripe(fake)
+        val openedByLink = InvoicesController("kin-1", PortalApi(fake), this) {}
+        openedByLink.onCheckoutReturn(cancelledLink)
+        runCurrent()
+        assertNull(openedByLink.checkingPayment)
+
+        openedByLink.onCheckoutReturn(finishedLink)
+        runCurrent()
+        assertEquals("inv-1", openedByLink.checkingPayment)
+
+        // And the window underneath no longer treats the checkout as cancelled.
+        paidFrom.onAppReturned()
+        runCurrent()
+        assertEquals("inv-1", paidFrom.checkingPayment)
+        advanceUntilIdle()
     }
 
     @Test

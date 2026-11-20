@@ -17,6 +17,7 @@ import com.kinfolk.portal.util.androidInitialShareToken
 import com.kinfolk.portal.util.androidInitialUnknownLink
 import com.kinfolk.portal.util.checkoutReturnOf
 import com.kinfolk.portal.util.deepLinkIsRecognized
+import com.kinfolk.portal.util.forgetEarlierLaunchLinks
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,6 +77,11 @@ class MainActivity : ComponentActivity() {
     private fun captureDeepLink(uri: Uri?) {
         if (uri == null) return
         val pathParts = uri.pathSegments ?: return
+        // #2401: a card payment's return link names an invoice, and it is the
+        // newest thing this app was asked to show. A claim, share or email
+        // link from earlier in this run must not open in its place.
+        val checkoutReturn = checkoutReturnOf(uri)
+        if (checkoutReturn != null) forgetEarlierLaunchLinks()
         captureSegment(pathParts, "claim") { androidInitialClaimInviteId = it }
         // Invite emails link `${CLAIM_LINK_BASE_URL}?invite=<id>` (query form, no
         // path segment), so it must parse or the claim screen never mounts on Android.
@@ -101,7 +107,7 @@ class MainActivity : ComponentActivity() {
             inviteQuery = uri.getQueryParameter("invite"),
             isEmailAction = emailAction != null,
             // #2401: a card payment coming back is a link this app can place.
-            isCheckoutReturn = checkoutReturnOf(uri) != null,
+            isCheckoutReturn = checkoutReturn != null,
         )
     }
 

@@ -154,31 +154,61 @@ class CheckoutReturnLinkTest {
     fun `another person signing in on the same phone does not get the link`() {
         PendingCheckoutReturn.onAccount("uidA")
         PendingCheckoutReturn.offer(CheckoutReturn("inv-1", finished = true))
-        PendingCheckoutReturn.markAnswered("inv-7")
+        PendingCheckoutReturn.markCancelled("inv-7")
         PendingCheckoutReturn.onAccount("uidB")
         assertNull(PendingCheckoutReturn.take())
-        assertFalse(PendingCheckoutReturn.wasAnswered("inv-7"))
+        assertFalse(PendingCheckoutReturn.wasCancelled("inv-7"))
     }
 
     @Test
-    fun `clear drops the link and what was answered`() {
+    fun `clear drops the link and what the links said`() {
         PendingCheckoutReturn.offer(CheckoutReturn("inv-1", finished = true))
-        PendingCheckoutReturn.markAnswered("inv-1")
+        PendingCheckoutReturn.markCancelled("inv-1")
+        PendingCheckoutReturn.markFinished("inv-2")
         PendingCheckoutReturn.clear()
         assertNull(PendingCheckoutReturn.take())
-        assertFalse(PendingCheckoutReturn.wasAnswered("inv-1"))
+        assertFalse(PendingCheckoutReturn.wasCancelled("inv-1"))
+        // inv-2's finished link is forgotten, so a cancel for it is believed again.
+        assertTrue(PendingCheckoutReturn.markCancelled("inv-2"))
+    }
+
+    // ── what the links have said about a checkout ──
+
+    @Test
+    fun `a cancel is believed for its own invoice, until that invoice is handed off again`() {
+        assertFalse(PendingCheckoutReturn.wasCancelled("inv-1"))
+        assertTrue(PendingCheckoutReturn.markCancelled("inv-1"))
+        assertTrue(PendingCheckoutReturn.wasCancelled("inv-1"))
+        assertFalse(PendingCheckoutReturn.wasCancelled("inv-2"))
+        // Another invoice going to checkout changes nothing for this one.
+        PendingCheckoutReturn.handedOff("inv-2")
+        assertTrue(PendingCheckoutReturn.wasCancelled("inv-1"))
+        PendingCheckoutReturn.handedOff("inv-1")
+        assertFalse(PendingCheckoutReturn.wasCancelled("inv-1"))
     }
 
     @Test
-    fun `an answered link answers only for its own invoice, and only until that invoice is handed off again`() {
-        assertFalse(PendingCheckoutReturn.wasAnswered("inv-1"))
-        PendingCheckoutReturn.markAnswered("inv-1")
-        assertTrue(PendingCheckoutReturn.wasAnswered("inv-1"))
-        assertFalse(PendingCheckoutReturn.wasAnswered("inv-2"))
-        // Another invoice going to checkout changes nothing for this one.
-        PendingCheckoutReturn.handedOff("inv-2")
-        assertTrue(PendingCheckoutReturn.wasAnswered("inv-1"))
+    fun `once a finished link was seen, a cancel for the same checkout is not believed`() {
+        PendingCheckoutReturn.markFinished("inv-1")
+        assertFalse(PendingCheckoutReturn.markCancelled("inv-1"), "a cancel after Stripe's success address is stale or forged")
+        assertFalse(PendingCheckoutReturn.wasCancelled("inv-1"))
+        // A cancel for a different invoice is its own matter.
+        assertTrue(PendingCheckoutReturn.markCancelled("inv-2"))
+        assertTrue(PendingCheckoutReturn.wasCancelled("inv-2"))
+    }
+
+    @Test
+    fun `a finished link after a cancel takes the cancel back`() {
+        assertTrue(PendingCheckoutReturn.markCancelled("inv-1"))
+        PendingCheckoutReturn.markFinished("inv-1")
+        assertFalse(PendingCheckoutReturn.wasCancelled("inv-1"))
+    }
+
+    @Test
+    fun `a new hand-off forgets a finished link too, so the next cancel is believed`() {
+        PendingCheckoutReturn.markFinished("inv-1")
         PendingCheckoutReturn.handedOff("inv-1")
-        assertFalse(PendingCheckoutReturn.wasAnswered("inv-1"))
+        assertTrue(PendingCheckoutReturn.markCancelled("inv-1"))
+        assertTrue(PendingCheckoutReturn.wasCancelled("inv-1"))
     }
 }

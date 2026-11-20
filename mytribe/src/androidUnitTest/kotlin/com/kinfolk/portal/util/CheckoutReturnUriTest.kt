@@ -91,4 +91,27 @@ class CheckoutReturnUriTest {
         assertNull(read("mailto:catch@hanasamku.com"))
         assertNull(checkoutReturnOf(null))
     }
+
+    /**
+     * The claim, share and email links are kept for the life of the process
+     * and win over the signed-in shell in every new copy of the app's screen.
+     * A return link has to clear them, or a household who opened a shared
+     * KinTale earlier would come back from paying to that KinTale.
+     */
+    @Test
+    fun aReturnLinkReplacesTheLaunchLinksFromEarlierInTheRun() {
+        androidInitialClaimInviteId = "invite-1"
+        androidInitialShareToken = "share-1"
+        androidInitialSecureResetParams = SecureResetParams(oobCode = "code-1")
+        try {
+            forgetEarlierLaunchLinks()
+            assertNull(readInitialClaimInviteId())
+            assertNull(readInitialShareToken())
+            assertNull(readInitialSecureResetParams())
+        } finally {
+            androidInitialClaimInviteId = null
+            androidInitialShareToken = null
+            androidInitialSecureResetParams = null
+        }
+    }
 }

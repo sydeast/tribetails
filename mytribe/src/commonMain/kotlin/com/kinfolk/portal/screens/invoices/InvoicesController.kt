@@ -180,6 +180,8 @@ class InvoicesController internal constructor(
     private var awaitingCheckout: String? = null
     private var checkJob: Job? = null
     private var checkToken: Any? = null
+    /** True while the running check was started by focus coming back and by nothing surer. See [onCheckoutReturn]. */
+    private var checkStartedByFocus = false
 
     /**
      * Q6: the account credit history. Loaded beside the invoices and never
@@ -387,21 +389,26 @@ class InvoicesController internal constructor(
      * #2401: this is the fallback now. The return link normally brings the
      * household back ([onCheckoutReturn]), and it DOES say which address the
      * browser opened. So when a link for this invoice is waiting to be opened,
-     * or was already acted on (in another window of this app, see
-     * [PendingCheckoutReturn.markAnswered]), this stands down and the link
-     * decides. Focus alone is what is left when the household closes the
-     * browser and switches back by hand.
+     * this stands down and the link decides. Focus alone is what is left when
+     * the household closes the browser and switches back by hand.
+     *
+     * One more case: Android opened the link in a second window of this app,
+     * and the household has now backed out to this one, which still remembers
+     * the hand-off. If that link said the checkout was cancelled, nothing is
+     * checked here either. If it said finished, or said nothing, this window
+     * checks for itself: the other window's check ended with that window, and
+     * a bill that may still be landing is never shown with a live Pay button.
      */
     fun onAppReturned() {
         val invoiceId = awaitingCheckout ?: return
         if (PendingCheckoutReturn.isWaitingFor(invoiceId)) return
         awaitingCheckout = null
-        if (PendingCheckoutReturn.wasAnswered(invoiceId)) {
-            // The other window showed the outcome. Show the bill as it stands.
+        if (PendingCheckoutReturn.wasCancelled(invoiceId)) {
+            // No payment was made. Show the bill as it stands.
             scope.launch { read(quietFailure = true) }
             return
         }
-        startPaymentCheck(invoiceId)
+        startPaymentCheck(invoiceId, byFocus = true)
     }
 
     /**
@@ -410,41 +417,55 @@ class InvoicesController internal constructor(
      * here remembers the hand-off, so the invoice and the outcome both come
      * from the link ([checkoutReturnFromLink]).
      *
-     * A finished checkout starts the check, unless focus coming back already
-     * started it. A cancelled one starts none and stops one focus started: no
-     * payment was made, so there is nothing to wait for, and Pay is offered
-     * again at once instead of after a minute. The bill is read once so the
-     * screen shows it as it stands.
+     * A FINISHED checkout starts the check, unless one is already running for
+     * this invoice.
      *
-     * Never a paid claim. Any app or web page can fire this link, and all it
-     * can cause is a read of the household's own invoices.
+     * A CANCELLED checkout starts none, and calls off a check that only focus
+     * coming back had started: no payment was made, so there is nothing to
+     * wait for, and Pay is offered again at once instead of after a minute. The
+     * bill is read once so the screen shows it as it stands.
+     *
+     * WHAT A LINK MAY AND MAY NOT DO. Any app or web page can fire one. It
+     * never says paid: the read does. And a cancelled link is believed only
+     * while nothing better is known. It cannot stop a check that a finished
+     * link started or confirmed, or one the household asked for with Check
+     * again, so a forged or stale cancel cannot put a live Pay button in front
+     * of a payment that is still landing. The one wait it can end is the one
+     * that began on a guess, focus coming back.
      */
     fun onCheckoutReturn(ret: CheckoutReturn) {
         if (awaitingCheckout == ret.invoiceId) awaitingCheckout = null
-        PendingCheckoutReturn.markAnswered(ret.invoiceId)
         if (ret.finished) {
-            if (checkingPayment != ret.invoiceId) startPaymentCheck(ret.invoiceId)
+            PendingCheckoutReturn.markFinished(ret.invoiceId)
+            if (checkingPayment == ret.invoiceId) {
+                // Stripe's own address confirms the check focus started.
+                checkStartedByFocus = false
+            } else {
+                startPaymentCheck(ret.invoiceId, byFocus = false)
+            }
             return
         }
-        if (checkingPayment == ret.invoiceId) stopPaymentCheck()
-        if (paymentNotSeen == ret.invoiceId) paymentNotSeen = null
+        val believed = PendingCheckoutReturn.markCancelled(ret.invoiceId)
+        if (believed && checkingPayment == ret.invoiceId && checkStartedByFocus) stopPaymentCheck()
         scope.launch { read(quietFailure = true) }
     }
 
     /** #2366: "Check again" after a check ran out, or "Tap to sync" during one. */
-    fun checkPaymentAgain(invoiceId: String) = startPaymentCheck(invoiceId)
+    fun checkPaymentAgain(invoiceId: String) = startPaymentCheck(invoiceId, byFocus = false)
 
     private fun stopPaymentCheck() {
         checkJob?.cancel()
         checkJob = null
         checkToken = null
         checkingPayment = null
+        checkStartedByFocus = false
     }
 
-    private fun startPaymentCheck(invoiceId: String) {
+    private fun startPaymentCheck(invoiceId: String, byFocus: Boolean) {
         checkJob?.cancel()
         val token = Any()
         checkToken = token
+        checkStartedByFocus = byFocus
         paymentNotSeen = null
         paymentNotChecked = null
         checkingPayment = invoiceId

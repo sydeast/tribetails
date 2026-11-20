@@ -84,7 +84,7 @@ fun checkoutReturnFromLink(
 }
 
 /**
- * The return link waiting to be opened, and the last one that was.
+ * The return link waiting to be opened, and what the links have said so far.
  *
  * Held here, not on the intent, for the reason a tapped push is
  * ([com.kinfolk.portal.push.PendingPushOpen]): the invoice can only open once
@@ -99,56 +99,65 @@ object PendingCheckoutReturn {
     private val state = MutableStateFlow<CheckoutReturn?>(null)
     val pending: StateFlow<CheckoutReturn?> = state
     private var account: String? = null
-    private var answered: String? = null
-
+    private var finished: String? = null
+    private var cancelled: String? = null
     /** Told who is signed in, each time that is known for certain (null for a settled sign-out). */
     fun onAccount(uid: String?) {
         if (account != null && uid != account) clear()
         account = uid
     }
-
     /** Sign-out: nothing is kept for whoever signs in next. */
     fun clear() {
         state.value = null
-        answered = null
+        finished = null
+        cancelled = null
     }
-
     /** A newer link replaces an older one that never opened. */
     fun offer(ret: CheckoutReturn) {
         state.value = ret
     }
-
     /** Hands back the waiting link and forgets it, so it opens once. */
     fun take(): CheckoutReturn? {
         val ret = state.value
         state.value = null
         return ret
     }
-
     /** True while a link for [invoiceId] is waiting to be opened. */
     fun isWaitingFor(invoiceId: String): Boolean = state.value?.invoiceId == invoiceId
-
-    /**
-     * A checkout for [invoiceId] is being handed to the browser: whatever an
-     * earlier link said about this invoice no longer answers for it.
+    /*
+     * WHAT THE LINKS HAVE SAID ABOUT A CHECKOUT, kept for the whole app and not
+     * in one controller. Android can open a return link in a second window of
+     * this app, stacked on the one the household paid from. The window
+     * underneath still remembers handing the checkout off, and when the
+     * household backs out to it, this is how it learns what the link said.
+     *
+     * The two answers are not equals. A FINISHED link is Stripe's success
+     * address: the household paid, and the bill must be checked wherever it is
+     * shown. A CANCELLED link only ever calls a wait OFF, so it is believed
+     * only while no finished link has been seen for the same checkout. Any app
+     * or web page can fire either link, and the worst a forged one may do is
+     * cause a read. It must never be able to put a live Pay button in front of
+     * a household whose payment is still landing.
      */
+    /** A checkout for [invoiceId] is being handed to the browser: nothing an earlier link said answers for it. */
     fun handedOff(invoiceId: String) {
-        if (answered == invoiceId) answered = null
+        if (finished == invoiceId) finished = null
+        if (cancelled == invoiceId) cancelled = null
     }
-
+    /** Stripe's success address came back for [invoiceId]. From here no cancel link is believed for it. */
+    fun markFinished(invoiceId: String) {
+        finished = invoiceId
+        if (cancelled == invoiceId) cancelled = null
+    }
     /**
-     * A return link for [invoiceId] has been acted on. Android can open a
-     * link in a second window of this app, stacked on the one the household
-     * paid from. The window underneath still remembers handing the checkout
-     * off, and this is how it learns the return was already dealt with, so it
-     * does not run a check of its own when the household backs out to it (and,
-     * after a cancelled checkout, does not hold Pay back for a minute over a
-     * payment nobody made).
+     * Stripe's cancel address came back for [invoiceId]. Answers whether it is
+     * believed: false when a finished link was already seen for this checkout.
      */
-    fun markAnswered(invoiceId: String) {
-        answered = invoiceId
+    fun markCancelled(invoiceId: String): Boolean {
+        if (finished == invoiceId) return false
+        cancelled = invoiceId
+        return true
     }
-
-    /** True when a return link for [invoiceId] was acted on since its checkout was handed off. */
-    fun wasAnswered(invoiceId: String): Boolean = answered == invoiceId
+    /** True when the checkout for [invoiceId] was cancelled and nothing since says it was paid. */
+    fun wasCancelled(invoiceId: String): Boolean = cancelled == invoiceId && finished != invoiceId
 }

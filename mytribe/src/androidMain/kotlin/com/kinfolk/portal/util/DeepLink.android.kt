@@ -41,6 +41,25 @@ internal fun checkoutReturnOf(uri: Uri?): CheckoutReturn? {
         checkout = uri.getQueryParameter(CHECKOUT_RETURN_PARAM),
     )
 }
+/**
+ * #2401: forgets the claim, share and email links this app was opened with
+ * earlier in the same run.
+ *
+ * Those three are kept for the life of the process and are read again by every
+ * new copy of the app's screen, where each of them wins over the signed-in
+ * shell (`startRouteFor`). A card payment's return link can open such a copy.
+ * Left alone, a household who had opened a shared KinTale link earlier would
+ * come back from paying to that KinTale, and the invoice would never open.
+ *
+ * The return link is the newest thing the household asked this app to show,
+ * so it replaces the older ones. A screen already drawn from one of them read
+ * it when it was built and is not changed by this.
+ */
+internal fun forgetEarlierLaunchLinks() {
+    androidInitialClaimInviteId = null
+    androidInitialShareToken = null
+    androidInitialSecureResetParams = null
+}
 actual fun readInitialClaimInviteId(): String? = androidInitialClaimInviteId
 actual fun readInitialShareToken(): String? = androidInitialShareToken
 actual fun readInitialSecureResetParams(): SecureResetParams? = androidInitialSecureResetParams
