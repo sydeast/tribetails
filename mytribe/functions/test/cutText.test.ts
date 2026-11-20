@@ -140,6 +140,13 @@ describe('#2371 a household text message links to its own entry', () => {
     expect(sms.text.endsWith(`... More in MyTribe: ${PORTAL_URL}${ENTRY}`)).toBe(true);
     expect(sms.text.length).toBeLessThanOrEqual(householdSmsMax(PORTAL_URL, ENTRY));
   });
+  it('the longest text, entry link included, still fits two text segments', () => {
+    // A notice id is a 20-character Firestore id. Two joined segments carry 306 characters.
+    const entry = householdNoticeEntryRoute('A'.repeat(20));
+    expect(householdSmsMax(PORTAL_URL, entry)).toBeLessThanOrEqual(306);
+    const long = 'word '.repeat(200).trim();
+    expect(householdSmsText(long, PORTAL_URL, entry).length).toBeLessThanOrEqual(householdSmsMax(PORTAL_URL, entry));
+  });
   it('the "already links and fits" rule measures the longer entry link', () => {
     const own = `${'a'.repeat(150)} Every date: ${PORTAL_URL}`;
     expect(householdSms(own, PORTAL_URL, ENTRY)).toEqual({ text: own, cut: false });
