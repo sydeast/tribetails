@@ -35,9 +35,16 @@ const BLOCK = /<!--[ \t]*sample-names[ \t]*\r?\n([\s\S]*?)-->[ \t]*(?:\r?\n)?/gi
 const PLACEHOLDER_LABEL = { kin: 'Kin', kinfolk: 'Kinfolk', auntie: 'Auntie' };
 const PLACEHOLDER = /\[(?:Kin|Kinfolk|Auntie)(?: \d+)?\]/;
 const APOSTROPHES = /['’‘ʼ]/gu;
-// A name stands as a word of its own, with or without a plural ending.
-const WORD_START = '(?<![\\p{L}\\p{N}])';
-const WORD_END = '(e?s)?(?![\\p{L}\\p{N}])';
+// What a declared name may be written with. A comma, a bracket, a quote mark or
+// a note after the name would make one "name" that matches nothing, and the
+// names on that line would stay in the text.
+const NAME = /^[\p{L}\p{M}\p{N}\s'’‘ʼ.-]+$/u;
+// A name stands as a word of its own, with or without a plural ending. The
+// letter apostrophe (U+02BC) is a letter to Unicode and an apostrophe to
+// whoever typed it, so it ends a name the way the other three do.
+const WORD_CHAR = '(?!ʼ)[\\p{L}\\p{N}]';
+const WORD_START = `(?<!${WORD_CHAR})`;
+const WORD_END = `(e?s)?(?!${WORD_CHAR})`;
 
 /**
  * `code` is what a generate answers with when the voice files cannot be used.
@@ -104,6 +111,11 @@ function parseSampleNames(text) {
     for (const form of line.slice(colon + 1).split('|').map((f) => tidy(f).trim()).filter(Boolean)) {
       if (form.length < 2) {
         throw new SampleNamesError(`sample-names line ${i + 1}: a name needs at least two characters`);
+      }
+      if (!NAME.test(form)) {
+        throw new SampleNamesError(
+          `sample-names line ${i + 1}: a name is letters, digits, spaces, apostrophes, hyphens and full stops, with "|" between two spellings`,
+        );
       }
       if (forms.some((f) => fold(f) === fold(form))) continue;
       if (listed.has(fold(form))) {

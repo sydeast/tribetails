@@ -149,6 +149,31 @@ describe('parseSampleNames: the names a samples file declares', () => {
       );
     }
   });
+  it('refuses a name written with what names are not written with, so two names on a line are never read as one', () => {
+    for (const bad of [
+      'kin: Juniper, Cap',
+      'kin: Juniper; Cap',
+      'kin: Juniper / Cap',
+      'kin: Juniper & Cap',
+      'kin: "Juniper"',
+      'kin: Juniper (the cat)',
+      'kin: Juniper # the cat',
+      'kinfolk: kin: Juniper',
+    ]) {
+      assert.throws(
+        () => names.parseSampleNames(`<!-- sample-names\nkin: Tofu\n${bad}\n-->`),
+        (e) => e instanceof names.SampleNamesError && e.code === 'voice_sample_names_invalid' &&
+          /line 2/.test(e.message) && !/Juniper|Cap|Tofu/.test(e.message),
+        bad,
+      );
+    }
+    // A full stop, a hyphen, a digit, an apostrophe and an accent are all part of a name.
+    const out = names.parseSampleNames("<!-- sample-names\nkin: Mr. Nibbles | R2-D2\nkinfolk: D'Arcy | D\u2019Arcy-Lowe | Zoe\u0308\n-->");
+    assert.deepStrictEqual(out.entries, [
+      { role: 'kin', forms: ['Mr. Nibbles', 'R2-D2'] },
+      { role: 'kinfolk', forms: ["D'Arcy", 'D\u2019Arcy-Lowe', 'Zo\u00eb'] },
+    ]);
+  });
 });
 
 describe('scrubSampleNames: a sample with the names taken out', () => {
@@ -188,6 +213,13 @@ describe('scrubSampleNames: a sample with the names taken out', () => {
       "[Kin]s grow here. [Kin 2]s. [Kin 2]S. The [Kinfolk]s' gate. [Kin 2]'s bowl. Two [Auntie]es.",
     );
   });
+  it('reads a possessive written with the letter apostrophe, which counts as a letter everywhere else', () => {
+    // U+02BC is a letter to Unicode. Typed after a name it is an apostrophe.
+    assert.strictEqual(
+      names.scrubSampleNames('Tofu\u02bcs bowl. The Marlowes\u02bc gate. \u02bcJuniper\u02bc, she said.', ENTRIES),
+      '[Kin]\u02bcs bowl. The [Kinfolk]s\u02bc gate. \u02bc[Kin 2]\u02bc, she said.',
+    );
+  });
   it('leaves a word alone that only contains a name', () => {
     const text = 'Juniperus is the genus. The capital. A tofurkey recap. Marlowesque. Tofu2go.';
     assert.strictEqual(names.scrubSampleNames(text, ENTRIES), text);
@@ -225,6 +257,7 @@ describe('sampleNamesIn: a draft that carries a name out of the samples', () => 
   it('finds a Kin or Kinfolk name as a word, possessive included', () => {
     assert.deepStrictEqual(names.sampleNamesIn("Tofu's bowl was empty and Marlowe called.", ENTRIES, ''), ['Tofu', 'Marlowe']);
     assert.deepStrictEqual(names.sampleNamesIn('Nibbles was at the door.', ENTRIES, ''), ['Nibbles']);
+    assert.deepStrictEqual(names.sampleNamesIn('Tofu\u02bcs bowl was empty.', ENTRIES, ''), ['Tofu']);
   });
   it('finds the name however the draft writes it: capitals, lowercase, plural', () => {
     for (const [draft, written] of [

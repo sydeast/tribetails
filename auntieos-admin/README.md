@@ -138,7 +138,7 @@ generate stops with a 500 and nothing is sent:
 |---|---|
 | `voice_sample_names_missing` | The voice files have no block. |
 | `voice_sample_names_empty` | The block has no `kin:` and no `kinfolk:` line. |
-| `voice_sample_names_invalid` | There is more than one block, the block does not open and close as a comment of its own, a line is not `kin:`, `kinfolk:` or `auntie:`, one name is on two lines, or `-->` is written inside the block. |
+| `voice_sample_names_invalid` | There is more than one block, the block does not open and close as a comment of its own, a line is not `kin:`, `kinfolk:` or `auntie:`, a name holds anything other than letters, digits, spaces, apostrophes, hyphens and full stops (a comma between two names, a note after one), one name is on two lines, or `-->` is written inside the block. |
 | `voice_sample_names_left` | A listed name is still in the text after replacing. |
 
 `npm run check:voice` in `web/functions` asks the same question without a
