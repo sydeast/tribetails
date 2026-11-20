@@ -41,6 +41,7 @@ import { RouteMap } from '../components/RouteMap';
 import { MutationLabel, OfflineMutationNotice } from '../components/OfflineMutationNotice';
 import { isOfflineError, usePortalMutation } from '../lib/mutationState';
 import { SettingsBusinessFootnote } from '../components/BusinessFootnote';
+import { cutWhole } from '../lib/cutText';
 
 const PAGE_SIZE = 20;
 const GALLERY_VARIANTS = ['g1', 'g2', 'g3', 'g4'] as const;
@@ -249,7 +250,7 @@ function TaleCard(props: { tale: KinTaleDto; kinfolkId: string | undefined; feat
   });
 
   const mediaView = viewOfQuery(media);
-  const headline = tale.title || tale.body.slice(0, featured ? 90 : 70);
+  const headline = tale.title || cutWhole(tale.body, featured ? 90 : 70);
   const meta = taleMetaLabel(tale);
   const paragraphs = tale.body.split(/\n+/).filter((p) => p.length > 0);
 

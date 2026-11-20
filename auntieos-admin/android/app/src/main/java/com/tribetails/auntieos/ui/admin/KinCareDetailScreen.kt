@@ -39,6 +39,7 @@ import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.emergencyContactsOf
 import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.domain.readableVisitNotes
 import com.tribetails.auntieos.data.repository.AuntieRepository
 import com.tribetails.auntieos.data.repository.BookingNotesRepository
@@ -930,7 +931,7 @@ private fun KinTaleSnippet(report: KinCareReport) {
             }
             if (report.bodyCopy.isNotBlank()) {
                 Text(
-                    text  = report.bodyCopy.take(180) + if (report.bodyCopy.length > 180) "…" else "",
+                    text  = cutWhole(report.bodyCopy, 180) + if (report.bodyCopy.length > 180) "…" else "",
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )

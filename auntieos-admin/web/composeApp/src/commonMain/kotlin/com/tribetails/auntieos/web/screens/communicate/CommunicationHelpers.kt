@@ -4,6 +4,7 @@ import com.tribetails.auntieos.web.data.CallLog
 import com.tribetails.auntieos.web.data.EmailMessage
 import com.tribetails.auntieos.web.data.SmsMessage
 import com.tribetails.auntieos.web.data.VoicemailLog
+import com.tribetails.auntieos.web.screens.cutWhole
 
 /**
  * Pure helpers for the Communicate recipient-context panel. No Compose, no IO —
@@ -17,7 +18,7 @@ fun summaryLine(tldr: String, rawSummary: String, max: Int): String {
     val r = rawSummary.trim()
     if (r.isEmpty()) return ""
     if (max <= 0 || r.length <= max) return r
-    return r.take(max).trimEnd() + "…"
+    return cutWhole(r, max).trimEnd() + "…"
 }
 
 data class LatestComm(
@@ -28,7 +29,7 @@ data class LatestComm(
 
 private fun commSnippet(text: String, max: Int = 140): String {
     val t = text.trim()
-    return if (t.length <= max) t else t.take(max).trimEnd() + "…"
+    return if (t.length <= max) t else cutWhole(t, max).trimEnd() + "…"
 }
 
 /**

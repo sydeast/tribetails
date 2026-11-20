@@ -1,4 +1,5 @@
 import sanitizeHtml from 'sanitize-html';
+import { cutWhole } from './cutText';
 
 /**
  * Allowlist for the rich-text subset MyTribe supports on kinfolk-authored
@@ -150,7 +151,7 @@ export function messagePlainText(body: string): string {
 /** messagePlainText, cut to maxLength, for the messages list and the new-message notice. */
 export function messagePreview(body: string, maxLength: number): string {
   const plain = messagePlainText(body);
-  return plain.length <= maxLength ? plain : plain.slice(0, maxLength);
+  return cutWhole(plain, maxLength);
 }
 
 /**
@@ -172,5 +173,5 @@ export function sanitizePlainText(text: string): string {
  */
 export function toPlainTextPreview(richText: string, maxLength: number): string {
   const plain = sanitizePlainText(richText);
-  return plain.length <= maxLength ? plain : plain.slice(0, maxLength);
+  return cutWhole(plain, maxLength);
 }

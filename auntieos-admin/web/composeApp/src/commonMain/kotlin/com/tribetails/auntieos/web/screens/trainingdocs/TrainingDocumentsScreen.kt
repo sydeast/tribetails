@@ -30,6 +30,7 @@ import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.TrainingDocAttachment
 import com.tribetails.auntieos.web.data.TrainingDocument
+import com.tribetails.auntieos.web.screens.cutWhole
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -337,7 +338,7 @@ private fun DocCard(
             if (doc.content.isNotBlank()) {
                 Spacer(Modifier.height(AuntieTheme.dims.space3))
                 val preview = if (!expanded && doc.content.length > 200)
-                    doc.content.take(200) + "..." else doc.content
+                    cutWhole(doc.content, 200) + "..." else doc.content
                 Text(
                     text  = preview,
                     style = AuntieTheme.typography.bodySmall,

@@ -61,6 +61,7 @@ import com.tribetails.auntieos.data.model.Draft
 import com.tribetails.auntieos.data.model.KinCareReport
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.isUntriagedOrphan
+import com.tribetails.auntieos.domain.cutWhole
 import com.tribetails.auntieos.ui.components.AuntieBanner
 import com.tribetails.auntieos.ui.components.AuntieBannerTone
 import com.tribetails.auntieos.ui.components.AuntieChip
@@ -454,7 +455,7 @@ private fun OrphanRow(
 internal fun bodyPreview(body: String): String {
     val cleaned = body.replace(Regex("\\s+"), " ").trim()
     if (cleaned.isBlank()) return "(empty body)"
-    return if (cleaned.length <= 80) cleaned else cleaned.take(80) + "…"
+    return if (cleaned.length <= 80) cleaned else cutWhole(cleaned, 80) + "…"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

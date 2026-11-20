@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { maskPhoneDigits } from '../lib/maskPhoneDigits';
+import { cutWhole } from '../lib/cutText';
 import { initSentry } from '../lib/sentry';
 import { wrapCallable } from '../lib/wrapCallable';
 import { hasKinfolkPerm, requireKinfolkPerm } from '../lib/memberGate';
@@ -181,7 +182,7 @@ export const REFUSAL_REASON_MAX = 300;
 /** The refusal message as it goes into the audit: phone-shaped digits masked, trimmed, capped. */
 export function refusalReason(message: string): string {
   const masked = maskPhoneDigits(message).trim();
-  return masked.length > REFUSAL_REASON_MAX ? `${masked.slice(0, REFUSAL_REASON_MAX - 1)}…` : masked;
+  return masked.length > REFUSAL_REASON_MAX ? `${cutWhole(masked, REFUSAL_REASON_MAX - 1)}…` : masked;
 }
 
 /** A `kinfolkId` the caller sent, read without the schema, for a payload that failed to parse. */

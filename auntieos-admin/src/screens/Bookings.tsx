@@ -63,6 +63,7 @@ import { DEFAULT_BUSINESS_TIME_ZONE, resolveBusinessTimeZone } from '../lib/busi
 import { navKicker } from '../lib/nav';
 import { isOverdueSession } from '../lib/sessionFormat';
 import { localDateIso } from '../lib/invoiceFormat';
+import { cutWhole } from '../lib/cutText';
 import './Bookings.css';
 
 /**
@@ -1368,7 +1369,7 @@ function BookingRow({
           <StatusPill label="OVERDUE" tone="error" />
         )}
         {notePreview.trim() !== '' && (
-          <span className="bookings__row-note">Note: {notePreview.slice(0, 120)}</span>
+          <span className="bookings__row-note">Note: {cutWhole(notePreview, 120)}</span>
         )}
       </span>
     </>

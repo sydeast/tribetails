@@ -58,6 +58,7 @@ import com.tribetails.auntieos.web.data.SmsMessage
 import com.tribetails.auntieos.web.data.VoicemailLog
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
+import com.tribetails.auntieos.web.screens.cutWhole
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieBanner
 import com.tribetails.auntieos.web.ui.components.AuntieBannerTone
@@ -991,7 +992,7 @@ internal fun VoicemailLog.toEntry() = InboxEntry(
     kinfolkId   = kinfolkId,
     kinfolkName = kinfolkName,
     counterpart = callerNumber,
-    preview     = transcript.take(120),
+    preview     = cutWhole(transcript, 120),
     replyTargetPhone = callerNumber,
     replyTargetEmail = "",
     voicemailAudioUrl = audioUrl,
@@ -1022,7 +1023,7 @@ private fun CallLog.toEntry() = InboxEntry(
     kinfolkId   = kinfolkId,
     kinfolkName = kinfolkName,
     counterpart = counterpartNumber,
-    preview     = transcript.take(120).ifBlank {
+    preview     = cutWhole(transcript, 120).ifBlank {
         when (status.lowercase()) {
             "missed"    -> "Missed call"
             "voicemail" -> "Left a voicemail"
@@ -1046,7 +1047,7 @@ private fun SmsMessage.toEntry() = InboxEntry(
     kinfolkId   = kinfolkId,
     kinfolkName = kinfolkName,
     counterpart = counterpartNumber,
-    preview     = body.take(140),
+    preview     = cutWhole(body, 140),
     replyTargetPhone = counterpartNumber,
     replyTargetEmail = "",
     voicemailAudioUrl = "",
@@ -1066,7 +1067,7 @@ private fun EmailMessage.toEntry(): InboxEntry {
         kinfolkId   = kinfolkId,
         kinfolkName = kinfolkName,
         counterpart = person,
-        preview     = previewText.take(160),
+        preview     = cutWhole(previewText, 160),
         replyTargetPhone = "",
         replyTargetEmail = person,
         voicemailAudioUrl = "",

@@ -5,6 +5,7 @@ import { logEvent } from '../lib/logger';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { sanitizePlainText } from '../lib/richText';
+import { cutWhole } from '../lib/cutText';
 import { anthropicClient } from '../lib/aiCopy';
 import { AI_BATCHES_COLLECTION, TALES_COLLECTION } from '../admin/aiBackfillTaleTitles';
 import { FULL_CPU_SERIAL, SCHEDULE_RETRY_PERIODIC } from '../lib/runtimeOptions';
@@ -39,7 +40,7 @@ interface ApplyCounts {
 /** Normalizes a model title result: plain text, single line, hard cap. */
 export function normalizeTitle(raw: string): string {
   const flat = sanitizePlainText(raw).replace(/\s+/g, ' ').trim().replace(/^["'“”]+|["'“”.]+$/g, '');
-  return flat.length > MAX_TITLE_CHARS ? flat.slice(0, MAX_TITLE_CHARS).trim() : flat;
+  return flat.length > MAX_TITLE_CHARS ? cutWhole(flat, MAX_TITLE_CHARS).trim() : flat;
 }
 
 async function applyTitle(taleId: string, title: string): Promise<'applied' | 'skippedTitled' | 'skippedMissing'> {
