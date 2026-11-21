@@ -545,6 +545,22 @@ describe('addKinToUpcomingVisits: one notice per recipient for the whole change'
     } as never);
     expect(sent('kincare.changed')).toHaveLength(1);
   });
+  it('a fresh stamp written with any other change never silences that change', async () => {
+    const before = { status: 'confirmed', startTime: ts(AHEAD), assignedAuntieUid: 'ada', ...OLD_KIN };
+    await onBookingsWrite.run({
+      id: 'evt-stamp-and-note',
+      params: { kinfolkId: 'fam1', batchId: 'b1', visitId: 'v1' },
+      data: {
+        before: { data: () => before, exists: true },
+        after: {
+          data: () => ({ ...before, notes: 'Side gate', kinIds: ['biscuit', 'mochi', 'pepper'], kinAddedStamp: 'fresh' }),
+          exists: true,
+        },
+      },
+    } as never);
+    expect(sent('kincare.changed')).toHaveLength(1);
+    expect(sent('assignment.changed')).toHaveLength(1);
+  });
   it('a request awaiting approval tells nobody, and a confirmed visit beside it is the only one named', async () => {
     const docs = household();
     visit(docs, 'c1', { copy: { assignedAuntieUid: 'ada' } });

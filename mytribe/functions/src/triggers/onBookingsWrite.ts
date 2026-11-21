@@ -475,7 +475,11 @@ export const onBookingsWrite = onDocumentWritten(
     // `assignment.changed` keeps `{{bookingDate}}`: reassigned, unassigned,
     // cancelled and edited are all genuinely one-visit news.
     // #1822: a Kin added to upcoming visits is told to her once, by the callable.
-    const kinAdded = kinAddedStampChanged(before, after);
+    // Only a write that changed nothing watched beyond the Kin lists counts: a
+    // fresh stamp riding on any other edit (a time, a note, a service) never
+    // silences that edit's notices.
+    const kinAdded =
+      kinAddedStampChanged(before, after) && changedFieldsAll.every((f) => f === 'kinIds' || f === 'kinNames');
     for (const d of assignmentDispatches(before, after, changedFieldsAll)) {
       if (kinAdded && d.key === 'assignment.changed' && d.extra['changeKind'] === 'updated') continue;
       const extra =
