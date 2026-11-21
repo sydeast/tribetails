@@ -16,6 +16,7 @@ import {
   formatCentsUsd,
   formatUsd,
   documentNoun,
+  invoiceName,
   invoiceRowStatusInfo,
   longDateLabel,
   longDateLabelFromMs,
@@ -436,7 +437,7 @@ export function InvoiceDetail() {
 
         <header className="hero-greet">
           <div className="kick">
-            {documentNoun(inv)} {inv.id}
+            {invoiceName(inv)}
           </div>
           <h1>
             {documentNoun(inv)} for <span>{inv.client ?? 'your tribe'}</span>
@@ -476,9 +477,7 @@ export function InvoiceDetail() {
                     <div className="lbl">Status</div>
                     <span className={`chip big ${status.cssClass}`}>{status.chipLabel}</span>
                     {partPaid && <div className="num">{partPaid}</div>}
-                    <div className="num">
-                      {documentNoun(inv)} {inv.id}
-                    </div>
+                    <div className="num">{invoiceName(inv)}</div>
                   </div>
                 </div>
 

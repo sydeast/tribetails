@@ -348,13 +348,13 @@ describe('#2361: a declined card on an invoice that was cancelled or written off
 
   it('the line reads plainly with no invoice number', () => {
     expect(cardDeclinedAfterPaymentWords('', 'invoice-other-household')).toBe(
-      'A card was declined on an invoice that belongs to a different household. No notice was sent to the household.',
+      'A card was declined on an invoice with no number that belongs to a different household. No notice was sent to the household.',
     );
     expect(cardDeclinedAfterPaymentWords('1029', 'invoice-not-found')).toBe(
       'A card was declined on an invoice that could not be found. No notice was sent to the household.',
     );
     expect(cardDeclinedAfterPaymentWords('', 'invoice-cancelled')).toBe(
-      'A card was declined on an invoice that was cancelled. No notice was sent to the household.',
+      'A card was declined on an invoice with no number that was cancelled. No notice was sent to the household.',
     );
     expect(cardDeclinedAfterPaymentWords('1029', 'invoice-paid')).toBe(
       'A card was declined on invoice 1029, which was already paid. No notice was sent to the household.',
@@ -966,7 +966,7 @@ describe('#2345: the line for a payment an earlier build put on an invoice that 
       'A card payment of $40.00 was recorded for an invoice that could not be found.',
     );
     expect(cardPaymentNotPayableWords('', 'apply_invoice_not_sent', 0)).toBe(
-      'A card payment was put on an invoice, but the invoice was a draft or a quote when the payment arrived.',
+      'A card payment was put on an invoice with no number, but the invoice was a draft or a quote when the payment arrived.',
     );
     expect(cardPaymentNotPayableWords('1029', 'apply_wrong_household', 4000)).toBe(
       'A card payment of $40.00 was put on invoice 1029, but the checkout was for a different household.',

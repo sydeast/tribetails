@@ -259,6 +259,29 @@ describe('payInvoiceHandler', () => {
    * `getMyInvoices` started shipping the derived balance. It asks the shared
    * rule now, so the screen and the checkout charge the same figure.
    */
+  it("#2453: the line on Stripe's page names the invoice by its number, never by its id", async () => {
+    const pay = async (id: string, invoice: Record<string, unknown>) => {
+      mocks.stripeMock.checkout.sessions.create.mockClear();
+      const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] }, [`invoices/${id}`]: invoice } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+      await payInvoiceHandler({
+        data: { invoiceId: id, successUrl: 'https://kinfolk.tribetails.com/invoices/x?checkout=done', cancelUrl: 'https://kinfolk.tribetails.com/invoices/x' },
+        auth: { uid: 'u1' },
+      } as any);
+      const arg = mocks.stripeMock.checkout.sessions.create.mock.calls[0]![0] as any;
+      return arg.line_items[0].price_data.product_data as { name: string; description?: string };
+    };
+    const numbered = await pay('inv_1731000000000_ab12cd', {
+      kinfolkId: '3', status: 'sent', total: 40, invoiceNumber: '1042', client: 'Ada Kim',
+    });
+    expect(numbered).toEqual({ name: 'Invoice #1042', description: 'Ada Kim' });
+    // No number and no name on the invoice: words for the one, no line for the other. No id for either.
+    const bare = await pay('inv_1731000000001_ef34gh', { kinfolkId: '3', status: 'sent', total: 40 });
+    expect(bare).toEqual({ name: 'Invoice with no number' });
+    expect(JSON.stringify(bare)).not.toContain('inv_1731000000001_ef34gh');
+  });
+
   it('#902: charges a migrated invoice its derived balance instead of refusing it', async () => {
     const ctx = buildDbMock({
       docs: {

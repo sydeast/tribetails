@@ -808,7 +808,7 @@ describe('getInvoiceLedger unlinkedKinfolkPayments (the household fallback)', ()
 describe('getInvoiceLedger gate and refusals', () => {
   it('refuses an unknown invoice rather than answering an empty ledger', async () => {
     mocks.dbFn.mockReturnValue(seed({ invoice: null }).db);
-    await expect(run()).rejects.toThrow(/not found/i);
+    await expect(run()).rejects.toMatchObject({ code: 'not-found', message: 'Invoice not found.' });
   });
 
   it('refuses a signed-out caller', async () => {

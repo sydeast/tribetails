@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { FieldValue } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
@@ -102,7 +103,7 @@ export async function unarchiveInvoiceHandler(
   // visit is refereed by Firestore rather than by whoever writes last.
   const outcome = await db().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    if (!snap.exists) throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+    if (!snap.exists) throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
     const data = snap.data() as ArchivableInvoice;
 
     if (!isArchived(data)) {

@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { FieldValue } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
@@ -197,7 +198,7 @@ export async function linkInvoiceSessionsHandler(
   const outcome = await db().runTransaction(async (tx) => {
     const invSnap = await tx.get(invRef);
     if (!invSnap.exists) {
-      throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+      throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
     }
     const data = invSnap.data() as InvoiceDoc;
     if (!testOwnsDoc(actor.testMode, data.kinfolkId ?? '')) {

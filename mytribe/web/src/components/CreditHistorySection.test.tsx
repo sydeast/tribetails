@@ -108,7 +108,13 @@ describe('credit history lines', () => {
       applications: [{ appliedAtMs: OCT_3, amountCents: 600, invoiceId: 'i', invoiceNumber: null }],
     };
     expect(creditStatusLine(c)).toBe('$6.00 of $10.00 applied');
-    expect(creditApplicationLines(c)).toEqual(['$6.00 on an invoice, Oct 3, 2026']);
+    expect(creditApplicationLines(c)).toEqual(['$6.00 on an invoice with no number, Oct 3, 2026']);
+    // #1848: a number stored blank is no number either.
+    const blank = { ...c, applications: [{ ...c.applications[0]!, invoiceNumber: '' }] };
+    expect(creditApplicationLines(blank)).toEqual(['$6.00 on an invoice with no number, Oct 3, 2026']);
+    expect(creditUseLine({ useId: 'u', usedAtMs: OCT_3, amountCents: 600, invoiceId: 'inv_1731000000000_ab12cd', invoiceNumber: null })).toBe(
+      '$6.00 on an invoice with no number, Oct 3, 2026',
+    );
   });
 
   it('a use line names the invoice when it has a number', () => {

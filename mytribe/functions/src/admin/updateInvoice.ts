@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { FieldValue, type DocumentReference, type Transaction } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
@@ -250,7 +251,7 @@ type EditPatch = z.infer<typeof Args>['patch'];
 async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatch) {
   const invoiceId = ref.id;
   const snap = await tx.get(ref);
-  if (!snap.exists) throw new HttpsError('not-found', `Invoice '${invoiceId}' not found.`);
+  if (!snap.exists) throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
   const data = snap.data() as InvoiceDoc;
   // #2168: an archived invoice is read-only until it is restored. Decided on
   // what this transaction read, so an archive committing first re-runs here.

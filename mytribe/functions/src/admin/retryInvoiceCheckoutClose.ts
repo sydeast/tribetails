@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
@@ -61,7 +62,7 @@ export async function retryInvoiceCheckoutCloseHandler(
     throw err;
   }
   const snap = await db().collection('invoices').doc(args.invoiceId).get();
-  if (!snap.exists) throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+  if (!snap.exists) throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
   const data = snap.data() as SweepDoc & { kinfolkId?: string; invoiceNumber?: string };
   // #2090: a written-off invoice owes nothing either, and the sweep closes its
   // links (`sessionsToClose`), so Try again works on it as on a paid one.

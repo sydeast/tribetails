@@ -9,7 +9,7 @@ import {
   declinedRowLabel,
   formatCentsUsd,
   formatUsd,
-  documentNoun,
+  invoiceName,
   invoiceRowStatusInfo,
   invoiceStatusInfo,
   longDateLabel,
@@ -333,7 +333,7 @@ export function Invoices() {
 }
 
 function invoiceTitle(inv: InvoiceDto): string {
-  return inv.client ?? `${documentNoun(inv)} #${inv.id}`;
+  return inv.client ?? invoiceName(inv);
 }
 
 function OpenRow(props: {
@@ -388,7 +388,7 @@ function OpenRow(props: {
         <div className="info">
           <b>{invoiceTitle(inv)}</b>
           <small className="id">
-            {inv.client ? `${documentNoun(inv)} #${inv.id}` : dueLabel}
+            {inv.client ? invoiceName(inv) : dueLabel}
             {inv.client ? ` · ${dueLabel}` : ''}
           </small>
         </div>
@@ -452,7 +452,7 @@ function PaidRow(props: { invoice: InvoiceDto; divider: boolean }) {
       <div className="info">
         <b>{invoiceTitle(inv)}</b>
         <small className="id">
-          {inv.client ? `${documentNoun(inv)} #${inv.id} · ${paidLabel}` : paidLabel}
+          {inv.client ? `${invoiceName(inv)} · ${paidLabel}` : paidLabel}
         </small>
       </div>
       <div className="amt">
@@ -479,7 +479,7 @@ function CreditRow(props: { invoice: InvoiceDto; divider: boolean; redeemPhase: 
       <div className="cmeta">
         <b>{invoiceTitle(inv)}</b>
         <small>
-          Invoice #{inv.id}.{' '}
+          {invoiceName(inv)}.{' '}
           {redeemed ? 'It is in your account balance.' : 'Save it to your account balance to spend it.'}
         </small>
         {redeemed && (

@@ -65,6 +65,7 @@ import {
   type InvoiceSettlementState,
 } from './invoiceMath';
 import { invoiceStateStampOf } from './invoiceStateStamp';
+import { invoiceLeadName, invoiceName } from './invoiceNaming';
 import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from './paymentAppliedOwner';
 
 /** What the apply did to the invoice, after the write. */
@@ -146,19 +147,21 @@ export function planApply(input: {
       ok: false,
       refusal: {
         code: 'apply_invoice_not_found',
-        message: `Invoice '${invoice.invoiceId}' does not exist, so nothing can be applied to it.`,
+        message: 'That invoice could not be found, so nothing can be applied to it.',
       },
     };
   }
   const doc = invoice.doc;
-  const label = invoiceNumberOf(doc) || invoice.invoiceId;
+  // #2453: the number, or the words for an invoice with none. Never the id.
+  const named = invoiceName(invoiceNumberOf(doc));
+  const lead = invoiceLeadName(invoiceNumberOf(doc));
 
   if (appliedCents <= 0) {
     return {
       ok: false,
       refusal: {
         code: 'apply_zero_amount',
-        message: `Nothing was entered against invoice ${label}. Enter an amount to apply, or leave the invoice off the payment.`,
+        message: `Nothing was entered against ${named}. Enter an amount to apply, or leave the invoice off the payment.`,
       },
     };
   }
@@ -169,7 +172,7 @@ export function planApply(input: {
       refusal: {
         code: 'apply_exceeds_payment',
         message:
-          `${usd(appliedCents)} was applied to invoice ${label}, but this payment has only ` +
+          `${usd(appliedCents)} was applied to ${named}, but this payment has only ` +
           `${usd(input.spendableCents)} to give once its tip is set aside. Lower the applied ` +
           `amount, lower the tip, or raise the payment amount.`,
       },
@@ -185,7 +188,7 @@ export function planApply(input: {
       ok: false,
       refusal: {
         code: 'apply_wrong_household',
-        message: `Invoice ${label} belongs to a different household than this payment.`,
+        message: `${lead} belongs to a different household than this payment.`,
       },
     };
   }
@@ -195,7 +198,7 @@ export function planApply(input: {
       ok: false,
       refusal: {
         code: 'apply_invoice_not_sent',
-        message: `Invoice ${label} is a draft or quote; send it before applying a payment to it.`,
+        message: `${lead} is a draft or quote; send it before applying a payment to it.`,
       },
     };
   }
@@ -250,19 +253,20 @@ export function balanceToSettle(
       ok: false,
       refusal: {
         code: 'apply_invoice_not_found',
-        message: `Invoice '${invoice.invoiceId}' does not exist, so nothing can be applied to it.`,
+        message: 'That invoice could not be found, so nothing can be applied to it.',
       },
     };
   }
   const doc = invoice.doc;
-  const label = invoiceNumberOf(doc) || invoice.invoiceId;
+  // #2453: the number, or the words for an invoice with none. Never the id.
+  const lead = invoiceLeadName(invoiceNumberOf(doc));
   const invoiceKin = typeof doc.kinfolkId === 'string' ? doc.kinfolkId : '';
   if (kinfolkId !== '' && invoiceKin !== '' && invoiceKin !== kinfolkId) {
     return {
       ok: false,
       refusal: {
         code: 'apply_wrong_household',
-        message: `Invoice ${label} belongs to a different household than this payment.`,
+        message: `${lead} belongs to a different household than this payment.`,
       },
     };
   }
@@ -271,7 +275,7 @@ export function balanceToSettle(
       ok: false,
       refusal: {
         code: 'apply_invoice_not_sent',
-        message: `Invoice ${label} is a draft or quote; send it before applying a payment to it.`,
+        message: `${lead} is a draft or quote; send it before applying a payment to it.`,
       },
     };
   }
@@ -285,7 +289,7 @@ export function balanceToSettle(
       ok: false,
       refusal: {
         code: 'apply_nothing_owed',
-        message: `Invoice ${label} owes nothing, so no payment can be recorded against it.`,
+        message: `${lead} owes nothing, so no payment can be recorded against it.`,
         amountDueCents: 0,
       },
     };

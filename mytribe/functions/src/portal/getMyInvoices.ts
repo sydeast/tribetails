@@ -1,3 +1,4 @@
+import { invoiceNumberText } from '../lib/invoiceNaming';
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { resolveKinfolkAccess } from '../lib/resolveKinfolkAccess';
@@ -122,6 +123,12 @@ export type InvoiceLineItemDto = z.infer<typeof InvoiceLineItemDtoSchema>;
 export const InvoiceDtoSchema = z
   .object({
     id: z.string().min(1),
+    /**
+     * #1848: the number a Kinfolk can quote, as the office sees it, or null when
+     * the invoice has none. The portals print this and never `id`, which is the
+     * stored key and only opens the invoice.
+     */
+    invoiceNumber: z.string().nullable(),
     kinfolkId: z.string(),
     kinfolkName: z.string().nullable(),
     client: z.string().nullable(),
@@ -539,6 +546,7 @@ export async function getMyInvoicesHandler(
     const payBlockedReason = payRefusal === null ? null : cardCheckoutRefusalSentence(payRefusal);
     return {
       id: d.id,
+      invoiceNumber: invoiceNumberText(data['invoiceNumber']) || null,
       kinfolkId,
       kinfolkName: stringOrNull(data['kinfolkName']),
       client: stringOrNull(data['client']) ?? stringOrNull(data['kinfolkName']) ?? householdName,

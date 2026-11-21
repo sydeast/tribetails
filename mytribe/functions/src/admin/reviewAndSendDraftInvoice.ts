@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import {
   FieldValue,
   type DocumentReference,
@@ -132,9 +133,9 @@ export const Result = z
  * The draft as read, or the refusal. Shared by the check and the flip so the
  * two cannot disagree about what may be sent.
  */
-function sendableDraft(snap: DocumentSnapshot, invoiceId: string): InvoiceDoc {
+function sendableDraft(snap: DocumentSnapshot): InvoiceDoc {
   if (!snap.exists) {
-    throw new HttpsError('not-found', `Invoice '${invoiceId}' not found.`);
+    throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
   }
   const data = snap.data() as InvoiceDoc;
 
@@ -312,7 +313,7 @@ export async function sendDraft(uid: string, invoiceId: string): Promise<z.infer
   // so a household is never told about an invoice it cannot open (drafts are
   // hidden from Kinfolk).
   const { data, prior, quote } = await db().runTransaction(async (tx) => {
-    const draft = sendableDraft(await tx.get(ref), args.invoiceId);
+    const draft = sendableDraft(await tx.get(ref));
     // #2087: read off the draft THIS transaction read, so a quote turned into
     // an invoice a moment ago goes out as the invoice it now is.
     const quote = isQuoteDraft(draft);
@@ -410,7 +411,7 @@ export async function sendDraft(uid: string, invoiceId: string): Promise<z.infer
     familyId,
     description: quote
       ? words.quoteSentence(data.invoiceNumber, 'sent to the household')
-      : `Draft ${words.invoiceWords(data.invoiceNumber).replace(/^an /, '')} reviewed and sent`,
+      : words.draftInvoiceSentWords(data.invoiceNumber),
     payload: { invoiceId: args.invoiceId, kinfolkId: familyId, recipientUid: recipientUid ?? null },
   }).catch((err) => {
     logEvent({

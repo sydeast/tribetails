@@ -83,6 +83,7 @@ function paymentMoney(over: Record<string, unknown> = {}): Record<string, unknow
 function invoiceDto(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: 'inv1',
+    invoiceNumber: '1042',
     kinfolkId: 'fam1',
     kinfolkName: 'The Kims',
     client: 'Ada Kim',

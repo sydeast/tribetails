@@ -53,7 +53,7 @@ vi.mock('../api/invoicesApi', async () => {
 });
 
 const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
-  id: 'inv-open-1',
+  id: 'inv-open-1', invoiceNumber: '1042',
   kinfolkId: 'kin-fam-1',
   kinfolkName: 'The Test Family',
   client: 'The Test Family',
@@ -442,5 +442,88 @@ describe('Invoices: Pay now sends the same return addresses and checkout key as 
     await waitFor(() => expect(payInvoice).toHaveBeenCalledTimes(2));
     expect(payInvoice.mock.calls[1]![4]).toMatch(KEY);
     expect(payInvoice.mock.calls[1]![4]).not.toBe(payInvoice.mock.calls[0]![4]);
+  });
+});
+
+/**
+ * #1848: every row names its invoice by the number a Kinfolk can quote. The
+ * stored id (`inv_<13 digits>_<6 characters>`) used to stand after the "#".
+ */
+describe('Invoices: a row prints the invoice number, never the stored id (#1848)', () => {
+  const ID = 'inv_1731000000000_ab12cd';
+  async function renderWith(res: GetMyInvoicesResult) {
+    const invoicesApi = await import('../api/invoicesApi');
+    vi.mocked(invoicesApi.getMyInvoices).mockResolvedValue(res);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Invoices />
+      </QueryClientProvider>,
+    );
+  }
+  const noIdOnScreen = () => expect(document.body.textContent ?? '').not.toContain(ID);
+
+  it('an open row', async () => {
+    await renderWith({ open: [{ ...OPEN_INVOICE, id: ID, invoiceNumber: '1042' }], paid: [], credits: [], accountBalanceCents: 0 });
+    expect(await screen.findByText(/^Invoice #1042 · /)).toBeInTheDocument();
+    noIdOnScreen();
+  });
+
+  it('an open row with no number', async () => {
+    await renderWith({ open: [{ ...OPEN_INVOICE, id: ID, invoiceNumber: null }], paid: [], credits: [], accountBalanceCents: 0 });
+    expect(await screen.findByText(/^Invoice with no number · /)).toBeInTheDocument();
+    noIdOnScreen();
+  });
+
+  it('an open row with no client name takes the invoice name as its title', async () => {
+    await renderWith({
+      open: [{ ...OPEN_INVOICE, id: ID, invoiceNumber: '1042', client: null }],
+      paid: [],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByText('Invoice #1042')).toBeInTheDocument();
+    noIdOnScreen();
+  });
+
+  it('a quote row', async () => {
+    await renderWith({
+      open: [{ ...OPEN_INVOICE, id: ID, invoiceNumber: 'Q-7', status: 'quote' }],
+      paid: [],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByText(/^Quote #Q-7/)).toBeInTheDocument();
+    noIdOnScreen();
+  });
+
+  it('a paid row, with and without a number', async () => {
+    await renderWith({
+      open: [],
+      paid: [
+        { ...OPEN_INVOICE, id: ID, invoiceNumber: '1042', status: 'paid', isPaid: true, amountDue: 0 },
+        { ...OPEN_INVOICE, id: `${ID}2`, invoiceNumber: null, status: 'paid', isPaid: true, amountDue: 0 },
+      ],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByText(/^Invoice #1042 · /)).toBeInTheDocument();
+    expect(screen.getByText(/^Invoice with no number · /)).toBeInTheDocument();
+    noIdOnScreen();
+  });
+
+  it('a row in the CREDITS panel, with and without a number', async () => {
+    await renderWith({
+      open: [],
+      paid: [],
+      credits: [
+        { ...CREDIT_INVOICE, id: ID, invoiceNumber: '1042' },
+        { ...CREDIT_INVOICE, id: `${ID}2`, invoiceNumber: null },
+      ],
+      accountBalanceCents: 0,
+    });
+    expect(await screen.findByText(/^Invoice #1042\. /)).toBeInTheDocument();
+    expect(screen.getByText(/^Invoice with no number\. /)).toBeInTheDocument();
+    noIdOnScreen();
   });
 });
