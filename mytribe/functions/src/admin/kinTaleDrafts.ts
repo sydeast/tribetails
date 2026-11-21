@@ -6,7 +6,7 @@ import { logEvent } from '../lib/logger';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { wrapCallable } from '../lib/wrapCallable';
 import { isOwner, isOwnerClaim, staffBypass } from '../lib/staffGate';
-import { isKinTaleDraft } from '../lib/generatedDraftType';
+import { draftWentOut, isKinTaleDraft } from '../lib/generatedDraftType';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -244,6 +244,17 @@ export async function deleteGeneratedDraftHandler(
     const published = typeof draft['publishedReportId'] === 'string' ? draft['publishedReportId'].trim() : '';
     if (published !== '') {
       throw new HttpsError('failed-precondition', 'This draft has already been sent as a KinTale, so it is kept.');
+    }
+    // #2428: the same goes for every other draft a household was sent, or may
+    // have been: an approved Email or Text, and a Push that reached their
+    // notifications list or their phone (`draftWentOut`). Until now only a
+    // KinTale was kept, so deleting any of the others removed the one record
+    // of a message somebody received. A held Push, and one whose send never
+    // answered, reached nobody and are still deleted here.
+    if (draftWentOut(draft)) {
+      throw new HttpsError('failed-precondition', 'This draft has already been sent, so it is kept.', {
+        code: 'draft_already_sent',
+      });
     }
     tx.delete(draftRef);
     return either(draft['kinfolk_id'], draft['kinfolkId']);

@@ -136,6 +136,23 @@ class FirestoreClient {
         }
         return platformInvokeCallable("sendHouseholdPush", callableJson.encodeToString(JsonObject.serializer(), payload))
     }
+    /**
+     * #2428: approve and send a Communicate Email or Text draft through the
+     * `sendGeneratedDraft` callable. The server claims the draft, sends it to
+     * the address on the household's own record and stamps the draft sent, so
+     * there is no address here and no approve write before it. A repeat for a
+     * draft that went out answers `already_sent` and sends nothing. Returns the
+     * callable's raw answer; decode it with `decodeDraftSendResult`.
+     */
+    suspend fun sendGeneratedDraft(draftId: String, kinfolkId: String, body: String, subject: String?): WriteResult<String> {
+        val payload = buildJsonObject {
+            put("draftId", JsonPrimitive(draftId.trim()))
+            put("kinfolkId", JsonPrimitive(kinfolkId.trim()))
+            put("body", JsonPrimitive(body.trim()))
+            if (!subject.isNullOrBlank()) put("subject", JsonPrimitive(subject.trim()))
+        }
+        return platformInvokeCallable("sendGeneratedDraft", callableJson.encodeToString(JsonObject.serializer(), payload))
+    }
     /** #1563: delete an unsent generated draft. The server refuses one already sent. */
     suspend fun deleteGeneratedDraft(draftId: String): WriteResult<Unit> {
         val payload = buildJsonObject { put("draftId", JsonPrimitive(draftId.trim())) }
@@ -4142,7 +4159,38 @@ data class GeneratedDraft(
      */
     val pushOutcome: String = "",
     val pushReason: String = "",
+    /**
+     * #2428: when `sendGeneratedDraft` handed an Email or Text draft to the
+     * provider. Set means the household has it. Stamped by the server only.
+     */
+    val sentAt: String = "",
 ) {
+    /**
+     * #2428: a Push the household was sent: on their notifications list, and
+     * on their phone when the answer is `sent`. It opens as sent, with no
+     * Approve and no Delete. A held Push and an unanswered one reached nobody
+     * and are not this.
+     */
+    val isSentPush: Boolean get() =
+        type().lowercase() == "push" && status.trim().lowercase() == "approved" && pushOutcome.trim() in setOf("sent", "listed")
+    /**
+     * #2428: the channel an Email or Text draft went out on (`email` or `sms`),
+     * or null when the draft is not one or has not gone. Gone means stamped
+     * [sentAt], or approved: approving one is what sends it, on every version
+     * of every client, so an approved one with no stamp went out the old way.
+     * The type counts when either spelling carries it.
+     */
+    val sentMessageChannel: String? get() {
+        val types = setOf(communicationType.trim().lowercase(), communication_type.trim().lowercase())
+        val channel = when {
+            "email" in types -> "email"
+            "sms" in types -> "sms"
+            else -> return null
+        }
+        return if (sentAt.isNotBlank() || status.trim().lowercase() == "approved") channel else null
+    }
+    /** #2428: already went to its household as a KinTale, a Push, an Email or a Text. */
+    val wentOut: Boolean get() = isPublished || isSentPush || sentMessageChannel != null
     /**
      * #2293: an approved Push draft the server held back. Nothing reached the
      * household, so KinTales lists it under Drafts again and Communicate opens

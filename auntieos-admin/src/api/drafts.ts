@@ -101,6 +101,18 @@ export interface GeneratedDraftRow {
    */
   pushOutcome?: string | undefined;
   pushReason?: string | undefined;
+  /**
+   * #2428: stamped by the `sendGeneratedDraft` callable on an Email or Text
+   * draft once the provider has taken the message: when, on which channel
+   * (`email` or `sms`) and to which masked address. `sentAt` set means the
+   * household has it. `approvedAt` is when it was approved, which on a draft an
+   * older version of the app sent is the only date there is. See
+   * `lib/draftSent.ts`.
+   */
+  sentAt?: string | undefined;
+  sentChannel?: string | undefined;
+  sentTo?: string | undefined;
+  approvedAt?: string | undefined;
 }
 
 /**

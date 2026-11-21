@@ -2,7 +2,7 @@ import Handlebars from 'handlebars';
 import { stripUnresolvedTokens } from '../notifications/templateParsers';
 import { sendsAreSuppressed, suppressedId, logSuppressedSend } from './sendGuard';
 import { isReservedEmailDomain, logRefusedSend, refusedId } from './reservedEmailDomains';
-import { describeProviderFailure, providerFailureFields } from './providerFailure';
+import { describeProviderFailure, providerFailureFields, SMTP2GO_NO_VERDICT_MESSAGE } from './providerFailure';
 
 /**
  * Email transport: smtp2go HTTP API (replaced SendGrid 2026-06-10 when the
@@ -182,7 +182,10 @@ export async function sendTemplatedEmail(args: SendArgs): Promise<string> {
     throw new Error(`smtp2go send failed (HTTP ${res.status}): ${payload.data?.error ?? 'unknown error'}`);
   }
   if (!payload.data?.succeeded) {
-    throw new Error(`smtp2go send failed: ${payload.data?.failures?.join('; ') ?? 'no sends succeeded'}`);
+    // The same words as before. With no `failures` to quote it is the one line
+    // a caller can tell "no verdict" by (`SMTP2GO_NO_VERDICT_MESSAGE`).
+    const failures = payload.data?.failures?.join('; ');
+    throw new Error(failures === undefined ? SMTP2GO_NO_VERDICT_MESSAGE : `smtp2go send failed: ${failures}`);
   }
   return payload.data.email_id ?? '';
 }
