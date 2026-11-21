@@ -25,8 +25,8 @@ import org.junit.Test
  * This file used to be `FamilyKinPathStampTest`, the tests of the function that
  * decided when the app should write that link. #2115 narrowed it to "only when
  * the Kin has none". #2290 is that last case going wrong: a Kin just made here
- * has no link for a moment, while the server ties it to the Kin the household
- * already added under the same name. The app's own link, `families/{kinfolkId}/
+ * has no link for a moment, while the server ties it to the unlinked Kin the household
+ * already has under the same name. The app's own link, `families/{kinfolkId}/
  * kin/{this id}`, named a copy nobody had made. Whichever write the server saw
  * first, it ended with a second household copy of the one Kin.
  *

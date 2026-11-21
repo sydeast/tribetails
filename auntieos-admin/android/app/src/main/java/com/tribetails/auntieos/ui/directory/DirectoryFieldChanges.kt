@@ -185,7 +185,7 @@ internal val KIN_SERVER_OWNED = setOf("id", "updatedAt", "familyKinPath")
  *    different id, so a save re-pointed the link at a copy that does not exist.
  *    The stamp was then limited to a Kin with no link.
  *  - #2290: a Kin just made here has no link for a moment, while the server
- *    ties it to the Kin the household already added under that name. The stamp
+ *    ties it to the unlinked Kin the household already has under that name. The stamp
  *    for "a Kin with no link" raced that and pointed the record at a new path
  *    instead, and the household saw the same Kin twice.
  *

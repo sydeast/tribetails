@@ -368,7 +368,7 @@ class DirectorySaveTest {
 
     /**
      * #2290: a Kin just made here is held with NO link while the server ties
-     * it to the Kin the household already added under that name. A save from
+     * it to the unlinked Kin the household already has under that name. A save from
      * that copy used to write `families/{kinfolkId}/kin/{this id}` as the link,
      * over the server's, and the household then saw the Kin twice.
      */

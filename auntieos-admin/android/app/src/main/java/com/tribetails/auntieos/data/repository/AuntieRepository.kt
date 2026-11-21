@@ -705,7 +705,7 @@ class AuntieRepository(
         // copy when there is none. This used to follow the add with a write of
         // `families/{kinfolkId}/kin/{this id}`, a copy nobody had made. That
         // raced the server's name match and won either way: the household got a
-        // second copy of a Kin it had already added.
+        // second copy of a Kin it already had.
         kin.copy(id = docRef.id).also {
             AuntieLog.i("Created kin with ID: ${it.id}")
         }
