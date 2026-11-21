@@ -4,8 +4,10 @@
 // tests (which run fine under either environment).
 import { describe, it, expect } from 'vitest';
 import type { TemplateSummary } from '../api/templates';
+import { SEED_CORPUS } from '../../../mytribe/functions/src/notifications/seedCorpus.generated';
 import {
   templateFieldErrors,
+  templateMarkupError,
   templateRowTitle,
   templateSavedNotice,
   templateSubjectPreview,
@@ -307,6 +309,50 @@ describe('templateFieldErrors (#1614)', () => {
   });
   it('skips the key on edit and is empty for a complete form', () => {
     expect(templateFieldErrors(fields({ templateId: '' }), { isCreate: false })).toEqual([]);
+  });
+  it('#2251: names a subject, body or HTML the sender could not fill in, at its own field', () => {
+    const found = templateFieldErrors(
+      fields({ subject: '{{#if isQuote}}Quote', body: 'Paid{{/if}}', html: '<p>Hi {{kinName</p>' }),
+      { isCreate: false },
+    );
+    expect(found.map((e) => e.field)).toEqual(['subject', 'body', 'html']);
+  });
+});
+
+describe('templateMarkupError (#2251)', () => {
+  it('says which block is never closed', () => {
+    expect(templateMarkupError('The subject', '{{#if isQuote}}Your quote is ready')).toBe(
+      'The subject cannot be sent as written. {{#if}} is never closed. Add {{/if}} where that part ends.',
+    );
+  });
+  it('says a close tag closes nothing, a wrong close, and a lone else', () => {
+    expect(templateMarkupError('The body', 'x{{/if}}')).toMatch(/\{\{\/if\}\} closes a part that was never opened/);
+    expect(templateMarkupError('The body', '{{#if a}}x{{/unless}}')).toMatch(/\{\{#if\}\} is closed with \{\{\/unless\}\}/);
+    expect(templateMarkupError('The body', 'a {{else}} b')).toMatch(/\{\{else\}\} sits outside any \{\{#if\}\}/);
+  });
+  it('catches half a field', () => {
+    expect(templateMarkupError('The subject', 'Hi {{kinName and more')).toMatch(/A field is not written correctly/);
+  });
+  it('passes plain text, fields, loops and paired blocks with else', () => {
+    for (const ok of [
+      'No fields',
+      'Hi {{kinfolkName}}',
+      '{{#if isQuote}}Quote{{else}}Invoice{{/if}}',
+      '<ul>{{#each visits}}<li>{{this.date}}</li>{{/each}}</ul>',
+      '{{#unless paid}}Due {{dueDate}}{{/unless}}',
+    ]) {
+      expect(templateMarkupError('The body', ok)).toBeNull();
+    }
+  });
+  it('refuses nothing in the shipped seed corpus (no false alarm on a good template)', () => {
+    const refused = SEED_CORPUS.flatMap((e) =>
+      [e.emailSubject, e.emailHeadline, e.emailContent]
+        .map((v) => templateMarkupError('The email', v))
+        .filter((m): m is string => m !== null)
+        .map((m) => `${e.key}: ${m}`),
+    );
+    expect(SEED_CORPUS.length).toBeGreaterThan(10);
+    expect(refused).toEqual([]);
   });
 });
 describe('templateFormError', () => {

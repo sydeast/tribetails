@@ -199,3 +199,53 @@ describe('sendEmailChannel: generic fallback when copy is not authored', () => {
     expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #2251: a template stored with an unclosed `{{#if}}` (saved before the save
+ * refused one, or imported before the importer did) used to throw on every
+ * send, so the household heard nothing. It now gets the same disclosed
+ * fallback as a missing template.
+ */
+describe('sendEmailChannel: a stored template the renderer cannot fill in', () => {
+  it('sends the generic wording, flags the fallback and logs the template at error', async () => {
+    mocks.loadEmailTemplate.mockResolvedValue({
+      subject: '{{#if isQuote}}Your quote is ready',
+      body: 'Hi {{kinfolkName}}',
+      html: null,
+    });
+
+    const res = await sendEmailChannel({ def: def(), recipientUid: 'u1', data: { isQuote: true } });
+
+    expect(res).toEqual({
+      providerMessageId: 'msg-1',
+      usedFallback: true,
+      fallbackReason: 'emailTemplates/kincare.request.declined',
+    });
+    expect(mocks.sendTemplatedEmail).toHaveBeenCalledTimes(1);
+    const sent = mocks.sendTemplatedEmail.mock.calls[0]![0];
+    expect(sent.to).toBe('kin@example.com');
+    expect(sent.subjectTemplate).toBe('An update about your care');
+    const logged = mocks.logEvent.mock.calls.map((c) => c[0]).find((e) => e.event === 'notification.template.broken');
+    expect(logged).toMatchObject({ severity: 'error', extra: { channel: 'email', templateId: 'kincare.request.declined' } });
+    expect(logged.extra.reason).toMatch(/Parse error/);
+  });
+
+  it('a broken html part alone also falls back', async () => {
+    mocks.loadEmailTemplate.mockResolvedValue({ subject: 'Fine', body: 'Fine', html: '<p>{{/if}}</p>' });
+    const res = await sendEmailChannel({ def: def(), recipientUid: 'u1', data: {} });
+    expect(res.usedFallback).toBe(true);
+    expect(mocks.sendTemplatedEmail.mock.calls[0]![0].subjectTemplate).toBe('An update about your care');
+  });
+
+  it('a document marked visual with nothing to fill in falls back instead of throwing', async () => {
+    mocks.loadEmailTemplate.mockResolvedValue({ subject: 'S', format: 'visual' });
+    const res = await sendEmailChannel({ def: def(), recipientUid: 'u1', data: {} });
+    expect(res.usedFallback).toBe(true);
+  });
+
+  it('a provider failure on a good template still throws, so it retries', async () => {
+    mocks.loadEmailTemplate.mockResolvedValue({ subject: 'Fine', body: 'Fine', html: null });
+    mocks.sendTemplatedEmail.mockRejectedValueOnce(new Error('smtp2go 503'));
+    await expect(sendEmailChannel({ def: def(), recipientUid: 'u1', data: {} })).rejects.toThrow(/smtp2go 503/);
+  });
+});

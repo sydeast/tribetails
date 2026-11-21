@@ -6,7 +6,7 @@ import { loadEmailFrame } from '../../lib/emailFrameStore';
 import { logEvent } from '../../lib/logger';
 import { isEmailHardBounced } from '../../lib/suppressions';
 import { fallbackEmail } from '../fallbackTemplate';
-import { kinForStoredTemplate } from '../templateParsers';
+import { kinForStoredTemplate, templateRenderFailure } from '../templateParsers';
 import { businessLabel, loadBusinessName } from '../../lib/businessName';
 import { businessNoticeRecipients, readBusinessAdmins } from '../../lib/businessAdmins';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
@@ -88,19 +88,14 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
   const renderData = { ...data, recipientUid, notificationKey: def.key };
   const tpl = await loadEmailTemplate(templateId);
 
-  if (!tpl) {
+  const sendGeneric = async (event: string, action: string, reason?: string): Promise<ChannelSendResult> => {
     const businessName = await loadBusinessName('emailChannel');
     const generic = fallbackEmail(def, businessName);
     logEvent({
       severity: 'error',
       function: 'emailChannel',
-      event: 'notification.template.missing',
-      extra: {
-        key: def.key,
-        channel: 'email',
-        templateId,
-        action: 'sent generic wording; author this template in the Template Bank',
-      },
+      event,
+      extra: { key: def.key, channel: 'email', templateId, ...(reason ? { reason } : {}), action },
     });
     const providerMessageId = await sendTemplatedEmail({
       to: email,
@@ -110,15 +105,47 @@ export async function sendEmailChannel(args: ChannelSendArgs): Promise<ChannelSe
       templateKey: def.key,
     });
     return { providerMessageId, usedFallback: true, fallbackReason: `emailTemplates/${templateId}` };
+  };
+
+  if (!tpl) {
+    return sendGeneric(
+      'notification.template.missing',
+      'sent generic wording; author this template in the Template Bank',
+    );
   }
 
   // #957: the operator's frame, read once for this send. Never throws.
   const frame = await loadEmailFrame('emailChannel');
-  const parts = sendPartsFor(tpl, frame);
+  // #2251: a stored template the renderer cannot fill in (an unclosed {{#if}}
+  // saved before the save refused it, or imported before the importer did)
+  // used to throw here on every send, so the household heard nothing. It now
+  // gets the disclosed fallback a missing template already gets: the generic
+  // wording goes out, logged at `error` with the template id, and the channel
+  // row is stamped `usedFallback`. Only the render is guarded; a provider
+  // failure below still throws and retries as before.
+  let parts: ReturnType<typeof sendPartsFor>;
+  let failure: string | null;
+  try {
+    parts = sendPartsFor(tpl, frame);
+    failure = null;
+  } catch (err) {
+    // A document marked visual with no headline or content: nothing to fill in.
+    parts = { subjectTemplate: '', bodyTemplate: '' };
+    failure = err instanceof Error ? err.message : String(err);
+  }
+  // #2093: a template stored before the quote wording changed still reads whole.
+  const sendData = kinForStoredTemplate(renderData, [parts.subjectTemplate, parts.bodyTemplate, parts.htmlTemplate]);
+  failure ??= templateRenderFailure([parts.subjectTemplate, parts.bodyTemplate, parts.htmlTemplate], sendData);
+  if (failure !== null) {
+    return sendGeneric(
+      'notification.template.broken',
+      'sent generic wording; open this template in the Template Bank and fix it',
+      failure,
+    );
+  }
   const providerMessageId = await sendTemplatedEmail({
     to: email,
-    // #2093: a template stored before the quote wording changed still reads whole.
-    data: kinForStoredTemplate(renderData, [parts.subjectTemplate, parts.bodyTemplate, parts.htmlTemplate]),
+    data: sendData,
     templateKey: def.key,
     ...parts,
   });

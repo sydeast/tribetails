@@ -6,6 +6,7 @@ import {
   householdPushShelfLine,
   kinForStoredTemplate,
   renderPlainText,
+  templateRenderFailure,
 } from '../templateParsers';
 import { fallbackPush } from '../fallbackTemplate';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
@@ -106,10 +107,35 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
       },
     });
   }
+  // #2251: copy stored with an unclosed {{#if}} (imported before the importer
+  // refused one) used to throw on every send. It gets the same disclosed
+  // generic wording as missing copy. Its route is kept only when it renders.
+  const storedCtx = { ...kinForStoredTemplate(data, [stored?.title, stored?.body]), recipientUid, notificationKey: def.key };
+  const brokenCopy = missingCopy ? null : templateRenderFailure([stored.title, stored.body], storedCtx);
+  const brokenRoute = stored?.dataRoute ? templateRenderFailure([stored.dataRoute], storedCtx) : null;
+  if (brokenCopy !== null || brokenRoute !== null) {
+    logEvent({
+      severity: 'error',
+      function: 'pushChannel',
+      event: 'notification.template.broken',
+      extra: {
+        key: def.key,
+        channel: 'push',
+        templateId,
+        reason: brokenCopy ?? brokenRoute,
+        action:
+          brokenCopy !== null
+            ? 'sent generic wording; open this template in the Template Bank and fix its push wording'
+            : 'sent without its stored tap target; fix the push template route',
+      },
+    });
+  }
   const generic = fallbackPush(def);
-  const tpl: PushTemplate = missingCopy
-    ? { title: generic.title, body: generic.body, dataRoute: stored?.dataRoute }
-    : stored;
+  const usedFallback = missingCopy || brokenCopy !== null;
+  const keptRoute = brokenRoute === null ? stored?.dataRoute : undefined;
+  const tpl: PushTemplate = usedFallback
+    ? { title: generic.title, body: generic.body, dataRoute: keptRoute }
+    : { ...stored!, dataRoute: keptRoute };
 
   const tokensSnap = await db().collection('fcm_tokens').where('uid', '==', recipientUid).get();
   const tokens = tokensSnap.docs.map((d) => d.id);
@@ -192,7 +218,7 @@ export async function sendPushChannel(args: ChannelSendArgs): Promise<ChannelSen
     );
   }
 
-  return missingCopy
+  return usedFallback
     ? {
         providerMessageId: firstSuccessId,
         usedFallback: true,

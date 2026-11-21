@@ -1,0 +1,41 @@
+package com.tribetails.auntieos.ui.admin
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** #2251: the Markdown editor holds back a subject or body the sender could not fill in. */
+class TemplateMarkupTest {
+    @Test
+    fun anUnclosedIfNamesTheFieldAndTheMissingClose() {
+        assertEquals(
+            "The subject cannot be sent as written. {{#if}} is never closed. Add {{/if}} where that part ends.",
+            templateMarkupError("The subject", "{{#if isQuote}}Your quote is ready"),
+        )
+    }
+
+    @Test
+    fun aStrayCloseAWrongCloseAndALoneElseAreEachNamed() {
+        assertTrue(templateMarkupError("The body", "Paid{{/if}}")!!.contains("{{/if}} closes a part that was never opened"))
+        assertTrue(templateMarkupError("The body", "{{#if a}}x{{/unless}}")!!.contains("{{#if}} is closed with {{/unless}}"))
+        assertTrue(templateMarkupError("The body", "a {{else}} b")!!.contains("{{else}} sits outside any {{#if}}"))
+    }
+
+    @Test
+    fun halfAFieldIsCaught() {
+        assertTrue(templateMarkupError("The subject", "Hi {{kinName and more")!!.contains("A field is not written correctly"))
+    }
+
+    @Test
+    fun goodTemplatesPass() {
+        listOf(
+            "No fields",
+            "Hi {{kinfolkName}}",
+            "{{#if isQuote}}Quote{{else}}Invoice{{/if}} for {{kinName}}",
+            "- {{#each visits}}{{this.date}}{{/each}}",
+            "{{#unless paid}}Due {{dueDate}}{{/unless}}",
+            "",
+        ).forEach { assertNull(it, templateMarkupError("The body", it)) }
+    }
+}

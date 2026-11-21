@@ -217,6 +217,24 @@ describe('sendPushChannel', () => {
     expect(res.usedFallback).toBe(true);
     expect(mocks.multicast.mock.calls[0]![0].notification.title).toBe('An update about your care');
   });
+  it('#2251: sends GENERIC wording when the stored wording cannot be filled in, rather than throwing', async () => {
+    const ctx = buildPushDbMock({ template: { title: '{{#if isQuote}}Quote', body: 'Ready' }, tokens: ['t1'] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.multicast.mockResolvedValue({ successCount: 1, failureCount: 0, responses: [{ success: true, messageId: 'm1' }] });
+    const res = await sendPushChannel({ def: def(), recipientUid: 'u1', data: {} });
+    expect(res).toEqual({ providerMessageId: 'm1', usedFallback: true, fallbackReason: 'pushTemplates/t.k' });
+    expect(mocks.multicast.mock.calls[0]![0].notification).toEqual({ title: 'An update about your care', body: 'Tap to see it.' });
+  });
+  it('#2251: a stored route that cannot be filled in is dropped; good wording still goes as written', async () => {
+    const ctx = buildPushDbMock({ template: { title: 'Hi', body: 'Ready', dataRoute: '/visits/{{#if id}}x' }, tokens: ['t1'] });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.multicast.mockResolvedValue({ successCount: 1, failureCount: 0, responses: [{ success: true, messageId: 'm1' }] });
+    const res = await sendPushChannel({ def: def(), recipientUid: 'u1', data: {} });
+    expect(res.usedFallback).toBeUndefined();
+    const sent = mocks.multicast.mock.calls[0]![0];
+    expect(sent.notification.title).toBe('Hi');
+    expect(String(sent.data.route ?? '')).not.toContain('{{');
+  });
   it('points an office-facing key at AuntieOS, not the household portal', async () => {
     const ctx = buildPushDbMock({ template: null, tokens: ['t1'] });
     mocks.dbFn.mockReturnValue(ctx.db);

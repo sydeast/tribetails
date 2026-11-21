@@ -11,7 +11,10 @@ import {
   TEMPLATE_ID_MAX_LENGTH,
   TEMPLATE_ID_PATTERN,
   TEMPLATE_ID_RULE,
+  TEMPLATE_MARKUP_REFUSAL,
+  emailMarkupErrors,
   noTripleStash,
+  type TemplateMarkupRefusalDetails,
   noUnquotedAttributeMerge,
   tripleStashMessage,
   unquotedAttributeMessage,
@@ -162,6 +165,18 @@ export async function saveTemplateHandler(
     const blocking = r.issues.filter((i) => !i.startsWith('Removed an image'));
     if (blocking.length) throw new HttpsError('invalid-argument', blocking.join(' '));
     content = r.content;
+  }
+
+  // #2251: a field the sender cannot fill in is refused here, beside its box,
+  // rather than stored to fail every send of the notice later. Checked on what
+  // would be stored (the sanitized content), with the same scan the importer
+  // and the text and push door run.
+  const fieldErrors = visual
+    ? emailMarkupErrors({ subject: args.subject, headline: args.headline, content })
+    : emailMarkupErrors({ subject: args.subject, body: args.body, html: args.html });
+  if (Object.keys(fieldErrors).length > 0) {
+    const details: TemplateMarkupRefusalDetails = { reason: TEMPLATE_MARKUP_REFUSAL, fieldErrors };
+    throw new HttpsError('invalid-argument', Object.values(fieldErrors).join(' '), details);
   }
 
   const ref = db().doc(`emailTemplates/${args.templateId}`);
