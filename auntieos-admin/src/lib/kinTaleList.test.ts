@@ -424,7 +424,6 @@ describe('isUnansweredPushDraft (#2381)', () => {
   });
 });
 
-
 describe('a Communicate draft that went out is listed as Sent (#2440)', () => {
   const NOW = Date.parse('2026-11-20T18:00:00.000Z');
   const stateOf = (over: Partial<GeneratedDraftRow>) => kinTaleState(rowFromDraft(draft(over), NOW).status ?? '');

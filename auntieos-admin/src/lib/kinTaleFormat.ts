@@ -160,6 +160,7 @@ export function sentViaLabel(sentVia: string): string {
  * literal text, never "not one of the others, so must be Y").
  */
 export type KinTaleState = 'draft' | 'sent' | 'failed' | 'unconfirmed' | 'sending' | 'unknown';
+
 /**
  * #2440: the two list statuses only a Communicate Email or Text draft takes
  * (`lib/kinTaleList.ts#rowFromDraft`). No report stores either. A send that got

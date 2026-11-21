@@ -418,6 +418,7 @@ describe('sendGeneratedDraft: when the send gets no answer', () => {
     await expect(deleteGeneratedDraftHandler(owner({ draftId: 'd1' }))).rejects.toMatchObject({ code: 'failed-precondition' });
     expect(ctx.deletes).toHaveLength(0);
   });
+
   it('#2452 the delete refusal for an unconfirmed draft says not confirmed, never sent', async () => {
     const { ctx } = db({ 'generated_drafts/d1': { ...EMAIL_DRAFT }, ...HOUSEHOLD });
     mocks.sendTemplatedEmail.mockRejectedValueOnce(headersTimeout());
@@ -432,6 +433,7 @@ describe('sendGeneratedDraft: when the send gets no answer', () => {
     expect(DRAFT_DELETE_UNCONFIRMED_MESSAGE).not.toMatch(/already been sent|has been sent|was sent/);
     expect(ctx.deletes).toHaveLength(0);
   });
+
   it('#2452 a claim left by a call that died reads as unconfirmed to delete too', async () => {
     const stale = new Date(Date.now() - DRAFT_SEND_LEASE_MS - 1000).toISOString();
     const { ctx } = db({
@@ -442,6 +444,7 @@ describe('sendGeneratedDraft: when the send gets no answer', () => {
     });
     expect(ctx.deletes).toHaveLength(0);
   });
+
   it('#2452 a draft being sent right now is kept, and delete says so', async () => {
     const now = new Date().toISOString();
     const { ctx } = db({
@@ -454,6 +457,7 @@ describe('sendGeneratedDraft: when the send gets no answer', () => {
     });
     expect(ctx.deletes).toHaveLength(0);
   });
+
   it('#2452 a sent draft, and one an older version sent, keep the sent refusal', async () => {
     const { ctx } = db({
       'generated_drafts/sent': { ...EMAIL_DRAFT, status: 'approved', sentAt: '2026-11-20T10:00:01.000Z' },
@@ -467,6 +471,7 @@ describe('sendGeneratedDraft: when the send gets no answer', () => {
     }
     expect(ctx.deletes).toHaveLength(0);
   });
+
   it('#2452 draftSendStanding tells a running send from one that got no answer', () => {
     const now = Date.parse('2026-11-20T10:05:00.000Z');
     const claimed = (agoMs: number) => new Date(now - agoMs).toISOString();

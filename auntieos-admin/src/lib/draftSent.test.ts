@@ -27,6 +27,7 @@ const UNCONFIRMED: Partial<GeneratedDraftRow> = {
   sendClaimedAt: '2026-11-20T16:00:00.000Z',
   sendUnconfirmedAt: '2026-11-20T16:00:31.000Z',
 };
+
 /** A Text claimed a second ago: the send is running. */
 const CLAIMED_NOW: Partial<GeneratedDraftRow> = {
   communicationType: 'sms',
@@ -164,17 +165,20 @@ describe('messageDraftStanding (#2452)', () => {
     expect(messageDraftStanding(row({ ...UNCONFIRMED }), NOW)).toBe('unconfirmed');
     expect(messageDraftStanding(row({ communication_type: 'email', status: 'approved' }), NOW)).toBe('approved');
   });
+
   it('a mark wins over a fresh claim, and a stamp wins over both', () => {
     const fresh = new Date(NOW - 1000).toISOString();
     expect(messageDraftStanding(row({ ...UNCONFIRMED, sendClaimedAt: fresh, sendUnconfirmedAt: fresh }), NOW)).toBe('unconfirmed');
     expect(messageDraftStanding(row({ ...UNCONFIRMED, sentAt: fresh }), NOW)).toBe('sent');
   });
+
   it('a claim left by a call that died is unconfirmed once its two minutes have passed', () => {
     const claimedAgo = (ms: number) => row({ communication_type: 'sms', status: 'approved', sendClaimedAt: new Date(NOW - ms).toISOString() });
     expect(messageDraftStanding(claimedAgo(DRAFT_SEND_LEASE_MS - 1), NOW)).toBe('sending');
     expect(messageDraftStanding(claimedAgo(DRAFT_SEND_LEASE_MS), NOW)).toBe('unconfirmed');
     expect(messageDraftStanding(row({ communication_type: 'sms', status: 'approved', sendClaimedAt: 'not a time' }), NOW)).toBe('unconfirmed');
   });
+
   it('a draft nobody approved, and any other type, has no standing', () => {
     expect(messageDraftStanding(row({ communication_type: 'email', status: 'generated' }), NOW)).toBeNull();
     expect(messageDraftStanding(row({ communication_type: 'email', status: 'generated', sendClaimedAt: '2026-11-20T16:00:00.000Z' }), NOW)).toBeNull();
@@ -182,6 +186,7 @@ describe('messageDraftStanding (#2452)', () => {
     expect(messageDraftStanding(row({ communication_type: 'visit_report', status: 'approved' }), NOW)).toBeNull();
   });
 });
+
 describe('an unconfirmed send on open (#2452)', () => {
   it('says the send was not confirmed, that it is not sent again, and to write a new one', () => {
     expect(sentDraftOnOpen(row({ ...UNCONFIRMED }), 'Dana Halbrook', ZONE, NOW)).toEqual({
@@ -195,16 +200,19 @@ describe('an unconfirmed send on open (#2452)', () => {
       },
     });
   });
+
   it('never reads as approved or sent', () => {
     const notice = sentDraftOnOpen(row({ ...UNCONFIRMED }), 'Dana Halbrook', ZONE, NOW)?.notice;
     expect(notice?.title).not.toMatch(/approved|sent\b/i);
     expect(notice?.body).not.toMatch(/Already|was approved|Sent to|already went/);
   });
+
   it('a stale claim with no mark reads the same, dated by the claim', () => {
     const stale = row({ communicationType: 'sms', status: 'approved', sendClaimedAt: '2026-11-19T16:00:00.000Z' });
     expect(sentDraftOnOpen(stale, '', ZONE, NOW)?.notice).toEqual(unconfirmedSendText('', 'sms', 'Nov 19, 2026'));
     expect(unconfirmedSendText('', 'sms', 'Nov 19, 2026').body).toContain('The send of this text to the household on Nov 19, 2026 did not get an answer');
   });
+
   it('a send still running says so, and offers nothing', () => {
     expect(sentDraftOnOpen(row({ ...CLAIMED_NOW }), 'Dana Halbrook', ZONE, NOW)?.notice).toEqual({
       title: 'Being sent',
@@ -212,12 +220,14 @@ describe('an unconfirmed send on open (#2452)', () => {
       tone: 'warning',
     });
   });
+
   it('the notice for the server refusal in the same sitting carries no date', () => {
     expect(unconfirmedSendText('Dana Halbrook', 'email').body).toBe(
       'The send of this email to Dana Halbrook did not get an answer, so it is not known whether it reached them. ' +
         'It is not sent again from this draft. Write a new one if it has to go again.',
     );
   });
+
   it('sendRefusedUnconfirmed reads the code, never the sentence', () => {
     expect(sendRefusedUnconfirmed({ message: 'anything', details: { code: 'draft_send_unconfirmed' } })).toBe(true);
     expect(sendRefusedUnconfirmed({ message: 'The send did not get an answer', details: { code: 'draft_send_in_flight' } })).toBe(false);
@@ -225,6 +235,7 @@ describe('an unconfirmed send on open (#2452)', () => {
     expect(sendRefusedUnconfirmed(null)).toBe(false);
   });
 });
+
 describe('the sent date is the business day, not the browser day (#2440)', () => {
   // 03:30 UTC on Nov 21 is 9:30 PM on Nov 20 in Chicago.
   const late = '2026-11-21T03:30:00.000Z';
@@ -233,16 +244,19 @@ describe('the sent date is the business day, not the browser day (#2440)', () =>
     expect(sentDayOf(late, 'UTC')).toBe('Nov 21, 2026');
     expect(sentDayOf(late, 'Pacific/Honolulu')).toBe('Nov 20, 2026');
   });
+
   it('falls back to America/Chicago when the setting is blank or unusable', () => {
     expect(sentDayOf(late, '')).toBe('Nov 20, 2026');
     expect(sentDayOf(late, 'Not/AZone')).toBe('Nov 20, 2026');
   });
+
   it('the notice carries that day', () => {
     const sent = row({ communication_type: 'email', status: 'approved', sentAt: late });
     expect(sentDraftOnOpen(sent, 'Dana Halbrook', 'America/Chicago', NOW)?.notice?.body).toContain('on Nov 20, 2026');
     expect(sentDraftOnOpen(sent, 'Dana Halbrook', 'UTC', NOW)?.notice?.body).toContain('on Nov 21, 2026');
   });
 });
+
 describe('draftListPlace (#2440)', () => {
   it('a draft that went out is filed under Sent', () => {
     expect(draftListPlace(row({ communication_type: 'email', status: 'approved', sentAt: '2026-11-20T16:00:00.000Z' }), NOW)).toBe('sent');
@@ -250,10 +264,12 @@ describe('draftListPlace (#2440)', () => {
     expect(draftListPlace(row({ communication_type: 'push', status: 'approved', pushOutcome: 'sent' }), NOW)).toBe('sent');
     expect(draftListPlace(row({ communication_type: 'push', status: 'approved', pushOutcome: 'listed' }), NOW)).toBe('sent');
   });
+
   it('an unconfirmed send and a running one are never filed under Sent', () => {
     expect(draftListPlace(row({ ...UNCONFIRMED }), NOW)).toBe('unconfirmed');
     expect(draftListPlace(row({ ...CLAIMED_NOW }), NOW)).toBe('sending');
   });
+
   it('every other draft is left to the list rules', () => {
     expect(draftListPlace(row({ communication_type: 'email', status: 'generated' }), NOW)).toBeNull();
     expect(draftListPlace(row({ communication_type: 'push', status: 'approved', pushOutcome: 'held' }), NOW)).toBeNull();

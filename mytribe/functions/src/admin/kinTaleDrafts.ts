@@ -224,6 +224,7 @@ export async function publishGeneratedDraftHandler(
 export const DRAFT_DELETE_UNCONFIRMED_MESSAGE =
   'The send of this draft did not get an answer, so it is not known whether the message reached the household. ' +
   'The draft is kept. Write a new one if it has to go again.';
+
 export async function deleteGeneratedDraftHandler(
   req: CallableRequest<unknown>,
 ): Promise<DeleteGeneratedDraftResult> {

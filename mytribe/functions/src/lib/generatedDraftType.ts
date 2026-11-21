@@ -90,6 +90,7 @@ export const DRAFT_SEND_LEASE_MS = 120_000;
  * refusal by it. The admin clients read the same stamps the same way.
  */
 export type DraftSendStanding = 'unsent' | 'in_flight' | 'unconfirmed' | 'approved' | 'sent';
+
 export function draftSendStanding(draft: DraftData, nowMs: number): DraftSendStanding {
   const state = draftSendState(draft);
   if (state !== 'sending') return state;
@@ -97,10 +98,12 @@ export function draftSendStanding(draft: DraftData, nowMs: number): DraftSendSta
   const claimedMs = Date.parse(text(draft['sendClaimedAt']));
   return !Number.isNaN(claimedMs) && nowMs - claimedMs < DRAFT_SEND_LEASE_MS ? 'in_flight' : 'unconfirmed';
 }
+
 /** The standing of an Email or Text draft (either spelling), or null for every other type. */
 export function messageDraftStanding(draft: DraftData, nowMs: number): DraftSendStanding | null {
   return carriesType(draft, ['email', 'sms']) ? draftSendStanding(draft, nowMs) : null;
 }
+
 /**
  * #2428: true when this draft is the record of something a household was sent,
  * or may have been. Such a draft is kept: `deleteGeneratedDraft` refuses it.
