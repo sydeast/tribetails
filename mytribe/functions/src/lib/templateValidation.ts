@@ -13,7 +13,197 @@
  * learns "invalid" has to invent the explanation, and two callers inventing it
  * separately is how an operator gets told two different things about one rule.
  */
+import Handlebars from 'handlebars';
 import { sanitizeEmailContent } from './emailContent';
+import { contentToText, frameHtml } from './emailFrame';
+
+/** The block helpers the seed corpus uses and Handlebars ships. Anything else throws at send. */
+const BLOCK_HELPERS = new Set(['if', 'unless', 'each', 'with']);
+/** Handlebars' other built-ins: a paramless block of one of these is a helper call, not a section. */
+const BUILT_IN_HELPERS = new Set(['lookup', 'log', 'helperMissing', 'blockHelperMissing']);
+
+export interface TemplateScan {
+  /** Context fields the text asks for, in order of first appearance. */
+  fields: string[];
+  /** A sentence when the text cannot be sent as written, otherwise null. */
+  problem: string | null;
+}
+
+export const MERGE_FIELD_NOT_CLOSED =
+  'A field is not written correctly. Each field needs two curly brackets on both sides, like {{kinName}}.';
+export const MERGE_FIELD_THREE_BRACKETS = 'Use two curly brackets around a field, like {{kinName}}, not three.';
+
+/**
+ * Reads the fields out of one piece of template text by parsing it the way the
+ * sender will, so "it saved" and "it sends" cannot disagree.
+ *
+ * Names inside an `each` or `with` block belong to the item being walked, not
+ * to the notification, so they are not listed: only the block's own subject
+ * is. That is the same line `enrichTemplateData.test.ts` draws for the corpus.
+ *
+ * Moved here from `templateChannelWording.ts` (#2251) so the email door
+ * (`saveTemplate`) and the importer run the same check as the text and push
+ * door, without loading the notification catalog on every cold start.
+ */
+export function scanTemplate(text: string): TemplateScan {
+  let ast: hbs.AST.Program;
+  try {
+    ast = Handlebars.parse(text);
+  } catch {
+    return { fields: [], problem: MERGE_FIELD_NOT_CLOSED };
+  }
+  const fields: string[] = [];
+  let problem: string | null = null;
+  const note = (name: string) => {
+    if (!fields.includes(name)) fields.push(name);
+  };
+  const pathName = (node: hbs.AST.Expression | undefined): string | null =>
+    node && node.type === 'PathExpression' ? (node as hbs.AST.PathExpression).original : null;
+
+  const walk = (program: hbs.AST.Program | undefined, local: boolean): void => {
+    if (!program) return;
+    for (const raw of program.body) {
+      if (raw.type === 'MustacheStatement') {
+        const node = raw as hbs.AST.MustacheStatement;
+        if (!node.escaped) problem ??= MERGE_FIELD_THREE_BRACKETS;
+        const name = pathName(node.path);
+        if (name === null || node.params.length > 0 || node.hash) {
+          problem ??= MERGE_FIELD_NOT_CLOSED;
+          continue;
+        }
+        if (!local && name !== 'this' && !name.startsWith('this.') && !name.startsWith('@')) note(name);
+      } else if (raw.type === 'BlockStatement') {
+        const node = raw as hbs.AST.BlockStatement;
+        const helper = pathName(node.path);
+        const subject = pathName(node.params[0]);
+        // `{{#kinNames}}...{{/kinNames}}` and `{{^note}}...{{/note}}` with no
+        // argument are plain sections: Handlebars walks or tests the field
+        // itself, and they render. Refusing them would lock out a template
+        // that sends today (#2251 review). Their own field is noted; the names
+        // inside belong to the item, as in an `each`.
+        if (
+          helper !== null &&
+          !BLOCK_HELPERS.has(helper) &&
+          !BUILT_IN_HELPERS.has(helper) &&
+          node.params.length === 0 &&
+          !node.hash
+        ) {
+          if (!local && helper !== 'this' && !helper.startsWith('this.') && !helper.startsWith('@')) note(helper);
+          walk(node.program, true);
+          walk(node.inverse, true);
+          continue;
+        }
+        if (helper === null || !BLOCK_HELPERS.has(helper) || subject === null || node.params.length !== 1) {
+          problem ??= `{{#${helper ?? ''}}} is not something a notification can use here.`;
+          continue;
+        }
+        if (!local && subject !== 'this' && !subject.startsWith('this.') && !subject.startsWith('@')) note(subject);
+        const inner = local || helper === 'each' || helper === 'with';
+        walk(node.program, inner);
+        walk(node.inverse, inner);
+      } else if (raw.type !== 'ContentStatement' && raw.type !== 'CommentStatement') {
+        // Partials and decorators: nothing registers one, so the send would throw.
+        problem ??= MERGE_FIELD_NOT_CLOSED;
+      }
+    }
+  };
+  walk(ast, false);
+  return { fields, problem };
+}
+
+/** `{{#if x}}`, `{{^if x}}`, `{{else}}`, `{{/if}}`, read for pairing only. */
+const BLOCK_TAG = /\{\{~?\s*(?:([#^])\s*([A-Za-z_][\w-]*)|\/\s*([A-Za-z_][\w-]*)|(else))\b[^}]*?~?\}\}/g;
+
+/**
+ * The plainer sentence for the commonest mistake (#2251): a block opened and
+ * never closed, or closed and never opened. `{{#if isQuote}}Your quote` with no
+ * `{{/if}}` reads better as that than as "a field is not written correctly".
+ * Null when the block tags pair up, which leaves the general sentence.
+ */
+function blockPairProblem(text: string): string | null {
+  const open: string[] = [];
+  for (const m of text.matchAll(BLOCK_TAG)) {
+    const opener = m[2];
+    const closer = m[3];
+    if (opener) {
+      open.push(opener);
+    } else if (closer) {
+      const top = open.pop();
+      if (top === undefined) {
+        return `{{/${closer}}} closes a part that was never opened. Remove it, or add the {{#${closer}}} it belongs to.`;
+      }
+      if (top !== closer) return `{{#${top}}} is closed with {{/${closer}}}. Close it with {{/${top}}}.`;
+    } else if (open.length === 0) {
+      return '{{else}} sits outside any {{#if}}. Move it between an {{#if}} and its {{/if}}, or remove it.';
+    }
+  }
+  const last = open.pop();
+  return last === undefined ? null : `{{#${last}}} is never closed. Add {{/${last}}} where that part ends.`;
+}
+
+/**
+ * The complaint about one template field the sender could not fill in, or null
+ * when it sends (#2251). Before this an email template with an unclosed
+ * `{{#if}}` saved, and then every send of it threw and the household heard
+ * nothing.
+ *
+ * A triple stash is left to `tripleStashIssue`, which has its own sentence.
+ *
+ * @param label the field as the editor names it: "The subject", "The body".
+ */
+export function templateMarkupIssue(label: string, value: string | null | undefined): string | null {
+  if (!value || !noTripleStash(value)) return null;
+  const { problem } = scanTemplate(value);
+  if (problem === null) return null;
+  const detail = problem === MERGE_FIELD_NOT_CLOSED ? (blockPairProblem(value) ?? problem) : problem;
+  return `${label} cannot be sent as written. ${detail}`;
+}
+
+/** The fields `saveTemplate` refuses on, keyed the way the editors name their boxes. */
+export type TemplateMarkupField = 'subject' | 'body' | 'html' | 'headline' | 'content';
+export type TemplateMarkupErrors = Partial<Record<TemplateMarkupField, string>>;
+
+const MARKUP_LABELS: Readonly<Record<TemplateMarkupField, string>> = {
+  subject: 'The subject',
+  body: 'The body',
+  html: 'The HTML',
+  headline: 'The headline',
+  content: 'The email',
+};
+
+/**
+ * Every field of an email template the sender could not fill in, keyed by
+ * field. Empty means every field sends. A visual template is also checked as
+ * the sender assembles it (headline and content together, in the frame), so a
+ * block opened in the headline and closed in the content cannot slip past.
+ */
+export function emailMarkupErrors(t: {
+  subject?: string | null;
+  body?: string | null;
+  html?: string | null;
+  headline?: string | null;
+  content?: string | null;
+}): TemplateMarkupErrors {
+  const errors: TemplateMarkupErrors = {};
+  for (const field of ['subject', 'body', 'html', 'headline', 'content'] as const) {
+    const issue = templateMarkupIssue(MARKUP_LABELS[field], t[field]);
+    if (issue) errors[field] = issue;
+  }
+  if (t.headline != null && t.content != null && !errors.headline && !errors.content) {
+    const issue =
+      templateMarkupIssue(MARKUP_LABELS.content, contentToText(t.headline, t.content)) ??
+      templateMarkupIssue(MARKUP_LABELS.content, frameHtml(t.headline, t.content));
+    if (issue) errors.content = issue;
+  }
+  return errors;
+}
+
+/** The machine-readable half of a markup refusal, on `HttpsError.details`. */
+export const TEMPLATE_MARKUP_REFUSAL = 'template-markup-refused';
+export interface TemplateMarkupRefusalDetails {
+  reason: typeof TEMPLATE_MARKUP_REFUSAL;
+  fieldErrors: TemplateMarkupErrors;
+}
 
 /**
  * Handlebars triple-stash, `{{{var}}}`, renders a variable WITHOUT HTML escape,
@@ -128,6 +318,8 @@ export function emailTemplateIssues(content: EmailTemplateContent): string[] {
   }
   const attributeIssue = unquotedAttributeIssue('html', content.html);
   if (attributeIssue) issues.push(attributeIssue);
+  // #2251: a field the sender cannot fill in is refused at import as at save.
+  issues.push(...Object.values(emailMarkupErrors(content)));
   return issues;
 }
 
@@ -163,6 +355,7 @@ export function visualEmailTemplateIssues(v: VisualEmailTemplateContent): string
     const issue = tripleStashIssue(field, value);
     if (issue) issues.push(issue);
   }
+  issues.push(...Object.values(emailMarkupErrors(v)));
   const r = sanitizeEmailContent(v.content, '');
   issues.push(...r.issues.filter((i) => !i.startsWith('Removed an image')));
   if (r.content !== v.content) issues.push('content is not in the stored form; regenerate it with the converter.');
@@ -175,6 +368,8 @@ export function smsTemplateIssues(text: string): string[] {
   if (text.trim().length === 0) issues.push('sms text is empty.');
   const issue = tripleStashIssue('sms text', text);
   if (issue) issues.push(issue);
+  const markup = templateMarkupIssue('The text message', text);
+  if (markup) issues.push(markup);
   return issues;
 }
 
@@ -190,5 +385,9 @@ export function pushTemplateIssues(title: string, body: string): string[] {
     const issue = tripleStashIssue(field, value);
     if (issue) issues.push(issue);
   }
+  const titleMarkup = templateMarkupIssue('The push title', title);
+  if (titleMarkup) issues.push(titleMarkup);
+  const bodyMarkup = templateMarkupIssue('The push message', body);
+  if (bodyMarkup) issues.push(bodyMarkup);
   return issues;
 }

@@ -4,8 +4,11 @@
 // tests (which run fine under either environment).
 import { describe, it, expect } from 'vitest';
 import type { TemplateSummary } from '../api/templates';
+import { SEED_CORPUS } from '../../../mytribe/functions/src/notifications/seedCorpus.generated';
 import {
   templateFieldErrors,
+  sectionTitleErrors,
+  templateMarkupError,
   templateRowTitle,
   templateSavedNotice,
   templateSubjectPreview,
@@ -312,6 +315,64 @@ describe('templateFieldErrors (#1614)', () => {
   it('skips the key on edit and is empty for a complete form', () => {
     expect(templateFieldErrors(fields({ templateId: '' }), { isCreate: false })).toEqual([]);
   });
+  it('#2251: names a subject, body or HTML the sender could not fill in, at its own field', () => {
+    const found = templateFieldErrors(
+      fields({ subject: '{{#if isQuote}}Quote', body: 'Paid{{/if}}', html: '<p>Hi {{kinName</p>' }),
+      { isCreate: false },
+    );
+    expect(found.map((e) => e.field)).toEqual(['subject', 'body', 'html']);
+  });
+});
+
+describe('templateMarkupError (#2251)', () => {
+  it('says which block is never closed', () => {
+    expect(templateMarkupError('The subject', '{{#if isQuote}}Your quote is ready')).toBe(
+      'The subject cannot be sent as written. {{#if}} is never closed. Add {{/if}} where that part ends.',
+    );
+  });
+  it('says a close tag closes nothing, a wrong close, and a lone else', () => {
+    expect(templateMarkupError('The body', 'x{{/if}}')).toMatch(/\{\{\/if\}\} closes a part that was never opened/);
+    expect(templateMarkupError('The body', '{{#if a}}x{{/unless}}')).toMatch(/\{\{#if\}\} is closed with \{\{\/unless\}\}/);
+    expect(templateMarkupError('The body', 'a {{else}} b')).toMatch(/\{\{else\}\} sits outside any \{\{#if\}\}/);
+  });
+  it('catches half a field', () => {
+    expect(templateMarkupError('The subject', 'Hi {{kinName and more')).toMatch(/A field is not written correctly/);
+  });
+  it('passes plain text, fields, loops and paired blocks with else', () => {
+    for (const ok of [
+      'No fields',
+      'Hi {{kinfolkName}}',
+      '{{#if isQuote}}Quote{{else}}Invoice{{/if}}',
+      '<ul>{{#each visits}}<li>{{this.date}}</li>{{/each}}</ul>',
+      '{{#unless paid}}Due {{dueDate}}{{/unless}}',
+    ]) {
+      expect(templateMarkupError('The body', ok)).toBeNull();
+    }
+  });
+  // #2251 review: a comment or an escaped tag is never filled in, so it never holds Save back.
+  it('passes sections, else-if, block params, and tags inside a comment or escaped', () => {
+    for (const ok of [
+      '{{#if a}}x{{else if b}}y{{else}}z{{/if}}',
+      '{{#each items as |item i|}}{{item.name}}{{/each}}',
+      '{{#kinNames}}{{this}}{{/kinNames}}',
+      '{{!-- {{#if x}} kept for later --}}Hi {{kinName}}',
+      '{{! {{/if}} }}Hi',
+      'Type \\{{#if x}} to show a part',
+    ]) {
+      expect(templateMarkupError('The body', ok)).toBeNull();
+    }
+    expect(templateMarkupError('The body', '{{!-- note --}}{{#if a}}x')).toMatch(/\{\{#if\}\} is never closed/);
+  });
+  it('refuses nothing in the shipped seed corpus (no false alarm on a good template)', () => {
+    const refused = SEED_CORPUS.flatMap((e) =>
+      [e.emailSubject, e.emailHeadline, e.emailContent]
+        .map((v) => templateMarkupError('The email', v))
+        .filter((m): m is string => m !== null)
+        .map((m) => `${e.key}: ${m}`),
+    );
+    expect(SEED_CORPUS.length).toBeGreaterThan(10);
+    expect(refused).toEqual([]);
+  });
 });
 describe('templateFormError', () => {
   it('is null for a complete create-mode form', () => {
@@ -563,5 +624,21 @@ describe('#953 visual templates', () => {
       fields: ['subject'],
       source: 'template',
     });
+  });
+});
+describe('sectionTitleErrors (#2084)', () => {
+  it('marks a row with text and no title, by index, and leaves empty and titled rows alone', () => {
+    expect(
+      sectionTitleErrors([
+        { title: 'Intro', description: '' },
+        { title: '  ', description: 'typed text' },
+        { title: '', description: '' },
+        { title: '', description: '   ' },
+      ]),
+    ).toEqual({ 1: 'Give this section a title, or remove it.' });
+  });
+  it('is empty when nothing would be lost', () => {
+    expect(sectionTitleErrors([])).toEqual({});
+    expect(sectionTitleErrors([{ title: 'A', description: 'b' }])).toEqual({});
   });
 });

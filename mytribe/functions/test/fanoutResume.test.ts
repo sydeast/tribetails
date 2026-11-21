@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
+import { withJoinedHouseholds } from './_helpers/joinedHouseholds';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
 /**
@@ -108,9 +109,12 @@ function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unkn
   } as unknown as CallableRequest<unknown>;
 }
 
-/** `n` linked households, so one fan-out is `n` enqueues. */
+/**
+ * `n` linked households, so one fan-out is `n` enqueues. #2482: each one's
+ * login joined it (`withJoinedHouseholds`), which is what makes it linked.
+ */
 function audienceDb(n: number, docs: Record<string, Record<string, unknown> | null> = {}) {
-  return buildDbMock({
+  return buildDbMock(withJoinedHouseholds({
     writeThrough: true,
     docs,
     queryDocs: {
@@ -119,7 +123,7 @@ function audienceDb(n: number, docs: Record<string, Record<string, unknown> | nu
         data: { status: 'active', tags: [], uid: `u${i}` },
       })),
     },
-  });
+  }));
 }
 
 const blastArgs = (over: Record<string, unknown> = {}) => ({
