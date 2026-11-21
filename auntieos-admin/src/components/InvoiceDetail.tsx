@@ -114,9 +114,11 @@ import './InvoiceDetail.css';
  *            when the first call SETTLED the invoice; on an explicit partial
  *            it wrote a second subcollection row and dropped the balance twice.
  *
- *            EDITING THE FORM MINTS NEW KEYS, because an edited payment is a
- *            different payment. So the safe advice still depends on leaving the
- *            form alone, and the sentence says that.
+ *            EDITING THE FORM MINTS NEW KEYS for the other money actions,
+ *            because an edited entry is a different one. So the safe advice
+ *            there still depends on leaving the form alone, and the sentence
+ *            says that. #2297: Record payment holds its key until an answer
+ *            whatever is edited, and its sentence leaves that part out.
  *   failed   the server answered. Its own sentence is the useful one.
  *
  * The offline classes carry their whole sentence, so the callable-name prefix
@@ -128,6 +130,12 @@ export function invoiceActionError(caught: unknown, callableName: string): strin
   const message = caught instanceof Error && caught.message ? caught.message : 'Action failed';
   if (phase === 'blocked') return message;
   if (phase === 'unknown') {
+    // #2297: Record payment holds its key until an answer whatever is edited,
+    // so for it a changed figure is not a different payment. The panel says
+    // which payment is on record when the answer comes.
+    if (callableName === 'recordPayment') {
+      return `${message} Press the same button again: this payment carries a key that makes a second attempt land on the same record, so it is not recorded twice.`;
+    }
     return `${message} Press the same button again WITHOUT changing anything: this payment carries a key that makes a second attempt land on the same record. Changing a figure first would make it a different payment.`;
   }
   return `${failedToLead(callableName)}: ${message}`;

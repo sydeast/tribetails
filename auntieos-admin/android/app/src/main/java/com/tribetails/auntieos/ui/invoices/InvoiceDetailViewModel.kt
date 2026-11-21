@@ -202,7 +202,7 @@ class InvoiceDetailViewModel(
      * refund mechanism to take back. With the key, the server answers the
      * retry from the first attempt's row.
      *
-     * Re-minted the moment the payment being submitted changes, compared at
+     * (Before #2297, below:) re-minted the moment the payment being submitted changes, compared at
      * submit time via [paymentSignature] rather than tracked through the
      * dialog's own state: an edited amount is a different payment, and a held
      * key would replay the first attempt and report the OLD figure back as
