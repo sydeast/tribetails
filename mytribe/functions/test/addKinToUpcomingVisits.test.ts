@@ -607,6 +607,7 @@ describe('addKinToUpcomingVisits: one notice per recipient for the whole change'
     expect(sent('assignment.changed')).toHaveLength(2);
   });
 });
+
 /**
  * #1822 review: the two partial-failure gaps. (1) An envelope whose write
  * failed was never repaired: a retry found every visit carrying the Kin, so it

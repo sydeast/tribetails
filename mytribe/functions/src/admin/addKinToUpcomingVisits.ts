@@ -144,6 +144,7 @@ interface Visit {
   /** The booking envelope the household copy sits under, when it exists. */
   envelope: { path: string; data: Doc } | null;
 }
+
 /**
  * #1822 review: the field on a household copy that says THIS write was an
  * `addKinToUpcomingVisits` write, so `onBookingsWrite` leaves the notices to
@@ -486,6 +487,7 @@ export async function addKinToUpcomingVisitsHandler(
     added: changed.size,
   });
 }
+
 /** The two household statuses on which a changed visit is news to the household (`visitTellsHouseholdOfChanges`). */
 const HOUSEHOLD_TOLD = new Set(['confirmed', 'approved']);
 /** A confirmed visit this call changed, as it wrote the household copy. */
@@ -494,6 +496,7 @@ interface Told {
   batchId: string;
   data: Doc;
 }
+
 /**
  * The whole change, told once (lead decision 2026-11-21; #532/#536 shape):
  *
@@ -613,6 +616,7 @@ async function tellOnce(args: { kinfolkId: string; kin: KinRosterEntry; told: To
     warn('kincare.changed', err);
   }
 }
+
 export const addKinToUpcomingVisits = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },
   wrapAdminCallable('addKinToUpcomingVisits', addKinToUpcomingVisitsHandler),

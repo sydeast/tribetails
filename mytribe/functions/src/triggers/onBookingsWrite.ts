@@ -123,6 +123,7 @@ export function officeNoticeStampChanged(before: BookingDoc | undefined, after: 
   if (typeof now !== 'string' || now === '') return false;
   return before?.officeNoticeStamp !== now;
 }
+
 /**
  * #1822 (lead decision 2026-11-21): true when THIS write carries a new
  * `kinAddedStamp`, which means `admin/addKinToUpcomingVisits` made it and sends
@@ -142,6 +143,7 @@ export function kinAddedStampChanged(before: BookingDoc | undefined, after: Book
   if (typeof now !== 'string' || now === '') return false;
   return before?.kinAddedStamp !== now;
 }
+
 /**
  * A stamp reduced to something comparable across revisions. Firestore hands back
  * a Timestamp; the emulator and the tests can hand back a string or a number.
