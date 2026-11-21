@@ -197,3 +197,131 @@ describe('saveTribeProfile: an old client still sending the vet as a profile row
     expect(ctx.writes.find((w) => w.path.startsWith('household_data/'))).toBeUndefined();
   });
 });
+
+/**
+ * #2289: one household record per household, whichever side makes it first.
+ *
+ * The portal's first vet pick made `household_data/{householdId}` while the
+ * office made its record under an auto id, and the pick looked the record up
+ * BEFORE its transaction. An office save between the lookup and the write gave
+ * the household two records.
+ *
+ * What these can and cannot show: the mock runs transactions one after the
+ * other, so they prove where each write lands and what it carries, not that
+ * Firestore isolates two transactions. That part is the shared document path
+ * (and `firestore.rules`, which refuses a client create at any other id).
+ */
+describe('#2289: the household vet pick and the office never make two household records', () => {
+  const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+  const householdDataPaths = (docs: Record<string, unknown>) =>
+    Object.keys(docs).filter((p) => p.startsWith('household_data/') && docs[p] != null);
+
+  /** Runs [between] after the handler's own reads and before its transaction starts. */
+  function officeWritesFirst(ctx: ReturnType<typeof buildDbMock>, between: () => void) {
+    const real = ctx.db.runTransaction;
+    ctx.db.runTransaction = vi.fn(async (fn: any) => {
+      between();
+      return real(fn);
+    });
+  }
+
+  it('the office made the record after the lookup: the pick goes into it, and the office fields stand', async () => {
+    const docs: Record<string, Record<string, unknown> | null> = { 'clients/u1': { kinfolkIds: ['3'] }, 'vet_clinics/c1': CLINIC };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    // The office saves its first section while the pick is on its way in.
+    officeWritesFirst(ctx, () => {
+      docs['household_data/3'] = { kinfolkId: '3', foodLocation: 'Pantry', createdAt: '2026-11-20T10:00:00.000Z' };
+    });
+    const { setHouseholdVetHandler } = await import('../src/portal/saveTribeProfile');
+    await setHouseholdVetHandler({ data: { kinfolkId: '3', clinicId: 'c1' }, auth: { uid: 'u1' } } as any);
+
+    expect(householdDataPaths(docs)).toEqual(['household_data/3']);
+    expect(docs['household_data/3']).toMatchObject({
+      kinfolkId: '3',
+      foodLocation: 'Pantry',
+      primaryVetClinicId: 'c1',
+      createdAt: '2026-11-20T10:00:00.000Z',
+    });
+    const write = ctx.writes.find((w) => w.path === 'household_data/3')!;
+    expect(write.merge).toBe(true);
+    expect(write.data).not.toHaveProperty('createdAt');
+  });
+
+  it('an older app made the record under its own id after the lookup: the pick goes into that one, no second record', async () => {
+    const docs: Record<string, Record<string, unknown> | null> = { 'clients/u1': { kinfolkIds: ['3'] }, 'vet_clinics/c1': CLINIC };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    officeWritesFirst(ctx, () => {
+      docs['household_data/auto9'] = { kinfolkId: '3', foodLocation: 'Pantry' };
+    });
+    const { setHouseholdVetHandler } = await import('../src/portal/saveTribeProfile');
+    await setHouseholdVetHandler({ data: { kinfolkId: '3', clinicId: 'c1' }, auth: { uid: 'u1' } } as any);
+
+    expect(householdDataPaths(docs)).toEqual(['household_data/auto9']);
+    expect(docs['household_data/auto9']).toMatchObject({ kinfolkId: '3', foodLocation: 'Pantry', primaryVetClinicId: 'c1' });
+  });
+
+  it('the household picked first: a record keyed by the household id, which is where the office creates', async () => {
+    const docs: Record<string, Record<string, unknown> | null> = { 'clients/u1': { kinfolkIds: ['3'] }, 'vet_clinics/c1': CLINIC };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setHouseholdVetHandler } = await import('../src/portal/saveTribeProfile');
+    await setHouseholdVetHandler({ data: { kinfolkId: '3', clinicId: 'c1' }, auth: { uid: 'u1' } } as any);
+
+    expect(householdDataPaths(docs)).toEqual(['household_data/3']);
+    expect(docs['household_data/3']).toMatchObject({ kinfolkId: '3', primaryVetClinicId: 'c1' });
+  });
+
+  it('two picks sent at once leave one record, holding one of the two vets', async () => {
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      'vet_clinics/c1': CLINIC,
+      'vet_clinics/c2': { ...CLINIC, name: 'Oak Vet' },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setHouseholdVetHandler } = await import('../src/portal/saveTribeProfile');
+    await Promise.all([
+      setHouseholdVetHandler({ data: { kinfolkId: '3', clinicId: 'c1' }, auth: { uid: 'u1' } } as any),
+      setHouseholdVetHandler({ data: { kinfolkId: '3', clinicId: 'c2' }, auth: { uid: 'u1' } } as any),
+    ]);
+    expect(householdDataPaths(docs)).toEqual(['household_data/3']);
+    expect(['c1', 'c2']).toContain(docs['household_data/3']!['primaryVetClinicId']);
+  });
+
+  it('a record keyed by the household id with no kinfolkId field gets one, so the office lookup finds it', async () => {
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'clients/u1': { kinfolkIds: ['3'] },
+      'vet_clinics/c1': CLINIC,
+      'household_data/3': { foodLocation: 'Pantry' },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setHouseholdVetHandler } = await import('../src/portal/saveTribeProfile');
+    await setHouseholdVetHandler({ data: { kinfolkId: '3', clinicId: 'c1' }, auth: { uid: 'u1' } } as any);
+    expect(docs['household_data/3']).toEqual(expect.objectContaining({ kinfolkId: '3', foodLocation: 'Pantry', primaryVetClinicId: 'c1' }));
+  });
+
+  // #2445: admin Android reads both stamps as text. A server timestamp here
+  // failed its whole read of the record.
+  it('stamps createdAt and updatedAt as ISO text, the type every other writer of the record stores', async () => {
+    const ctx = buildDbMock({ docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'vet_clinics/c1': CLINIC } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { setHouseholdVetHandler } = await import('../src/portal/saveTribeProfile');
+    await setHouseholdVetHandler({ data: { kinfolkId: '3', clinicId: 'c1' }, auth: { uid: 'u1' } } as any);
+    const created = ctx.writes.find((w) => w.path === 'household_data/3')!.data;
+    expect(created.createdAt).toMatch(ISO);
+    expect(created.updatedAt).toMatch(ISO);
+
+    const ctx2 = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'vet_clinics/c1': CLINIC },
+      queryDocs: { household_data: [{ id: 'auto9', data: { kinfolkId: '3', primaryVetClinicId: 'c0' } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx2.db);
+    await setHouseholdVetHandler({ data: { kinfolkId: '3', clinicId: 'c1' }, auth: { uid: 'u1' } } as any);
+    const merged = ctx2.writes.find((w) => w.path === 'household_data/auto9')!.data;
+    expect(merged.updatedAt).toMatch(ISO);
+    expect(merged).not.toHaveProperty('createdAt');
+  });
+});

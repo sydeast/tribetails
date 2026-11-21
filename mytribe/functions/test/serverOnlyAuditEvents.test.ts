@@ -234,7 +234,9 @@ describe('#2162 no admin client sends a server-only kind', () => {
     // The scans read the kind from the call's own arguments. These files hold
     // a call that passes it on instead: the wrappers themselves, the data
     // sources' pass-through overrides, the booking screen's `audit` helper,
-    // the draft approval's `audit` step (its caller's lambda is scanned), and
+    // the draft approval's `audit` step (its caller's lambda is scanned), the
+    // draft send's `audit` step in `DraftSent.kt` (#2428: the same caller, the
+    // same scanned lambda, which names `DRAFT_APPROVED` itself), and
     // the kind worked out elsewhere (`clientHouseholdAuditAction` on desktop,
     // read above). A new file
     // here is a new indirect sender: read where its kind comes from, make the
@@ -253,6 +255,7 @@ describe('#2162 no admin client sends a server-only kind', () => {
         `${D}/screens/booking/BookingScreen.kt`,
         `${D}/screens/booking/BookingViewModel.kt`,
         `${D}/screens/communicate/ApproveSend.kt`,
+        `${D}/screens/communicate/DraftSent.kt`,
         `${D}/screens/directory/KinfolkEditScreen.kt`,
         `${D}/screens/settings/SettingsScreen.kt`,
       ].sort(),

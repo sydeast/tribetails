@@ -86,6 +86,12 @@ fun InvoiceDetailScreen(
      * the payment, so Pay stays held back and the screen offers Check again.
      */
     paymentNotChecked: Boolean = false,
+    /**
+     * #2437: the check is running because the server refused a Pay: a payment
+     * on this invoice is still being recorded. Its sentence is printed where
+     * Pay was, above the check.
+     */
+    paymentBeingRecorded: Boolean = false,
     onCheckPaymentAgain: () -> Unit = {},
     onPayMethod: (PayMethod) -> Unit = {},
     /** `true` accepts the quote, `false` declines it. */
@@ -269,6 +275,16 @@ fun InvoiceDetailScreen(
         } else if (offersPayment(invoice) && checkingPayment) {
             // #2366: a second payment while the first is still landing would
             // go to account credit, and there are no refunds.
+            if (paymentBeingRecorded) {
+                Text(
+                    PAYMENT_BEING_RECORDED,
+                    style = type.sansMeta,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = KinfolkSpacing.l)
+                        .testTag("invoice-payment-being-recorded"),
+                )
+            }
             KinLoading(
                 text = "Checking payment…",
                 onSync = onCheckPaymentAgain,

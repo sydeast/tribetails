@@ -273,6 +273,7 @@ scheduleDigestCron
 scheduleMarketingBlast
 screenCallAction
 sendExternalMessage
+sendGeneratedDraft
 sendHouseholdPush
 sendInvoiceReminder
 sendKinTaleReport

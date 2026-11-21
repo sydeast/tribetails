@@ -50,6 +50,16 @@ export interface ProviderFailureFields {
   providerCode?: number | string;
 }
 
+/**
+ * What `lib/email.ts` throws when smtp2go answered 2xx and the answer said
+ * neither yes nor no: a body that could not be read as JSON, or one with no
+ * `succeeded` and no `failures`. It carries no status and no code (#1540), so
+ * this line is the only thing that tells it from a refusal smtp2go put in
+ * words. A caller that must know whether a message left reads it as "not
+ * known" (#2428, `admin/sendGeneratedDraft.ts#nothingWentOut`).
+ */
+export const SMTP2GO_NO_VERDICT_MESSAGE = 'smtp2go send failed: no sends succeeded';
+
 /** A recipient to scrub out of the provider's text, which can quote it verbatim (Twilio 21211 does). */
 export interface RecipientScrub {
   plain: string;

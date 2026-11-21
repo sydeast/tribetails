@@ -94,3 +94,33 @@ internal fun householdFieldChanges(
     }
     return changes
 }
+
+/**
+ * #2289: what a household's FIRST save writes, as a merge into
+ * `household_data/{kinfolkId}`.
+ *
+ * Only what the operator filled in, plus the household's id and the stamps.
+ * The create used to be the whole model under an auto id. Two things were
+ * wrong with that once the portal's vet pick began creating the same record
+ * at the household's own id:
+ *  - a different id made a SECOND record for the household, and the two sides
+ *    then read different ones;
+ *  - at the shared id, the whole model would write `primaryVetClinicId = ""`
+ *    over the vet the household had just picked.
+ *
+ * [recordExists] is what the transaction read: `createdAt` is written only for
+ * a record that is not there yet, so joining one the household made first
+ * leaves its date alone.
+ */
+internal fun householdCreateFields(
+    form: HouseholdData,
+    timestamp: String,
+    recordExists: Boolean,
+): Map<String, Any> {
+    val fields = LinkedHashMap<String, Any>()
+    fields["kinfolkId"] = form.kinfolkId
+    fields.putAll(householdFieldChanges(HouseholdData(kinfolkId = form.kinfolkId), form))
+    if (!recordExists) fields["createdAt"] = timestamp
+    fields["updatedAt"] = timestamp
+    return fields
+}

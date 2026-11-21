@@ -176,6 +176,16 @@ class InvoicesController internal constructor(
      */
     var paymentNotChecked by mutableStateOf<String?>(null)
         private set
+    /**
+     * #2437: the invoice whose Pay the server refused because a payment on it
+     * has finished at Stripe and is not recorded yet, or null. The household
+     * pressed Pay from a screen that did not know: a second window of this
+     * app, or a return by hand. The refusal starts the same check a return
+     * from Stripe does, and while that check runs the screens print the
+     * server's sentence where Pay was ([PAYMENT_BEING_RECORDED]).
+     */
+    var paymentBeingRecorded by mutableStateOf<String?>(null)
+        private set
     /** The invoice handed to Stripe and not yet checked. Set on hand-off, spent on return. */
     private var awaitingCheckout: String? = null
     private var checkJob: Job? = null
@@ -371,7 +381,15 @@ class InvoicesController internal constructor(
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                error = t.message ?: "Could not start payment"
+                // #2437: not a failure to report. A payment on this bill is
+                // still being recorded, so Pay is held back and the bill is
+                // read again until it shows. The sentence is printed once,
+                // where Pay was, and not as an error as well.
+                if (isPaymentBeingRecorded(t)) {
+                    startPaymentCheck(invoice.id, byFocus = false, beingRecorded = true)
+                } else {
+                    error = t.message ?: "Could not start payment"
+                }
             } finally {
                 paying = null
             }
@@ -472,14 +490,18 @@ class InvoicesController internal constructor(
         checkJob = null
         checkToken = null
         checkingPayment = null
+        paymentBeingRecorded = null
         checkStartedByFocus = false
     }
 
-    private fun startPaymentCheck(invoiceId: String, byFocus: Boolean) {
+    private fun startPaymentCheck(invoiceId: String, byFocus: Boolean, beingRecorded: Boolean = false) {
         checkJob?.cancel()
         val token = Any()
         checkToken = token
         checkStartedByFocus = byFocus
+        // #2437: the server's sentence stays up only for the check its own
+        // refusal started. Any other check replaces it.
+        paymentBeingRecorded = if (beingRecorded) invoiceId else null
         paymentNotSeen = null
         // Only this invoice's own hold is lifted here. Another bill's check
         // that read nothing stays held until a read gets through
@@ -509,7 +531,10 @@ class InvoicesController internal constructor(
                 if (readSinceReturn) paymentNotSeen = invoiceId else paymentNotChecked = invoiceId
             } finally {
                 // A newer check owns the state now; this one leaves it alone.
-                if (checkToken === token) checkingPayment = null
+                if (checkToken === token) {
+                    checkingPayment = null
+                    paymentBeingRecorded = null
+                }
             }
         }
     }

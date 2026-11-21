@@ -43,7 +43,14 @@ import { refreshAfterSave } from '../lib/refreshAfterSave';
 import { accountCreditHistoryKey, businessContactKey, myHomeKey, myInvoicesKey } from '../lib/portalQueryKeys';
 import { announceSaved } from '../lib/saveNotice';
 import { mintCheckoutIdempotencyKey } from '../lib/moneyIdempotency';
-import { cameBackFromCheckout, checkoutReturnUrls, dropCheckoutMarker } from '../lib/checkoutReturn';
+import {
+  cameBackFromCheckout,
+  checkoutReturnUrls,
+  dropCheckoutMarker,
+  PAYMENT_CHECK_EVERY_MS,
+  PAYMENT_CHECK_FOR_MS,
+  paymentBeingRecorded,
+} from '../lib/checkoutReturn';
 import '../styles/invoices.css';
 import { BusinessFootnote } from '../components/BusinessFootnote';
 
@@ -57,10 +64,9 @@ import { BusinessFootnote } from '../components/BusinessFootnote';
 const STRIPE_ONLY_FALLBACK: PayMethod[] = [
   { id: 'stripe', label: 'Pay with Credit Card', kind: 'checkout', url: null, instructions: null },
 ];
-/** How often the bill is read again while checking. */
-export const PAYMENT_CHECK_EVERY_MS = 3_000;
-/** How long the check runs before the screen stops waiting and says so. */
-export const PAYMENT_CHECK_FOR_MS = 60_000;
+// #2437: the two check timings live in `lib/checkoutReturn.ts` now, where the
+// invoices list reads them too. Still exported from here for their tests.
+export { PAYMENT_CHECK_EVERY_MS, PAYMENT_CHECK_FOR_MS };
 /**
  * #2366, #2402: where the payment check stands after the household came back
  * from Stripe.
@@ -73,8 +79,13 @@ export const PAYMENT_CHECK_FOR_MS = 60_000;
  *              payment would be a second real charge, and there are no refunds.
  *
  * `since` is when the check began. Only a read that finished after it counts.
+ *
+ * #2437: `why` is the server's sentence when the check began because
+ * `payInvoice` refused: a payment on this invoice has finished at Stripe and
+ * is not recorded yet. It is printed where Pay was for as long as that check
+ * runs.
  */
-type PaymentCheck = { since: number; phase: 'checking' | 'not-seen' | 'not-read' };
+type PaymentCheck = { since: number; phase: 'checking' | 'not-seen' | 'not-read'; why?: string };
 /**
  * Invoice document view, ported from
  * ui-ideas/mytribe-invoice-detail-2026-05-31.html. There's no dedicated
@@ -207,6 +218,14 @@ export function InvoiceDetail() {
       // because nothing about the line says so.
       if (res.checkoutUrl) window.location.href = res.checkoutUrl;
     },
+    // #2437: the server opened no checkout because a payment on this invoice
+    // is still being recorded. That is what the check above is for, so it
+    // starts here too: Pay is held back, the server's sentence takes its
+    // place, and the bill is read again until the payment shows.
+    onError: (err) => {
+      const why = paymentBeingRecorded(err);
+      if (why !== null) setCheck({ since: Date.now(), phase: 'checking', why });
+    },
   }, { policy: 'abandon', what: 'your payment' });
 
   // ABANDON, though it reads like a download. `getMyInvoicePdf` re-renders the
@@ -261,7 +280,11 @@ export function InvoiceDetail() {
   // their own sentence now. A red "Couldn't open checkout. Try again." over a
   // payment whose fate is not known is the one line this screen must not
   // print.
-  const payError = errorLine(pay, "Couldn't open checkout. Try again.");
+  // #2437: the "still being recorded" refusal is not printed here. Its sentence
+  // goes where Pay was while the payment is checked, and a second copy in red
+  // would read as a second failure.
+  const payError =
+    paymentBeingRecorded(pay.error) !== null ? null : errorLine(pay, "Couldn't open checkout. Try again.");
   const pdfError = errorLine(downloadPdf, "Couldn't prepare the PDF. Try again.");
   const quoteError = errorLine(decideQuote, "Couldn't send your answer. Try again.");
   const redeemError = errorLine(redeem, "Couldn't redeem this credit. Try again.");
@@ -565,6 +588,11 @@ export function InvoiceDetail() {
                       and there are no refunds. */}
                   {payable && checking && (
                     <div className="pay-check" data-testid="payment-check">
+                      {check?.why && (
+                        <p className="pay-blocked" data-testid="payment-being-recorded">
+                          {check.why}
+                        </p>
+                      )}
                       <LoadingLine what="your payment" retry={() => void invoices.refetch()}>
                         Checking payment…
                       </LoadingLine>

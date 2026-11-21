@@ -594,6 +594,10 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   // in the triggers block below.
   syncVisitToGoogleCalendar: () => require('./admin/googleCalendar/syncVisitToGoogleCalendar'),
   sendExternalMessage: () => require('./admin/sendExternalMessage'),
+  // #2428: the one send of a Communicate Email or Text draft to its household.
+  // The draft is claimed before the provider call and stamped after it, so a
+  // draft that went out is never sent again.
+  sendGeneratedDraft: () => require('./admin/sendExternalMessage'),
   // #2061: the push an approved Communicate Push draft sends to its household,
   // behind the household send gate and the household's own push setting.
   sendHouseholdPush: () => require('./admin/conversations'),

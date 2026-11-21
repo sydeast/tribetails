@@ -121,37 +121,36 @@ export const Args = z
     }
   });
 
-type ParsedArgs = z.infer<typeof Args>;
+export type ParsedArgs = z.infer<typeof Args>;
 
 // The recipient key helpers moved to lib/suppressions.ts (#1077) so the smtp2go
 // webhook can key a hard bounce exactly as the send paths read it without
 // importing this module's callable registrations. Re-exported for existing
 // importers.
 export { normalizeRecipient, suppressionDocId, redactRecipient };
-export async function sendExternalMessageHandler(req: CallableRequest<unknown>): Promise<{
-  ok: true;
-  channel: 'email' | 'sms';
+
+/** What a send that reached the provider is known by. */
+export interface ProviderSend {
   providerMessageId: string;
+  /** The recipient as the provider was given it. Never stored or logged. */
+  normalized: string;
   recipientRedacted: string;
-  mirrored: boolean;
-  mirrorSkippedReason: MirrorSkippedReason | null;
-}> {
-  initSentry();
-  const uid = req.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+}
 
-  let args: ParsedArgs;
-  try {
-    args = Args.parse(req.data);
-  } catch (err) {
-    if (err instanceof ZodError) {
-      throw new HttpsError('invalid-argument', 'sendExternalMessage validation failed', {
-        validationErrors: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
-      });
-    }
-    throw err;
-  }
-
+/**
+ * The consent gate and the provider send, with nothing recorded yet.
+ *
+ * Returning means the provider took the message.
+ *
+ * A THROW DOES NOT ALWAYS MEAN NOTHING WENT OUT. A refusal made here (a
+ * recipient that cannot be normalized, a hard bounce, an opt-out) and the
+ * provider saying no both happen before or instead of the send. A timeout or a
+ * dropped connection is thrown as `unavailable` too, and that can follow a
+ * request the provider accepted. A caller holding a claim on something, as
+ * `admin/sendGeneratedDraft.ts` does on a draft, lets go of it only when
+ * `nothingWentOut` there says so, never on a throw alone.
+ */
+export async function sendThroughProvider(args: ParsedArgs): Promise<ProviderSend> {
   let normalized: string;
   try {
     normalized = normalizeRecipient(args.channel, args.to);
@@ -222,6 +221,106 @@ export async function sendExternalMessageHandler(req: CallableRequest<unknown>):
     });
   }
 
+  return { providerMessageId, normalized, recipientRedacted };
+}
+
+/**
+ * The record of a send that already went out: the `external_messages` row and
+ * the audit entry, both with the recipient redacted. `extra` rides on the audit
+ * payload (a draft send names its draft there).
+ */
+export async function recordExternalSend(
+  uid: string,
+  args: ParsedArgs,
+  sent: Pick<ProviderSend, 'providerMessageId' | 'recipientRedacted'>,
+  mirror: { mirrored: boolean; mirrorSkippedReason: MirrorSkippedReason | null },
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  const { providerMessageId, recipientRedacted } = sent;
+  const { mirrored, mirrorSkippedReason } = mirror;
+  const now = Date.now();
+  // Record every send. Store redacted recipient in the audit-facing doc too so
+  // a plaintext one-off contact never lands in long-lived logs.
+  await db()
+    .collection('external_messages')
+    .add({
+      channel: args.channel,
+      transactional: args.transactional,
+      recipientRedacted,
+      subject: args.channel === 'email' ? args.subject : null,
+      bodyLength: args.body.length,
+      providerMessageId,
+      actorUid: uid,
+      sentAtMs: now,
+      // Engagement counters, bumped by the provider webhooks (matched on providerMessageId).
+      counts: zeroCounters(),
+      lastEvent: null,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+  await writeAuditEntry({
+    status: 'SUCCESS',
+    event: AUDIT_EVENTS.EXTERNAL_MESSAGE_SENT,
+    severity: 'info',
+    actorRole: 'AUNTIE',
+    actorUid: uid,
+    targetCollection: 'external_messages',
+    description: `External ${args.channel} sent to ${recipientRedacted}`,
+    // `mirrored` records that an outbound row was written, NOT who it went to.
+    // The recipient stays redacted here exactly as before.
+    payload: {
+      channel: args.channel,
+      recipientRedacted,
+      providerMessageId,
+      transactional: args.transactional,
+      mirrored,
+      ...extra,
+    },
+  }).catch((err) => {
+    logEvent({
+      severity: 'warn',
+      function: 'sendExternalMessage',
+      event: 'audit.write.failed',
+      uid,
+      errorMessage: (err as Error)?.message,
+    });
+  });
+
+  logEvent({
+    severity: 'info',
+    function: 'sendExternalMessage',
+    event: 'admin.external.message.sent',
+    uid,
+    extra: { channel: args.channel, recipientRedacted, providerMessageId, mirrored, mirrorSkippedReason },
+  });
+}
+
+export async function sendExternalMessageHandler(req: CallableRequest<unknown>): Promise<{
+  ok: true;
+  channel: 'email' | 'sms';
+  providerMessageId: string;
+  recipientRedacted: string;
+  mirrored: boolean;
+  mirrorSkippedReason: MirrorSkippedReason | null;
+}> {
+  initSentry();
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
+
+  let args: ParsedArgs;
+  try {
+    args = Args.parse(req.data);
+  } catch (err) {
+    if (err instanceof ZodError) {
+      throw new HttpsError('invalid-argument', 'sendExternalMessage validation failed', {
+        validationErrors: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      });
+    }
+    throw err;
+  }
+
+  const { providerMessageId, normalized, recipientRedacted } = await sendThroughProvider(args);
+
   // Mirror into the Channels thread, if asked AND if the server agrees the number
   // is already a known counterpart. This runs AFTER a successful provider send
   // and can never fail the call: the text really did go out, and reporting a
@@ -265,60 +364,7 @@ export async function sendExternalMessageHandler(req: CallableRequest<unknown>):
     }
   }
 
-  const now = Date.now();
-  // Record every send. Store redacted recipient in the audit-facing doc too so
-  // a plaintext one-off contact never lands in long-lived logs.
-  await db()
-    .collection('external_messages')
-    .add({
-      channel: args.channel,
-      transactional: args.transactional,
-      recipientRedacted,
-      subject: args.channel === 'email' ? args.subject : null,
-      bodyLength: args.body.length,
-      providerMessageId,
-      actorUid: uid,
-      sentAtMs: now,
-      // Engagement counters, bumped by the provider webhooks (matched on providerMessageId).
-      counts: zeroCounters(),
-      lastEvent: null,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-
-  await writeAuditEntry({
-    status: 'SUCCESS',
-    event: AUDIT_EVENTS.EXTERNAL_MESSAGE_SENT,
-    severity: 'info',
-    actorRole: 'AUNTIE',
-    actorUid: uid,
-    targetCollection: 'external_messages',
-    description: `External ${args.channel} sent to ${recipientRedacted}`,
-    // `mirrored` records that an outbound row was written, NOT who it went to.
-    // The recipient stays redacted here exactly as before.
-    payload: {
-      channel: args.channel,
-      recipientRedacted,
-      providerMessageId,
-      transactional: args.transactional,
-      mirrored,
-    },
-  }).catch((err) => {
-    logEvent({
-      severity: 'warn',
-      function: 'sendExternalMessage',
-      event: 'audit.write.failed',
-      uid,
-      errorMessage: (err as Error)?.message,
-    });
-  });
-
-  logEvent({
-    severity: 'info',
-    function: 'sendExternalMessage',
-    event: 'admin.external.message.sent',
-    uid,
-    extra: { channel: args.channel, recipientRedacted, providerMessageId, mirrored, mirrorSkippedReason },
-  });
+  await recordExternalSend(uid, args, { providerMessageId, recipientRedacted }, { mirrored, mirrorSkippedReason });
 
   return { ok: true, channel: args.channel, providerMessageId, recipientRedacted, mirrored, mirrorSkippedReason };
 }
@@ -337,6 +383,34 @@ export const sendExternalMessage = onCall(
     ],
   },
   wrapAdminCallable('sendExternalMessage', sendExternalMessageHandler),
+);
+
+/**
+ * #2428: the one send of a Communicate Email or Text draft to its household.
+ * The handler, its claim on the draft and the stamp that says the draft went
+ * out live in `admin/sendGeneratedDraft.ts`, loaded here only when the call
+ * arrives. It is exported from this module because it sends through the same
+ * two providers and needs the same secrets.
+ *
+ * Owner-only: it is not on the Auntie list (`lib/auntieAccess.ts`).
+ */
+export const sendGeneratedDraft = onCall(
+  {
+    region: 'us-central1',
+    cors: TRIBETAILS_CORS,
+    secrets: [
+      'SMTP2GO_API_KEY',
+      'EMAIL_FROM',
+      'TWILIO_ACCOUNT_SID',
+      'TWILIO_AUTH_TOKEN',
+      'TWILIO_FROM_NUMBER',
+      'SENTRY_DSN',
+    ],
+  },
+  wrapAdminCallable('sendGeneratedDraft', async (req: CallableRequest<unknown>) => {
+    const { sendGeneratedDraftHandler } = await import('./sendGeneratedDraft.js');
+    return sendGeneratedDraftHandler(req);
+  }),
 );
 
 // ---------------------------------------------------------------------------

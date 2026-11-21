@@ -24,7 +24,8 @@ import {
 } from '../lib/personalizeCompose';
 import { generateDraft, draftOpening, type GenerateDraftResult } from '../api/communicateGenerate';
 import { approveGeneratedDraft, type ApproveDraftResult } from '../api/communicateApprove';
-import { sendExternalMessage } from '../api/externalSend';
+import { sendGeneratedDraft } from '../api/draftSend';
+import { alreadySentText, sentDraftOnOpen } from '../lib/draftSent';
 import {
   sendHouseholdPush,
   householdPushResultText,
@@ -68,10 +69,23 @@ const SUBJECT_MAX = 500;
  * `approveGeneratedDraft` owns the ordering: the Firestore write is a gate, the
  * audit entry follows it, and the send follows that. See `api/communicateApprove.ts`
  * for why that order and no other. This screen decides only ONE thing about it,
- * whether there is a `deliver` step at all: a Text or an Email goes out through
- * `sendExternalMessage`, while a KinTale report and a Blog post are promoted and
+ * whether there is a `deliver` step at all: a Push goes out through
+ * `sendHouseholdPush`, while a Social, Blog or General draft is promoted and
  * recorded but sent by nothing. A deliverable approve gets a confirm dialog
  * first, because it reaches a real household and is not undoable.
+ *
+ * ── AN EMAIL OR TEXT IS SENT BY THE SERVER, ONCE (#2428) ────────────────────
+ * Approving one calls `sendGeneratedDraft`, which approves the draft, sends it
+ * and marks it sent in one call. Before #2428 this screen approved the draft
+ * itself and then called `sendExternalMessage`, and nothing on the draft said
+ * it had gone: opened again it read "needs approval", and a second approve
+ * sent the household the same message twice.
+ *
+ * ── A DRAFT THAT ALREADY WENT OUT OPENS AS SENT (#2428) ─────────────────────
+ * A sent Email or Text, and a Push that reached the household's notifications
+ * list or their phone, open with what happened and neither button
+ * (`lib/draftSent.ts`). The server refuses a second send and a delete of one
+ * whatever a screen offers.
  *
  * ── A PUSH IS SENT BY THE SERVER, OR SAYS WHY NOT (#2061) ───────────────────
  * A Push draft's approved line goes to the household through
@@ -139,6 +153,9 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
   const [published, setPublished] = useState<{ reportId: string; alreadyPublished: boolean } | null>(null);
   // #2061: what the push send answered, for a Push draft.
   const [pushResult, setPushResult] = useState<HouseholdPushResult | null>(null);
+  // #2428: an Email or Text that had already gone out: the stored draft it was
+  // opened from, or `answered` when the server said so to a send from here.
+  const [sentBefore, setSentBefore] = useState<GeneratedDraftRow | 'answered' | null>(null);
   const [retryingPush, setRetryingPush] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -204,6 +221,15 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     setPublished(
       isPublishedDraft(row) ? { reportId: str(row.publishedReportId).trim(), alreadyPublished: true } : null,
     );
+    // #2428: a draft that already went out opens as sent, with no Approve and
+    // no Delete. It used to open as "needs approval", and approving an Email or
+    // Text again sent it to the household a second time.
+    const went = sentDraftOnOpen(row, household);
+    if (went !== null) {
+      setApproved({ ok: true, auditWarning: null, providerId: null, delivered: true });
+      setPushResult(went.push);
+    }
+    setSentBefore(went !== null && went.notice !== null ? row : null);
   }, [stored, loadedDraftId]);
 
   function patch(next: Partial<PersonalizeFormState>) {
@@ -217,6 +243,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     setApproved(null);
     setPublished(null);
     setPushResult(null);
+    setSentBefore(null);
     setApproveError(null);
     setFormError(null);
   }
@@ -232,6 +259,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
     setApproved(null);
     setPublished(null);
     setPushResult(null);
+    setSentBefore(null);
     setApproveError(null);
     setDeleted(false);
     setGenerating(true);
@@ -266,7 +294,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
       setApproveError(null);
     }
   }
-  async function runApprove(kf: Kinfolk | undefined) {
+  async function runApprove() {
     if (busy || inFlight.current) return;
     inFlight.current = true;
     setApproving(true);
@@ -282,6 +310,23 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
           title: form.subject,
         });
         setPublished({ reportId: result.reportId, alreadyPublished: result.alreadyPublished });
+        setConfirmOpen(false);
+        return;
+      }
+      // #2428: an Email or Text is approved and sent by the server in one call,
+      // which marks the draft sent. No client-side approve write and no
+      // `sendExternalMessage`: that pair left nothing on the draft to say it
+      // had gone, so it could be approved and sent again.
+      if (def.deliverable === 'email' || def.deliverable === 'sms') {
+        const result = await sendGeneratedDraft({
+          draftId: draft?.draft_id ?? '',
+          kinfolkId: draft?.kinfolk_id ?? form.recipientId,
+          body: draftText,
+          ...(def.deliverable === 'email' ? { subject: form.subject } : {}),
+        });
+        setApproved({ ok: true, auditWarning: result.auditWarning, providerId: null, delivered: true });
+        setPushResult(null);
+        setSentBefore(result.outcome === 'already_sent' ? 'answered' : null);
         setConfirmOpen(false);
         return;
       }
@@ -301,17 +346,6 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                 body: draftText,
               });
               return null;
-            }
-          : (def.deliverable === 'email' || def.deliverable === 'sms') && kf !== undefined
-          ? async () => {
-              const res = await sendExternalMessage({
-                channel: def.deliverable === 'email' ? 'email' : 'sms',
-                to: def.deliverable === 'email' ? str(kf.email) : str(kf.phoneNumber),
-                subject: form.subject,
-                body: draftText,
-                transactional: true,
-              });
-              return res.providerMessageId;
             }
           : undefined;
 
@@ -386,7 +420,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
       setConfirmOpen(true);
       return;
     }
-    void runApprove(kf);
+    void runApprove();
   }
 
   return (
@@ -712,7 +746,18 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       </Banner>
                     );
                   })()}
-                  {approved !== null && pushResult === null && (
+                  {approved !== null && pushResult === null && sentBefore !== null && (() => {
+                    // #2428: this one had already gone out. Say so, in place of
+                    // "Draft approved", which reads as something done just now.
+                    const words =
+                      sentBefore === 'answered' ? alreadySentText(household) : sentDraftOnOpen(sentBefore, household)?.notice;
+                    return words ? (
+                      <Banner tone="success" title={words.title}>
+                        {words.body}
+                      </Banner>
+                    ) : null;
+                  })()}
+                  {approved !== null && pushResult === null && sentBefore === null && (
                     <Banner tone="success" title="Draft approved">
                       {approved.delivered
                         ? // #1592: no provider message id; it is a support trace, not
@@ -772,7 +817,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                     <GhostButton label="Cancel" onClick={() => setConfirmOpen(false)} disabled={approving} />
                     <PrimaryButton
                       label={approving ? 'Sending…' : 'Send now'}
-                      onClick={() => void runApprove(kf)}
+                      onClick={() => void runApprove()}
                       disabled={approving}
                       busy={approving}
                     />

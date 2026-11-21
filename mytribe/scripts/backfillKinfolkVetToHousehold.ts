@@ -324,10 +324,9 @@ export async function applyPlan(db: Firestore, writes: PlannedWrite[]): Promise<
     const batch = db.batch();
     for (const w of writes.slice(i, i + CHUNK)) {
       if (Object.keys(w.householdUpdate).length > 0) {
-        const ref =
-          w.householdDocId !== null
-            ? db.collection('household_data').doc(w.householdDocId)
-            : db.collection('household_data').doc();
+        // #2289: a household's first record is made at its own id, the id every
+        // other creator uses, so this can never make a second one beside it.
+        const ref = db.collection('household_data').doc(w.householdDocId ?? w.kinfolkId);
         batch.set(ref, { kinfolkId: w.kinfolkId, ...w.householdUpdate }, { merge: true });
       }
       if (w.clearKinfolk) {

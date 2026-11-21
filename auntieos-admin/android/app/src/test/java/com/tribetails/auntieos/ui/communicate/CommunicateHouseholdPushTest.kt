@@ -206,14 +206,17 @@ class CommunicateHouseholdPushTest {
         assertFalse(notice.title == "Push sent")
         assertTrue(notice.body.contains("different household"))
     }
-    @Test fun `a Push draft that went out opens as a plain draft with no notice`() = runTest(testDispatcher) {
+    @Test fun `#2428 a Push draft that went out opens as sent, approved and with nothing to try again`() = runTest(testDispatcher) {
         coEvery { repo.getGeneratedDraft("gd1") } returns Result.success(heldDraft.copy(pushOutcome = "sent", pushReason = ""))
         val vm = CommunicateViewModel(repo = repo)
         advanceUntilIdle()
         vm.loadDraft("gd1")
         advanceUntilIdle()
-        assertNull(vm.uiState.value.pushNotice)
-        assertNull(vm.uiState.value.savedDraftId)
+        // Until #2428 this opened as a plain draft (no notice, not approved),
+        // which the screen drew with Approve and Delete.
+        assertEquals("Push sent", vm.uiState.value.pushNotice?.title)
+        assertFalse(vm.uiState.value.pushNotice!!.retryable)
+        assertEquals("gd1", vm.uiState.value.savedDraftId)
     }
 
     // ── #2381: delete, and a send that never answered ──────────────────────

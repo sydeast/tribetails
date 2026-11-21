@@ -242,6 +242,35 @@ describe('sendTemplatedEmail keeps a body-phase transport error (#1540)', () => 
     expect(thrown.message).toBe('smtp2go send failed: no sends succeeded');
     expect(thrown.code).toBeUndefined();
     expect(thrown.cause).toBeUndefined();
+    // #2428: that line is how `sendGeneratedDraft` tells a 2xx with no verdict
+    // from a refusal, so it is a named constant and stays word for word.
+    const { SMTP2GO_NO_VERDICT_MESSAGE } = await import('../src/lib/providerFailure');
+    expect(thrown.message).toBe(SMTP2GO_NO_VERDICT_MESSAGE);
+  });
+
+  it('#2428: a 2xx that names its failures quotes them, and is never the no-verdict line', async () => {
+    const { SMTP2GO_NO_VERDICT_MESSAGE } = await import('../src/lib/providerFailure');
+    const { sendTemplatedEmail } = await import('../src/lib/email');
+    const args = { to: 'kin@tribetails.com', subjectTemplate: 'x', bodyTemplate: 'y', data: {} };
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { succeeded: 0, failed: 1, failures: ['bad recipient', 'blocked sender'] } }),
+    });
+    const named = await sendTemplatedEmail(args).catch((e) => e);
+    expect(named.message).toBe('smtp2go send failed: bad recipient; blocked sender');
+    expect(named.message).not.toBe(SMTP2GO_NO_VERDICT_MESSAGE);
+
+    // An empty list is still a list: the words before it, as they always read.
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: { succeeded: 0, failures: [] } }) });
+    const empty = await sendTemplatedEmail(args).catch((e) => e);
+    expect(empty.message).toBe('smtp2go send failed: ');
+
+    // A 2xx that parsed and says neither yes nor no reads the same as one that did not parse.
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: { succeeded: 0 } }) });
+    const silent = await sendTemplatedEmail(args).catch((e) => e);
+    expect(silent.message).toBe(SMTP2GO_NO_VERDICT_MESSAGE);
   });
 
   it('a 4xx whose body is not JSON keeps the existing HTTP message', async () => {
