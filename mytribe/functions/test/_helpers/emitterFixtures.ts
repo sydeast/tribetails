@@ -265,6 +265,10 @@ export const EMITTER_FIXTURES: EmitterFixture[] = [
   ...fx('invoice.payment.disputed', S.dispute, [OFFICE_COPY], {
     ...INVOICE_BASE, disputeId: 'dp1', disputeStatus: 'needs response', disputeReason: 'fraudulent', disputeAmount: '$68.00', stripeEventId: 'evt1',
   }, BILL),
+  // stripeDispute names the invoice and household only when Stripe's charge carries them.
+  ...fx('invoice.payment.disputed', S.dispute, [OFFICE_COPY], {
+    disputeId: 'dp1', disputeStatus: 'needs response', disputeReason: 'not stated', disputeAmount: 'an unknown amount', stripeEventId: 'evt1',
+  }, { variant: 'no invoice on the charge' }),
   ...fx('invoice.payment.unapplied', S.stripeWebhook, [OFFICE_COPY], {
     ...INVOICE_BASE, stripeEventId: 'evt1', unappliedAmount: '$20.00', unappliedReason: 'The invoice was already paid',
   }, BILL),

@@ -77,6 +77,7 @@ export const WORLD_DOCS: Record<string, Record<string, unknown>> = {
   },
   // A flat visit row, the shape `kin_care_sessions` keeps (`vis_{visitId}`).
   'kin_care_sessions/vis_vis1': { kinfolkId: 'fam1', kinNames: ['Rex'], startTime: ts(VISIT_MS) },
+  'kin_care_sessions/vis_x9': { kinfolkId: 'fam2', kinNames: ['Decoykin'], startTime: ts(DECOY_VISIT_MS) },
   'kin_care_sessions/vis_vis2': { kinfolkId: 'fam1', kinNames: ['Biscuit'], startTime: ts(DECOY_VISIT_MS) },
   'invoices/inv1': {
     kinfolkId: 'fam1',
@@ -86,7 +87,8 @@ export const WORLD_DOCS: Record<string, Record<string, unknown>> = {
     amountDue: 68,
     dueDate: 'Dec 10, 2026',
     date: 'Dec 3, 2026',
-    sessionIds: ['vis_vis1'],
+    // A decoy: a visit from the other household listed on Rex's bill.
+    sessionIds: ['vis_vis1', 'vis_x9'],
   },
   'invoices/inv2': {
     kinfolkId: 'fam1',

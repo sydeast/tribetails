@@ -555,7 +555,13 @@ export async function enrichTemplateData(
     for (const id of ids) {
       try {
         const snap = await firestore.doc(`kin_care_sessions/${id}`).get();
-        const kin = snap.exists ? (snap.data() as Doc)?.kinNames : undefined;
+        const session = snap.exists ? ((snap.data() as Doc) ?? null) : null;
+        // #2487: ONE HOUSEHOLD, as for the invoice itself. A visit the bill
+        // lists that belongs to another household names nothing.
+        const sessionKin = str(session?.kinfolkId);
+        const billKin = str(inv?.kinfolkId) || familyId;
+        if (sessionKin && billKin && sessionKin !== billKin) continue;
+        const kin = session?.kinNames;
         if (Array.isArray(kin)) {
           for (const n of kin.map((x) => str(x)).filter((x) => x.length > 0)) {
             if (!names.includes(n)) names.push(n);
@@ -891,17 +897,24 @@ export async function enrichTemplateData(
   }
 
   if (want.has('kinfolkName')) {
-    let v = str(data.recipientDisplayName);
-    if (!v) v = str((await loadInvoice())?.kinfolkName);
+    // #2487: a stored "name" that is an address (an older portal invite named
+    // the household by the address it went to) is skipped, never printed as
+    // a greeting.
+    const nm = (x: unknown): string => {
+      const t = str(x).trim();
+      return t.includes('@') ? '' : t;
+    };
+    let v = nm(data.recipientDisplayName);
+    if (!v) v = nm((await loadInvoice())?.kinfolkName);
     if (!v) {
       const fam = await loadFamily();
-      v = str(fam?.displayName) || str(fam?.name);
+      v = nm(fam?.displayName) || nm(fam?.name);
     }
     if (!v) {
       const puid = str((await loadFamily())?.primaryUid);
       if (puid) {
         const c = await loadClient(puid);
-        v = str(c?.displayName) || str(c?.name);
+        v = nm(c?.displayName) || nm(c?.name);
       }
     }
     // Recipient-as-client fallback ONLY when the recipient IS the kinfolk
@@ -909,7 +922,7 @@ export async function enrichTemplateData(
     // staff admin, whose name must never stand in for the kinfolk's.
     if (!v && audience === 'kinfolk' && recipientUid) {
       const c = await loadClient(recipientUid);
-      v = str(c?.displayName) || str(c?.name);
+      v = nm(c?.displayName) || nm(c?.name);
     }
     fill('kinfolkName', v);
   }

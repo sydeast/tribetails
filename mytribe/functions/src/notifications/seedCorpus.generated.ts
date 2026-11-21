@@ -125,9 +125,9 @@ export const SEED_CORPUS: readonly SeedCorpusEntry[] = [
     key: "invoice.payment.disputed",
     emailSubject: "Card dispute update: {{disputeStatus}}",
     emailHeadline: "Card dispute update: {{disputeStatus}}",
-    emailContent: "<p>{{disputeAmount}} on invoice {{invoiceNumber}} is being disputed through the cardholder's bank. Reason given: {{disputeReason}}.</p><blockquote><p>When a dispute opens, Stripe holds that money back out of the balance while the bank decides, and charges its dispute fee on top. A dispute that closes as won reinstates the funds. Check the status line above for where this one stands.</p></blockquote><p>The invoice still reads paid in AuntieOS. That is on purpose, and nothing has gone to the household about it. What happens to the money is your call once the bank rules.</p><p>If the status says needs_response, there is a deadline. Submit evidence in Stripe before it runs out, or the dispute closes as lost.</p>",
-    smsTxt: "{{Business}}: {{disputeAmount}} on invoice {{invoiceNumber}} is {{disputeStatus}} with the cardholder's bank. Reason: {{disputeReason}}.\n",
-    pushTxt: "Card dispute update. {{disputeAmount}} on invoice {{invoiceNumber}} is {{disputeStatus}} with the cardholder's bank. Tap to review.\n",
+    emailContent: "<p>{{disputeAmount}}{{#if invoiceNumber}} on invoice {{invoiceNumber}}{{/if}} is being disputed through the cardholder's bank. Reason given: {{disputeReason}}.</p><blockquote><p>When a dispute opens, Stripe holds that money back out of the balance while the bank decides, and charges its dispute fee on top. A dispute that closes as won reinstates the funds. Check the status line above for where this one stands.</p></blockquote><p>The invoice still reads paid in AuntieOS. That is on purpose, and nothing has gone to the household about it. What happens to the money is your call once the bank rules.</p><p>If the status says needs_response, there is a deadline. Submit evidence in Stripe before it runs out, or the dispute closes as lost.</p>",
+    smsTxt: "{{Business}}: {{disputeAmount}}{{#if invoiceNumber}} on invoice {{invoiceNumber}}{{/if}} is {{disputeStatus}} with the cardholder's bank. Reason: {{disputeReason}}.\n",
+    pushTxt: "Card dispute update. {{disputeAmount}}{{#if invoiceNumber}} on invoice {{invoiceNumber}}{{/if}} is {{disputeStatus}} with the cardholder's bank. Tap to review.\n",
   },
   {
     key: "invoice.payment.unapplied",

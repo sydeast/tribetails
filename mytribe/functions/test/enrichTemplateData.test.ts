@@ -736,3 +736,45 @@ describe('#2487: a KinTale or bill names its own Kin, not the roster', () => {
     expect(out.kinName).toBe('Rex, Biscuit');
   });
 });
+describe('#2487: an address is never a household name', () => {
+  it('skips a stored household name that is an address and reads the person instead', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'families/fam1': { displayName: 'catch@hanasamku.com', primaryUid: 'cli1' },
+          'clients/cli1': { displayName: 'Maya Rivera' },
+        },
+        queryDocs: { kin: [] },
+      }).db,
+    );
+    const out = await enrichTemplateData('kintale.published', 'cli1', { kinfolkId: 'fam1' });
+    expect(out.kinfolkName).toBe('Maya Rivera');
+  });
+  it('leaves the name blank rather than print an address when that is all there is', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'families/fam1': { displayName: 'catch@hanasamku.com', primaryUid: 'cli1' },
+          'clients/cli1': { displayName: 'catch@hanasamku.com' },
+        },
+        queryDocs: { kin: [] },
+      }).db,
+    );
+    const out = await enrichTemplateData('kintale.published', 'cli1', { kinfolkId: 'fam1' });
+    expect(out.kinfolkName).toBeUndefined();
+  });
+  it("a bill's visit from another household names nothing", async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-1', amountDue: 10, sessionIds: ['vis_a', 'vis_b'] },
+          'kin_care_sessions/vis_a': { kinfolkId: 'fam1', kinNames: ['Rex'] },
+          'kin_care_sessions/vis_b': { kinfolkId: 'fam2', kinNames: ['Stranger'] },
+        },
+        queryDocs: { kin: [] },
+      }).db,
+    );
+    const out = await enrichTemplateData('invoice.new', 'cli1', { kinfolkId: 'fam1', invoiceId: 'inv1' });
+    expect(out.kinName).toBe('Rex');
+  });
+});
