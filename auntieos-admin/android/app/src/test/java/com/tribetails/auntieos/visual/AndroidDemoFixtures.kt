@@ -105,6 +105,7 @@ object AndroidDemoFixtures {
         invoiceId = "demo-inv-1",
         payments = emptyList(),
         paidCents = 0L,
+        broughtOverPaidCents = 0L,
         totalCents = 0L,
         amountDueCents = 0L,
         writeOffs = emptyList(),

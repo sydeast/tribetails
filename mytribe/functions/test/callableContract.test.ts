@@ -1196,6 +1196,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
     load: () => import('../src/admin/getInvoiceLedger'),
     signature: [
       'amountDueCents',
+      // #2470: what was paid before the reload, inside `paidCents`, never a row.
+      'broughtOverPaidCents',
       'invoiceId',
       'ledgerPayments[].amountCents',
       // Frozen for the same reason `listPayments[].amountResolved` is: without

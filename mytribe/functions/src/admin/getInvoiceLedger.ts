@@ -9,8 +9,7 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveInvoiceWriteActor, testOwnsDoc } from '../lib/testMode';
 import {
   paidCentsFromPayments,
-  invoiceTotalCentsOf,
-  settleInvoice,
+  settleInvoiceDoc,
   type PaymentAmount,
 } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
@@ -275,10 +274,20 @@ const WriteOffEntrySchema = z
 export const Result = z
   .object({
     invoiceId: z.string().min(1),
-    /** The subcollection, newest first. THE AUTHORITY: `paidCents` is their sum. */
+    /** The subcollection, newest first. THE AUTHORITY: with `broughtOverPaidCents`, `paidCents` is their sum. */
     payments: z.array(InvoicePaymentSchema),
-    /** Sum of `payments` above, the same arithmetic the balance is derived from. */
+    /**
+     * What has been applied: the sum of `payments` above plus
+     * `broughtOverPaidCents`, the same arithmetic the balance is derived from.
+     */
     paidCents: CentsSchema,
+    /**
+     * #2470: what was paid on this invoice before it was brought over from the
+     * old system, which has no payment row. 0 on every other invoice. Clients
+     * show it as its own line under the payments, so the list and `paidCents`
+     * agree.
+     */
+    broughtOverPaidCents: CentsSchema,
     /** What the invoice is worth, in cents, as the classifier reads it. */
     totalCents: CentsSchema,
     /**
@@ -404,9 +413,10 @@ export async function getInvoiceLedgerHandler(
   // invoice's stored balance was computed from rather than a second opinion.
   const paymentsSnap = await invRef.collection('payments').get();
   const paymentDocs = paymentsSnap.docs.map((d) => ({ id: d.id, data: d.data() as PaymentAmount }));
-  const paidCents = paidCentsFromPayments(paymentDocs.map((p) => p.data));
-  const totalCents = invoiceTotalCentsOf(invoice);
-  const settlement = settleInvoice(totalCents, paidCents);
+  // #2470: settled on the rows plus what was brought over paid, and
+  // `paidCents` below is that applied figure.
+  const settlement = settleInvoiceDoc(invoice, paidCentsFromPayments(paymentDocs.map((p) => p.data)));
+  const paidCents = settlement.paidCents;
   // #2090: the write-off entries. Read beside the payments, never summed into them.
   const writeOffSnap = await invRef.collection(WRITE_OFFS_SUBCOLLECTION).get();
   const writeOffs = writeOffSnap.docs
@@ -630,6 +640,7 @@ export async function getInvoiceLedgerHandler(
     invoiceId: args.invoiceId,
     payments,
     paidCents,
+    broughtOverPaidCents: settlement.broughtOverPaidCents,
     totalCents: settlement.totalCents,
     amountDueCents: Math.max(0, settlement.amountDueCents - writtenOffCents),
     writeOffs,

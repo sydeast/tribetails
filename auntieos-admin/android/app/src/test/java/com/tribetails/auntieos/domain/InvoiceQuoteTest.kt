@@ -41,6 +41,10 @@ class InvoiceQuoteTest {
         assertFalse(WITHDRAW_PAID_REASON.contains("—"))
     }
     @Test
+    fun `2470 what was paid before a quote was brought over holds Withdraw too`() {
+        assertEquals(WITHDRAW_PAID_REASON, quoteWithdrawHeldReason(inv("quote").copy(paidCents = 0L, broughtOverPaidCents = 1500L)))
+    }
+    @Test
     fun `2092 the draft panel says Kinfolk, never client`() {
         assertEquals("This invoice is still a draft. Review it, then send it to let the Kinfolk know.", draftPanelLine(false))
         assertFalse(draftPanelLine(false).contains("client"))

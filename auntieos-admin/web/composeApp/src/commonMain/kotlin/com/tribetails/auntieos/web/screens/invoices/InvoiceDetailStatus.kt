@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.screens.invoices
 
 import com.tribetails.auntieos.web.data.Invoice
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
@@ -62,8 +63,10 @@ data class InvoicePartPayment(val paidCents: Long, val remainingCents: Long)
  * number or an explicit null is not a record of a payment, and rounding 12.5
  * up to 13 would make a claim the doc does not.
  */
-fun invoicePaidCentsOf(invoice: Invoice): Long? {
-    val p = invoice.paidCents as? JsonPrimitive ?: return null
+fun invoicePaidCentsOf(invoice: Invoice): Long? = wholeCentsOf(invoice.paidCents)
+
+private fun wholeCentsOf(raw: JsonElement?): Long? {
+    val p = raw as? JsonPrimitive ?: return null
     if (p.isString) return null
     p.longOrNull?.let { return it }
     val d = p.doubleOrNull ?: return null
@@ -71,9 +74,30 @@ fun invoicePaidCentsOf(invoice: Invoice): Long? {
     return d.toLong()
 }
 
+/** #2470: the stored `broughtOverPaidCents` when it is a positive whole number, else 0. */
+fun invoiceBroughtOverCentsOf(invoice: Invoice): Long =
+    wholeCentsOf(invoice.broughtOverPaidCents)?.takeIf { it > 0L } ?: 0L
+
+/**
+ * #2470: WHAT HAS BEEN APPLIED TO AN INVOICE, in integer cents: the stored
+ * `paidCents` (the payment rows' sum) plus `broughtOverPaidCents`, what was
+ * paid before the invoice was brought over from the old system, which has no
+ * row. Null when neither is a record of a payment. The server's
+ * `invoiceMath.ts#appliedCentsOf`, as on web and Android.
+ */
+fun invoiceAppliedCentsOf(invoice: Invoice): Long? {
+    val rows = invoicePaidCentsOf(invoice)
+    val broughtOver = invoiceBroughtOverCentsOf(invoice)
+    if (rows == null && broughtOver == 0L) return null
+    return (rows ?: 0L).coerceAtLeast(0L) + broughtOver
+}
+
+/** #2470: the line the Payments panel shows for the brought-over amount. */
+const val BROUGHT_OVER_LINE: String = "Paid before this invoice was brought over"
+
 fun invoicePartPaidOf(invoice: Invoice): InvoicePartPayment? {
     if (invoiceStateOrNull(invoice) != InvoiceState.OPEN) return null
-    val paidCents = invoicePaidCentsOf(invoice) ?: return null
+    val paidCents = invoiceAppliedCentsOf(invoice) ?: return null
     if (paidCents <= 0L) return null
     val amountDue = invoice.amountDue.takeIf { it.isFinite() } ?: 0.0
     val remainingCents = (amountDue * 100.0).roundToLong()

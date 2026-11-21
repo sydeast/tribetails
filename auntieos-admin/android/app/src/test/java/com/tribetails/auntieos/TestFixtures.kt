@@ -199,6 +199,7 @@ object TestFixtures {
         invoiceId = invoiceId,
         payments = emptyList(),
         paidCents = 0L,
+        broughtOverPaidCents = 0L,
         totalCents = 0L,
         amountDueCents = 0L,
         writeOffs = emptyList(),

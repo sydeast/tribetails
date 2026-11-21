@@ -13,7 +13,7 @@ import { validateResponse } from '../lib/callableResponse';
 import { InvoiceStateSchema, OkSchema } from '../lib/invoiceResponseSchema';
 import { INVOICE_STATES } from '../lib/invoiceEditPolicy';
 import { refuseIfArchived } from '../lib/invoiceArchive';
-import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { appliedCentsOf, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { QUOTE_DRAFT_FIELD, isQuoteDraft, isSentQuote, quoteDecisionOf } from '../lib/quoteDecision';
 import {
   quoteWithdrawn,
@@ -122,12 +122,19 @@ export const CANCEL_PAID_REFUSAL = 'A payment is recorded on this quote, so it c
  * #2365 path) is not applied and writes no row, so it does not count. A doc
  * brought over from the old system with a stored paid figure and no rows
  * counts by that figure (`paidCents`, else the dollar `amountPaid`), so a
- * migrated part-paid bill is held the same way. PURE.
+ * migrated part-paid bill is held the same way. #2470: and what the reload
+ * stamped as brought over paid (`broughtOverPaidCents`) is added to it, through
+ * the shared `appliedCentsOf`. PURE.
  */
 export function appliedPaymentCentsOf(
   doc: Record<string, unknown>,
   rows: readonly PaymentAmount[],
 ): number {
+  return appliedCentsOf(doc, recordedCentsOf(doc, rows));
+}
+
+/** The rows, else the stored paid figures. Rows only: no brought-over amount. */
+function recordedCentsOf(doc: Record<string, unknown>, rows: readonly PaymentAmount[]): number {
   const fromRows = paidCentsFromPayments(rows);
   if (fromRows > 0) return fromRows;
   const stored = doc['paidCents'];

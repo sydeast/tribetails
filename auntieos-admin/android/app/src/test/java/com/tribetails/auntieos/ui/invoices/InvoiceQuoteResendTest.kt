@@ -85,6 +85,7 @@ class InvoiceQuoteResendTest {
                 invoiceId = "inv1",
                 payments = emptyList(),
                 paidCents = 0L,
+                broughtOverPaidCents = 0L,
                 totalCents = 24000L,
                 amountDueCents = 24000L,
                 writeOffs = emptyList(),

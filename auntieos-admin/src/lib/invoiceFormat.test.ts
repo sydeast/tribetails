@@ -10,6 +10,7 @@ import {
   invoiceActionsFor,
   invoiceActionsOffered,
   invoiceDaysOverdue,
+  invoiceAppliedCents,
   invoicePartialPayment,
   isoDatePrefixOrNull,
   localDateIso,
@@ -279,6 +280,12 @@ describe('invoicePartialPayment', () => {
   const open = { amountDue: 20, paidCents: 2000 };
   it('reports what was collected and what is left on a part-paid open invoice', () => {
     expect(invoicePartialPayment('open', open)).toEqual({ paidCents: 2000, remainingCents: 2000 });
+  });
+  it('#2470 counts what was paid before the invoice was brought over', () => {
+    expect(invoicePartialPayment('open', { amountDue: 25, broughtOverPaidCents: 1500 })).toEqual({ paidCents: 1500, remainingCents: 2500 });
+    expect(invoicePartialPayment('open', { amountDue: 15, paidCents: 1000, broughtOverPaidCents: 1500 })).toEqual({ paidCents: 2500, remainingCents: 1500 });
+    expect(invoiceAppliedCents({ paidCents: 1000, broughtOverPaidCents: 1500 })).toBe(2500);
+    expect(invoiceAppliedCents({ paidCents: Number.NaN, broughtOverPaidCents: '15' })).toBe(0);
   });
   it('is null for an open invoice nobody has paid', () => {
     expect(invoicePartialPayment('open', { amountDue: 40 })).toBeNull();

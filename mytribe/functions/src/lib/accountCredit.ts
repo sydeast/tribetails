@@ -78,8 +78,7 @@ import {
 } from '../admin/markInvoicePaid';
 import {
   paidCentsFromPayments,
-  invoiceTotalCentsOf,
-  settleInvoice,
+  settleInvoiceDoc,
   centsToDollars,
   type PaymentAmount,
 } from './invoiceMath';
@@ -194,10 +193,8 @@ export function invoiceAcceptsCredit(
 ): boolean {
   if (isDraftOrQuote(doc)) return false;
   if (refusedLifecycle(doc) !== null) return false;
-  const settlement = settleInvoice(
-    invoiceTotalCentsOf(doc),
-    paidCentsFromPayments(existingPayments),
-  );
+  // #2470: the rows plus anything brought over paid.
+  const settlement = settleInvoiceDoc(doc, paidCentsFromPayments(existingPayments));
   if (alreadySettledRefusal(doc, existingPayments.length, settlement.state) !== null) return false;
   return settlement.amountDueCents > 0;
 }
@@ -428,7 +425,8 @@ export async function drawAccountCredit(
       );
     }
     const heldCents = readAccountBalanceCents((famSnap.data() ?? {})[ACCOUNT_BALANCE_FIELD]);
-    const before = settleInvoice(invoiceTotalCentsOf(doc), paidCentsFromPayments(existingPayments));
+    // #2470: measured against the rows plus what was brought over paid.
+    const before = settleInvoiceDoc(doc, paidCentsFromPayments(existingPayments));
     const found = { invoiceNumber, kinfolkId, accountBalanceCents: heldCents, amountDueCents: before.amountDueCents };
     const invoiceRefusal = creditInvoiceRefusal(doc, existingPayments);
     if (invoiceRefusal !== null) return { result: refusedWith(invoiceRefusal, found), applied: null };
@@ -443,7 +441,7 @@ export async function drawAccountCredit(
     // Throws rather than writes if this would ever be negative, which aborts
     // the whole transaction: no payment row, no invoice update, no decrement.
     const remainingCents = balanceAfterDraw(heldCents, drawCents);
-    const after = settleInvoice(before.totalCents, before.paidCents + drawCents);
+    const after = settleInvoiceDoc(doc, before.rowsPaidCents + drawCents);
     const settling = after.state === 'settled' || after.state === 'overpaid';
     // `create`, never `set`: two attempts that race past the replay read cannot
     // both land a row at this key.
@@ -528,7 +526,8 @@ export async function drawAccountCredit(
       status: settling ? 'paid' : 'open',
       paymentStatus: settling ? 'PAID' : 'PARTIAL',
       totalCents: after.totalCents,
-      paidCents: after.paidCents,
+      // #2470: the rows only; a brought-over amount stays in its own field.
+      paidCents: after.rowsPaidCents,
       amountDueCents: after.amountDueCents,
       overpaidCents: after.overpaidCents,
       amountDue: centsToDollars(after.amountDueCents),
@@ -555,7 +554,7 @@ export async function drawAccountCredit(
     };
     tx.set(
       invRef,
-      { ...invoiceUpdate, ...invoiceStateStampOf({ ...doc, ...invoiceUpdate }, after.paidCents) },
+      { ...invoiceUpdate, ...invoiceStateStampOf({ ...doc, ...invoiceUpdate }, after.rowsPaidCents) },
       { merge: true },
     );
     return {

@@ -572,6 +572,14 @@ data class Invoice(
      * would report the whole total as collected on exactly the wrong invoices.
      */
     var paidCents: Long = 0L,
+    /**
+     * #2470: what was paid before this invoice was brought over from the old
+     * system, in integer cents. Stamped once by the data reload, never a
+     * payment row and never inside [paidCents]. Counted as applied with it
+     * ([com.tribetails.auntieos.domain.invoiceAppliedCents]). 0 on every
+     * other invoice.
+     */
+    var broughtOverPaidCents: Long = 0L,
     /** Collected beyond the total, in integer cents. Non-zero only after an overpayment. */
     var overpaidCents: Long = 0L,
     /**

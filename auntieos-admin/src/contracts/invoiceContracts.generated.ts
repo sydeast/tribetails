@@ -352,6 +352,7 @@ export interface GetInvoiceLedgerResult {
   invoiceId: string;
   payments: GetInvoiceLedgerResultPayment[];
   paidCents: number;
+  broughtOverPaidCents: number;
   totalCents: number;
   amountDueCents: number;
   writeOffs: GetInvoiceLedgerResultWriteOff[];

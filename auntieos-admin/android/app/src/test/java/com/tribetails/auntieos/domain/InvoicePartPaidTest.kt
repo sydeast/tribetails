@@ -29,6 +29,18 @@ class InvoicePartPaidTest {
     }
 
     @Test
+    fun `2470 counts what was paid before the invoice was brought over`() {
+        // $40 brought over at $25 owed, no rows: $15 of $40 paid.
+        val fresh = invoicePartPaid(inv(amountDue = 25.0, paidCents = 0L).copy(broughtOverPaidCents = 1500L))
+        assertEquals(InvoicePartPayment(paidCents = 1500L, remainingCents = 2500L), fresh)
+        // After $10 recorded: $25 of $40 paid, $15 owed.
+        val after = invoicePartPaid(inv(amountDue = 15.0, paidCents = 1000L).copy(broughtOverPaidCents = 1500L))
+        assertEquals(InvoicePartPayment(paidCents = 2500L, remainingCents = 1500L), after)
+        assertEquals(2500L, invoiceAppliedCents(inv(paidCents = 1000L).copy(broughtOverPaidCents = 1500L)))
+        assertEquals(0L, invoiceAppliedCents(inv(paidCents = -5L).copy(broughtOverPaidCents = -1L)))
+        assertEquals("Paid before this invoice was brought over", BROUGHT_OVER_LINE)
+    }
+    @Test
     fun `is null for an open invoice nobody has paid`() {
         assertNull(invoicePartPaid(inv(amountDue = 40.0, paidCents = 0L)))
     }

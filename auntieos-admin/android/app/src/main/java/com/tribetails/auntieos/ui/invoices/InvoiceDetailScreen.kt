@@ -59,6 +59,7 @@ import com.tribetails.auntieos.domain.QuoteDecision
 import com.tribetails.auntieos.domain.invoiceQuoteDecision
 import com.tribetails.auntieos.domain.invoiceActionsOffered
 import com.tribetails.auntieos.domain.invoiceIsOverdue
+import com.tribetails.auntieos.domain.BROUGHT_OVER_LINE
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.dollarsToCents
 import com.tribetails.auntieos.domain.parseOptionalMoney
@@ -1037,6 +1038,11 @@ private fun invoiceDetailBody(
                         color = AuntieTheme.colors.textDim,
                     )
                 }
+                // #2470: paid before the invoice was brought over. It has no
+                // row, and it counts toward what has been paid.
+                if (invoice.broughtOverPaidCents > 0L) {
+                    DetailRow(BROUGHT_OVER_LINE, formatCentsUsd(invoice.broughtOverPaidCents), valueMono = true)
+                }
 
                 when {
                     // NOTHING READ IS NOT NOTHING THERE, and these two branches
@@ -1109,7 +1115,7 @@ private fun invoiceDetailBody(
                         LedgerCaveatBanner(clientPayments)
                     }
 
-                    invoice.paymentsHistory.isNullOrBlank() ->
+                    invoice.paymentsHistory.isNullOrBlank() && invoice.broughtOverPaidCents <= 0L ->
                         EmptyHint(
                             if (InvoiceAction.RECORD_PAYMENT in actions) {
                                 "No payment recorded against this invoice yet. Use Record payment to log one."

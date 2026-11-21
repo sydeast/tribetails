@@ -209,7 +209,8 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
   }
   // #2435: the balance is the total less what has been applied (the rows, or
   // the stored `paidCents` when it is larger), never a stale stated figure
-  // above it. MyTribe ships the same figure (`appliedCentsOf`).
+  // above it. MyTribe ships the same figure (`recordedPaidCentsOf`). #2470:
+  // the rule adds what was brought over paid from the doc itself.
   const amountCents = amountDueCentsOf(inv, Math.max(rowsPaidCents, storedPaidCentsOf(inv)));
   if (amountCents <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
   // #2410: NO CHECKOUT FOR A PAYMENT THE INVOICE COULD NOT TAKE. Since #2385

@@ -99,6 +99,7 @@ class InvoiceDetailDisputeTest {
                 invoiceId = "inv1",
                 payments = emptyList(),
                 paidCents = 4000L,
+                broughtOverPaidCents = 0L,
                 totalCents = 4000L,
                 amountDueCents = 0L,
                 writeOffs = emptyList(),

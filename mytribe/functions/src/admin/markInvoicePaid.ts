@@ -10,8 +10,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import {
   paidCentsFromPayments,
-  invoiceTotalCentsOf,
-  settleInvoice,
+  settleInvoiceDoc,
   centsToDollars,
   formatUsdCents,
   type PaymentAmount,
@@ -491,8 +490,9 @@ export async function markInvoicePaidHandler(
 
     const existingPayments = paymentsSnap.docs.map((d) => d.data() as PaymentAmount);
     const existingPaidCents = paidCentsFromPayments(existingPayments);
-    const totalCents = invoiceTotalCentsOf(data);
-    const before = settleInvoice(totalCents, existingPaidCents);
+    // #2470: settled on the rows plus what was brought over paid, so "settle
+    // the rest" and the new balance both measure what is really still owed.
+    const before = settleInvoiceDoc(data, existingPaidCents);
 
     const settledRefusal = alreadySettledRefusal(data, existingPayments.length, before.state);
     if (settledRefusal) {
@@ -510,7 +510,7 @@ export async function markInvoicePaidHandler(
       throw new HttpsError('failed-precondition', overBalance.message, { code: overBalance.code });
     }
     const paidAmount = centsToDollars(paidCents);
-    const after = settleInvoice(totalCents, existingPaidCents + paidCents);
+    const after = settleInvoiceDoc(data, existingPaidCents + paidCents);
     const settling = after.state === 'settled' || after.state === 'overpaid';
 
     const paymentRow = {
@@ -552,7 +552,8 @@ export async function markInvoicePaidHandler(
       // `totalCents` is projected from the dollar `total`, so every downstream
       // reader has an exact figure instead of re-deriving one from a float.
       totalCents: after.totalCents,
-      paidCents: after.paidCents,
+      // #2470: the rows only; a brought-over amount stays in its own field.
+      paidCents: after.rowsPaidCents,
       amountDueCents: after.amountDueCents,
       overpaidCents: after.overpaidCents,
       // The legacy dollar scalar, projected from the SAME cents figure in the
@@ -605,7 +606,7 @@ export async function markInvoicePaidHandler(
         // payment included in paidCents: a settling payment stamps paid/none, a
         // partial stamps open/all (part-paid stays fully editable), and an
         // overpayment stamps paid off the CLAMPED zero balance, never credit.
-        ...invoiceStateStampOf({ ...data, ...invoiceUpdate }, after.paidCents),
+        ...invoiceStateStampOf({ ...data, ...invoiceUpdate }, after.rowsPaidCents),
       },
       { merge: true },
     );

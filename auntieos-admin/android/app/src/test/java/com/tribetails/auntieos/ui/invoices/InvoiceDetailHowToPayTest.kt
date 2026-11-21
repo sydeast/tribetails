@@ -62,6 +62,7 @@ class InvoiceDetailHowToPayTest {
         invoiceId = "inv1",
         payments = emptyList(),
         paidCents = 0L,
+        broughtOverPaidCents = 0L,
         totalCents = 6000L,
         amountDueCents = 6000L,
         writeOffs = emptyList(),
