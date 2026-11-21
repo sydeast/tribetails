@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.generated';
 import {
   PaymentSubmissionKey,
+  answerIsThisEntry,
   paymentFigures,
   paymentLandedCheck,
   paymentMayHaveLanded,
@@ -45,7 +46,7 @@ describe('PaymentSubmissionKey (#2297)', () => {
   it('lets the key go on an answer, so the same figures next time are a new payment', () => {
     const keys = new PaymentSubmissionKey(minter());
     const first = keys.keyFor('inv1', figures('20'));
-    expect(keys.settle(false)).toBe('recorded');
+    expect(keys.settle(false, true)).toBe('recorded');
     expect(keys.current).toBeNull();
     expect(keys.keyFor('inv1', figures('20'))).not.toBe(first);
   });
@@ -63,16 +64,25 @@ describe('PaymentSubmissionKey (#2297)', () => {
     keys.open();
     keys.keyFor('inv1', figures('20'));
     keys.keyFor('inv1', figures('20'));
-    expect(keys.settle(true)).toBe('recorded');
+    expect(keys.settle(true, true)).toBe('recorded');
   });
 
-  it('reads a replay as an earlier entry when the figures changed under the key', () => {
+  it('reads a replay as an earlier entry when the figures changed under the key and the row has other money', () => {
     const keys = new PaymentSubmissionKey(minter());
     keys.open();
     keys.keyFor('inv1', figures('20'));
     keys.keyFor('inv1', figures('25'));
-    expect(keys.settle(true)).toBe('earlier');
+    expect(keys.settle(true, false)).toBe('earlier');
     expect(keys.current).toBeNull();
+  });
+  it('reads a replay carrying this press\'s money as this entry, after the figures changed under the key', () => {
+    // The $20.00 press was refused or never arrived; the $25.00 press wrote
+    // the row and its answer was lost.
+    const keys = new PaymentSubmissionKey(minter());
+    keys.open();
+    keys.keyFor('inv1', figures('20'));
+    keys.keyFor('inv1', figures('25'));
+    expect(keys.settle(true, true)).toBe('recorded');
   });
 
   it('reads a replay as an earlier entry when the key came from an earlier opening, same figures or not', () => {
@@ -81,7 +91,7 @@ describe('PaymentSubmissionKey (#2297)', () => {
     keys.keyFor('inv1', figures('20'));
     keys.open();
     keys.keyFor('inv1', figures('20'));
-    expect(keys.settle(true)).toBe('earlier');
+    expect(keys.settle(true, true)).toBe('earlier');
   });
 
   it('reads a first-time answer under a changed figure as this entry: nothing was on record under the key', () => {
@@ -89,10 +99,28 @@ describe('PaymentSubmissionKey (#2297)', () => {
     keys.keyFor('inv1', figures('20'));
     keys.open();
     keys.keyFor('inv1', figures('25'));
-    expect(keys.settle(false)).toBe('recorded');
+    expect(keys.settle(false, false)).toBe('recorded');
   });
 });
 
+describe('answerIsThisEntry (#2297)', () => {
+  const answer = { amountCents: 2500, tipCents: 500, feeCents: 100, appliedCents: 2000, creditedToAccountCents: 0 };
+  const sent = { amountCents: 2500, tipCents: 500, feeCents: 100, appliedCents: 2000, creditCents: 0 };
+  it('matches when every figure sent is the figure on the row', () => {
+    expect(answerIsThisEntry(answer, sent)).toBe(true);
+  });
+  it('differs when any one figure differs', () => {
+    expect(answerIsThisEntry(answer, { ...sent, amountCents: 2000 })).toBe(false);
+    expect(answerIsThisEntry(answer, { ...sent, tipCents: 0 })).toBe(false);
+    expect(answerIsThisEntry(answer, { ...sent, feeCents: 0 })).toBe(false);
+    expect(answerIsThisEntry(answer, { ...sent, appliedCents: 2500 })).toBe(false);
+    expect(answerIsThisEntry(answer, { ...sent, creditCents: 300 })).toBe(false);
+  });
+  it('leaves out a figure the server works out (a blank Amount)', () => {
+    expect(answerIsThisEntry(answer, { ...sent, amountCents: null, tipCents: null, appliedCents: null })).toBe(true);
+    expect(answerIsThisEntry(answer, { ...sent, amountCents: null, appliedCents: null, feeCents: 0 })).toBe(false);
+  });
+});
 describe('paymentMayHaveLanded (#2297)', () => {
   it('is false for the server refusing the request', () => {
     for (const code of ['functions/invalid-argument', 'functions/failed-precondition', 'permission-denied']) {

@@ -243,12 +243,17 @@ class InvoiceDetailViewModel(
 
     /**
      * #2297: the server answered a press under the held key, which lets it go.
-     * True when the answer is an earlier entry's: a replay, and the presses
-     * under the key had other figures or came from an earlier opening.
+     * True when the answer is an earlier entry's: a replay, and the key came
+     * from an earlier opening, or the presses under it had other figures and
+     * the row's money is not this press's ([sameMoney], from
+     * [answerIsThisEntry]). A replay carrying this press's money after a
+     * changed figure is this press's own row: the earlier press was refused or
+     * never arrived.
      */
-    private fun settlePaymentKey(replayed: Boolean): Boolean {
+    private fun settlePaymentKey(replayed: Boolean, sameMoney: Boolean): Boolean {
         val earlier = replayed && paymentSubmissionKey != null &&
-            (paymentSubmissionOpening != recordPaymentOpening || paymentSubmissionSignatures.size > 1)
+            (paymentSubmissionOpening != recordPaymentOpening ||
+                (paymentSubmissionSignatures.size > 1 && !sameMoney))
         releasePaymentKey()
         return earlier
     }
@@ -522,7 +527,7 @@ class InvoiceDetailViewModel(
             // #2297: a replay of a press made with other figures, or in an
             // earlier opening, is that earlier payment's answer, and the screen
             // says so instead of reporting it as the figures just typed.
-            if (settlePaymentKey(recorded.replayed == true)) {
+            if (settlePaymentKey(recorded.replayed == true, answerIsThisEntry(recorded, payment, appliedAmount))) {
                 loadPaymentsForInvoice(invoiceId)
                 reloadInvoiceQuietly(invoiceId)
                 _uiState.value = _uiState.value.copy(
@@ -1718,6 +1723,23 @@ private val PAYMENT_REFUSAL_CODES = setOf(
     com.google.firebase.functions.FirebaseFunctionsException.Code.RESOURCE_EXHAUSTED,
     com.google.firebase.functions.FirebaseFunctionsException.Code.ABORTED,
 )
+
+/**
+ * #2297: is the money on the answered row the money this press sent? A replay
+ * of an earlier press with other figures differs; a replay of this press's own
+ * row (its first answer was lost) matches. The same rule as admin web's
+ * `answerIsThisEntry`.
+ */
+internal fun answerIsThisEntry(
+    answer: com.tribetails.auntieos.data.contracts.RecordPaymentResult,
+    payment: Payment,
+    appliedAmount: Double,
+): Boolean =
+    answer.amountCents == Math.round(payment.amount * 100) &&
+        answer.tipCents == Math.round(payment.tip * 100) &&
+        answer.feeCents == Math.round(payment.fee * 100) &&
+        answer.appliedCents == Math.round(appliedAmount * 100) &&
+        answer.creditedToAccountCents == payment.creditToAccountCents
 
 /** #2297: true when a failed Record may have recorded the payment anyway. */
 internal fun paymentMayHaveLanded(err: Throwable): Boolean {

@@ -458,6 +458,52 @@ class RecordPaymentIdempotencyTest {
             assertFalse(paymentMayHaveLanded(refusal))
             assertTrue(paymentMayHaveLanded(RuntimeException("internal")))
         }
+
+    /**
+     * #2297 review: the first press is refused (nothing recorded), the
+     * corrected $60 press lands and its answer is lost. The row under the key
+     * is the $60 one, so its replayed answer is this payment, not an earlier
+     * press's: saying "the amounts typed after it were not recorded" here
+     * would invite recording the $60 a second time.
+     */
+    @Test
+    fun `#2297 a refused press, then a corrected one that landed with its answer lost, reports the corrected payment`() =
+        runTest(testDispatcher) {
+            val refusal = mockk<FirebaseFunctionsException>()
+            every { refusal.code } returns FirebaseFunctionsException.Code.FAILED_PRECONDITION
+            every { refusal.details } returns null
+            every { refusal.message } returns "The invoice balance changed."
+            val replayOfThisPress = Result.success(
+                decodeRecordPaymentResult(
+                    mapOf(
+                        "ok" to true,
+                        "paymentId" to "pay-1",
+                        "amountCents" to 6000,
+                        "appliedCents" to 6000,
+                        "application" to mapOf("invoiceId" to "inv1", "state" to "partial", "amountDueCents" to 6000),
+                        "replayed" to true,
+                    ),
+                ),
+            )
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), captureNullable(sentKeys)) } returns
+                Result.failure<com.tribetails.auntieos.data.contracts.RecordPaymentResult>(refusal) andThen
+                lost() andThen replayOfThisPress
+            val vm = loaded()
+            advanceUntilIdle()
+            coEvery { invoiceRepo.getInvoiceLedger("inv1") } answers { Result.success(ledgerWith(sentKeys.first()!!)) }
+            vm.openRecordPayment()
+            vm.recordPayment(payment(amount = 120.0), 120.0)
+            advanceUntilIdle()
+            vm.recordPayment(payment(amount = 60.0), 60.0)
+            advanceUntilIdle()
+            val sent = keys(3)
+            assertEquals(sent[0], sent[2])
+            val state = vm.uiState.value
+            assertNotEquals(PAYMENT_EARLIER_ON_RECORD, state.toastMessage)
+            assertFalse(state.toastIsError)
+            assertFalse(state.showRecordPayment)
+        }
+
     @Test
     fun `a recorded payment releases the key, so the next one is its own payment`() =
         runTest(testDispatcher) {

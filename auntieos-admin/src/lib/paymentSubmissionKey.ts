@@ -1,4 +1,4 @@
-import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.generated';
+import type { GetInvoiceLedgerResult, RecordPaymentResult } from '../contracts/invoiceContracts.generated';
 import { mintPaymentIdempotencyKey } from './moneyIdempotency';
 
 /**
@@ -22,6 +22,9 @@ import { mintPaymentIdempotencyKey } from './moneyIdempotency';
  *   - A REPLAYED ANSWER IS CHECKED (`settle`). The server marks an answer that
  *     came from an earlier press's row (`replayed`). When the presses under the
  *     key all had these figures, in this opening, that is this entry's answer.
+ *     When the figures changed under the key, the row's money says whose it
+ *     is (`answerIsThisEntry`): the press now answered may be the one that
+ *     wrote it (an earlier press was refused, or never left the device).
  *     Otherwise it is an earlier entry's: the screen says that payment is the
  *     one on record and the figures typed since were not recorded, instead of
  *     reporting the earlier payment as the one just typed.
@@ -53,14 +56,17 @@ export class PaymentSubmissionKey {
   /**
    * The server answered a press under the held key, which lets the key go.
    * `'recorded'`: this entry is the payment on record. `'earlier'`: the answer
-   * is a replay of a press made with other figures, or in an earlier opening,
-   * and that earlier payment is the one on record.
+   * is a replay of a press made in an earlier opening, or of one made with
+   * other figures whose money the row carries, and that earlier payment is
+   * the one on record. `sameMoney` is `answerIsThisEntry` for the press just
+   * answered.
    */
-  settle(replayed: boolean): 'recorded' | 'earlier' {
+  settle(replayed: boolean, sameMoney: boolean): 'recorded' | 'earlier' {
     const held = this.held;
     this.held = null;
     if (!replayed || held === null) return 'recorded';
-    return held.opening === this.opening && held.figures.size === 1 ? 'recorded' : 'earlier';
+    if (held.opening !== this.opening) return 'earlier';
+    return held.figures.size === 1 || sameMoney ? 'recorded' : 'earlier';
   }
 
   /** The payment is known to be on record without an answer: the next press is a new payment. */
@@ -88,6 +94,33 @@ export function paymentFigures(boxes: {
   return [boxes.amount, boxes.tip, boxes.fee, boxes.total, boxes.credit]
     .map((b) => b.trim())
     .join('\u001F'); // a separator no typed amount can contain
+}
+
+/**
+ * Is the money on the answered row the money this press sent? The answer
+ * carries the row's own figures, so a replay of an earlier press with other
+ * figures differs from this press, and a replay of this press's own row (its
+ * first answer was lost) matches. A `null` figure is one the server works out
+ * (a blank Amount, #2299) and is not compared.
+ */
+export function answerIsThisEntry(
+  answer: Pick<RecordPaymentResult, 'amountCents' | 'tipCents' | 'feeCents' | 'appliedCents' | 'creditedToAccountCents'>,
+  sent: {
+    amountCents: number | null;
+    tipCents: number | null;
+    feeCents: number;
+    appliedCents: number | null;
+    creditCents: number;
+  },
+): boolean {
+  const same = (got: number, want: number | null) => want === null || got === want;
+  return (
+    same(answer.amountCents, sent.amountCents) &&
+    same(answer.tipCents, sent.tipCents) &&
+    same(answer.feeCents, sent.feeCents) &&
+    same(answer.appliedCents, sent.appliedCents) &&
+    same(answer.creditedToAccountCents, sent.creditCents)
+  );
 }
 
 /**

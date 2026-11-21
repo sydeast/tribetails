@@ -4371,6 +4371,57 @@ describe('Record payment after a lost reply (#2297)', () => {
     expect(screen.queryByLabelText(/amount collected/i)).not.toBeInTheDocument();
   });
 
+  it('a refused press, then a corrected one that landed with its answer lost, reports the corrected payment', async () => {
+    // The first press is refused (nothing recorded). The corrected $25.00
+    // press lands and its answer is lost; the row under the key is the $25.00
+    // one, so the replayed answer is this entry's, not an earlier press's.
+    recordPayment.mockRejectedValueOnce(
+      Object.assign(new Error('The invoice balance changed.'), { code: 'functions/failed-precondition' }),
+    );
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2500, state: 'partial', paidCents: 2500, amountDueCents: 1500 },
+        { amountCents: 2500, replayed: true },
+      ),
+    );
+    await openAndType();
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    getInvoiceLedger.mockImplementation(() =>
+      Promise.resolve(
+        ledgerResult({
+          ledgerPayments: [ledgerPayment({ paymentId: keyOf(0), amountCents: 2500, appliedCents: 2500 })],
+        }),
+      ),
+    );
+    await press();
+    expect(await screen.findByText(/\$15\.00 is still owed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/an earlier press of record went through/i)).not.toBeInTheDocument();
+    expect(recordPayment).toHaveBeenCalledTimes(3);
+    expect(keyOf(2)).toBe(keyOf(0));
+  });
+
+  it('the same money typed two ways is the same entry: a replayed answer to it is this payment', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 },
+        { amountCents: 2000, replayed: true },
+      ),
+    );
+    await openAndType('20');
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '20.00');
+    await press();
+    expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/an earlier press of record went through/i)).not.toBeInTheDocument();
+  });
+
   it('keeps a failed press\'s key across Cancel, and a replay in the next opening is said to be the earlier payment', async () => {
     recordPayment.mockRejectedValueOnce(lost());
     recordPayment.mockResolvedValueOnce(

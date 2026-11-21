@@ -11,6 +11,7 @@ import com.tribetails.auntieos.web.data.PAYMENT_LANDED_NO_ANSWER_CODE
 import com.tribetails.auntieos.web.data.PaymentSubmissionKeys
 import com.tribetails.auntieos.web.data.RecordPaymentOutcome
 import com.tribetails.auntieos.web.data.WriteResult
+import com.tribetails.auntieos.web.data.answerIsThisEntry
 import com.tribetails.auntieos.web.data.decodeInvoiceLedgerPayments
 import com.tribetails.auntieos.web.data.decodeRecordPaymentOutcome
 import com.tribetails.auntieos.web.data.recordPaymentOutcomeMessage
@@ -310,6 +311,39 @@ class RecordPaymentCallableClientTest {
         assertEquals(PAYMENT_EARLIER_ON_RECORD_CODE, (r as WriteResult.Err).code)
         assertEquals(PAYMENT_EARLIER_ON_RECORD, r.message)
         assertNull(keys.current, "a payment is on record, so the next press is a new one")
+    }
+    /**
+     * #2297 review: the first press is refused (nothing recorded), the
+     * corrected press lands and its answer is lost. The row under the key
+     * carries the corrected money, so the replay is this payment, not an
+     * earlier press's.
+     */
+    @Test
+    fun aRefusedPressThenACorrectedOneThatLandedWithItsAnswerLostIsTheCorrectedPayment() = runBlocking {
+        val keys = PaymentSubmissionKeys()
+        val sentKeys = mutableListOf<String>()
+        val corrected = decodeRecordPaymentOutcome(okBody).copy(replayed = true, feeCents = 310L)
+        val answers = ArrayDeque(
+            listOf<WriteResult<RecordPaymentOutcome>>(
+                WriteResult.Err("The invoice balance changed."),
+                WriteResult.Err("INTERNAL"),
+                WriteResult.Ok(corrected),
+            ),
+        )
+        val record: suspend (String) -> WriteResult<RecordPaymentOutcome> = { key -> sentKeys += key; answers.removeFirst() }
+        keys.open()
+        submitInvoicePayment(entry(), keys, record) { ledgerListing("other") }
+        val r = submitInvoicePayment(entry(fee = "3.10"), keys, record) { ledgerListing(sentKeys.first()) }
+        assertEquals(sentKeys[0], sentKeys[2])
+        assertTrue(r is WriteResult.Ok, "$r")
+        assertNull(keys.current)
+    }
+    @Test
+    fun theAnswerMoneyIsReadSoAReplayCanBeToldApart() {
+        val decoded = decodeRecordPaymentOutcome(okBody)
+        assertTrue(answerIsThisEntry(decoded, entry()))
+        assertFalse(answerIsThisEntry(decoded, entry(fee = "3.10")))
+        assertFalse(answerIsThisEntry(decoded, entry().copy(creditToAccountCents = 500L)))
     }
     @Test
     fun aSameFigureRetryAnsweredFromTheFirstPressIsThisPayment() = runBlocking {

@@ -87,6 +87,7 @@ import {
   PAYMENT_EARLIER_ON_RECORD,
   PAYMENT_LANDED_NO_ANSWER,
   PaymentSubmissionKey,
+  answerIsThisEntry,
   paymentFigures,
   paymentLandedCheck,
   paymentMayHaveLanded,
@@ -1867,10 +1868,19 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           }
         }
         // The server answered, so the key is let go: the next press of Record
-        // is a new payment. A replay of a press made with other figures, or in
+        // is a new payment. A replay of a press made with other money, or in
         // an earlier opening, is that earlier payment's answer, not this
         // entry's, and the panel says so instead of reporting it as this one.
-        if (keys.settle(ledgerRow.replayed === true) === 'earlier') {
+        // A replay carrying this press's own money is this press's row: an
+        // earlier press under the key was refused or never arrived.
+        const sameMoney = answerIsThisEntry(ledgerRow, {
+          amountCents: request.amount > 0 || !settleBalance ? Math.round(request.amount * 100) : null,
+          tipCents: settleBalance && tipToSend === 0 ? null : Math.round(tipToSend * 100),
+          feeCents: Math.round(fee * 100),
+          appliedCents: settleBalance ? null : appliedCents,
+          creditCents,
+        });
+        if (keys.settle(ledgerRow.replayed === true, sameMoney) === 'earlier') {
           reloadLedger();
           setBusy(false);
           setNoticeIncomplete(true);

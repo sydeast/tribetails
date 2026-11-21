@@ -106,6 +106,15 @@ data class RecordPaymentOutcome(
      * which reads false.
      */
     val replayed: Boolean = false,
+    /**
+     * #2297 review: the money on the row this answer describes, in cents, so a
+     * replay can be told apart from the press just answered
+     * ([answerIsThisEntry]). Absent from an older function, which reads 0.
+     */
+    val amountCents: Long = 0L,
+    val tipCents: Long = 0L,
+    val feeCents: Long = 0L,
+    val appliedCents: Long = 0L,
 )
 
 private val recordPaymentJson = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -129,6 +138,10 @@ fun decodeRecordPaymentOutcome(body: String): RecordPaymentOutcome {
         officeNoticePending = flag("officeNoticePending"),
         replayed = flag("replayed"),
         confirmationAppOnly = flag("confirmationAppOnly"),
+        amountCents = obj.cents("amountCents"),
+        tipCents = obj.cents("tipCents"),
+        feeCents = obj.cents("feeCents"),
+        appliedCents = obj.cents("appliedCents"),
     )
 }
 
@@ -239,11 +252,14 @@ class PaymentSubmissionKeys(private val mint: () -> String = { mintPaymentIdempo
 
     /**
      * The server answered a press under the held key, which lets it go. True
-     * when the answer is an earlier entry's: a replay, and the presses under
-     * the key had other figures or came from an earlier opening.
+     * when the answer is an earlier entry's: a replay, and the key came from an
+     * earlier opening, or the presses under it had other figures and the row's
+     * money is not this press's ([sameMoney], from [answerIsThisEntry]). A
+     * replay carrying this press's money after a changed figure is this press's
+     * own row: the earlier press was refused or never arrived.
      */
-    fun settle(replayed: Boolean): Boolean {
-        val earlier = replayed && key != null && (keyOpening != opening || figures.size > 1)
+    fun settle(replayed: Boolean, sameMoney: Boolean): Boolean {
+        val earlier = replayed && key != null && (keyOpening != opening || (figures.size > 1 && !sameMoney))
         release()
         return earlier
     }
@@ -269,6 +285,20 @@ fun paymentEntryFigures(entry: InvoicePaymentEntry): String = listOf(
     entry.creditToAccountCents.toString(),
 ).joinToString("\u001F")
 
+/**
+ * #2297 review: is the money on the answered row the money this press sent? A
+ * replay of an earlier press with other figures differs; a replay of this
+ * press's own row (its first answer was lost) matches. The same rule as admin
+ * web's `answerIsThisEntry` and Android's.
+ */
+fun answerIsThisEntry(answer: RecordPaymentOutcome, entry: InvoicePaymentEntry): Boolean {
+    fun cents(dollars: Double): Long = kotlin.math.round(dollars * 100).toLong()
+    return answer.amountCents == cents(entry.payment.amount) &&
+        answer.tipCents == cents(entry.payment.tip) &&
+        answer.feeCents == cents(entry.fee) &&
+        answer.appliedCents == cents(entry.applyAmount) &&
+        answer.creditedToAccountCents == entry.creditToAccountCents
+}
 /**
  * #2297: the press that failed did land, and the second ask for its answer
  * failed as well. The payment is on the invoice; only its answer is missing.
@@ -328,7 +358,7 @@ suspend fun submitInvoicePayment(
 ): WriteResult<RecordPaymentOutcome> {
     val key = keys.keyFor(entry.payment.invoiceId, paymentEntryFigures(entry))
     fun answered(ok: WriteResult.Ok<RecordPaymentOutcome>): WriteResult<RecordPaymentOutcome> =
-        if (keys.settle(ok.value.replayed)) {
+        if (keys.settle(ok.value.replayed, answerIsThisEntry(ok.value, entry))) {
             WriteResult.Err(PAYMENT_EARLIER_ON_RECORD, PAYMENT_EARLIER_ON_RECORD_CODE)
         } else {
             ok
