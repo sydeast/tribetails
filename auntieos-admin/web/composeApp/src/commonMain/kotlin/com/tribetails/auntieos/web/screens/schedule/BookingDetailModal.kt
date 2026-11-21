@@ -43,9 +43,9 @@ import com.tribetails.auntieos.web.data.AuthClient
 import com.tribetails.auntieos.web.data.BookingNote
 import com.tribetails.auntieos.web.data.FirestoreClient
 import com.tribetails.auntieos.web.data.FirestoreResult
+import com.tribetails.auntieos.web.data.staffByline
 import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.StaffMember
-import com.tribetails.auntieos.web.data.staffByline
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
 import com.tribetails.auntieos.web.theme.AuntieTheme
