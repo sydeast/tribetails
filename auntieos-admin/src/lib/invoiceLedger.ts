@@ -83,12 +83,11 @@ export function sessionServiceLabel(serviceType: string, catalog: BookingCatalog
 /**
  * A payment row's amount including its gratuity. Integer cents, added once.
  *
- * KEPT, AND NO LONGER WHAT THE TABLE RENDERS. Read the note on
- * `ledgerRowAppliedCents` below for why: on the operator's real data `amount`
- * ALREADY CONTAINS the tip, so adding them counts the gratuity twice. This
- * function survives because `ledgerCoversBalance` has always used it and
- * changing what that banner fires on is a separate decision from fixing the
- * table, but nothing new should reach for it.
+ * KEPT, AND NOTHING ON SCREEN USES IT. On the operator's real data `amount`
+ * ALREADY CONTAINS the tip, so adding them counts the gratuity twice. The
+ * table stopped rendering it first, and `ledgerCoversBalance` stopped summing
+ * it in #2413. It stays because payment code is not deleted here, but nothing
+ * new should reach for it.
  */
 export function ledgerRowTotalCents(
   row: Pick<GetInvoiceLedgerResultLedgerPayment, 'amountCents' | 'tipCents'>,
@@ -222,7 +221,10 @@ export function ledgerCoversBalance(input: {
 }): boolean {
   if (input.amountDueCents <= 0) return false;
   if (input.ledgerPayments.length === 0) return false;
-  const ledgerTotal = input.ledgerPayments.reduce((sum, r) => sum + ledgerRowTotalCents(r), 0);
+  // #2413: each row's amount, once. The amount is gross, so the tip is already
+  // inside it; adding `tipCents` on top counted every tip twice and raised the
+  // warning over rows that did not cover the balance.
+  const ledgerTotal = input.ledgerPayments.reduce((sum, r) => sum + r.amountCents, 0);
   return ledgerTotal >= input.amountDueCents;
 }
 

@@ -140,11 +140,37 @@ describe('ledgerCoversBalance', () => {
     ).toBe(true);
   });
 
-  it('counts the tip toward the cover, because it is money that came in', () => {
+  // #2413: the amount is gross, so the tip is inside it and is not added again.
+  it('counts each row\'s amount once: a tip inside the amount does not stretch it over the balance', () => {
     expect(
       ledgerCoversBalance({
         amountDueCents: 4000,
         ledgerPayments: [{ amountCents: 3600, tipCents: 500 }],
+      }),
+    ).toBe(false);
+  });
+  it('stays quiet on the reported case: $100.00 owed, one $95.00 payment with a $10.00 tip inside it', () => {
+    expect(
+      ledgerCoversBalance({
+        amountDueCents: 10000,
+        ledgerPayments: [{ amountCents: 9500, tipCents: 1000 }],
+      }),
+    ).toBe(false);
+  });
+  it('adds several tipped rows by their amounts alone', () => {
+    const rows = [
+      { amountCents: 5000, tipCents: 800 },
+      { amountCents: 4000, tipCents: 700 },
+    ];
+    // $90.00 of amounts. Counting the tips again made it $105.00.
+    expect(ledgerCoversBalance({ amountDueCents: 10000, ledgerPayments: rows })).toBe(false);
+    expect(ledgerCoversBalance({ amountDueCents: 9000, ledgerPayments: rows })).toBe(true);
+  });
+  it('still flags a tipped row whose amount alone covers the balance', () => {
+    expect(
+      ledgerCoversBalance({
+        amountDueCents: 4000,
+        ledgerPayments: [{ amountCents: 4500, tipCents: 500 }],
       }),
     ).toBe(true);
   });
