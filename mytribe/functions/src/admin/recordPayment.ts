@@ -461,6 +461,14 @@ export const Result = z
      * the office copy; nothing else resends it.
      */
     officeNoticePending: z.boolean(),
+    /**
+     * #2297 review: true when this answer came from the row an earlier call
+     * with the same `idempotencyKey` wrote, so nothing was recorded by this
+     * call. Absent when this call recorded the payment. A client that let the
+     * figures change under one key reads it to say which payment is on record,
+     * rather than reporting the earlier payment as the one just typed.
+     */
+    replayed: z.boolean().optional(),
   })
   .strict();
 export type RecordPaymentResult = z.infer<typeof Result>;
@@ -1807,6 +1815,8 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
     // `replayWithConfirmation`; the row alone cannot say either of these.
     householdNoPortalAccount: false,
     officeNoticePending: false,
+    // #2297 review: nothing was recorded by the call this answers.
+    replayed: true,
   });
 }
 

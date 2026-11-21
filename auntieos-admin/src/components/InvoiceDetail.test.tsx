@@ -1817,7 +1817,7 @@ describe('recording a payment is one call that writes the settlement and the led
    * row the first press may already have written, and a fresh key per press
    * puts the duplicate straight back in the one case an operator produces one.
    */
-  it('holds ONE key across a re-press, and mints a NEW one when a figure changes', async () => {
+  it('holds ONE key across a re-press, and keeps it when a figure changes before any answer (#2297)', async () => {
     // Two failures, so the dialog is still open for the third press. That is
     // the real shape of this defect: the operator only presses again because
     // the first press reported something.
@@ -1841,14 +1841,15 @@ describe('recording a payment is one call that writes the settlement and the led
     const secondKey = recordPayment.mock.calls[1]![0].idempotencyKey;
     expect(firstKey).toMatch(/^pay_\d{10,16}_[a-z0-9]{1,16}$/);
     expect(secondKey).toBe(firstKey);
-    // A CHANGED FIGURE IS A DIFFERENT PAYMENT, so the held key is dropped.
+    // #2297: A CHANGED FIGURE KEEPS THE KEY while no press has been answered.
+    // Either earlier press may still commit, and a new key would let it land
+    // beside this one. The server's answer says which payment is on record.
     await userEvent.clear(screen.getByLabelText(/amount collected/i));
     await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(3));
     const thirdKey = recordPayment.mock.calls[2]![0].idempotencyKey;
-    expect(thirdKey).toMatch(/^pay_\d{10,16}_[a-z0-9]{1,16}$/);
-    expect(thirdKey).not.toBe(firstKey);
+    expect(thirdKey).toBe(firstKey);
     expect(recordPayment.mock.calls[2]![0].apply).toMatchObject({ amount: 25 });
     expect(markInvoicePaid).not.toHaveBeenCalled();
   });
@@ -4271,5 +4272,260 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
       'Quote archived. The household no longer sees it. Its visit is back on the un-invoiced list.',
     );
     expect(archiveNoticeText(0)).toBe('Invoice archived.');
+  });
+});
+
+/**
+ * #2297: after a lost reply, the next press must neither record the payment a
+ * second time nor swallow a real second payment.
+ */
+describe('Record payment after a lost reply (#2297)', () => {
+  const lost = () => new Error('internal');
+  const keyOf = (call: number): string => recordPayment.mock.calls[call]![0].idempotencyKey as string;
+  async function openAndType(amountText = '20') {
+    render(<InvoiceDetail invoice={entry({ amountDue: 40, total: 40 })} onClose={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, amountText);
+  }
+  const press = () => userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+
+  it('finds a payment that landed, asks again with the same key, and closes the form', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult({ appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 }),
+    );
+    await openAndType();
+    // The ledger read after the failure lists the row the first press wrote.
+    getInvoiceLedger.mockImplementation(() =>
+      Promise.resolve(
+        ledgerResult({
+          ledgerPayments: [ledgerPayment({ paymentId: keyOf(0), amountCents: 2000, appliedCents: 2000 })],
+        }),
+      ),
+    );
+    await press();
+    expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
+    expect(recordPayment).toHaveBeenCalledTimes(2);
+    expect(keyOf(1)).toBe(keyOf(0));
+    // The form is closed, so nothing is left to press a third time.
+    expect(screen.queryByLabelText(/amount collected/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/action failed/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps the form and the key when the payment did not land, and a fixed note is still the same payment', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    expect(recordPayment).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText(/amount collected/i)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/staff-only notes/i), 'paid at the door');
+    await userEvent.click(screen.getByRole('checkbox', { name: /send a confirmation email/i }));
+    await userEvent.type(screen.getByLabelText(/payment method/i), 'cash');
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(recordPayment.mock.calls[1]![0]).toMatchObject({ notes: 'paid at the door', sendConfirmationEmail: true });
+  });
+
+  it('holds the key when the payments cannot be read, even when a figure changes', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    await openAndType();
+    getInvoiceLedger.mockRejectedValue(new Error('offline'));
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(2));
+    // Nobody knows whether the first press landed, so the same key goes:
+    // if it did, the server answers with it instead of recording a second one.
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it('holds the key after the check finds nothing, even when a figure changes: the first press may still be committing', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult({ appliedCents: 2500, state: 'partial', paidCents: 2500, amountDueCents: 1500 }),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    await press();
+    // A new key here would let a late first press and this one both write.
+    // Under the same key the server's create lets only one of them.
+    expect(await screen.findByText(/\$15\.00 is still owed/i)).toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(recordPayment.mock.calls[1]![0]).toMatchObject({ amount: 25 });
+  });
+
+  it('says the earlier payment is on record when a changed figure is answered from the first press', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 },
+        { amountCents: 2000, replayed: true },
+      ),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    await press();
+    expect(
+      await screen.findByText(/an earlier press of record went through, and that payment is the one on record/i),
+    ).toBeInTheDocument();
+    // Not the ordinary outcome, which would read as the $25.00 just typed.
+    expect(screen.queryByText(/is still owed/i)).not.toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(screen.queryByLabelText(/amount collected/i)).not.toBeInTheDocument();
+  });
+
+  it('a refused press, then a corrected one that landed with its answer lost, reports the corrected payment', async () => {
+    // The first press is refused (nothing recorded). The corrected $25.00
+    // press lands and its answer is lost; the row under the key is the $25.00
+    // one, so the replayed answer is this entry's, not an earlier press's.
+    recordPayment.mockRejectedValueOnce(
+      Object.assign(new Error('The invoice balance changed.'), { code: 'functions/failed-precondition' }),
+    );
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2500, state: 'partial', paidCents: 2500, amountDueCents: 1500 },
+        { amountCents: 2500, replayed: true },
+      ),
+    );
+    await openAndType();
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    getInvoiceLedger.mockImplementation(() =>
+      Promise.resolve(
+        ledgerResult({
+          ledgerPayments: [ledgerPayment({ paymentId: keyOf(0), amountCents: 2500, appliedCents: 2500 })],
+        }),
+      ),
+    );
+    await press();
+    expect(await screen.findByText(/\$15\.00 is still owed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/an earlier press of record went through/i)).not.toBeInTheDocument();
+    expect(recordPayment).toHaveBeenCalledTimes(3);
+    expect(keyOf(2)).toBe(keyOf(0));
+  });
+
+  it('the same money typed two ways is the same entry: a replayed answer to it is this payment', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 },
+        { amountCents: 2000, replayed: true },
+      ),
+    );
+    await openAndType('20');
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '20.00');
+    await press();
+    expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/an earlier press of record went through/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps a failed press\'s key across Cancel, and a replay in the next opening is said to be the earlier payment', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 },
+        { amountCents: 2000, replayed: true },
+      ),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '20');
+    await press();
+    expect(
+      await screen.findByText(/an earlier press of record went through, and that payment is the one on record/i),
+    ).toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it('after Cancel, a held key the server had never seen records the new entry as usual', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult({ appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 }),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '20');
+    await press();
+    expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it('starts a new key for the next payment after one went through', async () => {
+    recordPayment.mockResolvedValue(
+      paymentResult({ appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 }),
+    );
+    await openAndType();
+    await press();
+    await screen.findByText(/\$20\.00 is still owed/i);
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '20');
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(2));
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it('says the payment was recorded when it landed and its answer still does not come back', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockRejectedValueOnce(lost());
+    await openAndType();
+    getInvoiceLedger.mockImplementation(() =>
+      Promise.resolve(ledgerResult({ ledgerPayments: [ledgerPayment({ paymentId: keyOf(0) })] })),
+    );
+    await press();
+    expect(
+      await screen.findByText(/the payment was recorded, but this screen did not get its details back/i),
+    ).toBeInTheDocument();
+    expect(recordPayment).toHaveBeenCalledTimes(2);
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(screen.queryByLabelText(/amount collected/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/action failed/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps the button busy until the payments have been read', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    await openAndType();
+    let finishRead: (r: GetInvoiceLedgerResult) => void = () => {};
+    getInvoiceLedger.mockImplementation(
+      () => new Promise<GetInvoiceLedgerResult>((resolve) => (finishRead = resolve)),
+    );
+    await press();
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    // Still checking: no error yet, and the button cannot be pressed.
+    expect(screen.queryByText(/action failed/i)).not.toBeInTheDocument();
+    const busyButton = screen.getAllByRole('button').find((b) => /recording/i.test(b.textContent ?? ''));
+    expect(busyButton).toBeDefined();
+    expect(busyButton).toBeDisabled();
+    await act(async () => finishRead(ledgerResult()));
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
   });
 });

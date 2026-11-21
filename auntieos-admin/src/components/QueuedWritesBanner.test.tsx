@@ -106,11 +106,25 @@ describe('invoiceActionError', () => {
    * leaving it beside the new sentence would give two contradictory
    * instructions for one error.
    */
-  it('tells the operator to re-press UNCHANGED after an unknown payment', () => {
-    const line = invoiceActionError(new LostSignalError('recordPayment'), 'recordPayment');
+  it('tells the operator to re-press UNCHANGED after an unknown money action', () => {
+    const line = invoiceActionError(new LostSignalError('markInvoicePaid'), 'markInvoicePaid');
     expect(line).toMatch(/no way to tell/i);
     expect(line).toMatch(/press the same button again without changing anything/i);
     expect(line).toMatch(/changing a figure first would make it a different payment/i);
+    expect(line).not.toMatch(/check whether this payment is already there/i);
+  });
+
+  /**
+   * #2297: Record payment holds its key until an answer whatever is edited, so
+   * a changed figure is not a different payment there, and the sentence must
+   * not say it is.
+   */
+  it('tells the operator to press Record payment again, without the changed-figure warning', () => {
+    const line = invoiceActionError(new LostSignalError('recordPayment'), 'recordPayment');
+    expect(line).toMatch(/no way to tell/i);
+    expect(line).toMatch(/press the same button again/i);
+    expect(line).toMatch(/not recorded twice/i);
+    expect(line).not.toMatch(/different payment/i);
     expect(line).not.toMatch(/check whether this payment is already there/i);
   });
 
