@@ -1418,6 +1418,8 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     // The ADR-0002 stamp, both halves, shipped verbatim off the doc.
     'editScope',
     'id',
+    // #1974: the invoice-level discount in cents under the lines, null with no stored lines.
+    'invoiceDiscountCents',
     // #1848: the number the portals print in place of the id; null when the invoice has none.
     'invoiceNumber',
     'isPaid',
@@ -1427,6 +1429,8 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     // an optional field is still a field three clients read.
     'lineItems[].amountCents',
     'lineItems[].dateIso',
+    // #1974: what was taken off a stored line; null on a row rebuilt from a visit.
+    'lineItems[].discountCents',
     'lineItems[].label',
     'lineItems[].lineId',
     'lineItems[].qty',
@@ -1464,6 +1468,8 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     'quoteDecidedByUid',
     'quoteDecision',
     'status',
+    // #1974: the sum of the stored lines, so the household's table adds up.
+    'subtotalCents',
     'terms',
     'total',
     'viewed',

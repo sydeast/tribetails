@@ -137,6 +137,7 @@ import {
   BLANK_AMOUNT_BALANCE_UNKNOWN,
   InvoiceDetail,
   archiveNoticeText,
+  convertQuoteTermsLine,
   paymentSplit,
   archivedQuoteBannerText,
   parseOptionalMoney,
@@ -4017,6 +4018,36 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
     ).toBeInTheDocument();
   });
 
+  it('#2258 the Turn into invoice confirm names the payment terms the invoice will carry', async () => {
+    const user = userEvent.setup();
+    render(<InvoiceDetail invoice={entry({ status: 'quote', editScope: 'all', termsCode: 'net_30' })} onClose={vi.fn()} />);
+    expect(screen.queryByTestId('convert-quote-terms')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Turn into invoice' }));
+    expect(screen.getByTestId('convert-quote-terms')).toHaveTextContent(
+      "It keeps the quote's payment terms: Due 30 days after the invoice date.",
+    );
+    // Withdraw has no terms line.
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Withdraw quote' }));
+    expect(screen.queryByTestId('convert-quote-terms')).toBeNull();
+  });
+  it('#2258 convertQuoteTermsLine follows the server rule', () => {
+    expect(convertQuoteTermsLine({ termsCode: 'net_7_after_last_visit', dueDate: '2026-06-10' })).toBe(
+      "It keeps the quote's payment terms: Due 7 days after the last visit.",
+    );
+    expect(convertQuoteTermsLine({ termsCode: 'custom', dueDate: '2026-07-04' })).toBe(
+      'It keeps the due date picked on the quote.',
+    );
+    expect(convertQuoteTermsLine({ termsCode: '', dueDate: '2026-07-04' })).toBe(
+      'It keeps the due date picked on the quote.',
+    );
+    expect(convertQuoteTermsLine({ dueDate: '' })).toBe(
+      'The quote has no payment terms, so it takes your Payment terms setting.',
+    );
+    expect(convertQuoteTermsLine({ termsCode: 'Net 9', dueDate: '' })).toBe(
+      'The quote has no payment terms, so it takes your Payment terms setting.',
+    );
+  });
   it('#2088 Withdraw quote confirms first, then names how many visits went back on the list', async () => {
     const user = userEvent.setup();
     render(<InvoiceDetail invoice={sentQuote()} onClose={vi.fn()} />);

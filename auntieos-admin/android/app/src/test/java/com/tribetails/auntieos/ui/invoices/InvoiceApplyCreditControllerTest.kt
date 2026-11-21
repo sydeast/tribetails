@@ -29,7 +29,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class InvoiceApplyCreditControllerTest {
 
-    private fun history(balance: Long) = GetAccountCreditHistoryResult(true, "fam1", balance, emptyList(), emptyList())
+    private fun history(balance: Long) = GetAccountCreditHistoryResult(true, "fam1", balance, emptyList(), emptyList(), null)
 
     private fun applied(applied: Long = 2500L, due: Long = 7500L, balance: Long = 9500L) =
         ApplyAccountCreditResult(true, "inv1", "acr_1790000000000_k1", applied, due, balance, false)

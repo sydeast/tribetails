@@ -56,7 +56,12 @@ import type { Audience } from './types';
  * unit test (enrichTemplateData.test.ts) cross-checks this map against the
  * on-disk seeds so the two can never drift. Only the subset the enricher knows
  * how to hydrate (see ENRICHABLE) is fetched; the rest are emitter-supplied
- * (link, score, count, incidentId, ip, ...).
+ * (score, count, incidentId, ip, ...).
+ *
+ * #2487: `link` is on every key that has a button or a text to its item. The
+ * channel trigger fills it per copy (`notifications/noticeLink.ts`): the item
+ * in MyTribe for a household's copy, in AuntieOS for the office's and an
+ * Auntie's. The password reset's emitter supplies its own.
  */
 export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // #536, the assignment half: an approved REQUEST is one piece of news for the
@@ -69,10 +74,10 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'assignment.assigned': [
     'Business',
     'kinName',
+    'link',
     'nextVisit.date',
     'nextVisit.time',
     'nextVisit.weekday',
-    'portalUrl',
     'serviceType',
     'visitCount',
     'visits',
@@ -83,48 +88,66 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   // her days; `kinAdded` / `addedKinName` and the structured dates are
   // emitter-supplied by `admin/addKinToUpcomingVisits`.
   'assignment.changed': [
-    'Business',
     'addedKinName',
     'bookingDate',
+    'Business',
     'kinAdded',
     'kinName',
+    'link',
     'nextVisit.date',
     'nextVisit.weekday',
-    'portalUrl',
     'serviceType',
-    'visits',
     'visitCount',
+    'visits',
   ],
-  'account.welcome.kinfolk': ['kinfolkName'],
-  'auth.account.locked': ['business', 'email'],
-  'auth.failedLogin.attempts': ['attemptsInWindow', 'business', 'email'],
+  'account.welcome.kinfolk': ['kinfolkName', 'link'],
+  'auth.account.locked': ['business', 'email', 'link'],
+  'auth.failedLogin.attempts': ['attemptsInWindow', 'business', 'email', 'link'],
   'auth.password.reset': ['Business', 'displayName', 'link'],
-  'invite.expired': ['Business', 'invitedEmail'],
+  'invite.expired': ['Business', 'invitedEmail', 'link'],
   // #1586: a direct send (membership/acceptInvite.ts), not a catalog row, so the
   // enricher never runs on it. Every token is supplied by the sender.
+  // #2487: the portal invites and the recovery emails, given repo copies so
+  // Template Import can load them and the editor previews them with samples.
+  // Direct sends (`sendFromTemplate`): the enricher never runs on them, and
+  // every token is the sender's (`lib/inviteEmails.ts`, `lib/inviteNames.ts`),
+  // with `{{Business}}` filled by `sendFromTemplate` itself.
+  'invite.auntie-notify': ['auntieReviewUrl', 'invitedEmail', 'primaryDisplayName', 'tribeName'],
+  'invite.primary': ['Business', 'claimUrl', 'expiresInDays', 'primaryDisplayName', 'tribeName'],
+  'invite.primary-receipt': ['expiresInDays', 'invitedEmail', 'tribeName'],
+  'invite.secondary': ['claimUrl', 'expiresInDays', 'primaryDisplayName', 'secondaryDisplayName', 'tribeName'],
+  'recovery.completed': ['claimUrl', 'tribeName'],
+  'recovery.requested': ['tribeName'],
   'invite.verify-email': ['claimUrl', 'invitedEmail', 'verifyUrl'],
-  'invoice.charge.failed': ['invoiceNumber', 'kinfolkName'],
-  'invoice.new': ['amount', 'dueDate', 'invoiceNumber', 'isQuote', 'kinfolkName', 'kinName'],
-  'invoice.overdue': ['bookingDate', 'kinfolkName', 'kinName'],
-  'invoice.payment.applied': ['invoiceNumber'],
+  'invoice.charge.failed': ['invoiceNumber', 'kinfolkName', 'link'],
+  'invoice.new': ['amount', 'dueDate', 'invoiceNumber', 'isQuote', 'kinfolkName', 'kinName', 'link'],
+  'invoice.overdue': ['bookingDate', 'kinfolkName', 'kinName', 'link'],
+  'invoice.payment.applied': ['invoiceNumber', 'link'],
   // `disputeAmount` / `disputeReason` / `disputeStatus` are emitter-supplied by
   // `billing/stripeDispute.ts`, like `link` / `score` / `incidentId`: they come
   // off the Stripe Dispute object and there is no local entity to hydrate them
   // from. `invoiceNumber` is the one the enricher fills, and it renders blank
   // on an unattributed dispute — which is the honest output, not a defect.
-  'invoice.payment.disputed': ['Business', 'disputeAmount', 'disputeReason', 'disputeStatus', 'invoiceNumber'],
+  'invoice.payment.disputed': [
+    'Business',
+    'disputeAmount',
+    'disputeReason',
+    'disputeStatus',
+    'invoiceNumber',
+    'link',
+  ],
   // `unappliedAmount` / `unappliedReason` are emitter-supplied by
   // `billing/stripeWebhook.ts` (docket Q5), off the Stripe event.
-  'invoice.payment.unapplied': ['Business', 'invoiceNumber', 'unappliedAmount', 'unappliedReason'],
-  'invoice.receipt': ['amount', 'invoiceNumber', 'kinfolkName'],
-  'invoice.reminder': ['amount', 'invoiceNumber', 'kinName'],
-  'invoice.updated': ['invoiceNumber', 'kinName'],
+  'invoice.payment.unapplied': ['Business', 'invoiceNumber', 'link', 'unappliedAmount', 'unappliedReason'],
+  'invoice.receipt': ['amount', 'invoiceNumber', 'kinfolkName', 'link'],
+  'invoice.reminder': ['amount', 'invoiceNumber', 'kinName', 'link'],
+  'invoice.updated': ['invoiceNumber', 'kinName', 'link'],
   // #1831: the visit steps name the Kin (the enricher reads them off the visit)
   // and, on the way, the arrival estimate the Auntie gave (emitter-supplied).
-  'kincare.auntie.arrived': ['kinName', 'serviceType'],
-  'kincare.auntie.departed': ['kinName', 'serviceType'],
-  'kincare.auntie.on_my_way': ['etaMinutes', 'kinName', 'serviceType'],
-  'kincare.booking.cancel': ['bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
+  'kincare.auntie.arrived': ['kinName', 'link', 'serviceType'],
+  'kincare.auntie.departed': ['kinName', 'link', 'serviceType'],
+  'kincare.auntie.on_my_way': ['etaMinutes', 'kinName', 'link', 'serviceType'],
+  'kincare.booking.cancel': ['bookingDate', 'kinfolkName', 'kinName', 'link', 'serviceType'],
   // #536: the confirmation is about a REQUEST, not a visit, so it enumerates the
   // whole envelope. `visits` / `visitCount` / `nextVisit.*` / `portalUrl` are
   // emitter-supplied structured data (notifications/visitDates.ts), not tokens
@@ -138,20 +161,20 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
   'kincare.booking.confirm': [
     'kinfolkName',
     'kinName',
+    'link',
     'nextVisit.date',
     'nextVisit.time',
     'nextVisit.weekday',
     'note',
-    'portalUrl',
     'serviceType',
     'visitCount',
     'visits',
   ],
-  'kincare.cancel.requested': ['Business', 'bookingDate', 'kinfolkName', 'kinName', 'serviceType'],
+  'kincare.cancel.requested': ['bookingDate', 'Business', 'kinfolkName', 'kinName', 'link', 'serviceType'],
   // `note` is emitter-supplied, like the dispute fields above: it is the
   // operator's own words, carried on the dispatch, with no entity to hydrate
   // it from. The four below are the ones this enricher fills.
-  'kincare.cancel.declined': ['Business', 'bookingDate', 'kinfolkName', 'kinName', 'note', 'serviceType'],
+  'kincare.cancel.declined': ['bookingDate', 'Business', 'kinfolkName', 'kinName', 'link', 'note', 'serviceType'],
   // #1822: `kinAdded` / `addedKinName` and the structured dates are
   // emitter-supplied by `admin/addKinToUpcomingVisits`, which tells the whole
   // change once instead of once per visit.
@@ -161,55 +184,79 @@ export const TEMPLATE_FIELDS: Record<string, readonly string[]> = {
     'kinAdded',
     'kinfolkName',
     'kinName',
+    'link',
     'nextVisit.date',
     'nextVisit.weekday',
-    'portalUrl',
     'serviceType',
-    'visits',
     'visitCount',
+    'visits',
   ],
   // #1408. `reason` (the household's words) and `note` (the office's) are
   // emitter-supplied; kinName rides on the dispatch too, and the enricher
   // fills kinfolkName from the household.
-  'kin.removal.archived': ['Business', 'kinfolkName', 'kinName', 'note'],
-  'kin.removal.declined': ['Business', 'kinfolkName', 'kinName', 'note'],
-  'kin.removal.requested': ['Business', 'kinfolkName', 'kinName', 'reason'],
-  'kincare.note.auntie': ['Business', 'kinName'],
-  'kincare.note.kinfolk': ['Business', 'kinName'],
+  'kin.removal.archived': ['Business', 'kinfolkName', 'kinName', 'link', 'note'],
+  'kin.removal.declined': ['Business', 'kinfolkName', 'kinName', 'link', 'note'],
+  'kin.removal.requested': ['Business', 'kinfolkName', 'kinName', 'link', 'reason'],
+  'kincare.note.auntie': ['Business', 'kinName', 'link'],
+  'kincare.note.kinfolk': ['Business', 'kinName', 'link'],
   'kincare.report.sent': ['kinfolkName', 'kinName'],
-  'kincare.requested': ['Business', 'bookingDates', 'kinfolkName', 'kinName', 'serviceType'],
-  'kincare.request.declined': ['Business', 'bookingDates', 'kinfolkName', 'kinName', 'note', 'serviceType'],
-  'kincare.reschedule.requested': ['Business', 'bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
-  'kincare.unavailable': ['bookingDate', 'kinfolkName', 'serviceType'],
-  'kincare.upcoming.reminder': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'serviceType'],
-  'kintale.comment.added': ['kinName'],
-  'kintale.note.added': ['kinName'],
-  'kintale.published': ['kinfolkName', 'kinName'],
-  'marketing.optin': ['business'],
-  'message.received': ['Business', 'kinfolkName', 'preview'],
-  'message.reply': ['Business', 'preview'],
-  'newsletter.announcement': ['business'],
-  'pet.marked.inactive': ['Business', 'kinName'],
-  'pets.updated': ['kinName'],
-  'profile.updated': [],
+  'kincare.requested': ['bookingDates', 'Business', 'kinfolkName', 'kinName', 'link', 'serviceType'],
+  'kincare.request.declined': ['bookingDates', 'Business', 'kinfolkName', 'kinName', 'link', 'note', 'serviceType'],
+  'kincare.reschedule.requested': [
+    'bookingDate',
+    'bookingTime',
+    'Business',
+    'kinfolkName',
+    'kinName',
+    'link',
+    'serviceType',
+  ],
+  'kincare.unavailable': ['bookingDate', 'kinfolkName', 'link', 'serviceType'],
+  'kincare.upcoming.reminder': ['bookingDate', 'bookingTime', 'kinfolkName', 'kinName', 'link', 'serviceType'],
+  'kintale.comment.added': ['kinName', 'link'],
+  'kintale.note.added': ['kinName', 'link'],
+  'kintale.published': ['kinfolkName', 'kinName', 'link'],
+  'marketing.optin': ['business', 'link'],
+  'message.received': ['Business', 'kinfolkName', 'link', 'preview'],
+  'message.reply': ['Business', 'link', 'preview'],
+  'newsletter.announcement': ['business', 'link'],
+  'pet.marked.inactive': ['Business', 'kinName', 'link'],
+  'pets.updated': ['kinName', 'link'],
+  'profile.updated': ['link'],
   // #1039: {{actorName}} is emitter-supplied (portal/quoteDecision.ts passes
   // it directly, same as `invoiceNumber` on other keys) rather than hydrated
   // here — there is no id to fetch it FROM, the decision itself is the
   // source. Still listed below so the drift guard, which mirrors every token
   // a seed uses regardless of who fills it in, does not flag the seed as
   // carrying a token this map never heard of.
-  'quote.accepted': ['actorName', 'kinName'],
-  'quote.denied': ['Business', 'actorName'],
-  'rating.submitted.bad': ['Business', 'score'],
-  'rating.submitted.good': ['Business', 'score'],
-  'schedule.upcoming.digest': ['Business', 'count'],
-  'security.account.locked.operator': ['Business', 'kinfolkEmail', 'kinfolkName'],
-  'security.failedLogin.attempts.operator': ['Business', 'attemptsInWindow', 'kinfolkEmail', 'kinfolkName'],
-  'security.failedLogin.budgetExhausted.operator': ['Business', 'kinfolkEmail', 'kinfolkName', 'reportLimit'],
-  'security.account.locked.spike.operator': ['Business', 'lockedAccounts', 'windowMinutes'],
-  'security.breach_attempt.kinfolk': ['Business', 'incidentId', 'ip', 'kinfolkEmail', 'timestampIso', 'userAgent'],
-  'security.breach_attempt.staff': ['Business', 'incidentId', 'ip', 'staffEmail', 'timestampIso', 'userAgent'],
-  'survey.event': [],
+  'quote.accepted': ['actorName', 'kinName', 'link'],
+  'quote.denied': ['actorName', 'Business', 'link'],
+  'rating.submitted.bad': ['Business', 'link', 'score'],
+  'rating.submitted.good': ['Business', 'link', 'score'],
+  'schedule.upcoming.digest': ['Business', 'count', 'link'],
+  'security.account.locked.operator': ['Business', 'kinfolkEmail', 'kinfolkName', 'link'],
+  'security.failedLogin.attempts.operator': ['attemptsInWindow', 'Business', 'kinfolkEmail', 'kinfolkName', 'link'],
+  'security.failedLogin.budgetExhausted.operator': ['Business', 'kinfolkEmail', 'kinfolkName', 'link', 'reportLimit'],
+  'security.account.locked.spike.operator': ['Business', 'link', 'lockedAccounts', 'windowMinutes'],
+  'security.breach_attempt.kinfolk': [
+    'Business',
+    'incidentId',
+    'ip',
+    'kinfolkEmail',
+    'link',
+    'timestampIso',
+    'userAgent',
+  ],
+  'security.breach_attempt.staff': [
+    'Business',
+    'incidentId',
+    'ip',
+    'link',
+    'staffEmail',
+    'timestampIso',
+    'userAgent',
+  ],
+  'survey.event': ['link'],
 };
 
 /**

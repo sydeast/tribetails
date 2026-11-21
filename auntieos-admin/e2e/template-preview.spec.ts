@@ -125,12 +125,12 @@ test.describe('Template Bank live preview', () => {
     const body = page.getByLabel('Body');
     await expect(page.getByRole('status')).toHaveCount(0);
 
-    // `link` is emitter-supplied, not one of the twelve `enrichTemplateData.ts`
-    // hydrates, so writing it here is a promise `acceptInvite` has to keep and
-    // the preview says so.
-    await body.fill(`${WELCOME_BUSINESS_BODY.replace('[]', '{{link}}')}`);
+    // `score` is emitter-supplied, not one of the tokens every send fills
+    // (`enrichTemplateData.ts`, plus `{{link}}` since #2487), so writing it
+    // here is a promise some emitter has to keep and the preview says so.
+    await body.fill(`${WELCOME_BUSINESS_BODY.replace('[]', '{{score}}')}`);
     await expect(page.getByRole('status')).toContainText('merge field');
-    await expect(page.getByRole('status')).toContainText('link');
+    await expect(page.getByRole('status')).toContainText('score');
   });
 
   test('falls silent again once every merge field is one the pipeline fills', async ({ page }) => {

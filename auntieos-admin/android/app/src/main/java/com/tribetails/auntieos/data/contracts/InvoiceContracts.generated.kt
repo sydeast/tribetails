@@ -36,6 +36,7 @@ data class InvoiceLineItemDto(
     val amountCents: Long?,
     val qty: Double?,
     val unitCents: Long?,
+    val discountCents: Long?,
 )
 
 /**
@@ -53,6 +54,7 @@ internal fun decodeInvoiceLineItemDto(raw: Map<String, Any?>?): InvoiceLineItemD
         amountCents = (raw?.get("amountCents") as? Number)?.toLong(),
         qty = (raw?.get("qty") as? Number)?.toDouble(),
         unitCents = (raw?.get("unitCents") as? Number)?.toLong(),
+        discountCents = (raw?.get("discountCents") as? Number)?.toLong(),
     )
 
 /** `InvoiceDtoPayMethod`, shared across callables. */
@@ -136,6 +138,8 @@ data class InvoiceDto(
     val writtenOffCents: Long?,
     /** Null when the payload omits the key. */
     val lineItems: List<InvoiceLineItemDto>? = null,
+    val subtotalCents: Long?,
+    val invoiceDiscountCents: Long?,
     val payMethods: List<InvoiceDtoPayMethod>,
     val payBlockedReason: String?,
     val payments: List<InvoiceDtoPayment>,
@@ -176,6 +180,8 @@ internal fun decodeInvoiceDto(raw: Map<String, Any?>?): InvoiceDto =
         creditRedeemedAtMs = (raw?.get("creditRedeemedAtMs") as? Number)?.toDouble(),
         writtenOffCents = (raw?.get("writtenOffCents") as? Number)?.toLong(),
         lineItems = (raw?.get("lineItems") as? List<*>)?.mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceLineItemDto(nested) } },
+        subtotalCents = (raw?.get("subtotalCents") as? Number)?.toLong(),
+        invoiceDiscountCents = (raw?.get("invoiceDiscountCents") as? Number)?.toLong(),
         payMethods = (raw?.get("payMethods") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayMethod(nested) } },
         payBlockedReason = raw?.get("payBlockedReason") as? String,
         payments = (raw?.get("payments") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeInvoiceDtoPayment(nested) } },
@@ -1849,6 +1855,23 @@ internal fun decodeGetAccountCreditHistoryResultUse(raw: Map<String, Any?>?): Ge
         invoiceNumber = raw?.get("invoiceNumber") as? String,
     )
 
+/** Nested in the `getAccountCreditHistory` contract. */
+data class GetAccountCreditHistoryResultEarlierCredit(
+    val amountCents: Long,
+    val remainingCents: Long,
+)
+
+/**
+ * Fail-soft decode of `GetAccountCreditHistoryResultEarlierCredit` from a callable payload.
+ * Pure, and it never throws: a missing or wrong-typed value falls back to the
+ * neutral one for its type, and a list entry of the wrong type is dropped.
+ */
+internal fun decodeGetAccountCreditHistoryResultEarlierCredit(raw: Map<String, Any?>?): GetAccountCreditHistoryResultEarlierCredit =
+    GetAccountCreditHistoryResultEarlierCredit(
+        amountCents = (raw?.get("amountCents") as? Number)?.toLong() ?: 0L,
+        remainingCents = (raw?.get("remainingCents") as? Number)?.toLong() ?: 0L,
+    )
+
 /** Response from the `getAccountCreditHistory` callable. */
 data class GetAccountCreditHistoryResult(
     val ok: Boolean,
@@ -1856,6 +1879,7 @@ data class GetAccountCreditHistoryResult(
     val accountBalanceCents: Long,
     val credits: List<GetAccountCreditHistoryResultCredit>,
     val uses: List<GetAccountCreditHistoryResultUse>,
+    val earlierCredit: GetAccountCreditHistoryResultEarlierCredit?,
 )
 
 /**
@@ -1870,6 +1894,7 @@ internal fun decodeGetAccountCreditHistoryResult(raw: Map<String, Any?>?): GetAc
         accountBalanceCents = (raw?.get("accountBalanceCents") as? Number)?.toLong() ?: 0L,
         credits = (raw?.get("credits") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetAccountCreditHistoryResultCredit(nested) } },
         uses = (raw?.get("uses") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeGetAccountCreditHistoryResultUse(nested) } },
+        earlierCredit = contractRawMap(raw?.get("earlierCredit"))?.let { nested -> decodeGetAccountCreditHistoryResultEarlierCredit(nested) },
     )
 
 // ---------- listUnappliedPayments ----------

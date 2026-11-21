@@ -590,6 +590,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'auntieDisplayName',
         'recipientDisplayName',
         'reportPreviewUrl',
+        'taleId',
       ],
     },
   ],
@@ -1231,6 +1232,12 @@ export const MERGE_FIELD_LABELS: Readonly<Record<string, string>> = {
   serviceId: 'Service reference',
   taleTitle: 'KinTale title',
   timeBlockId: 'Time block reference',
+  // #2487: the portal invite and recovery emails' own fields.
+  auntieReviewUrl: 'Invite review link',
+  expiresInDays: 'Days until the invite expires',
+  primaryDisplayName: "Inviter's or invitee's name",
+  secondaryDisplayName: "Invitee's name",
+  tribeName: 'Household name',
 };
 
 /** The labels for these keys, only those this table has. */

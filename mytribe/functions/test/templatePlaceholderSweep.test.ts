@@ -15,6 +15,10 @@ import { enrichTemplateData } from '../src/notifications/enrichTemplateData';
 import { sendPartsFor } from '../src/lib/emailFrame';
 import { renderEmailParts } from '../src/lib/email';
 import { kinForStoredTemplate, parsePushTxt, renderPlainText } from '../src/notifications/templateParsers';
+import { resolveTargetRef } from '../src/notifications/dispatcher';
+import { noticeOpenTarget } from '../src/notifications/noticeOpenTarget';
+import { ADMIN_URL, noticeLink } from '../src/notifications/noticeLink';
+import { PORTAL_URL } from '../src/notifications/visitDates';
 
 /**
  * #2487 (owner report): "templates need placeholders that actually work".
@@ -48,8 +52,14 @@ beforeEach(() => {
 const UNSENT_SEEDS: Record<string, string> = {
   // A legacy alias: a send under it is sent as `kintale.published`.
   'kincare.report.sent': 'alias of kintale.published',
-  // Sent straight to an address by membership/acceptInvite.ts, outside the catalog.
-  'invite.verify-email': 'direct send, covered by the direct-send fixtures',
+  // Sent straight to an address with sendFromTemplate, outside the catalog.
+  'invite.verify-email': 'direct send, covered by DIRECT_SENDS below',
+  'invite.primary': 'direct send, covered by DIRECT_SENDS below',
+  'invite.secondary': 'direct send, covered by DIRECT_SENDS below',
+  'invite.primary-receipt': 'direct send, covered by DIRECT_SENDS below',
+  'invite.auntie-notify': 'direct send, covered by DIRECT_SENDS below',
+  'recovery.requested': 'direct send, covered by DIRECT_SENDS below',
+  'recovery.completed': 'direct send, covered by DIRECT_SENDS below',
 };
 for (const key of NEVER_FIRES) UNSENT_SEEDS[key] = 'listed in NEVER_FIRES';
 
@@ -73,10 +83,28 @@ function partsOf(key: string): Part[] {
   ];
 }
 
+/**
+ * The context the channel trigger hands a sender: the enriched data, plus
+ * `{{link}}` built the way the trigger builds it, from the target the
+ * dispatcher would stamp on the work order (`resolveTargetRef`).
+ */
 async function contextFor(fx: EmitterFixture): Promise<Record<string, unknown>> {
   const enriched = await enrichTemplateData(fx.key, fx.recipientUid, fx.data, [], fx.stream === 'kinfolk');
-  return { ...enriched, recipientUid: fx.recipientUid, notificationKey: fx.key };
+  const target = resolveTargetRef({ key: fx.key, recipientUid: fx.recipientUid, data: fx.data, ...(fx.target ?? {}) } as never);
+  const open = noticeOpenTarget({ key: fx.key, stream: fx.stream, data: fx.data, ...target, notificationId: 'n1' });
+  const auntie = getNotificationDef(fx.key).recipientResolver === 'auntieAssignedToKincare' && fx.stream !== 'kinfolk';
+  const link = noticeLink({ key: fx.key, stream: fx.stream, auntie, data: fx.data, ...target, open });
+  const supplied = enriched['link'];
+  return {
+    ...enriched,
+    ...(typeof supplied === 'string' && supplied !== '' ? {} : { link }),
+    recipientUid: fx.recipientUid,
+    notificationKey: fx.key,
+  };
 }
+
+/** Tokens that are a link a reader follows. */
+const LINK_TOKENS = new Set(['link', 'claimUrl', 'verifyUrl', 'auntieReviewUrl']);
 
 /** What each sender actually sends, rendered the way it renders it. */
 function renderedTexts(key: string, ctx: Record<string, unknown>): Record<string, string> {
@@ -140,6 +168,18 @@ describe('every seed placeholder fills with a real value, for every emitter (#24
       }
       expect(problems).toEqual([]);
 
+      // #2487: every notice links to its item, for this reader, on the reader's own site.
+      const printed = partsOf(fx.key).flatMap((part) => printedTokens(part.template, ctx));
+      expect(printed.some((p) => LINK_TOKENS.has(p.token)), `${id} prints no link`).toBe(true);
+      const link = String(ctx['link']);
+      if (fx.key !== 'auth.password.reset') {
+        expect(link.startsWith(fx.stream === 'kinfolk' ? `${PORTAL_URL}/` : `${ADMIN_URL}/`), `${id}: ${link}`).toBe(true);
+      }
+      if (fx.link !== undefined) expect(link, `${id}: {{link}}`).toBe(fx.link);
+      if (fx.aboutRex) {
+        expect(link, `${id}: a notice about one record links to it, not to the list`).not.toMatch(/\/notifications(\?|$)/);
+      }
+
       for (const [name, text] of Object.entries(renderedTexts(fx.key, ctx))) {
         expect(text, `${id} ${name}`).not.toMatch(/\{\{|\}\}/);
         for (const decoy of [...DECOYS, ...(fx.aboutRex ? ['Biscuit'] : [])]) {
@@ -181,23 +221,104 @@ describe('the sweep itself is not vacuous', () => {
     expect(NOTIFICATION_KEY_ALIASES).toBeDefined();
   });
 });
-describe('the direct send with a seed fills every token from its sender (#2487)', () => {
-  it('invite.verify-email, as membership/acceptInvite.ts sends it', () => {
-    // acceptInvite passes these three and nothing else; no enricher runs.
-    const data = {
+/**
+ * The direct sends with a repo copy, each with the data its sender passes
+ * (`sendFromTemplate` adds `{{Business}}` itself). No enricher runs on them.
+ */
+const CLAIM = 'https://kinfolk.tribetails.com/claim/i1?invite=i1';
+const NAMES = { primaryDisplayName: WORLD.primaryName, tribeName: WORLD.householdName, kinfolkName: WORLD.primaryName };
+const DIRECT_SENDS: Array<{ key: string; source: string; data: Record<string, unknown> }> = [
+  {
+    key: 'invite.verify-email',
+    source: 'src/membership/acceptInvite.ts',
+    data: {
       invitedEmail: WORLD.primaryEmail,
       verifyUrl: 'https://kinfolk.tribetails.com/account/action?mode=verifyEmail&oobCode=abc',
-      claimUrl: 'https://kinfolk.tribetails.com/claim/i1',
-    };
-    const problems: string[] = [];
-    for (const part of partsOf('invite.verify-email')) {
-      for (const p of printedTokens(part.template, data)) {
-        if (isBlank(p.value)) problems.push(`${part.name}: {{${p.token}}}`);
+      claimUrl: CLAIM,
+    },
+  },
+  {
+    key: 'invite.primary',
+    source: 'src/admin/inviteKinfolkToPortal.ts, mintInvite.ts, provisionTribe.ts',
+    data: { ...NAMES, claimUrl: CLAIM, expiresInDays: 14, Business: WORLD.businessName, business: WORLD.businessName },
+  },
+  {
+    key: 'invite.secondary',
+    source: 'src/lib/inviteEmails.ts',
+    data: { primaryDisplayName: 'Maya', secondaryDisplayName: 'there', secondaryLabel: 'CoParent', tribeName: WORLD.householdName, claimUrl: CLAIM, expiresInDays: 14 },
+  },
+  {
+    key: 'invite.primary-receipt',
+    source: 'src/lib/inviteEmails.ts',
+    data: { invitedEmail: 'pawsome@hanasamku.com', secondaryLabel: 'CoParent', tribeName: WORLD.householdName, expiresInDays: 14 },
+  },
+  {
+    key: 'invite.auntie-notify',
+    source: 'src/lib/inviteEmails.ts',
+    data: {
+      primaryDisplayName: 'Maya',
+      invitedEmail: 'pawsome@hanasamku.com',
+      secondaryLabel: 'CoParent',
+      tribeName: WORLD.householdName,
+      permissionsCsv: 'messaging_direct',
+      auntieReviewUrl: 'https://auntie.tribetails.com/invites/i1',
+    },
+  },
+  { key: 'recovery.requested', source: 'src/recovery/requestPrimaryRecovery.ts', data: { tribeName: WORLD.householdName, method: 'email' } },
+  { key: 'recovery.completed', source: 'src/admin/executePrimaryRecovery.ts', data: { tribeName: WORLD.householdName, claimUrl: CLAIM } },
+];
+
+/** The same sends with no name on file: the fallbacks `lib/inviteNames.ts` and `lib/inviteEmails.ts` use. */
+const NO_NAMES = { primaryDisplayName: 'there', tribeName: 'the household', kinfolkName: 'there' };
+const FALLBACK_SENDS: Array<{ key: string; data: Record<string, unknown> }> = [
+  { key: 'invite.primary', data: { ...NO_NAMES, claimUrl: CLAIM, expiresInDays: 14, Business: 'Your Auntie', business: 'your Auntie' } },
+  { key: 'invite.secondary', data: { primaryDisplayName: 'Your household', secondaryDisplayName: 'there', tribeName: 'the household', claimUrl: CLAIM, expiresInDays: 14 } },
+  { key: 'invite.auntie-notify', data: { primaryDisplayName: 'The household', invitedEmail: 'pawsome@hanasamku.com', tribeName: 'the household', auntieReviewUrl: 'https://auntie.tribetails.com/invites/i1' } },
+];
+
+describe('the direct sends with a repo copy fill every token from their sender (#2487)', () => {
+  it('covers every direct-send seed', () => {
+    const direct = Object.keys(UNSENT_SEEDS).filter((k) => UNSENT_SEEDS[k]!.startsWith('direct send')).sort();
+    expect(DIRECT_SENDS.map((d) => d.key).sort()).toEqual(direct);
+  });
+
+  for (const d of DIRECT_SENDS) {
+    it(`${d.key} <- ${d.source}`, () => {
+      const problems: string[] = [];
+      for (const part of partsOf(d.key)) {
+        for (const p of printedTokens(part.template, d.data)) {
+          if (isBlank(p.value)) problems.push(`${part.name}: {{${p.token}}}`);
+        }
       }
-    }
-    expect(problems).toEqual([]);
-    const html = renderedTexts('invite.verify-email', data)['email html'];
-    // A link keeps its query string whole in the button.
+      expect(problems).toEqual([]);
+      const texts = renderedTexts(d.key, d.data);
+      for (const [name, text] of Object.entries(texts)) {
+        expect(text, `${d.key} ${name}`).not.toMatch(/\{\{|\}\}/);
+        for (const decoy of DECOYS) expect(text, `${d.key} ${name}`).not.toContain(decoy);
+      }
+    });
+  }
+
+  for (const f of FALLBACK_SENDS) {
+    it(`${f.key} with no name on file never reads "Welcome, there" or leaves a lowercase word starting a sentence`, () => {
+      const texts = renderedTexts(f.key, f.data);
+      for (const [name, text] of Object.entries(texts)) {
+        if (name === 'email html') continue;
+        expect(text, `${f.key} ${name}`).not.toMatch(/, there\b(?!,)/);
+        expect(text, `${f.key} ${name}`).not.toMatch(/(^|[.!?]\s+)(there|the household)\b/);
+        // A capital mid-sentence: "invited you, Your household".
+        expect(text, `${f.key} ${name}`).not.toMatch(/[a-z,] +(Your|The) household\b/);
+      }
+    });
+  }
+
+  it('a link keeps its query string whole in the button', () => {
+    const html = renderedTexts('invite.verify-email', DIRECT_SENDS[0]!.data)['email html'];
     expect(html).toContain('href="https://kinfolk.tribetails.com/account/action?mode=verifyEmail&oobCode=abc"');
+  });
+
+  it('the portal invite carries its accept link as a button', () => {
+    const html = renderedTexts('invite.primary', DIRECT_SENDS[1]!.data)['email html'];
+    expect(html).toContain(`href="${CLAIM}"`);
   });
 });

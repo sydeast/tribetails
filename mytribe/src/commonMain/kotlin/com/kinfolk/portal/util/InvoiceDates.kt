@@ -55,3 +55,14 @@ fun invoiceLineUnits(qty: Double?, unitCents: Long?): String {
     val qtyLabel = if (qty % 1.0 == 0.0) qty.toLong().toString() else qty.toString()
     return "$qtyLabel x ${formatUsd(unitCents.toDouble() / 100.0)}"
 }
+
+/**
+ * #1974: "includes $50.00 off" under a line whose amount already has a
+ * discount taken out, or "" when there is none. Same words as the web portal,
+ * the admin and the PDF.
+ */
+fun invoiceLineDiscount(discountCents: Long?): String =
+    if (discountCents != null && discountCents > 0L) "includes ${formatUsd(discountCents.toDouble() / 100.0)} off" else ""
+
+/** #1974: "(10.00)", the invoice mock's notation for an amount taken off. */
+fun invoiceDiscountAmount(cents: Long): String = "(${formatUsd(cents.toDouble() / 100.0).removePrefix("$")})"

@@ -1,5 +1,8 @@
 import { buildVisitDateData, AUNTIE_SCHEDULE_URL, PORTAL_URL } from '../../src/notifications/visitDates';
 import { VISIT_MS, WORLD } from './noticeWorld';
+
+const P = 'https://kinfolk.tribetails.com';
+const A = 'https://auntie.tribetails.com';
 import type { AudienceStream } from '../../src/notifications/types';
 
 /**
@@ -23,6 +26,10 @@ export interface EmitterFixture {
   aboutRex: boolean;
   /** Tokens whose value is known exactly, when the template prints them. */
   expect?: Record<string, string>;
+  /** The target the call site passes explicitly, when it does not leave it to the dispatcher. */
+  target?: { targetType: string; targetId: string };
+  /** The exact `{{link}}` this copy carries, where the sweep pins it. */
+  link?: string;
 }
 
 export function fixtureId(key: string, source: string): string {
@@ -53,7 +60,14 @@ function fx(
   source: string,
   copies: Copy[],
   data: Record<string, unknown>,
-  opts: { aboutRex?: boolean; expect?: Record<string, string>; variant?: string } = {},
+  opts: {
+    aboutRex?: boolean;
+    expect?: Record<string, string>;
+    variant?: string;
+    target?: { targetType: string; targetId: string };
+    /** Per stream: the exact link each copy carries. */
+    links?: Partial<Record<AudienceStream, string>>;
+  } = {},
 ): EmitterFixture[] {
   return copies.map((c) => ({
     key,
@@ -63,6 +77,8 @@ function fx(
     aboutRex: opts.aboutRex ?? false,
     ...(opts.expect ? { expect: opts.expect } : {}),
     ...(opts.variant ? { variant: opts.variant } : {}),
+    ...(opts.target ? { target: opts.target } : {}),
+    ...(opts.links?.[c.stream] ? { link: opts.links[c.stream] } : {}),
   }));
 }
 
@@ -167,7 +183,7 @@ export const EMITTER_FIXTURES: EmitterFixture[] = [
     startTimeMsList: [VISIT_MS],
     requestedDateList: [],
     visitCount: 1,
-  }, REX),
+  }, { ...REX, links: { business: `${A}/bookings?requestId=bat1&requestKinfolkId=fam1` } }),
   ...fx('kincare.booking.confirm', S.approve, [HOUSEHOLD_COPY, OFFICE_COPY], {
     ...REQUEST_BASE, ...visitDates(), ...OLD_DATE_TOKENS, note: null,
   }, REX),
@@ -187,7 +203,10 @@ export const EMITTER_FIXTURES: EmitterFixture[] = [
   ...fx('kincare.changed', S.householdNotice, [HOUSEHOLD_COPY, OFFICE_COPY], { ...VISIT_BASE, changedFields: ['startTime'] }, REX),
   ...fx('kincare.changed', S.addKin, [HOUSEHOLD_COPY, OFFICE_COPY], { ...KIN_ADDED, ...visitDates() }, REX),
   ...fx('kincare.reschedule.requested', S.bookingsWrite, [OFFICE_COPY], { ...VISIT_BASE, reason: 'We will be away.' }, REX),
-  ...fx('kincare.cancel.requested', S.bookingsWrite, [OFFICE_COPY], { ...VISIT_BASE, reason: 'We will be away.' }, REX),
+  ...fx('kincare.cancel.requested', S.bookingsWrite, [OFFICE_COPY], { ...VISIT_BASE, reason: 'We will be away.' }, {
+    ...REX,
+    links: { business: `${A}/bookings?bookingId=vis_vis1` },
+  }),
   ...fx('kincare.cancel.declined', S.bookingsWrite, [HOUSEHOLD_COPY], {
     ...VISIT_BASE, reason: 'We will be away.', note: 'It is too close to the day.',
   }, REX),
@@ -200,7 +219,7 @@ export const EMITTER_FIXTURES: EmitterFixture[] = [
   }, { ...REX, variant: 'no note' }),
   ...fx('kin.removal.requested', S.kinWrites, [OFFICE_COPY], {
     kinfolkId: 'fam1', kinId: 'k1', flatKinId: 'k1', kinName: 'Rex', reason: 'Rex moved in with family.', requestId: 'req1',
-  }, REX),
+  }, { ...REX, target: { targetType: 'kinfolk', targetId: 'fam1' }, links: { business: `${A}/bookings?kinRemoval=req1` } }),
   ...fx('kin.removal.requested', S.kinWrites, [OFFICE_COPY], {
     kinfolkId: 'fam1', kinId: 'k1', flatKinId: 'k1', kinName: 'Rex', reason: null, requestId: 'req1',
   }, { ...REX, variant: 'no reason' }),
@@ -209,7 +228,7 @@ export const EMITTER_FIXTURES: EmitterFixture[] = [
   ...fx('kin.removal.declined', S.kinRemoval, [HOUSEHOLD_COPY], { kinfolkId: 'fam1', kinId: 'k1', kinName: 'Rex', note: null, requestId: 'req1' }, { ...REX, variant: 'no note' }),
   ...fx('kin.removal.archived', S.kinRemoval, [HOUSEHOLD_COPY], { kinfolkId: 'fam1', kinId: 'k1', kinName: 'Rex', note: 'Thank you for telling us.', requestId: 'req1' }, REX),
   ...fx('kincare.auntie.on_my_way', S.visitStep, [HOUSEHOLD_COPY], stepData('on_my_way', { etaMinutes: 10 }), REX),
-  ...fx('kincare.auntie.arrived', S.visitStep, [HOUSEHOLD_COPY], stepData('arrived'), REX),
+  ...fx('kincare.auntie.arrived', S.visitStep, [HOUSEHOLD_COPY], stepData('arrived'), { ...REX, links: { kinfolk: `${P}/schedule/vis1` } }),
   ...fx('kincare.auntie.departed', S.visitStep, [HOUSEHOLD_COPY], stepData('departed'), REX),
   ...fx('kincare.note.kinfolk', S.noteCreate, [OFFICE_COPY], {
     ...NOTE_BASE, noteId: 'n1', authorUid: 'cli1', preview: 'Please top up the water bowl.',
@@ -222,7 +241,7 @@ export const EMITTER_FIXTURES: EmitterFixture[] = [
   }, REX),
   ...fx('assignment.assigned', S.approve, [AUNTIE_COPY], {
     ...REQUEST_BASE, assignedAuntieUid: AUNTIE, ...visitDates(AUNTIE_SCHEDULE_URL), ...OLD_DATE_TOKENS,
-  }, REX),
+  }, { ...REX, links: { staff: `${A}/bookings?requestId=bat1&requestKinfolkId=fam1` } }),
   ...fx('assignment.assigned', S.bookingsWrite, [AUNTIE_COPY], {
     ...VISIT_BASE, assignedAuntieUid: AUNTIE, ...visitDates(AUNTIE_SCHEDULE_URL), ...OLD_DATE_TOKENS,
   }, REX),
@@ -235,9 +254,16 @@ export const EMITTER_FIXTURES: EmitterFixture[] = [
     items: [{ bookingId: 'vis1', kinfolkId: 'fam1', serviceName: WORLD.serviceName, auntieDisplayName: 'June', startTimeMs: VISIT_MS }],
   }),
   // ── KinTales ──────────────────────────────────────────────────────────────
-  ...fx('kintale.published', S.taleCreate, [HOUSEHOLD_COPY], { kinfolkId: 'fam1', taleId: 'tale1', authorDisplayName: 'June' }, REX),
+  ...fx('kintale.published', S.taleCreate, [HOUSEHOLD_COPY], { kinfolkId: 'fam1', taleId: 'tale1', authorDisplayName: 'June' }, {
+    ...REX,
+    links: { kinfolk: `${P}/kintales?tale=tale1` },
+  }),
   ...fx('kintale.published', S.taleUpdate, [HOUSEHOLD_COPY], { kinfolkId: 'fam1', taleId: 'tale1', authorDisplayName: 'June' }, REX),
-  ...fx('kintale.published', S.visitStep, [HOUSEHOLD_COPY], stepData('report_sent'), REX),
+  // #2487: the visit-step send names the KinTale it announces, so its link opens that tale.
+  ...fx('kintale.published', S.visitStep, [HOUSEHOLD_COPY], stepData('report_sent', { taleId: 'tale1' }), {
+    ...REX,
+    links: { kinfolk: `${P}/kintales?tale=tale1` },
+  }),
   ...fx('kintale.note.added', S.taleUpdate, [HOUSEHOLD_COPY], {
     kinfolkId: 'fam1', taleId: 'tale1', authorDisplayName: 'June', bodyChanged: true, mediaAdded: false, addedMediaCount: 0,
   }, REX),
@@ -245,7 +271,10 @@ export const EMITTER_FIXTURES: EmitterFixture[] = [
     kinfolkId: 'fam1', taleId: 'tale1', commentId: 'c1', authorUid: 'cli1', authorRole: 'kinfolk', authorName: 'Maya', taleTitle: 'A sunny walk', preview: 'He looks so happy.',
   }, REX),
   // ── Money ─────────────────────────────────────────────────────────────────
-  ...fx('invoice.new', S.createInvoice, [HOUSEHOLD_COPY, OFFICE_COPY], INVOICE_BASE, BILL),
+  ...fx('invoice.new', S.createInvoice, [HOUSEHOLD_COPY, OFFICE_COPY], INVOICE_BASE, {
+    ...BILL,
+    links: { kinfolk: `${P}/invoices/inv1`, business: `${A}/invoices?invoiceId=inv1` },
+  }),
   ...fx('invoice.new', S.resendQuote, [HOUSEHOLD_COPY, OFFICE_COPY], { ...INVOICE_BASE, isQuote: true, resent: true }, BILL),
   ...fx('invoice.new', S.reviewDraft, [HOUSEHOLD_COPY], INVOICE_BASE, BILL),
   ...fx('invoice.new', S.reviewDraft, [HOUSEHOLD_COPY], { ...INVOICE_BASE, isQuote: true }, { ...BILL, variant: 'a quote' }),
@@ -287,7 +316,7 @@ export const EMITTER_FIXTURES: EmitterFixture[] = [
   }, { variant: 'no name on the kinfolk record' }),
   ...fx('message.reply', S.conversations, [HOUSEHOLD_COPY], {
     kinfolkId: 'fam1', kinfolkName: WORLD.primaryName, messageId: 'm2', preview: 'Noon works.',
-  }),
+  }, { target: { targetType: 'conversation', targetId: 'fam1' }, links: { kinfolk: `${P}/messages` } }),
   ...fx('pets.updated', S.familyKin, [HOUSEHOLD_COPY, OFFICE_COPY], { kinfolkId: 'fam1', kinId: 'k1' }),
   ...fx('pet.marked.inactive', S.familyKin, [OFFICE_COPY], { kinfolkId: 'fam1', kinId: 'k1', kinName: 'Rex', status: 'memorial' }, REX),
   ...fx('profile.updated', S.profileWrite, [HOUSEHOLD_COPY, OFFICE_COPY], { kinfolkId: 'fam1' }),

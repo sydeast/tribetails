@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.domain
 
 import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResultCredit
+import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResultEarlierCredit
 import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResultUse
 import java.time.Instant
 import java.time.ZoneId
@@ -82,4 +83,18 @@ fun creditApplicationLines(credit: GetAccountCreditHistoryResultCredit, zone: Zo
 fun creditUseLine(use: GetAccountCreditHistoryResultUse, zone: ZoneId = ZoneId.systemDefault()): String {
     val invoice = use.invoiceNumber?.takeIf { it.isNotBlank() } ?: "an invoice"
     return "${formatCentsUsd(use.amountCents)} on $invoice, ${creditDate(use.usedAtMs, zone)}"
+}
+
+/**
+ * #1939: credit in the balance that no listed credit accounts for, so the
+ * credits listed, less the credit used, are the balance. Same words as the web
+ * admin, the desktop console and both portals.
+ */
+const val EARLIER_CREDIT_LABEL: String = "Earlier credit"
+
+/** "Not used yet", "$1,058.00 of $2,015.00 applied", or "All applied". */
+fun earlierCreditStatusLine(earlier: GetAccountCreditHistoryResultEarlierCredit): String {
+    if (earlier.remainingCents <= 0L) return "All applied"
+    val used = earlier.amountCents - earlier.remainingCents
+    return if (used > 0L) "${formatCentsUsd(used)} of ${formatCentsUsd(earlier.amountCents)} applied" else "Not used yet"
 }

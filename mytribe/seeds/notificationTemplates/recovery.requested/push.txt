@@ -1,0 +1,1 @@
+Account recovery asked. Someone asked to recover the main account for {{tribeName}}.

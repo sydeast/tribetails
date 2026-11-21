@@ -353,3 +353,38 @@ export function declinedRowLabel(
   const actor = quoteActorLabel(invoice, viewerUid);
   return actor ? `${actor} declined this` : 'Declined';
 }
+
+/**
+ * #1974: "includes $50.00 off" under a line whose amount already has a
+ * discount taken out, the wording the admin and the PDF use. Null when there
+ * is none, and on a row rebuilt from a visit (no figure) or from an older
+ * server (no key).
+ */
+export function lineDiscountLine(discountCents: number | null | undefined): string | null {
+  return typeof discountCents === 'number' && discountCents > 0 ? `includes ${formatCentsUsd(discountCents)} off` : null;
+}
+
+/**
+ * #1974: the subtotal and invoice discount an invoice built from lines shows
+ * under them. Null for an invoice with no stored lines, and for an older
+ * server that sends neither key: that invoice keeps the free-text discount row.
+ */
+export function invoiceDiscountFigures(
+  inv: Partial<Pick<InvoiceDto, 'subtotalCents' | 'invoiceDiscountCents'>>,
+): { subtotalCents: number; invoiceDiscountCents: number } | null {
+  const subtotal = inv.subtotalCents;
+  if (typeof subtotal !== 'number') return null;
+  const discount = inv.invoiceDiscountCents;
+  return { subtotalCents: subtotal, invoiceDiscountCents: typeof discount === 'number' && discount > 0 ? discount : 0 };
+}
+
+/** "(10.00)", the invoice mock's notation for an amount taken off. */
+export function discountAmountText(cents: number): string {
+  return `(${formatCentsUsd(cents).replace('$', '')})`;
+}
+
+/** The office's note on the invoice discount, or null when it says nothing. */
+export function discountNoteOf(discount: string | null | undefined): string | null {
+  const note = (discount ?? '').trim();
+  return note === '' ? null : note;
+}
