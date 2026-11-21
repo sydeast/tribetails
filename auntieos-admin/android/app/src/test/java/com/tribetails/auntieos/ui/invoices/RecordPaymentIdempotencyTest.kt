@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.ui.invoices
 
+import com.google.firebase.functions.FirebaseFunctionsException
 import com.tribetails.auntieos.TestFixtures
+import com.tribetails.auntieos.data.contracts.GetInvoiceLedgerResultLedgerPayment
 import com.tribetails.auntieos.data.contracts.decodeRecordPaymentResult
 import com.tribetails.auntieos.data.model.Payment
 import com.tribetails.auntieos.data.repository.AuntieRepository
@@ -8,6 +10,7 @@ import com.tribetails.auntieos.data.repository.InvoiceRepository
 import com.tribetails.auntieos.data.repository.KinCareRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -18,6 +21,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -223,18 +227,165 @@ class RecordPaymentIdempotencyTest {
             val sent = keys(2)
             assertNotEquals(sent[0], sent[1])
         }
+    /**
+     * #2297: reversed. A corrected reference, note, method or date after a lost
+     * reply is the same payment retried. A new key there recorded it twice
+     * when the first press had landed.
+     */
     @Test
-    fun `a corrected reference number is an edit too, not the same payment retried`() =
+    fun `a corrected reference, note, method or date is the same payment retried`() =
         runTest(testDispatcher) {
             coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen settled()
             val vm = loaded()
             advanceUntilIdle()
             vm.recordPayment(payment(reference = "CHK-1"), 120.0)
             advanceUntilIdle()
-            vm.recordPayment(payment(reference = "CHK-2"), 120.0)
+            vm.recordPayment(
+                payment(reference = "CHK-2").copy(
+                    notes = "paid at the door",
+                    paymentMethod = "cash",
+                    date = "2026-05-02",
+                    sendConfirmationEmail = true,
+                ),
+                120.0,
+            )
+            advanceUntilIdle()
+            val sent = keys(2)
+            assertEquals(sent[0], sent[1])
+        }
+
+    private fun ledgerWith(vararg paymentIds: String) = TestFixtures.emptyInvoiceLedger("inv1").copy(
+        ledgerPayments = paymentIds.map { id ->
+            GetInvoiceLedgerResultLedgerPayment(
+                paymentId = id,
+                amountCents = 12000L,
+                amountResolved = true,
+                tipCents = 0L,
+                feeCents = 0L,
+                tipBasis = "gross",
+                reconciles = true,
+                appliedCents = 12000L,
+                unappliedCents = 0L,
+                proceedsCents = 12000L,
+                autoApply = false,
+                appliedInvoiceId = "inv1",
+                appliedInvoiceNumber = "TT-1",
+                method = "check",
+                reference = "CHK-1",
+                date = "2026-05-01",
+                notes = "",
+                recordedBy = null,
+            )
+        },
+    )
+
+    /** Every key a press sent, in order, captured as the calls are made. */
+    private val sentKeys = mutableListOf<String?>()
+
+    @Test
+    fun `#2297 a failed press that landed is found, answered with the same key, and the form closes`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), captureNullable(sentKeys)) } returns lost() andThen settled()
+            val vm = loaded()
+            advanceUntilIdle()
+            // The read after the failure lists the row the first press wrote.
+            coEvery { invoiceRepo.getInvoiceLedger("inv1") } answers { Result.success(ledgerWith(sentKeys.first()!!)) }
+            vm.openRecordPayment()
+            vm.recordPayment(payment(), 120.0)
+            advanceUntilIdle()
+            val sent = keys(2)
+            assertEquals(sent[0], sent[1])
+            val state = vm.uiState.value
+            assertFalse(state.showRecordPayment)
+            assertFalse(state.recordingPayment)
+            assertFalse(state.toastIsError)
+        }
+
+    @Test
+    fun `#2297 a failed press that did not land keeps the form and the key`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen settled()
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.openRecordPayment()
+            vm.recordPayment(payment(), 120.0)
+            advanceUntilIdle()
+            assertTrue(vm.uiState.value.showRecordPayment)
+            assertTrue(vm.uiState.value.toastIsError)
+            vm.recordPayment(payment(), 120.0)
+            advanceUntilIdle()
+            val sent = keys(2)
+            assertEquals(sent[0], sent[1])
+        }
+
+    @Test
+    fun `#2297 when the payments cannot be read the key is pinned, even for a changed amount`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen settled()
+            val vm = loaded()
+            advanceUntilIdle()
+            coEvery { invoiceRepo.getInvoiceLedger("inv1") } returns Result.failure(RuntimeException("offline"))
+            vm.openRecordPayment()
+            vm.recordPayment(payment(amount = 120.0), 120.0)
+            advanceUntilIdle()
+            vm.recordPayment(payment(amount = 60.0), 60.0)
+            advanceUntilIdle()
+            val sent = keys(2)
+            assertEquals(sent[0], sent[1])
+        }
+
+    @Test
+    fun `#2297 a payment entered after Cancel is a new payment, even with the same figures`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen settled()
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.openRecordPayment()
+            vm.recordPayment(payment(), 120.0)
+            advanceUntilIdle()
+            vm.closeRecordPayment()
+            vm.openRecordPayment()
+            vm.recordPayment(payment(), 120.0)
             advanceUntilIdle()
             val sent = keys(2)
             assertNotEquals(sent[0], sent[1])
+        }
+
+    @Test
+    fun `#2297 a landed payment whose answer is lost twice says it was recorded and closes`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), captureNullable(sentKeys)) } returns lost() andThen lost()
+            val vm = loaded()
+            advanceUntilIdle()
+            coEvery { invoiceRepo.getInvoiceLedger("inv1") } answers { Result.success(ledgerWith(sentKeys.first()!!)) }
+            vm.openRecordPayment()
+            vm.recordPayment(payment(), 120.0)
+            advanceUntilIdle()
+            val sent = keys(2)
+            assertEquals(sent[0], sent[1])
+            val state = vm.uiState.value
+            assertFalse(state.showRecordPayment)
+            assertEquals(PAYMENT_LANDED_NO_ANSWER, state.toastMessage)
+        }
+
+    @Test
+    fun `#2297 a refusal from the server is not checked against the payments`() =
+        runTest(testDispatcher) {
+            val refusal = mockk<FirebaseFunctionsException>()
+            every { refusal.code } returns FirebaseFunctionsException.Code.FAILED_PRECONDITION
+            every { refusal.details } returns null
+            every { refusal.message } returns "This invoice is already paid."
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns Result.failure(refusal)
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.openRecordPayment()
+            vm.recordPayment(payment(), 120.0)
+            advanceUntilIdle()
+            // One read on load, one quiet reload after the refusal; no check, and no second call.
+            coVerify(exactly = 1) { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) }
+            assertEquals("Couldn't record payment: This invoice is already paid.", vm.uiState.value.toastMessage)
+            assertFalse(paymentMayHaveLanded(refusal))
+            assertTrue(paymentMayHaveLanded(RuntimeException("internal")))
         }
     @Test
     fun `a recorded payment releases the key, so the next one is its own payment`() =

@@ -213,9 +213,28 @@ class InvoiceDetailViewModel(
      * moves the instant the payment lands and the quiet reload arrives, so
      * folding it in would make a landed first attempt look like an edit to the
      * retry that follows a lost reply.
+     *
+     * #2297: THE KEY BELONGS TO ONE OPENING OF THE FORM. [openRecordPayment]
+     * and [closeRecordPayment] let it go, so a payment entered after Cancel is a
+     * new payment even when every box matches the first (two equal cash
+     * instalments on one day). Before this the key lived as long as the screen,
+     * and that second payment was answered with the first and never recorded.
+     * Only the money is in [paymentSignature] now: fixing a note, the method,
+     * the reference or the date after a lost reply is a retry of the same
+     * payment. After a failed press the payments are read again
+     * ([checkPaymentLanded]); when that read fails as well, nobody knows
+     * whether the first press landed, so [paymentSubmissionPinned] holds the
+     * key for the rest of the opening whatever is edited.
      */
     private var paymentSubmissionKey: String? = null
     private var paymentSubmissionSignature: String? = null
+    private var paymentSubmissionPinned: Boolean = false
+
+    private fun releasePaymentKey() {
+        paymentSubmissionKey = null
+        paymentSubmissionSignature = null
+        paymentSubmissionPinned = false
+    }
 
     /**
      * #1872: the Account credit box on an invoice that can take a payment.
@@ -339,13 +358,19 @@ class InvoiceDetailViewModel(
         loadPaymentsForInvoice(_uiState.value.invoice?.id.orEmpty())
     }
 
-    fun openRecordPayment() { _uiState.value = _uiState.value.copy(showRecordPayment = true) }
+    fun openRecordPayment() {
+        // #2297: a new opening is a new payment.
+        if (!_uiState.value.recordingPayment) releasePaymentKey()
+        _uiState.value = _uiState.value.copy(showRecordPayment = true)
+    }
     /**
      * #2298: does nothing while a payment is being recorded. Closing the form
      * mid-call left nothing to correct when the call then failed.
      */
     fun closeRecordPayment() {
         if (_uiState.value.recordingPayment) return
+        // #2297: a payment entered after the form was closed is a new payment.
+        releasePaymentKey()
         _uiState.value = _uiState.value.copy(showRecordPayment = false)
     }
 
@@ -363,9 +388,13 @@ class InvoiceDetailViewModel(
      * no ledger row and nobody told. The desktop console has made this one call
      * since #881.
      *
-     * If the call fails, NOTHING was recorded and the operator is told. The
-     * dialog stays open and the key is held, so pressing Record again is a
-     * retry the server answers from the first attempt's row if it did land.
+     * If the server refuses, NOTHING was recorded and the operator is told. Any
+     * other failure may have landed (#2297): the payments are read again before
+     * Record can be pressed, and a row under this key means it did, so its
+     * answer is asked for again with the same key and the form closes. Not
+     * found, the dialog stays open and the key is held, so pressing Record
+     * again is a retry the server answers from the first attempt's row if it
+     * lands late.
      *
      * #982: TWO FIGURES, NOT ONE. [appliedAmount] is the dialog's Amount box,
      * the part of the payment that goes on this invoice, and it travels as
@@ -384,19 +413,57 @@ class InvoiceDetailViewModel(
         // to press again, and two attempts overlapping is the ordinary case this
         // protects, not the exotic one.
         val signature = paymentSignature(invoiceId, payment, appliedAmount)
-        if (paymentSubmissionKey == null || paymentSubmissionSignature != signature) {
+        // #2297: a pinned key is held whatever was edited; see the note on it.
+        if (paymentSubmissionKey == null || (!paymentSubmissionPinned && paymentSubmissionSignature != signature)) {
             paymentSubmissionKey = mintPaymentIdempotencyKey()
             paymentSubmissionSignature = signature
+            paymentSubmissionPinned = false
         }
         val key = paymentSubmissionKey
         viewModelScope.launch {
-            val recorded = invoiceRepository.recordPaymentOnInvoice(
+            // #982: the applied part only. The tip is tip and the leftover is
+            // leftover; neither is invoice money.
+            val attempt = invoiceRepository.recordPaymentOnInvoice(
                 payment = payment,
-                // #982: the applied part only. The tip is tip and the leftover
-                // is leftover; neither is invoice money.
                 appliedAmount = appliedAmount,
                 idempotencyKey = key,
-            ).getOrElse { err ->
+            )
+            // #2297: A FAILED PRESS MAY HAVE LANDED. The SDK reports the same
+            // error for a request that never arrived and for a write that
+            // committed with its answer lost. Before the form can be pressed
+            // again, the invoice's payments are read and the row this key
+            // writes is looked for; Record stays busy meanwhile. A refusal
+            // from the server recorded nothing and is not checked.
+            val firstError = attempt.exceptionOrNull()
+            val landed = when {
+                firstError == null -> PaymentLanded.NOT_CHECKED
+                key != null && paymentMayHaveLanded(firstError) -> checkPaymentLanded(invoiceId, key)
+                else -> PaymentLanded.NOT_CHECKED
+            }
+            val recorded = attempt.getOrNull() ?: if (landed == PaymentLanded.YES) {
+                // It landed. The same key again is answered from the stored
+                // row, so this asks for the first press's answer, and finishes
+                // any notice it still owes, without recording anything twice.
+                invoiceRepository.recordPaymentOnInvoice(
+                    payment = payment,
+                    appliedAmount = appliedAmount,
+                    idempotencyKey = key,
+                ).getOrNull() ?: run {
+                    releasePaymentKey()
+                    reloadInvoiceQuietly(invoiceId)
+                    _uiState.value = _uiState.value.copy(
+                        recordingPayment = false,
+                        showRecordPayment = false,
+                        toastMessage = PAYMENT_LANDED_NO_ANSWER,
+                        toastVisible = true,
+                        toastIsError = true,
+                    )
+                    return@launch
+                }
+            } else null
+            if (recorded == null) {
+                val err = firstError ?: IllegalStateException("recordPayment returned no answer")
+                if (landed == PaymentLanded.UNKNOWN) paymentSubmissionPinned = true
                 // The key is kept: the next press of the same entry is a retry
                 // of this one, and the server answers a retry from the row the
                 // first attempt wrote, if it wrote one.
@@ -411,12 +478,20 @@ class InvoiceDetailViewModel(
                 )
                 _uiState.value = _uiState.value.copy(
                     recordingPayment = false,
-                    ledgerAmountDueCents = dueNow ?: _uiState.value.ledgerAmountDueCents,
+                    // #2297: a check that read the payments read them after the
+                    // failure, so its balance is the one that stands.
+                    ledgerAmountDueCents = if (landed == PaymentLanded.NO) {
+                        _uiState.value.ledgerAmountDueCents
+                    } else {
+                        dueNow ?: _uiState.value.ledgerAmountDueCents
+                    },
                     toastMessage = recordPaymentFailureToast(err),
                     toastVisible = true,
                     toastIsError = true,
                 )
-                reloadBalanceQuietly(invoiceId)
+                // #2297: the check is the read after a failure. Only a refusal,
+                // which is not checked, reads the payments here.
+                if (landed == PaymentLanded.NOT_CHECKED) reloadBalanceQuietly(invoiceId)
                 reloadInvoiceQuietly(invoiceId)
                 return@launch
             }
@@ -425,8 +500,7 @@ class InvoiceDetailViewModel(
             // operator meant to make, not a retry of this one, and holding a key
             // across it would have the server hand back the first payment and
             // report it as though the second had landed.
-            paymentSubmissionKey = null
-            paymentSubmissionSignature = null
+            releasePaymentKey()
             // #1511: the server's word that the confirmation reached the household
             // in the app only. Read only when she asked for one.
             val confirmationAppOnly =
@@ -488,6 +562,12 @@ class InvoiceDetailViewModel(
      * Payment amount box of $200, correcting the Amount box from 127.50 to 100
      * leaves every [Payment] field as it was, and a held `ipay_` key would
      * replay the 127.50 settlement.
+     *
+     * #2297: THE MONEY ONLY. The date, method, reference, email, notes and the
+     * confirmation tick are not in it: correcting one of those after a lost
+     * reply is a retry of the same payment, and a new key there recorded it
+     * twice. A retry that ticks the confirmation is still answered with one
+     * (the server finishes a copy the first attempt did not send).
      */
     private fun paymentSignature(invoiceId: String, payment: Payment, appliedAmount: Double): String = listOf(
         invoiceId,
@@ -495,17 +575,10 @@ class InvoiceDetailViewModel(
         payment.amount.toString(),
         payment.tip.toString(),
         payment.fee.toString(),
-        payment.date,
-        payment.paymentMethod,
-        payment.referenceNumber,
-        payment.email,
-        payment.notes.orEmpty(),
-        payment.invoiceNumber,
         payment.autoApply.toString(),
         // #988: a changed credit is a different payment, even when every other
         // box, the payment total included, is the same.
         payment.creditToAccountCents.toString(),
-        payment.sendConfirmationEmail.toString(),
     ).joinToString("\u001F") // a separator no typed field can contain
 
     private fun loadSessionsForKinfolk(kinfolkId: String) {
@@ -1296,6 +1369,28 @@ class InvoiceDetailViewModel(
      * second toast about this read would replace it. A failed read leaves what
      * is shown as it was.
      */
+    /**
+     * #2297: did the press that failed land after all? `recordPayment` writes
+     * its ledger row at `payments/{key}`, and `getInvoiceLedger` lists that row
+     * under this invoice with the key as its `paymentId`. The read is put on
+     * screen either way, so the operator sees the payments as they stand now.
+     */
+    private suspend fun checkPaymentLanded(invoiceId: String, key: String): PaymentLanded =
+        invoiceRepository.getInvoiceLedger(invoiceId).fold(
+            onSuccess = { ledger ->
+                _uiState.value = _uiState.value.copy(
+                    linkedPayments = ledger.ledgerPayments,
+                    clientPayments = ledger.unlinkedKinfolkPayments,
+                    ledgerAmountDueCents = ledger.amountDueCents,
+                )
+                if (ledger.ledgerPayments.any { it.paymentId == key }) PaymentLanded.YES else PaymentLanded.NO
+            },
+            onFailure = {
+                AuntieLog.e("Payment check read failed for invoice $invoiceId", it)
+                PaymentLanded.UNKNOWN
+            },
+        )
+
     private fun reloadBalanceQuietly(invoiceId: String) {
         viewModelScope.launch {
             invoiceRepository.getInvoiceLedger(invoiceId)
@@ -1578,6 +1673,42 @@ internal fun archiveSuccessMessage(
  * went through, so the toast must not say the payment was not recorded, and it
  * carries no developer wording.
  */
+/** #2297: what the check after a failed Record found. */
+internal enum class PaymentLanded { NOT_CHECKED, YES, NO, UNKNOWN }
+
+/**
+ * #2297: the callable codes that are the server's own refusal. With one of
+ * these the server read the request and said no, so nothing was recorded.
+ * Every other failure (`INTERNAL`, `UNAVAILABLE`, `DEADLINE_EXCEEDED`, an
+ * answer that could not be read, an error with no code) may have landed.
+ * The same list as admin web's `paymentMayHaveLanded`.
+ */
+private val PAYMENT_REFUSAL_CODES = setOf(
+    com.google.firebase.functions.FirebaseFunctionsException.Code.INVALID_ARGUMENT,
+    com.google.firebase.functions.FirebaseFunctionsException.Code.FAILED_PRECONDITION,
+    com.google.firebase.functions.FirebaseFunctionsException.Code.PERMISSION_DENIED,
+    com.google.firebase.functions.FirebaseFunctionsException.Code.UNAUTHENTICATED,
+    com.google.firebase.functions.FirebaseFunctionsException.Code.NOT_FOUND,
+    com.google.firebase.functions.FirebaseFunctionsException.Code.ALREADY_EXISTS,
+    com.google.firebase.functions.FirebaseFunctionsException.Code.OUT_OF_RANGE,
+    com.google.firebase.functions.FirebaseFunctionsException.Code.RESOURCE_EXHAUSTED,
+    com.google.firebase.functions.FirebaseFunctionsException.Code.ABORTED,
+)
+
+/** #2297: true when a failed Record may have recorded the payment anyway. */
+internal fun paymentMayHaveLanded(err: Throwable): Boolean {
+    val code = (err as? com.google.firebase.functions.FirebaseFunctionsException)?.code ?: return true
+    return code !in PAYMENT_REFUSAL_CODES
+}
+
+/**
+ * #2297: the press that failed did land, and the second ask for its answer
+ * failed as well. The payment is on the invoice; only its answer is missing.
+ * The same words as admin web and the desktop console.
+ */
+internal const val PAYMENT_LANDED_NO_ANSWER =
+    "The payment was recorded, but this screen did not get its details back. Check the payments below before recording another one."
+
 internal fun recordPaymentFailureToast(err: Throwable): String =
     if (err is com.tribetails.auntieos.data.repository.PaymentAnswerUnreadable) {
         com.tribetails.auntieos.data.repository.PAYMENT_ANSWER_UNREADABLE_MESSAGE

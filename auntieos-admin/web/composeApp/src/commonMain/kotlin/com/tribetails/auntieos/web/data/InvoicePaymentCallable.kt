@@ -184,36 +184,116 @@ const val PAYMENT_ANSWER_UNREADABLE_MESSAGE: String =
  * the money twice. A changed entry is a different payment and gets a new key.
  * [release] after the server has answered Ok, so a second, genuinely identical
  * payment (two equal cash instalments on one day) is not replayed as the first.
+ *
+ * #2297, the same rules as admin web and Android:
+ *   - ONE OPENING, ONE KEY. The dialog calls [release] when it opens and when
+ *     it is dismissed, so a payment entered after Cancel is a new payment even
+ *     when every box matches. Before this the key lived as long as the invoice
+ *     screen, and that second payment was answered with the first.
+ *   - ONLY THE MONEY decides "a changed entry" ([paymentEntryFigures]). Fixing
+ *     the note, method, reference or date after a lost reply is a retry.
+ *   - [pin] when a failed press could not be checked against the invoice's
+ *     payments: nobody knows whether it landed, so the key is held for the rest
+ *     of the opening whatever is edited.
  */
 class PaymentSubmissionKeys(private val mint: () -> String = { mintPaymentIdempotencyKey() }) {
     private var held: Pair<String, String>? = null
+    private var pinned: Boolean = false
 
     fun keyFor(signature: String): String {
-        held?.let { (sig, key) -> if (sig == signature) return key }
+        held?.let { (sig, key) -> if (pinned || sig == signature) return key }
         val minted = mint()
         held = signature to minted
+        pinned = false
         return minted
+    }
+
+    /** The key held now, or null. */
+    val current: String? get() = held?.second
+
+    fun pin() {
+        if (held != null) pinned = true
     }
 
     fun release() {
         held = null
+        pinned = false
     }
 }
+
+/**
+ * #2297: the money figures of one entry, which are all that make two presses
+ * different payments. The invoice is in it so a key can never cross invoices.
+ */
+fun paymentEntryFigures(entry: InvoicePaymentEntry): String = listOf(
+    entry.payment.invoiceId,
+    entry.payment.amount.toString(),
+    entry.payment.tip.toString(),
+    entry.applyAmount.toString(),
+    entry.fee.toString(),
+    entry.creditToAccountCents.toString(),
+).joinToString("\u001F")
+
+/**
+ * #2297: the press that failed did land, and the second ask for its answer
+ * failed as well. The payment is on the invoice; only its answer is missing.
+ * The same words as admin web and Android.
+ */
+const val PAYMENT_LANDED_NO_ANSWER: String =
+    "The payment was recorded, but this screen did not get its details back. Check the payments below before recording another one."
+
+/** #2297: the [WriteResult.Err.code] that marks [PAYMENT_LANDED_NO_ANSWER]. The dialog closes on it. */
+const val PAYMENT_LANDED_NO_ANSWER_CODE: String = "payment_landed_no_answer"
 
 /**
  * The dialog's submit, outside Compose so it is testable: take the held key for
  * this entry, call the callable, release the key only on Ok. On Err the key is
  * kept, so a re-press of the same entry sends the same key.
+ *
+ * #2297: A FAILED PRESS MAY HAVE LANDED. This console cannot tell a refusal
+ * from a lost answer by the error alone, so after every failure the invoice's
+ * payments are read and the row this key writes is looked for, before the
+ * dialog can be pressed again.
+ *   - Found: it landed. The same key is sent once more, which the server
+ *     answers from the stored row (finishing any notice it still owes) without
+ *     recording anything twice. If that ask fails too, the result is an Err
+ *     carrying [PAYMENT_LANDED_NO_ANSWER_CODE], and the key is let go.
+ *   - Not found: the Err is returned and the key is kept.
+ *   - The read failed: the Err is returned and the key is pinned.
  */
 suspend fun submitInvoicePayment(
     client: FirestoreClient,
     entry: InvoicePaymentEntry,
     keys: PaymentSubmissionKeys,
+): WriteResult<RecordPaymentOutcome> = submitInvoicePayment(
+    entry = entry,
+    keys = keys,
+    record = { key -> client.recordInvoicePayment(entry, idempotencyKey = key) },
+    readLedger = { client.getInvoiceLedgerPayments(entry.payment.invoiceId) },
+)
+
+/** [submitInvoicePayment] with its two calls passed in, so each order of answers is a unit test. */
+suspend fun submitInvoicePayment(
+    entry: InvoicePaymentEntry,
+    keys: PaymentSubmissionKeys,
+    record: suspend (key: String) -> WriteResult<RecordPaymentOutcome>,
+    readLedger: suspend () -> WriteResult<InvoiceLedgerPayments>,
 ): WriteResult<RecordPaymentOutcome> {
-    // A data class's toString names every field, so a field added later cannot
-    // fall out of the comparison.
-    val key = keys.keyFor(entry.toString())
-    val r = client.recordInvoicePayment(entry, idempotencyKey = key)
-    if (r is WriteResult.Ok) keys.release()
-    return r
+    val key = keys.keyFor(paymentEntryFigures(entry))
+    val first = record(key)
+    if (first is WriteResult.Ok) {
+        keys.release()
+        return first
+    }
+    val landed = when (val ledger = readLedger()) {
+        is WriteResult.Ok -> ledger.value.linked.any { it.paymentId == key }
+        is WriteResult.Err -> {
+            keys.pin()
+            return first
+        }
+    }
+    if (!landed) return first
+    val again = record(key)
+    keys.release()
+    return if (again is WriteResult.Ok) again else WriteResult.Err(PAYMENT_LANDED_NO_ANSWER, PAYMENT_LANDED_NO_ANSWER_CODE)
 }
