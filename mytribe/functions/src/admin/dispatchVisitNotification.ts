@@ -348,7 +348,18 @@ export async function dispatchVisitNotificationCore(
   if (args.reportPreviewUrl) data.reportPreviewUrl = args.reportPreviewUrl;
   // #2487: the KinTale a `report_sent` announces, so the notice opens that
   // KinTale (the dispatcher targets a `taleId` before a visit) and names its Kin.
-  if (args.event === 'report_sent' && args.reportId) data.taleId = args.reportId;
+  // Only this household's KinTale: the id comes from the caller, and a notice
+  // must never carry another household's record id in its link.
+  if (args.event === 'report_sent' && args.reportId && !args.reportId.includes('/')) {
+    try {
+      const tale = (await db().doc(`kin_care_reports/${args.reportId}`).get()).data() as
+        | { kinfolkId?: unknown }
+        | undefined;
+      if (tale?.kinfolkId === args.familyId) data.taleId = args.reportId;
+    } catch {
+      // A failed read sends the notice about the visit instead, as before #2487.
+    }
+  }
 
   const enqueued = await enqueueNotificationDetailed({
     key,
