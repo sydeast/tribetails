@@ -68,12 +68,11 @@ const PATTERNS: Array<[string, RegExp]> = [
  *   1. THE GATED PATH ITSELF, and the machinery that carries what it already
  *      passed (the dispatcher, the sweeps, promoteQueued, the channel senders).
  *   2. NOT A SEND AT ALL: reading, listing, marking read, archiving, cancelling.
- *   3. KNOWN BYPASSES, all operator-initiated, none on a schedule. These reach a
- *      household without passing the gate, and they are listed here rather than
- *      fixed because the approved scope of this work is the dispatcher
- *      chokepoint. They are named in the PR body. Nothing here fires by itself:
- *      each one needs the operator to press a button, and the operator is the
- *      person who decides when the product opens.
+ *   3. NOT BEHIND THE SWITCH, ON PURPOSE. A single message the owner writes to
+ *      one household goes with the switch off (#1834, ruling 2026-11-20), and
+ *      so do invites and password resets. Nothing here fires by itself: each
+ *      one needs a person to press a button. Broadcasts used to be listed here
+ *      and are now held (`notifications/sendSwitchRules.ts`).
  */
 const ALLOWED = new Map<string, string>([
   // ── 1. the gated path ──────────────────────────────────────────────────────
@@ -111,9 +110,10 @@ const ALLOWED = new Map<string, string>([
   ],
   ['mytribe/functions/src/lib/email.ts', 'the email primitive itself; it addresses nobody on its own'],
   [
-    'mytribe/functions/src/admin/sendHouseholdPush.ts',
-    'GATED (#2061): one approved Communicate push to one household. Reads loadHouseholdSendGate ' +
-      'before it writes the notice or pushes, and the household message.reply push setting after.',
+    'mytribe/functions/src/admin/broadcastMessage.ts',
+    'HELD (#1834, ruling 2026-11-20): a broadcast to many households. Asks broadcastHoldReason ' +
+      '(the switch, then the broadcast notice) before the row, the roster or any send; a resumed ' +
+      'fan-out asks again and stops. Then emails/texts/pushes directly through resolveChannels.',
   ],
   ['mytribe/functions/src/lib/firestoreAdmin.ts', 'the admin SDK shim; exposes messaging(), sends nothing'],
 
@@ -135,19 +135,20 @@ const ALLOWED = new Map<string, string>([
     'messages.create on the ANTHROPIC client, not Twilio; drafts copy, sends nothing',
   ],
 
-  // ── 3. known bypasses, operator-initiated, reported not fixed ──────────────
+  // ── 3. not behind the switch, on purpose ───────────────────────────────────
   [
-    'mytribe/functions/src/admin/broadcastMessage.ts',
-    'BYPASS: emails/texts/pushes households directly and writes its own inbox doc. ' +
-      'Honors resolveChannels but not the gate. Operator presses Send; never scheduled.',
+    'mytribe/functions/src/admin/sendHouseholdPush.ts',
+    'ON PURPOSE (#1834, ruling 2026-11-20): one approved Communicate push to one household, a single ' +
+      'message, so the switch does not hold it. The message.reply notice switch and the household push setting still do.',
   ],
   [
     'mytribe/functions/src/admin/sendExternalMessage.ts',
-    'BYPASS: one operator-composed email or text to one household. Never scheduled.',
+    'ON PURPOSE (#1834, ruling 2026-11-20): one operator-composed email or text to one household, ' +
+      'a single message, so the switch does not hold it. Never scheduled.',
   ],
   [
     'mytribe/functions/src/admin/sendGeneratedDraft.ts',
-    'BYPASS (#2408): the entry that holds the whole of one operator-composed Text draft, which goes ' +
+    'ON PURPOSE (#1834, #2408): the entry that holds the whole of one operator-composed Text draft, which goes ' +
       'through sendExternalMessage.ts above. Written only for a text about to go, removed if none went. Never scheduled.',
   ],
   [

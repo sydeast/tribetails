@@ -104,8 +104,9 @@ internal const val SCHEDULE_NOTE_OFF_WITH_HOUR =
 
 /** What the switch's own line says: what off holds back, and what it does not. */
 internal const val HOUSEHOLD_SWITCH_TIP =
-    "Off, notices to households are held back, a KinTale or an invoice you send included. " +
-        "Four things still go: a broadcast, a single email or text message you write, an invite, a password reset. " +
+    "Off, notices to households are held back, a KinTale or an invoice you send included, and so are broadcasts and marketing blasts. " +
+        "A message you write to one household still goes: an email, a text, a push, an inbox reply. " +
+        "Invites and password resets still go too. " +
         "Your own alerts and the daily digest still reach you."
 
 internal fun notificationScheduleNote(live: Boolean, hour: Int?): String? = when {

@@ -142,7 +142,7 @@ export const SCHEDULE_NOTE_OFF_WITH_HOUR =
   'A send time is set, but notices to households are off, so they are held back.';
 /** The switch's tooltip: what off holds back, and what it does not. */
 export const HOUSEHOLD_SWITCH_TIP =
-  'Off, notices to households are held back, a KinTale or an invoice you send included. Four things still go: a broadcast, a single email or text message you write, an invite, a password reset. Your own alerts and the daily digest still reach you.';
+  'Off, notices to households are held back, a KinTale or an invoice you send included, and so are broadcasts and marketing blasts. A message you write to one household still goes: an email, a text, a push, an inbox reply. Invites and password resets still go too. Your own alerts and the daily digest still reach you.';
 export function scheduleNote(draft: Draft): string | null {
   const hour = hourFieldNumber(draft.householdNotificationHour);
   if (draft.householdNotificationsLive && hour === null) return SCHEDULE_NOTE_ON_NO_HOUR;

@@ -1,5 +1,7 @@
 package com.tribetails.auntieos.ui.marketing
 
+import com.tribetails.auntieos.domain.HeldSendKind
+import com.tribetails.auntieos.domain.heldSendText
 import com.tribetails.auntieos.ui.communicate.BroadcastCriteria
 import com.tribetails.auntieos.ui.communicate.SegmentKind
 import java.time.LocalDate
@@ -497,6 +499,8 @@ data class MarketingBlastRow(
     val queued: Int = 0,
     /** #823. The frozen roster's size. 0 on a campaign written before this shipped. */
     val audienceSize: Int = 0,
+    /** #1834. Copies held at the send time and never sent; counted inside [dispatched]. */
+    val heldAtSend: Int = 0,
 ) {
     /** What the row is called in the list. The key is the fallback for an unnamed campaign. */
     /** #1587: the operator's title, else the campaign's name. Never the wire key. */
@@ -532,6 +536,7 @@ fun decodeBlasts(raw: Map<String, Any?>?): List<MarketingBlastRow> {
             fanoutState = BlastFanoutState.fromWire(b["fanoutState"] as? String),
             queued = (b["queued"] as? Number)?.toInt() ?: 0,
             audienceSize = (b["audienceSize"] as? Number)?.toInt() ?: 0,
+            heldAtSend = (b["heldAtSend"] as? Number)?.toInt() ?: 0,
         )
     }.sortedByDescending { it.fireAtMs }
 }
@@ -560,6 +565,8 @@ fun decodeCancelResult(raw: Map<String, Any?>?): CancelBlastResult = CancelBlast
 
 /** Maps a raw callable error to operator-facing text (server sentinels + passthrough). */
 fun blastErrorText(message: String): String = when {
+    // #1834: held while notices to households are off, or the campaign is turned off.
+    heldSendText(message, HeldSendKind.Blast) != null -> heldSendText(message, HeldSendKind.Blast)!!
     message.contains("no_recipients", ignoreCase = true) ->
         "That audience has nobody with a MyTribe account right now. Nothing was scheduled."
     message.contains("audience_too_large", ignoreCase = true) ->
