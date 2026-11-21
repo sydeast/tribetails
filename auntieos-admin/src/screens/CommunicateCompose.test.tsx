@@ -343,6 +343,21 @@ describe('CommunicateCompose screen', () => {
     expect(screen.queryByRole('button', { name: 'Check again' })).not.toBeInTheDocument();
     expect(getBroadcastProgress).not.toHaveBeenCalled();
   });
+  it('#1834: a broadcast held because notices to households are off reads as held, not failed', async () => {
+    sendBroadcast.mockRejectedValueOnce(new Error('held_household_notices_off'));
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Big news');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^send now$/i }));
+
+    expect(await screen.findByText('Broadcast held')).toBeInTheDocument();
+    expect(screen.getByText(/This broadcast was not sent and will not go out later/)).toBeInTheDocument();
+    expect(screen.queryByText(/Could not send/)).toBeNull();
+    expect(screen.queryByText('Broadcast failed')).toBeNull();
+    // The words survive, so the owner can send it once notices are on.
+    expect(screen.getByLabelText(/message/i)).toHaveValue('Hello kinfolk');
+  });
   it('fails loud, naming the callable, and leaves the form intact for a retry (no data loss)', async () => {
     sendBroadcast.mockRejectedValueOnce(new Error('permission-denied'));
     render(<CommunicateCompose />);

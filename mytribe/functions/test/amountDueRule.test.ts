@@ -40,7 +40,7 @@ const LEGACY_SETTLED_BY_ROWS = { status: 'sent', total: 40 };
 /** What `paidCentsFromPayments` returns for a row set that covers the $40 bill. */
 const ROWS_COVER = 4000;
 
-describe('the rule: a stated balance is untouched, a missing one is derived', () => {
+describe('the rule: a stated balance stands (capped by #2435), a missing one is derived', () => {
   it('reads a stated balance verbatim, in either field, including zero and negative', () => {
     expect(statedAmountDueCents({ amountDue: 40 })).toBe(4000);
     expect(statedAmountDueCents({ amountDue: 0 })).toBe(0);
@@ -107,6 +107,43 @@ describe('the rule: a stated balance is untouched, a missing one is derived', ()
   });
 });
 
+/**
+ * #2435 (operator ruling 2026-11-20): the balance is the total less what has
+ * been applied. A stated balance never asks for more than that; a lower stated
+ * figure (an invoice brought over part paid) stands.
+ */
+describe('#2435 a stated balance never asks for more than the total less what has been applied', () => {
+  const STALE = { status: 'open', total: 40, amountDue: 40 };
+  it('the named case: total $40, $15 recorded, $40 stated, owes $25', () => {
+    expect(amountDueCentsOf(STALE, 1500)).toBe(2500);
+    expect(amountDueCentsOf({ status: 'open', totalCents: 4000, amountDueCents: 4000 }, 1500)).toBe(2500);
+    expect(amountDueDollarsOf(STALE, 1500)).toBe(25);
+  });
+  it('a stated balance that agrees with the rows is unchanged', () => {
+    expect(amountDueCentsOf({ status: 'open', total: 40, amountDue: 25 }, 1500)).toBe(2500);
+    expect(amountDueCentsOf(STALE, 0)).toBe(4000);
+    expect(amountDueCentsOf(STALE, null)).toBe(4000);
+  });
+  it('an invoice brought over part paid keeps its lower stated balance', () => {
+    // $40 total, $25 still owed, the earlier $15 never written as a row here.
+    expect(amountDueCentsOf({ status: 'open', total: 40, amountDue: 25 }, 0)).toBe(2500);
+    expect(amountDueCentsOf({ status: 'open', total: 40, amountDue: 25 }, null)).toBe(2500);
+    expect(amountDueCentsOf({ status: 'open', total: 40, amountDue: 10 }, 1500)).toBe(1000);
+  });
+  it('a stated balance above the total is capped at it, even by a pure reader with no rows', () => {
+    expect(amountDueCentsOf({ status: 'open', total: 40, amountDue: 55 }, null)).toBe(4000);
+  });
+  it('rows that already cover the total leave the stated figure for #2410 to refuse, never read as settled', () => {
+    expect(amountDueCentsOf(STALE, 4000)).toBe(4000);
+    expect(amountDueCentsOf(STALE, 5000)).toBe(4000);
+  });
+  it('a credit, a stated zero and a doc with no total pass through as stated', () => {
+    expect(amountDueCentsOf({ status: 'credit', total: -25, amountDue: -25 }, 0)).toBe(-2500);
+    expect(amountDueCentsOf({ status: 'paid', total: 40, amountDue: 0 }, 1500)).toBe(0);
+    expect(amountDueCentsOf({ status: 'open', amountDue: 40 }, 1500)).toBe(4000);
+    expect(amountDueCentsOf({ status: 'open', total: 0, amountDue: 40 }, 0)).toBe(4000);
+  });
+});
 /**
  * READER 1: the classifier (lib/invoiceEditPolicy.ts#invoiceStateOf). Everything
  * downstream of the state stamp reads its answer.

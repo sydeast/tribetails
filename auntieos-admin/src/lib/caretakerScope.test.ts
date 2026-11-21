@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   applyCaretakerScope,
-  CARETAKER_FILTERS,
   CARETAKER_MEDIA_TYPES,
+  caretakerFiltersFor,
   isCaretakerScope,
   setCaretakerScope,
 } from './caretakerScope';
@@ -13,26 +13,48 @@ import { mediaTargetQuery } from '../api/media';
 import { type CollectionSpec } from './firestore';
 
 /**
- * An Auntie reads KinTale drafts only, and rules refuse a drafts list that does
- * not say so. Home's "KinTales pending" panel and the KinTales list both read
- * `GENERATED_DRAFTS_QUERY`, so the predicate is added to that one spec here.
+ * An Auntie reads the KinTale drafts she made only (#2443), and rules refuse a
+ * drafts list that does not say so. Home's "KinTales pending" panel and the
+ * KinTales list both read `GENERATED_DRAFTS_QUERY`, so the predicates are added
+ * to that one spec here.
  */
 describe('applyCaretakerScope', () => {
   const KINTALE_DRAFTS = ['communication_type', '==', 'visit_report'];
+  const MINE = ['createdBy', '==', 'auntie-1'];
 
   beforeEach(() => {
     setCaretakerScope(false);
     setTestScope(null);
   });
 
-  it('HAPPY: an Auntie\'s drafts list names the KinTale type', () => {
-    setCaretakerScope(true);
+  it('HAPPY: an Auntie\'s drafts list names the KinTale type and her as the maker', () => {
+    setCaretakerScope(true, 'auntie-1');
     expect(applyCaretakerScope(GENERATED_DRAFTS_QUERY)).toEqual({
       path: 'generated_drafts',
       order: ['createdOn', 'desc'],
       max: 50,
-      filters: [KINTALE_DRAFTS],
+      filters: [KINTALE_DRAFTS, MINE],
     });
+  });
+
+  it('#2443: another Auntie\'s list names her own uid, not the first one\'s', () => {
+    setCaretakerScope(true, 'auntie-1');
+    expect(applyCaretakerScope(GENERATED_DRAFTS_QUERY).filters).toEqual([KINTALE_DRAFTS, MINE]);
+    setCaretakerScope(true, 'auntie-2');
+    expect(applyCaretakerScope(GENERATED_DRAFTS_QUERY).filters).toEqual([KINTALE_DRAFTS, ['createdBy', '==', 'auntie-2']]);
+  });
+
+  it('NEGATIVE: #2443 an Auntie session with no uid asks for nobody\'s drafts, never everybody\'s', () => {
+    for (const uid of [null, '', '   ']) {
+      setCaretakerScope(true, uid);
+      expect(applyCaretakerScope(GENERATED_DRAFTS_QUERY).filters).toEqual([KINTALE_DRAFTS, ['createdBy', '==', '']]);
+    }
+  });
+
+  it('NEGATIVE: #2443 a maker filter the screen supplied for someone else does not stand in for hers', () => {
+    setCaretakerScope(true, 'auntie-1');
+    const spec: CollectionSpec = { ...GENERATED_DRAFTS_QUERY, filters: [['createdBy', '==', 'auntie-2']] };
+    expect(applyCaretakerScope(spec).filters).toEqual([['createdBy', '==', 'auntie-2'], KINTALE_DRAFTS, MINE]);
   });
 
   it('HAPPY: the owner\'s drafts list is left as it is, every type included', () => {
@@ -40,21 +62,27 @@ describe('applyCaretakerScope', () => {
     expect(applyCaretakerScope(GENERATED_DRAFTS_QUERY).filters).toBeUndefined();
   });
 
-  it('keeps a filter the screen supplied beside the type', () => {
-    setCaretakerScope(true);
+  it('keeps a filter the screen supplied beside the type and the maker', () => {
+    setCaretakerScope(true, 'auntie-1');
     const spec: CollectionSpec = { ...GENERATED_DRAFTS_QUERY, filters: [['kinfolk_id', '==', 'kf-1']] };
-    expect(applyCaretakerScope(spec).filters).toEqual([['kinfolk_id', '==', 'kf-1'], KINTALE_DRAFTS]);
+    expect(applyCaretakerScope(spec).filters).toEqual([['kinfolk_id', '==', 'kf-1'], KINTALE_DRAFTS, MINE]);
   });
 
-  it('applied twice it adds the type once', () => {
-    setCaretakerScope(true);
-    expect(applyCaretakerScope(applyCaretakerScope(GENERATED_DRAFTS_QUERY)).filters).toEqual([KINTALE_DRAFTS]);
+  it('applied twice it adds the type and the maker once', () => {
+    setCaretakerScope(true, 'auntie-1');
+    expect(applyCaretakerScope(applyCaretakerScope(GENERATED_DRAFTS_QUERY)).filters).toEqual([KINTALE_DRAFTS, MINE]);
+  });
+
+  it('a spec that already carries one of the two gains only the other', () => {
+    setCaretakerScope(true, 'auntie-1');
+    const typed: CollectionSpec = { ...GENERATED_DRAFTS_QUERY, filters: [KINTALE_DRAFTS as never] };
+    expect(applyCaretakerScope(typed).filters).toEqual([KINTALE_DRAFTS, MINE]);
   });
 
   it('NEGATIVE: a filter for another type does not stand in for the KinTale type', () => {
-    setCaretakerScope(true);
+    setCaretakerScope(true, 'auntie-1');
     const spec: CollectionSpec = { ...GENERATED_DRAFTS_QUERY, filters: [['communication_type', '==', 'push']] };
-    expect(applyCaretakerScope(spec).filters).toEqual([['communication_type', '==', 'push'], KINTALE_DRAFTS]);
+    expect(applyCaretakerScope(spec).filters).toEqual([['communication_type', '==', 'push'], KINTALE_DRAFTS, MINE]);
   });
 
   it('leaves every other collection alone for an Auntie', () => {
@@ -65,17 +93,19 @@ describe('applyCaretakerScope', () => {
     }
   });
 
-  it('names exactly two collections: drafts by the generator\'s spelling of the type, media by its stored types', () => {
-    expect([...CARETAKER_FILTERS.entries()]).toEqual([
-      ['generated_drafts', KINTALE_DRAFTS],
-      ['media_files', ['entityType', 'in', ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk']]],
-    ]);
+  it('names exactly two collections: drafts by the generator\'s spelling of the type and her uid, media by its stored types', () => {
+    setCaretakerScope(true, 'auntie-1');
+    expect(caretakerFiltersFor('generated_drafts')).toEqual([KINTALE_DRAFTS, MINE]);
+    expect(caretakerFiltersFor('media_files')).toEqual([['entityType', 'in', ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk']]]);
+    for (const path of ['kin_care_reports', 'kinfolk', 'dossiers', 'the_411']) {
+      expect(caretakerFiltersFor(path)).toEqual([]);
+    }
   });
 
-  it('switching back to the owner removes the type from the next query', () => {
-    setCaretakerScope(true);
+  it('switching back to the owner removes the type and the maker from the next query', () => {
+    setCaretakerScope(true, 'auntie-1');
     expect(isCaretakerScope()).toBe(true);
-    setCaretakerScope(false);
+    setCaretakerScope(false, 'auntie-1');
     expect(isCaretakerScope()).toBe(false);
     expect(applyCaretakerScope(GENERATED_DRAFTS_QUERY).filters).toBeUndefined();
   });

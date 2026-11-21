@@ -11,6 +11,7 @@ import {
 import { getAdmin } from './firestoreAdmin';
 import { formatUsd, formatUsdCents, lineAmountCents } from './invoiceMath';
 import { invoiceIsPaid } from './invoicePaidGate';
+import { amountDueDollarsOf } from './amountDueRule';
 import { isWrittenOff } from './invoiceArchive';
 import { invoiceLeadName } from './invoiceNaming';
 
@@ -150,7 +151,9 @@ export function invoiceForPdf(id: string, data: Record<string, unknown>): Invoic
     discount: str('discount'),
     status: str('status') || str('invoiceStatus'),
     total: num('total'),
-    amountDue: num('amountDue'),
+    // #2435: never more than the total less what has been applied (the stored
+    // `paidCents`), the same rule the portal ships and the checkout charges.
+    amountDue: typeof data['amountDue'] === 'number' && num('amountDue') > 0 ? Math.min(num('amountDue'), amountDueDollarsOf(data, intOr0('paidCents'))) : num('amountDue'),
     writtenOffCents: intOr0('writtenOffCents'),
     paymentsHistory: str('paymentsHistory'),
     lineItems,

@@ -1183,6 +1183,11 @@ async function runGenerate(deps, body) {
     // in KinTales > Drafts. Both carry the same instant; `generated_at` stays
     // for the readers that already use it.
     const stampedAt = new Date().toISOString();
+    // #2443 ruling, 2026-11-20: who made the draft, the signed-in caller's uid
+    // from her verified token, never from the request body. An Auntie works
+    // only the KinTale drafts stamped with her uid (`firestore.rules`,
+    // `publishGeneratedDraft`); a draft with no stamp is the owner's.
+    const maker = typeof deps.uid === 'string' ? deps.uid.trim() : '';
     await ref.set({
       communication_type: v.communication_type,
       recipient: v.recipient,
@@ -1196,6 +1201,7 @@ async function runGenerate(deps, body) {
       source: 'function:generate',
       generated_at: stampedAt,
       createdOn: stampedAt,
+      ...(maker !== '' ? { createdBy: maker } : {}),
     });
     draftId = ref.id;
   } catch (e) {

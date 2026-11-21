@@ -549,7 +549,8 @@ export async function convertQuoteToInvoice(invoiceId: string): Promise<ConvertQ
  * withdrawQuote (admin, #2088): the quote is cancelled, the household no
  * longer sees it, and the visits it held go back on the not-yet-invoiced list,
  * as on a decline. `releasedSessionIds` is those visits. Refused with
- * `quote_accepted_locked`, `quote_not_a_quote` or `invoice_archived`.
+ * `quote_accepted_locked`, `quote_not_a_quote`, `invoice_archived` or (#2358)
+ * `quote_has_payment`: a quote with any applied payment is never withdrawn.
  */
 export async function withdrawQuote(invoiceId: string): Promise<WithdrawQuoteResult> {
   return call<WithdrawQuoteArgs, WithdrawQuoteResult>('withdrawQuote', { invoiceId });

@@ -43,6 +43,7 @@ import { Dialog } from '../components/Dialog';
 // into MarketingBlasts.css so the two cannot drift apart.
 import '../components/SlowWaitNotice.css';
 import { navKicker } from '../lib/nav';
+import { blastCountsText, heldSendText } from '../lib/heldSendText';
 import './MarketingBlasts.css';
 
 /**
@@ -429,7 +430,8 @@ export function MarketingBlasts() {
       loadBlasts();
     } catch (err) {
       setConfirmOpen(false);
-      setScheduleError(`Could not schedule: ${errText(err, 'Schedule failed')}`);
+      const message = errText(err, 'Schedule failed');
+      setScheduleError(heldSendText(message, 'blast') ?? `Could not schedule: ${message}`);
     } finally {
       setScheduling(false);
     }
@@ -489,7 +491,10 @@ export function MarketingBlasts() {
           >
             <div className="blasts__form">
               {scheduleError !== null && (
-                <Banner tone="error" title="Schedule failed">
+                <Banner
+                  tone={scheduleError.startsWith('Held.') ? 'warning' : 'error'}
+                  title={scheduleError.startsWith('Held.') ? 'Blast held' : 'Schedule failed'}
+                >
                   {scheduleError}
                 </Banner>
               )}
@@ -964,7 +969,7 @@ export function MarketingBlasts() {
                           ) : (
                             <>
                               {' '}
-                              &middot; {b.dispatched} sent, {b.suppressed} suppressed
+                              &middot; {blastCountsText(b.dispatched, b.suppressed, b.heldAtSend)}
                               {/* A failed campaign that DID queue copies is a
                                   send stopped part-way, not one that never
                                   started, and it is the population #823 was

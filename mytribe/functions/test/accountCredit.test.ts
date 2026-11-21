@@ -324,10 +324,19 @@ describe('drawAccountCredit: every refusal names its reason and writes nothing',
     });
     expect(res.refused).toBe('invoice_archived');
   });
-  it('a cancelled invoice and a credit note', async () => {
-    for (const status of ['cancelled', 'credit']) {
-      const res = await refusal({ invoice: { kinfolkId: 'fam1', status, total: 40 } });
-      expect(res.refused, status).toBe('invoice_not_collectable');
+  it('a credit note', async () => {
+    const res = await refusal({ invoice: { kinfolkId: 'fam1', status: 'credit', total: 40 } });
+    expect(res.refused).toBe('invoice_not_collectable');
+  });
+  it('#2358: a cancelled invoice, by name, in either spelling of its status', async () => {
+    for (const invoice of [
+      { kinfolkId: 'fam1', status: 'cancelled', total: 40 },
+      { kinfolkId: 'fam1', status: ' Cancelled ', total: 40 },
+      // The legacy spelling, with no `status` stored: before #2358 this took credit.
+      { kinfolkId: 'fam1', invoiceStatus: 'cancelled', total: 40 },
+    ]) {
+      const res = await refusal({ invoice });
+      expect(res.refused, JSON.stringify(invoice)).toBe('invoice_cancelled');
     }
   });
   it('a missing invoice, and an invoice with no household', async () => {

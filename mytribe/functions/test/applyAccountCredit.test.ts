@@ -307,9 +307,15 @@ describe('applyAccountCredit: what it refuses, in words for the field', () => {
     expect(err.details).toMatchObject({ reason: 'invoice_archived' });
   });
 
-  it('a cancelled invoice', async () => {
+  it('#2358: a cancelled invoice, said by name', async () => {
     const err = await refused({ invoice: { kinfolkId: 'fam1', status: 'cancelled', total: 100 } });
-    expect(err.details).toMatchObject({ reason: 'invoice_not_collectable' });
+    expect(err.message).toBe('This invoice is cancelled, so it takes no credit.');
+    expect(err.details).toMatchObject({ reason: 'invoice_cancelled' });
+  });
+  it('#2358: an invoice cancelled only in the legacy status field', async () => {
+    const err = await refused({ invoice: { kinfolkId: 'fam1', invoiceStatus: 'cancelled', total: 100 } });
+    expect(err.message).toBe('This invoice is cancelled, so it takes no credit.');
+    expect(err.details).toMatchObject({ reason: 'invoice_cancelled' });
   });
 
   it('an invoice with no household on it', async () => {
@@ -332,7 +338,7 @@ describe('applyAccountCredit: what it refuses, in words for the field', () => {
   it('every refusal has words with no code, id or dash in them', () => {
     const reasons = [
       'invoice_missing', 'no_household', 'invoice_draft', 'invoice_quote', 'invoice_archived',
-      'invoice_paid', 'invoice_not_collectable', 'amount_invalid', 'over_credit', 'over_balance',
+      'invoice_paid', 'invoice_cancelled', 'invoice_not_collectable', 'amount_invalid', 'over_credit', 'over_balance',
     ] as const;
     for (const reason of reasons) {
       const words = applyCreditRefusalMessage(reason, { accountBalanceCents: 1200, amountDueCents: 1000 });

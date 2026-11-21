@@ -17,7 +17,7 @@ import { resolveBusinessTimeZone } from '../lib/businessOperations';
 import { useVisitLifecycle } from '../lib/useVisitLifecycle';
 import { useVisitNoticeReach } from '../lib/useVisitNoticeReach';
 import { useIsAuntie } from '../lib/useIsAuntie';
-import { actionNotifiesHousehold, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
+import { actionNotifiesHousehold, noticeAbout, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
 import { useVisitTracking } from '../lib/visitTracking';
 import {
   VisitTrackingIndicator,
@@ -312,6 +312,8 @@ export function SessionDetail({ entry, read, onBack }: SessionDetailProps) {
       visitRoutingSkip(entry) === null
       ? str(entry.kinfolkId).trim()
       : null,
+    // #2339: an Arrived or Departed after an undo the household already heard about.
+    clock.pending !== null && entry !== null ? noticeAbout(sessionId, clock.pending.action) : null,
   );
   const noticeLine =
     clock.pending === null || entry === null

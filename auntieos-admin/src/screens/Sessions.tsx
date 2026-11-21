@@ -35,7 +35,7 @@ import { useBusinessZone } from '../lib/useBusinessZone';
 import { ClockStepWarningLine } from '../components/ClockStepWarningLine';
 import { UndoDepartedAction } from '../components/UndoDepartedAction';
 import { useVisitNoticeReach } from '../lib/useVisitNoticeReach';
-import { actionNotifiesHousehold, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
+import { actionNotifiesHousehold, noticeAbout, visitNoticeConfirmFor, visitRoutingSkip } from '../lib/visitNotice';
 import { COMPLETE_OWNER_ONLY, completeRefusal } from '../lib/completeRule';
 import { useArrivalRule } from '../lib/useArrivalRule';
 import { useIsAuntie } from '../lib/useIsAuntie';
@@ -55,7 +55,7 @@ import { HeldButton } from '../components/HeldButton';
 import { Avatar } from '../components/Avatar';
 import { Dialog } from '../components/Dialog';
 import { AsyncRegion } from '../components/AsyncRegion';
-import { VisitTrackingIndicator } from '../components/VisitTrackingIndicator';
+import { VisitRouteIndicator } from '../components/VisitTrackingIndicator';
 import { navKicker } from '../lib/nav';
 import './Sessions.css';
 
@@ -569,6 +569,8 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
     clock.pending !== null && actionNotifiesHousehold(clock.pending.action) && visitRoutingSkip(entry) === null
       ? str(entry.kinfolkId).trim()
       : null,
+    // #2339: an Arrived or Departed after an undo the household already heard about.
+    clock.pending !== null ? noticeAbout(entry._id, clock.pending.action) : null,
   );
   const noticeLine =
     clock.pending === null
@@ -740,9 +742,10 @@ function SessionCard({ entry, ctx }: { entry: SessionEntry; ctx: CardContext }) 
           finished route on the detail sheet, and claiming a live one here would
           be a claim about a phone that has stopped pinging. When THIS browser
           clocked the visit in (#772) the line says so, and says when it could
-          not track; the mock's own line stands in when the phone is the tracker. */}
+          not track. Otherwise (#2338, #2386) it reads the visit's route: the
+          mock's live line while a phone is pinging, else when it last pinged. */}
       {state === 'arrived' && (
-        <VisitTrackingIndicator sessionId={entry._id} idleText="GPS tracking · live route" />
+        <VisitRouteIndicator sessionId={entry._id} />
       )}
 
       {/* The mock's address chip is a control (pointer cursor, orange rim on

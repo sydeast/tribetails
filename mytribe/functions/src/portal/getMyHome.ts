@@ -9,7 +9,8 @@ import { refuseAuntie } from '../lib/staffGate';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { payMethodSettingsFrom, resolveHomePayMethods, type PayMethod } from '../lib/paymentMethods';
-import { openBalanceCentsOf } from './getMyInvoices';
+import { countsTowardOpenBalance, openBalanceCentsOf } from './getMyInvoices';
+import { paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { countUnreadNotifications } from '../lib/recipientNotifications';
 import { isDefaultHomeLayout } from '../lib/homeLayout';
 
@@ -298,8 +299,32 @@ export async function getMyHomeHandler(
     : [];
 
   // #1462: money owed is billing too, so 0 for a member without access.
+  // #2435: the balance is the total less what has been applied, so each open
+  // invoice's payment rows are read (a few small reads, in parallel). One that
+  // fails falls back to the stored figure for that invoice.
   const balanceDueCents = billingAccess
-    ? openBalanceCentsOf(invoiceSnap.docs.map((d) => d.data() as Record<string, unknown>))
+    ? openBalanceCentsOf(
+        invoiceSnap.docs.map((d) => d.data() as Record<string, unknown>),
+        await Promise.all(
+          invoiceSnap.docs.map(async (d) => {
+            if (!countsTowardOpenBalance(d.data() as Record<string, unknown>)) return null;
+            try {
+              const rows = await d.ref.collection('payments').get();
+              return paidCentsFromPayments(rows.docs.map((r) => r.data() as PaymentAmount));
+            } catch (err) {
+              logEvent({
+                severity: 'warn',
+                function: 'getMyHome',
+                event: 'portal.home.payRows.failed',
+                uid,
+                errorMessage: (err as Error)?.message,
+                extra: { kinfolkId, invoiceId: d.id },
+              });
+              return null;
+            }
+          }),
+        ),
+      )
     : 0;
 
   logEvent({

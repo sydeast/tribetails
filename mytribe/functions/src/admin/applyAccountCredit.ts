@@ -114,6 +114,8 @@ export function applyCreditRefusalMessage(
       return 'This invoice is already paid, so it takes no credit.';
     case 'invoice_archived':
       return 'This invoice is archived, so it takes no credit.';
+    case 'invoice_cancelled':
+      return 'This invoice is cancelled, so it takes no credit.';
     case 'invoice_not_collectable':
       return 'This invoice cannot take a payment.';
     case 'no_household':

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
 import { getEnv, cleanup, shutdown, seedFamily } from './setup';
 
@@ -815,6 +815,8 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   const push = { ...base, communication_type: 'push', createdOn: '2026-11-01T10:00:00.000Z' };
   const email = { ...base, communication_type: 'email', createdOn: '2026-11-02T10:00:00.000Z' };
   const tale = { ...base, communication_type: 'visit_report', createdOn: '2026-11-03T10:00:00.000Z' };
+  /** #2443: a KinTale draft she made. The generator stamps the maker's uid as `createdBy`. */
+  const mine = { ...tale, createdBy: 'auntie-1' };
   /** A migrated draft: the older spelling only. */
   const older = { kinfolkId: 'f1', generatedCopy: 'Words', communicationType: 'visit_report', status: 'pending', createdOn: '2026-05-23T10:00:00.000Z' };
   /** Types that are not exactly `visit_report` and not exactly `push`. */
@@ -824,11 +826,16 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
     '', 7, null, true, ['visit_report'],
   ];
   const draftsQuery = (db: ReturnType<ReturnType<typeof asAuntie>['firestore']>) =>
-    db.collection('generated_drafts').where('communication_type', '==', 'visit_report').orderBy('createdOn', 'desc').limit(50);
+    db
+      .collection('generated_drafts')
+      .where('communication_type', '==', 'visit_report')
+      .where('createdBy', '==', 'auntie-1')
+      .orderBy('createdOn', 'desc')
+      .limit(50);
   async function seedAll() {
     await seed(PUSH, push);
     await seed(EMAIL, email);
-    await seed(TALE, tale);
+    await seed(TALE, mine);
     await seed(OLDER, older);
   }
   // ── The owner ─────────────────────────────────────────────────────────────
@@ -961,17 +968,17 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   it('an Auntie is refused deleting a draft of any type, a KinTale draft included', async () => {
     const env = await getEnv();
     await seedAll();
-    await seed('generated_drafts/sent-1', { ...tale, status: 'published', publishedReportId: 'r1' });
+    await seed('generated_drafts/sent-1', { ...mine, status: 'published', publishedReportId: 'r1' });
     const db = asAuntie(env).firestore();
     for (const path of [TALE, PUSH, EMAIL, OLDER, 'generated_drafts/sent-1']) {
       await assertFails(db.doc(path).delete());
     }
   });
   // ── What an Auntie reads ──────────────────────────────────────────────────
-  it('an Auntie reads a KinTale draft', async () => {
+  it('an Auntie reads a KinTale draft she made', async () => {
     const env = await getEnv();
-    await seed(TALE, tale);
-    await seed('generated_drafts/tale-2', { ...tale, communicationType: 'visit_report' });
+    await seed(TALE, mine);
+    await seed('generated_drafts/tale-2', { ...mine, communicationType: 'visit_report' });
     const db = asAuntie(env).firestore();
     await assertSucceeds(db.doc(TALE).get());
     await assertSucceeds(db.doc('generated_drafts/tale-2').get());
@@ -980,7 +987,7 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
     const env = await getEnv();
     await seedAll();
     for (const type of ['sms', 'social_post', 'blog_post', 'general']) {
-      await seed(`generated_drafts/${type}-1`, { ...base, communication_type: type });
+      await seed(`generated_drafts/${type}-1`, { ...base, communication_type: type, createdBy: 'auntie-1' });
     }
     const db = asAuntie(env).firestore();
     for (const path of [PUSH, EMAIL, 'generated_drafts/sms-1', 'generated_drafts/social_post-1', 'generated_drafts/blog_post-1', 'generated_drafts/general-1']) {
@@ -992,18 +999,18 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
     const db = asAuntie(env).firestore();
     for (const [i, type] of INEXACT_TYPES.entries()) {
       const path = `generated_drafts/odd-${String(i)}`;
-      await seed(path, { ...base, communication_type: type });
+      await seed(path, { ...base, communication_type: type, createdBy: 'auntie-1' });
       await assertFails(db.doc(path).get());
     }
-    await seed('generated_drafts/untyped-1', base);
+    await seed('generated_drafts/untyped-1', { ...base, createdBy: 'auntie-1' });
     await assertFails(db.doc('generated_drafts/untyped-1').get());
   });
   it('an Auntie is refused reading a draft whose older type field is missing its partner or says something else', async () => {
     const env = await getEnv();
-    await seed(OLDER, older);
-    await seed('generated_drafts/mixed-1', { ...tale, communicationType: 'push' });
-    await seed('generated_drafts/mixed-2', { ...tale, communicationType: ' visit_report' });
-    await seed('generated_drafts/mixed-3', { ...tale, communicationType: '' });
+    await seed(OLDER, { ...older, createdBy: 'auntie-1' });
+    await seed('generated_drafts/mixed-1', { ...mine, communicationType: 'push' });
+    await seed('generated_drafts/mixed-2', { ...mine, communicationType: ' visit_report' });
+    await seed('generated_drafts/mixed-3', { ...mine, communicationType: '' });
     const db = asAuntie(env).firestore();
     for (const path of [OLDER, 'generated_drafts/mixed-1', 'generated_drafts/mixed-2', 'generated_drafts/mixed-3']) {
       await assertFails(db.doc(path).get());
@@ -1014,7 +1021,9 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
     await seedAll();
     const db = asAuntie(env).firestore();
     await assertSucceeds(draftsQuery(db).get());
-    await assertSucceeds(db.collection('generated_drafts').where('communication_type', '==', 'visit_report').get());
+    await assertSucceeds(
+      db.collection('generated_drafts').where('communication_type', '==', 'visit_report').where('createdBy', '==', 'auntie-1').get(),
+    );
   });
   it('an Auntie is refused a list that does not name the KinTale type', async () => {
     const env = await getEnv();
@@ -1035,11 +1044,11 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   /** The words and the title of a draft, in both spellings. */
   const WORD_FIELDS = ['generatedCopy', 'generated_copy', 'generatedTitle', 'generated_title', 'subject'] as const;
   const SENT = 'generated_drafts/sent-1';
-  const sent = { ...tale, status: 'published', publishedReportId: 'r1', publishedAt: '2026-11-04T00:00:00.000Z' };
+  const sent = { ...mine, status: 'published', publishedReportId: 'r1', publishedAt: '2026-11-04T00:00:00.000Z' };
   it('an Auntie is refused changing the words or the title of a KinTale draft, one field at a time', async () => {
     const env = await getEnv();
-    await seed(TALE, { ...tale, generated_title: 'A visit', subject: 'A visit' });
-    await seed('generated_drafts/tale-2', { ...tale, communicationType: 'visit_report', generatedCopy: 'Words', generatedTitle: 'A visit' });
+    await seed(TALE, { ...mine, generated_title: 'A visit', subject: 'A visit' });
+    await seed('generated_drafts/tale-2', { ...mine, communicationType: 'visit_report', generatedCopy: 'Words', generatedTitle: 'A visit' });
     const db = asAuntie(env).firestore();
     for (const path of [TALE, 'generated_drafts/tale-2']) {
       for (const field of WORD_FIELDS) {
@@ -1049,7 +1058,7 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   });
   it('an Auntie is refused changing the words and the title of a KinTale draft together', async () => {
     const env = await getEnv();
-    await seed(TALE, { ...tale, generated_title: 'A visit' });
+    await seed(TALE, { ...mine, generated_title: 'A visit' });
     const db = asAuntie(env).firestore();
     await assertFails(db.doc(TALE).update({ generated_copy: 'Her words', generated_title: 'Her title' }));
     await assertFails(db.doc(TALE).update({ generatedTitle: 'Her title', subject: 'Her title' }));
@@ -1066,7 +1075,7 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   });
   it('an account carrying both roles is refused changing the words or the title of a KinTale draft', async () => {
     const env = await getEnv();
-    await seed(TALE, tale);
+    await seed(TALE, mine);
     await seed(SENT, sent);
     const db = asDoubleClaimed(env).firestore();
     for (const path of [TALE, SENT]) {
@@ -1088,7 +1097,7 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   });
   it('an Auntie is refused approving a KinTale draft or changing its status at all', async () => {
     const env = await getEnv();
-    await seed(TALE, tale);
+    await seed(TALE, mine);
     const db = asAuntie(env).firestore();
     await assertFails(db.doc(TALE).update({ status: 'approved' }));
     await assertFails(db.doc(TALE).update({ status: 'approved', generatedCopy: 'Her words' }));
@@ -1098,7 +1107,7 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   });
   it('an Auntie is refused moving a KinTale draft to another household, in either spelling', async () => {
     const env = await getEnv();
-    await seed(TALE, tale);
+    await seed(TALE, mine);
     const db = asAuntie(env).firestore();
     await assertFails(db.doc(TALE).update({ kinfolk_id: 'f2' }));
     await assertFails(db.doc(TALE).update({ kinfolkId: 'f2' }));
@@ -1108,8 +1117,8 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   });
   it('an Auntie is refused changing whether or how a draft was sent', async () => {
     const env = await getEnv();
-    await seed(TALE, tale);
-    await seed('generated_drafts/sent-1', { ...tale, status: 'published', publishedReportId: 'r1', publishedAt: '2026-11-04T00:00:00.000Z' });
+    await seed(TALE, mine);
+    await seed('generated_drafts/sent-1', { ...mine, status: 'published', publishedReportId: 'r1', publishedAt: '2026-11-04T00:00:00.000Z' });
     const db = asAuntie(env).firestore();
     await assertFails(db.doc(TALE).update({ publishedReportId: 'r9' }));
     await assertFails(db.doc(TALE).update({ publishedAt: '2026-11-20T00:00:00.000Z' }));
@@ -1121,7 +1130,7 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   });
   it('an Auntie is refused changing the type of a KinTale draft, in either spelling', async () => {
     const env = await getEnv();
-    await seed(TALE, tale);
+    await seed(TALE, mine);
     const db = asAuntie(env).firestore();
     await assertFails(db.doc(TALE).update({ communication_type: 'push' }));
     await assertFails(db.doc(TALE).update({ communication_type: 'email', generatedCopy: 'Her words' }));
@@ -1134,7 +1143,7 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   });
   it('an Auntie is refused changing anything else on a KinTale draft, or replacing it', async () => {
     const env = await getEnv();
-    await seed(TALE, tale);
+    await seed(TALE, mine);
     const db = asAuntie(env).firestore();
     await assertFails(db.doc(TALE).update({ raw_notes: 'Other notes' }));
     await assertFails(db.doc(TALE).update({ createdOn: '2027-01-01T00:00:00.000Z' }));
@@ -1145,7 +1154,7 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
   it('an Auntie is refused editing a draft that is not exactly a KinTale draft, the words included', async () => {
     const env = await getEnv();
     await seedAll();
-    await seed('generated_drafts/mixed-1', { ...tale, communicationType: 'push' });
+    await seed('generated_drafts/mixed-1', { ...mine, communicationType: 'push' });
     const db = asAuntie(env).firestore();
     for (const path of [PUSH, EMAIL, OLDER, 'generated_drafts/mixed-1']) {
       await assertFails(db.doc(path).update({ generatedCopy: 'Her words' }));
@@ -1159,12 +1168,102 @@ describe('rules: generated drafts are the owner\'s to make and remove; an Auntie
       await assertFails(db.doc(path).update({ status: 'approved' }));
     }
   });
+  // ── #2443 ruling: an Auntie works only the KinTale drafts she made ─────────
+  it('#2443: an Auntie is refused reading a KinTale draft another Auntie or the owner made, or one with no maker', async () => {
+    const env = await getEnv();
+    await seed('generated_drafts/hers-2', { ...tale, createdBy: 'auntie-2' });
+    await seed('generated_drafts/owners', { ...tale, createdBy: 'owner-1' });
+    await seed('generated_drafts/unstamped', tale);
+    const db = asAuntie(env).firestore();
+    for (const path of ['generated_drafts/hers-2', 'generated_drafts/owners', 'generated_drafts/unstamped']) {
+      await assertFails(db.doc(path).get());
+    }
+    // The other Auntie reads her own.
+    await assertSucceeds(asAuntie(env, 'auntie-2').firestore().doc('generated_drafts/hers-2').get());
+  });
+  it('#2443: a maker stamp that only looks like hers is not hers', async () => {
+    const env = await getEnv();
+    const db = asAuntie(env).firestore();
+    for (const [i, stamp] of ['', ' auntie-1', 'auntie-1 ', 'AUNTIE-1', 7, null, ['auntie-1']].entries()) {
+      const path = `generated_drafts/stamp-${String(i)}`;
+      await seed(path, { ...tale, createdBy: stamp });
+      await assertFails(db.doc(path).get());
+    }
+  });
+  it('#2443: an Auntie lists only when her query says the drafts are hers', async () => {
+    const env = await getEnv();
+    await seedAll();
+    await seed('generated_drafts/hers-2', { ...tale, createdBy: 'auntie-2' });
+    await seed('generated_drafts/unstamped', tale);
+    const db = asAuntie(env).firestore();
+    const col = db.collection('generated_drafts');
+    const kinTales = col.where('communication_type', '==', 'visit_report');
+    await assertSucceeds(draftsQuery(db).get());
+    // The type alone was enough before the ruling. It is not now.
+    await assertFails(kinTales.get());
+    await assertFails(kinTales.orderBy('createdOn', 'desc').limit(50).get());
+    // Another maker's drafts, the owner's, and every maker but her.
+    await assertFails(kinTales.where('createdBy', '==', 'auntie-2').get());
+    await assertFails(kinTales.where('createdBy', '==', 'owner-1').get());
+    await assertFails(kinTales.where('createdBy', 'in', ['auntie-1', 'auntie-2']).get());
+    await assertFails(kinTales.where('createdBy', '!=', 'auntie-2').get());
+    // Hers, but not only KinTale drafts.
+    await assertFails(col.where('createdBy', '==', 'auntie-1').get());
+  });
+  it('#2443: what her list returns is her own KinTale drafts and nothing else', async () => {
+    const env = await getEnv();
+    await seedAll();
+    await seed('generated_drafts/hers-2', { ...tale, createdBy: 'auntie-2' });
+    await seed('generated_drafts/her-push', { ...push, createdBy: 'auntie-1' });
+    const snap = await draftsQuery(asAuntie(env).firestore()).get();
+    expect(snap.docs.map((d) => d.id)).toEqual(['tale-1']);
+  });
+  it('#2443: the owner reads and lists every draft whoever made it', async () => {
+    const env = await getEnv();
+    await seed('generated_drafts/hers-2', { ...tale, createdBy: 'auntie-2' });
+    await seed(TALE, mine);
+    await seed('generated_drafts/unstamped', tale);
+    const db = asOwner(env).firestore();
+    for (const path of [TALE, 'generated_drafts/hers-2', 'generated_drafts/unstamped']) {
+      await assertSucceeds(db.doc(path).get());
+    }
+    const snap = await db.collection('generated_drafts').orderBy('createdOn', 'desc').limit(50).get();
+    expect(snap.size).toBe(3);
+  });
+  it('#2443: a draft is created stamped with its maker or with no stamp, never with somebody else\'s uid', async () => {
+    const env = await getEnv();
+    const db = asOwner(env).firestore();
+    await assertSucceeds(db.doc('generated_drafts/new-own').set({ ...tale, createdBy: 'owner-1' }));
+    await assertSucceeds(db.doc('generated_drafts/new-none').set(tale));
+    await assertFails(db.doc('generated_drafts/new-hers').set({ ...tale, createdBy: 'auntie-1' }));
+    await assertFails(db.doc('generated_drafts/new-blank').set({ ...tale, createdBy: '' }));
+    await assertFails(db.doc('generated_drafts/new-null').set({ ...tale, createdBy: null }));
+    await assertFails(db.collection('generated_drafts').add({ ...tale, createdBy: 'auntie-1' }));
+  });
+  it('#2443: nobody hands a draft to an Auntie, or takes one from her, by changing its maker', async () => {
+    const env = await getEnv();
+    await seed(TALE, mine);
+    await seed('generated_drafts/unstamped', tale);
+    const owner = asOwner(env).firestore();
+    await assertFails(owner.doc('generated_drafts/unstamped').update({ createdBy: 'auntie-1' }));
+    await assertFails(owner.doc(TALE).update({ createdBy: 'owner-1' }));
+    await assertFails(owner.doc(TALE).update({ createdBy: 'auntie-2', generatedCopy: 'Final words' }));
+    await assertFails(owner.doc(TALE).set({ ...tale, createdBy: 'auntie-2' }));
+    // The owner's own edits leave the maker where it was and still go through.
+    await assertSucceeds(owner.doc(TALE).update({ generatedCopy: 'Final words' }));
+    await assertSucceeds(owner.doc(TALE).update({ createdBy: 'auntie-1', status: 'approved' }));
+    const auntie = asAuntie(env).firestore();
+    await assertFails(auntie.doc('generated_drafts/unstamped').update({ createdBy: 'auntie-1' }));
+    await assertFails(auntie.doc(TALE).update({ createdBy: 'auntie-2' }));
+  });
   // ── Everyone else ─────────────────────────────────────────────────────────
   it('an account carrying both roles is held to what an Auntie may do', async () => {
     const env = await getEnv();
     await seedAll();
+    await seed('generated_drafts/tale-confused', { ...tale, createdBy: 'confused-1' });
     const db = asDoubleClaimed(env).firestore();
-    await assertSucceeds(db.doc(TALE).get());
+    await assertSucceeds(db.doc('generated_drafts/tale-confused').get());
+    await assertFails(db.doc(TALE).get());
     await assertFails(db.doc(PUSH).get());
     await assertFails(db.doc('generated_drafts/new-1').set(tale));
     await assertFails(db.doc(TALE).update({ status: 'approved' }));

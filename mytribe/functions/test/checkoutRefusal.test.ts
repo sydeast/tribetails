@@ -464,3 +464,54 @@ describe('#2410: getMyInvoices tells the screens there is no Pay, by the same ru
     expect(hooks.createSession).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #2435 (operator ruling 2026-11-20): the balance is the total less what has
+ * been applied. The named case, through the three sides for real: a $40 bill
+ * with one $15 payment recorded that still states $40 owed.
+ */
+describe('#2435: a stated balance above what the rows leave is read as the rows leave it', () => {
+  const STALE = { ...OPEN, paidCents: 0 };
+  const ROWS: PaymentAmount[] = [{ amountCents: 1500, amount: 15 }];
+
+  it('MyTribe ships $25 due and $15 paid, and offers Pay', async () => {
+    seed(STALE, ROWS);
+    const dto = await listed();
+    expect(dto).toMatchObject({ status: 'open', amountDue: 25, paidCents: 1500, partiallyPaid: true, payBlockedReason: null });
+    expect(dto!.payMethods.map((m) => m.id)).toContain('stripe');
+  });
+
+  it('the checkout charges $25', async () => {
+    seed(STALE, ROWS);
+    const { ok } = await pay();
+    expect(ok).toMatchObject({ sessionId: 'cs_new', amountCents: 2500 });
+    expect(hooks.createSession.mock.calls[0]![0].line_items[0].price_data.unit_amount).toBe(2500);
+  });
+
+  it('a $25 card payment settles it with no tip', async () => {
+    seed(STALE, ROWS);
+    const row = await cardPaymentLands(2500);
+    expect(row).toMatchObject({ appliedCents: 2500, tipCents: 0 });
+    expect(row.needsAdminDecision).toBeUndefined();
+    expect(docs[INVOICE]).toMatchObject({ status: 'paid', amountDueCents: 0, paidCents: 4000 });
+    expect(docs[`${INVOICE}/payments/stripe_pi_1`]).toMatchObject({ amountCents: 2500 });
+  });
+
+  it('a $40 payment from a checkout opened before this fix still applies $25; the rest is tip (no refunds)', async () => {
+    seed(STALE, ROWS);
+    const row = await cardPaymentLands(4000);
+    expect(row).toMatchObject({ appliedCents: 2500, tipCents: 1500 });
+    expect(docs[INVOICE]).toMatchObject({ status: 'paid', amountDueCents: 0 });
+  });
+
+  it('an invoice brought over part paid keeps its stated balance on all three sides', async () => {
+    const BROUGHT = { ...OPEN, amountDue: 25, amountDueCents: 2500 };
+    seed(BROUGHT, []);
+    expect(await listed()).toMatchObject({ amountDue: 25, payBlockedReason: null });
+    expect((await pay()).ok).toMatchObject({ amountCents: 2500 });
+    seed(BROUGHT, []);
+    const row = await cardPaymentLands(2500);
+    expect(row).toMatchObject({ appliedCents: 2500, tipCents: 0 });
+    expect(docs[INVOICE]).toMatchObject({ status: 'paid', amountDueCents: 0 });
+  });
+});

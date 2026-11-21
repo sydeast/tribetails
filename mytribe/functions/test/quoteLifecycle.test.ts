@@ -65,6 +65,8 @@ import {
   withdrawQuoteHandler,
   quoteActionAlreadyDone,
   quoteActionRefusal,
+  appliedPaymentCentsOf,
+  CANCEL_PAID_REFUSAL,
 } from '../src/admin/quoteActions';
 import { archiveInvoiceHandler } from '../src/admin/archiveInvoice';
 import { linkInvoiceSessionsHandler } from '../src/admin/linkInvoiceSessions';
@@ -510,6 +512,78 @@ describe('#2088 withdrawing a quote releases its visits like a decline', () => {
   });
 });
 
+// ── #2358: a bill with a payment on it is never cancelled ─────────────────
+describe('#2358 a quote with any applied payment cannot be withdrawn', () => {
+  const REFUSAL = 'A payment is recorded on this quote, so it cannot be withdrawn.';
+  async function refusedWithdraw(ctx: ReturnType<typeof world>, quoteId: string) {
+    const writes = ctx.writes.length;
+    (writeAuditEntry as any).mockClear();
+    const err = await withdrawQuoteHandler(admin({ invoiceId: quoteId })).catch((e) => e);
+    expect(err).toMatchObject({ code: 'failed-precondition', details: { code: 'quote_has_payment' } });
+    expect(err.message).toBe(REFUSAL);
+    // Nothing moved: still a quote, still holding its visits, no audit line.
+    expect(ctx.writes.length).toBe(writes);
+    expect(writeAuditEntry).not.toHaveBeenCalled();
+    const q = await docOf(ctx, `invoices/${quoteId}`);
+    expect(q['status']).toBe('quote');
+    expect(q['quoteWithdrawnAt']).toBeUndefined();
+    expect((await docOf(ctx, 'kin_care_sessions/s1'))['invoiceId']).toBe(quoteId);
+  }
+  it('refuses when a payment row is on it (a recorded payment, a card payment or applied credit)', async () => {
+    const ctx = world();
+    const quoteId = await sentQuote(['s1']);
+    await ctx.db.doc(`invoices/${quoteId}/payments/p1`).set({ amountCents: 1500, amount: 15, method: 'cash' });
+    await refusedWithdraw(ctx, quoteId);
+  });
+  it('refuses a dollar-only payment row from before cents were stored', async () => {
+    const ctx = world();
+    const quoteId = await sentQuote(['s1']);
+    await ctx.db.doc(`invoices/${quoteId}/payments/p1`).set({ amount: 0.01 });
+    await refusedWithdraw(ctx, quoteId);
+  });
+  it('refuses a doc brought over with a stored paid figure and no rows', async () => {
+    for (const field of [{ paidCents: 2500 }, { amountPaid: 25 }]) {
+      const ctx = world();
+      const quoteId = await sentQuote(['s1']);
+      await ctx.db.doc(`invoices/${quoteId}`).set(field, { merge: true });
+      await refusedWithdraw(ctx, quoteId);
+    }
+  });
+  it('a payment HELD for the owner is not applied: it writes no row, and the quote can still be withdrawn', async () => {
+    const ctx = world();
+    const quoteId = await sentQuote(['s1']);
+    await ctx.db.doc(`invoices/${quoteId}`).set({ unappliedPaymentIds: ['evt_1'] }, { merge: true });
+    const res = await withdrawQuoteHandler(admin({ invoiceId: quoteId }));
+    expect(res.status).toBe('cancelled');
+  });
+  it('a zero row is no payment, and a quote with none is withdrawn as before', async () => {
+    const ctx = world();
+    const quoteId = await sentQuote(['s1']);
+    await ctx.db.doc(`invoices/${quoteId}/payments/p0`).set({ amountCents: 0 });
+    const res = await withdrawQuoteHandler(admin({ invoiceId: quoteId }));
+    expect(res.status).toBe('cancelled');
+  });
+  it('a retry of a withdraw that already happened still answers success, ahead of the payment check', async () => {
+    const ctx = world();
+    const quoteId = await sentQuote(['s1']);
+    const first = await withdrawQuoteHandler(admin({ invoiceId: quoteId }));
+    await ctx.db.doc(`invoices/${quoteId}/payments/p1`).set({ amountCents: 1500 });
+    await expect(withdrawQuoteHandler(admin({ invoiceId: quoteId }))).resolves.toEqual(first);
+  });
+  it('appliedPaymentCentsOf: rows first, then the stored figures', () => {
+    expect(appliedPaymentCentsOf({}, [])).toBe(0);
+    expect(appliedPaymentCentsOf({}, [{ amountCents: 1500 }, { amount: 10 }])).toBe(2500);
+    expect(appliedPaymentCentsOf({ paidCents: 900 }, [{ amountCents: 1500 }])).toBe(1500);
+    expect(appliedPaymentCentsOf({ paidCents: 900 }, [])).toBe(900);
+    expect(appliedPaymentCentsOf({ amountPaid: 12.34 }, [])).toBe(1234);
+    expect(appliedPaymentCentsOf({ paidCents: 0, amountPaid: -5 }, [])).toBe(0);
+    expect(appliedPaymentCentsOf({ paidCents: Number.NaN }, [])).toBe(0);
+  });
+  it('the sentence names no code, id or dash', () => {
+    expect(CANCEL_PAID_REFUSAL).toBe(REFUSAL);
+    expect(CANCEL_PAID_REFUSAL).not.toMatch(/[_—]/);
+  });
+});
 describe('a retry of Turn into invoice or Withdraw that already succeeded answers success', () => {
   it('withdraw twice: the second answers ok with the same visits, and writes and records nothing', async () => {
     const ctx = world();
