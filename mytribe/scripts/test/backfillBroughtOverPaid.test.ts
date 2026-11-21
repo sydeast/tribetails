@@ -25,7 +25,46 @@ describe('backfillBroughtOverPaid planInvoice', () => {
     expect(planInvoice(BROUGHT, 0)).toMatchObject({ verdict: 'stamp', broughtOverPaidCents: 1500 });
   });
   it('stamps the whole total on one brought over paid in full', () => {
-    expect(planInvoice({ ...BROUGHT, amountDue: 0 }, 0)).toMatchObject({ verdict: 'stamp', broughtOverPaidCents: 4000 });
+    expect(planInvoice({ ...BROUGHT, status: 'paid', amountDue: 0 }, 0)).toMatchObject({ verdict: 'stamp', broughtOverPaidCents: 4000 });
+  });
+  it('stamps when the old system answers "Yes" and states $0, or "No" and states money', () => {
+    expect(planInvoice({ ...BROUGHT, status: 'Yes', amountDue: 0 }, 0)).toMatchObject({ verdict: 'stamp', broughtOverPaidCents: 4000 });
+    expect(planInvoice({ ...BROUGHT, status: ' no ', amountDue: 25 }, 0)).toMatchObject({ verdict: 'stamp', broughtOverPaidCents: 1500 });
+  });
+  it('with no status, the figures alone decide', () => {
+    const { status: _drop, ...noStatus } = BROUGHT;
+    expect(planInvoice(noStatus, 0)).toMatchObject({ verdict: 'stamp', broughtOverPaidCents: 1500 });
+    expect(planInvoice({ ...BROUGHT, status: '' }, 0)).toMatchObject({ verdict: 'stamp', broughtOverPaidCents: 1500 });
+    expect(planInvoice({ ...BROUGHT, status: null }, 0)).toMatchObject({ verdict: 'stamp', broughtOverPaidCents: 1500 });
+  });
+  it('lists, never stamps, "No" with $0 stated: the data contradicts itself', () => {
+    expect(planInvoice({ ...BROUGHT, status: 'No', amountDue: 0 }, 0)).toMatchObject({ verdict: 'status_disagrees', broughtOverPaidCents: null });
+    // Named as the contradiction even when the total is $0 as well.
+    expect(planInvoice({ ...BROUGHT, status: 'No', total: 0, amountDue: 0 }, 0).verdict).toBe('status_disagrees');
+    // The app's own unpaid labels read the same way.
+    expect(planInvoice({ ...BROUGHT, status: 'open', amountDue: 0 }, 0).verdict).toBe('status_disagrees');
+    expect(planInvoice({ ...BROUGHT, status: 'overdue', amountDue: 0 }, 0).verdict).toBe('status_disagrees');
+  });
+  it('lists, never stamps, "Yes" with money still stated', () => {
+    expect(planInvoice({ ...BROUGHT, status: 'Yes', total: 127.5, amountDue: 117.5 }, 0)).toMatchObject({
+      verdict: 'status_disagrees',
+      broughtOverPaidCents: null,
+    });
+    expect(planInvoice({ ...BROUGHT, status: 'paid', amountDue: 25 }, 0).verdict).toBe('status_disagrees');
+  });
+  it('lists a status that answers neither, a write-off above all', () => {
+    // A write-off zeroes the stated balance; read as paid in full it would invent $40 of payments.
+    expect(planInvoice({ ...BROUGHT, status: 'written_off', amountDue: 0 }, 0)).toMatchObject({
+      verdict: 'status_unreadable',
+      broughtOverPaidCents: null,
+    });
+    for (const status of ['cancelled', 'draft', 'quote', 'maybe', true, 1]) {
+      expect(planInvoice({ ...BROUGHT, status }, 0).verdict).toBe('status_unreadable');
+    }
+  });
+  it('a $0 invoice with $0 stated had nothing paid and is not listed', () => {
+    expect(planInvoice({ ...BROUGHT, status: 'Yes', total: 0, amountDue: 0 }, 0).verdict).toBe('nothing_paid');
+    expect(planInvoice({ ...BROUGHT, status: 'zero', total: 0, amountDue: 0 }, 0).verdict).toBe('nothing_paid');
   });
   it('prefers the integer cents fields when present', () => {
     expect(planInvoice({ ...BROUGHT, totalCents: 4001, amountDueCents: 2499 }, 0)).toMatchObject({ broughtOverPaidCents: 1502 });
@@ -86,8 +125,25 @@ describe('backfillBroughtOverPaid run', () => {
     const r = await run('dry-run', 300, f.db);
     expect(r).toMatchObject({ scanned: 3, stamped: 1 });
     expect(r.byVerdict).toMatchObject({ stamp: 1, has_payment_rows: 1, not_brought_over: 1 });
-    expect(r.listed).toEqual([{ invoiceId: 'b', verdict: 'has_payment_rows', totalCents: 4000, statedCents: 2500, paymentRowCount: 1 }]);
+    expect(r.listed).toEqual([
+      { invoiceId: 'b', verdict: 'has_payment_rows', totalCents: 4000, statedCents: 2500, paymentRowCount: 1, status: 'open' },
+    ]);
     expect(f.commits()).toBe(0);
+  });
+
+  it('an apply writes nothing on a contradiction and lists it with its status', async () => {
+    const f = fakeDb({
+      no: { ...BROUGHT, status: 'No', amountDue: 0 },
+      yes: { ...BROUGHT, status: 'Yes', amountDue: 0 },
+      off: { ...BROUGHT, status: 'written_off', amountDue: 0 },
+    });
+    const r = await run('apply', 300, f.db);
+    expect(f.writes).toEqual([{ id: 'yes', data: { broughtOverPaidCents: 4000 } }]);
+    expect(r.byVerdict).toMatchObject({ stamp: 1, status_disagrees: 1, status_unreadable: 1 });
+    expect(r.listed.map((l) => [l.invoiceId, l.verdict, l.status])).toEqual([
+      ['no', 'status_disagrees', 'No'],
+      ['off', 'status_unreadable', 'written_off'],
+    ]);
   });
 
   it('an apply writes the field alone', async () => {

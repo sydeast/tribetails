@@ -22,11 +22,23 @@
  *     field, which nothing in this codebase writes),
  *   - it has no payment rows,
  *   - it has no `broughtOverPaidCents` yet,
- *   - it states a balance, and 0 <= stated < total.
+ *   - it states a balance, and 0 <= stated < total,
+ *   - its `status` agrees with that balance, or it has none (below).
+ *
+ * THE STATUS MUST AGREE WITH THE FIGURES (lead decision on #2470). The old
+ * system's per-invoice `status` is its answer to "paid?", literally "Yes" or
+ * "No"; on an invoice the app has since stamped it is the app's own label. A
+ * paid answer ("Yes", `paid`, `zero`) agrees with a $0 stated balance, and an
+ * unpaid one ("No", `open`, `sent`, `overdue`, `past_due`) with a balance above
+ * $0. When they disagree the data contradicts itself and there is no telling
+ * which half is right, so nothing is stamped and the invoice is listed. Any
+ * other label (`written_off`, `cancelled`, `draft`, a word the old system never
+ * wrote) is listed too: a write-off zeroes the stated balance, and reading
+ * that as "paid in full" would invent a payment.
  *
  * Everything else is left exactly as it is. The shapes a person should look
- * at (rows already present, a balance above the total, a credit, no total) are
- * listed by id with their figures.
+ * at (rows already present, a balance above the total, a credit, no total, a
+ * status that disagrees or cannot be read) are listed by id with their figures.
  *
  * WHAT IT WRITES: `broughtOverPaidCents` and nothing else. Not `paidCents`
  * (every payment path rewrites that from the rows, and the field must survive
@@ -126,9 +138,36 @@ export type Verdict =
   /** States a negative balance (a credit). LISTED. */
   | 'credit'
   /** No positive total to measure against. LISTED. */
-  | 'no_total';
+  | 'no_total'
+  /** Its status says paid with money stated, or unpaid with nothing stated. LISTED. */
+  | 'status_disagrees'
+  /** Its status is neither a paid nor an unpaid answer. LISTED. */
+  | 'status_unreadable';
 
-export const LISTED_VERDICTS: readonly Verdict[] = ['has_payment_rows', 'stated_above_total', 'credit', 'no_total'];
+export const LISTED_VERDICTS: readonly Verdict[] = [
+  'has_payment_rows',
+  'stated_above_total',
+  'credit',
+  'no_total',
+  'status_disagrees',
+  'status_unreadable',
+];
+
+/** Status words that answer "paid": the old system's "Yes" and the app's own labels for nothing owed. */
+export const PAID_ANSWERS: readonly string[] = ['yes', 'paid', 'zero'];
+/** Status words that answer "not paid": the old system's "No" and the app's labels for money owed. */
+export const UNPAID_ANSWERS: readonly string[] = ['no', 'open', 'sent', 'overdue', 'past_due'];
+
+/** What an invoice's `status` says about "paid?": absent, paid, not paid, or a word that answers neither. */
+export function paidAnswerOf(status: unknown): 'absent' | 'paid' | 'unpaid' | 'unreadable' {
+  if (status === undefined || status === null) return 'absent';
+  if (typeof status !== 'string') return 'unreadable';
+  const s = status.trim().toLowerCase();
+  if (s === '') return 'absent';
+  if (PAID_ANSWERS.includes(s)) return 'paid';
+  if (UNPAID_ANSWERS.includes(s)) return 'unpaid';
+  return 'unreadable';
+}
 
 export interface InvoicePlan {
   verdict: Verdict;
@@ -151,8 +190,15 @@ export function planInvoice(data: Record<string, unknown>, paymentRowCount: numb
   if (broughtOverPaidCentsOf(data) > 0) return plan('already_stamped');
   if (!(IMPORT_MARKER_FIELD in data)) return plan('not_brought_over');
   if (statedCents === null) return plan('no_stated_balance');
-  if (totalCents <= 0) return plan('no_total');
   if (statedCents < 0) return plan('credit');
+  // Ahead of the total checks, so a "No" invoice stating $0 is listed as the
+  // contradiction it is even when its total is $0 too.
+  const answer = paidAnswerOf(data['status']);
+  if (answer === 'unreadable') return plan('status_unreadable');
+  if (answer !== 'absent' && (answer === 'paid') !== (statedCents === 0)) return plan('status_disagrees');
+  // Nothing billed and nothing owed: nothing was paid either.
+  if (totalCents === 0 && statedCents === 0) return plan('nothing_paid');
+  if (totalCents <= 0) return plan('no_total');
   if (statedCents > totalCents) return plan('stated_above_total');
   if (statedCents === totalCents) return plan('nothing_paid');
   if (paymentRowCount > 0) return plan('has_payment_rows');
@@ -165,6 +211,8 @@ export interface Listed {
   totalCents: number;
   statedCents: number | null;
   paymentRowCount: number;
+  /** The invoice's `status` as stored, so a contradiction can be read off the list. */
+  status: string | null;
 }
 
 export interface RunResult {
@@ -204,6 +252,8 @@ export function emptyResult(): RunResult {
       stated_above_total: 0,
       credit: 0,
       no_total: 0,
+      status_disagrees: 0,
+      status_unreadable: 0,
     },
     listed: [],
   };
@@ -248,6 +298,7 @@ export async function run(mode: Mode, pageSize: number, db?: Firestore): Promise
           totalCents: plan.totalCents,
           statedCents: plan.statedCents,
           paymentRowCount: rowCount,
+          status: data['status'] === undefined || data['status'] === null ? null : String(data['status']),
         });
       }
       if (plan.verdict !== 'stamp' || plan.broughtOverPaidCents === null) continue;
@@ -283,9 +334,13 @@ function summarise(mode: Mode, r: RunResult): void {
     console.log('    stated_above_total : asks for more than its total.');
     console.log('    credit             : states a negative balance.');
     console.log('    no_total           : no total to measure against.');
+    console.log('    status_disagrees   : its status says paid with money stated, or not paid');
+    console.log('                         with nothing stated, so the figures cannot be trusted.');
+    console.log('    status_unreadable  : its status answers neither paid nor not paid');
+    console.log('                         (a write-off, a cancellation, an unknown word).');
     for (const l of r.listed) {
       console.log(
-        `      ${INVOICES_COLLECTION}/${l.invoiceId}  ${l.verdict}  total=${l.totalCents}  stated=${l.statedCents}  rows=${l.paymentRowCount}`,
+        `      ${INVOICES_COLLECTION}/${l.invoiceId}  ${l.verdict}  total=${l.totalCents}  stated=${l.statedCents}  rows=${l.paymentRowCount}  status=${JSON.stringify(l.status)}`,
       );
     }
   }

@@ -481,4 +481,14 @@ describe('#2470: write-off, withdraw, edit and the repair pass', () => {
     const after = { ...BROUGHT, amountDue: 15, amountDueCents: 1500, paidCents: 1000 };
     expect(repairPlanFor('inv1', after, [{ amountCents: 1000 }])).toEqual({ skipped: 'balance_already_correct' });
   });
+
+  it('the repair pass reopens a zeroed part-paid brought-over invoice at $15 and stores the rows alone', () => {
+    // The pre-2026-07-25 shape: a $10 row marked paid with nothing owed.
+    const zeroed = { ...BROUGHT, status: 'paid', amountDue: 0, amountDueCents: 0, paidCents: 1000 };
+    const plan = repairPlanFor('inv1', zeroed, [{ amountCents: 1000 }]);
+    if (!('update' in plan)) throw new Error(`expected a repair plan, got ${JSON.stringify(plan)}`);
+    expect(plan.update).toMatchObject({ status: 'open', paidCents: 1000, amountDueCents: 1500, amountDue: 15 });
+    expect(plan.update).not.toHaveProperty('broughtOverPaidCents');
+    expect(plan.finding).toMatchObject({ paidCents: 2500, correctAmountDueCents: 1500 });
+  });
 });
