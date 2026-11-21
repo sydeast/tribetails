@@ -118,6 +118,13 @@ fun KinfolkPortalAppGuarded() {
             AuthState.SignedOut -> com.kinfolk.portal.push.PendingPushOpen.onAccount(null)
             else -> Unit
         }
+        // #2401: the same rule for a card payment's return link that has not
+        // opened yet. It belongs to the session it arrived in.
+        when (val settled = authState) {
+            is AuthState.SignedIn -> com.kinfolk.portal.screens.invoices.PendingCheckoutReturn.onAccount(settled.uid)
+            AuthState.SignedOut -> com.kinfolk.portal.screens.invoices.PendingCheckoutReturn.onAccount(null)
+            else -> Unit
+        }
     }
     LaunchedEffect(signedInUid, firestoreClient) {
         unreadBadge.reset()
@@ -363,6 +370,8 @@ fun KinfolkPortalAppGuarded() {
                                 // #2259: a push tapped and not yet opened is not
                                 // kept for whoever signs in next.
                                 com.kinfolk.portal.push.PendingPushOpen.clear()
+                                // #2401: nor is a card payment's return link.
+                                com.kinfolk.portal.screens.invoices.PendingCheckoutReturn.clear()
                             },
                             onBackToDirectory = {
                                 pickedKinfolkId = null

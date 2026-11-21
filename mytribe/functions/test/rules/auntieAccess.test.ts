@@ -772,50 +772,247 @@ describe('rules: #1580 admin-only visit notes are the owner\'s alone', () => {
     await assertFails(asAuntie(env).firestore().doc(`${VISIT}/adminNotes/n3`).set({ body: 'x' }));
   });
 });
-describe('rules: #2295 a Push draft is the owner\'s', () => {
+describe('rules: generated drafts are the owner\'s to make and remove; an Auntie works KinTale drafts only', () => {
   afterEach(async () => cleanup());
   afterAll(async () => shutdown());
   const PUSH = 'generated_drafts/push-1';
+  const EMAIL = 'generated_drafts/email-1';
   const TALE = 'generated_drafts/tale-1';
-  const push = { kinfolk_id: 'f1', communication_type: 'push', generated_copy: 'Hello', status: 'generated' };
-  const tale = { kinfolk_id: 'f1', communication_type: 'visit_report', generated_copy: 'A visit', status: 'generated' };
-  it('the owner creates, approves and deletes a Push draft', async () => {
+  const OLDER = 'generated_drafts/older-1';
+  const base = { kinfolk_id: 'f1', generated_copy: 'Words', raw_notes: 'Notes', status: 'generated' };
+  const push = { ...base, communication_type: 'push', createdOn: '2026-11-01T10:00:00.000Z' };
+  const email = { ...base, communication_type: 'email', createdOn: '2026-11-02T10:00:00.000Z' };
+  const tale = { ...base, communication_type: 'visit_report', createdOn: '2026-11-03T10:00:00.000Z' };
+  /** A migrated draft: the older spelling only. */
+  const older = { kinfolkId: 'f1', generatedCopy: 'Words', communicationType: 'visit_report', status: 'pending', createdOn: '2026-05-23T10:00:00.000Z' };
+  /** Types that are not exactly `visit_report` and not exactly `push`. */
+  const INEXACT_TYPES: unknown[] = [
+    ' push', 'push ', 'Push', 'PUSH', 'push\t', '\u00a0push', 'push\u00a0', 'push\u2028', '\u2029push', '\u3000push', '\ufeffpush',
+    ' visit_report', 'visit_report ', 'Visit_Report', 'visit_report\u00a0', '\u3000visit_report', '\ufeffvisit_report',
+    '', 7, null, true, ['visit_report'],
+  ];
+  const draftsQuery = (db: ReturnType<ReturnType<typeof asAuntie>['firestore']>) =>
+    db.collection('generated_drafts').where('communication_type', '==', 'visit_report').orderBy('createdOn', 'desc').limit(50);
+  async function seedAll() {
+    await seed(PUSH, push);
+    await seed(EMAIL, email);
+    await seed(TALE, tale);
+    await seed(OLDER, older);
+  }
+  // ── The owner ─────────────────────────────────────────────────────────────
+  it('the owner creates, reads, approves and deletes a draft of every type', async () => {
     const env = await getEnv();
     const db = asOwner(env).firestore();
-    await assertSucceeds(db.doc(PUSH).set(push));
-    await assertSucceeds(db.doc(PUSH).update({ status: 'approved', generatedCopy: 'Hello' }));
-    await assertSucceeds(db.doc(PUSH).delete());
+    for (const [path, draft] of [[PUSH, push], [EMAIL, email], [TALE, tale], [OLDER, older]] as const) {
+      await assertSucceeds(db.doc(path).set(draft));
+      await assertSucceeds(db.doc(path).get());
+      await assertSucceeds(db.doc(path).update({ status: 'approved', generatedCopy: 'Final words', approvedBy: 'owner-1' }));
+      await assertSucceeds(db.doc(path).delete());
+    }
   });
-  it('an Auntie still approves a KinTale draft', async () => {
+  it('the owner lists every draft with no type on the query', async () => {
     const env = await getEnv();
-    await seed(TALE, tale);
-    await assertSucceeds(asAuntie(env).firestore().doc(TALE).update({ status: 'approved', generatedCopy: 'A visit' }));
+    await seedAll();
+    await assertSucceeds(asOwner(env).firestore().collection('generated_drafts').orderBy('createdOn', 'desc').limit(50).get());
   });
-  it('an Auntie is refused writing a Push draft, in either spelling and any case', async () => {
+  // ── An Auntie never creates or deletes ────────────────────────────────────
+  it('an Auntie is refused creating a draft of any type, a KinTale draft included', async () => {
     const env = await getEnv();
     const db = asAuntie(env).firestore();
+    await assertFails(db.doc(TALE).set(tale));
     await assertFails(db.doc(PUSH).set({ ...push, status: 'approved' }));
-    await assertFails(db.doc(PUSH).set({ kinfolkId: 'f1', communicationType: ' Push ', status: 'approved' }));
-    await assertFails(db.doc(PUSH).set({ kinfolk_id: 'f1', communication_type: 7, status: 'approved' }));
+    await assertFails(db.doc(EMAIL).set(email));
+    await assertFails(db.doc(OLDER).set(older));
+    await assertFails(db.doc('generated_drafts/untyped-1').set(base));
+    await assertFails(db.collection('generated_drafts').add(tale));
   });
-  it('an Auntie is refused approving, editing or deleting a stored Push draft', async () => {
+  it('an Auntie is refused creating a draft whose type is not exactly a known one, in either spelling', async () => {
     const env = await getEnv();
-    await seed(PUSH, push);
     const db = asAuntie(env).firestore();
-    await assertFails(db.doc(PUSH).update({ status: 'approved' }));
-    await assertFails(db.doc(PUSH).update({ kinfolk_id: 'f2', generatedCopy: 'Other words' }));
-    await assertFails(db.doc(PUSH).update({ communication_type: 'email' }));
-    await assertFails(db.doc(PUSH).delete());
+    for (const [i, type] of INEXACT_TYPES.entries()) {
+      await assertFails(db.doc(`generated_drafts/new-a-${String(i)}`).set({ ...base, communication_type: type, status: 'approved' }));
+      await assertFails(db.doc(`generated_drafts/new-b-${String(i)}`).set({ ...base, communicationType: type, status: 'approved' }));
+    }
   });
-  it('an Auntie is refused turning a KinTale draft into a Push draft', async () => {
+  it('an Auntie is refused deleting a draft of any type, a KinTale draft included', async () => {
+    const env = await getEnv();
+    await seedAll();
+    await seed('generated_drafts/sent-1', { ...tale, status: 'published', publishedReportId: 'r1' });
+    const db = asAuntie(env).firestore();
+    for (const path of [TALE, PUSH, EMAIL, OLDER, 'generated_drafts/sent-1']) {
+      await assertFails(db.doc(path).delete());
+    }
+  });
+  // ── What an Auntie reads ──────────────────────────────────────────────────
+  it('an Auntie reads a KinTale draft', async () => {
+    const env = await getEnv();
+    await seed(TALE, tale);
+    await seed('generated_drafts/tale-2', { ...tale, communicationType: 'visit_report' });
+    const db = asAuntie(env).firestore();
+    await assertSucceeds(db.doc(TALE).get());
+    await assertSucceeds(db.doc('generated_drafts/tale-2').get());
+  });
+  it('an Auntie is refused reading a Communicate draft: push, email or any other type', async () => {
+    const env = await getEnv();
+    await seedAll();
+    for (const type of ['sms', 'social_post', 'blog_post', 'general']) {
+      await seed(`generated_drafts/${type}-1`, { ...base, communication_type: type });
+    }
+    const db = asAuntie(env).firestore();
+    for (const path of [PUSH, EMAIL, 'generated_drafts/sms-1', 'generated_drafts/social_post-1', 'generated_drafts/blog_post-1', 'generated_drafts/general-1']) {
+      await assertFails(db.doc(path).get());
+    }
+  });
+  it('an Auntie is refused reading a draft whose type is not exactly visit_report', async () => {
+    const env = await getEnv();
+    const db = asAuntie(env).firestore();
+    for (const [i, type] of INEXACT_TYPES.entries()) {
+      const path = `generated_drafts/odd-${String(i)}`;
+      await seed(path, { ...base, communication_type: type });
+      await assertFails(db.doc(path).get());
+    }
+    await seed('generated_drafts/untyped-1', base);
+    await assertFails(db.doc('generated_drafts/untyped-1').get());
+  });
+  it('an Auntie is refused reading a draft whose older type field is missing its partner or says something else', async () => {
+    const env = await getEnv();
+    await seed(OLDER, older);
+    await seed('generated_drafts/mixed-1', { ...tale, communicationType: 'push' });
+    await seed('generated_drafts/mixed-2', { ...tale, communicationType: ' visit_report' });
+    await seed('generated_drafts/mixed-3', { ...tale, communicationType: '' });
+    const db = asAuntie(env).firestore();
+    for (const path of [OLDER, 'generated_drafts/mixed-1', 'generated_drafts/mixed-2', 'generated_drafts/mixed-3']) {
+      await assertFails(db.doc(path).get());
+    }
+  });
+  it('an Auntie lists KinTale drafts when her query names the type', async () => {
+    const env = await getEnv();
+    await seedAll();
+    const db = asAuntie(env).firestore();
+    await assertSucceeds(draftsQuery(db).get());
+    await assertSucceeds(db.collection('generated_drafts').where('communication_type', '==', 'visit_report').get());
+  });
+  it('an Auntie is refused a list that does not name the KinTale type', async () => {
+    const env = await getEnv();
+    await seedAll();
+    const db = asAuntie(env).firestore();
+    const col = db.collection('generated_drafts');
+    await assertFails(col.get());
+    await assertFails(col.orderBy('createdOn', 'desc').limit(50).get());
+    await assertFails(col.where('kinfolk_id', '==', 'f1').get());
+    await assertFails(col.where('communication_type', '==', 'push').get());
+    await assertFails(col.where('communication_type', '==', 'email').get());
+    await assertFails(col.where('communication_type', 'in', ['visit_report', 'push']).get());
+    await assertFails(col.where('communication_type', '>=', 'push').get());
+    await assertFails(col.where('communicationType', '==', 'visit_report').get());
+    await assertFails(col.where('status', '==', 'generated').get());
+  });
+  // ── What an Auntie edits ──────────────────────────────────────────────────
+  it('an Auntie edits the words and the title of a KinTale draft', async () => {
+    const env = await getEnv();
+    await seed(TALE, { ...tale, generated_title: 'A visit' });
+    const db = asAuntie(env).firestore();
+    await assertSucceeds(db.doc(TALE).update({ generatedCopy: 'Her words' }));
+    await assertSucceeds(db.doc(TALE).update({ generated_copy: 'Her words', generated_title: 'Her title' }));
+    await assertSucceeds(db.doc(TALE).update({ generatedTitle: 'Her title', subject: 'Her title' }));
+  });
+  it('an Auntie is refused approving a KinTale draft or changing its status at all', async () => {
     const env = await getEnv();
     await seed(TALE, tale);
     const db = asAuntie(env).firestore();
-    await assertFails(db.doc(TALE).update({ communication_type: 'push', status: 'approved' }));
-    await assertFails(db.doc(TALE).update({ communicationType: 'PUSH', status: 'approved' }));
+    await assertFails(db.doc(TALE).update({ status: 'approved' }));
+    await assertFails(db.doc(TALE).update({ status: 'approved', generatedCopy: 'Her words' }));
+    await assertFails(db.doc(TALE).update({ status: 'published' }));
+    await assertFails(db.doc(TALE).update({ status: 'pending' }));
+    await assertFails(db.doc(TALE).update({ approvedAt: '2026-11-20T00:00:00.000Z', approvedBy: 'auntie-1' }));
   });
-  it('a double-claimed account degrades to the Auntie and is refused', async () => {
+  it('an Auntie is refused moving a KinTale draft to another household, in either spelling', async () => {
     const env = await getEnv();
-    await assertFails(asDoubleClaimed(env).firestore().doc(PUSH).set({ ...push, status: 'approved' }));
+    await seed(TALE, tale);
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc(TALE).update({ kinfolk_id: 'f2' }));
+    await assertFails(db.doc(TALE).update({ kinfolkId: 'f2' }));
+    await assertFails(db.doc(TALE).update({ kinfolk_id: 'f2', generatedCopy: 'Her words' }));
+    await assertFails(db.doc(TALE).update({ kinfolk_name: 'Someone else' }));
+    await assertFails(db.doc(TALE).update({ recipient: 'Someone else' }));
+  });
+  it('an Auntie is refused changing whether or how a draft was sent', async () => {
+    const env = await getEnv();
+    await seed(TALE, tale);
+    await seed('generated_drafts/sent-1', { ...tale, status: 'published', publishedReportId: 'r1', publishedAt: '2026-11-04T00:00:00.000Z' });
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc(TALE).update({ publishedReportId: 'r9' }));
+    await assertFails(db.doc(TALE).update({ publishedAt: '2026-11-20T00:00:00.000Z' }));
+    await assertFails(db.doc(TALE).update({ pushOutcome: 'held' }));
+    await assertFails(db.doc(TALE).update({ pushReason: 'household_notices_off' }));
+    await assertFails(db.doc(TALE).update({ pushAttemptedAt: '2026-11-20T00:00:00.000Z' }));
+    await assertFails(db.doc('generated_drafts/sent-1').update({ publishedReportId: '' }));
+    await assertFails(db.doc('generated_drafts/sent-1').update({ status: 'generated' }));
+  });
+  it('an Auntie is refused changing the type of a KinTale draft, in either spelling', async () => {
+    const env = await getEnv();
+    await seed(TALE, tale);
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc(TALE).update({ communication_type: 'push' }));
+    await assertFails(db.doc(TALE).update({ communication_type: 'email', generatedCopy: 'Her words' }));
+    await assertFails(db.doc(TALE).update({ communicationType: 'push' }));
+    await assertFails(db.doc(TALE).update({ communicationType: 'visit_report' }));
+    for (const type of INEXACT_TYPES) {
+      await assertFails(db.doc(TALE).update({ communication_type: type }));
+      await assertFails(db.doc(TALE).update({ communicationType: type }));
+    }
+  });
+  it('an Auntie is refused changing anything else on a KinTale draft, or replacing it', async () => {
+    const env = await getEnv();
+    await seed(TALE, tale);
+    const db = asAuntie(env).firestore();
+    await assertFails(db.doc(TALE).update({ raw_notes: 'Other notes' }));
+    await assertFails(db.doc(TALE).update({ createdOn: '2027-01-01T00:00:00.000Z' }));
+    await assertFails(db.doc(TALE).update({ model: 'x', source: 'x' }));
+    await assertFails(db.doc(TALE).update({ anythingNew: true }));
+    await assertFails(db.doc(TALE).set({ communication_type: 'visit_report', generated_copy: 'Her words' }));
+  });
+  it('an Auntie is refused editing a draft that is not exactly a KinTale draft, the words included', async () => {
+    const env = await getEnv();
+    await seedAll();
+    await seed('generated_drafts/mixed-1', { ...tale, communicationType: 'push' });
+    const db = asAuntie(env).firestore();
+    for (const path of [PUSH, EMAIL, OLDER, 'generated_drafts/mixed-1']) {
+      await assertFails(db.doc(path).update({ generatedCopy: 'Her words' }));
+      await assertFails(db.doc(path).update({ generated_copy: 'Her words' }));
+      await assertFails(db.doc(path).update({ status: 'approved' }));
+    }
+    for (const [i, type] of INEXACT_TYPES.entries()) {
+      const path = `generated_drafts/odd-${String(i)}`;
+      await seed(path, { ...base, communication_type: type });
+      await assertFails(db.doc(path).update({ generatedCopy: 'Her words' }));
+      await assertFails(db.doc(path).update({ status: 'approved' }));
+    }
+  });
+  // ── Everyone else ─────────────────────────────────────────────────────────
+  it('an account carrying both roles is held to what an Auntie may do', async () => {
+    const env = await getEnv();
+    await seedAll();
+    const db = asDoubleClaimed(env).firestore();
+    await assertSucceeds(db.doc(TALE).get());
+    await assertFails(db.doc(PUSH).get());
+    await assertFails(db.doc('generated_drafts/new-1').set(tale));
+    await assertFails(db.doc(TALE).update({ status: 'approved' }));
+    await assertFails(db.doc(TALE).delete());
+    await assertFails(db.collection('generated_drafts').get());
+  });
+  it('a household member and a signed-out visitor read and write no draft', async () => {
+    const env = await getEnv();
+    await seedAll();
+    const kin = env.authenticatedContext('u-kin', { role: 'kinfolk', kinfolkId: 'f1' }).firestore();
+    const out = env.unauthenticatedContext().firestore();
+    for (const db of [kin, out]) {
+      await assertFails(db.doc(TALE).get());
+      await assertFails(db.collection('generated_drafts').where('communication_type', '==', 'visit_report').get());
+      await assertFails(db.collection('generated_drafts').where('kinfolk_id', '==', 'f1').get());
+      await assertFails(db.doc(TALE).update({ generatedCopy: 'x' }));
+      await assertFails(db.doc('generated_drafts/new-1').set(tale));
+      await assertFails(db.doc(TALE).delete());
+    }
   });
 });

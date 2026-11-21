@@ -15,7 +15,7 @@ vi.mock('firebase-admin/firestore', async () => {
   return { ...actual, FieldValue: { ...actual.FieldValue, serverTimestamp: () => '__TS__' } };
 });
 
-import { sendHouseholdPushHandler, householdPushNoticeId } from '../src/admin/sendHouseholdPush';
+import { sendHouseholdPushHandler, householdPushNoticeId, PUSH_CLAIM_LEASE_MS } from '../src/admin/sendHouseholdPush';
 import { toNotificationListItem } from '../src/portal/listMyNotifications';
 
 /**
@@ -53,6 +53,8 @@ function seed(docs: Record<string, Record<string, unknown> | null>, queryDocs: R
 }
 
 const noticePath = `notifications/${householdPushNoticeId('draft1')}`;
+/** The approved draft holding these words: the send pushes the stored copy and nothing else (#2389). */
+const draftSaying = (copy: string) => ({ [draftPath]: { ...DRAFT, generated_copy: copy } });
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
@@ -90,8 +92,8 @@ describe('sendHouseholdPush (#2061)', () => {
 
     expect(res).toEqual({ ok: true, outcome: 'held', reason: 'household_notices_off' });
     expect(mocks.multicast).not.toHaveBeenCalled();
-    // Nothing for the household; the draft remembers the answer (#2293).
-    expect(ctx.writes.map((w) => w.path)).toEqual([draftPath]);
+    // Nothing for the household; the draft takes its claim and remembers the answer (#2293).
+    expect([...new Set(ctx.writes.map((w) => w.path))]).toEqual([draftPath]);
     expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'held', pushReason: 'household_notices_off' });
   });
 
@@ -105,7 +107,7 @@ describe('sendHouseholdPush (#2061)', () => {
     const ctx = seed({ [draftPath]: DRAFT, 'kinfolk/fam1': { firstName: 'Test' }, 'business_settings/business_settings': { householdNotificationsLive: false } });
     const res = await sendHouseholdPushHandler(req());
     expect(res).toEqual({ ok: true, outcome: 'held', reason: 'household_has_no_portal_account' });
-    expect(ctx.writes.map((w) => w.path)).toEqual([draftPath]);
+    expect([...new Set(ctx.writes.map((w) => w.path))]).toEqual([draftPath]);
   });
 
   it('SAD: the operator turned household message notices off, so nothing is written', async () => {
@@ -116,7 +118,7 @@ describe('sendHouseholdPush (#2061)', () => {
     });
     const res = await sendHouseholdPushHandler(req());
     expect(res).toEqual({ ok: true, outcome: 'held', reason: 'notice_turned_off' });
-    expect(ctx.writes.map((w) => w.path)).toEqual([draftPath]);
+    expect([...new Set(ctx.writes.map((w) => w.path))]).toEqual([draftPath]);
     expect(mocks.multicast).not.toHaveBeenCalled();
   });
 
@@ -126,7 +128,7 @@ describe('sendHouseholdPush (#2061)', () => {
     expect(res).toEqual({ ok: true, outcome: 'listed', reason: 'household_push_off' });
     expect(mocks.multicast).not.toHaveBeenCalled();
     // The notice, its pushOutcome stamp, and the draft's: nothing else is written.
-    expect([...new Set(ctx.writes.map((w) => w.path))]).toEqual([noticePath, draftPath]);
+    expect([...new Set(ctx.writes.map((w) => w.path))].sort()).toEqual([draftPath, noticePath].sort());
     expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'listed', pushReason: 'household_push_off' });
   });
 
@@ -185,7 +187,7 @@ describe('sendHouseholdPush (#2061)', () => {
   });
   it('HAPPY: a long message is pushed short, opens the notifications list, and is whole on that list', async () => {
     const long = `${'Biscuit had a great walk today. '.repeat(20)}See you Friday.`;
-    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, 'business_settings/business_settings': { householdNotificationsLive: true } });
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...draftSaying(long), 'business_settings/business_settings': { householdNotificationsLive: true } });
     const res = await sendHouseholdPushHandler(req({ body: long }));
     expect(res.outcome).toBe('sent');
     const sent = mocks.multicast.mock.calls[0]![0];
@@ -197,14 +199,14 @@ describe('sendHouseholdPush (#2061)', () => {
     expect((notice!.data as Record<string, unknown>)['householdLine']).toBe(long);
   });
   it('NEGATIVE: markup never reaches the lock screen', async () => {
-    seed({ ...HOUSEHOLD, ...PUSH_ON });
+    seed({ ...HOUSEHOLD, ...PUSH_ON, ...draftSaying('<b>Hi</b> there') });
     await sendHouseholdPushHandler(req({ body: '<b>Hi</b> there' }));
     expect(mocks.multicast.mock.calls[0]![0].notification.body).toBe('Hi there');
   });
 
   it("#2321: an apostrophe, an ampersand and a quote mark reach the phone and the list as typed", async () => {
     const typed = `O'Malley & Sue said "see you Friday"`;
-    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, 'business_settings/business_settings': { householdNotificationsLive: true } });
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...draftSaying(typed), 'business_settings/business_settings': { householdNotificationsLive: true } });
     const res = await sendHouseholdPushHandler(req({ body: typed, title: "Bob & Sue's Auntie" }));
     expect(res.outcome).toBe('sent');
     expect(mocks.multicast.mock.calls[0]![0].notification).toEqual({ title: "Bob & Sue's Auntie", body: typed });
@@ -248,11 +250,43 @@ describe('sendHouseholdPush checks its draft (#2295)', () => {
   it('NEGATIVE: refuses a draft that is not a push', async () => {
     await refused({ ...DRAFT, communication_type: 'visit_report' }, 'failed-precondition');
   });
+  /** Types that are not exactly `push`. */
+  const NOT_EXACTLY_PUSH: unknown[] = [
+    'Push', 'PUSH', ' push', 'push ', 'push\t', '\u00a0push', 'push\u2028', '\u3000push', '\ufeffpush', '', 7, null,
+  ];
+  it('NEGATIVE: refuses a draft whose type is not exactly push, in either spelling', async () => {
+    const { communication_type: _dropped, ...rest } = DRAFT;
+    for (const type of NOT_EXACTLY_PUSH) {
+      await refused({ ...DRAFT, communication_type: type }, 'failed-precondition');
+      await refused({ ...rest, communicationType: type }, 'failed-precondition');
+    }
+  });
+  it('NEGATIVE: refuses a draft with no type on it', async () => {
+    const { communication_type: _dropped, ...rest } = DRAFT;
+    await refused(rest, 'failed-precondition');
+  });
+  it('NEGATIVE: refuses a draft whose two type fields disagree, whichever says push', async () => {
+    await refused({ ...DRAFT, communicationType: 'visit_report' }, 'failed-precondition');
+    await refused({ ...DRAFT, communication_type: 'visit_report', communicationType: 'push' }, 'failed-precondition');
+    await refused({ ...DRAFT, communicationType: ' push' }, 'failed-precondition');
+    await refused({ ...DRAFT, communicationType: '' }, 'failed-precondition');
+  });
+  it('HAPPY: both type fields saying push sends', async () => {
+    seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { ...DRAFT, communicationType: 'push' } });
+    expect((await sendHouseholdPushHandler(req())).outcome).toBe('sent');
+  });
   it('NEGATIVE: refuses a push draft nobody approved', async () => {
     await refused({ ...DRAFT, status: 'generated' }, 'failed-precondition');
   });
+  it('NEGATIVE: refuses a push draft whose status is not exactly approved', async () => {
+    const { status: _dropped, ...rest } = DRAFT;
+    await refused(rest, 'failed-precondition');
+    for (const status of ['Approved', ' approved', 'approved\u00a0', true, null]) {
+      await refused({ ...rest, status }, 'failed-precondition');
+    }
+  });
   it('HAPPY: the older camelCase spelling of the same household sends', async () => {
-    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { communicationType: 'push', kinfolkId: 'fam1', status: 'approved' } });
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { communicationType: 'push', kinfolkId: 'fam1', status: 'approved', generatedCopy: DRAFT.generated_copy } });
     expect((await sendHouseholdPushHandler(req())).outcome).toBe('sent');
     expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'sent', pushReason: '' });
   });
@@ -275,23 +309,156 @@ describe('sendHouseholdPush checks its draft (#2295)', () => {
   });
   it('ERROR: a draft stamp that fails never changes the answer', async () => {
     const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE });
-    const realCollection = ctx.db.collection.bind(ctx.db);
-    const refusedSet = vi.fn(async () => {
-      throw new Error('write refused');
-    });
+    const collection = ctx.db.collection.bind(ctx.db);
+    const realUpdate = collection('generated_drafts').doc('draft1').update;
+    // The claim's write lands; the stamp after the send is refused.
+    const update = vi
+      .fn()
+      .mockImplementationOnce((data: Record<string, unknown>) => realUpdate(data))
+      .mockRejectedValue(new Error('write refused'));
     vi.spyOn(ctx.db, 'collection').mockImplementation(((name: string) => {
-      const col = realCollection(name);
+      const col = collection(name);
       if (name !== 'generated_drafts') return col;
-      return {
-        ...col,
-        doc: (id: string) => {
-          const ref = col.doc(id);
-          return { ...ref, get: ref.get, set: refusedSet };
-        },
-      };
+      return { ...col, doc: (id: string) => ({ ...col.doc(id), update }) };
     }) as any);
     expect(await sendHouseholdPushHandler(req())).toEqual({ ok: true, outcome: 'sent', reason: null });
-    expect(refusedSet).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledTimes(2);
     expect(ctx.docs[draftPath]!['pushOutcome']).toBeUndefined();
+  });
+});
+describe('sendHouseholdPush: the approved words, once, and a deleted draft stays deleted (#2389)', () => {
+  const LIVE = { 'business_settings/business_settings': { householdNotificationsLive: true } };
+  const APPROVED = { ...DRAFT, generatedCopy: 'See you Friday at ten.' };
+  it('HAPPY: the words pushed are the ones approve stored, not the copy first generated', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: APPROVED });
+    expect((await sendHouseholdPushHandler(req({ body: ' See you Friday at ten. ' }))).outcome).toBe('sent');
+    expect(mocks.multicast.mock.calls[0]![0].notification.body).toBe('See you Friday at ten.');
+    expect(ctx.docs[noticePath]).toMatchObject({ householdLine: 'See you Friday at ten.' });
+  });
+  it('NEGATIVE: words edited after approval are refused, and nothing is written or pushed', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: APPROVED });
+    await expect(sendHouseholdPushHandler(req({ body: 'See you Saturday at ten.' }))).rejects.toMatchObject({
+      code: 'failed-precondition',
+      message: 'The words changed after this draft was approved. Approve it again to send them.',
+      details: { code: 'push_words_changed' },
+    });
+    // The first generated copy is not the approved one either.
+    await expect(sendHouseholdPushHandler(req({ body: DRAFT.generated_copy }))).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes).toEqual([]);
+    expect(ctx.docs[noticePath]).toBeUndefined();
+    expect(mocks.multicast).not.toHaveBeenCalled();
+  });
+  it('HAPPY: a push that only reached their list, then edited and approved again, shows the new words on the list and pushes them', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...LIVE, [draftPath]: APPROVED });
+    expect((await sendHouseholdPushHandler(req({ body: 'See you Friday at ten.' }))).outcome).toBe('listed');
+    expect(ctx.docs[noticePath]).toMatchObject({ householdLine: 'See you Friday at ten.' });
+    // The owner edits the words and approves again; the household turns pushes on.
+    ctx.docs[draftPath] = { ...ctx.docs[draftPath], generatedCopy: 'See you Saturday at ten.' };
+    ctx.docs['clients/uid_kin'] = PUSH_ON['clients/uid_kin'];
+    expect((await sendHouseholdPushHandler(req({ body: 'See you Saturday at ten.' }))).outcome).toBe('sent');
+    expect(mocks.multicast.mock.calls[0]![0].notification.body).toBe('See you Saturday at ten.');
+    expect(ctx.docs[noticePath]).toMatchObject({
+      householdLine: 'See you Saturday at ten.',
+      description: 'See you Saturday at ten.',
+      body: 'See you Saturday at ten.',
+      pushOutcome: 'sent',
+    });
+    // Still one notice: it was created once and its words were updated.
+    expect(ctx.writes.filter((w) => w.path === noticePath && w.merge === false)).toHaveLength(1);
+  });
+  it('NEGATIVE: an approved draft with no words stored is refused', async () => {
+    const { generated_copy: _dropped, ...noWords } = DRAFT;
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { ...noWords, generatedCopy: '  ' } });
+    await expect(sendHouseholdPushHandler(req())).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes).toEqual([]);
+    expect(mocks.multicast).not.toHaveBeenCalled();
+  });
+  it('NEGATIVE: a second tap while the first is still sending is refused, and one push goes out', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE });
+    let finishPush: (v: unknown) => void = () => undefined;
+    mocks.multicast.mockReturnValue(new Promise((resolve) => (finishPush = resolve)));
+    const first = sendHouseholdPushHandler(req());
+    await vi.waitFor(() => expect(mocks.multicast).toHaveBeenCalledTimes(1));
+    await expect(sendHouseholdPushHandler(req())).rejects.toMatchObject({
+      // A user-fault code: `wrapCallable` sends `aborted` to Sentry as a server fault.
+      code: 'failed-precondition',
+      message: 'This push is being sent right now. Wait a moment, then try again.',
+      details: { code: 'push_in_flight' },
+    });
+    finishPush({ successCount: 1, responses: [{ success: true, messageId: 'fcm-1' }] });
+    expect(await first).toEqual({ ok: true, outcome: 'sent', reason: null });
+    expect(mocks.multicast).toHaveBeenCalledTimes(1);
+    // The claim is let go with the answer, and a later tap finds the push sent.
+    expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'sent', pushClaimedAt: '' });
+    expect((await sendHouseholdPushHandler(req())).outcome).toBe('already_sent');
+    expect(mocks.multicast).toHaveBeenCalledTimes(1);
+  });
+  it('NEGATIVE: a claim another screen holds refuses the send and writes nothing', async () => {
+    const claimedAt = new Date(Date.now() - 5_000).toISOString();
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { ...DRAFT, pushClaimedAt: claimedAt } });
+    await expect(sendHouseholdPushHandler(req())).rejects.toMatchObject({
+      code: 'failed-precondition',
+      details: { code: 'push_in_flight' },
+    });
+    expect(ctx.writes).toEqual([]);
+    expect(mocks.multicast).not.toHaveBeenCalled();
+  });
+  it('HAPPY: a claim left by an attempt that never finished stops holding after its lease', async () => {
+    const claimedAt = new Date(Date.now() - PUSH_CLAIM_LEASE_MS - 1_000).toISOString();
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE, [draftPath]: { ...DRAFT, pushClaimedAt: claimedAt } });
+    expect((await sendHouseholdPushHandler(req())).outcome).toBe('sent');
+    expect(ctx.docs[draftPath]).toMatchObject({ pushOutcome: 'sent', pushClaimedAt: '' });
+  });
+  it('ERROR (#2381): a send that fails partway lets go of its claim, leaves the draft approved and unstamped, and can be tried again', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE });
+    const collection = ctx.db.collection.bind(ctx.db);
+    const spy = vi.spyOn(ctx.db, 'collection').mockImplementation(((name: string) => {
+      const col = collection(name);
+      if (name !== 'notifications') return col;
+      return {
+        ...col,
+        doc: (id: string) => ({
+          ...col.doc(id),
+          create: async () => {
+            throw new Error('the list is unavailable');
+          },
+        }),
+      };
+    }) as any);
+    await expect(sendHouseholdPushHandler(req())).rejects.toThrow('the list is unavailable');
+    expect(mocks.multicast).not.toHaveBeenCalled();
+    expect(ctx.docs[draftPath]).toMatchObject({ status: 'approved', pushClaimedAt: '' });
+    expect(ctx.docs[draftPath]!['pushOutcome']).toBeUndefined();
+    spy.mockRestore();
+    expect((await sendHouseholdPushHandler(req())).outcome).toBe('sent');
+  });
+  it('NEGATIVE: a draft deleted while its push is in flight stays deleted', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE });
+    mocks.multicast.mockImplementation(async () => {
+      delete ctx.docs[draftPath];
+      return { successCount: 1, responses: [{ success: true, messageId: 'fcm-1' }] };
+    });
+    expect(await sendHouseholdPushHandler(req())).toEqual({ ok: true, outcome: 'sent', reason: null });
+    expect(ctx.docs[draftPath]).toBeUndefined();
+  });
+  it('NEGATIVE: a draft deleted while a failing send is in flight is not brought back by the claim being let go', async () => {
+    const ctx = seed({ ...HOUSEHOLD, ...PUSH_ON, ...LIVE });
+    const collection = ctx.db.collection.bind(ctx.db);
+    vi.spyOn(ctx.db, 'collection').mockImplementation(((name: string) => {
+      const col = collection(name);
+      if (name !== 'notifications') return col;
+      return {
+        ...col,
+        doc: (id: string) => ({
+          ...col.doc(id),
+          create: async () => {
+            delete ctx.docs[draftPath];
+            throw new Error('the list is unavailable');
+          },
+        }),
+      };
+    }) as any);
+    await expect(sendHouseholdPushHandler(req())).rejects.toThrow('the list is unavailable');
+    expect(ctx.docs[draftPath]).toBeUndefined();
   });
 });

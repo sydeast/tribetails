@@ -232,6 +232,44 @@ with `duplicateCheckoutReason: 'invoice-cancelled'`, the invoice stays cancelled
 with no payment row and no balance change, the household is sent nothing, and
 the owner sees it under Payments needing a decision as "Not applied because the
 invoice was cancelled."
+Since #2362 cancelling (or withdrawing a quote) expires the invoice's open
+checkout pages, as paying or writing it off does, so that hold should now be
+rare. A written-off invoice is held the same way with
+`duplicateCheckoutReason: 'invoice-written-off'` and reads "Not applied because
+the invoice was written off" (#2363). A held payment whose fee lookup failed
+writes the `stripe.fee.unresolved` warning like an applied one (#2370).
+A declined card on a cancelled or written-off invoice sends the household
+nothing and leaves the owner one Activity Log line (#2361), like a decline on a
+paid one.
+A card payment on an invoice that cannot take it for any other reason is held
+the same way (#2345): the whole charge on one unapplied row with the fee beside
+it, nothing on the invoice, no credit, nothing sent to the household. The
+reasons, as `duplicateCheckoutReason` stores them and as the owner reads them
+after "Not applied because":
+
+| Stored reason | The invoice | Sentence |
+| --- | --- | --- |
+| `invoice-not-sent` | is a draft or a quote | the invoice was a draft or a quote |
+| `invoice-credit` | is a credit (by its label, or a negative balance or total) | the invoice was a credit, not a bill |
+| `invoice-no-balance` | has nothing owed on its total (no total, or its payments already cover it) | nothing was owed on the invoice's total |
+| `invoice-other-household` | belongs to a different household than the checkout | the invoice belongs to a different household |
+| `invoice-not-found` | does not exist | the invoice could not be found |
+
+A checkout for one household's invoice is held for the household on the
+checkout, and listed under that household. The invoice it named is not written
+at all, and the owner's decision cannot put the money on it. In every other
+case the invoice gains only `unappliedPaymentIds` and the two
+`duplicateCheckout` fields, as a cancelled one does. A held payment on a draft
+can be applied to that invoice by the owner once it is sent. A payment Stripe
+gave no amount for is held on all of these too, with no figure on the row.
+A declined card touches only its own household's invoice: on a checkout whose
+invoice does not exist, or belongs to a different household than the checkout,
+the decline writes nothing to an invoice, sends no notice, and leaves the owner
+one Activity Log line.
+One invoice still takes a card payment the ordinary rules cannot describe: one
+brought over part paid, whose stated balance is lower than its payment rows
+leave. The household paid what it was shown, so the invoice is marked paid
+(`cardApplyFallback: stated_balance_below_recorded_payments`).
 
 **`disputeStatus` and `disputeFundsState` are two different facts, on purpose.**
 `disputeStatus` mirrors Stripe's dispute lifecycle (`needs_response`,

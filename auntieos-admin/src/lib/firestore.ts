@@ -19,6 +19,7 @@ import {
   isVisibleInTestScope,
   DOC_ID_FIELD,
 } from './testScope';
+import { applyCaretakerScope } from './caretakerScope';
 
 /** One server-side predicate: [field, op, value]. */
 export type Filter = [string, WhereFilterOp, unknown];
@@ -62,8 +63,10 @@ export function useCollection<T>(spec: CollectionSpec): Async<T[]> {
   const retry = () => setNonce((n) => n + 1);
   // Sandbox scoping is applied HERE, not in each screen's spec, so a screen
   // cannot forget it. A test admin is permission-denied on an unscoped read of
-  // the operator collections; see lib/testScope.ts.
-  const scoped = applyTestScope(spec);
+  // the operator collections; see lib/testScope.ts. An Auntie's list of a
+  // collection she reads only part of is narrowed the same way, for the same
+  // reason; see lib/caretakerScope.ts.
+  const scoped = applyCaretakerScope(applyTestScope(spec));
   const key = JSON.stringify(scoped);
 
   useEffect(() => {

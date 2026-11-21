@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   twilioFn: vi.fn(),
   fromNumber: vi.fn(() => '+15555550000'),
   messagesCreate: vi.fn(),
+  logEvent: vi.fn(),
 }));
 
 vi.mock('../src/lib/firestoreAdmin', () => ({
@@ -17,10 +18,12 @@ vi.mock('../src/lib/twilio', () => ({
   getTwilio: () => ({ messages: { create: mocks.messagesCreate } }),
   getTwilioFromNumber: mocks.fromNumber,
 }));
+vi.mock('../src/lib/logger', () => ({ logEvent: mocks.logEvent }));
 
 beforeEach(() => {
   mocks.dbFn.mockReset();
   mocks.messagesCreate.mockReset();
+  mocks.logEvent.mockReset();
 });
 
 import { sendSmsChannel } from '../src/notifications/senders/smsChannel';
@@ -223,6 +226,100 @@ describe('sendSmsChannel', () => {
     });
     it.each(['business', 'staff', undefined] as const)('a %s copy is sent as written', async (stream) => {
       expect(await send('Tribe Tails: {{note}}', { note: longNote }, stream)).toBe(`Tribe Tails: ${longNote}`);
+    });
+  });
+  describe('#2371: the link opens the notice entry, which holds a cut message whole', () => {
+    const ENTRY = '/notifications?entry=n1';
+    const ENTRY_LINK = `More in MyTribe: https://kinfolk.tribetails.com${ENTRY}`;
+    const longNote = 'Please leave the side gate unlatched. '.repeat(14).trim();
+    const send = async (text: string, data: Record<string, unknown>, entryId?: string) => {
+      const ctx = buildDbMock({ docs: { 'smsTemplates/t.k': { text }, 'clients/u1': { phone: '+15555551111' } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.messagesCreate.mockReset();
+      mocks.messagesCreate.mockResolvedValue({ sid: 'SM_e' });
+      await sendSmsChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data,
+        stream: 'kinfolk',
+        open: { data: {}, readInList: { route: entryId ? ENTRY : '/notifications', ...(entryId ? { entryId } : {}) } },
+      });
+      return { body: mocks.messagesCreate.mock.calls[0]![0].body as string, ctx };
+    };
+    it('a cut message links to its entry and is written whole onto it', async () => {
+      const { body, ctx } = await send('Tribe Tails: we could not take it. {{note}}', { note: longNote }, 'n1');
+      expect(body.endsWith(`... ${ENTRY_LINK}`)).toBe(true);
+      expect(ctx.writes.filter((w) => w.path === 'notifications/n1')).toEqual([
+        { path: 'notifications/n1', data: { householdTextMessage: `Tribe Tails: we could not take it. ${longNote}` }, merge: true },
+      ]);
+    });
+    it('a message that fits links to its entry and writes nothing', async () => {
+      const { body, ctx } = await send('Your Auntie arrived.', {}, 'n1');
+      expect(body).toBe(`Your Auntie arrived. ${ENTRY_LINK}`);
+      expect(ctx.writes.some((w) => w.path.startsWith('notifications/'))).toBe(false);
+    });
+    it('with no entry named it links to the list and writes nothing', async () => {
+      const { body, ctx } = await send('Tribe Tails: {{note}}', { note: longNote });
+      expect(body.endsWith('... More in MyTribe: https://kinfolk.tribetails.com/notifications')).toBe(true);
+      expect(ctx.writes.some((w) => w.path.startsWith('notifications/'))).toBe(false);
+    });
+    it('the message is on the entry before the text is sent', async () => {
+      const ctx = buildDbMock({ docs: { 'smsTemplates/t.k': { text: '{{note}}' }, 'clients/u1': { phone: '+15555551111' } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      let keptAtSend = -1;
+      mocks.messagesCreate.mockImplementation(async () => {
+        keptAtSend = ctx.writes.filter((w) => w.path === 'notifications/n1').length;
+        return { sid: 'SM_o' };
+      });
+      await sendSmsChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data: { note: longNote },
+        stream: 'kinfolk',
+        open: { data: {}, readInList: { route: ENTRY, entryId: 'n1' } },
+      });
+      expect(keptAtSend).toBe(1);
+    });
+    it('a refused write is logged and the text still goes, with its link to the entry', async () => {
+      const ctx = buildDbMock({ docs: { 'smsTemplates/t.k': { text: '{{note}}' }, 'clients/u1': { phone: '+15555551111' } } });
+      const collection = ctx.db.collection;
+      ctx.db.collection = (path: string) => {
+        const real = collection(path);
+        if (path !== 'notifications') return real;
+        return { ...real, doc: () => ({ update: async () => { throw new Error('5 NOT_FOUND: no entity to update'); } }) };
+      };
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.messagesCreate.mockResolvedValue({ sid: 'SM_r' });
+      await sendSmsChannel({
+        def: def(),
+        recipientUid: 'u1',
+        data: { note: longNote },
+        stream: 'kinfolk',
+        open: { data: {}, readInList: { route: ENTRY, entryId: 'n1' } },
+      });
+      expect((mocks.messagesCreate.mock.calls[0]![0].body as string).endsWith(`... ${ENTRY_LINK}`)).toBe(true);
+      expect(mocks.logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          severity: 'error',
+          function: 'smsChannel',
+          event: 'notification.sms.message_not_kept',
+          extra: expect.objectContaining({ key: 't.k', entryId: 'n1' }),
+        }),
+      );
+    });
+    it.each(['business', 'staff'] as const)('a %s copy is sent as written and writes nothing', async (stream) => {
+      const ctx = buildDbMock({ docs: { 'smsTemplates/t.k': { text: '{{note}}' }, 'clients/u1': { phone: '+15555551111' }, 'users/u1': { phone: '+15555551111' } } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      mocks.messagesCreate.mockResolvedValue({ sid: 'SM_s' });
+      await sendSmsChannel({
+        def: def({ audience: 'both', audiences: { kinfolk: true, business: true } }),
+        recipientUid: 'u1',
+        data: { note: longNote },
+        stream,
+        open: { data: {} },
+      });
+      expect(mocks.messagesCreate.mock.calls[0]![0].body).toBe(longNote);
+      expect(ctx.writes.some((w) => w.path.startsWith('notifications/'))).toBe(false);
     });
   });
 });

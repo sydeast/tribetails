@@ -108,6 +108,15 @@ make_repo() {
   mkdir -p "$r/scripts/lib"
   cp "$REPO_SCRIPTS"/lib/*.sh "$REPO_SCRIPTS"/lib/*.js "$r/scripts/lib/" 2>/dev/null
 
+  # Step 1b runs the admin functions' own voice-file checker whenever
+  # RELEASE_INCLUDE_ADMIN_FUNCTIONS=1. The real one, and the one module it
+  # needs: neither reads node_modules. No voice files are written here, which
+  # is what a fresh checkout looks like (they are gitignored).
+  mkdir -p "$r/auntieos-admin/web/functions"
+  cp "$REPO_SCRIPTS/../auntieos-admin/web/functions/checkVoice.js" \
+     "$REPO_SCRIPTS/../auntieos-admin/web/functions/sampleNames.js" \
+     "$r/auntieos-admin/web/functions/"
+
   # 0a reads a root lockfile and mytribe/functions' own lockfile. Empty
   # (no dependencies declared) so a fully-synthetic repo with no real
   # node_modules reports "not installed yet" rather than "no lockfile at
@@ -3861,6 +3870,91 @@ if [ "$RC" != "0" ] && printf '%s' "$OUT" | grep -qF "KEYSTORE_PATH" &&
   ok "#1402: any other Gradle failure still gets the signing and Mapbox hint"
 else
   bad "#1402: an ordinary Gradle failure lost its hint (rc=$RC)"; printf '%s\n' "$OUT" | tail -12
+fi
+
+# ---------------------------------------------------------------------------
+# Ask Auntie's voice files are checked in step 1b, before anything deploys,
+# and only when this run uploads them (RELEASE_INCLUDE_ADMIN_FUNCTIONS=1).
+# Present and unusable refuses. Absent is reported and the release goes on,
+# as it did before the check existed (#2399). Every name here is invented.
+# ---------------------------------------------------------------------------
+# voice_files <dir> <declaration lines>: the three voice files, committed.
+voice_files() {
+  local v="$1/repo/auntieos-admin/web/functions/voice"
+  mkdir -p "$v/corpus"
+  printf '# Voice\n\n"Quillon ate every bit."\n' > "$v/01_Voice_Bible.md"
+  printf '# Playbook\n\n"Hi Bramwell, quick note."\n' > "$v/02_Channel_Playbook.md"
+  printf '# Samples\n\n<!-- sample-names\n%s-->\n\n### One\n> "QUILLON was at the door. Tell Bramwell."\n' "$2" \
+    > "$v/corpus/exemplars.md"
+  commit_all "$1"
+  arm_ci "$1"
+}
+
+# No voice files at all: the hosted runner, a fresh clone.
+DVA="$(admin_repo)"
+RCVA="$(run_release "$DVA" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DVA/calls")"
+OUT="$(stripped "$DVA/out")"
+if [ "$RCVA" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: NOT IN THIS CHECKOUT" &&
+   printf '%s' "$OUT" | grep -qF "#2399" &&
+   [ "$(admin_calls "$DVA/calls" functions:default)" = "1" ]; then
+  ok "voice: a checkout without the voice files is told so, and the release goes on"
+else
+  bad "voice: a checkout without the voice files did not release with a warning (rc=$RCVA)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+
+# Usable files.
+DVB="$(admin_repo)"
+voice_files "$DVB" $'kin: Quillon\nkinfolk: Bramwell\n'
+RCVB="$(run_release "$DVB" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DVB/calls")"
+OUT="$(stripped "$DVB/out")"
+if [ "$RCVB" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: the files this release uploads are usable" &&
+   printf '%s' "$OUT" | grep -qF "voice: sample names 2 declared (2 spellings), 4 replaced, none left" &&
+   [ "$(admin_calls "$DVB/calls" functions:default)" = "1" ]; then
+  ok "voice: usable voice files pass, with counts, and the admin functions deploy"
+else
+  bad "voice: usable voice files did not pass (rc=$RCVB)"; printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+if printf '%s' "$OUT" | grep -qiE "quillon|bramwell"; then
+  bad "voice: the release output repeats a name out of the voice files"
+else
+  ok "voice: the release output repeats no name out of the voice files"
+fi
+
+# A declaration that would replace nothing: refused before the first deploy.
+DVC="$(admin_repo)"
+voice_files "$DVC" $'# nobody yet\nauntie: Thessaly\n'
+RCVC="$(run_release "$DVC" "${ADMIN_ENV[@]}" FIREBASE_CALL_LOG="$DVC/calls")"
+OUT="$(stripped "$DVC/out")"
+if [ "$RCVC" != "0" ] &&
+   printf '%s' "$OUT" | grep -qF "REFUSED: Ask Auntie's voice files cannot be used" &&
+   printf '%s' "$OUT" | grep -qF "voice: refused (voice_sample_names_empty)"; then
+  ok "voice: a samples file that lists no Kin or Kinfolk refuses the release, and says why"
+else
+  bad "voice: an unusable samples file did not refuse the release (rc=$RCVC)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+if grep -q "deploy" "$DVC/calls" 2>/dev/null; then
+  bad "voice: something deployed before the voice files were refused"; cat "$DVC/calls"
+else
+  ok "voice: nothing deployed before the voice files were refused"
+fi
+if printf '%s' "$OUT" | grep -qiE "quillon|bramwell|thessaly"; then
+  bad "voice: the refusal repeats a name out of the voice files"
+else
+  ok "voice: the refusal repeats no name out of the voice files"
+fi
+
+# The same files, in a run that does not upload them: not this run's business.
+RCVD="$(run_release "$DVC" RELEASE_YES=1 RELEASE_SKIP_ANDROID=1 RELEASE_FUNCTIONS_BATCH=4 \
+  RELEASE_FUNCTIONS_SETTLE=0 RELEASE_RETRY_KEEP=0 FIREBASE_CALL_LOG="$DVC/calls-off")"
+OUT="$(stripped "$DVC/out")"
+if [ "$RCVD" = "0" ] && printf '%s' "$OUT" | grep -qF "voice: not looked at" &&
+   ! printf '%s' "$OUT" | grep -qF "voice_sample_names_empty"; then
+  ok "voice: a run that does not ship the admin functions does not check their voice files"
+else
+  bad "voice: a run without the admin functions was held up by their voice files (rc=$RCVD)"
+  printf '%s\n' "$OUT" | grep -i "voice" | tail -8
 fi
 
 echo

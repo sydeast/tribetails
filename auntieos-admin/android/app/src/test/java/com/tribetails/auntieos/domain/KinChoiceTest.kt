@@ -151,13 +151,52 @@ class KinChoiceTest {
 
     @Test
     fun `the Kin line names the Kin the visit stores`() {
-        assertEquals("Pepper", visitKinLine(listOf("Pepper")))
-        assertEquals("Biscuit, Gravy", visitKinLine(listOf("Biscuit", " Gravy ")))
+        assertEquals("Pepper", visitKinLine(listOf("k1"), listOf("Pepper")))
+        assertEquals("Biscuit, Gravy", visitKinLine(listOf("k1", "k2"), listOf("Biscuit", " Gravy ")))
     }
 
     @Test
     fun `a visit that names nobody reads as the whole home, never a blank line`() {
-        assertEquals("Every Kin in the home", visitKinLine(emptyList()))
-        assertEquals("Every Kin in the home", visitKinLine(listOf("", "  ")))
+        assertEquals("Every Kin in the home", visitKinLine(emptyList(), emptyList()))
+        assertEquals("Every Kin in the home", visitKinLine(emptyList(), listOf("", "  ")))
+    }
+
+    // #2404: a Kin with no name on file is stored as an id alone. The line read
+    // the names only, so a booking narrowed to that Kin read as the whole home.
+    @Test
+    fun `a visit narrowed to Kin with no name on file counts them, never the whole home`() {
+        assertEquals("1 (names not on file)", visitKinLine(listOf("k2"), emptyList()))
+        assertEquals("2 (names not on file)", visitKinLine(listOf("k2", "k3"), listOf("", " ")))
+    }
+
+    @Test
+    fun `a visit with more Kin than names lists the names and counts the rest`() {
+        assertEquals("Biscuit · 1 without a name on file", visitKinLine(listOf("k1", "k2"), listOf("Biscuit")))
+        assertEquals(
+            "Biscuit, Gravy · 2 without a name on file",
+            visitKinLine(listOf("k1", "k2", "k3", "k4"), listOf("Biscuit", "", "Gravy")),
+        )
+    }
+
+    @Test
+    fun `names the visit stores without ids are still named, with nobody counted`() {
+        assertEquals("Biscuit, Gravy", visitKinLine(emptyList(), listOf("Biscuit", "Gravy")))
+        assertEquals("Biscuit, Gravy", visitKinLine(listOf("k1"), listOf("Biscuit", "Gravy")))
+    }
+
+    // What the form stores for a narrowed choice is what the line reads back.
+    @Test
+    fun `a narrowed choice the form stores reads back as that choice`() {
+        val nameless = listOf(RosterKin("k1", "Biscuit"), RosterKin("k2", null))
+        val onlyNameless = KinChoice().toggle("k1", nameless)
+        assertEquals(
+            "1 (names not on file)",
+            visitKinLine(onlyNameless.kinIdsToSend(nameless, true), onlyNameless.kinNamesToStore(nameless, true)),
+        )
+        val everyKin = KinChoice()
+        assertEquals(
+            "Every Kin in the home",
+            visitKinLine(everyKin.kinIdsToSend(nameless, true), everyKin.kinNamesToStore(nameless, true)),
+        )
     }
 }

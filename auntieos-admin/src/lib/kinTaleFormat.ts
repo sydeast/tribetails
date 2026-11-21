@@ -1,6 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import { dayKey, formatWhen, type FsTime } from './time';
 import { str } from './coerce';
+import { cutWhole } from './cutText';
 import { parseFlexibleDate } from './bookingFormat';
 
 /**
@@ -105,7 +106,7 @@ export function kinTaleHousehold(kinfolkName: string): string {
 export function bodyPreview(body: string): string {
   const cleaned = str(body).replace(/\s+/g, ' ').trim();
   if (cleaned === '') return '(empty body)';
-  return cleaned.length <= 80 ? cleaned : `${cleaned.slice(0, 80)}…`;
+  return cleaned.length <= 80 ? cleaned : `${cutWhole(cleaned, 80)}…`;
 }
 
 /**

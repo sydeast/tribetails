@@ -16,6 +16,7 @@ import { db } from './firebase';
 import { type Async } from './async';
 import { type CollectionSpec } from './firestore';
 import { applyTestScope, isSuppressedInTestMode, DOC_ID_FIELD } from './testScope';
+import { applyCaretakerScope } from './caretakerScope';
 
 /**
  * A bounded collection read that grows a page at a time.
@@ -123,7 +124,7 @@ export function usePagedCollection<T>(spec: PagedCollectionSpec): PagedCollectio
   // by the contract `CollectionSpec` already states, filter values are stable
   // primitives or ISO strings, which is the same contract that makes keying off
   // JSON.stringify correct in the first place.
-  const key = JSON.stringify(applyTestScope({ ...rest, max: pageSize }));
+  const key = JSON.stringify(applyCaretakerScope(applyTestScope({ ...rest, max: pageSize })));
 
   const [state, setState] = useState<Async<T[]>>({ status: 'loading' });
   const [hasMore, setHasMore] = useState(false);

@@ -393,6 +393,10 @@ jobs:
               - 'docs/RUNBOOK.md'
               - 'auntieos-admin/web/firebase.json'
               - '.gitignore'
+              # release.test.sh runs release step 1b's voice-file check with
+              # the real checker and the one module it needs.
+              - 'auntieos-admin/web/functions/checkVoice.js'
+              - 'auntieos-admin/web/functions/sampleNames.js'
             # #1047: every "- Enforced in:" path in docs/DECISIONS.md must exist.
             # Two things can break that, and this filter has to see both: an
             # edit to the doc (docs/**), and a change that removes a named file,

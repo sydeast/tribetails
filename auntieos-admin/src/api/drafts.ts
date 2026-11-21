@@ -128,6 +128,12 @@ export interface GeneratedDraftRow {
  * from two different reads of the same collection. The consequences the list
  * screen has to state on screen instead of hiding: the cap is 50, and the
  * window is applied client-side (see `lib/kinTaleList.ts#draftsInWindow`).
+ *
+ * WHO SEES WHAT. The owner's read is this spec as written, every type of draft.
+ * An Auntie reads KinTale drafts only, and rules refuse her a list that does
+ * not say so, so `useCollection` adds `communication_type == 'visit_report'` to
+ * this spec when she is signed in (`lib/caretakerScope.ts`). Do not add that
+ * filter here: the owner's Drafts bucket lists held pushes too.
  */
 export const GENERATED_DRAFTS_MAX = 50;
 

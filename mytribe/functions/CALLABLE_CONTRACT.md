@@ -354,6 +354,14 @@ A save leaves the doc at `reconcileStatus: 'pending'`. The nightly reconcile pas
 is what folds it into the household Dossier and the pet Kin411, so client copy
 must say "next reconcile pass", never "instantly".
 
+Create and update both stamp `documentKind: 'note'` on the stored doc. It is not
+a request field, and one a caller sends is dropped. The copy generator
+(`auntieos-admin/web/functions/generate.js`) sends a `training_documents` row to
+the model as a voice example only when the row carries
+`documentKind: 'voice_example'` and names no household, so nothing these
+callables write is ever one. `communicationType` is the label the list groups
+by and decides nothing about where a note is read.
+
 ### createTrainingDocument
 - req `{ title: string /* <=200 */, content: string /* <=20000 */, notes: string /* <=4000 */, communicationType: string /* <=120, clients send 'note' */, targetType: 'KINFOLK'|'KIN', targetKinfolkId: string /* 1..120 */, targetKinId?: string /* <=120, required when targetType is KIN */, attachments: Array<{ storageUrl: string /* url */, cloudinaryPublicId: string /* 1..300 */, fileType: string /* <=20 */, mimeType: string /* <=120 */, fileName: string /* <=300 */ }> /* <=25 */ }`
 - res `{ ok: true, docId: string }`
@@ -954,6 +962,10 @@ handler until ADR-0001 codegen replaces the hand-mirror).
     throw here would offer a retry that collects again.
   - Refuses `tip_exceeds_amount` (`invalid-argument`) and every `apply_*` code
     (`failed-precondition`) BEFORE writing anything.
+  - Refuses `link_wrong_household` (`failed-precondition`) BEFORE writing
+    anything when `invoiceId` names an invoice of a different household than
+    `kinfolkId`. A payment with no household and an invoice that carries none
+    are not refused.
 - req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
 - res `{ ok: true, invoiceId: string, skipped: ''|'invoice_missing'|'invoice_not_collectable'|'no_household'|'no_credit', appliedCents: number, amountDueCents: number, accountBalanceCents: number }`
 - **DISABLED (#1872, operator ruling 2026-11-11).** Account credit is never

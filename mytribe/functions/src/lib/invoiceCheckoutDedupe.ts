@@ -97,6 +97,7 @@
  * run, the same way `planApply` and `planCreditDraw` are.
  */
 import { invoiceCancelled, invoiceMarkedPaid } from './invoicePaidGate';
+import { isWrittenOff } from './invoiceArchive';
 
 /**
  * `families/{kinfolkId}.accountBalanceCents`, where a duplicate charge USED TO
@@ -170,6 +171,8 @@ export interface InvoiceCheckoutState {
   paymentStatus?: unknown;
   /** The legacy spelling of `status`, read for `invoice-cancelled` only when `status` is absent. */
   invoiceStatus?: unknown;
+  /** #2363: set by a write-off, read with `status` for `invoice-written-off`. */
+  writtenOffAt?: unknown;
 }
 
 /**
@@ -217,6 +220,11 @@ export function invoiceOwesNothing(state: Pick<InvoiceCheckoutState, 'amountDueC
  *                            a second attempt at anything, but the same answer:
  *                            the card is charged, the invoice takes no payment,
  *                            and the owner decides what the money becomes.
+ * `invoice-written-off`      #2363: the owner wrote the balance off after the
+ *                            checkout page was opened. Held the same way. Asked
+ *                            ahead of the money checks, because a write-off
+ *                            zeroes the balance and would otherwise read as
+ *                            `invoice-not-owed`, "already paid", which it was not.
  *
  * ── WHY "A DIFFERENT INTENT SETTLED IT" IS NOT ON ITS OWN A REFUSAL ───────
  *
@@ -233,7 +241,53 @@ export type DuplicateCheckoutReason =
   | 'invoice-not-owed'
   | 'invoice-marked-paid'
   | 'invoice-cancelled'
+  | 'invoice-written-off'
+  // #2345: not a second attempt at anything. The invoice could not take the
+  // payment at all (`lib/cardPaymentApply.ts#cardHoldReason`). Held the same
+  // way, never applied.
+  | 'invoice-not-found'
+  | 'invoice-other-household'
+  | 'invoice-not-sent'
+  | 'invoice-credit'
+  | 'invoice-no-balance'
+  | 'invoice-not-payable'
   | null;
+
+/**
+ * #2345 (lead ruling 2026-11-17): A CARD PAYMENT ON AN INVOICE THAT COULD NOT
+ * TAKE IT IS HELD FOR THE OWNER, the way one on a cancelled invoice is
+ * (#2358). This maps what `decideCardApply`'s fallback landing could not
+ * describe to the held reason it becomes. `cardHoldReason` asks about the
+ * invoice itself first (missing, another household's, a draft or a quote, a
+ * credit), so what reaches here in practice is `no_recorded_balance`: nothing
+ * was owed on the invoice's total, so there was nothing to apply the money to.
+ * The other cases are mapped as well, so no refusal `planApply` can give is
+ * ever applied by way of this landing.
+ *
+ * Null for `stated_balance_below_recorded_payments` (an invoice brought over
+ * part paid and then paid off by card: nothing is wrong, and it is applied)
+ * and for anything that is not a fallback reason.
+ */
+export function heldReasonForCardFallback(reason: string | null | undefined): DuplicateCheckoutReason {
+  switch (reason) {
+    case undefined:
+    case null:
+    case '':
+    case 'stated_balance_below_recorded_payments':
+      return null;
+    case 'apply_invoice_not_found':
+      return 'invoice-not-found';
+    case 'apply_wrong_household':
+      return 'invoice-other-household';
+    case 'apply_invoice_not_sent':
+      return 'invoice-not-sent';
+    case 'no_recorded_balance':
+      return 'invoice-no-balance';
+    default:
+      // Every other refusal `planApply` can give.
+      return 'invoice-not-payable';
+  }
+}
 
 export function duplicateCheckoutReason(input: {
   /** The invoice as stored, read inside the webhook's transaction. */
@@ -267,6 +321,11 @@ export function duplicateCheckoutReason(input: {
   // same rule (`invoiceCancelled`), so the two cannot disagree.
   if (invoiceCancelled({ status: input.invoice.status, invoiceStatus: input.invoice.invoiceStatus })) {
     return 'invoice-cancelled';
+  }
+  // #2363: WRITTEN OFF. The owner gave up the balance, so the invoice is owed
+  // nothing, but it was not paid, and the owner is told which of the two.
+  if (isWrittenOff({ status: input.invoice.status, writtenOffAt: input.invoice.writtenOffAt })) {
+    return 'invoice-written-off';
   }
   // AHEAD OF THE MONEY CHECKS, because it is the only one of them that can
   // refuse a session while the invoice still shows a balance. A partial payment recorded between two
@@ -306,6 +365,20 @@ export function unappliedReasonLabel(reason: string | null): string {
       return 'the invoice was already marked paid';
     case 'invoice-cancelled':
       return 'the invoice was cancelled';
+    case 'invoice-written-off':
+      return 'the invoice was written off';
+    case 'invoice-not-found':
+      return 'the invoice could not be found';
+    case 'invoice-other-household':
+      return 'the invoice belongs to a different household';
+    case 'invoice-not-sent':
+      return 'the invoice was a draft or a quote';
+    case 'invoice-credit':
+      return 'the invoice was a credit, not a bill';
+    case 'invoice-no-balance':
+      return "nothing was owed on the invoice's total";
+    case 'invoice-not-payable':
+      return 'the invoice could not take a payment';
     default:
       return 'the invoice was not owed this payment';
   }

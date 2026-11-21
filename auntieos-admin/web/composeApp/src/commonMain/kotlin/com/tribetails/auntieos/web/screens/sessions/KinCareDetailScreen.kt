@@ -46,6 +46,7 @@ import com.tribetails.auntieos.web.data.KinCareSession
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.emergencyContactsOf
 import com.tribetails.auntieos.web.observability.runCatchingCancellable
+import com.tribetails.auntieos.web.screens.cutWhole
 import com.tribetails.auntieos.web.theme.AuntieTheme
 import com.tribetails.auntieos.web.ui.components.AuntieAvatar
 import com.tribetails.auntieos.web.ui.components.AuntieKeyValueRow
@@ -682,7 +683,7 @@ private fun KinTaleSnippet(report: KinCareReport) {
         }
         if (report.bodyCopy.isNotBlank()) {
             Text(
-                text  = report.bodyCopy.take(180) + if (report.bodyCopy.length > 180) "…" else "",
+                text  = cutWhole(report.bodyCopy, 180) + if (report.bodyCopy.length > 180) "…" else "",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )

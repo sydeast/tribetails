@@ -5,7 +5,8 @@ import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { wrapCallable } from '../lib/wrapCallable';
-import { staffBypass } from '../lib/staffGate';
+import { isOwner, isOwnerClaim, staffBypass } from '../lib/staffGate';
+import { isKinTaleDraft } from '../lib/generatedDraftType';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -45,6 +46,11 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * and it is deliberately NOT `'catalog'` (`lib/kinTalePublishClaim.ts`), which
  * would tell `onKinTaleCreate` the client had already announced it and suppress
  * the household's notice.
+ *
+ * WHO SENDS WHAT. The owner sends any draft. An Auntie sends a KinTale draft
+ * only, one whose type is exactly `visit_report` (`lib/generatedDraftType.ts`),
+ * which is the same set of drafts the rules let her read. Any other draft is
+ * the owner's Communicate work, and to her it is not there.
  */
 
 /** Statuses that mean "sent as a KinTale". Written by this file only. */
@@ -104,6 +110,9 @@ export async function publishGeneratedDraftHandler(
 
   const token = (req.auth?.token ?? {}) as Record<string, unknown>;
   const authorDisplayName = (typeof token['name'] === 'string' ? token['name'].trim() : '') || 'Auntie';
+  // Anyone who is not the owner is held to KinTale drafts, so a caller this
+  // check has never heard of gets the narrower answer.
+  const callerIsOwner = isOwner(actorUid, isOwnerClaim(req.auth?.token), 'publishGeneratedDraft');
   const draftRef = db().collection('generated_drafts').doc(args.draftId);
   const reportRef = db().collection('kin_care_reports').doc();
   const now = new Date().toISOString();
@@ -120,6 +129,10 @@ export async function publishGeneratedDraftHandler(
       throw new HttpsError('not-found', 'This draft no longer exists. It may have been deleted.');
     }
     const draft = (draftSnap.data() ?? {}) as Record<string, unknown>;
+    // The same answer as a draft that is gone: this one is not hers to read.
+    if (!callerIsOwner && !isKinTaleDraft(draft)) {
+      throw new HttpsError('not-found', 'This draft no longer exists. It may have been deleted.');
+    }
 
     const already = typeof draft['publishedReportId'] === 'string' ? draft['publishedReportId'].trim() : '';
     if (already !== '') {

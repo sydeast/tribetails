@@ -1086,9 +1086,31 @@ describe('payInvoice return addresses (#2366)', () => {
     } as any);
     expect(res.sessionId).toBe('cs_test_1');
   });
+  it('#2401: hands Stripe the address the MyTribe app claims, unchanged', async () => {
+    const ctx = buildDbMock({ docs: OPEN_DOCS });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+    const res = await payInvoiceHandler({
+      data: {
+        invoiceId: 'inv-1',
+        successUrl: 'https://kinfolk.tribetails.com/app/invoices/inv-1?checkout=done',
+        cancelUrl: 'https://kinfolk.tribetails.com/app/invoices/inv-1',
+      },
+      auth: { uid: 'u1' },
+    } as any);
+    expect(res.sessionId).toBe('cs_test_1');
+    const params = mocks.stripeMock.checkout.sessions.create.mock.calls[0]![0];
+    expect(params.success_url).toBe('https://kinfolk.tribetails.com/app/invoices/inv-1?checkout=done');
+    expect(params.cancel_url).toBe('https://kinfolk.tribetails.com/app/invoices/inv-1');
+  });
   it.each([
     ['a foreign success address', { successUrl: 'https://evil.example/ok' }],
     ['a foreign cancel address', { cancelUrl: 'https://evil.example/no' }],
+    // #2401: the app's own link is where the portal's return page sends the
+    // household next. It is never an address Stripe is given.
+    ["the app's own link as the success address", { successUrl: 'mytribe://invoices/inv-1?checkout=done' }],
+    ["the app's own link as the cancel address", { cancelUrl: 'mytribe://invoices/inv-1' }],
+    ['the app return path on a foreign site', { successUrl: 'https://evil.example/app/invoices/inv-1?checkout=done' }],
     ['a lookalike host', { successUrl: 'https://kinfolk.tribetails.com.evil.example/invoices/inv-1' }],
     ['a user part hiding the host', { successUrl: 'https://kinfolk.tribetails.com@evil.example/invoices/inv-1' }],
     ['plain http', { cancelUrl: 'http://kinfolk.tribetails.com/invoices/inv-1' }],

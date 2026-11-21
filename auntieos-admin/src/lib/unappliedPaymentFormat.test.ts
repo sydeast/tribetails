@@ -77,6 +77,11 @@ describe('unappliedPaymentFormat: the lines (#1003)', () => {
       'Card payment of $40.00 on invoice 1029. There are no refunds. Anything you do not credit or apply stays recorded on the payment.',
     );
   });
+  it('#2363: a card payment held because its invoice was written off says written off', () => {
+    const held = { ...payment, invoiceNumber: '1029', amountCents: 4000, reason: 'the invoice was written off' };
+    expect(unappliedPaymentDetail(held)).toBe('Sep 27, 2026. Not applied because the invoice was written off.');
+    expect(unappliedPaymentDetail(held)).not.toMatch(/paid/);
+  });
   it('does not double the full stop when the reason already ends in one', () => {
     expect(unappliedPaymentDetail({ ...payment, reason: 'the invoice was void.' })).toBe(
       'Sep 27, 2026. Not applied because the invoice was void.',

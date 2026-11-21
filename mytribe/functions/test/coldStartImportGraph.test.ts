@@ -312,8 +312,18 @@ const ALLOWED_EAGER_PACKAGES = [
  * `getFeatureFlags` used to carry inline, moved so the write and the screen
  * resolve the choose-Kin flag the same way). Everything else they import was
  * already here.
+ *
+ * 463 since #2323 (on top of #1822's 462): `lib/cutText.ts`, the one cut for
+ * text a person reads, so a preview, a push line or a text message never ends
+ * on half an emoji. `lib/richText.ts`, `lib/conversations.ts` and
+ * `notifications/templateParsers.ts` each cut by storage units before, and
+ * templateParsers carried its own copy. It is pure and imports nothing.
+ *
+ * 464 (on top of #2323's 463): `lib/generatedDraftType.ts`, the reading of a
+ * generated draft's type, used by `admin/kinTaleDrafts.ts` at file scope and by
+ * `admin/sendHouseholdPush.ts`. It is three pure functions and imports nothing.
  */
-const MAX_OWN_EAGER_MODULES = 462;
+const MAX_OWN_EAGER_MODULES = 464;
 
 interface Edge {
   spec: string;

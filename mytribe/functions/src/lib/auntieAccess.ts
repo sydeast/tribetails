@@ -66,6 +66,8 @@ export const AUNTIE_ALLOWED_CALLABLES: ReadonlySet<string> = new Set<string>([
   'triageOrphanReport', // assign / mark duplicate / archive bad data
   // #1563: send a generated KinTale draft to its household. Deleting one
   // (deleteGeneratedDraft) is destructive (rule 6) and stays with the owner.
+  // The handler holds her to KinTale drafts (type exactly `visit_report`), the
+  // ones the rules let her read; any other draft is the owner's.
   'publishGeneratedDraft',
   // #2058: sending a visit's KinTale. Marks it sent and stamps its own copy of
   // the care tasks in one transaction, which a client write could not do.

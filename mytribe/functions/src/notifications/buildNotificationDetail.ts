@@ -1,5 +1,6 @@
 import { db } from '../lib/firestoreAdmin';
 import { logEvent } from '../lib/logger';
+import { cutWhole } from '../lib/cutText';
 import { businessTimeZone } from '../lib/bookingTimeBlocks';
 import { canonicalNotificationKey } from './catalog';
 import { enrichTemplateData, SERVICE_FALLBACK_WORD } from './enrichTemplateData';
@@ -486,7 +487,7 @@ function invoiceNumberLine(f: Facts): string {
 /** The first words of a message, on one line. */
 function previewLine(v: unknown, max = 140): string {
   const flat = text(v).replace(/\s+/g, ' ');
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
+  return flat.length <= max ? flat : `${cutWhole(flat, max - 1).trimEnd()}…`;
 }
 
 function kinOf(f: Facts): string {

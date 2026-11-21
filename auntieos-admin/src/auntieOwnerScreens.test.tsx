@@ -81,6 +81,8 @@ vi.mock('./screens/CoveragePackageBuilder', () => ({
 vi.mock('./screens/MarketingBlasts', () => ({
   MarketingBlasts: () => <div>MARKETING BLASTS SCREEN</div>,
 }));
+// Tribal Intel: the owner's notes about households, Kinfolk and Kin.
+vi.mock('./screens/TribalIntel', () => ({ TribalIntel: () => <div>TRIBAL INTEL SCREEN</div> }));
 
 // #2187: the real route adapter over a stand-in screen that says which flag it
 // was handed, so the test reads what the router's own access produced.
@@ -377,9 +379,9 @@ describe('#2200 / #2201 the owner and the test admin keep all four', () => {
 describe('#2200 / #2201 every owner-only nav entry is guarded in the router', () => {
   const ownerOnly = NAV.filter((e) => e.ownerOnly);
 
-  it('covers the six owner screens and agrees with isOwnerOnlyPath', () => {
+  it('covers the seven owner screens and agrees with isOwnerOnlyPath', () => {
     expect(ownerOnly.map((e) => e.slug).sort()).toEqual(
-      ['activity', 'invoices', 'marketing-blasts', 'packages', 'settings', 'templates'],
+      ['activity', 'invoices', 'marketing-blasts', 'packages', 'settings', 'templates', 'tribal-intel'],
     );
     for (const e of NAV) expect(isOwnerOnlyPath(`/${e.slug}`)).toBe(e.ownerOnly === true);
   });
@@ -392,6 +394,79 @@ describe('#2200 / #2201 every owner-only nav entry is guarded in the router', ()
     });
   }
 });
+
+/**
+ * Tribal Intel is the owner's screen. Its notes are written by the owner and
+ * feed the dossiers, the household records and the 411s; an Auntie reads the
+ * 411, never the notes. She cannot add, edit or delete one either, so the
+ * screen has nothing for her: no rail entry, and its address sends her Home.
+ */
+describe('an Auntie never reaches Tribal Intel', () => {
+  it('shows her no Tribal Intel rail entry, and keeps KinTale templates', async () => {
+    await boot('/home', AUNTIE_CLAIMS);
+    expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    expect(railLink('Tribal Intel')).toBeNull();
+    expect(railLink('KinTale templates')).not.toBeNull();
+  });
+
+  it('sends her from /tribal-intel to Home', async () => {
+    await boot('/tribal-intel', AUNTIE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    expect(screen.queryByText('TRIBAL INTEL SCREEN')).toBeNull();
+  });
+
+  it('treats a double-claimed account as the Auntie', async () => {
+    await boot('/tribal-intel', DOUBLE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    expect(screen.queryByText('TRIBAL INTEL SCREEN')).toBeNull();
+    expect(railLink('Tribal Intel')).toBeNull();
+  });
+
+  // The retired address has no route of its own, so it opens no screen for anyone.
+  it('opens no notes screen for her at the old /training-docs address', async () => {
+    await boot('/training-docs', AUNTIE_CLAIMS);
+    await settleRouter();
+    expect(screen.queryByText('TRIBAL INTEL SCREEN')).toBeNull();
+  });
+});
+
+describe('the owner and the test admin keep Tribal Intel', () => {
+  for (const claims of [OWNER_CLAIMS, TEST_ADMIN_CLAIMS]) {
+    const who = claims === OWNER_CLAIMS ? 'owner' : 'test admin';
+
+    it(`shows the ${who} the rail entry`, async () => {
+      await boot('/home', claims);
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+      expect(railLink('Tribal Intel')).not.toBeNull();
+    });
+
+    it(`opens Tribal Intel for the ${who}`, async () => {
+      await boot('/tribal-intel', claims);
+      expect(await screen.findByText('TRIBAL INTEL SCREEN')).toBeInTheDocument();
+      expect(window.location.pathname).toBe('/tribal-intel');
+    });
+  }
+
+  it('keeps it for the offline session whose claims were not read', async () => {
+    const offline = Object.assign(new Error('Failed to fetch'), { code: 'auth/network-request-failed' });
+    currentUser = USER;
+    window.history.replaceState(null, '', '/tribal-intel');
+    const { router } = await importRouterTrackingListeners();
+    getIdTokenResult.mockRejectedValue(offline);
+    lastRouter = router;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(/Signed in, but out of touch/i)).toBeInTheDocument();
+    expect(await screen.findByText('TRIBAL INTEL SCREEN')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/tribal-intel');
+    expect(railLink('Tribal Intel')).not.toBeNull();
+  });
+});
+
 /**
  * #2187, operator ruling 2026-11-14: "No, only I can". Making a booking is the
  * owner's alone. Bookings itself stays hers (she works the visits on it), so

@@ -73,6 +73,13 @@ export function isAllowedOrigin(
  * `/portal/payment-success`, and refusing it would stop that household paying
  * at all. The path is the client's business; the origin is the safety line.
  *
+ * Three paths are in use by installed MyTribe apps, and all three must keep
+ * passing (#2401): `/portal/payment-success` (before #2366), `/invoices/{id}`
+ * (#2366, and what the web portal itself sends), and `/app/invoices/{id}`
+ * (#2401, an address on this origin that the app claims, so the phone opens
+ * the app). The app's own `mytribe://` link is NOT a return address and is
+ * refused like any other scheme: Stripe is only ever given https on the portal.
+ *
  * Compared on the parsed `URL.origin`, never a prefix of the raw string, so
  * `https://kinfolk.tribetails.com.evil.example` and
  * `https://kinfolk.tribetails.com@evil.example` are both refused. A URL with a

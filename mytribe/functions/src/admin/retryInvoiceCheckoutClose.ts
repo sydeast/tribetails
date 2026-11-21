@@ -9,9 +9,7 @@ import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { OkSchema } from '../lib/invoiceResponseSchema';
-import { invoiceIsPaid } from '../lib/invoicePaidGate';
-import { isWrittenOff } from '../lib/invoiceArchive';
-import { sessionsToClose, type SweepDoc } from '../lib/checkoutSessionSweep';
+import { invoiceTakesNoPayment, sessionsToClose, type SweepDoc } from '../lib/checkoutSessionSweep';
 import {
   liveSessionsApi,
   recordCheckoutSweep,
@@ -67,10 +65,11 @@ export async function retryInvoiceCheckoutCloseHandler(
   const data = snap.data() as SweepDoc & { kinfolkId?: string; invoiceNumber?: string };
   // #2090: a written-off invoice owes nothing either, and the sweep closes its
   // links (`sessionsToClose`), so Try again works on it as on a paid one.
-  if (!invoiceIsPaid(data) && !isWrittenOff(data)) {
+  // #2362: so does a cancelled one.
+  if (!invoiceTakesNoPayment(data)) {
     throw new HttpsError(
       'failed-precondition',
-      'This invoice is not paid, so its payment links are still how the household pays.',
+      'This invoice is still owed, so its payment links are still how the household pays.',
       { code: 'invoice_not_paid' },
     );
   }

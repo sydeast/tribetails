@@ -26,10 +26,8 @@ private val WHITESPACE_RUN = Regex("\\s+")
 fun kinTaleHeadline(title: String?, body: String, fallbackChars: Int): String? {
     val ownTitle = title?.normalizeHeadline()?.takeIf { it.isNotEmpty() }
     if (ownTitle != null) return ownTitle
-    var cut = body.take(fallbackChars)
-    // Never end on half of an emoji's surrogate pair.
-    if (cut.length == fallbackChars && cut.lastOrNull()?.isHighSurrogate() == true) cut = cut.dropLast(1)
-    return cut.normalizeHeadline().takeIf { it.isNotEmpty() }
+    // #2323: never end on part of an emoji, a joined emoji or a flag.
+    return cutWhole(body, fallbackChars).normalizeHeadline().takeIf { it.isNotEmpty() }
 }
 
 private fun String.normalizeHeadline(): String = replace(WHITESPACE_RUN, " ").trim()

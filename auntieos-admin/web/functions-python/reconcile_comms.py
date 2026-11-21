@@ -789,6 +789,28 @@ def kin_ids_for_household(db, kinfolk_id: str, log: dict, channel: str) -> list[
     return [s.id for s in snaps]
 
 
+def kin_belongs_to_household(kin_doc: dict, kinfolk_id: str) -> bool:
+    """May a log anchored on `kinfolk_id` update this Kin's 411?
+
+    A 411 takes notes from its own household only. `targetKinId` and a KinTale's
+    `kinIds` are ids a log carries, and neither proves the Kin lives under the
+    household the log was matched to, so the Kin's own record is the judge.
+
+    Same rule as the save callables (`resolveTribalIntelTarget.ts`): a Kin whose
+    record names a household must name this one. A Kin whose record names none
+    is accepted, as it is there, because there is no second household for the
+    note to cross into.
+
+    A `kinfolkId` that is not text names no household either, which is how the
+    callables read it (`str()` there returns '' for anything that is not a
+    string). It must not raise here: this runs after the log is claimed, so an
+    exception would end the pass and leave the log `in_progress`.
+    """
+    stored = kin_doc.get("kinfolkId")
+    owner = stored.strip() if isinstance(stored, str) else ""
+    return owner == "" or owner == kinfolk_id
+
+
 # ---------- claim-first helpers ----------
 
 def claim_log_atomic(db, coll: str, log_id: str, ts: str) -> bool:
@@ -1056,6 +1078,9 @@ def reconcile_pass(
                       f"has no kin IDs; skipping 411 fan-out (dossier-only update)")
 
             touched_411_ids: list[str] = []
+            # Kin a log named that live under a different household. Skipped,
+            # and never a failure to retry: no later pass could land them.
+            skipped_kin_ids: list[str] = []
             # WARNING-33: track whether ANY 411 fan-out failed. A failed 411 must
             # NOT let the source log be marked 'applied' (which would retire it
             # forever, silently dropping the 411 update). On failure we mark the
@@ -1067,6 +1092,13 @@ def reconcile_pass(
                     print(f"[{ts}] {source_id} → WARNING: kin/{kin_id} not found; skipping 411 update")
                     continue
                 kin_doc = kin_snap.to_dict() or {}
+                # Checked before the 411 is read or merged, so nothing from the
+                # other household is loaded, sent to the model or printed.
+                if not kin_belongs_to_household(kin_doc, kinfolk_id):
+                    print(f"[{ts}] {source_id} → WARNING: kin/{kin_id} belongs to another household, "
+                          f"not kinfolk/{kinfolk_id}; skipping 411 update")
+                    skipped_kin_ids.append(kin_id)
+                    continue
                 kin_name    = (kin_doc.get("name") or kin_id)
                 kin_species = (kin_doc.get("species") or "")
 
@@ -1129,6 +1161,10 @@ def reconcile_pass(
                     reconcile_note_parts.append(f"{merge_label} → household_bank/{bank_doc_id}")
                 if touched_411_ids:
                     reconcile_note_parts.append("411s: " + ", ".join(touched_411_ids))
+                if skipped_kin_ids:
+                    reconcile_note_parts.append(
+                        "skipped " + ", ".join(f"kin/{k} (another household)" for k in skipped_kin_ids)
+                    )
                 # FAIL LOUD WHEN A ROUTE HAD NOWHERE TO GO. Routing sends a
                 # targeted note to exactly one record, so it has no second
                 # destination to fall back on: a KIN-targeted note whose pet has
@@ -1137,10 +1173,14 @@ def reconcile_pass(
                 # silence. Mark 'error' instead, the same status an ambiguous
                 # contact match gets (WARNING-30), so it is triaged rather than
                 # forgotten. It cannot fire on the other two routes: an upsert
-                # creates the doc when there is none.
+                # creates the doc when there is none. A note naming a Kin from
+                # another household lands here too, and the reason says so.
                 wrote_nothing = not writes_dossier and not writes_bank and not touched_411_ids
                 if wrote_nothing:
-                    missing = ", ".join(f"kin/{k}" for k in fan_kin_ids) or "no destination resolved"
+                    missing = ", ".join(
+                        f"kin/{k}" + (" (another household)" if k in skipped_kin_ids else "")
+                        for k in fan_kin_ids
+                    ) or "no destination resolved"
                     reconcile_note = (
                         f"routing target={target or 'untargeted'} wrote nothing: {missing}"
                     )

@@ -514,6 +514,18 @@ export async function recordPaymentHandler(
     }
   }
 
+  // ONE HOUSEHOLD. The invoice a payment is linked to belongs to the household
+  // the payment is recorded for, the rule `planApply` already holds an apply
+  // to. Checked here, ahead of every other guard, so the reason given is this
+  // one and not a sentence about credit or a leftover. It covers the display
+  // link beside an `apply` to a different invoice too. A link that names the
+  // very invoice being applied to is left to `planApply`, whose refusal code
+  // the clients already know. A retry of a stored row was answered above and
+  // never reaches this.
+  if (args.invoiceId !== '' && kinfolkId !== '' && args.apply?.invoiceId !== args.invoiceId) {
+    const linkSnap = await db().collection('invoices').doc(args.invoiceId).get();
+    if (linkSnap.exists) refuseLinkToAnotherHousehold((linkSnap.data() ?? {}) as Record<string, unknown>, kinfolkId);
+  }
   // EVERY FIGURE IN INTEGER CENTS, ONCE, HERE. The dollar floats the request
   // carries are the collection's legacy shape and are still stored verbatim
   // below; nothing downstream re-derives cents from them, so no two readers can
@@ -742,6 +754,8 @@ export async function recordPaymentHandler(
     const linkedInvoice = linkedInvoiceSnap?.exists
       ? ((linkedInvoiceSnap.data() ?? {}) as Record<string, unknown>)
       : undefined;
+    // The same rule as before the transaction, on this transaction's own read.
+    if (linkedInvoice) refuseLinkToAnotherHousehold(linkedInvoice, kinfolkId);
     // #2296: THE SETTLEMENT THIS CALL NAMES ALREADY HAS ITS LEDGER ROW. A call
     // naming a settlement records that one payment's row, and a settlement is
     // one payment. An older two-call build that sends its second step again
@@ -1422,6 +1436,26 @@ async function twoStepAppliedCents(args: {
   return { known: true, appliedCents: paidCentsFromPayments([(snap.data() ?? {}) as PaymentAmount]) };
 }
 
+/** The `details.code` of a payment linked to an invoice of another household. */
+export const LINK_WRONG_HOUSEHOLD_CODE = 'link_wrong_household';
+/**
+ * Refuses a payment whose linked invoice belongs to a different household.
+ *
+ * The same test `planApply` makes for an apply: both households known and not
+ * the same one. A payment with no household, and an invoice that carries none
+ * (older rows), are left as they were. The sentence names the invoice by its
+ * number and never by its stored id.
+ */
+function refuseLinkToAnotherHousehold(invoice: Record<string, unknown>, kinfolkId: string): void {
+  const invoiceKin = typeof invoice['kinfolkId'] === 'string' ? invoice['kinfolkId'] : '';
+  if (kinfolkId === '' || invoiceKin === '' || invoiceKin === kinfolkId) return;
+  const number = typeof invoice['invoiceNumber'] === 'string' ? invoice['invoiceNumber'].trim() : '';
+  throw new HttpsError(
+    'failed-precondition',
+    `${number === '' ? 'That invoice' : `Invoice ${number}`} belongs to a different household than this payment.`,
+    { code: LINK_WRONG_HOUSEHOLD_CODE },
+  );
+}
 /** "$36.00" from integer cents, for a refusal an operator has to read. */
 function dollars(cents: number): string {
   return formatUsdCents(cents);
