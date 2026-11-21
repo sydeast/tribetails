@@ -4184,6 +4184,20 @@ data class KinCareSession(
     val kinCareVisitId: String? = null,   // -> .../kinCares/{visitId}
 )
 
+/**
+ * #2268: a stored `kin_care_sessions.status` as the upper-case code every
+ * screen compares against. A called-off visit is stored three ways
+ * (`CANCELLED`, `cancelled`, and the one-L `CANCELED` older and imported rows
+ * carry), and the server reads all three as cancelled
+ * (`normalizeBookingStatus`). Every other code is only trimmed and
+ * upper-cased, so an unknown one keeps its own text. Android's twin is
+ * `data/model/Models.kt#visitStatusCode`.
+ */
+fun visitStatusCode(raw: String?): String {
+    val code = raw?.trim()?.uppercase().orEmpty()
+    return if (code == "CANCELED") "CANCELLED" else code
+}
+
 @Serializable
 data class GeneratedDraft(
     val _id: String = "",
@@ -4715,6 +4729,13 @@ data class Invoice(
      * "app only" for an explicit true alone.
      */
     val reminderNotifiedAppOnly: Boolean? = null,
+    /**
+     * #2515: when the send-time check held the reminder on record back because
+     * notices to households were turned off (ms epoch). The sent stamp above
+     * is kept so the reminder is not raised again; [lastReminderLabel] reads a
+     * sent stamp no later than this one as "held, not sent".
+     */
+    val reminderHeldAtMs: Long? = null,
     /**
      * #1174: the itemization, held RAW and read through
      * `screens.invoices.invoiceEditLinesOf`. Raw for the reason Android's model

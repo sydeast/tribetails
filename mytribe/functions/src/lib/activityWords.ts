@@ -171,6 +171,15 @@ export function notificationsTurnedOffSummaryWords(kinds: readonly HeldKind[]): 
   const many = kinds.filter((k) => k.count > 0).length > 1;
   return `Did not send ${heldKindsWords(kinds)}: ${many ? 'these notifications are' : 'this notification is'} turned off in Settings`;
 }
+/**
+ * #2478: added to a timed line whose copies were taken off the queue at their
+ * send time (`notificationScheduledSweep` and the other two queue sweeps).
+ * Those copies are gone and nothing sends them once notices are back on, which
+ * is not true of the reminder jobs' own line: they ask again on their next run.
+ */
+export function notSentLaterWords(count: number): string {
+  return `${count === 1 ? 'It' : 'They'} will not be sent later`;
+}
 /** The notification as a whole is switched off in Settings. */
 export function notificationTurnedOffWords(name: string, to: string): string {
   return `Did not send ${quotedName(name)}${toWhom(to)}: this notification is turned off in Settings`;

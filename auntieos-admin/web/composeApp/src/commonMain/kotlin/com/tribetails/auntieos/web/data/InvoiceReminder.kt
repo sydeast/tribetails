@@ -164,6 +164,30 @@ fun reminderOutcomeMessage(outcome: ReminderOutcome, zone: TimeZone = TimeZone.c
  * (`reminderNotifiedAppOnly`). Only an explicit true adds "app only"; a stamp
  * from before the flag existed, or one copied from the dedupe ledger, has none.
  */
-fun lastReminderLabel(stampMs: Long?, zone: TimeZone = TimeZone.currentSystemDefault(), appOnly: Boolean? = false): String =
-    if (stampMs != null && stampMs > 0L) formatReminderTime(stampMs, zone) + (if (appOnly == true) ", app only" else "")
-    else "none sent"
+fun lastReminderLabel(
+    stampMs: Long?,
+    zone: TimeZone = TimeZone.currentSystemDefault(),
+    appOnly: Boolean? = false,
+    heldAtMs: Long? = null,
+): String =
+    if (stampMs == null || stampMs <= 0L) "none sent"
+    else if (reminderWasHeld(stampMs, heldAtMs)) formatReminderTime(stampMs, zone) + ", held, not sent"
+    else formatReminderTime(stampMs, zone) + (if (appOnly == true) ", app only" else "")
+/**
+ * #2515: whether the reminder on record never went out. The sweep that holds a
+ * queued reminder at its send time, because notices to households were turned
+ * off, writes `reminderHeldAtMs` beside the sent stamp and leaves that stamp,
+ * so the reminder is not raised again. A sent stamp no later than the held one
+ * is that reminder; a reminder sent afterwards stamps a later time.
+ */
+fun reminderWasHeld(stampMs: Long?, heldAtMs: Long?): Boolean =
+    stampMs != null && stampMs > 0L && heldAtMs != null && heldAtMs >= stampMs
+/** The invoice list's reminder line: "reminded <when>", or "reminder held, not sent" (#2515). */
+fun reminderListLine(
+    stampMs: Long?,
+    appOnly: Boolean?,
+    heldAtMs: Long?,
+    zone: TimeZone = TimeZone.currentSystemDefault(),
+): String =
+    if (reminderWasHeld(stampMs, heldAtMs)) "reminder held, not sent"
+    else "reminded ${lastReminderLabel(stampMs, zone, appOnly)}"

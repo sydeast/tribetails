@@ -9,6 +9,8 @@ import { sweepPendingCreditNotices } from '../lib/accountCredit';
 import { isBroadcastKey } from '../notifications/householdSendGate';
 import { countHeldNotice, withHeldNoticeBatch } from '../notifications/heldNoticeBatch';
 import type { BroadcastHoldReason } from '../notifications/sendSwitchRules';
+// #2478: loaded only when a run has rows to drain, so the cold-start graph stays at its bound.
+import type * as QueuedCopyHold from '../notifications/queuedCopyHold';
 
 /**
  * Drains `scheduledNotifications/{auto}` docs whose `fireAtMs` has elapsed.
@@ -25,6 +27,9 @@ import type { BroadcastHoldReason } from '../notifications/sendSwitchRules';
  * without practical benefit.
  */
 const SCAN_LIMIT = 200;
+
+/** #2478: the job whose line counts the household copies held at their send time (blasts keep `marketingBlast`). */
+export const SCHEDULED_HELD_JOB = 'notificationScheduledSweep';
 
 /**
  * Drains the due rows of `scheduledNotifications` at `now`. Exported for the
@@ -58,95 +63,150 @@ export async function drainScheduledNotifications(now: number): Promise<{ promot
     }
     return holdByKey.get(key) ?? null;
   };
-  await withHeldNoticeBatch('marketingBlast', { atMs: now }, async (heldBatch) => {
-    for (const doc of snap.docs) {
-      const data = doc.data() as Record<string, unknown>;
-      const key = typeof data.key === 'string' ? data.key : '';
-      // A row queued before #1898 carries no stream; a blast key reaches households only.
-      const householdCopy = data.stream === undefined || data.stream === 'kinfolk';
-      if (key !== '' && isBroadcastKey(key) && householdCopy) {
-        let hold: BroadcastHoldReason | null;
-        try {
-          hold = await holdFor(key);
-        } catch (err) {
-          hold = 'unreadable';
-          logEvent({
-            severity: 'warn',
-            function: 'notificationScheduledSweep',
-            event: 'scheduled.hold.read.failed',
-            extra: { scheduledId: doc.id, error: (err as Error)?.message },
-          });
-        }
-        // Settings that cannot be read are no answer: the copy is neither sent
-        // nor taken off the queue, and the next tick asks again. A held copy
-        // is gone for good, so one failed read must not decide that.
-        if (hold === 'unreadable') {
-          skipped += 1;
-          continue;
-        }
-        if (hold !== null) {
-          const reason = hold;
-          const inner = (data.data ?? {}) as Record<string, unknown>;
-          const blastId = typeof inner.blastId === 'string' ? inner.blastId : '';
+  /**
+   * #2478: EVERY OTHER HOUSEHOLD COPY IS ASKED AGAIN AT ITS SEND TIME TOO.
+   * An invoice reminder, an overdue notice or a visit reminder queued while
+   * notices to households were on is held if they were turned off since: taken
+   * off the queue, never sent later, and counted on this job's own line
+   * (`notifications/queuedCopyHold.ts`). The switch is read once per run.
+   * Both lines say the copies will not be sent later (`final`).
+   */
+  const { queuedCopyVerdict, startQueuedCopyGate, heldStampOf }: typeof QueuedCopyHold = await import(
+    '../notifications/queuedCopyHold.js'
+  );
+  const gate = startQueuedCopyGate();
+  /**
+   * Takes one row off the queue; false when another run already did.
+   *
+   * #2515: a reminder's invoice or visit gets its held stamp in the same
+   * commit (`heldStampOf`), so it never reads as a reminder that went out.
+   * Only on a document that exists: a merge would make one out of nothing.
+   */
+  const takeOff = (ref: FirebaseFirestore.DocumentReference, row: Record<string, unknown>): Promise<boolean> =>
+    db().runTransaction(async (tx) => {
+      const stamp = heldStampOf(row);
+      const fresh = await tx.get(ref);
+      if (!fresh.exists) return false;
+      const target = stamp === null ? null : await tx.get(db().doc(stamp.path));
+      tx.delete(ref);
+      if (stamp !== null && target?.exists === true) {
+        tx.set(db().doc(stamp.path), { [stamp.field]: now }, { merge: true });
+      }
+      return true;
+    });
+  await withHeldNoticeBatch('marketingBlast', { atMs: now, final: true }, (heldBatch) =>
+    withHeldNoticeBatch(SCHEDULED_HELD_JOB, { atMs: now, final: true }, async (queuedBatch) => {
+      for (const doc of snap.docs) {
+        const data = doc.data() as Record<string, unknown>;
+        const key = typeof data.key === 'string' ? data.key : '';
+        // A row queued before #1898 carries no stream; a blast key reaches households only.
+        const householdCopy = data.stream === undefined || data.stream === 'kinfolk';
+        if (key !== '' && isBroadcastKey(key) && householdCopy) {
+          let hold: BroadcastHoldReason | null;
           try {
-            const removed = await db().runTransaction(async (tx) => {
-              const fresh = await tx.get(doc.ref);
-              if (!fresh.exists) return false;
-              tx.delete(doc.ref);
-              if (blastId !== '') {
-                tx.set(
-                  db().collection('marketingBlasts').doc(blastId),
-                  { heldAtSend: FieldValue.increment(1), heldReason: reason },
-                  { merge: true },
-                );
-              }
-              return true;
-            });
-            if (removed) {
-              held += 1;
-              const recipientUid = typeof data.recipientUid === 'string' ? data.recipientUid : '';
-              countHeldNotice(
-                heldBatch,
-                key,
-                reason,
-                blastId === '' ? '' : [key, `blast:${blastId}`, recipientUid].join('\u0000'),
-              );
-            }
+            hold = await holdFor(key);
           } catch (err) {
+            hold = 'unreadable';
             logEvent({
               severity: 'warn',
               function: 'notificationScheduledSweep',
-              event: 'scheduled.hold.failed',
+              event: 'scheduled.hold.read.failed',
               extra: { scheduledId: doc.id, error: (err as Error)?.message },
             });
           }
-          continue;
+          // Settings that cannot be read are no answer: the copy is neither sent
+          // nor taken off the queue, and the next tick asks again. A held copy
+          // is gone for good, so one failed read must not decide that.
+          if (hold === 'unreadable') {
+            skipped += 1;
+            continue;
+          }
+          if (hold !== null) {
+            const reason = hold;
+            const inner = (data.data ?? {}) as Record<string, unknown>;
+            const blastId = typeof inner.blastId === 'string' ? inner.blastId : '';
+            try {
+              const removed = await db().runTransaction(async (tx) => {
+                const fresh = await tx.get(doc.ref);
+                if (!fresh.exists) return false;
+                tx.delete(doc.ref);
+                if (blastId !== '') {
+                  tx.set(
+                    db().collection('marketingBlasts').doc(blastId),
+                    { heldAtSend: FieldValue.increment(1), heldReason: reason },
+                    { merge: true },
+                  );
+                }
+                return true;
+              });
+              if (removed) {
+                held += 1;
+                const recipientUid = typeof data.recipientUid === 'string' ? data.recipientUid : '';
+                countHeldNotice(
+                  heldBatch,
+                  key,
+                  reason,
+                  blastId === '' ? '' : [key, `blast:${blastId}`, recipientUid].join('\u0000'),
+                );
+              }
+            } catch (err) {
+              logEvent({
+                severity: 'warn',
+                function: 'notificationScheduledSweep',
+                event: 'scheduled.hold.failed',
+                extra: { scheduledId: doc.id, error: (err as Error)?.message },
+              });
+            }
+            continue;
+          }
+        } else if (key !== '') {
+          const verdict = await queuedCopyVerdict(key, data.stream, gate);
+          if (verdict === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          if (verdict === 'hold') {
+            try {
+              if (await takeOff(doc.ref, data)) {
+                held += 1;
+                countHeldNotice(queuedBatch, key, 'off', [key, `scheduled:${doc.id}`].join('\u0000'));
+              }
+            } catch (err) {
+              logEvent({
+                severity: 'warn',
+                function: 'notificationScheduledSweep',
+                event: 'scheduled.hold.failed',
+                extra: { scheduledId: doc.id, error: (err as Error)?.message },
+              });
+            }
+            continue;
+          }
+        }
+        try {
+          await db().runTransaction(async (tx) => {
+            const fresh = await tx.get(doc.ref);
+            if (!fresh.exists) return;
+            promoteQueuedNotification(tx, data, {
+              mode: 'scheduled-promoted',
+              origin: {
+                originScheduledId: doc.id,
+                scheduledFireAtMs: data.fireAtMs ?? null,
+              },
+            });
+            tx.delete(doc.ref);
+          });
+          promoted += 1;
+        } catch (err) {
+          logEvent({
+            severity: 'warn',
+            function: 'notificationScheduledSweep',
+            event: 'scheduled.promote.failed',
+            extra: { scheduledId: doc.id, error: (err as Error)?.message },
+          });
         }
       }
-      try {
-        await db().runTransaction(async (tx) => {
-          const fresh = await tx.get(doc.ref);
-          if (!fresh.exists) return;
-          promoteQueuedNotification(tx, data, {
-            mode: 'scheduled-promoted',
-            origin: {
-              originScheduledId: doc.id,
-              scheduledFireAtMs: data.fireAtMs ?? null,
-            },
-          });
-          tx.delete(doc.ref);
-        });
-        promoted += 1;
-      } catch (err) {
-        logEvent({
-          severity: 'warn',
-          function: 'notificationScheduledSweep',
-          event: 'scheduled.promote.failed',
-          extra: { scheduledId: doc.id, error: (err as Error)?.message },
-        });
-      }
-    }
-  });
+    }),
+  );
 
   logEvent({
     severity: 'info',

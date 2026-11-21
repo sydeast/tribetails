@@ -328,6 +328,23 @@ class AuntieTimeStateMachineTest {
         assertTrue(!isVisibleOnAuntieTime(session(status = "CANCELLED", startTime = "2026-07-14T09:00:00Z"), today))
     }
 
+    // #2268: the one-L CANCELED used to be left off the board altogether, where a
+    // two-L one shows under Recent. All three stored spellings now read alike.
+    @Test
+    fun `every stored spelling of a cancellation follows the CANCELLED rule and files under Recent`() {
+        val zone = com.tribetails.auntieos.web.screens.booking.NewBookingMath.businessTimeZone(null)
+        listOf("CANCELLED", "cancelled", "CANCELED", " canceled ").forEach { status ->
+            val yesterday = session(id = "y", status = status, startTime = "2026-07-20T09:00:00Z")
+            val lastWeek = session(id = "w", status = status, startTime = "2026-07-14T09:00:00Z")
+            assertTrue(isVisibleOnAuntieTime(yesterday, today), "$status yesterday")
+            assertTrue(!isVisibleOnAuntieTime(lastWeek, today), "$status last week")
+            assertTrue(!isOverdueScheduled(lastWeek, today, zone), "$status is never Overdue")
+            val board = auntieTimeBoard(listOf(yesterday), today, zone)
+            assertEquals(listOf(yesterday), board[AuntieTimePhase.CompletedToday], "$status files under Recent")
+            assertEquals(setOf(AuntieTimePhase.CompletedToday), board.keys, "$status is in no other group")
+        }
+    }
+
     @Test
     fun `COMPLETED far in the future is still visible (no upper bound by design)`() {
         // The terminal-status branch is "date >= yesterday" with no cutoff, unlike

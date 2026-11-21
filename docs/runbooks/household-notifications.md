@@ -111,6 +111,23 @@ Set the same field to `false`, or delete it. The next send is held back. Nothing
 that already went out can be pulled back, so this stops the bleeding rather than
 undoing anything.
 
+A household notice already queued to go later is held too (#2478). The three
+sweeps (`notificationScheduledSweep`, `notificationDebounceSweep`,
+`notificationBatchSweep`) ask the switch again when each household copy comes
+due: an invoice reminder, an overdue notice, a visit reminder, a KinTale comment
+digest, and any other notice that waits in a queue. The payment, invoice,
+KinTale and booking confirmations locked on for Kinfolk are held the same way. With the switch off, the copy comes off the
+queue and is never sent later, even after you switch notices back on. The
+reminder jobs stamped the invoice or visit when they queued it, so they do not
+queue that reminder again. The sweep also writes when it held it
+(`reminderHeldAtMs`, `overdueHeldAtMs`, `upcomingReminderHeldAtMs`, #2515), so
+the invoice's "Last reminder" row reads "held, not sent" and the invoice list
+reads "reminder held, not sent" instead of claiming it went out. Each sweep run writes one Activity Log line with the
+count: `Held back 2 invoice reminders: notices to households are turned off.
+They will not be sent later`. If the switch cannot be read, the copy stays
+queued and the next run asks again. Copies for you and your Aunties are not
+affected.
+
 ### Checking it took
 
 Look for something happening, not for something stopping. The gate is meant to
