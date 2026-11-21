@@ -666,6 +666,36 @@ export function editDueOrderProblem(
   if (!touched) return null;
   return dueDateOrderProblem(editing.date, editing.dueDate, termsChanged ? editing.termsChoice : invoice.termsCode);
 }
+/**
+ * #2509: a due date typed beside rule terms is a date picked by hand, so the
+ * picker moves to "A date I pick myself", which is what `updateInvoice` stores.
+ * Typed back to the stored date, the picker returns to the invoice's own rule.
+ * Terms with no code keep their words: their due date is already typed.
+ */
+export function withTypedDueDate<T extends { dueDate: string; termsChoice: string }>(
+  editing: T,
+  dueDate: string,
+  invoice: { dueDate: string; termsCode?: string },
+): T {
+  const stored = parseInvoiceTermsCode(invoice.termsCode);
+  if (stored === null || stored === 'custom') return { ...editing, dueDate };
+  if (dueDate.trim() === invoice.dueDate.trim()) {
+    return { ...editing, dueDate, termsChoice: editing.termsChoice === 'custom' ? stored : editing.termsChoice };
+  }
+  return { ...editing, dueDate, termsChoice: editing.termsChoice === stored ? 'custom' : editing.termsChoice };
+}
+/**
+ * #2509: picking rule terms hands the due date back to the rule, so a date
+ * typed a moment ago is dropped rather than left to switch the terms on save.
+ */
+export function withPickedTerms<T extends { dueDate: string; termsChoice: string }>(
+  editing: T,
+  termsChoice: T['termsChoice'],
+  invoice: { dueDate: string },
+): T {
+  const rule = termsChoice !== KEPT_TERMS && termsChoice !== 'custom';
+  return { ...editing, termsChoice, dueDate: rule ? invoice.dueDate : editing.dueDate };
+}
 /** The metadata and money fields, mid-edit. Text, because a half-typed field is not a number. */
 interface EditDraft {
   invoiceNumber: string;
@@ -2162,7 +2192,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   type="date"
                   className="invoice-detail__field-input"
                   value={editing.dueDate}
-                  onChange={(e) => setEditing({ ...editing, dueDate: e.target.value })}
+                  // #2509: typed beside rule terms, the terms become "A date I pick myself".
+                  onChange={(e) => setEditing(withTypedDueDate(editing, e.target.value, invoice))}
                   // #1609: picked terms other than custom set the due date.
                   disabled={busy || termsSetDueDate(editing, invoice)}
                   aria-label="Invoice due date"
@@ -2183,7 +2214,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   className="invoice-detail__field-input"
                   value={editing.termsChoice}
                   onChange={(e) =>
-                    setEditing({ ...editing, termsChoice: e.target.value as EditDraft['termsChoice'] })
+                    setEditing(withPickedTerms(editing, e.target.value as EditDraft['termsChoice'], invoice))
                   }
                   disabled={busy}
                   aria-label="Invoice terms"

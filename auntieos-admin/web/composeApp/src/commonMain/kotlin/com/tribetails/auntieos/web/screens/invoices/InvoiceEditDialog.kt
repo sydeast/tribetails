@@ -85,7 +85,7 @@ internal fun InvoiceEditDialog(
                 )
                 BottomBorderField(
                     value = draft.dueDate,
-                    onValueChange = { onChange(draft.copy(dueDate = it)) },
+                    onValueChange = { onChange(draft.withTypedDueDate(it)) },
                     label = "Due date",
                     // #1609: picked terms other than custom set the due date on save.
                     placeholder = if (termsSetDueDate) "set by the terms" else "YYYY-MM-DD",
@@ -102,7 +102,7 @@ internal fun InvoiceEditDialog(
                 options = (if (draft.storedTermsCode == null) listOf<InvoiceTermsCode?>(null) else emptyList()) +
                     invoiceTermsDefs(),
                 selected = draft.termsCode,
-                onSelect = { onChange(draft.copy(termsCode = it)) },
+                onSelect = { onChange(draft.withPickedTerms(it)) },
                 optionLabel = { code ->
                     code?.label ?: if (draft.terms.isBlank()) "Not set" else "As stored: ${draft.terms.trim()}"
                 },

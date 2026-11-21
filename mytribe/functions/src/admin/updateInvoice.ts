@@ -18,7 +18,7 @@ import { paymentStandingOfInvoice } from '../lib/invoicePaidGate';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { PAYMENT_APPLIED_OWNER_FIELD, paymentAppliedOwner } from '../lib/paymentAppliedOwner';
 import { randomUUID } from 'node:crypto';
-import { InvoiceTermsCodeArg } from '../lib/invoiceTerms';
+import { InvoiceTermsCodeArg, invoiceTermsWords, parseInvoiceTermsCode } from '../lib/invoiceTerms';
 import {
   businessToday,
   readInvoiceTermsSettings,
@@ -405,6 +405,25 @@ async function planEdit(tx: Transaction, ref: DocumentReference, patch: EditPatc
     update['terms'] = outcome.fields.terms;
     update['termsCode'] = outcome.fields.termsCode;
     update['dueDate'] = outcome.fields.dueDate;
+  }
+  // #2509: A DUE DATE TYPED IN EDIT IS A DATE PICKED BY HAND. On an invoice
+  // whose terms are a rule ("Due on receipt"), a new due date sent on its own
+  // used to keep the rule beside it: the household read "Due on receipt" next
+  // to a date weeks away, and every later re-count from the rule (Turn into
+  // invoice, Review and send) threw the typed date away. The terms become
+  // "a date I pick myself", in that code's own words, so every re-count keeps
+  // the date. Only a CHANGED date counts: a client echoing the stored one back
+  // is not picking anything. An invoice with no code (typed or imported terms)
+  // already reads its due date as typed and keeps its words. Decided before
+  // the #1593 order check below, which judges a hand-picked date and not a
+  // rule's: a typed date before the invoice date is refused here too.
+  if (patch.dueDate !== undefined && patch.termsCode === undefined && patch.terms === undefined) {
+    const storedCode = parseInvoiceTermsCode(data['termsCode']);
+    const storedDue = typeof data['dueDate'] === 'string' ? data['dueDate'].trim() : '';
+    if (storedCode !== null && storedCode !== 'custom' && patch.dueDate.trim() !== storedDue) {
+      update['termsCode'] = 'custom';
+      update['terms'] = invoiceTermsWords('custom');
+    }
   }
   // #1593: the invoice as it would be after this edit, so moving the invoice
   // date past an existing typed due date is caught as well as typing an early
