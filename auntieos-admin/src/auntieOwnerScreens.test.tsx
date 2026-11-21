@@ -83,6 +83,12 @@ vi.mock('./screens/MarketingBlasts', () => ({
 }));
 // Tribal Intel: the owner's notes about households, Kinfolk and Kin.
 vi.mock('./screens/TribalIntel', () => ({ TribalIntel: () => <div>TRIBAL INTEL SCREEN</div> }));
+// Invites, Form Schemas and Feature Flags: none of the three can do anything
+// for an Auntie, so they join the owner's screens.
+vi.mock('./screens/Invites', () => ({ Invites: () => <div>INVITES SCREEN</div> }));
+vi.mock('./routes/InviteDetailView', () => ({ InviteDetailView: () => <div>INVITE DETAIL SCREEN</div> }));
+vi.mock('./routes/FormSchemasView', () => ({ FormSchemasView: () => <div>FORM SCHEMAS SCREEN</div> }));
+vi.mock('./screens/FeatureFlags', () => ({ FeatureFlags: () => <div>FEATURE FLAGS SCREEN</div> }));
 
 // #2187: the real route adapter over a stand-in screen that says which flag it
 // was handed, so the test reads what the router's own access produced.
@@ -379,9 +385,20 @@ describe('#2200 / #2201 the owner and the test admin keep all four', () => {
 describe('#2200 / #2201 every owner-only nav entry is guarded in the router', () => {
   const ownerOnly = NAV.filter((e) => e.ownerOnly);
 
-  it('covers the seven owner screens and agrees with isOwnerOnlyPath', () => {
+  it('covers the ten owner screens and agrees with isOwnerOnlyPath', () => {
     expect(ownerOnly.map((e) => e.slug).sort()).toEqual(
-      ['activity', 'invoices', 'marketing-blasts', 'packages', 'settings', 'templates', 'tribal-intel'],
+      [
+        'activity',
+        'feature-flags',
+        'form-schemas',
+        'invites',
+        'invoices',
+        'marketing-blasts',
+        'packages',
+        'settings',
+        'templates',
+        'tribal-intel',
+      ],
     );
     for (const e of NAV) expect(isOwnerOnlyPath(`/${e.slug}`)).toBe(e.ownerOnly === true);
   });
@@ -502,4 +519,94 @@ describe('#2187 an Auntie gets Bookings without New booking', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
   }
+});
+
+/**
+ * Three screens that could only refuse an Auntie. Invites: the list, one
+ * invite, sending and revoking are all the owner's, because an invite grants a
+ * person portal access. Form Schemas: the list cannot load for her. Feature
+ * Flags: every switch is refused. Each comes off her rail and its address
+ * sends her Home, the way Settings and Templates do. The owner, the test admin
+ * and the offline session keep all three.
+ */
+const CONFIG_SCREENS = [
+  { rail: 'Invites', path: '/invites', sentinel: 'INVITES SCREEN' },
+  { rail: 'Form Schemas', path: '/form-schemas', sentinel: 'FORM SCHEMAS SCREEN' },
+  { rail: 'Feature Flags', path: '/feature-flags', sentinel: 'FEATURE FLAGS SCREEN' },
+] as const;
+
+function noConfigScreen(): void {
+  for (const s of CONFIG_SCREENS) expect(screen.queryByText(s.sentinel)).toBeNull();
+  expect(screen.queryByText('INVITE DETAIL SCREEN')).toBeNull();
+}
+
+describe('an Auntie never reaches Invites, Form Schemas or Feature Flags', () => {
+  it('shows her none of the three rail entries, and keeps her work screens', async () => {
+    await boot('/home', AUNTIE_CLAIMS);
+    expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+    for (const s of CONFIG_SCREENS) expect(railLink(s.rail)).toBeNull();
+    for (const name of ['Directory', 'KinTales', 'Gallery', 'Schedule', 'Bookings', 'Auntie Time', 'Communicate', 'Inbox', 'Notifications', 'KinTale templates']) {
+      expect(railLink(name)).not.toBeNull();
+    }
+  });
+
+  for (const path of ['/invites', '/invites/inv-1', '/form-schemas', '/feature-flags']) {
+    it(`sends her from ${path} to Home`, async () => {
+      await boot(path, AUNTIE_CLAIMS);
+      await waitFor(() => expect(window.location.pathname).toBe('/home'));
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+      noConfigScreen();
+    });
+  }
+
+  it('treats a double-claimed account as the Auntie', async () => {
+    await boot('/invites/inv-1', DOUBLE_CLAIMS);
+    await waitFor(() => expect(window.location.pathname).toBe('/home'));
+    noConfigScreen();
+    for (const s of CONFIG_SCREENS) expect(railLink(s.rail)).toBeNull();
+  });
+});
+
+describe('the owner and the test admin keep Invites, Form Schemas and Feature Flags', () => {
+  for (const claims of [OWNER_CLAIMS, TEST_ADMIN_CLAIMS]) {
+    const who = claims === OWNER_CLAIMS ? 'owner' : 'test admin';
+
+    it(`shows the ${who} all three rail entries`, async () => {
+      await boot('/home', claims);
+      expect(await screen.findByText('ADMIN HOME')).toBeInTheDocument();
+      for (const s of CONFIG_SCREENS) expect(railLink(s.rail)).not.toBeNull();
+    });
+
+    for (const s of CONFIG_SCREENS) {
+      it(`opens ${s.rail} for the ${who}`, async () => {
+        await boot(s.path, claims);
+        expect(await screen.findByText(s.sentinel)).toBeInTheDocument();
+        expect(window.location.pathname).toBe(s.path);
+      });
+    }
+
+    it(`opens one invite for the ${who}`, async () => {
+      await boot('/invites/inv-1', claims);
+      expect(await screen.findByText('INVITE DETAIL SCREEN')).toBeInTheDocument();
+      expect(window.location.pathname).toBe('/invites/inv-1');
+    });
+  }
+
+  it('keeps all three for the offline session whose claims were not read', async () => {
+    const offline = Object.assign(new Error('Failed to fetch'), { code: 'auth/network-request-failed' });
+    currentUser = USER;
+    window.history.replaceState(null, '', '/invites');
+    const { router } = await importRouterTrackingListeners();
+    getIdTokenResult.mockRejectedValue(offline);
+    lastRouter = router;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(/Signed in, but out of touch/i)).toBeInTheDocument();
+    expect(await screen.findByText('INVITES SCREEN')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/invites');
+    for (const s of CONFIG_SCREENS) expect(railLink(s.rail)).not.toBeNull();
+  });
 });

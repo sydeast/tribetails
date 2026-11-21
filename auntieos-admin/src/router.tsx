@@ -232,6 +232,8 @@ const featureFlagsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'feature-flags',
   staticData: { title: navTitle('featureFlags') },
+  // Business configuration: every switch is refused for an Auntie.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./screens/FeatureFlags'), 'FeatureFlags'),
 });
 
@@ -255,6 +257,8 @@ const formSchemasRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'form-schemas',
   staticData: { title: navTitle('formSchemas') },
+  // Business configuration: the list cannot load for an Auntie.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./routes/FormSchemasView'), 'FormSchemasView'),
 });
 
@@ -287,6 +291,8 @@ const invitesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'invites',
   staticData: { title: navTitle('invites') },
+  // An invite grants a person portal access, which is the owner's to give.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./screens/Invites'), 'Invites'),
 });
 
@@ -297,6 +303,8 @@ const inviteDetailRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'invites/$inviteId',
   staticData: { title: navTitle('invites') },
+  // The notice that links here goes to the owner; an Auntie cannot read one.
+  beforeLoad: refuseAuntie,
   component: lazyRouteComponent(() => import('./routes/InviteDetailView'), 'InviteDetailView'),
 });
 
