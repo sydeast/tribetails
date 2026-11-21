@@ -212,10 +212,10 @@ describe('sendGeneratedDraft: the one send', () => {
 
     expect(res).toMatchObject({ outcome: 'sent', channel: 'sms', recipientRedacted: '+1******2671' });
     expect(mocks.twilioCreate).toHaveBeenCalledTimes(1);
-    // #2408: the words, then the link into MyTribe. No sign-in on this household, so the link is the list.
+    // #2316 (ruling 2026-11-20): no sign-in on this household, so the whole text, with no link.
     expect(mocks.twilioCreate.mock.calls[0]![0]).toMatchObject({
       to: '+14155552671',
-      body: 'See you Friday at 9. More in MyTribe: https://kinfolk.tribetails.com/notifications',
+      body: 'See you Friday at 9.',
     });
     expect(mocks.sendTemplatedEmail).not.toHaveBeenCalled();
     expect(docs['generated_drafts/d2']).toMatchObject({ status: 'approved', sentChannel: 'sms', sentProviderMessageId: 'SM123' });
@@ -887,14 +887,45 @@ describe('sendGeneratedDraft: a Text is short and links to the whole message (#2
     expect(docs[ENTRY]).toMatchObject({ householdTextMessage: LONG });
     expect(docs[ENTRY]).not.toHaveProperty('readAt');
   });
-  it('a household with no MyTribe sign-in gets the short text with a link to the list, and no entry', async () => {
+  it('#2316: a household with no MyTribe sign-in gets the whole text, no cut, no link, and no entry', async () => {
     const { ctx } = db({ 'generated_drafts/d2': { ...TEXT_DRAFT }, ...HOUSEHOLD });
     const res = await sendGeneratedDraftHandler(owner(longArgs));
     expect(res.outcome).toBe('sent');
-    expect(sentText().endsWith(`... ${LIST_LINK}`)).toBe(true);
-    expect(sentText().length).toBeLessThanOrEqual(200 + 1 + LIST_LINK.length);
+    expect(mocks.twilioCreate).toHaveBeenCalledTimes(1);
+    expect(sentText()).toBe(LONG.trim());
+    expect(sentText()).not.toContain('More in MyTribe');
+    expect(sentText()).not.toContain('...');
     expect(ctx.writes.filter((w) => w.path.startsWith('notifications/'))).toEqual([]);
     expect(logged('draft.text.no_portal_account')).toHaveLength(1);
+  });
+  it('#2316: a whole text longer than one text can carry goes as several, in order, split at a word', async () => {
+    const huge = `${'The new spring hours start on Monday morning. '.repeat(60)}Thank you!`;
+    expect(huge.length).toBeGreaterThan(1600);
+    db({ 'generated_drafts/d2': { ...TEXT_DRAFT }, ...HOUSEHOLD });
+    const res = await sendGeneratedDraftHandler(owner({ ...textArgs, body: huge }));
+    expect(res.outcome).toBe('sent');
+    const bodies = mocks.twilioCreate.mock.calls.map((c: any[]) => String(c[0].body));
+    expect(bodies.length).toBe(2);
+    for (const b of bodies) expect(b.length).toBeLessThanOrEqual(1600);
+    expect(bodies.join(' ')).toBe(huge.trim());
+    // Split at the end of a word: the next character of the message is a space.
+    expect(huge.trim().charAt(bodies[0]!.length)).toBe(' ');
+  });
+  it('#2316 ERROR: the second of two texts gets no answer, so the draft says unconfirmed, not unsent', async () => {
+    const huge = `${'The new spring hours start on Monday morning. '.repeat(60)}Thank you!`;
+    const { docs } = db({ 'generated_drafts/d2': { ...TEXT_DRAFT }, ...HOUSEHOLD });
+    mocks.twilioCreate
+      .mockResolvedValueOnce({ sid: 'SM1' })
+      .mockRejectedValueOnce(Object.assign(new Error('timeout of 30000ms exceeded'), { code: 'ECONNABORTED' }));
+    await expect(sendGeneratedDraftHandler(owner({ ...textArgs, body: huge }))).rejects.toBeTruthy();
+    expect(mocks.twilioCreate).toHaveBeenCalledTimes(2);
+    expect(docs['generated_drafts/d2']).not.toHaveProperty('sentAt');
+    expect(JSON.stringify(docs['generated_drafts/d2'])).toMatch(/unconfirmed/i);
+  });
+  it('#2316 NEGATIVE: a household with a sign-in still gets the short line and its link', async () => {
+    db({ 'generated_drafts/d2': { ...TEXT_DRAFT }, ...SIGNED_IN });
+    await sendGeneratedDraftHandler(owner(longArgs));
+    expect(sentText()).toMatch(/\.\.\. More in MyTribe: https:\/\/kinfolk\.tribetails\.com\/notifications\?entry=/);
   });
   it('a login stored on the household that is not a member of it is given no entry', async () => {
     // #1840: `kinfolk.uid` can hold a staff login. The household's message never goes on that list.
@@ -906,7 +937,8 @@ describe('sendGeneratedDraft: a Text is short and links to the whole message (#2
     });
     await sendGeneratedDraftHandler(owner(longArgs));
     expect(ctx.writes.filter((w) => w.path.startsWith('notifications/'))).toEqual([]);
-    expect(sentText().endsWith(LIST_LINK)).toBe(true);
+    // #2316: nobody in the household can sign in, so the whole text goes.
+    expect(sentText()).toBe(LONG.trim());
   });
   it('an entry that cannot be written is logged, and the text still goes with a link to the list', async () => {
     const { ctx } = db({ 'generated_drafts/d2': { ...TEXT_DRAFT }, ...SIGNED_IN });

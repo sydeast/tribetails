@@ -800,7 +800,7 @@ describe('broadcastMessage fills merge fields per household (#1610)', () => {
       ).resolves.toMatchObject({ perChannel: { push: { sent: 0, skipped: 1, failed: 0 } } });
       expect(entries(ctx)).toHaveLength(0);
     });
-    it('a household with no MyTribe account gets the short text with a link to the list', async () => {
+    it('#2316: a household with no MyTribe account gets the whole text, with no cut and no link', async () => {
       const ctx = buildDbMock({ writeThrough: true,
         // No account, so no settings of their own: the operator set texts on
         // for this notice and locked it, the one way such a household is texted.
@@ -815,7 +815,33 @@ describe('broadcastMessage fills merge fields per household (#1610)', () => {
       await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: LONG }));
       expect(entries(ctx)).toHaveLength(0);
       expect(mocks.twilioCreate).toHaveBeenCalledTimes(1);
-      expect(mocks.twilioCreate.mock.calls[0][0].body).toMatch(/\.\.\. More in MyTribe: https:\/\/kinfolk\.tribetails\.com\/notifications$/);
+      expect(mocks.twilioCreate.mock.calls[0][0].body).toBe(LONG.trim());
+    });
+    it('#2316: a whole text too long for one goes as several in order; a later one failing counts as failed', async () => {
+      const huge = `${'The new spring hours start on Monday morning. '.repeat(60)}Thank you!`;
+      const noAccountDb = () =>
+        buildDbMock({ writeThrough: true,
+          docs: {
+            'businessSettings/notifications': {
+              byKey: { 'broadcast.message': { channels: { sms: true }, locked: { sms: true } } },
+            },
+          },
+          queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'active', phoneNumber: '+14155552671', uid: '' } }] },
+        });
+      mocks.dbFn.mockReturnValue(noAccountDb().db);
+      const ok = await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: huge }));
+      const bodies = mocks.twilioCreate.mock.calls.map((c: any[]) => String(c[0].body));
+      expect(bodies).toHaveLength(2);
+      for (const b of bodies) expect(b.length).toBeLessThanOrEqual(1600);
+      expect(bodies.join(' ')).toBe(huge.trim());
+      expect(ok.perChannel.sms).toEqual({ sent: 1, skipped: 0, failed: 0 });
+
+      mocks.twilioCreate.mockReset().mockResolvedValueOnce({ sid: 'SM1' }).mockRejectedValueOnce(new Error('Twilio down'));
+      mocks.dbFn.mockReturnValue(noAccountDb().db);
+      await expect(
+        broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: huge })),
+      ).rejects.toMatchObject({ message: 'broadcast_all_failed' });
+      expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ event: 'sms.parts.partial' }));
     });
     it('a refused entry write is logged, and the text and push still go with a link to the list', async () => {
       const ctx = namedDb();

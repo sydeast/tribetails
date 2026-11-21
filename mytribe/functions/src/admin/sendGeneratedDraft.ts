@@ -14,7 +14,12 @@ import { SMTP2GO_NO_VERDICT_MESSAGE } from '../lib/providerFailure';
 import { resolveKinfolkUid } from '../lib/resolveKinfolkUid';
 import { loadBusinessName } from '../lib/businessName';
 import { getNotificationDef } from '../notifications/catalog';
-import { householdNoticeEntryRoute, householdPushShelfLine, householdSmsText } from '../notifications/templateParsers';
+import {
+  householdNoticeEntryRoute,
+  householdPushShelfLine,
+  householdSmsText,
+  householdWholeSmsParts,
+} from '../notifications/templateParsers';
 import { HOUSEHOLD_TEXT_MESSAGE_FIELD } from '../notifications/senders/pushChannel';
 import { PORTAL_URL } from '../notifications/visitDates';
 import {
@@ -104,11 +109,11 @@ import {
  *   - Known that nothing went out: the entry is removed, then the claim is let
  *     go. A send that got no answer keeps it, because the text may have
  *     arrived and its link has to open.
- *   - A household with no MyTribe sign-in has no list to write to. It is sent
- *     the short text with a link to the notifications list, which opens the
- *     sign-in page: what a blast does for that household today. Whether such
- *     a household should be texted the whole message is an open operator
- *     question and is not decided here.
+ *   - A household with no MyTribe sign-in has no list to write to, so it is
+ *     texted the WHOLE message, with no cut and no link (#2316, operator ruling
+ *     2026-11-20). A message longer than one text can carry goes as several
+ *     texts in order (`householdWholeSmsParts`); if one after the first is not
+ *     answered, the draft is marked unconfirmed, like a text with no answer.
  *   - An entry that could not be written is logged and the text still goes,
  *     linking to the list, as a blast does.
  *
@@ -288,17 +293,30 @@ export async function sendGeneratedDraftHandler(req: CallableRequest<unknown>): 
   // #2408: a Text is the short line and a link to its entry on the household's
   // notifications list, which holds the words whole. An Email goes as written.
   let send = claim.send;
-  let entry: HouseholdEntry = { ref: null, written: false };
+  let entry: HouseholdEntry = { ref: null, written: false, noAccount: false };
+  // The bodies to send, in order: one, except a long whole text (#2316).
+  let bodies: string[] = [send.body];
   if (claim.channel === 'sms') {
     entry = await keepOnHouseholdList(uid, args.kinfolkId, args.draftId, claim.send.body);
-    const route = householdNoticeEntryRoute(entry.written && entry.ref ? entry.ref.id : '');
-    send = { ...claim.send, body: householdSmsText(claim.send.body, PORTAL_URL, route) };
+    if (entry.noAccount) {
+      // #2316: no MyTribe account, so no entry to link to: the whole message.
+      bodies = householdWholeSmsParts(claim.send.body);
+      send = { ...claim.send, body: bodies.join('\n') };
+    } else {
+      const route = householdNoticeEntryRoute(entry.written && entry.ref ? entry.ref.id : '');
+      send = { ...claim.send, body: householdSmsText(claim.send.body, PORTAL_URL, route) };
+      bodies = [send.body];
+    }
   }
-  let sent: Awaited<ReturnType<typeof sendThroughProvider>>;
+  let sent: Awaited<ReturnType<typeof sendThroughProvider>> | null = null;
   try {
-    sent = await sendThroughProvider(send);
+    for (const body of bodies) {
+      const one = await sendThroughProvider({ ...send, body });
+      sent ??= one;
+    }
+    if (sent === null) throw new HttpsError('invalid-argument', 'There is nothing to text: the message is blank.');
   } catch (err) {
-    if (nothingWentOut(err)) {
+    if (sent === null && nothingWentOut(err)) {
       // No text arrived, so nothing links to the entry: it comes off their list.
       await removeFromHouseholdList(entry, uid);
       // The draft is unsent again and can be sent again.
@@ -322,18 +340,19 @@ export async function sendGeneratedDraftHandler(req: CallableRequest<unknown>): 
 
   // The message is with the provider. Nothing below may fail the call: an error
   // here would tell the operator to try again a message that already went.
+  const sent1 = sent as Awaited<ReturnType<typeof sendThroughProvider>>;
   const sentAt = new Date().toISOString();
   await stampSent(draftRef, uid, {
     sentAt,
     sentChannel: claim.channel,
-    sentTo: sent.recipientRedacted,
-    sentProviderMessageId: sent.providerMessageId,
+    sentTo: sent1.recipientRedacted,
+    sentProviderMessageId: sent1.providerMessageId,
   });
   try {
     await recordExternalSend(
       uid,
       send,
-      sent,
+      sent1,
       { mirrored: false, mirrorSkippedReason: 'not_requested' },
       {
         draftId: args.draftId,
@@ -356,9 +375,9 @@ export async function sendGeneratedDraftHandler(req: CallableRequest<unknown>): 
     function: 'sendGeneratedDraft',
     event: 'draft.sent',
     uid,
-    extra: { draftId: args.draftId, channel: claim.channel, recipientRedacted: sent.recipientRedacted },
+    extra: { draftId: args.draftId, channel: claim.channel, recipientRedacted: sent1.recipientRedacted },
   });
-  return { ok: true, outcome: 'sent', channel: claim.channel, recipientRedacted: sent.recipientRedacted, sentAt };
+  return { ok: true, outcome: 'sent', channel: claim.channel, recipientRedacted: sent1.recipientRedacted, sentAt };
 }
 
 /** A Text draft's entry on the household's notifications list. */
@@ -367,6 +386,8 @@ interface HouseholdEntry {
   ref: FirebaseFirestore.DocumentReference | null;
   /** The write was acknowledged, so the text links to this entry. */
   written: boolean;
+  /** Nobody in the household can sign in to MyTribe, so there is no list at all (#2316). */
+  noAccount: boolean;
 }
 /**
  * #2408: puts a Text draft's whole message on the household's notifications
@@ -399,7 +420,7 @@ async function keepOnHouseholdList(
         uid,
         extra: { draftId, kinfolkId },
       });
-      return { ref: null, written: false };
+      return { ref: null, written: false, noAccount: true };
     }
     const def = getNotificationDef(HOUSEHOLD_TEXT_NOTIFICATION_KEY);
     const businessName = await loadBusinessName('sendGeneratedDraft');
@@ -419,7 +440,7 @@ async function keepOnHouseholdList(
       targetId: kinfolkId,
       createdAt: FieldValue.serverTimestamp(),
     });
-    return { ref, written: true };
+    return { ref, written: true, noAccount: false };
   } catch (err) {
     logEvent({
       severity: 'error',
@@ -431,7 +452,7 @@ async function keepOnHouseholdList(
     });
     // `ref` is kept when the write itself failed: a write that timed out may
     // have landed, and `removeFromHouseholdList` clears it if no text goes.
-    return { ref, written: false };
+    return { ref, written: false, noAccount: false };
   }
 }
 /**

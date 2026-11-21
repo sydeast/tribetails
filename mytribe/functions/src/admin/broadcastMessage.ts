@@ -25,7 +25,12 @@ import { unsubscribeFooter, suppressionDocId } from './sendExternalMessage';
 import { fillBusinessPlaceholders, loadBusinessName } from '../lib/businessName';
 import { broadcastMergeData, renderBroadcastCopy, unsupportedMergeFields } from '../lib/broadcastMerge';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
-import { householdNoticeEntryRoute, householdPushShelfLine, householdSmsText } from '../notifications/templateParsers';
+import {
+  householdNoticeEntryRoute,
+  householdPushShelfLine,
+  householdSmsText,
+  householdWholeSmsParts,
+} from '../notifications/templateParsers';
 import { PORTAL_URL } from '../notifications/visitDates';
 import {
   BroadcastIdempotencyKeyArg,
@@ -61,7 +66,9 @@ import type { ResolvedChannels, UserNotificationPrefs } from '../notifications/t
  *              catalog, because there is no template for ad-hoc broadcast copy.
  *   - email -> SendGrid per kinfolk with an email on file, honoring opt-outs.
  *   - sms   -> Twilio per kinfolk with a phone on file, honoring opt-outs.
- *              Short, with a link to the in-app entry (#2316).
+ *              Short, with a link to the in-app entry (#2316); the whole
+ *              message for a household with no MyTribe account (ruling
+ *              2026-11-20).
  *   - push  -> FCM multicast to the kinfolk's `fcm_tokens` (resolved via uid).
  *              Short, and a tap opens the in-app entry (#2316).
  *
@@ -602,11 +609,28 @@ export function broadcastSender(ctx: {
       } else {
         try {
           const twilio = await getTwilio();
-          await twilio.messages.create({
-            from: getTwilioFromNumber(),
-            to: smsTo,
-            body: householdSmsText(copy.body, PORTAL_URL, householdRoute),
-          });
+          // #2316 (ruling 2026-11-20): a household with no MyTribe account has
+          // no entry to read, so it is texted the whole message, as several
+          // texts when one cannot carry it. A household with an account gets
+          // the short line and the link, as before.
+          const bodies = k.uid
+            ? [householdSmsText(copy.body, PORTAL_URL, householdRoute)]
+            : householdWholeSmsParts(copy.body);
+          if (bodies.length === 0) throw new Error('nothing to text: the message is blank');
+          let partsSent = 0;
+          try {
+            for (const body of bodies) {
+              await twilio.messages.create({ from: getTwilioFromNumber(), to: smsTo, body });
+              partsSent += 1;
+            }
+          } catch (err) {
+            // A text cut short part-way did not carry the whole message, so it
+            // counts as failed; the log says how far it got.
+            if (partsSent > 0) {
+              logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'sms.parts.partial', uid, extra: { kinfolkId: k.id, partsSent, parts: bodies.length } });
+            }
+            throw err;
+          }
           mark('sms', 'sent');
           detail.reached = true;
           linkSent = true;
