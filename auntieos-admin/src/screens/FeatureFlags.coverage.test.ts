@@ -20,4 +20,14 @@ describe('FeatureFlags screen coverage', () => {
     const keys = FLAGS.map((f) => f.key);
     expect(new Set(keys).size).toBe(keys.length);
   });
+
+  // #1891: a flag's label and description are for the owner. A function name
+  // (recap_recent_comms), the word "callable", a plan phase or a vendor's
+  // plumbing term on this screen is developer wording.
+  it('describes every flag without function names or developer wording', () => {
+    const developer = /\b[a-z]+_[a-z0-9_]+\b|callable|\bPhase \d|WARNING-\d|\bFCM\b|webhook|\bvuln/i;
+    for (const flag of FLAGS) {
+      expect(`${flag.label} ${flag.detail}`).not.toMatch(developer);
+    }
+  });
 });
