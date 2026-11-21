@@ -22,10 +22,15 @@ fun <T> Flow<FirestoreResult<T>>.answersWithin(
     message: String,
     timeoutMs: Long = FIRST_ANSWER_TIMEOUT_MS,
 ): Flow<FirestoreResult<T>> = channelFlow {
+    // Loading first: `collectAsState` keeps the last value when its flow is
+    // replaced, so without this a Try again would leave the failure line up
+    // until the new read answered.
+    send(FirestoreResult.Loading)
     val answered = CompletableDeferred<Unit>()
     val reader = launch {
         this@answersWithin.collect { r ->
-            if (r !is FirestoreResult.Loading) answered.complete(Unit)
+            if (r is FirestoreResult.Loading) return@collect
+            answered.complete(Unit)
             send(r)
         }
     }

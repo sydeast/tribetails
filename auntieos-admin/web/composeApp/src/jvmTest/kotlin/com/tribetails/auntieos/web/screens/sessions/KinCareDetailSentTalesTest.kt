@@ -65,7 +65,8 @@ class KinCareDetailSentTalesTest {
     fun anAnswerInTimePassesThroughUnchanged() = runTest {
         val out = flowOf<FirestoreResult<List<Int>>>(FirestoreResult.Data(listOf(1)), FirestoreResult.Data(listOf(1, 2)))
             .answersWithin("Could not load.").toList()
-        assertEquals(listOf(FirestoreResult.Data(listOf(1)), FirestoreResult.Data(listOf(1, 2))), out)
+        // Loading first, so a Try again clears the failure line while it reads.
+        assertEquals(listOf(FirestoreResult.Loading, FirestoreResult.Data(listOf(1)), FirestoreResult.Data(listOf(1, 2))), out)
     }
 
     @Test
