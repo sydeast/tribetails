@@ -270,6 +270,94 @@ describe('addKinToUpcomingVisits: applying', () => {
     expect(docs['families/fam1/bookings/req1']!['kinNames']).toEqual(['Biscuit', 'Mochi', 'Pepper']);
   });
 
+  it('counts and adds to a visit whose arrival was undone (a blank stamp is no stamp)', async () => {
+    const docs = household();
+    // setVisitLifecycle's UNDO_ARRIVAL writes `arrivedAt: ''` and puts the row back to SCHEDULED.
+    visit(docs, 'undone', { session: { status: 'SCHEDULED', arrivedAt: '', onMyWayAt: '' } });
+    mockFrom(docs);
+    const res = await addKinToUpcomingVisitsHandler(req({ kinfolkId: 'fam1', kinId: 'pepper', apply: true }));
+    expect(res).toMatchObject({ upcoming: 1, added: 1 });
+    expect(docs['kin_care_sessions/vis_undone']!['kinIds']).toEqual(['biscuit', 'mochi', 'pepper']);
+  });
+
+  it('never narrows a visit stored with no Kin (every Kin) down to the new Kin alone', async () => {
+    const docs = household();
+    // R1: an empty list on a booking means every Kin of the household, and an
+    // approval materializes it as the whole roster (`materializeKinRoster`).
+    docs['families/fam1/bookings/old1'] = { familyId: 'fam1', envelopeStatus: 'requested', kinIds: [], kinNames: [] };
+    docs['families/fam1/bookings/old1/kinCares/o1'] = {
+      familyId: 'fam1',
+      status: 'requested',
+      startTime: ts(AHEAD),
+      endTime: ts(AHEAD_END),
+      sessionId: null,
+      kinIds: [],
+      kinNames: [],
+    };
+    mockFrom(docs);
+    await addKinToUpcomingVisitsHandler(req({ kinfolkId: 'fam1', kinId: 'pepper', apply: true }));
+    const sorted = (v: unknown) => [...(v as string[])].sort();
+    expect(sorted(docs['families/fam1/bookings/old1/kinCares/o1']!['kinIds'])).toEqual(['biscuit', 'mochi', 'pepper']);
+    expect(sorted(docs['families/fam1/bookings/old1/kinCares/o1']!['kinNames'])).toEqual(['Biscuit', 'Mochi', 'Pepper']);
+    expect(sorted(docs['families/fam1/bookings/old1']!['kinIds'])).toEqual(['biscuit', 'mochi', 'pepper']);
+  });
+
+  /** Runs [change] once, after the visits were read and before the first write. */
+  function betweenReadAndWrite(ctx: ReturnType<typeof buildDbMock>, change: () => void) {
+    let done = false;
+    const once = () => {
+      if (!done) change();
+      done = true;
+    };
+    const realBatch = ctx.db.batch;
+    ctx.db.batch = () => {
+      once();
+      return realBatch();
+    };
+    const realTx = ctx.db.runTransaction;
+    ctx.db.runTransaction = (fn: any) => {
+      once();
+      return realTx(fn);
+    };
+  }
+
+  it('leaves alone a visit that started between the count and the write', async () => {
+    const docs = household();
+    visit(docs, 'v1');
+    visit(docs, 'v2');
+    const ctx = mockFrom(docs);
+    // The Auntie taps On my way on v1 after the visits were read.
+    betweenReadAndWrite(ctx, () => {
+      docs['kin_care_sessions/vis_v1'] = {
+        ...docs['kin_care_sessions/vis_v1'],
+        status: 'ON_MY_WAY',
+        onMyWayAt: '2099-03-01T14:50:00Z',
+      };
+    });
+    const res = await addKinToUpcomingVisitsHandler(req({ kinfolkId: 'fam1', kinId: 'pepper', apply: true }));
+    expect(res.added).toBe(1);
+    expect(docs['kin_care_sessions/vis_v1']!['kinIds']).toEqual(['biscuit', 'mochi']);
+    expect(docs['families/fam1/bookings/b_v1/kinCares/v1']!['kinIds']).toEqual(['biscuit', 'mochi']);
+    expect(docs['families/fam1/bookings/b_v1']!['kinIds']).toEqual(['biscuit', 'mochi']);
+    expect(docs['kin_care_sessions/vis_v2']!['kinIds']).toEqual(['biscuit', 'mochi', 'pepper']);
+    expect((writeAuditEntry as any).mock.calls[0][0]).toMatchObject({ description: 'Added Pepper to 1 upcoming visit' });
+  });
+
+  it('keeps a Kin another edit put on the visit between the count and the write', async () => {
+    const docs = household();
+    docs['kin/clover'] = { name: 'Clover', kinfolkId: 'fam1' };
+    visit(docs, 'v1');
+    const ctx = mockFrom(docs);
+    betweenReadAndWrite(ctx, () => {
+      for (const p of ['kin_care_sessions/vis_v1', 'families/fam1/bookings/b_v1/kinCares/v1']) {
+        docs[p] = { ...docs[p], kinIds: ['biscuit', 'mochi', 'clover'], kinNames: ['Biscuit', 'Mochi', 'Clover'] };
+      }
+    });
+    await addKinToUpcomingVisitsHandler(req({ kinfolkId: 'fam1', kinId: 'pepper', apply: true }));
+    expect(docs['kin_care_sessions/vis_v1']!['kinIds']).toEqual(['biscuit', 'mochi', 'clover', 'pepper']);
+    expect(docs['families/fam1/bookings/b_v1/kinCares/v1']!['kinNames']).toEqual(['Biscuit', 'Mochi', 'Clover', 'Pepper']);
+  });
+
   it('never touches a past visit', async () => {
     const docs = household();
     visit(docs, 'past', { session: { startTime: PAST, endTime: PAST }, copy: { startTime: ts(PAST), endTime: ts(PAST) } });
@@ -310,6 +398,18 @@ describe('addKinToUpcomingVisits: refusals', () => {
     }
   });
 
+  it('answers a count of 0 for a Kin no longer in care, so its page shows no error', async () => {
+    const docs = household();
+    docs['families/fam1/kin/old'] = { name: 'Old Timer', status: 'noLongerWithUs' };
+    visit(docs, 'v1');
+    const ctx = mockFrom(docs);
+    for (const kinId of ['stranger', 'old']) {
+      const res = await addKinToUpcomingVisitsHandler(req({ kinfolkId: 'fam1', kinId }));
+      expect(res).toEqual({ ok: true, kinId, kinName: null, upcoming: 0, added: 0 });
+    }
+    expect(ctx.writes.filter((w) => !w.path.startsWith('business_settings'))).toEqual([]);
+  });
+
   it('refuses a call with no Kin named', async () => {
     mockFrom(household());
     await expect(addKinToUpcomingVisitsHandler(req({ kinfolkId: 'fam1' }))).rejects.toMatchObject({
@@ -321,10 +421,8 @@ describe('addKinToUpcomingVisits: refusals', () => {
     const docs = household();
     visit(docs, 'v1');
     const ctx = mockFrom(docs);
-    const realBatch = ctx.db.batch;
-    ctx.db.batch = () => {
-      const b = realBatch();
-      return { ...b, commit: async () => { throw new Error('write refused'); } };
+    ctx.db.runTransaction = async () => {
+      throw new Error('write refused');
     };
     await expect(addKinToUpcomingVisitsHandler(req({ kinfolkId: 'fam1', kinId: 'pepper', apply: true }))).rejects.toThrow(
       'write refused',

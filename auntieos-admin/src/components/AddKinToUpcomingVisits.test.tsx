@@ -104,4 +104,11 @@ describe('AddKinToUpcomingVisits', () => {
     expect(container.textContent).toBe('');
     expect(mocks.add).not.toHaveBeenCalled();
   });
+
+  it('is not shown to a sandbox test admin, whom the server refuses', async () => {
+    mocks.access.current = { status: 'testAdmin' };
+    const { container } = render(<AddKinToUpcomingVisits kinfolkId="kf1" kinId="pepper" kinName="Pepper" />);
+    expect(container.textContent).toBe('');
+    expect(mocks.add).not.toHaveBeenCalled();
+  });
 });

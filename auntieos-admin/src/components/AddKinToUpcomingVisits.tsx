@@ -39,7 +39,9 @@ export function AddKinToUpcomingVisits({
   kinName: string;
 }) {
   const access = useAdminAccess();
-  const isOwner = access?.status === 'admin' || access?.status === 'testAdmin';
+  // The owner only. A sandbox test admin carries no `admin` claim, so
+  // `wrapAdminCallable` refuses her too: the band would only ever show an error.
+  const isOwner = access?.status === 'admin';
   const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [confirming, setConfirming] = useState(false);
   const name = kinName.trim() !== '' ? kinName : 'this Kin';

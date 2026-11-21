@@ -38,7 +38,11 @@ import type { TimeZoneReader } from '../lib/pastVisit';
  * WHAT IS WRITTEN. The Kin's id (the one a visit stores: its admin record's,
  * see `readHouseholdKin`) and its name are added to `kinIds` / `kinNames` on
  * the office row, the household's copy and the booking envelope, each only
- * where it is missing. Nothing else on any of them changes.
+ * where it is missing. Nothing else on any of them changes. A doc stored with
+ * no Kin at all means every Kin (R1), so it gets the whole active roster, never
+ * the new Kin alone. Each visit is written in its own transaction that checks
+ * again that it has not started, so a visit an Auntie starts while this runs
+ * is left alone, and a Kin another edit added meanwhile is kept.
  *
  * IDEMPOTENT. A visit that already carries the Kin (by either of its two ids)
  * is not counted and not written, so a second tap, or a retry of a call whose
@@ -119,9 +123,19 @@ function carries(data: Doc, kin: KinRosterEntry): boolean {
   return ids.includes(kin.id) || (kin.householdId !== null && ids.includes(kin.householdId));
 }
 
+/**
+ * A lifecycle stamp that is really there. `setVisitLifecycle`'s Undo Arrived
+ * clears `arrivedAt` by writing `''` (this collection's "cleared" spelling) and
+ * puts the row back to SCHEDULED, so a blank string is no stamp.
+ */
+function stamped(v: unknown): boolean {
+  if (v == null) return false;
+  return typeof v === 'string' ? v.trim() !== '' : true;
+}
+
 async function sessionUpcoming(data: Doc, nowMs: number, tz: TimeZoneReader): Promise<boolean> {
   if (!SESSION_OPEN.has(text(data['status']).toUpperCase())) return false;
-  if (data['onMyWayAt'] != null || data['arrivedAt'] != null) return false;
+  if (stamped(data['onMyWayAt']) || stamped(data['arrivedAt'])) return false;
   return isAhead(timeString(data['startTime']), timeString(data['endTime']), nowMs, tz);
 }
 
@@ -140,14 +154,12 @@ async function householdUpcoming(data: Doc, nowMs: number, tz: TimeZoneReader): 
  * household copy paired by the visit's `sessionId` or the row's
  * `kinCareVisitId`.
  */
-async function upcomingVisits(kinfolkId: string, nowMs: number): Promise<Visit[]> {
+async function upcomingVisits(kinfolkId: string, nowMs: number, tz: TimeZoneReader): Promise<Visit[]> {
   const firestore = db();
   const [sessionSnap, householdSnap] = await Promise.all([
     firestore.collection('kin_care_sessions').where('kinfolkId', '==', kinfolkId).get(),
     firestore.collectionGroup('kinCares').where('familyId', '==', kinfolkId).get(),
   ]);
-  const { businessTimeZoneReader } = await import('../lib/pastVisit.js');
-  const tz = businessTimeZoneReader();
   const sessions = new Map<string, Doc>();
   const sessionByVisitId = new Map<string, string>();
   for (const d of sessionSnap.docs) {
@@ -179,14 +191,31 @@ async function upcomingVisits(kinfolkId: string, nowMs: number): Promise<Visit[]
   return out;
 }
 
-function withKin(data: Doc, kin: KinRosterEntry): { kinIds: string[]; kinNames: string[] } {
-  const kinIds = [...stringList(data['kinIds']), kin.id];
+/**
+ * The doc's Kin with [kin] added. A doc stored with NO Kin means every Kin of
+ * the household (R1, `lib/kinRoster.ts`; an approval materializes it as the
+ * whole roster), so adding to it writes the whole active roster, which has
+ * [kin] on it, rather than narrowing the visit to the new Kin alone.
+ */
+function withKin(
+  data: Doc,
+  kin: KinRosterEntry,
+  roster: readonly KinRosterEntry[],
+): { kinIds: string[]; kinNames: string[] } {
+  const ids = stringList(data['kinIds']);
+  if (ids.length === 0) {
+    return {
+      kinIds: roster.map((k) => k.id),
+      kinNames: roster.map((k) => k.name).filter((n): n is string => n !== null),
+    };
+  }
   const names = stringList(data['kinNames']);
   const kinNames = kin.name !== null && !names.includes(kin.name) ? [...names, kin.name] : names;
-  return { kinIds, kinNames };
+  return { kinIds: [...ids, kin.id], kinNames };
 }
 
-const BATCH_LIMIT = 400;
+/** Visits written at once, each in its own transaction. */
+const PARALLEL = 10;
 
 export async function addKinToUpcomingVisitsHandler(
   req: CallableRequest<unknown>,
@@ -215,12 +244,27 @@ export async function addKinToUpcomingVisitsHandler(
   const roster = await readHouseholdKinRoster(args.kinfolkId);
   const kin = roster.find((k) => k.id === args.kinId || k.householdId === args.kinId);
   if (kin === undefined) {
+    // A memorial or archived Kin is on no visit still to come, so the count is
+    // 0 and its page draws nothing (all three clients ask on every Kin page).
+    // Only putting it on visits is refused.
+    if (args.apply !== true) {
+      return validateResponse('addKinToUpcomingVisits', Result, {
+        ok: true as const,
+        kinId: args.kinId,
+        kinName: null,
+        upcoming: 0,
+        added: 0,
+      });
+    }
     throw new HttpsError('not-found', 'This Kin is not one of the household’s Kin in care.', {
       code: 'kin_not_in_household',
     });
   }
 
-  const visits = await upcomingVisits(args.kinfolkId, Date.now());
+  const nowMs = Date.now();
+  const { businessTimeZoneReader } = await import('../lib/pastVisit.js');
+  const tz = businessTimeZoneReader();
+  const visits = await upcomingVisits(args.kinfolkId, nowMs, tz);
   const missing = visits.filter(
     (v) => (v.session !== null && !carries(v.session.data, kin)) || (v.household !== null && !carries(v.household.data, kin)),
   );
@@ -236,43 +280,85 @@ export async function addKinToUpcomingVisitsHandler(
   }
 
   const firestore = db();
-  const writes: Array<{ path: string; data: Doc }> = [];
-  const batchPaths = new Set<string>();
-  for (const v of missing) {
-    if (v.session !== null && !carries(v.session.data, kin)) {
-      writes.push({
-        path: `kin_care_sessions/${v.session.id}`,
-        data: { ...withKin(v.session.data, kin), updatedAt: FieldValue.serverTimestamp(), updatedBy: uid },
-      });
-    }
-    if (v.household !== null) {
-      if (!carries(v.household.data, kin)) {
-        writes.push({
-          path: v.household.path,
-          data: { ...withKin(v.household.data, kin), updatedAt: FieldValue.serverTimestamp() },
-        });
+  /**
+   * CONCURRENCY. Each visit is written in its own transaction, which reads the
+   * office row and the household's copy again, tests again that the visit has
+   * not started (an Auntie can tap On my way while this runs) and that the Kin
+   * is still missing, and adds the Kin to the lists as they stand then, so a
+   * Kin another edit put on the visit meanwhile is kept. A visit that started
+   * in between is left as it is and not counted.
+   */
+  const addOne = (v: Visit): Promise<boolean> =>
+    firestore.runTransaction(async (tx) => {
+      const sessionRef = v.session !== null ? firestore.doc(`kin_care_sessions/${v.session.id}`) : null;
+      const householdRef = v.household !== null ? firestore.doc(v.household.path) : null;
+      const sessionSnap = sessionRef !== null ? await tx.get(sessionRef) : null;
+      const householdSnap = householdRef !== null ? await tx.get(householdRef) : null;
+      const session = sessionSnap?.exists ? ((sessionSnap.data() ?? {}) as Doc) : null;
+      const household = householdSnap?.exists ? ((householdSnap.data() ?? {}) as Doc) : null;
+      if (sessionRef !== null && (session === null || !(await sessionUpcoming(session, nowMs, tz)))) return false;
+      if (householdRef !== null && (household === null || !(await householdUpcoming(household, nowMs, tz)))) return false;
+      let changed = false;
+      if (sessionRef !== null && session !== null && !carries(session, kin)) {
+        tx.set(
+          sessionRef,
+          { ...withKin(session, kin, roster), updatedAt: FieldValue.serverTimestamp(), updatedBy: uid },
+          { merge: true },
+        );
+        changed = true;
       }
-      batchPaths.add(v.household.batchPath);
-    }
-  }
-  // The booking envelopes name the Kin of the whole booking: add the Kin to
-  // each envelope one of the changed visits belongs to.
-  const envelopes = await Promise.all([...batchPaths].map((p) => firestore.doc(p).get()));
-  for (const snap of envelopes) {
-    if (!snap.exists) continue;
-    const data = (snap.data() ?? {}) as Doc;
-    if (carries(data, kin)) continue;
-    writes.push({ path: snap.ref.path, data: { ...withKin(data, kin), updatedAt: FieldValue.serverTimestamp() } });
+      if (householdRef !== null && household !== null && !carries(household, kin)) {
+        tx.set(householdRef, { ...withKin(household, kin, roster), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+        changed = true;
+      }
+      return changed;
+    });
+
+  const changed: Visit[] = [];
+  let failure: unknown = null;
+  for (let i = 0; i < missing.length && failure === null; i += PARALLEL) {
+    const chunk = missing.slice(i, i + PARALLEL);
+    const results = await Promise.allSettled(chunk.map(addOne));
+    results.forEach((r, j) => {
+      if (r.status === 'fulfilled') {
+        if (r.value) changed.push(chunk[j]!);
+      } else if (failure === null) {
+        failure = r.reason;
+      }
+    });
   }
 
-  for (let i = 0; i < writes.length; i += BATCH_LIMIT) {
-    const batch = firestore.batch();
-    for (const w of writes.slice(i, i + BATCH_LIMIT)) batch.set(firestore.doc(w.path), w.data, { merge: true });
-    await batch.commit();
+  // The booking envelopes name the Kin of the whole booking: add the Kin to
+  // each envelope one of the changed visits belongs to, the same way.
+  const batchPaths = new Set(changed.flatMap((v) => (v.household !== null ? [v.household.batchPath] : [])));
+  for (const path of batchPaths) {
+    try {
+      await firestore.runTransaction(async (tx) => {
+        const ref = firestore.doc(path);
+        const snap = await tx.get(ref);
+        if (!snap.exists) return;
+        const data = (snap.data() ?? {}) as Doc;
+        if (carries(data, kin)) return;
+        tx.set(ref, { ...withKin(data, kin, roster), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      });
+    } catch (err) {
+      if (failure === null) failure = err;
+    }
+  }
+
+  if (changed.length === 0) {
+    if (failure !== null) throw failure;
+    return validateResponse('addKinToUpcomingVisits', Result, {
+      ok: true as const,
+      kinId: kin.id,
+      kinName: kin.name,
+      upcoming: missing.length,
+      added: 0,
+    });
   }
 
   const kinWords = kin.name ?? 'a Kin';
-  const visitWords = missing.length === 1 ? '1 upcoming visit' : `${missing.length} upcoming visits`;
+  const visitWords = changed.length === 1 ? '1 upcoming visit' : `${changed.length} upcoming visits`;
   await writeAuditEntry({
     event: AUDIT_EVENTS.ADD_KIN_TO_UPCOMING_VISITS,
     severity: 'info',
@@ -286,8 +372,8 @@ export async function addKinToUpcomingVisitsHandler(
     payload: {
       kinfolkId: args.kinfolkId,
       kinId: kin.id,
-      visitCount: missing.length,
-      sessionIds: missing.flatMap((v) => (v.session !== null ? [v.session.id] : [])),
+      visitCount: changed.length,
+      sessionIds: changed.flatMap((v) => (v.session !== null ? [v.session.id] : [])),
     },
   }).catch((err) => {
     logEvent({
@@ -304,15 +390,19 @@ export async function addKinToUpcomingVisitsHandler(
     function: 'addKinToUpcomingVisits',
     event: 'admin.kin.addedToUpcomingVisits',
     uid,
-    extra: { kinfolkId: args.kinfolkId, kinId: kin.id, visits: missing.length, writes: writes.length },
+    extra: { kinfolkId: args.kinfolkId, kinId: kin.id, visits: changed.length, upcoming: missing.length },
   });
+
+  // Visits already written stay written (a retry finds them carrying the Kin
+  // and skips them), and the log above names them; the rest are reported.
+  if (failure !== null) throw failure;
 
   return validateResponse('addKinToUpcomingVisits', Result, {
     ok: true as const,
     kinId: kin.id,
     kinName: kin.name,
     upcoming: missing.length,
-    added: missing.length,
+    added: changed.length,
   });
 }
 

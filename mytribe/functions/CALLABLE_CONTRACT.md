@@ -2640,6 +2640,9 @@ console; not in the contracts registry.
   `kinfolkId`. Past, started, cancelled and completed visits are never written.
 - `apply: true` adds the Kin's id and name to `kinIds` / `kinNames` on the
   office row, the household copy and the booking envelope, only where missing.
+  A doc stored with no Kin (every Kin, R1) gets the whole active roster. Each
+  visit is written in its own transaction that checks again that it has not
+  started; one started meanwhile is left alone and not counted in `added`.
   Idempotent: a visit already carrying the Kin by either id is neither counted
   nor written. One Activity Log line (`ADD_KIN_TO_UPCOMING_VISITS`, "Added
   <Kin> to N upcoming visits") when at least one visit changed.
@@ -2649,7 +2652,8 @@ console; not in the contracts registry.
   approval sends nothing.
 - GATE: owner only (`wrapAdminCallable`, not on the Auntie allowlist, and an
   explicit Auntie refusal). A Kin that is not an active Kin of the household
-  is `not-found` (`kin_not_in_household`).
+  counts 0 on a preview (its page draws nothing) and is `not-found`
+  (`kin_not_in_household`) on `apply: true`.
 ### getMyBookings
 - req `{ kinfolkId?: string }` (no zod schema; read raw off `req.data`, same
   precedent as `getMyInvoicesRequest`)
