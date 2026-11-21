@@ -111,6 +111,32 @@ class PayFailureKeepsListTest {
         onNodeWithTag("invoice-row-pay-error", useUnmergedTree = true).assertDoesNotExist()
     }
 
+    /**
+     * A list already in hand stays drawn when a later read of it fails, with
+     * no message over it: the title is for a list with nothing to show
+     * (#2442). The rows are the last copy that was read.
+     */
+    @Test
+    fun list_aLaterReadThatFails_keepsTheRowsItHas() = runComposeUiTest {
+        val fake = FakeFunctionsClient()
+        stubTwoOpen(fake)
+        val readAgain = androidx.compose.runtime.mutableStateOf(0)
+        val api = PortalApi(fake)
+        setThemedContent {
+            val c = rememberInvoicesController("3", api)
+            androidx.compose.runtime.LaunchedEffect(readAgain.value) { if (readAgain.value > 0) c.reload() }
+            InvoicesScreen("The Foster", "3", api, controller = c)
+        }
+        waitForIdle()
+        onNodeWithText("Invoice #1001").assertIsDisplayed()
+        fake.stubError("getMyInvoices", IllegalStateException("network down"))
+        readAgain.value = 1
+        waitForIdle()
+        kotlin.test.assertTrue(fake.calls.count { it.first == "getMyInvoices" } >= 2, "the list was read again")
+        onNodeWithText("Couldn't load invoices").assertDoesNotExist()
+        onNodeWithText("Invoice #1001").assertIsDisplayed()
+        onNodeWithText("Invoice #1002").assertIsDisplayed()
+    }
     private fun invoice(payBlockedReason: String? = null) = Invoice(
         id = "inv-1",
         kinfolkId = "3",
