@@ -22,6 +22,12 @@ describe('isPortalReturnUrl', () => {
     'https://kinfolk.tribetails.com/account?billing=saved',
     // An Android build from before #2366: the path is not the server's call.
     'https://kinfolk.tribetails.com/portal/payment-success',
+    'https://kinfolk.tribetails.com/portal/payment-cancel',
+    // #2401: what the MyTribe app sends now, an address on the portal's origin
+    // that the app claims. Still https on the portal, so nothing here changed.
+    'https://kinfolk.tribetails.com/app/invoices/inv-1?checkout=done',
+    'https://kinfolk.tribetails.com/app/invoices/inv-1',
+    'https://kinfolk.tribetails.com/app/invoices/INV%202027%2F1?checkout=done',
     'https://kinfolk-portal.web.app/invoices/inv-1',
     'https://kinfolk-portal.firebaseapp.com/invoices/inv-1',
     'https://mytribe-kinfolk-beta.web.app/invoices/inv-1',
@@ -46,6 +52,13 @@ describe('isPortalReturnUrl', () => {
     ['a preview channel of the admin site', 'https://auntieos-ttpc--main-abc.web.app/invoices/inv-1'],
     ['a lookalike preview channel', 'https://kinfolk-portal--x.web.app.evil.example/invoices/inv-1'],
     ['a custom scheme', 'mytribe://invoice/inv-1'],
+    // #2401: the app's own link opens the app, and is never a return address.
+    // Stripe is only ever given an https address on the portal.
+    ["the app's own invoice link", 'mytribe://invoices/inv-1?checkout=done'],
+    ["the app's own invoice link with the portal as a user part", 'mytribe://kinfolk.tribetails.com@invoices/inv-1'],
+    ['an Android intent link', 'intent://kinfolk.tribetails.com/app/invoices/inv-1#Intent;scheme=https;end'],
+    ['the app return path on a foreign site', 'https://evil.example/app/invoices/inv-1?checkout=done'],
+    ['the app return path on the admin site', 'https://auntie.tribetails.com/app/invoices/inv-1?checkout=done'],
     ['a javascript URL', 'javascript:alert(1)'],
     ['not a URL', 'not a url'],
     ['a relative path', '/invoices/inv-1'],
@@ -80,6 +93,27 @@ describe('requirePortalReturnUrls', () => {
 
   it('passes when both addresses are portal addresses', () => {
     expect(() => requirePortalReturnUrls({ successUrl: `${OK}?checkout=done`, cancelUrl: OK })).not.toThrow();
+  });
+  it('#2401: passes the pair the MyTribe app sends, and the pairs older builds still send', () => {
+    const APP = 'https://kinfolk.tribetails.com/app/invoices/inv-1';
+    expect(() => requirePortalReturnUrls({ successUrl: `${APP}?checkout=done`, cancelUrl: APP })).not.toThrow();
+    // Before #2366.
+    expect(() =>
+      requirePortalReturnUrls({
+        successUrl: 'https://kinfolk.tribetails.com/portal/payment-success',
+        cancelUrl: 'https://kinfolk.tribetails.com/portal/payment-cancel',
+      }),
+    ).not.toThrow();
+    // Between #2366 and #2401.
+    expect(() => requirePortalReturnUrls({ successUrl: `${OK}?checkout=done`, cancelUrl: OK })).not.toThrow();
+  });
+  it.each([
+    ['the success address', { successUrl: 'mytribe://invoices/inv-1?checkout=done', cancelUrl: OK }],
+    ['the cancel address', { successUrl: `${OK}?checkout=done`, cancelUrl: 'mytribe://invoices/inv-1' }],
+  ])("#2401: refuses the app's own link as %s", (_why, urls) => {
+    expect(() => requirePortalReturnUrls(urls)).toThrow(
+      expect.objectContaining({ code: 'invalid-argument', details: { code: RETURN_URL_REFUSED_CODE } }),
+    );
   });
 
   it.each([

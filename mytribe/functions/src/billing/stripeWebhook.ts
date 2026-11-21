@@ -53,6 +53,7 @@ import {
   SETTLED_INTENT_FIELD,
   checkoutRoundOf,
   duplicateCheckoutReason,
+  invoiceCheckoutStateOf,
   roundFromMetadata,
   type DuplicateCheckoutReason,
   unappliedReasonLabel,
@@ -883,18 +884,8 @@ export async function stripeWebhookHandler(req: Request, res: Response): Promise
     // second payment.
     const duplicate = isPaidEvent
       ? duplicateCheckoutReason({
-          invoice: {
-            round: invoice?.[CHECKOUT_ROUND_FIELD],
-            settledPaymentIntentId: invoice?.[SETTLED_INTENT_FIELD],
-            amountDueCents: invoice?.amountDueCents,
-            amountDue: invoice?.amountDue,
-            status: invoice?.status,
-            paymentStatus: invoice?.paymentStatus,
-            // #2358: a cancelled invoice takes no payment; the charge is held.
-            invoiceStatus: invoice?.invoiceStatus,
-            // #2363: a written-off invoice is held with its own reason.
-            writtenOffAt: invoice?.writtenOffAt,
-          },
+          // #2410: read by the one reader `payInvoice`'s own check uses.
+          invoice: invoiceCheckoutStateOf(invoice),
           paymentIntentId,
           eventRound,
         })

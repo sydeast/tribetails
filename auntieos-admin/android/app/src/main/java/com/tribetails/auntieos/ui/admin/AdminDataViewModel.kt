@@ -1521,10 +1521,13 @@ internal fun isNotificationUnread(entry: com.tribetails.auntieos.data.admin.Noti
  *
  * #2293: an approved Push draft the server held ([Draft.isHeldPush]) is listed
  * here too, the web list's rule, so it can be opened and sent again.
+ *
+ * #2381: so is an approved Push draft whose send never answered
+ * ([Draft.isUnansweredPush]). It used to drop off this list for good.
  */
 internal fun unsentGeneratedDrafts(drafts: List<Draft>): List<Draft> =
     drafts
-        .filter { it.isUnsent || it.isHeldPush }
+        .filter { it.isUnsent || it.isHeldPush || it.isUnansweredPush }
         .sortedByDescending { it.createdOn }
 /**
  * #1675: what the notifications screen says after answering a waiting request

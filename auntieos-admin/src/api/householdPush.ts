@@ -12,7 +12,12 @@ import { call } from '../lib/fns';
  * predicts a send.
  */
 
-export type HouseholdPushOutcome = 'sent' | 'listed' | 'held' | 'already_sent';
+/**
+ * `unanswered` is never the server's word. It is this client's name for an
+ * approved Push draft with no answer on it (#2381): the send was cut off before
+ * it answered, so nobody knows yet whether the push went out.
+ */
+export type HouseholdPushOutcome = 'sent' | 'listed' | 'held' | 'already_sent' | 'unanswered';
 export type HouseholdPushReason =
   | 'household_has_no_portal_account'
   | 'household_notices_off'
@@ -58,9 +63,34 @@ export async function sendHouseholdPush(args: SendHouseholdPushArgs): Promise<Ho
   return { outcome, reason };
 }
 
-/** Whether a result means the push can be tried again once the cause is fixed. */
+/** Whether a result means the push can be tried again: it was held, or its send never answered. */
 export function householdPushRetryable(r: HouseholdPushResult): boolean {
-  return r.outcome === 'held';
+  return r.outcome === 'held' || r.outcome === 'unanswered';
+}
+/**
+ * #2381, #2389: which of the draft's two buttons the screen offers.
+ *
+ * A draft that reached its household is finished: no second send, no delete.
+ * An approved Push that did not go out (held, or never answered) keeps Delete
+ * beside its Try again, and has no Approve until its words are edited.
+ */
+export function personalizeDraftActions(state: {
+  published: boolean;
+  approved: boolean;
+  pushResult: HouseholdPushResult | null;
+}): { approve: boolean; remove: boolean } {
+  if (state.published) return { approve: false, remove: false };
+  if (!state.approved) return { approve: true, remove: true };
+  return { approve: false, remove: state.pushResult !== null && householdPushRetryable(state.pushResult) };
+}
+/**
+ * #2389: the server refuses a send whose words are not the approved ones and
+ * names that refusal in `details.code`. The screen answers it by going back to
+ * unapproved, so Approve and send is the next step.
+ */
+export function pushRefusalNeedsApproval(err: unknown): boolean {
+  const details = (err as { details?: unknown } | null)?.details;
+  return (details as { code?: unknown } | null | undefined)?.code === 'push_words_changed';
 }
 
 /**
@@ -82,6 +112,11 @@ export function householdPushResultText(r: HouseholdPushResult, household: strin
             : r.reason === 'no_device'
               ? `It is on ${household}'s notifications list. No push went to a phone, because nobody in the household has turned on pushes in the app yet.`
               : `It is on ${household}'s notifications list. The push to their phone did not go through.`,
+      };
+    case 'unanswered':
+      return {
+        title: 'Not confirmed',
+        body: `The last send did not answer, so it is not known whether this push reached ${household}. Try again. A push that already went out is not sent twice.`,
       };
     case 'held':
     default:

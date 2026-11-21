@@ -4,6 +4,7 @@ import {
   draftIdFromListRowId,
   isPublishedDraft,
   isHeldPushDraft,
+  isUnansweredPushDraft,
   draftCreatedAt,
   draftHousehold,
   draftKinfolkId,
@@ -398,6 +399,27 @@ describe('isHeldPushDraft (#2293)', () => {
     expect(isHeldPushDraft(draft({ ...held, pushOutcome: undefined }))).toBe(false);
     expect(isHeldPushDraft(draft({ ...held, communicationType: 'sms' }))).toBe(false);
     expect(isHeldPushDraft(draft({ ...held, status: 'generated' }))).toBe(false);
+  });
+});
+describe('isUnansweredPushDraft (#2381)', () => {
+  const unanswered = { communicationType: 'push', status: 'approved' };
+  it('an approved push whose send never answered is listed under Drafts', () => {
+    expect(isUnansweredPushDraft(draft(unanswered))).toBe(true);
+    expect(isUnansweredPushDraft(draft({ ...unanswered, pushOutcome: '' }))).toBe(true);
+    expect(isUnansweredPushDraft(draft({ communicationType: undefined, communication_type: 'push', status: 'approved' }))).toBe(true);
+    expect(kinTaleState(rowFromDraft(draft(unanswered)).status ?? '')).toBe('draft');
+  });
+  it('a push with any answer on it is not unanswered', () => {
+    for (const pushOutcome of ['sent', 'listed', 'held']) {
+      expect(isUnansweredPushDraft(draft({ ...unanswered, pushOutcome }))).toBe(false);
+    }
+  });
+  it('another type, or a push nobody approved, is not unanswered', () => {
+    expect(isUnansweredPushDraft(draft({ ...unanswered, communicationType: 'sms' }))).toBe(false);
+    expect(isUnansweredPushDraft(draft({ ...unanswered, communicationType: 'visit_report' }))).toBe(false);
+    expect(isUnansweredPushDraft(draft({ ...unanswered, status: 'generated' }))).toBe(false);
+    // An approved email stays out of Drafts, as before.
+    expect(kinTaleState(rowFromDraft(draft({ communicationType: 'email', status: 'approved' })).status ?? '')).toBe('unknown');
   });
 });
 
