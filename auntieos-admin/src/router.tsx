@@ -455,6 +455,18 @@ const tribalIntelRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/TribalIntel'), 'TribalIntel'),
 });
 
+// #2429: the address Tribal Intel had before its rename. `lib/nav.ts` still
+// maps the slug, and no route answered it, so it fell to the not-found card.
+// Redirect-only, like `/template-bank`: the owner lands on Tribal Intel, and
+// an Auntie Home, the same as at `/tribal-intel`.
+const trainingDocsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'training-docs',
+  beforeLoad: (ctx: { context: { access?: AdminAccess | null } }) => {
+    refuseAuntie(ctx);
+    throw redirect({ to: '/tribal-intel' });
+  },
+});
 const coveragePackagesRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: 'packages',
@@ -587,7 +599,7 @@ const adminNotFoundRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   signInRoute,
-  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, inviteDetailRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, templateBankRoute, templateAssignmentRoute, kinTaleTemplatesRoute, tribalIntelRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute, adminNotFoundRoute]),
+  adminRoute.addChildren([homeRoute, featureFlagsRoute, activityRoute, notificationsRoute, formSchemasRoute, invoicesRoute, directoryRoute, invitesRoute, inviteDetailRoute, directoryProfileRoute, householdMembersRoute, bookingsRoute, sessionsRoute, sessionDetailRoute, kinTalesRoute, galleryRoute, templatesRoute, templateBankRoute, templateAssignmentRoute, kinTaleTemplatesRoute, tribalIntelRoute, trainingDocsRoute, coveragePackagesRoute, scheduleRoute, inboxRoute, settingsRoute, communicateRoute, marketingBlastsRoute, accountRoute, myNotificationsRoute, notificationGateRoute, vetClinicsRoute, mediaRoute, adminNotFoundRoute]),
 ]);
 
 export const router = createRouter({
