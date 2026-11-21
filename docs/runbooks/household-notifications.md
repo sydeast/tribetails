@@ -256,8 +256,8 @@ Bulk writes fire the document triggers, so expect this while the gate is shut:
   turning those rows off in the notification gate for the duration, and back on
   after. Do it on the Business tab: since 2026-11-20 the Kinfolk copy of
   payment, invoice, KinTale and booking confirmations cannot be turned off
-  (#2382), and this switch is what keeps those household copies held until
-  launch.
+  (#2382). The household launch switch (`householdNotificationsLive`) is what
+  keeps those household copies held until launch.
 - **Invoices keep their backlog.** Nothing marks a re-uploaded invoice as
   reminded or notified, so the first runs after you open the gate chase them.
 - **Old KinTales and bookings do not get announced at launch, and that is on
