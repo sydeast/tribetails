@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildDbMock } from './_helpers/mockDb';
+import { buildDbMock as buildBareDbMock } from './_helpers/mockDb';
+import { withJoinedHouseholds } from './_helpers/joinedHouseholds';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
 /**
@@ -58,6 +59,7 @@ import {
   blastStatus,
 } from '../src/admin/marketingBlasts';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
+import { logEvent } from '../src/lib/logger';
 
 const HOUR = 60 * 60 * 1000;
 
@@ -70,6 +72,15 @@ beforeEach(() => {
   mocks.resolveChannels.mockReset().mockReturnValue({ email: true, sms: false, push: false });
   (writeAuditEntry as any).mockClear();
 });
+
+/**
+ * #2482: every household fixture here with a stored login was joined by it
+ * (see `withJoinedHouseholds`); the staff-login cases seed their own member
+ * records to say otherwise.
+ */
+function buildDbMock(opts: Parameters<typeof buildBareDbMock>[0] = {}) {
+  return buildBareDbMock(withJoinedHouseholds(opts));
+}
 
 function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unknown> {
   return { data, auth: uid ? ({ uid, token: { admin: true } } as any) : undefined } as unknown as CallableRequest<unknown>;
@@ -156,11 +167,24 @@ describe('scheduleMarketingBlast audience criteria', () => {
     const ctx = kinfolkDb();
     mocks.dbFn.mockReturnValue(ctx.db);
 
-    const res = await scheduleMarketingBlastHandler(req(baseBlast({ audienceUids: ['uA', 'uB', 'uA'] })));
+    const res = await scheduleMarketingBlastHandler(req(baseBlast({ audienceUids: ['u1', 'u2', 'u1'] })));
 
     // De-duped: the same account must not be scheduled the same blast twice.
     expect(res.matched).toBe(2);
-    expect(mocks.enqueue.mock.calls.map((c) => c[0].recipientUid)).toEqual(['uA', 'uB']);
+    expect(mocks.enqueue.mock.calls.map((c) => c[0].recipientUid)).toEqual(['u1', 'u2']);
+  });
+
+  // #2482: an account is a household's account by the member check, so a
+  // named login no household stores is nobody.
+  it('NEGATIVE: an explicit login that no household stores is not scheduled', async () => {
+    const ctx = kinfolkDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await scheduleMarketingBlastHandler(req(baseBlast({ audienceUids: ['u1', 'uX'] })));
+
+    expect(res.matched).toBe(2);
+    expect(res.noLinkedAccount).toBe(1);
+    expect(mocks.enqueue.mock.calls.map((c) => c[0].recipientUid)).toEqual(['u1']);
   });
 
   it('refuses two audience paths at once instead of letting handler precedence pick', async () => {
@@ -303,6 +327,179 @@ describe('previewMarketingBlastAudience', () => {
     await expect(
       previewMarketingBlastAudienceHandler(req({ key: 'survey.event', criteria: { kind: 'all' } }, null)),
     ).rejects.toThrow(/Sign-in required/);
+  });
+});
+
+// ── the household's account (#2482) ──────────────────────────────────────────
+
+/**
+ * #2482: a blast decides who in a household has a MyTribe account with the
+ * member check every other household send makes (`resolveKinfolkUid`, #1840),
+ * not the stored `kinfolk.uid` alone, which can hold a staff login on a
+ * household nobody has joined.
+ */
+describe('marketing blasts use the member check for the household account (#2482)', () => {
+  /**
+   * k1 is joined by its own login u1. k5's record carries a staff login, and
+   * `null` member record: nobody joined it (see `withJoinedHouseholds`). With
+   * `primary`, k5 has been claimed by that login as its PRIMARY.
+   */
+  function staffLoginDb(opts: { primary?: string } = {}) {
+    return buildDbMock({
+      writeThrough: true,
+      docs: {
+        'staff/staff1': { role: 'admin' },
+        'families/k5/members/staff1': null,
+        ...(opts.primary ? { [`families/k5/members/${opts.primary}`]: { role: 'PRIMARY', status: 'ACTIVE' } } : {}),
+      },
+      queryDocs: {
+        kinfolk: [
+          { id: 'k1', data: { status: 'active', tags: [], uid: 'u1' } },
+          { id: 'k5', data: { status: 'active', tags: [], uid: 'staff1' } },
+        ],
+        'families/k5/members': opts.primary ? [{ id: opts.primary, data: { role: 'PRIMARY', status: 'ACTIVE' } }] : [],
+      },
+    });
+  }
+  const scheduledTo = () => mocks.enqueue.mock.calls.map((c) => c[0].recipientUid);
+  const prefsReadFor = () => mocks.loadUserPrefs.mock.calls.map((c) => c[0]);
+  const rosterIds = (ctx: { writes: Array<{ path: string; data: any }> }) =>
+    ctx.writes.filter((w) => w.path.includes('/fanoutChunks/')).flatMap((w) => w.data.recipientIds ?? []);
+  /** Every read of a member record under k5 fails. */
+  function failMemberReads(ctx: { db: any }, household = 'k5') {
+    const doc = ctx.db.doc;
+    ctx.db.doc = (path: string) =>
+      path.startsWith(`families/${household}/members/`)
+        ? { get: async () => { throw new Error('14 UNAVAILABLE'); } }
+        : doc(path);
+  }
+
+  it('HAPPY: a household nobody joined, with a staff login stored, schedules nothing to that login', async () => {
+    const ctx = staffLoginDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await scheduleMarketingBlastHandler(req(baseBlast({ criteria: { kind: 'all' } })));
+
+    expect(scheduledTo()).toEqual(['u1']);
+    expect(rosterIds(ctx)).toEqual(['u1']);
+    expect(res.matched).toBe(2);
+    expect(res.noLinkedAccount).toBe(1);
+    expect(res.failed).toBe(0);
+  });
+
+  it('HAPPY: a claimed household with a staff login stored is reached through its PRIMARY', async () => {
+    const ctx = staffLoginDb({ primary: 'p1' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await scheduleMarketingBlastHandler(req(baseBlast({ criteria: { kind: 'all' } })));
+
+    expect(scheduledTo()).toEqual(['u1', 'p1']);
+    expect(res.noLinkedAccount).toBe(0);
+    for (const call of mocks.enqueue.mock.calls) expect(call[0].data.audienceUid).toBe(call[0].recipientUid);
+  });
+
+  it('HAPPY: a household its own login joined is unchanged', async () => {
+    const ctx = buildDbMock({
+      writeThrough: true,
+      queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'active', tags: [], uid: 'u1' } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await scheduleMarketingBlastHandler(req(baseBlast({ criteria: { kind: 'all' } })));
+
+    expect(scheduledTo()).toEqual(['u1']);
+    expect(res).toMatchObject({ matched: 1, noLinkedAccount: 0, dispatched: 1, failed: 0 });
+  });
+
+  it('the frozen roster a resumed fan-out walks holds the checked login, never the stored one', async () => {
+    const ctx = staffLoginDb({ primary: 'p1' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await scheduleMarketingBlastHandler(req(baseBlast({ criteria: { kind: 'all' } })));
+
+    expect(rosterIds(ctx)).toEqual(['u1', 'p1']);
+  });
+
+  it('an explicit login on a household it never joined is nobody; on a claimed one, its PRIMARY', async () => {
+    let ctx = staffLoginDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      scheduleMarketingBlastHandler(req(baseBlast({ audienceUids: ['staff1'] }))),
+    ).rejects.toThrow(/no_recipients/);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+
+    ctx = staffLoginDb({ primary: 'p1' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await scheduleMarketingBlastHandler(req(baseBlast({ audienceUids: ['staff1'] })));
+    expect(scheduledTo()).toEqual(['p1']);
+    expect(res.matched).toBe(1);
+  });
+
+  it('ERROR: a member check that cannot be read fails that household and schedules nothing to the stored login', async () => {
+    (logEvent as any).mockClear();
+    const ctx = staffLoginDb();
+    failMemberReads(ctx);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await scheduleMarketingBlastHandler(req(baseBlast({ criteria: { kind: 'all' } })));
+
+    expect(scheduledTo()).toEqual(['u1']);
+    expect(res.dispatched).toBe(1);
+    expect(res.failed).toBe(1);
+    expect(res.noLinkedAccount).toBe(0);
+    const row = ctx.writes.find((w) => w.path.startsWith('marketingBlasts/') && w.data.key !== undefined);
+    expect(row!.data.failed).toBe(1);
+    expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ event: 'recipient.resolve.failed', severity: 'warn' }));
+  });
+
+  it('ERROR: when no member check can be read, nothing is scheduled and the refusal says to try again', async () => {
+    const ctx = staffLoginDb();
+    failMemberReads(ctx, 'k1');
+    failMemberReads(ctx, 'k5');
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    await expect(
+      scheduleMarketingBlastHandler(req(baseBlast({ criteria: { kind: 'all' } }))),
+    ).rejects.toMatchObject({ code: 'unavailable' });
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(ctx.writes.filter((w) => w.path.startsWith('marketingBlasts/'))).toHaveLength(0);
+  });
+
+  it('PREVIEW: a household nobody joined is counted as having no account, and its stored login is never read', async () => {
+    const ctx = staffLoginDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await previewMarketingBlastAudienceHandler(
+      req({ key: 'newsletter.announcement', criteria: { kind: 'all' } }),
+    );
+
+    expect(res).toMatchObject({ matched: 2, noLinkedAccount: 1, suppressedByPrefs: 0, reachable: 1 });
+    expect(prefsReadFor()).toEqual(['u1']);
+  });
+
+  it('PREVIEW: a claimed household counts its PRIMARY, read against its own settings', async () => {
+    const ctx = staffLoginDb({ primary: 'p1' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await previewMarketingBlastAudienceHandler(
+      req({ key: 'newsletter.announcement', criteria: { kind: 'all' } }),
+    );
+
+    expect(res).toMatchObject({ matched: 2, noLinkedAccount: 0, reachable: 2 });
+    expect(prefsReadFor()).toEqual(['u1', 'p1']);
+  });
+
+  it('PREVIEW: a member check that cannot be read is not counted as an account', async () => {
+    const ctx = staffLoginDb();
+    failMemberReads(ctx);
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await previewMarketingBlastAudienceHandler(
+      req({ key: 'newsletter.announcement', criteria: { kind: 'all' } }),
+    );
+
+    expect(res).toMatchObject({ matched: 2, noLinkedAccount: 0, reachable: 1 });
+    expect(prefsReadFor()).toEqual(['u1']);
   });
 });
 

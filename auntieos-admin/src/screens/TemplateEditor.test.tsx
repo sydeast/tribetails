@@ -362,7 +362,7 @@ describe('TemplateEditor: I9 usage instructions + sections', () => {
     expect(screen.queryByLabelText(/section 1 title/i)).toBeNull();
   });
 
-  it('sends edited usage instructions and non-blank sections in the save payload, dropping titleless rows', async () => {
+  it('sends edited usage instructions and non-blank sections in the save payload, dropping empty rows', async () => {
     saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
     render(
       <TemplateEditor
@@ -373,12 +373,11 @@ describe('TemplateEditor: I9 usage instructions + sections', () => {
     );
     await userEvent.type(screen.getByLabelText(/usage instructions/i), 'Use for confirmed bookings.');
 
-    // First section: fully filled. Second: no title, dropped on save.
+    // First section: fully filled. Second: nothing typed, dropped on save.
     await userEvent.click(screen.getByRole('button', { name: /add section/i }));
     await userEvent.type(screen.getByLabelText(/section 1 title/i), 'Greeting');
     await userEvent.type(screen.getByLabelText(/section 1 description/i), 'Warm hello');
     await userEvent.click(screen.getByRole('button', { name: /add section/i }));
-    await userEvent.type(screen.getByLabelText(/section 2 description/i), 'orphan, no title');
 
     await userEvent.click(screen.getByRole('button', { name: /save template/i }));
 
@@ -388,6 +387,111 @@ describe('TemplateEditor: I9 usage instructions + sections', () => {
           usageInstructions: 'Use for confirmed bookings.',
           sectionDefinitions: [{ title: 'Greeting', description: 'Warm hello' }],
         }),
+      ),
+    );
+  });
+
+  // #2084: the walk typed a description into a section with no title, pressed
+  // Save, saw "Saved", and the text was gone on reopening.
+  it('#2084: a section with text and no title stops Save, says so at the row, and loses nothing', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    const onSaved = vi.fn();
+    render(<TemplateEditor template={tpl({ templateId: 'booking.confirmed' })} onClose={vi.fn()} onSaved={onSaved} />);
+    await userEvent.click(screen.getByRole('button', { name: /add section/i }));
+    await userEvent.type(screen.getByLabelText(/section 1 description/i), 'What this section covers');
+    await userEvent.click(screen.getByRole('button', { name: /add section/i }));
+    await userEvent.type(screen.getByLabelText(/section 2 title/i), 'QA-R1 section');
+
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+
+    expect(saveTemplate).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(screen.queryByText(/^Saved /)).toBeNull();
+    expect(screen.getByLabelText(/section 1 title/i)).toHaveAttribute('aria-invalid', 'true');
+    expect(document.getElementById('template-editor-section-0-error')).toHaveTextContent(
+      'Give this section a title, or remove it.',
+    );
+    expect(screen.getByLabelText(/section 1 description/i)).toHaveValue('What this section covers');
+    expect(screen.getByText('One thing needs fixing. It is marked below.')).toBeInTheDocument();
+
+    // Typing a title clears the mark, and the save keeps both rows.
+    await userEvent.type(screen.getByLabelText(/section 1 title/i), 'Intro');
+    expect(document.getElementById('template-editor-section-0-error')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sectionDefinitions: [
+            { title: 'Intro', description: 'What this section covers' },
+            { title: 'QA-R1 section', description: '' },
+          ],
+        }),
+      ),
+    );
+    expect(await screen.findByText('Saved Booking Confirmed.')).toBeInTheDocument();
+  });
+
+  it('#2084: removing the untitled section also lets the save through', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(<TemplateEditor template={tpl({ templateId: 'booking.confirmed' })} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: /add section/i }));
+    await userEvent.type(screen.getByLabelText(/section 1 description/i), 'orphan');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(saveTemplate).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() => expect(saveTemplate).toHaveBeenCalledWith(expect.objectContaining({ sectionDefinitions: [] })));
+  });
+
+  // Review of #2084: a template stored before this with an untitled section
+  // still opens and saves after an unrelated edit.
+  it('#2084: an old template with an empty untitled section saves after an unrelated edit', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    const onSaved = vi.fn();
+    render(
+      <TemplateEditor
+        template={tpl({
+          templateId: 'booking.confirmed',
+          sectionDefinitions: [
+            { title: '', description: '' },
+            { title: 'Greeting', description: 'Warm hello' },
+          ],
+        })}
+        onClose={vi.fn()}
+        onSaved={onSaved}
+      />,
+    );
+    await userEvent.type(screen.getByLabelText(/usage instructions/i), 'Use for confirmed bookings.');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ sectionDefinitions: [{ title: 'Greeting', description: 'Warm hello' }] }),
+      ),
+    );
+    expect(onSaved).toHaveBeenCalled();
+  });
+
+  it('#2084: an old untitled section with text is shown, marked, and saves once titled', async () => {
+    saveTemplate.mockResolvedValue({ templateId: 'booking.confirmed' });
+    render(
+      <TemplateEditor
+        template={tpl({ templateId: 'booking.confirmed', sectionDefinitions: [{ title: '  ', description: 'Old notes' }] })}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText(/section 1 description/i)).toHaveValue('Old notes');
+    await userEvent.type(screen.getByLabelText(/usage instructions/i), 'x');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    expect(saveTemplate).not.toHaveBeenCalled();
+    expect(document.getElementById('template-editor-section-0-error')).toHaveTextContent(
+      'Give this section a title, or remove it.',
+    );
+    await userEvent.type(screen.getByLabelText(/section 1 title/i), 'Notes');
+    await userEvent.click(screen.getByRole('button', { name: /save template/i }));
+    await waitFor(() =>
+      expect(saveTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ sectionDefinitions: [{ title: 'Notes', description: 'Old notes' }] }),
       ),
     );
   });
