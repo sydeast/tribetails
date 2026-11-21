@@ -261,6 +261,68 @@ class InvoiceEditFormTest {
         assertEquals("2026-12-01", patch["dueDate"])
     }
 
+    // ── #2509: a due date typed beside rule terms is picked by hand ────────────
+
+    private fun onReceipt() = itemized(scope = "metadataOnly").apply {
+        termsCode = "due_on_receipt"
+        terms = "Due on receipt"
+        dueDate = "2026-10-01"
+    }
+
+    @Test
+    fun `a due date typed beside rule terms moves the picker to custom and sends it`() {
+        val invoice = onReceipt()
+        val draft = invoiceEditDraftOf(invoice)!!.withTypedDueDate("2026-10-15")
+        assertEquals(com.tribetails.auntieos.domain.InvoiceTermsCode.CUSTOM, draft.termsCode)
+        val patch = invoiceEditPatchOf(invoice, draft).patch!!.toPayload()
+        assertEquals("custom", patch["termsCode"])
+        assertEquals("2026-10-15", patch["dueDate"])
+        assertFalse(patch.containsKey("terms"))
+    }
+
+    @Test
+    fun `typed back to the stored date, the rule returns and nothing about terms is sent`() {
+        val invoice = onReceipt()
+        val draft = invoiceEditDraftOf(invoice)!!
+            .withTypedDueDate("2026-10-15")
+            .withTypedDueDate("2026-10-01")
+            .copy(address = "14 Elm Row")
+        assertEquals(com.tribetails.auntieos.domain.InvoiceTermsCode.DUE_ON_RECEIPT, draft.termsCode)
+        val patch = invoiceEditPatchOf(invoice, draft).patch!!.toPayload()
+        assertFalse(patch.containsKey("termsCode"))
+        assertFalse(patch.containsKey("dueDate"))
+    }
+
+    @Test
+    fun `picking the rule again after typing hands the due date back to it`() {
+        val invoice = onReceipt()
+        val draft = invoiceEditDraftOf(invoice)!!
+            .withTypedDueDate("2026-10-15")
+            .withPickedTerms(com.tribetails.auntieos.domain.InvoiceTermsCode.DUE_ON_RECEIPT)
+            .copy(address = "14 Elm Row")
+        assertEquals("2026-10-01", draft.dueDate)
+        val patch = invoiceEditPatchOf(invoice, draft).patch!!.toPayload()
+        assertFalse(patch.containsKey("termsCode"))
+        assertFalse(patch.containsKey("dueDate"))
+    }
+
+    @Test
+    fun `a typed date before the invoice date is refused once it counts as picked by hand`() {
+        val invoice = onReceipt()
+        val draft = invoiceEditDraftOf(invoice)!!.withTypedDueDate("2026-09-20")
+        assertEquals("The due date has to be on or after the invoice date.", invoiceEditDueOrderProblem(draft))
+    }
+
+    @Test
+    fun `terms with no code keep their words when a due date is typed`() {
+        val invoice = itemized(scope = "metadataOnly")
+        val draft = invoiceEditDraftOf(invoice)!!.withTypedDueDate("2026-10-20")
+        assertNull(draft.termsCode)
+        val patch = invoiceEditPatchOf(invoice, draft).patch!!.toPayload()
+        assertEquals("2026-10-20", patch["dueDate"])
+        assertFalse(patch.containsKey("termsCode"))
+    }
+
     @Test
     fun `a date that is not YYYY-MM-DD is refused`() {
         val invoice = itemized(scope = "metadataOnly")

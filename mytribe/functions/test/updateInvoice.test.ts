@@ -867,6 +867,100 @@ describe('updateInvoice structured terms', () => {
   });
 });
 /**
+ * #2509: a due date typed in Edit, on an invoice whose terms are a rule, is a
+ * date picked by hand. The terms become custom in that code's own words, so a
+ * later re-count from the rule cannot throw the typed date away.
+ */
+describe('#2509 a due date typed in Edit switches rule terms to a date picked by hand', () => {
+  const RULE_INVOICE = {
+    ...OPEN_INVOICE,
+    date: '2026-06-01',
+    dueDate: '2026-06-01',
+    termsCode: 'due_on_receipt',
+    terms: 'Due on receipt',
+  };
+
+  it('a lone new due date on "Due on receipt" stores the custom terms and the typed date', async () => {
+    const ctx = seed(RULE_INVOICE);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { dueDate: '2026-06-15' } }));
+    expect(invoiceWrite(ctx)?.data).toMatchObject({
+      dueDate: '2026-06-15',
+      termsCode: 'custom',
+      terms: 'Due by the date shown on this invoice',
+    });
+  });
+
+  it('does the same for a visit rule', async () => {
+    const ctx = seed({ ...RULE_INVOICE, termsCode: 'net_7_after_last_visit', terms: 'Due 7 days after the last visit' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { dueDate: '2026-06-20' } }));
+    expect(invoiceWrite(ctx)?.data).toMatchObject({ dueDate: '2026-06-20', termsCode: 'custom' });
+  });
+
+  it('a due date echoed back unchanged keeps the rule', async () => {
+    const ctx = seed(RULE_INVOICE);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { dueDate: '2026-06-01', address: '2 Elm St' } }));
+    const data = invoiceWrite(ctx)?.data;
+    expect(data?.dueDate).toBe('2026-06-01');
+    expect(data).not.toHaveProperty('termsCode');
+    expect(data).not.toHaveProperty('terms');
+  });
+
+  it('terms that are already custom stay custom with their own words', async () => {
+    const ctx = seed({ ...RULE_INVOICE, termsCode: 'custom', terms: 'Due by the date shown on this invoice' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { dueDate: '2026-06-15' } }));
+    const data = invoiceWrite(ctx)?.data;
+    expect(data?.dueDate).toBe('2026-06-15');
+    expect(data).not.toHaveProperty('termsCode');
+  });
+
+  it('typed or imported terms with no code keep their words', async () => {
+    const ctx = seed({ ...OPEN_INVOICE, date: '2026-06-01', dueDate: '2026-06-01', terms: 'Pay when you can' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { dueDate: '2026-06-15' } }));
+    const data = invoiceWrite(ctx)?.data;
+    expect(data?.dueDate).toBe('2026-06-15');
+    expect(data).not.toHaveProperty('termsCode');
+    expect(data).not.toHaveProperty('terms');
+  });
+
+  it('free-text terms sent with the date replace the rule as before, not with custom', async () => {
+    const ctx = seed(RULE_INVOICE);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(
+      req({ invoiceId: 'inv1', patch: { dueDate: '2026-06-15', terms: 'Pay at the first visit' } }),
+    );
+    expect(invoiceWrite(ctx)?.data).toMatchObject({
+      dueDate: '2026-06-15',
+      terms: 'Pay at the first visit',
+      termsCode: '',
+    });
+  });
+
+  it('a rule picked in the same patch still decides the date', async () => {
+    const ctx = seed(RULE_INVOICE);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { termsCode: 'net_14' } }));
+    expect(invoiceWrite(ctx)?.data).toMatchObject({ termsCode: 'net_14', dueDate: '2026-06-15' });
+  });
+
+  it('a typed date before the invoice date is refused once it counts as picked by hand', async () => {
+    const ctx = seed({ ...RULE_INVOICE, date: '2026-06-10', dueDate: '2026-06-10' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      updateInvoiceHandler(req({ invoiceId: 'inv1', patch: { dueDate: '2026-06-01' } })),
+    ).rejects.toMatchObject({
+      code: 'invalid-argument',
+      message: 'The due date has to be on or after the invoice date.',
+      details: { code: 'invoice_due_before_date', field: 'dueDate' },
+    });
+    expect(invoiceWrite(ctx)).toBeUndefined();
+  });
+});
+/**
  * #884: an edit that lowers the total to what has already been paid settles the
  * invoice, but no money moved. It stamps itself as the owner of the
  * payment-applied notice and sends none, so the invoice trigger stays silent.

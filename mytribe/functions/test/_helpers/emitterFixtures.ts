@@ -233,9 +233,10 @@ export const EMITTER_FIXTURES: EmitterFixture[] = [
   ...fx('kincare.note.kinfolk', S.noteCreate, [OFFICE_COPY], {
     ...NOTE_BASE, noteId: 'n1', authorUid: 'cli1', preview: 'Please top up the water bowl.',
   }, REX),
+  // #2277: the writer is named from her staff record, and she is left out of the roster.
   ...fx('kincare.note.auntie', S.noteCreate, [OFFICE_COPY], {
-    ...NOTE_BASE, noteId: 'n1', authorUid: 'auntie1', preview: 'All good today.',
-  }, REX),
+    ...NOTE_BASE, noteId: 'n1', authorUid: 'auntie1', actorName: 'Mia Torres', preview: 'All good today.',
+  }, { ...REX, expect: { ...ABOUT_REX, actorName: 'Mia Torres' } }),
   ...fx('kincare.upcoming.reminder', S.reminderCron, [HOUSEHOLD_COPY], {
     kinfolkId: 'fam1', bookingId: 'bat1', serviceName: WORLD.serviceName, startTimeMs: VISIT_MS, timeBlockId: null, serviceId: null,
   }, REX),

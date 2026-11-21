@@ -329,8 +329,11 @@ const CATALOG_LIST: NotificationDef[] = [
     // Vendor-parity (2026-07-02): the office hears when an Auntie writes a visit
     // note. Mirrors kincare.note.kinfolk but for staff-authored notes; emitted by
     // the same onBookingNoteCreate trigger.
+    // #2277: the owner writes these notes too, so neither line says an Auntie
+    // did. The notice names its writer ({{actorName}}, the row's actor) and is
+    // never sent to her.
     key: 'kincare.note.auntie',
-    label: 'Auntie added a note to a KinCare',
+    label: 'Note added to a KinCare',
     audience: 'business',
     audiences: { business: true },
     category: 'visit',
@@ -341,7 +344,7 @@ const CATALOG_LIST: NotificationDef[] = [
     deliveryMode: 'trigger',
     recipientResolver: 'businessAdmins',
     templates: { email: 'kincare.note.auntie', sms: 'kincare.note.auntie', push: 'kincare.note.auntie' },
-    description: 'An Auntie added a note to a KinCare visit.',
+    description: 'The office or an Auntie added a note to a KinCare visit.',
   },
 
   // ─────────────────────────────────────────────────────────
