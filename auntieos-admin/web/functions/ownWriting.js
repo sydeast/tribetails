@@ -317,7 +317,7 @@ const SPECIFIC_STEMS = {
     // Any other way into the home: windows, flaps, porches and the like.
     'window', 'skylight', 'porch', 'patio', 'balcony', 'basement', 'cellar', 'attic', 'crawlspace', 'hatch',
     'shutter', 'curtain', 'slider', 'screen', 'lobby', 'doorman', 'doormat', 'fence', 'flap', 'catflap',
-    'dogflap', 'neighbo',
+    'dogflap', 'neighbo', 'driveway', 'alleyway',
   ],
   medicine: [
     'medic', 'capsule', 'dose', 'dosage', 'dosing', 'prescri', 'pharmac', 'antibiotic', 'steroid',
@@ -350,11 +350,12 @@ const SPECIFIC_STEMS = {
     'nervous', 'skittish', 'jumpy', 'spook', 'startl', 'panic', 'stress', 'trembl', 'hate',
     'claw', 'swat', 'sneak', 'bully', 'grump', 'cranky', 'moody', 'feisty', 'stubborn',
     'protective', 'possessive', 'jealous', 'dominan', 'wary', 'cautious', 'stranger', 'spray',
+    'standoffish', 'clingy', 'aloof', 'grumbl', 'shred',
   ],
   away: [
     'travel', 'vacation', 'trip', 'flight', 'airport', 'cruise', 'hotel', 'honeymoon', 'getaway', 'abroad',
     'overseas', 'roadtrip', 'staycation', 'itinerar', 'jetlag', 'layover', 'return', 'homecoming',
-    'housesit',
+    'housesit', 'wedding', 'conference', 'reunion', 'funeral',
   ],
   address: ['address', 'apartment', 'subdivision', 'intersection', 'boulevard', 'parkway', 'highway'],
   diet: ['kibble', 'dietar'],
@@ -364,7 +365,8 @@ const SPECIFIC_WORDS = {
     'pin', 'pins', 'fob', 'fobs', 'armed', 'arming', 'spare', 'entry', 'entrance', 'mailbox', 'wifi', 'wi-fi',
     'hide-a-key', 'deck', 'blinds', 'let (?:myself|yourself|ourselves|me|us|them) (?:in|out)', 'way in',
     'in through', 'through the (?:back|front|side|garage|yard)',
-    'under the (?:mat|rug|pot|planter|rock|flowerpot)', 'lights? (?:on|off)',
+    'under the (?:mat|rug|pot|planter|rock|flowerpot)', 'lights? (?:on|off)', 'alley',
+    '(?:back|side|front) (?:way|yard|entrance)',
   ],
   medicine: [
     'med', 'meds', 'pill', 'pills', 'pilled', 'pilling', 'tablet', 'tablets', 'mg', 'mcg', 'ml', 'cc',
@@ -387,9 +389,11 @@ const SPECIFIC_WORDS = {
     'scratch(?:es|ed|ing)? (?:at|the|up)', 'come out from', 'ran (?:up|down)stairs', 'not a fan of',
     "(?:would not|wouldn't|won't|will not|didn't|did not) come out", 'warm(?:s|ed)? up to', 'get(?:s)? along', 'got along',
     "(?:does not|doesn't|did not|didn't|won't|will not|can't|cannot) (?:like|stand|tolerate|handle|trust)",
-    'other (?:dogs|cats|animals|pets|people|kin)', 'got out', 'gets out', 'slipped out',
+    'other (?:dogs?|cats?|animals?|pets?|people|kin)', 'got out', 'gets out', 'slipped out',
+    'bit (?:me|my|him|her|them|us|at|someone|the)', '(?:tore|tear|tears|tearing|torn) (?:up|apart|into)', 'snuck', 'not good with', 'closet', 'crate', 'crated',
+    "(?:want|wants|wanted|would not|wouldn't) to come out", 'peed', 'pooped', 'potty',
     'ran away', 'runs? away', 'running away',
-    'under the (?:bed|couch|sofa|porch|house|deck|stairs)', 'behind the (?:couch|sofa|bed|dryer|washer|fridge)',
+    'under the (?:bed|couch|sofa|porch|house|deck|stairs|dresser|table|desk|chair|bathtub)', 'behind the (?:couch|sofa|bed|dryer|washer|fridge)',
   ],
   away: [
     // "while you're away", but not "right away" or "put away".
@@ -401,6 +405,8 @@ const SPECIFIC_WORDS = {
     "see you (?:when|once) you(?:'re| are| get)", 'see you (?:on )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)',
     'landed', 'fly', 'flying', 'come home', 'comes home', 'coming home', 'get home', 'gets home', 'getting home',
     'come back', 'comes back', 'coming back', 'home soon', 'heading out', 'been gone',
+    "while (?:you|you're|y'all|they|they're)", 'enjoy your (?:time|stay|visit|break)', 'your stay', 'time off',
+    'lake house', 'beach house', 'cabin', 'drive (?:up|down|back|home)',
     '(?:before|after|once|until|till|when) you (?:leave|left|go|head|fly|drive)',
     'on holiday', 'your holidays?', 'holidaying', 'house sit(?:ting)?', 'empty house',
     "(?:nobody|no one|no-one)(?:'s| is)? home", 'misse[sd] (?:you|y\'all|everyone|them|her|his|their)',
@@ -466,6 +472,27 @@ const DETAIL_PLACEHOLDER = /\[(?:phone|address|number)\]/u;
 // is read as "Old Quarry" and "Quarry Road".
 const STREET_PAIR = /(?<![\p{L}\p{N}])([\p{Lu}][\p{L}\p{M}'’-]*)\s+(?=([\p{L}]+))/gu;
 const OWN_PLACEHOLDERS = new RegExp(PLACEHOLDER_TOKEN.source, 'gu');
+// The household somewhere else, by a place's name: "while you were in Denver",
+// "Enjoy Lisbon", "back from [Name]". The place is any capitalised word that
+// is not a possessive ("in Biscuit's bed"), a placeholder for a Tribe name, a
+// brand word or the calendar. Places cannot be listed, so the word before
+// them is what counts.
+const PLACE_BEFORE = [
+  'in', 'enjoy', 'enjoying', 'enjoyed', 'visiting', 'back from', 'home from', 'off to', 'fly to', 'flying to',
+  'flew to', 'headed to', 'heading to', 'trip to', 'drive to', 'driving to', 'welcome to', 'fun in',
+].map((w) => `[${w.charAt(0).toUpperCase()}${w.charAt(0)}]${phraseSource(w.slice(1))}`);
+const PLACE_AFTER = new RegExp(
+  `(?<![\\p{L}\\p{N}])(?:${PLACE_BEFORE.join('|')})\\s+(\\[Name\\]|\\p{Lu}[\\p{L}\\p{M}]*)(?![\\p{L}\\p{M}'’-])`,
+  'gu',
+);
+function namesAPlace(source) {
+  for (const [, word] of source.matchAll(PLACE_AFTER)) {
+    if (word === '[Name]') return true;
+    const key = fold(word);
+    if (!ALWAYS_WORDS.has(key) && !NOT_STREET_NAMES.has(key)) return true;
+  }
+  return false;
+}
 
 /**
  * The kind of household specific `text` holds ('digit', 'entry', 'medicine',
@@ -483,6 +510,7 @@ function householdSpecific(text) {
   const folded = fold(bare).replace(/\s+/gu, ' ');
   if (NUMBER_TIME.test(folded) || SPOKEN_TIME.test(folded)) return 'time';
   for (const [kind, pattern] of Object.entries(SPECIFIC_PATTERNS)) if (pattern.test(folded)) return kind;
+  if (namesAPlace(source.replace(/\s+/gu, ' '))) return 'away';
   for (const [, first, second] of bare.matchAll(STREET_PAIR)) {
     if (STREET_WORDS.has(fold(second)) && !NOT_STREET_NAMES.has(fold(first))) return 'address';
   }
