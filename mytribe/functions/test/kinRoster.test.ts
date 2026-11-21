@@ -259,14 +259,33 @@ describe('materializeKinRoster, naming the Kin an existing booking stores', () =
     });
   });
 
-  it('names a Kin stored under its household card id, and leaves the stored id as it is', async () => {
+  // #2350: approving a request made before #2347 kept its household card ids,
+  // so the booked visit's Kin were missing from every admin screen.
+  it('names a Kin stored under its household card id, and stores the admin record id the admin screens read', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
     const { materializeKinRoster } = await import('../src/lib/kinRoster');
 
     expect(await materializeKinRoster('3', ['fam-b', 'flat-a'])).toEqual({
-      kinIds: ['fam-b', 'flat-a'],
+      kinIds: ['flat-b', 'flat-a'],
       kinNames: ['Gravy', 'Biscuit'],
     });
+  });
+
+  it('#2350: a Kin named under both of its ids is stored once', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('3', ['fam-a', 'flat-a', 'fam-b'])).toEqual({
+      kinIds: ['flat-a', 'flat-b'],
+      kinNames: ['Biscuit', 'Gravy'],
+    });
+  });
+
+  it('#2350: a Kin who has since passed is stored under its admin record id too', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('3', ['fam-c'])).toEqual({ kinIds: ['flat-c'], kinNames: ['Old Boy'] });
   });
 
   it('still names a Kin the booking was made for who has since passed', async () => {

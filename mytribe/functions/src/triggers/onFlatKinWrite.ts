@@ -323,6 +323,10 @@ export async function adoptFlatKin(
       event: outcome.state === 'adopted' ? 'mirror.family.adopted' : 'mirror.family.linked',
       extra: { kinfolkId, flatId, familyKinPath: outcome.path, relinked: missingPath !== '' && outcome.path !== missingPath },
     });
+    // #2350: a household card this record was just tied to was the Kin's
+    // stored id until now, so its visits may name the card. Put them on the record.
+    const { rewriteVisitKinIdsAfterLink } = await import('../lib/visitKinIds.js');
+    await rewriteVisitKinIdsAfterLink(kinfolkId, 'onFlatKinWrite');
     return { action: outcome.state, familyKinPath: outcome.path };
   }
   return { action: 'skipped', reason: outcome.state };

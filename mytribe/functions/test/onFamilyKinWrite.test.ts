@@ -15,6 +15,7 @@ import {
   mirrorFamilyKinToFlat,
   buildFlatMirrorPayload,
   buildFlatMirrorChanges,
+  linkWasWritten,
   onFamilyKinWrite,
 } from '../src/triggers/onFamilyKinWrite';
 import { MIRROR_ORIGIN_FAMILY } from '../src/triggers/kinMirror';
@@ -26,6 +27,24 @@ const FAMILY_PATH = `families/${KINFOLK}/kin/${KIN_ID}`;
 describe('onFamilyKinWrite: exports', () => {
   it('exports the trigger', () => {
     expect(onFamilyKinWrite).toBeDefined();
+  });
+});
+
+// #2350: the trigger moves the household's visits onto the Kin's admin record
+// exactly when the mirror tied the card to a record it did not carry.
+describe('linkWasWritten', () => {
+  it('is true for a record minted for a new card, or one of its own after a crossed link', () => {
+    expect(linkWasWritten({ name: 'Rex' }, { action: 'created', flatDocId: 'flat-new' })).toBe(true);
+    expect(linkWasWritten({ name: 'Rex', legacyKinId: 'flat-old' }, { action: 'created', flatDocId: 'flat-new' })).toBe(true);
+  });
+  it('is true for a record taken by name, which the card did not carry yet', () => {
+    expect(linkWasWritten({ name: 'Rex' }, { action: 'updated', flatDocId: 'flat-office' })).toBe(true);
+    expect(linkWasWritten({ name: 'Rex' }, { action: 'skipped', flatDocId: 'flat-office' })).toBe(true);
+  });
+  it('is false for an ordinary edit of a linked card, an echo, and a write with no record', () => {
+    expect(linkWasWritten({ name: 'Rex', legacyKinId: 'flat-1' }, { action: 'updated', flatDocId: 'flat-1' })).toBe(false);
+    expect(linkWasWritten({ name: 'Rex', legacyKinId: 'flat-1' }, { action: 'skipped', flatDocId: 'flat-1' })).toBe(false);
+    expect(linkWasWritten({ name: 'Rex' }, { action: 'skipped', flatDocId: null })).toBe(false);
   });
 });
 

@@ -1,3 +1,4 @@
+import type { Firestore } from 'firebase-admin/firestore';
 import { db } from './firestoreAdmin';
 import { isInactiveKinStatus } from './kinStatus';
 import { resolveKinNames } from './resolveKinNames';
@@ -88,8 +89,7 @@ function nameOf(data: Record<string, unknown>): string | null {
  * `lib/kinLink.ts`), the first keeps its id and the other is listed under its
  * own, so no id ever names two Kin.
  */
-export async function readHouseholdKin(kinfolkId: string): Promise<KinRosterEntry[]> {
-  const firestore = db();
+export async function readHouseholdKin(kinfolkId: string, firestore: Firestore = db()): Promise<KinRosterEntry[]> {
   const [familySnap, flatSnap] = await Promise.all([
     firestore.collection('families').doc(kinfolkId).collection('kin').get(),
     firestore.collection('kin').where('kinfolkId', '==', kinfolkId).get(),
@@ -159,16 +159,45 @@ function rosterPair(entries: readonly KinRosterEntry[]): { kinIds: string[]; kin
 }
 
 /**
+ * The household Kin [id] names, by either of its two ids, or undefined. The
+ * id a Kin is stored under wins over a household card id that happens to
+ * match, so an id never resolves to a second Kin.
+ */
+export function rosterEntryFor(all: readonly KinRosterEntry[], id: string): KinRosterEntry | undefined {
+  return all.find((k) => k.id === id) ?? all.find((k) => k.householdId === id);
+}
+
+/**
+ * #2350: household card id -> the id a visit stores for that Kin, for every
+ * Kin whose two ids differ. Read from [readHouseholdKin], memorial and
+ * archived Kin included: an old visit may carry a Kin that has since passed.
+ * A card id that is also some Kin's stored id is left out, so an alias never
+ * points one Kin's visits at another.
+ */
+export function kinIdAliases(all: readonly KinRosterEntry[]): Map<string, string> {
+  const stored = new Set(all.map((k) => k.id));
+  const aliases = new Map<string, string>();
+  for (const k of all) {
+    if (k.householdId === null || k.householdId === k.id || stored.has(k.householdId)) continue;
+    aliases.set(k.householdId, k.id);
+  }
+  return aliases;
+}
+
+/**
  * Resolves the `kinIds` + `kinNames` pair for a booking that ALREADY EXISTS,
  * from the ids stored on it: an approval, or a visit getting its booking
  * record. A new visit goes through [kinRosterForNewVisit] instead.
  *
- * - The record names specific Kin: those ids are kept as they are,
- *   de-duplicated, and named. An existing booking keeps the Kin it was made
- *   for. A stored id may be either of a Kin's two ids (older writers stored
- *   whichever they were sent), so each is named from the household's Kin by
- *   either one; an id this household no longer has is looked up the old way
- *   and, failing that, contributes no name.
+ * - The record names specific Kin: an existing booking keeps the Kin it was
+ *   made for. A stored id may be either of a Kin's two ids (older writers
+ *   stored whichever they were sent). #2350: each is written back as the id
+ *   the admin screens look the Kin up by (its admin record's, see
+ *   [readHouseholdKin]), de-duplicated, and named. A household request made
+ *   before #2347 carries household card ids, and an approval that kept them
+ *   booked a visit whose Kin no admin screen could find. An id this household
+ *   no longer has is kept as it is, looked up the old way and, failing that,
+ *   contributes no name.
  * - The record names none: R1 applies and the full active roster is
  *   materialized.
  *
@@ -181,10 +210,12 @@ export async function materializeKinRoster(
   kinfolkId: string,
   kinIds: readonly string[] | null | undefined,
 ): Promise<{ kinIds: string[]; kinNames: string[] }> {
-  const stated = [...new Set(kinIds ?? [])].filter((id) => id.length > 0);
+  const named = [...new Set(kinIds ?? [])].filter((id) => id.length > 0);
   const all = await readHouseholdKin(kinfolkId);
-  if (stated.length === 0) return rosterPair(all.filter((k) => k.active));
-  const known = (id: string) => all.find((k) => k.id === id || k.householdId === id);
+  if (named.length === 0) return rosterPair(all.filter((k) => k.active));
+  const known = (id: string) => rosterEntryFor(all, id);
+  // #2350: one Kin named under both of its ids is one Kin, stored once.
+  const stated = [...new Set(named.map((id) => known(id)?.id ?? id))];
   const unknown = stated.filter((id) => known(id) === undefined);
   // One batched read for the ids no current Kin answers to, in stated order.
   const strays = unknown.length > 0 ? await resolveKinNames(kinfolkId, unknown) : [];

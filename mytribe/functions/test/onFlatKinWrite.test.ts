@@ -664,6 +664,24 @@ describe('#2290: a link to a household copy that is not there finds the Kin the 
   });
 });
 
+describe('#2350: tying an office record to a household card moves the visits that named the card', () => {
+  it('a visit booked under the card id names the office record once the two are tied', async () => {
+    const FLAT = { kinfolkId: 'kf1', name: 'Biscuit', species: 'Dog', status: 'active', familyKinPath: '' };
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'kin/flat1': { ...FLAT },
+      'families/kf1/kin/k2': { name: 'Biscuit', status: 'active' },
+      // Booked while Biscuit was only a household card, so it stored the card id.
+      'kin_care_sessions/s1': { kinfolkId: 'kf1', kinIds: ['k2'], kinNames: ['Biscuit'], status: 'SCHEDULED' },
+      'kin_care_sessions/s2': { kinfolkId: 'kf2', kinIds: ['k2'] },
+    };
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs, writeThrough: true }).db);
+
+    expect(await adoptFlatKin('flat1', FLAT as any)).toEqual({ action: 'linked', familyKinPath: 'families/kf1/kin/k2' });
+    expect(docs['kin_care_sessions/s1']).toEqual({ kinfolkId: 'kf1', kinIds: ['flat1'], kinNames: ['Biscuit'], status: 'SCHEDULED' });
+    expect(docs['kin_care_sessions/s2']?.['kinIds']).toEqual(['k2']);
+  });
+});
+
 describe('kinMirror field-ownership contract', () => {
   it('declares status parent-owned, so no reverse mirror can ever carry it', () => {
     expect(PARENT_OWNED_FIELDS).toContain('status');

@@ -282,6 +282,12 @@ export async function healKinLink(kinfolkId: string, flatId: string): Promise<Ki
     event: 'kin.link.healed',
     extra: { kinfolkId, flatId, ownerKinId: owner?.kinId ?? null, moved },
   });
+  if (moved.length > 0) {
+    // #2350: each moved Kin was stored under its own card id while its link
+    // was crossed, and is stored under its new record from now on.
+    const { rewriteVisitKinIdsAfterLink } = await import('./visitKinIds.js');
+    await rewriteVisitKinIdsAfterLink(kinfolkId, 'healKinLink');
+  }
   return { ownerKinId: owner?.kinId ?? null, moved };
 }
 
