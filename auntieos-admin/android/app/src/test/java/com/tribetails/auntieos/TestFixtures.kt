@@ -113,6 +113,7 @@ object TestFixtures {
         appliedInvoiceId = "",
         appliedInvoiceNumber = "",
         method = "Venmo",
+        methodLabel = "Venmo",
         reference = "",
         date = date,
         notes = "",
