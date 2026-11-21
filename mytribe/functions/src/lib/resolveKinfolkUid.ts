@@ -49,7 +49,15 @@ import { logEvent } from './logger';
  */
 export async function resolveKinfolkUid(kinfolkId: string): Promise<string | null> {
   const snap = await db().collection('kinfolk').doc(kinfolkId).get();
-  const uid = (snap.data() as { uid?: unknown } | undefined)?.uid;
+  return resolveKinfolkUidFrom(kinfolkId, (snap.data() as { uid?: unknown } | undefined)?.uid);
+}
+
+/**
+ * `resolveKinfolkUid` for a caller that has just read the household record and
+ * already holds its stored `uid`: a broadcast reads its whole audience in one
+ * query (#2482). The same checks in the same order, minus the record read.
+ */
+export async function resolveKinfolkUidFrom(kinfolkId: string, uid: unknown): Promise<string | null> {
   if (typeof uid !== 'string' || uid.trim() === '') return null;
 
   const memberSnap = await db().doc(`families/${kinfolkId}/members/${uid}`).get();

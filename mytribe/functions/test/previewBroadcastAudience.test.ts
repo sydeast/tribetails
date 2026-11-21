@@ -20,11 +20,14 @@ const kinfolk = [
   { id: 'k4', data: { status: 'archived', firstName: 'Old', email: 'x@hanasamku.com' } },
 ];
 
+/** #2482: k1's stored login joined the household, so it has a MyTribe account. */
+const JOINED = { 'families/k1/members/u1': { role: 'PRIMARY', status: 'ACTIVE' } };
+
 beforeEach(() => mocks.dbFn.mockReset());
 
 describe('previewBroadcastAudience (#1610)', () => {
   it('counts the households the send will target, never an archived one', async () => {
-    mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { kinfolk } }).db);
+    mocks.dbFn.mockReturnValue(buildDbMock({ docs: { ...JOINED }, queryDocs: { kinfolk } }).db);
     const res = await previewBroadcastAudienceHandler(req({ criteria: { kind: 'all' } }));
     expect(res).toEqual({
       ok: true,
@@ -67,6 +70,31 @@ describe('previewBroadcastAudience (#1610)', () => {
     await expect(previewBroadcastAudienceHandler(req({ criteria: { kind: 'all' } }, null))).rejects.toMatchObject({
       code: 'unauthenticated',
     });
+  });
+
+  // #2482: "with the app" is the member check the send makes, not the stored login.
+  it('does not count a household whose stored login never joined it (a staff login)', async () => {
+    const staffKinfolk = [
+      { id: 'k1', data: { status: 'active', firstName: 'Dana', email: '', phoneNumber: '', uid: 'u1' } },
+      { id: 'k5', data: { status: 'active', firstName: 'Ash', email: '', phoneNumber: '', uid: 'staff1' } },
+    ];
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({ docs: { ...JOINED, 'staff/staff1': { role: 'admin' } }, queryDocs: { kinfolk: staffKinfolk } }).db,
+    );
+    const res = await previewBroadcastAudienceHandler(req({ criteria: { kind: 'all' } }));
+    expect(res.targeted).toBe(2);
+    expect(res.withApp).toBe(1);
+  });
+
+  it('a member check that cannot be read is not counted as an account', async () => {
+    const ctx = buildDbMock({ docs: { ...JOINED }, queryDocs: { kinfolk } });
+    const doc = ctx.db.doc;
+    ctx.db.doc = (path: string) =>
+      path.startsWith('families/') ? { get: async () => { throw new Error('14 UNAVAILABLE'); } } : doc(path);
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await previewBroadcastAudienceHandler(req({ criteria: { kind: 'all' } }));
+    expect(res.targeted).toBe(3);
+    expect(res.withApp).toBe(0);
   });
 
   it('a missing segment is not-found', async () => {

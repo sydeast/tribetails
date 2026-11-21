@@ -136,7 +136,11 @@ describe('Emergency Contacts are never a recipient (#829)', () => {
   it('broadcastMessage texts the household phone and never an Emergency Contact phone', async () => {
     const ctx = buildDbMock({
       writeThrough: true,
-      docs: { 'clients/u1': { notificationPrefs: { byKey: { 'broadcast.message': { sms: true } } } } },
+      docs: {
+        'clients/u1': { notificationPrefs: { byKey: { 'broadcast.message': { sms: true } } } },
+        // #2482: the stored login is the household's own, a joined member.
+        'families/k1/members/u1': { role: 'PRIMARY', status: 'ACTIVE' },
+      },
       queryDocs: { kinfolk: [{ id: 'k1', data: KINFOLK_WITH_EC }], fcm_tokens: [] },
     });
     mocks.dbFn.mockReturnValue(ctx.db);

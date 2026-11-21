@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { buildDbMock } from './_helpers/mockDb';
+import { buildDbMock as buildBareDbMock } from './_helpers/mockDb';
+import { withJoinedHouseholds } from './_helpers/joinedHouseholds';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
 const mocks = vi.hoisted(() => ({
@@ -23,7 +24,9 @@ vi.mock('firebase-admin/firestore', async () => {
   return { ...actual, FieldValue: { serverTimestamp: () => '__TS__' } };
 });
 
-import { broadcastMessageHandler } from '../src/admin/broadcastMessage';
+import { broadcastMessageHandler, broadcastSender } from '../src/admin/broadcastMessage';
+import { getNotificationDef } from '../src/notifications/catalog';
+import { loadBusinessOverride, streamForRecipient } from '../src/notifications/prefs';
 import { getBroadcastProgressHandler, stopBroadcastHandler } from '../src/admin/broadcastProgress';
 import { outboundFanoutSweepCore } from '../src/scheduled/outboundFanoutSweep';
 import { writeAuditEntry } from '../src/lib/writeAuditEntry';
@@ -39,6 +42,15 @@ beforeEach(() => {
   mocks.getAdmin.mockReset().mockReturnValue({ messaging: () => ({ sendEachForMulticast: mocks.multicast }) });
   (writeAuditEntry as any).mockClear();
 });
+
+/**
+ * #2482: every household fixture here with a stored login was joined by it
+ * (see `withJoinedHouseholds`); the staff-login cases seed their own member
+ * records to say otherwise.
+ */
+function buildDbMock(opts: Parameters<typeof buildBareDbMock>[0] = {}) {
+  return buildBareDbMock(withJoinedHouseholds(opts));
+}
 
 function req(data: unknown, uid: string | null = 'admin1'): CallableRequest<unknown> {
   return {
@@ -1030,6 +1042,141 @@ describe('broadcastMessage fills merge fields per household (#1610)', () => {
   });
 });
 
+/**
+ * #2482: a broadcast decides who in a household has a MyTribe account with the
+ * member check every other household send makes (`resolveKinfolkUid`, #1840),
+ * not the stored `kinfolk.uid` alone, which can hold a staff login on a
+ * household nobody has joined.
+ */
+describe('broadcastMessage uses the member check for the household account (#2482)', () => {
+  const LONG = `${'Spring hours change on Monday. '.repeat(12)}Thank you!`;
+  /** Texts locked on by the operator, so a household with no account is texted. */
+  const TEXTS_LOCKED_ON = {
+    'businessSettings/notifications': {
+      byKey: { 'broadcast.message': { channels: { sms: true, push: true }, locked: { sms: true, push: true } } },
+    },
+  };
+  /**
+   * A household whose record carries a staff login. The login has a device and
+   * its own settings, so anything routed by the stored login alone would reach
+   * it. `null` member record: nobody joined (see `withJoinedHouseholds`).
+   */
+  function staffLoginDb(opts: { primary?: string } = {}) {
+    const members = opts.primary ? [{ id: opts.primary, data: { role: 'PRIMARY', status: 'ACTIVE' } }] : [];
+    return buildDbMock({
+      writeThrough: true,
+      docs: {
+        ...TEXTS_LOCKED_ON,
+        'staff/staff1': { role: 'admin' },
+        'clients/staff1': prefsDoc({ email: true, sms: true, push: true }),
+        'families/k1/members/staff1': null,
+        'kinfolk/k1': { status: 'active', email: '', phoneNumber: '+14155552671', uid: 'staff1' },
+        ...(opts.primary
+          ? {
+              [`families/k1/members/${opts.primary}`]: { role: 'PRIMARY', status: 'ACTIVE' },
+              [`clients/${opts.primary}`]: prefsDoc({ email: true, sms: true, push: true }),
+            }
+          : {}),
+      },
+      queryDocs: {
+        kinfolk: [{ id: 'k1', data: { status: 'active', email: '', phoneNumber: '+14155552671', uid: 'staff1' } }],
+        'families/k1/members': members,
+        fcm_tokens: [
+          { id: 'staff-tok', data: { uid: 'staff1' } },
+          ...(opts.primary ? [{ id: 'primary-tok', data: { uid: opts.primary } }] : []),
+        ],
+      },
+    });
+  }
+  const entries = (ctx: { writes: Array<{ path: string; data: any }> }) =>
+    ctx.writes.filter((x) => x.path.startsWith('notifications/'));
+
+  it('HAPPY: a household nobody joined, with a staff login stored, gets the whole text and no entry', async () => {
+    const ctx = staffLoginDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await broadcastMessageHandler(
+      req({ criteria: { kind: 'all' }, channels: ['inapp', 'sms', 'push'], subject: 'Hours', body: LONG }),
+    );
+    expect(mocks.twilioCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.twilioCreate.mock.calls[0][0].body).toBe(LONG.trim());
+    // Nothing on the staff login's notifications list, and no push to its device.
+    expect(entries(ctx)).toHaveLength(0);
+    expect(mocks.multicast).not.toHaveBeenCalled();
+    expect(res.perChannel.sms).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(res.perChannel.inapp).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    expect(res.perChannel.push).toEqual({ sent: 0, skipped: 1, failed: 0 });
+  });
+
+  it('HAPPY: a claimed household with a staff login stored is reached through its PRIMARY', async () => {
+    const ctx = staffLoginDb({ primary: 'p1' });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await broadcastMessageHandler(
+      req({ criteria: { kind: 'all' }, channels: ['inapp', 'sms', 'push'], subject: 'Hours', body: LONG }),
+    );
+    const list = entries(ctx);
+    expect(list).toHaveLength(1);
+    expect(list[0].data.recipientUid).toBe('p1');
+    // The PRIMARY has an account, so the text is the short line and its link.
+    const text = String(mocks.twilioCreate.mock.calls[0][0].body);
+    expect(text.endsWith(`... More in MyTribe: https://kinfolk.tribetails.com/notifications?entry=${list[0].path.split('/')[1]}`)).toBe(true);
+    expect(text.length).toBeLessThan(LONG.length);
+    expect(mocks.multicast.mock.calls[0][0].tokens).toEqual(['primary-tok']);
+  });
+
+  it('HAPPY: a household its own login joined is unchanged: entry on its list, short text with the link', async () => {
+    const ctx = buildDbMock({
+      writeThrough: true,
+      docs: { 'clients/u1': prefsDoc({ sms: true }) },
+      queryDocs: { kinfolk: [{ id: 'k1', data: { status: 'active', phoneNumber: '+14155552671', uid: 'u1' } }] },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['sms'], body: 'Closed Monday' }));
+    const list = entries(ctx);
+    expect(list.map((e) => e.data.recipientUid)).toEqual(['u1']);
+    expect(mocks.twilioCreate.mock.calls[0][0].body).toBe(
+      `Closed Monday More in MyTribe: https://kinfolk.tribetails.com/notifications?entry=${list[0].path.split('/')[1]}`,
+    );
+  });
+
+  it('a resumed send, which reads the household back by id, makes the same check', async () => {
+    const ctx = staffLoginDb();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const def = getNotificationDef('broadcast.message');
+    const sendOne = broadcastSender({
+      actorUid: 'admin1',
+      channels: ['inapp', 'sms', 'push'],
+      subject: 'Hours',
+      body: LONG,
+      def,
+      businessOverride: await loadBusinessOverride('broadcast.message'),
+      stream: streamForRecipient(def, 'clients'),
+    });
+    const said = await sendOne('k1');
+    expect(said.outcome).toBe('sent');
+    expect(mocks.twilioCreate.mock.calls[0][0].body).toBe(LONG.trim());
+    expect(entries(ctx)).toHaveLength(0);
+    expect(mocks.multicast).not.toHaveBeenCalled();
+  });
+
+  it('ERROR: a member check that cannot be read sends nothing, and nothing to the stored login', async () => {
+    const ctx = staffLoginDb();
+    const doc = ctx.db.doc;
+    ctx.db.doc = (path: string) => {
+      if (path.startsWith('families/k1/members/')) {
+        return { get: async () => { throw new Error('14 UNAVAILABLE'); } };
+      }
+      return doc(path);
+    };
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      broadcastMessageHandler(req({ criteria: { kind: 'all' }, channels: ['inapp', 'sms', 'push'], subject: 'Hours', body: LONG })),
+    ).rejects.toMatchObject({ message: 'broadcast_all_failed' });
+    expect(mocks.twilioCreate).not.toHaveBeenCalled();
+    expect(mocks.multicast).not.toHaveBeenCalled();
+    expect(entries(ctx)).toHaveLength(0);
+    expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ event: 'recipient.resolve.failed', severity: 'warn' }));
+  });
+});
 
 /**
  * #1834 (operator ruling, 2026-11-20): with notices to households switched off,
