@@ -1,5 +1,6 @@
 package com.tribetails.auntieos.web
 
+import com.tribetails.auntieos.web.data.visitStatusCode
 import com.tribetails.auntieos.web.ui.components.AuntieStatusTone
 import com.tribetails.auntieos.web.ui.components.formatTime
 import com.tribetails.auntieos.web.ui.components.greetingForHour
@@ -73,6 +74,23 @@ class DenScreenKitTest {
         assertEquals("cancelled", statusLabel("CANCELLED"))
         assertEquals("scheduled", statusLabel("SCHEDULED"))
         assertEquals("scheduled", statusLabel("anything-else"))
+    }
+
+    // #2268: the Home visit card labelled a one-L CANCELED visit "scheduled".
+    @Test
+    fun statusLabel_reads_every_spelling_of_a_cancellation_as_cancelled() {
+        assertEquals("cancelled", statusLabel("CANCELED"))
+        assertEquals("cancelled", statusLabel("cancelled"))
+        assertEquals("cancelled", statusLabel(" canceled "))
+    }
+
+    @Test
+    fun visitStatusCode_folds_the_one_l_spelling_and_keeps_unknown_codes() {
+        assertEquals("CANCELLED", visitStatusCode("CANCELED"))
+        assertEquals("CANCELLED", visitStatusCode("cancelled"))
+        assertEquals("SCHEDULED", visitStatusCode(" scheduled "))
+        assertEquals("NO_SHOW", visitStatusCode("no_show"))
+        assertEquals("", visitStatusCode(null))
     }
 
     @Test

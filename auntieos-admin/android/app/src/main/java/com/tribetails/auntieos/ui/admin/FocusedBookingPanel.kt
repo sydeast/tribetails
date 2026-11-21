@@ -25,6 +25,7 @@ import com.composables.icons.lucide.CircleAlert
 import com.composables.icons.lucide.CircleCheckBig
 import com.composables.icons.lucide.Lucide
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.data.model.visitStatusCode
 import com.tribetails.auntieos.domain.storedBusinessLocal
 import com.tribetails.auntieos.ui.admin.scheduling.FOCUSED_BOOKING_FAILED_TITLE
 import com.tribetails.auntieos.ui.admin.scheduling.FOCUSED_BOOKING_GONE_BODY
@@ -152,7 +153,7 @@ private fun FocusedVisitCard(
 ) {
     val c = AuntieTheme.colors
     val zone = LocalBusinessZone.current
-    val status = session.status.uppercase()
+    val status = visitStatusCode(session.status)
     val tone = when (status) {
         "CANCELLED" -> AuntieStatusTone.Muted
         "COMPLETED" -> AuntieStatusTone.Purple
