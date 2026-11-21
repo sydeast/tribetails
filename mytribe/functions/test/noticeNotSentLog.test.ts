@@ -167,13 +167,20 @@ describe('#1819 a notice the send switch held back', () => {
 });
 
 describe('#1905 a channel the household switched off', () => {
+  /**
+   * #2382 (2026-11-20) locked the payment notice's email on for households, so
+   * a household can no longer switch it off. The rule is unchanged for every
+   * other notice, so it is exercised on the invoice-changed notice, which rides
+   * the same Invoices & Payments category switch.
+   */
+  const SWITCHABLE_KEY = 'invoice.updated';
   /** The portal's category switch: Invoices & Payments, Email off. */
   const EMAIL_OFF = { 'clients/kinUid': { displayName: 'Dre East', notificationPrefs: { byCategory: { invoice: { email: false } } } } };
 
   it('the household copy goes to their notifications list, sends no email, and the log says so', async () => {
     const ctx = db(EMAIL_OFF);
     const outcome = await enqueueNotificationDetailed({
-      key: PAYMENT_KEY,
+      key: SWITCHABLE_KEY,
       recipientUid: 'kinUid',
       data: { invoiceId: 'inv1', kinfolkId: 'fam1' },
     });
@@ -192,35 +199,35 @@ describe('#1905 a channel the household switched off', () => {
         targetCollection: 'notifications',
         targetId: household[0]!.path.split('/')[1],
         description:
-          'Did not send "Payment or credit applied to an invoice" to Dre East by email: they turned that off in their notification settings',
+          'Did not send "Invoice or quote updated" to Dre East by email: they turned that off in their notification settings',
         payload: expect.objectContaining({ outcome: 'channels_off', channels: ['email'] }),
       }),
     ]);
   });
 
   it('push, off by default and never chosen, is not blamed on the household', async () => {
-    const def = getNotificationDef(PAYMENT_KEY);
+    const def = getNotificationDef(SWITCHABLE_KEY);
     expect(resolveChannels(def, {}, null, 'kinfolk')).toEqual({ email: true, sms: false, push: false });
     expect(channelsSwitchedOffByRecipient(def, {}, null, 'kinfolk')).toEqual([]);
 
     const ctx = db();
-    await enqueueNotificationDetailed({ key: PAYMENT_KEY, recipientUid: 'kinUid', data: { invoiceId: 'inv1', kinfolkId: 'fam1' } });
+    await enqueueNotificationDetailed({ key: SWITCHABLE_KEY, recipientUid: 'kinUid', data: { invoiceId: 'inv1', kinfolkId: 'fam1' } });
     expect(logLines(ctx.writes)).toEqual([]);
   });
 
   it('names each channel they switched off, by key or by category, and only those', () => {
-    const def = getNotificationDef(PAYMENT_KEY);
+    const def = getNotificationDef(SWITCHABLE_KEY);
     expect(channelsSwitchedOffByRecipient(def, { byCategory: { invoice: { email: false } } }, null, 'kinfolk')).toEqual([
       'email',
     ]);
-    expect(channelsSwitchedOffByRecipient(def, { byKey: { [PAYMENT_KEY]: { email: false } } }, null, 'kinfolk')).toEqual([
+    expect(channelsSwitchedOffByRecipient(def, { byKey: { [SWITCHABLE_KEY]: { email: false } } }, null, 'kinfolk')).toEqual([
       'email',
     ]);
     // Their per-notification choice wins over the category, as it does in the send.
     expect(
       channelsSwitchedOffByRecipient(
         def,
-        { byKey: { [PAYMENT_KEY]: { email: true } }, byCategory: { invoice: { email: false } } },
+        { byKey: { [SWITCHABLE_KEY]: { email: true } }, byCategory: { invoice: { email: false } } },
         null,
         'kinfolk',
       ),
@@ -245,7 +252,7 @@ describe('#1905 a channel the household switched off', () => {
   });
 
   it('a channel the owner turned off or locked is the owner\'s doing, not the household\'s', () => {
-    const def = getNotificationDef(PAYMENT_KEY);
+    const def = getNotificationDef(SWITCHABLE_KEY);
     const theirs = { byCategory: { invoice: { email: false } } };
     expect(channelsSwitchedOffByRecipient(def, theirs, { enabled: true, channels: { email: false } }, 'kinfolk')).toEqual([]);
     expect(
@@ -254,9 +261,22 @@ describe('#1905 a channel the household switched off', () => {
     expect(channelsSwitchedOffByRecipient(def, theirs, { enabled: false, channels: {} }, 'kinfolk')).toEqual([]);
   });
 
+  it('#2382: the payment notice still goes by email with the household\'s Email switch off, and nothing is blamed', async () => {
+    const ctx = db(EMAIL_OFF);
+    const outcome = await enqueueNotificationDetailed({
+      key: PAYMENT_KEY,
+      recipientUid: 'kinUid',
+      data: { invoiceId: 'inv1', kinfolkId: 'fam1' },
+    });
+    expect(outcome.appOnly ?? []).not.toContain('kinUid');
+    expect(outcome.channelsByRecipient?.kinUid).toEqual(['email']);
+    expect(workOrders(ctx.writes).filter((w) => w.data.recipientUid === 'kinUid')).toHaveLength(1);
+    expect(logLines(ctx.writes).filter((l) => l.actionType === 'NOTIFICATION_NOT_SENT')).toEqual([]);
+    expect(channelsSwitchedOffByRecipient(getNotificationDef(PAYMENT_KEY), { byCategory: { invoice: { email: false } } }, null, 'kinfolk')).toEqual([]);
+  });
   it('with the send switch off too, the one line is "held back", not a channel line', async () => {
     const ctx = db({ ...EMAIL_OFF, ...GATE_OFF });
-    await enqueueNotificationDetailed({ key: PAYMENT_KEY, recipientUid: 'kinUid', data: { invoiceId: 'inv1', kinfolkId: 'fam1' } });
+    await enqueueNotificationDetailed({ key: SWITCHABLE_KEY, recipientUid: 'kinUid', data: { invoiceId: 'inv1', kinfolkId: 'fam1' } });
     expect(logLines(ctx.writes).map((l) => (l.payload as { outcome: string }).outcome)).toEqual(['held']);
   });
 });

@@ -25,6 +25,9 @@ import {
   audienceBlurb,
   catalogForStream,
   currentOverride,
+  keptLockedOn,
+  lockedOnChannel,
+  lockedOnFor,
   setLockReason,
   setStreamChannel,
   setStreamEnabled,
@@ -32,7 +35,7 @@ import {
   toggledStreamChannelLock,
   toggledStreamEnabledLock,
 } from '../lib/notificationGateEdit';
-import { rowBadges } from '../lib/notificationProvenance';
+import { REQUIRED_FOR_KINFOLK, rowBadges } from '../lib/notificationProvenance';
 import { BadgeRow, GateRowDetail, UngatedSendsPanel } from './NotificationGateDetail';
 import { DenPanel } from '../components/DenScreenKit';
 import { Banner } from '../components/Banner';
@@ -115,8 +118,11 @@ export function NotificationGate() {
 
   // Optimistic write: apply the edit locally, persist it, and on failure surface
   // the error and reload to server truth (never leave a phantom optimistic edit).
-  function persist(entry: NotificationCatalogEntry, override: NotificationOverride) {
+  function persist(entry: NotificationCatalogEntry, edited: NotificationOverride) {
     if (!matrix) return;
+    // #2382: a locked confirmation's Kinfolk copy and email are saved on, so an
+    // off stored before the ruling cannot make every later edit on the row fail.
+    const override = keptLockedOn(entry, edited);
     setMatrix({ ...matrix, overrides: { ...matrix.overrides, [entry.key]: override } });
     saveBusinessNotificationOverride(entry.key, override)
       .then(() => setSaveError(null))
@@ -264,7 +270,10 @@ interface GateRowProps {
 function GateRow({ entry, matrix, stream, audienceTitle, onPersist }: GateRowProps) {
   const [open, setOpen] = useState(false);
   const title = displayTitle(entry);
-  const enabled = streamEffectiveEnabled(matrix, entry.key, stream);
+  // #2382: a confirmation locked on for this audience is drawn on and fixed,
+  // whatever an older stored override says, because the send ignores that off.
+  const lockedOn = lockedOnFor(entry, stream);
+  const enabled = lockedOn || streamEffectiveEnabled(matrix, entry.key, stream);
   const enabledLockOn = streamEffectiveLockedEnabled(matrix, entry.key, stream);
   const anyChannelLockOn = NOTIFICATION_CHANNELS.some((c) =>
     streamEffectiveChannelLocked(matrix, entry.key, stream, c),
@@ -279,7 +288,7 @@ function GateRow({ entry, matrix, stream, audienceTitle, onPersist }: GateRowPro
   // the always-on ones, not to every row that grew a badge. A "Never fires" or
   // "Marketing" badge must not sprout a "why it stays on" field with nothing
   // locked behind it.
-  const showReason = enabledLockOn || anyChannelLockOn || alwaysEnabledFor(entry, stream);
+  const showReason = enabledLockOn || anyChannelLockOn || lockedOn || alwaysEnabledFor(entry, stream);
 
   return (
     <div className="notifgate__row">
@@ -301,6 +310,7 @@ function GateRow({ entry, matrix, stream, audienceTitle, onPersist }: GateRowPro
         <GateCell
           on={enabled}
           locked={enabledLockOn}
+          fixed={lockedOn}
           toggleLabel={`${title}, on or off for ${audienceTitle}`}
           lockLabel={enabledLockOn ? `Locked on for ${audienceTitle}, tap to unlock` : `Lock on for ${audienceTitle}`}
           onToggle={() =>
@@ -310,13 +320,15 @@ function GateRow({ entry, matrix, stream, audienceTitle, onPersist }: GateRowPro
         />
 
         {NOTIFICATION_CHANNELS.map((channel) => {
-          const channelOn = streamEffectiveChannel(matrix, entry.key, stream, channel);
+          const channelFixed = lockedOnChannel(entry, stream, channel);
+          const channelOn = channelFixed || streamEffectiveChannel(matrix, entry.key, stream, channel);
           const channelLocked = streamEffectiveChannelLocked(matrix, entry.key, stream, channel);
           return (
             <GateCell
               key={channel}
               on={channelOn}
               locked={channelLocked}
+              fixed={channelFixed}
               // On/Off supersedes channels: a channel toggle is inert while the
               // notification's master is off, but stays visible.
               toggleDisabled={!enabled}
@@ -355,6 +367,11 @@ function GateRow({ entry, matrix, stream, audienceTitle, onPersist }: GateRowPro
 interface GateCellProps {
   on: boolean;
   locked: boolean;
+  /**
+   * #2382: locked on by ruling, not by the operator. The toggle is drawn on and
+   * disabled, and the lock is drawn closed with nothing to tap.
+   */
+  fixed?: boolean;
   toggleLabel: string;
   lockLabel: string;
   toggleDisabled?: boolean;
@@ -363,7 +380,33 @@ interface GateCellProps {
 }
 
 /** One aligned matrix cell: a toggle over a lock control. */
-function GateCell({ on, locked, toggleLabel, lockLabel, toggleDisabled = false, onToggle, onToggleLock }: GateCellProps) {
+function GateCell({
+  on,
+  locked,
+  fixed = false,
+  toggleLabel,
+  lockLabel,
+  toggleDisabled = false,
+  onToggle,
+  onToggleLock,
+}: GateCellProps) {
+  if (fixed) {
+    return (
+      <div className="notifgate__cell">
+        <Toggle checked onChange={() => {}} disabled label={`${toggleLabel}, ${REQUIRED_FOR_KINFOLK.toLowerCase()}`} />
+        <button
+          type="button"
+          className="notifgate__lock notifgate__lock--on"
+          aria-pressed
+          aria-label={REQUIRED_FOR_KINFOLK}
+          title={REQUIRED_FOR_KINFOLK}
+          disabled
+        >
+          <LockIcon />
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="notifgate__cell">
       <Toggle checked={on} onChange={onToggle} disabled={toggleDisabled} label={toggleLabel} />

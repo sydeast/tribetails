@@ -127,6 +127,58 @@ describe('getNotificationCatalogHandler', () => {
     }
   });
 
+  // Ruling on #2382 (2026-11-20): payment, invoice, KinTale and booking
+  // confirmations are required on and cannot be disabled. A stored operator off
+  // (from before the ruling) no longer hides the row or drops its email,
+  // because the send ignores it too; text and push stay the household's.
+  describe('#2382: locked confirmations', () => {
+    const LOCKED = [
+      'invoice.new',
+      'invoice.receipt',
+      'invoice.payment.applied',
+      'kincare.booking.confirm',
+      'kintale.published',
+    ];
+    async function dtoFor(key: string) {
+      const result = await getNotificationCatalogHandler({ data: {}, auth: SIGNED_IN } as never);
+      return result.categories.flatMap((c) => c.keys).find((k) => k.key === key);
+    }
+    for (const key of LOCKED) {
+      it(`${key}: email is required and locked on, text and push free`, async () => {
+        const dto = await dtoFor(key);
+        expect(dto, key).toBeDefined();
+        expect(dto!.required).toEqual(['email']);
+        expect(dto!.lockedChannels).toEqual(['email']);
+        expect(dto!.lockedChannelValues).toEqual({ email: true });
+        expect(dto!.allowedChannels).toEqual(['email', 'sms', 'push']);
+      });
+      it(`${key}: a stored Kinfolk off neither hides the row nor drops its email`, async () => {
+        h.overrideData = {
+          byKey: { [key]: { enabled: true, channels: {}, streams: { kinfolk: { enabled: false } } } },
+        };
+        const dto = await dtoFor(key);
+        expect(dto, key).toBeDefined();
+        expect(dto!.lockedChannels).toEqual(['email']);
+        expect(dto!.lockedChannelValues).toEqual({ email: true });
+      });
+      it(`${key}: a stored flat email off still shows email locked on`, async () => {
+        h.overrideData = { byKey: { [key]: { enabled: false, channels: { email: false } } } };
+        const dto = await dtoFor(key);
+        expect(dto!.allowedChannels).toContain('email');
+        expect(dto!.lockedChannelValues).toEqual({ email: true });
+      });
+    }
+    it('an operator text-off on a locked confirmation still drops text', async () => {
+      h.overrideData = { byKey: { 'invoice.new': { enabled: true, channels: { sms: false } } } };
+      const dto = await dtoFor('invoice.new');
+      expect(dto!.allowedChannels).toEqual(['email', 'push']);
+    });
+    it('another always-on row the operator switched off is still hidden', async () => {
+      h.overrideData = { byKey: { 'kincare.booking.cancel': { enabled: false, channels: {} } } };
+      expect(await dtoFor('kincare.booking.cancel')).toBeUndefined();
+    });
+  });
+
   // Audience revamp 2026-07: the filter is now audiences.kinfolk (was kinfolkFacing),
   // so business-only and staff-only keys stay hidden from the kinfolk portal.
   it('excludes keys without the kinfolk audience (business/staff-only)', async () => {

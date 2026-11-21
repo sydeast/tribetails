@@ -49,6 +49,20 @@ data class NotifRowBadge(
  */
 const val NOTIF_MEANT_TO_STAY_ON = "Meant to stay on"
 const val NOTIF_OFF_AND_MEANT_TO_STAY_ON = "Off, and meant to stay on"
+
+/**
+ * THE ONE WORDING FOR THE ENFORCED LOCK (ruling on #2382, 2026-11-20). Payment,
+ * invoice, KinTale and booking confirmations are required on for Kinfolk, email
+ * included, and the server enforces it, so this may say "cannot be turned off".
+ * It does not promise delivery: the household launch switch still holds every
+ * household notice until launch. Same strings as REQUIRED_FOR_KINFOLK /
+ * REQUIRED_FOR_KINFOLK_DETAIL on admin web and the desktop console; the detail
+ * is the server's refusal sentence word for word.
+ */
+const val NOTIF_REQUIRED_FOR_KINFOLK = "Required for Kinfolk"
+const val NOTIF_REQUIRED_FOR_KINFOLK_DETAIL =
+    "Payment, invoice, KinTale and booking confirmations cannot be turned off for Kinfolk, " +
+        "and neither can their email. Text and push can still be changed."
 /**
  * WHY THIS EXISTS, AND WHY IT IS NOT THE WORDS "ALWAYS ON".
  *
@@ -75,6 +89,15 @@ fun notifAlwaysOnBadge(
     stream: String,
     enabled: Boolean,
 ): NotifRowBadge? {
+    // #2382: an enforced lock, not advice. Its own words, never the "you can
+    // switch it off here" sentence below, which would be false for it.
+    if (entry.lockedOnFor(stream)) {
+        return NotifRowBadge(
+            label = NOTIF_REQUIRED_FOR_KINFOLK,
+            detail = NOTIF_REQUIRED_FOR_KINFOLK_DETAIL,
+            tone = NotifBadgeTone.Info,
+        )
+    }
     if (!entry.alwaysEnabledFor(stream)) return null
     return if (!enabled) {
         NotifRowBadge(

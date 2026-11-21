@@ -21,6 +21,14 @@ import { DEDUPE_COLLECTION, deliverListedCopy, enqueueNotificationDetailed } fro
  * wrote.
  */
 const KEY = 'invoice.payment.applied';
+/**
+ * #2382 (2026-11-20) locked `invoice.payment.applied` on for households, email
+ * included, so neither an operator off nor a household's own email off can hold
+ * its copy back any more. The branches for those holds are still live for every
+ * other key, so they are exercised on `invoice.updated`, an unlocked row with
+ * the same audiences and channels.
+ */
+const OPEN_KEY = 'invoice.updated';
 const BASE_MS = Date.UTC(2026, 10, 14, 15, 0, 0);
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const DATA = { kinfolkId: 'fam1', invoiceId: 'inv1', paymentId: 'settle_ipay_1' };
@@ -39,9 +47,9 @@ function setup(extra: Record<string, Record<string, unknown>> = {}) {
 }
 
 /** The sweep's send: the household's list only, and the office. */
-const listOnly = () =>
+const listOnly = (key: string = KEY) =>
   enqueueNotificationDetailed({
-    key: KEY,
+    key,
     recipientUid: 'kinUid',
     data: DATA,
     dedupeWindowMs: WEEK_MS,
@@ -147,19 +155,37 @@ describe('#2281 review: a list-only copy the admin then asks to have sent', () =
 
   it('honours the household\'s own settings: every channel off sends nothing', async () => {
     const ctx = setup({
-      'clients/kinUid': { notificationPrefs: { byKey: { [KEY]: { email: false, sms: false, push: false } } } },
+      'clients/kinUid': { notificationPrefs: { byKey: { [OPEN_KEY]: { email: false, sms: false, push: false } } } },
     });
-    await listOnly();
-    expect(await deliver()).toEqual({ outcome: 'no-channels', channels: [] });
+    await listOnly(OPEN_KEY);
+    expect(await deliver({ key: OPEN_KEY })).toEqual({ outcome: 'no-channels', channels: [] });
     expect(workOrders(ctx.writes).filter((w) => w.data.recipientUid === 'kinUid')).toEqual([]);
   });
 
   it('a notification the operator switched off sends nothing', async () => {
     const ctx = setup();
-    await listOnly();
-    ctx.docs['businessSettings/notifications'] = { byKey: { [KEY]: { enabled: false } } };
-    expect((await deliver()).outcome).toBe('off');
+    await listOnly(OPEN_KEY);
+    ctx.docs['businessSettings/notifications'] = { byKey: { [OPEN_KEY]: { enabled: false } } };
+    expect((await deliver({ key: OPEN_KEY })).outcome).toBe('off');
     expect(workOrders(ctx.writes).filter((w) => w.data.recipientUid === 'kinUid')).toEqual([]);
+  });
+
+  it('#2382: the payment notice still goes by email when the household switched every channel off', async () => {
+    const ctx = setup({
+      'clients/kinUid': { notificationPrefs: { byKey: { [KEY]: { email: false, sms: false, push: false } } } },
+    });
+    await listOnly();
+    expect(await deliver()).toEqual({ outcome: 'sent', channels: ['email'] });
+    expect(workOrders(ctx.writes).filter((w) => w.data.recipientUid === 'kinUid')).toHaveLength(1);
+  });
+
+  it('#2382: an operator off stored before the ruling does not hold the payment notice', async () => {
+    const ctx = setup();
+    await listOnly();
+    ctx.docs['businessSettings/notifications'] = { byKey: { [KEY]: { enabled: false, channels: { email: false } } } };
+    const res = await deliver();
+    expect(res.outcome).toBe('sent');
+    expect(res.channels).toContain('email');
   });
 
   it('stops at the household send gate', async () => {
@@ -230,15 +256,15 @@ describe('#2332 a listed copy held back writes a "not sent" line', () => {
 
   it('the notification turned off in Settings: "Did not send ... to Dre East"', async () => {
     const ctx = setup(KIN);
-    await listOnly();
-    ctx.docs['businessSettings/notifications'] = { byKey: { [KEY]: { enabled: false } } };
-    expect((await deliver()).outcome).toBe('off');
+    await listOnly(OPEN_KEY);
+    ctx.docs['businessSettings/notifications'] = { byKey: { [OPEN_KEY]: { enabled: false } } };
+    expect((await deliver({ key: OPEN_KEY })).outcome).toBe('off');
     const lines = notSent(ctx.writes);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({
       status: 'NOT_SENT',
       description: expect.stringMatching(/^Did not send "[^"]+" to Dre East: this notification is turned off in Settings$/),
-      payload: { key: KEY, outcome: 'turned_off', recipientUid: 'kinUid' },
+      payload: { key: OPEN_KEY, outcome: 'turned_off', recipientUid: 'kinUid' },
     });
   });
 
@@ -246,17 +272,17 @@ describe('#2332 a listed copy held back writes a "not sent" line', () => {
     const ctx = setup({
       'clients/kinUid': {
         displayName: 'Dre East',
-        notificationPrefs: { byKey: { [KEY]: { email: false, sms: false, push: false } } },
+        notificationPrefs: { byKey: { [OPEN_KEY]: { email: false, sms: false, push: false } } },
       },
     });
-    await listOnly();
+    await listOnly(OPEN_KEY);
     const before = notSent(ctx.writes).length;
-    expect((await deliver()).outcome).toBe('no-channels');
+    expect((await deliver({ key: OPEN_KEY })).outcome).toBe('no-channels');
     const lines = notSent(ctx.writes).slice(before);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({
       description: expect.stringMatching(/^Did not send "[^"]+" to Dre East by email.*: they turned that off in their notification settings$/),
-      payload: { key: KEY, outcome: 'channels_off', channels: expect.arrayContaining(['email']) },
+      payload: { key: OPEN_KEY, outcome: 'channels_off', channels: expect.arrayContaining(['email']) },
     });
   });
 

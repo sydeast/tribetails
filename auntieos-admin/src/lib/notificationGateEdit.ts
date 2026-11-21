@@ -114,6 +114,51 @@ export function alwaysEnabledFor(entry: NotificationCatalogEntry, stream: NotifS
   );
 }
 
+/**
+ * Whether this row is LOCKED ON for `stream`'s copy (ruling on #2382,
+ * 2026-11-20: payment, invoice, KinTale and booking confirmations are required
+ * on and cannot be disabled). Unlike `alwaysEnabledFor` this is enforced: the
+ * server refuses turning the row or its email off for that stream and ignores
+ * any off already stored, so the gate draws both on and fixed. Text and push
+ * stay editable. Mirrors `lockedOnFor` in Kotlin.
+ */
+export function lockedOnFor(entry: NotificationCatalogEntry, stream: NotifStream): boolean {
+  return entry.lockedOnStreams?.has(stream) === true;
+}
+
+/** On a locked-on row, whether `channel` is the one the lock pins on (#2382). */
+export function lockedOnChannel(
+  entry: NotificationCatalogEntry,
+  stream: NotifStream,
+  channel: NotificationChannel,
+): boolean {
+  return channel === 'email' && lockedOnFor(entry, stream);
+}
+
+/**
+ * The override to save for a locked-on row (#2382): `override` with every
+ * locked stream's copy and its email kept on. A settings doc written before
+ * the ruling can still hold an off (often a flat one, which the kinfolk stream
+ * inherits), and the server refuses any save whose kinfolk view is off. Without
+ * this, editing text or push on such a row would be refused every time. The
+ * send already ignores that stored off, so this changes what is stored, never
+ * what is sent. Rows with no lock pass through untouched.
+ */
+export function keptLockedOn(
+  entry: NotificationCatalogEntry,
+  override: NotificationOverride,
+): NotificationOverride {
+  let next = override;
+  for (const stream of entry.lockedOnStreams ?? []) {
+    const gate = next.streams[stream];
+    if ((gate?.enabled ?? next.enabled) === false) next = setStreamEnabled(next, stream, true);
+    if ((next.streams[stream]?.channels.email ?? next.channels.email) === false) {
+      next = setStreamChannel(next, stream, 'email', true);
+    }
+  }
+  return next;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Write-side override transforms (what the gate persists when a row is edited)
 // ─────────────────────────────────────────────────────────────────────────────
