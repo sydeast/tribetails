@@ -103,6 +103,20 @@ gracious-formal demotion were all live in `voice/` and absent from what the
 model saw. Run the sync after every corpus edit, and again before deploying the
 function.
 
+There is a third copy. The scheduled release runs on a GitHub runner whose
+checkout has no voice files, so it restores them from Secret Manager
+(`AUNTIE_VOICE_FILES`) for the length of the run (#2399). That copy is as old
+as the last time it was stored, and a scheduled release ships it as it is. So
+after the sync, from the repo root:
+
+```
+node scripts/voice-secret.mjs push
+```
+
+It stores nothing when the files fail the check below, and it never prints a
+line of them. `docs/runbooks/release-internals.md`, "Ask Auntie's voice files
+on the runner", has the rest.
+
 Channel and length rules belong in `voice/02_Channel_Playbook.md` §2. The
 per-type lines in `SYSTEM_FRAMING` (`web/functions/generate.js`) must agree with
 that table; when they disagree, the table is right and the prompt is the bug.
@@ -145,7 +159,9 @@ generate stops with a 500 and nothing is sent:
 deploy. It prints the reason and counts, never a name. `npm run sync:voice`
 runs it after copying. A release that ships the admin functions runs it before
 anything deploys, and stops on voice files that are present and fail. A
-checkout with no voice files is reported and not stopped (#2399).
+checkout with no voice files gets the stored copy, checked the same way; a
+stored copy that fails stops the release too. With no copy stored, the
+release reports it and goes on (#2399).
 
 After the model answers, a draft that uses a listed name in any of those forms
 is thrown away unless the request itself carries the name:

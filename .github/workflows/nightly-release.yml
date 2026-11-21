@@ -653,6 +653,13 @@ jobs:
       # functions, so step 1b would read no declared secrets and print "Not
       # checked". Building mytribe/functions first lets 1b compare the declared
       # secrets against Secret Manager for real.
+      #
+      # ASK AUNTIE'S VOICE FILES (#2399) are gitignored, so this checkout has
+      # none. Step 1b of release.sh restores them from Secret Manager
+      # (AUNTIE_VOICE_FILES, read as the release account), checks them, and
+      # removes them when it exits. Nothing for that is passed in here: no
+      # repository secret holds them. A preflight does the same restore and
+      # check, so it proves the stored copy before a full run needs it.
       - name: Preflight only
         if: needs.decide.outputs.mode == 'preflight' && needs.decide.outputs.new == 'true'
         env:
@@ -696,7 +703,11 @@ jobs:
             "$RUNNER_TEMP"/*) rm -f "$GRADLE_USER_HOME/gradle.properties" ;;
           esac
           rm -f gha-creds-*.json
-          echo "Removed the restored keystores, local.properties, sentry.properties, gradle.properties and credentials files."
+          # Ask Auntie's voice files (#2399). release.sh removes the copy it
+          # restored on every exit it controls. A job that is cancelled or
+          # times out kills it before it can, and these hold real names.
+          rm -rf auntieos-admin/web/functions/voice
+          echo "Removed the restored keystores, local.properties, sentry.properties, gradle.properties, credentials files and Ask Auntie's voice files."
 
       - name: Summary
         if: always()

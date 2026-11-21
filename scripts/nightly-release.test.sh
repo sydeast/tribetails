@@ -235,7 +235,8 @@ CLEAN_BODY="$(awk '
   on { print }
 ' "$WF")"
 for path in 'auntieos-release.keystore' 'auntieos-admin/android/local.properties' \
-            'mytribe/local.properties' '.android/debug.keystore' 'gradle.properties' 'gha-creds-'; do
+            'mytribe/local.properties' '.android/debug.keystore' 'gradle.properties' 'gha-creds-' \
+            'auntieos-admin/web/functions/voice'; do
   if printf '%s' "$CLEAN_BODY" | grep >/dev/null -cF "$path"; then
     ok "cleanup removes $path"
   else
@@ -342,15 +343,21 @@ step_run_body() {
   ' "$WF"
 }
 SANDBOX="$(mktemp -d)"
+# The voice files are sentinels too: off a runner, the cleanup must not delete
+# the copy a developer's checkout holds.
+VOICE_DIR=auntieos-admin/web/functions/voice
+SENTINELS="home/.android/debug.keystore gradle/gradle.properties ws/mytribe/local.properties
+  ws/auntieos-admin/android/local.properties ws/$VOICE_DIR/01_Voice_Bible.md ws/$VOICE_DIR/corpus/exemplars.md"
 seed_sandbox() {
   rm -rf "${SANDBOX:?}"/*
-  mkdir -p "$SANDBOX/home/.android" "$SANDBOX/gradle" "$SANDBOX/ws/mytribe" "$SANDBOX/ws/auntieos-admin/android" "$SANDBOX/rt"
-  for f in home/.android/debug.keystore gradle/gradle.properties ws/mytribe/local.properties ws/auntieos-admin/android/local.properties; do
+  mkdir -p "$SANDBOX/home/.android" "$SANDBOX/gradle" "$SANDBOX/ws/mytribe" "$SANDBOX/ws/auntieos-admin/android" "$SANDBOX/rt" \
+           "$SANDBOX/ws/$VOICE_DIR/corpus"
+  for f in $SENTINELS; do
     printf 'sentinel\n' > "$SANDBOX/$f"
   done
 }
 sandbox_intact() {
-  for f in home/.android/debug.keystore gradle/gradle.properties ws/mytribe/local.properties ws/auntieos-admin/android/local.properties; do
+  for f in $SENTINELS; do
     [ "$(cat "$SANDBOX/$f" 2>/dev/null)" = "sentinel" ] || return 1
   done
 }
@@ -387,6 +394,18 @@ if [ "$rc" != "0" ] && sandbox_intact && grep -q 'not under RUNNER_TEMP' "$SANDB
   ok "restore on a runner whose GRADLE_USER_HOME is outside RUNNER_TEMP refuses and writes nothing"
 else
   bad "restore with GRADLE_USER_HOME outside RUNNER_TEMP exited $rc or changed a file: $(head -2 "$SANDBOX/out")"
+fi
+# On a runner the cleanup also takes Ask Auntie's voice files out of the
+# workspace (#2399): release.sh removes the copy it restored on every exit it
+# controls, and a cancelled job never reaches one. The sandbox's Gradle home is
+# outside RUNNER_TEMP, so its gradle.properties must survive this.
+seed_sandbox
+rc="$(run_body 'Delete the restored signing material and credentials' true "$SANDBOX/rt")"
+if [ "$rc" = "0" ] && [ ! -e "$SANDBOX/ws/$VOICE_DIR" ] &&
+   [ "$(cat "$SANDBOX/gradle/gradle.properties" 2>/dev/null)" = "sentinel" ]; then
+  ok "cleanup on a runner removes Ask Auntie's voice files from the workspace"
+else
+  bad "cleanup on a runner exited $rc or left the voice files in the workspace: $(head -2 "$SANDBOX/out")"
 fi
 rm -rf "$SANDBOX"
 
@@ -457,6 +476,27 @@ if [ -z "$BANG" ]; then
 else
   bad "commands in the section contain '!', which zsh expands:"
   printf '    %s\n' "$BANG"
+fi
+# Ask Auntie's voice files reach the runner from Secret Manager, not from a
+# repository secret (#2399), so the loop over `secrets.*` above cannot see
+# them. The commands that store them have to be in a fenced block here, and no
+# repository secret may carry them: one is readable from any branch.
+FENCED="$(printf '%s\n' "$SECTION" | awk '/^```/ { f = !f; next } f { print }')"
+if printf '%s' "$FENCED" | grep >/dev/null -cF 'npm run sync:voice --prefix auntieos-admin/web/functions' &&
+   printf '%s' "$FENCED" | grep >/dev/null -cF 'node scripts/voice-secret.mjs push'; then
+  ok "the runbook gives the commands that store Ask Auntie's voice files"
+else
+  bad "the runbook has no fenced 'sync:voice' and 'node scripts/voice-secret.mjs push' commands"
+fi
+if printf '%s' "$SECTION" | grep >/dev/null -cF 'AUNTIE_VOICE_FILES'; then
+  ok "the runbook names the secret the voice files are stored in"
+else
+  bad "the runbook does not name AUNTIE_VOICE_FILES"
+fi
+if grep -Eq 'secrets\.[A-Z0-9_]*VOICE' "$WF"; then
+  bad "the workflow reads the voice files from a repository secret"
+else
+  ok "the workflow passes no repository secret for the voice files"
 fi
 
 echo
