@@ -9,15 +9,17 @@ import { TRIBETAILS_CORS } from '../lib/cors';
 import { resolveInvoiceWriteActor, testOwnsDoc } from '../lib/testMode';
 import {
   paidCentsFromPayments,
-  invoiceTotalCentsOf,
-  settleInvoice,
+  settleInvoiceDoc,
   type PaymentAmount,
 } from '../lib/invoiceMath';
 import { validateResponse } from '../lib/callableResponse';
+import { FALLBACK_BUSINESS_TIME_ZONE } from '../lib/businessHours';
+import { anyTimestamp, ledgerDateText, ONLINE_METHOD_FIELD, paymentMethodLabelOf } from '../lib/onlinePaymentMethod';
 import { WRITE_OFFS_SUBCOLLECTION } from '../lib/invoiceArchive';
 import { CentsSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import {
   TIP_BASES,
+  ledgerAppliedInvoiceOf,
   paymentMoneyOf,
   paymentReconciles,
   readTipBasis,
@@ -126,6 +128,14 @@ const InvoicePaymentSchema = z
      * put next to the settlement they belong to.
      */
     sourcePaymentId: z.string().nullable(),
+    /**
+     * #2334: the Method cell in plain words. A card payment's actual method
+     * (Card, Klarna, Affirm, a wallet), "Online payment" for one stored before
+     * the method was, and the recorded method otherwise. `''` when none was
+     * recorded, so each client keeps its own words for that. `method` stays
+     * the stored value.
+     */
+    methodLabel: z.string(),
   })
   .strict();
 
@@ -209,8 +219,14 @@ const LedgerPaymentSchema = z
     /** The human-facing number behind `appliedInvoiceId`. `''` when unknown. */
     appliedInvoiceNumber: z.string(),
     method: z.string(),
+    /** #2334: the Method cell in plain words, the same rule as the settlement row's. */
+    methodLabel: z.string(),
     reference: z.string(),
-    /** FREE TEXT on this collection, like every legacy billing date. Not parsed. */
+    /**
+     * FREE TEXT on this collection, like every legacy billing date. Not parsed.
+     * #2334: a card payment's row stores a Timestamp, which reads here as its
+     * business day (`YYYY-MM-DD`) rather than as nothing.
+     */
     date: z.string(),
     /**
      * STAFF ONLY, and it stays that way. This callable is admin-gated
@@ -275,10 +291,20 @@ const WriteOffEntrySchema = z
 export const Result = z
   .object({
     invoiceId: z.string().min(1),
-    /** The subcollection, newest first. THE AUTHORITY: `paidCents` is their sum. */
+    /** The subcollection, newest first. THE AUTHORITY: with `broughtOverPaidCents`, `paidCents` is their sum. */
     payments: z.array(InvoicePaymentSchema),
-    /** Sum of `payments` above, the same arithmetic the balance is derived from. */
+    /**
+     * What has been applied: the sum of `payments` above plus
+     * `broughtOverPaidCents`, the same arithmetic the balance is derived from.
+     */
     paidCents: CentsSchema,
+    /**
+     * #2470: what was paid on this invoice before it was brought over from the
+     * old system, which has no payment row. 0 on every other invoice. Clients
+     * show it as its own line under the payments, so the list and `paidCents`
+     * agree.
+     */
+    broughtOverPaidCents: CentsSchema,
     /** What the invoice is worth, in cents, as the classifier reads it. */
     totalCents: CentsSchema,
     /**
@@ -404,9 +430,10 @@ export async function getInvoiceLedgerHandler(
   // invoice's stored balance was computed from rather than a second opinion.
   const paymentsSnap = await invRef.collection('payments').get();
   const paymentDocs = paymentsSnap.docs.map((d) => ({ id: d.id, data: d.data() as PaymentAmount }));
-  const paidCents = paidCentsFromPayments(paymentDocs.map((p) => p.data));
-  const totalCents = invoiceTotalCentsOf(invoice);
-  const settlement = settleInvoice(totalCents, paidCents);
+  // #2470: settled on the rows plus what was brought over paid, and
+  // `paidCents` below is that applied figure.
+  const settlement = settleInvoiceDoc(invoice, paidCentsFromPayments(paymentDocs.map((p) => p.data)));
+  const paidCents = settlement.paidCents;
   // #2090: the write-off entries. Read beside the payments, never summed into them.
   const writeOffSnap = await invRef.collection(WRITE_OFFS_SUBCOLLECTION).get();
   const writeOffs = writeOffSnap.docs
@@ -433,6 +460,7 @@ export async function getInvoiceLedgerHandler(
         // paidCentsFromPayments' rule, per row, so the list and its sum agree.
         amountCents: paidCentsFromPayments([data]),
         method: strOrNull(raw['method']),
+        methodLabel: paymentMethodLabelOf(raw['method'], raw[ONLINE_METHOD_FIELD]),
         reference: strOrNull(raw['reference']),
         paidAt: strOrNull(raw['paidAt']),
         recordedBy: strOrNull(raw['recordedBy']),
@@ -457,6 +485,22 @@ export async function getInvoiceLedgerHandler(
   // an `amount` for (see `resolveLedgerAmountCents`). Counted across the
   // whole page so ONE warn log reports the invoice, not one log line per row.
   let unresolvedLedgerAmounts = 0;
+  // #2334: the business zone, read once and only when a row's `date` is a
+  // Timestamp (every card payment's), so it reads as that business day.
+  let zone: string = FALLBACK_BUSINESS_TIME_ZONE;
+  let zoneRead = false;
+  const zoneFor = async (docs: readonly FirebaseFirestore.QueryDocumentSnapshot[]): Promise<void> => {
+    if (zoneRead || !anyTimestamp(docs.map((d) => (d.data() as Record<string, unknown>)['date']))) return;
+    zoneRead = true;
+    try {
+      // Loaded on use, like every other caller: it is not in the eager graph.
+      const { businessTimeZoneReader } = await import('../lib/pastVisit.js');
+      zone = await businessTimeZoneReader()();
+    } catch {
+      // The settings read failing costs the day its zone, never the ledger.
+    }
+  };
+  await zoneFor(ledgerSnap.docs);
   /**
    * One ROOT `payments` document, read as money. Shared by both root-collection
    * lists below so they cannot come to different conclusions about the same
@@ -496,11 +540,13 @@ export async function getInvoiceLedgerHandler(
       unappliedCents: money.unappliedCents,
       proceedsCents: money.proceedsCents,
       autoApply: raw['autoApply'] === true,
-      appliedInvoiceId: str(raw['appliedInvoiceId']),
-      appliedInvoiceNumber: str(raw['appliedInvoiceNumber']),
+      // #1971: a row that paid its invoice reads as applied to it, even when
+      // it was written with a blank `appliedInvoiceId`.
+      ...ledgerAppliedInvoiceOf(raw, money.appliedCents),
       method: str(raw['paymentMethod']),
+      methodLabel: paymentMethodLabelOf(raw['paymentMethod'], raw[ONLINE_METHOD_FIELD]),
       reference: str(raw['referenceNumber']),
-      date: str(raw['date']),
+      date: ledgerDateText(raw['date'], zone),
       notes: str(raw['notes']),
       recordedBy: strOrNull(raw['recordedBy']),
     };
@@ -528,6 +574,7 @@ export async function getInvoiceLedgerHandler(
         .limit(MAX_LEDGER_ROWS)
         .get()
     : null;
+  if (unlinkedSnap) await zoneFor(unlinkedSnap.docs);
   const unlinkedKinfolkPayments = (unlinkedSnap?.docs ?? [])
     .filter((d) => str((d.data() as Record<string, unknown>)['invoiceId']) === '')
     .map(ledgerRowOf)
@@ -630,6 +677,7 @@ export async function getInvoiceLedgerHandler(
     invoiceId: args.invoiceId,
     payments,
     paidCents,
+    broughtOverPaidCents: settlement.broughtOverPaidCents,
     totalCents: settlement.totalCents,
     amountDueCents: Math.max(0, settlement.amountDueCents - writtenOffCents),
     writeOffs,

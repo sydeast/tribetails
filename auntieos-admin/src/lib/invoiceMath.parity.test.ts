@@ -73,6 +73,15 @@ const KNOWN_SERVER_ONLY_EXPORTS: readonly string[] = [
   // mirror's own refusal text already routes through, so it needs no copy here.
   'formatUsd',
   'formatUsdCents',
+  // #2470: what an invoice brought over part paid had already collected. The
+  // server settles every payment on it; the admin reads the applied figure off
+  // the doc with `invoiceFormat.ts#invoiceAppliedCents`, and the typing
+  // preview works out line totals, which the field does not touch.
+  'BROUGHT_OVER_PAID_FIELD',
+  'broughtOverPaidCentsOf',
+  'appliedCentsOf',
+  'InvoiceDocSettlement',
+  'settleInvoiceDoc',
 ];
 
 /**

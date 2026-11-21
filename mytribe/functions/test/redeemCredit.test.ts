@@ -267,6 +267,46 @@ describe('redeemCreditHandler', () => {
     expect(invoiceWrite!.data.editScope).toBe('none');
   });
 
+  it('#1969: the redeemed credit is listed in the credit history, once, beside the balance it raised', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'invoices/inv-c1': { kinfolkId: '3', amountDue: -2000, status: 'credit', invoiceNumber: '1019' },
+        'families/3': { accountBalanceCents: 0 },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { redeemCreditHandler } = await import('../src/portal/redeemCredit');
+    await redeemCreditHandler({ data: { invoiceId: 'inv-c1' }, auth: { uid: 'u1' } } as any);
+    const ledger = ctx.writes.filter((w) => w.path.startsWith('families/3/creditLedger/'));
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0].path).toBe('families/3/creditLedger/redeem_inv-c1');
+    expect(ledger[0].data).toMatchObject({
+      kind: 'given',
+      source: 'creditInvoice',
+      amountCents: 200_000,
+      reason: 'From the credit on invoice 1019',
+      invoiceId: 'inv-c1',
+    });
+    expect(ctx.writes.find((w) => w.path === 'families/3')!.data.accountBalanceCents).toBe(200_000);
+  });
+
+  it('#1969: a refused redemption lists nothing in the credit history', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        'clients/u1': { kinfolkIds: ['3'] },
+        'invoices/inv-c1': { kinfolkId: '3', amountDue: -2000, status: 'credit', creditRedeemedAt: 'already' },
+        'families/3': { accountBalanceCents: 0 },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { redeemCreditHandler } = await import('../src/portal/redeemCredit');
+    await expect(
+      redeemCreditHandler({ data: { invoiceId: 'inv-c1' }, auth: { uid: 'u1' } } as any),
+    ).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect(ctx.writes.find((w) => w.path.startsWith('families/3/creditLedger/'))).toBeUndefined();
+  });
+
   // CREDITS ARE NOT REFUNDABLE (operator ruling, 2026-07-20). The three tests
   // that used to live here covered the `originalPaymentMethod` target: that it
   // required an originalPaymentIntentId, that it called Stripe refunds.create,
@@ -402,6 +442,8 @@ describe('redeemCredit CRITICAL-3 claim-first atomicity (race)', () => {
         set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
           store[path] = opts?.merge ? { ...(store[path] ?? {}), ...data } : data;
         },
+        // #1969: the credit history event lives under the household.
+        collection: (sub: string) => ({ doc: (id: string) => makeRef(`${path}/${sub}/${id}`) }),
       };
     }
 
@@ -474,6 +516,10 @@ describe('redeemCredit CRITICAL-3 claim-first atomicity (race)', () => {
     expect((familyWrites[0].accountBalanceCents as number)).toBe(3550); // absolute, computed in-tx
     expect((store['families/3'] as Record<string, unknown>).accountBalanceCents).toBe(3550);
     expect((fulfilled[0] as PromiseFulfilledResult<any>).value.newAccountBalanceCents).toBe(3550);
+    // #1969: and one credit history line, not two.
+    expect(Object.keys(store).filter((k) => k.startsWith('families/3/creditLedger/'))).toEqual([
+      'families/3/creditLedger/redeem_inv-race',
+    ]);
   });
 });
 describe('redeemCredit refuses a PAID invoice (operator ruling 2026-09-27, docket Q5)', () => {

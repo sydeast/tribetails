@@ -88,7 +88,8 @@ export async function executePrimaryRecoveryHandler(req: CallableRequest<unknown
   // sending the resolved one keeps the mail and the invite doc pointed at the
   // same verified inbox rather than at two spellings of it.
   await sendFromTemplate('recovery.completed', target.email, {
-    tribeName: args.familyId,
+    // #2487: the household's name, never its record id.
+    tribeName: (await (await import('../lib/inviteNames.js')).inviteNamesFor(args.familyId, { caller: 'executePrimaryRecovery' })).tribeName,
     claimUrl: `${claimBaseUrl}?invite=${inviteRef.id}`,
   });
   await writeAuditEntry({

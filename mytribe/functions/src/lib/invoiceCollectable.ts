@@ -20,6 +20,9 @@
  * opinion about what is payable.
  */
 import { amountDueCentsOf } from './amountDueRule';
+// Pure, like amountDueRule: it imports only that rule and invoiceMath, so the
+// operator scripts that read this predicate (#902) still pull in no money path.
+import { invoiceStateOf } from './invoiceEditPolicy';
 
 /**
  * The raw fields this module reads. All optional and all unknown: real documents
@@ -28,6 +31,8 @@ import { amountDueCentsOf } from './amountDueRule';
  */
 export interface CollectableDoc {
   status?: unknown;
+  /** #2510: the older spelling of `status`, read only when `status` is absent. */
+  invoiceStatus?: unknown;
   amountDue?: unknown;
   amountDueCents?: unknown;
   total?: unknown;
@@ -57,8 +62,17 @@ export interface CollectableDoc {
  */
 export function collectableForAutoApply(doc: CollectableDoc | undefined): boolean {
   if (!doc) return false;
-  const status = typeof doc.status === 'string' ? doc.status.trim().toLowerCase() : '';
-  if (status === 'draft' || status === 'quote' || status === 'cancelled' || status === 'credit') {
+  // #2510: a draft or a quote by the state classifier, as every other reader
+  // decides it. Reading `status` alone counted a draft or quote marked only in
+  // the older `invoiceStatus` field as collectable, a bill the household was
+  // never sent.
+  const state = invoiceStateOf(doc);
+  if (state === 'draft' || state === 'quote') return false;
+  // The other labels are read the same way: `status`, and the older
+  // `invoiceStatus` only when `status` is absent (#2471). Never both at once.
+  const raw = doc.status ?? doc.invoiceStatus;
+  const status = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (status === 'cancelled' || status === 'credit') {
     return false;
   }
   if (status === 'paid' || status === 'redeemed') return false;

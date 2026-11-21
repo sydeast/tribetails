@@ -88,6 +88,7 @@ class InvoiceDetailPaymentUnitsTest {
         amountCents: Long = 13750L,
         tipCents: Long = 0L,
         method: String = "stripe",
+        methodLabel: String = "Card",
         date: String = "2026-07-20",
         amountResolved: Boolean = true,
     ) = GetInvoiceLedgerResultLedgerPayment(
@@ -105,6 +106,7 @@ class InvoiceDetailPaymentUnitsTest {
         appliedInvoiceId = "",
         appliedInvoiceNumber = "",
         method = method,
+        methodLabel = methodLabel,
         reference = "",
         date = date,
         notes = "",
@@ -117,6 +119,7 @@ class InvoiceDetailPaymentUnitsTest {
         invoiceId = "inv1",
         payments = emptyList(),
         paidCents = 0L,
+        broughtOverPaidCents = 0L,
         totalCents = 20000L,
         amountDueCents = 6250L,
         writeOffs = emptyList(),
@@ -129,11 +132,11 @@ class InvoiceDetailPaymentUnitsTest {
         orphanSessionIds = emptyList(),
         truncated = false,
     )
-    private fun mount(result: Result<GetInvoiceLedgerResult>) {
+    private fun mount(result: Result<GetInvoiceLedgerResult>, shown: Invoice = invoice) {
         val repo = mockk<AuntieRepository>(relaxed = true)
         val kinCareRepo = mockk<KinCareRepository>(relaxed = true)
         val invoiceRepo = mockk<InvoiceRepository>(relaxed = true)
-        coEvery { invoiceRepo.getInvoiceById("inv1") } returns Result.success(invoice)
+        coEvery { invoiceRepo.getInvoiceById("inv1") } returns Result.success(shown)
         coEvery { kinCareRepo.getKinCareSessionsForKinfolk(any()) } returns Result.success(emptyList())
         coEvery { repo.getBusinessSettings() } returns Result.success(BusinessSettings())
         coEvery { invoiceRepo.getInvoiceLedger("inv1") } returns result
@@ -159,6 +162,17 @@ class InvoiceDetailPaymentUnitsTest {
         mount(Result.success(ledger(ledgerPayments = listOf(ledgerRow(amountCents = 13750L)))))
         rule.onNodeWithText("$137.50").assertExists()
         rule.onNodeWithText("$13,750.00").assertDoesNotExist()
+    }
+    @Test
+    fun `2470 an invoice brought over part paid shows what was paid before the move and reads part paid`() {
+        // $40, $15 brought over, $10 recorded since: $15 owed, $25 of $40 paid.
+        mount(
+            Result.success(ledger()),
+            invoice.copy(total = 40.0, amountDue = 15.0, paidCents = 1000L, broughtOverPaidCents = 1500L),
+        )
+        rule.onNodeWithText("PAID IN THE OLD SYSTEM").assertExists()
+        rule.onNodeWithText("$25.00 of $40.00 paid").assertExists()
+        rule.onNodeWithText("No payment recorded against this invoice", substring = true).assertDoesNotExist()
     }
     @Test
     fun `the gross tip is inside the amount, not added to it`() {

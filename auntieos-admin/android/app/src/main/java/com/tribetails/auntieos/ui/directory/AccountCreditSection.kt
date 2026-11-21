@@ -13,15 +13,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResultCredit
+import com.tribetails.auntieos.data.contracts.GetAccountCreditHistoryResultEarlierCredit
+import com.tribetails.auntieos.domain.EARLIER_CREDIT_LABEL
 import com.tribetails.auntieos.domain.MAX_CREDIT_REASON_LENGTH
 import com.tribetails.auntieos.domain.accountBalanceLine
 import com.tribetails.auntieos.domain.creditApplicationLines
 import com.tribetails.auntieos.domain.creditGivenLine
 import com.tribetails.auntieos.domain.creditStatusLine
 import com.tribetails.auntieos.domain.creditUseLine
+import com.tribetails.auntieos.domain.earlierCreditStatusLine
 import com.tribetails.auntieos.domain.formatCentsUsd
 import com.tribetails.auntieos.domain.giveCreditConfirmText
 import com.tribetails.auntieos.ui.components.AuntieDialog
@@ -68,13 +72,17 @@ private fun AccountCreditHistoryBody(state: AccountCreditUiState) {
                     style = AuntieTheme.typography.titleMedium,
                     color = c.textPrimary,
                 )
-                if (history.credits.isEmpty()) {
+                // #1939: credit the log does not itemise is its own row, so the
+                // credits listed, less the credit used, are the balance above.
+                val earlier = history.earlierCredit
+                if (history.credits.isEmpty() && earlier == null) {
                     EmptyHint("No credit given yet.")
                 } else {
                     Text("Credits given", style = AuntieTheme.typography.labelLarge, color = c.textDim)
                     history.credits.forEachIndexed { i, credit ->
-                        CreditRow(credit, last = i == history.credits.lastIndex)
+                        CreditRow(credit, last = earlier == null && i == history.credits.lastIndex)
                     }
+                    if (earlier != null) EarlierCreditRow(earlier)
                 }
                 if (history.uses.isNotEmpty()) {
                     Text("Credit used", style = AuntieTheme.typography.labelLarge, color = c.textDim)
@@ -86,6 +94,23 @@ private fun AccountCreditHistoryBody(state: AccountCreditUiState) {
         }
     }
 }
+
+@Composable
+private fun EarlierCreditRow(earlier: GetAccountCreditHistoryResultEarlierCredit) {
+    val c = AuntieTheme.colors
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 6.dp).testTag(EARLIER_CREDIT_ROW_TAG),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(formatCentsUsd(earlier.amountCents), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            Text(EARLIER_CREDIT_LABEL, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        }
+        Text(earlierCreditStatusLine(earlier), style = AuntieTheme.typography.bodySmall, color = c.textDim)
+    }
+}
+
+internal const val EARLIER_CREDIT_ROW_TAG = "account-credit-earlier"
 
 @Composable
 private fun CreditRow(credit: GetAccountCreditHistoryResultCredit, last: Boolean) {

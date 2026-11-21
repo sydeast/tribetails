@@ -370,13 +370,23 @@ export interface InvoicePartialPayment {
   paidCents: number;
   remainingCents: number;
 }
+/**
+ * #2470: WHAT HAS BEEN APPLIED TO AN INVOICE, in integer cents: the stored
+ * `paidCents` (the payment rows' sum) plus `broughtOverPaidCents`, what was
+ * paid before the invoice was brought over from the old system, which has no
+ * row. The server's `invoiceMath.ts#appliedCentsOf`, read off the doc.
+ */
+export function invoiceAppliedCents(row: { paidCents?: unknown; broughtOverPaidCents?: unknown }): number {
+  const whole = (v: unknown): number => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0);
+  return whole(row.paidCents) + whole(row.broughtOverPaidCents);
+}
 export function invoicePartialPayment(
   state: InvoiceState | null,
-  row: { paidCents?: number; amountDue: number },
+  row: { paidCents?: number; broughtOverPaidCents?: number; amountDue: number },
 ): InvoicePartialPayment | null {
   if (state !== 'open') return null;
-  const paidCents = row.paidCents;
-  if (typeof paidCents !== 'number' || !Number.isInteger(paidCents) || paidCents <= 0) return null;
+  const paidCents = invoiceAppliedCents(row);
+  if (paidCents <= 0) return null;
   const remainingCents = Math.round(financeNumber(row.amountDue) * 100);
   if (remainingCents <= 0) return null;
   return { paidCents, remainingCents };

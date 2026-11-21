@@ -142,6 +142,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'portalUrl',
         'bookingDate',
         'bookingTime',
+        'householdBookingTime',
         // #2030: the office's note to the household with its yes; null when none.
         'note',
       ],
@@ -167,6 +168,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'portalUrl',
         'bookingDate',
         'bookingTime',
+        'householdBookingTime',
       ],
     },
     {
@@ -189,6 +191,8 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'portalUrl',
         'bookingDate',
         'bookingTime',
+        'householdBookingTime',
+        'note',
       ],
     },
   ],
@@ -243,6 +247,31 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'serviceName',
         'startTimeMs',
         'changedFields',
+      ],
+    },
+    {
+      // #1822: the owner adds a Kin to the household's upcoming visits; one
+      // notice for the whole change, the trigger above skips those writes.
+      trigger: 'The owner adds a Kin to the upcoming visits; one notice names every confirmed visit changed.',
+      source: 'src/admin/addKinToUpcomingVisits.ts',
+      dataKeys: [
+        'kinfolkId',
+        'kinId',
+        'kinName',
+        'kinAdded',
+        'addedKinName',
+        'changedFields',
+        'serviceName',
+        'startTimeMs',
+        'visits',
+        'visitCount',
+        'nextVisit',
+        'portalUrl',
+        'bookingDate',
+        'bookingTime',
+        'removed',
+        'removedCount',
+        'householdBookingTime',
       ],
     },
   ],
@@ -406,7 +435,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
   ],
   'kincare.note.auntie': [
     {
-      trigger: 'An Auntie posts a note on a visit.',
+      trigger: 'The office or an Auntie posts a note on a visit. The writer is not sent it.',
       source: 'src/triggers/onBookingNoteCreate.ts',
       dataKeys: [
         'kinfolkId',
@@ -415,6 +444,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'visitId',
         'noteId',
         'authorUid',
+        'actorName',
         'preview',
       ],
     },
@@ -423,7 +453,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
     {
       trigger: 'The nightly reminder sweep finds a visit coming up soon.',
       source: 'src/scheduled/kincareReminderCron.ts',
-      dataKeys: ['kinfolkId', 'bookingId', 'serviceName', 'startTimeMs'],
+      dataKeys: ['kinfolkId', 'bookingId', 'serviceName', 'startTimeMs', 'timeBlockId', 'serviceId'],
     },
   ],
   'assignment.assigned': [
@@ -496,6 +526,31 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'changedFields',
       ],
     },
+    {
+      // #1822: one per Auntie for a Kin added to her upcoming visits.
+      trigger: 'The owner adds a Kin to the upcoming visits; each Auntie on them hears once, naming her days.',
+      source: 'src/admin/addKinToUpcomingVisits.ts',
+      dataKeys: [
+        'kinfolkId',
+        'kinId',
+        'kinName',
+        'kinAdded',
+        'addedKinName',
+        'assignedAuntieUid',
+        'changeKind',
+        'changedFields',
+        'serviceName',
+        'startTimeMs',
+        'visits',
+        'visitCount',
+        'nextVisit',
+        'portalUrl',
+        'bookingDate',
+        'bookingTime',
+        'removed',
+        'removedCount',
+      ],
+    },
   ],
   'schedule.upcoming.digest': [
     {
@@ -536,6 +591,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
         'auntieDisplayName',
         'recipientDisplayName',
         'reportPreviewUrl',
+        'taleId',
       ],
     },
   ],
@@ -543,7 +599,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
     {
       trigger: 'Someone comments on a KinTale.',
       source: 'src/triggers/onKinTaleCommentCreate.ts',
-      dataKeys: ['kinfolkId', 'taleId', 'commentId', 'authorUid', 'authorRole', 'preview'],
+      dataKeys: ['kinfolkId', 'taleId', 'commentId', 'authorUid', 'authorRole', 'preview', 'authorName', 'taleTitle'],
     },
   ],
   'kintale.note.added': [
@@ -796,7 +852,7 @@ export const NOTIFICATION_EMITTERS: Record<string, readonly EmitterDescriptor[]>
     {
       trigger: 'Someone asks for a password reset link.',
       source: 'src/auth/requestPasswordReset.ts',
-      dataKeys: ['link', 'email', 'displayName'],
+      dataKeys: ['link', 'email', 'displayName', 'business', 'Business'],
     },
   ],
   'auth.failedLogin.attempts': [
@@ -1064,6 +1120,7 @@ export const MERGE_FIELD_LABELS: Readonly<Record<string, string>> = {
   business: 'Business name',
   actorName: 'Name of who did it',
   actorUid: 'Reference to who did it',
+  addedKinName: 'Name of the Kin added to the visits',
   addedMediaCount: 'Number of photos added',
   amount: 'Amount',
   amountDue: 'Amount due',
@@ -1113,6 +1170,7 @@ export const MERGE_FIELD_LABELS: Readonly<Record<string, string>> = {
   ip: 'Sign-in IP address',
   isQuote: 'Whether it is a quote',
   items: 'Line items',
+  kinAdded: 'A Kin was added to these visits',
   kinId: 'Kin reference',
   kinName: "Kin's name",
   kinfolkEmail: 'Kinfolk email',
@@ -1169,6 +1227,18 @@ export const MERGE_FIELD_LABELS: Readonly<Record<string, string>> = {
   windowEndMs: 'Window end',
   windowMinutes: 'Window length in minutes',
   windowStartMs: 'Window start',
+  // #2487: keys the emitters send that this table did not list.
+  authorName: "Author's name",
+  householdBookingTime: 'Visit time as the household sees it',
+  serviceId: 'Service reference',
+  taleTitle: 'KinTale title',
+  timeBlockId: 'Time block reference',
+  // #2487: the portal invite and recovery emails' own fields.
+  auntieReviewUrl: 'Invite review link',
+  expiresInDays: 'Days until the invite expires',
+  primaryDisplayName: "Inviter's or invitee's name",
+  secondaryDisplayName: "Invitee's name",
+  tribeName: 'Household name',
 };
 
 /** The labels for these keys, only those this table has. */

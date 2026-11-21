@@ -19,6 +19,7 @@ import {
 import {
   formatUsd,
   invoiceActionsOffered,
+  invoiceAppliedCents,
   invoicePartialPayment,
   invoiceStateInfo,
   isInvoiceOverdue,
@@ -68,7 +69,12 @@ import { Dialog } from './Dialog';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { HeldButton } from './HeldButton';
 import { Banner } from './Banner';
-import { invoiceTermsDefs, parseInvoiceTermsCode, type InvoiceTermsCode } from '../lib/invoiceTerms';
+import {
+  invoiceTermsDefs,
+  invoiceTermsWords,
+  parseInvoiceTermsCode,
+  type InvoiceTermsCode,
+} from '../lib/invoiceTerms';
 import { dueDateOrderProblem } from '../lib/invoiceDueOrder';
 import { noticePreviewSentence } from '../lib/invoiceNoticePreview';
 import { failedToLead } from '../lib/callableErrorText';
@@ -77,6 +83,23 @@ import { readInvoiceSendMarks } from '../api/invoiceSendCheck';
 import { sendMarksOf, sendOutcomeAfterSilence, type SendCheckAction } from '../lib/invoiceSendCheck';
 import { CallableTimeoutError, LONG_CALLABLE_TIMEOUT_MS } from '../lib/fns';
 import { mintPaymentIdempotencyKey } from '../lib/moneyIdempotency';
+import {
+  PAYMENT_EARLIER_ON_RECORD,
+  PAYMENT_LANDED_NO_ANSWER,
+  PaymentSubmissionKey,
+  answerIsThisEntry,
+  paymentFigures,
+  paymentLandedCheck,
+  paymentMayHaveLanded,
+} from '../lib/paymentSubmissionKey';
+import {
+  BIG_TIP_UNCONFIRMED,
+  bigTipConfirmLabel,
+  creditOnTopNote,
+  feeClause,
+  feeOverPaymentError,
+  tipNeedsConfirming,
+} from '../lib/recordPaymentChecks';
 import './InvoiceDetail.css';
 
 /**
@@ -105,9 +128,11 @@ import './InvoiceDetail.css';
  *            when the first call SETTLED the invoice; on an explicit partial
  *            it wrote a second subcollection row and dropped the balance twice.
  *
- *            EDITING THE FORM MINTS NEW KEYS, because an edited payment is a
- *            different payment. So the safe advice still depends on leaving the
- *            form alone, and the sentence says that.
+ *            EDITING THE FORM MINTS NEW KEYS for the other money actions,
+ *            because an edited entry is a different one. So the safe advice
+ *            there still depends on leaving the form alone, and the sentence
+ *            says that. #2297: Record payment holds its key until an answer
+ *            whatever is edited, and its sentence leaves that part out.
  *   failed   the server answered. Its own sentence is the useful one.
  *
  * The offline classes carry their whole sentence, so the callable-name prefix
@@ -119,6 +144,12 @@ export function invoiceActionError(caught: unknown, callableName: string): strin
   const message = caught instanceof Error && caught.message ? caught.message : 'Action failed';
   if (phase === 'blocked') return message;
   if (phase === 'unknown') {
+    // #2297: Record payment holds its key until an answer whatever is edited,
+    // so for it a changed figure is not a different payment. The panel says
+    // which payment is on record when the answer comes.
+    if (callableName === 'recordPayment') {
+      return `${message} Press the same button again: this payment carries a key that makes a second attempt land on the same record, so it is not recorded twice.`;
+    }
     return `${message} Press the same button again WITHOUT changing anything: this payment carries a key that makes a second attempt land on the same record. Changing a figure first would make it a different payment.`;
   }
   return `${failedToLead(callableName)}: ${message}`;
@@ -660,6 +691,36 @@ export function editDueOrderProblem(
   if (!touched) return null;
   return dueDateOrderProblem(editing.date, editing.dueDate, termsChanged ? editing.termsChoice : invoice.termsCode);
 }
+/**
+ * #2509: a due date typed beside rule terms is a date picked by hand, so the
+ * picker moves to "A date I pick myself", which is what `updateInvoice` stores.
+ * Typed back to the stored date, the picker returns to the invoice's own rule.
+ * Terms with no code keep their words: their due date is already typed.
+ */
+export function withTypedDueDate<T extends { dueDate: string; termsChoice: string }>(
+  editing: T,
+  dueDate: string,
+  invoice: { dueDate: string; termsCode?: string },
+): T {
+  const stored = parseInvoiceTermsCode(invoice.termsCode);
+  if (stored === null || stored === 'custom') return { ...editing, dueDate };
+  if (dueDate.trim() === invoice.dueDate.trim()) {
+    return { ...editing, dueDate, termsChoice: editing.termsChoice === 'custom' ? stored : editing.termsChoice };
+  }
+  return { ...editing, dueDate, termsChoice: editing.termsChoice === stored ? 'custom' : editing.termsChoice };
+}
+/**
+ * #2509: picking rule terms hands the due date back to the rule, so a date
+ * typed a moment ago is dropped rather than left to switch the terms on save.
+ */
+export function withPickedTerms<T extends { dueDate: string; termsChoice: string }>(
+  editing: T,
+  termsChoice: T['termsChoice'],
+  invoice: { dueDate: string },
+): T {
+  const rule = termsChoice !== KEPT_TERMS && termsChoice !== 'custom';
+  return { ...editing, termsChoice, dueDate: rule ? invoice.dueDate : editing.dueDate };
+}
 /** The metadata and money fields, mid-edit. Text, because a half-typed field is not a number. */
 interface EditDraft {
   invoiceNumber: string;
@@ -790,10 +851,27 @@ export const WITHDRAW_PAID_REASON = 'A payment is recorded on this quote, so it 
  * offering what it would refuse.
  */
 export function quoteWithdrawHeldReason(invoice: InvoiceEntry, ledgerPaidCents: number | null): string | null {
-  const stored = typeof invoice.paidCents === 'number' && Number.isFinite(invoice.paidCents) ? invoice.paidCents : 0;
+  // #2470: the stored figure counts what was paid before it was brought over;
+  // the ledger's `paidCents` already does.
+  const stored = invoiceAppliedCents(invoice);
   const paid = ledgerPaidCents !== null && Number.isFinite(ledgerPaidCents) ? Math.max(ledgerPaidCents, stored) : stored;
   return paid > 0 ? WITHDRAW_PAID_REASON : null;
 }
+/**
+ * #2258: which payment terms the invoice a quote turns into will carry, for the
+ * Turn into invoice confirm. The server's `convertedQuoteTermsSource`
+ * (functions `admin/quoteActions.ts`) decides; this repeats its rule: custom
+ * terms or a due date typed with no code are kept, the quote's own code is
+ * kept, and a quote with no terms takes the business's Payment terms setting.
+ */
+export function convertQuoteTermsLine(invoice: { termsCode?: unknown; dueDate?: unknown }): string {
+  const code = parseInvoiceTermsCode(invoice.termsCode);
+  const typedDue = typeof invoice.dueDate === 'string' ? invoice.dueDate.trim() : '';
+  if (code === 'custom' || (code === null && typedDue !== '')) return 'It keeps the due date picked on the quote.';
+  if (code !== null) return `It keeps the quote's payment terms: ${invoiceTermsWords(code)}.`;
+  return 'The quote has no payment terms, so it takes your Payment terms setting.';
+}
+
 /** The confirmation once a quote is withdrawn, naming how many visits went back on the list. */
 export function withdrawNoticeText(released: number): string {
   if (released === 0) return 'Quote withdrawn. The household no longer sees it.';
@@ -935,6 +1013,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // a leftover is tip, and credit is only ever what she enters here.
   const [paidCredit, setPaidCredit] = useState('');
   const [paidSendConfirmation, setPaidSendConfirmation] = useState(false);
+  // #1975: the tip she ticked as right when it is larger than the invoice's
+  // total, in cents. A different tip asks again.
+  const [bigTipConfirmedCents, setBigTipConfirmedCents] = useState<number | null>(null);
   /**
    * #825: ONE KEY PER SUBMISSION, held across a re-press.
    *
@@ -947,25 +1028,15 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
    * answers from the row the first press wrote, rather than collecting a
    * second time.
    *
-   * Cleared by `startAction` (a new dialog is a new payment) and by the effect
-   * below whenever any figure on the form changes (an edited payment is a
-   * different payment, and a held key would report the first one's figures back
-   * for money that was never collected).
+   * #2297: the rules live in `lib/paymentSubmissionKey.ts`. In short: a key is
+   * held from its first press until the server answers one, whatever is edited
+   * and across Cancel, because a different key while an earlier press is
+   * unresolved is how a payment gets recorded twice. An answer lets it go, so
+   * the next payment gets a new key. A replayed answer to an entry whose
+   * figures changed under the key is said to be the earlier payment's.
    */
-  const ledgerKey = useRef<string | null>(null);
-  useEffect(() => {
-    ledgerKey.current = null;
-  }, [
-    paidAmount,
-    paidTip,
-    paidFee,
-    paidTotal,
-    paidMethod,
-    paidReference,
-    paidNotes,
-    paidCredit,
-    paidSendConfirmation,
-  ]);
+  const ledgerKey = useRef<PaymentSubmissionKey | null>(null);
+  ledgerKey.current ??= new PaymentSubmissionKey(mintPaymentIdempotencyKey);
 
   // Edit mode. Seeded from the invoice the moment Edit is pressed rather than
   // held in sync with it: the live listener would otherwise overwrite what the
@@ -1161,6 +1232,14 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   });
   // The fee, for the "comes out of the tip" clause. Null while half-typed.
   const splitFee = parseOptionalMoney(paidFee);
+  // #1975: a fee larger than the payment is refused, and a tip larger than the
+  // invoice's total is asked about. See lib/recordPaymentChecks.ts.
+  const splitFeeCents = splitFee !== null ? Math.round(splitFee * 100) : 0;
+  const invoiceTotalCents = Number.isFinite(invoice.total)
+    ? Math.round(invoice.total * 100)
+    : (ledger?.totalCents ?? null);
+  const splitFeeError = split !== null && split.ok ? feeOverPaymentError(splitFeeCents, split.paidCents) : null;
+  const bigTip = split !== null && split.ok && tipNeedsConfirming(split.tipCents, invoiceTotalCents);
 
   // The STORED editScope decides only whether to OFFER the control; the server
   // still enforces on the write, and a refusal comes back with a code and is
@@ -1219,19 +1298,21 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     // OFF by default. A confirmation is a message to a real household, so it
     // goes out because she ticked the box, never because the panel assumed.
     setPaidSendConfirmation(false);
+    setBigTipConfirmedCents(null);
     // Prefilled with the outstanding balance so the common case is one click,
     // and editable so a partial is one field away rather than impossible.
     setPaidAmount(key === 'markPaid' && invoice.amountDue > 0 ? String(invoice.amountDue) : '');
-    // A NEW DIALOG IS A NEW PAYMENT (#825). The effect above already clears
-    // these whenever a figure changes, but opening the dialog is not a figure
-    // change, and a key held from the last payment would report that one's
-    // result back for this one.
-    ledgerKey.current = null;
+    // #825, #2297: a payment that got its answer already let its key go, so a
+    // new dialog is a new payment. A key from a press that failed is still
+    // held: the next press carries it, and a replayed answer to it is said to
+    // be the earlier payment's, not this one's.
+    ledgerKey.current?.open();
     setPending(key);
   }
 
   function cancelPending() {
     if (busy) return;
+    // #2297: Cancel keeps a key whose press failed. See `ledgerKey`.
     setPending(null);
   }
 
@@ -1580,6 +1661,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     // #1567: the marks each send leaves, as they stood when the button was
     // pressed, so a re-read after a silent send can tell whether it landed.
     const before = sendMarksOf(invoice as unknown as Record<string, unknown>);
+    // #2297: the payments read after a failed Record, when one was made, so the
+    // panel shows it rather than reading them a second time.
+    let readAfterFailure: GetInvoiceLedgerResult | null = null;
     try {
       let outcome = meta.successMessage;
       // Set wherever an outcome sentence gets a clause saying part of this did
@@ -1695,6 +1779,20 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           if (settleBalance) reloadLedger();
           return;
         }
+        if (checked !== null) {
+          // #1975: refused or asked about before anything is sent.
+          const feeError = feeOverPaymentError(Math.round(fee * 100), checked.paidCents);
+          if (feeError !== null) {
+            setBusy(false);
+            setActionError(feeError);
+            return;
+          }
+          if (tipNeedsConfirming(checked.tipCents, invoiceTotalCents) && bigTipConfirmedCents !== checked.tipCents) {
+            setBusy(false);
+            setActionError(BIG_TIP_UNCONFIRMED);
+            return;
+          }
+        }
         if (checked === null && !settleBalance) {
           setBusy(false);
           setActionError('One of the amounts cannot be read.');
@@ -1728,9 +1826,19 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // `paymentSplit`, or (#2299) "what is owed" when she left it blank. If
         // the balance moved since the panel loaded, a typed amount over it is
         // refused with what is owed now, and the panel shows that figure.
-        ledgerKey.current ??= mintPaymentIdempotencyKey();
+        const keys = ledgerKey.current!;
+        const idempotencyKey = keys.keyFor(
+          invoice._id,
+          paymentFigures({
+            amount: paidAmount,
+            tip: paidTip,
+            fee: paidFee,
+            total: paidTotal,
+            credit: paidCredit,
+          }),
+        );
         const appliedCents = checked?.appliedCents ?? 0;
-        const ledgerRow = await recordPayment({
+        const request: Parameters<typeof recordPayment>[0] = {
           kinfolkId: invoice.kinfolkId,
           kinfolkName: invoice.kinfolkName,
           client: invoice.client,
@@ -1755,8 +1863,61 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           apply: settleBalance
             ? { invoiceId: invoice._id, invoiceNumber: invoice.invoiceNumber, amount: 0, settleBalance: true }
             : { invoiceId: invoice._id, invoiceNumber: invoice.invoiceNumber, amount: appliedCents / 100 },
-          idempotencyKey: ledgerKey.current,
+          idempotencyKey,
+        };
+        let ledgerRow: Awaited<ReturnType<typeof recordPayment>>;
+        try {
+          ledgerRow = await recordPayment(request);
+        } catch (caught) {
+          // #2297: A FAILED PRESS MAY HAVE LANDED. The SDK reports the same
+          // error for a request that never arrived and for one whose write
+          // committed and whose answer was lost. So before the button is
+          // pressable again, the invoice's payments are read, and the row this
+          // key writes is looked for. The button stays busy meanwhile.
+          // A refusal from the server recorded nothing, so it is not checked.
+          // Whatever the check finds, the key stays held: "not found" can be a
+          // payment still committing, and only the same key keeps the next
+          // press from recording it a second time.
+          if (!paymentMayHaveLanded(caught)) throw caught;
+          const check = await paymentLandedCheck(() => getInvoiceLedger(invoice._id), idempotencyKey);
+          readAfterFailure = check.ledger;
+          if (check.landed !== 'yes') throw caught;
+          // It landed. The same key again is answered from the stored row, so
+          // this asks for the first press's answer, and finishes any notice it
+          // still owes, without recording anything a second time.
+          try {
+            ledgerRow = await recordPayment(request);
+          } catch {
+            keys.release();
+            reloadLedger();
+            setBusy(false);
+            setNoticeIncomplete(true);
+            setNotice(PAYMENT_LANDED_NO_ANSWER);
+            setPending(null);
+            return;
+          }
+        }
+        // The server answered, so the key is let go: the next press of Record
+        // is a new payment. A replay of a press made with other money, or in
+        // an earlier opening, is that earlier payment's answer, not this
+        // entry's, and the panel says so instead of reporting it as this one.
+        // A replay carrying this press's own money is this press's row: an
+        // earlier press under the key was refused or never arrived.
+        const sameMoney = answerIsThisEntry(ledgerRow, {
+          amountCents: request.amount > 0 || !settleBalance ? Math.round(request.amount * 100) : null,
+          tipCents: settleBalance && tipToSend === 0 ? null : Math.round(tipToSend * 100),
+          feeCents: Math.round(fee * 100),
+          appliedCents: settleBalance ? null : appliedCents,
+          creditCents,
         });
+        if (keys.settle(ledgerRow.replayed === true, sameMoney) === 'earlier') {
+          reloadLedger();
+          setBusy(false);
+          setNoticeIncomplete(true);
+          setNotice(PAYMENT_EARLIER_ON_RECORD);
+          setPending(null);
+          return;
+        }
         const res = ledgerRow.application;
 
         let ledgerNote = '';
@@ -1837,8 +1998,17 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // the panel loaded. The server's figure is shown straight away when it
         // sent one, and the payments are read again either way, so the same
         // entry is not refused twice against an old figure.
-        setRefusedDueCents(refusalAmountDueCents(caught));
-        reloadLedger();
+        // #2297: when the failure was checked against the payments, that read
+        // came after the failure and is what the panel shows.
+        if (readAfterFailure !== null) {
+          setLedger(readAfterFailure);
+          setLedgerError(null);
+          setLedgerLoading(false);
+          setRefusedDueCents(null);
+        } else {
+          setRefusedDueCents(refusalAmountDueCents(caught));
+          reloadLedger();
+        }
       }
     }
   }
@@ -1877,10 +2047,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               <dd>{formatUsd(partial.paidCents / 100)}</dd>
             </div>
           )}
-          {writtenOffCents !== null && typeof invoice.paidCents === 'number' && invoice.paidCents > 0 && (
+          {writtenOffCents !== null && invoiceAppliedCents(invoice) > 0 && (
             <div className="invoice-detail__fact">
               <dt>Paid</dt>
-              <dd>{formatCentsUsd(invoice.paidCents)}</dd>
+              <dd>{formatCentsUsd(invoiceAppliedCents(invoice))}</dd>
             </div>
           )}
           {writtenOffCents !== null && (
@@ -1906,7 +2076,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           </div>
           <div className="invoice-detail__fact">
             <dt>Last reminder</dt>
-            <dd>{lastReminderLabel(lastReminderAt, undefined, lastReminderAppOnly)}</dd>
+            <dd>{lastReminderLabel(lastReminderAt, undefined, lastReminderAppOnly, invoice.reminderHeldAtMs)}</dd>
           </div>
         </dl>
 
@@ -2139,7 +2309,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   type="date"
                   className="invoice-detail__field-input"
                   value={editing.dueDate}
-                  onChange={(e) => setEditing({ ...editing, dueDate: e.target.value })}
+                  // #2509: typed beside rule terms, the terms become "A date I pick myself".
+                  onChange={(e) => setEditing(withTypedDueDate(editing, e.target.value, invoice))}
                   // #1609: picked terms other than custom set the due date.
                   disabled={busy || termsSetDueDate(editing, invoice)}
                   aria-label="Invoice due date"
@@ -2160,7 +2331,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                   className="invoice-detail__field-input"
                   value={editing.termsChoice}
                   onChange={(e) =>
-                    setEditing({ ...editing, termsChoice: e.target.value as EditDraft['termsChoice'] })
+                    setEditing(withPickedTerms(editing, e.target.value as EditDraft['termsChoice'], invoice))
                   }
                   disabled={busy}
                   aria-label="Invoice terms"
@@ -2279,6 +2450,11 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         ) : quotePrompt !== null ? (
           <div className="invoice-detail__confirm">
             <p className="invoice-detail__confirm-copy">{QUOTE_ACTION_COPY[quotePrompt].confirm}</p>
+            {quotePrompt === 'convert' ? (
+              <p className="invoice-detail__confirm-copy" data-testid="convert-quote-terms">
+                {convertQuoteTermsLine(invoice)}
+              </p>
+            ) : null}
             <div className="invoice-detail__confirm-actions">
               <GhostButton label="Cancel" onClick={() => !busy && setQuotePrompt(null)} disabled={busy} />
               <PrimaryButton
@@ -2432,7 +2608,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     className="invoice-detail__field-input"
                     value={paidTotal}
                     onChange={(e) => setPaidTotal(e.target.value)}
-                    placeholder="same as collected plus tip"
+                    placeholder="collected plus tip and credit"
                     inputMode="decimal"
                     disabled={busy}
                     aria-label="Total payment amount in dollars"
@@ -2495,6 +2671,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     </span>
                   ) : !split.ok ? (
                     <span className="invoice-detail__unapplied-unknown">{split.error}</span>
+                  ) : splitFeeError !== null ? (
+                    <span className="invoice-detail__unapplied-unknown">{splitFeeError}</span>
                   ) : (
                     <>
                       <span className="invoice-detail__unapplied-label">
@@ -2503,10 +2681,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                       <span className="invoice-detail__unapplied-note">
                         {formatUsd(split.appliedCents / 100)} to this invoice,{' '}
                         {formatUsd(split.tipCents / 100)} tip
-                        {splitFee !== null && splitFee > 0
-                          ? ` (the ${formatUsd(splitFee)} fee comes out of it)`
-                          : ''}
+                        {feeClause(splitFeeCents, split.tipCents)}
                         , {formatUsd(split.creditCents / 100)} account credit.
+                        {creditOnTopNote(split.creditCents, split.appliedCents + split.overCents, paidTotal.trim() !== '')}
                         {/* #1566: said out loud when the amount typed was over
                             the balance, so the cap is never a surprise. */}
                         {split.overCents > 0
@@ -2516,6 +2693,17 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     </>
                   )}
                 </p>
+                {bigTip && split !== null && split.ok && invoiceTotalCents !== null && (
+                  <label className="invoice-detail__check">
+                    <input
+                      type="checkbox"
+                      checked={bigTipConfirmedCents === split.tipCents}
+                      onChange={(e) => setBigTipConfirmedCents(e.target.checked ? split.tipCents : null)}
+                      disabled={busy}
+                    />
+                    <span>{bigTipConfirmLabel(split.tipCents, invoiceTotalCents)}</span>
+                  </label>
+                )}
                 <label className="invoice-detail__check">
                   <input
                     type="checkbox"

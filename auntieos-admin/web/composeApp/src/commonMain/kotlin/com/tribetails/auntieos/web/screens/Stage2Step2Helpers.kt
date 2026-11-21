@@ -105,7 +105,8 @@ fun kinAvatarsForSession(
  * Sum the totals of PAID invoices whose invoice date falls within the current
  * week window [weekStartIso] .. [nowIso] (both inclusive on the date prefix). Paid
  * is decided by the canonical [invoiceIsPaid] test. Invoices with an unparseable
- * date are skipped (never count money we cannot place in the week).
+ * date are skipped (never count money we cannot place in the week). Archived
+ * invoices are skipped (#2254).
  *
  * @param weekStartIso YYYY-MM-DD of the week's first day (e.g. Monday).
  * @param nowIso       YYYY-MM-DD of today (the week's upper bound).
@@ -115,6 +116,13 @@ fun weeklyRevenue(invoices: List<Invoice>, weekStartIso: String, nowIso: String)
     val end = isoDatePrefixOrNull(nowIso) ?: return 0.0
     var sum = 0.0
     for (inv in invoices) {
+        // #2254: ARCHIVED INVOICES ARE NOT REVENUE, as on admin web
+        // (`weeklyRevenue` in src/lib/dashboardInsights.ts) and Android
+        // (`domain/Stage2Step2Helpers.kt#weeklyRevenue`). Its own guard, kept
+        // out of [invoiceRevenueOf] and [invoiceIsPaid]: those say whether the
+        // invoice was paid, which archiving does not change, and the Invoices
+        // list and detail read [invoiceIsPaid].
+        if (invoiceIsArchived(inv)) continue
         val earned = invoiceRevenueOf(inv)
         if (earned <= 0.0) continue
         val date = isoDatePrefixOrNull(inv.date) ?: continue

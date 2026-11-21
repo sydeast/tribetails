@@ -87,6 +87,24 @@ const val CONVERT_QUOTE_CONFIRM_COPY: String =
         "answer from the household is cleared. The household sees nothing until you send the invoice with " +
         "Review and send."
 
+/**
+ * #2258: which payment terms the invoice a quote turns into will carry, shown in
+ * the Turn into invoice confirm. Repeats the server's `convertedQuoteTermsSource`
+ * (`admin/quoteActions.ts`), which decides: custom terms or a due date typed
+ * with no code are kept, the quote's own code is kept, and a quote with no
+ * terms takes the business's Payment terms setting.
+ */
+fun convertQuoteTermsLine(invoice: Invoice): String {
+    val code = parseInvoiceTermsCode(invoice.termsCode)
+    val typedDue = invoice.dueDate.trim()
+    return when {
+        code == InvoiceTermsCode.CUSTOM || (code == null && typedDue.isNotEmpty()) ->
+            "It keeps the due date picked on the quote."
+        code != null -> "It keeps the quote's payment terms: ${code.words}."
+        else -> "The quote has no payment terms, so it takes your Payment terms setting."
+    }
+}
+
 /** The confirm before a quote is withdrawn (#2088). */
 const val WITHDRAW_QUOTE_CONFIRM_COPY: String =
     "This withdraws the quote. The household no longer sees it, and the visits it holds go back on the " +
@@ -105,7 +123,8 @@ const val WITHDRAW_PAID_REASON: String = "A payment is recorded on this quote, s
  * button from offering what it would refuse.
  */
 fun quoteWithdrawHeldReason(invoice: Invoice): String? =
-    if (invoice.paidCents > 0L) WITHDRAW_PAID_REASON else null
+    // #2470: what was paid before it was brought over holds it too.
+    if (invoiceAppliedCents(invoice) > 0L) WITHDRAW_PAID_REASON else null
 /** The toast once a quote is a draft invoice. */
 const val QUOTE_CONVERTED_MESSAGE: String =
     "Quote turned into a draft invoice. Send it with Review and send when it is ready."

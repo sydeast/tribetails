@@ -2357,6 +2357,26 @@ class FirestoreClient {
     }
 
     /**
+     * #1822: how many of the household's upcoming visits do not carry this Kin
+     * ([apply] false), or put the Kin on them ([apply] true), through
+     * `addKinToUpcomingVisits`. Owner only; the server refuses an Auntie and
+     * leaves every started or past visit as it is.
+     */
+    suspend fun addKinToUpcomingVisits(kinfolkId: String, kinId: String, apply: Boolean): WriteResult<AddKinToVisitsAnswer> {
+        if (kinfolkId.isBlank() || kinId.isBlank()) return WriteResult.Err("No Kin to ask about.")
+        val payload = buildJsonObject {
+            put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId)))
+            put("kinId", JsonPrimitive(kinId.trim()))
+            put("apply", JsonPrimitive(apply))
+        }
+        return when (val r = platformInvokeCallable("addKinToUpcomingVisits", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> addKinToVisitsAnswerOf(r.value)?.let { WriteResult.Ok(it) }
+                ?: WriteResult.Err("The upcoming visits could not be checked.")
+        }
+    }
+
+    /**
      * AO-25: admin multi-date / recurring booking REQUEST via the
      * createMultiDateBookingRequest callable. Writes the envelope model
      * (families/{kinfolkId}/bookings) as 'requested', the Incoming-requests queue,
@@ -4164,6 +4184,20 @@ data class KinCareSession(
     val kinCareVisitId: String? = null,   // -> .../kinCares/{visitId}
 )
 
+/**
+ * #2268: a stored `kin_care_sessions.status` as the upper-case code every
+ * screen compares against. A called-off visit is stored three ways
+ * (`CANCELLED`, `cancelled`, and the one-L `CANCELED` older and imported rows
+ * carry), and the server reads all three as cancelled
+ * (`normalizeBookingStatus`). Every other code is only trimmed and
+ * upper-cased, so an unknown one keeps its own text. Android's twin is
+ * `data/model/Models.kt#visitStatusCode`.
+ */
+fun visitStatusCode(raw: String?): String {
+    val code = raw?.trim()?.uppercase().orEmpty()
+    return if (code == "CANCELED") "CANCELLED" else code
+}
+
 @Serializable
 data class GeneratedDraft(
     val _id: String = "",
@@ -4696,6 +4730,13 @@ data class Invoice(
      */
     val reminderNotifiedAppOnly: Boolean? = null,
     /**
+     * #2515: when the send-time check held the reminder on record back because
+     * notices to households were turned off (ms epoch). The sent stamp above
+     * is kept so the reminder is not raised again; [lastReminderLabel] reads a
+     * sent stamp no later than this one as "held, not sent".
+     */
+    val reminderHeldAtMs: Long? = null,
+    /**
      * #1174: the itemization, held RAW and read through
      * `screens.invoices.invoiceEditLinesOf`. Raw for the reason Android's model
      * gives: staff can write this collection directly, so the field can hold
@@ -4733,6 +4774,14 @@ data class Invoice(
      * Absent on every invoice no payment has touched.
      */
     val paidCents: JsonElement? = null,
+    /**
+     * #2470: what was paid before this invoice was brought over from the old
+     * system, in integer cents. Stamped once by the data reload, never a
+     * payment row and never inside [paidCents]. Read through
+     * `screens.invoices.invoiceAppliedCentsOf`. Raw for the same reason as
+     * [paidCents]. Absent on every other invoice.
+     */
+    val broughtOverPaidCents: JsonElement? = null,
     /**
      * #1239: the exact integer total the invoice callables write beside the
      * dollar [total]. Read through `screens.invoices.invoiceTotalDisagreementOf`,
@@ -4950,6 +4999,9 @@ data class NotificationEntry(
     val category: String = "",
     val recipientUid: String = "",
     val actorUid: String? = null,
+    // AO-28: who caused it, resolved by the dispatcher. Absent on rows with no
+    // actor. #2277: the row's meta line names her, as web and Android do.
+    val actorName: String? = null,
     val status: String = "",         // pending | dispatched
     val mode: String = "",           // trigger | debounced | batched | scheduled
     val channels: List<String> = emptyList(),

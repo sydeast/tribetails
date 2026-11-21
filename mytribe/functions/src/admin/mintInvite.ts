@@ -64,13 +64,12 @@ export async function mintInviteHandler(req: CallableRequest<unknown>): Promise<
     createdAt: FieldValue.serverTimestamp(),
     expiresAt,
   });
+  // #2487: the household's own names, read off its records. This used to greet
+  // the address the invite was sent to and name the household by its record id
+  // ("Welcome to 9fQ2..."); before that it greeted "Auntie", the sender.
+  const names = await (await import('../lib/inviteNames.js')).inviteNamesFor(args.familyId, { caller: 'mintInvite' });
   await sendFromTemplate('invite.primary', args.invitedEmail, {
-    // The template greets `primaryDisplayName` and this callable has no
-    // household record to read a name from, so it greets the address the
-    // invite was sent to. It used to greet "Auntie", which addressed the
-    // kinfolk by the name of the person mailing them.
-    primaryDisplayName: args.invitedEmail,
-    tribeName: args.familyId,
+    ...names,
     claimUrl: `${claimBaseUrl}?invite=${ref.id}`,
     expiresInDays: INVITE_TTL_DAYS,
   });

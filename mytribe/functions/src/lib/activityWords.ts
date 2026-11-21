@@ -171,6 +171,15 @@ export function notificationsTurnedOffSummaryWords(kinds: readonly HeldKind[]): 
   const many = kinds.filter((k) => k.count > 0).length > 1;
   return `Did not send ${heldKindsWords(kinds)}: ${many ? 'these notifications are' : 'this notification is'} turned off in Settings`;
 }
+/**
+ * #2478: added to a timed line whose copies were taken off the queue at their
+ * send time (`notificationScheduledSweep` and the other two queue sweeps).
+ * Those copies are gone and nothing sends them once notices are back on, which
+ * is not true of the reminder jobs' own line: they ask again on their next run.
+ */
+export function notSentLaterWords(count: number): string {
+  return `${count === 1 ? 'It' : 'They'} will not be sent later`;
+}
 /** The notification as a whole is switched off in Settings. */
 export function notificationTurnedOffWords(name: string, to: string): string {
   return `Did not send ${quotedName(name)}${toWhom(to)}: this notification is turned off in Settings`;
@@ -558,8 +567,9 @@ export function auntieHouseholdLookWords(auntieName: unknown, householdName: unk
  * by card: the invoice was already paid, or the payment from that same
  * checkout has gone through. No "charge failed" notice is sent for it, and the
  * line says so. `invoice-paid`, `payment-landed`, `invoice-cancelled`,
- * `invoice-written-off`, `invoice-not-found` and `invoice-other-household` are
- * the reasons the Stripe webhook stores.
+ * `invoice-written-off`, `invoice-not-found`, `invoice-other-household` and
+ * (#2416) `invoice-not-sent` and `invoice-credit` are the reasons the Stripe
+ * webhook stores.
  */
 export function cardDeclinedAfterPaymentWords(invoiceNumber: unknown, reason: string): string {
   const sent = 'No notice was sent to the household.';
@@ -576,7 +586,12 @@ export function cardDeclinedAfterPaymentWords(invoiceNumber: unknown, reason: st
         ? 'was written off'
         : reason === 'invoice-other-household'
           ? 'belongs to a different household'
-          : 'was already paid';
+          : // #2416: a draft, an unaccepted quote or a credit asks the household for nothing.
+            reason === 'invoice-not-sent'
+            ? 'was a draft or a quote, not a bill'
+            : reason === 'invoice-credit'
+              ? 'was a credit, not a bill'
+              : 'was already paid';
   const why =
     reason === 'payment-landed'
       ? ', and the payment from the same checkout went through'

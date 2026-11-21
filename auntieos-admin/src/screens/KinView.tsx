@@ -5,6 +5,7 @@ import { getKin, type KinDetail } from '../api/kinView';
 import { getKin411, type Kin411 } from '../api/recipientContext';
 import { updateKinTags } from '../api/directoryWrite';
 import { KinRemovalRequestBand } from '../components/KinRemovalRequests';
+import { AddKinToUpcomingVisits } from '../components/AddKinToUpcomingVisits';
 import { initialsOf } from '../api/directory';
 import { type Async } from '../lib/async';
 import {
@@ -491,6 +492,8 @@ export function KinView({ kinId, kinName, household, openedFrom, onBack }: KinVi
 
                   {homeId !== '' ? (
                     <>
+                      {/* #1822: owner only; draws nothing when every upcoming visit has this Kin. */}
+                      <AddKinToUpcomingVisits kinfolkId={homeId} kinId={petId} kinName={k.name} />
                       <RecentKinTalesPanel kinfolkId={homeId} kin={scope} />
                       <UpcomingVisitsPanel kinfolkId={homeId} kin={scope} />
                     </>

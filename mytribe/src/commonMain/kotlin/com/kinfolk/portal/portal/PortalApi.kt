@@ -2288,6 +2288,8 @@ class PortalApi(
                         amountCents = li["amountCents"]?.jsonPrimitive?.longOrNull,
                         qty = li["qty"]?.jsonPrimitive?.doubleOrNull,
                         unitCents = li["unitCents"]?.jsonPrimitive?.longOrNull,
+                        // #1974: absent from an older server, null on a visit row.
+                        discountCents = (li["discountCents"] as? JsonPrimitive)?.longOrNull,
                     )
                 }
                 ?.takeIf { it.isNotEmpty() },
@@ -2299,6 +2301,27 @@ class PortalApi(
             // #2410: absent from an older server and null on a payable bill;
             // both read as null. A blank sentence is no sentence.
             payBlockedReason = (o["payBlockedReason"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() },
+            // #1974: absent from an older server and null with no stored lines; both read null.
+            subtotalCents = (o["subtotalCents"] as? JsonPrimitive)?.longOrNull,
+            invoiceDiscountCents = (o["invoiceDiscountCents"] as? JsonPrimitive)?.longOrNull,
+            // #2334: the bill's Payment History. Absent from an older server,
+            // which reads as no rows; a row with no id is dropped.
+            payments = (o["payments"] as? JsonArray)
+                ?.mapNotNull { it as? JsonObject }
+                ?.mapNotNull { p ->
+                    val id = (p["paymentId"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                    if (id.isBlank()) {
+                        null
+                    } else {
+                        HouseholdPayment(
+                            paymentId = id,
+                            methodLabel = (p["methodLabel"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                            paidDay = (p["paidDay"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() },
+                            amountCents = (p["amountCents"] as? JsonPrimitive)?.longOrNull ?: 0L,
+                        )
+                    }
+                }
+                .orEmpty(),
         )
     }
 

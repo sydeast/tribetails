@@ -1,6 +1,8 @@
 package com.tribetails.auntieos.ui.admin
 
 import com.tribetails.auntieos.data.model.KinCareSession
+import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.ui.components.AuntieStatusTone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -90,6 +92,32 @@ class AuntieTimeWindowTest {
     fun `a cancellation is dated by its start, since it never gets a completedAt`() {
         assertTrue(isVisibleOnAuntieTime(session(status = "CANCELLED", startTime = "2026-07-15T09:00:00Z"), today))
         assertFalse(isVisibleOnAuntieTime(session(status = "CANCELLED", startTime = "2026-06-01T09:00:00Z"), today))
+    }
+
+    // #2268: the server reads CANCELLED, cancelled and the one-L CANCELED as one
+    // state. A CANCELED visit used to be placed by its date like a scheduled
+    // one, so it sat under Upcoming or Overdue with Arrived and Complete on it.
+    @Test
+    fun `#2268 every stored spelling of a cancellation is a wrap, never Upcoming or Overdue`() {
+        val zone = businessZone(null)
+        for (status in listOf("CANCELLED", "cancelled", "CANCELED", " canceled ")) {
+            val yesterday = session(status = status, startTime = "2026-07-15T09:00:00Z")
+            val tomorrow = session(status = status, startTime = "2026-07-17T09:00:00Z")
+            val longAgo = session(status = status, startTime = "2026-07-01T09:00:00Z")
+            assertTrue("$status yesterday is Recent", isVisibleOnAuntieTime(yesterday, today))
+            assertEquals("$status yesterday", Phase.CompletedToday, phaseFor(yesterday, today, zone))
+            assertFalse("$status ahead is not Upcoming", isVisibleOnAuntieTime(tomorrow, today))
+            assertFalse("$status long ago is not on the board", isVisibleOnAuntieTime(longAgo, today))
+            assertFalse("$status is never Overdue", isOverdueScheduled(longAgo, today))
+            assertEquals(0, overdueOnAuntieTime(listOf(longAgo), today))
+        }
+    }
+
+    @Test
+    fun `#2268 the card reads a one-L cancellation as cancelled, in tone and label`() {
+        assertEquals(AuntieStatusTone.Muted, kinCareStatusTone("CANCELED"))
+        assertEquals(AuntieStatusTone.Muted, kinCareStatusTone("cancelled"))
+        assertEquals(kinCareStatusTone("CANCELLED"), kinCareStatusTone("CANCELED"))
     }
 
     @Test

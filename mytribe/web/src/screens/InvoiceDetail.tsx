@@ -13,9 +13,13 @@ import { getBusinessContact, getMyHome } from '../api/portal';
 import type { PayMethod } from '../api/types';
 import {
   creditTargetLabel,
+  discountAmountText,
+  discountNoteOf,
   formatCentsUsd,
   formatUsd,
   documentNoun,
+  invoiceDiscountFigures,
+  lineDiscountLine,
   invoiceName,
   invoiceRowStatusInfo,
   longDateLabel,
@@ -24,6 +28,10 @@ import {
   partPaidSummary,
   paidDollarsOf,
   payBlockedReason,
+  paymentHistoryOf,
+  paymentRowDayLabel,
+  paymentRowIsCredit,
+  paymentRowMethodLabel,
   NOTHING_TO_PAY,
   quoteActorLabel,
 } from '../lib/invoiceFormat';
@@ -379,6 +387,9 @@ export function InvoiceDetail() {
   // the whole total as collected.
   // #2090: on a written-off invoice only the recorded payments (`paidDollarsOf`).
   const paidAmount = paidDollarsOf(inv);
+  // #1974: subtotal and invoice discount as amounts, or null to keep the old row.
+  const figures = invoiceDiscountFigures(inv);
+  const discountNote = discountNoteOf(inv.discount);
   const writtenOff = inv.status === 'written_off';
   // Same rule as the list row: only an `open` invoice with a balance takes a
   // payment. Spelled positively rather than as the old not-credit/not-
@@ -392,6 +403,8 @@ export function InvoiceDetail() {
   // #2410: an open bill the server says cannot take a payment. No pay option
   // is drawn for it, and its sentence goes where they would be.
   const payBlocked = payBlockedReason(inv);
+  // #2334: each payment on this bill, how it was paid, the day and the amount.
+  const history = paymentHistoryOf(inv);
   // A quote still waiting for an answer. `quoteDecision` is what separates it
   // from one already answered: a DECLINED quote keeps `status: 'quote'` on the
   // server (see functions/src/portal/quoteDecision.ts), and an ACCEPTED one is
@@ -525,6 +538,10 @@ export function InvoiceDetail() {
                                 {item.qty} x {formatCentsUsd(item.unitCents)}
                               </small>
                             )}
+                            {/* #1974: what was taken off, already out of the amount. */}
+                            {lineDiscountLine(item.discountCents) !== null && (
+                              <small>{lineDiscountLine(item.discountCents)}</small>
+                            )}
                           </td>
                           <td className="date">{longDateLabel(item.dateIso) ?? '—'}</td>
                           <td className="r amt">{item.amountCents !== null ? formatCentsUsd(item.amountCents) : '—'}</td>
@@ -542,11 +559,34 @@ export function InvoiceDetail() {
                     </div>
                   ) : (
                     <>
+                      {/* #1974: an invoice built from lines shows its subtotal and
+                          the invoice discount as amounts, so the lines add up to
+                          the total. An older server sends neither key, and an
+                          invoice with no stored lines has neither figure: both
+                          keep the free-text discount row as before. */}
+                      {figures !== null && (
+                        <>
+                          <div className="row" data-testid="invoice-subtotal">
+                            <span>Subtotal</span>
+                            <b>{formatCentsUsd(figures.subtotalCents)}</b>
+                          </div>
+                          {figures.invoiceDiscountCents > 0 && (
+                            <div className="row disc" data-testid="invoice-discount">
+                              <span>
+                                Discount
+                                {discountNote !== null && <small className="disc-note">{discountNote}</small>}
+                              </span>
+                              <b>{discountAmountText(figures.invoiceDiscountCents)}</b>
+                            </div>
+                          )}
+                          <div className="rule" />
+                        </>
+                      )}
                       <div className="row total">
                         <span>Total</span>
                         <b>{formatUsd(inv.total)}</b>
                       </div>
-                      {inv.discount && (
+                      {figures === null && inv.discount && (
                         <div className="row disc">
                           <span>Discount</span>
                           <b>{inv.discount}</b>
@@ -644,10 +684,27 @@ export function InvoiceDetail() {
               </div>
             </section>
 
-            {inv.paymentsHistory && (
-              <section className="glass card d2">
+            {(history.length > 0 || inv.paymentsHistory) && (
+              <section className="glass card d2" data-testid="payment-history">
                 <div className="sectlabel">Payment History</div>
-                <p className="note">{inv.paymentsHistory}</p>
+                {history.map((p) => {
+                  const credit = paymentRowIsCredit(p);
+                  const day = paymentRowDayLabel(p);
+                  return (
+                    <div key={p.paymentId} className={`pay ${credit ? 'p2' : 'p1'}`} data-testid="payment-history-row">
+                      <div className="ic" aria-hidden="true">
+                        {credit ? '\u{1F381}' : '\u{1F4B3}'}
+                      </div>
+                      <div className="info">
+                        <b>{paymentRowMethodLabel(p)}</b>
+                        {day && <small>{day}</small>}
+                      </div>
+                      <div className="pamt">{formatCentsUsd(p.amountCents)}</div>
+                    </div>
+                  );
+                })}
+                {/* Migrated bills carry the old system's free text as well. */}
+                {inv.paymentsHistory && <p className="note">{inv.paymentsHistory}</p>}
               </section>
             )}
           </div>

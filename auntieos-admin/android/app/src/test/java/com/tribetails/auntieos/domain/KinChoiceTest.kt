@@ -94,6 +94,18 @@ class KinChoiceTest {
         assertFalse(KinChoice(allKin = false).noneChosen(home, chooseKin = false))
     }
 
+    @Test
+    fun `a draft saved with choosing off carries no chosen-with-choosing-on stamp`() {
+        assertFalse(KinChoice().chosenWithFlagOn(chooseKin = false))
+        assertFalse(KinChoice(allKin = false, selectedIds = setOf("k2")).chosenWithFlagOn(chooseKin = false))
+    }
+
+    @Test
+    fun `a draft saved with choosing on is stamped, whether narrowed or for every Kin`() {
+        assertTrue(KinChoice(allKin = false, selectedIds = setOf("k2")).chosenWithFlagOn(chooseKin = true))
+        assertTrue(KinChoice().chosenWithFlagOn(chooseKin = true))
+    }
+
     // ── choosing on ─────────────────────────────────────────────────────────
 
     @Test

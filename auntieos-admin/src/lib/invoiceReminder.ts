@@ -121,7 +121,25 @@ export function reminderOutcomeMessage(outcome: ReminderOutcome, timeZone?: stri
  * (`reminderNotifiedAppOnly`). Only an explicit true adds "app only"; a stamp
  * from before the flag existed, or one copied from the dedupe ledger, has none.
  */
-export function lastReminderLabel(stamp: unknown, timeZone?: string, appOnly?: unknown): string {
+export function lastReminderLabel(stamp: unknown, timeZone?: string, appOnly?: unknown, heldAtMs?: unknown): string {
   if (!(typeof stamp === 'number' && Number.isFinite(stamp) && stamp > 0)) return 'none sent';
+  if (reminderWasHeld(stamp, heldAtMs)) return formatReminderTime(stamp, timeZone) + ', held, not sent';
   return formatReminderTime(stamp, timeZone) + (appOnly === true ? ', app only' : '');
+}
+/**
+ * #2515: whether the reminder on record never went out. The sweep that holds a
+ * queued reminder at its send time, because notices to households were turned
+ * off, writes `reminderHeldAtMs` beside the sent stamp and leaves that stamp,
+ * so the reminder is not raised again. A sent stamp no later than the held one
+ * is that reminder; a reminder sent afterwards stamps a later time.
+ */
+export function reminderWasHeld(stamp: unknown, heldAtMs: unknown): boolean {
+  return (
+    typeof stamp === 'number' &&
+    Number.isFinite(stamp) &&
+    stamp > 0 &&
+    typeof heldAtMs === 'number' &&
+    Number.isFinite(heldAtMs) &&
+    heldAtMs >= stamp
+  );
 }

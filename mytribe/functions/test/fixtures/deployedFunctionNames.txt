@@ -5,6 +5,7 @@ addGuestKinTaleComment
 addInternalBookingNote
 addKin
 addKinTaleComment
+addKinToUpcomingVisits
 addSecondaryContact
 adjustSupply
 aiBackfillTaleTitles

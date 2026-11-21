@@ -41,6 +41,10 @@ class InvoiceQuoteTest {
         assertFalse(WITHDRAW_PAID_REASON.contains("—"))
     }
     @Test
+    fun `2470 what was paid before a quote was brought over holds Withdraw too`() {
+        assertEquals(WITHDRAW_PAID_REASON, quoteWithdrawHeldReason(inv("quote").copy(paidCents = 0L, broughtOverPaidCents = 1500L)))
+    }
+    @Test
     fun `2092 the draft panel says Kinfolk, never client`() {
         assertEquals("This invoice is still a draft. Review it, then send it to let the Kinfolk know.", draftPanelLine(false))
         assertFalse(draftPanelLine(false).contains("client"))
@@ -134,5 +138,32 @@ class InvoiceQuoteTest {
             assertFalse(text.contains("still see it"))
         }
         assertTrue(archivedQuoteBannerCopy(inv("draft", quoteDraft = true, archivedAt = archived)).contains("never sent"))
+    }
+    @Test
+    fun `2258 the Turn into invoice confirm names the payment terms the invoice will carry`() {
+        assertEquals(
+            "It keeps the quote's payment terms: Due 30 days after the invoice date.",
+            convertQuoteTermsLine(inv("quote").copy(termsCode = "net_30", dueDate = "2026-07-10")),
+        )
+        assertEquals(
+            "It keeps the quote's payment terms: Due 7 days after the last visit.",
+            convertQuoteTermsLine(inv("draft", quoteDraft = true).copy(termsCode = " net_7_after_last_visit ")),
+        )
+        assertEquals(
+            "It keeps the due date picked on the quote.",
+            convertQuoteTermsLine(inv("quote").copy(termsCode = "custom", dueDate = "2026-07-04")),
+        )
+        assertEquals(
+            "It keeps the due date picked on the quote.",
+            convertQuoteTermsLine(inv("quote").copy(termsCode = "", dueDate = "2026-07-04")),
+        )
+        assertEquals(
+            "The quote has no payment terms, so it takes your Payment terms setting.",
+            convertQuoteTermsLine(inv("quote")),
+        )
+        assertEquals(
+            "The quote has no payment terms, so it takes your Payment terms setting.",
+            convertQuoteTermsLine(inv("quote").copy(termsCode = "Net 9")),
+        )
     }
 }

@@ -87,6 +87,7 @@ class InvoiceDetailDueDateTest {
         invoiceId = "inv1",
         payments = emptyList(),
         paidCents = 0L,
+        broughtOverPaidCents = 0L,
         totalCents = 30000L,
         amountDueCents = 4444L,
         writeOffs = emptyList(),

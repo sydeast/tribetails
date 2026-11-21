@@ -43,7 +43,7 @@
 import {
   paidCentsFromPayments,
   invoiceTotalCentsOf,
-  settleInvoice,
+  settleInvoiceDoc,
   centsToDollars,
   type PaymentAmount,
 } from './invoiceMath';
@@ -62,6 +62,8 @@ export interface RepairInvoiceDoc {
   invoiceNumber?: unknown;
   kinfolkId?: unknown;
   writtenOffAt?: unknown;
+  /** #2470: paid before the reload, never a row. Counted as applied. */
+  broughtOverPaidCents?: unknown;
 }
 
 /** Why a scanned invoice was left alone. Reported, so a detect run is never a silent "nothing here". */
@@ -158,7 +160,10 @@ export function repairPlanFor(
   // it rather than assuming a total keeps the pass from fabricating a balance.
   if (totalCents <= 0) return { skipped: 'no_total' };
 
-  const settlement = settleInvoice(totalCents, paidCents);
+  // #2470: the rows plus what was brought over paid. Measured by the rows
+  // alone, an invoice brought over part paid that has since taken a payment
+  // would read understated and be reopened at more than it owes.
+  const settlement = settleInvoiceDoc(doc, paidCents);
   if (settlement.state === 'settled' || settlement.state === 'overpaid') {
     // Genuinely paid off. Reading `paid` is correct.
     return { skipped: 'payments_cover_total' };
@@ -185,7 +190,8 @@ export function repairPlanFor(
     status: 'open',
     paymentStatus: 'PARTIAL',
     totalCents: settlement.totalCents,
-    paidCents: settlement.paidCents,
+    // #2470: the rows only; a brought-over amount stays in its own field.
+    paidCents: settlement.rowsPaidCents,
     amountDueCents: settlement.amountDueCents,
     overpaidCents: 0,
     amountDue: centsToDollars(settlement.amountDueCents),
@@ -200,7 +206,7 @@ export function repairPlanFor(
   // this function returns is by construction a part-paid open invoice, so the
   // stamp reads open/all; derived through the shared helper anyway so the two
   // can never drift.
-  Object.assign(update, invoiceStateStampOf({ ...doc, ...update }, settlement.paidCents));
+  Object.assign(update, invoiceStateStampOf({ ...doc, ...update }, settlement.rowsPaidCents));
 
   return {
     finding: {

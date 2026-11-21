@@ -28,6 +28,8 @@ import {
   type ApplyStep,
 } from '../lib/paymentApply';
 import { creditAccount } from '../lib/accountCredit';
+import { stageCreditInEvent } from '../lib/creditLedger';
+import { hiddenFromHousehold } from '../lib/quoteDecision';
 import { centsToDollars, formatUsdCents, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { PaymentIdempotencyKeyArg, assertSameCaller } from '../lib/moneyIdempotency';
 // #1005: money notices go to a member with billing access, not the last-synced account.
@@ -459,6 +461,14 @@ export const Result = z
      * the office copy; nothing else resends it.
      */
     officeNoticePending: z.boolean(),
+    /**
+     * #2297 review: true when this answer came from the row an earlier call
+     * with the same `idempotencyKey` wrote, so nothing was recorded by this
+     * call. Absent when this call recorded the payment. A client that let the
+     * figures change under one key reads it to say which payment is on record,
+     * rather than reporting the earlier payment as the one just typed.
+     */
+    replayed: z.boolean().optional(),
   })
   .strict();
 export type RecordPaymentResult = z.infer<typeof Result>;
@@ -576,6 +586,12 @@ export async function recordPaymentHandler(
       { code: 'tip_exceeds_amount' },
     );
   }
+  // #1975: A FEE LARGER THAN THE PAYMENT is refused for the same reason. The fee is
+  // what the processor kept out of what was paid, so it cannot be more than
+  // that. A fee larger than the tip is ordinary (a card payment of exactly the
+  // balance, no tip) and is not refused. For "pay what is owed" the amount is
+  // not known yet; it is checked in the transaction.
+  if (!settleBalance) refuseFeeOverAmount(feeCents, amountCents);
   const paidAtIso = new Date().toISOString();
   // THE APPLY IS PLANNED INSIDE THE TRANSACTION BELOW (#2269). Refusing there
   // still means no payment row either: an operator who mis-keyed the Apply box
@@ -734,6 +750,8 @@ export async function recordPaymentHandler(
         tipCents = resolved.tipCents;
         appliedCents = resolved.appliedCents;
         money = moneyOf();
+        // #1975: the fee against the amount this transaction resolved.
+        refuseFeeOverAmount(feeCents, amountCents);
       }
       const plan = planApply({
         invoice,
@@ -959,6 +977,29 @@ export async function recordPaymentHandler(
         })
       : null;
     creditAccount(db(), tx, { kinfolkId, cents: creditedToAccountCents });
+    // #1939: and the credit's line in the household's credit history, on the
+    // same transaction, so the history lists where this balance came from.
+    // The number is the one this transaction read off the invoice, never the
+    // caller's `invoiceNumber` (#2453: that is whatever the app sent), so the
+    // household's line reads "From a payment" when no invoice was read.
+    // The household reads this line, so a display link only lends its number
+    // when that invoice is this household's own and one it may see: an unsent
+    // draft (or a withdrawn or archived quote) is never named to it, and nor
+    // is an invoice stamped with no household. An apply already refuses both.
+    const householdLinkNumber =
+      linkedInvoice !== undefined && linkedInvoice['kinfolkId'] === kinfolkId && !hiddenFromHousehold(linkedInvoice)
+        ? linkedInvoiceNumber
+        : '';
+    stageCreditInEvent(db(), tx, {
+      kinfolkId,
+      source: 'payment',
+      sourceId: ref.id,
+      invoiceId: staged?.invoiceId || args.invoiceId,
+      invoiceNumber: staged?.invoiceNumber || householdLinkNumber,
+      amountCents: creditedToAccountCents,
+      actorUid: actor.uid,
+      atMs: Date.now(),
+    });
     // No `id` field inside the doc: Android's `@DocumentId` property is
     // excluded from serialization, so the direct write never stored one either.
     const row: Record<string, unknown> = {
@@ -1449,6 +1490,21 @@ async function twoStepAppliedCents(args: {
 
 /** The `details.code` of a payment linked to an invoice of another household. */
 export const LINK_WRONG_HOUSEHOLD_CODE = 'link_wrong_household';
+/** #1975: the refusal code for a processor fee larger than the payment. */
+export const FEE_EXCEEDS_AMOUNT_CODE = 'fee_exceeds_amount';
+/**
+ * #1975: refuses a processor fee larger than the payment it came out of. A
+ * keying slip (the payment typed into the fee box), refused before anything
+ * is written, like a tip larger than the payment.
+ */
+function refuseFeeOverAmount(feeCents: number, amountCents: number): void {
+  if (feeCents <= amountCents) return;
+  throw new HttpsError(
+    'invalid-argument',
+    `A fee of ${dollars(feeCents)} is more than the ${dollars(amountCents)} payment it came out of. Check the fee.`,
+    { code: FEE_EXCEEDS_AMOUNT_CODE },
+  );
+}
 /**
  * Refuses a payment whose linked invoice belongs to a different household.
  *
@@ -1759,6 +1815,8 @@ function replayResult(paymentId: string, stored: Record<string, unknown>): z.inf
     // `replayWithConfirmation`; the row alone cannot say either of these.
     householdNoPortalAccount: false,
     officeNoticePending: false,
+    // #2297 review: nothing was recorded by the call this answers.
+    replayed: true,
   });
 }
 

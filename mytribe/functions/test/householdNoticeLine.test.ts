@@ -72,7 +72,7 @@ const EXPECTED: Record<string, string> = {
   'kincare.auntie.arrived': 'Drop-in visit for Rex and Mochi on Tue, Nov 17 at Midday (11 AM to 3 PM)',
   'kincare.auntie.departed': 'Drop-in visit for Rex and Mochi on Tue, Nov 17 at Midday (11 AM to 3 PM)',
   'kincare.unavailable': 'Drop-in visit for Rex and Mochi on Tue, Nov 17 at Midday (11 AM to 3 PM)',
-  'kincare.changed': 'Drop-in visit for Rex and Mochi on Tue, Nov 17 at Midday (11 AM to 3 PM)',
+  'kincare.changed': 'Drop-in visit for Rex and Mochi, 4 visits starting Tue, Nov 17 at Midday (11 AM to 3 PM)',
   'kincare.cancel.declined': 'Drop-in visit for Rex and Mochi on Tue, Nov 17 at Midday (11 AM to 3 PM)',
   'kincare.request.declined': 'Drop-in visit for Rex and Mochi, 4 visits, Nov 17 to Dec 8',
   'kincare.upcoming.reminder': 'Drop-in visit for Rex and Mochi on Tue, Nov 17 at Midday (11 AM to 3 PM)',

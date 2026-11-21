@@ -81,6 +81,15 @@ data class KinChoice(val allKin: Boolean = true, val selectedIds: Set<String> = 
     fun kinNamesToStore(roster: List<RosterKin>, chooseKin: Boolean): List<String> =
         if (coversAll(chooseKin) || roster.isEmpty()) emptyList()
         else covered(roster, chooseKin).mapNotNull { k -> k.name?.takeIf { it.isNotBlank() } }
+    /**
+     * #2347: the `kinChosenWithFlagOn` stamp a draft this app writes carries.
+     * True exactly when the form drew the picker, i.e. choosing Kin is on, so
+     * the server keeps the draft's Kin at approval even if choosing is
+     * switched off before then. A draft saved with choosing off says false,
+     * and is booked for every Kin whatever ids it names.
+     */
+    fun chosenWithFlagOn(chooseKin: Boolean): Boolean = chooseKin
+
     /** True when Kin can be chosen and none is: the one state a form must not submit. */
     fun noneChosen(roster: List<RosterKin>, chooseKin: Boolean): Boolean =
         chooseKin && roster.isNotEmpty() && covered(roster, chooseKin).isEmpty()

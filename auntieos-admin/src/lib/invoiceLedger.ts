@@ -27,6 +27,12 @@ export function paymentDayLabel(paidAt: string | null): string {
   return day === '' ? 'no date recorded' : day;
 }
 
+/** The stored method word for a checkout payment. Never shown. */
+const STORED_CHECKOUT_METHOD = 'stripe';
+
+/** #2334: what a checkout payment with no stored method reads as, the server's own words. */
+export const ONLINE_PAYMENT_LABEL = 'Online payment';
+
 /**
  * How a payment describes itself in one line: its method, or the honest absence
  * of one.
@@ -36,8 +42,14 @@ export function paymentDayLabel(paidAt: string | null): string {
  * a hurry is still a payment), and a row that renders as an empty cell reads as
  * a rendering bug rather than as a fact about the record.
  */
-export function paymentMethodLabel(method: string | null): string {
+export function paymentMethodLabel(method: string | null, methodLabel?: string | null): string {
+  // #2334: the server's plain words win (Card, Klarna, Affirm, "Online
+  // payment"). A server older than the field sends none, and the stored word
+  // for a checkout payment is never shown: it reads "Online payment".
+  const label = (methodLabel ?? '').trim();
+  if (label !== '') return label;
   const trimmed = (method ?? '').trim();
+  if (trimmed.toLowerCase() === STORED_CHECKOUT_METHOD) return ONLINE_PAYMENT_LABEL;
   return trimmed === '' ? 'no method recorded' : trimmed;
 }
 
@@ -222,12 +234,31 @@ export function sessionsWithBrokenBacklink(
  */
 export function ledgerCoversBalance(input: {
   amountDueCents: number;
-  ledgerPayments: readonly Pick<GetInvoiceLedgerResultLedgerPayment, 'amountCents' | 'tipCents'>[];
+  ledgerPayments: readonly (Pick<GetInvoiceLedgerResultLedgerPayment, 'amountCents' | 'tipCents'> &
+    Partial<Pick<GetInvoiceLedgerResultLedgerPayment, 'appliedCents'>>)[];
 }): boolean {
   if (input.amountDueCents <= 0) return false;
-  if (input.ledgerPayments.length === 0) return false;
-  const towardBill = input.ledgerPayments.reduce((sum, r) => sum + ledgerRowTowardBillCents(r), 0);
+  // #2467: only money no balance has seen. A row that applied money already
+  // came off a balance (this invoice's, or the one it names), and what was left
+  // of it was decided then: tip, or the credit the admin entered. Counting it
+  // raised the warning on a properly recorded part payment ($60 of $100 left
+  // $40 owed beside a $60 row). The ledger's `amountDueCents` already counts
+  // what was paid before the invoice was brought over (#2486).
+  const unseen = input.ledgerPayments.filter((r) => !ledgerRowCameOffABalance(r));
+  if (unseen.length === 0) return false;
+  const towardBill = unseen.reduce((sum, r) => sum + ledgerRowTowardBillCents(r), 0);
   return towardBill >= input.amountDueCents;
+}
+/**
+ * #2467: did this history row already come off a balance? It did when it
+ * applied money. Since #1971 the ledger names the invoice on every such row,
+ * including the older two-step ones. A card payment written to the history
+ * only applied nothing, and is exactly the row the warning is for.
+ */
+export function ledgerRowCameOffABalance(
+  row: Partial<Pick<GetInvoiceLedgerResultLedgerPayment, 'appliedCents'>>,
+): boolean {
+  return typeof row.appliedCents === 'number' && row.appliedCents > 0;
 }
 /**
  * #2413: the part of a payment row that can go toward a bill: its gross amount
@@ -262,12 +293,26 @@ export function ledgerRowTowardBillCents(
 export function paymentsPanelIsEmpty(input: {
   payments: readonly unknown[];
   ledgerPayments: readonly unknown[];
+  /** #2470: paid before the invoice was brought over. A payment, with no row. */
+  broughtOverPaidCents?: number;
 }): boolean {
-  return input.payments.length === 0 && input.ledgerPayments.length === 0;
+  return input.payments.length === 0 && input.ledgerPayments.length === 0 && broughtOverCents(input) === 0;
 }
-/** Sum of the subcollection rows, for the panel's own footer. */
+/** #2470: the brought-over amount the ledger reports, or 0 on an older response. */
+export function broughtOverCents(input: { broughtOverPaidCents?: number }): number {
+  const v = input.broughtOverPaidCents;
+  return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0;
+}
+/** #2470: the line the payments table shows for it. */
+export const BROUGHT_OVER_LINE = 'Paid in the old system';
+/**
+ * Sum of the subcollection rows, for the panel's own footer. #2470: plus what
+ * was paid before the invoice was brought over, when the caller passes it, so
+ * the footer agrees with the ledger's `paidCents`.
+ */
 export function paymentsTotalCents(
   payments: readonly Pick<GetInvoiceLedgerResultPayment, 'amountCents'>[],
+  broughtOverPaidCents = 0,
 ): number {
-  return payments.reduce((sum, p) => sum + p.amountCents, 0);
+  return payments.reduce((sum, p) => sum + p.amountCents, 0) + broughtOverCents({ broughtOverPaidCents });
 }

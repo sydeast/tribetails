@@ -154,7 +154,9 @@ async function notifyHouseholdOfReply(args: {
       recipientUid,
       data: {
         kinfolkId: args.kinfolkId,
-        kinfolkName: args.kinfolkName,
+        // #2487: a name that is only the record id stands in for nothing; left
+        // blank, the notice's enricher fills the household's own name.
+        kinfolkName: args.kinfolkName === args.kinfolkId ? '' : args.kinfolkName,
         messageId: args.messageId,
         preview: messagePreview(args.body, 200),
       },

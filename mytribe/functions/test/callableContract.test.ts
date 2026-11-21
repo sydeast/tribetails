@@ -1133,6 +1133,9 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'ok',
       'paymentId',
       'proceedsCents',
+      // #2297 review: `replayed` (optional) says the answer came from the row
+      // an earlier call with the same key wrote, and this call recorded nothing.
+      'replayed',
       'tipBasis',
       'tipCents',
       'tipNetCents',
@@ -1196,6 +1199,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
     load: () => import('../src/admin/getInvoiceLedger'),
     signature: [
       'amountDueCents',
+      // #2470: what was paid before the reload, inside `paidCents`, never a row.
+      'broughtOverPaidCents',
       'invoiceId',
       'ledgerPayments[].amountCents',
       // Frozen for the same reason `listPayments[].amountResolved` is: without
@@ -1209,6 +1214,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'ledgerPayments[].date',
       'ledgerPayments[].feeCents',
       'ledgerPayments[].method',
+      // #2334: the Method cell in plain words, never the stored 'stripe'.
+      'ledgerPayments[].methodLabel',
       'ledgerPayments[].notes',
       'ledgerPayments[].paymentId',
       'ledgerPayments[].proceedsCents',
@@ -1223,6 +1230,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'paidCents',
       'payments[].amountCents',
       'payments[].method',
+      // #2334: the Method cell in plain words, never the stored 'stripe'.
+      'payments[].methodLabel',
       'payments[].paidAt',
       'payments[].paymentId',
       'payments[].recordedBy',
@@ -1259,6 +1268,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'unlinkedKinfolkPayments[].date',
       'unlinkedKinfolkPayments[].feeCents',
       'unlinkedKinfolkPayments[].method',
+      // #2334: the Method cell in plain words, never the stored 'stripe'.
+      'unlinkedKinfolkPayments[].methodLabel',
       'unlinkedKinfolkPayments[].notes',
       'unlinkedKinfolkPayments[].paymentId',
       'unlinkedKinfolkPayments[].proceedsCents',
@@ -1297,6 +1308,8 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'payments[].kinfolkId',
       'payments[].kinfolkName',
       'payments[].method',
+      // #2334: the Method cell in plain words, never the stored 'stripe'.
+      'payments[].methodLabel',
       'payments[].notes',
       'payments[].paymentId',
       'payments[].proceedsCents',
@@ -1408,6 +1421,8 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     // The ADR-0002 stamp, both halves, shipped verbatim off the doc.
     'editScope',
     'id',
+    // #1974: the invoice-level discount in cents under the lines, null with no stored lines.
+    'invoiceDiscountCents',
     // #1848: the number the portals print in place of the id; null when the invoice has none.
     'invoiceNumber',
     'isPaid',
@@ -1417,6 +1432,8 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     // an optional field is still a field three clients read.
     'lineItems[].amountCents',
     'lineItems[].dateIso',
+    // #1974: what was taken off a stored line; null on a row rebuilt from a visit.
+    'lineItems[].discountCents',
     'lineItems[].label',
     'lineItems[].lineId',
     'lineItems[].qty',
@@ -1438,6 +1455,12 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     'payMethods[].label',
     'payMethods[].url',
     'paymentsHistory',
+    // #2334: the bill's Payment History, as the household may see it: how it
+    // was paid, the day and the amount. No reference, fee, notes or recorder.
+    'payments[].amountCents',
+    'payments[].methodLabel',
+    'payments[].paidDay',
+    'payments[].paymentId',
     // The household's answer to a quote (issue #385). Both halves ship: the
     // decision is what tells an accepted quote (status 'open') from an ordinary
     // invoice, and a declined one (status still 'quote') from one nobody has
@@ -1448,6 +1471,8 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     'quoteDecidedByUid',
     'quoteDecision',
     'status',
+    // #1974: the sum of the stored lines, so the household's table adds up.
+    'subtotalCents',
     'terms',
     'total',
     'viewed',

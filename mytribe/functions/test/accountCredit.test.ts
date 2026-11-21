@@ -104,6 +104,15 @@ describe('invoiceAcceptsCredit: the same refusals a manual payment gets', () => 
     }
   });
 
+  it('#2510: refuses a draft or a quote marked only in the older invoiceStatus field', () => {
+    for (const invoiceStatus of ['draft', 'quote', ' Draft ']) {
+      expect(invoiceAcceptsCredit({ kinfolkId: 'fam1', invoiceStatus, total: 127.5 }, []), invoiceStatus).toBe(false);
+    }
+  });
+  it('#2510: status wins when the two fields disagree, and they are never OR-ed', () => {
+    expect(invoiceAcceptsCredit({ ...open, status: 'draft', invoiceStatus: 'open' }, [])).toBe(false);
+    expect(invoiceAcceptsCredit({ ...open, status: 'open', invoiceStatus: 'draft' }, [])).toBe(true);
+  });
   it('refuses an invoice its payments already cover', () => {
     expect(invoiceAcceptsCredit(open, [{ amountCents: 12750 }])).toBe(false);
   });
@@ -309,6 +318,19 @@ describe('drawAccountCredit: every refusal names its reason and writes nothing',
     );
   });
 
+  it('#2510: a draft or a quote marked only in the older invoiceStatus field', async () => {
+    expect((await refusal({ invoice: { kinfolkId: 'fam1', invoiceStatus: 'draft', total: 40 } })).refused).toBe(
+      'invoice_draft',
+    );
+    expect((await refusal({ invoice: { kinfolkId: 'fam1', invoiceStatus: 'quote', total: 40 } })).refused).toBe(
+      'invoice_quote',
+    );
+  });
+  it('#2510: a stored status wins over the older field when they disagree', async () => {
+    expect(
+      (await refusal({ invoice: { kinfolkId: 'fam1', status: 'draft', invoiceStatus: 'open', total: 40 } })).refused,
+    ).toBe('invoice_draft');
+  });
   it('a paid invoice, by its payments or by its label', async () => {
     expect((await refusal({ subPayments: [{ id: 'p1', data: { amountCents: 12750 } }] })).refused).toBe(
       'invoice_paid',

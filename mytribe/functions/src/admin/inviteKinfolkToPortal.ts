@@ -111,9 +111,10 @@ export async function inviteKinfolkToPortalHandler(
     expiresAt,
   });
 
+  // #2487: the names the other invite senders use, never the address.
+  const names = await (await import('../lib/inviteNames.js')).inviteNamesFor(kinfolkId, { caller: 'inviteKinfolkToPortal' });
   await sendFromTemplate('invite.primary', email, {
-    primaryDisplayName: householdName,
-    tribeName: householdName,
+    ...names,
     claimUrl: `${claimBaseUrl}?invite=${inviteRef.id}`,
     expiresInDays: INVITE_TTL_DAYS,
   });

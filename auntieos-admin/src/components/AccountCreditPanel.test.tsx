@@ -74,6 +74,48 @@ describe('AccountCreditPanel: the history (Q6)', () => {
     expect(await screen.findByText('No credit given yet.')).toBeInTheDocument();
   });
 
+  it('#1939: credit the log does not list is its own row, so credits less uses is the balance', async () => {
+    // The walk household: $957.00 held, three uses, no credit the log listed.
+    api.getAccountCreditHistory.mockResolvedValue(
+      history({
+        accountBalanceCents: 95_700,
+        credits: [],
+        uses: [
+          { useId: 'd3', usedAtMs: OCT_3, amountCents: 300, invoiceId: 'i23', invoiceNumber: '1023' },
+          { useId: 'd2', usedAtMs: OCT_3, amountCents: 500, invoiceId: 'i21', invoiceNumber: '1021' },
+          { useId: 'd1', usedAtMs: OCT_3, amountCents: 105_000, invoiceId: 'i20', invoiceNumber: '1020' },
+        ],
+        earlierCredit: { amountCents: 201_500, remainingCents: 95_700 },
+      }),
+    );
+    render(<AccountCreditPanel kinfolkId="fam1" />);
+    expect(await screen.findByText('$957.00 on account')).toBeInTheDocument();
+    expect(screen.queryByText('No credit given yet.')).not.toBeInTheDocument();
+    const row = screen.getByTestId('acredit-earlier');
+    expect(within(row).getByText('$2,015.00')).toBeInTheDocument();
+    expect(within(row).getByText('Earlier credit')).toBeInTheDocument();
+    expect(within(row).getByText('$1,058.00 of $2,015.00 applied')).toBeInTheDocument();
+  });
+
+  it('#1939: earlier credit with nothing used reads Not used yet; all of it used reads All applied', async () => {
+    api.getAccountCreditHistory.mockResolvedValue(
+      history({ credits: [], uses: [], earlierCredit: { amountCents: 4200, remainingCents: 4200 } }),
+    );
+    const first = render(<AccountCreditPanel kinfolkId="fam1" />);
+    expect(within(await screen.findByTestId('acredit-earlier')).getByText('Not used yet')).toBeInTheDocument();
+    first.unmount();
+    api.getAccountCreditHistory.mockResolvedValue(history({ earlierCredit: { amountCents: 4200, remainingCents: 0 } }));
+    render(<AccountCreditPanel kinfolkId="fam1" />);
+    expect(within(await screen.findByTestId('acredit-earlier')).getByText('All applied')).toBeInTheDocument();
+  });
+
+  it('#1939: an older server with no earlierCredit key shows no earlier row', async () => {
+    api.getAccountCreditHistory.mockResolvedValue(history());
+    render(<AccountCreditPanel kinfolkId="fam1" />);
+    expect(await screen.findByText('$12.00 on account')).toBeInTheDocument();
+    expect(screen.queryByTestId('acredit-earlier')).not.toBeInTheDocument();
+  });
+
   it('hides itself entirely when the server refuses the reader', async () => {
     api.getAccountCreditHistory.mockRejectedValue(new FirebaseError('functions/permission-denied', 'no'));
     const { container } = render(<AccountCreditPanel kinfolkId="fam1" />);

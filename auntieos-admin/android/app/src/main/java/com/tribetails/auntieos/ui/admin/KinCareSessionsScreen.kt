@@ -51,6 +51,7 @@ import com.tribetails.auntieos.data.admin.AuditLog
 import com.tribetails.auntieos.data.model.KinCareSession
 import com.tribetails.auntieos.data.model.Kinfolk
 import com.tribetails.auntieos.data.model.businessZone
+import com.tribetails.auntieos.data.model.visitStatusCode
 import com.tribetails.auntieos.ui.admin.scheduling.LocalBusinessZone
 import com.tribetails.auntieos.ui.admin.scheduling.businessToday
 import com.tribetails.auntieos.data.repository.BookingTransitionAction
@@ -147,7 +148,7 @@ private fun startGpsTracking(context: Context, sessionId: String, kinfolkId: Str
 // fail-loud banners.
 // ─────────────────────────────────────────────────────────────────────────────
 
-private enum class Phase(val label: String) {
+internal enum class Phase(val label: String) {
     Active("Active"),
     // issue #702: a SCHEDULED visit whose slot already passed gets its own
     // phase, between Active and Upcoming, rather than being dropped outright.
@@ -1087,7 +1088,7 @@ private fun ActionRow(
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        when (session.status.uppercase()) {
+        when (visitStatusCode(session.status)) {
             "SCHEDULED" -> {
                 PrimaryButton(
                     label = "On The Way",
@@ -1399,7 +1400,7 @@ private fun AddressChip(address: String, context: Context) {
  * Internal since #755: the Kin Care detail's hero pill reads the same map, so
  * the card and the detail cannot drift on which hue a state takes.
  */
-internal fun kinCareStatusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
+internal fun kinCareStatusTone(status: String): AuntieStatusTone = when (visitStatusCode(status)) {
     "ON_MY_WAY" -> AuntieStatusTone.Orange
     "ARRIVED" -> AuntieStatusTone.Teal
     "DEPARTED" -> AuntieStatusTone.Purple
@@ -1409,7 +1410,7 @@ internal fun kinCareStatusTone(status: String): AuntieStatusTone = when (status.
 }
 
 /** Leading glyph for the icon tile. */
-private fun statusGlyph(status: String): ImageVector = when (status.uppercase()) {
+private fun statusGlyph(status: String): ImageVector = when (visitStatusCode(status)) {
     "ON_MY_WAY" -> Lucide.Footprints
     "ARRIVED", "DEPARTED" -> Lucide.Radio
     "COMPLETED" -> Lucide.CircleCheckBig
@@ -1424,9 +1425,9 @@ private fun statusGlyph(status: String): ImageVector = when (status.uppercase())
  * produces today is therefore never swept into Recent by elimination, it is
  * placed by its date like SCHEDULED (matching web's `sessionPhase`).
  */
-private fun phaseFor(s: KinCareSession, today: String, zone: ZoneId): Phase = when {
-    s.status.uppercase() in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> Phase.Active
-    s.status.uppercase() in setOf("COMPLETED", "CANCELLED") -> Phase.CompletedToday
+internal fun phaseFor(s: KinCareSession, today: String, zone: ZoneId): Phase = when {
+    visitStatusCode(s.status) in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> Phase.Active
+    visitStatusCode(s.status) in setOf("COMPLETED", "CANCELLED") -> Phase.CompletedToday
     isOverdueScheduled(s, today, zone) -> Phase.Overdue
     else -> Phase.Upcoming
 }

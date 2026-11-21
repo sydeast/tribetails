@@ -339,8 +339,20 @@ const ALLOWED_EAGER_PACKAGES = [
  * invoice callables' "not found" refusals share it. It is three pure functions
  * and two strings and imports nothing. `lib/activityWords.ts` reads it too and
  * is still loaded with `await import()`.
+ *
+ * 468 since #1822 (on top of #2453's 467): `admin/addKinToUpcomingVisits.ts`,
+ * a new FUNCTIONS entry, the owner's step that puts a Kin adopted after a
+ * booking on the household's upcoming visits. Everything it imports at file
+ * scope was already here; `lib/pastVisit.ts` is loaded with `await import()`.
+ *
+ * 469 since #2334 (on top of #1822's 468): `lib/onlinePaymentMethod.ts`, the
+ * plain words for a payment's method (Card, Klarna, Affirm, 'Online payment'
+ * for an old card row) and the ledger date read off a Timestamp. The webhook,
+ * the two admin payment readers and `portal/getMyInvoices.ts` share it. It is
+ * pure, and the one module it imports (`lib/businessHours.ts`) was already
+ * here; `lib/pastVisit.ts` is still loaded with `await import()`.
  */
-const MAX_OWN_EAGER_MODULES = 467;
+const MAX_OWN_EAGER_MODULES = 469;
 
 interface Edge {
   spec: string;

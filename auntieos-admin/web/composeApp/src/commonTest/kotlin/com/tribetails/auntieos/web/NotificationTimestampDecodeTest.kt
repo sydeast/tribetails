@@ -79,4 +79,15 @@ class NotificationTimestampDecodeTest {
         assertEquals("", entry.readAt)
         assertEquals(false, entry.isRead)
     }
+
+    @Test
+    fun decodes_the_actor_name_and_tolerates_its_absence() {
+        // #2277: the office note notice carries the writer's name for the row.
+        val named = json.decodeFromString<NotificationEntry>(
+            """{"_id":"n6","key":"kincare.note.auntie","actorUid":"auntie1","actorName":"Mia Torres"}""",
+        )
+        assertEquals("Mia Torres", named.actorName)
+        assertEquals(null, json.decodeFromString<NotificationEntry>("""{"_id":"n7"}""").actorName)
+        assertEquals(null, json.decodeFromString<NotificationEntry>("""{"_id":"n8","actorName":null}""").actorName)
+    }
 }

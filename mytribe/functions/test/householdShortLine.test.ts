@@ -107,6 +107,8 @@ describe('every household text message and push in the repo templates', () => {
     serviceType: 'Extended Overnight Stay with Medication',
     kinfolkName: 'Alexandria',
     portalUrl: PORTAL_URL,
+    // #2487: the item's own address, which a visit text prints as `{{link}}`.
+    link: `${PORTAL_URL}/schedule/v1`,
     preview: 'x'.repeat(200),
   });
   // The senders' own renderer (#2321), so this measures what is sent.
@@ -126,7 +128,7 @@ describe('every household text message and push in the repo templates', () => {
       expect(sent).toContain(PORTAL_URL);
       // One whole address, never a cut one.
       expect(sent.match(/https:\/\/\S+/g)).toHaveLength(1);
-      expect(sent.match(/https:\/\/\S+/)![0]).toMatch(/^https:\/\/kinfolk\.tribetails\.com(\/notifications)?$/);
+      expect(sent.match(/https:\/\/\S+/)![0]).toMatch(/^https:\/\/kinfolk\.tribetails\.com(\/notifications|\/schedule\/v1)?$/);
       // No character that would force the costlier encoding.
       expect(sent).not.toContain('…');
     });
