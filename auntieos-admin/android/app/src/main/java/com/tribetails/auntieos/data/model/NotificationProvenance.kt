@@ -206,9 +206,12 @@ fun businessAdminLines(roster: BusinessAdminRoster): List<String> = roster.membe
     // #1564: no per-person address. Every business email goes to the business
     // contact email (operator ruling, 2026-11-05 docket); [businessEmailLine]
     // says where.
-    val name = member.displayName ?: member.uid
+    // #1882: a name, never the sign-in email the server stood in for one, and
+    // never a uid. A business admin with no name is the office.
+    val stored = member.displayName?.trim().orEmpty()
+    val name = if (stored.isNotEmpty() && !stored.contains('@')) stored else "Office"
     val parts = buildList {
-        if (!member.hasStaffRecord) add("no staff record for ${member.uid}")
+        if (!member.hasStaffRecord) add("no staff record yet")
         if (member.defaultAssignee) add("unassigned visits default to them")
     }
     if (parts.isEmpty()) name else "$name (${parts.joinToString("; ")})"

@@ -762,6 +762,10 @@ private fun formatFileSize(bytes: Long): String {
  * omitted rather than shown as a real author. Returns "" when nothing real
  * remains. Pure; unit-tested.
  */
+/** #1882: a stored author that is an identifier, an email or a long opaque uid, not a name. */
+internal fun isStoredIdentifier(value: String): Boolean =
+    value.contains('@') || Regex("^[A-Za-z0-9_-]{20,}$").matches(value)
+
 internal fun mediaMetaLine(
     uploadedAt: String,
     uploadedBy: String,
@@ -775,9 +779,11 @@ internal fun mediaMetaLine(
     val date = uploadedAt.trim().take(10)
         .takeIf { it.length == 10 && it[4] == '-' && it[7] == '-' }
         .orEmpty()
+    // #1882: a uid the staff list does not know, or an email, is not a name.
+    // The line keeps the date rather than print either.
     val author = uploadedBy.trim()
         .takeIf { it.isNotBlank() && !it.equals("auntie", ignoreCase = true) }
-        ?.let { uploaderNames[it] ?: it }
+        ?.let { uploaderNames[it] ?: it.takeUnless(::isStoredIdentifier) }
         .orEmpty()
     return listOf(date, author).filter { it.isNotBlank() }.joinToString(" · ")
 }

@@ -230,7 +230,7 @@ class FormSchemaValidatorTest {
     @Test fun `blank schema id is rejected`() {
         val schema = baseSchema().copy(id = "")
         val errors = FormSchemaValidator.validate(schema)
-        assertTrue(errors.any { it.message.contains("id is required", ignoreCase = true) })
+        assertTrue(errors.any { it.message.contains("Short name is required", ignoreCase = true) })
     }
 
     @Test fun `blank schema name is rejected`() {
@@ -293,7 +293,7 @@ class FormSchemaValidatorTest {
         val errors = FormSchemaValidator.validate(schema)
         assertTrue(
             "Expected a schema-id invalid error but got $errors",
-            errors.any { it.message.contains("Schema id", ignoreCase = true) && it.message.contains("invalid", ignoreCase = true) },
+            errors.any { it.message.contains("Short name", ignoreCase = true) && it.message.contains("invalid", ignoreCase = true) },
         )
     }
 
@@ -305,7 +305,7 @@ class FormSchemaValidatorTest {
         val errors = FormSchemaValidator.validate(schema)
         assertFalse(
             "Expected no schema-id-invalid error but got $errors",
-            errors.any { it.message.contains("Schema id", ignoreCase = true) && it.message.contains("invalid", ignoreCase = true) },
+            errors.any { it.message.contains("Short name", ignoreCase = true) && it.message.contains("invalid", ignoreCase = true) },
         )
     }
 
@@ -314,7 +314,7 @@ class FormSchemaValidatorTest {
         val errors = FormSchemaValidator.validate(schema)
         assertTrue(
             "Expected schema-id invalid error but got $errors",
-            errors.any { it.message.contains("Schema id", ignoreCase = true) && it.message.contains("invalid", ignoreCase = true) },
+            errors.any { it.message.contains("Short name", ignoreCase = true) && it.message.contains("invalid", ignoreCase = true) },
         )
     }
 

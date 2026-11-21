@@ -184,8 +184,8 @@ class FormSchemaValidatorTest {
         val r = validateFormSchema(s)
         assertFalse(r.isValid)
         assertTrue(
-            r.sectionErrors[-1].orEmpty().any { it.contains("Schema id") && it.contains("must start with a letter") },
-            "Schema id with a space should be rejected.",
+            r.sectionErrors[-1].orEmpty().any { it.contains("Short name") && it.contains("must start with a letter") },
+            "Short name with a space should be rejected.",
         )
     }
 
@@ -211,7 +211,7 @@ class FormSchemaValidatorTest {
         )
         val r = validateFormSchema(s)
         assertTrue(
-            r.sectionErrors[-1].orEmpty().none { it.contains("Schema id") },
+            r.sectionErrors[-1].orEmpty().none { it.contains("Short name") },
             "Blank schema id is not a regex violation (caught by canSave instead).",
         )
     }

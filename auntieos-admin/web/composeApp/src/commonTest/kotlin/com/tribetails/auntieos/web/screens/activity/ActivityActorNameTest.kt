@@ -37,6 +37,10 @@ class ActivityActorNameTest {
     @Test
     fun formSchemasNameTheEditor() {
         assertEquals("Syd East", updatedByLabel("u1", names))
-        assertEquals("seed_phase14_schemas", updatedByLabel("seed_phase14_schemas", names))
+        // #1890: a seed script's name, a uid and a sign-in email are not names.
+        assertEquals("Set up", updatedByLabel("seed_phase14_schemas", names))
+        assertEquals("Staff", updatedByLabel("nppJNdMNYJfUigibGKUQj3n4obt2", names))
+        assertEquals("Staff", updatedByLabel("e2e-admin@tribetails.com", names))
+        assertEquals("Office", updatedByLabel("u2", mapOf("u2" to "e2e-admin@tribetails.com")))
     }
 }

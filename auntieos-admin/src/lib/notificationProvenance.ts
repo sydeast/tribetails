@@ -210,9 +210,12 @@ export function reachesBusinessAdmins(entry: NotificationCatalogEntry): boolean 
  */
 export function businessAdminLines(roster: BusinessAdminRoster): string[] {
   return roster.members.map((member) => {
-    const name = member.displayName ?? member.uid;
+    // #1882: a name, never the sign-in email the server used to stand in for
+    // one, and never a uid. A business admin with no name is the office.
+    const stored = (member.displayName ?? '').trim();
+    const name = stored !== '' && !stored.includes('@') ? stored : 'Office';
     const parts: string[] = [];
-    if (!member.hasStaffRecord) parts.push(`no staff record for ${member.uid}`);
+    if (!member.hasStaffRecord) parts.push('no staff record yet');
     if (member.defaultAssignee) parts.push('unassigned visits default to them');
     return parts.length > 0 ? `${name} (${parts.join('; ')})` : name;
   });

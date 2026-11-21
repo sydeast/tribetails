@@ -54,4 +54,14 @@ class ActivityActorNameTest {
         assertEquals("Syd East", labels["u1"])
         assertEquals("roster-only address", labels["u2"])
     }
+    /** #1890: Updated by read a sign-in email and "seed_phase14_schemas". */
+    @Test
+    fun updatedByIsANameOrAPlainWord() {
+        val labels = mapOf("u1" to "Syd East", "u2" to "e2e-admin@tribetails.com")
+        assertEquals("Syd East", com.tribetails.auntieos.ui.admin.formschemas.plainUpdatedBy("u1", labels))
+        assertEquals("Office", com.tribetails.auntieos.ui.admin.formschemas.plainUpdatedBy("u2", labels))
+        assertEquals("Staff", com.tribetails.auntieos.ui.admin.formschemas.plainUpdatedBy("nppJNdMNYJfUigibGKUQj3n4obt2", labels))
+        assertEquals("Staff", com.tribetails.auntieos.ui.admin.formschemas.plainUpdatedBy("e2e-admin@tribetails.com", labels))
+        assertEquals("Set up", com.tribetails.auntieos.ui.admin.formschemas.plainUpdatedBy("seed_phase14_schemas", labels))
+    }
 }

@@ -3609,7 +3609,22 @@ data class StaffMember(
  * A uid with neither is left out, so the caller keeps whatever it showed before.
  */
 fun uploaderNamesFrom(staff: List<StaffMember>): Map<String, String> =
-    staff.mapNotNull { m -> (m.displayName ?: m.email)?.let { m.uid to it } }.toMap()
+    staff.associate { m -> m.uid to staffByline(m) }
+
+/**
+ * #1882: a staff member's name, else the word for their role ("Office" for the
+ * owner, "Auntie"), the words the visit notes sign with. Never an email, and
+ * an email stored as a display name is not a name.
+ */
+fun staffByline(member: StaffMember): String {
+    val name = member.displayName?.trim().orEmpty()
+    if (name.isNotEmpty() && !name.contains('@')) return name
+    return when (member.role) {
+        "owner" -> "Office"
+        "auntie" -> "Auntie"
+        else -> "Staff"
+    }
+}
 
 /**
  * #1820: uid -> "owner" or "auntie", for the Activity Log's actor role. Only

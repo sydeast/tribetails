@@ -214,16 +214,22 @@ describe('the business admin roster, resolved to people', () => {
   });
   /**
    * An allowlist-seeded operator has no staff doc and therefore no name. They
-   * receive every business notification anyway, so the line shows the uid and
-   * says why there is nothing better to show.
+   * receive every business notification anyway, so the line still lists them,
+   * as the office (#1882: never the uid).
    */
-  it('falls back to the uid when there is no staff record to name', () => {
+  it('#1882: lists an admin with no staff record as the office, never by uid', () => {
     const [line] = businessAdminLines(
       roster({ members: [member({ uid: 'op8', displayName: null, email: null, hasStaffRecord: false })] }),
     );
-    expect(line).toContain('op8');
-    expect(line).toContain('no staff record');
-    expect(line).not.toContain('no email on file');
+    expect(line).toBe('Office (no staff record yet)');
+    expect(line).not.toContain('op8');
+  });
+  // #1882: the walk read the sign-in email under "By name:".
+  it('#1882: an email standing in for a name reads as the office', () => {
+    const [line] = businessAdminLines(
+      roster({ members: [member({ displayName: 'e2e-admin@tribetails.com', defaultAssignee: true })] }),
+    );
+    expect(line).toBe('Office (unassigned visits default to them)');
   });
   it('warns when the list is the allowlist fallback rather than the stored roster', () => {
     const note = businessAdminSourceNote(roster({ source: 'operatorAllowlist', members: [member()] }));
