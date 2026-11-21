@@ -76,18 +76,42 @@ describe('planVisitKinIds (pure)', () => {
     expect(planVisitKinIds({ kinId: 'fam-a' }, ALIASES)).toEqual({ kind: 'rewrite', update: { kinId: 'flat-a' } });
   });
 
-  it('keeps a Kin named under both of its ids once, and drops its paired name with it', async () => {
+  // #2350 review: a card id beside the record it maps to may be one Kin named
+  // twice, or two Kin. Merging them could drop a Kin from the visit for good.
+  it('lists and leaves a visit where two ids would become one record, paired names or not', async () => {
     const { planVisitKinIds } = await import('../src/lib/visitKinIds');
     expect(
       planVisitKinIds({ kinIds: ['flat-a', 'fam-a', 'fam-b'], kinNames: ['Biscuit', 'Biscuit', 'Gravy'] }, ALIASES),
-    ).toEqual({ kind: 'rewrite', update: { kinIds: ['flat-a', 'flat-b'], kinNames: ['Biscuit', 'Gravy'] } });
+    ).toEqual({ kind: 'refuse', reason: 'two-ids-one-record', cardIds: ['fam-a'] });
+    expect(planVisitKinIds({ kinIds: ['flat-a', 'fam-a'], kinNames: ['Biscuit'] }, ALIASES)).toEqual({
+      kind: 'refuse',
+      reason: 'two-ids-one-record',
+      cardIds: ['fam-a'],
+    });
   });
 
-  it('leaves kinNames alone when it is not paired one to one', async () => {
+  it('a whole-home visit booked while a crossed pair was open is never merged after the heal (#2530)', async () => {
+    // Rex (older) and Rover (newer, id sorts first) claimed rec-rex. The roster
+    // gave Rover rec-rex and listed Rex under his card, so a whole-home visit
+    // stored [rec-rex, zz-rex]. The heal gave Rover rec-rover and left Rex on
+    // rec-rex. Mapping zz-rex would merge both into rec-rex and drop a Kin.
     const { planVisitKinIds } = await import('../src/lib/visitKinIds');
-    expect(planVisitKinIds({ kinIds: ['flat-a', 'fam-a'], kinNames: ['Biscuit'] }, ALIASES)).toEqual({
+    const healed = new Map([
+      ['zz-rex', 'rec-rex'],
+      ['aa-rover', 'rec-rover'],
+    ]);
+    expect(planVisitKinIds({ kinIds: ['rec-rex', 'zz-rex'], kinNames: ['Rover', 'Rex'] }, healed)).toEqual({
+      kind: 'refuse',
+      reason: 'two-ids-one-record',
+      cardIds: ['zz-rex'],
+    });
+  });
+
+  it('keeps the same id listed twice once, with its paired name', async () => {
+    const { planVisitKinIds } = await import('../src/lib/visitKinIds');
+    expect(planVisitKinIds({ kinIds: ['fam-a', 'fam-a', 'fam-b'], kinNames: ['Biscuit', 'Biscuit', 'Gravy'] }, ALIASES)).toEqual({
       kind: 'rewrite',
-      update: { kinIds: ['flat-a'] },
+      update: { kinIds: ['flat-a', 'flat-b'], kinNames: ['Biscuit', 'Gravy'] },
     });
   });
 

@@ -314,6 +314,48 @@ describe('materializeKinRoster, naming the Kin an existing booking stores', () =
       kinNames: ['Biscuit', 'Gravy', 'Office Cat'],
     });
   });
+
+  // #2350 review (#2530): while two cards claim one record, the roster hands
+  // the record to the card whose id sorts first, which may be the newer Kin.
+  // An approval that mapped that card's id would book the visit on the older
+  // Kin's record, which no script can put right later. The card id stays.
+  it('#2530: a card of a crossed pair keeps its own id, and is still named', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        queryDocs: {
+          'families/5/kin': [
+            { id: 'aa-rover', data: { name: 'Rover', legacyKinId: 'rec-1' } },
+            { id: 'fam-tib', data: { name: 'Tibbs', legacyKinId: 'rec-tib' } },
+            { id: 'zz-rex', data: { name: 'Rex', legacyKinId: 'rec-1' } },
+          ],
+          kin: [
+            { id: 'rec-1', data: { name: 'Rover', kinfolkId: '5', familyKinPath: 'families/5/kin/aa-rover' } },
+            { id: 'rec-tib', data: { name: 'Tibbs', kinfolkId: '5' } },
+          ],
+        },
+      }).db,
+    );
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('5', ['aa-rover', 'zz-rex', 'fam-tib'])).toEqual({
+      kinIds: ['aa-rover', 'zz-rex', 'rec-tib'],
+      kinNames: ['Rover', 'Rex', 'Tibbs'],
+    });
+  });
+
+  it('#2530: a live card tied to an archived record by name keeps its own id', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        queryDocs: {
+          'families/6/kin': [{ id: 'new-max', data: { name: 'Max', legacyKinId: 'rec-old-max', status: 'active' } }],
+          kin: [{ id: 'rec-old-max', data: { name: 'Max', kinfolkId: '6', status: 'archived' } }],
+        },
+      }).db,
+    );
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('6', ['new-max'])).toEqual({ kinIds: ['new-max'], kinNames: ['Max'] });
+  });
 });
 
 describe('kinRosterForNewVisit, operator ruling 2026-11-12: every visit covers every Kin', () => {

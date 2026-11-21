@@ -1,8 +1,10 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import { db } from './firestoreAdmin';
-import { kinIdAliases, readHouseholdKin } from './kinRoster';
-import { isInactiveKinStatus } from './kinStatus';
+import { kinIdAliases, readHouseholdKinLinks } from './kinRoster';
 import { logEvent } from './logger';
+
+/** Lives with the roster reader it mirrors; re-exported for the script and the tests. */
+export { crossedCardIds } from './kinRoster';
 
 /**
  * #2350. A visit or KinTale that names a Kin by its household card id, put
@@ -33,12 +35,11 @@ import { logEvent } from './logger';
  * read the plan.
  *
  * WHAT THE SCRIPT WRITES, and only this: `kinIds` (each card id replaced in
- * place by the Kin's stored id, a Kin then named twice kept once) and the
- * legacy single `kinId`, on `kin_care_sessions` and `kin_care_reports`. Order
- * is kept, so `kinNames` (paired by position on the admin side,
- * `visitFacts.ts`) still lines up; a dropped duplicate drops its name too
- * when the two lists are the same length. Nothing a person hears follows: the
- * visit triggers react to `status` and the calendar fields, the KinTale
+ * place by the Kin's stored id) and the legacy single `kinId`, on
+ * `kin_care_sessions` and `kin_care_reports`. Order is kept, so `kinNames`
+ * (paired by position on the admin side, `visitFacts.ts`) still lines up. The
+ * same id listed twice is kept once, with its paired name. Nothing a person
+ * hears follows: the visit triggers react to `status` and the calendar fields, the KinTale
  * triggers to a send, its body or its media. A sent KinTale with no care-task
  * copy yet gets one from `onKinTaleUpdate` on the write.
  *
@@ -56,6 +57,10 @@ import { logEvent } from './logger';
  *     card created first, so the record may be the other Kin's. The same holds
  *     for a live card tied to an archived or memorial record (#1912). Listed,
  *     left for after `healKinLink` has given each card a record of its own.
+ *   - a document where two different ids would become one record (a card id
+ *     beside its own record id, or two cards mapped to one record). It may
+ *     be two Kin booked while a crossed pair was open (#2530), and merging
+ *     them would drop one from the visit. Listed and left.
  *   - a card id that is also some Kin's stored id, or one no Kin of the
  *     household answers to.
  *
@@ -71,14 +76,15 @@ export type VisitKinIdCollection = (typeof VISIT_KIN_ID_COLLECTIONS)[number];
 
 type Data = Record<string, unknown>;
 
-export type KinIdRefusalReason = 'card-id-elsewhere' | 'crossed-link';
+export type KinIdRefusalReason = 'card-id-elsewhere' | 'crossed-link' | 'two-ids-one-record';
 
 export type KinIdPlan =
   | { kind: 'none' }
   /**
    * `card-id-elsewhere`: the card id is named somewhere other than `kinIds` /
-   * `kinId`. `crossed-link`: the document names a card that shares its admin
-   * record with another card.
+   * `kinId`. `crossed-link`: the document names a card whose admin record may
+   * be another Kin's ([crossedCardIds]). `two-ids-one-record`: two different
+   * ids on it would become the same record.
    */
   | { kind: 'refuse'; reason: KinIdRefusalReason; cardIds: string[] }
   | { kind: 'rewrite'; update: Data };
@@ -86,10 +92,6 @@ export type KinIdPlan =
 function stringList(v: unknown): string[] | null {
   if (!Array.isArray(v)) return null;
   return v.filter((x): x is string => typeof x === 'string');
-}
-
-function textOf(v: unknown): string {
-  return typeof v === 'string' ? v.trim() : '';
 }
 
 /** Every string anywhere inside [v], walked without a JSON round trip. */
@@ -112,69 +114,18 @@ function collectStrings(v: unknown, into: Set<string>, depth = 0): void {
   }
 }
 
-/**
- * The household cards whose admin record may not be their own. PURE.
- *
- * Two kinds: a card that shares its record with another card, and a live card
- * tied to an archived or memorial record (see below).
- *
- * Reads each card's record exactly as `readHouseholdKin` does (its
- * `legacyKinId` when that record exists, else the record whose
- * `familyKinPath` names the card, else a record under the card's own id), and
- * returns every card whose record another card also reads as its own. For
- * such a pair the roster reader keeps the record for whichever card it meets
- * first, which is not always the card `lib/kinLink.ts` says owns it, so no
- * alias from either card can be trusted until the pair is healed.
- */
-export function crossedCardIds(
-  kinfolkId: string,
-  cards: ReadonlyArray<{ id: string; data: Data }>,
-  records: ReadonlyArray<{ id: string; data: Data }>,
-): Set<string> {
-  const recordIds = new Set(records.map((r) => r.id));
-  const recordStatus = new Map(records.map((r) => [r.id, r.data['status']]));
-  const byRecord = new Map<string, string[]>();
-  const crossed = new Set<string>();
-  for (const card of cards) {
-    const stamped = textOf(card.data['legacyKinId']);
-    const pointed = records.find((r) => textOf(r.data['familyKinPath']) === `families/${kinfolkId}/kin/${card.id}`);
-    const linked =
-      stamped !== '' && recordIds.has(stamped) ? stamped : pointed ? pointed.id : recordIds.has(card.id) ? card.id : null;
-    if (linked === null) continue;
-    byRecord.set(linked, [...(byRecord.get(linked) ?? []), card.id]);
-    // #1912: a live Kin tied to an archived or memorial record. `kinLink.ts`
-    // reads that as crossed with no owner (`adoptedWhileHidden`): the record
-    // was another Kin's of the same name. A memorial being restored looks the
-    // same for a moment; holding it only lists its visits.
-    if (!isInactiveKinStatus(card.data['status']) && isInactiveKinStatus(recordStatus.get(linked))) crossed.add(card.id);
-  }
-  for (const claimants of byRecord.values()) {
-    if (claimants.length > 1) for (const id of claimants) crossed.add(id);
-  }
-  return crossed;
-}
-
 /** A household's card id -> stored id map, with the crossed cards taken out of it. */
 export interface HouseholdKinIdMap {
   aliases: Map<string, string>;
   crossed: Set<string>;
 }
 
-/** Reads one household's Kin and works out [HouseholdKinIdMap]. Writes nothing. */
+/** Reads one household's Kin, in one read, and works out [HouseholdKinIdMap]. Writes nothing. */
 export async function readHouseholdKinIdMap(
   kinfolkId: string,
   firestore: Firestore = db(),
 ): Promise<HouseholdKinIdMap> {
-  const [entries, cardSnap, recordSnap] = await Promise.all([
-    readHouseholdKin(kinfolkId, firestore),
-    firestore.collection('families').doc(kinfolkId).collection('kin').get(),
-    firestore.collection('kin').where('kinfolkId', '==', kinfolkId).get(),
-  ]);
-  const crossed = crossedCardIds(
-    kinfolkId,
-    cardSnap.docs.map((d) => ({ id: d.id, data: (d.data() ?? {}) as Data })),
-    recordSnap.docs.map((d) => ({ id: d.id, data: (d.data() ?? {}) as Data })),
-  );
+  const { entries, crossed } = await readHouseholdKinLinks(kinfolkId, firestore);
   const aliases = kinIdAliases(entries);
   for (const id of crossed) aliases.delete(id);
   return { aliases, crossed };
@@ -217,6 +168,21 @@ export function planVisitKinIds(
   const update: Data = {};
   if (kinIds !== null && kinIds.some((id) => aliases.has(id))) {
     const mapped = kinIds.map((id) => aliases.get(id) ?? id);
+    // Two different ids that would become one record: a card id and the
+    // record it maps to, or two cards mapped to one record. That is one Kin
+    // named twice, or two Kin booked while a crossed pair gave the newer one
+    // the older one's record (#2530) and healed since. The ids cannot tell
+    // the two apart, and the names cannot either (a crossing happened by
+    // name), so merging could drop a Kin from the visit for good.
+    const firstFrom = new Map<string, string>();
+    const merging = new Set<string>();
+    kinIds.forEach((from, i) => {
+      const to = mapped[i] as string;
+      const earlier = firstFrom.get(to);
+      if (earlier === undefined) firstFrom.set(to, from);
+      else if (earlier !== from) for (const id of [earlier, from]) if (aliases.has(id)) merging.add(id);
+    });
+    if (merging.size > 0) return { kind: 'refuse', reason: 'two-ids-one-record', cardIds: [...merging] };
     const names = stringList(data['kinNames']);
     const pairedNames = names !== null && names.length === mapped.length;
     const seen = new Set<string>();

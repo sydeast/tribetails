@@ -22,7 +22,9 @@
  * `kin_care_reports`, card ids replaced in place, nothing else. A document
  * that names the card id anywhere else (a per-Kin checklist answer, a mood) is
  * listed and left alone, and so is one that names a card in a crossed pair
- * (two cards that claim one admin record), until the pair is healed. The
+ * (two cards that claim one admin record, or a live card tied to an archived
+ * record), until the pair is healed (`repair:crossed-kin-links`), and so is
+ * one where two different ids would become one record. The
  * household's own copies are never written. Before writing a household it reads
  * its Kin again and leaves it if any link changed since the plan.
  *
@@ -158,7 +160,12 @@ function report(summary: Summary, plans: HouseholdKinIdPlan[], mode: Mode): void
       console.log(`  ${w.collection}/${w.docId}  ${JSON.stringify(w.update)}`);
     }
     for (const r of plan.refusals) {
-      const why = r.reason === 'crossed-link' ? 'card shares its record with another card' : 'card id also named outside kinIds';
+      const why =
+        r.reason === 'crossed-link'
+          ? 'card record may be another Kin (shared with another card, or archived): run repair:crossed-kin-links first'
+          : r.reason === 'two-ids-one-record'
+            ? 'two ids on it would become one record (may be two Kin)'
+            : 'card id also named outside kinIds';
       console.log(`  LEFT ${r.collection}/${r.docId}  ${why}: ${r.cardIds.join(', ')}`);
     }
   }
