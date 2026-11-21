@@ -114,11 +114,16 @@
 .items thead th.r, .items tbody td.r { text-align: right; }
 .items tbody td { padding: 14px 12px; border-bottom: 1px solid var(--hairline); vertical-align: top; font-size: 14px; }
 .items tbody tr:hover { background: rgba(255, 255, 255, .45); }
-/* #1974: schedule.css's global `.svc` (mono, capitals, display block) reached
-   this cell, so every line description printed in capitals. The cell keeps
-   the table's own type, as the invoice mock draws it. */
+/* #1974: two global `.svc` rules reach this cell. schedule.css's (mono,
+   capitals, display block) printed every line description in capitals, and
+   booking.css's service card (border, radius, glass, shadow, hover lift)
+   applies once the booking screen has been opened. The cell keeps the
+   table's own look, as the invoice mock draws it. */
 .items tbody td.svc { display: table-cell; font-family: inherit; font-size: 14px; letter-spacing: normal;
-  text-transform: none; color: inherit; margin-bottom: 0; }
+  text-transform: none; color: inherit; margin-bottom: 0; border: none; border-bottom: 1px solid var(--hairline);
+  border-radius: 0; background: none; box-shadow: none; cursor: auto; overflow: visible; position: static;
+  transition: none; }
+.items tbody td.svc:hover { transform: none; box-shadow: none; }
 .items .svc b { font-weight: 600; display: block; }
 .items .svc small { display: block; color: var(--navy-muted); font-size: 12px; margin-top: 2px; }
 .items .date { font-family: var(--mono); font-size: 12.5px; color: var(--navy-soft); white-space: nowrap; }

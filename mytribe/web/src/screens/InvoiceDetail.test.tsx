@@ -478,6 +478,11 @@ describe('#1974: line descriptions keep the case they were typed in', () => {
     expect(rule).toContain('text-transform: none');
     expect(rule).toContain('font-family: inherit');
     expect(rule).toContain('display: table-cell');
+    // booking.css's service card `.svc` must not dress the cell either.
+    expect(rule).toContain('border-radius: 0');
+    expect(rule).toContain('background: none');
+    expect(rule).toContain('box-shadow: none');
+    expect(css).toMatch(/\.items tbody td\.svc:hover \{[^}]*transform: none/);
   });
 });
 /**
