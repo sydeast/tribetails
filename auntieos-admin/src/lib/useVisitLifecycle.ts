@@ -23,11 +23,13 @@ import {
   type UndoneArrivalNotices,
 } from './sessionLifecycle';
 import {
+  announceVisitClock,
   beginVisitClockWrite,
   clearVisitClockWrite,
   visitClockInFlight,
   settleVisitClockWrite,
   useVisitClockState,
+  visitClockState,
   type LifecycleWriteState,
 } from './visitClockOutcome';
 import { actionNotifiesHousehold, visitNoticeOutcomeSentence } from './visitNotice';
@@ -274,6 +276,10 @@ export function useVisitLifecycle(
       void res.notification.then((outcome) => {
         said = visitNoticeOutcomeSentence(outcome, household, auntie);
         resay();
+        // #1815: and once more where the operator is looking, unless a newer
+        // write on this visit has already replaced the sentence.
+        const now = visitClockState(id);
+        if (now.status === 'done' && now.message.includes(said)) announceVisitClock(id, now.message);
       });
 
       // #2357: and, for an undo, what came off their notifications list.
