@@ -82,6 +82,43 @@ class UnappliedPaymentsSectionTest {
         )
     }
     @Test
+    fun aPaymentWhoseInvoiceHasNoNumberLeavesTheInvoiceOut() {
+        // #2417: this read "on invoice an unnumbered invoice".
+        val held = payment.copy(
+            invoiceId = "k3Jx9QpLm2", invoiceNumber = " ", amountCents = 4000,
+            reason = "the invoice could not be found",
+        )
+        assertEquals("\$40.00 card payment", unappliedPaymentLine(held))
+        assertEquals(
+            "Sep 27, 2026. Not applied because the invoice could not be found.",
+            unappliedPaymentDetailLine(held, utc),
+        )
+        assertEquals(
+            "Card payment of \$40.00. There are no refunds. " +
+                "Anything you do not credit or apply stays recorded on the payment.",
+            decideLeadLine(held),
+        )
+    }
+
+    @Test
+    fun anOpenInvoiceWithNoNumberIsNamedInWordsInThePicker() {
+        // #2417: the words admin web and Android use, never the stored id.
+        val unnumbered = OpenInvoiceDto("k3Jx9QpLm2", "", 4000)
+        assertEquals("Invoice with no number, \$40.00 due", openInvoiceOptionLabel(unnumbered))
+        assertEquals("Invoice with no number, \$40.00 due", openInvoiceOptionLabel(unnumbered.copy(invoiceNumber = "  ")))
+    }
+
+    @Test
+    fun moneyAppliedToAnInvoiceWithNoNumberSaysSo() {
+        // #2417
+        val note = decisionResultText(outcome(credited = 0).copy(appliedInvoiceId = "k3Jx9QpLm2", appliedInvoiceNumber = ""))
+        assertEquals(
+            "Decision saved. \$15.00 on an invoice with no number (paid in full). \$0.00 kept on the payment.",
+            note,
+        )
+    }
+
+    @Test
     fun theDialogTextReadsAsTheSpecSays() {
         assertEquals("Decide what this payment becomes", DECIDE_TITLE)
         assertEquals(

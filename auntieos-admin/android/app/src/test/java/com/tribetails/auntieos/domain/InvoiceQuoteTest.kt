@@ -26,7 +26,9 @@ class InvoiceQuoteTest {
         assertEquals("Quote #1026", invoiceDocTitle(inv("draft", quoteDraft = true).copy(invoiceNumber = "1026")))
         assertEquals("Invoice #1026", invoiceDocTitle(inv("open", quoteDecision = "accepted").copy(invoiceNumber = "1026")))
         assertEquals("Invoice #1042", invoiceDocTitle(inv("draft").copy(invoiceNumber = "1042")))
-        assertEquals("Invoice #-", invoiceDocTitle(inv("open")))
+        // #2417: no number reads as words, the heading admin web shows.
+        assertEquals("Invoice with no number", invoiceDocTitle(inv("open")))
+        assertEquals("Quote with no number", invoiceDocTitle(inv("quote")))
     }
 
     @Test

@@ -155,11 +155,25 @@ fun ledgerRowDateLabel(p: InvoiceLedgerPayment): String {
     return "${LEDGER_MONTHS[day.month.ordinal]} ${day.day}, ${day.year}"
 }
 
-/** The invoice the money went to ("#1029"), or "" when it touched no balance. */
+/**
+ * #2417, #2420: how an invoice that has no number is named wherever its number
+ * would stand. Never its stored id. The same words ship on admin web and
+ * Android.
+ */
+const val INVOICE_WITH_NO_NUMBER = "an invoice with no number"
+
+/** The same, where it opens a line. */
+const val INVOICE_WITH_NO_NUMBER_LEAD = "Invoice with no number"
+
+/**
+ * The invoice the money went to ("#1029"), the words for an invoice that has no
+ * number, or "" when the payment touched no balance.
+ */
 fun ledgerRowAppliedTo(p: InvoiceLedgerPayment): String {
     val number = p.appliedInvoiceNumber.trim()
     if (number.isNotEmpty()) return "#$number"
-    return p.appliedInvoiceId.trim()
+    if (p.appliedInvoiceId.trim().isNotEmpty()) return INVOICE_WITH_NO_NUMBER
+    return ""
 }
 
 /** Never "$0.00 applied": a payment that touched no balance says so. */
