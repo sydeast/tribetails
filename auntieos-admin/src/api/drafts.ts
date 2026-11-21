@@ -121,6 +121,12 @@ export interface GeneratedDraftRow {
    */
   sendClaimedAt?: string | undefined;
   sendUnconfirmedAt?: string | undefined;
+  /**
+   * #2443: the uid of whoever made the draft, stamped on the server by every
+   * path that creates one. An Auntie reads and sends only the KinTale drafts
+   * stamped with her uid; a draft with no stamp is the owner's.
+   */
+  createdBy?: string | undefined;
 }
 
 /**
@@ -150,10 +156,12 @@ export interface GeneratedDraftRow {
  * window is applied client-side (see `lib/kinTaleList.ts#draftsInWindow`).
  *
  * WHO SEES WHAT. The owner's read is this spec as written, every type of draft.
- * An Auntie reads KinTale drafts only, and rules refuse her a list that does
- * not say so, so `useCollection` adds `communication_type == 'visit_report'` to
- * this spec when she is signed in (`lib/caretakerScope.ts`). Do not add that
- * filter here: the owner's Drafts bucket lists held pushes too.
+ * An Auntie reads the KinTale drafts she made only (#2443), and rules refuse
+ * her a list that does not say so, so `useCollection` adds
+ * `communication_type == 'visit_report'` and `createdBy == <her uid>` to this
+ * spec when she is signed in (`lib/caretakerScope.ts`). Do not add those
+ * filters here: the owner's Drafts bucket lists held pushes too, and every
+ * maker's drafts.
  */
 export const GENERATED_DRAFTS_MAX = 50;
 

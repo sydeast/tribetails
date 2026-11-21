@@ -29,12 +29,34 @@ import type { Category, Channel, NotificationDef } from './types';
  *                                 no alwaysEnabled check at all, so the operator
  *                                 can silence any of these rows and it will then
  *                                 genuinely stop sending to everyone.
+ *   lockedOnStreams.kinfolk     → ENFORCED (operator ruling on #2382, 2026-11-20:
+ *                                 payment, invoice, KinTale and booking
+ *                                 confirmations are required on and cannot be
+ *                                 disabled). On the kinfolk stream the operator
+ *                                 cannot turn the notification or its email off:
+ *                                 the save refuses it and `resolveChannels` /
+ *                                 `notificationDisabledFor` ignore a stored off
+ *                                 (see `withConfirmationLock` in prefs.ts). Text
+ *                                 and push stay gateable, and the household still
+ *                                 chooses them. The household launch switch
+ *                                 (`householdNotificationsLive`) still holds these
+ *                                 until launch; this lock is about settings only.
+ *                                 The lock also makes email required on that
+ *                                 stream alone (`requiredOnStream`), so the
+ *                                 household cannot turn it off either, while an
+ *                                 owner copy of the same row keeps her own prefs.
  *   kinfolkFacing = false       → hidden from kinfolk prefs UI (still sent).
  *
- * So no surface may caption either flag "Always on" or "Required" full stop.
- * The settled words are "Meant to stay on" for alwaysEnabled and, on a
- * recipient's own screen, "Set by your business" / "Set by Tribe Tails Pet
- * Care" for a channel that recipient cannot change.
+ * So no surface may caption alwaysEnabled or required.email "Always on" or
+ * "Required" full stop. The settled words are "Meant to stay on" for
+ * alwaysEnabled, "Required for Kinfolk" for a lockedOnStreams.kinfolk row on
+ * the owner's gate, and, on a recipient's own screen, "Set by your business" /
+ * "Set by Tribe Tails Pet Care" for a channel that recipient cannot change.
+ *
+ * The five lockedOnStreams.kinfolk rows: `invoice.new` (invoice),
+ * `invoice.receipt` and `invoice.payment.applied` (payment), `kintale.published`
+ * (KinTale) and `kincare.booking.confirm` (booking). notificationCatalog.test.ts
+ * pins exactly this set.
  */
 
 const DEBOUNCE_30_MIN = 30 * 60 * 1000;
@@ -54,6 +76,7 @@ const CATALOG_LIST: NotificationDef[] = [
     required: { email: true },
     alwaysEnabled: true,
     alwaysEnabledStreams: { kinfolk: true },
+    lockedOnStreams: { kinfolk: true },
     kinfolkFacing: false,
     deliveryMode: 'trigger',
     recipientResolver: 'kinfolkAcct',
@@ -333,8 +356,9 @@ const CATALOG_LIST: NotificationDef[] = [
     audiences: { kinfolk: true },
     category: 'kintale',
     allowedChannels: ['email', 'sms', 'push'],
-    required: {},
+    required: { email: true },
     alwaysEnabled: false,
+    lockedOnStreams: { kinfolk: true },
     kinfolkFacing: true,
     deliveryMode: 'trigger',
     recipientResolver: 'kinfolkAcct',
@@ -399,6 +423,7 @@ const CATALOG_LIST: NotificationDef[] = [
     required: { email: true },
     alwaysEnabled: true,
     alwaysEnabledStreams: { kinfolk: true },
+    lockedOnStreams: { kinfolk: true },
     kinfolkFacing: false,
     deliveryMode: 'trigger',
     recipientResolver: 'kinfolkAcct',
@@ -436,6 +461,7 @@ const CATALOG_LIST: NotificationDef[] = [
     required: { email: true },
     alwaysEnabled: true,
     alwaysEnabledStreams: { kinfolk: true },
+    lockedOnStreams: { kinfolk: true },
     kinfolkFacing: true,
     deliveryMode: 'trigger',
     recipientResolver: 'kinfolkAcct',
@@ -570,8 +596,12 @@ const CATALOG_LIST: NotificationDef[] = [
     audiences: { kinfolk: true, business: true },
     category: 'invoice',
     allowedChannels: ['email', 'push'],
+    // Email is required for the household copy only, through the lock
+    // (`requiredOnStream`). Not a flat `required.email`: that would force the
+    // owner's own copy on too, over her own receive preferences (#2382 review).
     required: {},
     alwaysEnabled: false,
+    lockedOnStreams: { kinfolk: true },
     kinfolkFacing: true,
     deliveryMode: 'trigger',
     recipientResolver: 'kinfolkAcct',
@@ -1326,6 +1356,34 @@ export function alwaysEnabledForStream(
   if (!def.alwaysEnabled) return false;
   if (!def.alwaysEnabledStreams) return true;
   return def.alwaysEnabledStreams[stream] === true;
+}
+
+/**
+ * Whether [def]'s copy on [stream] is locked on (ruling on #2382, 2026-11-20):
+ * no setting turns the notification or its email off for that stream. Unlike
+ * `alwaysEnabledForStream` this is enforced, in `withConfirmationLock`
+ * (prefs.ts) and in `saveBusinessNotificationOverride`.
+ */
+export function lockedOnForStream(
+  def: NotificationDef,
+  stream: 'kinfolk' | 'business' | 'staff',
+): boolean {
+  return def.lockedOnStreams?.[stream] === true;
+}
+
+/**
+ * Whether [channel] is required for [stream]'s copy of [def]: the catalog's
+ * `required` (every stream), or email on a stream the confirmation lock covers
+ * (#2382). The lock's email requirement is scoped to that stream, so a locked
+ * row that also serves the owner leaves her own copy to her own preferences.
+ * `resolveChannels` and the household catalog read this, never `required` alone.
+ */
+export function requiredOnStream(
+  def: NotificationDef,
+  channel: Channel,
+  stream: 'kinfolk' | 'business' | 'staff',
+): boolean {
+  return def.required[channel] === true || (channel === 'email' && lockedOnForStream(def, stream));
 }
 
 /**

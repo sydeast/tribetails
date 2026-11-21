@@ -61,6 +61,14 @@ data class NotificationCatalogEntry(
     val alwaysEnabled: Boolean = false,
     /** Streams alwaysEnabled applies to; empty = every stream the key serves. */
     val alwaysEnabledStreams: Set<String> = emptySet(),
+    /**
+     * Streams this row is LOCKED ON for (ruling on #2382, 2026-11-20): payment,
+     * invoice, KinTale and booking confirmations, kinfolk stream only. Unlike
+     * [alwaysEnabled] this is enforced: the server refuses turning the row or its
+     * email off there and ignores a stored off. Empty = none, and a server older
+     * than the field sends none.
+     */
+    val lockedOnStreams: Set<String> = emptySet(),
     val kinfolkFacing: Boolean = false,
     val deliveryMode: String = "",
     val description: String = "",
@@ -117,6 +125,17 @@ data class NotificationCatalogEntry(
      */
     fun alwaysEnabledFor(stream: String): Boolean =
         alwaysEnabled && (alwaysEnabledStreams.isEmpty() || stream in alwaysEnabledStreams)
+
+    /**
+     * Is this row locked on for [stream]'s copy (#2382)? Enforced, so the gate
+     * draws the On/Off toggle and the email toggle on and fixed for that
+     * stream. Text and push stay editable. Mirrors `lockedOnFor` on admin web.
+     */
+    fun lockedOnFor(stream: String): Boolean = stream in lockedOnStreams
+
+    /** On a locked-on row, whether [channel] is the one the lock pins on (#2382). */
+    fun lockedOnChannel(stream: String, channel: String): Boolean =
+        channel == "email" && lockedOnFor(stream)
 
     /** Row title for the UI: the catalog label, else the description, else the key as words (#1592). */
     fun displayTitle(): String =
@@ -346,6 +365,26 @@ fun NotificationOverride.withStreamChannel(stream: String, channel: String, valu
 }
 
 /**
+ * The override to save for a locked-on row (#2382): this one with every locked
+ * stream's copy and its email kept on. A settings doc written before the ruling
+ * can still hold an off (often a flat one the kinfolk stream inherits), and the
+ * server refuses any save whose kinfolk view is off, so without this every
+ * text or push edit on such a row would be refused. The send already ignores
+ * that stored off, so this changes what is stored, never what is sent. Rows
+ * with no lock come back unchanged. Mirrors `keptLockedOn` on admin web.
+ */
+fun NotificationOverride.keptLockedOn(entry: NotificationCatalogEntry): NotificationOverride {
+    var next = this
+    for (stream in entry.lockedOnStreams) {
+        if ((next.streams[stream]?.enabled ?: next.enabled) == false) next = next.withStreamEnabled(stream, true)
+        if ((next.streams[stream]?.channels?.get("email") ?: next.channels["email"]) == false) {
+            next = next.withStreamChannel(stream, "email", true)
+        }
+    }
+    return next
+}
+
+/**
  * Sets the whole-notification LOCK for [stream]. Locks are only-true on the wire
  * (absence = unlocked), so unlocking a lock the stream inherited from the flat legacy
  * field must (a) clear the flat lock and (b) pin an explicit lock onto every OTHER
@@ -431,6 +470,7 @@ fun notificationCatalogEntryFromMap(m: Map<*, *>): NotificationCatalogEntry? {
         required = boolMap(m["required"]),
         alwaysEnabled = m["alwaysEnabled"] as? Boolean ?: false,
         alwaysEnabledStreams = trueKeySet(m["alwaysEnabledStreams"]),
+        lockedOnStreams = trueKeySet(m["lockedOnStreams"]),
         kinfolkFacing = m["kinfolkFacing"] as? Boolean ?: false,
         deliveryMode = m["deliveryMode"] as? String ?: "",
         description = m["description"] as? String ?: "",

@@ -27,7 +27,13 @@ import { generateDraft, draftOpening, type GenerateDraftResult } from '../api/co
 import { approveGeneratedDraft, type ApproveDraftResult } from '../api/communicateApprove';
 import { sendGeneratedDraft } from '../api/draftSend';
 import { alreadySentText, sendRefusedUnconfirmed, sentDraftOnOpen, unconfirmedSendText } from '../lib/draftSent';
-import { householdTextPreviewLine } from '../lib/householdText';
+import {
+  householdTextAccountOf,
+  householdTextAsSent,
+  householdTextChannelLine,
+  type HouseholdTextAccount,
+} from '../lib/householdText';
+import { useVisitNoticeReach } from '../lib/useVisitNoticeReach';
 import { useBusinessZone } from '../lib/useBusinessZone';
 import {
   sendHouseholdPush,
@@ -88,7 +94,9 @@ const SUBJECT_MAX = 500;
  * #2408 (ruling 2026-11-14): an Email carries the whole message. A Text is
  * sent short with a link to the whole message on the household's notifications
  * list in MyTribe, and the confirm shows that short text
- * (`lib/householdText.ts`), so what is approved is what arrives.
+ * (`lib/householdText.ts`), so what is approved is what arrives. #2316
+ * (ruling 2026-11-20): a household with no MyTribe account is texted the whole
+ * message instead, and the confirm asks the server which one this household is.
  *
  * A sent Email or Text, and a Push that reached the household's notifications
  * list or their phone, open with what happened and neither button
@@ -202,6 +210,13 @@ export function CommunicatePersonalize({
   const draftId = useId();
 
   const def = messageTypeDef(form.messageType);
+  // #2316: a Text goes short with a link, or whole to a household with no
+  // MyTribe account. Asked of the server each time the confirm opens, for the
+  // household the send names, so the confirm shows the text that arrives.
+  const textHousehold = (draft?.kinfolk_id ?? form.recipientId) || null;
+  const textAccount = householdTextAccountOf(
+    useVisitNoticeReach(confirmOpen && def.deliverable === 'sms' ? textHousehold : null),
+  );
   const busy = generating || approving || deleting || retryingPush;
   // #2389: `busy` is state, so two taps in one frame both read it false. This
   // is set before the first await and read by every send and delete.
@@ -949,9 +964,7 @@ export function CommunicatePersonalize({
                     </p>
                     <p className="personalize__confirm-line">
                       <strong>Channel:</strong>{' '}
-                      {def.deliverable === 'email'
-                        ? 'Email'
-                        : 'Text, kept short, with a link to MyTribe'}
+                      {def.deliverable === 'email' ? 'Email' : householdTextChannelLine(textAccount)}
                     </p>
                     {def.deliverable === 'email' && (
                       <p className="personalize__confirm-line">
@@ -961,10 +974,8 @@ export function CommunicatePersonalize({
                   </>
                 )}
                 {def.deliverable === 'sms' ? (
-                  // #2408: what the household is texted, not the draft it is cut from.
-                  <p className="personalize__confirm-line" data-testid="confirm-text-as-sent">
-                    <strong>Text:</strong> {householdTextPreviewLine(draftText)}
-                  </p>
+                  // #2408, #2316: what the household is texted, not the draft it is cut from.
+                  <ConfirmTextAsSent body={draftText} account={textAccount} />
                 ) : (
                   <p className="personalize__confirm-line">
                     <strong>Message:</strong> {draftText}
@@ -1009,5 +1020,63 @@ export function CommunicatePersonalize({
         );
       }}
     </AsyncRegion>
+  );
+}
+/**
+ * #2408, #2316: the Text line of the send confirm, as the household gets it. A
+ * household with a MyTribe account gets the short line and a link; one with
+ * none gets the whole message, one line per text when it takes several. Until
+ * the server answers, and when it cannot, neither is claimed.
+ */
+function ConfirmTextAsSent({ body, account }: { body: string; account: HouseholdTextAccount }) {
+  const sent = householdTextAsSent(body, account);
+  if (sent.kind === 'checking') {
+    return (
+      <p className="personalize__confirm-line" data-testid="confirm-text-as-sent" role="status">
+        <strong>Text:</strong> Checking whether they have a MyTribe account…
+      </p>
+    );
+  }
+  if (sent.kind === 'unknown') {
+    return (
+      <>
+        <p className="personalize__confirm-line" data-testid="confirm-text-as-sent" role="status">
+          <strong>Text:</strong> Their MyTribe account could not be checked. With an account they get a short line and
+          a link; without one they get the whole message.
+        </p>
+        <p className="personalize__confirm-line">
+          <strong>Message:</strong> {body}
+        </p>
+      </>
+    );
+  }
+  if (sent.kind === 'short') {
+    return (
+      <p className="personalize__confirm-line" data-testid="confirm-text-as-sent">
+        <strong>Text:</strong> {sent.line}
+      </p>
+    );
+  }
+  if (sent.parts.length <= 1) {
+    return (
+      <p className="personalize__confirm-line" data-testid="confirm-text-as-sent">
+        <strong>Text:</strong> {sent.parts[0] ?? ''}
+      </p>
+    );
+  }
+  return (
+    <div data-testid="confirm-text-as-sent">
+      <p className="personalize__confirm-line">
+        <strong>Text, sent as {sent.parts.length} texts:</strong>
+      </p>
+      {sent.parts.map((part, i) => (
+        <p key={i} className="personalize__confirm-line" data-testid="confirm-text-part">
+          <strong>
+            {i + 1} of {sent.parts.length}:
+          </strong>{' '}
+          {part}
+        </p>
+      ))}
+    </div>
   );
 }

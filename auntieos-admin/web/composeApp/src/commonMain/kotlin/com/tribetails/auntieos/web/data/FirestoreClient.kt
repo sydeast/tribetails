@@ -1299,6 +1299,31 @@ class FirestoreClient {
     }
 
     /**
+     * #2316: whether [familyId] has a MyTribe account, for a Text confirm and
+     * preview. Asks `previewVisitNotification` with no key, whose
+     * `household_has_no_portal_account` is exactly the null
+     * `resolveKinfolkUid` that makes `sendGeneratedDraft` text the whole
+     * message; it is checked before the notices switch, so any other answer
+     * means they have one. Err when the call fails or carries no answer.
+     */
+    suspend fun previewHouseholdTextAccount(
+        familyId: String,
+    ): WriteResult<com.tribetails.auntieos.web.screens.communicate.HouseholdTextAccount> {
+        if (familyId.isBlank()) return WriteResult.Err("No household to ask about.")
+        val payload = buildJsonObject { put("familyId", JsonPrimitive(familyId)) }
+        return when (val r = platformInvokeCallable("previewVisitNotification", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> runCatchingCancellable {
+                val obj = callableJson.parseToJsonElement(r.value) as? JsonObject
+                obj?.takeIf { (it["willNotify"] as? JsonPrimitive)?.booleanOrNull != null }?.let {
+                    com.tribetails.auntieos.web.screens.communicate.householdTextAccountOfReason(
+                        (it["reason"] as? JsonPrimitive)?.contentOrNull,
+                    )
+                }
+            }.getOrNull()?.let { WriteResult.Ok(it) } ?: WriteResult.Err("No answer about this household.")
+        }
+    }
+    /**
      * #1816: what the household was told about a KinTale the compose screen
      * sent by a direct write (`sentVia: "pending"`). The server's trigger is
      * the only thing that knows; it records the outcome at

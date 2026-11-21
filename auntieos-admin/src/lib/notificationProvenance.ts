@@ -5,7 +5,7 @@ import {
   type NotifStream,
 } from '../api/myNotifications';
 import type { BusinessAdminRoster } from '../api/businessAdmins';
-import { alwaysEnabledFor } from './notificationGateEdit';
+import { alwaysEnabledFor, lockedOnFor } from './notificationGateEdit';
 import { displayTitle } from './myNotificationsFormat';
 import { humanizeKey } from './notificationsFeed';
 
@@ -46,6 +46,21 @@ export interface RowBadge {
 export const MEANT_TO_STAY_ON = 'Meant to stay on';
 export const OFF_AND_MEANT_TO_STAY_ON = 'Off, and meant to stay on';
 /**
+ * THE ONE WORDING FOR THE ENFORCED LOCK (ruling on #2382, 2026-11-20).
+ *
+ * Payment, invoice, KinTale and booking confirmations are required on and
+ * cannot be disabled, on the Kinfolk copy, email included. Unlike the advisory
+ * flag above this one IS enforced (the save refuses it, the send ignores a
+ * stored off), so it may say "cannot be turned off". It does not say the
+ * message always arrives: the household launch switch still holds every
+ * household notice until launch. The same two strings are on Android
+ * (`NotificationProvenance.kt`) and the desktop console, and the detail is the
+ * server's refusal sentence word for word.
+ */
+export const REQUIRED_FOR_KINFOLK = 'Required for Kinfolk';
+export const REQUIRED_FOR_KINFOLK_DETAIL =
+  'Payment, invoice, KinTale and booking confirmations cannot be turned off for Kinfolk, and neither can their email. Text and push can still be changed.';
+/**
  * WHY THIS EXISTS, AND WHY IT IS NOT THE WORDS "ALWAYS ON".
  *
  * The gate used to caption an `alwaysEnabled` row "Always on". It is not. There
@@ -73,6 +88,11 @@ export function alwaysOnBadge(
   stream: NotifStream,
   enabled: boolean,
 ): RowBadge | null {
+  // #2382: an enforced lock, not advice. Its own words, and never the
+  // "you can switch it off here" sentence below, which would be false.
+  if (lockedOnFor(entry, stream)) {
+    return { label: REQUIRED_FOR_KINFOLK, detail: REQUIRED_FOR_KINFOLK_DETAIL, tone: 'info' };
+  }
   if (!alwaysEnabledFor(entry, stream)) return null;
   if (!enabled) {
     return {

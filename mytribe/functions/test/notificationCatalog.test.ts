@@ -3,6 +3,8 @@ import {
   NOTIFICATION_CATALOG,
   alwaysEnabledForStream,
   listNotificationKeys,
+  lockedOnForStream,
+  requiredOnStream,
 } from '../src/notifications/catalog';
 
 describe('NOTIFICATION_CATALOG integrity', () => {
@@ -287,6 +289,34 @@ describe('NOTIFICATION_CATALOG audiences streams (audience revamp 2026-07)', () 
         }
       }
     }
+  });
+
+  // Ruling on #2382 (2026-11-20): payment, invoice, KinTale and booking
+  // confirmations are required on and cannot be disabled.
+  it('locks exactly the five confirmations on for Kinfolk, each with email required for Kinfolk', () => {
+    const locked = Object.values(NOTIFICATION_CATALOG)
+      .filter((def) => def.lockedOnStreams !== undefined)
+      .map((def) => def.key)
+      .sort();
+    expect(locked).toEqual(
+      ['invoice.new', 'invoice.payment.applied', 'invoice.receipt', 'kincare.booking.confirm', 'kintale.published'],
+    );
+    for (const key of locked) {
+      const def = NOTIFICATION_CATALOG[key]!;
+      expect(def.lockedOnStreams, key).toEqual({ kinfolk: true });
+      expect(def.audiences.kinfolk, `${key} must serve the kinfolk stream`).toBe(true);
+      expect(requiredOnStream(def, 'email', 'kinfolk'), `${key} must require email for Kinfolk`).toBe(true);
+      expect(requiredOnStream(def, 'push', 'kinfolk'), `${key} leaves push to the household`).toBe(false);
+      expect(def.allowedChannels, key).toContain('email');
+      expect(lockedOnForStream(def, 'kinfolk')).toBe(true);
+      expect(lockedOnForStream(def, 'business')).toBe(false);
+    }
+    expect(lockedOnForStream(NOTIFICATION_CATALOG['kincare.booking.cancel']!, 'kinfolk')).toBe(false);
+    // The lock's email requirement stops at the household copy: the payment
+    // notice never required email for the owner, and still does not.
+    const applied = NOTIFICATION_CATALOG['invoice.payment.applied']!;
+    expect(applied.required).toEqual({});
+    expect(requiredOnStream(applied, 'email', 'business')).toBe(false);
   });
 
   it('alwaysEnabledForStream scopes the flat flag per stream', () => {
