@@ -20,6 +20,15 @@ doc told the operator to set a `GOOGLE_CALENDAR_ID` no function ever read, so
 the setup looked complete and did nothing. Add a test that reads the function's
 `__endpoint` and asserts the name is declared.
 
+**One secret is read by the release and declared by no function:
+`AUNTIE_VOICE_FILES`.** It holds Ask Auntie's voice files for a release that
+runs where they are not, the scheduled one (#2399). It will never show up in
+`node scripts/declared-secrets.js`, and it is not an orphan. Deleting it puts
+the scheduled release back to shipping the admin functions without the files.
+It is stored with `node scripts/voice-secret.mjs push`, not with
+`functions:secrets:set`; see "Ask Auntie's voice files on the runner" in
+`docs/runbooks/release-internals.md`.
+
 **And setting a secret does nothing until the next deploy, every time, not just
 the first.** These are gcfv2 functions, which pin the secret VERSION resolved at
 deploy time. `functions:secrets:set` mints version N+1 and binds it to nothing;

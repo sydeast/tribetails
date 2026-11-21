@@ -267,3 +267,80 @@ describe('#2287 setMediaProfilePhoto: a staff photo change applies to the caller
     expect(writeAuditEntry).not.toHaveBeenCalled();
   });
 });
+/**
+ * An Auntie works with a visit's, a Kin's and a household's files, and her own
+ * account photo. Any other file is the owner's, and this callable answers her
+ * as it would for an id with no file behind it.
+ */
+describe('setMediaProfilePhoto: an Auntie promotes only the files she works with', () => {
+  function staffReq(data: unknown, auth: { uid: string; token: Record<string, unknown> }) {
+    return { data, auth, rawRequest: {}, acceptsStreaming: false } as unknown as CallableRequest<unknown>;
+  }
+  const auntie = { uid: 'auntie-1', token: { staffRole: 'auntie' } };
+  const owner = { uid: 'owner-1', token: { admin: true } };
+  const OWNER_FILES: Array<{ entityType?: unknown; entityId: string }> = [
+    { entityType: 'TRIBAL_INTEL', entityId: 'pending' },
+    { entityType: 'BUSINESS', entityId: 'business_settings' },
+    { entityType: 'INVOICE', entityId: 'inv-1' },
+    { entityType: 'tribal_intel', entityId: 'pending' },
+    { entityType: 'Kin', entityId: 'pet1' },
+    { entityType: 7, entityId: 'pet1' },
+    { entityId: 'fam1' },
+  ];
+  it('HAPPY: a visit photo, in the stored spellings she reads', async () => {
+    for (const entityType of ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk']) {
+      const ctx = ctxFor({ chosen: { storageUrl: 'https://cdn/v.jpg', entityId: 'e1', entityType } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await setMediaProfilePhotoHandler(staffReq({ mediaFileId: 'm1', entityType, entityId: 'e1' }, auntie));
+      expect(res.photoUrl).toBe('https://cdn/v.jpg');
+      expect(ctx.writes.find((w) => w.path === 'media_files/m1')!.data.isProfilePhoto).toBe(true);
+    }
+  });
+  it('NEGATIVE: a file that is the owner\'s is not found, and its address and entity are not in the reply', async () => {
+    for (const file of OWNER_FILES) {
+      const ctx = ctxFor({ chosen: { storageUrl: 'https://cdn/private.jpg', ...file } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      // Named exactly as stored, and named wrongly: neither gets further.
+      for (const args of [
+        { mediaFileId: 'm1', entityType: String(file.entityType ?? 'KINFOLK'), entityId: file.entityId },
+        { mediaFileId: 'm1', entityType: 'KIN', entityId: 'pet9' },
+      ]) {
+        const err = await setMediaProfilePhotoHandler(staffReq(args, auntie)).then(
+          () => null,
+          (e: { code?: string; message?: string }) => e,
+        );
+        expect(err).toMatchObject({ code: 'not-found', message: "Media file 'm1' not found." });
+        expect(err!.message).not.toContain('private.jpg');
+        expect(err!.message).not.toContain(file.entityId);
+      }
+      expect(ctx.writes).toHaveLength(0);
+    }
+    expect(writeAuditEntry).not.toHaveBeenCalled();
+  });
+  it('NEGATIVE: an account carrying both claims is held to the same files', async () => {
+    const ctx = ctxFor({ chosen: { storageUrl: 'https://cdn/private.jpg', entityId: 'pending', entityType: 'TRIBAL_INTEL' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const both = { uid: 'confused-1', token: { admin: true, staffRole: 'auntie' } };
+    await expect(
+      setMediaProfilePhotoHandler(staffReq({ mediaFileId: 'm1', entityType: 'TRIBAL_INTEL', entityId: 'pending' }, both)),
+    ).rejects.toMatchObject({ code: 'not-found' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('SAD: a missing file reads the same to her as one that is not hers', async () => {
+    const ctx = ctxFor({ chosen: null });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(
+      setMediaProfilePhotoHandler(staffReq({ mediaFileId: 'm1', entityType: 'KIN', entityId: 'pet1' }, auntie)),
+    ).rejects.toMatchObject({ code: 'not-found', message: "Media file 'm1' not found." });
+  });
+  it('HAPPY: the owner promotes any file, as before', async () => {
+    for (const file of OWNER_FILES.filter((f) => typeof f.entityType === 'string')) {
+      const ctx = ctxFor({ chosen: { storageUrl: 'https://cdn/any.jpg', ...file } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const res = await setMediaProfilePhotoHandler(
+        staffReq({ mediaFileId: 'm1', entityType: String(file.entityType), entityId: file.entityId }, owner),
+      );
+      expect(res.photoUrl).toBe('https://cdn/any.jpg');
+    }
+  });
+});

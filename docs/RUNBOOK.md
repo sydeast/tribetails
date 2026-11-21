@@ -105,6 +105,25 @@ Everything else that used to live here moved to `docs/runbooks/` on
    release go on and prints the warning in yellow. What each answer means:
    `auntieos-admin/docs/runbooks/e2e.md`, "How a release reads it".
 
+8. **If you edited Ask Auntie's voice files, store them for the scheduled
+   release.** A release from this Mac ships the files in this checkout. The
+   scheduled one has no checkout copy and ships what Secret Manager holds
+   (#2399), so an edit that is not stored is undone by the next Monday or
+   Thursday run.
+
+   ```bash
+   npm run sync:voice --prefix auntieos-admin/web/functions \
+     && node scripts/voice-secret.mjs push
+   ```
+
+   It ends with `voice: stored 3 files as AUNTIE_VOICE_FILES and read them
+   back`, or `already holds these 3 files` when nothing changed.
+
+   If you forget, the release reminds you. Step 1b compares the stored copy
+   with this checkout's files and prints a yellow warning with the same
+   `push` command when they differ or nothing is stored. It warns and goes
+   on; it never stops the release.
+
 ---
 
 ## Run it
@@ -145,7 +164,7 @@ What it does, in order. It stops at the first failure and names the step:
 | 0b | CI is green for this exact commit, e2e included, and so is the real-services suite (`e2e-real.yml`) |
 | 0c | Web build config (`VITE_*`) fetched from Secret Manager |
 | 1 | `npm run check`: typecheck, lint, contracts, seeds, functions build, tests, web builds |
-| 1b | Every secret the functions declare exists. With the admin functions included, Ask Auntie's voice files are usable when they are in the checkout |
+| 1b | Every secret the functions declare exists. With the admin functions included, Ask Auntie's voice files are usable: the checkout's own, or on a checkout with none (the scheduled release) the copy stored in Secret Manager, restored for the run and removed after |
 | 1c | Both Android release APKs build |
 | 2 | Firestore indexes deploy |
 | 3 | Waits until every index is Enabled |
@@ -217,6 +236,13 @@ to be redone, are in
 If a run stops at "Check the release variables are set" or "Check the runner
 can authenticate", that setup is what it names as missing; do not re-create
 secrets on a guess (#850).
+
+The runner's checkout has no Ask Auntie voice files, because they are
+gitignored. Step 1b restores them from Secret Manager and removes them when
+the run ends (#2399). Storing them is item 8 under
+[Before a release](#before-a-release); what the run does with a missing or
+damaged copy is in
+[Ask Auntie's voice files on the runner](runbooks/release-internals.md#ask-aunties-voice-files-on-the-runner).
 
 ---
 
@@ -392,6 +418,11 @@ for the quoted text.
 | "Pass the --force option to deploy" | A change raises the minimum bill. `RELEASE_FUNCTIONS_FORCE=1`, after reading the diff |
 | Functions left undeployed after a partial deploy | Retry just those names; see troubleshooting |
 | `SDK location not found` | Run `npm run setup` |
+| "REFUSED: the stored copy of Ask Auntie's voice files cannot be used" | The copy in Secret Manager is empty, damaged or fails the names check, and this checkout has no files of its own. Nothing deployed. Store a good copy from the Mac (item 8 under [Before a release](#before-a-release)) and rerun |
+| "REFUSED: the stored copy of Ask Auntie's voice files could not be asked for" | Secret Manager answered step 0c and then dropped the request for the voice files. Nothing deployed. Rerun |
+| "voice: NOT IN THIS CHECKOUT" in yellow | The admin functions shipped without Ask Auntie's voice files, so every draft errors. The lines under it say whether no copy is stored or Secret Manager could not be asked. Store one (same item 8), then release again |
+| "voice: THE STORED COPY IS NOT THESE FILES", "NO COPY IS STORED" or "THE STORED COPY CANNOT BE USED" in yellow | This release shipped the voice files in this checkout and is fine. The copy the scheduled release ships is different, missing or damaged. Run `node scripts/voice-secret.mjs push` from the repo root before the next Monday or Thursday run |
+| "voice: NOT COMPARED with the copy stored for the scheduled release" in yellow | This release shipped the voice files in this checkout and is fine. Secret Manager did not answer, so nobody knows whether the stored copy matches. If you edited the voice files since the last `push`, run it again |
 | Signing errors at step 1c | `auntieos-admin/android/local.properties` is missing a key |
 | `communication with agent failed` on `git push` | 1Password is locked. Unlock it and rerun |
 

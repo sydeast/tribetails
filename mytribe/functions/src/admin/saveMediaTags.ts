@@ -6,6 +6,8 @@ import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
+import { isAuntieClaim } from '../lib/staffGate';
+import { caretakerMayUseMedia } from '../lib/caretakerMedia';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 /**
@@ -106,8 +108,18 @@ export async function saveMediaTagsHandler(
     );
   }
   const media = mediaSnap.data() as
-    | { kinfolkId?: string; taggedKinIds?: unknown }
+    | { kinfolkId?: string; taggedKinIds?: unknown; entityType?: unknown; entityId?: unknown }
     | undefined;
+
+  // An Auntie tags the photos she works with: a visit's, a Kin's and a
+  // household's (lib/caretakerMedia.ts). Any other file is the owner's, and to
+  // her it is not there, so she gets the same answer as for a missing id.
+  if (isAuntieClaim(req.auth?.token) && !caretakerMayUseMedia(media, uid)) {
+    throw new HttpsError(
+      'not-found',
+      `Media file '${args.mediaFileId}' no longer exists. Refresh the gallery and try again.`,
+    );
+  }
   const mediaKinfolkId = (media?.kinfolkId ?? '').trim();
 
   // Every id must resolve, and (when the photo belongs to a household) must
