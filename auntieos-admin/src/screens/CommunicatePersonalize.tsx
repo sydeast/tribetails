@@ -45,6 +45,7 @@ import {
 } from '../api/householdPush';
 import { DenPanel, EmptyHint, StatusPill } from '../components/DenScreenKit';
 import { AsyncRegion } from '../components/AsyncRegion';
+import { HoldLeaveWhile } from '../components/HoldLeaveWhile';
 import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Dialog } from '../components/Dialog';
 import { RecipientContextPanel } from '../components/RecipientContextPanel';
@@ -194,6 +195,7 @@ export function CommunicatePersonalize({
   const [retryingPush, setRetryingPush] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteWork, setDeleteWork] = useState<Promise<unknown> | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleted, setDeleted] = useState(false);
   // Which stored draft the form was last filled from, so a live update to the
@@ -452,7 +454,9 @@ export function CommunicatePersonalize({
     setDeleting(true);
     setDeleteError(null);
     try {
-      await deleteGeneratedDraft(id);
+      const work = deleteGeneratedDraft(id);
+      setDeleteWork(work);
+      await work;
       setDeleteOpen(false);
       clearDraft();
       setDeleted(true);
@@ -460,6 +464,7 @@ export function CommunicatePersonalize({
       setDeleteError(err instanceof Error ? err.message : 'Delete failed.');
     } finally {
       inFlight.current = false;
+      setDeleteWork(null);
       setDeleting(false);
     }
   }
@@ -986,6 +991,7 @@ export function CommunicatePersonalize({
                 </p>
               </Dialog>
             )}
+            <HoldLeaveWhile work={deleteWork} />
             {deleteOpen && (
               <Dialog
                 title="Delete this draft?"

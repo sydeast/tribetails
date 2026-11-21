@@ -222,6 +222,28 @@ export interface CommsRecap {
   sourceCount: number;
 }
 
+/** The newest message of a household's Inbox thread, as one line of plain text. */
+export interface LatestThreadMessage {
+  preview: string;
+  createdAtMs: number;
+}
+
+/**
+ * #1878: the household's Inbox thread is a fifth place a message lives, and the
+ * four logs above never see it. `getConversationThread` would also mark the
+ * thread read, so this asks the read-only `getLatestConversationMessage`.
+ * Null means the household has no thread.
+ */
+export async function getLatestThreadMessage(kinfolkId: string): Promise<LatestThreadMessage | null> {
+  const res = await call<
+    { kinfolkId: string },
+    { message?: { preview?: unknown; createdAtMs?: unknown } | null }
+  >('getLatestConversationMessage', { kinfolkId: kinfolkId.trim() });
+  const m = res.message;
+  if (m === null || m === undefined || typeof m.createdAtMs !== 'number' || m.createdAtMs <= 0) return null;
+  return { preview: str(m.preview), createdAtMs: m.createdAtMs };
+}
+
 /**
  * `recap_recent_comms`, an admin-gated Python callable in the `reconcile`
  * codebase (functions-python/main.py). It reads up to fifteen recent rows across

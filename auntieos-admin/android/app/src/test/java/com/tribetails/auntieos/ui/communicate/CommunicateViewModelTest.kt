@@ -42,6 +42,7 @@ class CommunicateViewModelTest {
         // selectKinfolk, but stub sensible defaults so any flow that does reach them
         // never NPEs on a bare mock.
         coEvery { mockRepo.recentCommsForKinfolk(any()) } returns Result.success(RecentComms())
+        coEvery { mockRepo.latestThreadMessage(any()) } returns Result.success(null)
         // The household bank is the third destination (issue #461) and is read in
         // the same batch as the dossier, so every selectKinfolk flow reaches it.
         // Default it to "no bank on file", which is the common real state.

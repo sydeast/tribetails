@@ -394,6 +394,28 @@ sealed interface BroadcastReachState {
     data class Failed(val message: String) : BroadcastReachState
 }
 
+/**
+ * #1879: Send stays off while the count is out, and for an audience the count
+ * says is nobody. A count that failed to load does not block: the owner may
+ * still decide, and the server refuses an empty audience itself.
+ */
+fun broadcastSendBlocked(reach: BroadcastReachState): Boolean = when (reach) {
+    BroadcastReachState.Loading -> true
+    is BroadcastReachState.Ready -> reach.preview.targeted == 0
+    is BroadcastReachState.Failed -> false
+}
+
+/** #1879: the line under the reach. It must not promise a send that cannot happen. Pure. */
+fun broadcastConfirmNote(reach: BroadcastReachState): String =
+    if (reach is BroadcastReachState.Ready && reach.preview.targeted == 0) {
+        "Nobody matches this audience, so nothing can be sent. Cancel and choose a different audience."
+    } else {
+        "This goes out right now. A household that switched a channel off does not get it there; the result shows who was reached."
+    }
+
+/** #1878: said when the thread read failed, in place of a false "no messages". */
+const val COMMS_THREAD_FAILED = "The message thread could not be read, so a newer message may be missing here."
+
 /** Generated copy split into its own subject line (if any) and the body without it (#1610). */
 data class SubjectSplit(val subject: String, val body: String)
 

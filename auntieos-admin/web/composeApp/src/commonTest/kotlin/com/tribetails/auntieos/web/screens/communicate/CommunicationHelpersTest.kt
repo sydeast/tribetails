@@ -41,6 +41,23 @@ class CommunicationHelpersTest {
         assertEquals("newest", latest?.snippet)
     }
 
+    // #1878: a household whose only messages are in the thread is not "no messages".
+    @Test fun latest_counts_the_thread_when_the_logs_are_empty() {
+        val latest = latestCommunication(
+            emptyList(), emptyList(), emptyList(), emptyList(),
+            LatestThreadMessage("See you Sunday", 1_793_000_000_000),
+        )
+        assertEquals("thread", latest?.channel)
+        assertEquals("See you Sunday", latest?.snippet)
+        assertEquals("MyTribe message", commsChannelLabel(latest!!.channel))
+    }
+
+    @Test fun latest_keeps_a_newer_log_over_an_older_thread_message() {
+        val sms = listOf(SmsMessage(_id = "s1", timestamp = "2030-01-01T00:00:00Z", body = "newer text"))
+        val latest = latestCommunication(sms, emptyList(), emptyList(), emptyList(), LatestThreadMessage("older", 1_000_000))
+        assertEquals("sms", latest?.channel)
+    }
+
     @Test fun latest_null_when_all_empty() {
         assertNull(latestCommunication(emptyList(), emptyList(), emptyList(), emptyList()))
     }

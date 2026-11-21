@@ -693,6 +693,32 @@ describe('CommunicateCompose: live preview', () => {
     expect(previewBroadcastAudience).toHaveBeenCalledWith({ criteria: { kind: 'all' } });
     expect(sendBroadcast).not.toHaveBeenCalled();
   });
+  // #1879
+  it('a count of zero turns Send off and says nothing can be sent', async () => {
+    previewBroadcastAudience.mockResolvedValue({ targeted: 0, withEmail: 0, withPhone: 0, withApp: 0, withoutFirstName: 0 });
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Hi');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(/Nobody matches this audience/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/This goes out right now/)).toBeNull();
+    const send = within(dialog).getByRole('button', { name: /send now/i });
+    expect(send).toBeDisabled();
+    await userEvent.click(send);
+    expect(sendBroadcast).not.toHaveBeenCalled();
+  });
+
+  it('Send stays off while the count is out', async () => {
+    previewBroadcastAudience.mockReturnValue(new Promise(() => undefined));
+    render(<CommunicateCompose />);
+    await fillMinimalForm();
+    await userEvent.type(screen.getByLabelText(/subject/i), 'Hi');
+    await userEvent.click(screen.getByRole('button', { name: /review broadcast/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: /send now/i })).toBeDisabled();
+  });
+
   it('a count that fails to load says so and still lets the operator decide', async () => {
     previewBroadcastAudience.mockRejectedValue(new Error('unavailable'));
     render(<CommunicateCompose />);

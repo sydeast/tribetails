@@ -8,7 +8,8 @@ import type { Kin } from '../api/directory';
 const { useCollection } = vi.hoisted(() => ({ useCollection: vi.fn() }));
 vi.mock('../lib/firestore', () => ({ useCollection }));
 
-const { getDossier, getHouseholdBank, getKin411, recapRecentComms } = vi.hoisted(() => ({
+const { getDossier, getHouseholdBank, getKin411, recapRecentComms, getLatestThreadMessage } = vi.hoisted(() => ({
+  getLatestThreadMessage: vi.fn(),
   getDossier: vi.fn(),
   getHouseholdBank: vi.fn(),
   getKin411: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock('../api/recipientContext', async (orig) => ({
   getHouseholdBank,
   getKin411,
   recapRecentComms,
+  getLatestThreadMessage,
 }));
 
 const { getFeatureFlags } = vi.hoisted(() => ({ getFeatureFlags: vi.fn() }));
@@ -46,6 +48,8 @@ function setup(opts: SetupOpts = {}) {
   getHouseholdBank.mockReset();
   getKin411.mockReset();
   recapRecentComms.mockReset();
+  getLatestThreadMessage.mockReset();
+  getLatestThreadMessage.mockResolvedValue(null);
   getFeatureFlags.mockReset();
 
   const kinRows: Async<Kin[]> = opts.kinRows ?? { status: 'ready', data: [kin()] };
@@ -343,6 +347,39 @@ describe('the last-communication box', () => {
     setup({ comms: [] });
     render(<RecipientContextPanel kinfolkId="kf1" />);
     expect(await screen.findByText(/no messages on file yet/i)).toBeInTheDocument();
+  });
+
+  // #1878
+  it('shows the thread message when the four logs hold nothing', async () => {
+    setup({ comms: [] });
+    getLatestThreadMessage.mockResolvedValue({ preview: 'See you Sunday', createdAtMs: Date.UTC(2026, 10, 1) });
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    expect(await screen.findByText(/MyTribe message .*See you Sunday/)).toBeInTheDocument();
+    expect(screen.queryByText(/no messages on file yet/i)).toBeNull();
+  });
+
+  it('keeps a newer log entry over an older thread message', async () => {
+    setup({ comms: [sms] });
+    getLatestThreadMessage.mockResolvedValue({ preview: 'Older thread line', createdAtMs: Date.UTC(2026, 0, 1) });
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    expect(await screen.findByText(/Running ten late\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Older thread line/)).toBeNull();
+  });
+
+  it('never says "no messages" when the thread could not be read', async () => {
+    setup({ comms: [] });
+    getLatestThreadMessage.mockRejectedValue(new Error('offline'));
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    expect(await screen.findByText(/message thread could not be read/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no messages on file yet/i)).toBeNull();
+  });
+
+  it('shows a wait, not "no messages", while the thread is being read', async () => {
+    setup({ comms: [] });
+    getLatestThreadMessage.mockReturnValue(new Promise(() => undefined));
+    render(<RecipientContextPanel kinfolkId="kf1" />);
+    expect((await screen.findAllByText('Reading messages…')).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/no messages on file yet/i)).toBeNull();
   });
 
   it('picks the newest across different channels, not merely the first collection', async () => {

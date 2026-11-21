@@ -21,6 +21,23 @@ fun summaryLine(tldr: String, rawSummary: String, max: Int): String {
     return cutWhole(r, max).trimEnd() + "…"
 }
 
+/**
+ * #1878: the newest message of the household's thread with the office. It lives
+ * apart from the four logs, so a household could have a full thread and read
+ * "No messages on file yet." [preview] is one plain line from the server.
+ */
+data class LatestThreadMessage(val preview: String, val createdAtMs: Long)
+
+/** The channel word on the Latest message line. Never the stored key. Pure. */
+fun commsChannelLabel(channel: String): String = when (channel) {
+    "sms" -> "Text"
+    "email" -> "Email"
+    "call" -> "Call"
+    "voicemail" -> "Voicemail"
+    "thread" -> "MyTribe message"
+    else -> "Message"
+}
+
 data class LatestComm(
     val channel: String,   // "sms" | "email" | "call" | "voicemail"
     val timestamp: String, // ISO-8601 UTC string
@@ -42,12 +59,16 @@ fun latestCommunication(
     emails: List<EmailMessage>,
     calls: List<CallLog>,
     voicemails: List<VoicemailLog>,
+    thread: LatestThreadMessage? = null,
 ): LatestComm? {
     val candidates = buildList {
         sms.forEach { if (it.timestamp.isNotBlank()) add(LatestComm("sms", it.timestamp, commSnippet(it.body))) }
         emails.forEach { if (it.timestamp.isNotBlank()) add(LatestComm("email", it.timestamp, commSnippet(it.subject.ifBlank { it.body }))) }
         calls.forEach { if (it.timestamp.isNotBlank()) add(LatestComm("call", it.timestamp, commSnippet(it.transcript.ifBlank { it.status }))) }
         voicemails.forEach { if (it.timestamp.isNotBlank()) add(LatestComm("voicemail", it.timestamp, commSnippet(it.transcript))) }
+        thread?.takeIf { it.createdAtMs > 0 }?.let {
+            add(LatestComm("thread", java.time.Instant.ofEpochMilli(it.createdAtMs).toString(), commSnippet(it.preview)))
+        }
     }
     return candidates.maxByOrNull { it.timestamp }
 }

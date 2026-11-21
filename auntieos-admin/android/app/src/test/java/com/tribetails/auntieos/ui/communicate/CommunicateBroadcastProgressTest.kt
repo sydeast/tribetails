@@ -42,6 +42,7 @@ class CommunicateBroadcastProgressTest {
         repo = mockk()
         coEvery { repo.getKinfolk() } returns Result.success(TestFixtures.allKinfolk)
         coEvery { repo.recentCommsForKinfolk(any()) } returns Result.success(RecentComms())
+        coEvery { repo.latestThreadMessage(any()) } returns Result.success(null)
         coEvery { repo.getHouseholdBank(any()) } returns Result.success(null)
     }
 

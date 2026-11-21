@@ -620,6 +620,7 @@ const FUNCTIONS: Record<string, FunctionModuleLoader> = {
   stopBroadcast: () => require('./admin/broadcastProgress'),
   listConversations: () => require('./admin/conversations'),
   getConversationThread: () => require('./admin/conversations'),
+  getLatestConversationMessage: () => require('./admin/conversations'),
   replyToConversation: () => require('./admin/conversations'),
   markConversationRead: () => require('./admin/conversations'),
   markConversationUnread: () => require('./admin/conversations'),
