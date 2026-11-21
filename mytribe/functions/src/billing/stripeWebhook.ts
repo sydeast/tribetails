@@ -8,6 +8,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { invoiceCancelled, invoiceMarkedPaid, type InvoicePaidDoc } from '../lib/invoicePaidGate';
 import { isWrittenOff, type WriteOffDoc } from '../lib/invoiceArchive';
+import { invoiceStateOf, type InvoiceStateDoc } from '../lib/invoiceEditPolicy';
 import { logEvent } from '../lib/logger';
 import { wrapHttp } from '../lib/wrapHttp';
 // #1005: money notices go to a member with billing access, not the last-synced account.
@@ -144,6 +145,12 @@ export const NOTICE_SKIPPED_AFTER_PAYMENT = 'declined-after-payment';
  * owner-only line. So is a decline on a checkout whose invoice no longer
  * exists, or is not one of the checkout household's: a declined checkout
  * touches only its own household's invoice.
+ *
+ * #2416 (lead decision 2026-11-21): a draft, a quote the household has not
+ * accepted, and a credit too. A card payment on one of them is held for the
+ * owner and the household is told nothing (#2345, `cardHoldReason`), so a
+ * decline on one is the owner's alone as well. The two reasons are the held
+ * payment's own (`invoice-not-sent`, `invoice-credit`).
  */
 export type DeclineAfterPaymentReason =
   | 'invoice-paid'
@@ -151,14 +158,18 @@ export type DeclineAfterPaymentReason =
   | 'invoice-cancelled'
   | 'invoice-written-off'
   | 'invoice-not-found'
-  | 'invoice-other-household';
+  | 'invoice-other-household'
+  | 'invoice-not-sent'
+  | 'invoice-credit';
 /** The stored reason read back on a retry. Anything unknown reads as the original `invoice-paid`. */
 export function declineReasonOf(raw: unknown): DeclineAfterPaymentReason {
   return raw === 'payment-landed' ||
     raw === 'invoice-cancelled' ||
     raw === 'invoice-written-off' ||
     raw === 'invoice-not-found' ||
-    raw === 'invoice-other-household'
+    raw === 'invoice-other-household' ||
+    raw === 'invoice-not-sent' ||
+    raw === 'invoice-credit'
     ? raw
     : 'invoice-paid';
 }
@@ -171,7 +182,8 @@ export interface DeclineAfterPaymentDetail {
  * PURE. Whether a declined charge has been overtaken by a payment: the
  * PaymentIntent it names has its claim (`stripePayments/{id}`, written in the
  * same commit as the money, so the checkout's own payment landed), or the
- * invoice reads paid, cancelled or written off (#2361), or it does not exist
+ * invoice reads paid, cancelled or written off (#2361), or a draft, a quote
+ * or a credit (#2416, by `invoiceStateOf`), or it does not exist
  * or is not one of the checkout household's (`checkoutKinfolkId`, by
  * `invoiceOfAnotherHousehold`). Null when the decline still matters to the
  * household.
@@ -184,9 +196,11 @@ export function declineAfterPayment(
   // A payment from this same checkout that has landed is said first, as
   // before: on a cancelled invoice it is held, and the owner already has the
   // line saying why. Otherwise whose the invoice is comes ahead of what it
-  // says about itself, then cancelled and written off ahead of paid, the
-  // order `cardHoldReason` asks them in.
+  // says about itself, then cancelled and written off, then (#2416) a draft
+  // or a quote and a credit, ahead of paid: the order `cardHoldReason` asks
+  // them in. None of these needs the invoice's payment rows.
   const paid = invoiceMarkedPaid(invoice ?? null);
+  const state = invoice === undefined || invoice === null ? null : invoiceStateOf(invoice as InvoiceStateDoc);
   const reason: DeclineAfterPaymentReason | null = paymentLanded
     ? paid
       ? 'invoice-paid'
@@ -199,9 +213,13 @@ export function declineAfterPayment(
           ? 'invoice-cancelled'
           : isWrittenOff(invoice as WriteOffDoc | null)
             ? 'invoice-written-off'
-            : paid
-              ? 'invoice-paid'
-              : null;
+            : state === 'draft' || state === 'quote'
+              ? 'invoice-not-sent'
+              : state === 'credit' || state === 'redeemed'
+                ? 'invoice-credit'
+                : paid
+                  ? 'invoice-paid'
+                  : null;
   if (reason === null) return null;
   const number = invoice?.['invoiceNumber'];
   return { reason, invoiceNumber: typeof number === 'string' ? number : '' };
