@@ -737,5 +737,5 @@ private fun AddDocumentForm(
  * Same words as the admin web form.
  */
 internal const val TRIBAL_INTEL_FORM_TIP =
-    "Saved notes are folded into the household's dossier and the pet's 411 overnight. " +
+    "Saved notes are folded into the household's dossier and the Kin's 411 overnight. " +
         "Attachments are listed as sources: only their names and links are read, never what an image shows."
