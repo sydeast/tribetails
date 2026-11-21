@@ -674,3 +674,107 @@ describe('enrichTemplateData: an invoice is read only for its own household', ()
     expect(legacyOut).toMatchObject({ invoiceNumber: 'TT-2002', amount: '$310.00' });
   });
 });
+describe('#2487: a KinTale or bill names its own Kin, not the roster', () => {
+  const roster = {
+    kin: [
+      { id: 'k1', data: { kinfolkId: 'fam1', name: 'Rex', status: 'active' } },
+      { id: 'k2', data: { kinfolkId: 'fam1', name: 'Biscuit', status: 'active' } },
+    ],
+  };
+  it("a KinTale names the Kin on the tale's visit", async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'kin_care_reports/t1': { kinfolkId: 'fam1', sessionId: 'vis_v1' },
+          'kin_care_sessions/vis_v1': { kinfolkId: 'fam1', kinNames: ['Rex'] },
+        },
+        queryDocs: roster,
+      }).db,
+    );
+    const out = await enrichTemplateData('kintale.published', 'cli1', { kinfolkId: 'fam1', taleId: 't1' });
+    expect(out.kinName).toBe('Rex');
+  });
+  it('a KinTale with no visit names the Kin it was written for (kinIds)', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({ docs: { 'kin_care_reports/t1': { kinfolkId: 'fam1', kinIds: ['k2'] } }, queryDocs: roster }).db,
+    );
+    const out = await enrichTemplateData('kintale.published', 'cli1', { kinfolkId: 'fam1', taleId: 't1' });
+    expect(out.kinName).toBe('Biscuit');
+  });
+  it("another household's KinTale fills nothing from the tale; the roster is the fallback", async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'kin_care_reports/t1': { kinfolkId: 'fam2', sessionId: 'vis_x' },
+          'kin_care_sessions/vis_x': { kinfolkId: 'fam2', kinNames: ['Stranger'] },
+        },
+        queryDocs: roster,
+      }).db,
+    );
+    const out = await enrichTemplateData('kintale.published', 'cli1', { kinfolkId: 'fam1', taleId: 't1' });
+    expect(out.kinName).toBe('Rex, Biscuit');
+    expect(String(out.kinName)).not.toContain('Stranger');
+  });
+  it("a bill names the Kin on the visits it bills", async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-1', amountDue: 10, sessionIds: ['vis_v1'] },
+          'kin_care_sessions/vis_v1': { kinNames: ['Rex'] },
+        },
+        queryDocs: roster,
+      }).db,
+    );
+    const out = await enrichTemplateData('invoice.new', 'cli1', { kinfolkId: 'fam1', invoiceId: 'inv1' });
+    expect(out.kinName).toBe('Rex');
+  });
+  it('a bill with no visits on it still names the household Kin rather than nobody', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({ docs: { 'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-1', amountDue: 10 } }, queryDocs: roster }).db,
+    );
+    const out = await enrichTemplateData('invoice.new', 'cli1', { kinfolkId: 'fam1', invoiceId: 'inv1' });
+    expect(out.kinName).toBe('Rex, Biscuit');
+  });
+});
+describe('#2487: an address is never a household name', () => {
+  it('skips a stored household name that is an address and reads the person instead', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'families/fam1': { displayName: 'catch@hanasamku.com', primaryUid: 'cli1' },
+          'clients/cli1': { displayName: 'Maya Rivera' },
+        },
+        queryDocs: { kin: [] },
+      }).db,
+    );
+    const out = await enrichTemplateData('kintale.published', 'cli1', { kinfolkId: 'fam1' });
+    expect(out.kinfolkName).toBe('Maya Rivera');
+  });
+  it('leaves the name blank rather than print an address when that is all there is', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'families/fam1': { displayName: 'catch@hanasamku.com', primaryUid: 'cli1' },
+          'clients/cli1': { displayName: 'catch@hanasamku.com' },
+        },
+        queryDocs: { kin: [] },
+      }).db,
+    );
+    const out = await enrichTemplateData('kintale.published', 'cli1', { kinfolkId: 'fam1' });
+    expect(out.kinfolkName).toBeUndefined();
+  });
+  it("a bill's visit from another household names nothing", async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        docs: {
+          'invoices/inv1': { kinfolkId: 'fam1', invoiceNumber: 'INV-1', amountDue: 10, sessionIds: ['vis_a', 'vis_b'] },
+          'kin_care_sessions/vis_a': { kinfolkId: 'fam1', kinNames: ['Rex'] },
+          'kin_care_sessions/vis_b': { kinfolkId: 'fam2', kinNames: ['Stranger'] },
+        },
+        queryDocs: { kin: [] },
+      }).db,
+    );
+    const out = await enrichTemplateData('invoice.new', 'cli1', { kinfolkId: 'fam1', invoiceId: 'inv1' });
+    expect(out.kinName).toBe('Rex');
+  });
+});

@@ -56,6 +56,19 @@ describe('mintInviteHandler (admin)', () => {
     expect(sendFromTemplate.mock.calls[0][0]).toBe('invite.primary');
   });
 
+  it('#2487: the invite never names the household by its record id or greets the address', async () => {
+    const { mintInviteHandler } = await import('../src/admin/mintInvite');
+    await mintInviteHandler({
+      data: { familyId: 'f1', invitedEmail: 'catch@hanasamku.com' },
+      auth: { uid: 'u-admin' },
+    } as any);
+    const data = sendFromTemplate.mock.calls[0][2] as Record<string, unknown>;
+    expect(data.tribeName).not.toBe('f1');
+    expect(data.primaryDisplayName).not.toBe('catch@hanasamku.com');
+    expect(String(data.claimUrl)).toBe('https://claim.tribetails.com?invite=inv-1');
+    expect(data.expiresInDays).toBeGreaterThan(0);
+  });
+
   it('REFUSES to mint a SECONDARY, rather than quietly minting a PRIMARY instead', async () => {
     const { mintInviteHandler } = await import('../src/admin/mintInvite');
     await expect(

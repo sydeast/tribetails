@@ -79,7 +79,16 @@ export async function onNotificationChannelCreateHandler(event: any): Promise<vo
     // hydrate the standard entities into the full {{token}} context here, once at
     // the single fan-out choke point, so every channel + delivery mode benefits.
     // Emitter-provided values win; a missing entity degrades to blank (never throws).
-    const enrichedData = await enrichTemplateData(parent.key, parent.recipientUid, parent.data ?? {});
+    // #2487: the copy's own stream, so a household's copy of a key that also
+    // reaches the office is worded for the household (its visit time as the
+    // window the portal shows, #1863), the way its notifications list line is.
+    const enrichedData = await enrichTemplateData(
+      parent.key,
+      parent.recipientUid,
+      parent.data ?? {},
+      [],
+      parent.stream === 'kinfolk',
+    );
     try {
       const result = await sender({
         def,
