@@ -5,6 +5,7 @@ import com.tribetails.auntieos.web.data.JvmFirestoreRest
 import kotlinx.serialization.builtins.ListSerializer
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -97,17 +98,31 @@ class InvoiceTotalDisagreementTest {
     }
 
     @Test
-    fun theBannerNamesBothFiguresAndWhereTheStoredOneLives() {
-        assertEquals("This invoice disagrees with itself", INVOICE_TOTAL_DISAGREEMENT_TITLE)
-        val exact = invoiceTotalDisagreementText(InvoiceTotalDisagreement(3800L, 4000L, InvoiceStoredTotalField.TOTAL_CENTS))
-        assertEquals(
-            "The line items add up to \$38.00, but the total stored on the invoice says \$40.00. " +
-                "Nothing has been changed to make them match, and nothing will be. " +
-                "The household is billed the stored figure. Re-saving the line items through Edit will recompute " +
-                "the stored total from them, if the lines are the version you want to keep.",
-            exact,
+    fun theBannerNamesBothFiguresInPlainWords() {
+        assertEquals("The line items do not add up to the total", INVOICE_TOTAL_DISAGREEMENT_TITLE)
+        val editable = invoiceTotalDisagreementText(
+            InvoiceTotalDisagreement(3800L, 4000L, InvoiceStoredTotalField.TOTAL_CENTS),
+            linesEditable = true,
         )
-        val legacy = invoiceTotalDisagreementText(InvoiceTotalDisagreement(3800L, 4500L, InvoiceStoredTotalField.TOTAL))
-        assertTrue(legacy.startsWith("The line items add up to \$38.00, but the total stored on the invoice (its legacy dollar field) says \$45.00."))
+        assertEquals(
+            "The line items add up to \$38.00, but the invoice total is \$40.00. " +
+                "The household is billed \$40.00. Nothing was changed to make them match. " +
+                "If the line items are right, press Edit and save them, and the total will follow.",
+            editable,
+        )
+    }
+    /** #1860: a paid invoice's lines are locked, so the banner never asks for a re-save. */
+    @Test
+    fun aLockedInvoiceIsNeverToldToResaveItsLines() {
+        val locked = invoiceTotalDisagreementText(
+            InvoiceTotalDisagreement(0L, 6000L, InvoiceStoredTotalField.TOTAL),
+            linesEditable = false,
+        )
+        assertTrue(locked.endsWith("A payment is recorded, so the line items can no longer be edited."))
+        assertFalse(locked.contains("press Edit"))
+        for (text in listOf(locked, invoiceTotalDisagreementText(InvoiceTotalDisagreement(0L, 6000L, InvoiceStoredTotalField.TOTAL), true))) {
+            assertFalse(text.contains("legacy"))
+            assertFalse(text.contains("stored"))
+        }
     }
 }

@@ -283,16 +283,20 @@ fun invoiceTotalDisagreementOf(invoice: Invoice): InvoiceTotalDisagreement? {
     return if (stored == derived) null else InvoiceTotalDisagreement(derived, stored, from)
 }
 
-const val INVOICE_TOTAL_DISAGREEMENT_TITLE: String = "This invoice disagrees with itself"
-
-/** The banner body: both figures, where the stored one lives, and what fixes it. Web's and Android's copy. */
-fun invoiceTotalDisagreementText(d: InvoiceTotalDisagreement): String {
-    val source = when (d.storedFrom) {
-        InvoiceStoredTotalField.TOTAL_CENTS -> "the total stored on the invoice"
-        InvoiceStoredTotalField.TOTAL -> "the total stored on the invoice (its legacy dollar field)"
+const val INVOICE_TOTAL_DISAGREEMENT_TITLE: String = "The line items do not add up to the total"
+/**
+ * The banner body: both figures, which one is billed, and the one thing the
+ * Admin can do. #1860: the old copy named the stored field ("its legacy dollar
+ * field") and told her to re-save lines a recorded payment has locked. Same
+ * words as web (`lib/invoiceReconcile.ts#invoiceTotalMismatchText`) and Android.
+ */
+fun invoiceTotalDisagreementText(d: InvoiceTotalDisagreement, linesEditable: Boolean): String {
+    val stored = formatEditCents(d.storedCents)
+    val head = "The line items add up to ${formatEditCents(d.derivedCents)}, but the invoice total is $stored. " +
+        "The household is billed $stored. Nothing was changed to make them match."
+    return if (linesEditable) {
+        "$head If the line items are right, press Edit and save them, and the total will follow."
+    } else {
+        "$head A payment is recorded, so the line items can no longer be edited."
     }
-    return "The line items add up to ${formatEditCents(d.derivedCents)}, but $source says " +
-        "${formatEditCents(d.storedCents)}. Nothing has been changed to make them match, and nothing will be. " +
-        "The household is billed the stored figure. Re-saving the line items through Edit will recompute " +
-        "the stored total from them, if the lines are the version you want to keep."
 }
