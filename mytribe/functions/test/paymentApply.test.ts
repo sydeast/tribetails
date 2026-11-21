@@ -138,14 +138,15 @@ describe('planApply: the refusal this module owns', () => {
 });
 
 describe('planApply: the refusals imported from markInvoicePaid', () => {
-  it('refuses an invoice that does not exist, by id, rather than throwing', () => {
+  it('refuses an invoice that does not exist rather than throwing, and never prints its id (#2453)', () => {
     const result = plan({
       invoice: { invoiceId: 'ghost', doc: null, existingPayments: [] },
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.refusal.code).toBe('apply_invoice_not_found');
-    expect(result.refusal.message).toContain('ghost');
+    expect(result.refusal.message).toBe('That invoice could not be found, so nothing can be applied to it.');
+    expect(result.refusal.message).not.toContain('ghost');
   });
 
   it('refuses a draft: send it before money can be put against it', () => {

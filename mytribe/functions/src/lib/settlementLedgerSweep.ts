@@ -320,9 +320,8 @@ export async function finishAbandonedSettlement(firestore: Firestore, invoiceId:
       targetUid: staged.rowId,
       targetCollection: 'payments',
       familyId: staged.kinfolkId,
-      description:
-        `Payment ledger row recorded for invoice ${staged.invoiceNumber || invoiceId}: ` +
-        'the app stopped after paying it off and before recording the row',
+      // #2453: the invoice's number, never its id (that is the payload's).
+      description: (await import('./activityWords.js')).ledgerRowBackfilledWords(staged.invoiceNumber),
       payload: {
         paymentId: staged.rowId,
         kinfolkId: staged.kinfolkId,

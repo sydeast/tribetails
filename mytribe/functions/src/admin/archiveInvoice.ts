@@ -1,4 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
+import { INVOICE_NOT_FOUND_WORDS } from '../lib/invoiceNaming';
 import { FieldValue } from 'firebase-admin/firestore';
 import { z, ZodError } from 'zod';
 import { db } from '../lib/firestoreAdmin';
@@ -125,7 +126,7 @@ export async function archiveInvoiceHandler(
   // transaction read, before anything is written.
   const outcome = await db().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    if (!snap.exists) throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+    if (!snap.exists) throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
     const data = snap.data() as ArchivableInvoice;
     if (isArchived(data)) {
       throw new HttpsError('failed-precondition', 'This invoice is already archived.', {
@@ -315,7 +316,7 @@ export async function writeOffInvoiceHandler(
   const outcome = await db().runTransaction(async (tx) => {
     // EVERY READ BEFORE EVERY WRITE: the invoice and what has been paid on it.
     const snap = await tx.get(ref);
-    if (!snap.exists) throw new HttpsError('not-found', `Invoice '${args.invoiceId}' not found.`);
+    if (!snap.exists) throw new HttpsError('not-found', INVOICE_NOT_FOUND_WORDS);
     const data = (snap.data() ?? {}) as ArchivableInvoice;
     const paymentsSnap = await tx.get(ref.collection('payments'));
     const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));

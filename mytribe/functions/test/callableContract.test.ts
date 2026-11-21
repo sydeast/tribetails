@@ -1408,6 +1408,8 @@ describe('ADR-0001 W3-1 response contract drift guard (getMyInvoices DTO)', () =
     // The ADR-0002 stamp, both halves, shipped verbatim off the doc.
     'editScope',
     'id',
+    // #1848: the number the portals print in place of the id; null when the invoice has none.
+    'invoiceNumber',
     'isPaid',
     'kinfolkId',
     'kinfolkName',

@@ -215,8 +215,9 @@ class CreditHistoryTest {
     }
 
     @Test
-    fun `a use names its invoice, or says an invoice when it has no number`() {
+    fun `a use names its invoice, or says it has no number`() {
         assertEquals("$25.00 on INV-1009, Sep 27, 2026", creditUseLine(CreditUse("u1", sep27, 2500, "inv9", "INV-1009"), utc))
-        assertEquals("$25.00 on an invoice, Sep 27, 2026", creditUseLine(CreditUse("u1", sep27, 2500, "inv9", null), utc))
+        assertEquals("$25.00 on an invoice with no number, Sep 27, 2026", creditUseLine(CreditUse("u1", sep27, 2500, "inv9", null), utc))
+        assertEquals("$25.00 on an invoice with no number, Sep 27, 2026", creditUseLine(CreditUse("u1", sep27, 2500, "inv9", " "), utc))
     }
 }

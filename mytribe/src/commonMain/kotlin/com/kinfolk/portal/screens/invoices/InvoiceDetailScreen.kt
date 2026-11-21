@@ -128,7 +128,7 @@ fun InvoiceDetailScreen(
                     tint = KinfolkBrand.Navy,
                 )
             }
-            Text("${invoiceDocNoun(invoice)} #${invoice.id}", style = type.heritageTitle)
+            Text(invoiceName(invoice), style = type.heritageTitle)
         }
         GlassCard(
             modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),

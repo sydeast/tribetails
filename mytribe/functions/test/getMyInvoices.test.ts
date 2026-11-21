@@ -872,3 +872,28 @@ describe('legacy viewed flag (#1180)', () => {
     expect(byId).toEqual({ a: true, b: true, c: false, d: false });
   });
 });
+
+/** #1848: the portals print the invoice's number, so the callable ships it; the id only opens the invoice. */
+describe('#1848 getMyInvoices ships the invoice number', () => {
+  it('the stored number trimmed, and null when the invoice has none', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'families/3': {} },
+      queryDocs: {
+        invoices: [
+          { id: 'inv_1731000000000_ab12cd', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 50, total: 50, invoiceNumber: ' 1042 ' } },
+          { id: 'inv_1731000000001_ef34gh', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 20, total: 20 } },
+          { id: 'inv_1731000000002_ij56kl', data: { kinfolkId: '3', invoiceStatus: 'open', amountDue: 10, total: 10, invoiceNumber: '  ' } },
+        ],
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { getMyInvoicesHandler } = await import('../src/portal/getMyInvoices');
+    const res = await getMyInvoicesHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const byId = Object.fromEntries(res.open.map((i) => [i.id, i.invoiceNumber]));
+    expect(byId).toEqual({
+      inv_1731000000000_ab12cd: '1042',
+      inv_1731000000001_ef34gh: null,
+      inv_1731000000002_ij56kl: null,
+    });
+  });
+});

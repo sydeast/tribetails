@@ -60,6 +60,8 @@ import { vendorConfigured } from '../support/e2e-real';
 
 const STAMP = Date.now().toString(36);
 const INVOICE_ID = `e2e-real-pay-${STAMP}`;
+/** The number `openInvoiceDoc` gives this run's invoice. Stripe's page prints it (#2453); the id is never shown. */
+const INVOICE_NUMBER = `MT-E2E-${STAMP}`;
 const TOTAL = 42;
 /** [TOTAL] as Stripe's page prints it and as Stripe counts it. */
 const TOTAL_ON_STRIPE = '$42.00';
@@ -126,10 +128,10 @@ describe('paying an invoice by card (real payInvoice, Stripe test mode, real web
     // Stripe's hosted page, on Stripe's origin. Everything inside this block
     // runs there; nothing from this file's scope crosses except `args`, and
     // the one thing that comes back is the session id from the page address.
-    cy.origin<{ invoiceId: string; amount: string; budget: number }, string>(
+    cy.origin<{ invoiceNumber: string; amount: string; budget: number }, string>(
       'https://checkout.stripe.com',
-      { args: { invoiceId: INVOICE_ID, amount: TOTAL_ON_STRIPE, budget: BUDGET_MS.CHECKOUT } },
-      ({ invoiceId, amount, budget }) => {
+      { args: { invoiceNumber: INVOICE_NUMBER, amount: TOTAL_ON_STRIPE, budget: BUDGET_MS.CHECKOUT } },
+      ({ invoiceNumber, amount, budget }) => {
         // Stripe's own scripts on this page throw while it loads (#1275,
         // run 41268330873). The browser hides another origin's exception
         // behind the bare message "Script error.", and Cypress fails the test
@@ -179,15 +181,15 @@ describe('paying an invoice by card (real payInvoice, Stripe test mode, real web
         const deadline = Date.now() + budget;
         cy.get('body', { timeout: budget });
         // THE SESSION STRIPE SHOWS IS THIS INVOICE'S. `payInvoice` names the
-        // line "Invoice #<id>" and prices it from the invoice, and the id is
+        // line "Invoice #<number>" and prices it from the invoice, and the number is
         // unique to this run, so these two strings on Stripe's page mean the
         // session about to be paid is the one this Pay click made, for the
         // amount the household owes.
         cy.then(() => {
           cy.document({ timeout: Math.max(deadline - Date.now(), 1_000) }).should((doc) => {
             const text = (doc.body?.innerText ?? '').replace(/\s+/g, ' ');
-            if (!text.includes(`Invoice #${invoiceId}`) || !text.includes(amount)) {
-              throw new Error(`Stripe's checkout page does not show "Invoice #${invoiceId}" and ${amount}. ${pageFacts(doc)}`);
+            if (!text.includes(`Invoice #${invoiceNumber}`) || !text.includes(amount)) {
+              throw new Error(`Stripe's checkout page does not show "Invoice #${invoiceNumber}" and ${amount}. ${pageFacts(doc)}`);
             }
           });
         });

@@ -230,6 +230,32 @@ export function declinedQuoteStatusInfo(): InvoiceStatusInfo {
 export function documentNoun(invoice: Pick<InvoiceDto, 'status'>): 'Quote' | 'Invoice' {
   return invoice.status === 'quote' ? 'Quote' : 'Invoice';
 }
+/** What `invoiceName` reads. `invoiceNumber` is optional: a server older than the field sends no key. */
+type NamedInvoice = Pick<InvoiceDto, 'status'> & { invoiceNumber?: string | null };
+/**
+ * #1848: how the portal names one invoice, "Invoice #1042" or "Quote #1042".
+ * The stored id used to stand after the "#", a string nobody can quote. An
+ * invoice with no number reads "Invoice with no number" (or "Quote with no
+ * number"), the words the office's apps and the server use.
+ *
+ * A server older than the field sends no key. That is "not told", not "has no
+ * number", so the name is the bare noun: "Invoice". The portal's main channel
+ * runs against the released server, which may be older than this page.
+ */
+export function invoiceName(invoice: NamedInvoice): string {
+  const noun = documentNoun(invoice);
+  if (invoice.invoiceNumber === undefined) return noun;
+  const number = (invoice.invoiceNumber ?? '').trim();
+  return number === '' ? `${noun} with no number` : `${noun} #${number}`;
+}
+/**
+ * The invoice a credit was spent on, inside a sentence: its number as stored
+ * ("INV-1009"), or "an invoice with no number". Never an id.
+ */
+export function invoiceNumberOrWords(invoiceNumber: string | null | undefined): string {
+  const number = (invoiceNumber ?? '').trim();
+  return number === '' ? 'an invoice with no number' : number;
+}
 /**
  * The status info for one invoice, decision included: the single place the two
  * screens agree on what a quote with an answer on it is called.

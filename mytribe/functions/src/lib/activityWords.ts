@@ -15,6 +15,8 @@
  * `ActivityWords.kt`); stored rows are evidence and are never rewritten.
  */
 
+import { invoiceLeadName, invoiceName } from './invoiceNaming';
+
 /** `account.welcome.kinfolk` as "Account welcome kinfolk": the last resort for a key with no label. */
 export function humanizeKey(raw: string): string {
   const words = raw
@@ -314,8 +316,7 @@ export function accountCreditGivenWords(amountCents: number): string {
 
 /** `Applied $25.00 account credit to invoice 1026`. The household is the entry's `familyId`. */
 export function accountCreditAppliedWords(amountCents: number, invoiceNumber: string | null): string {
-  const n = (invoiceNumber ?? '').trim();
-  return `Applied ${dollars(amountCents)} account credit to ${n === '' ? 'an invoice' : `invoice ${n}`}`;
+  return `Applied ${dollars(amountCents)} account credit to ${invoiceName(invoiceNumber)}`;
 }
 const PATTERN_WORDS: Record<string, string> = { individual: 'individual dates', weekly: 'weekly' };
 
@@ -341,14 +342,12 @@ export function triageBadDataWords(reason: string): string {
   return `Archived a KinTale from Needs triage as bad data${r === '' ? '' : `: ${r}`}`;
 }
 
-/** "invoice INV-2027-0001", or "an invoice" when the invoice has no number yet. Never its id. */
+/**
+ * "invoice INV-2027-0001", or "an invoice with no number". Never its id.
+ * The words are `invoiceNaming.ts`'s (#2453), shared with the refusals.
+ */
 export function invoiceWords(invoiceNumber: unknown): string {
-  return typeof invoiceNumber === 'string' && invoiceNumber.trim() !== ''
-    ? `invoice ${invoiceNumber.trim()}`
-    : 'an invoice';
-}
-function capitalised(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  return invoiceName(invoiceNumber);
 }
 /** `Made the PDF for invoice INV-2027-0001`. */
 export function invoicePdfMadeWords(invoiceNumber: unknown): string {
@@ -358,15 +357,60 @@ export function invoicePdfMadeWords(invoiceNumber: unknown): string {
 export function invoicePdfDownloadedWords(invoiceNumber: unknown): string {
   return `Household downloaded the PDF for ${invoiceWords(invoiceNumber)}`;
 }
-/** The invoice sentences that already named the number, with "an invoice" where the id used to stand in. */
+/** `Invoice 1042 archived`, or `Invoice with no number archived`. Never its id. */
 export function invoiceSentence(invoiceNumber: unknown, rest: string): string {
-  return `${capitalised(invoiceWords(invoiceNumber))} ${rest}`;
+  return `${invoiceLeadName(invoiceNumber)} ${rest}`;
 }
 
-/** `Quote 1026 sent to the household`, or `A quote ...` when it has no number. Never its id. */
+/** `Quote 1026 sent to the household`, or `Quote with no number ...`. Never its id. */
 export function quoteSentence(invoiceNumber: unknown, rest: string): string {
-  const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
-  return `${n === '' ? 'A quote' : `Quote ${n}`} ${rest}`;
+  return `${invoiceLeadName(invoiceNumber, 'quote')} ${rest}`;
+}
+/** `Draft invoice 1042 reviewed and sent`, or `Draft invoice with no number ...`. */
+export function draftInvoiceSentWords(invoiceNumber: unknown): string {
+  return `Draft ${lowerFirst(invoiceLeadName(invoiceNumber))} reviewed and sent`;
+}
+function lowerFirst(s: string): string {
+  return s.charAt(0).toLowerCase() + s.slice(1);
+}
+/** `Invoice 1042 settled by a manually-recorded payment`, or the partial line while a balance is still owed (#2453). */
+export function manualPaymentWords(invoiceNumber: unknown, settled: boolean): string {
+  return settled
+    ? `${invoiceLeadName(invoiceNumber)} settled by a manually-recorded payment`
+    : `Partial payment recorded against ${invoiceName(invoiceNumber)}; a balance is still owed`;
+}
+/** `Payment row recorded against invoice 1042` (#2453). */
+export function paymentRowRecordedWords(invoiceNumber: unknown): string {
+  return `Payment row recorded against ${invoiceName(invoiceNumber)}`;
+}
+/** The sweep finishing a payment the app paid off but never wrote a row for (#2453). */
+export function ledgerRowBackfilledWords(invoiceNumber: unknown): string {
+  return (
+    `Payment ledger row recorded for ${invoiceName(invoiceNumber)}: ` +
+    'the app stopped after paying it off and before recording the row'
+  );
+}
+/**
+ * #2453: what the owner decided about a held card payment, in dollars, naming
+ * only the parts that got money: `Held card payment of $40.00 decided: $25.00
+ * to account credit, $10.00 to invoice 1042 and $5.00 kept as recorded`. The
+ * payment's id and the invoice's id stay in the entry's payload.
+ */
+export function unappliedPaymentDecidedWords(d: {
+  paymentCents: number;
+  creditedCents: number;
+  appliedCents: number;
+  keptCents: number;
+  appliedInvoiceNumber: unknown;
+}): string {
+  const parts: string[] = [];
+  if (d.creditedCents > 0) parts.push(`${dollars(d.creditedCents)} to account credit`);
+  if (d.appliedCents > 0) parts.push(`${dollars(d.appliedCents)} to ${invoiceName(d.appliedInvoiceNumber)}`);
+  if (d.keptCents > 0) parts.push(`${dollars(d.keptCents)} kept as recorded`);
+  const lead = `Held card payment of ${dollars(d.paymentCents)} decided`;
+  if (parts.length === 0) return lead;
+  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `${lead}: ${list}`;
 }
 
 /** `updateKinCareSession`'s field names as the operator reads them. */
@@ -439,7 +483,7 @@ export function paymentNoticeGaveUpWords(attempts: number): string {
  * invoice's number only, never an id.
  */
 export function paymentPossibleDuplicateWords(invoiceNumber: string): string {
-  const which = invoiceNumber.trim() === '' ? 'an invoice that' : `invoice ${invoiceNumber.trim()}, which`;
+  const which = invoiceNumber.trim() === '' ? `${invoiceName('')} that` : `${invoiceName(invoiceNumber)}, which`;
   return `A payment was recorded for ${which} was already settled. Check for a duplicate.`;
 }
 /** The vet clinic callables, when the clinic named is not there. */
@@ -459,10 +503,7 @@ export function notificationDispatchedWords(name: string, channels: readonly str
 }
 /** `Declined quote INV-2027-0001 revised and sent again`. */
 export function quoteRevisedWords(invoiceNumber: unknown): string {
-  const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
-  return n === ''
-    ? 'A declined quote revised and sent again'
-    : `Declined quote ${n} revised and sent again`;
+  return `Declined ${lowerFirst(invoiceLeadName(invoiceNumber, 'quote'))} revised and sent again`;
 }
 /**
  * #1839: an Auntie's look at a household, `Jane Rivers looked at Kinfolk Dre
@@ -493,7 +534,7 @@ export function cardDeclinedAfterPaymentWords(invoiceNumber: unknown, reason: st
   // The checkout named an invoice that is not there, so there is no number to give.
   if (reason === 'invoice-not-found') return `A card was declined on an invoice that could not be found. ${sent}`;
   const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
-  const invoice = n === '' ? 'an invoice' : `invoice ${n}`;
+  const invoice = invoiceName(invoiceNumber);
   // #2361: a cancelled or written-off invoice asks nothing of the household
   // either. Nor does one that is another household's than the checkout's.
   const state =
@@ -522,12 +563,11 @@ export function cardDeclinedAfterPaymentWords(invoiceNumber: unknown, reason: st
  * earlier build applied, when a retry finds its line unwritten.
  */
 export function cardPaymentNotPayableWords(invoiceNumber: unknown, reason: string, amountCents: number): string {
-  const n = typeof invoiceNumber === 'string' ? invoiceNumber.trim() : '';
   const amount = amountCents > 0 ? ` of ${dollars(amountCents)}` : '';
   if (reason === 'apply_invoice_not_found') {
     return `A card payment${amount} was recorded for an invoice that could not be found.`;
   }
-  const invoice = n === '' ? 'an invoice' : `invoice ${n}`;
+  const invoice = invoiceName(invoiceNumber);
   const why =
     reason === 'apply_invoice_not_sent'
       ? 'the invoice was a draft or a quote when the payment arrived'
