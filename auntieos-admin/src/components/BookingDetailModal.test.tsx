@@ -557,15 +557,15 @@ describe('BookingDetailModal assigned Auntie', () => {
     expect(factValue('Assigned Auntie')).not.toHaveTextContent('Assigned');
   });
 
-  it('calls a nameless owner "Operator", never her sign-in email, on the row and in the picker', async () => {
+  it('calls a nameless owner "Office", never her sign-in email, on the row and in the picker', async () => {
     const owner = { uid: 'u1', displayName: 'e2e-admin@tribetails.com', email: 'e2e-admin@tribetails.com', role: 'owner' as const };
     getVisitAssignment.mockResolvedValue({ assignedAuntieUid: 'u1', auntieDisplayName: null });
     loadStaffRoster.mockResolvedValue([owner]);
     listStaff.mockResolvedValue([owner]);
     open();
-    await waitFor(() => expect(factValue('Assigned Auntie')).toHaveTextContent('Operator'));
+    await waitFor(() => expect(factValue('Assigned Auntie')).toHaveTextContent('Office'));
     await user.click(screen.getByRole('button', { name: 'Choose an Auntie' }));
-    expect(await screen.findByRole('button', { name: 'Operator' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Office' })).toBeInTheDocument();
     expect(screen.queryByText(/e2e-admin@tribetails\.com/)).toBeNull();
   });
 

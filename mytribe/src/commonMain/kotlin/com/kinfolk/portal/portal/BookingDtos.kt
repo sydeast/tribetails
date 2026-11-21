@@ -59,6 +59,12 @@ data class Booking(
      */
     val requestDeclinedAtMs: Long? = null,
     /**
+     * #1870: true when a staff member is assigned to this visit, whether or not
+     * they have a name to show. Carries no uid or email. Absent on an older
+     * server, which reads as false.
+     */
+    val auntieAssigned: Boolean = false,
+    /**
      * Where the kinfolk's ask for a new time stands, or null when this visit
      * has never had one. The proposed window and the office's note survive the
      * decision on purpose, so the screen can say what was asked for and what

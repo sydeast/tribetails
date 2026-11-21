@@ -617,6 +617,8 @@ data class GetMyBookingsResultLiveVisit(
     val auntieDisplayName: String?,
     val auntieAvatarUrl: String?,
     val notes: String?,
+    /** Null when the payload omits the key. */
+    val auntieAssigned: Boolean? = null,
     val requestedByUid: String?,
     val createdAtMs: Long?,
     val updatedAtMs: Long?,
@@ -671,6 +673,7 @@ internal fun decodeGetMyBookingsResultLiveVisit(raw: Map<String, Any?>?): GetMyB
         auntieDisplayName = raw?.get("auntieDisplayName") as? String,
         auntieAvatarUrl = raw?.get("auntieAvatarUrl") as? String,
         notes = raw?.get("notes") as? String,
+        auntieAssigned = raw?.get("auntieAssigned") as? Boolean,
         requestedByUid = raw?.get("requestedByUid") as? String,
         createdAtMs = (raw?.get("createdAtMs") as? Number)?.toLong(),
         updatedAtMs = (raw?.get("updatedAtMs") as? Number)?.toLong(),

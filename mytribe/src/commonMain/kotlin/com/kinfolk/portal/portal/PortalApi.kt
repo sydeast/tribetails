@@ -2133,6 +2133,8 @@ class PortalApi(
         cancelResponseNote = o["cancelResponseNote"]?.jsonPrimitive?.contentOrNull,
         // #2029: absent on an older server, which reads as a plain cancellation.
         requestDeclinedAtMs = o["requestDeclinedAtMs"]?.jsonPrimitive?.longOrNull,
+        // #1870: absent on an older server, which reads as not assigned.
+        auntieAssigned = o["auntieAssigned"]?.jsonPrimitive?.booleanOrNull ?: false,
         rescheduleRequestStatus = decodeRescheduleStatus(o["rescheduleRequestStatus"]?.jsonPrimitive?.contentOrNull),
         rescheduleRequestedStartTimeMs = o["rescheduleRequestedStartTimeMs"]?.jsonPrimitive?.longOrNull,
         rescheduleRequestedEndTimeMs = o["rescheduleRequestedEndTimeMs"]?.jsonPrimitive?.longOrNull,

@@ -1496,9 +1496,9 @@ describe('acceptAssigneeLine (#1870)', () => {
 
   it('waits on the roster for a nameless assignee, then never shows an email', () => {
     expect(acceptAssigneeLine({ assignedAuntieUid: 'u1', auntieDisplayName: null }, null)).toBeNull();
-    expect(acceptAssigneeLine({ assignedAuntieUid: 'u1', auntieDisplayName: null }, [owner])).toBe('Assigned to the Operator.');
+    expect(acceptAssigneeLine({ assignedAuntieUid: 'u1', auntieDisplayName: null }, [owner])).toBe('Assigned to the Office.');
     expect(acceptAssigneeLine({ assignedAuntieUid: 'u1', auntieDisplayName: 'e2e-admin@tribetails.com' }, [owner])).toBe(
-      'Assigned to the Operator.',
+      'Assigned to the Office.',
     );
     expect(acceptAssigneeLine({ assignedAuntieUid: 'gone', auntieDisplayName: null }, [owner])).toBe('Assigned to a staff member.');
 

@@ -292,7 +292,7 @@ class IncomingSeriesAssigneeTest {
     fun waitsOnTheRosterThenNeverShowsAnEmail() {
         val s = series(IncomingKinCare(visitId = "v1", assignedAuntieUid = "u1", auntieDisplayName = "e2e-admin@tribetails.com"))
         assertNull(s.acceptAssigneeLine(null))
-        assertEquals("Assigned to the Operator.", s.acceptAssigneeLine(listOf(owner)))
+        assertEquals("Assigned to the Office.", s.acceptAssigneeLine(listOf(owner)))
         assertEquals("Assigned to a staff member.", s.acceptAssigneeLine(emptyList()))
     }
 

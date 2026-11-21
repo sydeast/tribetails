@@ -126,7 +126,7 @@ class IncomingSeriesAssigneeTest {
     fun waitsOnTheRosterThenNeverShowsAnEmail() {
         val s = series(KinCareVisit(_id = "v1", assignedAuntieUid = "u1", auntieDisplayName = null))
         assertEquals(null, s.acceptAssigneeLine(null))
-        assertEquals("Assigned to the Operator.", s.acceptAssigneeLine(listOf(owner)))
+        assertEquals("Assigned to the Office.", s.acceptAssigneeLine(listOf(owner)))
         assertEquals("Assigned to a staff member.", s.acceptAssigneeLine(emptyList()))
     }
 
@@ -139,7 +139,7 @@ class IncomingSeriesAssigneeTest {
     fun assignedRowNeverShowsAnEmail() {
         assertEquals("Unassigned", com.tribetails.auntieos.web.data.assignedAuntieLabel(null, null, null))
         assertEquals("Assigned", com.tribetails.auntieos.web.data.assignedAuntieLabel("u1", null, null))
-        assertEquals("Operator", com.tribetails.auntieos.web.data.assignedAuntieLabel("u1", "e2e-admin@tribetails.com", listOf(owner)))
+        assertEquals("Office", com.tribetails.auntieos.web.data.assignedAuntieLabel("u1", "e2e-admin@tribetails.com", listOf(owner)))
         assertEquals("Auntie Ruth", com.tribetails.auntieos.web.data.assignedAuntieLabel("u1", "Auntie Ruth", listOf(owner)))
     }
 }

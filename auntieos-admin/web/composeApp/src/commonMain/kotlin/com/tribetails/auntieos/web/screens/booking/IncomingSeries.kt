@@ -130,8 +130,8 @@ fun BookingSeries.acceptAssigneeLine(roster: List<StaffMember>?): String? {
     val member = roster.firstOrNull { it.uid == uid }
     member?.name?.let { return "Assigned to $it." }
     return when (member?.role) {
-        "owner" -> "Assigned to the Operator."
-        "auntie" -> "Assigned to an Auntie with no name on file."
+        "owner" -> "Assigned to the Office."
+        "auntie" -> "Assigned to an Auntie."
         else -> "Assigned to a staff member."
     }
 }

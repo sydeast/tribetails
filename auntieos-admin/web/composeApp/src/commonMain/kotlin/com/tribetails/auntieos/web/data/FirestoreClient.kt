@@ -3607,17 +3607,10 @@ data class StaffMember(
     val name: String? get() = displayName?.trim()?.takeIf { it.isNotEmpty() && '@' !in it && it != uid }
     /**
      * What the Assigned Auntie picker and row call this person: the name, else
-     * the role they hold ("Operator", "Auntie"). Never a sign-in email or a uid
-     * (#1857), and never blank.
+     * the word for their role ("Office", "Auntie"). Never a sign-in email or a
+     * uid (#1857), and never blank.
      */
-    val pickerLabel: String get() = name ?: staffRoleWord(role)
-}
-
-/** #1857: the word for a staff member with no name on file, by role. The web twin is `staffRoleWord` in api/staff.ts. */
-fun staffRoleWord(role: String?): String = when (role) {
-    "owner" -> "Operator"
-    "auntie" -> "Auntie"
-    else -> "Staff member"
+    val pickerLabel: String get() = name ?: staffByline(copy(displayName = null))
 }
 
 /**
@@ -3631,7 +3624,7 @@ fun assignedAuntieLabel(assignedUid: String?, storedName: String?, roster: List<
     if (stored.isNotEmpty() && '@' !in stored) return stored
     val member = roster?.firstOrNull { it.uid == assignedUid }
     if (member != null) return member.pickerLabel
-    return if (roster == null) "Assigned" else staffRoleWord(null)
+    return if (roster == null) "Assigned" else staffByline(StaffMember(uid = assignedUid))
 }
 
 /**
@@ -3640,6 +3633,21 @@ fun assignedAuntieLabel(assignedUid: String?, storedName: String?, roster: List<
  */
 fun uploaderNamesFrom(staff: List<StaffMember>): Map<String, String> =
     staff.mapNotNull { m -> (m.displayName ?: m.email)?.let { m.uid to it } }.toMap()
+
+/**
+ * #1882: a staff member's name, else the word for their role ("Office" for the
+ * owner, "Auntie"), the words the visit notes sign with. Never an email, and
+ * an email stored as a display name is not a name.
+ */
+fun staffByline(member: StaffMember): String {
+    val name = member.displayName?.trim().orEmpty()
+    if (name.isNotEmpty() && !name.contains('@')) return name
+    return when (member.role) {
+        "owner" -> "Office"
+        "auntie" -> "Auntie"
+        else -> "Staff"
+    }
+}
 
 /**
  * #1820: uid -> "owner" or "auntie", for the Activity Log's actor role. Only

@@ -72,6 +72,31 @@ export function staffNamesByUid(staff: readonly StaffMember[]): Map<string, stri
   return new Map(staff.map((m) => [m.uid, staffLabel(m)]));
 }
 
+/** True for a value shaped like an email address, which is never a name. */
+export function looksLikeEmail(value: string): boolean {
+  return value.includes('@');
+}
+
+/**
+ * The word a byline uses for a staff member with no name on file (#1882): the
+ * same words the visit notes already sign with. Never an email, never a uid.
+ */
+export function staffRoleWord(role: StaffRole | null | undefined): string {
+  if (role === 'owner') return 'Office';
+  if (role === 'auntie') return 'Auntie';
+  return 'Staff';
+}
+
+/**
+ * A person's byline (#1882): their name, else the word for their role. An
+ * email stored as a display name is not a name. The picker keeps
+ * `staffLabel` below, which must tell two unnamed Aunties apart (#1857).
+ */
+export function staffByline(member: StaffMember): string {
+  const name = (member.displayName ?? '').trim();
+  return name !== '' && !looksLikeEmail(name) ? name : staffRoleWord(member.role);
+}
+
 /**
  * uid -> role, for the Activity Log's "Actor role" (#1820). Only staff the
  * server could place are in it; a uid that is absent is not relabelled.
@@ -130,7 +155,7 @@ export function resetStaffNamesForTest(): void {
  */
 export function staffName(member: StaffMember): string | null {
   const name = (member.displayName ?? '').trim();
-  if (name === '' || name.includes('@') || name === member.uid) return null;
+  if (name === '' || looksLikeEmail(name) || name === member.uid) return null;
   return name;
 }
 
@@ -140,14 +165,7 @@ export function staffName(member: StaffMember): string | null {
  * uid. Never blank, so a picker button always has a name.
  */
 export function staffPersonLabel(member: StaffMember): string {
-  return staffName(member) ?? staffRoleWord(member.role ?? null);
-}
-
-/** The word for a staff member with no name on file, by the role they hold. */
-export function staffRoleWord(role: StaffRole | null): string {
-  if (role === 'owner') return 'Operator';
-  if (role === 'auntie') return 'Auntie';
-  return 'Staff member';
+  return staffName(member) ?? staffRoleWord(member.role);
 }
 
 /**
@@ -162,12 +180,13 @@ export function assignedAuntieLabel(
 ): string {
   if (assignedUid === null) return 'Unassigned';
   const stored = (storedName ?? '').trim();
-  if (stored !== '' && !stored.includes('@')) return stored;
+  if (stored !== '' && !looksLikeEmail(stored)) return stored;
   const member = roster?.find((m) => m.uid === assignedUid);
   if (member !== undefined) return staffPersonLabel(member);
   // An empty roster is a read that failed (`loadStaffRoster` resolves [] then), not proof of who it is.
   return roster === null || roster.length === 0 ? 'Assigned' : staffRoleWord(null);
 }
+
 /** The picker label: display name, then email, then the uid. Never blank, so
  *  the control always has an accessible name. */
 export function staffLabel(member: StaffMember): string {

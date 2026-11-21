@@ -16,7 +16,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { NO_EXTRAS, readHouseholdAddress, type VisitExtras } from './portalVisitLinks';
-import { assigneeNamesFor, needsAssigneeName, withAssigneeName } from './staffIdentity';
+import { assigneeNamesFor, hasAssignee, needsAssigneeName, withAssigneeName, withoutEmailName } from './assigneeName';
 import {
   CLOCK_ONLY_TIME_CONTEXT,
   householdBlockFor,
@@ -83,6 +83,13 @@ export const BookingDtoSchema = z
     auntieDisplayName: z.string().nullable(),
     auntieAvatarUrl: z.string().nullable(),
     notes: z.string().nullable(),
+    /**
+     * #1870: true when a staff member is assigned to this visit, whether or not
+     * they have a name to show. The household then reads "Your Auntie" instead
+     * of "Not yet assigned". Carries no uid and no email. Optional because a
+     * cached answer, or a server from before #1870, does not have it.
+     */
+    auntieAssigned: z.boolean().optional(),
     requestedByUid: z.string().nullable(),
     createdAtMs: z.number().int().nullable(),
     updatedAtMs: z.number().int().nullable(),
@@ -248,13 +255,15 @@ function blockFieldsOf(data: Record<string, unknown>, time: HouseholdTimeContext
  */
 export function kinCareToDto(
   id: string,
-  data: Record<string, unknown>,
+  stored: Record<string, unknown>,
   batchId: string | null,
   kinfolkId: string,
   extras: VisitExtras = NO_EXTRAS,
   time: HouseholdTimeContext = CLOCK_ONLY_TIME_CONTEXT,
   serviceCatalog: ServiceNameCatalog = EMPTY_SERVICE_NAME_CATALOG,
 ): BookingDto {
+  // #1857: an email stored where the name belongs never reaches a household.
+  const data = withoutEmailName(stored);
   const cancelStatus = cancelRequestStatusOf(data);
   const status = (data['status'] as BookingDto['status']) ?? 'requested';
   const sessionId = stringOrNull(data['sessionId']);
@@ -281,6 +290,7 @@ export function kinCareToDto(
     auntieDisplayName: stringOrNull(data['auntieDisplayName']),
     auntieAvatarUrl: stringOrNull(data['auntieAvatarUrl']),
     notes: stringOrNull(data['notes']),
+    auntieAssigned: hasAssignee(data['assignedAuntieUid']),
     requestedByUid: stringOrNull(data['requestedByUid']),
     createdAtMs: tsMillis(data['createdAt']),
     updatedAtMs: tsMillis(data['updatedAt']),

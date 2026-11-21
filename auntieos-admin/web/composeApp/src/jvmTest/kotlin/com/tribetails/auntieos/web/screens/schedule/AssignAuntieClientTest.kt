@@ -115,8 +115,8 @@ class AssignAuntieClientTest {
         assertTrue(r is WriteResult.Ok)
         val staff = (r as WriteResult.Ok).value
         assertEquals(listOf("u3", "u4"), staff.map { it.uid })
-        assertEquals("Staff member", staff[0].pickerLabel)
-        assertEquals("Staff member", staff[1].pickerLabel)
+        assertEquals("Staff", staff[0].pickerLabel)
+        assertEquals("Staff", staff[1].pickerLabel)
     }
 
     @Test

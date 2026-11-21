@@ -306,6 +306,7 @@ export interface GetMyBookingsResultLiveVisit {
   auntieDisplayName: string | null;
   auntieAvatarUrl: string | null;
   notes: string | null;
+  auntieAssigned?: boolean;
   requestedByUid: string | null;
   createdAtMs: number | null;
   updatedAtMs: number | null;

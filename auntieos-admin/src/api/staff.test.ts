@@ -159,9 +159,9 @@ describe('Staffing names (#1857)', () => {
 
   it('staffPersonLabel falls back to the role word', () => {
     expect(staffPersonLabel(ruth)).toBe('Auntie Ruth');
-    expect(staffPersonLabel(owner)).toBe('Operator');
+    expect(staffPersonLabel(owner)).toBe('Office');
     expect(staffPersonLabel({ uid: 'u4', displayName: null, email: null, role: 'auntie' })).toBe('Auntie');
-    expect(staffPersonLabel({ uid: 'u5', displayName: null, email: 'pawsome@hanasamku.com' })).toBe('Staff member');
+    expect(staffPersonLabel({ uid: 'u5', displayName: null, email: 'pawsome@hanasamku.com' })).toBe('Staff');
   });
 
   it('assignedAuntieLabel: stored name, else the roster, else "Assigned" until the roster answers', () => {
@@ -169,8 +169,8 @@ describe('Staffing names (#1857)', () => {
     expect(assignedAuntieLabel('u2', 'Auntie Ruth', null)).toBe('Auntie Ruth');
     expect(assignedAuntieLabel('u2', null, null)).toBe('Assigned');
     expect(assignedAuntieLabel('u2', null, [ruth])).toBe('Auntie Ruth');
-    expect(assignedAuntieLabel('u1', 'e2e-admin@tribetails.com', [owner])).toBe('Operator');
-    expect(assignedAuntieLabel('gone', null, [ruth])).toBe('Staff member');
+    expect(assignedAuntieLabel('u1', 'e2e-admin@tribetails.com', [owner])).toBe('Office');
+    expect(assignedAuntieLabel('gone', null, [ruth])).toBe('Staff');
     expect(assignedAuntieLabel('u2', null, [])).toBe('Assigned');
   });
 });

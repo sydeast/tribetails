@@ -1,6 +1,6 @@
 import { db } from './firestoreAdmin';
 import { resolveDefaultAssigneeUid } from './businessAdmins';
-import { staffNameFor } from './staffIdentity';
+import { staffNameFor } from './assigneeName';
 
 export interface Assignee {
   uid: string;

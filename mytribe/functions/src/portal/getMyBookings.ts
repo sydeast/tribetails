@@ -11,7 +11,7 @@ import { validateResponse } from '../lib/callableResponse';
 import { FULL_CPU } from '../lib/runtimeOptions';
 import { matchServiceKey, serviceDisplayName, serviceNameCatalogFrom, EMPTY_SERVICE_NAME_CATALOG } from '../lib/serviceDisplayName';
 import { hasBillingAccess } from '../lib/memberGate';
-import { assigneeNamesFor, needsAssigneeName, withAssigneeName } from '../lib/staffIdentity';
+import { assigneeNamesFor, hasAssignee, needsAssigneeName, withAssigneeName } from '../lib/assigneeName';
 import { loadVisitExtras, NO_EXTRAS, type VisitExtras } from '../lib/portalVisitLinks';
 import {
   BookingDtoSchema,
@@ -241,6 +241,8 @@ export async function getMyBookingsHandler(
       // household must not read it. A visit with no booking request has no
       // household-written note to show here, so there is nothing to project.
       notes: null,
+      // #1870: the flag only, never the uid on the session.
+      auntieAssigned: hasAssignee(s['assignedAuntieUid']),
       requestedByUid: stringOrNull(s['createdBy']),
       createdAtMs: isoMillis(s['createdAt']),
       updatedAtMs: isoMillis(s['updatedAt']),

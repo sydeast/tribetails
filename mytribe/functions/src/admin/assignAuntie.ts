@@ -6,7 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
-import { staffNameFor } from '../lib/staffIdentity';
+import { staffNameFor } from '../lib/assigneeName';
 
 /**
  * Assign (or unassign) an Auntie on a single KinCare visit.

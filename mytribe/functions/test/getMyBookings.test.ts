@@ -567,4 +567,35 @@ describe('getMyBookingsHandler: the Auntie on a visit stored without a name (#18
     const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
     expect(res.upcoming.find((b) => b.id === 'b-up')?.auntieDisplayName).toBeNull();
   });
+
+  it('drops an email stored as the name on a visit with no assignee', async () => {
+    mocks.dbFn.mockReturnValue(withVisit({ auntieDisplayName: 'e2e-admin@tribetails.com' }).db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const dto = res.upcoming.find((b) => b.id === 'b-up');
+    expect(dto?.auntieDisplayName).toBeNull();
+    expect(dto?.auntieAssigned).toBe(false);
+    expect(JSON.stringify(res)).not.toContain('e2e-admin@tribetails.com');
+  });
+
+  it('flags a visit whose assignee has no name, and sends neither the uid nor an email', async () => {
+    mocks.dbFn.mockReturnValue(
+      withVisit({ assignedAuntieUid: 'owner-uid-private' }, { 'staff/owner-uid-private': { email: 'e2e-admin@tribetails.com' } }).db,
+    );
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    const dto = res.upcoming.find((b) => b.id === 'b-up');
+    expect(dto?.auntieDisplayName).toBeNull();
+    expect(dto?.auntieAssigned).toBe(true);
+    const wire = JSON.stringify(res);
+    expect(wire).not.toContain('owner-uid-private');
+    expect(wire).not.toContain('e2e-admin@tribetails.com');
+  });
+
+  it('does not flag a visit nobody is assigned to', async () => {
+    mocks.dbFn.mockReturnValue(withVisit({ assignedAuntieUid: null, auntieDisplayName: null }).db);
+    const { getMyBookingsHandler } = await import('../src/portal/getMyBookings');
+    const res = await getMyBookingsHandler({ data: { kinfolkId: '3' }, auth: { uid: 'u1' } } as any);
+    expect(res.upcoming.find((b) => b.id === 'b-up')?.auntieAssigned).toBe(false);
+  });
 });

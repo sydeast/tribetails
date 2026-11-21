@@ -1052,8 +1052,8 @@ export function acceptAssigneeLine(
   const member = roster.find((m) => m.uid === uid);
   const name = member === undefined ? null : staffName(member);
   if (name !== null) return `Assigned to ${name}.`;
-  if (member?.role === 'owner') return 'Assigned to the Operator.';
-  if (member?.role === 'auntie') return 'Assigned to an Auntie with no name on file.';
+  if (member?.role === 'owner') return 'Assigned to the Office.';
+  if (member?.role === 'auntie') return 'Assigned to an Auntie.';
   return 'Assigned to a staff member.';
 }
 

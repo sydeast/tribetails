@@ -9,7 +9,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { kinCareLengthMinutes } from '../portal/getServiceCatalog';
-import { assigneeNamesFor } from '../lib/staffIdentity';
+import { assigneeNamesFor } from '../lib/assigneeName';
 
 /**
  * The office's queue of NEW booking requests (issue #533).

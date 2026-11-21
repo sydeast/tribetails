@@ -464,12 +464,7 @@ private fun KinCareDetailBody(
                 Text(com.kinfolk.portal.util.visitTitle(kinCare.title, kinCare.serviceLabel) ?: "Booking", style = type.heritageTitle)
                 Text(bookingWhenLabel(kinCare, withDate = true).ifEmpty { "TBD" }, style = type.sansLabel)
                 ReviewRow("KinCare Duration", kinCare.serviceLabel ?: "TBD")
-                // #2029: a declined request will never get an Auntie, so it is not "Pending".
-                ReviewRow(
-                    "Auntie",
-                    kinCare.auntieDisplayName
-                        ?: if (kinCare.stage() == com.kinfolk.portal.portal.VisitStage.Declined) "Not assigned" else "Pending",
-                )
+                ReviewRow("Auntie", auntieTileLabel(kinCare.auntieDisplayName, kinCare.stage(), kinCare.auntieAssigned))
                 ReviewRow(
                     "Kin",
                     kinCare.kinNames.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "TBD",
@@ -1089,3 +1084,22 @@ private fun CancelRequestSection(
 /** #1298: the status row says the same word as the list and Home pills, in sentence case. */
 private fun statusLabel(b: Booking): String =
     b.stage().label().lowercase().replaceFirstChar { it.uppercase() }
+
+/**
+ * The Auntie row. #2029: a declined request will never get an Auntie, so it is
+ * not "Pending". #1836: a completed visit was made by someone, so it is not
+ * "Pending" either when the record names nobody. #1870: neither is a visit with
+ * a staff member assigned who has no name to show. The web portal's
+ * `auntieTileLabel` (BookingDetail.tsx) is the other half.
+ */
+internal fun auntieTileLabel(
+    name: String?,
+    stage: com.kinfolk.portal.portal.VisitStage,
+    assigned: Boolean = false,
+): String = when {
+    !name.isNullOrBlank() -> name
+    stage == com.kinfolk.portal.portal.VisitStage.Declined -> "Not assigned"
+    stage == com.kinfolk.portal.portal.VisitStage.Completed -> "Your Auntie"
+    assigned && stage != com.kinfolk.portal.portal.VisitStage.Cancelled -> "Your Auntie"
+    else -> "Pending"
+}

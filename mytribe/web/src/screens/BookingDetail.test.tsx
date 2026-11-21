@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BookingDetail } from './BookingDetail';
+import { auntieTileLabel, BookingDetail } from './BookingDetail';
 import type { GetBookingPolicyResult, GetBusinessClosuresResult } from '../api/bookingApi';
 import type {
   AddBookingNoteResult,
@@ -1113,6 +1113,34 @@ describe('BookingDetail: a send that got no answer (#1919)', () => {
     expect(screen.queryByText(/Cancellation requested/)).not.toBeInTheDocument();
     // It looked before it spoke: the first read, then the check.
     expect(mocks.getMyBookings).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('BookingDetail: an assigned Auntie with no name (#1870)', () => {
+  it('reads Your Auntie on an upcoming visit, never Not yet assigned', async () => {
+    mocks.getMyBookings.mockResolvedValue(
+      bookingsResult({ upcoming: [booking({ status: 'confirmed', auntieDisplayName: null, auntieAssigned: true })] }),
+    );
+    renderScreen();
+    expect(await screen.findByText('Your Auntie')).toBeInTheDocument();
+    expect(screen.queryByText('Not yet assigned')).not.toBeInTheDocument();
+  });
+
+  it('still reads Not yet assigned when nobody is assigned, and on an answer with no flag', async () => {
+    mocks.getMyBookings.mockResolvedValue(
+      bookingsResult({ upcoming: [booking({ status: 'confirmed', auntieDisplayName: null })] }),
+    );
+    renderScreen();
+    expect(await screen.findByText('Not yet assigned')).toBeInTheDocument();
+  });
+
+  it('keeps the name, and the words for a declined or cancelled visit', () => {
+    expect(auntieTileLabel('Maya', 'confirmed', true)).toBe('Maya');
+    expect(auntieTileLabel(null, 'requested', true)).toBe('Your Auntie');
+    expect(auntieTileLabel('  ', 'enRoute', true)).toBe('Your Auntie');
+    expect(auntieTileLabel(null, 'declined', true)).toBe('Not assigned');
+    expect(auntieTileLabel(null, 'cancelled', true)).toBe('Not yet assigned');
+    expect(auntieTileLabel(null, 'confirmed', false)).toBe('Not yet assigned');
   });
 });
 

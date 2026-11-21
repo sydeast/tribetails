@@ -88,43 +88,6 @@ export function mergeIdentity(
   };
 }
 
-function looksLikeEmail(s: string): boolean {
-  return s.includes('@');
-}
-
-/**
- * #1857: a staff member's NAME and nothing else: the staff record's name, else
- * the sign-in account's display name. Never an email and never the uid, so it
- * is safe to store on a record a household reads (`auntieDisplayName` on a
- * visit). A "name" that is itself an email counts as no name. Null when there
- * is none, and the screen then says who it is in its own words.
- */
-export function staffNameOnly(
-  record: StaffRecord | undefined,
-  signIn: { displayName: string } | undefined,
-): string | null {
-  for (const candidate of [trimmed(record?.displayName), trimmed(signIn?.displayName)]) {
-    if (candidate !== '' && !looksLikeEmail(candidate)) return candidate;
-  }
-  return null;
-}
-
-/**
- * #1857: the name to store with an assignment, for one staff uid whose record
- * is already in hand. The sign-in account is read only when the record has no
- * usable name; a failed read costs only that fallback.
- */
-export async function staffNameFor(
-  uid: string,
-  record: StaffRecord | undefined,
-  context: string,
-): Promise<string | null> {
-  const own = staffNameOnly(record, undefined);
-  if (own !== null || uid === '') return own;
-  const signIn = await signInIdentities([uid], context);
-  return staffNameOnly(record, signIn.get(uid));
-}
-
 /**
  * Every uid's identity, in the order given. One `getAll` for the staff records,
  * and an Auth read only for the uids whose record has no name.
@@ -152,66 +115,4 @@ export async function withSignInFallback(
   const gaps = uids.filter((_uid, i) => !trimmed(records[i]?.displayName));
   const signIn = gaps.length > 0 ? await signInIdentities(gaps, context) : new Map();
   return uids.map((uid, i) => mergeIdentity(uid, records[i], signIn.get(uid)));
-}
-
-/**
- * #1870: a visit assigned to someone, with no name stored beside the uid.
- *
- * Until #1857 the assignment writers stored only the staff record's name, and
- * the owner's record had none, so every visit she was given carried
- * `auntieDisplayName: null`. The office's drawer read "Assigned" and MyTribe
- * read "Not yet assigned" for the same booking. The writers now store a name,
- * and this fills one in at read time for the visits written before that.
- *
- * Name only (record name, then sign-in display name), never an email: a
- * household reads this.
- */
-export function needsAssigneeName(data: Record<string, unknown>): string | null {
-  const uid = data['assignedAuntieUid'];
-  const name = data['auntieDisplayName'];
-  if (typeof uid !== 'string' || uid === '') return null;
-  if (typeof name === 'string' && name.trim() !== '' && !looksLikeEmail(name)) return null;
-  return uid;
-}
-
-/**
- * uid -> name for every uid given, read in one `getAll` plus one sign-in lookup
- * for the records with no name. A uid with no name anywhere is left out. Never
- * throws: a failed read leaves the visit as it was stored.
- */
-export async function assigneeNamesFor(
-  uids: readonly string[],
-  context: string,
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  const unique = [...new Set(uids.filter((u) => u !== ''))];
-  if (unique.length === 0) return out;
-  try {
-    const firestore = db();
-    const snaps = await firestore.getAll(...unique.map((uid) => firestore.collection('staff').doc(uid)));
-    const records = snaps.map((s) => (s.exists ? (s.data() as { displayName?: unknown }) : undefined));
-    const gaps = unique.filter((_uid, i) => staffNameOnly(records[i], undefined) === null);
-    const signIn = gaps.length > 0 ? await signInIdentities(gaps, context) : new Map();
-    unique.forEach((uid, i) => {
-      const name = staffNameOnly(records[i], signIn.get(uid));
-      if (name !== null) out.set(uid, name);
-    });
-  } catch {
-    /* best effort: the stored record stands */
-  }
-  return out;
-}
-
-/** The visit's fields with its assignee's name filled in, when it was missing and is now known. */
-export function withAssigneeName(
-  data: Record<string, unknown>,
-  names: ReadonlyMap<string, string>,
-): Record<string, unknown> {
-  const uid = needsAssigneeName(data);
-  if (uid === null) return data;
-  const name = names.get(uid);
-  if (name !== undefined) return { ...data, auntieDisplayName: name };
-  // An email stored in the name's place is never handed on.
-  const stored = data['auntieDisplayName'];
-  return typeof stored === 'string' && looksLikeEmail(stored) ? { ...data, auntieDisplayName: null } : data;
 }
