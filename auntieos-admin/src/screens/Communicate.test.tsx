@@ -481,3 +481,33 @@ describe('Communicate screen', () => {
     });
   });
 });
+
+/**
+ * #2444: the owner's sends are not drawn for an Auntie. Broadcast, Send
+ * outside the tribe and Recent each call something the server refuses her
+ * (`broadcastMessage`, `sendExternalMessage`, `listRecentSends`), so she gets
+ * the one surface she can finish a send on, told who she is.
+ */
+describe('#2444 Communicate for an Auntie', () => {
+  it('draws no mode switch, no Send outside the tribe and no Recent, and reads nothing she is refused', () => {
+    listRecentSends.mockResolvedValue([]);
+    render(<Communicate isAuntie />);
+    expect(screen.queryByRole('tablist', { name: 'Communicate mode' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Broadcast' })).toBeNull();
+    expect(screen.queryByTestId('compose-stub')).toBeNull();
+    expect(screen.queryByText('Send outside the tribe')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Recent' })).toBeNull();
+    expect(listRecentSends).not.toHaveBeenCalled();
+    expect(screen.getByTestId('personalize-stub')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Talk to your kinfolk');
+  });
+
+  it('keeps all of it for the owner', async () => {
+    listRecentSends.mockResolvedValue([]);
+    render(<Communicate />);
+    expect(screen.getByRole('tablist', { name: 'Communicate mode' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Broadcast' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Recent' })).toBeInTheDocument();
+    await waitFor(() => expect(listRecentSends).toHaveBeenCalledTimes(1));
+  });
+});

@@ -125,8 +125,43 @@ export interface CommunicateProps {
   draftId?: string | undefined;
   /** Opens a sent KinTale; passed through to Personalize's success banner. */
   onOpenKinTale?: ((reportId: string) => void) | undefined;
+  /**
+   * #2444: an Auntie is signed in, from the access the admin layout resolved
+   * before the screen drew. See `AUNTIE_SUBTITLE` for what she is left with.
+   */
+  isAuntie?: boolean;
+  /** Opens the KinTales list, where her drafts are. Her empty state's way forward. */
+  onOpenKinTales?: (() => void) | undefined;
 }
-export function Communicate({ draftId, onOpenKinTale }: CommunicateProps = {}) {
+
+/**
+ * #2444. What an Auntie can finish on this screen is one thing: open a stored
+ * KinTale draft (`?draftId=`, from KinTales > Drafts or Home), edit it and send
+ * it through `publishGeneratedDraft`, the one draft callable on her list.
+ * Everything else here is the owner's, and each was a step she could start and
+ * never finish:
+ *
+ *   Generate            `/api/generate` refuses a caretaker: it reads the
+ *                       household dossier, which is owner-only.
+ *   Approve (any type   a client write to `generated_drafts`, which the rules
+ *   but a KinTale)      give the owner alone. Email and Text then send through
+ *                       `sendExternalMessage` and Push through
+ *                       `sendHouseholdPush`, neither on her list.
+ *   Delete draft        `deleteGeneratedDraft`, destructive, the owner's.
+ *   Broadcast           `broadcastMessage` and the audience callables.
+ *   Send outside the    `sendExternalMessage`, the business phone and email.
+ *   tribe
+ *   Recent              `listRecentSends`, which failed to load for her.
+ *
+ * HIDDEN, NOT DISABLED. The one disabled-visible ruling is Complete on a visit
+ * (#2199, 2026-11-14). The rulings about what she does not do at all took the
+ * control away: New booking (#2187) is hidden, and Templates for email, text
+ * and push (#2163, 2026-11-13) are never seen. Email, Text and Push here are
+ * the same three channels, so they follow that ruling.
+ */
+const AUNTIE_SUBTITLE = 'Read a KinTale draft, make your edits, and send it to the household.';
+
+export function Communicate({ draftId, onOpenKinTale, isAuntie = false, onOpenKinTales }: CommunicateProps = {}) {
   const [mode, setMode] = useState<Mode>('personalize');
 
   const { getTabProps } = useRovingTabs({
@@ -137,6 +172,27 @@ export function Communicate({ draftId, onOpenKinTale }: CommunicateProps = {}) {
   // Non-null: MODES lists every Mode member and `mode` only ever holds a key
   // set from that same array.
   const active = MODES.find((m) => m.key === mode)!;
+
+  if (isAuntie) {
+    return (
+      <div className="screen">
+        <DenScreenHeading
+          kicker={navKicker('communicate')}
+          title="Talk to your"
+          accentTail="kinfolk"
+          subtitle={AUNTIE_SUBTITLE}
+        />
+        <div className="communicate__cols">
+          <CommunicatePersonalize
+            draftId={draftId}
+            onOpenKinTale={onOpenKinTale}
+            isAuntie
+            onOpenKinTales={onOpenKinTales}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="screen">
