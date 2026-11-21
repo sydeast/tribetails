@@ -1310,8 +1310,9 @@ What step 1b does on the runner:
 |---|---|
 | A copy that passes `checkVoice.js` | Restores it, ships the admin functions with it, removes it |
 | No `AUNTIE_VOICE_FILES` | Warns and goes on. Ask Auntie answers every draft with an error |
-| Nothing it can say, because gcloud could not ask | Warns and goes on, the same |
 | A copy that is empty, damaged or refused by `checkVoice.js`, or whose value cannot be read | Refuses before any deploy |
+| No answer, after answering step 0c of the same run | Refuses before any deploy. A dropped request: run it again |
+| No answer at any point in the run (no gcloud, signed out, `RELEASE_SKIP_CLIENT_SECRETS=1`) | Warns and goes on, as for no copy. The runner does not get here: step 0c refuses first |
 
 A release from the Mac uses the files already in the checkout and does not
 read the secret. To see when the stored copy last changed, without printing

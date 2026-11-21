@@ -414,6 +414,7 @@ for the quoted text.
 | Functions left undeployed after a partial deploy | Retry just those names; see troubleshooting |
 | `SDK location not found` | Run `npm run setup` |
 | "REFUSED: the stored copy of Ask Auntie's voice files cannot be used" | The copy in Secret Manager is empty, damaged or fails the names check, and this checkout has no files of its own. Nothing deployed. Store a good copy from the Mac (item 8 under [Before a release](#before-a-release)) and rerun |
+| "REFUSED: the stored copy of Ask Auntie's voice files could not be asked for" | Secret Manager answered step 0c and then dropped the request for the voice files. Nothing deployed. Rerun |
 | "voice: NOT IN THIS CHECKOUT" in yellow | The admin functions shipped without Ask Auntie's voice files, so every draft errors. The lines under it say whether no copy is stored or Secret Manager could not be asked. Store one (same item 8), then release again |
 | Signing errors at step 1c | `auntieos-admin/android/local.properties` is missing a key |
 | `communication with agent failed` on `git push` | 1Password is locked. Unlock it and rerun |

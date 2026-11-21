@@ -4033,10 +4033,12 @@ voice_raw() {
 #                                in gcloud's own words
 #   GCLOUD_VOICE_ADD=lose        `versions add` exits 0 and stores something
 #                                else, which is a write that did not land
+#   GCLOUD_LIST_ANSWERS=N        `secrets list` answers N times and then fails
+#                                with a 503: a store that goes quiet mid-run
 voice_store() {
   local dir="$1"
   secret_store "$dir" "${FULL_STORE[@]}"
-  rm -f "$dir/secrets.created"
+  rm -f "$dir/secrets.created" "$dir/secrets.lists"
   if [ "$#" -ge 2 ]; then printf '%s' "$2" > "$dir/secrets/AUNTIE_VOICE_FILES"; fi
   cat > "$dir/stubs/gcloud" <<'STUB'
 #!/usr/bin/env bash
@@ -4045,6 +4047,14 @@ voice_store() {
 store="$GCLOUD_SECRETS_DIR"
 case "$1 $2 $3" in
   "secrets list --project")
+    if [ -n "${GCLOUD_LIST_ANSWERS:-}" ]; then
+      asked="$(cat "$store.lists" 2>/dev/null || echo 0)"
+      asked=$((asked + 1)); echo "$asked" > "$store.lists"
+      if [ "$asked" -gt "$GCLOUD_LIST_ANSWERS" ]; then
+        echo "ERROR: (gcloud.secrets.list) HttpError accessing <https://secretmanager.googleapis.com/v1/projects/0/secrets>: response: <503>" >&2
+        exit 1
+      fi
+    fi
     for f in "$store"/*; do [ -e "$f" ] && basename "$f"; done
     exit 0
     ;;
@@ -4358,6 +4368,28 @@ if [ "$RCRD" != "0" ] &&
 else
   bad "voice restore: an unreadable stored copy did not refuse (rc=$RCRD)"
   printf '%s\n' "$OUT" | grep -i "voice" | tail -8
+fi
+
+# Secret Manager answers step 0c and then goes quiet. That is not a machine
+# without gcloud, which is the case that warns and goes on (the first case in
+# this file's voice section): the copy is there and was never looked at, so
+# going on would ship a broken Ask Auntie over one dropped request.
+DRQ="$(admin_repo)"
+voice_store "$DRQ" "$STORED"
+RCRQ="$(run_release "$DRQ" "${ADMIN_ENV[@]}" GCLOUD_SECRETS_DIR="$DRQ/secrets" GCLOUD_LIST_ANSWERS=1 \
+  FIREBASE_CALL_LOG="$DRQ/calls")"
+OUT="$(stripped "$DRQ/out")"
+if [ "$RCRQ" != "0" ] &&
+   printf '%s' "$OUT" | grep -qF "client config: every declared VITE_* value resolved" &&
+   printf '%s' "$OUT" | grep -qF "voice: Secret Manager could not be asked for AUNTIE_VOICE_FILES" &&
+   printf '%s' "$OUT" | grep -qF "REFUSED: the stored copy of Ask Auntie's voice files could not be asked for" &&
+   printf '%s' "$OUT" | grep -qF "Run the release again" &&
+   ! printf '%s' "$OUT" | grep -qF "NOT IN THIS CHECKOUT" &&
+   ! grep -q "deploy" "$DRQ/calls" 2>/dev/null && [ ! -e "$(voice_dir "$DRQ")" ]; then
+  ok "voice restore: a Secret Manager that answered step 0c and then went quiet stops the release"
+else
+  bad "voice restore: a Secret Manager that went quiet after step 0c did not refuse (rc=$RCRQ)"
+  printf '%s\n' "$OUT" | grep -iE "voice|client config" | tail -10
 fi
 
 # The Mac: the files are in the checkout, and Secret Manager holds a copy that

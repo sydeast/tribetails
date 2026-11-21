@@ -2269,6 +2269,13 @@ fi
 #                 operator set this up, so shipping without the files would
 #                 break an Ask Auntie that works today.
 #
+# "Could not ask" goes on only when this run never reached Secret Manager at
+# all. When step 0c read it minutes ago (CLIENT_RC=0) and it does not answer
+# here, that is a dropped request, not a machine without gcloud: the copy may
+# well be there, and on the runner it is. REFUSED too, because going on would
+# ship a broken Ask Auntie behind one yellow line until the next release. A
+# rerun asks again.
+#
 # Files already in the checkout are checked as they are and never replaced.
 # That is the Mac: a release from it asks Secret Manager nothing here.
 #
@@ -2285,8 +2292,13 @@ if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
     STEP="restoring Ask Auntie's voice files from Secret Manager"
     VOICE_RESTORE_RC=0
     node "$ROOT/scripts/voice-secret.mjs" restore --project "$PROJECT" || VOICE_RESTORE_RC=$?
-    case "$VOICE_RESTORE_RC" in
-      0)
+    # 1 when Secret Manager answered step 0c in this run and not this step.
+    VOICE_STORE_WENT_QUIET=0
+    if [ "$VOICE_RESTORE_RC" = "4" ] && [ "${CLIENT_RC:-}" = "0" ]; then
+      VOICE_STORE_WENT_QUIET=1
+    fi
+    case "$VOICE_RESTORE_RC:$VOICE_STORE_WENT_QUIET" in
+      0:*)
         # Set before the check below, so a copy that fails it is still removed.
         VOICE_RESTORED=1
         STEP="checking Ask Auntie's voice files"
@@ -2296,16 +2308,23 @@ if [ "${RELEASE_INCLUDE_ADMIN_FUNCTIONS:-0}" = "1" ]; then
         # now disagrees, do not ship on either answer.
         [ "$VOICE_RC" = "0" ] || VOICE_RC=1
         ;;
-      3|4|6) ;;
+      3:*|4:0|6:*) ;;
       *)
-        red "REFUSED: the stored copy of Ask Auntie's voice files cannot be used"
+        if [ "$VOICE_STORE_WENT_QUIET" = "1" ]; then
+          red "REFUSED: the stored copy of Ask Auntie's voice files could not be asked for"
+        else
+          red "REFUSED: the stored copy of Ask Auntie's voice files cannot be used"
+        fi
         red "  (see the line above)."
         red ""
         red "  This checkout has no voice files, so the admin functions would ship"
         red "  without them and Ask Auntie would answer every draft with an error."
         red "  Refusing now, before any deploy. Nothing was written to the checkout."
         red ""
-        if [ "$VOICE_RESTORE_RC" = "5" ]; then
+        if [ "$VOICE_STORE_WENT_QUIET" = "1" ]; then
+          red "  Secret Manager answered step 0c of this run and did not answer"
+          red "  here, so the copy was never looked at. Run the release again."
+        elif [ "$VOICE_RESTORE_RC" = "5" ]; then
           red "  Secret Manager lists the copy and did not hand over its value. Run"
           red "  the release again. If it stops here again, look at its versions:"
           red "    gcloud secrets versions list AUNTIE_VOICE_FILES --project $PROJECT"
