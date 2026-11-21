@@ -346,6 +346,61 @@ describe('payInvoiceHandler', () => {
     expect(callArg.line_items[0]!.price_data.unit_amount).toBe(2500);
   });
 
+  describe('#2435 the checkout charges the total less what has been applied, never a stale stated balance', () => {
+    const urls = {
+      successUrl: 'https://kinfolk.tribetails.com/invoices/x?checkout=done',
+      cancelUrl: 'https://kinfolk.tribetails.com/invoices/x',
+    };
+    async function charge(invoice: Record<string, unknown>, rows: Array<Record<string, unknown>>) {
+      const ctx = buildDbMock({
+        docs: { 'clients/u1': { kinfolkIds: ['3'] }, 'invoices/inv-s': { kinfolkId: '3', ...invoice } },
+        queryDocs: { 'invoices/inv-s/payments': rows.map((data, i) => ({ id: `p${String(i)}`, data })) },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const { payInvoiceHandler } = await import('../src/portal/payInvoice');
+      return payInvoiceHandler({ data: { invoiceId: 'inv-s', ...urls }, auth: { uid: 'u1' } } as any);
+    }
+    it('total $40, $15 recorded, $40 stated: charges $25', async () => {
+      const res = await charge({ status: 'open', total: 40, amountDue: 40, amountDueCents: 4000 }, [
+        { amountCents: 1500, amount: 15 },
+      ]);
+      expect(res.amountCents).toBe(2500);
+      const callArg = mocks.stripeMock.checkout.sessions.create.mock.calls[0]![0];
+      expect(callArg.line_items[0]!.price_data.unit_amount).toBe(2500);
+    });
+    it('applied account credit counts the same as a payment (it writes a row too)', async () => {
+      const res = await charge({ status: 'open', total: 40, amountDue: 40 }, [
+        { amountCents: 1000, method: 'credit' },
+        { amountCents: 500, method: 'cash' },
+      ]);
+      expect(res.amountCents).toBe(2500);
+    });
+    it('an invoice brought over part paid is still charged its stated balance', async () => {
+      const res = await charge({ status: 'open', total: 40, amountDue: 25 }, []);
+      expect(res.amountCents).toBe(2500);
+    });
+    it('a session left open at the old $40 is not handed back: a new one is made for $25', async () => {
+      mocks.stripeMock.checkout.sessions.retrieve.mockResolvedValueOnce({
+        id: 'cs_old',
+        url: 'https://checkout.stripe.com/old',
+        status: 'open',
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        amount_total: 4000,
+        success_url: urls.successUrl,
+        cancel_url: urls.cancelUrl,
+        metadata: { invoiceId: 'inv-s', checkoutRound: '0' },
+      });
+      const res = await charge(
+        { status: 'open', total: 40, amountDue: 40, pendingCheckoutSessionId: 'cs_old' },
+        [{ amountCents: 1500 }],
+      );
+      expect(res.sessionId).not.toBe('cs_old');
+      expect(res.amountCents).toBe(2500);
+      expect(mocks.stripeMock.checkout.sessions.create.mock.calls[0]![0].line_items[0]!.price_data.unit_amount).toBe(
+        2500,
+      );
+    });
+  });
   it('creates a Checkout Session and returns the URL', async () => {
     const ctx = buildDbMock({
       docs: {

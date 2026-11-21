@@ -207,7 +207,10 @@ export async function payInvoiceHandler(req: CallableRequest<unknown>): Promise<
     });
     throw new HttpsError('failed-precondition', PAID_INVOICE_REFUSAL, { code: PAID_INVOICE_REFUSAL_CODE });
   }
-  const amountCents = amountDueCentsOf(inv, rowsPaidCents);
+  // #2435: the balance is the total less what has been applied (the rows, or
+  // the stored `paidCents` when it is larger), never a stale stated figure
+  // above it. MyTribe ships the same figure (`appliedCentsOf`).
+  const amountCents = amountDueCentsOf(inv, Math.max(rowsPaidCents, storedPaidCentsOf(inv)));
   if (amountCents <= 0) throw new HttpsError('failed-precondition', 'Invoice is fully paid.');
   // #2410: NO CHECKOUT FOR A PAYMENT THE INVOICE COULD NOT TAKE. Since #2385
   // the webhook keeps such a payment off the invoice for the owner to decide
@@ -794,4 +797,10 @@ export const payInvoice = onCall(
 export function checkoutLineName(invoiceNumber: unknown): string {
   const n = invoiceNumberText(invoiceNumber);
   return n === '' ? invoiceLeadName('') : `Invoice #${n}`;
+}
+
+/** #2435: the stored `paidCents` when it is a positive whole number of cents, else 0. */
+function storedPaidCentsOf(inv: Record<string, unknown>): number {
+  const v = inv['paidCents'];
+  return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0;
 }

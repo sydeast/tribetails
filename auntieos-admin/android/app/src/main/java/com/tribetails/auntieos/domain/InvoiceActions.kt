@@ -298,6 +298,21 @@ fun invoiceWriteOffOwedCents(invoice: Invoice): Long? {
     return cents.takeIf { it > 0L }
 }
 
+/**
+ * #2435: the balance the server's write-off refusal names ("The balance on this
+ * invoice is now $25.00, not $40.00. ..."), in cents, or null for any other
+ * failure. The stored figure the button offers can be above what the payments
+ * leave owing, and the server writes off only that, so the confirm reopens at
+ * the server's figure instead of offering the refused one again. Web reads the
+ * same figure off the refusal's `owedCents`.
+ */
+fun writeOffRefusedOwedCents(message: String): Long? {
+    val match = Regex("""balance on this invoice is now \$([0-9,]+)\.([0-9]{2}), not""").find(message) ?: return null
+    val dollars = match.groupValues[1].replace(",", "").toLongOrNull() ?: return null
+    val cents = match.groupValues[2].toLongOrNull() ?: return null
+    return (dollars * 100L + cents).takeIf { it > 0L }
+}
+
 /** #2090: the archive prompt on an invoice with money owed. Same words as the server, web and desktop. */
 fun cannotArchiveOwedText(owedCents: Long): String =
     "This invoice still has ${formatUsdCents(owedCents)} owing, so it cannot be archived. " +
