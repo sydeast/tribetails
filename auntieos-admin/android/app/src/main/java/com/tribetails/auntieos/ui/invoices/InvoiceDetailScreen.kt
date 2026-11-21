@@ -987,14 +987,15 @@ private fun invoiceDetailBody(
         item {
             AuntieBanner(
                 tone  = AuntieBannerTone.Error,
-                title = "This invoice disagrees with itself",
+                title = com.tribetails.auntieos.domain.INVOICE_TOTAL_DISAGREEMENT_TITLE,
             ) {
                 Text(
-                    text = "The line items add up to ${com.tribetails.auntieos.domain.formatCents(drift.derivedCents)}, " +
-                        "but the total stored on the invoice says ${com.tribetails.auntieos.domain.formatCents(drift.storedCents)}. " +
-                        "Nothing has been changed to make them match, and nothing will be. The household is " +
-                        "billed the stored figure. Re-saving the line items through Edit will recompute " +
-                        "the stored total from them, if the lines are the version you want to keep.",
+                    text = com.tribetails.auntieos.domain.invoiceTotalDisagreementText(
+                        drift,
+                        linesEditable = !archived &&
+                            com.tribetails.auntieos.domain.invoiceEditScopeOf(invoice) ==
+                            com.tribetails.auntieos.domain.InvoiceEditScope.ALL,
+                    ),
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )

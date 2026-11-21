@@ -174,6 +174,22 @@ class InvoiceLineItemsTest {
         assertEquals(4000L, drift.storedCents)
     }
 
+    /** #1860: plain words, and never a re-save the locked lines cannot take. */
+    @Test
+    fun `the mismatch banner says both figures and what the Admin can do`() {
+        val drift = InvoiceTotalDisagreement(derivedCents = 0L, storedCents = 6000L)
+        assertEquals(
+            "The line items add up to \$0.00, but the invoice total is \$60.00. The household is billed \$60.00. " +
+                "Nothing was changed to make them match. If the line items are right, press Edit and save them, " +
+                "and the total will follow.",
+            invoiceTotalDisagreementText(drift, linesEditable = true),
+        )
+        val locked = invoiceTotalDisagreementText(drift, linesEditable = false)
+        assertTrue(locked.endsWith("The line items on this invoice are locked, so they cannot be edited."))
+        assertFalse(locked.contains("press Edit"))
+        assertFalse(locked.contains("stored"))
+    }
+
     @Test
     fun `falls back to the dollar total when totalCents is absent`() {
         // The case most worth catching: an invoice edited outside the callables

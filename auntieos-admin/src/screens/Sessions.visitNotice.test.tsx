@@ -216,7 +216,7 @@ describe('the outcome survives the card moving to Active', () => {
     const view = render(<Sessions onSelect={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: /^OMW$/ }));
     await user.click(screen.getByRole('button', { name: /yes, mark it on the way/i }));
-    expect(await screen.findByText('SCHEDULED → ON_MY_WAY. Checking whether Dre East was told.')).toBeInTheDocument();
+    expect(await screen.findByText('Marked on the way. Checking whether Dre East was told.')).toBeInTheDocument();
 
     // The reload the write asks for: the board goes to its loading row, which
     // unmounts every card...
@@ -235,7 +235,7 @@ describe('the outcome survives the card moving to Active', () => {
     const active = screen.getByRole('heading', { level: 3, name: /^Active/ }).closest('li') as HTMLElement;
     expect(
       await within(active).findByText(
-        'SCHEDULED → ON_MY_WAY. Dre East was not notified, because they have no portal account.',
+        'Marked on the way. Dre East was not notified, because they have no portal account.',
       ),
     ).toBeInTheDocument();
   });
@@ -274,7 +274,7 @@ describe('#2185 the switch-off lines under an Auntie sign-in', () => {
     await user.click(within(dialog).getByRole('button', { name: /yes, mark it on the way/i }));
     expect(
       await screen.findByText(
-        'SCHEDULED → ON_MY_WAY. Dre East was not notified, because the owner has notices to households turned off.',
+        'Marked on the way. Dre East was not notified, because the owner has notices to households turned off.',
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/in Settings/)).toBeNull();
@@ -295,7 +295,7 @@ describe('#2185 the switch-off lines under an Auntie sign-in', () => {
     await user.click(within(dialog).getByRole('button', { name: /yes, mark it on the way/i }));
     expect(
       await screen.findByText(
-        'SCHEDULED → ON_MY_WAY. Dre East was not notified, because notices to households are off in Settings.',
+        'Marked on the way. Dre East was not notified, because notices to households are off in Settings.',
       ),
     ).toBeInTheDocument();
   });
