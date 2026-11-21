@@ -115,6 +115,8 @@ fun parseRecordPaymentForm(
     /** #988: "Leave as account credit", dollars, blank for none. */
     credit: String,
     sendConfirmationEmail: Boolean,
+    /** #1975: the tip she ticked as right when it is larger than the invoice's total, in cents. */
+    bigTipConfirmedCents: Long? = null,
 ): RecordPaymentForm {
     fun money(s: String): Double? = normalizeMoneyText(s)?.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 }
     fun optionalMoney(s: String): Double? = if (s.isBlank()) 0.0 else money(s)
@@ -138,6 +140,14 @@ fun parseRecordPaymentForm(
     }
     if (split.creditCents > 0L && invoice.kinfolkId.isBlank()) {
         return RecordPaymentForm.Invalid("Account credit needs a household, and this invoice is not linked to one.")
+    }
+    // #1975: a fee larger than the payment is refused; a tip larger than the
+    // invoice's total waits for her tick.
+    feeOverPaymentError(kotlin.math.round(feeValue * 100).toLong(), split.paidCents)?.let {
+        return RecordPaymentForm.Invalid(it)
+    }
+    if (tipNeedsConfirming(split.tipCents, invoiceTotalCents(invoice)) && bigTipConfirmedCents != split.tipCents) {
+        return RecordPaymentForm.Invalid(BIG_TIP_UNCONFIRMED)
     }
     val payment = buildInvoicePayment(invoice, paid, method, reference, date, notes)
         .copy(client = invoice.client, tip = split.tipCents / 100.0)
@@ -258,14 +268,40 @@ fun recordPaymentSplitLine(split: RecordPaymentSplit?, fee: String): String = wh
     is RecordPaymentSplit.Refused -> split.message
     is RecordPaymentSplit.Ok -> {
         val feeValue = normalizeMoneyText(fee)?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
-        val feeClause = if (feeValue != null) " (the ${formatMoney(feeValue)} fee comes out of it)" else ""
+        val feeCents = feeValue?.let { kotlin.math.round(it * 100).toLong() }
+        // #1975: a fee larger than the payment is refused here, before Save.
+        val feeError = feeCents?.let { feeOverPaymentError(it, split.paidCents) }
+        // #1975: a fee larger than the tip comes out of the payment, not the tip.
+        val feeClause = when {
+            feeCents == null -> ""
+            feeCents <= split.tipCents -> " (the ${formatMoney(feeCents / 100.0)} fee comes out of it)"
+            else -> " (the ${formatMoney(feeCents / 100.0)} fee comes out of the payment)"
+        }
         // #1566: said out loud when the Apply figure was over the balance.
         val overClause = if (split.overCents > 0L) {
             " The invoice owes ${formatMoney(split.appliedCents / 100.0)}, so the ${formatMoney(split.overCents / 100.0)} over it is tip."
         } else {
             ""
         }
-        "${formatMoney(split.paidCents / 100.0)} paid: ${formatMoney(split.appliedCents / 100.0)} to this invoice, " +
-            "${formatMoney(split.tipCents / 100.0)} tip$feeClause, ${formatMoney(split.creditCents / 100.0)} account credit.$overClause"
+        feeError ?: ("${formatMoney(split.paidCents / 100.0)} paid: ${formatMoney(split.appliedCents / 100.0)} to this invoice, " +
+            "${formatMoney(split.tipCents / 100.0)} tip$feeClause, ${formatMoney(split.creditCents / 100.0)} account credit.$overClause")
     }
 }
+// ── #1975: the figures questioned before Save. Same rules and words as admin
+// web (`lib/recordPaymentChecks.ts`) and admin Android. ──────────────────────
+/** A processor fee larger than the payment it came out of, refused. Null when it fits. */
+fun feeOverPaymentError(feeCents: Long, paidCents: Long): String? =
+    if (feeCents <= paidCents) null
+    else "A fee of ${formatMoney(feeCents / 100.0)} is more than the ${formatMoney(paidCents / 100.0)} payment it came out of. Check the fee."
+/** The invoice's total in cents, or null when it cannot be read. */
+fun invoiceTotalCents(invoice: Invoice): Long? =
+    if (invoice.total.isFinite() && invoice.total >= 0.0) kotlin.math.round(invoice.total * 100).toLong() else null
+/** True when the tip is larger than the invoice's total and has to be confirmed. */
+fun tipNeedsConfirming(tipCents: Long, invoiceTotalCents: Long?): Boolean =
+    invoiceTotalCents != null && tipCents > invoiceTotalCents
+/** The tick box beside a tip larger than the invoice. */
+fun bigTipConfirmLabel(tipCents: Long, invoiceTotalCents: Long): String =
+    "The ${formatMoney(tipCents / 100.0)} tip is right. It is more than this invoice's ${formatMoney(invoiceTotalCents / 100.0)} total."
+/** What Record says when the tip has not been confirmed. */
+const val BIG_TIP_UNCONFIRMED: String =
+    "The tip is more than this invoice's total. Check the amounts, or tick the box to say the tip is right."
