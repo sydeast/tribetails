@@ -73,6 +73,12 @@ const AUNTIE_ACCOUNT_PHOTO = 'auntie-account-photo';
 const SANDBOX_FILE = `${TEST_TRIBE}-media-1`;
 
 const HER_IDS = Object.keys(HERS).sort();
+/**
+ * What her Gallery list returns: her five rows, and the sandbox household's
+ * photo. That one is a household photo like any other (`KINFOLK`), so it is in
+ * her list; the sandbox scope narrows the sandbox account, not her.
+ */
+const HER_GALLERY = [...HER_IDS, SANDBOX_FILE].sort();
 const OWNER_IDS = Object.keys(OWNERS);
 
 /** The owner. `admin: true` and no staffRole. */
@@ -194,7 +200,7 @@ describe('rules: media_files, an Auntie reads the files of her own work', () => 
   it('HAPPY: her Gallery list names her types and comes back with exactly her files', async () => {
     const env = await getEnv();
     const db = asAuntie(env).firestore();
-    expect(await ids(auntieGalleryQuery(db))).toEqual(HER_IDS);
+    expect(await ids(auntieGalleryQuery(db))).toEqual(HER_GALLERY);
   });
 
   it('HAPPY: her Media screen for one household or one Kin lists that one\'s photos', async () => {
@@ -337,7 +343,7 @@ describe('rules: media_files, every other caller', () => {
     const db = env.authenticatedContext('confused-1', { admin: true, staffRole: 'auntie' }).firestore();
     for (const id of OWNER_IDS) await assertFails(db.doc(`media_files/${id}`).get());
     await assertFails(galleryQuery(db).get());
-    expect(await ids(auntieGalleryQuery(db))).toEqual(HER_IDS);
+    expect(await ids(auntieGalleryQuery(db))).toEqual(HER_GALLERY);
     await assertFails(db.collection('media_files').add(file('TRIBAL_INTEL', 'pending', '23')));
   });
 
