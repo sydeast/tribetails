@@ -698,6 +698,33 @@ describe('sendGeneratedDraft: a Text is short and links to the whole message (#2
     expect(line.length).toBeLessThanOrEqual(197);
     expect(line.slice(190).replaceAll(family, '')).toBe('');
   });
+  it('the longest text, with the link to a real draft id, fits two joined segments (306)', async () => {
+    // A draft id is a 20-character Firestore id, and the entry id is longer
+    // than a notice's by its `personal-text-` prefix, so the bound a notice
+    // meets (cutText.test.ts) is checked again here on the text as sent.
+    const realId = 'Ab3dEf6hIj9kLm2nOp5q';
+    expect(realId).toHaveLength(20);
+    const link = `More in MyTribe: https://kinfolk.tribetails.com/notifications?entry=personal-text-${realId}`;
+    // The longest short line: 200 characters that need no cut.
+    db({ [`generated_drafts/${realId}`]: { ...TEXT_DRAFT }, ...SIGNED_IN });
+    await sendGeneratedDraftHandler(owner({ ...textArgs, draftId: realId, body: 'h'.repeat(200) }));
+    expect(sentText()).toBe(`${'h'.repeat(200)} ${link}`);
+    expect(sentText().length).toBeLessThanOrEqual(306);
+    // A much longer message is cut to no more than that.
+    mocks.twilioCreate.mockClear();
+    db({ [`generated_drafts/${realId}`]: { ...TEXT_DRAFT }, ...SIGNED_IN });
+    await sendGeneratedDraftHandler(owner({ ...textArgs, draftId: realId, body: 'word '.repeat(900) }));
+    expect(sentText().endsWith(`... ${link}`)).toBe(true);
+    expect(sentText().length).toBeLessThanOrEqual(306);
+    // A message that carries its own MyTribe link is sent as written only while it fits the same bound.
+    mocks.twilioCreate.mockClear();
+    db({ [`generated_drafts/${realId}`]: { ...TEXT_DRAFT }, ...SIGNED_IN });
+    const own = `Every date: https://kinfolk.tribetails.com/schedule ${'k '.repeat(126)}`;
+    await sendGeneratedDraftHandler(owner({ ...textArgs, draftId: realId, body: own }));
+    expect(sentText()).toBe(own.trim());
+    expect(sentText().length).toBeGreaterThan(300);
+    expect(sentText().length).toBeLessThanOrEqual(306);
+  });
   it('the entry is on their list before the text is sent', async () => {
     const { docs } = db({ 'generated_drafts/d2': { ...TEXT_DRAFT }, ...SIGNED_IN });
     let atSend: Record<string, unknown> | null | undefined;
