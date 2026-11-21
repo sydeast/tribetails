@@ -11,6 +11,8 @@ import {
   type KinfolkLike,
 } from './audienceCriteria';
 import { SEGMENTS_COLLECTION } from './audienceSegments';
+import { resolveKinfolkUidFrom } from '../lib/resolveKinfolkUid';
+import { logEvent } from '../lib/logger';
 
 /**
  * Audience resolution for marketing blasts, shared by `scheduleMarketingBlast`
@@ -35,8 +37,16 @@ import { SEGMENTS_COLLECTION } from './audienceSegments';
  * ── WHAT "REACHABLE" MEANS, AND WHY IT IS COUNTED HONESTLY ──────────────────
  * A kinfolk household matching the criteria is not necessarily a recipient:
  *
- *   - no linked MyTribe account (`uid` blank) -> there is no inbox to schedule
- *     into. `enqueueNotification` takes a recipient UID, not a household.
+ *   - no MyTribe account -> there is no inbox to schedule into.
+ *     `enqueueNotification` takes a recipient UID, not a household. Whether a
+ *     household has an account, and which login it is, is the member check
+ *     every other household send makes (`resolveKinfolkUid`, #1840), not the
+ *     stored `kinfolk.uid` alone: that field can hold a login that never
+ *     joined the household (a staff login, say). A household nobody joined has
+ *     no account; a claimed household whose stored login is not a member is
+ *     reached through its PRIMARY. A check that cannot be read schedules
+ *     nothing for that household and is counted as failed, never answered
+ *     with the stored login.
  *   - marketing opt-in missing -> `resolveChannels` returns every channel off
  *     for any catalog row carrying a `marketingCategory` (prefs.ts, the
  *     CAN-SPAM/CASL gate the operator cannot override), so the dispatcher
@@ -142,50 +152,127 @@ export interface ResolvedAudience {
   uids: string[];
   /** Households the audience selection matched. Equals `audienceUids.length` on the explicit path. */
   matched: number;
-  /** Matched households with no linked MyTribe account, so no inbox to schedule into. */
+  /** Matched households with no MyTribe account by the member check, so no inbox to schedule into. */
   noLinkedAccount: number;
+  /**
+   * Matched households whose member check could not be read. Nothing is
+   * scheduled for them and nothing goes to the stored login on a guess; the
+   * send counts them as failed.
+   */
+  accountCheckFailed: number;
   /** One line describing the audience, for the audit trail and the blast row. */
   description: string;
 }
 
+/** Member checks run a few at a time, as `previewBroadcastAudience` runs them. */
+const ACCOUNT_CHECK_BATCH = 25;
+
+/** One household's account by the member check: a login, nobody, or a check that failed. */
+type HouseholdAccount = { kind: 'account'; uid: string } | { kind: 'none' } | { kind: 'failed' };
+
 /**
- * Resolves the audience to the uids a blast will be enqueued for.
+ * #2482's member check for each household, in order. A household with no
+ * stored login is nobody without a read. Read-only.
+ */
+async function householdAccounts(households: readonly KinfolkLike[]): Promise<HouseholdAccount[]> {
+  const out: HouseholdAccount[] = [];
+  for (let i = 0; i < households.length; i += ACCOUNT_CHECK_BATCH) {
+    const answers = await Promise.all(
+      households.slice(i, i + ACCOUNT_CHECK_BATCH).map(async (k): Promise<HouseholdAccount> => {
+        const stored = (k.uid ?? '').trim();
+        if (stored === '') return { kind: 'none' };
+        try {
+          const uid = await resolveKinfolkUidFrom(k.id, stored);
+          return uid === null ? { kind: 'none' } : { kind: 'account', uid };
+        } catch (err) {
+          logEvent({
+            severity: 'warn',
+            function: 'marketingAudience',
+            event: 'recipient.resolve.failed',
+            extra: { kinfolkId: k.id, err: (err as Error)?.message },
+          });
+          return { kind: 'failed' };
+        }
+      }),
+    );
+    out.push(...answers);
+  }
+  return out;
+}
+
+/** The whole household roster, read into the resolver's shape. */
+async function loadAllKinfolk(): Promise<KinfolkLike[]> {
+  // CRM-sized collection: fetch and filter in memory, the same trade
+  // `broadcastMessage` makes, so tag match modes need no composite index.
+  const snap = await db().collection(KINFOLK_COLLECTION).get();
+  return snap.docs.map((d) => toKinfolkLike(d.id, d.data() as Record<string, unknown>));
+}
+
+/**
+ * Resolves the audience to the uids a blast will be enqueued for, through the
+ * member check (see the header).
  *
- * The explicit `audienceUids` path is passed through verbatim: the caller named
- * accounts, not households, so there is no kinfolk record to consult and no
- * `noLinkedAccount` to count.
+ * The explicit `audienceUids` path names accounts, and both Pick accounts
+ * lists build it from the households' stored logins. So each named login is
+ * taken back to the households that store it and checked there like any
+ * other household: a household it never joined adds nobody, a claimed one
+ * adds its PRIMARY. A named login no household stores is nobody. `matched`,
+ * `noLinkedAccount` and `accountCheckFailed` count named logins on this path.
  */
 export async function resolveMarketingAudience(args: AudienceArgs): Promise<ResolvedAudience> {
+  const uids: string[] = [];
+  const add = (uid: string) => {
+    if (!uids.includes(uid)) uids.push(uid);
+  };
+
   if (args.audienceUids) {
-    const uids = Array.from(new Set(args.audienceUids.map((u) => u.trim()).filter((u) => u.length > 0)));
+    const named = Array.from(new Set(args.audienceUids.map((u) => u.trim()).filter((u) => u.length > 0)));
+    const wanted = new Set(named);
+    const households = (await loadAllKinfolk()).filter((k) => wanted.has((k.uid ?? '').trim()));
+    const answers = await householdAccounts(households);
+    let noLinkedAccount = 0;
+    let accountCheckFailed = 0;
+    for (const name of named) {
+      let reached = false;
+      let failed = false;
+      households.forEach((k, i) => {
+        if ((k.uid ?? '').trim() !== name) return;
+        const a = answers[i]!;
+        if (a.kind === 'account') {
+          add(a.uid);
+          reached = true;
+        } else if (a.kind === 'failed') {
+          failed = true;
+        }
+      });
+      if (failed) accountCheckFailed += 1;
+      else if (!reached) noLinkedAccount += 1;
+    }
     return {
       uids,
-      matched: uids.length,
-      noLinkedAccount: 0,
-      description: `${uids.length} chosen ${uids.length === 1 ? 'account' : 'accounts'}`,
+      matched: named.length,
+      noLinkedAccount,
+      accountCheckFailed,
+      description: `${named.length} chosen ${named.length === 1 ? 'account' : 'accounts'}`,
     };
   }
 
   const criteria = args.criteria ?? (await loadSegmentCriteria(args.segmentId as string));
+  const matched = resolveRecipientsFromKinfolk(await loadAllKinfolk(), criteria);
 
-  // CRM-sized collection: fetch and filter in memory, the same trade
-  // `broadcastMessage` makes, so tag match modes need no composite index.
-  const snap = await db().collection(KINFOLK_COLLECTION).get();
-  const all = snap.docs.map((d) => toKinfolkLike(d.id, d.data() as Record<string, unknown>));
-  const matched = resolveRecipientsFromKinfolk(all, criteria);
-
-  const uids: string[] = [];
   let noLinkedAccount = 0;
-  for (const k of matched) {
-    const uid = (k.uid ?? '').trim();
-    if (uid === '') noLinkedAccount += 1;
-    else if (!uids.includes(uid)) uids.push(uid);
+  let accountCheckFailed = 0;
+  for (const a of await householdAccounts(matched)) {
+    if (a.kind === 'account') add(a.uid);
+    else if (a.kind === 'failed') accountCheckFailed += 1;
+    else noLinkedAccount += 1;
   }
 
   return {
     uids,
     matched: matched.length,
     noLinkedAccount,
+    accountCheckFailed,
     description: describeCriteria(criteria),
   };
 }
@@ -200,6 +287,14 @@ export async function resolveMarketingAudience(args: AudienceArgs): Promise<Reso
  * bounds the work.
  */
 export function assertAudienceUsable(resolved: ResolvedAudience): void {
+  // Nobody reached because the member checks could not be read is not "nobody
+  // has an account": the same audience may well be fine a moment later.
+  if (resolved.uids.length === 0 && resolved.accountCheckFailed > 0) {
+    throw new HttpsError(
+      'unavailable',
+      'Could not check who in that audience has a MyTribe account. Nothing was scheduled. Try again.',
+    );
+  }
   if (resolved.uids.length === 0) {
     throw new HttpsError('failed-precondition', 'no_recipients');
   }
@@ -215,11 +310,16 @@ export function assertAudienceUsable(resolved: ResolvedAudience): void {
 export interface MarketingReach {
   /** Households (or named accounts) the selection matched. */
   matched: number;
-  /** Matched households with no linked MyTribe account. */
+  /** Matched households with no MyTribe account by the member check. */
   noLinkedAccount: number;
   /** Linked accounts whose marketing opt-in or the operator's gate leaves every channel off. */
   suppressedByPrefs: number;
-  /** Linked accounts that will actually be scheduled a notification. */
+  /**
+   * Linked accounts that will actually be scheduled a notification. Accounts
+   * come from the member check the send makes, so a household whose check
+   * could not be read is never counted here: the number never claims an
+   * account the send could not confirm.
+   */
   reachable: number;
 }
 

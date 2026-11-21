@@ -95,6 +95,13 @@ fun InvoiceDetailScreen(
      * Pay was, above the check.
      */
     paymentBeingRecorded: Boolean = false,
+    /**
+     * #2442: why the last Pay on this invoice did not open a checkout, in the
+     * server's words. This screen used to show nothing at all for it.
+     */
+    payError: String? = null,
+    /** #2442: why the PDF could not be prepared. */
+    pdfError: String? = null,
     onCheckPaymentAgain: () -> Unit = {},
     onPayMethod: (PayMethod) -> Unit = {},
     /** `true` accepts the quote, `false` declines it. */
@@ -386,6 +393,20 @@ fun InvoiceDetailScreen(
             }
         }
 
+        // #2442: a refused Pay prints its sentence here. The one exception is
+        // the blocked bill's own sentence (#2410), which the branch above
+        // already prints where the pay options would be.
+        val blockedShown = !offersPayment(invoice) && payBlockedReason(invoice) != null
+        if (payError != null && !(blockedShown && payError == payBlockedReason(invoice))) {
+            Text(
+                payError,
+                style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = KinfolkSpacing.l)
+                    .testTag("invoice-pay-error"),
+            )
+        }
         // 16.2 LIVE: renders the invoice PDF server-side (getMyInvoicePdf) and
         // opens the returned download URL.
         KinGhostButton(
@@ -394,6 +415,16 @@ fun InvoiceDetailScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
             enabled = !downloadingPdf,
         )
+        if (pdfError != null) {
+            Text(
+                pdfError,
+                style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = KinfolkSpacing.l)
+                    .testTag("invoice-pdf-error"),
+            )
+        }
         Spacer(Modifier.height(KinfolkSpacing.l))
     }
 }

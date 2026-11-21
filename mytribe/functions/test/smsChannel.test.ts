@@ -114,6 +114,17 @@ describe('sendSmsChannel', () => {
     expect(res).toEqual({ skipped: true, skipReason: 'template_text_empty' });
     expect(mocks.messagesCreate).not.toHaveBeenCalled();
   });
+  it('#2251: SKIPS, with an error line naming the template, when its wording cannot be filled in', async () => {
+    const ctx = buildDbMock({
+      docs: { 'clients/u1': { phone: '+15555551111' }, 'smsTemplates/t.k': { text: '{{#if isQuote}}Your quote' } },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await sendSmsChannel({ def: def(), recipientUid: 'u1', data: { isQuote: true } });
+    expect(res).toEqual({ skipped: true, skipReason: 'template_broken' });
+    expect(mocks.messagesCreate).not.toHaveBeenCalled();
+    const logged = mocks.logEvent.mock.calls.map((c) => c[0]).find((e) => e.event === 'notification.template.broken');
+    expect(logged).toMatchObject({ severity: 'error', extra: { channel: 'sms', templateId: 't.k' } });
+  });
   it('still THROWS when the catalog row has no sms template id at all', async () => {
     // A misconfigured catalog row is a developer bug, not a content gap. No
     // amount of authoring fixes it, so it must stay loud.
