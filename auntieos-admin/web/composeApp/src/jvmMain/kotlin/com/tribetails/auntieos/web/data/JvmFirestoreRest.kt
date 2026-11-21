@@ -254,6 +254,45 @@ internal object JvmFirestoreRest {
         return arr.mapNotNull { row -> row.jsonObject["document"]?.jsonObject?.let { docToPlain(it) } }
     }
 
+    /**
+     * #2386: the newest document of the subcollection [collectionId] under the
+     * document [parentPath] (`kin_care_sessions/s1`) whose [field] is a number,
+     * or null when none is. One `:runQuery` with `field >= 0`, newest first,
+     * limit 1, so a poll reads one document however long the route is. The
+     * inequality also keeps an older string-typed clock out of the answer:
+     * Firestore orders numbers before strings, and a string never passes a
+     * numeric filter.
+     */
+    suspend fun latestNumeric(parentPath: String, collectionId: String, field: String): JsonObject? {
+        val token = bearerToken() ?: error("Not signed in")
+        val query = buildJsonObject {
+            put("structuredQuery", buildJsonObject {
+                put("from", buildJsonArray { add(buildJsonObject { put("collectionId", collectionId) }) })
+                put("where", buildJsonObject {
+                    put("fieldFilter", buildJsonObject {
+                        put("field", buildJsonObject { put("fieldPath", field) })
+                        put("op", "GREATER_THAN_OR_EQUAL")
+                        put("value", buildJsonObject { put("integerValue", "0") })
+                    })
+                })
+                put("orderBy", buildJsonArray {
+                    add(buildJsonObject {
+                        put("field", buildJsonObject { put("fieldPath", field) })
+                        put("direction", "DESCENDING")
+                    })
+                })
+                put("limit", 1)
+            })
+        }
+        val resp = http.post("$BASE/$parentPath:runQuery") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(codec.encodeToString(JsonObject.serializer(), query))
+        }
+        if (!resp.status.isSuccess()) error("Firestore ${resp.status.value}: ${resp.bodyAsText().take(180)}")
+        val arr = codec.parseToJsonElement(resp.bodyAsText()).jsonArray
+        return arr.firstNotNullOfOrNull { row -> row.jsonObject["document"]?.jsonObject?.let { docToPlain(it) } }
+    }
     /** Scoped equivalent of [list] that pushes the EQ predicate to the server. */
     suspend inline fun <reified T> listWhereEq(
         collection: String,

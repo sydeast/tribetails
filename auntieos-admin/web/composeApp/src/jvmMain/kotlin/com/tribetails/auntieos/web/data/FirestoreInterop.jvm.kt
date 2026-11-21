@@ -109,6 +109,9 @@ object JvmFirestoreFixtures {
     @Volatile
     var restTransport: RestTestTransport? = null
 
+    /** #2386: each session's newest breadcrumb (absent means none). Null falls through to the real read. */
+    var lastBreadcrumbs: Map<String, Breadcrumb>? = null
+
     /** True when ANY fixture is set, i.e. we are inside a screenshot test, not the live app. */
     val active: Boolean
         get() = kinfolk != null || allKin != null || sessions != null || reports != null ||
@@ -135,6 +138,7 @@ object JvmFirestoreFixtures {
         lastCallableName = null; lastCallablePayloadJson = null; callablePayloads.clear()
         lastWrite = null
         restTransport = null
+        lastBreadcrumbs = null
         JvmFirestoreRest.clearTimestampPaths()
         // #1593: the settings baseline is the last read; a new test has read nothing.
         resetBusinessSettingsBaseline()
@@ -751,6 +755,43 @@ internal actual suspend fun platformArchiveDynamicField(id: String): WriteResult
 
 // GPS breadcrumb subcollections: not part of the desktop admin surface.
 internal actual fun platformBreadcrumbsStream(sessionId: String): Flow<FirestoreResult<List<Breadcrumb>>> = stubFlow("GPS breadcrumbs are captured on mobile")
+/**
+ * #2386: the newest ping, for the Arrived card's GPS line. A screen test that set
+ * no fixture keeps the old answer (the stub) rather than reaching the network;
+ * the app polls one document per [JvmFirestoreRest.pollingStream] tick.
+ */
+internal actual fun platformLastBreadcrumbStream(sessionId: String): Flow<FirestoreResult<List<Breadcrumb>>> {
+    JvmFirestoreFixtures.lastBreadcrumbs?.let { return fixtureFlow(listOfNotNull(it[sessionId])) }
+    if (JvmFirestoreFixtures.active && JvmFirestoreFixtures.restTransport == null) return stubFlow("GPS breadcrumbs are captured on mobile")
+    return JvmFirestoreRest.pollingStream {
+        listOfNotNull(
+            JvmFirestoreRest.latestNumeric("kin_care_sessions/$sessionId", "breadcrumbs", "timestamp")?.let(::breadcrumbFromPlain),
+        )
+    }
+}
+/**
+ * PURE. One breadcrumb document, flattened by the REST codec, as the console's
+ * [Breadcrumb]. Both trackers (Android, admin web) write `latitude` /
+ * `longitude` and `timestamp` as epoch millis; the older shape wrote `lat` /
+ * `lng` and an ISO string. The clock is kept as whole millis in text, which
+ * `parseBreadcrumbMillis` reads (#615): a double such as `1.7949459E12` would not
+ * be.
+ */
+internal fun breadcrumbFromPlain(doc: JsonObject): Breadcrumb {
+    fun num(key: String): Double? = (doc[key] as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toDoubleOrNull()
+    val raw = doc["timestamp"] as? JsonPrimitive
+    val clock = when {
+        raw == null -> ""
+        raw.isString -> raw.content
+        else -> raw.content.toDoubleOrNull()?.takeIf { it.isFinite() }?.toLong()?.toString() ?: ""
+    }
+    return Breadcrumb(
+        _id = (doc["_id"] as? JsonPrimitive)?.content.orEmpty(),
+        timestamp = clock,
+        lat = num("lat") ?: num("latitude") ?: 0.0,
+        lng = num("lng") ?: num("longitude") ?: 0.0,
+    )
+}
 internal actual suspend fun platformAddBreadcrumb(sessionId: String, crumb: Breadcrumb): WriteResult<String> = stubWriteResult("GPS is mobile-only")
 internal actual suspend fun platformGetBreadcrumbs(sessionId: String): WriteResult<List<Breadcrumb>> = WriteResult.Ok(emptyList())
 internal actual suspend fun platformSaveSessionGpsSummary(sessionId: String, summary: GpsSummary): WriteResult<Unit> = stubWriteResult("GPS is mobile-only")

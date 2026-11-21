@@ -19,7 +19,7 @@ import {
 } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
 import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
-import { paidByCardFallback } from '../lib/invoicePaidGate';
+import { invoiceCancelled, paidByCardFallback, type InvoicePaidDoc } from '../lib/invoicePaidGate';
 import {
   PAYMENT_APPLIED_OWNER_AT_FIELD,
   PAYMENT_APPLIED_OWNER_FIELD,
@@ -289,7 +289,13 @@ export function isDraftOrQuote(d: InvoiceDoc): boolean {
  */
 export function refusedLifecycle(d: InvoiceDoc): string | null {
   const s = normalizedStatus(d);
-  if (s === 'cancelled') return 'This invoice is cancelled, so a payment cannot be recorded against it.';
+  // #2358: cancelled by `status`, or by the legacy `invoiceStatus` when no
+  // `status` is stored, the same rule `payInvoice` and the card webhook read
+  // (`invoiceCancelled`). Before, a doc cancelled only in the legacy field
+  // took a recorded payment, a Mark paid and account credit.
+  if (s === 'cancelled' || invoiceCancelled(d as InvoicePaidDoc)) {
+    return 'This invoice is cancelled, so a payment cannot be recorded against it.';
+  }
   if (s === 'credit') {
     return 'This is a credit owed to the household, not a bill. Redeeming it is its own flow.';
   }

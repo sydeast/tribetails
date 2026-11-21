@@ -5,6 +5,7 @@ import {
   actionNotifiesHousehold,
   visitNoticeConfirmFor,
   visitNoticeConfirmLine,
+  noticeAbout,
   visitNoticeOutcomeSentence,
   visitNoticePreview,
   visitRoutingSkip,
@@ -174,6 +175,33 @@ describe('visitNoticeConfirmLine', () => {
     ).toBe('Dre East will not be told, because they have no portal account.');
   });
 
+  it('#2339: a step the household already heard about before an undo is not promised again', () => {
+    expect(
+      visitNoticeConfirmLine({ kind: 'will_not_notify', reason: 'already_notified' }, 'DEPARTED', 'Dre East'),
+    ).toBe('Dre East was already told the visit has finished, so they will not be told again.');
+    expect(
+      visitNoticeConfirmLine({ kind: 'will_not_notify', reason: 'already_notified' }, 'ARRIVED', 'Dre East'),
+    ).toBe('Dre East was already told their Auntie has arrived, so they will not be told again.');
+  });
+  it("#2339: the server's already_notified answer reaches the confirm, and only for a routed visit", () => {
+    const reach = { status: 'ready', willNotify: false, reason: 'already_notified' } as const;
+    expect(visitNoticePreview({ action: 'DEPARTED', session: ROUTED, reach })).toEqual({
+      kind: 'will_not_notify',
+      reason: 'already_notified',
+    });
+    expect(visitNoticePreview({ action: 'DEPARTED', session: { kinfolkId: 'kf1' }, reach })).toEqual({
+      kind: 'will_not_notify',
+      reason: 'session_has_no_routing_ids',
+    });
+  });
+  it('#2339: only Arrived and Departed ask about their step', () => {
+    expect(noticeAbout('s1', 'DEPARTED')).toEqual({ sessionId: 's1', step: 'departed' });
+    expect(noticeAbout('s1', 'ARRIVED')).toEqual({ sessionId: 's1', step: 'arrived' });
+    expect(noticeAbout('s1', 'ON_MY_WAY')).toBeNull();
+    expect(noticeAbout('s1', 'UNDO_ARRIVAL')).toBeNull();
+    expect(noticeAbout(null, 'DEPARTED')).toBeNull();
+    expect(noticeAbout('  ', 'DEPARTED')).toBeNull();
+  });
   it('is null when there is nothing honest to say', () => {
     expect(visitNoticeConfirmLine({ kind: 'unknown' }, 'ARRIVED', 'Dre East')).toBeNull();
     expect(visitNoticeConfirmLine({ kind: 'none' }, 'UNDO_ARRIVAL', 'Dre East')).toBeNull();
