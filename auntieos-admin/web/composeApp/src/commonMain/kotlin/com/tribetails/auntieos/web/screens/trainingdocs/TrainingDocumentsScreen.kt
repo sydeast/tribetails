@@ -630,8 +630,8 @@ private fun AddDocumentForm(
 }
 
 /** #1616: what this screen holds. The same two strings ship on web and Android. */
-internal const val TRIBAL_INTEL_SUBTITLE = "Notes about a household, a person or a pet, written for the dossier and the 411."
-internal const val TRIBAL_INTEL_EMPTY_MESSAGE = "Notes about a household, a person or a pet appear here once you add them."
+internal const val TRIBAL_INTEL_SUBTITLE = "Notes about a household, a person or a Kin, written for the dossier and the 411."
+internal const val TRIBAL_INTEL_EMPTY_MESSAGE = "Notes about a household, a person or a Kin appear here once you add them."
 /** The Tribal Intel form's info tip (#1595), the same words as admin web and Android. */
 internal const val TRIBAL_INTEL_FORM_TIP =
     "Saved notes are folded into the household's dossier and the pet's 411 overnight. " +

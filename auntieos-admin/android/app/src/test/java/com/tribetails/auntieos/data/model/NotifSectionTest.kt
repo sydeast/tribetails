@@ -20,21 +20,21 @@ class NotifSectionTest {
         assertEquals(
             listOf(
                 "Bookings and visits", "Messages", "Billing and payments",
-                "Ratings and pets", "Account and security",
+                "Ratings and Kin", "Account and security",
             ),
             notifSectionsFor(STREAM_BUSINESS).map { it.title },
         )
         assertEquals(
             listOf(
                 "Assignments and schedule", "Visit workflow",
-                "KinTales and comments", "Pets and profiles",
+                "KinTales and comments", "Kin and profiles",
             ),
             notifSectionsFor(STREAM_STAFF).map { it.title },
         )
         assertEquals(
             listOf(
                 "Visit updates", "Upcoming care", "KinTales", "Messages",
-                "Billing and payments", "Home and pets", "Account and security",
+                "Billing and payments", "Home and Kin", "Account and security",
                 "Newsletters and community",
             ),
             notifSectionsFor(STREAM_KINFOLK).map { it.title },
