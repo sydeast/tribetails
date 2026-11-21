@@ -165,7 +165,39 @@ class Stage2Step2HelpersTest {
         assertEquals(0.0, weeklyRevenue(invoices, "2026-06-01", "2026-06-07"))
     }
 
-    // ── cashFlowOutstanding (#2000) ─────────────────────────────────────────────
+    @Test fun `weeklyRevenue leaves archived invoices out, as admin web and Android do (#2254)`() {
+        val invoices = listOf(
+            Invoice(_id = "live", status = "paid", amountDue = 0.0, total = 40.0, date = "2026-06-03"),
+            // Archived paid invoice in the same week: not revenue.
+            Invoice(
+                _id = "gone", status = "paid", amountDue = 0.0, total = 75.0, date = "2026-06-03",
+                archivedAt = JsonPrimitive("2026-06-05T09:00:00Z"),
+            ),
+            // Archived written-off invoice: what came in before the write-off is
+            // not counted either, because the whole invoice is archived.
+            Invoice(
+                _id = "wo", status = "written_off", amountDue = 0.0, total = 50.0, date = "2026-06-04",
+                writtenOffCents = JsonPrimitive(3000), archivedAt = JsonPrimitive("2026-06-06T09:00:00Z"),
+            ),
+            // archivedAt stored as null reads as not archived (an unarchive), so it counts.
+            Invoice(_id = "back", status = "paid", amountDue = 0.0, total = 10.0, date = "2026-06-05", archivedAt = JsonNull),
+        )
+        assertEquals(50.0, weeklyRevenue(invoices, "2026-06-01", "2026-06-07"))
+    }
+
+    @Test fun `archive stays out of the paid test, so an archived invoice still reads as paid (#2254)`() {
+        // The guard lives in weeklyRevenue, not in invoiceRevenueOf or
+        // invoiceIsPaid: those answer "was it paid", which archiving does not
+        // change, and the Invoices list and detail read invoiceIsPaid.
+        val archivedPaid = Invoice(
+            _id = "gone", status = "paid", amountDue = 0.0, total = 75.0, date = "2026-06-03",
+            archivedAt = JsonPrimitive("2026-06-05T09:00:00Z"),
+        )
+        assertEquals(75.0, invoiceRevenueOf(archivedPaid))
+        assertEquals(0.0, weeklyRevenue(listOf(archivedPaid), "2026-06-01", "2026-06-07"))
+    }
+
+    // ── cashFlowOutstanding (#2000)─────────────────────────────────────────────
 
     @Test fun `cashFlowOutstanding counts only sent open balances, as Invoices does`() {
         // The walk: two open invoices beside an unsent $28 draft. Home added
