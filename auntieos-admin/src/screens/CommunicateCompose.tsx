@@ -30,6 +30,7 @@ import { PrimaryButton, GhostButton } from '../components/Buttons';
 import { Toggle } from '../components/Toggle';
 import { Dialog } from '../components/Dialog';
 import { Banner } from '../components/Banner';
+import { heldSendText } from '../lib/heldSendText';
 // The still-sending panel borrows the wait treatment's classes for its manual
 // re-read. Imported rather than copied so the two cannot drift apart.
 import '../components/SlowWaitNotice.css';
@@ -258,7 +259,9 @@ export function CommunicateCompose() {
       submissionKey.current = null;
       setConfirmOpen(false);
     } catch (err) {
-      setSendError(`Could not send: ${friendlySendError(err)}`);
+      const text = friendlySendError(err);
+      // #1834: a held broadcast is not a failed one; its sentence says what happened.
+      setSendError(text.startsWith('Held.') ? text : `Could not send: ${text}`);
       setConfirmOpen(false);
     } finally {
       setSending(false);
@@ -331,7 +334,10 @@ export function CommunicateCompose() {
         <DenPanel title="Compose" subtitle="Every field below is validated the same way the send itself will be.">
         <div className="compose__form">
           {sendError !== null && (
-            <Banner tone="error" title="Broadcast failed">
+            <Banner
+              tone={sendError.startsWith('Held.') ? 'warning' : 'error'}
+              title={sendError.startsWith('Held.') ? 'Broadcast held' : 'Broadcast failed'}
+            >
               {sendError}
             </Banner>
           )}
@@ -658,6 +664,9 @@ export function CommunicateCompose() {
 export function friendlySendError(err: unknown): string {
   const message = err instanceof Error ? err.message : 'Send failed';
   if (message.includes('no_recipients')) return 'No kinfolk match this audience. Nothing was sent.';
+  // #1834: held while notices to households are off, or broadcasts are turned off.
+  const held = heldSendText(message, 'broadcast');
+  if (held !== null) return held;
   if (message.includes('unsupported_merge_fields')) {
     const list = message.split('unsupported_merge_fields:')[1]?.trim() ?? '';
     return `The message has merge fields a broadcast cannot fill${list !== '' ? ` (${list})` : ''}. Nothing was sent.`;

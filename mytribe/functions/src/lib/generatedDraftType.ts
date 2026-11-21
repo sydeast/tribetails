@@ -133,3 +133,23 @@ export function draftWentOut(draft: DraftData): boolean {
 export function isKinTaleDraft(draft: DraftData): boolean {
   return draft['communication_type'] === 'visit_report' && draftTypeIsExactly(draft, 'visit_report');
 }
+
+/**
+ * #2443 ruling, 2026-11-20: WHO MADE A DRAFT. Every path that creates a
+ * `generated_drafts` doc stamps the signed-in caller's uid here, on the server:
+ * the generator (`auntieos-admin/web/functions/generate.js`) and the
+ * out-of-band `writeDraft` endpoint beside it. No client creates one, and the
+ * rules refuse a create that names anybody but the caller.
+ *
+ * An Auntie works only the KinTale drafts she made: she reads, lists and sends
+ * a draft only when this field is exactly her uid. A draft with no stamp was
+ * made before the stamp existed, by the owner (the generator has only ever
+ * admitted the owner), so it is the owner's. Compared exactly as stored, like
+ * the type.
+ */
+export const DRAFT_CREATOR_FIELD = 'createdBy';
+
+/** True when the draft carries a creator stamp that is exactly `uid`. */
+export function draftMadeBy(draft: DraftData, uid: string): boolean {
+  return uid !== '' && draft[DRAFT_CREATOR_FIELD] === uid;
+}

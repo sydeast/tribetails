@@ -1421,7 +1421,11 @@ private fun BroadcastForm(
                     timedOutSignature = if (isBroadcastTimeout(r.message)) signature else null
                     errorIsTimeout = isBroadcastTimeout(r.message)
                     errorText = broadcastErrorText(r.message)
-                    onToast(broadcastErrorText(r.message), ToastKind.Error)
+                    // #1834: a held broadcast is told plainly, not as a failure.
+                    onToast(
+                        broadcastErrorText(r.message),
+                        if (broadcastErrorText(r.message).startsWith(HELD_SEND_PREFIX)) ToastKind.Info else ToastKind.Error,
+                    )
                 }
             }
             sending = false
@@ -1706,8 +1710,9 @@ private fun BroadcastForm(
 
         errorText?.let { msg ->
             // #867 review: the title follows the error on screen now, not a timeout that came before it.
-            val title = if (errorIsTimeout) "Send may still be running" else "Broadcast blocked"
-            AuntieBanner(tone = AuntieBannerTone.Error, title = title, icon = Lucide.Ban) {
+            val held = msg.startsWith(HELD_SEND_PREFIX)
+            val title = if (errorIsTimeout) "Send may still be running" else if (held) "Broadcast held" else "Broadcast blocked"
+            AuntieBanner(tone = if (held) AuntieBannerTone.Warning else AuntieBannerTone.Error, title = title, icon = Lucide.Ban) {
                 Text(text = msg, style = AuntieTheme.typography.bodyMedium, color = c.textDim)
             }
         }

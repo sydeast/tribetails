@@ -204,6 +204,8 @@ fun decodeBroadcastResult(dataJson: String): BroadcastResult {
  * through verbatim (fail loud, never hide a provider/validation failure).
  */
 fun broadcastErrorText(message: String): String = when {
+    // #1834: held while notices to households are off, or broadcasts are turned off.
+    heldBroadcastText(message) != null -> heldBroadcastText(message)!!
     // #1610: the server refuses a merge field it cannot fill.
     message.contains("unsupported_merge_fields", ignoreCase = true) -> {
         val list = message.substringAfter("unsupported_merge_fields:", "").trim()

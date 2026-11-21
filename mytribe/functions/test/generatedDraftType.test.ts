@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { draftTypeIsExactly, isKinTaleDraft, isPushDraft } from '../src/lib/generatedDraftType';
+import {
+  DRAFT_CREATOR_FIELD,
+  draftMadeBy,
+  draftTypeIsExactly,
+  isKinTaleDraft,
+  isPushDraft,
+} from '../src/lib/generatedDraftType';
 
 /** The type of a generated draft, read exactly as stored, in both spellings. */
 describe('generatedDraftType', () => {
@@ -48,10 +54,10 @@ describe('generatedDraftType', () => {
 });
 
 /**
- * An Auntie's drafts list filters on the type and sorts by `createdOn`
- * (`auntieos-admin/src/lib/caretakerScope.ts`). Firestore serves that only from
- * a composite index, and the emulator the rules tests run on does not check for
- * one, so this does.
+ * An Auntie's drafts list filters on the type and on her uid as the maker
+ * (#2443), and sorts by `createdOn` (`auntieos-admin/src/lib/caretakerScope.ts`).
+ * Firestore serves that only from a composite index, and the emulator the rules
+ * tests run on does not check for one, so this does.
  */
 describe('the index behind an Auntie\'s drafts list', () => {
   it('is declared in firestore.indexes.json', () => {
@@ -63,8 +69,30 @@ describe('the index behind an Auntie\'s drafts list', () => {
       queryScope: 'COLLECTION',
       fields: [
         { fieldPath: 'communication_type', order: 'ASCENDING' },
+        { fieldPath: 'createdBy', order: 'ASCENDING' },
         { fieldPath: 'createdOn', order: 'DESCENDING' },
       ],
     });
+  });
+});
+
+/** #2443 ruling: who made a draft, compared exactly as stored. */
+describe('draftMadeBy', () => {
+  it('HAPPY: a draft stamped with the uid was made by it', () => {
+    expect(DRAFT_CREATOR_FIELD).toBe('createdBy');
+    expect(draftMadeBy({ createdBy: 'auntie-1' }, 'auntie-1')).toBe(true);
+  });
+
+  it('NEGATIVE: another maker, no stamp, or a stamp that only looks like the uid', () => {
+    expect(draftMadeBy({ createdBy: 'auntie-2' }, 'auntie-1')).toBe(false);
+    expect(draftMadeBy({}, 'auntie-1')).toBe(false);
+    for (const stamp of ['', ' auntie-1', 'auntie-1 ', 'AUNTIE-1', 7, null, ['auntie-1'], { uid: 'auntie-1' }]) {
+      expect(draftMadeBy({ createdBy: stamp }, 'auntie-1')).toBe(false);
+    }
+  });
+
+  it('NEGATIVE: a blank caller made nothing, even a draft with a blank stamp', () => {
+    expect(draftMadeBy({ createdBy: '' }, '')).toBe(false);
+    expect(draftMadeBy({}, '')).toBe(false);
   });
 });

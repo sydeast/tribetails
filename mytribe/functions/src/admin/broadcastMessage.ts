@@ -97,7 +97,9 @@ import type { ResolvedChannels, UserNotificationPrefs } from '../notifications/t
  *
  *   - the operator's business gate for the row (Settings -> Notification gate,
  *     kinfolk stream) can disable the whole thing, disable a channel, or LOCK a
- *     channel on for everyone;
+ *     channel on for everyone. Since #1834 a broadcast disabled there, or sent
+ *     while "Send notices to households" is off, is held as a whole before
+ *     anything is written (`notifications/sendSwitchRules.ts`);
  *   - the household's own notification settings then choose within what the
  *     gate still offers (email defaults on; SMS and push default off until the
  *     household opts in, the platform-wide default, now applied here too);
@@ -733,6 +735,35 @@ export async function resumeBroadcastFanout(opts: {
 }): Promise<{ ran: boolean; complete: boolean; processed: number; total: number; cancelled: boolean }> {
   const { broadcastId, row, workerId, deadlineMs } = opts;
   const ref = db().collection(BROADCASTS_COLLECTION).doc(broadcastId);
+  // #1834: a broadcast handed to the sweep while notices to households were on
+  // does not finish after they are turned off. The rest is stopped, the way
+  // `stopBroadcast` stops it, and never sent later.
+  if (typeof row['cancelRequestedAtMs'] !== 'number') {
+    const { broadcastHoldReason } = await import('../notifications/sendSwitchRules.js');
+    const hold = await broadcastHoldReason(BROADCAST_NOTIFICATION_KEY);
+    // Settings that cannot be read are no answer. A stop is for good, so this
+    // tick sends nothing and stops nothing, and the next tick asks again.
+    if (hold === 'unreadable') {
+      logEvent({ severity: 'warn', function: 'outboundFanoutSweep', event: 'broadcast.hold.unreadable', extra: { broadcastId } });
+      return {
+        ran: false,
+        complete: false,
+        processed: storedCount(row, 'fanoutProcessed'),
+        total: storedCount(row, 'fanoutTotal'),
+        cancelled: false,
+      };
+    }
+    if (hold !== null) {
+      await stopHeldBroadcast(ref, hold);
+      return {
+        ran: false,
+        complete: false,
+        processed: storedCount(row, 'fanoutProcessed'),
+        total: storedCount(row, 'fanoutTotal'),
+        cancelled: true,
+      };
+    }
+  }
   const channels = (Array.isArray(row['channels']) ? row['channels'] : []).filter(
     (c): c is BroadcastChannel => (ALL_BROADCAST_CHANNELS as readonly string[]).includes(c as string),
   );
@@ -774,6 +805,42 @@ export async function resumeBroadcastFanout(opts: {
   };
 }
 
+/**
+ * #1834: stamps the stop on a running broadcast the switch now holds, once,
+ * and writes its one Activity Log line. A row already stopped, finished, or
+ * stopped by an earlier tick is left alone, so a sweep that meets it again
+ * writes nothing more.
+ */
+async function stopHeldBroadcast(
+  ref: FirebaseFirestore.DocumentReference,
+  hold: 'off' | 'turnedOff',
+): Promise<void> {
+  const stamped = await db().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = (snap.data() ?? {}) as Record<string, unknown>;
+    if (!snap.exists || data['fanoutState'] !== 'running' || typeof data['cancelRequestedAtMs'] === 'number') {
+      return null;
+    }
+    tx.set(ref, { cancelRequestedAtMs: Date.now(), heldReason: hold }, { merge: true });
+    const sent = storedCount(data, 'fanoutProcessed');
+    return { sent, neverSent: Math.max(0, storedCount(data, 'fanoutTotal') - sent), actorUid: data['actorUid'] };
+  });
+  if (stamped === null) return;
+  const { broadcastStoppedHeldWords } = await import('../lib/activityWords.js');
+  logEvent({ severity: 'info', function: 'outboundFanoutSweep', event: 'broadcast.held.stopped', extra: { broadcastId: ref.id, reason: hold } });
+  await writeAuditEntry({
+    status: 'NOT_SENT',
+    event: AUDIT_EVENTS.NOTIFICATION_NOT_SENT,
+    severity: 'info',
+    actorRole: 'SYSTEM',
+    ...(typeof stamped.actorUid === 'string' && stamped.actorUid !== '' ? { actorUid: stamped.actorUid } : {}),
+    targetCollection: BROADCASTS_COLLECTION,
+    description: broadcastStoppedHeldWords(hold),
+    payload: { key: BROADCAST_NOTIFICATION_KEY, outcome: 'held', broadcastId: ref.id, sent: stamped.sent, neverSent: stamped.neverSent, reason: hold },
+  }).catch((err) => {
+    logEvent({ severity: 'warn', function: 'outboundFanoutSweep', event: 'audit.write.failed', errorMessage: (err as Error)?.message });
+  });
+}
 export async function broadcastMessageHandler(
   req: CallableRequest<unknown>,
 ): Promise<BroadcastMessageResult> {
@@ -819,6 +886,35 @@ export async function broadcastMessageHandler(
 
   if (recipients.length === 0) {
     throw new HttpsError('failed-precondition', 'no_recipients');
+  }
+  /**
+   * #1834 (ruling 2026-11-20): A BROADCAST IS HELD WHILE NOTICES TO HOUSEHOLDS
+   * ARE OFF, or while broadcasts are turned off in Settings. Held as a whole,
+   * before the row or the roster is written: nothing is queued to go later,
+   * and the same key sends it once notices are on again. A key whose first
+   * attempt already went is answered from its row below, as before; one left
+   * at 'failed' reached nobody and is held like a new one.
+   */
+  // Loaded here, not at cold start: only a send asks it.
+  const { broadcastHeldError, broadcastHoldReason, recordBroadcastHeld } = await import(
+    '../notifications/sendSwitchRules.js'
+  );
+  const hold = await broadcastHoldReason(BROADCAST_NOTIFICATION_KEY);
+  if (hold !== null) {
+    const prior = args.idempotencyKey
+      ? await db().collection(BROADCASTS_COLLECTION).doc(args.idempotencyKey).get()
+      : null;
+    if (prior === null || !prior.exists || prior.data()?.['fanoutState'] === 'failed') {
+      await recordBroadcastHeld({
+        what: 'a broadcast',
+        key: BROADCAST_NOTIFICATION_KEY,
+        households: recipients.length,
+        reason: hold,
+        actorUid: uid,
+        fn: 'broadcastMessage',
+      });
+      throw broadcastHeldError(hold, 'broadcastMessage');
+    }
   }
 
   /**

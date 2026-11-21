@@ -87,11 +87,12 @@ import {
  * twice either.
  *
  * ── THE HOUSEHOLD SEND GATE ──────────────────────────────────────────────────
- * Unchanged. An operator-composed email or text to one household has never
- * passed `householdNotificationsLive` (`sendExternalMessage.ts` is listed as a
- * bypass in `householdSendGateGuard.test.ts`, and this sends through the same
- * function). A Push draft still goes through `sendHouseholdPush`, which reads
- * the gate.
+ * Not behind it, on purpose (#1834, ruling 2026-11-20: single messages pass).
+ * An operator-composed email or text to one household has never passed
+ * `householdNotificationsLive` (`sendExternalMessage.ts` is listed as not
+ * behind the switch in `householdSendGateGuard.test.ts`, and this sends
+ * through the same function). A Push draft goes through `sendHouseholdPush`,
+ * which since #1834 does not read the switch either.
  *
  * ── A TEXT IS SHORT AND LINKS TO THE WHOLE MESSAGE (#2408) ───────────────────
  * Operator ruling 2026-11-14: a household's text message stays short, with a

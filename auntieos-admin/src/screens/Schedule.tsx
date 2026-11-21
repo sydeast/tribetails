@@ -129,6 +129,10 @@ interface ScheduleProps {
    * #2199: whether an Auntie is signed in, from the access the admin layout
    * resolved before the screen drew, so Mark Completed in the sheet is held from the first paint.
    * Left out, the sheet reads the token itself, a moment later.
+   *
+   * #2187 ruling, 2026-11-20: only the owner makes a New visit, so it is not
+   * drawn for her (`createKinCareSession` refuses her too). Block time, her own
+   * availability, stays.
    */
   isAuntie?: boolean;
 }
@@ -501,7 +505,8 @@ export function Schedule({ onSelect, isAuntie = false }: ScheduleProps) {
               onPrev={() => setSelected(shiftRange(selected, view, -1))}
               onNext={() => setSelected(shiftRange(selected, view, 1))}
             />
-            <PrimaryButton label="New visit" onClick={() => setNewVisitOpen(true)} />
+            {/* #2187 ruling, 2026-11-20: only the owner makes a New visit. */}
+            {!isAuntie && <PrimaryButton label="New visit" onClick={() => setNewVisitOpen(true)} />}
             <GhostButton label="Block time" onClick={() => setBlockTimeOpen(true)} />
           </div>
         }
@@ -776,7 +781,7 @@ export function Schedule({ onSelect, isAuntie = false }: ScheduleProps) {
         </Dialog>
       )}
 
-      {newVisitOpen && (
+      {newVisitOpen && !isAuntie && (
         <NewVisitDialog
           households={households}
           serviceRates={serviceRates}

@@ -151,3 +151,54 @@ describe('listFormSchemas', () => {
     expect(listed.extra.count).toBe(2);
   });
 });
+
+/**
+ * #2461 ruling, 2026-11-20: an Auntie sees the full KinTale, its custom field
+ * answers included. Their labels come from the KinTale form, so she lists that
+ * form and no other.
+ */
+describe('listFormSchemas: an Auntie lists the KinTale form only', () => {
+  const auntie = (uid = 'auntie1'): CallableRequest<unknown> =>
+    ({ ...req(), auth: { uid, token: { staffRole: 'auntie' } } }) as unknown as CallableRequest<unknown>;
+  const FORMS = [
+    { id: 'kintaleForm', data: { name: 'KinTale extras', appliesTo: 'KINTALE', version: 3, updatedBy: 'admin1' } },
+    { id: 'tribeProfile', data: { name: 'Tribe Profile', appliesTo: 'KINFOLK', version: 5, updatedBy: 'admin1' } },
+    { id: 'kinProfile', data: { name: 'Kin Profile', appliesTo: 'KIN', version: 1 } },
+    { id: 'loose', data: { name: 'Loose', version: 1 } },
+    { id: 'oddCase', data: { name: 'Odd', appliesTo: 'kintale', version: 1 } },
+  ];
+  const withForms = () => mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { formSchemas: FORMS } }).db);
+
+  it('HAPPY: she gets the KinTale form, with no record of who last edited it', async () => {
+    withForms();
+    const res = await listFormSchemasHandler(auntie());
+    expect(res.schemas).toEqual([
+      { id: 'kintaleForm', name: 'KinTale extras', appliesTo: 'KINTALE', version: 3, updatedAt: null, updatedBy: null },
+    ]);
+  });
+
+  it('NEGATIVE: every other form is left out for her, a placement that only looks like KINTALE included', async () => {
+    withForms();
+    const ids = (await listFormSchemasHandler(auntie())).schemas.map((s) => s.id);
+    for (const id of ['tribeProfile', 'kinProfile', 'loose', 'oddCase']) expect(ids).not.toContain(id);
+  });
+
+  it('NEGATIVE: an account carrying both roles is held to the KinTale form too', async () => {
+    withForms();
+    const both = { ...req(), auth: { uid: 'confused1', token: { admin: true, staffRole: 'auntie' } } };
+    const res = await listFormSchemasHandler(both as unknown as CallableRequest<unknown>);
+    expect(res.schemas.map((s) => s.id)).toEqual(['kintaleForm']);
+  });
+
+  it('SAD: with no KinTale form she gets an empty list, not an error', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock({ queryDocs: { formSchemas: FORMS.slice(1) } }).db);
+    expect((await listFormSchemasHandler(auntie())).schemas).toEqual([]);
+  });
+
+  it('the owner still lists every form, who edited it included', async () => {
+    withForms();
+    const res = await listFormSchemasHandler(req());
+    expect(res.schemas).toHaveLength(5);
+    expect(res.schemas.find((s) => s.id === 'tribeProfile')?.updatedBy).toBe('admin1');
+  });
+});

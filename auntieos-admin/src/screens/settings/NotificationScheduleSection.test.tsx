@@ -328,9 +328,11 @@ describe('the panel', () => {
       expect(container.textContent).not.toContain('Whether automatic notices reach households');
     });
 
-    it('the switch tooltip says what off holds back and what still goes', () => {
-      expect(HOUSEHOLD_SWITCH_TIP).toContain('notices to households are held back, a KinTale or an invoice you send included');
-      expect(HOUSEHOLD_SWITCH_TIP).toContain('Four things still go: a broadcast, a single email or text message you write, an invite, a password reset');
+    it('the switch tooltip says what off holds back and what still goes (#1834 ruling)', () => {
+      expect(HOUSEHOLD_SWITCH_TIP).toContain('notices to households are held back, a KinTale or an invoice you send included, and so are broadcasts and marketing blasts');
+      expect(HOUSEHOLD_SWITCH_TIP).toContain('A message you write to one household still goes: an email, a text, a push, an inbox reply.');
+      expect(HOUSEHOLD_SWITCH_TIP).toContain('Invites and password resets still go too');
+      expect(HOUSEHOLD_SWITCH_TIP).not.toContain('Four things still go');
       expect(HOUSEHOLD_SWITCH_TIP).not.toMatch(/nothing is sent/i);
     });
 

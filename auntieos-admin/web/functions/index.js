@@ -357,7 +357,8 @@ exports.writeDraft = onRequest({ cors: false }, async (req, res) => {
     res.status(405).json({ error: 'POST only' });
     return;
   }
-  if (!(await requireAdminWithDraftBudget(req, res, 'writeDraft'))) return;
+  const callerUid = await requireAdminWithDraftBudget(req, res, 'writeDraft');
+  if (!callerUid) return;
   const { docId, draft } = req.body || {};
   if (docId !== undefined) {
     const idError = validateDocId(docId);
@@ -372,12 +373,19 @@ exports.writeDraft = onRequest({ cors: false }, async (req, res) => {
     return;
   }
   try {
-    const col = sdk.firestore().collection('generated_drafts');
+    const db = sdk.firestore();
+    const col = db.collection('generated_drafts');
     const ref = docId ? col.doc(docId) : col.doc();
-    await ref.set(
-      { ...draft, _writtenAt: sdk.serverTimestamp() },
-      { merge: true }
-    );
+    // #2443 ruling, 2026-11-20: a draft records who made it. A write that
+    // creates the draft stamps the caller's uid as `createdBy`; a write to a
+    // draft that already exists leaves its maker as it was. The body cannot
+    // name a maker (`validateDraftPayload` refuses the key).
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const data = { ...draft, _writtenAt: sdk.serverTimestamp() };
+      if (!snap.exists) data.createdBy = callerUid;
+      tx.set(ref, data, { merge: true });
+    });
     res.status(200).json({ ok: true, id: ref.id });
   } catch (err) {
     console.error('writeDraft failed', err);
@@ -1070,7 +1078,7 @@ exports.generateAuntieCopy = onRequest({ secrets: [ANTHROPIC_API_KEY], cors: fal
   const anthropic = new Anthropic({ apiKey, timeout: MODEL_CALL_TIMEOUT_MS, maxRetries: MODEL_MAX_RETRIES });
 
   try {
-    const result = await runGenerate({ db: sdk.firestore(), anthropic, model }, req.body || {});
+    const result = await runGenerate({ db: sdk.firestore(), anthropic, model, uid: decodedToken.uid }, req.body || {});
     res.status(200).json(result);
   } catch (err) {
     // Byte-compatible error shape: always returns a full GenerateResponse so both

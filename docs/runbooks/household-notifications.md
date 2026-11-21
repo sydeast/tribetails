@@ -211,25 +211,39 @@ the invoice send time, and the clock. The send time governs invoice reminders
 and overdue notices only. With the switch on and no send time, every other
 household notice still goes out as it happens.
 
+### Broadcasts and marketing blasts are held (#1834, ruling 2026-11-20)
+
+With the switch off, a broadcast (`broadcastMessage`) and a marketing blast
+(`scheduleMarketingBlast`) are held as a whole. The same holds when that
+notification is turned off in Settings. Nothing is sent and nothing is stored to
+go later: the screen says it was held, the Activity Log gets one "Held back a
+broadcast to N households" line, and you send it again once notices are on.
+
+- A broadcast still sending when you switch notices off is stopped by the next
+  sweep tick (one "Stopped a broadcast part-way" line). The rest never goes.
+- A blast scheduled while notices were on and due after you switched them off
+  is held at its send time: its copies come off the queue, the campaign row
+  counts them as held, and the run writes one "Held back N notices from a
+  marketing blast" line.
+
 ### What the gate does not cover
 
-Three paths reach a household without passing it, and all three need you to
-press a button:
+These reach a household with the switch off, and each needs a person to press a
+button:
 
-- **Broadcasts** (`broadcastMessage`). Sends email, SMS and push to the
-  households you select, directly. It honours the notification gate settings and
-  each household's own preferences, but not this switch.
-- **A single message to one household** (`sendExternalMessage`).
-- **Invite and account-recovery mail** (`sendFromTemplate`). Onboarding has to
-  work while the gate is shut, so this one is deliberate.
+- **A single message to one household.** A Communicate email or text
+  (`sendExternalMessage`, `sendGeneratedDraft`), a Communicate push
+  (`sendHouseholdPush`) and an inbox reply notice (`message.reply`). The
+  household's own channel choices and the notice's own switch in Settings still
+  apply.
+- **Invite and account-recovery mail** (`sendFromTemplate`) and the password
+  reset. Onboarding has to work while the gate is shut, so this is deliberate.
+
+A KinTale notice is not on that list: it is sent by the KinTale document
+triggers, which fire for every uploaded report too, so it stays held.
 
 Nothing in that list runs on a schedule, so none of it can go off while you are
 asleep during the re-upload.
-
-**Do not schedule a marketing blast while the gate is shut.** A blast is spent
-rather than delayed: the fan-out records each household as suppressed and never
-comes back to them, so opening the gate afterwards sends nothing. Schedule it
-after.
 
 ### What the re-upload itself will do
 
