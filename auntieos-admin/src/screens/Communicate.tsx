@@ -143,10 +143,10 @@ export interface CommunicateProps {
  *
  *   Generate            `/api/generate` refuses a caretaker: it reads the
  *                       household dossier, which is owner-only.
- *   Approve (any type   a client write to `generated_drafts`, which the rules
- *   but a KinTale)      give the owner alone. Email and Text then send through
- *                       `sendExternalMessage` and Push through
- *                       `sendHouseholdPush`, neither on her list.
+ *   Approve (any type   Email and Text go out through `sendGeneratedDraft` and
+ *   but a KinTale)      Push through `sendHouseholdPush`, neither on her list.
+ *                       Social, Blog and General are a client write to
+ *                       `generated_drafts`, which the rules give the owner.
  *   Delete draft        `deleteGeneratedDraft`, destructive, the owner's.
  *   Broadcast           `broadcastMessage` and the audience callables.
  *   Send outside the    `sendExternalMessage`, the business phone and email.
