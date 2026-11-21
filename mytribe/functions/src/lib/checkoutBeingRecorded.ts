@@ -57,6 +57,14 @@ export const PAYMENT_BEING_RECORDED_CODE = 'payment_being_recorded';
  * portal build from before this change prints it where it prints any refusal.
  * "A payment", not "your payment": the person pressing Pay may not be the one
  * who paid.
+ *
+ * THE WORDS ARE READ BY CODE AS WELL. The MyTribe app knows this refusal by
+ * the sentence alone (`isPaymentBeingRecorded` in `InvoicesScreen.kt`), since
+ * its three ways of reaching the server hand back `details` in three shapes,
+ * and the web portal falls back to it when `details` is lost
+ * (`paymentBeingRecorded` in `mytribe/web/src/lib/checkoutReturn.ts`). Change
+ * the sentence in all three places together, or the app falls back to showing
+ * the refusal as an ordinary error. Each client's test pins its copy.
  */
 export const PAYMENT_BEING_RECORDED = 'A payment on this invoice is still being recorded. Check again in a minute.';
 
