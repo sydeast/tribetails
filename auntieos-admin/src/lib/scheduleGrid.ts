@@ -203,6 +203,78 @@ export function gridPlacement(
   };
 }
 
+/**
+ * #1861: a VISIT block, placed as {@link gridPlacement} places it, except at
+ * the very bottom of the day. A visit at 23:46 has 14 minutes left before
+ * midnight, the window cannot grow past it, and the block was drawn 12px tall
+ * with its time and household cut off. Such a block is lifted until it has the
+ * legible minimum, ending on the bottom edge. Its label still says 23:46, and
+ * the drag maths reads the visit's own start, not this top.
+ */
+export function visitBlockPlacement(
+  startMinute: number,
+  durationMinutes: number,
+  window: GridWindow = DEFAULT_GRID_WINDOW,
+): GridPlacement | null {
+  const place = gridPlacement(startMinute, durationMinutes, window);
+  if (place === null) return null;
+  const minPx = (HOUR_HEIGHT_PX * MIN_BLOCK_MINUTES) / 60;
+  if (place.heightPx >= minPx) return place;
+  const bottomPx = place.topPx + place.heightPx;
+  const heightPx = Math.min(minPx, bottomPx);
+  return { topPx: bottomPx - heightPx, heightPx };
+}
+
+/** Where one visit sits across its day column, when visits overlap (#1861). */
+export interface GridLane {
+  /** 0-based lane, left to right. */
+  lane: number;
+  /** How many lanes the visit's overlapping group is split into. */
+  lanes: number;
+}
+
+/**
+ * #1861: side-by-side lanes for blocks whose DRAWN extents overlap. Four visits
+ * that started between 23:05 and 23:46 were printed on top of one another,
+ * because each is drawn at least {@link MIN_BLOCK_MINUTES} tall whatever its
+ * real length. Overlap is judged on what is drawn, so blocks that touch only at
+ * an edge share a lane.
+ *
+ * Greedy, in start order: each block takes the leftmost lane whose last block
+ * has ended; every block in one connected group of overlaps gets that group's
+ * lane count, so the group's columns line up. Ties on top go by id, so the
+ * order is the same on every render.
+ */
+export function gridLanes(
+  blocks: readonly { id: string; topPx: number; heightPx: number }[],
+): Map<string, GridLane> {
+  const sorted = [...blocks].sort((a, b) => a.topPx - b.topPx || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const out = new Map<string, GridLane>();
+  let group: { id: string; lane: number }[] = [];
+  let laneEnds: number[] = [];
+  let groupBottom = Number.NEGATIVE_INFINITY;
+  const closeGroup = () => {
+    for (const g of group) out.set(g.id, { lane: g.lane, lanes: laneEnds.length });
+    group = [];
+    laneEnds = [];
+  };
+  for (const b of sorted) {
+    const bottom = b.topPx + b.heightPx;
+    if (b.topPx >= groupBottom) closeGroup();
+    let lane = laneEnds.findIndex((end) => end <= b.topPx);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(bottom);
+    } else {
+      laneEnds[lane] = bottom;
+    }
+    group.push({ id: b.id, lane });
+    groupBottom = group.length === 1 ? bottom : Math.max(groupBottom, bottom);
+  }
+  closeGroup();
+  return out;
+}
+
 /** Places a busy overlay from the two `HH:mm` strings a `booking_time_slots` row stores. */
 export function busyPlacement(
   startHHmm: string | undefined,
