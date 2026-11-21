@@ -267,6 +267,24 @@ fun AppNavHost(
             navController.navigate(destination) { launchSingleTop = true }
         }
     }
+    // #2401: Stripe returned a card payment to this app. The invoice it names
+    // opens, and after a finished checkout the bill is checked. Same gate as
+    // the push tap above (the signed-in shell is the start route), plus one
+    // more: only the window the household is looking at takes it. Android can
+    // open a link in a second window of this app, stacked on the one the
+    // household paid from, and the one underneath must not take the link out
+    // from under the one on screen. Taken once.
+    val pendingCheckoutReturn by com.kinfolk.portal.screens.invoices.PendingCheckoutReturn.pending.collectAsState()
+    val windowFocused = androidx.compose.ui.platform.LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(pendingCheckoutReturn, shellOnScreen, windowFocused) {
+        if (pendingCheckoutReturn == null || !shellOnScreen || !windowFocused) return@LaunchedEffect
+        navController.currentBackStackEntryFlow.first()
+        val ret = com.kinfolk.portal.screens.invoices.PendingCheckoutReturn.take() ?: return@LaunchedEffect
+        // Without billing access the invoice route leaves for Home by itself
+        // (#1005), and there is no bill this member may read to check.
+        if (shellBillingAccess) invoicesController.onCheckoutReturn(ret)
+        navController.navigate(InvoiceDetailRoute(ret.invoiceId)) { launchSingleTop = true }
+    }
     // #1281: lives above the NavHost, so it outlasts the wizard's destination
     // and reaches Schedule's. See ScheduleHandoff.
     var scheduleHandoff by remember { mutableStateOf<ScheduleHandoff?>(null) }
@@ -622,6 +640,7 @@ fun AppNavHost(
                                 viewerUid = viewerUid,
                                 checkingPayment = invoicesController.checkingPayment == invoice.id,
                                 paymentNotSeen = invoicesController.paymentNotSeen == invoice.id,
+                                paymentNotChecked = invoicesController.paymentNotChecked == invoice.id,
                                 onCheckPaymentAgain = { invoicesController.checkPaymentAgain(invoice.id) },
                                 onPayMethod = { method -> invoicesController.startPayMethod(invoice, method) },
                                 onQuoteDecision = { accept -> invoicesController.startQuoteDecision(invoice, accept) },

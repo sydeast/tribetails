@@ -80,6 +80,11 @@ fun InvoiceDetailScreen(
     checkingPayment: Boolean = false,
     /** #2366: the check ran out with the bill still owed. */
     paymentNotSeen: Boolean = false,
+    /**
+     * #2402: the check ran out and no read got through. Nothing is known about
+     * the payment, so Pay stays held back and the screen offers Check again.
+     */
+    paymentNotChecked: Boolean = false,
     onCheckPaymentAgain: () -> Unit = {},
     onPayMethod: (PayMethod) -> Unit = {},
     /** `true` accepts the quote, `false` declines it. */
@@ -268,6 +273,20 @@ fun InvoiceDetailScreen(
                 onSync = onCheckPaymentAgain,
                 modifier = Modifier.padding(horizontal = KinfolkSpacing.l),
             )
+        } else if (offersPayment(invoice) && paymentNotChecked) {
+            // #2402: no read since the household came back says this bill is
+            // still owed, so Pay is not offered on the copy from before.
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = KinfolkSpacing.l),
+                verticalArrangement = Arrangement.spacedBy(KinfolkSpacing.xs),
+            ) {
+                Text(PAYMENT_NOT_CHECKED, style = type.sansMeta)
+                KinGhostButton(
+                    label = "Check again",
+                    onClick = onCheckPaymentAgain,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         } else if (offersPayment(invoice)) {
             if (paymentNotSeen) {
                 Column(
