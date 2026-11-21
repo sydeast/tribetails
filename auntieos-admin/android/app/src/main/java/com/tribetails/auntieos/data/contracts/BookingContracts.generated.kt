@@ -1322,6 +1322,8 @@ data class ListPendingBookingRequestsResultRequest(
     val startTimeMsList: List<Long>,
     val visits: List<ListPendingBookingRequestsResultRequestVisit>,
     val requestedAtMs: Long?,
+    val assignedAuntieUid: String?,
+    val auntieDisplayName: String?,
 )
 
 /**
@@ -1343,6 +1345,8 @@ internal fun decodeListPendingBookingRequestsResultRequest(raw: Map<String, Any?
         startTimeMsList = (raw?.get("startTimeMsList") as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toLong() },
         visits = (raw?.get("visits") as? List<*>).orEmpty().mapNotNull { contractRawMap(it)?.let { nested -> decodeListPendingBookingRequestsResultRequestVisit(nested) } },
         requestedAtMs = (raw?.get("requestedAtMs") as? Number)?.toLong(),
+        assignedAuntieUid = raw?.get("assignedAuntieUid") as? String,
+        auntieDisplayName = raw?.get("auntieDisplayName") as? String,
     )
 
 /** Response from the `listPendingBookingRequests` callable. */

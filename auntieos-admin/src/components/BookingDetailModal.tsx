@@ -16,7 +16,7 @@ import {
   getVisitAssignment,
   rescheduleBooking,
 } from '../api/bookingsWrite';
-import { listStaff, staffLabel, type StaffMember } from '../api/staff';
+import { assignedAuntieLabel, listStaff, loadStaffRoster, staffPersonLabel, type StaffMember } from '../api/staff';
 import { getKinfolkProfile } from '../api/kinfolkProfile';
 import { useCollection, useDocById } from '../lib/firestore';
 import { arr, str } from '../lib/coerce';
@@ -412,6 +412,22 @@ function AssignedAuntiePanel({ kinfolkId, batchId, visitId, enabled, canAssign }
       alive = false;
     };
   }, [enabled, kinfolkId, batchId, visitId]);
+  // #1857: a visit assigned before the server stored a name holds only the
+  // uid, and the row read "Assigned". The roster (one shared read per page
+  // load) names that person. It never fails the panel: an empty answer leaves
+  // the row as it was.
+  const [roster, setRoster] = useState<readonly StaffMember[] | null>(null);
+  const needsRosterName = assignedUid !== null && assignedAuntieLabel(assignedUid, assignedName, null) === 'Assigned';
+  useEffect(() => {
+    if (!needsRosterName || roster !== null) return;
+    let alive = true;
+    void loadStaffRoster().then((r) => {
+      if (alive) setRoster(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [needsRosterName, roster]);
 
   // Loaded from the click, not from an effect keyed on `pickerOpen`: an effect
   // whose own loading flag is in its dependency list tears itself down mid
@@ -469,7 +485,7 @@ function AssignedAuntiePanel({ kinfolkId, batchId, visitId, enabled, canAssign }
     }
   }
 
-  const displayed = assignedName ?? (assignedUid !== null ? 'Assigned' : 'Unassigned');
+  const displayed = assignedAuntieLabel(assignedUid, assignedName, staff ?? roster);
 
   return (
     <DenPanel title="Staffing" subtitle="Who is running this visit." headingLevel={3}>
@@ -521,9 +537,9 @@ function AssignedAuntiePanel({ kinfolkId, batchId, visitId, enabled, canAssign }
             staff.map((member) => (
               <GhostButton
                 key={member.uid}
-                label={staffLabel(member)}
+                label={staffPersonLabel(member)}
                 disabled={assigning || member.uid === assignedUid}
-                onClick={() => void changeAssignee(member.uid, staffLabel(member))}
+                onClick={() => void changeAssignee(member.uid, staffPersonLabel(member))}
               />
             ))
           )}

@@ -123,6 +123,50 @@ export function resetStaffNamesForTest(): void {
   staffNamesOnce = null;
 }
 
+/**
+ * #1857: the staff member's name, and nothing else. `listStaff` fills a
+ * nameless record with the sign-in email, which is not a name; neither is the
+ * uid. Null when the roster holds no name for them.
+ */
+export function staffName(member: StaffMember): string | null {
+  const name = (member.displayName ?? '').trim();
+  if (name === '' || name.includes('@') || name === member.uid) return null;
+  return name;
+}
+
+/**
+ * #1857: what Staffing calls a staff member: their name, else the role they
+ * hold. The Assigned Auntie picker and row never show a sign-in email or a
+ * uid. Never blank, so a picker button always has a name.
+ */
+export function staffPersonLabel(member: StaffMember): string {
+  return staffName(member) ?? staffRoleWord(member.role ?? null);
+}
+
+/** The word for a staff member with no name on file, by the role they hold. */
+export function staffRoleWord(role: StaffRole | null): string {
+  if (role === 'owner') return 'Operator';
+  if (role === 'auntie') return 'Auntie';
+  return 'Staff member';
+}
+
+/**
+ * #1857: the Assigned Auntie row. The name stored with the assignment when it
+ * is one, else the roster's label for that uid, else "Assigned" only while the
+ * roster has not answered.
+ */
+export function assignedAuntieLabel(
+  assignedUid: string | null,
+  storedName: string | null,
+  roster: readonly StaffMember[] | null,
+): string {
+  if (assignedUid === null) return 'Unassigned';
+  const stored = (storedName ?? '').trim();
+  if (stored !== '' && !stored.includes('@')) return stored;
+  const member = roster?.find((m) => m.uid === assignedUid);
+  if (member !== undefined) return staffPersonLabel(member);
+  return roster === null ? 'Assigned' : staffRoleWord(null);
+}
 /** The picker label: display name, then email, then the uid. Never blank, so
  *  the control always has an accessible name. */
 export function staffLabel(member: StaffMember): string {

@@ -1283,6 +1283,10 @@ data class IncomingKinCare(
     val requestedDate: String = "",
     /** #1577: the Kin this visit covers, as the visit doc names them. Empty when absent. */
     val kinNames: List<String> = emptyList(),
+    /** #1870: who the visit is assigned to (the default assignee, at request time). Blank when nobody. */
+    val assignedAuntieUid: String = "",
+    /** #1870: the name stored with that assignment. Blank when none was stored. */
+    val auntieDisplayName: String = "",
 )
 
 /**
@@ -1320,6 +1324,8 @@ internal fun incomingKinCareOf(path: String, visitId: String, data: Map<String, 
         startTimePending = data["startTimePending"] == true,
         requestedDate = str("requestedDate"),
         kinNames = (data["kinNames"] as? List<*>).orEmpty().mapNotNull { (it as? String)?.takeIf { n -> n.isNotBlank() } },
+        assignedAuntieUid = str("assignedAuntieUid"),
+        auntieDisplayName = str("auntieDisplayName"),
     )
 }
 

@@ -17,6 +17,7 @@ import {
   type PendingBookingRequestDto,
 } from '../api/bookingRequests';
 import { getWorkSettings } from '../api/workSettings';
+import { loadStaffRoster, staffName, type StaffMember } from '../api/staff';
 import type { ListPendingBookingRequestsResultRequestVisit } from '../contracts/bookingContracts.generated';
 import { bookingWhenLabel } from '../lib/bookingDetailFormat';
 import { bookingServiceName, EMPTY_BOOKING_CATALOG, type BookingCatalog } from '../lib/bookingFormat';
@@ -804,6 +805,7 @@ export function DecisionDialog({ row, decision, onClose, onResolved }: DecisionD
         <span className="visit-requests__dialog-subject">{rowSubject(row, catalog)}</span>
       </p>
       <p className="visit-requests__dialog-line">{dialogLine(row, decision)}</p>
+      {row.kind === 'newBooking' && !declining && <AcceptAssigneeLine request={row.request} />}
       {nights.length > 0 && row.kind === 'newBooking' && (
         <ul className="visit-requests__nights">
           {nights.map((v) => {
@@ -1028,6 +1030,49 @@ function confirmLabel(kind: VisitRequest['kind'], decision: 'accept' | 'decline'
   if (decision === 'decline') return 'Send the decline';
   if (kind === 'newBooking') return 'Book it';
   return kind === 'cancel' ? 'Cancel it' : 'Move it';
+}
+
+/**
+ * #1870: who the visits go to once accepted. A request is assigned when the
+ * household makes it, so Accept confirms that assignment, and the dialog says
+ * so instead of leaving the office to find out from a notification.
+ */
+export function acceptAssigneeLine(
+  request: Pick<PendingBookingRequestDto, 'assignedAuntieUid' | 'auntieDisplayName'>,
+  roster: readonly StaffMember[] | null,
+): string | null {
+  // A server from before #1870 sends no assignee at all. That is not "nobody":
+  // the request may well be assigned, so the dialog says nothing about it.
+  if (request.assignedAuntieUid === undefined) return null;
+  const uid = request.assignedAuntieUid;
+  if (uid === null) return 'No Auntie is assigned yet. Choose one on the visit once it is booked.';
+  const stored = (request.auntieDisplayName ?? '').trim();
+  if (stored !== '' && !stored.includes('@')) return `Assigned to ${stored}.`;
+  if (roster === null) return null;
+  const member = roster.find((m) => m.uid === uid);
+  const name = member === undefined ? null : staffName(member);
+  if (name !== null) return `Assigned to ${name}.`;
+  if (member?.role === 'owner') return 'Assigned to the Operator.';
+  if (member?.role === 'auntie') return 'Assigned to an Auntie with no name on file.';
+  return 'Assigned to a staff member.';
+}
+
+function AcceptAssigneeLine({ request }: { request: PendingBookingRequestDto }) {
+  const needsRoster = request.assignedAuntieUid !== undefined && acceptAssigneeLine(request, null) === null;
+  const [roster, setRoster] = useState<readonly StaffMember[] | null>(null);
+  useEffect(() => {
+    if (!needsRoster) return undefined;
+    let live = true;
+    void loadStaffRoster().then((r) => {
+      if (live) setRoster(r);
+    });
+    return () => {
+      live = false;
+    };
+  }, [needsRoster]);
+  const line = acceptAssigneeLine(request, roster);
+  if (line === null) return null;
+  return <p className="visit-requests__dialog-line">{line}</p>;
 }
 
 function dialogLine(row: VisitRequest, decision: 'accept' | 'decline'): string {

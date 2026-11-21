@@ -16,6 +16,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { NO_EXTRAS, readHouseholdAddress, type VisitExtras } from './portalVisitLinks';
+import { assigneeNamesFor, needsAssigneeName, withAssigneeName } from './staffIdentity';
 import {
   CLOCK_ONLY_TIME_CONTEXT,
   householdBlockFor,
@@ -353,8 +354,11 @@ export async function readEnvelopeDto(
     // the cache entry it replaces does not lose it, and there are no completed
     // visits to link.
     const extras: VisitExtras = { ...NO_EXTRAS, address: await readHouseholdAddress(firestore, kinfolkId) };
-    const visits = visitsSnap.docs.map((d) =>
-      kinCareToDto(d.id, d.data() as Record<string, unknown>, stringOrNull((d.data() as Record<string, unknown>)['batchId']) ?? batchId, kinfolkId, extras, time, serviceCatalog),
+    // #1870: the same assignee-name fill the household's list gets.
+    const rows = visitsSnap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+    const names = await assigneeNamesFor(rows.map((r) => needsAssigneeName(r.data) ?? ''), 'readEnvelopeDto');
+    const visits = rows.map(({ id, data }) =>
+      kinCareToDto(id, withAssigneeName(data, names), stringOrNull(data['batchId']) ?? batchId, kinfolkId, extras, time, serviceCatalog),
     );
     return EnvelopeDtoSchema.parse(envelopeToDto(batchId, env, visits));
   } catch {
@@ -375,7 +379,9 @@ export async function readVisitDto(
       loadServiceCatalog(firestore),
     ]);
     if (!snap.exists) return null;
-    const data = (snap.data() ?? {}) as Record<string, unknown>;
+    const stored = (snap.data() ?? {}) as Record<string, unknown>;
+    const missing = needsAssigneeName(stored);
+    const data = missing === null ? stored : withAssigneeName(stored, await assigneeNamesFor([missing], 'readVisitDto'));
     const extras: VisitExtras = { ...NO_EXTRAS, address: await readHouseholdAddress(firestore, kinfolkId) };
     return BookingDtoSchema.parse(kinCareToDto(visitId, data, stringOrNull(data['batchId']) ?? batchId, kinfolkId, extras, time, serviceCatalog));
   } catch {

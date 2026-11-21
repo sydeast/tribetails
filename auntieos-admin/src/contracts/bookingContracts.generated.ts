@@ -639,6 +639,8 @@ export interface ListPendingBookingRequestsResultRequest {
   startTimeMsList: number[];
   visits: ListPendingBookingRequestsResultRequestVisit[];
   requestedAtMs: number | null;
+  assignedAuntieUid: string | null;
+  auntieDisplayName: string | null;
 }
 
 /**

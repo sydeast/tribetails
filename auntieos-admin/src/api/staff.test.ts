@@ -9,7 +9,10 @@ import {
   loadStaffRoles,
   loadStaffRoster,
   resetStaffNamesForTest,
+  assignedAuntieLabel,
   staffLabel,
+  staffName,
+  staffPersonLabel,
   staffNamesByUid,
   staffRolesByUid,
 } from './staff';
@@ -140,5 +143,33 @@ describe('staff roles by uid (#1820)', () => {
   it('a failed read relabels nobody', async () => {
     call.mockRejectedValueOnce(new Error('permission-denied'));
     expect((await loadStaffRoles()).size).toBe(0);
+  });
+});
+
+// #1857: Staffing named the owner by her sign-in email, then "Assigned".
+describe('Staffing names (#1857)', () => {
+  const owner = { uid: 'u1', displayName: 'e2e-admin@tribetails.com', email: 'e2e-admin@tribetails.com', role: 'owner' as const };
+  const ruth = { uid: 'u2', displayName: ' Auntie Ruth ', email: 'catch@hanasamku.com', role: 'auntie' as const };
+  it('staffName is the name only: never an email, a uid or blank', () => {
+    expect(staffName(ruth)).toBe('Auntie Ruth');
+    expect(staffName(owner)).toBeNull();
+    expect(staffName({ uid: 'u3', displayName: 'u3', email: null })).toBeNull();
+    expect(staffName({ uid: 'u3', displayName: '  ', email: null })).toBeNull();
+  });
+
+  it('staffPersonLabel falls back to the role word', () => {
+    expect(staffPersonLabel(ruth)).toBe('Auntie Ruth');
+    expect(staffPersonLabel(owner)).toBe('Operator');
+    expect(staffPersonLabel({ uid: 'u4', displayName: null, email: null, role: 'auntie' })).toBe('Auntie');
+    expect(staffPersonLabel({ uid: 'u5', displayName: null, email: 'pawsome@hanasamku.com' })).toBe('Staff member');
+  });
+
+  it('assignedAuntieLabel: stored name, else the roster, else "Assigned" until the roster answers', () => {
+    expect(assignedAuntieLabel(null, null, null)).toBe('Unassigned');
+    expect(assignedAuntieLabel('u2', 'Auntie Ruth', null)).toBe('Auntie Ruth');
+    expect(assignedAuntieLabel('u2', null, null)).toBe('Assigned');
+    expect(assignedAuntieLabel('u2', null, [ruth])).toBe('Auntie Ruth');
+    expect(assignedAuntieLabel('u1', 'e2e-admin@tribetails.com', [owner])).toBe('Operator');
+    expect(assignedAuntieLabel('gone', null, [ruth])).toBe('Staff member');
   });
 });

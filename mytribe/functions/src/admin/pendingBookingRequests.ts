@@ -9,6 +9,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { validateResponse } from '../lib/callableResponse';
 import { kinCareLengthMinutes } from '../portal/getServiceCatalog';
+import { assigneeNamesFor } from '../lib/staffIdentity';
 
 /**
  * The office's queue of NEW booking requests (issue #533).
@@ -96,6 +97,14 @@ export const PendingBookingRequestDto = z
     visits: z.array(PendingBookingVisitDto),
     /** When the household asked, from the envelope's createdAt. Drives the queue's sort. */
     requestedAtMs: z.number().int().nullable(),
+    /**
+     * #1870: who the visits go to once accepted. A request is assigned when it
+     * is made (the default assignee), so Accept confirms an assignment the
+     * office should see first. Null when no visit of the request carries one.
+     */
+    assignedAuntieUid: z.string().nullable(),
+    /** That person's name: staff record, then sign-in display name, never an email. Null when none. */
+    auntieDisplayName: z.string().nullable(),
   })
   .strict();
 
@@ -142,6 +151,9 @@ interface Group {
   kinNames: string[];
   /** #1098: every visit, sorted by start, a night by its date. */
   visits: PendingBookingVisit[];
+  /** #1870: the first assignee a visit of this request carries, and its stored name. */
+  assignedAuntieUid: string | null;
+  auntieDisplayName: string | null;
 }
 
 /**
@@ -208,7 +220,16 @@ export function groupByEnvelope(
     const key = `${kinfolkId}/${batchId}`;
     let group = byKey.get(key);
     if (!group) {
-      group = { kinfolkId, batchId, startTimeMsList: [], serviceType: null, kinNames: [], visits: [] };
+      group = {
+        kinfolkId,
+        batchId,
+        startTimeMsList: [],
+        serviceType: null,
+        kinNames: [],
+        visits: [],
+        assignedAuntieUid: null,
+        auntieDisplayName: null,
+      };
       byKey.set(key, group);
     }
 
@@ -226,6 +247,14 @@ export function groupByEnvelope(
       stringOrNull(row.data['serviceType']) ??
       stringOrNull(row.data['serviceName']) ??
       stringOrNull(row.data['title']);
+    if (group.assignedAuntieUid === null) {
+      const assignee = stringOrNull(row.data['assignedAuntieUid']);
+      if (assignee !== null) {
+        group.assignedAuntieUid = assignee;
+        const stored = stringOrNull(row.data['auntieDisplayName']);
+        group.auntieDisplayName = stored !== null && !stored.includes('@') ? stored : null;
+      }
+    }
     if (group.kinNames.length === 0 && Array.isArray(row.data['kinNames'])) {
       group.kinNames = (row.data['kinNames'] as unknown[]).filter(
         (n): n is string => typeof n === 'string' && n.length > 0,
@@ -295,6 +324,11 @@ export async function listPendingBookingRequestsHandler(
     serviceDurations,
   );
 
+  // #1870: a name for every assignee the visits stored without one.
+  const assigneeNames = await assigneeNamesFor(
+    groups.filter((g) => g.assignedAuntieUid !== null && g.auntieDisplayName === null).map((g) => g.assignedAuntieUid!),
+    'listPendingBookingRequests',
+  );
   // One parent read per pending ENVELOPE, not per visit: the envelope carries
   // `createdAt` (when the household actually asked, which no visit doc holds),
   // the request-level `notes`, and its own `envelopeStatus`.
@@ -351,6 +385,10 @@ export async function listPendingBookingRequestsHandler(
           startTimeMsList: list,
           visits: group.visits,
           requestedAtMs: millisOf(envelope?.['createdAt'] as Timestamp | null | undefined),
+          assignedAuntieUid: group.assignedAuntieUid,
+          auntieDisplayName:
+            group.auntieDisplayName ??
+            (group.assignedAuntieUid !== null ? (assigneeNames.get(group.assignedAuntieUid) ?? null) : null),
         };
       }),
     )

@@ -1,5 +1,6 @@
 import { db } from './firestoreAdmin';
 import { resolveDefaultAssigneeUid } from './businessAdmins';
+import { staffNameFor } from './staffIdentity';
 
 export interface Assignee {
   uid: string;
@@ -26,7 +27,13 @@ export async function resolveDefaultAssignee(): Promise<Assignee | null> {
   if (!uid) return null;
 
   const staffSnap = await db().collection('staff').doc(uid).get();
-  const displayName =
-    (staffSnap.data() as { displayName?: string } | undefined)?.displayName ?? null;
+  // #1870: the same name-only rule as assignAuntie (#1857). The owner's staff
+  // record may carry no name while her sign-in account does; an email is never
+  // stored as the name a household reads.
+  const displayName = await staffNameFor(
+    uid,
+    staffSnap.data() as { displayName?: unknown } | undefined,
+    'defaultAssignee',
+  );
   return { uid, displayName };
 }

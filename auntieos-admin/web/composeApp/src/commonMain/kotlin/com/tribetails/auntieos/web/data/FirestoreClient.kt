@@ -3600,8 +3600,38 @@ data class StaffMember(
      */
     val role: String? = null,
 ) {
-    /** What the picker row shows: name, else email, else the uid. */
-    val pickerLabel: String get() = displayName ?: email ?: uid
+    /**
+     * #1857: the person's name, and nothing else. `listStaff` fills a nameless
+     * record with the sign-in email, which is not a name; neither is the uid.
+     */
+    val name: String? get() = displayName?.trim()?.takeIf { it.isNotEmpty() && '@' !in it && it != uid }
+    /**
+     * What the Assigned Auntie picker and row call this person: the name, else
+     * the role they hold ("Operator", "Auntie"). Never a sign-in email or a uid
+     * (#1857), and never blank.
+     */
+    val pickerLabel: String get() = name ?: staffRoleWord(role)
+}
+
+/** #1857: the word for a staff member with no name on file, by role. The web twin is `staffRoleWord` in api/staff.ts. */
+fun staffRoleWord(role: String?): String = when (role) {
+    "owner" -> "Operator"
+    "auntie" -> "Auntie"
+    else -> "Staff member"
+}
+
+/**
+ * #1857: the Assigned Auntie row. The name stored with the assignment when it
+ * is one, else the roster's label for that uid, else "Assigned" only while the
+ * roster has not answered. Pure; the web twin is `assignedAuntieLabel`.
+ */
+fun assignedAuntieLabel(assignedUid: String?, storedName: String?, roster: List<StaffMember>?): String {
+    if (assignedUid == null) return "Unassigned"
+    val stored = storedName?.trim().orEmpty()
+    if (stored.isNotEmpty() && '@' !in stored) return stored
+    val member = roster?.firstOrNull { it.uid == assignedUid }
+    if (member != null) return member.pickerLabel
+    return if (roster == null) "Assigned" else staffRoleWord(null)
 }
 
 /**
@@ -5692,6 +5722,15 @@ data class KinCareVisit(
     val notes: String = "",
     val createdAt: String = "",
     val updatedAt: String = "",
+    /**
+     * #1870: who the visit is assigned to (the default assignee, at request
+     * time). Nullable on purpose: requestBooking stores an explicit null when
+     * nobody is assigned, and the strict decoder drops a doc whose null lands
+     * on a non-null field.
+     */
+    val assignedAuntieUid: String? = null,
+    /** #1870: the name stored with that assignment. Null when none was stored. */
+    val auntieDisplayName: String? = null,
 ) {
     /** Splits [path] into [familyId-of-path, batchId, visitId] (empty if malformed). */
     val pathParts: Triple<String, String, String>

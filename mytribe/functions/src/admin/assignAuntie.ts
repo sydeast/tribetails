@@ -6,6 +6,7 @@ import { logEvent } from '../lib/logger';
 import { initSentry } from '../lib/sentry';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
+import { staffNameFor } from '../lib/staffIdentity';
 
 /**
  * Assign (or unassign) an Auntie on a single KinCare visit.
@@ -55,7 +56,15 @@ export async function assignAuntieHandler(
     if (!staffSnap.exists) {
       throw new HttpsError('failed-precondition', 'assignAuntie: no staff record for that uid.');
     }
-    displayName = (staffSnap.data() as { displayName?: string } | undefined)?.displayName ?? null;
+
+    // #1857: the staff record's name, else the sign-in account's display name,
+    // never an email. A nameless record used to store null here, so the visit
+    // read "Assigned" on reopening and "Not yet assigned" in MyTribe.
+    displayName = await staffNameFor(
+      args.auntieUid,
+      staffSnap.data() as { displayName?: unknown } | undefined,
+      'assignAuntie',
+    );
   }
 
   await visitRef.set(

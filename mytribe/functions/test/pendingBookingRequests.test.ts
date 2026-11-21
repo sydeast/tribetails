@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
-const mocks = vi.hoisted(() => ({ dbFn: vi.fn() }));
-vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: vi.fn() }));
+const mocks = vi.hoisted(() => ({ dbFn: vi.fn(), getAdmin: vi.fn() }));
+vi.mock('../src/lib/firestoreAdmin', () => ({ db: mocks.dbFn, auth: vi.fn(), getAdmin: mocks.getAdmin }));
 vi.mock('../src/lib/logger', () => ({ logEvent: vi.fn() }));
 vi.mock('../src/lib/sentry', () => ({ initSentry: vi.fn() }));
 
@@ -250,5 +250,65 @@ describe('listPendingBookingRequests: per-visit detail (#1098)', () => {
       visitId: 'v1', serviceId: null, serviceType: 'Dog Walk', startTimeMs: SEP4,
       startTimePending: false, requestedDate: null, timeBlockLabel: null, lengthMinutes: null,
     });
+  });
+});
+
+// #1870: Accept confirmed an assignment the dialog never mentioned. The queue
+// now says who each request's visits are assigned to, by name, never by email.
+describe('listPendingBookingRequestsHandler: who the request is assigned to (#1870)', () => {
+  function dbWith(visits: Array<{ path: string; data: Record<string, unknown> }>, docs: Record<string, unknown> = {}) {
+    return buildDbMock({
+      docs: { 'families/fam1': { displayName: 'The Rivera Home' }, ...docs },
+      collectionGroupDocs: {
+        kinCares: visits.map((v) => ({ id: v.path.split('/').pop()!, path: v.path, data: v.data })),
+      },
+    });
+  }
+
+  it('carries the stored assignee and name', async () => {
+    mocks.dbFn.mockReturnValue(
+      dbWith([
+        { path: visitPath('fam1', 'req_1', 'v1'), data: { status: 'requested', startTime: ts(SEP4), assignedAuntieUid: 'owner1', auntieDisplayName: 'Auntie Dee' } },
+      ]).db,
+    );
+    const row = (await listPendingBookingRequestsHandler(req({}))).requests[0]!;
+    expect(row.assignedAuntieUid).toBe('owner1');
+    expect(row.auntieDisplayName).toBe('Auntie Dee');
+  });
+
+  it('names an assignee the visit stored without a name, from the staff record', async () => {
+    mocks.dbFn.mockReturnValue(
+      dbWith(
+        [{ path: visitPath('fam1', 'req_1', 'v1'), data: { status: 'requested', startTime: ts(SEP4), assignedAuntieUid: 'owner1', auntieDisplayName: null } }],
+        { 'staff/owner1': { displayName: 'Auntie Dee' } },
+      ).db,
+    );
+    const row = (await listPendingBookingRequestsHandler(req({}))).requests[0]!;
+    expect(row.auntieDisplayName).toBe('Auntie Dee');
+  });
+
+  it('never answers with an email, stored or from the sign-in account', async () => {
+    mocks.dbFn.mockReturnValue(
+      dbWith(
+        [{ path: visitPath('fam1', 'req_1', 'v1'), data: { status: 'requested', startTime: ts(SEP4), assignedAuntieUid: 'owner1', auntieDisplayName: 'e2e-admin@tribetails.com' } }],
+        { 'staff/owner1': { email: 'e2e-admin@tribetails.com' } },
+      ).db,
+    );
+    mocks.getAdmin.mockReturnValue({
+      auth: () => ({ getUsers: vi.fn(async () => ({ users: [{ uid: 'owner1', email: 'e2e-admin@tribetails.com' }] })) }),
+    });
+
+    const row = (await listPendingBookingRequestsHandler(req({}))).requests[0]!;
+    expect(row.assignedAuntieUid).toBe('owner1');
+    expect(row.auntieDisplayName).toBeNull();
+  });
+
+  it('says nobody when no visit of the request is assigned', async () => {
+    mocks.dbFn.mockReturnValue(
+      dbWith([{ path: visitPath('fam1', 'req_1', 'v1'), data: { status: 'requested', startTime: ts(SEP4) } }]).db,
+    );
+    const row = (await listPendingBookingRequestsHandler(req({}))).requests[0]!;
+    expect(row.assignedAuntieUid).toBeNull();
+    expect(row.auntieDisplayName).toBeNull();
   });
 });

@@ -1022,11 +1022,22 @@ internal fun SeriesDecisionDialog(
     enabled: Boolean = true,
     onDismiss: () -> Unit,
     onConfirm: (note: String) -> Unit,
+    /** #1870: the staff roster, read only when the assignee has no stored name. Null when the read fails. */
+    loadStaff: suspend () -> List<com.tribetails.auntieos.web.data.StaffMember>? = {
+        (FirestoreClient().listStaff() as? WriteResult.Ok)?.value
+    },
 ) {
     val c = AuntieTheme.colors
     // #2030: cleared for every new confirm, so a note meant for a decline never
     // rides an approval.
     var householdNote by remember(series?.kinfolkId, series?.batchId, decline) { mutableStateOf("") }
+    // #1870: who the visits go to, said before Book it.
+    var assigneeRoster by remember(series?.batchId) { mutableStateOf<List<com.tribetails.auntieos.web.data.StaffMember>?>(null) }
+    LaunchedEffect(series?.batchId, decline) {
+        if (series != null && !decline && assigneeRoster == null && series.acceptAssigneeLine(null) == null) {
+            assigneeRoster = loadStaff() ?: emptyList()
+        }
+    }
     AuntieDialog(
         visible = series != null,
         title = when {
@@ -1051,6 +1062,11 @@ internal fun SeriesDecisionDialog(
         if (series != null) {
             Text(series.subject(com.tribetails.auntieos.web.screens.LocalServiceCatalog.current), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
             Text(series.decisionLine(decline, zone), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+            if (!decline) {
+                series.acceptAssigneeLine(assigneeRoster)?.let { line ->
+                    Text(line, style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
+                }
+            }
             // #2030: the same two labels as the web's and Android's dialogs.
             MultilineField(
                 value = householdNote,

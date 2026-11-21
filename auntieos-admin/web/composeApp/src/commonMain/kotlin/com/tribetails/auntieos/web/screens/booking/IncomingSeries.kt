@@ -1,6 +1,7 @@
 package com.tribetails.auntieos.web.screens.booking
 
 import com.tribetails.auntieos.web.data.KinCareVisit
+import com.tribetails.auntieos.web.data.StaffMember
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
@@ -110,6 +111,30 @@ fun groupIncomingBySeries(
         }
         .sortedBy { it.visits.firstOrNull()?.startTime ?: "" }
 
+/** #1870: who the request's visits are assigned to, from the first visit that carries one. Blank when nobody. */
+val BookingSeries.assignedAuntieUid: String
+    get() = visits.firstOrNull { !it.assignedAuntieUid.isNullOrBlank() }?.assignedAuntieUid.orEmpty()
+/**
+ * #1870: the Book it confirm says who the visits go to. A request is assigned
+ * when the household makes it, so booking it confirms that assignment. The
+ * name stored with it, else the roster's word for that person; null while a
+ * nameless assignee waits on the roster. Never a sign-in email. The web twin
+ * is `acceptAssigneeLine` in VisitRequestsSection.tsx.
+ */
+fun BookingSeries.acceptAssigneeLine(roster: List<StaffMember>?): String? {
+    val uid = assignedAuntieUid
+    if (uid.isBlank()) return "No Auntie is assigned yet. Choose one on the visit once it is booked."
+    val stored = visits.firstOrNull { it.assignedAuntieUid == uid }?.auntieDisplayName?.trim().orEmpty()
+    if (stored.isNotEmpty() && '@' !in stored) return "Assigned to $stored."
+    if (roster == null) return null
+    val member = roster.firstOrNull { it.uid == uid }
+    member?.name?.let { return "Assigned to $it." }
+    return when (member?.role) {
+        "owner" -> "Assigned to the Operator."
+        "auntie" -> "Assigned to an Auntie with no name on file."
+        else -> "Assigned to a staff member."
+    }
+}
 /**
  * #1875: what answering the request will do, said with its day and time, so the
  * confirm step names the household (its title) and the date before anything is

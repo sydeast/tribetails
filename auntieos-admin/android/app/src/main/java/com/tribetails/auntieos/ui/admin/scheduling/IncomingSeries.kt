@@ -2,6 +2,7 @@ package com.tribetails.auntieos.ui.admin.scheduling
 
 import com.tribetails.auntieos.data.model.businessZone
 import com.tribetails.auntieos.data.repository.IncomingKinCare
+import com.tribetails.auntieos.data.repository.StaffMember
 import com.tribetails.auntieos.ui.admin.ServiceCatalog
 import java.time.LocalDate
 import java.time.LocalTime
@@ -50,6 +51,31 @@ fun IncomingSeries.subject(catalog: ServiceCatalog = ServiceCatalog()): String =
     if (isSeries) append(" · recurring series")
     if (serviceType.isNotBlank()) append(" · ${serviceName(catalog)}")
     if (kinNames.isNotEmpty()) append(" · ${kinNames.joinToString(", ")}")
+}
+
+/** #1870: who the request's visits are assigned to, from the first visit that carries one. Blank when nobody. */
+val IncomingSeries.assignedAuntieUid: String
+    get() = visits.firstOrNull { it.assignedAuntieUid.isNotBlank() }?.assignedAuntieUid.orEmpty()
+/**
+ * #1870: the Approve confirm says who the visits go to. A request is assigned
+ * when the household makes it, so Book it confirms that assignment. The name
+ * stored with it, else the roster's word for that person; null while a
+ * nameless assignee waits on the roster. Never a sign-in email. The web twin
+ * is `acceptAssigneeLine` in VisitRequestsSection.tsx.
+ */
+fun IncomingSeries.acceptAssigneeLine(roster: List<StaffMember>?): String? {
+    val uid = assignedAuntieUid
+    if (uid.isBlank()) return "No Auntie is assigned yet. Choose one on the visit once it is booked."
+    val stored = visits.firstOrNull { it.assignedAuntieUid == uid }?.auntieDisplayName?.trim().orEmpty()
+    if (stored.isNotEmpty() && '@' !in stored) return "Assigned to $stored."
+    if (roster == null) return null
+    val member = roster.firstOrNull { it.uid == uid }
+    member?.name?.let { return "Assigned to $it." }
+    return when (member?.role) {
+        "owner" -> "Assigned to the Operator."
+        "auntie" -> "Assigned to an Auntie with no name on file."
+        else -> "Assigned to a staff member."
+    }
 }
 /** #1577: the confirm step for Approve, titled with the household. */
 fun IncomingSeries.approveConfirmTitle(): String = "Book this request${householdSuffix(kinfolkName, "for")}"
