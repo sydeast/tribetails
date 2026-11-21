@@ -111,6 +111,7 @@ class InvoiceTotalDisagreementTest {
             editable,
         )
     }
+
     /** #1860: a paid invoice's lines are locked, so the banner never asks for a re-save. */
     @Test
     fun aLockedInvoiceIsNeverToldToResaveItsLines() {
@@ -118,7 +119,7 @@ class InvoiceTotalDisagreementTest {
             InvoiceTotalDisagreement(0L, 6000L, InvoiceStoredTotalField.TOTAL),
             linesEditable = false,
         )
-        assertTrue(locked.endsWith("A payment is recorded, so the line items can no longer be edited."))
+        assertTrue(locked.endsWith("The line items on this invoice are locked, so they cannot be edited."))
         assertFalse(locked.contains("press Edit"))
         for (text in listOf(locked, invoiceTotalDisagreementText(InvoiceTotalDisagreement(0L, 6000L, InvoiceStoredTotalField.TOTAL), true))) {
             assertFalse(text.contains("legacy"))

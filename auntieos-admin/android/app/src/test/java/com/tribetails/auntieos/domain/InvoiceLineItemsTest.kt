@@ -185,10 +185,11 @@ class InvoiceLineItemsTest {
             invoiceTotalDisagreementText(drift, linesEditable = true),
         )
         val locked = invoiceTotalDisagreementText(drift, linesEditable = false)
-        assertTrue(locked.endsWith("A payment is recorded, so the line items can no longer be edited."))
+        assertTrue(locked.endsWith("The line items on this invoice are locked, so they cannot be edited."))
         assertFalse(locked.contains("press Edit"))
         assertFalse(locked.contains("stored"))
     }
+
     @Test
     fun `falls back to the dollar total when totalCents is absent`() {
         // The case most worth catching: an invoice edited outside the callables

@@ -1079,16 +1079,18 @@ describe('InvoiceDetail lines-versus-total disagreement banner', () => {
     // person who can resolve it.
     expect(screen.getByText('Total').nextElementSibling).toHaveTextContent('$40.00');
   });
+
   it('#1860: names no storage detail, and says what Edit does on an editable invoice', () => {
     render(<InvoiceDetail invoice={entry({ lineItems: lines, total: 40 })} onClose={vi.fn()} />);
     expect(screen.queryByText(/legacy dollar field|normal edit path/i)).toBeNull();
     expect(screen.getByText(/press Edit and save them, and the total will follow/)).toBeInTheDocument();
   });
+
   it('#1860: on a paid invoice, says the lines are locked rather than asking for a re-save', () => {
     render(
       <InvoiceDetail invoice={entry({ ...PAID_STAMP, lineItems: [], totalCents: 6000, total: 60 })} onClose={vi.fn()} />,
     );
-    expect(screen.getByText(/A payment is recorded, so the line items can no longer be edited\./)).toBeInTheDocument();
+    expect(screen.getByText(/The line items on this invoice are locked, so they cannot be edited\./)).toBeInTheDocument();
     expect(screen.queryByText(/press Edit/)).toBeNull();
   });
   it('shows NO banner when the two agree', () => {

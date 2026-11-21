@@ -165,7 +165,7 @@ fun invoiceTotalDisagreementText(d: InvoiceTotalDisagreement, linesEditable: Boo
     return if (linesEditable) {
         "$head If the line items are right, press Edit and save them, and the total will follow."
     } else {
-        "$head A payment is recorded, so the line items can no longer be edited."
+        "$head The line items on this invoice are locked, so they cannot be edited."
     }
 }
 

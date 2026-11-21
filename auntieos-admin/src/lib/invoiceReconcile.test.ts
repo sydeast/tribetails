@@ -149,11 +149,13 @@ describe('invoiceTotalMismatchText (#1860)', () => {
         'and the total will follow.',
     );
   });
+
   it('never tells the Admin to re-save lines that a recorded payment has locked', () => {
     const text = invoiceTotalMismatchText(0, 6000, false);
-    expect(text).toContain('A payment is recorded, so the line items can no longer be edited.');
+    expect(text).toContain('The line items on this invoice are locked, so they cannot be edited.');
     expect(text).not.toMatch(/press Edit/);
   });
+
   it('names no storage detail', () => {
     for (const editable of [true, false]) {
       expect(invoiceTotalMismatchText(7500, 4000, editable)).not.toMatch(/legacy|dollar field|stored|edit path/i);
