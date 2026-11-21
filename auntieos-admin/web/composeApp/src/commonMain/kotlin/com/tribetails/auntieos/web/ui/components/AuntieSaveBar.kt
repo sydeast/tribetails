@@ -52,6 +52,12 @@ fun AuntieSaveBar(
     cancelLabel: String = "Cancel",
     dirtyLabel: String = "Unsaved changes",
     savedLabel: String = "All changes saved",
+    /**
+     * #1851: why Save is refused, said in the bar beside the button. Without it
+     * a form with a bad value read "All changes saved" over a Save that would
+     * not press, and the reason was only up beside the field, off screen.
+     */
+    problem: String? = null,
 ) {
     val c = AuntieTheme.colors
 
@@ -120,10 +126,15 @@ fun AuntieSaveBar(
                         center = Offset(size.width / 2f, size.height / 2f),
                     )
                 }
+                val status = saveBarStatus(dirty, problem, dirtyLabel, savedLabel)
                 Text(
-                    text = (if (dirty) dirtyLabel else savedLabel).uppercase(),
-                    style = AuntieTheme.typography.mono,
-                    color = if (dirty) c.textPrimary else c.textDim,
+                    text = status.text,
+                    style = if (status.isProblem) AuntieTheme.typography.labelSmall else AuntieTheme.typography.mono,
+                    color = when {
+                        status.isProblem -> c.error
+                        dirty -> c.textPrimary
+                        else -> c.textDim
+                    },
                 )
             }
 
@@ -145,3 +156,14 @@ fun AuntieSaveBar(
         }
     }
 }
+
+/** What the save bar's status line says, and whether it is a refusal. */
+data class SaveBarStatus(val text: String, val isProblem: Boolean)
+
+/**
+ * #1851: a refusal wins over the dirty / saved label, as written (a sentence,
+ * not shouted in capitals); otherwise the usual upper-case status.
+ */
+fun saveBarStatus(dirty: Boolean, problem: String?, dirtyLabel: String, savedLabel: String): SaveBarStatus =
+    if (!problem.isNullOrBlank()) SaveBarStatus(problem, isProblem = true)
+    else SaveBarStatus((if (dirty) dirtyLabel else savedLabel).uppercase(), isProblem = false)

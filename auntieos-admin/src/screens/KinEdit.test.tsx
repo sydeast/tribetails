@@ -547,3 +547,38 @@ describe('KinEdit: the vet (#1908 kin-vet)', () => {
     expect(await screen.findByText('The vet list did not load')).toBeInTheDocument();
   });
 });
+/**
+ * #1851: a refused save put its banner at the top of the form, off screen, and
+ * its arrival pushed the Save button out of view. It named Age only when Weight
+ * was refused too.
+ */
+describe('KinEdit: a refused save is said beside Save (#1851)', () => {
+  it('names every refused value under the Save row and focuses the first field to fix', async () => {
+    getKin.mockResolvedValue(kin());
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    const age = (await screen.findByText('Age')).parentElement!.querySelector('input')!;
+    const weight = screen.getByText('Weight').parentElement!.querySelector('input')!;
+    await userEvent.type(age, 'abc-5');
+    await userEvent.type(weight, 'heavy-ish');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    const banner = (await screen.findByText("That didn't save")).closest('.kedit__save-error') as HTMLElement;
+    expect(banner).not.toBeNull();
+    expect(banner).toHaveTextContent(/Age is a number of years/);
+    expect(banner).toHaveTextContent(/Weight is a number/);
+    const actions = document.querySelector('.kedit__actions') as HTMLElement;
+    // After the Save row in the document, not under the page heading.
+    expect(actions.compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await waitFor(() => expect(age).toHaveFocus());
+    expect(updateKin).not.toHaveBeenCalled();
+  });
+  it('a refused write is said beside Save too', async () => {
+    getKin.mockResolvedValue(kin());
+    updateKin.mockRejectedValue(new Error('The network is down.'));
+    render(<KinEdit kinId="p1" kinName="Willow" onDone={vi.fn()} onCancel={vi.fn()} />);
+    const nameInput = (await screen.findByText('Name')).parentElement!.querySelector('input')!;
+    await userEvent.type(nameInput, ' B');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    const message = await screen.findByText(/Could not save: The network is down\./);
+    expect(message.closest('.kedit__save-error')).not.toBeNull();
+  });
+});
