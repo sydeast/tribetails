@@ -522,6 +522,33 @@ describe('getMyInvoices prefers the stored line items', () => {
     expect(res.open[0].discount).toBe('10%');
   });
 
+  it('#1974: the household figures match the PDF to the cent, odd quantities and cents included', async () => {
+    const doc = {
+      invoiceStatus: 'open',
+      kinfolkId: '3',
+      invoiceDiscountCents: 333,
+      lineItems: [
+        { description: 'Half day', qty: 1.5, unitCents: 3333, discountCents: 17 },
+        { description: 'Walk', qty: 3, unitCents: 1999 },
+        { description: 'Overnight', qty: 2.25, unitCents: 4567, discountCents: 1001 },
+      ],
+    };
+    const { invoiceForPdf } = await import('../src/lib/invoicePdf');
+    const { computeInvoiceTotals } = await import('../src/lib/invoiceMath');
+    const pdf = invoiceForPdf('inv1', doc);
+    // The total the office's save writes (`updateInvoice` via invoiceMath), so
+    // the household, the PDF and the admin all close on the same figure.
+    const totalCents = computeInvoiceTotals(doc.lineItems, doc.invoiceDiscountCents, 0).totalCents;
+    expect(totalCents).toBe(pdf.subtotalCents - pdf.invoiceDiscountCents);
+    const res = await load({ ...doc, total: totalCents / 100, amountDue: totalCents / 100 });
+    const inv = res.open[0];
+    expect(inv.lineItems?.map((l) => l.amountCents)).toEqual(pdf.lineItems.map((l) => l.amountCents));
+    expect(inv.lineItems?.map((l) => l.discountCents)).toEqual(pdf.lineItems.map((l) => l.discountCents));
+    expect(inv.subtotalCents).toBe(pdf.subtotalCents);
+    expect(inv.invoiceDiscountCents).toBe(pdf.invoiceDiscountCents);
+    expect(Math.round(inv.total * 100)).toBe(inv.subtotalCents! - inv.invoiceDiscountCents!);
+  });
+
   it('gives every row a key that is unique within the invoice', async () => {
     // Keying on sessionId collapsed every stored row onto one empty key, which
     // is a rendering bug the server can prevent rather than hope about.
