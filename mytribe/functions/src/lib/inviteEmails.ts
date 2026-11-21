@@ -123,11 +123,18 @@ export async function sendPrimaryInviteEmails(args: SendPrimaryInviteEmailsArgs)
   const claimUrl = `${args.claimBaseUrl}?invite=${args.inviteId}`;
   // #957: one frame read for up to three sends in this invocation.
   const frame = await loadEmailFrame('sendPrimaryInviteEmails');
+  // #2487: both callers hand over the household's record id as `tribeName`,
+  // so all three emails named the household "9fQ2...". Its own name instead,
+  // and the invitee is greeted plainly rather than by the address the mail
+  // goes to.
+  // Loaded here, not at the top: it is one more module every cold start would pay for.
+  const { INVITE_GREETING_FALLBACK, inviteNamesFor } = await import('./inviteNames.js');
+  const tribeName = (await inviteNamesFor(args.tribeName, { caller: 'sendPrimaryInviteEmails' })).tribeName;
   await sendFromTemplate('invite.secondary', args.invitedEmail, {
     primaryDisplayName: args.authorName ?? 'Your Kin Parent',
-    secondaryDisplayName: args.invitedEmail,
+    secondaryDisplayName: INVITE_GREETING_FALLBACK,
     secondaryLabel: args.secondaryLabel,
-    tribeName: args.tribeName,
+    tribeName,
     claimUrl,
     expiresInDays: args.expiresInDays,
   }, frame);
@@ -136,7 +143,7 @@ export async function sendPrimaryInviteEmails(args: SendPrimaryInviteEmailsArgs)
       primaryDisplayName: args.authorName ?? 'Kin Parent',
       invitedEmail: args.invitedEmail,
       secondaryLabel: args.secondaryLabel,
-      tribeName: args.tribeName,
+      tribeName,
       permissionsCsv: Object.entries(args.proposedPermissions)
         .filter(([, v]) => v)
         .map(([k]) => k)
@@ -148,7 +155,7 @@ export async function sendPrimaryInviteEmails(args: SendPrimaryInviteEmailsArgs)
     await sendFromTemplate('invite.primary-receipt', args.primaryEmail, {
       invitedEmail: args.invitedEmail,
       secondaryLabel: args.secondaryLabel,
-      tribeName: args.tribeName,
+      tribeName,
       expiresInDays: args.expiresInDays,
     }, frame);
   }

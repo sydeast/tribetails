@@ -568,6 +568,46 @@ export async function enrichTemplateData(
     return names.join(', ');
   }
 
+  /**
+   * #2487: the Kin a KINTALE is about: "A new KinTale about {{kinName}}"
+   * named the household's whole roster, so a tale about one Kin named every
+   * Kin the household has. The tale's visit names its Kin, the read the
+   * notifications list line makes (`buildNotificationDetail`); a tale with no
+   * visit names the Kin it was written for (`kinIds`, flat `kin/{id}` ids,
+   * the only Kin field a tale stores). Only this household's tale counts. ''
+   * when the tale names none, and the caller falls back to the roster.
+   */
+  async function loadTaleKinNames(): Promise<string> {
+    const taleId = str(data.taleId) || str(data.reportId);
+    if (!taleId || !familyId) return '';
+    try {
+      const snap = await firestore.doc(`kin_care_reports/${taleId}`).get();
+      const tale = snap.exists ? ((snap.data() as Doc) ?? null) : null;
+      if (!tale) return '';
+      const taleKin = str(tale.kinfolkId);
+      if (taleKin && taleKin !== familyId) return '';
+      const sessionId = str(tale.sessionId);
+      if (sessionId) {
+        const session = await firestore.doc(`kin_care_sessions/${sessionId}`).get();
+        const s = session.exists ? ((session.data() as Doc) ?? null) : null;
+        const sessionKin = str(s?.kinfolkId);
+        const names = sessionKin && sessionKin !== familyId ? '' : joinNames(s?.kinNames);
+        if (names) return names;
+      }
+      const ids = Array.isArray(tale.kinIds) ? tale.kinIds.map((x) => str(x)).filter((x) => x !== '') : [];
+      if (ids.length === 0) return '';
+      const roster = await firestore.collection('kin').where('kinfolkId', '==', familyId).get();
+      const byId = new Map(roster.docs.map((d) => [d.id, str((d.data() as Doc)?.name)]));
+      return ids
+        .map((id) => byId.get(id) ?? '')
+        .filter((n) => n !== '')
+        .join(', ');
+    } catch (err) {
+      logErr('kintale', taleId, err);
+      return '';
+    }
+  }
+
   async function loadFamilyPetsName(): Promise<string> {
     if (!familyId) return '';
     try {
@@ -915,7 +955,12 @@ export async function enrichTemplateData(
         if (roster !== '') ctx[QUOTE_HOUSEHOLD_KIN_FIELD] = roster;
       }
     } else if (!v) {
-      v = await loadKinName();
+      // #2487: a KinTale's notice names the tale's Kin, and a bill's the Kin
+      // on the visits it bills, before the roster: "your invoice for Rex,
+      // Biscuit's care" for a bill that is only Rex's names the wrong Kin.
+      if (key.startsWith('kintale.')) v = await loadTaleKinNames();
+      else if (invoiceId) v = await loadQuoteKinNames();
+      if (!v) v = await loadKinName();
     }
     fill('kinName', v);
   }

@@ -36,6 +36,24 @@ describe('sendFromTemplate', () => {
     });
   });
 
+  it('#2487: fills {{Business}} on a direct send, and keeps a caller value', async () => {
+    tplGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ subject: 'Welcome from {{Business}}', body: 'Hi', html: null }),
+    });
+    const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
+    await sendFromTemplate('invite.primary', 'a@b.com', { name: 'Alice' });
+    const sent = sendMock.mock.calls[0][0].data as Record<string, unknown>;
+    // The settings read fails in this mock, so the neutral wording, never a blank.
+    expect(typeof sent.Business).toBe('string');
+    expect(String(sent.Business).trim()).not.toBe('');
+    expect(sent.name).toBe('Alice');
+
+    sendMock.mockClear();
+    await sendFromTemplate('invite.primary', 'a@b.com', { Business: 'Given', business: 'given' });
+    expect(sendMock.mock.calls[0][0].data).toEqual({ Business: 'Given', business: 'given' });
+  });
+
   it('throws fail-loud when template missing', async () => {
     tplGet.mockResolvedValue({ exists: false });
     const { sendFromTemplate } = await import('../src/lib/sendFromTemplate');
