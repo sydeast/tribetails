@@ -950,6 +950,14 @@ async function submitNewRequest(
     // request turned down in silence is what #533 exists to end, and an operator
     // who is not told about the silence cannot phone them instead.
     const declined = await declineBookingRequest(kinfolkId, batchId, note);
+    // #1877: a decline can stop partway. The server keeps that request waiting
+    // and sends the household nothing, so it stays counted and the line says so.
+    if (declined.failedVisits > 0) {
+      return {
+        message: `Declined ${String(declined.affectedVisits)} of ${String(declined.affectedVisits + declined.failedVisits)} visits. The rest did not go through and the household has not been told, so try again.`,
+        stillWaiting: true,
+      };
+    }
     return {
       message: declined.householdNotified
         ? 'Declined. Nothing was booked and the household has your answer.'

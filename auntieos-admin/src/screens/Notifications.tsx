@@ -478,7 +478,7 @@ export function Notifications({ onNavigate, isAuntie = false }: NotificationsPro
             setDecision(null);
             if (row.kind === 'newBooking' && stillWaiting !== true) {
               setAnswered((prev) =>
-                withAnsweredRequest(prev, queueRead, pendingRequestKey(row.request.kinfolkId, row.request.batchId)),
+                withAnsweredRequest(prev, pendingRequestKey(row.request.kinfolkId, row.request.batchId)),
               );
             }
             const name = row.request.kinfolkName?.trim() ?? '';

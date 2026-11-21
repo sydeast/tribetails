@@ -1001,6 +1001,28 @@ describe('Notifications quick actions (issue #20)', () => {
     expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
   });
 
+  it('#1877: a decline that stops partway leaves the request counted and says so', async () => {
+    declineBookingRequest.mockResolvedValue({ ok: true, householdNotified: false, affectedVisits: 1, failedVisits: 2 });
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    const tile = () => screen.getByText('Needs a decision').closest('.den-stat') as HTMLElement;
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    await confirmDecision('Send the decline');
+    expect(await screen.findByText(/Declined 1 of 3 visits/)).toBeInTheDocument();
+    expect(within(tile()).getByText('1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
+  });
+
+  it('#1877: a whole decline drops the request from the count', async () => {
+    declineBookingRequest.mockResolvedValue({ ok: true, householdNotified: true, affectedVisits: 3, failedVisits: 0 });
+    mockStreams({ status: 'ready', data: [waitingRequest()] });
+    render(<Notifications />);
+    const tile = () => screen.getByText('Needs a decision').closest('.den-stat') as HTMLElement;
+    await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+    await confirmDecision('Send the decline');
+    await waitFor(() => expect(within(tile()).getByText('0')).toBeInTheDocument());
+  });
+
   it('#1877: a refused approval leaves the request counted', async () => {
     approveBookingRequest.mockRejectedValue(new Error('That time overlaps a busy block on your Google Calendar.'));
     mockStreams({ status: 'ready', data: [waitingRequest()] });
