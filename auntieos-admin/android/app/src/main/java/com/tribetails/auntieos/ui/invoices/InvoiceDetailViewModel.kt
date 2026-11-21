@@ -214,26 +214,43 @@ class InvoiceDetailViewModel(
      * folding it in would make a landed first attempt look like an edit to the
      * retry that follows a lost reply.
      *
-     * #2297: THE KEY BELONGS TO ONE OPENING OF THE FORM. [openRecordPayment]
-     * and [closeRecordPayment] let it go, so a payment entered after Cancel is a
-     * new payment even when every box matches the first (two equal cash
-     * instalments on one day). Before this the key lived as long as the screen,
-     * and that second payment was answered with the first and never recorded.
-     * Only the money is in [paymentSignature] now: fixing a note, the method,
-     * the reference or the date after a lost reply is a retry of the same
-     * payment. After a failed press the payments are read again
-     * ([checkPaymentLanded]); when that read fails as well, nobody knows
-     * whether the first press landed, so [paymentSubmissionPinned] holds the
-     * key for the rest of the opening whatever is edited.
+     * #2297: SUPERSEDED IN PART. A KEY IS HELD FROM ITS FIRST PRESS UNTIL THE
+     * SERVER ANSWERS ONE, whatever is edited and across Cancel, the same rule
+     * as admin web (`lib/paymentSubmissionKey.ts`) and the desktop console.
+     * The server's create of `payments/{key}` is the only thing that makes two
+     * presses one payment, and "not found" after a failure can be a payment
+     * still committing, so a new key while an earlier press is unresolved is
+     * how a payment gets recorded twice. An answer lets the key go, so the next
+     * payment (two equal cash instalments on one day) gets a new one. The
+     * server marks an answer that came from an earlier press's row
+     * (`replayed`); when the presses under the key had other figures
+     * ([paymentSignature]) or came from an earlier opening of the form,
+     * [settlePaymentKey] reads it as that earlier payment's, and the screen
+     * says so instead of reporting it as the figures just typed.
      */
     private var paymentSubmissionKey: String? = null
-    private var paymentSubmissionSignature: String? = null
-    private var paymentSubmissionPinned: Boolean = false
+    private var paymentSubmissionInvoiceId: String? = null
+    private val paymentSubmissionSignatures = mutableSetOf<String>()
+    private var paymentSubmissionOpening: Int = 0
+    /** #2297: counts openings of Record payment, so a key from an earlier one is told apart. */
+    private var recordPaymentOpening: Int = 0
 
     private fun releasePaymentKey() {
         paymentSubmissionKey = null
-        paymentSubmissionSignature = null
-        paymentSubmissionPinned = false
+        paymentSubmissionInvoiceId = null
+        paymentSubmissionSignatures.clear()
+    }
+
+    /**
+     * #2297: the server answered a press under the held key, which lets it go.
+     * True when the answer is an earlier entry's: a replay, and the presses
+     * under the key had other figures or came from an earlier opening.
+     */
+    private fun settlePaymentKey(replayed: Boolean): Boolean {
+        val earlier = replayed && paymentSubmissionKey != null &&
+            (paymentSubmissionOpening != recordPaymentOpening || paymentSubmissionSignatures.size > 1)
+        releasePaymentKey()
+        return earlier
     }
 
     /**
@@ -359,8 +376,9 @@ class InvoiceDetailViewModel(
     }
 
     fun openRecordPayment() {
-        // #2297: a new opening is a new payment.
-        if (!_uiState.value.recordingPayment) releasePaymentKey()
+        // #2297: a payment that got its answer already let its key go. A key
+        // from a press that failed stays held; see [paymentSubmissionKey].
+        if (!_uiState.value.recordingPayment) recordPaymentOpening += 1
         _uiState.value = _uiState.value.copy(showRecordPayment = true)
     }
     /**
@@ -369,8 +387,7 @@ class InvoiceDetailViewModel(
      */
     fun closeRecordPayment() {
         if (_uiState.value.recordingPayment) return
-        // #2297: a payment entered after the form was closed is a new payment.
-        releasePaymentKey()
+        // #2297: Cancel keeps a key whose press failed; see [paymentSubmissionKey].
         _uiState.value = _uiState.value.copy(showRecordPayment = false)
     }
 
@@ -412,13 +429,15 @@ class InvoiceDetailViewModel(
         // the same key: a nine-second cold start is long enough for an operator
         // to press again, and two attempts overlapping is the ordinary case this
         // protects, not the exotic one.
-        val signature = paymentSignature(invoiceId, payment, appliedAmount)
-        // #2297: a pinned key is held whatever was edited; see the note on it.
-        if (paymentSubmissionKey == null || (!paymentSubmissionPinned && paymentSubmissionSignature != signature)) {
+        // #2297: a held key is kept whatever was edited, until an answer; see
+        // the note on it. It never crosses invoices.
+        if (paymentSubmissionKey == null || paymentSubmissionInvoiceId != invoiceId) {
+            releasePaymentKey()
             paymentSubmissionKey = mintPaymentIdempotencyKey()
-            paymentSubmissionSignature = signature
-            paymentSubmissionPinned = false
+            paymentSubmissionInvoiceId = invoiceId
+            paymentSubmissionOpening = recordPaymentOpening
         }
+        paymentSubmissionSignatures += paymentSignature(invoiceId, payment, appliedAmount)
         val key = paymentSubmissionKey
         viewModelScope.launch {
             // #982: the applied part only. The tip is tip and the leftover is
@@ -463,10 +482,10 @@ class InvoiceDetailViewModel(
             } else null
             if (recorded == null) {
                 val err = firstError ?: IllegalStateException("recordPayment returned no answer")
-                if (landed == PaymentLanded.UNKNOWN) paymentSubmissionPinned = true
-                // The key is kept: the next press of the same entry is a retry
-                // of this one, and the server answers a retry from the row the
-                // first attempt wrote, if it wrote one.
+                // The key is kept, whatever the check found and whatever is
+                // edited next: the next press is answered from the row the
+                // first attempt wrote, if it wrote one, and a first attempt
+                // still committing cannot land beside it.
                 //
                 // #2299: a refusal may mean the balance moved since the form
                 // loaded. The figure the server refused against is shown
@@ -500,7 +519,21 @@ class InvoiceDetailViewModel(
             // operator meant to make, not a retry of this one, and holding a key
             // across it would have the server hand back the first payment and
             // report it as though the second had landed.
-            releasePaymentKey()
+            // #2297: a replay of a press made with other figures, or in an
+            // earlier opening, is that earlier payment's answer, and the screen
+            // says so instead of reporting it as the figures just typed.
+            if (settlePaymentKey(recorded.replayed == true)) {
+                loadPaymentsForInvoice(invoiceId)
+                reloadInvoiceQuietly(invoiceId)
+                _uiState.value = _uiState.value.copy(
+                    recordingPayment = false,
+                    showRecordPayment = false,
+                    toastMessage = PAYMENT_EARLIER_ON_RECORD,
+                    toastVisible = true,
+                    toastIsError = true,
+                )
+                return@launch
+            }
             // #1511: the server's word that the confirmation reached the household
             // in the app only. Read only when she asked for one.
             val confirmationAppOnly =
@@ -1362,13 +1395,6 @@ class InvoiceDetailViewModel(
         val after = invoiceRepository.readInvoiceSendMarks(invoiceId)
         return sendOutcomeAfterSilence(action, SEND_BUDGET_SECONDS, before, after)
     }
-    /** Re-fetch the invoice into state without flipping the loading shimmer. */
-    /**
-     * #2299: the payments and the balance again, after a payment that did not
-     * go through. Quiet: the failed payment's own message is on screen, and a
-     * second toast about this read would replace it. A failed read leaves what
-     * is shown as it was.
-     */
     /**
      * #2297: did the press that failed land after all? `recordPayment` writes
      * its ledger row at `payments/{key}`, and `getInvoiceLedger` lists that row
@@ -1391,6 +1417,13 @@ class InvoiceDetailViewModel(
             },
         )
 
+    /** Re-fetch the invoice into state without flipping the loading shimmer. */
+    /**
+     * #2299: the payments and the balance again, after a payment that did not
+     * go through. Quiet: the failed payment's own message is on screen, and a
+     * second toast about this read would replace it. A failed read leaves what
+     * is shown as it was.
+     */
     private fun reloadBalanceQuietly(invoiceId: String) {
         viewModelScope.launch {
             invoiceRepository.getInvoiceLedger(invoiceId)
@@ -1664,15 +1697,6 @@ internal fun archiveSuccessMessage(
  * "paid in full": that is the very claim the 2026-07-25 fix exists to stop the
  * app making on its own.
  */
-/**
- * What the admin is told when Record payment did not come back with an answer
- * the app could use. Pure; unit-tested.
- *
- * A refusal or a failed call recorded nothing, and the server's own sentence
- * says why. #2298: an answer that could not be read is different. The call
- * went through, so the toast must not say the payment was not recorded, and it
- * carries no developer wording.
- */
 /** #2297: what the check after a failed Record found. */
 internal enum class PaymentLanded { NOT_CHECKED, YES, NO, UNKNOWN }
 
@@ -1709,6 +1733,23 @@ internal fun paymentMayHaveLanded(err: Throwable): Boolean {
 internal const val PAYMENT_LANDED_NO_ANSWER =
     "The payment was recorded, but this screen did not get its details back. Check the payments below before recording another one."
 
+/**
+ * #2297: the answer is a replay of an earlier press made with other figures, or
+ * in an earlier opening of the form. Money was recorded once: that earlier
+ * press. The same words as admin web and the desktop console.
+ */
+internal const val PAYMENT_EARLIER_ON_RECORD =
+    "An earlier press of Record went through, and that payment is the one on record. The amounts typed after it were not recorded. Check the payments below before recording another one."
+
+/**
+ * What the admin is told when Record payment did not come back with an answer
+ * the app could use. Pure; unit-tested.
+ *
+ * A refusal or a failed call recorded nothing, and the server's own sentence
+ * says why. #2298: an answer that could not be read is different. The call
+ * went through, so the toast must not say the payment was not recorded, and it
+ * carries no developer wording.
+ */
 internal fun recordPaymentFailureToast(err: Throwable): String =
     if (err is com.tribetails.auntieos.data.repository.PaymentAnswerUnreadable) {
         com.tribetails.auntieos.data.repository.PAYMENT_ANSWER_UNREADABLE_MESSAGE

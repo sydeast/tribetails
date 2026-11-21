@@ -2,51 +2,68 @@ import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.gener
 import { mintPaymentIdempotencyKey } from './moneyIdempotency';
 
 /**
- * #2297: THE KEY ONE OPENING OF RECORD PAYMENT HOLDS.
+ * #2297: THE KEY A RECORD PAYMENT ENTRY HOLDS.
  *
  * `recordPayment` dedupes on the key (#825): a second press with the same key
- * is answered from the row the first press wrote, if it wrote one. So whether
- * a lost reply turns into one payment or two is decided by when the screen
- * keeps its key and when it mints a new one. The rules, the same on admin web,
- * admin Android and the desktop console:
+ * is answered from the row the first press wrote, if it wrote one, and the
+ * server's create of `payments/{key}` lets only one of two overlapping presses
+ * write. That create is the only thing that makes two presses one payment, so
+ * the rule is about when a press may carry a DIFFERENT key. The rules, the same
+ * on admin web, admin Android and the desktop console:
  *
- *   - ONE OPENING, ONE KEY. Opening Record payment starts with no key, and
- *     closing it (Cancel, or a payment that went through) lets the key go. A
- *     second payment entered after the form was closed is a new payment, even
- *     when every box matches the first (two equal cash instalments on one day).
- *   - A RE-PRESS OF THE SAME FIGURES KEEPS THE KEY. Only the money decides
- *     what "the same entry" is: the amount, the tip, the fee, the payment
- *     amount and the credit. Fixing a note, the method, the reference, or
- *     ticking the confirmation is a retry of the same payment, and before this
- *     the web screen minted a new key for each of those, so a lost reply
- *     followed by a fixed note recorded the payment twice.
- *   - PINNED WHEN NOBODY KNOWS. After a failed press the screen reads the
- *     invoice's payments again (`paymentLandedCheck`). When that read fails
- *     too, nobody knows whether the first press landed, so the key is pinned
- *     for the rest of this opening, whatever is edited. A changed figure then
- *     gets the first payment's answer if it did land, which is the truth,
- *     rather than a second payment.
+ *   - A KEY IS HELD FROM ITS FIRST PRESS UNTIL THE SERVER ANSWERS ONE. A
+ *     failed press keeps it whatever is edited next, and across Cancel and the
+ *     next opening of the form. A failure can be a request that never arrived
+ *     or a payment whose answer was lost, and a payment can still commit after
+ *     the check that looked for it found nothing. A new key while an earlier
+ *     press is unresolved is the one way to record a payment twice.
+ *   - AN ANSWER LETS THE KEY GO. The next press after it is a new payment, even
+ *     when every box matches (two equal cash instalments on one day).
+ *   - A REPLAYED ANSWER IS CHECKED (`settle`). The server marks an answer that
+ *     came from an earlier press's row (`replayed`). When the presses under the
+ *     key all had these figures, in this opening, that is this entry's answer.
+ *     Otherwise it is an earlier entry's: the screen says that payment is the
+ *     one on record and the figures typed since were not recorded, instead of
+ *     reporting the earlier payment as the one just typed.
+ *   - A KEY NEVER CROSSES INVOICES (`scope`).
  */
 export class PaymentSubmissionKey {
-  private held: { key: string; figures: string; pinned: boolean } | null = null;
+  private held: { key: string; scope: string; figures: Set<string>; opening: number } | null = null;
+  private opening = 0;
 
   constructor(private readonly mint: () => string = mintPaymentIdempotencyKey) {}
 
-  /** The key for a press of these figures, minting one only when needed. */
-  keyFor(figures: string): string {
+  /** A new opening of the form. A key still unresolved from an earlier one stays held. */
+  open(): void {
+    this.opening += 1;
+  }
+
+  /** The key for a press of these figures on this invoice, minting one only when none is held. */
+  keyFor(scope: string, figures: string): string {
     const held = this.held;
-    if (held !== null && (held.pinned || held.figures === figures)) return held.key;
+    if (held !== null && held.scope === scope) {
+      held.figures.add(figures);
+      return held.key;
+    }
     const key = this.mint();
-    this.held = { key, figures, pinned: false };
+    this.held = { key, scope, figures: new Set([figures]), opening: this.opening };
     return key;
   }
 
-  /** The last press failed and the read that would have said whether it landed failed as well. */
-  pin(): void {
-    if (this.held !== null) this.held = { ...this.held, pinned: true };
+  /**
+   * The server answered a press under the held key, which lets the key go.
+   * `'recorded'`: this entry is the payment on record. `'earlier'`: the answer
+   * is a replay of a press made with other figures, or in an earlier opening,
+   * and that earlier payment is the one on record.
+   */
+  settle(replayed: boolean): 'recorded' | 'earlier' {
+    const held = this.held;
+    this.held = null;
+    if (!replayed || held === null) return 'recorded';
+    return held.opening === this.opening && held.figures.size === 1 ? 'recorded' : 'earlier';
   }
 
-  /** The form closed, or the payment went through: the next press is a new payment. */
+  /** The payment is known to be on record without an answer: the next press is a new payment. */
   release(): void {
     this.held = null;
   }
@@ -57,8 +74,9 @@ export class PaymentSubmissionKey {
 }
 
 /**
- * The money figures of one Record payment entry, as typed. Two presses with
- * the same figures are the same payment; see `PaymentSubmissionKey`.
+ * The money figures of one Record payment entry, as typed. A replayed answer
+ * to a press whose figures differ from an earlier press under the same key is
+ * an earlier entry's answer; see `PaymentSubmissionKey.settle`.
  */
 export function paymentFigures(boxes: {
   amount: string;
@@ -77,7 +95,7 @@ export function paymentFigures(boxes: {
  * row at `payments/{key}`, and `getInvoiceLedger` lists that row under this
  * invoice with the key as its `paymentId`.
  *
- * `'unknown'` when the read itself fails: the caller then pins the key.
+ * `'unknown'` when the read itself fails. The key stays held either way.
  */
 export async function paymentLandedCheck(
   readLedger: () => Promise<GetInvoiceLedgerResult>,
@@ -125,3 +143,11 @@ export function paymentMayHaveLanded(err: unknown): boolean {
  */
 export const PAYMENT_LANDED_NO_ANSWER =
   'The payment was recorded, but this screen did not get its details back. Check the payments below before recording another one.';
+
+/**
+ * What the panel says when the answer is a replay of an earlier press made
+ * with other figures, or in an earlier opening of the form (see
+ * `PaymentSubmissionKey.settle`). Money was recorded once: the earlier press.
+ */
+export const PAYMENT_EARLIER_ON_RECORD =
+  'An earlier press of Record went through, and that payment is the one on record. The amounts typed after it were not recorded. Check the payments below before recording another one.';

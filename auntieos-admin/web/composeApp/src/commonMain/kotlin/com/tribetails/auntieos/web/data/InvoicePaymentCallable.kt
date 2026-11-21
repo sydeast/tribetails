@@ -100,6 +100,12 @@ data class RecordPaymentOutcome(
      * false. Absent from an older function, which reads false.
      */
     val confirmationAppOnly: Boolean = false,
+    /**
+     * #2297: the answer came from the row an earlier call with the same key
+     * wrote, and this call recorded nothing. Absent from an older function,
+     * which reads false.
+     */
+    val replayed: Boolean = false,
 )
 
 private val recordPaymentJson = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -121,6 +127,7 @@ fun decodeRecordPaymentOutcome(body: String): RecordPaymentOutcome {
         confirmationEmailSent = flag("confirmationEmailSent"),
         householdNoPortalAccount = flag("householdNoPortalAccount"),
         officeNoticePending = flag("officeNoticePending"),
+        replayed = flag("replayed"),
         confirmationAppOnly = flag("confirmationAppOnly"),
     )
 }
@@ -185,45 +192,73 @@ const val PAYMENT_ANSWER_UNREADABLE_MESSAGE: String =
  * [release] after the server has answered Ok, so a second, genuinely identical
  * payment (two equal cash instalments on one day) is not replayed as the first.
  *
- * #2297, the same rules as admin web and Android:
- *   - ONE OPENING, ONE KEY. The dialog calls [release] when it opens and when
- *     it is dismissed, so a payment entered after Cancel is a new payment even
- *     when every box matches. Before this the key lived as long as the invoice
- *     screen, and that second payment was answered with the first.
- *   - ONLY THE MONEY decides "a changed entry" ([paymentEntryFigures]). Fixing
- *     the note, method, reference or date after a lost reply is a retry.
- *   - [pin] when a failed press could not be checked against the invoice's
- *     payments: nobody knows whether it landed, so the key is held for the rest
- *     of the opening whatever is edited.
+ * #2297 SUPERSEDES "a changed entry gets a new key". The same rules as admin
+ * web (`lib/paymentSubmissionKey.ts`) and Android:
+ *   - A KEY IS HELD FROM ITS FIRST PRESS UNTIL THE SERVER ANSWERS ONE,
+ *     whatever is edited and across Cancel. The server's create of
+ *     `payments/{key}` is the only thing that makes two presses one payment,
+ *     and "not found" after a failure can be a payment still committing, so a
+ *     new key while an earlier press is unresolved is how a payment gets
+ *     recorded twice. An answer lets it go ([settle]).
+ *   - A REPLAYED ANSWER IS CHECKED ([settle]). When the presses under the key
+ *     had other figures ([paymentEntryFigures]), or came from an earlier
+ *     opening of the dialog ([open]), the answer is that earlier payment's,
+ *     and the dialog says so instead of reporting it as the figures just typed.
+ *   - A KEY NEVER CROSSES INVOICES.
  */
 class PaymentSubmissionKeys(private val mint: () -> String = { mintPaymentIdempotencyKey() }) {
-    private var held: Pair<String, String>? = null
-    private var pinned: Boolean = false
+    private var key: String? = null
+    private var scope: String? = null
+    private val figures = mutableSetOf<String>()
+    private var keyOpening: Int = 0
+    private var opening: Int = 0
 
-    fun keyFor(signature: String): String {
-        held?.let { (sig, key) -> if (pinned || sig == signature) return key }
+    /** A new opening of the dialog. A key still unresolved from an earlier one stays held. */
+    fun open() {
+        opening += 1
+    }
+
+    /** The key for a press of these figures on this invoice, minting one only when none is held. */
+    fun keyFor(scope: String, signature: String): String {
+        val held = key
+        if (held != null && this.scope == scope) {
+            figures += signature
+            return held
+        }
+        release()
         val minted = mint()
-        held = signature to minted
-        pinned = false
+        key = minted
+        this.scope = scope
+        keyOpening = opening
+        figures += signature
         return minted
     }
 
     /** The key held now, or null. */
-    val current: String? get() = held?.second
+    val current: String? get() = key
 
-    fun pin() {
-        if (held != null) pinned = true
+    /**
+     * The server answered a press under the held key, which lets it go. True
+     * when the answer is an earlier entry's: a replay, and the presses under
+     * the key had other figures or came from an earlier opening.
+     */
+    fun settle(replayed: Boolean): Boolean {
+        val earlier = replayed && key != null && (keyOpening != opening || figures.size > 1)
+        release()
+        return earlier
     }
 
+    /** The payment is known to be on record without an answer: the next press is a new payment. */
     fun release() {
-        held = null
-        pinned = false
+        key = null
+        scope = null
+        figures.clear()
     }
 }
 
 /**
- * #2297: the money figures of one entry, which are all that make two presses
- * different payments. The invoice is in it so a key can never cross invoices.
+ * #2297: the money figures of one entry, which tell a replay of an earlier
+ * press made with other figures apart ([PaymentSubmissionKeys.settle]).
  */
 fun paymentEntryFigures(entry: InvoicePaymentEntry): String = listOf(
     entry.payment.invoiceId,
@@ -246,9 +281,22 @@ const val PAYMENT_LANDED_NO_ANSWER: String =
 const val PAYMENT_LANDED_NO_ANSWER_CODE: String = "payment_landed_no_answer"
 
 /**
+ * #2297: the answer is a replay of an earlier press made with other figures, or
+ * in an earlier opening of the dialog. Money was recorded once: that earlier
+ * press. The same words as admin web and Android.
+ */
+const val PAYMENT_EARLIER_ON_RECORD: String =
+    "An earlier press of Record went through, and that payment is the one on record. The amounts typed after it were not recorded. Check the payments below before recording another one."
+
+/** #2297: the [WriteResult.Err.code] that marks [PAYMENT_EARLIER_ON_RECORD]. The dialog closes on it. */
+const val PAYMENT_EARLIER_ON_RECORD_CODE: String = "payment_earlier_on_record"
+
+/**
  * The dialog's submit, outside Compose so it is testable: take the held key for
  * this entry, call the callable, release the key only on Ok. On Err the key is
- * kept, so a re-press of the same entry sends the same key.
+ * kept, so the next press sends the same key whatever was edited. An Ok that
+ * is a replay of an earlier entry comes back as an Err carrying
+ * [PAYMENT_EARLIER_ON_RECORD_CODE].
  *
  * #2297: A FAILED PRESS MAY HAVE LANDED. This console cannot tell a refusal
  * from a lost answer by the error alone, so after every failure the invoice's
@@ -258,8 +306,7 @@ const val PAYMENT_LANDED_NO_ANSWER_CODE: String = "payment_landed_no_answer"
  *     answers from the stored row (finishing any notice it still owes) without
  *     recording anything twice. If that ask fails too, the result is an Err
  *     carrying [PAYMENT_LANDED_NO_ANSWER_CODE], and the key is let go.
- *   - Not found: the Err is returned and the key is kept.
- *   - The read failed: the Err is returned and the key is pinned.
+ *   - Not found, or the read failed: the Err is returned and the key is kept.
  */
 suspend fun submitInvoicePayment(
     client: FirestoreClient,
@@ -279,21 +326,25 @@ suspend fun submitInvoicePayment(
     record: suspend (key: String) -> WriteResult<RecordPaymentOutcome>,
     readLedger: suspend () -> WriteResult<InvoiceLedgerPayments>,
 ): WriteResult<RecordPaymentOutcome> {
-    val key = keys.keyFor(paymentEntryFigures(entry))
+    val key = keys.keyFor(entry.payment.invoiceId, paymentEntryFigures(entry))
+    fun answered(ok: WriteResult.Ok<RecordPaymentOutcome>): WriteResult<RecordPaymentOutcome> =
+        if (keys.settle(ok.value.replayed)) {
+            WriteResult.Err(PAYMENT_EARLIER_ON_RECORD, PAYMENT_EARLIER_ON_RECORD_CODE)
+        } else {
+            ok
+        }
     val first = record(key)
-    if (first is WriteResult.Ok) {
-        keys.release()
-        return first
-    }
+    if (first is WriteResult.Ok) return answered(first)
+    // Whatever the check finds, the key stays held: "not found" can be a
+    // payment still committing, and only the same key keeps the next press
+    // from recording it a second time.
     val landed = when (val ledger = readLedger()) {
         is WriteResult.Ok -> ledger.value.linked.any { it.paymentId == key }
-        is WriteResult.Err -> {
-            keys.pin()
-            return first
-        }
+        is WriteResult.Err -> return first
     }
     if (!landed) return first
     val again = record(key)
+    if (again is WriteResult.Ok) return answered(again)
     keys.release()
-    return if (again is WriteResult.Ok) again else WriteResult.Err(PAYMENT_LANDED_NO_ANSWER, PAYMENT_LANDED_NO_ANSWER_CODE)
+    return WriteResult.Err(PAYMENT_LANDED_NO_ANSWER, PAYMENT_LANDED_NO_ANSWER_CODE)
 }

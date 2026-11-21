@@ -107,6 +107,18 @@ class RecordPaymentIdempotencyTest {
         ),
     )
 
+    /** #2297: the server's answer from the row an earlier press under the same key wrote. */
+    private fun replayed() = Result.success(
+        decodeRecordPaymentResult(
+            mapOf(
+                "ok" to true,
+                "paymentId" to "pay-1",
+                "application" to mapOf("invoiceId" to "inv1", "state" to "settled", "amountDueCents" to 0),
+                "replayed" to true,
+            ),
+        ),
+    )
+
     private fun lost() = Result.failure<com.tribetails.auntieos.data.contracts.RecordPaymentResult>(RuntimeException("internal"))
 
     /** The `pay_` keys the one `recordPayment` call was made with, in order. */
@@ -173,31 +185,66 @@ class RecordPaymentIdempotencyTest {
             coVerify(exactly = 0) { repo.logActivity(any()) }
         }
     @Test
-    fun `an edited payment mints a new key, because it is a different payment`() =
+    fun `#2297 an edited payment keeps the key until an answer, because the first press may still commit`() =
         runTest(testDispatcher) {
             coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen settled()
             val vm = loaded()
             advanceUntilIdle()
             vm.recordPayment(payment(amount = 120.0), 120.0)
             advanceUntilIdle()
-            // The operator corrects the amount in the still-open dialog. Holding
-            // the key here would replay the first attempt and report $120 back as
-            // though the correction had landed.
+            // The operator corrects the amount in the still-open dialog. A new
+            // key here would let a late first press land beside this one.
             vm.recordPayment(payment(amount = 60.0), 60.0)
             advanceUntilIdle()
             val sent = keys(2)
-            assertNotEquals(sent[0], sent[1])
+            assertEquals(sent[0], sent[1])
+            // Nothing was on record under the key, so the new figure is the payment.
+            assertEquals("Payment recorded. The invoice is paid in full.", vm.uiState.value.toastMessage)
+        }
+
+    @Test
+    fun `#2297 an edited payment answered from the first press says that earlier payment is on record`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen replayed()
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.openRecordPayment()
+            vm.recordPayment(payment(amount = 120.0), 120.0)
+            advanceUntilIdle()
+            vm.recordPayment(payment(amount = 60.0), 60.0)
+            advanceUntilIdle()
+            val sent = keys(2)
+            assertEquals(sent[0], sent[1])
+            val state = vm.uiState.value
+            // Not "paid in full" for the $60 just typed: the $120 press is the payment.
+            assertEquals(PAYMENT_EARLIER_ON_RECORD, state.toastMessage)
+            assertFalse(state.showRecordPayment)
+            assertFalse(state.recordingPayment)
+        }
+
+    @Test
+    fun `#2297 a same-figure retry answered from the first press reads as this payment`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen replayed()
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.openRecordPayment()
+            vm.recordPayment(payment(), 120.0)
+            advanceUntilIdle()
+            vm.recordPayment(payment(), 120.0)
+            advanceUntilIdle()
+            assertEquals("Payment recorded. The invoice is paid in full.", vm.uiState.value.toastMessage)
         }
     /**
      * #982: the applied part is not on the [Payment], so it has to be in the
      * signature on its own. With a stated $200 payment, correcting the Amount
-     * box leaves every Payment field unchanged; a held key would replay the
-     * first apply.
+     * box leaves every Payment field unchanged. #2297: the key is held until an
+     * answer; the signature is what tells a replay of the first apply apart.
      */
     @Test
-    fun `a corrected applied amount on the same transaction mints a new key`() =
+    fun `a corrected applied amount on the same transaction keeps the key, and its replay is the earlier payment`() =
         runTest(testDispatcher) {
-            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen settled()
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen replayed()
             val vm = loaded()
             advanceUntilIdle()
             val p = payment(amount = 200.0)
@@ -206,18 +253,19 @@ class RecordPaymentIdempotencyTest {
             vm.recordPayment(p, 100.0)
             advanceUntilIdle()
             val sent = keys(2)
-            assertNotEquals(sent[0], sent[1])
+            assertEquals(sent[0], sent[1])
+            assertEquals(PAYMENT_EARLIER_ON_RECORD, vm.uiState.value.toastMessage)
         }
     /**
      * #988: the same $200 with $20 moved from tip into account credit is a
      * different payment. Amount, applied part and every box but two are equal,
-     * so only the credit in the signature tells a held key not to replay the
-     * first submission's split.
+     * so only the credit in the signature tells a replay of the first
+     * submission's split apart (#2297: the key itself is held until an answer).
      */
     @Test
-    fun `a changed account credit on the same transaction mints a new key`() =
+    fun `a changed account credit on the same transaction keeps the key, and its replay is the earlier payment`() =
         runTest(testDispatcher) {
-            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen settled()
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen replayed()
             val vm = loaded()
             advanceUntilIdle()
             vm.recordPayment(payment(amount = 200.0).copy(tip = 72.5, creditToAccountCents = 0L), 127.5)
@@ -225,7 +273,8 @@ class RecordPaymentIdempotencyTest {
             vm.recordPayment(payment(amount = 200.0).copy(tip = 72.5, creditToAccountCents = 2_000L), 127.5)
             advanceUntilIdle()
             val sent = keys(2)
-            assertNotEquals(sent[0], sent[1])
+            assertEquals(sent[0], sent[1])
+            assertEquals(PAYMENT_EARLIER_ON_RECORD, vm.uiState.value.toastMessage)
         }
     /**
      * #2297: reversed. A corrected reference, note, method or date after a lost
@@ -319,7 +368,7 @@ class RecordPaymentIdempotencyTest {
         }
 
     @Test
-    fun `#2297 when the payments cannot be read the key is pinned, even for a changed amount`() =
+    fun `#2297 when the payments cannot be read the key is held, even for a changed amount`() =
         runTest(testDispatcher) {
             coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen settled()
             val vm = loaded()
@@ -335,9 +384,9 @@ class RecordPaymentIdempotencyTest {
         }
 
     @Test
-    fun `#2297 a payment entered after Cancel is a new payment, even with the same figures`() =
+    fun `#2297 Cancel keeps a failed press's key, and a replay in the next opening is the earlier payment`() =
         runTest(testDispatcher) {
-            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen settled()
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen replayed()
             val vm = loaded()
             advanceUntilIdle()
             vm.openRecordPayment()
@@ -348,7 +397,28 @@ class RecordPaymentIdempotencyTest {
             vm.recordPayment(payment(), 120.0)
             advanceUntilIdle()
             val sent = keys(2)
-            assertNotEquals(sent[0], sent[1])
+            assertEquals(sent[0], sent[1])
+            // Same figures, but the form was closed in between: it may be a
+            // second payment, so the operator is told which one is on record.
+            assertEquals(PAYMENT_EARLIER_ON_RECORD, vm.uiState.value.toastMessage)
+        }
+
+    @Test
+    fun `#2297 after Cancel a held key the server never saw records the new entry as usual`() =
+        runTest(testDispatcher) {
+            coEvery { invoiceRepo.recordPaymentOnInvoice(any(), any(), any()) } returns lost() andThen settled()
+            val vm = loaded()
+            advanceUntilIdle()
+            vm.openRecordPayment()
+            vm.recordPayment(payment(), 120.0)
+            advanceUntilIdle()
+            vm.closeRecordPayment()
+            vm.openRecordPayment()
+            vm.recordPayment(payment(amount = 90.0), 90.0)
+            advanceUntilIdle()
+            val sent = keys(2)
+            assertEquals(sent[0], sent[1])
+            assertEquals("Payment recorded. The invoice is paid in full.", vm.uiState.value.toastMessage)
         }
 
     @Test

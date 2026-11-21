@@ -1133,6 +1133,9 @@ const FROZEN_RESPONSE_SHAPES: Record<
       'ok',
       'paymentId',
       'proceedsCents',
+      // #2297 review: `replayed` (optional) says the answer came from the row
+      // an earlier call with the same key wrote, and this call recorded nothing.
+      'replayed',
       'tipBasis',
       'tipCents',
       'tipNetCents',

@@ -79,6 +79,7 @@ import { sendMarksOf, sendOutcomeAfterSilence, type SendCheckAction } from '../l
 import { CallableTimeoutError, LONG_CALLABLE_TIMEOUT_MS } from '../lib/fns';
 import { mintPaymentIdempotencyKey } from '../lib/moneyIdempotency';
 import {
+  PAYMENT_EARLIER_ON_RECORD,
   PAYMENT_LANDED_NO_ANSWER,
   PaymentSubmissionKey,
   paymentFigures,
@@ -957,13 +958,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
    * answers from the row the first press wrote, rather than collecting a
    * second time.
    *
-   * #2297: the rules live in `lib/paymentSubmissionKey.ts`. In short: one
-   * opening of the form holds one key (`startAction` and `cancelPending` let it
-   * go, and so does a payment that went through); only a changed money figure
-   * is a different payment, so fixing a note or ticking the confirmation after
-   * a lost reply keeps the key; and when a failed press cannot be checked
-   * against the invoice's payments, the key is pinned for the rest of the
-   * opening.
+   * #2297: the rules live in `lib/paymentSubmissionKey.ts`. In short: a key is
+   * held from its first press until the server answers one, whatever is edited
+   * and across Cancel, because a different key while an earlier press is
+   * unresolved is how a payment gets recorded twice. An answer lets it go, so
+   * the next payment gets a new key. A replayed answer to an entry whose
+   * figures changed under the key is said to be the earlier payment's.
    */
   const ledgerKey = useRef<PaymentSubmissionKey | null>(null);
   ledgerKey.current ??= new PaymentSubmissionKey(mintPaymentIdempotencyKey);
@@ -1223,16 +1223,17 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     // Prefilled with the outstanding balance so the common case is one click,
     // and editable so a partial is one field away rather than impossible.
     setPaidAmount(key === 'markPaid' && invoice.amountDue > 0 ? String(invoice.amountDue) : '');
-    // A NEW DIALOG IS A NEW PAYMENT (#825, #2297). A key held from the last
-    // opening would report that payment's result back for this one.
-    ledgerKey.current?.release();
+    // #825, #2297: a payment that got its answer already let its key go, so a
+    // new dialog is a new payment. A key from a press that failed is still
+    // held: the next press carries it, and a replayed answer to it is said to
+    // be the earlier payment's, not this one's.
+    ledgerKey.current?.open();
     setPending(key);
   }
 
   function cancelPending() {
     if (busy) return;
-    // #2297: a payment entered after the form was closed is a new payment.
-    ledgerKey.current?.release();
+    // #2297: Cancel keeps a key whose press failed. See `ledgerKey`.
     setPending(null);
   }
 
@@ -1734,6 +1735,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
         // refused with what is owed now, and the panel shows that figure.
         const keys = ledgerKey.current!;
         const idempotencyKey = keys.keyFor(
+          invoice._id,
           paymentFigures({
             amount: paidAmount,
             tip: paidTip,
@@ -1780,10 +1782,12 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           // pressable again, the invoice's payments are read, and the row this
           // key writes is looked for. The button stays busy meanwhile.
           // A refusal from the server recorded nothing, so it is not checked.
+          // Whatever the check finds, the key stays held: "not found" can be a
+          // payment still committing, and only the same key keeps the next
+          // press from recording it a second time.
           if (!paymentMayHaveLanded(caught)) throw caught;
           const check = await paymentLandedCheck(() => getInvoiceLedger(invoice._id), idempotencyKey);
           readAfterFailure = check.ledger;
-          if (check.landed === 'unknown') keys.pin();
           if (check.landed !== 'yes') throw caught;
           // It landed. The same key again is answered from the stored row, so
           // this asks for the first press's answer, and finishes any notice it
@@ -1800,9 +1804,18 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
             return;
           }
         }
-        // The server answered, so this payment is done: the next press of
-        // Record is a new payment.
-        keys.release();
+        // The server answered, so the key is let go: the next press of Record
+        // is a new payment. A replay of a press made with other figures, or in
+        // an earlier opening, is that earlier payment's answer, not this
+        // entry's, and the panel says so instead of reporting it as this one.
+        if (keys.settle(ledgerRow.replayed === true) === 'earlier') {
+          reloadLedger();
+          setBusy(false);
+          setNoticeIncomplete(true);
+          setNotice(PAYMENT_EARLIER_ON_RECORD);
+          setPending(null);
+          return;
+        }
         const res = ledgerRow.application;
 
         let ledgerNote = '';

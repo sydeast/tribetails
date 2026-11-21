@@ -17,38 +17,79 @@ const figures = (amount: string, extra: Partial<Record<'tip' | 'fee' | 'total' |
 describe('PaymentSubmissionKey (#2297)', () => {
   it('keeps one key for a re-press of the same figures', () => {
     const keys = new PaymentSubmissionKey(minter());
-    const first = keys.keyFor(figures('20'));
-    expect(keys.keyFor(figures('20'))).toBe(first);
-    expect(keys.keyFor(figures(' 20 '))).toBe(first);
+    const first = keys.keyFor('inv1', figures('20'));
+    expect(keys.keyFor('inv1', figures('20'))).toBe(first);
+    expect(keys.keyFor('inv1', figures(' 20 '))).toBe(first);
   });
-  it('mints a new key when a money figure changes', () => {
+
+  it('keeps the key when a money figure changes before any answer, so an earlier press still committing cannot land beside a second one', () => {
     const keys = new PaymentSubmissionKey(minter());
-    const first = keys.keyFor(figures('20'));
-    expect(keys.keyFor(figures('25'))).not.toBe(first);
-    const second = keys.current!;
-    const third = keys.keyFor(figures('25', { tip: '5' }));
-    expect(third).not.toBe(second);
-    expect(keys.keyFor(figures('25', { tip: '5', credit: '3' }))).not.toBe(third);
+    const first = keys.keyFor('inv1', figures('20'));
+    expect(keys.keyFor('inv1', figures('25'))).toBe(first);
+    expect(keys.keyFor('inv1', figures('25', { tip: '5', credit: '3', fee: '1' }))).toBe(first);
   });
-  it('holds a pinned key whatever the figures', () => {
+
+  it('keeps an unanswered key across a new opening of the form', () => {
     const keys = new PaymentSubmissionKey(minter());
-    const first = keys.keyFor(figures('20'));
-    keys.pin();
-    expect(keys.keyFor(figures('25'))).toBe(first);
-    expect(keys.keyFor(figures('25', { fee: '1' }))).toBe(first);
+    const first = keys.keyFor('inv1', figures('20'));
+    keys.open();
+    expect(keys.keyFor('inv1', figures('20'))).toBe(first);
   });
-  it('lets the key go on release, so the same figures are a new payment', () => {
+
+  it('never carries a key to another invoice', () => {
     const keys = new PaymentSubmissionKey(minter());
-    const first = keys.keyFor(figures('20'));
-    keys.pin();
+    const first = keys.keyFor('inv1', figures('20'));
+    expect(keys.keyFor('inv2', figures('20'))).not.toBe(first);
+  });
+
+  it('lets the key go on an answer, so the same figures next time are a new payment', () => {
+    const keys = new PaymentSubmissionKey(minter());
+    const first = keys.keyFor('inv1', figures('20'));
+    expect(keys.settle(false)).toBe('recorded');
+    expect(keys.current).toBeNull();
+    expect(keys.keyFor('inv1', figures('20'))).not.toBe(first);
+  });
+
+  it('lets the key go on release', () => {
+    const keys = new PaymentSubmissionKey(minter());
+    const first = keys.keyFor('inv1', figures('20'));
     keys.release();
     expect(keys.current).toBeNull();
-    expect(keys.keyFor(figures('20'))).not.toBe(first);
+    expect(keys.keyFor('inv1', figures('20'))).not.toBe(first);
   });
-  it('does nothing on pin with no key held', () => {
+
+  it('reads a replay of the same figures in the same opening as this entry, the retry after a lost reply', () => {
     const keys = new PaymentSubmissionKey(minter());
-    keys.pin();
+    keys.open();
+    keys.keyFor('inv1', figures('20'));
+    keys.keyFor('inv1', figures('20'));
+    expect(keys.settle(true)).toBe('recorded');
+  });
+
+  it('reads a replay as an earlier entry when the figures changed under the key', () => {
+    const keys = new PaymentSubmissionKey(minter());
+    keys.open();
+    keys.keyFor('inv1', figures('20'));
+    keys.keyFor('inv1', figures('25'));
+    expect(keys.settle(true)).toBe('earlier');
     expect(keys.current).toBeNull();
+  });
+
+  it('reads a replay as an earlier entry when the key came from an earlier opening, same figures or not', () => {
+    const keys = new PaymentSubmissionKey(minter());
+    keys.open();
+    keys.keyFor('inv1', figures('20'));
+    keys.open();
+    keys.keyFor('inv1', figures('20'));
+    expect(keys.settle(true)).toBe('earlier');
+  });
+
+  it('reads a first-time answer under a changed figure as this entry: nothing was on record under the key', () => {
+    const keys = new PaymentSubmissionKey(minter());
+    keys.keyFor('inv1', figures('20'));
+    keys.open();
+    keys.keyFor('inv1', figures('25'));
+    expect(keys.settle(false)).toBe('recorded');
   });
 });
 

@@ -1759,7 +1759,7 @@ describe('recording a payment is one call that writes the settlement and the led
    * row the first press may already have written, and a fresh key per press
    * puts the duplicate straight back in the one case an operator produces one.
    */
-  it('holds ONE key across a re-press, and mints a NEW one when a figure changes', async () => {
+  it('holds ONE key across a re-press, and keeps it when a figure changes before any answer (#2297)', async () => {
     // Two failures, so the dialog is still open for the third press. That is
     // the real shape of this defect: the operator only presses again because
     // the first press reported something.
@@ -1783,14 +1783,15 @@ describe('recording a payment is one call that writes the settlement and the led
     const secondKey = recordPayment.mock.calls[1]![0].idempotencyKey;
     expect(firstKey).toMatch(/^pay_\d{10,16}_[a-z0-9]{1,16}$/);
     expect(secondKey).toBe(firstKey);
-    // A CHANGED FIGURE IS A DIFFERENT PAYMENT, so the held key is dropped.
+    // #2297: A CHANGED FIGURE KEEPS THE KEY while no press has been answered.
+    // Either earlier press may still commit, and a new key would let it land
+    // beside this one. The server's answer says which payment is on record.
     await userEvent.clear(screen.getByLabelText(/amount collected/i));
     await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
     await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(3));
     const thirdKey = recordPayment.mock.calls[2]![0].idempotencyKey;
-    expect(thirdKey).toMatch(/^pay_\d{10,16}_[a-z0-9]{1,16}$/);
-    expect(thirdKey).not.toBe(firstKey);
+    expect(thirdKey).toBe(firstKey);
     expect(recordPayment.mock.calls[2]![0].apply).toMatchObject({ amount: 25 });
     expect(markInvoicePaid).not.toHaveBeenCalled();
   });
@@ -4138,7 +4139,7 @@ describe('Record payment after a lost reply (#2297)', () => {
     expect(recordPayment.mock.calls[1]![0]).toMatchObject({ notes: 'paid at the door', sendConfirmationEmail: true });
   });
 
-  it('pins the key when the payments cannot be read, even when a figure changes', async () => {
+  it('holds the key when the payments cannot be read, even when a figure changes', async () => {
     recordPayment.mockRejectedValueOnce(lost());
     await openAndType();
     getInvoiceLedger.mockRejectedValue(new Error('offline'));
@@ -4153,8 +4154,55 @@ describe('Record payment after a lost reply (#2297)', () => {
     expect(keyOf(1)).toBe(keyOf(0));
   });
 
-  it('starts a new payment with a new key after Cancel, even with the same figures', async () => {
+  it('holds the key after the check finds nothing, even when a figure changes: the first press may still be committing', async () => {
     recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult({ appliedCents: 2500, state: 'partial', paidCents: 2500, amountDueCents: 1500 }),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    await press();
+    // A new key here would let a late first press and this one both write.
+    // Under the same key the server's create lets only one of them.
+    expect(await screen.findByText(/\$15\.00 is still owed/i)).toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(recordPayment.mock.calls[1]![0]).toMatchObject({ amount: 25 });
+  });
+
+  it('says the earlier payment is on record when a changed figure is answered from the first press', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 },
+        { amountCents: 2000, replayed: true },
+      ),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/amount collected/i));
+    await userEvent.type(screen.getByLabelText(/amount collected/i), '25');
+    await press();
+    expect(
+      await screen.findByText(/an earlier press of record went through, and that payment is the one on record/i),
+    ).toBeInTheDocument();
+    // Not the ordinary outcome, which would read as the $25.00 just typed.
+    expect(screen.queryByText(/is still owed/i)).not.toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+    expect(screen.queryByLabelText(/amount collected/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps a failed press\'s key across Cancel, and a replay in the next opening is said to be the earlier payment', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult(
+        { appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 },
+        { amountCents: 2000, replayed: true },
+      ),
+    );
     await openAndType();
     await press();
     expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
@@ -4164,9 +4212,28 @@ describe('Record payment after a lost reply (#2297)', () => {
     await userEvent.clear(amount);
     await userEvent.type(amount, '20');
     await press();
-    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(2));
-    expect(keyOf(1)).toMatch(/^pay_\d{10,16}_[a-z0-9]{1,16}$/);
-    expect(keyOf(1)).not.toBe(keyOf(0));
+    expect(
+      await screen.findByText(/an earlier press of record went through, and that payment is the one on record/i),
+    ).toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it('after Cancel, a held key the server had never seen records the new entry as usual', async () => {
+    recordPayment.mockRejectedValueOnce(lost());
+    recordPayment.mockResolvedValueOnce(
+      paymentResult({ appliedCents: 2000, state: 'partial', paidCents: 2000, amountDueCents: 2000 }),
+    );
+    await openAndType();
+    await press();
+    expect(await screen.findByText(/action failed/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^record payment$/i }));
+    const amount = screen.getByLabelText(/amount collected/i);
+    await userEvent.clear(amount);
+    await userEvent.type(amount, '20');
+    await press();
+    expect(await screen.findByText(/\$20\.00 is still owed/i)).toBeInTheDocument();
+    expect(keyOf(1)).toBe(keyOf(0));
   });
 
   it('starts a new key for the next payment after one went through', async () => {

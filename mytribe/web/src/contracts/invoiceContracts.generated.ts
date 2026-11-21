@@ -728,6 +728,7 @@ export interface RecordPaymentResult {
   confirmationAppOnly?: boolean;
   householdNoPortalAccount: boolean;
   officeNoticePending: boolean;
+  replayed?: boolean;
 }
 
 // ---------- redeemCredit ----------
