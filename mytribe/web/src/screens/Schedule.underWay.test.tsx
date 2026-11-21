@@ -205,6 +205,12 @@ describe('Schedule, a visit under way', () => {
     expect(card).toHaveTextContent('the moment Auntie Maya wraps up.');
   });
 
+  it('#1835: on the way, the same card names her the same way', async () => {
+    renderWith(visit('enRoute', 'enRoute'), true);
+    const card = await screen.findByTestId('live-visit');
+    expect(card).toHaveTextContent('starts when Auntie Maya arrives.');
+  });
+
   it('the replay read failing does not take the card or the list away', async () => {
     const v = visit('active', 'active');
     mocks.getMyBookings.mockResolvedValue({ liveVisit: v, upcoming: [v], recent: [], envelopes: [] });

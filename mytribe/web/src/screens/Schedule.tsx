@@ -163,7 +163,7 @@ export function Schedule() {
               <p>
                 {arrived
                   ? `${liveService ?? 'A visit'} in progress. You’ll get a KinTale the moment ${auntieName(live.auntieDisplayName) ?? 'your Auntie'} wraps up.`
-                  : `${liveService ?? 'Your visit'} starts when ${live.auntieDisplayName ?? 'your Auntie'} arrives.`}
+                  : `${liveService ?? 'Your visit'} starts when ${auntieName(live.auntieDisplayName) ?? 'your Auntie'} arrives.`}
               </p>
               {arrived && liveSession?.arrivedAtIso && (
                 <div className="laddr">{'\u{1F4CD}'} Arrived {isoTime(liveSession.arrivedAtIso)}</div>
