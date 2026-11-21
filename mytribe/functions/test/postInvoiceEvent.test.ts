@@ -302,9 +302,12 @@ describe('#906 the trigger: no invoice.payment.applied can come from this path',
     // #871 moved `invoice.overdue` off this trigger and onto `invoiceOverdueCron`,
     // so `invoiceWriteNoticeKey` now answers only about a payment. A draft sent
     // past its due date is the office's to chase on the cron's schedule, and it
-    // is certainly not a payment, so this write announces nothing.
-    const before = { ...DRAFT, status: 'draft', dueDate: '2020-01-01' };
+    // is certainly not a payment, so this write announces nothing. #2246: on
+    // its terms it goes out dated today and due today, never already overdue.
+    const before = { ...DRAFT, status: 'draft', date: '2020-01-01', dueDate: '2020-01-01', termsCode: 'due_on_receipt' };
     const after = await sendAndRead(before);
+    expect(after.dueDate).not.toBe('2020-01-01');
+    expect(after.dueDate).toBe(after.date);
     expect(invoiceWriteNoticeKey(before as any, after as any)).toBeNull();
   });
 

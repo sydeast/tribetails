@@ -26,6 +26,8 @@ import { OkSchema } from '../lib/invoiceResponseSchema';
 import { isArchived, refuseIfArchived } from '../lib/invoiceArchive';
 import { readSendClaims, stageSessionLinks, storedSessionIds } from '../lib/invoiceSessionLinks';
 import { QUOTE_DRAFT_FIELD, isQuoteDraft, quoteDecisionOf } from '../lib/quoteDecision';
+import { businessToday, readInvoiceTermsSettings } from '../lib/invoiceCreateFields';
+import { issueDayFields, readVisitStartTimes } from '../lib/invoiceIssueDay';
 
 /**
  * Dedicated draft-review-and-send callable, replacing the AuntieOS admin's
@@ -303,6 +305,10 @@ export async function sendDraft(uid: string, invoiceId: string): Promise<z.infer
   // sent. Fail-soft: no snapshot means live settings, i.e. today's behaviour.
   // Read before the transaction, whose callback Firestore may run again.
   const payMethodSnapshot = await payMethodSnapshotForIssue('reviewAndSendDraftInvoice');
+  // #2246: the bill is dated the business day it goes out, and its due date is
+  // worked out from that day (`lib/invoiceIssueDay.ts`). The zone is read once,
+  // before the transaction, like the payment options.
+  const termsSettings = await readInvoiceTermsSettings(db());
 
   // THE CHECK AND THE FLIP, ONE TRANSACTION, BEFORE THE HOUSEHOLD HEARS
   // (#2168 review). Every refusal (archived, not a draft, incomplete, a line's
@@ -324,6 +330,21 @@ export async function sendDraft(uid: string, invoiceId: string): Promise<z.infer
     // the rule uniform rather than asserted per call site.
     const paymentsSnap = await tx.get(ref.collection('payments'));
     const paidCents = paidCentsFromPayments(paymentsSnap.docs.map((d) => d.data() as PaymentAmount));
+    // #2246: a bill (never a quote, which is a proposal) goes out dated today,
+    // due by its terms counted from today. The visits' start times are read
+    // here, before any write; a hand-picked due date already passed refuses.
+    let issued: Record<string, unknown> = {};
+    if (!quote) {
+      const outcome = issueDayFields({
+        doc: draft as Record<string, unknown>,
+        issueDay: businessToday(termsSettings.timeZone),
+        serviceDates: await readVisitStartTimes(tx, db(), draft),
+        timeZone: termsSettings.timeZone,
+        mode: 'send',
+      });
+      if (!outcome.ok) throw new HttpsError('failed-precondition', outcome.message, { code: outcome.code });
+      issued = outcome.fields;
+    }
     // A quote becomes a QUOTE (a proposal waiting for an answer), never `open`,
     // and loses the draft mark; `quoteSentBy` is what a failed notice's
     // put-back checks, as `sentBy` is for an invoice.
@@ -337,6 +358,7 @@ export async function sendDraft(uid: string, invoiceId: string): Promise<z.infer
           updatedAt: FieldValue.serverTimestamp(),
         }
       : {
+          ...issued,
           status: 'open',
           invoiceStatus: 'open',
           sentAt: FieldValue.serverTimestamp(),

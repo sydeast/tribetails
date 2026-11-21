@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CallableRequest } from 'firebase-functions/v2/https';
 import { buildDbMock } from './_helpers/mockDb';
 
@@ -483,5 +483,39 @@ describe('issue #1039: naming who acted', () => {
     expect(mocks.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ actorName: 'Someone' }) }),
     );
+  });
+});
+/**
+ * #2246: a quote accepted days after it was made becomes a bill dated the day
+ * of the accept, due by its terms counted from that day.
+ */
+describe('#2246 an accepted quote is a bill from the day it is accepted', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // 9 PM Thursday Nov 19 in Chicago.
+    vi.setSystemTime(new Date('2026-11-20T03:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  it('due on receipt: dated and due the accept day, not the day the quote was made', async () => {
+    const ctx = ctxFor(quoteDoc({ date: '2026-11-16', dueDate: '2026-11-16', termsCode: 'due_on_receipt', terms: 'Due on receipt' }));
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await acceptQuoteHandler(req({ invoiceId: 'q1' }));
+    expect(quoteWrite(ctx)).toMatchObject({ status: 'open', date: '2026-11-19', dueDate: '2026-11-19' });
+  });
+  it('a due date picked by hand that has passed is brought up to the accept day', async () => {
+    const ctx = ctxFor(quoteDoc({ date: '2026-11-01', dueDate: '2020-01-01', termsCode: 'custom' }));
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await acceptQuoteHandler(req({ invoiceId: 'q1' }));
+    expect(quoteWrite(ctx)).toMatchObject({ status: 'open', date: '2026-11-19', dueDate: '2026-11-19' });
+  });
+  it('a decline leaves the dates as they were', async () => {
+    const ctx = ctxFor(quoteDoc({ date: '2026-11-16', dueDate: '2026-11-16', termsCode: 'due_on_receipt' }));
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await denyQuoteHandler(req({ invoiceId: 'q1' }));
+    const write = quoteWrite(ctx);
+    expect('date' in write).toBe(false);
+    expect('dueDate' in write).toBe(false);
   });
 });

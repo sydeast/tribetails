@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import { buildDbMock } from './_helpers/mockDb';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
@@ -182,6 +182,12 @@ describe('#2168 review: an archived invoice is read-only until it is restored', 
   });
 
   it('once restored, the same draft can be edited and sent', async () => {
+    // #2246: sent on the draft's own date, with its hand-typed due date still ahead.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-06-10T17:00:00.000Z'));
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const { invoiceId, docOf } = await archivedDraft();
     await unarchiveInvoiceHandler(req({ invoiceId }));
 

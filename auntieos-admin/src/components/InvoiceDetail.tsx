@@ -595,7 +595,7 @@ const ACTIONS: readonly ActionMeta[] = [
     key: 'reviewSend',
     label: 'Review and send',
     confirmCopy:
-      'This sends the draft to the household on file and marks the invoice open. A draft missing its total, household, or invoice number is rejected rather than sent. Continue?',
+      'This sends the draft to the household on file and marks the invoice open. A draft missing its total, household, or invoice number is rejected rather than sent. It goes out dated today, and its due date is counted again from its terms. Continue?',
     confirmLabel: 'Review and send',
     busyLabel: 'Sending…',
     successMessage: 'Draft sent.',

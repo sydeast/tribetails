@@ -19,6 +19,8 @@ import { enqueueNotification } from '../notifications/dispatcher';
 import { readAcceptClaims, readDeclineRelease, stageSessionLinks } from '../lib/invoiceSessionLinks';
 import { isArchived } from '../lib/invoiceArchive';
 import { quoteDecisionOf, type QuoteDecision } from '../lib/quoteDecision';
+import { businessToday, readInvoiceTermsSettings } from '../lib/invoiceCreateFields';
+import { issueDayFields, readVisitStartTimes } from '../lib/invoiceIssueDay';
 
 /**
  * THE TWO ENDS OF A QUOTE'S LIFE. `admin/createQuote.ts` mints one; these two
@@ -266,6 +268,8 @@ async function decideQuote(
   // accepted the quote", not "Sam Alicia Rivera-Torres accepted the quote".
   const actorFirstName = actorDisplayName ? actorDisplayName.split(/\s+/)[0] : null;
 
+  // #2246: an accepted quote is a bill from today, read once outside the transaction.
+  const termsSettings = decision === 'accepted' ? await readInvoiceTermsSettings(firestore) : null;
   const outcome = await firestore.runTransaction(async (tx): Promise<DecisionOutcome> => {
     const snap = await tx.get(invoiceRef);
     if (!snap.exists) throw new HttpsError('not-found', QUOTE_NOT_FOUND_MESSAGE);
@@ -290,8 +294,24 @@ async function decideQuote(
         ? await readAcceptClaims(tx, firestore, args.invoiceId, txInv)
         : await readDeclineRelease(tx, firestore, args.invoiceId, txInv);
 
+    // #2246: the bill an accept makes is dated today and due by its terms
+    // counted from today (`lib/invoiceIssueDay.ts`). The household cannot send
+    // it back, so a picked due date already passed is brought up to today.
+    let issued: Record<string, unknown> = {};
+    if (termsSettings !== null) {
+      const accepted = { ...txInv, ...visits.fields };
+      const outcome = issueDayFields({
+        doc: accepted,
+        issueDay: businessToday(termsSettings.timeZone),
+        serviceDates: await readVisitStartTimes(tx, firestore, accepted),
+        timeZone: termsSettings.timeZone,
+        mode: 'accept',
+      });
+      if (outcome.ok) issued = outcome.fields;
+    }
     const update: Record<string, unknown> = {
       ...visits.fields,
+      ...issued,
       quoteDecision: decision,
       quoteDecidedAt: FieldValue.serverTimestamp(),
       quoteDecidedByUid: uid,

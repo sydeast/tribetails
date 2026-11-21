@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import { CallableRequest } from 'firebase-functions/v2/https';
 import { buildDbMock } from './_helpers/mockDb';
 
@@ -235,6 +235,12 @@ describe('#1906 an unsent draft invoice is the office\'s alone', () => {
   });
 
   it('once sent, is listed as open, payable, and linked from its visit', async () => {
+    // #2246: sent on the draft's own date, with its hand-typed due date still ahead.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-06-10T17:00:00.000Z'));
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const ctx = world();
     const id = await draftInvoice();
     await reviewAndSendDraftInvoiceHandler(admin({ invoiceId: id }));
