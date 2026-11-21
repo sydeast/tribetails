@@ -89,7 +89,8 @@ class InvoicesControllerTest {
 
         c.startPay(invoice)
         advanceUntilIdle()
-        assertEquals("Card declined by Stripe.", c.error)
+        assertEquals("Card declined by Stripe.", c.payErrorFor("inv-1"))
+        assertEquals(null, c.error, "a refused Pay is not a list that failed to load")
         assertEquals(1, fake.calls.size)
         val firstKey = keyOf(fake.calls[0])
         assertTrue(
@@ -243,7 +244,8 @@ class InvoicesControllerTest {
         advanceUntilIdle()
         assertEquals(0, fake.calls.size, "a paid invoice must not reach the checkout callable")
         assertEquals(emptyList(), opened.urls)
-        assertEquals(PAID_INVOICE_REFUSAL, c.error)
+        assertEquals(PAID_INVOICE_REFUSAL, c.payErrorFor("inv-1"))
+        assertEquals(null, c.error)
         assertEquals(null, c.paying)
     }
     @Test
@@ -254,7 +256,8 @@ class InvoicesControllerTest {
         c.startPay(invoiceFixture(status = InvoiceStatus.Open, isPaid = true, amountDue = 40.0))
         advanceUntilIdle()
         assertEquals(0, fake.calls.size)
-        assertEquals(PAID_INVOICE_REFUSAL, c.error)
+        assertEquals(PAID_INVOICE_REFUSAL, c.payErrorFor("inv-1"))
+        assertEquals(null, c.error)
     }
     @Test
     fun `a pay link on a paid invoice opens nothing`() = runTest {
@@ -268,7 +271,8 @@ class InvoicesControllerTest {
         advanceUntilIdle()
         assertEquals(emptyList(), opened.urls)
         assertEquals(0, fake.calls.size)
-        assertEquals(PAID_INVOICE_REFUSAL, c.error)
+        assertEquals(PAID_INVOICE_REFUSAL, c.payErrorFor("inv-1"))
+        assertEquals(null, c.error)
     }
     @Test
     fun `a pay link on an open invoice still opens`() = runTest {

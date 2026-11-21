@@ -64,8 +64,25 @@ import com.tribetails.auntieos.web.ui.components.ScreenScaffold
 import com.tribetails.auntieos.web.ui.components.SectionHeader
 import com.tribetails.auntieos.web.ui.components.ShimmerCard
 import com.tribetails.auntieos.web.util.openInMaps
+import com.tribetails.auntieos.web.ui.components.answersWithin
+import androidx.compose.ui.platform.testTag
 import kotlinx.datetime.TimeZone
 import com.tribetails.auntieos.web.util.businessTimeZone
+
+/** #2265: the KinTales panel's words when its read fails or never answers. */
+internal const val VISIT_TALES_FAILED = "Could not load this visit's KinTales."
+/** #2265: the KinTales panel's Try again, for a render test. */
+const val VISIT_TALES_RETRY_TAG = "visit-tales-retry"
+
+/**
+ * #2265: the visit's SENT KinTales, newest first, the way admin web and admin
+ * Android list them. The panel is "KinTales sent": a draft (or a failed send)
+ * has not reached the household, so it is not listed here.
+ */
+internal fun visitSentTales(reports: List<KinCareReport>, kinCareId: String): List<KinCareReport> =
+    reports
+        .filter { it.sessionId == kinCareId && it.status.trim().equals("SENT", ignoreCase = true) }
+        .sortedByDescending { it.sentAt.ifBlank { it.createdAt } }
 
 /**
  * Operational detail for one Kin Care. Auntie taps into this from the Auntie
@@ -87,7 +104,12 @@ fun KinCareDetailScreen(
     val reload = rememberReloadableRead()
     val sessions by remember(reload.generation) { client.sessionsStream().settlesRetry(reload) }.collectAsState(initial = FirestoreResult.Loading)
     val kinfolks by remember { client.kinfolkStream() }.collectAsState(initial = FirestoreResult.Loading)
-    val reports  by remember { client.reportsStream() }.collectAsState(initial = FirestoreResult.Loading)
+    // #2265: the KinTales panel's own read, with its own Try again, so a failed
+    // or unanswered read says so instead of reading as "none sent".
+    val talesReload = rememberReloadableRead()
+    val reports  by remember(talesReload.generation) {
+        client.reportsStream().answersWithin(VISIT_TALES_FAILED).settlesRetry(talesReload)
+    }.collectAsState(initial = FirestoreResult.Loading)
     // #1580: the internal notes' dates read on the business clock, like the booking sheet's.
     val settings by remember { client.businessSettingsStream() }.collectAsState(initial = FirestoreResult.Loading)
     val businessZone = com.tribetails.auntieos.web.screens.booking.NewBookingMath.businessTimeZone(
@@ -102,9 +124,7 @@ fun KinCareDetailScreen(
         (kinfolks as? FirestoreResult.Data)?.value?.firstOrNull { it._id == id }
     }
     val sessionReports = remember(reports, kinCareId) {
-        ((reports as? FirestoreResult.Data)?.value.orEmpty())
-            .filter { it.sessionId == kinCareId }
-            .sortedByDescending { it.sentAt.ifBlank { it.createdAt } }
+        visitSentTales((reports as? FirestoreResult.Data)?.value.orEmpty(), kinCareId)
     }
 
     // Stream the household's kin so we can show real names alongside the per-kin 411.
@@ -321,11 +341,20 @@ fun KinCareDetailScreen(
         DenPanel {
             PanelHeading("KinTales sent", Lucide.NotebookPen)
             Spacer(Modifier.height(6.dp))
-            if (sessionReports.isEmpty()) {
-                EmptyHint("No KinTales sent yet during this KinCare.")
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    sessionReports.forEach { r -> KinTaleSnippet(r) }
+            when {
+                // #2265: plain words and Try again, never the transport's message.
+                reports is FirestoreResult.Error -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(VISIT_TALES_FAILED, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error)
+                    GhostButton(
+                        label = "Try again",
+                        onClick = talesReload::retry,
+                        modifier = Modifier.testTag(VISIT_TALES_RETRY_TAG),
+                    )
+                }
+                reports is FirestoreResult.Loading -> EmptyHint("Loading the KinTales…")
+                sessionReports.isEmpty() -> EmptyHint("No KinTales sent yet during this KinCare.")
+                else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    sessionReports.forEach { r -> KinTaleSnippet(r, businessZone) }
                 }
             }
         }
@@ -656,7 +685,7 @@ private fun vetSummary(k: Kin411): String {
 }
 
 @Composable
-private fun KinTaleSnippet(report: KinCareReport) {
+private fun KinTaleSnippet(report: KinCareReport, zone: TimeZone) {
     val c = AuntieTheme.colors
     Column(
         modifier = Modifier
@@ -679,7 +708,8 @@ private fun KinTaleSnippet(report: KinCareReport) {
             )
             val ts = report.sentAt.ifBlank { report.updatedAt.ifBlank { report.createdAt } }
             if (ts.isNotBlank()) {
-                Text(ts, style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+                // #1828: on the business clock, month as a word, 24-hour; never the stored ISO text.
+                Text(shortIso(ts, zone = zone), style = AuntieTheme.typography.labelSmall, color = c.textFaint)
             }
         }
         if (report.bodyCopy.isNotBlank()) {

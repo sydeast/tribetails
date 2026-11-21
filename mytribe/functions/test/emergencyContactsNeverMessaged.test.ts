@@ -155,7 +155,11 @@ describe('Emergency Contacts are never a recipient (#829)', () => {
   });
 
   it('resolveMarketingAudience resolves account uids only', async () => {
-    const ctx = buildDbMock({ queryDocs: { kinfolk: [{ id: 'k1', data: KINFOLK_WITH_EC }] } });
+    const ctx = buildDbMock({
+      // #2482: the stored login is the household's own, a joined member.
+      docs: { 'families/k1/members/u1': { role: 'PRIMARY', status: 'ACTIVE' } },
+      queryDocs: { kinfolk: [{ id: 'k1', data: KINFOLK_WITH_EC }] },
+    });
     mocks.dbFn.mockReturnValue(ctx.db);
     const audience = await resolveMarketingAudience({ criteria: { kind: 'all' } });
     expect(audience.uids).toEqual(['u1']);

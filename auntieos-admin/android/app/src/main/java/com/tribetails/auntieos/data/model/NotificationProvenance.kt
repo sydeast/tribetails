@@ -337,6 +337,7 @@ private val SKIP_REASON_WORDS = mapOf(
     "recipient_hard_bounced" to "an earlier email to this address bounced, so it is not mailed again",
     "template_missing" to "there is no text message template for it",
     "template_text_empty" to "its text message template is empty",
+    "template_broken" to "its text message wording cannot be filled in, so fix it in Templates",
     "unknown" to "the sender gave no reason",
 )
 fun notifSkipReasonWords(code: String): String =
