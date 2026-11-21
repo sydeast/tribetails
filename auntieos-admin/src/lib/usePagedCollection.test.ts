@@ -402,12 +402,13 @@ describe('usePagedCollection: the sandbox scope', () => {
 
 describe('usePagedCollection: an Auntie\'s drafts list', () => {
   const DRAFTS: PagedCollectionSpec = { path: 'generated_drafts', order: ['createdOn', 'desc'], pageSize: 2 };
-  it('names the KinTale type for an Auntie, exactly as useCollection does', async () => {
-    setCaretakerScope(true);
+  it('names the KinTale type and her as the maker for an Auntie, exactly as useCollection does', async () => {
+    setCaretakerScope(true, 'auntie-1');
     getDocs.mockResolvedValue(snap('a', 1));
     renderHook(() => usePagedCollection<Row>(DRAFTS));
     await settle();
     expect(where).toHaveBeenCalledWith('communication_type', '==', 'visit_report');
+    expect(where).toHaveBeenCalledWith('createdBy', '==', 'auntie-1');
   });
   it('carries no type for the owner', async () => {
     getDocs.mockResolvedValue(snap('a', 1));

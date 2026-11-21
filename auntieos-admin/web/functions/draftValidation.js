@@ -74,6 +74,9 @@ function validateDraftPayload(draft) {
     // underscore namespace keeps a caller from forging any field the server
     // writes about the write itself, now or later.
     if (key.startsWith('_')) return `draft key "${key}" is reserved (leading underscore)`;
+    // #2443: who made the draft is stamped by the server from the verified
+    // token, so a caller cannot hand a draft to somebody else.
+    if (key === 'createdBy') return 'draft key "createdBy" is set by the server';
     if (key.includes('.')) return `draft key "${key}" must not contain "."`;
     if (key === '') return 'draft keys must not be empty';
   }

@@ -6,7 +6,7 @@ import { logEvent } from '../lib/logger';
 import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { wrapCallable } from '../lib/wrapCallable';
 import { isOwner, isOwnerClaim, staffBypass } from '../lib/staffGate';
-import { draftWentOut, isKinTaleDraft, messageDraftStanding } from '../lib/generatedDraftType';
+import { draftMadeBy, draftWentOut, isKinTaleDraft, messageDraftStanding } from '../lib/generatedDraftType';
 import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { TRIBETAILS_CORS } from '../lib/cors';
@@ -49,8 +49,11 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  *
  * WHO SENDS WHAT. The owner sends any draft. An Auntie sends a KinTale draft
  * only, one whose type is exactly `visit_report` (`lib/generatedDraftType.ts`),
- * which is the same set of drafts the rules let her read. Any other draft is
- * the owner's Communicate work, and to her it is not there.
+ * and (#2443 ruling, 2026-11-20) only one she made: its `createdBy` stamp is
+ * exactly her uid. That is the same set of drafts the rules let her read. A
+ * draft with no stamp is the owner's, and so is one stamped with anybody
+ * else's uid. Any other draft is the owner's Communicate work. To her, a draft
+ * that is not hers is not there.
  */
 
 /** Statuses that mean "sent as a KinTale". Written by this file only. */
@@ -130,7 +133,8 @@ export async function publishGeneratedDraftHandler(
     }
     const draft = (draftSnap.data() ?? {}) as Record<string, unknown>;
     // The same answer as a draft that is gone: this one is not hers to read.
-    if (!callerIsOwner && !isKinTaleDraft(draft)) {
+    // #2443: a KinTale draft she did not make is not hers either.
+    if (!callerIsOwner && !(isKinTaleDraft(draft) && draftMadeBy(draft, actorUid))) {
       throw new HttpsError('not-found', 'This draft no longer exists. It may have been deleted.');
     }
 

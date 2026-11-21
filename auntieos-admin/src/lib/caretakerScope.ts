@@ -5,12 +5,15 @@ import { type CollectionSpec, type Filter } from './firestore';
  *
  * Rules do not filter a list, they allow or refuse it whole. So where an
  * Auntie reads only part of a collection, her query has to say which part it
- * wants or the whole read is refused. This module adds that predicate, for the
- * two collections it applies to:
+ * wants or the whole read is refused. This module adds those predicates, for
+ * the two collections they apply to:
  *
- *   generated_drafts   KinTale drafts only: the docs whose type is exactly
- *                      `visit_report`. Every other draft there (email, text,
- *                      push and the rest) is the owner's Communicate work.
+ *   generated_drafts   the KinTale drafts she made: the docs whose type is
+ *                      exactly `visit_report` and whose `createdBy` stamp is
+ *                      exactly her uid (#2443 ruling, 2026-11-20). Every other
+ *                      draft there (email, text, push and the rest, and any
+ *                      KinTale draft the owner or another Auntie made) is not
+ *                      hers.
  *   media_files        the files of her own work: a visit's KinTale photos, a
  *                      Kin's photos and a household's photos. Every other file
  *                      there is the owner's.
@@ -21,11 +24,14 @@ import { type CollectionSpec, type Filter } from './firestore';
  * (`api/drafts.ts`), the Gallery and a household's or Kin's Media screen both
  * list `media_files`, and a screen added later cannot forget the predicate.
  *
- * DRAFTS. The field is `communication_type`, the spelling the generator writes
- * and the one the rule reads for a list. A migrated draft that carries only
- * the older `communicationType` spelling is not in her list; the owner still
- * sees it. The query sorts on `createdOn`, so the predicate needs the
- * composite index `generated_drafts (communication_type ASC, createdOn DESC)`.
+ * DRAFTS. The type field is `communication_type`, the spelling the generator
+ * writes and the one the rule reads for a list. A migrated draft that carries
+ * only the older `communicationType` spelling is not in her list; the owner
+ * still sees it. The maker field is `createdBy`, stamped on the server by every
+ * path that creates a draft (the generator and `writeDraft` in
+ * `web/functions`). A draft with no stamp is the owner's and is not in her list.
+ * The query sorts on `createdOn`, so the predicates need the composite index
+ * `generated_drafts (communication_type ASC, createdBy ASC, createdOn DESC)`.
  *
  * MEDIA. The field is `entityType`, compared as stored: the list carries both
  * spellings the uploaders write (`KIN` and `kin`, `KINFOLK` and `kinfolk`).
@@ -45,22 +51,41 @@ import { type CollectionSpec, type Filter } from './firestore';
  */
 export const CARETAKER_MEDIA_TYPES: readonly string[] = ['VISIT_LOG', 'KIN', 'kin', 'KINFOLK', 'kinfolk'];
 
-/** Collections an Auntie reads only part of, and the predicate that names her part. */
-export const CARETAKER_FILTERS: ReadonlyMap<string, Filter> = new Map<string, Filter>([
-  ['generated_drafts', ['communication_type', '==', 'visit_report']],
-  ['media_files', ['entityType', 'in', CARETAKER_MEDIA_TYPES]],
-]);
+/** The field every draft creator stamps with the maker's uid (#2443). */
+export const DRAFT_CREATOR_FIELD = 'createdBy';
+
+/** The type predicate on an Auntie's drafts list. */
+export const KINTALE_DRAFT_FILTER: Filter = ['communication_type', '==', 'visit_report'];
 
 /** Module-level for the reason `lib/testScope.ts` gives: the hooks have no route context. */
 let caretakerSession = false;
+let caretakerUid = '';
 
-/** Set by `resolveAccess`, the one place access is decided. */
-export function setCaretakerScope(isCaretaker: boolean): void {
+/**
+ * Set by `resolveAccess`, the one place access is decided. `uid` is the
+ * signed-in Auntie's, and names the drafts that are hers.
+ */
+export function setCaretakerScope(isCaretaker: boolean, uid: string | null = null): void {
   caretakerSession = isCaretaker;
+  caretakerUid = isCaretaker ? (uid ?? '').trim() : '';
 }
 
 export function isCaretakerScope(): boolean {
   return caretakerSession;
+}
+
+/**
+ * The predicates an Auntie's list of `path` must carry, or none for a
+ * collection she reads whole (or not at all).
+ *
+ * An Auntie session with no uid gets a maker predicate no draft can satisfy
+ * (`createdBy == ''`), so the drafts list comes back refused rather than
+ * widened: the rules allow her list only when it names her own uid.
+ */
+export function caretakerFiltersFor(path: string): Filter[] {
+  if (path === 'generated_drafts') return [KINTALE_DRAFT_FILTER, [DRAFT_CREATOR_FIELD, '==', caretakerUid]];
+  if (path === 'media_files') return [['entityType', 'in', CARETAKER_MEDIA_TYPES]];
+  return [];
 }
 
 /**
@@ -75,13 +100,14 @@ function sameFilter(a: Filter, b: Filter): boolean {
 /**
  * Return `spec` narrowed to what an Auntie may list when one is signed in,
  * otherwise `spec` unchanged. Idempotent, like `applyTestScope`: a re-render
- * re-derives the spec and must not stack the predicate.
+ * re-derives the spec and must not stack the predicates.
  */
 export function applyCaretakerScope(spec: CollectionSpec): CollectionSpec {
   if (!caretakerSession) return spec;
-  const filter = CARETAKER_FILTERS.get(spec.path);
-  if (!filter) return spec;
+  const wanted = caretakerFiltersFor(spec.path);
+  if (wanted.length === 0) return spec;
   const existing = spec.filters ?? [];
-  if (existing.some((f) => sameFilter(f, filter))) return spec;
-  return { ...spec, filters: [...existing, filter] };
+  const missing = wanted.filter((f) => !existing.some((e) => sameFilter(e, f)));
+  if (missing.length === 0) return spec;
+  return { ...spec, filters: [...existing, ...missing] };
 }
