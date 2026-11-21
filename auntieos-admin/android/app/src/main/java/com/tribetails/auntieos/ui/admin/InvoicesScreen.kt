@@ -874,7 +874,11 @@ private fun InvoiceRow(
         // before the operator presses Send reminder rather than only after.
         if (InvoiceAction.SEND_REMINDER in invoiceActionsFor(state)) {
             Text(
-                text = "reminded ${com.tribetails.auntieos.domain.lastReminderLabel(invoice.reminderNotifiedAtMs, appOnly = invoice.reminderNotifiedAppOnly)}",
+                text = com.tribetails.auntieos.domain.reminderListLine(
+                    invoice.reminderNotifiedAtMs,
+                    invoice.reminderNotifiedAppOnly,
+                    invoice.reminderHeldAtMs,
+                ),
                 style = AuntieTheme.typography.mono.copy(fontSize = 11.sp),
                 color = c.textDim,
             )

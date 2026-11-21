@@ -1993,7 +1993,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           </div>
           <div className="invoice-detail__fact">
             <dt>Last reminder</dt>
-            <dd>{lastReminderLabel(lastReminderAt, undefined, lastReminderAppOnly)}</dd>
+            <dd>{lastReminderLabel(lastReminderAt, undefined, lastReminderAppOnly, invoice.reminderHeldAtMs)}</dd>
           </div>
         </dl>
 

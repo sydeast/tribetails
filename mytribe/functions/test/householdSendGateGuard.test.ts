@@ -86,16 +86,19 @@ const ALLOWED = new Map<string, string>([
   ],
   [
     'mytribe/functions/src/scheduled/notificationDebounceSweep.ts',
-    'promotes gated pendingNotifications rows, transactionally',
+    'promotes gated pendingNotifications rows, transactionally; since #2478 it asks the send switch again ' +
+      'for a household copy at its send time (queuedCopyHold.ts) and deletes the held ones (never sent later)',
   ],
   [
     'mytribe/functions/src/scheduled/notificationScheduledSweep.ts',
     'promotes gated scheduledNotifications rows, transactionally; since #1834 it asks broadcastHoldReason ' +
-      'for a blast copy at its send time and deletes the held ones (never sent later), skipping on a failed read',
+      'for a blast copy at its send time, and since #2478 the send switch for every other household copy ' +
+      '(queuedCopyHold.ts); held ones are deleted (never sent later), a failed read skips the tick',
   ],
   [
     'mytribe/functions/src/scheduled/notificationBatchSweep.ts',
-    'promotes gated notificationBatch rows, transactionally',
+    'promotes gated notificationBatch rows, transactionally; since #2478 a household digest asks the send ' +
+      'switch again at its send time (queuedCopyHold.ts) and a held one is deleted (never sent later)',
   ],
   [
     'mytribe/functions/src/notifications/senders/emailChannel.ts',
