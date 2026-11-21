@@ -524,6 +524,10 @@ describe('createBillingSetupSession return addresses (#2366)', () => {
   it.each([
     ['a foreign success address', { successUrl: 'https://evil.example/ok', cancelUrl: 'https://kinfolk.tribetails.com/account' }],
     ['a foreign cancel address', { successUrl: 'https://kinfolk.tribetails.com/account?billing=saved', cancelUrl: 'https://evil.example/no' }],
+    // #2427: the MyTribe app's own link opens the app and is never a return
+    // address. Stripe is only ever given an https address on the portal.
+    ["the app's own account link as the success address", { successUrl: 'mytribe://account?billing=saved', cancelUrl: 'https://kinfolk.tribetails.com/app/account' }],
+    ["the app's own account link as the cancel address", { successUrl: 'https://kinfolk.tribetails.com/app/account?billing=saved', cancelUrl: 'mytribe://account' }],
   ])('refuses %s before opening Stripe', async (_why, urls) => {
     mocks.dbFn.mockReturnValue(withNoCard().db);
     const { createBillingSetupSessionHandler } = await import('../src/portal/billing');
@@ -532,5 +536,18 @@ describe('createBillingSetupSession return addresses (#2366)', () => {
       details: { code: 'return_url_refused' },
     });
     expect(mocks.stripeMock.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+  it.each([
+    // #2427: what the MyTribe app sends now, an address on the portal that the app claims.
+    ['the app return address', { successUrl: 'https://kinfolk.tribetails.com/app/account?billing=saved', cancelUrl: 'https://kinfolk.tribetails.com/app/account' }],
+    // What an installed app from before #2427 sends, and the web portal still sends.
+    ['the web Account page', { successUrl: 'https://kinfolk.tribetails.com/account?billing=saved', cancelUrl: 'https://kinfolk.tribetails.com/account' }],
+  ])('accepts %s and hands it to Stripe unchanged', async (_why, urls) => {
+    mocks.dbFn.mockReturnValue(withNoCard().db);
+    const { createBillingSetupSessionHandler } = await import('../src/portal/billing');
+    await createBillingSetupSessionHandler(callableRequest(urls, { uid: 'u1' }));
+    const session = mocks.stripeMock.checkout.sessions.create.mock.calls[0][0];
+    expect(session.success_url).toBe(urls.successUrl);
+    expect(session.cancel_url).toBe(urls.cancelUrl);
   });
 });
