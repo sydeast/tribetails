@@ -366,13 +366,63 @@ export function templateFormError(
  * `templateFormError` above is the first of these. The editor draws each one at
  * its own field and clears it when that field is edited.
  */
-export type TemplateErrorField = 'templateId' | 'subject' | 'body' | 'headline' | 'content';
+export type TemplateErrorField = 'templateId' | 'subject' | 'body' | 'html' | 'headline' | 'content';
 export interface TemplateFieldError {
   field: TemplateErrorField;
   message: string;
 }
+
+/** `{{!-- note --}}`, `{{! note}}` and an escaped `\{{field}}`: text the sender prints or drops, never fills. */
+const NOT_MARKUP = /\{\{!--[\s\S]*?--\}\}|\{\{![\s\S]*?\}\}|\\\{\{[\s\S]*?\}\}/g;
+
+/** `{{#if x}}`, `{{^if x}}`, `{{else}}`, `{{/if}}`, read for pairing only. */
+const BLOCK_TAG = /\{\{~?\s*(?:([#^])\s*([A-Za-z_][\w-]*)|\/\s*([A-Za-z_][\w-]*)|(else))\b[^}]*?~?\}\}/g;
+
+/**
+ * #2251: the sentence for a field whose `{{#if}}` blocks do not pair up, or
+ * that holds half a merge field, or null. The same sentences the server's
+ * `saveTemplate` refuses with (`lib/templateValidation.ts`), so a Save that is
+ * refused here and one refused there read the same. Narrower than the server:
+ * it only catches what it can be sure of, and the server is the last word on
+ * the rest, which the editor draws at the same field.
+ *
+ * Before this a subject like `{{#if isQuote}}Your quote is ready` saved, and
+ * every send of that notice then failed.
+ */
+export function templateMarkupError(label: string, value: string): string | null {
+  if (!value.includes('{{') && !value.includes('}}')) return null;
+  const fail = (detail: string) => `${label} cannot be sent as written. ${detail}`;
+  // A comment or an escaped `\{{` is never filled in, so a tag written inside
+  // one pairs with nothing and still sends (#2251 review).
+  const read = value.replace(NOT_MARKUP, '');
+  const open: string[] = [];
+  for (const m of read.matchAll(BLOCK_TAG)) {
+    const opener = m[2];
+    const closer = m[3];
+    if (opener) {
+      open.push(opener);
+    } else if (closer) {
+      const top = open.pop();
+      if (top === undefined) {
+        return fail(`{{/${closer}}} closes a part that was never opened. Remove it, or add the {{#${closer}}} it belongs to.`);
+      }
+      if (top !== closer) return fail(`{{#${top}}} is closed with {{/${closer}}}. Close it with {{/${top}}}.`);
+    } else if (open.length === 0) {
+      return fail('{{else}} sits outside any {{#if}}. Move it between an {{#if}} and its {{/if}}, or remove it.');
+    }
+  }
+  const last = open.pop();
+  if (last !== undefined) return fail(`{{#${last}}} is never closed. Add {{/${last}}} where that part ends.`);
+  // Half a field: `{{kinName` with no closing brackets before the next field.
+  const opens = read.split('{{').slice(1);
+  if (opens.some((rest) => !rest.includes('}}'))) {
+    return fail('A field is not written correctly. Each field needs two curly brackets on both sides, like {{kinName}}.');
+  }
+  return null;
+}
+
 export function templateFieldErrors(
-  fields: Pick<TemplateFormFields, 'templateId' | 'subject' | 'body'>,
+  fields: Pick<TemplateFormFields, 'templateId' | 'subject' | 'body'> & { html?: string },
   opts: { isCreate: boolean },
 ): TemplateFieldError[] {
   const out: TemplateFieldError[] = [];
@@ -381,8 +431,16 @@ export function templateFieldErrors(
     if (idError) out.push({ field: 'templateId', message: idError });
   }
   if (fields.subject.trim() === '') out.push({ field: 'subject', message: 'Subject is required.' });
+  else pushMarkup(out, 'subject', 'The subject', fields.subject);
   if (fields.body.trim() === '') out.push({ field: 'body', message: 'Body is required.' });
+  else pushMarkup(out, 'body', 'The body', fields.body);
+  pushMarkup(out, 'html', 'The HTML', fields.html ?? '');
   return out;
+}
+
+function pushMarkup(out: TemplateFieldError[], field: TemplateErrorField, label: string, value: string): void {
+  const message = templateMarkupError(label, value);
+  if (message) out.push({ field, message });
 }
 /**
  * The exact `saveTemplate` callable payload for these form fields. Mirrors
@@ -523,8 +581,11 @@ export function visualFieldErrors(
     if (idError) out.push({ field: 'templateId', message: idError });
   }
   if (fields.subject.trim() === '') out.push({ field: 'subject', message: 'Subject is required.' });
+  else pushMarkup(out, 'subject', 'The subject', fields.subject);
   if (fields.headline.trim() === '') out.push({ field: 'headline', message: 'Headline is required.' });
+  else pushMarkup(out, 'headline', 'The headline', fields.headline);
   if (!hasTextBlock(fields.content)) out.push({ field: 'content', message: 'The email needs some content.' });
+  else pushMarkup(out, 'content', 'The email', fields.content);
   return out;
 }
 /** The exact visual `saveTemplate` payload. Optional-field rules match `buildSaveTemplatePayload`. */

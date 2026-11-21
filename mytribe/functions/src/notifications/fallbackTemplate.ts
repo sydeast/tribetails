@@ -61,7 +61,13 @@ export interface FallbackEmail {
  * The catalog's own `label` and `description` are written for the operator's
  * settings screen, not for a customer, so they are deliberately not used here.
  */
-export function fallbackEmail(def: NotificationDef, businessName = ''): FallbackEmail {
+export function fallbackEmail(def: NotificationDef, businessName = '', opts: { hasLink?: boolean } = {}): FallbackEmail {
+  // #2487 order: every notice links to its item. A channel send carries the
+  // item's address as `{{link}}` (onNotificationChannelCreate), so the generic
+  // wording opens that item too. A merge field, like the business name, so the
+  // address is never read as Handlebars. With no link (the marketing preview)
+  // it points at the site.
+  const where = (site: string) => (opts.hasLink ? '{{link}}' : site);
   if (isKinfolkFacing(def)) {
     // #1381: the name comes from settings, as a merge field so a `{` in it is
     // never read as Handlebars. The caller adds `businessLabel` to the data.
@@ -71,7 +77,7 @@ export function fallbackEmail(def: NotificationDef, businessName = ''): Fallback
       body: [
         "There's an update about your care with {{businessLabel}}.",
         '',
-        `Sign in to see it: ${KINFOLK_URL}`,
+        `Sign in to see it: ${where(KINFOLK_URL)}`,
         '',
         businessName.trim() === '' ? "Your Kin's Favorite Auntie." : "{{businessLabel}}. Your Kin's Favorite Auntie.",
       ].join('\n'),
@@ -82,7 +88,7 @@ export function fallbackEmail(def: NotificationDef, businessName = ''): Fallback
     body: [
       "There's an update that needs your attention.",
       '',
-      `Sign in to see it: ${OFFICE_URL}`,
+      `Sign in to see it: ${where(OFFICE_URL)}`,
       '',
       // #1441: same sign-off rule as the household branch above.
       businessName.trim() === '' ? "Your Kin's Favorite Auntie." : "{{businessLabel}}. Your Kin's Favorite Auntie.",
