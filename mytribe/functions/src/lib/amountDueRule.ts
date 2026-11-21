@@ -21,7 +21,25 @@
  *
  * ── THE RULE ──────────────────────────────────────────────────────────────
  *
- * A STATED BALANCE IS ALWAYS THE ANSWER, whatever it says. `amountDue: 0` on a
+ * #2435 (operator ruling 2026-11-20): THE BALANCE IS TOTAL MINUS WHAT HAS BEEN
+ * APPLIED. Every applied payment and every applied account credit writes a row
+ * in `invoices/{id}/payments`, so what is owed is the total less those rows,
+ * and a stated balance never asks for more than that. One ABOVE it is stale
+ * (the rows moved and the field did not) and is read as the rows leave it:
+ * total $40, $15 recorded, $40 stated, owes $25. Before this the checkout
+ * charged $40 and the webhook turned the $15 over into a tip the household
+ * never chose, and there are no refunds. So with a stated balance the answer
+ * is min(stated, total - applied), the subtraction never below zero, where
+ * `applied` is what the caller passes (the rows' sum when it holds them, the
+ * stored `paidCents` otherwise). A pure reader passing `null` still has a
+ * stated balance capped at the total. A stated balance on a document with no
+ * positive total, or one whose rows already cover the total, passes as
+ * stated: there is nothing left to measure it against, and
+ * `cardCheckoutRefusal` refuses both by name (#2410).
+ *
+ * A STATED BALANCE BELOW WHAT THE ROWS LEAVE STANDS. That is an invoice brought
+ * over part paid, whose earlier payments were never written as rows here, and
+ * its stated figure is the correct owed amount. In the same way `amountDue: 0` on a
  * bill whose payments fall short is the pre-2026-07-25 partial-payment
  * corruption, and it is `lib/invoicePaymentRepair.ts`'s to fix from the payment
  * rows, deliberately and under an operator's eye. Re-deriving it here would
@@ -131,15 +149,26 @@ export function statesNoBalance(doc: AmountDueDoc): boolean {
  * when the caller is a pure reader that cannot fetch it. Those two are the same
  * branch whenever nothing has been collected; see the header.
  *
- * A stated balance is returned verbatim, negative included. Only a derived
- * figure is clamped at zero.
+ * A stated balance is returned as stated, negative included, unless it asks
+ * for more than the total less `paidCents` (#2435): then that is the answer.
+ * Only a derived figure is clamped at zero.
  */
 export function amountDueCentsOf(doc: AmountDueDoc, paidCents: number | null): number {
-  const stated = statedAmountDueCents(doc);
-  if (stated !== null) return stated;
-
   const totalCents = invoiceTotalCentsOf(doc);
   const paid = typeof paidCents === 'number' && Number.isFinite(paidCents) ? Math.round(paidCents) : 0;
+  const stated = statedAmountDueCents(doc);
+  if (stated !== null) {
+    // #2435: a stated balance never asks for more than the total less what
+    // has been applied. A credit (negative) and a doc with no total pass as
+    // stated; a lower stated figure (brought over part paid) stands.
+    // Rows that already cover the total leave the stated figure too: that
+    // shape is #2410's, refused at checkout by `cardCheckoutRefusal` and left
+    // for the office, never read here as settled.
+    if (stated <= 0 || totalCents <= 0) return stated;
+    const left = totalCents - Math.max(0, paid);
+    return left > 0 ? Math.min(stated, left) : stated;
+  }
+
   if (paid > 0) return Math.max(0, totalCents - paid);
 
   return SETTLED_LABELS.includes(label(doc.status)) ? 0 : Math.max(0, totalCents);
