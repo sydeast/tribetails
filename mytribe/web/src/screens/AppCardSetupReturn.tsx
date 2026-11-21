@@ -63,7 +63,7 @@ export function AppCardSetupReturn() {
           <p className="sub" style={{ margin: '12px auto 20px', maxWidth: '44ch' }}>
             {saved
               ? 'Go back to MyTribe to see the card on file.'
-              : 'No card was added. Go back to MyTribe to try again.'}
+              : 'Go back to MyTribe to see the card on file.'}
           </p>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             {onAndroid && (

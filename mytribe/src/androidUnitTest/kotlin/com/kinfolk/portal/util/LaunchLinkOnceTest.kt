@@ -59,15 +59,25 @@ class LaunchLinkOnceTest {
         assertNothingWaiting()
     }
 
-    /** The same screen coming back (a configuration change): a household on the reset screen stays there. */
+    /**
+     * A restored screen reads only its OWN intent. The link stored here was
+     * another copy's (opened over Home, then closed with Back): a dark-mode
+     * change rebuilding Home must not open it. A screen that was opened by a
+     * link reads that link again from its own intent, which MainActivity does
+     * when this answers true.
+     */
     @Test
-    fun aRestoredScreenKeepsAndRereadsItsLink() {
+    fun aRestoredScreenForgetsAnotherScreensLink_andReadsItsOwnIntent() {
         openedEarlier()
         assertTrue(launchLinkShouldBeRead(restored = true, replayedFromHistory = false))
-        assertEquals("invite-1", readInitialClaimInviteId())
-        assertEquals("share-1", readInitialShareToken())
-        assertEquals(SecureResetParams(oobCode = "code-1"), readInitialSecureResetParams())
-        assertTrue(readInitialUnknownLink())
+        assertNothingWaiting()
+    }
+    /** Replayed from Recents, then rebuilt by a configuration change: the replayed link stays unread. */
+    @Test
+    fun aRestoredScreenReplayedFromRecentsDoesNotReadTheLinkEither() {
+        openedEarlier()
+        assertFalse(launchLinkShouldBeRead(restored = true, replayedFromHistory = true))
+        assertNothingWaiting()
     }
 
     @Test

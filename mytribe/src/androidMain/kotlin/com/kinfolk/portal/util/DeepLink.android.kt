@@ -90,21 +90,25 @@ internal fun cardSetupReturnOf(uri: Uri?): CardSetupReturn? {
  * Called by `MainActivity.onCreate` before it reads its intent. Answers
  * whether that intent's link should be read.
  *
- * - A FRESH create starts with no launch link: whatever an earlier screen was
- *   opened with is forgotten. Its own intent is then read, so a link that
- *   started this create still opens, and a launcher or push intent with no
- *   link opens Home or the push's target.
- * - A fresh create Android REPLAYED from Recents carries the intent the task
- *   was first opened with. That link was opened the first time round, so it
- *   is not read again (the push tap and the card returns skip it the same
- *   way).
- * - A RESTORED create (the screen rebuilt after a configuration change, or
- *   after Android ended the process while the app was in the background) is
- *   the same screen coming back. It reads its intent again, as before, so a
- *   household still on the claim or reset screen stays there.
+ * EVERY create starts with no launch link: whatever another screen was
+ * opened with is forgotten. Then only this screen's own intent is read:
+ *
+ * - A fresh create reads its link, so a link that started it still opens, and
+ *   a launcher or push intent with no link opens Home or the push's target.
+ * - A RESTORED create (a configuration change the activity does not handle,
+ *   such as dark mode or font size, or process death in the background) reads
+ *   its own intent again, so a household still on the claim or reset screen
+ *   stays there. A screen that was opened from the icon reads nothing, even
+ *   when a second copy of the app on top of it had been opened by a link.
+ * - A create Android REPLAYED from Recents carries the intent the task was
+ *   first opened with. That link was opened the first time round, so it is
+ *   not read, fresh or restored (the push tap and the card returns skip it
+ *   the same way).
+ *
+ * [restored] is kept as an input so the call site states both facts; the
+ * answer does not depend on it.
  */
-internal fun launchLinkShouldBeRead(restored: Boolean, replayedFromHistory: Boolean): Boolean {
-    if (restored) return true
+internal fun launchLinkShouldBeRead(@Suppress("UNUSED_PARAMETER") restored: Boolean, replayedFromHistory: Boolean): Boolean {
     forgetEarlierLaunchLinks()
     androidInitialUnknownLink = false
     return !replayedFromHistory

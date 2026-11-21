@@ -153,7 +153,8 @@ describe('#2427 the address Stripe returns a MyTribe app card setup to', () => {
     await boot();
     const page = await screen.findByTestId('app-card-setup-return');
     expect(page).toHaveTextContent('Card setup was closed.');
-    expect(page).toHaveTextContent('No card was added.');
+    // The cancel address cannot know what is on file either, so it claims nothing.
+    expect(page.textContent ?? '').not.toMatch(/no card was added/i);
     expect(screen.getByRole('link', { name: 'Open MyTribe' })).toHaveAttribute('href', 'mytribe://account');
     expect(screen.getByRole('link', { name: 'See Account Settings here' })).toHaveAttribute('href', '/account');
   });
