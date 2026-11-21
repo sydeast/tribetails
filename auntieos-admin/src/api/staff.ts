@@ -165,7 +165,8 @@ export function assignedAuntieLabel(
   if (stored !== '' && !stored.includes('@')) return stored;
   const member = roster?.find((m) => m.uid === assignedUid);
   if (member !== undefined) return staffPersonLabel(member);
-  return roster === null ? 'Assigned' : staffRoleWord(null);
+  // An empty roster is a read that failed (`loadStaffRoster` resolves [] then), not proof of who it is.
+  return roster === null || roster.length === 0 ? 'Assigned' : staffRoleWord(null);
 }
 /** The picker label: display name, then email, then the uid. Never blank, so
  *  the control always has an accessible name. */

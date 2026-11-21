@@ -171,5 +171,6 @@ describe('Staffing names (#1857)', () => {
     expect(assignedAuntieLabel('u2', null, [ruth])).toBe('Auntie Ruth');
     expect(assignedAuntieLabel('u1', 'e2e-admin@tribetails.com', [owner])).toBe('Operator');
     expect(assignedAuntieLabel('gone', null, [ruth])).toBe('Staff member');
+    expect(assignedAuntieLabel('u2', null, [])).toBe('Assigned');
   });
 });
