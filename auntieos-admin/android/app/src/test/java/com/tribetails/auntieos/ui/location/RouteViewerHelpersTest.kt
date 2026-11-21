@@ -95,7 +95,7 @@ class RouteViewerHelpersTest {
             route       = VisitRoute(visitVerified = false),
             checkpoints = emptyList(),
         )
-        assertFalse(out.contains("Verified at client home"))
+        assertFalse(out.contains("Verified at the household's home"))
     }
 
     @Test
@@ -105,7 +105,7 @@ class RouteViewerHelpersTest {
             route       = VisitRoute(visitVerified = true),
             checkpoints = emptyList(),
         )
-        assertTrue(out.contains("Verified at client home: yes"))
+        assertTrue(out.contains("Verified at the household's home: yes"))
     }
 
     @Test
