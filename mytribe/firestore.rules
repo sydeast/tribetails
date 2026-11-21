@@ -1717,9 +1717,29 @@ service cloud.firestore {
     // HER LIST MUST CARRY THE TYPE: a list is allowed only when the query itself
     // says `communication_type == 'visit_report'` (admin web adds it for her in
     // `lib/caretakerScope.ts`); an unfiltered list is refused whole.
+    //
+    // #2443 ruling, 2026-11-20: SHE WORKS ONLY THE KINTALE DRAFTS SHE MADE.
+    // Every creator stamps the maker's uid as `createdBy`, on the server (the
+    // generator and `writeDraft` in auntieos-admin/web/functions). She reads a
+    // KinTale draft only when that stamp is exactly her uid, and her list must
+    // say `createdBy == <her uid>` as well as the type (admin web adds both in
+    // `lib/caretakerScope.ts`). A draft with no stamp was made before the stamp
+    // existed, by the owner, so it is the owner's and she does not read it.
+    // `publishGeneratedDraft` holds her send to the same drafts.
+    //
+    // THE STAMP IS NOT REWRITTEN. A create may stamp only the caller's own uid
+    // (or none, which reads as the owner's), and an update leaves the stamp as
+    // it was, so nobody hands a draft to an Auntie, or takes one from her, by
+    // editing this field.
     function isKinTaleDraftData(d) {
       return d.get('communication_type', null) == 'visit_report'
              && d.get('communicationType', 'visit_report') == 'visit_report';
+    }
+    function isOwnDraftData(d) {
+      return d.get('createdBy', null) == request.auth.uid;
+    }
+    function draftMakerKept() {
+      return request.resource.data.get('createdBy', null) == resource.data.get('createdBy', null);
     }
     // #2428: A DRAFT THAT WENT OUT IS A RECORD, AND AN EMAIL OR TEXT GOES OUT
     // ONCE. An Email or Text draft is sent by `sendGeneratedDraft`, which marks
@@ -1763,16 +1783,20 @@ service cloud.firestore {
     }
     match /generated_drafts/{id} {
       allow get: if isOwner()
-                 || (isCaretaker() && isKinTaleDraftData(resource.data))
+                 || (isCaretaker() && isKinTaleDraftData(resource.data) && isOwnDraftData(resource.data))
                  || (isTestAdmin() && resource.data.kinfolk_id == testScope());
       allow list: if isOwner()
-                  || (isCaretaker() && resource.data.communication_type == 'visit_report')
+                  || (isCaretaker()
+                      && resource.data.communication_type == 'visit_report'
+                      && resource.data.createdBy == request.auth.uid)
                   || (isTestAdmin() && resource.data.kinfolk_id == testScope());
-      allow create: if isOwner();
+      allow create: if isOwner()
+                    && request.resource.data.get('createdBy', request.auth.uid) == request.auth.uid;
       allow delete: if isOwner() && !draftWentOutData(resource.data);
       allow update: if isOwner()
                     && !isApprovedMessageDraftData(resource.data)
-                    && !isSentPushDraftData(resource.data);
+                    && !isSentPushDraftData(resource.data)
+                    && draftMakerKept();
     }
     // #2289: ONE household record per household. A household's first record
     // is made at its own id (`household_data/{kinfolkId}`) by every creator:

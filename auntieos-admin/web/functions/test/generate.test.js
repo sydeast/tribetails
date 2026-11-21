@@ -1481,3 +1481,34 @@ describe('a household note is never sent as a voice example', () => {
     assert.doesNotMatch(promptOf(a), /VOICE TRAINING EXAMPLES/);
   });
 });
+// #2443 ruling, 2026-11-20: a draft records who made it. The generator stamps
+// the signed-in caller's uid, which index.js takes from the verified token.
+describe('the draft records who made it (#2443)', () => {
+  const withUid = (db, anthropic, uid, body = T1_REQUEST) =>
+    gen.runGenerate({ db, anthropic, model: 'm', voiceSource: 'VOICE', uid }, body);
+  it('stamps the caller as the maker of a KinTale draft', async () => {
+    const db = t1Db();
+    const out = await withUid(db, visitModel([GOOD_DRAFT]), 'owner-1');
+    assert.strictEqual(db._drafts.length, 1);
+    assert.strictEqual(db._drafts[0].createdBy, 'owner-1');
+    assert.strictEqual(out.draft_id, db._drafts[0].id);
+  });
+  it('stamps every other kind of draft too', async () => {
+    const db = t1Db();
+    await withUid(db, visitModel(['Hello Tess.']), 'owner-1', { communication_type: 'email', recipient: 'Tess', raw_notes: 'say hi' });
+    assert.strictEqual(db._drafts[0].createdBy, 'owner-1');
+  });
+  it('a maker named in the request body is not the maker', async () => {
+    const db = t1Db();
+    await withUid(db, visitModel([GOOD_DRAFT]), 'owner-1', { ...T1_REQUEST, createdBy: 'auntie-1', created_by: 'auntie-1' });
+    assert.strictEqual(db._drafts[0].createdBy, 'owner-1');
+    assert.ok(!('created_by' in db._drafts[0]));
+  });
+  it('with no signed-in uid the draft carries no stamp, which reads as the owner\'s', async () => {
+    for (const uid of [undefined, '', '   ', 7]) {
+      const db = t1Db();
+      await withUid(db, visitModel([GOOD_DRAFT]), uid, { ...T1_REQUEST, createdBy: 'auntie-1' });
+      assert.ok(!('createdBy' in db._drafts[0]), String(uid));
+    }
+  });
+});
