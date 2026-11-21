@@ -18,17 +18,31 @@ import '../styles/bookingdetail.css';
  * A notice about a whole request ("KinCare booking confirmed", a request
  * declined) names the request's batch and no single visit, and used to open
  * the Schedule list, where the household had to find the booking among the
- * rest. This is the request on its own: a request of one KinCare goes straight
- * to that KinCare's page, and a request of several lists them, each opening its
+ * rest. This is the request on its own: a request of one visit goes straight
+ * to that visit's page, and a request of several lists them, each opening its
  * own page. MyTribe Android's `BookingEnvelopeScreen` is the other half.
  */
 export function bookingRequestOf(result: GetMyBookingsResult | undefined, batchId: string): GetMyBookingsResultEnvelope | null {
   return result?.envelopes.find((e) => e.batchId === batchId) ?? null;
 }
 
-/** "1 KinCare" / "3 KinCares": how many visits the request holds. */
-export function kinCareCountLabel(count: number): string {
-  return count === 1 ? '1 KinCare' : `${count} KinCares`;
+/** "1 visit" / "3 visits": the household word (#1825), as Android's same screen says it. */
+export function visitCountLabel(count: number): string {
+  return count === 1 ? '1 visit' : `${count} visits`;
+}
+
+/** The request's shape and state, in the words of Android's `BookingEnvelopeScreen`. */
+export function requestStateLine(request: Pick<GetMyBookingsResultEnvelope, 'pattern' | 'envelopeStatus'>): string {
+  const pattern = request.pattern === 'weekly' ? 'Repeating Schedule' : 'Individual Dates';
+  const status: Record<GetMyBookingsResultEnvelope['envelopeStatus'], string> = {
+    requested: 'Requested',
+    partiallyConfirmed: 'Partially confirmed',
+    confirmed: 'Confirmed',
+    inProgress: 'In progress',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+  };
+  return `${pattern} \u00b7 ${status[request.envelopeStatus]}`;
 }
 
 export function BookingRequest() {
@@ -61,7 +75,10 @@ export function BookingRequest() {
       </>
     );
   }
-  if (view.kind !== 'data') {
+  // A list read before this request existed must not say it is gone while the
+  // fresh read is still on its way.
+  const stillLooking = bookings.isFetching && !bookingRequestOf(bookings.data, batchId)?.kinCares.length;
+  if (view.kind !== 'data' || stillLooking) {
     return (
       <>
         <PortalNav active="schedule" />
@@ -96,8 +113,9 @@ export function BookingRequest() {
           </section>
         ) : (
           <section className="glass card d1" aria-label="This booking" data-testid="booking-request">
-            <div className="sectlabel">{kinCareCountLabel(kinCares.length)}</div>
-            <h3 className="title">{request.serviceName ?? 'Your booking'}</h3>
+            <div className="sectlabel">{visitCountLabel(kinCares.length)}</div>
+            <h3 className="title">{request.serviceName ?? 'Booking'}</h3>
+            <p className="sub">{requestStateLine(request)}</p>
             {request.kinNames.length > 0 && <p className="sub">{request.kinNames.join(', ')}</p>}
             {kinCares.map((b, i) => {
               const tile = visitTile(b);
@@ -111,7 +129,7 @@ export function BookingRequest() {
                     </div>
                     <div className="info">
                       {serviceEyebrowOf(b) && <span className="svc">{serviceEyebrowOf(b)}</span>}
-                      <b>{visitTitleOf(b) ?? 'KinCare'}</b>
+                      <b>{visitTitleOf(b) ?? 'Visit'}</b>
                       <small>{bookingSubtitle(b)}</small>
                     </div>
                     <div className="pet">{speciesEmoji(null)}</div>

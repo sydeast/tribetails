@@ -3,7 +3,8 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BookingRequest, bookingRequestOf, kinCareCountLabel } from './BookingRequest';
+import { BookingRequest, bookingRequestOf, requestStateLine, visitCountLabel } from './BookingRequest';
+import { bookingsQueryKey } from '../lib/bookingsCache';
 import type {
   GetMyBookingsResult,
   GetMyBookingsResultEnvelope,
@@ -13,7 +14,7 @@ import type {
 /**
  * #1865: the "KinCare booking confirmed" notice opened the Schedule list, and
  * the household had to find the booking among the rest. A notice about a whole
- * request now opens the request: its one KinCare, or the list of them.
+ * request now opens the request: its one visit, or the list of them.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -110,8 +111,9 @@ function result(envelopes: GetMyBookingsResultEnvelope[]): GetMyBookingsResult {
   return { liveVisit: null, upcoming: envelopes.flatMap((e) => e.kinCares), recent: [], envelopes };
 }
 
-function renderScreen() {
+function renderScreen(cached?: GetMyBookingsResult) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (cached) queryClient.setQueryData(bookingsQueryKey('fam1'), cached);
   return render(
     <QueryClientProvider client={queryClient}>
       <BookingRequest />
@@ -131,7 +133,7 @@ describe('BookingRequest (#1865)', () => {
     expect(screen.getByText(/Loading this booking/)).toBeInTheDocument();
   });
 
-  it('a request of one KinCare goes straight to that KinCare, replacing the address', async () => {
+  it('a request of one visit goes straight to that visit, replacing the address', async () => {
     mocks.getMyBookings.mockResolvedValue(result([envelope('b1', [visit('v24')]), envelope('b2', [visit('other', { batchId: 'b2' })])]));
     renderScreen();
     const nav = await screen.findByTestId('navigate');
@@ -140,7 +142,7 @@ describe('BookingRequest (#1865)', () => {
     expect(nav.dataset.replace).toBe('true');
   });
 
-  it('a request of several lists each KinCare, each opening its own page, and nothing from another request', async () => {
+  it('a request of several lists each visit, each opening its own page, and nothing from another request', async () => {
     mocks.getMyBookings.mockResolvedValue(
       result([
         envelope('b1', [visit('v24'), visit('v25', { startTimeMs: new Date(2026, 10, 25, 9, 0).getTime() })]),
@@ -149,7 +151,9 @@ describe('BookingRequest (#1865)', () => {
     );
     renderScreen();
     const card = await screen.findByTestId('booking-request');
-    expect(card).toHaveTextContent('2 KinCares');
+    expect(card).toHaveTextContent('2 visits');
+    expect(card).toHaveTextContent('Individual Dates \u00b7 Confirmed');
+    expect(card).not.toHaveTextContent(/KinCares?\b/);
     const opens = Array.from(card.querySelectorAll('a[data-to="/schedule/$visitId"]')).map((a) => JSON.parse(a.getAttribute('data-params')!));
     expect(opens).toEqual([{ visitId: 'v24' }, { visitId: 'v25' }]);
     expect(screen.queryByTestId('navigate')).toBeNull();
@@ -164,6 +168,35 @@ describe('BookingRequest (#1865)', () => {
     expect(screen.queryByTestId('navigate')).toBeNull();
   });
 
+  it('a list cached before the request existed keeps loading, and then opens it, never saying it is gone', async () => {
+    let answer!: (r: GetMyBookingsResult) => void;
+    mocks.getMyBookings.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    renderScreen(result([envelope('older', [visit('v1', { batchId: 'older' })])]));
+    expect(await screen.findByText(/Loading this booking/)).toBeInTheDocument();
+    expect(screen.queryByText(/couldn.t find that booking/)).toBeNull();
+    answer(result([envelope('b1', [visit('v24'), visit('v25')])]));
+    expect(await screen.findByTestId('booking-request')).toHaveTextContent('2 visits');
+  });
+
+  it('another household\u2019s request is not in this household\u2019s list, so nothing of it shows', async () => {
+    mocks.batchId = 'theirs';
+    mocks.getMyBookings.mockResolvedValue(result([envelope('b1', [visit('v24')])]));
+    renderScreen();
+    expect(await screen.findByText(/couldn.t find that booking/)).toBeInTheDocument();
+    expect(screen.queryByTestId('booking-request')).toBeNull();
+    expect(screen.queryByTestId('navigate')).toBeNull();
+  });
+
+  it('a staff name field or note on the record is never drawn', async () => {
+    mocks.getMyBookings.mockResolvedValue(
+      result([{ ...envelope('b1', [visit('v24', { notes: 'GATE CODE' }), visit('v25')]), notes: 'ENVELOPE NOTE' }]),
+    );
+    renderScreen();
+    const card = await screen.findByTestId('booking-request');
+    expect(card).not.toHaveTextContent('GATE CODE');
+    expect(card).not.toHaveTextContent('ENVELOPE NOTE');
+  });
+
   it('a failed read offers to try again rather than a blank page', async () => {
     mocks.getMyBookings.mockRejectedValue(new Error('boom'));
     renderScreen();
@@ -171,15 +204,20 @@ describe('BookingRequest (#1865)', () => {
   });
 });
 
-describe('bookingRequestOf / kinCareCountLabel', () => {
+describe('bookingRequestOf / visitCountLabel / requestStateLine', () => {
   it('finds the request by its batch only', () => {
     const r = result([envelope('b1', [visit('v1')])]);
     expect(bookingRequestOf(r, 'b1')?.batchId).toBe('b1');
     expect(bookingRequestOf(r, 'v1')).toBeNull();
     expect(bookingRequestOf(undefined, 'b1')).toBeNull();
   });
-  it('counts KinCares in the brand word', () => {
-    expect(kinCareCountLabel(1)).toBe('1 KinCare');
-    expect(kinCareCountLabel(3)).toBe('3 KinCares');
+  it('counts in the household word, as Android does', () => {
+    expect(visitCountLabel(1)).toBe('1 visit');
+    expect(visitCountLabel(3)).toBe('3 visits');
+  });
+
+  it('says the shape and state in Android\u2019s words', () => {
+    expect(requestStateLine({ pattern: 'weekly', envelopeStatus: 'partiallyConfirmed' })).toBe('Repeating Schedule \u00b7 Partially confirmed');
+    expect(requestStateLine({ pattern: 'individual', envelopeStatus: 'cancelled' })).toBe('Individual Dates \u00b7 Cancelled');
   });
 });
