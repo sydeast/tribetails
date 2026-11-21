@@ -148,6 +148,49 @@ class AppLinkManifestTest {
         assertTrue(!own.contains("""android:scheme="https""""), "The own-scheme filter must not also claim https:\n$own")
     }
 
+    // ── #2427: the address Stripe returns a card setup to ──
+    private fun cardSetupReturnFilter(): String =
+        filters().singleOrNull { it.contains("""android:path="/app/account"""") }
+            ?: fail("Exactly one intent-filter must claim /app/account")
+    @Test
+    fun theCardSetupReturnIsClaimedOnThePortalHostOverHttpsAndVerified() {
+        val filter = cardSetupReturnFilter()
+        assertTrue(filter.contains("""android:scheme="https""""), filter)
+        assertTrue(filter.contains("""android:host="kinfolk.tribetails.com""""), filter)
+        assertTrue(filter.contains("""android:autoVerify="true""""), "Without autoVerify the phone keeps the address in the browser:\n$filter")
+        assertTrue(filter.contains("android.intent.action.VIEW"), filter)
+        assertTrue(filter.contains("android.intent.category.BROWSABLE"), filter)
+        assertTrue(filter.contains("android.intent.category.DEFAULT"), filter)
+        // A filter of its own, so its path is matched against nothing else.
+        assertEquals(1, Regex("""android:(path|pathPrefix|pathPattern)=""").findAll(filter).count(), filter)
+        assertEquals(1, Regex("""android:scheme=""").findAll(filter).count(), filter)
+        assertEquals(1, Regex("""android:host=""").findAll(filter).count(), filter)
+    }
+    /**
+     * The web portal's own Account page, and every email action link under
+     * `/account/`, stay the browser's (the two action paths are claimed by
+     * exact path in their own filter).
+     */
+    @Test
+    fun theWebPortalsOwnAccountPageIsNotClaimed() {
+        val claimed = Regex("""android:(?:path|pathPrefix|pathPattern)="([^"]+)"""").findAll(manifest).map { it.groupValues[1] }.toList()
+        val account = claimed.filter { it.startsWith("/account") }
+        assertEquals(setOf("/account/secure-reset", "/account/action"), account.toSet(), "Only the two action paths may sit under /account: $claimed")
+        assertTrue(claimed.none { it.startsWith("/app/account/") || it == "/app/account/" }, "The card return claim is one exact path: $claimed")
+        assertTrue(
+            !Regex("""android:pathPrefix="/app/account""").containsMatchIn(manifest),
+            "The card return must be an exact path, not a prefix",
+        )
+    }
+    @Test
+    fun theAppsOwnSchemeOpensAccountSettingsToo() {
+        val own = filters().singleOrNull { it.contains("""android:scheme="mytribe"""") && it.contains("""android:host="account"""") }
+            ?: fail("Exactly one intent-filter must claim mytribe://account")
+        assertTrue(own.contains("android.intent.action.VIEW"), own)
+        assertTrue(own.contains("android.intent.category.BROWSABLE"), "A browser can only open a BROWSABLE link:\n$own")
+        assertTrue(own.contains("android.intent.category.DEFAULT"), own)
+        assertTrue(!own.contains("""android:scheme="https""""), "The own-scheme filter must not also claim https:\n$own")
+    }
     /** `MainActivity` is where every link above is read. */
     @Test
     fun theReturnFiltersBelongToTheMainActivity() {
@@ -155,5 +198,7 @@ class AppLinkManifestTest {
             ?: fail("No MainActivity in the manifest")
         assertTrue(activity.contains("""android:pathPrefix="/app/invoices/""""))
         assertTrue(activity.contains("""android:host="invoices""""))
+        assertTrue(activity.contains("""android:path="/app/account""""))
+        assertTrue(activity.contains("""android:host="account""""))
     }
 }

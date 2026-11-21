@@ -9,25 +9,33 @@ import com.kinfolk.portal.auth.parseEmailActionUrl
 import com.kinfolk.portal.push.PUSH_OPEN_EXTRA_KEYS
 import com.kinfolk.portal.push.PendingPushOpen
 import com.kinfolk.portal.push.pushOpenFromExtras
+import com.kinfolk.portal.screens.account.PendingCardSetupReturn
 import com.kinfolk.portal.screens.invoices.PendingCheckoutReturn
 import com.kinfolk.portal.ui.KinfolkPortalAppGuarded
 import com.kinfolk.portal.util.androidInitialClaimInviteId
 import com.kinfolk.portal.util.androidInitialSecureResetParams
 import com.kinfolk.portal.util.androidInitialShareToken
 import com.kinfolk.portal.util.androidInitialUnknownLink
+import com.kinfolk.portal.util.cardSetupReturnOf
 import com.kinfolk.portal.util.checkoutReturnOf
 import com.kinfolk.portal.util.deepLinkIsRecognized
 import com.kinfolk.portal.util.forgetEarlierLaunchLinks
+import com.kinfolk.portal.util.launchLinkShouldBeRead
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        captureDeepLink(intent?.data)
+        // #2432: a launch link opens once. See launchLinkShouldBeRead.
+        val replayed = intent != null && intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        if (launchLinkShouldBeRead(restored = savedInstanceState != null, replayedFromHistory = replayed)) {
+            captureDeepLink(intent?.data)
+        }
         // A restored activity is handed its first intent again; the tap it
         // carried was opened the first time round.
         if (savedInstanceState == null) {
             capturePushTap(intent)
             captureCheckoutReturn(intent)
+            captureCardSetupReturn(intent)
         }
         setContent { KinfolkPortalAppGuarded() }
     }
@@ -37,6 +45,19 @@ class MainActivity : ComponentActivity() {
         captureDeepLink(intent.data)
         capturePushTap(intent)
         captureCheckoutReturn(intent)
+        captureCardSetupReturn(intent)
+    }
+    /**
+     * #2427: Stripe sent the household back from its card page to an address
+     * this app claims (`/app/account` on the portal host, or
+     * `mytribe://account` from the portal's signed-out return page). Held for
+     * the nav host, which opens Account Settings once the household is signed
+     * in and reads the card again. Read once, like a card payment's return.
+     */
+    private fun captureCardSetupReturn(intent: Intent?) {
+        if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val ret = cardSetupReturnOf(intent.data) ?: return
+        PendingCardSetupReturn.offer(ret)
     }
     /**
      * #2401: Stripe sent the household back to an address this app claims
@@ -81,7 +102,9 @@ class MainActivity : ComponentActivity() {
         // newest thing this app was asked to show. A claim, share or email
         // link from earlier in this run must not open in its place.
         val checkoutReturn = checkoutReturnOf(uri)
-        if (checkoutReturn != null) forgetEarlierLaunchLinks()
+        // #2427: the same for a card setup coming back from Stripe.
+        val cardSetupReturn = cardSetupReturnOf(uri)
+        if (checkoutReturn != null || cardSetupReturn != null) forgetEarlierLaunchLinks()
         captureSegment(pathParts, "claim") { androidInitialClaimInviteId = it }
         // Invite emails link `${CLAIM_LINK_BASE_URL}?invite=<id>` (query form, no
         // path segment), so it must parse or the claim screen never mounts on Android.
@@ -108,6 +131,8 @@ class MainActivity : ComponentActivity() {
             isEmailAction = emailAction != null,
             // #2401: a card payment coming back is a link this app can place.
             isCheckoutReturn = checkoutReturn != null,
+            // #2427: and so is a card setup coming back.
+            isCardSetupReturn = cardSetupReturn != null,
         )
     }
 

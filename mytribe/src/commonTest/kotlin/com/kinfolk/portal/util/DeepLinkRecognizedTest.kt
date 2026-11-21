@@ -35,6 +35,12 @@ class DeepLinkRecognizedTest {
         assertFalse(deepLinkIsRecognized(listOf("this-page-does-not-exist"), inviteQuery = null, isEmailAction = false))
         assertFalse(deepLinkIsRecognized(emptyList(), inviteQuery = null, isEmailAction = false))
     }
+    // #2427: the address Stripe returns a card setup to opens Account Settings, not the not-found screen.
+    @Test
+    fun aCardSetupReturnIsRecognized() {
+        assertTrue(deepLinkIsRecognized(listOf("app", "account"), inviteQuery = null, isEmailAction = false, isCardSetupReturn = true))
+        assertFalse(deepLinkIsRecognized(listOf("app", "account"), inviteQuery = null, isEmailAction = false))
+    }
     // #2401: the address Stripe returns a card payment to opens the invoice, not the not-found screen.
     @Test
     fun aCheckoutReturnIsRecognized() {

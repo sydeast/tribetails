@@ -285,6 +285,20 @@ fun AppNavHost(
         if (shellBillingAccess) invoicesController.onCheckoutReturn(ret)
         navController.navigate(InvoiceDetailRoute(ret.invoiceId)) { launchSingleTop = true }
     }
+    // #2427: Stripe returned a card setup to this app. Account Settings opens
+    // and reads the card again. Same gates as the card payment's return above,
+    // and taken once. Without billing access there is no card to read and no
+    // Add a card that could have sent the household to Stripe, so nothing opens.
+    val pendingCardSetupReturn by com.kinfolk.portal.screens.account.PendingCardSetupReturn.pending.collectAsState()
+    var cardSetupReturn by remember { mutableStateOf<com.kinfolk.portal.screens.account.CardSetupReturn?>(null) }
+    LaunchedEffect(pendingCardSetupReturn, shellOnScreen, windowFocused) {
+        if (pendingCardSetupReturn == null || !shellOnScreen || !windowFocused) return@LaunchedEffect
+        navController.currentBackStackEntryFlow.first()
+        val ret = com.kinfolk.portal.screens.account.PendingCardSetupReturn.take() ?: return@LaunchedEffect
+        if (!shellBillingAccess) return@LaunchedEffect
+        cardSetupReturn = ret
+        navController.navigate(AccountRoute) { launchSingleTop = true }
+    }
     // #1281: lives above the NavHost, so it outlasts the wizard's destination
     // and reaches Schedule's. See ScheduleHandoff.
     var scheduleHandoff by remember { mutableStateOf<ScheduleHandoff?>(null) }
@@ -514,6 +528,8 @@ fun AppNavHost(
                             billingAccess = shellBillingAccess,
                             onAccountSaved = { onPersonNameChanged(resolveShellPersonName(it.displayName, it.email, shellFamilyName)) },
                             repo = repo,
+                            cardSetupReturn = cardSetupReturn,
+                            onCardSetupReturnSeen = { cardSetupReturn = null },
                         )
                     }
                 }

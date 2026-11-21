@@ -69,12 +69,14 @@ fun deepLinkIsRecognized(
     inviteQuery: String?,
     isEmailAction: Boolean,
     isCheckoutReturn: Boolean = false,
+    /** #2427: whether [com.kinfolk.portal.screens.account.cardSetupReturnFromLink] accepted it. */
+    isCardSetupReturn: Boolean = false,
 ): Boolean {
     fun idAfter(prefix: String): Boolean {
         val i = pathSegments.indexOf(prefix)
         return i >= 0 && i + 1 < pathSegments.size && pathSegments[i + 1].isNotBlank()
     }
-    if (isCheckoutReturn) return true
+    if (isCheckoutReturn || isCardSetupReturn) return true
     if (idAfter("claim") || idAfter("share")) return true
     if (pathSegments.lastOrNull() == "claim" && !inviteQuery.isNullOrBlank()) return true
     return isEmailAction
