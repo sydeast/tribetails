@@ -57,6 +57,7 @@ vi.mock('../api/templatesWrite', async () => {
     // Real, not stubbed: TemplateEditor uses it to tell the live-key warning
     // apart from a binding refusal, and a stub would only agree with itself.
     isLiveNotificationKeyWarning: actual.isLiveNotificationKeyWarning,
+    templateMarkupFieldErrors: actual.templateMarkupFieldErrors,
   };
 });
 

@@ -1122,13 +1122,17 @@ private fun TemplateEditorScreen(
     // required field left blank says so at the field instead of only greying Save.
     var subjectTouched by rememberSaveable(template.templateId, creating) { mutableStateOf(false) }
     var bodyTouched by rememberSaveable(template.templateId, creating) { mutableStateOf(false) }
-    val subjectHint = requiredFieldHint("Subject", subject, subjectTouched)
-    val bodyHint = requiredFieldHint("Body", bodyValue.text, bodyTouched)
+    // #2251: a subject or body the sender could not fill in says so at its
+    // field too, and holds Save back like a blank one.
+    val subjectMarkup = templateMarkupError("The subject", subject)
+    val subjectHint = requiredFieldHint("Subject", subject, subjectTouched) ?: subjectMarkup
     LaunchedEffect(templateId, title, subject, bodyValue.text, category, description, tags) {
         if (saveError != null) onDismissError()
     }
     val mode = remember(template.templateId, creating) { templateEditMode(template, creating) }
-    val canSave = when (mode) {
+    val bodyMarkup = if (mode == TemplateEditMode.FULL) templateMarkupError("The body", bodyValue.text) else null
+    val bodyHint = requiredFieldHint("Body", bodyValue.text, bodyTouched) ?: bodyMarkup
+    val canSave = subjectMarkup == null && bodyMarkup == null && when (mode) {
         TemplateEditMode.READ_ONLY -> false
         TemplateEditMode.SUBJECT_ONLY -> subject.isNotBlank()
         TemplateEditMode.FULL -> subject.isNotBlank() && bodyValue.text.isNotBlank() && keyError == null

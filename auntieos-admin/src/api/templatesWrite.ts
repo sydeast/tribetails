@@ -42,6 +42,33 @@ export function isTemplateKeyTakenError(err: unknown): boolean {
   if (typeof details !== 'object' || details === null) return false;
   return (details as { reason?: unknown }).reason === 'template-exists';
 }
+
+/** The fields a markup refusal can name, the way the editor keys its boxes. */
+const MARKUP_FIELDS = ['subject', 'body', 'html', 'headline', 'content'] as const;
+export type TemplateMarkupField = (typeof MARKUP_FIELDS)[number];
+
+/**
+ * #2251: the server's refusal of a template the sender could not fill in (an
+ * unclosed `{{#if}}`, half a field), one sentence per field, so the editor can
+ * draw each beside its own box. Null for any other error. Duck-typed on
+ * `details.reason`, like `isTemplateKeyTakenError`.
+ */
+export function templateMarkupFieldErrors(err: unknown): Partial<Record<TemplateMarkupField, string>> | null {
+  const details = (err as { details?: unknown } | null | undefined)?.details;
+  if (typeof details !== 'object' || details === null) return null;
+  const d = details as { reason?: unknown; fieldErrors?: unknown };
+  if (d.reason !== 'template-markup-refused' || typeof d.fieldErrors !== 'object' || d.fieldErrors === null) {
+    return null;
+  }
+  const raw = d.fieldErrors as Record<string, unknown>;
+  const out: Partial<Record<TemplateMarkupField, string>> = {};
+  for (const field of MARKUP_FIELDS) {
+    const message = raw[field];
+    if (typeof message === 'string' && message.trim() !== '') out[field] = message;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 export async function saveTemplate(
   payload: SaveTemplatePayload | SaveVisualTemplatePayload,
 ): Promise<{ templateId: string }> {
