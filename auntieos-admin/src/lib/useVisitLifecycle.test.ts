@@ -197,7 +197,7 @@ describe('the sentence never claims a notification it has not seen', () => {
     // The write has acked; the push has NOT. The household must not be in the
     // sentence yet, in either direction.
     await waitFor(() =>
-      expect(result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED. Checking whether the Wrens was told.' }),
+      expect(result.current.write).toEqual({ status: 'done', message: 'Marked arrived. Checking whether the Wrens was told.' }),
     );
 
     await act(async () => {
@@ -206,7 +206,7 @@ describe('the sentence never claims a notification it has not seen', () => {
     await waitFor(() =>
       expect(result.current.write).toEqual({
         status: 'done',
-        message: 'ON_MY_WAY → ARRIVED. The Wrens was notified.',
+        message: 'Marked arrived. The Wrens was notified.',
       }),
     );
   });
@@ -221,7 +221,7 @@ describe('the sentence never claims a notification it has not seen', () => {
     await waitFor(() =>
       expect(result.current.write).toEqual({
         status: 'done',
-        message: 'ON_MY_WAY → ARRIVED. The notice to the Wrens could not be sent.',
+        message: 'Marked arrived. The notice to the Wrens could not be sent.',
       }),
     );
   });
@@ -262,12 +262,12 @@ describe('the sentence never claims a notification it has not seen', () => {
     act(() => first.result.current.ask(actionNamed('ARRIVED')));
     act(() => first.result.current.confirm());
     await waitFor(() =>
-      expect(first.result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED. Checking whether Dre East was told.' }),
+      expect(first.result.current.write).toEqual({ status: 'done', message: 'Marked arrived. Checking whether Dre East was told.' }),
     );
     first.unmount();
 
     const second = renderHook(() => useVisitLifecycle(SESSION, 'Dre East'));
-    expect(second.result.current.write).toEqual({ status: 'done', message: 'ON_MY_WAY → ARRIVED. Checking whether Dre East was told.' });
+    expect(second.result.current.write).toEqual({ status: 'done', message: 'Marked arrived. Checking whether Dre East was told.' });
     await act(async () => {
       settle({ notified: false, notifySkipped: 'household_notices_off' });
     });
@@ -275,7 +275,7 @@ describe('the sentence never claims a notification it has not seen', () => {
       expect(second.result.current.write).toEqual({
         status: 'done',
         message:
-          'ON_MY_WAY → ARRIVED. Dre East was not notified, because notices to households are off in Settings.',
+          'Marked arrived. Dre East was not notified, because notices to households are off in Settings.',
       }),
     );
   });
@@ -307,7 +307,7 @@ describe('the sentence never claims a notification it has not seen', () => {
     await waitFor(() =>
       expect(result.current.write).toEqual({
         status: 'done',
-        message: "ARRIVED → ON_MY_WAY. No message was sent about the undo. Checking the household's notifications list.",
+        message: "Back to on the way. No message was sent about the undo. Checking the household's notifications list.",
       }),
     );
     await act(async () => {
@@ -317,7 +317,7 @@ describe('the sentence never claims a notification it has not seen', () => {
       expect(result.current.write).toEqual({
         status: 'done',
         message:
-          "ARRIVED → ON_MY_WAY. No message was sent about the undo. The arrival notice is off the household's notifications list.",
+          "Back to on the way. No message was sent about the undo. The arrival notice is off the household's notifications list.",
       }),
     );
     expect((result.current.write as { message?: string }).message).not.toMatch(/was notified|Checking/);
@@ -331,7 +331,7 @@ describe('the sentence never claims a notification it has not seen', () => {
       expect(result.current.write).toEqual({
         status: 'done',
         message:
-          'ARRIVED → ON_MY_WAY. No message was sent about the undo. The household was not told about the arrival, so nothing was on their notifications list.',
+          'Back to on the way. No message was sent about the undo. The household was not told about the arrival, so nothing was on their notifications list.',
       }),
     );
   });
@@ -342,7 +342,7 @@ describe('the sentence never claims a notification it has not seen', () => {
     await undoOn(result);
     await waitFor(() =>
       expect((result.current.write as { message?: string }).message).toBe(
-        "DEPARTED → ON_MY_WAY. No message was sent about the undo. The arrival and departure notices are off the household's notifications list.",
+        "Back to on the way. No message was sent about the undo. The arrival and departure notices are off the household's notifications list.",
       ),
     );
   });
@@ -354,7 +354,7 @@ describe('the sentence never claims a notification it has not seen', () => {
     await waitFor(() =>
       expect(result.current.write).toEqual({
         status: 'done',
-        message: 'ARRIVED → ON_MY_WAY. No message was sent about the undo.',
+        message: 'Back to on the way. No message was sent about the undo.',
       }),
     );
   });
@@ -380,7 +380,7 @@ describe('the sentence never claims a notification it has not seen', () => {
       expect(result.current.write).toEqual({
         status: 'done',
         message:
-          'Already ARRIVED. Nothing was changed, and the time already on file is unchanged.',
+          'Already arrived. Nothing was changed, and the time already on file is unchanged.',
       }),
     );
   });
@@ -477,7 +477,7 @@ describe('an Auntie starting a visit while arrival verification is on', () => {
     await waitFor(() =>
       expect(result.current.write).toEqual({
         status: 'done',
-        message: 'SCHEDULED \u2192 ARRIVED. The Wrens was notified.',
+        message: 'Marked arrived. The Wrens was notified.',
       }),
     );
     // The server measured it on the way in; no second measurement is sent.
@@ -517,7 +517,7 @@ describe('an Auntie starting a visit while arrival verification is on', () => {
     expect(requestStartFix).not.toHaveBeenCalled();
     await waitFor(() =>
       expect((result.current.write as { message?: string }).message).toBe(
-        "ARRIVED → SCHEDULED. No message was sent about the undo. The arrival notice is off the household's notifications list.",
+        "Back to scheduled. No message was sent about the undo. The arrival notice is off the household's notifications list.",
       ),
     );
     await waitFor(() => expect(stopVisitTracking).toHaveBeenCalledWith('s1'));
@@ -631,7 +631,7 @@ describe('an Auntie starting a visit while arrival verification is off', () => {
     await waitFor(() => expect(result.current.write.status).toBe('done'));
     expect(patchVisitLifecycle).toHaveBeenCalledTimes(1);
     expect(undoArrivalThroughServer).toHaveBeenCalledTimes(1);
-    expect((result.current.write as { message?: string }).message).toMatch(/^ARRIVED → SCHEDULED\. No message was sent about the undo\./);
+    expect((result.current.write as { message?: string }).message).toMatch(/^Back to scheduled\. No message was sent about the undo\./);
   });
 
   it('the owner whose undo the rules refuse is shown the refusal, with no second try', async () => {
@@ -692,7 +692,7 @@ describe('the owner starting a visit while arrival verification is on', () => {
       expect(result.current.write).toEqual({
         status: 'done',
         message:
-          'SCHEDULED \u2192 ARRIVED. The Wrens was notified. You arrived 2.3 km from this household, ' +
+          'Marked arrived. The Wrens was notified. You arrived 2.3 km from this household, ' +
           'outside the range. That is recorded on the visit and in the Activity Log.',
       }),
     );
@@ -707,7 +707,7 @@ describe('the owner starting a visit while arrival verification is on', () => {
     act(() => result.current.confirm());
     await waitFor(() => expect(verifyVisitArrival).toHaveBeenCalledTimes(1));
     await waitFor(() =>
-      expect(result.current.write).toEqual({ status: 'done', message: 'SCHEDULED \u2192 ARRIVED. The Wrens was notified.' }),
+      expect(result.current.write).toEqual({ status: 'done', message: 'Marked arrived. The Wrens was notified.' }),
     );
   });
 
@@ -719,7 +719,7 @@ describe('the owner starting a visit while arrival verification is on', () => {
     act(() => result.current.confirm());
     await waitFor(() => expect(verifyVisitArrival).toHaveBeenCalledTimes(1));
     await waitFor(() =>
-      expect(result.current.write).toEqual({ status: 'done', message: 'SCHEDULED \u2192 ARRIVED. The Wrens was notified.' }),
+      expect(result.current.write).toEqual({ status: 'done', message: 'Marked arrived. The Wrens was notified.' }),
     );
   });
 
