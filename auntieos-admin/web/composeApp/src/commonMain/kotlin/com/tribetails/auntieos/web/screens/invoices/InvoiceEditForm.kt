@@ -217,6 +217,29 @@ fun invoiceEditDueOrderProblem(draft: InvoiceEditDraft): String? {
     if (!touched) return null
     return dueDateOrderProblem(draft.date, draft.dueDate, (picked ?: draft.storedTermsCode)?.wire)
 }
+/**
+ * #2509: a due date typed beside rule terms is a date picked by hand, so the
+ * picker moves to "A date I pick myself", which is what `updateInvoice` stores.
+ * Typed back to the stored date, the picker returns to the invoice's own rule.
+ * Terms with no code keep their words: their due date is already typed.
+ */
+fun InvoiceEditDraft.withTypedDueDate(typed: String): InvoiceEditDraft {
+    val stored = storedTermsCode
+    val storedDue = storedDueDate
+    if (stored == null || stored == InvoiceTermsCode.CUSTOM || storedDue == null) return copy(dueDate = typed)
+    if (typed.trim() == storedDue.trim()) {
+        return copy(dueDate = typed, termsCode = if (termsCode == InvoiceTermsCode.CUSTOM) stored else termsCode)
+    }
+    return copy(dueDate = typed, termsCode = if (termsCode == stored) InvoiceTermsCode.CUSTOM else termsCode)
+}
+/**
+ * #2509: picking rule terms hands the due date back to the rule, so a date
+ * typed a moment ago is dropped rather than left to switch the terms on save.
+ */
+fun InvoiceEditDraft.withPickedTerms(code: InvoiceTermsCode?): InvoiceEditDraft {
+    val rule = code != null && code != InvoiceTermsCode.CUSTOM
+    return copy(termsCode = code, dueDate = if (rule) storedDueDate ?: dueDate else dueDate)
+}
 
 fun invoiceEditLineOf(line: InvoiceEditLineItem): InvoiceEditLine = InvoiceEditLine(
     description = line.description,
