@@ -418,3 +418,47 @@ describe('ScheduleWeekGrid now line', () => {
     });
   });
 });
+
+/**
+ * #2313: moving a visit is the owner's (`rescheduleBooking` refuses an
+ * Auntie), so with `canMove` off a block does not lift: any press, however far
+ * it travels, opens the visit and reports no drop.
+ */
+describe('ScheduleWeekGrid with moving switched off (an Auntie)', () => {
+  function renderFixed(rows: ScheduleSessionEntry[]) {
+    const byDay = new Map<string, ScheduleSessionEntry[]>();
+    byDay.set('2026-07-16', rows);
+    return render(
+      <ScheduleWeekGrid
+        days={DAYS}
+        businessZone={BIZ}
+        today="2026-07-16"
+        selected="2026-07-16"
+        byDay={byDay}
+        busyByDate={new Map()}
+        catalog={EMPTY_BOOKING_CATALOG}
+        snapMinutes={SNAP_MINUTES_ON}
+        pendingSessionId={null}
+        onSelectDay={onSelectDay}
+        onOpenSession={onOpenSession}
+        onDrop={onDrop}
+        canMove={false}
+      />,
+    );
+  }
+
+  it('a long drag reports no drop and opens the visit instead', () => {
+    renderFixed([session()]);
+    stubColumnWidth();
+    drag(block(), COLUMN_WIDTH, HOUR_HEIGHT_PX * 2);
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(onOpenSession).toHaveBeenCalledWith('sess-1');
+  });
+
+  it('the same drag moves the visit when moving is on', () => {
+    renderGrid([session()]);
+    stubColumnWidth();
+    drag(block(), 0, HOUR_HEIGHT_PX * 2);
+    expect(onDrop).toHaveBeenCalledTimes(1);
+  });
+});

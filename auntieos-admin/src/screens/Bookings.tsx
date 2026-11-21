@@ -716,7 +716,9 @@ export function Bookings({
   // #1607: the picked rows' states, so the bulk bar offers only what fits them.
   const selectedStates: BookingState[] =
     rows.status === 'ready' ? rows.data.filter((r) => selectedIds.has(r._id)).map((r) => bookingState(r)) : [];
-  const selectToggle = (
+  // Every bulk action is the owner's (`batchUpdateBookings`, and the bulk
+  // Reschedule's `rescheduleBooking`), so an Auntie gets no Select (#2313).
+  const selectToggle = isAuntie ? null : (
     <GhostButton
       label="Select"
       pressed={selecting}
@@ -788,6 +790,7 @@ export function Bookings({
           mock puts the three status sections directly under the heading and a
           queue that is usually empty was pushing the first one to y=580. */}
       <VisitRequestsSection
+        isAuntie={isAuntie}
         refreshKey={requestsRefresh}
         {...(focusRequest ? { focusRequest, onFocusNotWaiting: () => setBatchFocus(focusRequest) } : {})}
       />
@@ -849,7 +852,9 @@ export function Bookings({
               onSelectBooking={handleSelectBooking}
               // The card's own transition buttons open THIS screen's sheet at
               // the confirm step, so they exist only while the screen owns it.
-              onAct={onSelectBooking ? undefined : openDetail}
+              // #2313: a card's Approve, Reject and Cancel are refused for an
+              // Auntie, so her cards carry none. The card still opens the visit.
+              onAct={onSelectBooking || isAuntie ? undefined : openDetail}
               selecting={selecting}
               selectedIds={selectedIds}
               onTogglePick={toggleRow}
@@ -940,6 +945,7 @@ export function Bookings({
             entry={detailEntry}
             businessZone={businessZone}
             catalog={catalog}
+            isAuntie={isAuntie}
             onClose={closeDetail}
             actions={
               <BookingStatusActions

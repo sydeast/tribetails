@@ -1838,3 +1838,33 @@ describe('#1868 a cancelled visit on the Schedule', () => {
     }
   });
 });
+
+/**
+ * #2313: moving a visit is the owner's, so the week grid does not tell an
+ * Auntie to drag one. The owner's legend keeps the note.
+ */
+describe('#2313 the Schedule does not invite an Auntie to move a visit', () => {
+  /** A visit at 9:00-10:30 LOCAL today, inside the drawn 8a-6p window in any zone. */
+  function gridSession(): ScheduleSessionEntry {
+    const today = new Date();
+    return sessionEntry({
+      _id: 'sess-42',
+      serviceType: 'Dog Walk',
+      startTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 9, 0, 0, 0).toISOString(),
+      endTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 10, 30, 0, 0).toISOString(),
+    });
+  }
+  it('draws her legend with no drag note', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule isAuntie />);
+    await waitFor(() => expect(document.querySelector('.schedule__legend')).not.toBeNull());
+    expect(screen.queryByText(/Drag a visit to reschedule/)).toBeNull();
+    expect(rescheduleBooking).not.toHaveBeenCalled();
+  });
+
+  it('keeps the drag note for the owner', async () => {
+    mockCollections({ sessions: { status: 'ready', data: [gridSession()] } });
+    render(<Schedule />);
+    expect(await screen.findByText(/Drag a visit to reschedule/)).toBeInTheDocument();
+  });
+});
