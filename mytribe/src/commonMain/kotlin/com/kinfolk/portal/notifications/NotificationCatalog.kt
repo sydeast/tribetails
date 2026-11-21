@@ -125,6 +125,9 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
                 title = "Your KinTale is ready",
                 description = "When your Auntie publishes the written report from a KinCare visit.",
                 allowedChannels = ALL,
+                // Ruling on #2382 (2026-11-20): a required confirmation; email is
+                // always on and the household cannot turn it off. Text and push stay theirs.
+                required = EMAIL_ONLY,
             ),
             NotificationKey(
                 key = "kintale.comment.added",
@@ -176,6 +179,8 @@ val KINFOLK_CATEGORIES: List<CategoryDef> = listOf(
                 title = "Payment applied to your invoice",
                 description = "When a payment or credit is applied to an invoice.",
                 allowedChannels = EMAIL_PUSH,
+                // Ruling on #2382 (2026-11-20): a required confirmation, email locked on.
+                required = EMAIL_ONLY,
             ),
         ),
     ),

@@ -13,6 +13,9 @@ import {
   currentOverride,
   defaultOverride,
   encodeOverridePayload,
+  keptLockedOn,
+  lockedOnChannel,
+  lockedOnFor,
   setLockReason,
   setStreamChannel,
   setStreamEnabled,
@@ -260,5 +263,50 @@ describe('encodeOverridePayload (wire shape = saveBusinessNotificationOverride s
     expect(wire.enabled).toBe(true);
     expect(wire.lockReason).toBe('Because safety');
     expect(wire.channels).toEqual({ email: true, sms: true, push: true });
+  });
+});
+// Ruling on #2382 (2026-11-20): payment, invoice, KinTale and booking
+// confirmations are required on for Kinfolk and cannot be disabled.
+describe('#2382: a confirmation locked on for Kinfolk', () => {
+  const locked = entry({
+    key: 'invoice.new',
+    audiences: new Set([STREAM_BUSINESS, STREAM_KINFOLK]),
+    required: { email: true },
+    lockedOnStreams: new Set([STREAM_KINFOLK]),
+  });
+  const base = (over: Partial<NotificationOverride> = {}): NotificationOverride => ({
+    ...defaultOverride(),
+    ...over,
+  });
+  it('is locked on for the Kinfolk copy only, email being the pinned channel', () => {
+    expect(lockedOnFor(locked, STREAM_KINFOLK)).toBe(true);
+    expect(lockedOnFor(locked, STREAM_BUSINESS)).toBe(false);
+    expect(lockedOnChannel(locked, STREAM_KINFOLK, 'email')).toBe(true);
+    expect(lockedOnChannel(locked, STREAM_KINFOLK, 'sms')).toBe(false);
+    expect(lockedOnChannel(locked, STREAM_BUSINESS, 'email')).toBe(false);
+    // A row with no lock, or from a server older than the field, is never locked.
+    expect(lockedOnFor(entry(), STREAM_KINFOLK)).toBe(false);
+    expect(lockedOnFor(entry({ alwaysEnabled: true }), STREAM_KINFOLK)).toBe(false);
+  });
+  it('saves an older flat off with the Kinfolk copy and email kept on', () => {
+    const next = keptLockedOn(locked, base({ enabled: false, channels: { email: false, sms: false } }));
+    expect(next.streams.kinfolk?.enabled).toBe(true);
+    expect(next.streams.kinfolk?.channels.email).toBe(true);
+    // The owner's copy and text keep exactly what the operator chose.
+    expect(next.enabled).toBe(false);
+    expect(next.channels.sms).toBe(false);
+    expect(encodeOverridePayload(next).streams?.kinfolk).toEqual({ enabled: true, channels: { email: true } });
+  });
+  it('saves a stored Kinfolk overlay off back on', () => {
+    const stored = base({ streams: { kinfolk: { enabled: false, channels: { email: false, push: false }, locked: {} } } });
+    const next = keptLockedOn(locked, stored);
+    expect(next.streams.kinfolk?.enabled).toBe(true);
+    expect(next.streams.kinfolk?.channels).toEqual({ email: true, push: false });
+  });
+  it('leaves an override that is already on, and a row with no lock, exactly as given', () => {
+    const on = base({ streams: { business: { enabled: false, channels: {}, locked: {} } } });
+    expect(keptLockedOn(locked, on)).toBe(on);
+    const off = base({ enabled: false });
+    expect(keptLockedOn(entry(), off)).toBe(off);
   });
 });

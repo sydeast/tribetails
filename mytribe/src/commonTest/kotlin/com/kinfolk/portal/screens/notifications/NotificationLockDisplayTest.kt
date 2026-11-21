@@ -436,4 +436,22 @@ class NotificationLockDisplayTest {
             assertFalse(banned.containsMatchIn(line), "${key.key}: $line")
         }
     }
+
+    // Ruling on #2382 (2026-11-20): payment, invoice, KinTale and booking
+    // confirmations are required on. The static fallback (shown when the catalog
+    // callable fails) carries two of them; the other three are not listed there.
+    // Email is the household's no longer; text and push still are.
+    @Test
+    fun staticFallback_locksEmailOnTheRequiredConfirmations() {
+        val keys = com.kinfolk.portal.notifications.KINFOLK_CATEGORIES.flatMap { it.keys }.associateBy { it.key }
+        for (k in listOf("kintale.published", "invoice.payment.applied")) {
+            val key = keys.getValue(k)
+            assertEquals(setOf(EMAIL), key.required, k)
+            assertFalse(EMAIL in key.toggleableChannels(), "$k: email must not be the household's to switch")
+            assertEquals(key.allowedChannels - EMAIL, key.toggleableChannels(), "$k: text and push stay free")
+            assertFalse(key.isFullyLocked(), k)
+        }
+        // A row that is not a locked confirmation keeps every channel free.
+        assertEquals(setOf(EMAIL, SMS, PUSH), keys.getValue("kincare.auntie.arrived").toggleableChannels())
+    }
 }

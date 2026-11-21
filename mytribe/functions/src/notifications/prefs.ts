@@ -5,6 +5,8 @@ import {
   getNotificationDef,
   legacyCategoriesFor,
   legacyKeysFor,
+  lockedOnForStream,
+  requiredOnStream,
 } from './catalog';
 import type {
   AudienceStream,
@@ -53,6 +55,52 @@ export function overrideForStream(
   if (Object.keys(locked).length > 0) effective.locked = locked;
   if (typeof override.lockReason === 'string') effective.lockReason = override.lockReason;
   return effective;
+}
+
+/**
+ * Ruling on #2382 (2026-11-20): payment, invoice, KinTale and booking
+ * confirmations are required on and cannot be disabled. For a key whose
+ * `lockedOnStreams` lists [stream], a stored operator OFF for the whole
+ * notification or for its email channel is dropped from the stream-effective
+ * view, so the notification stays on and email falls through to the catalog's
+ * `required.email`. Text and push are untouched: the operator may still gate
+ * them, and the household still chooses them.
+ *
+ * Old settings docs can hold such an off from before the ruling (warn-but-allow-
+ * off, #7), and the save handler now refuses a new one. Reading through this
+ * view rather than trusting the stored value is what keeps the send, the
+ * household's settings screen and the owner's gate in agreement.
+ *
+ * `effectiveOverride` must already be [stream]'s view (overrideForStream). The
+ * household launch switch (`householdNotificationsLive`) is a separate gate and
+ * still holds these until launch.
+ */
+export function withConfirmationLock(
+  def: NotificationDef,
+  effectiveOverride: BusinessNotificationOverride | null,
+  stream: AudienceStream,
+): BusinessNotificationOverride | null {
+  if (!effectiveOverride || !lockedOnForStream(def, stream)) return effectiveOverride;
+  const offWhole = effectiveOverride.enabled === false;
+  const offEmail = effectiveOverride.channels?.email === false;
+  if (!offWhole && !offEmail) return effectiveOverride;
+  const channels: Partial<ResolvedChannels> = { ...(effectiveOverride.channels ?? {}) };
+  delete channels.email;
+  return { ...effectiveOverride, enabled: true, channels };
+}
+
+/**
+ * The override exactly as the send reads it for [stream]: the stream overlay
+ * (overrideForStream) with the confirmation lock applied (withConfirmationLock).
+ * Every reader that decides what a recipient on [stream] gets, or draws it,
+ * goes through this one view.
+ */
+export function gateViewFor(
+  def: NotificationDef,
+  rawBusinessOverride: BusinessNotificationOverride | null,
+  stream: AudienceStream,
+): BusinessNotificationOverride | null {
+  return withConfirmationLock(def, overrideForStream(rawBusinessOverride, stream), stream);
 }
 
 /**
@@ -226,7 +274,8 @@ export function withAliasedChoicesResolved(prefs: UserNotificationPrefs): UserNo
  * channel is looked at, or null when it is on and the channels decide.
  *
  *   'operator'   the business override disables the notification on this
- *                stream (#7, warn-but-allow-off: even an alwaysEnabled row).
+ *                stream (#7, warn-but-allow-off: even an alwaysEnabled row),
+ *                but never a confirmation locked on for the stream (#2382).
  *   'marketing'  the key is marketing-class and the recipient has not opted
  *                in (CAN-SPAM/CASL), a legal gate the operator cannot lift.
  *
@@ -244,11 +293,13 @@ export function notificationDisabledFor(
   rawBusinessOverride: BusinessNotificationOverride | null,
   stream: AudienceStream,
 ): NotificationDisabledReason | null {
-  const businessOverride = overrideForStream(rawBusinessOverride, stream);
+  const businessOverride = gateViewFor(def, rawBusinessOverride, stream);
 
   // #7 (2026-06-08): warn-but-allow-off. The operator may disable any notification,
   // including alwaysEnabled ones (the admin UI warns first). Honoring it here keeps
   // the dispatch layer truthful with what the admin matrix shows (no UI/send divergence).
+  // Exception (#2382, 2026-11-20): a confirmation locked on for this stream
+  // (`lockedOnStreams`) ignores a stored off; `gateViewFor` has already dropped it.
   // Marketing opt-in (below) is a separate legal gate the operator cannot override.
   if (businessOverride && businessOverride.enabled === false) {
     return 'operator';
@@ -271,9 +322,13 @@ export function notificationDisabledFor(
  * unchanged to that view.
  *
  * Precedence (highest wins):
+ *   0b. confirmation lock (#2382, 2026-11-20)     , on a `lockedOnStreams` stream a stored
+ *                                                   enabled=false or channels.email=false is
+ *                                                   dropped before steps 1 and 2 (gateViewFor)
  *   1. business override .enabled = false         , entire notification suppressed (#7: even alwaysEnabled)
  *   2. business override .channels.{ch} = false   , channel suppressed (#7: even a required channel)
- *   3. catalog.required.{ch} = true               , channel defaults ON (unless disabled in 2)
+ *   3. catalog.required.{ch} = true               , channel defaults ON (unless disabled in 2);
+ *      (requiredOnStream)                           also email on a lockedOnStreams stream (#2382)
  *   4. user prefs byKey.{ch}                      , granular override
  *   5. user prefs byCategory.{cat}.{ch}           , category default
  *      (4 and 5 follow key aliases, canonical first, then any retired key
@@ -296,7 +351,8 @@ export function resolveChannels(
   rawBusinessOverride: BusinessNotificationOverride | null,
   stream: AudienceStream,
 ): ResolvedChannels {
-  const businessOverride = overrideForStream(rawBusinessOverride, stream);
+  // Step 0 + 0b: the stream overlay, then the confirmation lock (#2382).
+  const businessOverride = gateViewFor(def, rawBusinessOverride, stream);
   const out: ResolvedChannels = { email: false, sms: false, push: false };
 
   // Steps 1 and the marketing gate: the notification as a whole is off, so no
@@ -323,12 +379,13 @@ export function resolveChannels(
     // (required -> on, otherwise email-on). An explicit admin OFF is already handled
     // above, so here the locked value is the admin's ON or the catalog default.
     if (businessOverride?.locked?.[ch] === true || businessOverride?.lockedEnabled === true) {
-      out[ch] = businessOverride?.channels?.[ch] ?? (def.required[ch] === true || ch === 'email');
+      out[ch] = businessOverride?.channels?.[ch] ?? (requiredOnStream(def, ch, stream) || ch === 'email');
       continue;
     }
 
     // Catalog-required channels default ON unless the operator disabled them above.
-    if (def.required[ch] === true) {
+    // On a stream the confirmation lock covers, email counts as required (#2382).
+    if (requiredOnStream(def, ch, stream)) {
       out[ch] = true;
       continue;
     }

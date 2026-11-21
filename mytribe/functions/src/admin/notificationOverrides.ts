@@ -1,4 +1,4 @@
-import { onCall, CallableRequest } from 'firebase-functions/v2/https';
+import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import { db } from '../lib/firestoreAdmin';
@@ -8,10 +8,11 @@ import {
   canonicalNotificationKey,
   getNotificationDef,
   legacyKeysFor,
+  lockedOnForStream,
   NOTIFICATION_CATALOG,
   NOTIFICATION_KEY_ALIASES,
 } from '../notifications/catalog';
-import { resolveOverrideForKey } from '../notifications/prefs';
+import { loadBusinessOverride, overrideForStream, resolveOverrideForKey } from '../notifications/prefs';
 import { TEMPLATE_FIELDS } from '../notifications/enrichTemplateData';
 import {
   NEVER_FIRES,
@@ -45,6 +46,9 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * Catalog `alwaysEnabled=true` keys CAN be disabled via override (see issue #7,
  * 2026-06-08: operator can now disable even catalog-required and always-on
  * notifications, with a warning in the UI but no server-side hard enforcement).
+ * EXCEPT the five confirmations locked on for the kinfolk stream
+ * (`lockedOnStreams`, ruling on #2382, 2026-11-20): the save refuses turning
+ * their kinfolk copy or its email off. See CONFIRMATION_LOCKED_MESSAGE.
  * #396 built the warning half of that, which had never shipped: the gate now
  * renders the flag as a risk marker that escalates once a row is actually off,
  * rather than as the "Always on" caption that implied a lock nobody enforces.
@@ -100,6 +104,7 @@ const SaveArgs = z.object({
   key: z.string().min(1),
   override: OverridePayload,
 });
+type SaveOverride = z.infer<typeof OverridePayload>;
 
 const DeleteArgs = z.object({
   key: z.string().min(1),
@@ -118,6 +123,11 @@ interface GetResult {
     alwaysEnabled: boolean;
     /** Streams alwaysEnabled applies to; absent = every stream the key serves. */
     alwaysEnabledStreams?: { kinfolk?: true; business?: true; staff?: true };
+    /**
+     * Streams this row is locked on for (#2382): the notification and its
+     * email cannot be switched off there. Enforced, unlike alwaysEnabled.
+     */
+    lockedOnStreams?: { kinfolk?: true; business?: true; staff?: true };
     kinfolkFacing: boolean;
     deliveryMode: string;
     description: string;
@@ -222,6 +232,7 @@ export async function getBusinessNotificationOverridesHandler(
       ),
       alwaysEnabled: def.alwaysEnabled,
       ...(def.alwaysEnabledStreams ? { alwaysEnabledStreams: { ...def.alwaysEnabledStreams } } : {}),
+      ...(def.lockedOnStreams ? { lockedOnStreams: { ...def.lockedOnStreams } } : {}),
       kinfolkFacing: def.kinfolkFacing,
       deliveryMode: def.deliveryMode,
       description: def.description,
@@ -296,23 +307,84 @@ export async function getBusinessNotificationOverridesHandler(
   };
 }
 
+/**
+ * The refusal the owner reads when a save would turn a locked confirmation off
+ * for households (#2382). Plain words; the admin clients show it as given.
+ */
+export const CONFIRMATION_LOCKED_MESSAGE =
+  'Payment, invoice, KinTale and booking confirmations cannot be turned off for Kinfolk, and neither can their email. Text and push can still be changed.';
+
+/**
+ * [override] with its kinfolk overlay set back on where a stored off would
+ * otherwise leave the kinfolk view off (#2382): the whole notification when
+ * [offWhole], its email when [offEmail]. Only the kinfolk overlay is written;
+ * the flat fields, the owner's and staff copies, text, push and every lock are
+ * left exactly as given. Mirrors `keptLockedOn` on the admin clients.
+ */
+function keptKinfolkOn(override: SaveOverride, offWhole: boolean, offEmail: boolean): SaveOverride {
+  const gate = { ...(override.streams?.kinfolk ?? {}) };
+  if (offWhole) gate.enabled = true;
+  if (offEmail) gate.channels = { ...(gate.channels ?? {}), email: true };
+  return { ...override, streams: { ...(override.streams ?? {}), kinfolk: gate } };
+}
+
 export async function saveBusinessNotificationOverrideHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ok: true; key: string }> {
   const args = SaveArgs.parse(req.data);
   // Validates the key exists in the catalog (throws on an unknown key). A
   // retired key from a stale client resolves to the row that replaced it.
-  getNotificationDef(args.key);
+  const def = getNotificationDef(args.key);
   const key = canonicalNotificationKey(args.key);
 
   // #7 (2026-06-08): the operator may now turn off even catalog-required channels
   // and always-on notifications. The admin UI surfaces a warning first
   // (warn-but-allow-off); the previous hard enforcement here is removed so the
   // operator stays in control of their own business notifications.
+  //
+  // Except (ruling on #2382, 2026-11-20): payment, invoice, KinTale and booking
+  // confirmations are required on for households and cannot be disabled. The
+  // payload is read the way the send reads it, as the kinfolk stream's view, so
+  // a flat off that the kinfolk stream would inherit is refused as surely as a
+  // kinfolk overlay off. The owner's own copy, and text and push, still save.
+  //
+  // Only a NEW off is refused. An off this payload carries because it was
+  // already stored (written before the ruling, and echoed back by a client
+  // that does not know the lock, such as an admin app installed before it) is
+  // the same off the send already ignores, so it is saved back as on instead:
+  // the owner's own edit on the row goes through, and nothing else in the
+  // payload changes. Refusing it would make every later edit on that row fail.
+  let override = args.override;
+  if (lockedOnForStream(def, 'kinfolk')) {
+    const kinfolkView = overrideForStream(override as BusinessNotificationOverride, 'kinfolk');
+    const offWhole = kinfolkView?.enabled === false;
+    const offEmail = kinfolkView?.channels?.email === false;
+    if (offWhole || offEmail) {
+      const storedView = overrideForStream(await loadBusinessOverride(key), 'kinfolk');
+      const newlyOff =
+        (offWhole && storedView?.enabled !== false) || (offEmail && storedView?.channels?.email !== false);
+      if (newlyOff) {
+        logEvent({
+          severity: 'warn',
+          function: 'saveBusinessNotificationOverride',
+          event: 'admin.notif.override.locked_refused',
+          extra: { key, requestedKey: args.key, actorUid: req.auth?.uid },
+        });
+        throw new HttpsError('failed-precondition', CONFIRMATION_LOCKED_MESSAGE);
+      }
+      override = keptKinfolkOn(override, offWhole, offEmail);
+      logEvent({
+        severity: 'info',
+        function: 'saveBusinessNotificationOverride',
+        event: 'admin.notif.override.locked_kept_on',
+        extra: { key, requestedKey: args.key, actorUid: req.auth?.uid, offWhole, offEmail },
+      });
+    }
+  }
 
   // A whitespace-only lockReason is the "clear it" gesture from the UI.
-  const stored: Record<string, unknown> = { ...args.override };
-  if (args.override.lockReason !== undefined && args.override.lockReason === '') {
+  const stored: Record<string, unknown> = { ...override };
+  if (override.lockReason !== undefined && override.lockReason === '') {
     stored.lockReason = FieldValue.delete();
   }
 
@@ -338,7 +410,7 @@ export async function saveBusinessNotificationOverrideHandler(
     severity: 'info',
     function: 'saveBusinessNotificationOverride',
     event: 'admin.notif.override.saved',
-    extra: { key, requestedKey: args.key, actorUid: req.auth?.uid, override: args.override },
+    extra: { key, requestedKey: args.key, actorUid: req.auth?.uid, override },
   });
   return { ok: true, key };
 }

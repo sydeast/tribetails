@@ -668,3 +668,95 @@ describe('NotificationGate: naming the business admin roster (#450)', () => {
     expect(listBusinessAdmins).not.toHaveBeenCalled();
   });
 });
+
+// Ruling on #2382 (2026-11-20): payment, invoice, KinTale and booking
+// confirmations are required on for Kinfolk and cannot be disabled.
+describe('NotificationGate: #2382 locked confirmations', () => {
+  const lockedEntry = () =>
+    entry({
+      key: 'invoice.new',
+      label: 'New invoice or quote issued',
+      category: 'invoice',
+      audiences: new Set([STREAM_BUSINESS, STREAM_KINFOLK]),
+      required: { email: true },
+      alwaysEnabled: true,
+      alwaysEnabledStreams: new Set([STREAM_KINFOLK]),
+      lockedOnStreams: new Set([STREAM_KINFOLK]),
+    });
+  async function openKinfolk() {
+    render(<NotificationGate />);
+    await userEvent.click(await screen.findByRole('tab', { name: /Kinfolk/ }));
+  }
+
+  it('draws the Kinfolk copy and its email on and fixed, even over a stored off', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [lockedEntry()],
+        overrides: {
+          'invoice.new': {
+            enabled: false,
+            channels: { email: false },
+            lockedEnabled: false,
+            locked: {},
+            streams: {},
+          },
+        },
+      }),
+    );
+    await openKinfolk();
+    const master = await screen.findByRole('switch', { name: /on or off for Kinfolk/i });
+    expect(master).toHaveAttribute('aria-checked', 'true');
+    expect(master).toBeDisabled();
+    const email = screen.getByRole('switch', { name: /via Email for Kinfolk/i });
+    expect(email).toHaveAttribute('aria-checked', 'true');
+    expect(email).toBeDisabled();
+    expect(screen.getAllByText('Required for Kinfolk').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Meant to stay on')).not.toBeInTheDocument();
+    expect(screen.queryByText('Off, and meant to stay on')).not.toBeInTheDocument();
+  });
+
+  it('keeps text and push editable, and saves them with the Kinfolk copy kept on', async () => {
+    getNotificationMatrix.mockResolvedValue(
+      matrix({
+        catalog: [lockedEntry()],
+        overrides: {
+          'invoice.new': { enabled: false, channels: {}, lockedEnabled: false, locked: {}, streams: {} },
+        },
+      }),
+    );
+    await openKinfolk();
+    const sms = await screen.findByRole('switch', { name: /via SMS for Kinfolk/i });
+    expect(sms).not.toBeDisabled();
+    await userEvent.click(sms);
+    await waitFor(() => expect(saveBusinessNotificationOverride).toHaveBeenCalledTimes(1));
+    const [, saved] = saveBusinessNotificationOverride.mock.calls[0]!;
+    // The stored flat off would otherwise reach the Kinfolk copy and be refused.
+    expect(saved.streams.kinfolk).toEqual(
+      expect.objectContaining({ enabled: true, channels: expect.objectContaining({ sms: false }) }),
+    );
+    expect(saved.streams.kinfolk.channels.email).not.toBe(false);
+  });
+
+  it("leaves the owner's copy of the same row free to switch off", async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [lockedEntry()] }));
+    render(<NotificationGate />);
+    const master = await screen.findByRole('switch', { name: /on or off for Business/i });
+    expect(master).not.toBeDisabled();
+    await userEvent.click(master);
+    await waitFor(() => expect(saveBusinessNotificationOverride).toHaveBeenCalledTimes(1));
+    const [, saved] = saveBusinessNotificationOverride.mock.calls[0]!;
+    expect(saved.streams.business.enabled).toBe(false);
+  });
+
+  it("shows the server's refusal in plain words when a save is turned down", async () => {
+    getNotificationMatrix.mockResolvedValue(matrix({ catalog: [lockedEntry()] }));
+    saveBusinessNotificationOverride.mockRejectedValue(
+      new Error(
+        'Payment, invoice, KinTale and booking confirmations cannot be turned off for Kinfolk, and neither can their email. Text and push can still be changed.',
+      ),
+    );
+    await openKinfolk();
+    await userEvent.click(await screen.findByRole('switch', { name: /via Push for Kinfolk/i }));
+    expect(await screen.findByText(/^Could not save: Payment, invoice, KinTale and booking/)).toBeInTheDocument();
+  });
+});

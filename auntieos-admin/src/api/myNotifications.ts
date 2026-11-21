@@ -101,6 +101,13 @@ export interface NotificationCatalogEntry {
   alwaysEnabled: boolean;
   /** Streams `alwaysEnabled` applies to; empty = every stream the key serves. */
   alwaysEnabledStreams: ReadonlySet<NotifStream>;
+  /**
+   * Streams this row is LOCKED ON for (ruling on #2382, 2026-11-20): payment,
+   * invoice, KinTale and booking confirmations, kinfolk stream only. Unlike
+   * `alwaysEnabled` this is enforced: the save refuses turning the row or its
+   * email off there, and the send ignores a stored off. Absent = none.
+   */
+  lockedOnStreams?: ReadonlySet<NotifStream>;
   kinfolkFacing: boolean;
   deliveryMode: string;
   description: string;
@@ -193,6 +200,7 @@ interface RawCatalogEntry {
   required?: Record<string, boolean>;
   alwaysEnabled?: boolean;
   alwaysEnabledStreams?: Partial<Record<NotifStream, true>>;
+  lockedOnStreams?: Partial<Record<NotifStream, true>>;
   kinfolkFacing?: boolean;
   deliveryMode?: string;
   description?: string;
@@ -343,6 +351,7 @@ function decodeCatalogEntry(raw: RawCatalogEntry): NotificationCatalogEntry {
     required: raw.required ?? {},
     alwaysEnabled: raw.alwaysEnabled ?? false,
     alwaysEnabledStreams: decodeStreamSet(raw.alwaysEnabledStreams),
+    lockedOnStreams: decodeStreamSet(raw.lockedOnStreams),
     kinfolkFacing: raw.kinfolkFacing ?? false,
     deliveryMode: str(raw.deliveryMode),
     description: str(raw.description),
