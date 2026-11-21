@@ -250,8 +250,25 @@ describe('household specifics: an example is a style sample only', () => {
       'See you at seven o\'clock, all is well here.',
       'Dropping in by six pm, all is well here.',
       'See you after 5 p.m. tomorrow.',
+      'I will be there around six tonight.',
+      'See you at seven thirty, all is well here.',
+      'Back by half past four with everyone fed.',
+      'Dinner went down at quarter to six.',
     ],
-    money: ['That comes to forty dollars for the week.', 'It was twenty bucks at the shop.'],
+    money: [
+      'That comes to forty dollars for the week.',
+      'It was twenty bucks at the shop.',
+      'Your invoice is ready whenever you are.',
+      'Thanks for the payment, your balance is all clear.',
+      'Thanks, I got your Venmo this morning.',
+      'I added the tip to your account credit.',
+    ],
+    diet: [
+      'Half a can at breakfast, as always.',
+      'Two scoops in the bowl and fresh water.',
+      'She is on a raw diet now, so no kibble.',
+      'He only gets wet food in the evening.',
+    ],
     entry: [
       'The gate sticks a little, so give it a shove.',
       'I left the spare key under the mat for you.',
@@ -263,6 +280,11 @@ describe('household specifics: an example is a style sample only', () => {
       'I disarmed it on my way in and armed it again when I left.',
       'The combo worked first try, all good.',
       'The gatepost is a little wobbly again.',
+      'The back window was unlatched, so I closed it.',
+      'The backdoor sticks in the rain.',
+      'The padlock on the shed is new.',
+      'The housekey is with the neighbour now.',
+      'The passkey worked fine today.',
     ],
     medicine: [
       'She took half a pill of gabapentin with her supper.',
@@ -359,6 +381,32 @@ describe('household specifics: an example is a style sample only', () => {
     const scrubbed = own.scrubExample('We walked along tarn way and back again for a long while.', roster, [], new Set(['we', 'way']), new Map());
     assert.strictEqual(scrubbed, 'We walked along [Kin] way and back again for a long while.');
     assert.notStrictEqual(own.householdSpecific(scrubbed), null);
+  });
+  it('the collected examples are read before the replacing: a medicine written as a name is not hidden by it', async () => {
+    // Mid-sentence, "Apoquel" would become [Name] and the sentence would read
+    // clean, so only the read before the replacing catches it.
+    const data = tribeData({
+      broadcasts: [
+        { id: 'b7', body: 'Everyone had their Apoquel with breakfast and then a long nap in the sun by the window.', sentAtMs: 990 },
+        ...tribeData().broadcasts,
+      ],
+    });
+    const { value } = await silence(() => own.buildOwnWriting(makeDb(data), VOICE));
+    assert.doesNotMatch(value.text, /with breakfast and then a long nap/);
+    assert.match(value.text, /holiday calendar is open/);
+  });
+  it('the collected examples are read again after the replacing, and one that turns specific is not sent', async () => {
+    // "Tarn" is a Kin on the roster, so "tarn way" becomes "[Kin] way": a street.
+    const data = tribeData({
+      kin: [...KIN, { id: 'k9', kinfolkId: 'h2', name: 'Tarn', species: 'cat' }],
+      broadcasts: [
+        { id: 'b8', body: 'We walked along tarn way and back again for a long while, thank you all.', sentAtMs: 990 },
+        ...tribeData().broadcasts,
+      ],
+    });
+    const { value } = await silence(() => own.buildOwnWriting(makeDb(data), VOICE));
+    assert.doesNotMatch(value.text, /back again for a long while/);
+    assert.match(value.text, /holiday calendar is open/);
   });
 });
 

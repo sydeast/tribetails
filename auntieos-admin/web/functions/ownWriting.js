@@ -299,15 +299,17 @@ function scrubExample(text, roster, rowNames, vocabulary, found) {
 // ---- 5. household specifics -------------------------------------------------
 //
 // Every list is written from general knowledge. A stem matches at the start
-// of a word ("lock" finds "locked" and "lockbox", never "clock"); a word
-// matches whole ("key" finds "key" and "keys", never "monkey"). Phrases allow
-// any space between their words.
+// of a word ("lock" finds "locked" and "lockbox", "key" finds "keys" and
+// "keychain", never "clock" or "monkey"); a word matches whole ("pin" finds
+// "pin", never "spin"). Phrases allow any space between their words. A
+// compound that ends in a stem ("padlock", "backdoor") is listed itself.
 
 const SPECIFIC_STEMS = {
   entry: [
     'door', 'lock', 'unlock', 'deadbolt', 'latch', 'alarm', 'keypad', 'keybox', 'keyless', 'keycard',
     'passcode', 'password', 'garage', 'combination', 'combo', 'security', 'camera', 'buzzer', 'intercom',
-    'concierge', 'disarm', 'key', 'gate', 'code', 'zip',
+    'concierge', 'disarm', 'key', 'gate', 'code', 'zip', 'unlatch', 'padlock', 'backdoor', 'frontdoor',
+    'sidedoor', 'trapdoor', 'housekey', 'passkey',
   ],
   medicine: [
     'medic', 'capsule', 'dose', 'dosage', 'dosing', 'prescri', 'pharmac', 'antibiotic', 'steroid',
@@ -337,6 +339,7 @@ const SPECIFIC_STEMS = {
     'guarding', 'accident', 'trigger', 'destruct', 'fight', 'attack', 'territor', 'hiss',
   ],
   address: ['address', 'apartment', 'subdivision', 'intersection', 'boulevard', 'parkway', 'highway'],
+  diet: ['kibble', 'dietar'],
 };
 const SPECIFIC_WORDS = {
   entry: [
@@ -364,7 +367,19 @@ const SPECIFIC_WORDS = {
     'unit', 'suite', 'condo', 'cul-de-sac', 'cross street', 'corner of',
   ],
   time: ['noon', 'midnight', "o'clock", 'a\\.m\\.?', 'p\\.m\\.?'],
-  money: ['dollar', 'dollars', 'bucks', 'cents'],
+  money: [
+    'dollar', 'dollars', 'bucks', 'cents', 'invoice', 'invoices', 'invoiced', 'payment', 'payments', 'pay', 'pays',
+    'paid', 'paying', 'balance', 'balances', 'owe', 'owes', 'owed', 'owing', 'overdue', 'deposit', 'deposits',
+    'refund', 'refunds', 'refunded', 'credit', 'credits', 'credited', 'tip', 'tips', 'tipped', 'tipping', 'fee',
+    'fees', 'charge', 'charges', 'charged', 'price', 'prices', 'priced', 'pricing', 'cost', 'costs', 'rate',
+    'rates', 'bill', 'bills', 'billed', 'billing', 'receipt', 'receipts', 'quote', 'quotes', 'quoted',
+    'discount', 'discounts', 'cash', 'venmo', 'paypal', 'zelle', 'cashapp', 'cash app', 'klarna', 'affirm',
+  ],
+  diet: [
+    'diet', 'diets', 'scoop', 'scoops', 'scooped', 'portion', 'portions', 'cup', 'cups', 'cans? of',
+    'half a can', 'tablespoons?', 'teaspoons?', 'tbsp', 'tsp', 'wet food', 'dry food', 'raw food',
+    'grain-free', 'grain free',
+  ],
 };
 // Street words that are everyday words too: they count only after a
 // capitalised word ("Quarry Road"), or a placeholder ("[Name] Lane").
@@ -395,6 +410,13 @@ const SPECIFIC_PATTERNS = Object.fromEntries(
 const DIGIT = /\p{N}/u;
 const MONEY_SIGN = /[$€£¢¥]/u;
 const NUMBER_TIME = /(?<![\p{L}\p{N}])(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(?:am|pm)(?![\p{L}\p{N}])/u;
+// A clock time in words: "around six", "at seven thirty", "half past four".
+const HOUR_WORD = '(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
+const SPOKEN_TIME = new RegExp(
+  `(?<![\\p{L}\\p{N}])(?:(?:at|around|by|before|after|until|till|til) ${HOUR_WORD}` +
+  `|${HOUR_WORD}[ -](?:fifteen|thirty|forty[ -]five)|half past|quarter (?:past|to|after|till?))(?![\\p{L}\\p{N}])`,
+  'u',
+);
 const DETAIL_PLACEHOLDER = /\[(?:phone|address|number)\]/u;
 // A capitalised word and the word after it, overlapping, so "Old Quarry Road"
 // is read as "Old Quarry" and "Quarry Road".
@@ -403,7 +425,7 @@ const OWN_PLACEHOLDERS = new RegExp(PLACEHOLDER_TOKEN.source, 'gu');
 
 /**
  * The kind of household specific `text` holds ('digit', 'entry', 'medicine',
- * 'health', 'behaviour', 'address', 'time', 'money'), or null when it holds
+ * 'health', 'behaviour', 'address', 'time', 'money', 'diet'), or null when it holds
  * none. A name placeholder stands for a capitalised word ("[Kin 2]" holds no
  * digit); one that stands for a phone, an address or a number is a specific,
  * since something particular was there.
@@ -415,7 +437,7 @@ function householdSpecific(text) {
   if (DIGIT.test(bare)) return 'digit';
   if (MONEY_SIGN.test(bare)) return 'money';
   const folded = fold(bare).replace(/\s+/gu, ' ');
-  if (NUMBER_TIME.test(folded)) return 'time';
+  if (NUMBER_TIME.test(folded) || SPOKEN_TIME.test(folded)) return 'time';
   for (const [kind, pattern] of Object.entries(SPECIFIC_PATTERNS)) if (pattern.test(folded)) return kind;
   for (const [, first, second] of bare.matchAll(STREET_PAIR)) {
     if (STREET_WORDS.has(fold(second)) && !NOT_STREET_NAMES.has(fold(first))) return 'address';
