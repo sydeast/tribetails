@@ -132,7 +132,8 @@ class PayBlockedInvoiceControllerTest {
 
         assertTrue(fake.calls.none { it.first == "payInvoice" }, "payInvoice was called: ${fake.calls.map { it.first }}")
         assertTrue(opened.isEmpty(), "a page was opened: $opened")
-        assertEquals(sentence, c.error)
+        assertEquals(sentence, c.payErrorFor("inv-1"))
+        assertNull(c.error)
     }
 
     @Test
@@ -147,7 +148,8 @@ class PayBlockedInvoiceControllerTest {
 
         assertTrue(opened.isEmpty(), "a page was opened: $opened")
         assertTrue(fake.calls.none { it.first == "payInvoice" })
-        assertEquals(sentence, c.error)
+        assertEquals(sentence, c.payErrorFor("inv-1"))
+        assertNull(c.error)
     }
 
     @Test
@@ -165,5 +167,6 @@ class PayBlockedInvoiceControllerTest {
 
         assertEquals(listOf("https://checkout.stripe.com/c/pay/cs_1"), opened)
         assertNull(c.error)
+        assertNull(c.payErrorFor("inv-1"))
     }
 }

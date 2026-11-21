@@ -313,7 +313,7 @@ class NotificationProvenanceTest {
         )
         listOf(
             "recipient_no_email", "recipient_no_phone", "recipient_hard_bounced",
-            "template_missing", "template_text_empty", "unknown",
+            "template_missing", "template_text_empty", "template_broken", "unknown",
         ).forEach { code ->
             assertFalse(code, notifDeliveryPhrase("skipped", code, null).detail.contains(code))
         }
