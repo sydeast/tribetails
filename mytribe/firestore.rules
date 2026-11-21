@@ -1738,7 +1738,20 @@ service cloud.firestore {
                         && isKinTaleDraftData(request.resource.data)
                         && caretakerDraftWordsOnly());
     }
-    match /household_data/{id}                  { allow read, write: if isStaff(); }
+    // #2289: ONE household record per household. A household's first record
+    // is made at its own id (`household_data/{kinfolkId}`) by every creator:
+    // admin web, admin Android, the desktop console and the portal's vet pick
+    // (`writeHouseholdVetClinicId`, Admin SDK). The office used to create under
+    // an auto id while the portal created under the household id, so two
+    // creates at about the same time left the household with two records and
+    // each side reading a different one. A create at any other id is refused
+    // here, so an app that still creates the old way cannot make the second
+    // record. Records made before this, under an auto id, stay readable and
+    // editable: only `create` is narrowed.
+    match /household_data/{id} {
+      allow read, update, delete: if isStaff();
+      allow create: if isStaff() && request.resource.data.kinfolkId == id;
+    }
  // The household bank (issue #461): the household's own reconciled record, the
  // peer of a kinfolk dossier and a kin 411. ADMIN-ONLY, the same standing ruling
  // that governs those two: kinfolk never see it, and no portal callable projects

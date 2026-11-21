@@ -138,6 +138,11 @@ which notified households about drafts they could not open.
   `kin/{docId}` doc back into the canonical `families/{kinfolkId}/kin/{kinId}` record.
   Both triggers carry a `_mirrorOrigin` stamp plus a real-change guard to prevent the
   mirror loop.
+- The link is set on the server only: no client derives a `familyKinPath` (#2290).
+  A flat Kin with no link, or with a link to a household
+  copy that does not exist, is tied to the copy already stamped with its id, else to
+  an unlinked live household Kin of the same name. A copy is made only when the
+  household has neither.
 
 ### Other triggers
 

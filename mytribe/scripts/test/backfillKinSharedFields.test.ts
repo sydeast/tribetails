@@ -184,7 +184,11 @@ describe('backfillKinSharedFields: run', () => {
     expect(fam.data).toMatchObject({ medications: 'Thyroid\n\nGive with food', routine: 'Walk at 7', _mirrorOrigin: 'flat' });
     const flat = ctx.writes.find((w) => w.path === FLAT)!;
     expect(flat.data).toMatchObject({ medicationHealthNotes: 'Thyroid\n\nGive with food', _mirrorOrigin: 'family' });
-    expect(ctx.writes.find((w) => w.path === 'household_data/f1')!.data).toMatchObject({ primaryVetClinicId: 'c1', kinfolkId: 'f1' });
+    const household = ctx.writes.find((w) => w.path === 'household_data/f1')!.data;
+    expect(household).toMatchObject({ primaryVetClinicId: 'c1', kinfolkId: 'f1' });
+    // #2445: both stamps as ISO text, the type admin Android reads.
+    expect(household.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(household.updatedAt).toBe(household.createdAt);
     expect(ctx.writes.find((w) => w.path === 'families/f1')!.data.customFields).toEqual([]);
     // The office-only Kin with no link is never written by this script.
     expect(ctx.writes.find((w) => w.path === 'kin/flat2')).toBeUndefined();

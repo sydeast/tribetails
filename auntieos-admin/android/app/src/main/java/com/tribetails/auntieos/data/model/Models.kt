@@ -418,11 +418,11 @@ data class Kin(
     var status: String = "active",
     var profilePictureUrl: String = "",   // Kin (pet) photo; parity with web Kin.profilePictureUrl
 
-    // Both are DERIVED, never edited here. `updateKinFields` writes
-    // familyKinPath only when the loaded Kin has none (#2115: a portal-added
-    // Kin's link names a household copy under another id, so it is never
-    // re-derived) and writes updatedAt as a serverTimestamp, so these two are
-    // a read-only view.
+    // Both are DERIVED, never edited here. familyKinPath, the link to the
+    // household's copy of this Kin, is set by the server alone (#2115, #2290:
+    // this app cannot know which household copy is the Kin's, and its own
+    // guess made a second copy). `updateKinFields` writes updatedAt as a
+    // serverTimestamp. So these two are a read-only view.
     // familyKinPath is set on 24 of 24 live kin; updatedAt on 23, as a Firestore
     // Timestamp, so it is held raw and read via updatedAtIso() (same pattern as
     // KinCareSession.updatedAt) rather than typed String.

@@ -168,38 +168,31 @@ internal val KIN_DIFF_FIELDS: Map<String, (Kin) -> Any> = linkedMapOf(
  *
  * - `id`             the document id (`@DocumentId`)
  * - `updatedAt`      stamped at write time by the repository
- * - `familyKinPath`  the MyTribe mirror FK, owned by the repository, which
- *                    writes it only through [familyKinPathStamp] (#2115)
+ * - `familyKinPath`  the link to the household's copy of the Kin, set by
+ *                    the server alone (#2115, #2290; see below)
  */
 internal val KIN_SERVER_OWNED = setOf("id", "updatedAt", "familyKinPath")
 
 /**
- * #2115: the link to the household's copy of a Kin that a save writes, or null
- * for none.
+ * #2115, #2290: THIS CLIENT NEVER WRITES `familyKinPath`, the link from a Kin
+ * to the household's copy of it. `familyKinPathStamp`, which lived here, is
+ * gone on purpose.
  *
- * The link used to be re-derived as `families/{kinfolkId}/kin/{kinId}` on every
- * save. That is right only for a Kin the office made first, where the two ids
- * are the same. A Kin the household added in the portal has its household copy
- * under a different id, so one admin Android save re-pointed its link at a copy
- * that does not exist, and the next shared fact the Admin changed made a second,
- * nameless Kin on the household's roster.
+ * It derived the link as `families/{kinfolkId}/kin/{kinId}`. That is the path
+ * of a copy only when the office made the Kin first AND the household had no
+ * Kin of that name. Two things it could not know broke it:
+ *  - #2115: a Kin the household added in the portal has its copy under a
+ *    different id, so a save re-pointed the link at a copy that does not exist.
+ *    The stamp was then limited to a Kin with no link.
+ *  - #2290: a Kin just made here has no link for a moment, while the server
+ *    ties it to the Kin the household already added under that name. The stamp
+ *    for "a Kin with no link" raced that and pointed the record at a new path
+ *    instead, and the household saw the same Kin twice.
  *
- * So the link is written only when the Kin has none ([existingFamilyKinPath]
- * blank: a Kin just created, or one from before the link existed). A save
- * never changes a link that is there: Edit kin has no household control, and
- * the server (#1912) repairs a link from the household copies. A null
- * [existingFamilyKinPath] means the caller does not know the link, and nothing
- * is written: leaving a link alone is always safe, re-pointing one is not.
+ * The server sets the link on any write to a Kin that has none
+ * (`mytribe/functions/src/triggers/onFlatKinWrite.ts`), with the household's
+ * copies in front of it. [KIN_SERVER_OWNED] keeps it out of every diff.
  */
-internal fun familyKinPathStamp(
-    kinId: String,
-    kinfolkId: String,
-    existingFamilyKinPath: String?,
-): Map<String, String>? {
-    if (kinId.isBlank() || kinfolkId.isBlank() || existingFamilyKinPath == null) return null
-    if (existingFamilyKinPath.isNotBlank()) return null
-    return mapOf("kinfolkId" to kinfolkId, "familyKinPath" to "families/$kinfolkId/kin/$kinId")
-}
 
 /**
  * The fields [edited] changes relative to [loaded], keyed by Firestore field

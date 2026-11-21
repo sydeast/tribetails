@@ -295,6 +295,27 @@ class ModelNullSafetyDecodeTest {
         assertEquals("", c.updatedAtIso())
     }
 
+    // #2445: the same defect on the household record. The portal's vet pick
+    // (`setHouseholdVet`) stamped createdAt/updatedAt as serverTimestamp(), and
+    // both were typed `String` here: Household Data would not open for that
+    // household, and one such record failed the Vet Clinics household count
+    // for every clinic.
+    @Test fun `HouseholdData tolerates the Timestamps the portal's vet pick wrote`() {
+        val h = HouseholdData(kinfolkId = "kf1")
+        setVia(h, "setCreatedAt", Any::class.java, Timestamp(Date(0)))
+        setVia(h, "setUpdatedAt", Any::class.java, Timestamp(Date(0)))
+        assertTrue(h.createdAt is Timestamp)
+        assertEquals("kf1", h.kinfolkId)
+    }
+
+    @Test fun `HouseholdData still takes the ISO String every admin writer stores, and a missing stamp`() {
+        val h = HouseholdData(createdAt = "2026-07-23T10:00:00Z", updatedAt = "2026-07-23T11:00:00Z")
+        assertEquals("2026-07-23T10:00:00Z", h.createdAt)
+        setVia(h, "setUpdatedAt", Any::class.java, null)
+        assertEquals(null, h.updatedAt)
+        assertEquals("", HouseholdData().createdAt)
+    }
+
     @Test fun `UserProfile tolerates a Timestamp from setMediaProfilePhoto`() {
         val p = UserProfile()
         setVia(p, "setCreatedAt", Any::class.java, Timestamp(Date(0)))
