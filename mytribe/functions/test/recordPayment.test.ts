@@ -385,6 +385,20 @@ describe('recordPayment: the Apply box', () => {
     ).rejects.toMatchObject({ code: 'failed-precondition' });
     expect(ctx.writes).toHaveLength(0);
   });
+  it('#2517: refuses an apply against a draft or a quote marked only in the older invoiceStatus field, and writes nothing', async () => {
+    for (const invoiceStatus of ['draft', 'quote']) {
+      const ctx = seed({ invoice: { kinfolkId: 'fam1', invoiceNumber: '1029', invoiceStatus, total: 127.5 } });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const err = await recordPaymentHandler(req({ ...feeArgs, apply: { invoiceId: 'inv1', amount: 100 } })).catch(
+        (e) => e,
+      );
+      expect(err, invoiceStatus).toMatchObject({
+        code: 'failed-precondition',
+        message: 'Invoice 1029 is a draft or quote; send it before applying a payment to it.',
+      });
+      expect(ctx.writes, invoiceStatus).toHaveLength(0);
+    }
+  });
   it('#2358: refuses an apply against a cancelled invoice in plain words, either spelling, and writes nothing', async () => {
     for (const invoice of [
       { kinfolkId: 'fam1', status: 'cancelled', total: 127.5, amountDue: 127.5 },

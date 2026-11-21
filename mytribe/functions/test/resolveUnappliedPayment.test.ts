@@ -308,6 +308,24 @@ describe('resolveUnappliedPayment: apply to another open invoice', () => {
     expect(ctx.writes).toHaveLength(0);
   });
 
+  it('#2517: refuses a draft or a quote marked only in the older invoiceStatus field', async () => {
+    const { status: _status, ...unlabelled } = openInvoice as Record<string, unknown>;
+    const ctx = seed({
+      invoices: {
+        inv_draft: { ...unlabelled, invoiceStatus: 'draft' },
+        inv_quote: { ...unlabelled, invoiceStatus: 'quote' },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    for (const applyInvoiceId of ['inv_draft', 'inv_quote']) {
+      await expect(
+        resolveUnappliedPaymentHandler(req({ ...applyOnly, applyInvoiceId })),
+        applyInvoiceId,
+      ).rejects.toMatchObject({ code: 'failed-precondition', details: { code: 'apply_invoice_not_sent' } });
+    }
+    expect(ctx.writes).toHaveLength(0);
+  });
+
   it('refuses more than the invoice owes', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);
