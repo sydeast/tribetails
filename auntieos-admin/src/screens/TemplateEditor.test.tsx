@@ -695,16 +695,16 @@ describe('TemplateEditor: live preview', () => {
     expect(screen.getByRole('region', { name: 'Live preview' })).toHaveTextContent('Hello there');
   });
   it('names a merge field the notification pipeline will not fill', () => {
-    // `link` is emitter-supplied, not enrichable (enrichTemplateData.ts), so the
+    // `score` is emitter-supplied, not enrichable (enrichTemplateData.ts), so the
     // author has to know the emitting function must pass it.
     render(
       <TemplateEditor
-        template={tpl({ body: 'See their account here: {{link}}' })}
+        template={tpl({ body: 'Their rating: {{score}}' })}
         onClose={vi.fn()}
         onSaved={vi.fn()}
       />,
     );
-    expect(screen.getByRole('status')).toHaveTextContent('1 merge field has no sample value: link');
+    expect(screen.getByRole('status')).toHaveTextContent('1 merge field has no sample value: score');
   });
   it('says nothing when every merge field is one the pipeline fills', () => {
     render(
@@ -739,12 +739,12 @@ describe('TemplateEditor: a template that also carries HTML', () => {
   it('counts a merge field that only appears in the HTML', () => {
     render(
       <TemplateEditor
-        template={tpl({ body: 'Plain.', html: '<a href="{{link}}">Account</a>' })}
+        template={tpl({ body: 'Plain.', html: '<a href="{{score}}">Account</a>' })}
         onClose={vi.fn()}
         onSaved={vi.fn()}
       />,
     );
-    expect(screen.getByRole('status')).toHaveTextContent('1 merge field has no sample value: link');
+    expect(screen.getByRole('status')).toHaveTextContent('1 merge field has no sample value: score');
   });
 });
 // Issue #468. Creating a template used to be an upsert with a friendly name on
@@ -861,7 +861,8 @@ describe('TemplateEditor: the email creation mock (#755)', () => {
     render(<TemplateEditor template={tpl({})} onClose={vi.fn()} onSaved={vi.fn()} />);
     const legend = document.querySelector('.template-editor__legend')!;
     const rows = Array.from(legend.querySelectorAll('.template-editor__legend-row'));
-    expect(rows).toHaveLength(12);
+    // #2487: the twelve the enricher fills, and the link to the notice's item.
+    expect(rows).toHaveLength(13);
     expect(rows[0]).toHaveTextContent('{{kinfolkName}}');
     expect(rows[0]).toHaveTextContent('Sandy Wren');
     expect(rows[5]).toHaveTextContent('{{invoiceNumber}}');

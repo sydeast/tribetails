@@ -1,1 +1,1 @@
-{{Business}}: {{kinName}} is staying on your profile. {{note}}
+{{Business}}: {{kinName}} is staying on your profile.{{#if note}} {{note}}{{/if}}

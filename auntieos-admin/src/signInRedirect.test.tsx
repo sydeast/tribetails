@@ -74,6 +74,12 @@ vi.mock('./lib/firestore', () => ({ useCollection }));
  */
 vi.mock('./screens/Home', () => ({ Home: () => <div>ADMIN HOME</div> }));
 vi.mock('./screens/Invites', () => ({ Invites: () => <div>INVITES SCREEN</div> }));
+// #2487: the screens a notice email or text opens, stubbed so the test reads where it landed.
+vi.mock('./routes/BookingsView', () => ({ BookingsView: () => <div>BOOKINGS SCREEN</div> }));
+vi.mock('./routes/InvoicesView', () => ({ InvoicesView: () => <div>INVOICES SCREEN</div> }));
+vi.mock('./routes/KinTalesView', () => ({ KinTalesView: () => <div>KINTALES SCREEN</div> }));
+vi.mock('./routes/DirectoryProfileView', () => ({ DirectoryProfileView: () => <div>HOUSEHOLD SCREEN</div> }));
+vi.mock('./routes/NotificationsView', () => ({ NotificationsView: () => <div>NOTIFICATIONS SCREEN</div> }));
 
 /** A token whose claims say this account is an admin. */
 function adminToken() {
@@ -192,6 +198,24 @@ describe('#1384 admin sign-in keeps the deep link', () => {
     expect(await screen.findByText('INVITES SCREEN')).toBeInTheDocument();
     expect(window.location.pathname).toBe('/invites');
     expect(window.location.search).toBe('?inviteId=inv_1');
+    expect(screen.queryByText('ADMIN HOME')).toBeNull();
+  });
+  it.each([
+    ['a visit', '/bookings?bookingId=vis_v1', 'BOOKINGS SCREEN'],
+    ['a booking request', '/bookings?requestId=b1&requestKinfolkId=f1', 'BOOKINGS SCREEN'],
+    ['a Kin removal request', '/bookings?kinRemoval=r1', 'BOOKINGS SCREEN'],
+    ['an invoice', '/invoices?invoiceId=inv1', 'INVOICES SCREEN'],
+    ['a KinTale', '/kintales?kinTaleId=t1', 'KINTALES SCREEN'],
+    ['a payment waiting on a decision', '/directory/f1?section=unapplied-payments&paymentId=evt1', 'HOUSEHOLD SCREEN'],
+    ['the notifications list', '/notifications', 'NOTIFICATIONS SCREEN'],
+  ])('#2487: a notice email link to %s, opened signed out, lands there after sign-in', async (_label, route, landed) => {
+    window.history.replaceState(null, '', route);
+    await boot();
+    await waitFor(() => expect(window.location.pathname).toBe('/signin'));
+    expect(new URLSearchParams(window.location.search).get('redirect')).toBe(route);
+    await fillAndSubmit();
+    expect(await screen.findByText(landed)).toBeInTheDocument();
+    expect(window.location.pathname + window.location.search).toBe(route);
     expect(screen.queryByText('ADMIN HOME')).toBeNull();
   });
   it('still lands on Home when the operator went to /signin directly', async () => {

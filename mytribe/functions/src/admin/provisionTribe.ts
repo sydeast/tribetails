@@ -50,9 +50,11 @@ export async function provisionTribeHandler(req: CallableRequest<unknown>): Prom
       expiresAt,
     });
   });
+  // #2487: greeted by name, never by the address the invite goes to. A tribe
+  // set up here has no person's name on file yet, so the household's name.
+  const names = await (await import('../lib/inviteNames.js')).inviteNamesFor(familyRef.id, { householdName: args.displayName, caller: 'provisionTribe' });
   await sendFromTemplate('invite.primary', args.primaryEmail, {
-    primaryDisplayName: args.primaryEmail,
-    tribeName: args.displayName,
+    ...names,
     claimUrl: `${claimBaseUrl}?invite=${inviteRef.id}`,
     expiresInDays: INVITE_TTL_DAYS,
   });

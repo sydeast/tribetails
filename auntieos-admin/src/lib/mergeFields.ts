@@ -100,12 +100,13 @@ export function unresolvedKeys(segments: readonly PreviewSegment[]): string[] {
 }
 
 /**
- * Sample bindings for the twelve tokens the notification enricher can hydrate.
+ * Sample bindings for the tokens every notification send fills: the twelve the
+ * enricher hydrates, and `{{link}}`, the link to the notice's item (#2487).
  *
  * SOURCE: `ENRICHABLE` in mytribe/functions/src/notifications/enrichTemplateData.ts.
  * That set is the honest boundary of "the pipeline will fill this in": the
  * enricher hydrates those twelve from the entities a notification names, and
- * everything else (`link`, `score`, `count`, `incidentId`, `ip`, the Stripe
+ * everything else (`score`, `count`, `incidentId`, `ip`, the Stripe
  * dispute fields) has to be handed in by whichever emitter raised the
  * notification. So a token outside this map is not necessarily a bug, but it IS
  * a promise somebody else has to keep, and the preview says so rather than
@@ -127,4 +128,7 @@ export const ENRICHABLE_SAMPLE: Readonly<Record<string, string>> = {
   kinfolkEmail: 'sandy@example.com',
   displayName: 'Sandy Wren',
   notes: 'Back door key is with the neighbour.',
+  // #2487: the link to the notice's item, filled per copy at send
+  // (mytribe/functions/src/notifications/noticeLink.ts).
+  link: 'https://kinfolk.tribetails.com/schedule',
 };

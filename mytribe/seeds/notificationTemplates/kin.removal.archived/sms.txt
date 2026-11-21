@@ -1,1 +1,1 @@
-{{Business}}: {{kinName}} has been removed from your profile, as you asked. {{note}}
+{{Business}}: {{kinName}} has been removed from your profile, as you asked.{{#if note}} {{note}}{{/if}}

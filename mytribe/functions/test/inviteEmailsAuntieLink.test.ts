@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../src/lib/sendFromTemplate', () => ({ sendFromTemplate: mocks.sendFromTemplate }));
 vi.mock('../src/lib/emailFrameStore', () => ({ loadEmailFrame: mocks.loadEmailFrame }));
+// #2487: the emails read the household's name; this suite is about the link only.
+vi.mock('../src/lib/firestoreAdmin', () => ({
+  db: () => ({ collection: () => ({ doc: () => ({ get: async () => ({ exists: false, data: () => undefined }) }) }) }),
+}));
 
 import { sendPrimaryInviteEmails } from '../src/lib/inviteEmails';
 
