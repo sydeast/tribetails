@@ -90,7 +90,8 @@ const ALLOWED = new Map<string, string>([
   ],
   [
     'mytribe/functions/src/scheduled/notificationScheduledSweep.ts',
-    'promotes gated scheduledNotifications rows, transactionally',
+    'promotes gated scheduledNotifications rows, transactionally; since #1834 it asks broadcastHoldReason ' +
+      'for a blast copy at its send time and deletes the held ones (never sent later), skipping on a failed read',
   ],
   [
     'mytribe/functions/src/scheduled/notificationBatchSweep.ts',
@@ -259,6 +260,52 @@ describe('household send gate: the dispatcher is the only road to a household', 
       offenders,
       'send through enqueueNotificationDetailed (notifications/dispatcher.ts), which is gated',
     ).toEqual([]);
+  });
+});
+
+/**
+ * #1834: THE KEYS THAT PASS THE SWITCH ARE NAMED ONLY WHERE A PERSON SENDS ONE.
+ *
+ * The dispatcher lets a household copy of `ONE_HOUSEHOLD_MESSAGE_KEYS` through
+ * with "Send notices to households" off, because the ruling lets a single
+ * message to one household go. That is only safe while nothing that fires by
+ * itself (a document trigger the production re-upload sets off, a timed job)
+ * enqueues one of those keys. The scan above cannot see that: an enqueue goes
+ * through the gated dispatcher and matches no pattern. So the key itself is
+ * the tripwire. A new file naming it has to be added here with its reason.
+ */
+describe('household send gate: a key that passes the switch is sent only by a person', () => {
+  const PASS_KEY_FILES = new Map<string, string>([
+    ['mytribe/functions/src/notifications/householdSendGate.ts', 'the list of keys itself'],
+    ['mytribe/functions/src/admin/conversations.ts', 'replyToConversation: the owner replies to one household'],
+    ['mytribe/functions/src/admin/sendHouseholdPush.ts', 'one approved Communicate push to one household'],
+    ['mytribe/functions/src/admin/sendGeneratedDraft.ts', 'one approved Communicate text draft to one household'],
+    ['mytribe/functions/src/notifications/catalog.ts', 'the catalog row; sends nothing'],
+    ['mytribe/functions/src/notifications/seedCorpus.generated.ts', 'the template seed corpus; sends nothing'],
+    ['mytribe/functions/src/notifications/enrichTemplateData.ts', 'merge-field table; sends nothing'],
+    ['mytribe/functions/src/notifications/buildNotificationDetail.ts', 'detail-line table; sends nothing'],
+    ['mytribe/functions/src/notifications/provenance.ts', 'provenance table; sends nothing'],
+  ]);
+
+  it('the pass list is the one reply/push key', async () => {
+    const { ONE_HOUSEHOLD_MESSAGE_KEYS } = await import('../src/notifications/householdSendGate');
+    expect([...ONE_HOUSEHOLD_MESSAGE_KEYS]).toEqual(['message.reply']);
+  });
+
+  it('no trigger, timed job or other file names a key that passes the switch', async () => {
+    const { ONE_HOUSEHOLD_MESSAGE_KEYS } = await import('../src/notifications/householdSendGate');
+    const found = new Set<string>();
+    for (const file of sourceFiles(resolve(REPO, ROOT))) {
+      const code = stripComments(readFileSync(file, 'utf8'));
+      for (const key of ONE_HOUSEHOLD_MESSAGE_KEYS) {
+        const literal = new RegExp(`['"\`]${key.replace(/\./g, '\\.')}['"\`]`);
+        if (literal.test(code)) found.add(rel(file));
+      }
+    }
+    // Proof the scan finds the senders it is about, rather than passing on nothing.
+    expect(found).toContain('mytribe/functions/src/admin/conversations.ts');
+    expect([...found].filter((f) => !PASS_KEY_FILES.has(f)), 'a new sender of a key that passes the switch').toEqual([]);
+    for (const f of PASS_KEY_FILES.keys()) expect(found, `${f} still names the key`).toContain(f);
   });
 });
 
