@@ -2613,14 +2613,43 @@ registry.
   of a Kin's two ids is read as that Kin; none on the roster means all of
   them), and a client shows a Kin picker with every Kin chosen to begin with.
 - The roster is frozen on the booking when it is written. A Kin added later is
-  on the next visit made, never on an existing one, and an approval keeps the
-  Kin the request was stored with.
+  on the next visit made, and an approval keeps the Kin the request was stored
+  with. The owner can put a Kin on visits already booked with
+  `addKinToUpcomingVisits` (#1822).
 - GATE: `resolveKinfolkAccess`. A household reads its own; the owner reads the
   household it names; an Auntie is admitted by `lib/auntieAccess.ts` for the
   visit's Kin editor.
 - Callers: admin web, admin Android, the desktop console, the kinfolk portal
   web app and the kinfolk portal Android app.
 
+### addKinToUpcomingVisits
+`src/admin/addKinToUpcomingVisits.ts`. Added 2026-11-20 (#1822, operator
+ruling 2026-11-20). Hand-typed on admin web, admin Android and the desktop
+console; not in the contracts registry.
+- req `{ kinfolkId: string, kinId: string, apply?: boolean }`. `kinId` may be
+  either of the Kin's ids (admin record or household card).
+- res `{ ok: true, kinId: string, kinName: string | null, upcoming: number, added: number }`.
+  `kinId` is the id visits store for the Kin. `upcoming` is how many of the
+  household's upcoming visits do not carry the Kin yet; `added` is how many
+  this call changed (0 unless `apply: true`).
+- Upcoming means not started: an office visit still DRAFT, PENDING or
+  SCHEDULED with no On my way or Arrived stamp and a start still ahead, and a
+  household copy still requested, confirmed or approved with a start (or, for
+  a night awaiting its time, a night) still ahead. Only rows under
+  `families/{kinfolkId}/bookings` and `kin_care_sessions` with that
+  `kinfolkId`. Past, started, cancelled and completed visits are never written.
+- `apply: true` adds the Kin's id and name to `kinIds` / `kinNames` on the
+  office row, the household copy and the booking envelope, only where missing.
+  Idempotent: a visit already carrying the Kin by either id is neither counted
+  nor written. One Activity Log line (`ADD_KIN_TO_UPCOMING_VISITS`, "Added
+  <Kin> to N upcoming visits") when at least one visit changed.
+- Notices: none of its own. A confirmed visit's household copy changing its
+  Kin is answered by `onBookingsWrite` with `kincare.changed`, the existing
+  visit-change rule (behind the household send gate); a request awaiting
+  approval sends nothing.
+- GATE: owner only (`wrapAdminCallable`, not on the Auntie allowlist, and an
+  explicit Auntie refusal). A Kin that is not an active Kin of the household
+  is `not-found` (`kin_not_in_household`).
 ### getMyBookings
 - req `{ kinfolkId?: string }` (no zod schema; read raw off `req.data`, same
   precedent as `getMyInvoicesRequest`)

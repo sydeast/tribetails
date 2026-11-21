@@ -129,6 +129,10 @@ fun KinViewScreen(
                         onSavingChange = { tagsSaving = it },
                     )
 
+                    // #1822: visits booked before this Kin joined the household.
+                    // Draws nothing when every upcoming visit already has the Kin.
+                    AddKinToVisitsBlock(client = client, kinfolkId = kinfolkId, kinId = kin._id, kinName = kin.name)
+
                     DenPanel(title = "Basics") {
                         ViewRow("Species", kin.species)
                         ViewRow("Breed", kin.breed)

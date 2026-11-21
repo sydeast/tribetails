@@ -2332,6 +2332,26 @@ class FirestoreClient {
     }
 
     /**
+     * #1822: how many of the household's upcoming visits do not carry this Kin
+     * ([apply] false), or put the Kin on them ([apply] true), through
+     * `addKinToUpcomingVisits`. Owner only; the server refuses an Auntie and
+     * leaves every started or past visit as it is.
+     */
+    suspend fun addKinToUpcomingVisits(kinfolkId: String, kinId: String, apply: Boolean): WriteResult<AddKinToVisitsAnswer> {
+        if (kinfolkId.isBlank() || kinId.isBlank()) return WriteResult.Err("No Kin to ask about.")
+        val payload = buildJsonObject {
+            put("kinfolkId", JsonPrimitive(enforceWriteKinfolkId(testMode, kinfolkId)))
+            put("kinId", JsonPrimitive(kinId.trim()))
+            put("apply", JsonPrimitive(apply))
+        }
+        return when (val r = platformInvokeCallable("addKinToUpcomingVisits", callableJson.encodeToString(JsonObject.serializer(), payload))) {
+            is WriteResult.Err -> WriteResult.Err(r.message, r.code)
+            is WriteResult.Ok -> addKinToVisitsAnswerOf(r.value)?.let { WriteResult.Ok(it) }
+                ?: WriteResult.Err("The upcoming visits could not be checked.")
+        }
+    }
+
+    /**
      * AO-25: admin multi-date / recurring booking REQUEST via the
      * createMultiDateBookingRequest callable. Writes the envelope model
      * (families/{kinfolkId}/bookings) as 'requested', the Incoming-requests queue,

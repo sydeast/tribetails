@@ -28,8 +28,9 @@ import { resolveKinNames } from './resolveKinNames';
  * ROSTER DRIFT, the consequence this design accepts: the roster is resolved
  * ONCE, at write time, and then frozen on the document. A Kin adopted next
  * month is NOT retroactively added to a booking already on the calendar; the
- * operator edits the booking, or the next booking picks the new Kin up. That
- * is deliberate. The alternative (a `coversAllKin` flag expanded at read time)
+ * next booking picks the new Kin up, and the owner can add the Kin to the
+ * upcoming visits in one deliberate step (`admin/addKinToUpcomingVisits.ts`,
+ * #1822), which never touches a visit that has started. That is deliberate. The alternative (a `coversAllKin` flag expanded at read time)
  * would re-answer "who is covered" against today's roster every time the page
  * loads, so a session completed in March would silently start listing a dog
  * adopted in July, rewriting history, on a record that feeds KinTales and

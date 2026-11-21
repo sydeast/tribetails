@@ -269,6 +269,48 @@ fun KinDetailScreen(
                     }
                 } else {
                     item { KinTalesPanel(kin, state, onOpenReport) }
+                    // #1822: visits booked before this Kin joined. The card
+                    // shows only while some upcoming visit lacks the Kin.
+                    if (state.missingLoading && state.missingVisits == null) {
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                AuntieSpinner(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Text("Checking upcoming visits…", style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim)
+                            }
+                        }
+                    }
+                    state.missingError?.let { msg ->
+                        item {
+                            AuntieBanner(
+                                tone = AuntieBannerTone.Error,
+                                title = "Couldn't check upcoming visits",
+                                trailing = {
+                                    GhostButton(label = "Retry", onClick = { viewModel.loadMissingVisits(state.householdId, kin.id) })
+                                },
+                            ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.error) }
+                        }
+                    }
+                    state.addToVisitsMessage?.let { msg ->
+                        item {
+                            AuntieBanner(
+                                tone = AuntieBannerTone.Success,
+                                title = "Upcoming visits",
+                                onDismiss = { viewModel.clearAddToVisitsMessage() },
+                            ) { Text(msg, style = AuntieTheme.typography.bodySmall, color = AuntieTheme.colors.textDim) }
+                        }
+                    }
+                    val missing = state.missingVisits ?: 0
+                    if (missing > 0) {
+                        item(key = "add-kin-to-visits") {
+                            AddKinToVisitsCard(
+                                kinName = kin.name,
+                                count = missing,
+                                inFlight = state.addingToVisits,
+                                error = state.addToVisitsError,
+                                onAdd = { viewModel.addToUpcomingVisits(state.householdId, kin.id, kin.name.ifBlank { "this Kin" }) },
+                            )
+                        }
+                    }
                     item { UpcomingKinCarePanel(kin, state, onOpenVisit) }
                 }
             }
