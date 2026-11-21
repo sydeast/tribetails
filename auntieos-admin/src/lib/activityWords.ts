@@ -84,6 +84,7 @@ const STATUS_WORDS: Record<string, string> = {
   COMPLETED: 'completed',
   CANCELLED: 'cancelled',
 };
+
 /** A stored visit status in words ("ON_MY_WAY" reads "on the way"). Also #1814's clock line. */
 export const statusWords = (s: string): string => STATUS_WORDS[s.trim().toUpperCase()] ?? lowerWords(s);
 

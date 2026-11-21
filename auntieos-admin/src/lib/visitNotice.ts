@@ -173,6 +173,7 @@ export function noticeAbout(
   const step = visitNoticeStepOf(action);
   return step === null || sessionId === null || sessionId.trim() === '' ? null : { sessionId, step };
 }
+
 /** The clock's order, so a step back (an undo) reads "Back to", never "Marked". */
 const CLOCK_ORDER = ['SCHEDULED', 'ON_MY_WAY', 'ARRIVED', 'DEPARTED', 'COMPLETED'];
 /**
@@ -188,10 +189,12 @@ export function visitMovedSentence(from: string, to: string): string {
   if (word === '') return 'Visit updated.';
   return a !== -1 && b !== -1 && b < a ? `Back to ${word}.` : `Marked ${word}.`;
 }
+
 /** #1814: a tap that found the visit already at this step. */
 export function visitAlreadySentence(status: string): string {
   return `Already ${statusWords(status)}. Nothing was changed, and the time already on file is unchanged.`;
 }
+
 /** Whether this action tells the household anything, so whether there is a question to ask. */
 export function actionNotifiesHousehold(action: VisitLifecycleAction): boolean {
   return TOLD_WHAT[action] !== undefined;

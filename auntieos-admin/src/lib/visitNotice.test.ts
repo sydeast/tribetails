@@ -396,11 +396,13 @@ describe('visitMovedSentence: the clock line in words (#1814)', () => {
     expect(visitMovedSentence('ARRIVED', 'DEPARTED')).toBe('Marked departed.');
     expect(visitMovedSentence('DEPARTED', 'COMPLETED')).toBe('Marked completed.');
   });
+
   it('says an undo as a step back', () => {
     expect(visitMovedSentence('ARRIVED', 'ON_MY_WAY')).toBe('Back to on the way.');
     expect(visitMovedSentence('DEPARTED', 'ON_MY_WAY')).toBe('Back to on the way.');
     expect(visitMovedSentence('ARRIVED', 'SCHEDULED')).toBe('Back to scheduled.');
   });
+
   it('never prints a stored key or an arrow, whatever the server sends', () => {
     for (const [from, to] of [
       ['SCHEDULED', 'ON_MY_WAY'],
@@ -414,6 +416,7 @@ describe('visitMovedSentence: the clock line in words (#1814)', () => {
     }
     expect(visitMovedSentence('SOME_NEW_STATE', 'ANOTHER_NEW_STATE')).toBe('Marked another new state.');
   });
+
   it('says a tap that changed nothing in words', () => {
     expect(visitAlreadySentence('ARRIVED')).toBe(
       'Already arrived. Nothing was changed, and the time already on file is unchanged.',
