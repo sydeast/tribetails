@@ -22,6 +22,7 @@ import {
   householdTimeContextFrom,
   type HouseholdTimeContext,
 } from './bookingTimeBlocks';
+import { kinTaleSignature } from './portalVisitLinks';
 export { CLOCK_ONLY_TIME_CONTEXT, householdTimeContextFrom, type HouseholdTimeContext };
 import {
   serviceDisplayName,
@@ -278,9 +279,10 @@ export function kinCareToDto(
     kinIds: Array.isArray(data['kinIds']) ? (data['kinIds'] as string[]) : [],
     kinNames: Array.isArray(data['kinNames']) ? (data['kinNames'] as string[]) : [],
     // #1836: a completed visit nobody was assigned to (the office worked it
-    // itself) is signed by its sent KinTale, never "Not yet assigned".
+    // itself) is signed by its sent KinTale, never "Not yet assigned". A stored
+    // name that is really a sign-in address is never handed to a household.
     auntieDisplayName:
-      stringOrNull(data['auntieDisplayName']) ??
+      kinTaleSignature(data['auntieDisplayName']) ??
       (completedSession !== null ? (extras.kinTaleAuthorBySession.get(completedSession) ?? null) : null),
     auntieAvatarUrl: stringOrNull(data['auntieAvatarUrl']),
     notes: stringOrNull(data['notes']),

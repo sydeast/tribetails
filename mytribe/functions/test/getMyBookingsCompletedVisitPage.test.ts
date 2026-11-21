@@ -104,6 +104,14 @@ describe('getMyBookings: the page of a completed visit the office worked itself 
     }
   });
 
+  it('a sign-in address stored as the Auntie name never reaches the household', async () => {
+    const withTale = await visitOf(world({ visit: { auntieDisplayName: 'e2e-admin@tribetails.com' } }));
+    expect(withTale.listed).toMatchObject({ auntieDisplayName: 'Maya' });
+    const noTale = await visitOf(world({ visit: { auntieDisplayName: 'e2e-admin@tribetails.com' }, reports: [] }));
+    expect(noTale.listed).toMatchObject({ auntieDisplayName: null });
+    expect(JSON.stringify(noTale.listed)).not.toContain('e2e-admin@tribetails.com');
+  });
+
   it('an unsent tale links nothing and signs nothing', async () => {
     const { listed } = await visitOf(
       world({ reports: [{ id: 'tale-1', data: { kinfolkId: '3', sessionId: 'vis_v1', authorDisplayName: 'Maya' } }] }),
