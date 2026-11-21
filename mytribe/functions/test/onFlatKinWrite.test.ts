@@ -468,6 +468,42 @@ describe('#2290: a link to a household copy that is not there finds the Kin the 
     expect(ctx.writes.find((w) => w.path === 'kin/flat1')!.data.familyKinPath).toBe('families/kf1/kin/portal7');
   });
 
+  /**
+   * Review of #2290. No client writes the link now, so the write that first
+   * ties a record to the household's Kin can be an edit: a record from before
+   * the link existed, saved with one field changed.
+   */
+  it('an edit on a record with no link ties it to the household Kin and takes the edit with it', async () => {
+    const before = { ...FLAT, familyKinPath: '', weight: '40 lbs', allergies: 'Chicken' };
+    const after = { ...before, weight: '45 lbs' };
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'kin/flat1': { ...after },
+      [TWIN_PATH]: { name: 'Biscuit', status: 'active', weight: '38 lbs', allergies: 'None' },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const res = await mirrorFlatKinToFamily(before as any, after as any, 'flat1');
+    expect(res).toEqual({ action: 'linked', familyKinPath: TWIN_PATH });
+    // The field the Admin changed travels. The one left alone does not.
+    expect(docs[TWIN_PATH]).toMatchObject({ weight: '45 lbs', allergies: 'None', name: 'Biscuit', legacyKinId: 'flat1', _mirrorOrigin: MIRROR_ORIGIN_FLAT });
+    expect(docs['kin/flat1']).toMatchObject({ familyKinPath: TWIN_PATH, legacyKinId: 'flat1' });
+    expect(docs[OWN_PATH] ?? null).toBeNull();
+  });
+
+  it('a new record with no link does not write its first draft over the household Kin', async () => {
+    const after = { ...FLAT, familyKinPath: '', weight: '', allergies: '' };
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'kin/flat1': { ...after },
+      [TWIN_PATH]: { name: 'Biscuit', status: 'active', weight: '40 lbs', allergies: 'Chicken' },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    expect((await mirrorFlatKinToFamily(undefined, after as any, 'flat1')).action).toBe('linked');
+    expect(docs[TWIN_PATH]).toMatchObject({ weight: '40 lbs', allergies: 'Chicken', legacyKinId: 'flat1' });
+  });
+
   it('a new record that arrives with the bad link does not write its first draft over the household Kin', async () => {
     const after = { ...FLAT, familyKinPath: OWN_PATH, weight: '', allergies: '' };
     const ctx = buildDbMock({
@@ -520,6 +556,97 @@ describe('#2290: a link to a household copy that is not there finds the Kin the 
     expect(res).toEqual({ action: 'adopted', familyKinPath: OWN_PATH });
     expect(docs[TWIN_PATH]).toMatchObject({ legacyKinId: 'flat-other' });
     expect(docs[OWN_PATH]).toMatchObject({ name: 'Biscuit', legacyKinId: 'flat1' });
+    expect(docs['kin/flat1']).toMatchObject({ familyKinPath: OWN_PATH });
+  });
+
+  /**
+   * Review of #2290. The household Kin's own office record points at it, but
+   * the Kin carries no stamp yet: the forward mirror writes the record's link
+   * first and the Kin's stamp second, as two separate writes, so a mirror run
+   * that stops between them leaves the pair like this until the Kin is next
+   * saved. A second office record of that name is a second Kin. Taking the
+   * household Kin by name would leave two office records on one household Kin.
+   */
+  for (const link of ['no link', 'a link to a copy that is not there'] as const) {
+    it(`a household Kin another office record points at is not taken by name (${link}): this one gets its own copy`, async () => {
+      const after = { ...FLAT, familyKinPath: link === 'no link' ? '' : OWN_PATH };
+      const docs: Record<string, Record<string, unknown> | null> = {
+        'kin/flat1': { ...after },
+        'kin/flat0': { ...FLAT, familyKinPath: TWIN_PATH, legacyKinId: 'flat0' },
+        [TWIN_PATH]: { name: 'Biscuit', status: 'active' },
+      };
+      const ctx = buildDbMock({ docs, writeThrough: true });
+      mocks.dbFn.mockReturnValue(ctx.db);
+
+      const res = await mirrorFlatKinToFamily(link === 'no link' ? undefined : ({ ...FLAT, familyKinPath: '' } as any), after as any, 'flat1');
+      expect(res).toEqual({ action: 'adopted', familyKinPath: OWN_PATH });
+      expect(docs[TWIN_PATH]).toEqual({ name: 'Biscuit', status: 'active' });
+      expect(docs['kin/flat0']).toMatchObject({ familyKinPath: TWIN_PATH, legacyKinId: 'flat0' });
+      expect(docs[OWN_PATH]).toMatchObject({ name: 'Biscuit', legacyKinId: 'flat1' });
+      expect(docs['kin/flat1']).toMatchObject({ familyKinPath: OWN_PATH, legacyKinId: 'flat1' });
+    });
+  }
+
+  it('a record in another household that points at the household Kin does not stop the name match', async () => {
+    const after = { ...FLAT, familyKinPath: '' };
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'kin/flat1': { ...after },
+      'kin/stray': { kinfolkId: 'kf2', name: 'Biscuit', status: 'active', familyKinPath: TWIN_PATH },
+      [TWIN_PATH]: { name: 'Biscuit', status: 'active' },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    expect(await adoptFlatKin('flat1', after as any)).toEqual({ action: 'linked', familyKinPath: TWIN_PATH });
+    expect(docs[TWIN_PATH]).toMatchObject({ legacyKinId: 'flat1' });
+    expect(docs[OWN_PATH] ?? null).toBeNull();
+  });
+
+  it('the household Kin got its own office record between the lookup and the claim: this one gets its own copy', async () => {
+    const after = { ...FLAT, familyKinPath: '' };
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'kin/flat1': { ...after },
+      [TWIN_PATH]: { name: 'Biscuit', status: 'active' },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const real = ctx.db.runTransaction;
+    ctx.db.runTransaction = vi.fn(async (fn: any) => {
+      // The forward mirror makes the household Kin's record. Its stamp on the
+      // Kin itself has not landed yet.
+      docs['kin/flat0'] = { ...FLAT, familyKinPath: TWIN_PATH, legacyKinId: 'flat0' };
+      return real(fn);
+    });
+
+    const res = await adoptFlatKin('flat1', after as any);
+    expect(res).toEqual({ action: 'adopted', familyKinPath: OWN_PATH });
+    expect(docs[TWIN_PATH]).toEqual({ name: 'Biscuit', status: 'active' });
+    expect(docs[OWN_PATH]).toMatchObject({ name: 'Biscuit', legacyKinId: 'flat1' });
+    expect(docs['kin/flat1']).toMatchObject({ familyKinPath: OWN_PATH });
+  });
+
+  it('a copy that turned up at the link between the lookup and the claim is the copy: the same-name Kin is left alone', async () => {
+    const before = { ...FLAT, familyKinPath: '' };
+    const after = { ...FLAT, familyKinPath: OWN_PATH };
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'kin/flat1': { ...after },
+      [TWIN_PATH]: { name: 'Biscuit', status: 'active' },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const real = ctx.db.runTransaction;
+    let run = 0;
+    ctx.db.runTransaction = vi.fn(async (fn: any) => {
+      // The first transaction is the mirror's own look at the link. The copy
+      // arrives after it, before the claim.
+      run += 1;
+      if (run === 2) docs[OWN_PATH] = { name: 'Biscuit', status: 'active', legacyKinId: 'flat1', familyKinPath: OWN_PATH };
+      return real(fn);
+    });
+
+    const res = await mirrorFlatKinToFamily(before as any, after as any, 'flat1');
+    expect(res).toEqual({ action: 'linked', familyKinPath: OWN_PATH });
+    expect(docs[TWIN_PATH]).toEqual({ name: 'Biscuit', status: 'active' });
     expect(docs['kin/flat1']).toMatchObject({ familyKinPath: OWN_PATH });
   });
 

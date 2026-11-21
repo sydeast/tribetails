@@ -79,12 +79,6 @@ export async function mirrorFlatKinToFamily(
     return { action: 'skipped', reason: 'family-origin' };
   }
 
-  const familyKinPath = text(after.familyKinPath);
-  if (familyKinPath === '') {
-    if (!flatDocId) return { action: 'skipped', reason: 'no-link' };
-    return adoptFlatKin(flatDocId, after);
-  }
-
   // Inclusion list first, translated, then strip every household-owned field
   // and every staff-only field. The lists are disjoint today, so both strips
   // are no-ops; they are here so that adding a field to STAFF_EDITABLE_FIELDS
@@ -95,6 +89,20 @@ export async function mirrorFlatKinToFamily(
     omitKeys(toFamilyFields(after, changedKeys(before, after, STAFF_EDITABLE_FIELDS)), PARENT_OWNED_FIELDS),
     STAFF_ONLY_KIN_FIELDS,
   );
+  // What this write hands a household copy that is FOUND rather than made. On
+  // an edit, the shared fields the Admin just changed. On a create every field
+  // counts as changed, and a copy the household already keeps is not
+  // overwritten with the office's first draft.
+  const carried = before === undefined ? {} : payload;
+
+  const familyKinPath = text(after.familyKinPath);
+  if (familyKinPath === '') {
+    if (!flatDocId) return { action: 'skipped', reason: 'no-link' };
+    // No client writes the link (#2290), so an edit can be the write that
+    // first ties a record to the household's copy. The edit goes with it.
+    return adoptFlatKin(flatDocId, after, { changes: carried });
+  }
+
   // A link that is new on this write (a create, or admin Android stamping one
   // after its add) or a Kin coming back from archive may name a household copy
   // that does not exist yet. Those are the writes that make sure it does.
@@ -155,10 +163,7 @@ export async function mirrorFlatKinToFamily(
     return 'merged' as const;
   });
   if (wrote === 'missing' && flatDocId !== undefined) {
-    // On an edit, what the Admin just changed goes to whichever copy is found.
-    // On a create every field counts as changed, and a copy the household
-    // already keeps is not overwritten with the office's first draft.
-    return adoptFlatKin(flatDocId, after, { missingPath: familyKinPath, changes: before === undefined ? {} : payload });
+    return adoptFlatKin(flatDocId, after, { missingPath: familyKinPath, changes: carried });
   }
   if (wrote === 'none') return { action: 'skipped', reason: 'no-change', familyKinPath };
   return { action: wrote === 'created' ? 'adopted' : 'mirrored', familyKinPath };
@@ -171,7 +176,10 @@ export async function mirrorFlatKinToFamily(
  *     was all that was missing, or was wrong);
  *   - an unstamped, live household copy of the same name is the same animal
  *     (a seeded household, or a Kin the household added before the link
- *     existed), and is tied to this record rather than duplicated;
+ *     existed), and is tied to this record rather than duplicated. Not when
+ *     another office record of this household already points at that copy:
+ *     the copy is that record's, stamped or not, and two office records never
+ *     share one household Kin. This record then gets its own copy;
  *   - otherwise a copy is made at `families/{kinfolkId}/kin/{flatId}`, the
  *     path admin Android has always stamped for a Kin the office made.
  * An archived or memorialised record gets nothing: it would only be hidden.
@@ -181,12 +189,15 @@ export async function mirrorFlatKinToFamily(
  * above and its link is corrected; with none found, the copy is made at
  * `missingPath`, as it always was. `changes` are the shared fields this write
  * changed, already translated: they go onto a copy that was found, so the
- * Admin's edit is not lost with the bad link.
+ * Admin's edit is not lost with the bad link, nor on the edit that first ties
+ * a record that had no link.
  *
  * The claim is made in a transaction that reads the record and the chosen
  * copy again. A link that arrived in the meantime wins (the household's own
  * add taking this record by name), and a same-name copy that another record
- * took in the meantime is left to it: this record gets its own.
+ * took in the meantime is left to it: this record gets its own. "Took" is read
+ * both ways, the copy's stamp and the other record's link, because the forward
+ * mirror writes the link first and the stamp second.
  */
 export async function adoptFlatKin(
   flatId: string,
@@ -202,18 +213,32 @@ export async function adoptFlatKin(
   const missingPath = opts.missingPath ?? '';
   const changes = opts.changes ?? {};
 
-  const byId =(a: { id: string }, b: { id: string }) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const byId = (a: { id: string }, b: { id: string }) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  // The office records whose link names a household copy, and whether one of
+  // them is another record of this household. A record with no household of
+  // its own counts: its link is all that says where it sits.
+  const linkedTo = (path: string) => firestore.collection('kin').where('familyKinPath', '==', path);
+  const isAnotherRecord = (d: { id: string; data: () => unknown }): boolean => {
+    if (d.id === flatId) return false;
+    const owner = text(((d.data() ?? {}) as Record<string, unknown>)['kinfolkId']);
+    return owner === '' || owner === kinfolkId;
+  };
   const stamped = await firestore.collection(`families/${kinfolkId}/kin`).where('legacyKinId', '==', flatId).get();
   let foundKinId: string | null = [...stamped.docs].sort(byId)[0]?.id ?? null;
   if (foundKinId === null) {
     const name = text(flat['name']).trim();
     if (name !== '') {
       const byName = await firestore.collection(`families/${kinfolkId}/kin`).where('name', '==', name).get();
-      const twin = [...byName.docs].sort(byId).find((d) => {
+      const twins = [...byName.docs].sort(byId).filter((d) => {
         const data = (d.data() ?? {}) as Record<string, unknown>;
         return text(data['legacyKinId']) === '' && !isInactiveKinStatus(data['status']);
       });
-      foundKinId = twin?.id ?? null;
+      for (const twin of twins) {
+        const linked = await linkedTo(familyPathFor(kinfolkId, twin.id)).get();
+        if (linked.docs.some(isAnotherRecord)) continue;
+        foundKinId = twin.id;
+        break;
+      }
     }
   }
   const ownPath = missingPath !== '' ? missingPath : familyPathFor(kinfolkId, flatId);
@@ -226,17 +251,23 @@ export async function adoptFlatKin(
     const flatSnap = await tx.get(flatRef);
     const ownSnap = await tx.get(ownRef);
     const foundSnap = foundRef ? await tx.get(foundRef) : null;
+    const foundLinks = foundRef && foundPath !== null ? await tx.get(linkedTo(foundPath)) : null;
     if (!flatSnap.exists) return { state: 'gone' as const };
     const current = (flatSnap.data() ?? {}) as Record<string, unknown>;
     const pointer = text(current['familyKinPath']);
 
     // The copy found before the transaction is used only if it is still this
-    // record's to take: stamped with it, or unstamped and live. A copy at the
-    // link itself that turned up meanwhile is the copy, whatever was found.
+    // record's to take: stamped with it, or unstamped, live and with no other
+    // office record pointing at it. A copy at the link itself that turned up
+    // meanwhile is the copy, whatever was found.
     const foundData = foundSnap?.exists ? ((foundSnap.data() ?? {}) as Record<string, unknown>) : null;
     const foundStamp = foundData === null ? null : text(foundData['legacyKinId']);
-    const foundIsOurs =
-      foundData !== null && (foundStamp === flatId || (foundStamp === '' && !isInactiveKinStatus(foundData['status'])));
+    const foundIsFree =
+      foundData !== null &&
+      foundStamp === '' &&
+      !isInactiveKinStatus(foundData['status']) &&
+      !(foundLinks?.docs.some(isAnotherRecord) ?? false);
+    const foundIsOurs = foundData !== null && (foundStamp === flatId || foundIsFree);
     const useFound = foundRef !== null && foundIsOurs && !(missingPath !== '' && ownSnap.exists);
     const path = useFound && foundPath !== null ? foundPath : ownPath;
     const familyRef = useFound && foundRef !== null ? foundRef : ownRef;
