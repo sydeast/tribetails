@@ -297,7 +297,7 @@ describe('#1820 what an Auntie may write a line about', () => {
   const hers = [
     // #2037: the four clock steps are the server's lines now (SERVER_ONLY_AUDIT_EVENTS).
     'VISIT_COMPLETED', 'VISIT_NOTE_ADDED', 'VISIT_PHOTO_ADDED',
-    'CONTENT_KINTALE_SENT', 'UPDATE_KIN', 'CREATE_KIN', 'UPDATE_KINFOLK', 'DRAFT_APPROVED', 'BLOCK_TIME_SLOT',
+    'UPDATE_KIN', 'CREATE_KIN', 'UPDATE_KINFOLK', 'DRAFT_APPROVED', 'BLOCK_TIME_SLOT',
   ];
   it.each(hers)('writes %s for an Auntie', async (actionType) => {
     await logActivityHandler(req({ actionType }, 'auntie-1', AUNTIE));

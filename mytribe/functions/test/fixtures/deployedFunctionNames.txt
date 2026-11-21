@@ -196,6 +196,7 @@ onKinCareSessionDeparted
 onKinCareSessionLifecycle
 onKinTaleCommentCreate
 onKinTaleCreate
+onKinTaleTemplateWrite
 onKinTaleUpdate
 onKinfolkAddressWrite
 onKinfolkCreate
