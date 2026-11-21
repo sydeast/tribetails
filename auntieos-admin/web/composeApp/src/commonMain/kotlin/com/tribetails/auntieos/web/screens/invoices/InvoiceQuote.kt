@@ -75,6 +75,26 @@ const val CONVERT_QUOTE_CONFIRM_TEXT: String =
         "answer from the household is cleared. The household sees nothing until you send the invoice with " +
         "Review and send."
 
+/**
+ * #2258: which payment terms the invoice a quote turns into will carry, shown in
+ * the Turn into invoice confirm, in the same words as admin web and Android.
+ * Repeats the server's `convertedQuoteTermsSource` (`admin/quoteActions.ts`),
+ * which decides: custom terms or a due date typed with no code are kept, the
+ * quote's own code is kept, and a quote with no terms takes the business's
+ * Payment terms setting.
+ */
+fun convertQuoteTermsLine(invoice: Invoice): String {
+    val stored = invoice.termsCode.trim()
+    val code = InvoiceTermsCode.entries.firstOrNull { it.wire == stored }
+    val typedDue = invoice.dueDate.trim()
+    return when {
+        code == InvoiceTermsCode.CUSTOM || (code == null && typedDue.isNotEmpty()) ->
+            "It keeps the due date picked on the quote."
+        code != null -> "It keeps the quote's payment terms: ${code.words}."
+        else -> "The quote has no payment terms, so it takes your Payment terms setting."
+    }
+}
+
 const val WITHDRAW_QUOTE_CONFIRM_TEXT: String =
     "This withdraws the quote. The household no longer sees it, and the visits it holds go back on the " +
         "not yet invoiced list. It is kept as cancelled, not deleted."

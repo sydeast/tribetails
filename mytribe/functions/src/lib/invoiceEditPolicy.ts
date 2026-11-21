@@ -50,6 +50,15 @@ export type InvoiceState = (typeof INVOICE_STATES)[number];
 /** The fields the classifier reads off a raw invoice doc. All optional: real docs are missing keys. */
 export interface InvoiceStateDoc {
   status?: unknown;
+  /**
+   * #2471: the older spelling of `status`, read ONLY when `status` is absent,
+   * the way `invoiceCancelled` and `invoiceMarkedPaid` (`invoicePaidGate.ts`)
+   * and the portal's `statusFromStamp` read it. Until then an invoice cancelled
+   * in this field alone classified by its money: it read open, stayed
+   * editable, and an edit that brought the total down to what was paid
+   * stamped it paid, while every payment path already refused it as cancelled.
+   */
+  invoiceStatus?: unknown;
   amountDue?: unknown;
   /** The integer-cents balance where a writer paired it with `amountDue`; see `amountDueRule.ts`. */
   amountDueCents?: unknown;
@@ -100,7 +109,9 @@ export interface InvoiceStateDoc {
  * reading, and the one that keeps the bill visible and repairable.
  */
 export function invoiceStateOf(doc: InvoiceStateDoc, paidCents: number | null = null): InvoiceState {
-  const status = typeof doc.status === 'string' ? doc.status.trim().toLowerCase() : '';
+  // #2471: `status` wins; the legacy `invoiceStatus` is read only when it is absent.
+  const raw = doc.status ?? doc.invoiceStatus;
+  const status = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
   const amountDue = amountDueCentsOf(doc, paidCents);
   const total = invoiceTotalCentsOf(doc);
 

@@ -123,6 +123,8 @@ const OPEN_INVOICE: GetMyInvoicesResult['open'][number] = {
   creditTarget: null,
   creditRedeemedAtMs: null,
   writtenOffCents: null,
+  subtotalCents: null,
+  invoiceDiscountCents: null,
   // #2410: null on an invoice that can be paid.
   payBlockedReason: null,
   payments: [],
@@ -141,6 +143,8 @@ const CREDIT_INVOICE: GetMyInvoicesResult['credits'][number] = {
   creditAmountCents: 2000,
   creditRedeemedAtMs: null,
   writtenOffCents: null,
+  subtotalCents: null,
+  invoiceDiscountCents: null,
   // Issue #409: how this bill can be paid, resolved server-side off the
   // options it was issued with. The card needs nothing configured, so a
   // believable invoice always carries at least this one.
@@ -313,11 +317,11 @@ describe('InvoiceDetail line items', () => {
     lineItems: [
       {
         lineId: 'stored:0', source: 'stored', sessionId: '',
-        label: 'Daily visit', dateIso: null, amountCents: 6000, qty: 3, unitCents: 2000,
+        label: 'Daily visit', dateIso: null, amountCents: 6000, qty: 3, unitCents: 2000, discountCents: 0,
       },
       {
         lineId: 'stored:1', source: 'stored', sessionId: '',
-        label: 'Extra dog', dateIso: null, amountCents: 400, qty: 1, unitCents: 500,
+        label: 'Extra dog', dateIso: null, amountCents: 400, qty: 1, unitCents: 500, discountCents: 0,
       },
     ],
   };
@@ -373,7 +377,7 @@ describe('InvoiceDetail line items', () => {
       lineItems: [
         {
           lineId: 'stored:0', source: 'stored', sessionId: 'vis_1',
-          label: 'Dog walk, 2026-07-10', dateIso: '2026-07-10T14:00:00.000Z', amountCents: 2500, qty: 1, unitCents: 2500,
+          label: 'Dog walk, 2026-07-10', dateIso: '2026-07-10T14:00:00.000Z', amountCents: 2500, qty: 1, unitCents: 2500, discountCents: 0,
         },
       ],
     });
@@ -390,7 +394,7 @@ describe('InvoiceDetail line items', () => {
       lineItems: [
         {
           lineId: 'stored:0', source: 'stored', sessionId: '',
-          label: 'Mileage', dateIso: null, amountCents: 1000, qty: 1, unitCents: 1000,
+          label: 'Mileage', dateIso: null, amountCents: 1000, qty: 1, unitCents: 1000, discountCents: 0,
         },
       ],
     });
@@ -404,12 +408,82 @@ describe('InvoiceDetail line items', () => {
       lineItems: [
         {
           lineId: 'session:vis_1', source: 'session', sessionId: 'vis_1',
-          label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500, qty: null, unitCents: null,
+          label: '30Minute', dateIso: '2026-07-01T10:00:00', amountCents: 2500, qty: null, unitCents: null, discountCents: null,
         },
       ],
     });
     expect(await screen.findByText('30Minute')).toBeInTheDocument();
     expect(screen.getByText('$25.00')).toBeInTheDocument();
+  });
+
+  /** #1974: the walk invoice. Lines $25.00, $9.00 and 2 x $600.00 with $50.00 off; $10.00 off the invoice. */
+  const DISCOUNTED: GetMyInvoicesResult['open'][number] = {
+    ...OPEN_INVOICE,
+    total: 1174,
+    amountDue: 1174,
+    discount: 'Thanks for the referral',
+    subtotalCents: 118400,
+    invoiceDiscountCents: 1000,
+    lineItems: [
+      { lineId: 'stored:0', source: 'stored', sessionId: '', label: 'Drop in', dateIso: null, amountCents: 2500, qty: 1, unitCents: 2500, discountCents: 0 },
+      { lineId: 'stored:1', source: 'stored', sessionId: '', label: 'Supplies', dateIso: null, amountCents: 900, qty: 1, unitCents: 900, discountCents: 0 },
+      { lineId: 'stored:2', source: 'stored', sessionId: '', label: 'Overnight', dateIso: null, amountCents: 115000, qty: 2, unitCents: 60000, discountCents: 5000 },
+    ],
+  };
+
+  it('#1974: the line discount, the subtotal and the invoice discount show as amounts that add up to the total', async () => {
+    await renderWith(DISCOUNTED);
+    expect(await screen.findByText('includes $50.00 off')).toBeInTheDocument();
+    expect(screen.getByText('2 x $600.00')).toBeInTheDocument();
+    expect(screen.getByText('$1,150.00')).toBeInTheDocument();
+    expect(screen.getByTestId('invoice-subtotal')).toHaveTextContent('Subtotal$1,184.00');
+    const discount = screen.getByTestId('invoice-discount');
+    expect(discount).toHaveTextContent('(10.00)');
+    expect(discount).toHaveTextContent('Thanks for the referral');
+    expect(screen.getByText('$1,174.00', { selector: '.row.total b' })).toBeInTheDocument();
+    // The note is never a row of its own with no amount.
+    expect(document.querySelectorAll('.totals .row.disc')).toHaveLength(1);
+  });
+
+  it('#1974: no line discount and no invoice discount: a subtotal and no Discount row', async () => {
+    await renderWith({ ...DISCOUNTED, discount: null, invoiceDiscountCents: 0, lineItems: DISCOUNTED.lineItems!.slice(0, 2), subtotalCents: 3400, total: 34, amountDue: 34 });
+    expect(await screen.findByTestId('invoice-subtotal')).toHaveTextContent('$34.00');
+    expect(screen.queryByTestId('invoice-discount')).not.toBeInTheDocument();
+    expect(screen.queryByText(/includes .* off/)).not.toBeInTheDocument();
+  });
+
+  it('#1974: an invoice with no stored lines keeps its free-text discount row', async () => {
+    await renderWith({ ...OPEN_INVOICE, discount: '10% loyalty' });
+    expect(await screen.findByText('10% loyalty')).toBeInTheDocument();
+    expect(screen.queryByTestId('invoice-subtotal')).not.toBeInTheDocument();
+  });
+
+  it('#1974: an older server that sends neither figure keeps the old discount row, and no line discount text', async () => {
+    const { subtotalCents: _s, invoiceDiscountCents: _d, ...older } = DISCOUNTED;
+    await renderWith({
+      ...(older as GetMyInvoicesResult['open'][number]),
+      lineItems: DISCOUNTED.lineItems!.map(({ discountCents: _x, ...li }) => li as never),
+    });
+    expect(await screen.findByText('Thanks for the referral')).toBeInTheDocument();
+    expect(screen.queryByTestId('invoice-subtotal')).not.toBeInTheDocument();
+    expect(screen.queryByText('includes $50.00 off')).not.toBeInTheDocument();
+  });
+});
+
+describe('#1974: line descriptions keep the case they were typed in', () => {
+  it('the invoice table cell overrides the global capitals rule the schedule screen sets on .svc', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const css = readFileSync(resolve(__dirname, '../styles/invoices.css'), 'utf8');
+    const rule = css.match(/\.items tbody td\.svc \{[^}]*\}/)?.[0] ?? '';
+    expect(rule).toContain('text-transform: none');
+    expect(rule).toContain('font-family: inherit');
+    expect(rule).toContain('display: table-cell');
+    // booking.css's service card `.svc` must not dress the cell either.
+    expect(rule).toContain('border-radius: 0');
+    expect(rule).toContain('background: none');
+    expect(rule).toContain('box-shadow: none');
+    expect(css).toMatch(/\.items tbody td\.svc:hover \{[^}]*transform: none/);
   });
 });
 /**
@@ -688,6 +762,8 @@ describe('InvoiceDetail payment option sources (issue #409)', () => {
     creditTarget: null,
     creditRedeemedAtMs: null,
     writtenOffCents: null,
+    subtotalCents: null,
+    invoiceDiscountCents: null,
     // #2410: null on an invoice that can be paid.
     payBlockedReason: null,
     payments: [],
