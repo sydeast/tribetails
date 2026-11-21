@@ -108,7 +108,7 @@ function tribeData(extra = {}) {
       { id: 'r2', status: 'SENT', sourceDraftId: 'd9', bodyCopy: 'Published from a generated draft, so this one is never a style example at all.', sentAt: '2026-11-08T11:00:00.000Z', createdAt: '2026-11-08T10:30:00.000Z' },
       { id: 'legacy_r3', status: 'SENT', sentVia: 'legacy_visit_logs', bodyCopy: 'An old imported visit log that came over in the migration from the old system.', createdAt: '2026-01-01T00:00:00.000Z' },
       { id: 'r4', status: 'DRAFT', bodyCopy: 'A tale still in the composer is not sent, so it is not one of ours yet either.', createdAt: '2026-11-08T12:00:00.000Z' },
-      { id: 'r5', status: 'SENT', bodyCopy: 'Sprocket chased the ball round and round the yard and then flopped down for a nap on the porch.', kinfolkName: 'Leopold Quince', sentAt: '2026-11-07T10:00:00.000Z', createdAt: '2026-11-07T09:00:00.000Z' },
+      { id: 'r5', status: 'SENT', bodyCopy: 'Sprocket chased the ball round and round the yard and then flopped down for a nap in the shade.', kinfolkName: 'Leopold Quince', sentAt: '2026-11-07T10:00:00.000Z', createdAt: '2026-11-07T09:00:00.000Z' },
     ],
     'kin_care_reports/r1/comments': [
       { id: 'c1', authorRole: 'admin', body: 'So glad Marzipan had a good day, Ottoline. More sun tomorrow if it holds.', createdAtMs: 50 },
@@ -118,7 +118,7 @@ function tribeData(extra = {}) {
       { id: 'b1', body: 'Hello {{firstName}}, the holiday calendar is open and we would love to see your Kin.', sentAtMs: 400 },
     ],
     generated_drafts: [
-      { id: 'd1', generated_copy: 'Sprocket chased the ball round and round the yard and then flopped down for a nap on the porch.', createdOn: '2026-11-07T08:00:00.000Z' },
+      { id: 'd1', generated_copy: 'Sprocket chased the ball round and round the yard and then flopped down for a nap in the shade.', createdOn: '2026-11-07T08:00:00.000Z' },
     ],
     ...extra,
   };
@@ -285,6 +285,27 @@ describe('household specifics: an example is a style sample only', () => {
       'The padlock on the shed is new.',
       'The housekey is with the neighbour now.',
       'The passkey worked fine today.',
+      'I closed the back window before I left.',
+      'The kitchen window was open a crack, so I shut it.',
+      'Everyone came in through the dog flap after the rain.',
+      'I left everything on the porch for you.',
+      'The slider in the den sticks a little.',
+      'Your neighbour has the other set now.',
+      'I let myself in through the side and all was quiet.',
+    ],
+    away: [
+      'Hope you have a wonderful trip, we will take good care of everyone while you are away.',
+      'See you when you are back Sunday, all is well here.',
+      'Back Sunday? We will be ready for you.',
+      'Enjoy your vacation, everyone is settled.',
+      'Safe travels home, everyone is happy.',
+      'Hope the flight was smooth and you landed safely.',
+      'Welcome home, everyone was so good while you were gone.',
+      'She misses you but is eating well.',
+      'I brought the mail and the packages inside.',
+      'The bins went out and the house is quiet.',
+      'Let me know when you get back and I will stop by.',
+      'Enjoy your holiday, we have everything here.',
     ],
     medicine: [
       'She took half a pill of gabapentin with her supper.',
@@ -309,6 +330,16 @@ describe('household specifics: an example is a style sample only', () => {
       'He gets anxious when the thunder starts.',
       'Do not let him off the leash near the pond.',
       'There was an accident on the rug, all cleaned up.',
+      'She spent most of the visit hiding under the bed.',
+      'He hid behind the couch until I sat down.',
+      'He barks at people walking past the house.',
+      'She was a little shy at first but warmed up to me.',
+      'He is scared of the vacuum, so I left it.',
+      'She gets nervous around strangers.',
+      'He does not like other dogs on the trail.',
+      'She jumps on people when they come in.',
+      'He was shaking during the storm, so we cuddled.',
+      'She chewed the corner of the rug again.',
     ],
     address: [
       'We took the long way down Quarry Road and back.',
@@ -334,13 +365,20 @@ describe('household specifics: an example is a style sample only', () => {
     'Thank you so much! It was a joy to spend the afternoon with your Kin. Talk soon!',
     'We had a lovely long walk, fresh water in the bowl and lots of cuddles on the couch before I left.',
     'Hi [Kinfolk], all went well today. [Kin] and [Kin 2] played in the yard and then napped in the sun.',
-    'Hope you have a wonderful trip, we will take good care of everyone while you are away.',
     'The clock in the hall chimed while we played with the monkey toy.',
     'She curled up on her pillow and we refilled the water bowl before heading off.',
     'The road was quiet and by the way, the leaves are turning.',
     'Missing you already, see you next time. Lots of love from the Tribe!',
     'Happy holidays from all of us, and thank you for a wonderful year.',
     'We played indoors while it rained and then had a little nap together.',
+    'Thank you for trusting us with your family, it means the world. Talk soon!',
+    'Sending lots of love and tail wags your way, see you next visit!',
+    'Everyone was fed, cuddled and settled before I headed out for the night.',
+    'Have a wonderful weekend, and thanks again for the kind note.',
+    'I will reply right away, thank you for checking in with us.',
+    'What a terrific afternoon of play, belly rubs and a long nap.',
+    'All tucked in and happy, fresh water in every bowl.',
+    'She was so happy to see me and we played fetch until she was tired out.',
   ];
   it('keeps plain sign-offs and generic visit wording, two Kin placeholders included', () => {
     for (const t of MUST_SURVIVE) assert.strictEqual(own.householdSpecific(t), null, t);
@@ -481,12 +519,12 @@ describe('the office\'s own writing, collected', () => {
       broadcasts: [
         { id: 'b1', body: 'The walk was lovely and fenwold the neighbour waved at us from the gate.', sentAtMs: 400 },
         { id: 'b2', body: 'The water is fresh and fenwold the neighbour says the gate is fixed now.', sentAtMs: 401 },
-        { id: 'b3', body: 'Fenwold the neighbour kept an eye on the yard while we were out on the walk.', sentAtMs: 402 },
+        { id: 'b3', body: 'Fenwold the baker waved at us from the shop while we were out on the walk.', sentAtMs: 402 },
       ],
     });
     const { text } = await build(data);
     assert.doesNotMatch(text, /Fenwold/);
-    assert.match(text, /\[Name\] the neighbour kept an eye/);
+    assert.match(text, /\[Name\] the baker waved at us/);
   });
   it('is held to a count, a length and a share per kind', async () => {
     const many = Array.from({ length: 30 }, (_, i) => ({

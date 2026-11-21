@@ -30,6 +30,10 @@
 //      replacing: any digit (codes, times, amounts), a money sign, a time of
 //      day, and any care detail (medicines and doses, health and behaviour
 //      notes, doors, locks, alarms, keys and codes, any part of an address).
+//      Windows and every other way into the home, the household being away
+//      or coming back ("back Sunday", "while you're away", travel), and a
+//      Kin's behaviour in plain words (hiding, barking at people, biting,
+//      fear) count too.
 //      The lists lean wide: when a word could be either, the example goes. A
 //      dropped example is replaced by the next one of its kind.
 //
@@ -310,6 +314,10 @@ const SPECIFIC_STEMS = {
     'passcode', 'password', 'garage', 'combination', 'combo', 'security', 'camera', 'buzzer', 'intercom',
     'concierge', 'disarm', 'key', 'gate', 'code', 'zip', 'unlatch', 'padlock', 'backdoor', 'frontdoor',
     'sidedoor', 'trapdoor', 'housekey', 'passkey',
+    // Any other way into the home: windows, flaps, porches and the like.
+    'window', 'skylight', 'porch', 'patio', 'balcony', 'basement', 'cellar', 'attic', 'crawlspace', 'hatch',
+    'shutter', 'curtain', 'slider', 'screen', 'lobby', 'doorman', 'doormat', 'fence', 'flap', 'catflap',
+    'dogflap', 'neighbo',
   ],
   medicine: [
     'medic', 'capsule', 'dose', 'dosage', 'dosing', 'prescri', 'pharmac', 'antibiotic', 'steroid',
@@ -337,6 +345,16 @@ const SPECIFIC_STEMS = {
   behaviour: [
     'aggress', 'growl', 'snarl', 'reactiv', 'anxi', 'separation', 'fearful', 'phobi', 'escap', 'muzzle',
     'guarding', 'accident', 'trigger', 'destruct', 'fight', 'attack', 'territor', 'hiss',
+    // The same in plain words: hiding, barking at people, fear.
+    'bark', 'howl', 'whin', 'yelp', 'yowl', 'cower', 'fear', 'afraid', 'frighten', 'scare', 'timid',
+    'nervous', 'skittish', 'jumpy', 'spook', 'startl', 'panic', 'stress', 'trembl', 'snap', 'chew',
+    'scratch', 'claw', 'swat', 'sneak', 'bully', 'grump', 'cranky', 'moody', 'feisty', 'stubborn',
+    'protective', 'possessive', 'jealous', 'dominan', 'wary', 'cautious', 'stranger', 'spray',
+  ],
+  away: [
+    'travel', 'vacation', 'trip', 'flight', 'airport', 'cruise', 'hotel', 'honeymoon', 'getaway', 'abroad',
+    'overseas', 'roadtrip', 'staycation', 'itinerar', 'jetlag', 'layover', 'return', 'homecoming',
+    'housesit',
   ],
   address: ['address', 'apartment', 'subdivision', 'intersection', 'boulevard', 'parkway', 'highway'],
   diet: ['kibble', 'dietar'],
@@ -344,7 +362,8 @@ const SPECIFIC_STEMS = {
 const SPECIFIC_WORDS = {
   entry: [
     'pin', 'pins', 'fob', 'fobs', 'armed', 'arming', 'spare', 'entry', 'entrance', 'mailbox', 'wifi', 'wi-fi',
-    'hide-a-key',
+    'hide-a-key', 'deck', 'blinds', 'let (?:myself|yourself|ourselves|me|us|them) (?:in|out)', 'way in',
+    'under the (?:mat|rug|pot|planter|rock|flowerpot)', 'lights? (?:on|off)',
   ],
   medicine: [
     'med', 'meds', 'pill', 'pills', 'pilled', 'pilling', 'tablet', 'tablets', 'mg', 'mcg', 'ml', 'cc',
@@ -361,6 +380,25 @@ const SPECIFIC_WORDS = {
     'lunge', 'lunges', 'lunged', 'lunging', 'scared', 'bolt', 'bolts', 'bolted', 'bolting', 'marking',
     'darts? out', 'darted out', 'ran off', 'runs? off', 'resource guard', 'do not let', "don't let",
     'never let', 'keep (?:\\p{L}+ )?away',
+    'hide', 'hides', 'hid', 'hiding', 'hidden', 'shy', 'shyness', 'terrified', 'terrifies', 'terrifying',
+    'scary', 'shaking', 'shakes', 'shook', 'pacing', 'mouthy', 'picky', 'pulls', 'pulling',
+    'jump(?:s|ed|ing)? (?:on|up)', 'warm(?:s|ed)? up to', 'get(?:s)? along', 'got along',
+    "(?:does not|doesn't|did not|didn't|won't|will not|can't|cannot) (?:like|stand|tolerate|handle|trust)",
+    'other (?:dogs|cats|animals|pets|people|kin)', 'got out', 'gets out', 'slipped out',
+    'ran away', 'runs? away', 'running away',
+    'under the (?:bed|couch|sofa|porch|house|deck|stairs)', 'behind the (?:couch|sofa|bed|dryer|washer|fridge)',
+  ],
+  away: [
+    // "while you're away", but not "right away" or "put away".
+    '(?<!(?:right|straight|put|far|tucked|packed|stored|cleared|washed|tidied|faded|gave|give|given) )away',
+    "(?:you're|you are|you were|you'll be|they're|they are|they'll be|y'all are|we're) (?:gone|out|back|home)",
+    'out of (?:town|state|the country)', 'back home', 'welcome (?:back|home)', 'home safe', 'home safely',
+    'safe (?:trip|flight|journey|drive)', 'get(?:s|ting)? back', 'got back', '(?:be|are|is|be getting) back',
+    'back (?:on |by |next |this )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|tonight|weekend|week)',
+    "see you (?:when|once) you(?:'re| are| get)", 'land', 'lands', 'landed', 'landing', 'fly', 'flying', 'flew',
+    'on holiday', 'your holidays?', 'holidaying', 'house sit(?:ting)?', 'empty house',
+    "(?:nobody|no one|no-one)(?:'s| is)? home", 'misse[sd] (?:you|y\'all|everyone|them|her|his|their)',
+    'mail', 'package', 'packages', 'parcel', 'parcels', 'newspapers?', 'bins', 'trash', 'garbage', 'recycling',
   ],
   address: [
     'street', 'streets', 'st', 'avenue', 'ave', 'blvd', 'pkwy', 'hwy', 'rd', 'ln', 'ct', 'cir', 'trl', 'apt',
@@ -425,7 +463,7 @@ const OWN_PLACEHOLDERS = new RegExp(PLACEHOLDER_TOKEN.source, 'gu');
 
 /**
  * The kind of household specific `text` holds ('digit', 'entry', 'medicine',
- * 'health', 'behaviour', 'address', 'time', 'money', 'diet'), or null when it holds
+ * 'health', 'behaviour', 'away', 'address', 'time', 'money', 'diet'), or null when it holds
  * none. A name placeholder stands for a capitalised word ("[Kin 2]" holds no
  * digit); one that stands for a phone, an address or a number is a specific,
  * since something particular was there.
