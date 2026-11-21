@@ -351,8 +351,14 @@ const ALLOWED_EAGER_PACKAGES = [
  * the two admin payment readers and `portal/getMyInvoices.ts` share it. It is
  * pure, and the one module it imports (`lib/businessHours.ts`) was already
  * here; `lib/pastVisit.ts` is still loaded with `await import()`.
+ *
+ * 470 since #1892 (on top of #2334's 469): `triggers/onKinTaleTemplateWrite.ts`,
+ * the trigger that writes the Activity Log line for a KinTale template change.
+ * Its rules, `lib/kinTaleTemplateAudit.ts`, load with `await import()` inside
+ * the handler, so the entry is the only module it adds. The KinTale send line
+ * (#1821) adds none: `lib/auditActor.ts` was already here.
  */
-const MAX_OWN_EAGER_MODULES = 469;
+const MAX_OWN_EAGER_MODULES = 470;
 
 interface Edge {
   spec: string;
