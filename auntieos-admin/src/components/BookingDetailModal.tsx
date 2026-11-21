@@ -36,6 +36,7 @@ import { sessionHousehold, sessionState, sessionStateInfo } from '../lib/session
 import { visitKinLine } from '../lib/visitFacts';
 import { Dialog } from './Dialog';
 import { Banner } from './Banner';
+import { AsyncLoading } from './AsyncRegion';
 import { PrimaryButton, GhostButton } from './Buttons';
 import { DenPanel, EmptyHint, ServicePill } from './DenScreenKit';
 import { useToast } from './Toast';
@@ -732,10 +733,18 @@ function NotesPanel({ kinfolkId, batchId, visitId, locked, household, auntie }: 
       subtitle="The household sees these on the booking."
       headingLevel={3}
     >
-      {state.status === 'loading' && <EmptyHint>Loading the notes…</EmptyHint>}
+      {/* #2227: a wait that runs long offers a way forward, and a failed read
+          says so in plain words with Try again, which re-subscribes (Firestore
+          drops a listener after its error). */}
+      {state.status === 'loading' && <AsyncLoading what="the notes" />}
       {state.status === 'error' && (
         <Banner tone="error" title="Could not load the notes">
-          {state.message}
+          Check the connection and try again.
+          {state.retry !== undefined && (
+            <div className="bdm__row">
+              <GhostButton label="Try again" onClick={state.retry} />
+            </div>
+          )}
         </Banner>
       )}
       {state.status === 'ready' &&

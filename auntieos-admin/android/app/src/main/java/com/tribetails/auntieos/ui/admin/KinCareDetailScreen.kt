@@ -118,6 +118,9 @@ fun KinCareDetailScreen(
     // kin and 411 reads on this screen are Directory domain and stay on [repo].
     kinCareRepo: KinCareRepository = AuntieOSApp.instance.kinCareRepository,
     notesRepo: BookingNotesRepository = remember { BookingNotesRepository() },
+    // Injected so a spec can draw a visit that carries its booking-request ids
+    // (#2227) without Firebase; the default is the signed-in account.
+    currentUid: () -> String? = { FirebaseAuth.getInstance().currentUser?.uid },
 ) {
     val scope = rememberCoroutineScope()
 
@@ -125,7 +128,10 @@ fun KinCareDetailScreen(
     var kinfolk    by remember(kinCareId) { mutableStateOf<Kinfolk?>(null) }
     var kinById    by remember(kinCareId) { mutableStateOf<Map<String, Kin>>(emptyMap()) }
     var fourOnes   by remember(kinCareId) { mutableStateOf<Map<String, Kin411>>(emptyMap()) }
-    var reports    by remember(kinCareId) { mutableStateOf<List<KinCareReport>>(emptyList()) }
+    // #2265: the KinTales panel's own read, apart from the screen's spinner, so
+    // a failure says so with Try again instead of reading as "none sent".
+    var talesState  by remember(kinCareId) { mutableStateOf<VisitTalesState>(VisitTalesState.Loading) }
+    var talesReload by remember(kinCareId) { mutableStateOf(0) }
     // #760: the GPS trail under the visit times. Live breadcrumbs while the
     // visit is in flight, the durable `gpsSummary` copy once it is not, because
     // `purgeOldVisitRoutes` deletes breadcrumbs past the retention window and a
@@ -170,9 +176,6 @@ fun KinCareDetailScreen(
                             repo.getKinByIds(ids).onSuccess { kinById = it }
                             repo.get411ByKinIds(ids).onSuccess { fourOnes = it }
                         }
-                        kinCareRepo.getReportsForSession(kinCareId).onSuccess { list ->
-                            reports = list.sortedWith(kinTaleDateComparator(true) { r -> kinTaleSortMillis(r.sentAt.orEmpty().ifBlank { r.createdAt }) }) // #1599: by parsed date
-                        }
                         // #760. A failed breadcrumb read leaves the list empty,
                         // which falls through to the saved summary below rather
                         // than blanking the panel.
@@ -202,6 +205,13 @@ fun KinCareDetailScreen(
         }
     }
 
+    // #2265: once the visit is on screen, its KinTales, by the equality-only read.
+    val sessionLoaded = session != null
+    LaunchedEffect(kinCareId, sessionLoaded, talesReload) {
+        if (!sessionLoaded) return@LaunchedEffect
+        talesState = VisitTalesState.Loading
+        talesState = loadVisitTales({ kinCareRepo.getReportsForVisit(kinCareId) })
+    }
     val s = session
     AuntieScreenScaffold(
         title = s?.kinfolkName?.ifBlank { "KinCare" } ?: "Loading…",
@@ -390,6 +400,7 @@ fun KinCareDetailScreen(
                 BookingNotesSection(
                     session = s,
                     notesRepo = notesRepo,
+                    listStaff = { kinCareRepo.listStaff() },
                     zone = businessZone(businessTimeZone),
                 )
             }
@@ -428,6 +439,8 @@ fun KinCareDetailScreen(
                         kinfolkId = s.kinfolkId,
                         batchId = assignBatchId,
                         visitId = assignVisitId,
+                        repo = kinCareRepo,
+                        currentUid = currentUid,
                     )
                 }
             } else {
@@ -489,11 +502,22 @@ fun KinCareDetailScreen(
 
             item {
                 DetailSection("KinTales sent") {
-                    if (reports.isEmpty()) {
-                        EmptyHint("No KinTales sent yet during this KinCare.")
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            reports.forEach { r -> KinTaleSnippet(r) }
+                    when (val st = talesState) {
+                        VisitTalesState.Loading -> EmptyHint("Loading the KinTales…")
+                        VisitTalesState.Failed -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = VISIT_TALES_FAILED,
+                                style = AuntieTheme.typography.labelSmall,
+                                color = AuntieTheme.colors.error,
+                            )
+                            GhostButton(label = "Try again", onClick = { talesReload++ })
+                        }
+                        is VisitTalesState.Ready -> if (st.tales.isEmpty()) {
+                            EmptyHint("No KinTales sent yet during this KinCare.")
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                st.tales.forEach { r -> KinTaleSnippet(r, businessZone(businessTimeZone)) }
+                            }
                         }
                     }
                 }
@@ -516,10 +540,11 @@ private fun AssignedAuntieSection(
     kinfolkId: String,
     batchId: String,
     visitId: String,
+    repo: KinCareRepository,
+    currentUid: () -> String?,
 ) {
-    val repo = AuntieOSApp.instance.kinCareRepository
     val scope = rememberCoroutineScope()
-    val myUid = remember { FirebaseAuth.getInstance().currentUser?.uid }
+    val myUid = remember { currentUid() }
     var assignedUid by remember(visitId) { mutableStateOf<String?>(null) }
     var assignedName by remember(visitId) { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
@@ -904,7 +929,7 @@ private fun AddressBlock(address: String) {
 }
 
 @Composable
-private fun KinTaleSnippet(report: KinCareReport) {
+private fun KinTaleSnippet(report: KinCareReport, zone: ZoneId) {
     val accent = when (report.status.uppercase()) {
         "SENT"   -> AuntieTheme.colors.success
         "FAILED" -> AuntieTheme.colors.error
@@ -926,7 +951,8 @@ private fun KinTaleSnippet(report: KinCareReport) {
                 )
                 val ts = report.sentAt.orEmpty().ifBlank { report.updatedAt.ifBlank { report.createdAt } }
                 if (ts.isNotBlank()) {
-                    Text(ts, style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
+                    // #1828: on the business clock, month as a word, 24-hour; never the stored ISO text.
+                    Text(shortIso(ts, zone = zone), style = AuntieTheme.typography.labelSmall, color = AuntieTheme.colors.textDim)
                 }
             }
             if (report.bodyCopy.isNotBlank()) {
@@ -1063,11 +1089,18 @@ private fun isKinCarePermissionDenied(err: Throwable): Boolean =
 private fun BookingNotesSection(
     session: KinCareSession,
     notesRepo: BookingNotesRepository,
+    listStaff: suspend () -> Result<List<com.tribetails.auntieos.data.repository.StaffMember>>,
     zone: ZoneId,
 ) {
     val scope = rememberCoroutineScope()
     val bookingId = session.sourceBookingId.ifBlank { session.id }
+    // The save resolves a legacy id on the server, so it keeps its own test.
     val canStream = session.kinfolkId.isNotBlank() && bookingId.isNotBlank()
+    // #2227: the thread lives under the visit's booking request, so the read
+    // needs both of its ids.
+    val batchId = session.kinCareBatchId?.trim().orEmpty()
+    val visitId = session.kinCareVisitId?.trim().orEmpty()
+    val canRead = session.kinfolkId.isNotBlank() && batchId.isNotEmpty() && visitId.isNotEmpty()
     // #2027: before a note is saved, say whether the household is sent a
     // notice about it, from the server; after, say what was sent.
     var notePreview by remember(session.kinfolkId) {
@@ -1086,10 +1119,15 @@ private fun BookingNotesSection(
         }
     }
 
-    val kinfolkFacing by remember(canStream, bookingId) {
-        if (canStream) notesRepo.streamKinfolkFacingNotes(session.kinfolkId, bookingId)
-        else flowOf(emptyList<BookingNotesRepository.BookingNote>())
-    }.collectAsState(initial = emptyList())
+    var notesReload by remember(session.id) { mutableStateOf(0) }
+    val kinfolkNotes by remember(canRead, batchId, visitId, notesReload) {
+        if (canRead) kinfolkNotesStates(notesRepo.streamVisitKinfolkNotes(session.kinfolkId, batchId, visitId))
+        else flowOf(KinfolkNotesState.NoRecord)
+    }.collectAsState(initial = KinfolkNotesState.Loading)
+    // #2227: staff notes are named by the writer. Best effort: a failed roster
+    // read leaves them as "Staff".
+    var noteStaff by remember { mutableStateOf<List<com.tribetails.auntieos.data.repository.StaffMember>>(emptyList()) }
+    LaunchedEffect(Unit) { listStaff().onSuccess { noteStaff = it } }
     // #1580: the visit's ONE internal-notes list, the same one web Bookings and
     // Auntie Time show, read by session through `listVisitInternalNotes`. It
     // used to stream `families/{k}/bookings/{visitId}/internalNotes`, a path the
@@ -1137,11 +1175,25 @@ private fun BookingNotesSection(
                 if (session.kinfolkNotes.isNotBlank()) {
                     FactRow(Lucide.NotebookPen, "On file", session.kinfolkNotes, multiline = true)
                 }
-                kinfolkFacing.sortedBy { it.createdAtMs ?: 0L }.forEach { note ->
-                    FactRow(Lucide.NotebookPen, note.authorRole.ifBlank { "note" }, note.body, multiline = true)
-                }
-                if (session.kinfolkNotes.isBlank() && kinfolkFacing.isEmpty()) {
-                    EmptyHint("No kinfolk-facing notes yet.")
+                when (val st = kinfolkNotes) {
+                    KinfolkNotesState.Loading -> EmptyHint("Loading the notes…")
+                    KinfolkNotesState.NoRecord -> EmptyHint(KINFOLK_NOTES_NO_RECORD)
+                    KinfolkNotesState.Failed -> {
+                        Text(
+                            text = KINFOLK_NOTES_FAILED,
+                            style = AuntieTheme.typography.labelSmall,
+                            color = AuntieTheme.colors.error,
+                        )
+                        GhostButton(label = "Try again", onClick = { notesReload++ })
+                    }
+                    is KinfolkNotesState.Ready -> {
+                        st.notes.forEach { note ->
+                            FactRow(Lucide.NotebookPen, kinfolkNoteAuthorLabel(note, noteStaff), note.body, multiline = true)
+                        }
+                        if (session.kinfolkNotes.isBlank() && st.notes.isEmpty()) {
+                            EmptyHint("No kinfolk-facing notes yet.")
+                        }
+                    }
                 }
                 AuntieField(
                     value = kinfolkInput,

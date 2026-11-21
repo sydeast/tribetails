@@ -117,6 +117,7 @@ class PaymentBeingRecordedControllerTest {
         assertEquals("inv-1", c.checkingPayment)
         // Said once, where Pay was. Not a second time as an error.
         assertNull(c.error)
+        assertNull(c.payErrorFor("inv-1"))
         assertNull(c.statusBanner, "no paid claim before a read shows it")
         assertTrue(opened.isEmpty(), "a page was opened: $opened")
 
@@ -144,6 +145,7 @@ class PaymentBeingRecordedControllerTest {
         assertNull(c.paymentBeingRecorded)
         assertNull(c.paymentNotSeen)
         assertNull(c.error)
+        assertNull(c.payErrorFor("inv-1"))
         assertTrue(assertNotNull(c.find("inv-1")).isPaid)
         assertEquals(PAYMENT_RECEIVED, c.statusBanner)
     }
@@ -160,6 +162,7 @@ class PaymentBeingRecordedControllerTest {
         assertEquals("inv-1", c.paymentNotSeen)
         assertNull(c.statusBanner)
         assertNull(c.error)
+        assertNull(c.payErrorFor("inv-1"))
         assertTrue(offersPayment(assertNotNull(c.find("inv-1"))))
 
         // The next press reaches the server, which refuses again while the payment is unrecorded.
@@ -178,7 +181,8 @@ class PaymentBeingRecordedControllerTest {
         val fake = FakeFunctionsClient()
         val c = refusedPay(fake, IllegalStateException(PAID_INVOICE_REFUSAL))
 
-        assertEquals(PAID_INVOICE_REFUSAL, c.error)
+        assertEquals(PAID_INVOICE_REFUSAL, c.payErrorFor("inv-1"))
+        assertNull(c.error, "a refused Pay is not a list that failed to load")
         assertNull(c.paymentBeingRecorded)
         assertNull(c.checkingPayment)
     }

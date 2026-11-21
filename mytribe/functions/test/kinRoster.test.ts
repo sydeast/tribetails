@@ -259,14 +259,33 @@ describe('materializeKinRoster, naming the Kin an existing booking stores', () =
     });
   });
 
-  it('names a Kin stored under its household card id, and leaves the stored id as it is', async () => {
+  // #2350: approving a request made before #2347 kept its household card ids,
+  // so the booked visit's Kin were missing from every admin screen.
+  it('names a Kin stored under its household card id, and stores the admin record id the admin screens read', async () => {
     mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
     const { materializeKinRoster } = await import('../src/lib/kinRoster');
 
     expect(await materializeKinRoster('3', ['fam-b', 'flat-a'])).toEqual({
-      kinIds: ['fam-b', 'flat-a'],
+      kinIds: ['flat-b', 'flat-a'],
       kinNames: ['Gravy', 'Biscuit'],
     });
+  });
+
+  it('#2350: a Kin named under both of its ids is stored once', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('3', ['fam-a', 'flat-a', 'fam-b'])).toEqual({
+      kinIds: ['flat-a', 'flat-b'],
+      kinNames: ['Biscuit', 'Gravy'],
+    });
+  });
+
+  it('#2350: a Kin who has since passed is stored under its admin record id too', async () => {
+    mocks.dbFn.mockReturnValue(buildDbMock(home()).db);
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('3', ['fam-c'])).toEqual({ kinIds: ['flat-c'], kinNames: ['Old Boy'] });
   });
 
   it('still names a Kin the booking was made for who has since passed', async () => {
@@ -294,6 +313,48 @@ describe('materializeKinRoster, naming the Kin an existing booking stores', () =
       kinIds: ['flat-a', 'flat-b', 'flat-f'],
       kinNames: ['Biscuit', 'Gravy', 'Office Cat'],
     });
+  });
+
+  // #2350 review (#2530): while two cards claim one record, the roster hands
+  // the record to the card whose id sorts first, which may be the newer Kin.
+  // An approval that mapped that card's id would book the visit on the older
+  // Kin's record, which no script can put right later. The card id stays.
+  it('#2530: a card of a crossed pair keeps its own id, and is still named', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        queryDocs: {
+          'families/5/kin': [
+            { id: 'aa-rover', data: { name: 'Rover', legacyKinId: 'rec-1' } },
+            { id: 'fam-tib', data: { name: 'Tibbs', legacyKinId: 'rec-tib' } },
+            { id: 'zz-rex', data: { name: 'Rex', legacyKinId: 'rec-1' } },
+          ],
+          kin: [
+            { id: 'rec-1', data: { name: 'Rover', kinfolkId: '5', familyKinPath: 'families/5/kin/aa-rover' } },
+            { id: 'rec-tib', data: { name: 'Tibbs', kinfolkId: '5' } },
+          ],
+        },
+      }).db,
+    );
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('5', ['aa-rover', 'zz-rex', 'fam-tib'])).toEqual({
+      kinIds: ['aa-rover', 'zz-rex', 'rec-tib'],
+      kinNames: ['Rover', 'Rex', 'Tibbs'],
+    });
+  });
+
+  it('#2530: a live card tied to an archived record by name keeps its own id', async () => {
+    mocks.dbFn.mockReturnValue(
+      buildDbMock({
+        queryDocs: {
+          'families/6/kin': [{ id: 'new-max', data: { name: 'Max', legacyKinId: 'rec-old-max', status: 'active' } }],
+          kin: [{ id: 'rec-old-max', data: { name: 'Max', kinfolkId: '6', status: 'archived' } }],
+        },
+      }).db,
+    );
+    const { materializeKinRoster } = await import('../src/lib/kinRoster');
+
+    expect(await materializeKinRoster('6', ['new-max'])).toEqual({ kinIds: ['new-max'], kinNames: ['Max'] });
   });
 });
 

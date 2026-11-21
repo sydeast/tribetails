@@ -1,3 +1,4 @@
+import type { Firestore } from 'firebase-admin/firestore';
 import { db } from './firestoreAdmin';
 import { isInactiveKinStatus } from './kinStatus';
 import { resolveKinNames } from './resolveKinNames';
@@ -88,30 +89,93 @@ function nameOf(data: Record<string, unknown>): string | null {
  * `lib/kinLink.ts`), the first keeps its id and the other is listed under its
  * own, so no id ever names two Kin.
  */
-export async function readHouseholdKin(kinfolkId: string): Promise<KinRosterEntry[]> {
-  const firestore = db();
+export async function readHouseholdKin(kinfolkId: string, firestore: Firestore = db()): Promise<KinRosterEntry[]> {
+  return (await readHouseholdKinLinks(kinfolkId, firestore)).entries;
+}
+
+type KinDocData = { id: string; data: Record<string, unknown> };
+
+/** [readHouseholdKin]'s entries and the household's [crossedCardIds], from one read of both collections. */
+export interface HouseholdKinLinks {
+  entries: KinRosterEntry[];
+  crossed: Set<string>;
+}
+
+export async function readHouseholdKinLinks(kinfolkId: string, firestore: Firestore = db()): Promise<HouseholdKinLinks> {
   const [familySnap, flatSnap] = await Promise.all([
     firestore.collection('families').doc(kinfolkId).collection('kin').get(),
     firestore.collection('kin').where('kinfolkId', '==', kinfolkId).get(),
   ]);
-  const flatDocs = flatSnap.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+  const cards = familySnap.docs.map((d) => ({ id: d.id, data: (d.data() ?? {}) as Record<string, unknown> }));
+  const records = flatSnap.docs.map((d) => ({ id: d.id, data: (d.data() ?? {}) as Record<string, unknown> }));
+  return { entries: householdKinFrom(kinfolkId, cards, records), crossed: crossedCardIds(kinfolkId, cards, records) };
+}
+
+/**
+ * The admin record a household card reads as its own: its `legacyKinId` when
+ * that record exists, else the record whose `familyKinPath` names the card,
+ * else a record under the card's own id.
+ */
+function linkedRecordOf(kinfolkId: string, card: KinDocData, records: readonly KinDocData[], recordIds: ReadonlySet<string>): string | null {
+  const stamped = textOf(card.data['legacyKinId']);
+  if (stamped !== '' && recordIds.has(stamped)) return stamped;
+  const pointed = records.find((r) => textOf(r.data['familyKinPath']) === `families/${kinfolkId}/kin/${card.id}`);
+  if (pointed) return pointed.id;
+  return recordIds.has(card.id) ? card.id : null;
+}
+
+/**
+ * The household cards whose admin record may not be their own. PURE.
+ *
+ * Two kinds: a card that shares its record with another card, and a live card
+ * tied to an archived or memorial record (see below).
+ *
+ * For a card that shares its record, [readHouseholdKin] keeps the record for
+ * whichever card it meets first (document id order), which is not always the
+ * card `lib/kinLink.ts` says owns it (the one created first, #2530), so no
+ * card id of the pair can be mapped to that record until the pair is healed.
+ * A writer that maps a card id to the id a visit stores (#2350: an approval,
+ * `backfill:visit-kin-ids`) leaves these cards as they are.
+ */
+export function crossedCardIds(
+  kinfolkId: string,
+  cards: ReadonlyArray<KinDocData>,
+  records: ReadonlyArray<KinDocData>,
+): Set<string> {
+  const recordIds = new Set(records.map((r) => r.id));
+  const recordStatus = new Map(records.map((r) => [r.id, r.data['status']]));
+  const byRecord = new Map<string, string[]>();
+  const crossed = new Set<string>();
+  for (const card of cards) {
+    const linked = linkedRecordOf(kinfolkId, card, records, recordIds);
+    if (linked === null) continue;
+    byRecord.set(linked, [...(byRecord.get(linked) ?? []), card.id]);
+    // #1912: a live Kin tied to an archived or memorial record. `kinLink.ts`
+    // reads that as crossed with no owner (`adoptedWhileHidden`): the record
+    // was another Kin's of the same name. A memorial being restored looks the
+    // same for a moment; holding it only leaves its visits as they are.
+    if (!isInactiveKinStatus(card.data['status']) && isInactiveKinStatus(recordStatus.get(linked))) crossed.add(card.id);
+  }
+  for (const claimants of byRecord.values()) {
+    if (claimants.length > 1) for (const id of claimants) crossed.add(id);
+  }
+  return crossed;
+}
+
+function householdKinFrom(kinfolkId: string, cards: readonly KinDocData[], flatDocs: readonly KinDocData[]): KinRosterEntry[] {
   const flatIds = new Set(flatDocs.map((f) => f.id));
   /** Admin records a household copy accounts for. */
   const claimed = new Set<string>();
   const all: KinRosterEntry[] = [];
-  for (const doc of familySnap.docs) {
-    const data = doc.data() as Record<string, unknown>;
-    const stamped = textOf(data['legacyKinId']);
-    const pointed = flatDocs.find((f) => textOf(f.data['familyKinPath']) === `families/${kinfolkId}/kin/${doc.id}`);
-    const linked =
-      stamped !== '' && flatIds.has(stamped) ? stamped : pointed ? pointed.id : flatIds.has(doc.id) ? doc.id : null;
+  for (const card of cards) {
+    const linked = linkedRecordOf(kinfolkId, card, flatDocs, flatIds);
     const own = linked !== null && !claimed.has(linked) ? linked : null;
     if (own !== null) claimed.add(own);
     all.push({
-      id: own ?? doc.id,
-      householdId: doc.id,
-      name: nameOf(data),
-      active: !isInactiveKinStatus(data['status']),
+      id: own ?? card.id,
+      householdId: card.id,
+      name: nameOf(card.data),
+      active: !isInactiveKinStatus(card.data['status']),
     });
   }
   for (const flat of flatDocs) {
@@ -159,16 +223,46 @@ function rosterPair(entries: readonly KinRosterEntry[]): { kinIds: string[]; kin
 }
 
 /**
+ * The household Kin [id] names, by either of its two ids, or undefined. The
+ * id a Kin is stored under wins over a household card id that happens to
+ * match, so an id never resolves to a second Kin.
+ */
+export function rosterEntryFor(all: readonly KinRosterEntry[], id: string): KinRosterEntry | undefined {
+  return all.find((k) => k.id === id) ?? all.find((k) => k.householdId === id);
+}
+
+/**
+ * #2350: household card id -> the id a visit stores for that Kin, for every
+ * Kin whose two ids differ. Read from [readHouseholdKin], memorial and
+ * archived Kin included: an old visit may carry a Kin that has since passed.
+ * A card id that is also some Kin's stored id is left out, so an alias never
+ * points one Kin's visits at another.
+ */
+export function kinIdAliases(all: readonly KinRosterEntry[]): Map<string, string> {
+  const stored = new Set(all.map((k) => k.id));
+  const aliases = new Map<string, string>();
+  for (const k of all) {
+    if (k.householdId === null || k.householdId === k.id || stored.has(k.householdId)) continue;
+    aliases.set(k.householdId, k.id);
+  }
+  return aliases;
+}
+
+/**
  * Resolves the `kinIds` + `kinNames` pair for a booking that ALREADY EXISTS,
  * from the ids stored on it: an approval, or a visit getting its booking
  * record. A new visit goes through [kinRosterForNewVisit] instead.
  *
- * - The record names specific Kin: those ids are kept as they are,
- *   de-duplicated, and named. An existing booking keeps the Kin it was made
- *   for. A stored id may be either of a Kin's two ids (older writers stored
- *   whichever they were sent), so each is named from the household's Kin by
- *   either one; an id this household no longer has is looked up the old way
- *   and, failing that, contributes no name.
+ * - The record names specific Kin: an existing booking keeps the Kin it was
+ *   made for. A stored id may be either of a Kin's two ids (older writers
+ *   stored whichever they were sent). #2350: each is written back as the id
+ *   the admin screens look the Kin up by (its admin record's, see
+ *   [readHouseholdKin]), de-duplicated, and named. A household request made
+ *   before #2347 carries household card ids, and an approval that kept them
+ *   booked a visit whose Kin no admin screen could find. A card of a crossed
+ *   pair ([crossedCardIds]) is kept as it is. An id this household
+ *   no longer has is kept as it is, looked up the old way and, failing that,
+ *   contributes no name.
  * - The record names none: R1 applies and the full active roster is
  *   materialized.
  *
@@ -181,10 +275,15 @@ export async function materializeKinRoster(
   kinfolkId: string,
   kinIds: readonly string[] | null | undefined,
 ): Promise<{ kinIds: string[]; kinNames: string[] }> {
-  const stated = [...new Set(kinIds ?? [])].filter((id) => id.length > 0);
-  const all = await readHouseholdKin(kinfolkId);
-  if (stated.length === 0) return rosterPair(all.filter((k) => k.active));
-  const known = (id: string) => all.find((k) => k.id === id || k.householdId === id);
+  const named = [...new Set(kinIds ?? [])].filter((id) => id.length > 0);
+  const { entries: all, crossed } = await readHouseholdKinLinks(kinfolkId);
+  if (named.length === 0) return rosterPair(all.filter((k) => k.active));
+  const known = (id: string) => rosterEntryFor(all, id);
+  // #2350: one Kin named under both of its ids is one Kin, stored once. A card
+  // of a crossed pair keeps its own id: the record the roster hands it may be
+  // the other Kin's (#2530), and a card id is put right later by
+  // `backfill:visit-kin-ids` where another Kin's record id never is.
+  const stated = [...new Set(named.map((id) => (crossed.has(id) ? id : known(id)?.id ?? id)))];
   const unknown = stated.filter((id) => known(id) === undefined);
   // One batched read for the ids no current Kin answers to, in stated order.
   const strays = unknown.length > 0 ? await resolveKinNames(kinfolkId, unknown) : [];
