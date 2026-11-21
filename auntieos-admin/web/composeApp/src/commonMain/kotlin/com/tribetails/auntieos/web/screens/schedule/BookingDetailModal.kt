@@ -59,10 +59,12 @@ import com.tribetails.auntieos.web.ui.components.MultilineField
 import com.tribetails.auntieos.web.ui.components.PrimaryButton
 import com.tribetails.auntieos.web.ui.components.ServicePill
 import com.tribetails.auntieos.web.ui.components.ToastKind
+import com.tribetails.auntieos.web.ui.components.answersWithin
 import com.tribetails.auntieos.web.util.nowIso
 import com.tribetails.auntieos.web.screens.BookingServicePill
 import com.tribetails.auntieos.web.screens.LocalServiceCatalog
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
@@ -77,6 +79,11 @@ private const val NOTE_CUTOFF_MS: Long = 3L * 60L * 60L * 1000L
 
 /** #898: the assignment-lookup retry button, so a render test can find it without ambiguity. */
 const val ASSIGN_LOAD_RETRY_TAG = "assign-load-retry"
+/** #2227: the kinfolk-facing notes' Try again, for a render test. */
+const val NOTES_LOAD_RETRY_TAG = "notes-load-retry"
+internal const val KINFOLK_NOTES_FAILED = "Could not load the kinfolk-facing notes."
+internal const val KINFOLK_NOTES_NO_RECORD =
+    "This visit is not part of a booking request, so it has no kinfolk-facing notes to show."
 
 @OptIn(ExperimentalTime::class)
 @Composable
@@ -103,8 +110,18 @@ fun BookingDetailModal(
     // this composable's own state in the same step.
     val routeToast = LocalRouteToast.current
 
-    val kinfolkNotes by remember(session.kinfolkId, bookingId) {
-        client.bookingNotesStream(session.kinfolkId, bookingId, internal = false)
+    // #2227: the kinfolk-facing thread lives under the visit's booking request,
+    // so the read needs both of its ids. The save keeps the legacy id, which
+    // the server resolves.
+    val notesBatchId = session.kinCareBatchId.orEmpty().trim()
+    val notesVisitId = session.kinCareVisitId.orEmpty().trim()
+    val canReadNotes = session.kinfolkId.isNotBlank() && notesBatchId.isNotEmpty() && notesVisitId.isNotEmpty()
+    var notesReload by remember(session._id) { mutableStateOf(0) }
+    val kinfolkNotes by remember(session.kinfolkId, notesBatchId, notesVisitId, notesReload) {
+        // A first read with no answer in 20 s lands on the Try again state.
+        if (canReadNotes) client.bookingNotesStream(session.kinfolkId, notesBatchId, internal = false, visitId = notesVisitId)
+            .answersWithin(KINFOLK_NOTES_FAILED)
+        else flowOf(FirestoreResult.Data(emptyList()))
     }.collectAsState(initial = FirestoreResult.Loading)
 
     var kinfolkInput by remember { mutableStateOf("") }
@@ -567,7 +584,16 @@ fun BookingDetailModal(
                     subtitle = "Visible to kinfolk. Editable until 3 hours before the visit.",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        NotesList(state = kinfolkNotes, emptyMsg = "No kinfolk-facing notes yet.", staff = noteStaff)
+                        if (canReadNotes) {
+                            NotesList(
+                                state = kinfolkNotes,
+                                emptyMsg = "No kinfolk-facing notes yet.",
+                                staff = noteStaff,
+                                onRetry = { notesReload++ },
+                            )
+                        } else {
+                            Text(KINFOLK_NOTES_NO_RECORD, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                        }
                         MultilineField(
                             value = kinfolkInput,
                             onValueChange = { kinfolkInput = it },
@@ -648,12 +674,16 @@ private fun FactRow(label: String, value: String) {
 }
 
 @Composable
-private fun NotesList(state: FirestoreResult<List<BookingNote>>, emptyMsg: String, staff: List<StaffMember>?) {
+private fun NotesList(state: FirestoreResult<List<BookingNote>>, emptyMsg: String, staff: List<StaffMember>?, onRetry: () -> Unit) {
     val c = AuntieTheme.colors
     when (state) {
         is FirestoreResult.Loading -> Text("Loading notes", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+        // #2227: plain words and a way out, never the transport's message.
         is FirestoreResult.Error -> AuntieBanner(tone = AuntieBannerTone.Error) {
-            Text("Could not load notes: ${state.message}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(KINFOLK_NOTES_FAILED, style = AuntieTheme.typography.bodySmall, color = c.textDim)
+                GhostButton(label = "Try again", onClick = onRetry, modifier = Modifier.testTag(NOTES_LOAD_RETRY_TAG))
+            }
         }
         is FirestoreResult.Data<List<BookingNote>> -> {
             if (state.value.isEmpty()) {
