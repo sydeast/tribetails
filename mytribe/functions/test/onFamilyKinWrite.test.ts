@@ -30,8 +30,9 @@ describe('onFamilyKinWrite: exports', () => {
   });
 });
 
-// #2350: the trigger moves the household's visits onto the Kin's admin record
-// exactly when the mirror tied the card to a record it did not carry.
+// #2350: the trigger logs the household's visits that name the card for the
+// operator's script exactly when the mirror tied the card to a record it did
+// not carry.
 describe('linkWasWritten', () => {
   it('is true for a record minted for a new card, or one of its own after a crossed link', () => {
     expect(linkWasWritten({ name: 'Rex' }, { action: 'created', flatDocId: 'flat-new' })).toBe(true);

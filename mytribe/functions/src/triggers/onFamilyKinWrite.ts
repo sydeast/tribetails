@@ -345,9 +345,10 @@ export const onFamilyKinWrite = onDocumentWritten(
       if (linkWasWritten(after, mirrored)) {
         // #2350: this Kin now has an admin record it did not have when this
         // write was made, so its stored id moved off the card. A visit booked
-        // in between named the card; put it on the record.
-        const { rewriteVisitKinIdsAfterLink } = await import('../lib/visitKinIds.js');
-        await rewriteVisitKinIdsAfterLink(kinfolkId, 'onFamilyKinWrite');
+        // in between named the card. Logged for the operator's
+        // `backfill:visit-kin-ids`; nothing is written here.
+        const { recordVisitKinIdsAfterLink } = await import('../lib/visitKinIds.js');
+        await recordVisitKinIdsAfterLink(kinfolkId, 'onFamilyKinWrite');
       }
     } catch (err) {
       logEvent({

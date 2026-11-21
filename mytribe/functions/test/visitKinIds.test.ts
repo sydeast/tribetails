@@ -111,7 +111,7 @@ describe('planVisitKinIds (pure)', () => {
   });
 });
 
-describe('rewriteHouseholdVisitKinIds', () => {
+describe('planHouseholdVisitKinIds + applyHouseholdVisitKinIds (the script\'s write)', () => {
   function world() {
     const docs = homeDocs();
     docs['kin_care_sessions/old'] = { kinfolkId: '3', kinIds: ['fam-a', 'fam-b'], kinNames: ['Biscuit', 'Gravy'], status: 'SCHEDULED' };
@@ -129,14 +129,20 @@ describe('rewriteHouseholdVisitKinIds', () => {
     return { ctx, docs };
   }
 
+  /** What the script does for one household: plan, then apply. */
+  async function rewriteHousehold(kinfolkId: string) {
+    const { planHouseholdVisitKinIds, applyHouseholdVisitKinIds } = await import('../src/lib/visitKinIds');
+    const plan = await planHouseholdVisitKinIds(kinfolkId);
+    return { ...plan, ...(await applyHouseholdVisitKinIds(plan)) };
+  }
+
   it('rewrites the household visits and KinTales, touches nothing else, and lists the one it cannot move', async () => {
     const { ctx, docs } = world();
-    const { rewriteHouseholdVisitKinIds } = await import('../src/lib/visitKinIds');
 
-    const done = await rewriteHouseholdVisitKinIds('3');
+    const done = await rewriteHousehold('3');
 
     expect(done.written).toBe(3);
-    expect(done.refusals).toEqual([{ collection: 'kin_care_reports', docId: 'answered', cardIds: ['fam-b'] }]);
+    expect(done.refusals).toEqual([{ collection: 'kin_care_reports', docId: 'answered', cardIds: ['fam-b'], reason: 'card-id-elsewhere' }]);
     expect(docs['kin_care_sessions/old']).toEqual({
       kinfolkId: '3',
       kinIds: ['flat-a', 'flat-b'],
@@ -157,11 +163,10 @@ describe('rewriteHouseholdVisitKinIds', () => {
 
   it('is idempotent: a second pass plans and writes nothing new', async () => {
     const { ctx } = world();
-    const { rewriteHouseholdVisitKinIds } = await import('../src/lib/visitKinIds');
-    await rewriteHouseholdVisitKinIds('3');
+    await rewriteHousehold('3');
     const after = ctx.writes.length;
 
-    const again = await rewriteHouseholdVisitKinIds('3');
+    const again = await rewriteHousehold('3');
 
     expect(again.writes).toEqual([]);
     expect(again.written).toBe(0);
@@ -174,12 +179,44 @@ describe('rewriteHouseholdVisitKinIds', () => {
       writeThrough: true,
     });
     mocks.dbFn.mockReturnValue(ctx.db);
-    const { rewriteHouseholdVisitKinIds } = await import('../src/lib/visitKinIds');
 
-    const done = await rewriteHouseholdVisitKinIds('3');
+    const done = await rewriteHousehold('3');
 
     expect(done).toMatchObject({ scanned: 0, written: 0, writes: [], refusals: [] });
     expect(ctx.writes).toEqual([]);
+  });
+
+  it('never moves a visit while two cards claim one record: lists it and leaves it', async () => {
+    // A crossed pair. Rex's card came first and owns rec-1 (`lib/kinLink.ts`:
+    // the card created first keeps the record). Rover's card was later tied to
+    // the same record. Rover's card id sorts first, so the roster reader hands
+    // Rover the record and lists Rex under his card id. Moving Rover's old
+    // visit onto rec-1 would put it on Rex.
+    const ctx = buildDbMock({
+      docs: {
+        'families/5/kin/aa-rover': { name: 'Rover', legacyKinId: 'rec-1', createdAt: new Date('2026-10-02T00:00:00Z') },
+        'families/5/kin/zz-rex': { name: 'Rex', legacyKinId: 'rec-1', createdAt: new Date('2026-09-01T00:00:00Z') },
+        'families/5/kin/fam-tib': { name: 'Tibbs', legacyKinId: 'rec-tib' },
+        'kin/rec-1': { name: 'Rover', kinfolkId: '5', familyKinPath: 'families/5/kin/aa-rover' },
+        'kin/rec-tib': { name: 'Tibbs', kinfolkId: '5' },
+        'kin_care_sessions/rover-old': { kinfolkId: '5', kinIds: ['aa-rover'], kinNames: ['Rover'] },
+        'kin_care_sessions/rex-old': { kinfolkId: '5', kinIds: ['zz-rex'], kinNames: ['Rex'] },
+        'kin_care_sessions/tibbs-old': { kinfolkId: '5', kinIds: ['fam-tib'], kinNames: ['Tibbs'] },
+      },
+      writeThrough: true,
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const { planHouseholdVisitKinIds } = await import('../src/lib/visitKinIds');
+
+    const plan = await planHouseholdVisitKinIds('5');
+
+    // The Kin no other card contests still moves.
+    expect(plan.writes).toEqual([{ collection: 'kin_care_sessions', docId: 'tibbs-old', update: { kinIds: ['rec-tib'] } }]);
+    expect(plan.aliases).toEqual(new Map([['fam-tib', 'rec-tib']]));
+    expect(plan.refusals).toEqual([
+      { collection: 'kin_care_sessions', docId: 'rover-old', cardIds: ['aa-rover'], reason: 'crossed-link' },
+      { collection: 'kin_care_sessions', docId: 'rex-old', cardIds: ['zz-rex'], reason: 'crossed-link' },
+    ]);
   });
 
   it('re-plans inside the write, so a visit put right meanwhile is left alone', async () => {
@@ -193,18 +230,48 @@ describe('rewriteHouseholdVisitKinIds', () => {
     expect(outcome).toEqual({ written: 2, skippedOnRecheck: 1 });
   });
 
-  it('after a link, never throws and logs what it moved', async () => {
-    world();
-    const { rewriteVisitKinIdsAfterLink } = await import('../src/lib/visitKinIds');
-    await rewriteVisitKinIdsAfterLink('3', 'onFamilyKinWrite');
-    expect(mocks.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'kin.visitIds.rewritten', extra: expect.objectContaining({ kinfolkId: '3', written: 3 }) }),
-    );
+  it('writes nothing for the household when its links changed since the plan', async () => {
+    const { ctx, docs } = world();
+    const { planHouseholdVisitKinIds, applyHouseholdVisitKinIds } = await import('../src/lib/visitKinIds');
+    const plan = await planHouseholdVisitKinIds('3');
+    // Gravy's card is tied to another record between the plan and the write.
+    docs['kin/flat-b2'] = { name: 'Gravy', kinfolkId: '3' };
+    docs['families/3/kin/fam-b'] = { name: 'Gravy', legacyKinId: 'flat-b2' };
 
+    expect(await applyHouseholdVisitKinIds(plan)).toEqual({ written: 0, skippedOnRecheck: 3 });
+    expect(ctx.writes.filter((w) => w.path.startsWith('kin_care_'))).toEqual([]);
+  });
+
+  it('after a link, logs what the script would change and writes nothing', async () => {
+    const { ctx, docs } = world();
+    const before = JSON.parse(JSON.stringify(docs));
+    const { recordVisitKinIdsAfterLink } = await import('../src/lib/visitKinIds');
+
+    await recordVisitKinIdsAfterLink('3', 'onFamilyKinWrite');
+
+    expect(ctx.writes).toEqual([]);
+    expect(JSON.parse(JSON.stringify(docs))).toEqual(before);
+    expect(mocks.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'kin.visitIds.planned',
+        extra: expect.objectContaining({
+          kinfolkId: '3',
+          toWrite: 3,
+          refusedCount: 1,
+          docs: ['kin_care_sessions/old', 'kin_care_sessions/passed', 'kin_care_reports/tale'],
+          refused: ['kin_care_reports/answered card-id-elsewhere'],
+          aliases: { 'fam-a': 'flat-a', 'fam-b': 'flat-b', 'fam-c': 'flat-c' },
+        }),
+      }),
+    );
+  });
+
+  it('after a link, never throws when the household cannot be read', async () => {
     mocks.dbFn.mockImplementation(() => {
       throw new Error('firestore down');
     });
-    await expect(rewriteVisitKinIdsAfterLink('3', 'onFamilyKinWrite')).resolves.toBeUndefined();
-    expect(mocks.logEvent).toHaveBeenLastCalledWith(expect.objectContaining({ event: 'kin.visitIds.rewrite_failed' }));
+    const { recordVisitKinIdsAfterLink } = await import('../src/lib/visitKinIds');
+    await expect(recordVisitKinIdsAfterLink('3', 'onFamilyKinWrite')).resolves.toBeUndefined();
+    expect(mocks.logEvent).toHaveBeenLastCalledWith(expect.objectContaining({ event: 'kin.visitIds.plan_failed' }));
   });
 });

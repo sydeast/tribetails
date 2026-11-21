@@ -8,18 +8,23 @@
  * admin record. Every admin screen (Home care flags, the KinTale composer,
  * Auntie Time, visit detail, the 411 on a visit, a Kin's own page) finds a
  * visit's Kin by the admin record id, so a visit stored under the card id
- * showed that Kin nowhere. Since #2347 new visits store the admin id, since
- * #2350 an approval does too, and a link written later moves the household's
- * visits with it. This script is for the rows stored before that: visits and
- * requests from before #2347, and the KinTales written for them.
+ * showed that Kin nowhere. Since #2347 new visits store the admin id and since
+ * #2350 an approval does too. This script moves the rows stored under a card
+ * id: visits and requests from before #2347, the KinTales written for them,
+ * and a visit booked while its Kin had no admin record yet. It is the only
+ * writer: a link event only logs what this script would change
+ * (`kin.visitIds.planned`), so the script can be run again after one.
  *
  * The decision per document is `planVisitKinIds` in
- * `mytribe/functions/src/lib/visitKinIds.ts`, the same one the server runs
- * after a link. Read its header for what is written and what is not. In short:
+ * `mytribe/functions/src/lib/visitKinIds.ts`, the same one a link event
+ * runs to log its plan. Read its header for what is written and what is not. In short:
  * `kinIds` and the legacy `kinId` on `kin_care_sessions` and
  * `kin_care_reports`, card ids replaced in place, nothing else. A document
  * that names the card id anywhere else (a per-Kin checklist answer, a mood) is
- * listed and left alone. The household's own copies are never written.
+ * listed and left alone, and so is one that names a card in a crossed pair
+ * (two cards that claim one admin record), until the pair is healed. The
+ * household's own copies are never written. Before writing a household it reads
+ * its Kin again and leaves it if any link changed since the plan.
  *
  * WHAT A RUN FIRES: nothing a person hears. The visit triggers react to
  * `status` and the calendar fields, the KinTale triggers to a send, its body
@@ -45,10 +50,10 @@ import { getApps, initializeApp, getFirestore, type Firestore } from './lib/fire
 import {
   VISIT_KIN_ID_COLLECTIONS,
   applyHouseholdVisitKinIds,
-  planVisitKinIds,
+  planHouseholdDocs,
+  readHouseholdKinIdMap,
   type HouseholdKinIdPlan,
 } from '../functions/src/lib/visitKinIds';
-import { kinIdAliases, readHouseholdKin } from '../functions/src/lib/kinRoster';
 
 type Mode = 'dry-run' | 'apply';
 
@@ -121,15 +126,14 @@ export async function buildPlan(db: Firestore): Promise<{ summary: Summary; plan
   const plans: HouseholdKinIdPlan[] = [];
   for (const [kinfolkId, rows] of [...byHousehold.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     summary.scanned += rows.length;
-    const aliases = kinIdAliases(await readHouseholdKin(kinfolkId, db));
-    if (aliases.size === 0) continue;
+    const map = await readHouseholdKinIdMap(kinfolkId, db);
+    if (map.aliases.size === 0 && map.crossed.size === 0) continue;
     summary.householdsWithAliases += 1;
-    const plan: HouseholdKinIdPlan = { kinfolkId, aliases, scanned: rows.length, writes: [], refusals: [] };
-    for (const row of rows) {
-      const decided = planVisitKinIds(row.data, aliases);
-      if (decided.kind === 'rewrite') plan.writes.push({ collection: row.collection, docId: row.id, update: decided.update });
-      else if (decided.kind === 'refuse') plan.refusals.push({ collection: row.collection, docId: row.id, cardIds: decided.cardIds });
-    }
+    const plan = planHouseholdDocs(
+      kinfolkId,
+      map,
+      rows.map((row) => ({ collection: row.collection, docId: row.id, data: row.data })),
+    );
     summary.toWrite += plan.writes.length;
     summary.refused += plan.refusals.length;
     if (plan.writes.length > 0 || plan.refusals.length > 0) plans.push(plan);
@@ -144,15 +148,18 @@ function report(summary: Summary, plans: HouseholdKinIdPlan[], mode: Mode): void
   console.log(`  with a Kin whose two ids differ       : ${summary.householdsWithAliases}`);
   console.log(`documents scanned                       : ${summary.scanned}`);
   console.log(`to rewrite                              : ${summary.toWrite}`);
-  console.log(`card id named elsewhere, left as is     : ${summary.refused}`);
+  console.log(`listed and left as is                   : ${summary.refused}`);
   for (const plan of plans) {
     console.log('');
     console.log(`-- household ${plan.kinfolkId} --`);
+    for (const [card, stored] of plan.aliases) console.log(`  card ${card} -> record ${stored}`);
+    if (plan.crossed.size > 0) console.log(`  crossed cards, not moved: ${[...plan.crossed].join(', ')}`);
     for (const w of plan.writes) {
       console.log(`  ${w.collection}/${w.docId}  ${JSON.stringify(w.update)}`);
     }
     for (const r of plan.refusals) {
-      console.log(`  LEFT ${r.collection}/${r.docId}  card id also named outside kinIds: ${r.cardIds.join(', ')}`);
+      const why = r.reason === 'crossed-link' ? 'card shares its record with another card' : 'card id also named outside kinIds';
+      console.log(`  LEFT ${r.collection}/${r.docId}  ${why}: ${r.cardIds.join(', ')}`);
     }
   }
   console.log('');
@@ -190,7 +197,7 @@ async function main(): Promise<void> {
     return;
   }
   const outcome = await applyPlans(db, plans);
-  console.log(`APPLIED: ${outcome.written} document(s) rewritten; ${outcome.skippedOnRecheck} changed meanwhile and were left.`);
+  console.log(`APPLIED: ${outcome.written} document(s) rewritten; ${outcome.skippedOnRecheck} left because they or their household changed since the plan (run again).`);
 }
 
 if (require.main === module) {

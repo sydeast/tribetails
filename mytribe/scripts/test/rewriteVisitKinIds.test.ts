@@ -57,7 +57,7 @@ describe('buildPlan', () => {
       { collection: 'kin_care_sessions', docId: 's-old', update: { kinIds: ['flat-a', 'flat-f'] } },
       { collection: 'kin_care_reports', docId: 'r-tale', update: { kinIds: ['flat-a'] } },
     ]);
-    expect(plans[0]?.refusals).toEqual([{ collection: 'kin_care_reports', docId: 'r-mood', cardIds: ['fam-a'] }]);
+    expect(plans[0]?.refusals).toEqual([{ collection: 'kin_care_reports', docId: 'r-mood', cardIds: ['fam-a'], reason: 'card-id-elsewhere' }]);
     expect(ctx.writes).toEqual([]);
   });
 });
@@ -80,5 +80,26 @@ describe('applyPlans', () => {
     const second = await buildPlan(ctx.db as never);
     expect(second.summary.toWrite).toBe(0);
     expect(second.plans.flatMap((p) => p.writes)).toEqual([]);
+  });
+});
+describe('a crossed pair', () => {
+  it('lists the visits of both cards that claim one record and writes neither, even with --allow-prod', async () => {
+    const docs: Record<string, Record<string, unknown> | null> = {
+      'families/kf-3/kin/aa-new': { name: 'Rover', legacyKinId: 'rec-1' },
+      'families/kf-3/kin/zz-old': { name: 'Rex', legacyKinId: 'rec-1' },
+      'kin/rec-1': { name: 'Rex', kinfolkId: 'kf-3' },
+      'kin_care_sessions/s-rover': { kinfolkId: 'kf-3', kinIds: ['aa-new'] },
+      'kin_care_sessions/s-rex': { kinfolkId: 'kf-3', kinIds: ['zz-old'] },
+    };
+    const ctx = buildDbMock({ docs, writeThrough: true });
+    const { summary, plans } = await buildPlan(ctx.db as never);
+    expect(summary).toMatchObject({ toWrite: 0, refused: 2 });
+    expect(plans[0]?.refusals.map((r) => [r.docId, r.reason])).toEqual([
+      ['s-rover', 'crossed-link'],
+      ['s-rex', 'crossed-link'],
+    ]);
+    expect(await applyPlans(ctx.db as never, plans)).toEqual({ written: 0, skippedOnRecheck: 0 });
+    expect(docs['kin_care_sessions/s-rover']?.['kinIds']).toEqual(['aa-new']);
+    expect(ctx.writes).toEqual([]);
   });
 });
