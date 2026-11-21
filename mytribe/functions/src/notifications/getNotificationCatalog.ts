@@ -1,5 +1,5 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
-import { NOTIFICATION_CATALOG } from './catalog';
+import { NOTIFICATION_CATALOG, requiredOnStream } from './catalog';
 import { gateViewFor } from './prefs';
 import type {
   Channel,
@@ -190,7 +190,7 @@ export function lockedChannelsFor(
 ): Channel[] {
   if (effectiveOverride?.lockedEnabled) return [...survivingChannels];
   return survivingChannels.filter(
-    (ch) => effectiveOverride?.locked?.[ch] === true || def.required[ch] === true,
+    (ch) => effectiveOverride?.locked?.[ch] === true || requiredOnStream(def, ch, 'kinfolk'),
   );
 }
 /**
@@ -215,7 +215,7 @@ export function lockedChannelValueFor(
 ): boolean {
   return (
     effectiveOverride?.channels?.[channel] ??
-    (def.required[channel] === true || channel === 'email')
+    (requiredOnStream(def, channel, 'kinfolk') || channel === 'email')
   );
 }
 
@@ -248,8 +248,10 @@ export async function getNotificationCatalogHandler(
     // and never loses email here, because the send ignores that stored off too.
     const ov = gateViewFor(def, byKey[def.key] ?? null, 'kinfolk');
     if (ov && ov.enabled === false) continue; // admin disabled this type for the kinfolk stream
-    const required: Channel[] = (Object.keys(def.required) as Channel[]).filter(
-      (c) => def.required[c] === true,
+    // Required for the household's copy: the catalog's `required`, plus email
+    // on a confirmation locked on for Kinfolk (#2382, `requiredOnStream`).
+    const required: Channel[] = (['email', 'sms', 'push'] as Channel[]).filter((c) =>
+      requiredOnStream(def, c, 'kinfolk'),
     );
     // Drop any channel the admin disabled (explicit false in the override). #7
     // (2026-06-08): required channels are no longer force-kept — the operator may

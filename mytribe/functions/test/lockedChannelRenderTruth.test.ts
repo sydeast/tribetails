@@ -337,6 +337,17 @@ describe('a locked confirmation renders the way it is sent, whatever is stored (
     expect(notificationDisabledFor(cancel, {}, off, 'kinfolk')).toBe('operator');
     expect(resolveChannels(cancel, {}, { enabled: true, channels: { email: false } }, 'kinfolk').email).toBe(false);
   });
+  it("leaves the owner's own email choice on the payment notice to her", () => {
+    // `invoice.payment.applied` serves the household and the owner. The lock
+    // requires email for the household's copy only: the owner switching her
+    // own email off is honoured, a household switching theirs off is not.
+    const applied = getNotificationDef('invoice.payment.applied');
+    const emailOff: UserNotificationPrefs = { byKey: { 'invoice.payment.applied': { email: false } } };
+    expect(resolveChannels(applied, emailOff, null, 'business').email).toBe(false);
+    expect(resolveChannels(applied, emailOff, null, 'kinfolk').email).toBe(true);
+    // With no choice of her own, the owner still gets it by email, as before.
+    expect(resolveChannels(applied, {}, null, 'business').email).toBe(true);
+  });
   it('the real KinTale row keeps email on for every retired-key household', () => {
     const real = getNotificationDef('kintale.published');
     for (const household of ALIAS_HOUSEHOLDS) {

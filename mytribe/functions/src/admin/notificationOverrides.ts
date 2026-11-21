@@ -12,7 +12,7 @@ import {
   NOTIFICATION_CATALOG,
   NOTIFICATION_KEY_ALIASES,
 } from '../notifications/catalog';
-import { overrideForStream, resolveOverrideForKey } from '../notifications/prefs';
+import { loadBusinessOverride, overrideForStream, resolveOverrideForKey } from '../notifications/prefs';
 import { TEMPLATE_FIELDS } from '../notifications/enrichTemplateData';
 import {
   NEVER_FIRES,
@@ -104,6 +104,7 @@ const SaveArgs = z.object({
   key: z.string().min(1),
   override: OverridePayload,
 });
+type SaveOverride = z.infer<typeof OverridePayload>;
 
 const DeleteArgs = z.object({
   key: z.string().min(1),
@@ -313,6 +314,20 @@ export async function getBusinessNotificationOverridesHandler(
 export const CONFIRMATION_LOCKED_MESSAGE =
   'Payment, invoice, KinTale and booking confirmations cannot be turned off for Kinfolk, and neither can their email. Text and push can still be changed.';
 
+/**
+ * [override] with its kinfolk overlay set back on where a stored off would
+ * otherwise leave the kinfolk view off (#2382): the whole notification when
+ * [offWhole], its email when [offEmail]. Only the kinfolk overlay is written;
+ * the flat fields, the owner's and staff copies, text, push and every lock are
+ * left exactly as given. Mirrors `keptLockedOn` on the admin clients.
+ */
+function keptKinfolkOn(override: SaveOverride, offWhole: boolean, offEmail: boolean): SaveOverride {
+  const gate = { ...(override.streams?.kinfolk ?? {}) };
+  if (offWhole) gate.enabled = true;
+  if (offEmail) gate.channels = { ...(gate.channels ?? {}), email: true };
+  return { ...override, streams: { ...(override.streams ?? {}), kinfolk: gate } };
+}
+
 export async function saveBusinessNotificationOverrideHandler(
   req: CallableRequest<unknown>,
 ): Promise<{ ok: true; key: string }> {
@@ -332,22 +347,44 @@ export async function saveBusinessNotificationOverrideHandler(
   // payload is read the way the send reads it, as the kinfolk stream's view, so
   // a flat off that the kinfolk stream would inherit is refused as surely as a
   // kinfolk overlay off. The owner's own copy, and text and push, still save.
+  //
+  // Only a NEW off is refused. An off this payload carries because it was
+  // already stored (written before the ruling, and echoed back by a client
+  // that does not know the lock, such as an admin app installed before it) is
+  // the same off the send already ignores, so it is saved back as on instead:
+  // the owner's own edit on the row goes through, and nothing else in the
+  // payload changes. Refusing it would make every later edit on that row fail.
+  let override = args.override;
   if (lockedOnForStream(def, 'kinfolk')) {
-    const kinfolkView = overrideForStream(args.override as BusinessNotificationOverride, 'kinfolk');
-    if (kinfolkView?.enabled === false || kinfolkView?.channels?.email === false) {
+    const kinfolkView = overrideForStream(override as BusinessNotificationOverride, 'kinfolk');
+    const offWhole = kinfolkView?.enabled === false;
+    const offEmail = kinfolkView?.channels?.email === false;
+    if (offWhole || offEmail) {
+      const storedView = overrideForStream(await loadBusinessOverride(key), 'kinfolk');
+      const newlyOff =
+        (offWhole && storedView?.enabled !== false) || (offEmail && storedView?.channels?.email !== false);
+      if (newlyOff) {
+        logEvent({
+          severity: 'warn',
+          function: 'saveBusinessNotificationOverride',
+          event: 'admin.notif.override.locked_refused',
+          extra: { key, requestedKey: args.key, actorUid: req.auth?.uid },
+        });
+        throw new HttpsError('failed-precondition', CONFIRMATION_LOCKED_MESSAGE);
+      }
+      override = keptKinfolkOn(override, offWhole, offEmail);
       logEvent({
-        severity: 'warn',
+        severity: 'info',
         function: 'saveBusinessNotificationOverride',
-        event: 'admin.notif.override.locked_refused',
-        extra: { key, requestedKey: args.key, actorUid: req.auth?.uid },
+        event: 'admin.notif.override.locked_kept_on',
+        extra: { key, requestedKey: args.key, actorUid: req.auth?.uid, offWhole, offEmail },
       });
-      throw new HttpsError('failed-precondition', CONFIRMATION_LOCKED_MESSAGE);
     }
   }
 
   // A whitespace-only lockReason is the "clear it" gesture from the UI.
-  const stored: Record<string, unknown> = { ...args.override };
-  if (args.override.lockReason !== undefined && args.override.lockReason === '') {
+  const stored: Record<string, unknown> = { ...override };
+  if (override.lockReason !== undefined && override.lockReason === '') {
     stored.lockReason = FieldValue.delete();
   }
 
@@ -373,7 +410,7 @@ export async function saveBusinessNotificationOverrideHandler(
     severity: 'info',
     function: 'saveBusinessNotificationOverride',
     event: 'admin.notif.override.saved',
-    extra: { key, requestedKey: args.key, actorUid: req.auth?.uid, override: args.override },
+    extra: { key, requestedKey: args.key, actorUid: req.auth?.uid, override },
   });
   return { ok: true, key };
 }

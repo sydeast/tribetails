@@ -105,8 +105,10 @@ export interface NotificationDef {
    * it, and `withConfirmationLock` (prefs.ts) drops a stored off before
    * `notificationDisabledFor`, `resolveChannels` and `getNotificationCatalog`
    * read the override. Text and push stay the operator's and the recipient's to
-   * choose. A row that sets this also sets `required.email`, so the recipient's
-   * own email pref cannot turn it off either. The household launch switch
+   * choose. On a listed stream email also counts as required
+   * (`requiredOnStream`, catalog.ts), so the recipient's own email pref cannot
+   * turn it off either; another stream's copy keeps its recipient's own prefs
+   * unless the row sets `required.email` itself. The household launch switch
    * (`householdNotificationsLive`) still holds these until launch.
    */
   lockedOnStreams?: { kinfolk?: true; business?: true; staff?: true };

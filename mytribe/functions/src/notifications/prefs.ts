@@ -6,6 +6,7 @@ import {
   legacyCategoriesFor,
   legacyKeysFor,
   lockedOnForStream,
+  requiredOnStream,
 } from './catalog';
 import type {
   AudienceStream,
@@ -326,7 +327,8 @@ export function notificationDisabledFor(
  *                                                   dropped before steps 1 and 2 (gateViewFor)
  *   1. business override .enabled = false         , entire notification suppressed (#7: even alwaysEnabled)
  *   2. business override .channels.{ch} = false   , channel suppressed (#7: even a required channel)
- *   3. catalog.required.{ch} = true               , channel defaults ON (unless disabled in 2)
+ *   3. catalog.required.{ch} = true               , channel defaults ON (unless disabled in 2);
+ *      (requiredOnStream)                           also email on a lockedOnStreams stream (#2382)
  *   4. user prefs byKey.{ch}                      , granular override
  *   5. user prefs byCategory.{cat}.{ch}           , category default
  *      (4 and 5 follow key aliases, canonical first, then any retired key
@@ -377,12 +379,13 @@ export function resolveChannels(
     // (required -> on, otherwise email-on). An explicit admin OFF is already handled
     // above, so here the locked value is the admin's ON or the catalog default.
     if (businessOverride?.locked?.[ch] === true || businessOverride?.lockedEnabled === true) {
-      out[ch] = businessOverride?.channels?.[ch] ?? (def.required[ch] === true || ch === 'email');
+      out[ch] = businessOverride?.channels?.[ch] ?? (requiredOnStream(def, ch, stream) || ch === 'email');
       continue;
     }
 
     // Catalog-required channels default ON unless the operator disabled them above.
-    if (def.required[ch] === true) {
+    // On a stream the confirmation lock covers, email counts as required (#2382).
+    if (requiredOnStream(def, ch, stream)) {
       out[ch] = true;
       continue;
     }

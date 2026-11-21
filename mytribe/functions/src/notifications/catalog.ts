@@ -41,7 +41,10 @@ import type { Category, Channel, NotificationDef } from './types';
  *                                 chooses them. The household launch switch
  *                                 (`householdNotificationsLive`) still holds these
  *                                 until launch; this lock is about settings only.
- *                                 Every such row also carries `required.email`.
+ *                                 The lock also makes email required on that
+ *                                 stream alone (`requiredOnStream`), so the
+ *                                 household cannot turn it off either, while an
+ *                                 owner copy of the same row keeps her own prefs.
  *   kinfolkFacing = false       → hidden from kinfolk prefs UI (still sent).
  *
  * So no surface may caption alwaysEnabled or required.email "Always on" or
@@ -593,7 +596,10 @@ const CATALOG_LIST: NotificationDef[] = [
     audiences: { kinfolk: true, business: true },
     category: 'invoice',
     allowedChannels: ['email', 'push'],
-    required: { email: true },
+    // Email is required for the household copy only, through the lock
+    // (`requiredOnStream`). Not a flat `required.email`: that would force the
+    // owner's own copy on too, over her own receive preferences (#2382 review).
+    required: {},
     alwaysEnabled: false,
     lockedOnStreams: { kinfolk: true },
     kinfolkFacing: true,
@@ -1363,6 +1369,21 @@ export function lockedOnForStream(
   stream: 'kinfolk' | 'business' | 'staff',
 ): boolean {
   return def.lockedOnStreams?.[stream] === true;
+}
+
+/**
+ * Whether [channel] is required for [stream]'s copy of [def]: the catalog's
+ * `required` (every stream), or email on a stream the confirmation lock covers
+ * (#2382). The lock's email requirement is scoped to that stream, so a locked
+ * row that also serves the owner leaves her own copy to her own preferences.
+ * `resolveChannels` and the household catalog read this, never `required` alone.
+ */
+export function requiredOnStream(
+  def: NotificationDef,
+  channel: Channel,
+  stream: 'kinfolk' | 'business' | 'staff',
+): boolean {
+  return def.required[channel] === true || (channel === 'email' && lockedOnForStream(def, stream));
 }
 
 /**
