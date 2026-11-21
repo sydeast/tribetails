@@ -508,6 +508,16 @@ describe('recordPayment: account credit is the amount the admin entered, into th
     // The balance still moves by the increment, exactly as before.
     expect(ctx.writes.find((w) => w.path === 'families/fam1')?.data.accountBalanceCents).toEqual({ __increment: 1500 });
   });
+  it('#1939: the history line names the number read off the invoice, never the one the app sent', async () => {
+    const ctx = seed({ invoice: { ...invoice, invoiceNumber: '1020' } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await recordPaymentHandler(
+      req({ ...leftoverArgs, invoiceNumber: 'typed by the app', autoApply: true, creditToAccountCents: 1500 }),
+    );
+    const ledger = ctx.writes.filter((w) => w.path.startsWith('families/fam1/creditLedger/'));
+    expect(ledger[0].data.reason).toBe('From a payment on invoice 1020');
+    expect(ledger[0].data.invoiceNumber).toBe('1020');
+  });
   it('an explicit zero credits nothing, even with auto-apply ticked', async () => {
     const ctx = seed({ invoice });
     mocks.dbFn.mockReturnValue(ctx.db);

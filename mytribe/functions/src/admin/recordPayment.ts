@@ -962,12 +962,15 @@ export async function recordPaymentHandler(
     creditAccount(db(), tx, { kinfolkId, cents: creditedToAccountCents });
     // #1939: and the credit's line in the household's credit history, on the
     // same transaction, so the history lists where this balance came from.
+    // The number is the one this transaction read off the invoice, never the
+    // caller's `invoiceNumber` (#2453: that is whatever the app sent), so the
+    // household's line reads "From a payment" when no invoice was read.
     stageCreditInEvent(db(), tx, {
       kinfolkId,
       source: 'payment',
       sourceId: ref.id,
       invoiceId: staged?.invoiceId || args.invoiceId,
-      invoiceNumber: staged?.invoiceNumber || linkedInvoiceNumber || invoiceNumberText(args.invoiceNumber),
+      invoiceNumber: staged?.invoiceNumber || linkedInvoiceNumber,
       amountCents: creditedToAccountCents,
       actorUid: actor.uid,
       atMs: Date.now(),
