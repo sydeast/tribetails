@@ -134,9 +134,11 @@ fun AddKinScreen(
                                 options = listOf("Male", "Female", "Unknown"),
                                 onSelect = viewModel::updateKinSex,
                                 displayText = { it },
-                                label = "Sex",
+                                // #1852: "Gender", the label Edit kin and every other
+                                // admin client use (model key `sex` kept).
+                                label = "Gender",
                                 modifier = Modifier.weight(1f),
-                                placeholder = "Sex",
+                                placeholder = "Gender",
                             )
 
                             AuntieField(
