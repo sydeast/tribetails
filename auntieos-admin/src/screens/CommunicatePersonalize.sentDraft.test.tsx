@@ -36,6 +36,10 @@ vi.mock('../api/householdPush', async (orig) => ({
 }));
 // #2440: the business's zone, as `business_settings.timeZone` resolves. The
 // hook reads settings over the network, so the value is handed in here.
+// #2316: the Text confirm asks whether the household has a MyTribe account.
+vi.mock('../api/visitNoticePreview', () => ({
+  previewVisitNotification: vi.fn().mockResolvedValue({ willNotify: true, reason: null }),
+}));
 const { businessZone } = vi.hoisted(() => ({ businessZone: { value: 'America/Chicago' } }));
 vi.mock('../lib/useBusinessZone', () => ({ useBusinessZone: () => businessZone.value }));
 vi.mock('../components/RecipientContextPanel', () => ({

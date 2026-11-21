@@ -132,69 +132,63 @@ describe('notification key aliases: dispatch', () => {
   });
 
   /**
-   * What a legacy pref governs is DELIVERY. email was the only default-on
-   * channel and the stored legacy pref turned it off, so no work order is
-   * written and nothing goes out. The notifications record itself is still
-   * written (#1505): the list behind the bell is not a channel a pref can turn
-   * off, and the alias must not make it one by accident.
+   * What a legacy pref governs is DELIVERY. It used to be shown on email: the
+   * stored legacy pref turned email off and nothing went out. Since #2382
+   * (2026-11-20) the KinTale notice's email is locked on for households, so a
+   * household can no longer turn it off under either name. The alias walk is
+   * shown on push instead, which stays the household's choice: off by default,
+   * on because of a pref stored under the retired key. The notifications record
+   * is written either way (#1505).
    */
-  const workOrders = (writes: Array<{ path: string }>) => writes.filter((w) => w.path.startsWith('notificationDispatch/'));
+  const channelsOf = (writes: Array<{ path: string; data: Record<string, unknown> }>) =>
+    writes.filter((w) => w.path.startsWith('notificationDispatch/')).map((w) => w.data.channels);
   const records = (writes: Array<{ path: string }>) => writes.filter((w) => w.path.startsWith('notifications/'));
 
-  it('a pref stored under the legacy key still governs the legacy dispatch: record, no delivery', async () => {
-    const ctx = buildDbMock({
-      docs: {
-        'clients/kin1': {
-          notificationPrefs: { byKey: { [LEGACY]: { email: false } } },
-        },
-      },
-    });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    const ids = await enqueueNotification({
-      key: LEGACY,
-      recipientUid: 'kin1',
-      data: { kinfolkId: 'f1' },
-    });
-    expect(ids).toHaveLength(1);
-    expect(records(ctx.writes)).toHaveLength(1);
-    expect(workOrders(ctx.writes)).toEqual([]);
-  });
-
-  it('a pref stored under the legacy key also governs the canonical dispatch: record, no delivery', async () => {
-    const ctx = buildDbMock({
-      docs: {
-        'clients/kin1': {
-          notificationPrefs: { byKey: { [LEGACY]: { email: false } } },
-        },
-      },
-    });
-    mocks.dbFn.mockReturnValue(ctx.db);
-    const ids = await enqueueNotification({
-      key: CANONICAL,
-      recipientUid: 'kin1',
-      data: { kinfolkId: 'f1' },
-    });
-    expect(ids).toHaveLength(1);
-    expect(records(ctx.writes)).toHaveLength(1);
-    expect(workOrders(ctx.writes)).toEqual([]);
-  });
-
-  it('a business override stored under the legacy key still suppresses both keys', async () => {
-    for (const key of [LEGACY, CANONICAL]) {
+  for (const key of [LEGACY, CANONICAL]) {
+    it(`a pref stored under the legacy key still governs the ${key} dispatch`, async () => {
       const ctx = buildDbMock({
         docs: {
-          'businessSettings/notifications': {
-            byKey: { [LEGACY]: { enabled: false, channels: {} } },
+          'clients/kin1': {
+            notificationPrefs: { byKey: { [LEGACY]: { email: false, push: true } } },
           },
         },
       });
       mocks.dbFn.mockReturnValue(ctx.db);
-      const ids = await enqueueNotification({
-        key,
-        recipientUid: 'kin1',
-        data: { kinfolkId: 'f1' },
+      const ids = await enqueueNotification({ key, recipientUid: 'kin1', data: { kinfolkId: 'f1' } });
+      expect(ids).toHaveLength(1);
+      expect(records(ctx.writes)).toHaveLength(1);
+      // Push on from the retired key's pref; email on whatever it says (#2382).
+      expect(channelsOf(ctx.writes as never)).toEqual([['email', 'push']]);
+    });
+  }
+
+  it('a business override stored under the legacy key still governs both keys', async () => {
+    for (const key of [LEGACY, CANONICAL]) {
+      const ctx = buildDbMock({
+        docs: {
+          'clients/kin1': { notificationPrefs: { byKey: { [CANONICAL]: { push: true } } } },
+          'businessSettings/notifications': {
+            byKey: { [LEGACY]: { enabled: true, channels: { push: false } } },
+          },
+        },
       });
-      expect(ids, `${key} should be suppressed by the legacy override`).toEqual([]);
+      mocks.dbFn.mockReturnValue(ctx.db);
+      await enqueueNotification({ key, recipientUid: 'kin1', data: { kinfolkId: 'f1' } });
+      expect(channelsOf(ctx.writes as never), `${key}: push gated off by the legacy override`).toEqual([['email']]);
+    }
+  });
+
+  it('#2382: a legacy override switching the KinTale notice off no longer holds the household copy', async () => {
+    for (const key of [LEGACY, CANONICAL]) {
+      const ctx = buildDbMock({
+        docs: {
+          'businessSettings/notifications': { byKey: { [LEGACY]: { enabled: false, channels: {} } } },
+        },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const ids = await enqueueNotification({ key, recipientUid: 'kin1', data: { kinfolkId: 'f1' } });
+      expect(ids, key).toHaveLength(1);
+      expect(channelsOf(ctx.writes as never), key).toEqual([['email']]);
     }
   });
 });
@@ -202,9 +196,11 @@ describe('notification key aliases: dispatch', () => {
 describe('notification key aliases: pref resolution precedence', () => {
   const def = () => NOTIFICATION_CATALOG[CANONICAL]!;
 
+  // Shown on push: since #2382 the KinTale notice's email is locked on for
+  // households, so no pref under either name moves it.
   it('honors an explicit legacy byKey pref when no canonical pref exists', () => {
     const out = resolveChannels(def(), { byKey: { [LEGACY]: { email: false, push: true } } }, null, 'kinfolk');
-    expect(out.email).toBe(false);
+    expect(out.email).toBe(true);
     expect(out.push).toBe(true);
   });
 
@@ -213,38 +209,38 @@ describe('notification key aliases: pref resolution precedence', () => {
     // UI must be what the dispatcher does, immediately.
     const out = resolveChannels(
       def(),
-      { byKey: { [CANONICAL]: { email: true }, [LEGACY]: { email: false } } },
+      { byKey: { [CANONICAL]: { push: false }, [LEGACY]: { push: true } } },
       null,
       'kinfolk',
     );
-    expect(out.email).toBe(true);
+    expect(out.push).toBe(false);
   });
 
   it('falls back to the legacy category row when nothing else is set', () => {
-    // Someone who muted the whole "Visit Updates" category before the merge
-    // does not silently start receiving the merged notification.
-    const out = resolveChannels(def(), { byCategory: { visit: { email: false } } }, null, 'kinfolk');
-    expect(out.email).toBe(false);
+    // Someone who turned push on for the whole "Visit Updates" category before
+    // the merge keeps getting the merged notification by push.
+    const out = resolveChannels(def(), { byCategory: { visit: { push: true } } }, null, 'kinfolk');
+    expect(out.push).toBe(true);
   });
 
   it('the canonical category row wins over the legacy category row', () => {
     const out = resolveChannels(
       def(),
-      { byCategory: { kintale: { email: true }, visit: { email: false } } },
+      { byCategory: { kintale: { push: false }, visit: { push: true } } },
       null,
       'kinfolk',
     );
-    expect(out.email).toBe(true);
+    expect(out.push).toBe(false);
   });
 
   it('any byKey pref outranks any category pref, canonical or legacy', () => {
     const out = resolveChannels(
       def(),
-      { byKey: { [LEGACY]: { email: true } }, byCategory: { kintale: { email: false } } },
+      { byKey: { [LEGACY]: { push: true } }, byCategory: { kintale: { push: false } } },
       null,
       'kinfolk',
     );
-    expect(out.email).toBe(true);
+    expect(out.push).toBe(true);
   });
 
   it('no pref at all still lands on the catalog default (email on, sms/push off)', () => {
@@ -306,14 +302,16 @@ describe('notification key aliases: business override admin surface', () => {
       '../src/admin/notificationOverrides'
     );
     const res = await saveBusinessNotificationOverrideHandler({
-      data: { key: LEGACY, override: { enabled: false, channels: { email: false } } },
+      // Text off, which #2382 leaves the operator's: an off for the row or its
+      // email is refused for this key now (notificationOverrides.test.ts).
+      data: { key: LEGACY, override: { enabled: true, channels: { sms: false } } },
       auth: { uid: 'admin1', token: {} },
     } as any);
     expect(res).toEqual({ ok: true, key: CANONICAL });
     const w = ctx.writes.find((x) => x.path === 'businessSettings/notifications');
     expect((w!.data.byKey as any)[CANONICAL]).toEqual({
-      enabled: false,
-      channels: { email: false },
+      enabled: true,
+      channels: { sms: false },
     });
     expect((w!.data.byKey as any)[LEGACY]).toBe('__DEL__');
   });

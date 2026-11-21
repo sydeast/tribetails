@@ -230,6 +230,35 @@ export function householdSms(rendered: string, portalUrl: string, route: string 
   const line = cut ? `${cutAtWord(words, HOUSEHOLD_SHORT_LINE_MAX - 3)}...` : words;
   return { text: `${line} ${householdSmsLink(portalUrl, route)}`, cut };
 }
+/**
+ * The longest body one text message may carry: Twilio refuses more (error
+ * 21617). Same number as `SMS_TEXT_MAX` in `lib/templateChannelWording.ts`,
+ * pinned equal by the test; not imported, because that module loads the
+ * whole catalog and this one is on every send path.
+ */
+export const SMS_BODY_MAX = 1600;
+/**
+ * #2316 (operator ruling 2026-11-20): the WHOLE message for a household with
+ * no MyTribe account, which has no entry to link to. PURE.
+ *
+ * As written, trimmed, with no cut and no link. A message longer than one text
+ * can carry is sent as several texts in order, each split at the end of a word
+ * where one is in the last fifth of the text, else where it fits (never inside
+ * a character). Empty for an empty message.
+ */
+export function householdWholeSmsParts(rendered: string, max: number = SMS_BODY_MAX): string[] {
+  const parts: string[] = [];
+  let rest = rendered.trim();
+  while (rest.length > max) {
+    const head = cutWhole(rest, max);
+    const breakAt = Math.max(head.lastIndexOf(' '), head.lastIndexOf('\n'));
+    const part = breakAt > max * 0.8 ? head.slice(0, breakAt) : head;
+    parts.push(part.trimEnd());
+    rest = rest.slice(part.length).trimStart();
+  }
+  if (rest !== '') parts.push(rest);
+  return parts;
+}
 /** `householdSms`'s text alone. PURE. */
 export function householdSmsText(rendered: string, portalUrl: string, route: string = HOUSEHOLD_NOTICE_ROUTE): string {
   return householdSms(rendered, portalUrl, route).text;

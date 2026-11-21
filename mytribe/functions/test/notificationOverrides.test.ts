@@ -22,6 +22,7 @@ vi.mock('firebase-admin/firestore', async () => {
 beforeEach(() => mocks.dbFn.mockReset());
 
 import {
+  CONFIRMATION_LOCKED_MESSAGE,
   getBusinessNotificationOverridesHandler,
   saveBusinessNotificationOverrideHandler,
   deleteBusinessNotificationOverrideHandler,
@@ -347,13 +348,213 @@ describe('saveBusinessNotificationOverrideHandler', () => {
   });
 
   it('allows disabling a catalog-required channel (warn-but-allow-off)', async () => {
+    // A required-email row the #2382 lock does not cover: the cancel notice.
     const ctx = buildDbMock();
     mocks.dbFn.mockReturnValue(ctx.db);
     const r = await saveBusinessNotificationOverrideHandler({
-      data: { key: 'invoice.new', override: { enabled: true, channels: { email: false } } },
+      data: { key: 'kincare.booking.cancel', override: { enabled: true, channels: { email: false } } },
       auth: { uid: 'admin1', token: {} },
     } as any);
-    expect(r).toMatchObject({ ok: true, key: 'invoice.new' });
+    expect(r).toMatchObject({ ok: true, key: 'kincare.booking.cancel' });
+  });
+
+  // Ruling on #2382 (2026-11-20): payment, invoice, KinTale and booking
+  // confirmations are required on and cannot be disabled. This overrides #7 for
+  // these five rows on the kinfolk stream only.
+  describe('#2382: confirmations locked on for Kinfolk', () => {
+    const LOCKED = [
+      'invoice.new',
+      'invoice.receipt',
+      'invoice.payment.applied',
+      'kincare.booking.confirm',
+      'kintale.published',
+    ];
+    function save(key: string, override: Record<string, unknown>) {
+      const ctx = buildDbMock();
+      mocks.dbFn.mockReturnValue(ctx.db);
+      const call = saveBusinessNotificationOverrideHandler({
+        data: { key, override },
+        auth: { uid: 'admin1', token: {} },
+      } as any);
+      return { ctx, call };
+    }
+    const wrote = (ctx: ReturnType<typeof buildDbMock>) =>
+      ctx.writes.some((w) => w.path === 'businessSettings/notifications');
+
+    for (const key of LOCKED) {
+      it(`${key}: refuses switching the Kinfolk copy off, and writes nothing`, async () => {
+        const { ctx, call } = save(key, { enabled: true, streams: { kinfolk: { enabled: false } } });
+        await expect(call).rejects.toMatchObject({
+          code: 'failed-precondition',
+          message: CONFIRMATION_LOCKED_MESSAGE,
+        });
+        expect(wrote(ctx)).toBe(false);
+      });
+
+      it(`${key}: refuses switching the Kinfolk email off`, async () => {
+        const { ctx, call } = save(key, {
+          enabled: true,
+          streams: { kinfolk: { channels: { email: false } } },
+        });
+        await expect(call).rejects.toMatchObject({ code: 'failed-precondition' });
+        expect(wrote(ctx)).toBe(false);
+      });
+    }
+
+    it('refuses a flat off the Kinfolk stream would inherit', async () => {
+      const { ctx, call } = save('invoice.new', { enabled: false });
+      await expect(call).rejects.toMatchObject({ code: 'failed-precondition' });
+      expect(wrote(ctx)).toBe(false);
+    });
+
+    it('refuses a flat email off the Kinfolk stream would inherit', async () => {
+      const { ctx, call } = save('kintale.published', { enabled: true, channels: { email: false } });
+      await expect(call).rejects.toMatchObject({ code: 'failed-precondition' });
+      expect(wrote(ctx)).toBe(false);
+    });
+
+    it('refuses through a retired key that resolves to a locked row', async () => {
+      // `kincare.report.sent` was merged into `kintale.published` on 2026-07-24.
+      const { ctx, call } = save('kincare.report.sent', { enabled: false });
+      await expect(call).rejects.toMatchObject({ code: 'failed-precondition' });
+      expect(wrote(ctx)).toBe(false);
+    });
+
+    it('still saves a flat off when the Kinfolk overlay keeps the row and its email on', async () => {
+      const { ctx, call } = save('invoice.new', {
+        enabled: false,
+        channels: { email: false },
+        streams: { kinfolk: { enabled: true, channels: { email: true } } },
+      });
+      await expect(call).resolves.toMatchObject({ ok: true, key: 'invoice.new' });
+      expect(wrote(ctx)).toBe(true);
+    });
+
+    it("still saves the owner's own copy switched off", async () => {
+      const { ctx, call } = save('invoice.new', {
+        enabled: true,
+        streams: { business: { enabled: false, channels: { email: false } } },
+      });
+      await expect(call).resolves.toMatchObject({ ok: true, key: 'invoice.new' });
+      expect(wrote(ctx)).toBe(true);
+    });
+
+    it('still saves text and push switched off for Kinfolk', async () => {
+      const { ctx, call } = save('kincare.booking.confirm', {
+        enabled: true,
+        streams: { kinfolk: { channels: { sms: false, push: false } } },
+      });
+      await expect(call).resolves.toMatchObject({ ok: true, key: 'kincare.booking.confirm' });
+      expect(wrote(ctx)).toBe(true);
+    });
+
+    it('leaves the other always-on rows advisory: the cancel notice still switches off', async () => {
+      const { ctx, call } = save('kincare.booking.cancel', {
+        enabled: true,
+        streams: { kinfolk: { enabled: false } },
+      });
+      await expect(call).resolves.toMatchObject({ ok: true });
+      expect(wrote(ctx)).toBe(true);
+    });
+
+    it('projects lockedOnStreams on exactly the five rows', async () => {
+      mocks.dbFn.mockReturnValue(buildDbMock().db);
+      const res = await getBusinessNotificationOverridesHandler({
+        data: {},
+        auth: { uid: 'admin1', token: {} },
+      } as any);
+      const locked = res.catalog.filter((c) => c.lockedOnStreams?.kinfolk === true).map((c) => c.key);
+      expect(locked.sort()).toEqual([...LOCKED].sort());
+      // `required` is projected flat, and the owner's own receive screens read
+      // it. The lock's email requirement is the household copy's alone, so the
+      // payment notice, which never required email before, still does not.
+      const required = (key: string) => res.catalog.find((c) => c.key === key)!.required.email;
+      expect(required('invoice.payment.applied')).not.toBe(true);
+      for (const key of ['invoice.new', 'invoice.receipt', 'kincare.booking.confirm', 'kintale.published']) {
+        expect(required(key), key).toBe(true);
+      }
+    });
+
+    // An admin app installed before the ruling does not know the lock. Over an
+    // off stored before the ruling it echoes that off back with every edit, so
+    // a refusal there would fail every later save on the row. The server saves
+    // that off back as on for the Kinfolk copy instead, and changes nothing else.
+    describe('an off that was already stored', () => {
+      function saveOver(stored: Record<string, unknown>, key: string, override: Record<string, unknown>) {
+        const ctx = buildDbMock({ docs: { 'businessSettings/notifications': { byKey: stored } } });
+        mocks.dbFn.mockReturnValue(ctx.db);
+        const call = saveBusinessNotificationOverrideHandler({
+          data: { key, override },
+          auth: { uid: 'admin1', token: {} },
+        } as any);
+        const written = () =>
+          (ctx.writes.find((w) => w.path === 'businessSettings/notifications')!.data as any).byKey[key];
+        return { ctx, call, written };
+      }
+
+      it("saves an old app's owner-copy edit, keeping the Kinfolk copy and its email on", async () => {
+        // Stored before the ruling: the whole row off, email off, flat.
+        const { call, written } = saveOver(
+          { 'invoice.new': { enabled: false, channels: { email: false, push: true } } },
+          'invoice.new',
+          // The old app edits the owner's push on the Business tab and sends the flat off back.
+          { enabled: false, channels: { email: false, push: true }, streams: { business: { channels: { push: false } } } },
+        );
+        await expect(call).resolves.toMatchObject({ ok: true, key: 'invoice.new' });
+        expect(written()).toEqual({
+          enabled: false,
+          channels: { email: false, push: true },
+          streams: {
+            business: { channels: { push: false } },
+            kinfolk: { enabled: true, channels: { email: true } },
+          },
+        });
+      });
+
+      it('keeps only what was stored off: a stored row off with email on gains only enabled', async () => {
+        const { call, written } = saveOver(
+          { 'kincare.booking.confirm': { enabled: true, channels: {}, streams: { kinfolk: { enabled: false } } } },
+          'kincare.booking.confirm',
+          { enabled: true, channels: {}, streams: { kinfolk: { enabled: false, channels: { sms: false } } } },
+        );
+        await expect(call).resolves.toMatchObject({ ok: true });
+        expect(written().streams.kinfolk).toEqual({ enabled: true, channels: { sms: false } });
+      });
+
+      it('still refuses an email off that is new, over a stored row off', async () => {
+        const { ctx, call } = saveOver(
+          { 'invoice.receipt': { enabled: false, channels: {} } },
+          'invoice.receipt',
+          { enabled: false, channels: { email: false } },
+        );
+        await expect(call).rejects.toMatchObject({ code: 'failed-precondition', message: CONFIRMATION_LOCKED_MESSAGE });
+        expect(ctx.writes.some((w) => w.path === 'businessSettings/notifications')).toBe(false);
+      });
+
+      it('still refuses switching off a row that is stored on', async () => {
+        const { ctx, call } = saveOver(
+          { 'kintale.published': { enabled: true, channels: { sms: true } } },
+          'kintale.published',
+          { enabled: true, channels: { sms: true }, streams: { kinfolk: { enabled: false } } },
+        );
+        await expect(call).rejects.toMatchObject({ code: 'failed-precondition' });
+        expect(ctx.writes.some((w) => w.path === 'businessSettings/notifications')).toBe(false);
+      });
+
+      it('reads an off stored under the retired key the way the send does', async () => {
+        const { call, written } = saveOver(
+          { 'kincare.report.sent': { enabled: false, channels: {} } },
+          'kintale.published',
+          { enabled: false, channels: { push: false } },
+        );
+        await expect(call).resolves.toMatchObject({ ok: true, key: 'kintale.published' });
+        expect(written()).toEqual({
+          enabled: false,
+          channels: { push: false },
+          streams: { kinfolk: { enabled: true } },
+        });
+      });
+    });
   });
 
   it('rejects unknown catalog keys', async () => {

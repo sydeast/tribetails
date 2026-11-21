@@ -13,6 +13,7 @@ import { getTwilio, getTwilioFromNumber } from '../lib/twilio';
 import { providerFailureFields, providerFailureMessage } from '../lib/providerFailure';
 import { redactRecipient } from '../lib/suppressions';
 import { normalizeE164 } from '../lib/phoneNormalize';
+import { resolveKinfolkUidFrom } from '../lib/resolveKinfolkUid';
 import {
   CriteriaSchema,
   describeCriteria,
@@ -25,7 +26,12 @@ import { unsubscribeFooter, suppressionDocId } from './sendExternalMessage';
 import { fillBusinessPlaceholders, loadBusinessName } from '../lib/businessName';
 import { broadcastMergeData, renderBroadcastCopy, unsupportedMergeFields } from '../lib/broadcastMerge';
 import { FULL_CPU_SERIAL } from '../lib/runtimeOptions';
-import { householdNoticeEntryRoute, householdPushShelfLine, householdSmsText } from '../notifications/templateParsers';
+import {
+  householdNoticeEntryRoute,
+  householdPushShelfLine,
+  householdSmsText,
+  householdWholeSmsParts,
+} from '../notifications/templateParsers';
 import { PORTAL_URL } from '../notifications/visitDates';
 import {
   BroadcastIdempotencyKeyArg,
@@ -61,7 +67,9 @@ import type { ResolvedChannels, UserNotificationPrefs } from '../notifications/t
  *              catalog, because there is no template for ad-hoc broadcast copy.
  *   - email -> SendGrid per kinfolk with an email on file, honoring opt-outs.
  *   - sms   -> Twilio per kinfolk with a phone on file, honoring opt-outs.
- *              Short, with a link to the in-app entry (#2316).
+ *              Short, with a link to the in-app entry (#2316); the whole
+ *              message for a household with no MyTribe account (ruling
+ *              2026-11-20).
  *   - push  -> FCM multicast to the kinfolk's `fcm_tokens` (resolved via uid).
  *              Short, and a tap opens the in-app entry (#2316).
  *
@@ -451,11 +459,33 @@ export function broadcastSender(ctx: {
     const mergeData = broadcastMergeData(k, businessName);
     const copy = renderBroadcastCopy(subject, body, mergeData);
 
+    // #2482: whether the household has a MyTribe account, and which login it
+    // is, comes from the member check every other household send makes
+    // (`resolveKinfolkUid`, #1840), not from the stored `kinfolk.uid` alone.
+    // That field can hold a staff login on a household nobody has joined; read
+    // alone, the household's message went onto that login's notifications list
+    // and the household was texted a link it could not open. With the check,
+    // such a household has no account: the whole text and no entry. A claimed
+    // household whose stored login is not a member is reached through its
+    // PRIMARY, as every other notice is. Every read below uses `accountUid`.
+    let accountUid = '';
+    if ((k.uid ?? '').trim() !== '') {
+      try {
+        accountUid = (await resolveKinfolkUidFrom(k.id, k.uid)) ?? '';
+      } catch (err) {
+        // Nothing is sent, and nothing ever goes to the stored login on a
+        // guess: every chosen channel failed for this household.
+        for (const ch of channels) mark(ch, 'failed');
+        logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'recipient.resolve.failed', uid, extra: { kinfolkId: k.id, err: (err as Error)?.message } });
+        return { outcome: 'failed' as RecipientOutcome, detail };
+      }
+    }
+
     // Preference resolution, identical to the dispatcher's: the operator's gate
     // for this row, then the household's own choice within it. A kinfolk with no
     // linked MyTribe account has no prefs document to read, so they resolve to
     // the catalog defaults, still gated by the operator's override.
-    const userPrefs: UserNotificationPrefs = k.uid ? await loadUserPrefs(k.uid, 'clients') : {};
+    const userPrefs: UserNotificationPrefs = accountUid ? await loadUserPrefs(accountUid, 'clients') : {};
     const allowed = resolveChannels(def, userPrefs, businessOverride, stream);
 
     if (allChannelsOff(allowed)) {
@@ -489,9 +519,9 @@ export function broadcastSender(ctx: {
     }
     let pushTokens: string[] = [];
     let pushLookupFailed = false;
-    if (channels.includes('push') && allowed.push && k.uid) {
+    if (channels.includes('push') && allowed.push && accountUid) {
       try {
-        const tokensSnap = await db().collection('fcm_tokens').where('uid', '==', k.uid).get();
+        const tokensSnap = await db().collection('fcm_tokens').where('uid', '==', accountUid).get();
         pushTokens = tokensSnap.docs.map((d) => d.id);
       } catch (err) {
         pushLookupFailed = true;
@@ -506,7 +536,7 @@ export function broadcastSender(ctx: {
     let linkSent = false;
     let writtenEntry: FirebaseFirestore.DocumentReference | null = null;
     // ---- in-app -------------------------------------------------------------
-    if (!k.uid) {
+    if (!accountUid) {
       // No linked MyTribe account: there is no notifications list to write to.
       if (inappChosen) mark('inapp', 'skipped');
     } else if (inappChosen || linkNeedsEntry) {
@@ -520,7 +550,7 @@ export function broadcastSender(ctx: {
           // `description` below stay the operator's own words rather than the
           // catalog label/description, because the copy is authored per send.
           category: def.category,
-          recipientUid: k.uid,
+          recipientUid: accountUid,
           actorUid: uid,
           data: { kinfolkId: k.id },
           // A text or a push needs no subject, and both MyTribe lists draw the
@@ -604,11 +634,28 @@ export function broadcastSender(ctx: {
       } else {
         try {
           const twilio = await getTwilio();
-          await twilio.messages.create({
-            from: getTwilioFromNumber(),
-            to: smsTo,
-            body: householdSmsText(copy.body, PORTAL_URL, householdRoute),
-          });
+          // #2316 (ruling 2026-11-20): a household with no MyTribe account has
+          // no entry to read, so it is texted the whole message, as several
+          // texts when one cannot carry it. A household with an account gets
+          // the short line and the link, as before.
+          const bodies = accountUid
+            ?[householdSmsText(copy.body, PORTAL_URL, householdRoute)]
+            : householdWholeSmsParts(copy.body);
+          if (bodies.length === 0) throw new Error('nothing to text: the message is blank');
+          let partsSent = 0;
+          try {
+            for (const body of bodies) {
+              await twilio.messages.create({ from: getTwilioFromNumber(), to: smsTo, body });
+              partsSent += 1;
+            }
+          } catch (err) {
+            // A text cut short part-way did not carry the whole message, so it
+            // counts as failed; the log says how far it got.
+            if (partsSent > 0) {
+              logEvent({ severity: 'warn', function: 'broadcastMessage', event: 'sms.parts.partial', uid, extra: { kinfolkId: k.id, partsSent, parts: bodies.length } });
+            }
+            throw err;
+          }
           mark('sms', 'sent');
           detail.reached = true;
           linkSent = true;
@@ -634,7 +681,7 @@ export function broadcastSender(ctx: {
 
     // ---- push ---------------------------------------------------------------
     if (channels.includes('push')) {
-      if (!allowed.push || !k.uid) {
+      if (!allowed.push || !accountUid) {
         mark('push', 'skipped'); // gate or household preference says no push, or no MyTribe account.
       } else if (pushLookupFailed) {
         mark('push', 'failed'); // the device read failed above, and was logged there.

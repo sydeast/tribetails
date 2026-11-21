@@ -6,6 +6,7 @@ import { wrapAdminCallable } from '../lib/wrapAdminCallable';
 import { TRIBETAILS_CORS } from '../lib/cors';
 import { CriteriaSchema, describeCriteria, resolveRecipientsFromKinfolk } from './audienceCriteria';
 import { loadCriteria, toKinfolkLike } from './broadcastMessage';
+import { resolveKinfolkUidFrom } from '../lib/resolveKinfolkUid';
 
 /**
  * previewBroadcastAudience (admin, #1610). How many households a broadcast
@@ -70,10 +71,36 @@ export async function previewBroadcastAudienceHandler(req: CallableRequest<unkno
     targeted: recipients.length,
     withEmail: recipients.filter((k) => has(k.email)).length,
     withPhone: recipients.filter((k) => has(k.phoneNumber)).length,
-    withApp: recipients.filter((k) => has(k.uid)).length,
+    withApp: await countWithAccount(recipients),
     withoutFirstName: recipients.filter((k) => !has(k.firstName)).length,
   };
 }
+
+/**
+ * #2482: households with a MyTribe account, by the member check the send makes
+ * (`resolveKinfolkUidFrom`), so "with the app" counts the households the send
+ * will reach in the app. The stored `uid` alone can hold a staff login on a
+ * household nobody joined. A household with no stored login is skipped without
+ * a read. A check that cannot be read is not counted: the number never claims
+ * an account the send could not confirm. Read-only; a few at a time.
+ */
+async function countWithAccount(recipients: Array<{ id: string; uid?: string }>): Promise<number> {
+  const linked = recipients.filter((k) => (k.uid ?? '').trim() !== '');
+  let count = 0;
+  for (let i = 0; i < linked.length; i += ACCOUNT_CHECK_BATCH) {
+    const answers = await Promise.all(
+      linked.slice(i, i + ACCOUNT_CHECK_BATCH).map((k) =>
+        resolveKinfolkUidFrom(k.id, k.uid).then(
+          (uid) => uid !== null,
+          () => false,
+        ),
+      ),
+    );
+    count += answers.filter(Boolean).length;
+  }
+  return count;
+}
+const ACCOUNT_CHECK_BATCH = 25;
 
 export const previewBroadcastAudience = onCall(
   { region: 'us-central1', cors: TRIBETAILS_CORS, secrets: ['SENTRY_DSN'] },

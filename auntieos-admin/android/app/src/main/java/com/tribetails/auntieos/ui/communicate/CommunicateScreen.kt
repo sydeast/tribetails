@@ -82,7 +82,9 @@ import com.tribetails.auntieos.config.LocalFeatureFlags
 import com.tribetails.auntieos.ui.theme.AuntieColors
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.domain.engagementSummary
-import com.tribetails.auntieos.domain.householdTextPreviewLine
+import com.tribetails.auntieos.domain.HouseholdTextAccount
+import com.tribetails.auntieos.domain.householdTextAsSentLines
+import com.tribetails.auntieos.domain.householdTextChannelLine
 import com.tribetails.auntieos.domain.channelLabel
 import com.tribetails.auntieos.domain.isoDatePrefixOrNull
 
@@ -304,11 +306,25 @@ fun CommunicateScreen(
 
             // ── Live preview ──────────────────────────────────────────────────
             item {
+                val textMessage = approveDeliveryChannel(state.commType) == ExternalChannel.Sms
+                val textHousehold = textHouseholdId(state)
+                // #2316: the preview shows the text this household gets, so it
+                // asks whether they have a MyTribe account when either changes.
+                LaunchedEffect(textMessage, textHousehold) {
+                    if (textMessage && textHousehold != null) viewModel.checkTextAccount(textHousehold)
+                }
                 PreviewPanel(
                     recipientName = state.selectedKinfolk?.displayName.orEmpty(),
                     subject = state.subject,
                     body = state.generatedCopy,
-                    textMessage = approveDeliveryChannel(state.commType) == ExternalChannel.Sms,
+                    textMessage = textMessage,
+                    // No household chosen yet: the general short form. A household
+                    // whose answer is not in yet: Checking, never a guess.
+                    textAccount = when {
+                        textHousehold == null -> HouseholdTextAccount.Account
+                        state.textAccountFor == textHousehold -> state.textAccount
+                        else -> HouseholdTextAccount.Checking
+                    },
                 )
             }
 
@@ -728,19 +744,19 @@ private fun ApproveSendConfirm(state: CommunicateUiState, channel: ExternalChann
                 color = c.textPrimary,
             )
             Text(
-                "Channel: ${if (channel == ExternalChannel.Email) "Email" else "Text, kept short, with a link to MyTribe"}",
+                "Channel: ${if (channel == ExternalChannel.Email) "Email" else householdTextChannelLine(state.textAccount)}",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
             if (channel == ExternalChannel.Email) {
                 Text("Subject: ${state.subject.trim()}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
             } else {
-                // #2408: what the household is texted, not the draft it is cut from.
-                Text(
-                    "Text: ${householdTextPreviewLine(state.generatedCopy)}",
-                    style = AuntieTheme.typography.bodySmall,
-                    color = c.textPrimary,
-                )
+                // #2408, #2316: what the household is texted, not the draft it is
+                // cut from: short with a link, or whole when they have no
+                // MyTribe account, and neither until the server has said.
+                householdTextAsSentLines(state.generatedCopy, state.textAccount).forEach { line ->
+                    Text(line, style = AuntieTheme.typography.bodySmall, color = c.textPrimary)
+                }
             }
         }
     }
@@ -1455,7 +1471,13 @@ private fun DraftCallout(subtitle: String, needsApproval: Boolean = true) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun PreviewPanel(recipientName: String, subject: String, body: String, textMessage: Boolean = false) {
+private fun PreviewPanel(
+    recipientName: String,
+    subject: String,
+    body: String,
+    textMessage: Boolean = false,
+    textAccount: HouseholdTextAccount = HouseholdTextAccount.Account,
+) {
     val dims = AuntieTheme.dims
     DenPanel(
         title = "Live preview",
@@ -1465,14 +1487,17 @@ private fun PreviewPanel(recipientName: String, subject: String, body: String, t
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
             // #2408: a Text is sent short with a link to the whole message in
             // MyTribe, so its preview is that text and not an email card.
+            // #2316: or the whole message, for a household with no account.
             if (textMessage) {
-                Text(
-                    text = body.takeIf { it.isNotBlank() }?.let(::householdTextPreviewLine)
-                        ?: "Generate a draft and it shows up here.",
-                    style = AuntieTheme.typography.bodyMedium,
-                    color = AuntieTheme.colors.textPrimary,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                val lines = if (body.isBlank()) listOf("Generate a draft and it shows up here.") else householdTextAsSentLines(body, textAccount)
+                lines.forEach { line ->
+                    Text(
+                        text = line,
+                        style = AuntieTheme.typography.bodyMedium,
+                        color = AuntieTheme.colors.textPrimary,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             } else AuntieEmailPreviewCard(
                 modifier = Modifier.fillMaxWidth(),
                 // Author-typed subject (spec 19 item 3); computed placeholder only

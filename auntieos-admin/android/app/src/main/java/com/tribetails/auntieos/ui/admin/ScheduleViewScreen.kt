@@ -2868,6 +2868,8 @@ fun AddEnhancedBookingDialog(
                                         kinIds           = kinChoice.kinIdsToSend(kin, chooseKin),
                                         // Named beside the ids, so Booking details names a narrowed choice.
                                         kinNames         = kinChoice.kinNamesToStore(kin, chooseKin),
+                                        // #2347: approval keeps a subset only from a draft saved with choosing on.
+                                        kinChosenWithFlagOn = kinChoice.chosenWithFlagOn(chooseKin),
                                         startDateTime    = LocalDateTime.of(date, startTime).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
                                         endDateTime      = LocalDateTime.of(date, endTime).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
                                         bookingMode      = bookingMode,

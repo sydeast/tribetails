@@ -110,6 +110,11 @@ import com.tribetails.auntieos.web.data.FirestoreResult
 import com.tribetails.auntieos.web.data.NotificationCatalogEntry
 import com.tribetails.auntieos.web.data.NotifAudience
 import com.tribetails.auntieos.web.data.alwaysEnabledFor
+import com.tribetails.auntieos.web.data.gateRowCaption
+import com.tribetails.auntieos.web.data.keptLockedOn
+import com.tribetails.auntieos.web.data.lockedOnChannel
+import com.tribetails.auntieos.web.data.lockedOnFor
+import com.tribetails.auntieos.web.data.NOTIF_REQUIRED_FOR_KINFOLK
 import com.tribetails.auntieos.web.data.displayTitle
 import com.tribetails.auntieos.web.data.notifAudiences
 import com.tribetails.auntieos.web.data.sectionedNotifications
@@ -1556,8 +1561,11 @@ private fun NotificationMatrixPanel() {
 
     var selectedTab by remember { mutableStateOf(NotifAudience.Business) }
 
-    fun persist(entry: NotificationCatalogEntry, override: NotificationOverride) {
+    fun persist(entry: NotificationCatalogEntry, edited: NotificationOverride) {
         val m = matrix ?: return
+        // #2382: a locked confirmation's Kinfolk copy and email are saved on, so an
+        // off stored before the ruling cannot make every later edit on the row fail.
+        val override = edited.keptLockedOn(entry)
         matrix = m.copy(overrides = m.overrides + (entry.key to override)) // optimistic
         scope.launch {
             when (val r = repo.saveOverride(entry.key, override)) {
@@ -1772,16 +1780,21 @@ private fun NotifMatrixRow(
 ) {
     val c = AuntieTheme.colors
     val stream = audience.stream
-    val enabled = streamEffectiveEnabled(matrix, entry.key, stream)
+    // #2382: a confirmation locked on for this audience is drawn on and fixed,
+    // whatever an older stored override says, because the send ignores that off.
+    val lockedOn = entry.lockedOnFor(stream)
+    val enabled = lockedOn || streamEffectiveEnabled(matrix, entry.key, stream)
     val enabledLockOn = streamEffectiveLockedEnabled(matrix, entry.key, stream)
     val anyChannelLockOn = NOTIF_CHANNEL_COLS.any { streamEffectiveChannelLocked(matrix, entry.key, stream, it) }
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(entry.displayTitle(), style = AuntieTheme.typography.bodyMedium, color = c.textPrimary)
-                // Per-stream: a key can be always-on for kinfolk yet optional here.
-                if (entry.alwaysEnabledFor(stream)) {
-                    Text("Always on", style = AuntieTheme.typography.labelSmall, color = c.textFaint)
+                // Per-stream: a key can be locked on for kinfolk yet optional here.
+                // "Required for Kinfolk" for the five #2382 confirmations (enforced),
+                // "Meant to stay on" for the advisory flag (#451), never "Always on".
+                entry.gateRowCaption(stream)?.let { caption ->
+                    Text(caption, style = AuntieTheme.typography.labelSmall, color = c.textFaint)
                 }
                 // Shared key: name the other audience's copy so the operator knows
                 // this row only gates the copy for the tab they are on.
@@ -1794,6 +1807,7 @@ private fun NotifMatrixRow(
                 on = enabled,
                 show = true,
                 locked = enabledLockOn,
+                fixed = lockedOn,
                 onToggle = { onToggleEnabled(!enabled) },
                 onToggleLock = onToggleEnabledLock,
             )
@@ -1803,10 +1817,12 @@ private fun NotifMatrixRow(
             // saved) here is the CURRENT TAB's stream overlay, falling back to the
             // flat legacy values until touched.
             NOTIF_CHANNEL_COLS.forEach { channel ->
-                val channelOn = streamEffectiveChannel(matrix, entry.key, stream, channel)
+                val channelFixed = entry.lockedOnChannel(stream, channel)
+                val channelOn = channelFixed || streamEffectiveChannel(matrix, entry.key, stream, channel)
                 NotifCell(
                     on = channelOn,
                     show = true,
+                    fixed = channelFixed,
                     // On/Off supersedes channels: the toggle greys out (inert) when
                     // the notification's master is off, but stays visible.
                     enabledToggle = enabled,
@@ -1818,7 +1834,7 @@ private fun NotifMatrixRow(
         }
         // Any active lock in this stream view reveals the reason editor: locked rows
         // promise the recipient a "why", and this is where the operator writes it.
-        if (enabledLockOn || anyChannelLockOn || entry.alwaysEnabledFor(stream)) {
+        if (enabledLockOn || anyChannelLockOn || lockedOn || entry.alwaysEnabledFor(stream)) {
             NotifLockReasonEditor(
                 entryKey = entry.key,
                 reason = lockReasonFor(matrix, entry.key),
@@ -1902,6 +1918,11 @@ private fun NotifCell(
     onToggle: () -> Unit,
     onToggleLock: () -> Unit,
     enabledToggle: Boolean = true,
+    /**
+     * #2382: locked on by ruling, not by the operator. The toggle is drawn on and
+     * disabled, and the lock is drawn closed with nothing to click.
+     */
+    fixed: Boolean = false,
 ) {
     val c = AuntieTheme.colors
     Column(
@@ -1909,7 +1930,15 @@ private fun NotifCell(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        if (show) {
+        if (show && fixed) {
+            AuntieToggle(checked = true, enabled = false, onCheckedChange = {})
+            Icon(
+                imageVector = Lucide.Lock,
+                contentDescription = NOTIF_REQUIRED_FOR_KINFOLK,
+                tint = c.primary,
+                modifier = Modifier.padding(3.dp).size(14.dp),
+            )
+        } else if (show) {
             AuntieToggle(checked = on, enabled = enabledToggle, onCheckedChange = { onToggle() })
             Icon(
                 imageVector = if (locked) Lucide.Lock else Lucide.LockOpen,

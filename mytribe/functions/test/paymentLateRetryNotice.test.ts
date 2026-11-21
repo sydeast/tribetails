@@ -169,21 +169,15 @@ describe('#2281 third review: a ticked late second call after the sweep, real di
     expectNothingNewSent();
     expect(first).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true });
   });
-  it('the operator switched this notification off: nothing is sent, and the answer does not blame the household', async () => {
+  // #2382 (2026-11-20): payment confirmations are required on for households
+  // and cannot be disabled. An operator off stored before the ruling no longer
+  // holds the household's copy, and the household cannot turn its email off.
+  it('#2382: an operator off stored before the ruling does not hold the confirmation email', async () => {
     await sweptPayoff();
-    docs['businessSettings/notifications'] = { byKey: { [KEY]: { enabled: false } } };
-    const first = await step2();
-    expectNothingNewSent();
-    expect(first).toMatchObject({ confirmationEmailSent: false });
-    // The clients print `confirmationAppOnly` as "email and text are off for
-    // this household". That is not why, so it is left out and they say the
-    // confirmation email did not go out.
-    expect(first).not.toHaveProperty('confirmationAppOnly');
-    expect(ledgerRows()).toEqual([`payments/${PAY}`]);
-    // Switched back on, the same submission pressed again sends it, once.
-    delete docs['businessSettings/notifications'];
+    docs['businessSettings/notifications'] = { byKey: { [KEY]: { enabled: false, channels: { email: false } } } };
     expect(await step2()).toMatchObject({ confirmationEmailSent: true, confirmationAppOnly: false });
     expect(ordersFor('kinUid')).toHaveLength(1);
+    // Pressed again, it is not sent twice, to the household or the office.
     await step2();
     expect(ordersFor('kinUid')).toHaveLength(1);
     expect(ordersFor('office1')).toHaveLength(1);
@@ -197,12 +191,11 @@ describe('#2281 third review: a ticked late second call after the sweep, real di
     expect(first).not.toHaveProperty('confirmationAppOnly');
     expect(docs[`payments/${PAY}`]).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true });
   });
-  it('the household turned every channel off: nothing is sent, and the answer says app only', async () => {
+  it('#2382: the household turned every channel off: the confirmation still goes by email', async () => {
     await sweptPayoff();
     docs['clients/kinUid'] = { notificationPrefs: { byKey: { [KEY]: { email: false, sms: false, push: false } } } };
-    const first = await step2();
-    expectNothingNewSent();
-    expect(first).toMatchObject({ confirmationEmailSent: false, confirmationAppOnly: true });
+    expect(await step2()).toMatchObject({ confirmationEmailSent: true, confirmationAppOnly: false });
+    expect(ordersFor('kinUid')).toHaveLength(1);
   });
   it('the billing member changed since the sweep: nothing is sent to either member, and the answer says the email did not go', async () => {
     await sweptPayoff();
