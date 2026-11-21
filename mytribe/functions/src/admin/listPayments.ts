@@ -13,6 +13,7 @@ import { anyTimestamp, ledgerDateText, ONLINE_METHOD_FIELD, paymentMethodLabelOf
 import { CentsSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import {
   TIP_BASES,
+  ledgerAppliedInvoiceOf,
   paymentMoneyOf,
   paymentReconciles,
   readTipBasis,
@@ -379,8 +380,9 @@ export async function listPaymentsHandler(
       autoApply: raw['autoApply'] === true,
       invoiceId: str(raw['invoiceId']),
       invoiceNumber: str(raw['invoiceNumber']),
-      appliedInvoiceId: str(raw['appliedInvoiceId']),
-      appliedInvoiceNumber: str(raw['appliedInvoiceNumber']),
+      // #1971: a row that paid its invoice reads as applied to it, even when
+      // it was written with a blank `appliedInvoiceId`.
+      ...ledgerAppliedInvoiceOf(raw, money.appliedCents),
       method: str(raw['paymentMethod']),
       methodLabel: paymentMethodLabelOf(raw['paymentMethod'], raw[ONLINE_METHOD_FIELD]),
       reference: str(raw['referenceNumber']),
