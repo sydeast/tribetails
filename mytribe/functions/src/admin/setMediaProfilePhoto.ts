@@ -9,6 +9,7 @@ import { writeAuditEntry } from '../lib/writeAuditEntry';
 import { AUDIT_EVENTS } from '../lib/auditEvents';
 import { auditActorPayload, resolveAuditActor } from '../lib/auditActor';
 import { isAuntieClaim } from '../lib/staffGate';
+import { caretakerMayUseMedia } from '../lib/caretakerMedia';
 import { TRIBETAILS_CORS } from '../lib/cors';
 
 /**
@@ -24,6 +25,10 @@ import { TRIBETAILS_CORS } from '../lib/cors';
  * photo change applies only to the caller's own profile, so for an Auntie a
  * USER target has to be her own record. The owner manages every staff record
  * and keeps the reach he had.
+ *
+ * An Auntie promotes only a file she works with (`lib/caretakerMedia.ts`): a
+ * visit's, a Kin's or a household's, or her own account photo. Rules hold that
+ * line for a client read and do not run here, so the handler asks.
  */
 const Args = z.object({
   mediaFileId: z.string().min(1).max(120),
@@ -74,6 +79,14 @@ export async function setMediaProfilePhotoHandler(
   const chosen = chosenSnap.data() as
     | { storageUrl?: string; entityId?: string; entityType?: string }
     | undefined;
+
+  // An Auntie works with a visit's, a Kin's and a household's files, and her
+  // own account photo (lib/caretakerMedia.ts). Any other file is the owner's,
+  // and to her it is not there: the same answer as a missing id, before the
+  // stored entity or the file's address is named in a reply.
+  if (isAuntieClaim(req.auth?.token) && !caretakerMayUseMedia(chosen, uid)) {
+    throw new HttpsError('not-found', `Media file '${args.mediaFileId}' not found.`);
+  }
 
   // The doc's own entity is the source of truth: reject cross-entity flips.
   const docEntityId = chosen?.entityId ?? '';

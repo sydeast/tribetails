@@ -11,6 +11,7 @@ vi.mock('../api/mediaUpload', async () => {
 });
 
 import { MediaUploadDialog, type KinfolkOption, type KinOption } from './MediaUploadDialog';
+import { setCaretakerScope } from '../lib/caretakerScope';
 
 const HOUSEHOLDS: KinfolkOption[] = [
   { id: 'kf1', label: 'The Alvarez Household' },
@@ -28,6 +29,8 @@ function photoFile(): File {
 
 beforeEach(() => {
   uploadMediaFile.mockReset();
+  // Module-level session state: the owner's dialog unless a test says otherwise.
+  setCaretakerScope(false);
 });
 
 describe('MediaUploadDialog', () => {
@@ -360,4 +363,77 @@ describe('MediaUploadDialog, file validation (#397 S1)', () => {
     expect(screen.getByText(/Photos and videos up to 50MB/i)).toBeInTheDocument();
   });
 });
-
+/**
+ * Company media is the owner's. An Auntie uploads to a household or a Kin, the
+ * files her Gallery shows her afterwards, so the third target is not offered.
+ */
+describe('MediaUploadDialog, an Auntie signed in', () => {
+  beforeEach(() => setCaretakerScope(true));
+  it('offers her a household or a Kin, and no company target', () => {
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} kinOptions={KIN} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    const options = within(screen.getByLabelText('Target type')).getAllByRole('option');
+    expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual(['KINFOLK', 'KIN']);
+    expect(screen.queryByRole('option', { name: /company/i })).toBeNull();
+    expect(screen.queryByText(/company media/i)).toBeNull();
+  });
+  it('HAPPY: she uploads to a household', async () => {
+    uploadMediaFile.mockResolvedValue('newMedia1');
+    const onUploaded = vi.fn();
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} kinOptions={KIN} onClose={vi.fn()} onUploaded={onUploaded} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await userEvent.upload(screen.getByLabelText('Photo or video'), photoFile());
+    await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
+    await waitFor(() => expect(uploadMediaFile).toHaveBeenCalledTimes(1));
+    expect(uploadMediaFile).toHaveBeenCalledWith(expect.objectContaining({ entityType: 'KINFOLK', entityId: 'kf1' }));
+    await waitFor(() => expect(onUploaded).toHaveBeenCalledOnce());
+  });
+  it('HAPPY: she uploads to a Kin, filed under that Kin\'s household', async () => {
+    uploadMediaFile.mockResolvedValue('newMedia2');
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} kinOptions={KIN} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Target type'), 'KIN');
+    await userEvent.selectOptions(screen.getByLabelText('Kin\u2019s household'), 'kf1');
+    await userEvent.selectOptions(screen.getByLabelText('Kin'), 'pet_gravy');
+    await userEvent.upload(screen.getByLabelText('Photo or video'), photoFile());
+    await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
+    await waitFor(() => expect(uploadMediaFile).toHaveBeenCalledTimes(1));
+    expect(uploadMediaFile).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'KIN', entityId: 'pet_gravy', kinfolkId: 'kf1' }),
+    );
+  });
+  it('SAD: with no household chosen she is told what is missing, and nothing is sent', async () => {
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} kinOptions={KIN} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    await userEvent.upload(screen.getByLabelText('Photo or video'), photoFile());
+    await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Choose a household before uploading.');
+    expect(uploadMediaFile).not.toHaveBeenCalled();
+  });
+  it('ERROR: a refused upload names the failure, keeps the dialog open and reports no success', async () => {
+    uploadMediaFile.mockRejectedValue(new Error('Missing or insufficient permissions.'));
+    const onUploaded = vi.fn();
+    const onClose = vi.fn();
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} kinOptions={KIN} onClose={onClose} onUploaded={onUploaded} />);
+    await userEvent.selectOptions(screen.getByLabelText('Household'), 'kf1');
+    await userEvent.upload(screen.getByLabelText('Photo or video'), photoFile());
+    await userEvent.click(screen.getByRole('button', { name: /^upload$/i }));
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(onUploaded).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+  it('a fixed target is stated for her the same as for the owner', () => {
+    render(
+      <MediaUploadDialog
+        fixedTarget={{ entityType: 'KIN', entityId: 'pet_biscuit', label: 'Biscuit' }}
+        onClose={vi.fn()}
+        onUploaded={vi.fn()}
+      />,
+    );
+    expect(screen.queryByLabelText('Target type')).toBeNull();
+    expect(screen.getByText('Biscuit')).toBeInTheDocument();
+  });
+  it('the owner is still offered all three', () => {
+    setCaretakerScope(false);
+    render(<MediaUploadDialog kinfolkOptions={HOUSEHOLDS} onClose={vi.fn()} onUploaded={vi.fn()} />);
+    const options = within(screen.getByLabelText('Target type')).getAllByRole('option');
+    expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual(['KINFOLK', 'KIN', 'BUSINESS']);
+  });
+});
