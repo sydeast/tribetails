@@ -2,9 +2,11 @@
 
 package com.kinfolk.portal.screens.invoices
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -116,9 +118,9 @@ class InvoiceDetailScreenTest {
             isPaid = true,
             amountDue = 0.0,
             payments = listOf(
-                HouseholdPayment("stripe_pi_1", "Klarna", "2026-11-20", 2500L),
-                HouseholdPayment("stripe_pi_0", "Online payment", "2026-11-01", 1000L),
-                HouseholdPayment("credit", "Account credit", null, 500L),
+                HouseholdPayment("p1", "Klarna", "2026-11-20", 2500L),
+                HouseholdPayment("p2", "Online payment", "2026-11-01", 1000L),
+                HouseholdPayment("p3", "Account credit", null, 500L),
             ),
         )
         setThemedContent {
@@ -148,6 +150,30 @@ class InvoiceDetailScreenTest {
         onNodeWithText("stripe", substring = true, ignoreCase = true).assertDoesNotExist()
     }
 
+    // #2334 / #2470: what was paid before the bill was brought over is one
+    // more line, "Paid before", with its amount and no day.
+    @Test
+    fun paymentHistory_broughtOverPaid_showsPaidBeforeWithAmountAndNoDay() = runComposeUiTest {
+        val paid = openInvoice().copy(
+            status = InvoiceStatus.Paid,
+            isPaid = true,
+            amountDue = 0.0,
+            payments = listOf(
+                HouseholdPayment("p1", "Cash", "2026-11-05", 1500L),
+                HouseholdPayment("paid-before", "Paid before", null, 2500L),
+            ),
+        )
+        setThemedContent {
+            InvoiceDetailScreen("The Foster", paid, onBack = {})
+        }
+        waitForIdle()
+        onNodeWithText("Payment History").assertExists()
+        onNodeWithText("Cash").assertExists()
+        onNodeWithText("Nov 05, 2026").assertExists()
+        onNodeWithText("Paid before").assertExists()
+        onNodeWithText("\$25.00").assertExists()
+        onAllNodesWithTag("payment-history-row").assertCountEquals(2)
+    }
     @Test
     fun paymentHistory_noPaymentsAndNoLegacyText_drawsNoSection() = runComposeUiTest {
         setThemedContent {

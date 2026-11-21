@@ -832,9 +832,9 @@ describe('InvoiceDetail: Payment History (#2334)', () => {
     paidCents: 4000,
     payMethods: [],
     payments: [
-      { paymentId: 'stripe_pi_1', methodLabel: 'Klarna', paidDay: '2026-11-20', amountCents: 2500 },
-      { paymentId: 'stripe_pi_0', methodLabel: 'Online payment', paidDay: '2026-11-01', amountCents: 1000 },
-      { paymentId: 'credit', methodLabel: 'Account credit', paidDay: null, amountCents: 500 },
+      { paymentId: 'p1', methodLabel: 'Klarna', paidDay: '2026-11-20', amountCents: 2500 },
+      { paymentId: 'p2', methodLabel: 'Online payment', paidDay: '2026-11-01', amountCents: 1000 },
+      { paymentId: 'p3', methodLabel: 'Account credit', paidDay: null, amountCents: 500 },
     ],
   };
 
@@ -860,6 +860,27 @@ describe('InvoiceDetail: Payment History (#2334)', () => {
     expect(row!.querySelector('b')?.textContent).toBe('Online payment');
   });
 
+  it('a bill brought over part paid shows "Paid before" last, with its amount and no day', async () => {
+    await renderWith({
+      open: [],
+      paid: [
+        {
+          ...PAID,
+          paidCents: 4000,
+          payments: [
+            { paymentId: 'p1', methodLabel: 'Cash', paidDay: '2026-11-05', amountCents: 1500 },
+            { paymentId: 'paid-before', methodLabel: 'Paid before', paidDay: null, amountCents: 2500 },
+          ],
+        },
+      ],
+      credits: [],
+      accountBalanceCents: 0,
+    });
+    const rows = await screen.findAllByTestId('payment-history-row');
+    expect(rows.map((r) => r.querySelector('b')?.textContent)).toEqual(['Cash', 'Paid before']);
+    expect(within(rows[1]!).getByText('$25.00')).toBeInTheDocument();
+    expect(rows[1]!.querySelector('small')).toBeNull();
+  });
   it('no payments and no legacy text draws no Payment History at all', async () => {
     await renderWith({ open: [OPEN_INVOICE], paid: [], credits: [], accountBalanceCents: 0 });
     expect(await screen.findByText('Pay with Credit Card')).toBeInTheDocument();

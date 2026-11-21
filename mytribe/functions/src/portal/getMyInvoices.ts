@@ -13,12 +13,24 @@ import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib
 import { validateResponse } from '../lib/callableResponse';
 import { hiddenFromHousehold, quoteDecisionOf } from '../lib/quoteDecision';
 import { amountDueCentsOf } from '../lib/amountDueRule';
-import { appliedCentsOf, centsToDollars, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import {
+  appliedCentsOf,
+  broughtOverPaidCentsOf,
+  centsToDollars,
+  paidCentsFromPayments,
+  type PaymentAmount,
+} from '../lib/invoiceMath';
 import { cardCheckoutRefusal, cardCheckoutRefusalSentence } from '../lib/cardPaymentApply';
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { payMethodSettingsFrom, resolvePayMethods, settingsForInvoice } from '../lib/paymentMethods';
 import { invoiceIsPaid } from '../lib/invoicePaidGate';
-import { householdMethodLabelOf, ONLINE_METHOD_FIELD, paymentDayOf } from '../lib/onlinePaymentMethod';
+import {
+  householdMethodLabelOf,
+  ONLINE_METHOD_FIELD,
+  PAID_BEFORE_KEY,
+  PAID_BEFORE_LABEL,
+  paymentDayOf,
+} from '../lib/onlinePaymentMethod';
 import { businessTimeZone } from '../lib/bookingTimeBlocks';
 import {
   EMPTY_SERVICE_NAME_CATALOG,
@@ -132,6 +144,9 @@ export type InvoiceLineItemDto = z.infer<typeof InvoiceLineItemDtoSchema>;
  *
  * `paidDay` is the business day it was paid, `YYYY-MM-DD`, or null when the
  * row carries no readable date.
+ *
+ * `paymentId` is the line's key (`p1`, `p2`, ... in the order shown, and
+ * `paid-before` for the brought-over line), never a stored id.
  */
 export const HouseholdPaymentDtoSchema = z
   .object({
@@ -342,6 +357,11 @@ export const InvoiceDtoSchema = z
      * `[]` on an invoice with no rows, and when the rows could not be read: a
      * read that fails costs the list, never the invoice. The legacy free-text
      * `paymentsHistory` stays beside it for migrated bills.
+     *
+     * A bill brought over part paid (#2470, `broughtOverPaidCents`) ends with
+     * one undated line, "Paid before", for that amount, so the lines add up to
+     * `paidCents`. The admin ledger names the same money "Paid in the old
+     * system".
      */
     payments: z.array(HouseholdPaymentDtoSchema),
   })
@@ -649,7 +669,7 @@ export async function getMyInvoicesHandler(
               amountDue: amountDueCents,
             }),
       payBlockedReason,
-      payments: householdPaymentsOf(historyRowsByInvoice.get(d.id) ?? [], businessZone),
+      payments: householdPaymentsOf(historyRowsByInvoice.get(d.id) ?? [], businessZone, broughtOverPaidCentsOf(data)),
       // Set here when the invoice has its own lines. The session pass below then
       // skips this invoice entirely and cannot overwrite them.
       // Bound lines get their visit day filled in by the lookup pass below; a
@@ -793,16 +813,25 @@ export function statusFromStamp(data: Record<string, unknown>): { status: Status
  * #2334: an invoice's payment rows as its Payment History, newest first.
  * PURE. Rows are sorted by their stored `paidAt` (every writer stores an ISO
  * string), and one with none sorts last rather than being dropped.
+ *
+ * `paymentId` is a key for the line, `p1`, `p2` in the order shown, and NOT
+ * the row's stored id: a card row is stored under the Stripe payment's own
+ * reference, which the household's view never carries.
+ *
+ * `broughtOverPaidCents` (#2470), what was paid before the bill was brought
+ * over from the old system, is one more line, last and undated: "Paid before".
+ * With it the lines add up to what the bill shows as paid. It is passed in from
+ * the invoice itself, so it stands even when the rows could not be read.
  */
 export function householdPaymentsOf(
   rows: ReadonlyArray<{ id: string; data: Record<string, unknown> }>,
   timeZone: string,
+  broughtOverPaidCents = 0,
 ): Array<z.infer<typeof HouseholdPaymentDtoSchema>> {
-  return rows
-    .map(({ id, data }) => ({
+  const lines = rows
+    .map(({ data }) => ({
       sortKey: typeof data['paidAt'] === 'string' ? (data['paidAt'] as string) : '',
       dto: {
-        paymentId: id,
         methodLabel: householdMethodLabelOf(data['method'], data[ONLINE_METHOD_FIELD]),
         paidDay: paymentDayOf(data['paidAt'], timeZone),
         amountCents: paidCentsFromPayments([data as PaymentAmount]),
@@ -810,7 +839,11 @@ export function householdPaymentsOf(
     }))
     .filter((r) => r.dto.amountCents > 0)
     .sort((a, b) => b.sortKey.localeCompare(a.sortKey))
-    .map((r) => r.dto);
+    .map((r, i) => ({ paymentId: `p${i + 1}`, ...r.dto }));
+  if (Number.isInteger(broughtOverPaidCents) && broughtOverPaidCents > 0) {
+    lines.push({ paymentId: PAID_BEFORE_KEY, methodLabel: PAID_BEFORE_LABEL, paidDay: null, amountCents: broughtOverPaidCents });
+  }
+  return lines;
 }
 
 /**

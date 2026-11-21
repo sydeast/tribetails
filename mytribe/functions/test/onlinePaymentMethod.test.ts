@@ -87,6 +87,26 @@ describe('householdMethodLabelOf: the household Payment History', () => {
     expect(householdMethodLabelOf('venmo', undefined)).toBe('Venmo');
     expect(householdMethodLabelOf(null, undefined)).toBe('Payment');
   });
+  it('a method typed by hand that names a pay option reads as that option, whatever its case or spacing', () => {
+    expect(householdMethodLabelOf('CASH', undefined)).toBe('Cash');
+    expect(householdMethodLabelOf('VENMO', undefined)).toBe('Venmo');
+    expect(householdMethodLabelOf('paypal', undefined)).toBe('PayPal');
+    expect(householdMethodLabelOf('cashapp', undefined)).toBe('Cash App');
+    expect(householdMethodLabelOf('cash_app', undefined)).toBe('Cash App');
+    expect(householdMethodLabelOf('Cash App', undefined)).toBe('Cash App');
+    expect(householdMethodLabelOf('bank transfer', undefined)).toBe('Bank transfer');
+    expect(householdMethodLabelOf(' zelle ', 'card')).toBe('Zelle');
+  });
+  it('any other typed method keeps its words, opens with a capital, and never shows an underscore', () => {
+    expect(householdMethodLabelOf('money order', undefined)).toBe('Money order');
+    expect(householdMethodLabelOf('apple_cash', undefined)).toBe('Apple cash');
+    expect(householdMethodLabelOf('Venmo to the office', undefined)).toBe('Venmo to the office');
+    expect(householdMethodLabelOf('___', undefined)).toBe('Payment');
+  });
+  it('a stored stripe is never named Credit card by the pay option list, it is the actual method', () => {
+    expect(householdMethodLabelOf('stripe', 'card')).toBe('Card');
+    expect(householdMethodLabelOf('STRIPE', undefined)).toBe('Online payment');
+  });
 });
 
 describe('ledgerDateText: the root ledger row date as text', () => {

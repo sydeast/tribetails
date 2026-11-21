@@ -14,6 +14,7 @@
  */
 
 import { FALLBACK_BUSINESS_TIME_ZONE } from './businessHours';
+import { METHOD_SPECS } from './paymentMethods';
 
 /** The field on both the invoice's payment row and the root ledger row. */
 export const ONLINE_METHOD_FIELD = 'onlineMethod';
@@ -161,16 +162,45 @@ export function paymentMethodLabelOf(method: unknown, onlineMethod: unknown): st
 export const HOUSEHOLD_PAYMENT_FALLBACK_LABEL = 'Payment';
 
 /**
+ * The names the office's own pay options go by, keyed the way a stored method
+ * word is compared: lower case, with spaces, underscores and hyphens dropped.
+ * `stripe` is left out: a Stripe row is named by its actual method above.
+ */
+const PAY_OPTION_NAMES: ReadonlyMap<string, string> = new Map(
+  METHOD_SPECS.filter((s) => s.id !== STRIPE_METHOD).map((s) => [s.id, s.shortLabel] as const),
+);
+
+function methodWordKey(word: string): string {
+  return word.toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+/**
  * #2334: the same rule as {@link paymentMethodLabelOf}, worded for the
- * household's Payment History: it opens with a capital ("account credit" reads
- * "Account credit", a typed "venmo" reads "Venmo"), and a row with no method
- * reads "Payment" rather than an office phrase.
+ * household's Payment History. A payment the office recorded by hand reads as
+ * the method typed (the actual method, per the ruling), never as a stored key:
+ *
+ *  - a word that names one of the pay options reads as that option's name,
+ *    whatever its case or spacing ("venmo", "CASH", "cash_app", "paypal" read
+ *    "Venmo", "Cash", "Cash App", "PayPal");
+ *  - any other word keeps what was typed, underscores read as spaces, and it
+ *    opens with a capital ("account credit" reads "Account credit");
+ *  - a row with no method reads "Payment" rather than an office phrase.
  */
 export function householdMethodLabelOf(method: unknown, onlineMethod: unknown): string {
   const label = paymentMethodLabelOf(method, onlineMethod);
   if (label === '') return HOUSEHOLD_PAYMENT_FALLBACK_LABEL;
-  return label.charAt(0).toUpperCase() + label.slice(1);
+  const named = PAY_OPTION_NAMES.get(methodWordKey(label));
+  if (named !== undefined) return named;
+  const words = label.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (words === '') return HOUSEHOLD_PAYMENT_FALLBACK_LABEL;
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+/** #2334: the Payment History line for what was paid before the bill was brought over. */
+export const PAID_BEFORE_LABEL = 'Paid before';
+
+/** #2334: the fixed key of that line. Not a stored id: no payment row has it. */
+export const PAID_BEFORE_KEY = 'paid-before';
 
 const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/;
 

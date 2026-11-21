@@ -938,6 +938,38 @@ describe('#2334: an invoice carries its Payment History for the household', () =
         recordedBy: 'admin1',
       },
       'invoices/inv-open': { kinfolkId: '3', status: 'open', total: 9, amountDue: 9, amountDueCents: 900 },
+      // #2470: brought over with $25 already paid in the old system, then $10
+      // by hand here, $5 still owed.
+      'invoices/inv-brought': {
+        kinfolkId: '3',
+        status: 'open',
+        invoiceStatus: 'open',
+        total: 40,
+        totalCents: 4000,
+        amountDue: 5,
+        amountDueCents: 500,
+        paidCents: 1000,
+        broughtOverPaidCents: 2500,
+      },
+      'invoices/inv-brought/payments/auto1': {
+        amountCents: 1000,
+        method: 'CASH',
+        reference: 'receipt 88',
+        paidAt: '2026-11-05T15:00:00.000Z',
+        recordedBy: 'admin1',
+        notes: 'left on the counter',
+      },
+      // Paid in full in the old system, with no row here at all.
+      'invoices/inv-old': {
+        kinfolkId: '3',
+        status: 'paid',
+        invoiceStatus: 'paid',
+        total: 30,
+        totalCents: 3000,
+        amountDue: 0,
+        amountDueCents: 0,
+        broughtOverPaidCents: 3000,
+      },
       // A draft and its rows stay the office's own.
       'invoices/inv-draft': { kinfolkId: '3', invoiceStatus: 'draft', status: 'draft', total: 5 },
       'invoices/inv-draft/payments/x': { amountCents: 500, method: 'cash', paidAt: '2026-11-02T15:00:00.000Z' },
@@ -955,10 +987,35 @@ describe('#2334: an invoice carries its Payment History for the household', () =
     seedPaid();
     const inv = (await listedAll()).find((i) => i.id === 'inv-paid');
     expect(inv?.payments).toEqual([
-      { paymentId: 'stripe_pi_1', methodLabel: 'Klarna', paidDay: '2026-11-20', amountCents: 2500 },
-      { paymentId: 'stripe_pi_0', methodLabel: 'Online payment', paidDay: '2026-11-01', amountCents: 1500 },
-      { paymentId: 'hand', methodLabel: 'Venmo', paidDay: '2026-10-30', amountCents: 2000 },
+      { paymentId: 'p1', methodLabel: 'Klarna', paidDay: '2026-11-20', amountCents: 2500 },
+      { paymentId: 'p2', methodLabel: 'Online payment', paidDay: '2026-11-01', amountCents: 1500 },
+      { paymentId: 'p3', methodLabel: 'Venmo', paidDay: '2026-10-30', amountCents: 2000 },
     ]);
+  });
+  it('carries nothing of the stored rows but the words, the day and the amount: no row id, reference, recorder or note', async () => {
+    seedPaid();
+    const all = await listedAll();
+    const shipped = JSON.stringify(all.map((i) => i.payments));
+    // A card row is stored under the Stripe payment's own reference.
+    for (const secret of ['pi_0', 'pi_1', 'stripe', '@riveras', 'admin1', 'system:', 'receipt 88', 'counter', 'auto1', 'hand']) {
+      expect(shipped).not.toContain(secret);
+    }
+  });
+  it('a bill brought over part paid ends with one undated "Paid before" line, and the lines add up to what it shows as paid', async () => {
+    seedPaid();
+    const inv = (await listedAll()).find((i) => i.id === 'inv-brought');
+    expect(inv?.payments).toEqual([
+      { paymentId: 'p1', methodLabel: 'Cash', paidDay: '2026-11-05', amountCents: 1000 },
+      { paymentId: 'paid-before', methodLabel: 'Paid before', paidDay: null, amountCents: 2500 },
+    ]);
+    expect(inv?.paidCents).toBe(3500);
+    expect((inv?.payments ?? []).reduce((sum, p) => sum + p.amountCents, 0)).toBe(inv?.paidCents);
+  });
+  it('a bill paid in full before it was brought over shows that one line', async () => {
+    seedPaid();
+    const inv = (await listedAll()).find((i) => i.id === 'inv-old');
+    expect(inv?.payments).toEqual([{ paymentId: 'paid-before', methodLabel: 'Paid before', paidDay: null, amountCents: 3000 }]);
+    expect(inv?.paidCents).toBe(3000);
   });
 
   it('never says stripe, and never carries the reference, who recorded it, or a fee', async () => {
@@ -980,7 +1037,7 @@ describe('#2334: an invoice carries its Payment History for the household', () =
   it('no business zone set reads the day on the shared default, Chicago', async () => {
     seedPaid(null);
     const inv = (await listedAll()).find((i) => i.id === 'inv-paid');
-    expect(inv?.payments[0]).toMatchObject({ paymentId: 'stripe_pi_1', paidDay: '2026-11-20' });
+    expect(inv?.payments[0]).toMatchObject({ methodLabel: 'Klarna', paidDay: '2026-11-20' });
   });
 });
 
@@ -997,8 +1054,27 @@ describe('#2334: householdPaymentsOf', () => {
         'America/Chicago',
       ),
     ).toEqual([
-      { paymentId: 'b', methodLabel: 'Card', paidDay: '2026-11-03', amountCents: 200 },
-      { paymentId: 'a', methodLabel: 'Account credit', paidDay: null, amountCents: 100 },
+      { paymentId: 'p1', methodLabel: 'Card', paidDay: '2026-11-03', amountCents: 200 },
+      { paymentId: 'p2', methodLabel: 'Account credit', paidDay: null, amountCents: 100 },
     ]);
+  });
+  it('what was paid before the bill was brought over is the last line, and it stands with no rows read', async () => {
+    const { householdPaymentsOf } = await import('../src/portal/getMyInvoices');
+    expect(householdPaymentsOf([], 'America/Chicago', 2500)).toEqual([
+      { paymentId: 'paid-before', methodLabel: 'Paid before', paidDay: null, amountCents: 2500 },
+    ]);
+    expect(
+      householdPaymentsOf([{ id: 'x', data: { amountCents: 700, method: 'venmo', paidAt: '2026-11-03T12:00:00.000Z' } }], 'America/Chicago', 300),
+    ).toEqual([
+      { paymentId: 'p1', methodLabel: 'Venmo', paidDay: '2026-11-03', amountCents: 700 },
+      { paymentId: 'paid-before', methodLabel: 'Paid before', paidDay: null, amountCents: 300 },
+    ]);
+  });
+  it('nothing brought over, or a broken figure, adds no line', async () => {
+    const { householdPaymentsOf } = await import('../src/portal/getMyInvoices');
+    expect(householdPaymentsOf([], 'America/Chicago')).toEqual([]);
+    expect(householdPaymentsOf([], 'America/Chicago', 0)).toEqual([]);
+    expect(householdPaymentsOf([], 'America/Chicago', -500)).toEqual([]);
+    expect(householdPaymentsOf([], 'America/Chicago', 12.5)).toEqual([]);
   });
 });

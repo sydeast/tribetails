@@ -964,13 +964,13 @@ class PayMethodDecodeTest {
                     put("status", "paid")
                     put("payments", buildJsonArray {
                         add(buildJsonObject {
-                            put("paymentId", "stripe_pi_1")
+                            put("paymentId", "p1")
                             put("methodLabel", "Klarna")
                             put("paidDay", "2026-11-20")
                             put("amountCents", 2500L)
                         })
                         add(buildJsonObject {
-                            put("paymentId", "credit")
+                            put("paymentId", "p2")
                             put("methodLabel", "Account credit")
                             put("paidDay", JsonNull)
                             put("amountCents", 1500L)
@@ -985,8 +985,8 @@ class PayMethodDecodeTest {
         val inv = PortalApi(fake).getMyInvoices("3").paid.single()
         assertEquals(
             listOf(
-                HouseholdPayment("stripe_pi_1", "Klarna", "2026-11-20", 2500L),
-                HouseholdPayment("credit", "Account credit", null, 1500L),
+                HouseholdPayment("p1", "Klarna", "2026-11-20", 2500L),
+                HouseholdPayment("p2", "Account credit", null, 1500L),
             ),
             inv.payments,
         )
