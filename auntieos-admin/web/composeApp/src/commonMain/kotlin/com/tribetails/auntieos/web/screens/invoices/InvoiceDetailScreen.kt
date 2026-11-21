@@ -896,7 +896,10 @@ private fun InvoiceDetailBody(
                 title = INVOICE_TOTAL_DISAGREEMENT_TITLE,
                 body  = {
                     Text(
-                        invoiceTotalDisagreementText(drift),
+                        invoiceTotalDisagreementText(
+                            drift,
+                            linesEditable = canEditInvoice && invoiceEditScopeOf(invoice) == InvoiceEditScope.ALL,
+                        ),
                         style = AuntieTheme.typography.bodySmall,
                         color = c.textDim,
                     )
