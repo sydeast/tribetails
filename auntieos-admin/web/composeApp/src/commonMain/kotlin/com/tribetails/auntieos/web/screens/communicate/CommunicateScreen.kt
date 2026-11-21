@@ -767,7 +767,12 @@ fun CommunicateScreen(
                         // #12: Live preview is the primary right-column panel and stays
                         // open; the secondary panels collapse by default so the column
                         // no longer overflows below the fold (expand on demand).
-                        PreviewPanel(recipientName = recipientName, subject = subject, body = editedCopy)
+                        PreviewPanel(
+                            recipientName = recipientName,
+                            subject = subject,
+                            body = editedCopy,
+                            textMessage = messageType == MessageType.Text,
+                        )
                         ExternalSendPanel(
                             firestore = firestore,
                             onToast = { msg, kind -> showToast(msg, kind) },
@@ -812,7 +817,12 @@ fun CommunicateScreen(
                         recipient = selectedKinfolk,
                         firestore = firestore,
                     )
-                    PreviewPanel(recipientName = recipientName, subject = subject, body = editedCopy)
+                    PreviewPanel(
+                        recipientName = recipientName,
+                        subject = subject,
+                        body = editedCopy,
+                        textMessage = messageType == MessageType.Text,
+                    )
                     ExternalSendPanel(
                         firestore = firestore,
                         onToast = { msg, kind -> showToast(msg, kind) },
@@ -2165,7 +2175,7 @@ private fun LastCommunicationBox(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun PreviewPanel(recipientName: String, subject: String, body: String) {
+private fun PreviewPanel(recipientName: String, subject: String, body: String, textMessage: Boolean = false) {
     val c = AuntieTheme.colors
     val dims = AuntieTheme.dims
     DenPanel(
@@ -2174,7 +2184,17 @@ private fun PreviewPanel(recipientName: String, subject: String, body: String) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
-            AuntieEmailPreviewCard(
+            // #2408: a Text is sent short with a link to the whole message in
+            // MyTribe, so its preview is that text and not an email card.
+            if (textMessage) {
+                Text(
+                    text = body.takeIf { it.isNotBlank() }?.let(::householdTextPreviewLine)
+                        ?: "Pull a template or generate a draft and it shows up here.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = c.textPrimary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else AuntieEmailPreviewCard(
                 modifier = Modifier.fillMaxWidth(),
                 // Author-typed subject (spec 19 item 3); falls back to a computed
                 // placeholder only until the author types one. CTA stays placeholder.

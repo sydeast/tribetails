@@ -395,6 +395,44 @@ describe('approve', () => {
     expect(sendExternalMessage).not.toHaveBeenCalled();
   });
 
+  it('#2408: the confirm for a Text shows the short text the household gets, and the whole draft is still what is sent on', async () => {
+    const user = setup();
+    const long =
+      'Nova had the best day at the park today. She met two new friends by the pond, shared her ball without a fuss, ' +
+      'and slept the whole way home. Her water bowl is topped up and the back gate is latched. See you on Friday morning.';
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'sms', generated_copy: long }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'SMS' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    const shown = await screen.findByTestId('confirm-text-as-sent');
+    expect(shown.textContent).toMatch(/^Text: Nova had the best day at the park today\./);
+    expect(shown.textContent).toMatch(/\.\.\. More in MyTribe: \(link\)$/);
+    expect(shown.textContent).not.toContain('See you on Friday morning');
+    expect(shown.textContent!.length).toBeLessThanOrEqual('Text: '.length + 200 + ' More in MyTribe: (link)'.length);
+    expect(screen.getByText(/Text, kept short, with a link to the whole message in MyTribe/)).toBeInTheDocument();
+    expect(screen.queryByText('Message:')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    await waitFor(() => expect(sendGeneratedDraft).toHaveBeenCalledTimes(1));
+    // The server gets the whole message: it writes it to the notifications list and cuts the text itself.
+    expect(sendGeneratedDraft.mock.calls[0]![0]).toMatchObject({ draftId: 'd1', kinfolkId: 'kf1', body: long });
+  });
+  it('#2408: the confirm for an Email still shows the whole message', async () => {
+    const user = setup();
+    generateDraft.mockResolvedValue(draftResult({ communication_type: 'email' }));
+    render(<CommunicatePersonalize />);
+    await user.click(screen.getByRole('radio', { name: 'Email' }));
+    await pickRecipient(user, 'Halbrook', 'Dana Halbrook');
+    await user.type(screen.getByLabelText(/^subject$/i), 'Nova at the park');
+    await generate(user);
+    await screen.findByLabelText(/edit before approving/i);
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    expect(await screen.findByText('Message:')).toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-text-as-sent')).toBeNull();
+    expect(screen.queryByText(/More in MyTribe/)).toBeNull();
+  });
   it('#1592: a delivered approve says it was sent, never the provider message id', async () => {
     const user = setup();
     sendGeneratedDraft.mockResolvedValue({ outcome: 'sent', auditWarning: null, providerMessageId: 'SG.msg-123' });

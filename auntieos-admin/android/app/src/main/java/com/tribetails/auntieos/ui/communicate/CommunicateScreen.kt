@@ -81,6 +81,7 @@ import com.tribetails.auntieos.config.LocalFeatureFlags
 import com.tribetails.auntieos.ui.theme.AuntieColors
 import com.tribetails.auntieos.ui.theme.AuntieTheme
 import com.tribetails.auntieos.domain.engagementSummary
+import com.tribetails.auntieos.domain.householdTextPreviewLine
 import com.tribetails.auntieos.domain.channelLabel
 import com.tribetails.auntieos.domain.isoDatePrefixOrNull
 
@@ -306,6 +307,7 @@ fun CommunicateScreen(
                     recipientName = state.selectedKinfolk?.displayName.orEmpty(),
                     subject = state.subject,
                     body = state.generatedCopy,
+                    textMessage = approveDeliveryChannel(state.commType) == ExternalChannel.Sms,
                 )
             }
 
@@ -719,12 +721,19 @@ private fun ApproveSendConfirm(state: CommunicateUiState, channel: ExternalChann
                 color = c.textPrimary,
             )
             Text(
-                "Channel: ${if (channel == ExternalChannel.Email) "Email" else "Text"}",
+                "Channel: ${if (channel == ExternalChannel.Email) "Email" else "Text, kept short, with a link to the whole message in MyTribe"}",
                 style = AuntieTheme.typography.bodySmall,
                 color = c.textDim,
             )
             if (channel == ExternalChannel.Email) {
                 Text("Subject: ${state.subject.trim()}", style = AuntieTheme.typography.bodySmall, color = c.textDim)
+            } else {
+                // #2408: what the household is texted, not the draft it is cut from.
+                Text(
+                    "Text: ${householdTextPreviewLine(state.generatedCopy)}",
+                    style = AuntieTheme.typography.bodySmall,
+                    color = c.textPrimary,
+                )
             }
         }
     }
@@ -1433,7 +1442,7 @@ private fun DraftCallout(subtitle: String, needsApproval: Boolean = true) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun PreviewPanel(recipientName: String, subject: String, body: String) {
+private fun PreviewPanel(recipientName: String, subject: String, body: String, textMessage: Boolean = false) {
     val dims = AuntieTheme.dims
     DenPanel(
         title = "Live preview",
@@ -1441,7 +1450,17 @@ private fun PreviewPanel(recipientName: String, subject: String, body: String) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(dims.space3)) {
-            AuntieEmailPreviewCard(
+            // #2408: a Text is sent short with a link to the whole message in
+            // MyTribe, so its preview is that text and not an email card.
+            if (textMessage) {
+                Text(
+                    text = body.takeIf { it.isNotBlank() }?.let(::householdTextPreviewLine)
+                        ?: "Generate a draft and it shows up here.",
+                    style = AuntieTheme.typography.bodyMedium,
+                    color = AuntieTheme.colors.textPrimary,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else AuntieEmailPreviewCard(
                 modifier = Modifier.fillMaxWidth(),
                 // Author-typed subject (spec 19 item 3); computed placeholder only
                 // until the author types one. CTA stays placeholder.

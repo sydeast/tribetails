@@ -26,6 +26,7 @@ import { generateDraft, draftOpening, type GenerateDraftResult } from '../api/co
 import { approveGeneratedDraft, type ApproveDraftResult } from '../api/communicateApprove';
 import { sendGeneratedDraft } from '../api/draftSend';
 import { alreadySentText, sentDraftOnOpen } from '../lib/draftSent';
+import { householdTextPreviewLine } from '../lib/householdText';
 import {
   sendHouseholdPush,
   householdPushResultText,
@@ -82,6 +83,11 @@ const SUBJECT_MAX = 500;
  * sent the household the same message twice.
  *
  * ── A DRAFT THAT ALREADY WENT OUT OPENS AS SENT (#2428) ─────────────────────
+ * #2408 (ruling 2026-11-14): an Email carries the whole message. A Text is
+ * sent short with a link to the whole message on the household's notifications
+ * list in MyTribe, and the confirm shows that short text
+ * (`lib/householdText.ts`), so what is approved is what arrives.
+ *
  * A sent Email or Text, and a Push that reached the household's notifications
  * list or their phone, open with what happened and neither button
  * (`lib/draftSent.ts`). The server refuses a second send and a delete of one
@@ -854,7 +860,10 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       {def.deliverable === 'email' ? str(kf?.email) : str(kf?.phoneNumber)})
                     </p>
                     <p className="personalize__confirm-line">
-                      <strong>Channel:</strong> {def.deliverable === 'email' ? 'Email' : 'Text'}
+                      <strong>Channel:</strong>{' '}
+                      {def.deliverable === 'email'
+                        ? 'Email'
+                        : 'Text, kept short, with a link to the whole message in MyTribe'}
                     </p>
                     {def.deliverable === 'email' && (
                       <p className="personalize__confirm-line">
@@ -863,9 +872,16 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                     )}
                   </>
                 )}
-                <p className="personalize__confirm-line">
-                  <strong>Message:</strong> {draftText}
-                </p>
+                {def.deliverable === 'sms' ? (
+                  // #2408: what the household is texted, not the draft it is cut from.
+                  <p className="personalize__confirm-line" data-testid="confirm-text-as-sent">
+                    <strong>Text:</strong> {householdTextPreviewLine(draftText)}
+                  </p>
+                ) : (
+                  <p className="personalize__confirm-line">
+                    <strong>Message:</strong> {draftText}
+                  </p>
+                )}
                 <p className="personalize__confirm-note">
                   This reaches a real household right now. It is not undoable.
                 </p>
