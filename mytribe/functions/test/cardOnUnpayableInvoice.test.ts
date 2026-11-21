@@ -491,6 +491,9 @@ describe('#2345: a card payment on an invoice that cannot take it is held for th
     ['a draft', { ...OPEN, status: 'draft' }, 'invoice-not-sent'],
     ['a quote saved unsent', { ...OPEN, status: 'draft', invoiceStatus: 'draft', quoteDraft: true }, 'invoice-not-sent'],
     ['a quote', { ...OPEN, status: 'quote' }, 'invoice-not-sent'],
+    // #2517: marked only in the older field.
+    ['a draft in the older field only', { ...OPEN, status: undefined, invoiceStatus: 'draft' }, 'invoice-not-sent'],
+    ['a quote in the older field only', { ...OPEN, status: undefined, invoiceStatus: 'quote' }, 'invoice-not-sent'],
     ['a credit by its label', { ...OPEN, status: 'credit' }, 'invoice-credit'],
     [
       'a credit with a negative balance',
@@ -861,6 +864,13 @@ describe('#2345: why a card payment is held (the decision, on its own)', () => {
     expect(ask({ ...OPEN, status: 'draft' }, { duplicate: 'invoice-not-owed' })).toBe('invoice-not-sent');
     expect(ask({ ...OPEN, status: 'credit' }, { duplicate: 'invoice-not-owed' })).toBe('invoice-credit');
     expect(ask({ ...OPEN, amountDue: -5, amountDueCents: -500 }, { duplicate: 'invoice-not-owed' })).toBe('invoice-credit');
+  });
+
+  it('#2517: a draft or quote marked only in the older field is held; a stored status wins', () => {
+    expect(ask({ ...OPEN, status: undefined, invoiceStatus: 'draft' })).toBe('invoice-not-sent');
+    expect(ask({ ...OPEN, status: undefined, invoiceStatus: 'quote' })).toBe('invoice-not-sent');
+    expect(ask({ ...OPEN, status: 'open', invoiceStatus: 'draft' })).toBeNull();
+    expect(ask({ ...OPEN, status: 'draft', invoiceStatus: 'open' })).toBe('invoice-not-sent');
   });
 
   it('keeps the reason for a second attempt at a payment the invoice already took', () => {
