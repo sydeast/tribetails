@@ -356,6 +356,15 @@ export function editorPreviewOf(
       continue;
     }
     const line = { description: label, qty, unitCents, discountCents };
+    // #1975: the server's bounds, said beside the line as it is typed. A unit
+    // price over the cap used to go into the subtotal ($10,000,049.00 for seven
+    // 9s) and was only refused on Create.
+    if (problem === null && qty > MAX_QTY) {
+      problem = `Quantity for "${label}" cannot be more than ${String(MAX_QTY)}.`;
+    }
+    if (problem === null && unitCents > MAX_UNIT_CENTS) {
+      problem = `Unit price for "${label}" cannot be more than ${formatCentsUsd(MAX_UNIT_CENTS)}.`;
+    }
     // The line's own check, from the same validator the server runs.
     problem ??= validateInvoiceMoney([line], 0);
     lineProblems.push(problem);

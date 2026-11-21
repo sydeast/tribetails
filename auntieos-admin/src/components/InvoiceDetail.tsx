@@ -78,6 +78,14 @@ import { readInvoiceSendMarks } from '../api/invoiceSendCheck';
 import { sendMarksOf, sendOutcomeAfterSilence, type SendCheckAction } from '../lib/invoiceSendCheck';
 import { CallableTimeoutError, LONG_CALLABLE_TIMEOUT_MS } from '../lib/fns';
 import { mintPaymentIdempotencyKey } from '../lib/moneyIdempotency';
+import {
+  BIG_TIP_UNCONFIRMED,
+  bigTipConfirmLabel,
+  creditOnTopNote,
+  feeClause,
+  feeOverPaymentError,
+  tipNeedsConfirming,
+} from '../lib/recordPaymentChecks';
 import './InvoiceDetail.css';
 
 /**
@@ -938,6 +946,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   // a leftover is tip, and credit is only ever what she enters here.
   const [paidCredit, setPaidCredit] = useState('');
   const [paidSendConfirmation, setPaidSendConfirmation] = useState(false);
+  // #1975: the tip she ticked as right when it is larger than the invoice's
+  // total, in cents. A different tip asks again.
+  const [bigTipConfirmedCents, setBigTipConfirmedCents] = useState<number | null>(null);
   /**
    * #825: ONE KEY PER SUBMISSION, held across a re-press.
    *
@@ -1164,6 +1175,14 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
   });
   // The fee, for the "comes out of the tip" clause. Null while half-typed.
   const splitFee = parseOptionalMoney(paidFee);
+  // #1975: a fee larger than the payment is refused, and a tip larger than the
+  // invoice's total is asked about. See lib/recordPaymentChecks.ts.
+  const splitFeeCents = splitFee !== null ? Math.round(splitFee * 100) : 0;
+  const invoiceTotalCents = Number.isFinite(invoice.total)
+    ? Math.round(invoice.total * 100)
+    : (ledger?.totalCents ?? null);
+  const splitFeeError = split !== null && split.ok ? feeOverPaymentError(splitFeeCents, split.paidCents) : null;
+  const bigTip = split !== null && split.ok && tipNeedsConfirming(split.tipCents, invoiceTotalCents);
 
   // The STORED editScope decides only whether to OFFER the control; the server
   // still enforces on the write, and a refusal comes back with a code and is
@@ -1222,6 +1241,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
     // OFF by default. A confirmation is a message to a real household, so it
     // goes out because she ticked the box, never because the panel assumed.
     setPaidSendConfirmation(false);
+    setBigTipConfirmedCents(null);
     // Prefilled with the outstanding balance so the common case is one click,
     // and editable so a partial is one field away rather than impossible.
     setPaidAmount(key === 'markPaid' && invoice.amountDue > 0 ? String(invoice.amountDue) : '');
@@ -1697,6 +1717,20 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
           // figure does not keep refusing a payment the server would take.
           if (settleBalance) reloadLedger();
           return;
+        }
+        if (checked !== null) {
+          // #1975: refused or asked about before anything is sent.
+          const feeError = feeOverPaymentError(Math.round(fee * 100), checked.paidCents);
+          if (feeError !== null) {
+            setBusy(false);
+            setActionError(feeError);
+            return;
+          }
+          if (tipNeedsConfirming(checked.tipCents, invoiceTotalCents) && bigTipConfirmedCents !== checked.tipCents) {
+            setBusy(false);
+            setActionError(BIG_TIP_UNCONFIRMED);
+            return;
+          }
         }
         if (checked === null && !settleBalance) {
           setBusy(false);
@@ -2435,7 +2469,7 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     className="invoice-detail__field-input"
                     value={paidTotal}
                     onChange={(e) => setPaidTotal(e.target.value)}
-                    placeholder="same as collected plus tip"
+                    placeholder="collected plus tip and credit"
                     inputMode="decimal"
                     disabled={busy}
                     aria-label="Total payment amount in dollars"
@@ -2498,6 +2532,8 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     </span>
                   ) : !split.ok ? (
                     <span className="invoice-detail__unapplied-unknown">{split.error}</span>
+                  ) : splitFeeError !== null ? (
+                    <span className="invoice-detail__unapplied-unknown">{splitFeeError}</span>
                   ) : (
                     <>
                       <span className="invoice-detail__unapplied-label">
@@ -2506,10 +2542,9 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                       <span className="invoice-detail__unapplied-note">
                         {formatUsd(split.appliedCents / 100)} to this invoice,{' '}
                         {formatUsd(split.tipCents / 100)} tip
-                        {splitFee !== null && splitFee > 0
-                          ? ` (the ${formatUsd(splitFee)} fee comes out of it)`
-                          : ''}
+                        {feeClause(splitFeeCents, split.tipCents)}
                         , {formatUsd(split.creditCents / 100)} account credit.
+                        {creditOnTopNote(split.creditCents, split.appliedCents + split.overCents, paidTotal.trim() !== '')}
                         {/* #1566: said out loud when the amount typed was over
                             the balance, so the cap is never a surprise. */}
                         {split.overCents > 0
@@ -2519,6 +2554,17 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
                     </>
                   )}
                 </p>
+                {bigTip && split !== null && split.ok && invoiceTotalCents !== null && (
+                  <label className="invoice-detail__check">
+                    <input
+                      type="checkbox"
+                      checked={bigTipConfirmedCents === split.tipCents}
+                      onChange={(e) => setBigTipConfirmedCents(e.target.checked ? split.tipCents : null)}
+                      disabled={busy}
+                    />
+                    <span>{bigTipConfirmLabel(split.tipCents, invoiceTotalCents)}</span>
+                  </label>
+                )}
                 <label className="invoice-detail__check">
                   <input
                     type="checkbox"

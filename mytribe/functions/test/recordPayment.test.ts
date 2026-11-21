@@ -298,6 +298,26 @@ describe('recordPayment: the fee, and the gross tip beside it', () => {
     });
     expect(ctx.writes).toHaveLength(0);
   });
+  it('#1975 REFUSES a fee larger than the payment, and writes nothing', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    await expect(recordPaymentHandler(req({ amount: 100, fee: 500 }))).rejects.toMatchObject({
+      code: 'invalid-argument',
+      details: { code: 'fee_exceeds_amount' },
+      message: 'A fee of $500.00 is more than the $100.00 payment it came out of. Check the fee.',
+    });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('#1975 takes a fee larger than the tip, which is an ordinary card payment', async () => {
+    const ctx = seed();
+    mocks.dbFn.mockReturnValue(ctx.db);
+    const res = await recordPaymentHandler(req({ amount: 100, tip: 0, fee: 3 }));
+    expect(res).toMatchObject({ amountCents: 10000, feeCents: 300 });
+    // A fee equal to the payment is the edge that still fits.
+    const ctx2 = seed();
+    mocks.dbFn.mockReturnValue(ctx2.db);
+    await expect(recordPaymentHandler(req({ amount: 3, fee: 3 }))).resolves.toMatchObject({ feeCents: 300 });
+  });
   it('refuses a negative fee at validation rather than storing one', async () => {
     const ctx = seed();
     mocks.dbFn.mockReturnValue(ctx.db);

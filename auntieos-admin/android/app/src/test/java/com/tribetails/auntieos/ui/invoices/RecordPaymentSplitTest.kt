@@ -2,7 +2,11 @@ package com.tribetails.auntieos.ui.invoices
 
 import com.tribetails.auntieos.data.model.Invoice
 import com.tribetails.auntieos.domain.PaymentSplit
+import com.tribetails.auntieos.domain.bigTipConfirmLabel
+import com.tribetails.auntieos.domain.creditOnTopNote
+import com.tribetails.auntieos.domain.feeOverPaymentError
 import com.tribetails.auntieos.domain.paymentSplit
+import com.tribetails.auntieos.domain.tipNeedsConfirming
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -190,5 +194,49 @@ class RecordPaymentSplitTest {
         assertEquals(2.0, payment.fee, 0.0)
         assertEquals(0L, payment.creditToAccountCents)
         assertEquals(false, payment.autoApply)
+    }
+
+    // ── #1975 ────────────────────────────────────────────────────────────────
+    @Test
+    fun `1975 a credit with Payment amount blank is said to be on top of the amount`() {
+        val split = paymentSplit(100.0, tip = "", credit = "500", paymentTotal = "", amountDueCents = 21_700L)
+        assertEquals(
+            "\$600.00 paid: \$100.00 to this invoice, \$0.00 tip, \$500.00 account credit. " +
+                "The \$500.00 credit is on top of the \$100.00 amount. If the household paid less, enter what they paid under Payment amount.",
+            recordPaymentSplitCopy(split, feeCents = 0L, totalTyped = false),
+        )
+        // Typed, the credit comes out of the payment amount, and nothing is said.
+        val typed = paymentSplit(127.5, tip = "", credit = "20", paymentTotal = "200")
+        assertTrue(!recordPaymentSplitCopy(typed, feeCents = 0L, totalTyped = true).contains("on top"))
+    }
+    @Test
+    fun `1975 a fee larger than the tip comes out of the payment`() {
+        val split = paymentSplit(127.5, "", "", "")
+        assertEquals(
+            "\$127.50 paid: \$127.50 to this invoice, \$0.00 tip (the \$3.00 fee comes out of the payment), \$0.00 account credit.",
+            recordPaymentSplitCopy(split, feeCents = 300L),
+        )
+    }
+    @Test
+    fun `1975 a fee larger than the payment is refused, one inside it is not`() {
+        assertEquals(
+            "A fee of \$500.00 is more than the \$100.00 payment it came out of. Check the fee.",
+            feeOverPaymentError(50_000L, 10_000L),
+        )
+        assertNull(feeOverPaymentError(10_000L, 10_000L))
+        assertNull(feeOverPaymentError(300L, 10_000L))
+    }
+    @Test
+    fun `1975 a tip larger than the invoice total is asked about`() {
+        val split = paymentSplit(9_999_999.0, "", "", "", amountDueCents = 21_700L) as PaymentSplit.Ok
+        assertEquals(999_978_200L, split.tipCents)
+        assertTrue(tipNeedsConfirming(split.tipCents, 21_700L))
+        assertEquals(false, tipNeedsConfirming(21_700L, 21_700L))
+        assertEquals(false, tipNeedsConfirming(500L, null))
+        assertEquals(
+            "The \$9,999,782.00 tip is right. It is more than this invoice's \$217.00 total.",
+            bigTipConfirmLabel(split.tipCents, 21_700L),
+        )
+        assertEquals("", creditOnTopNote(0L, 100L, false))
     }
 }
