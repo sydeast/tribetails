@@ -116,6 +116,7 @@
 import { getApps, initializeApp, getFirestore, FieldValue, type Firestore } from './lib/firebaseAdmin';
 import { resolveLedgerAmountCents } from '../functions/src/lib/paymentMoney';
 import {
+  appliedCentsOf,
   centsToDollars,
   invoiceTotalCentsOf,
   paidCentsFromPayments,
@@ -314,8 +315,11 @@ export function planInvoiceBackfill(
   }
   if (totalCents <= 0) return report('no_total');
   if (!invoiceMarkedPaid(invoice) || amountDueCentsOf(invoice, rowsCents) > 0) return report('not_marked_paid');
-  if (rowsCents + cardCents > totalCents) return report('would_overpay');
-  if (rowsCents + cardCents < totalCents) return report('still_short');
+  // #2470: what was paid before the invoice was brought over counts with the
+  // rows. It is never a row, so the rows this writes stop short of the total by it.
+  const appliedCents = appliedCentsOf(invoice, rowsCents);
+  if (appliedCents + cardCents > totalCents) return report('would_overpay');
+  if (appliedCents + cardCents < totalCents) return report('still_short');
 
   const rows: PlannedRow[] = missing.map((ledger, i) => {
     const amountCents = amounts[i]!.amountCents;
@@ -339,10 +343,12 @@ export function planInvoiceBackfill(
     };
   });
 
+  // #2470: `paidCents` is the rows' sum, the brought-over amount excluded.
+  const rowsAfterCents = rowsCents + cardCents;
   const money = {
     paymentStatus: 'PAID',
     totalCents,
-    paidCents: totalCents,
+    paidCents: rowsAfterCents,
     overpaidCents: 0,
   };
   return {
@@ -354,7 +360,7 @@ export function planInvoiceBackfill(
       ...money,
       // The state stamp, from the doc as this write leaves it: an invoice
       // whose rows now cover it is paid and frozen like any other.
-      ...invoiceStateStampOf({ ...invoice, ...money }, totalCents),
+      ...invoiceStateStampOf({ ...invoice, ...money }, rowsAfterCents),
     },
   };
 }

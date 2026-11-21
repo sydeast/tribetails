@@ -226,6 +226,7 @@ function ledgerResult(over: Partial<GetInvoiceLedgerResult> = {}): GetInvoiceLed
     invoiceId: 'inv1',
     payments: [],
     paidCents: 0,
+    broughtOverPaidCents: 0,
     totalCents: 4000,
     amountDueCents: 4000,
     writeOffs: [],
@@ -1519,6 +1520,24 @@ describe('the payments panel', () => {
     expect(screen.getByText('#881')).toBeInTheDocument();
     expect(screen.getByText('Collected').closest('tr')).toHaveTextContent('$20.00');
     expect(screen.getByText('Still owed').closest('tr')).toHaveTextContent('$20.00');
+  });
+  it('#2470 an invoice brought over part paid shows what was paid before the move, counted in Collected', async () => {
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({ payments: [subPayment({ amountCents: 1000 })], paidCents: 2500, broughtOverPaidCents: 1500, amountDueCents: 1500 }),
+    );
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    const line = await screen.findByTestId('invoice-ledger-brought-over');
+    expect(line).toHaveTextContent('Paid in the old system');
+    expect(line).toHaveTextContent('$15.00');
+    expect(screen.getByText('Collected').closest('tr')).toHaveTextContent('$25.00');
+    expect(screen.getByText('Still owed').closest('tr')).toHaveTextContent('$15.00');
+  });
+  it('#2470 with no rows at all, the brought-over line is the table, not the empty sentence', async () => {
+    getInvoiceLedger.mockResolvedValue(ledgerResult({ paidCents: 1500, broughtOverPaidCents: 1500, amountDueCents: 2500 }));
+    render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
+    expect(await screen.findByTestId('invoice-ledger-brought-over')).toHaveTextContent('$15.00');
+    expect(screen.queryByText(/No payment has been recorded against this invoice/i)).toBeNull();
+    expect(screen.getByText('Collected').closest('tr')).toHaveTextContent('$15.00');
   });
   it('says nothing has been recorded rather than rendering an empty table', async () => {
     render(<InvoiceDetail invoice={entry()} onClose={vi.fn()} />);
@@ -3927,6 +3946,10 @@ describe('#2087 #2088 the quote actions on the detail sheet', () => {
     getInvoiceLedger.mockReset().mockReturnValue(new Promise(() => undefined));
     render(<InvoiceDetail invoice={{ ...sentQuote(), paidCents: 900 }} onClose={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'Withdraw quote' })).toHaveAttribute('aria-disabled', 'true');
+  });
+  it('#2470 what was paid before a quote was brought over holds Withdraw quote too', () => {
+    expect(quoteWithdrawHeldReason({ ...sentQuote(), broughtOverPaidCents: 1500 }, null)).toBe(WITHDRAW_PAID_REASON);
+    expect(quoteWithdrawHeldReason({ ...sentQuote(), broughtOverPaidCents: 0 }, null)).toBeNull();
   });
   it('#2358 quoteWithdrawHeldReason: a payment from either source holds it, none does not', () => {
     expect(quoteWithdrawHeldReason(sentQuote(), null)).toBeNull();

@@ -4,6 +4,8 @@ import type { GetInvoiceLedgerResult } from '../contracts/invoiceContracts.gener
 import { formatCentsUsd } from '../lib/invoiceReconcile';
 import { useBookingCatalog } from '../lib/useBookingCatalog';
 import {
+  BROUGHT_OVER_LINE,
+  broughtOverCents,
   ledgerCoversBalance,
   ledgerRowAppliedLabel,
   ledgerRowBalanceCents,
@@ -119,7 +121,10 @@ function PaymentsPanel({
   canRecordPayment: boolean;
 }) {
   const { payments, ledgerPayments } = ledger;
-  const recorded = paymentsTotalCents(payments);
+  // #2470: what was paid before the invoice was brought over has no row, so it
+  // is its own line in the table and counts in Collected.
+  const broughtOver = broughtOverCents(ledger);
+  const recorded = paymentsTotalCents(payments, broughtOver);
   const stripeGap = ledgerCoversBalance(ledger);
   const historyNameId = useId();
   const historyTipId = useId();
@@ -142,7 +147,7 @@ function PaymentsPanel({
             : 'No payment has been recorded against this invoice.'}
           {canRecordPayment && ' Use Record payment below to log one.'}
         </p>
-      ) : payments.length === 0 ? null : (
+      ) : payments.length === 0 && broughtOver === 0 ? null : (
         <table className="invoice-ledger__table">
           <caption className="invoice-ledger__caption">
             What settled this invoice. Its balance is calculated from these and nothing else.
@@ -170,6 +175,12 @@ function PaymentsPanel({
                 <td className="invoice-ledger__num">{formatCentsUsd(p.amountCents)}</td>
               </tr>
             ))}
+            {broughtOver > 0 && (
+              <tr data-testid="invoice-ledger-brought-over">
+                <td colSpan={3}>{BROUGHT_OVER_LINE}</td>
+                <td className="invoice-ledger__num">{formatCentsUsd(broughtOver)}</td>
+              </tr>
+            )}
           </tbody>
           <tfoot>
             <tr className="invoice-ledger__total-row">

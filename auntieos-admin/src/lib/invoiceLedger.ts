@@ -262,12 +262,26 @@ export function ledgerRowTowardBillCents(
 export function paymentsPanelIsEmpty(input: {
   payments: readonly unknown[];
   ledgerPayments: readonly unknown[];
+  /** #2470: paid before the invoice was brought over. A payment, with no row. */
+  broughtOverPaidCents?: number;
 }): boolean {
-  return input.payments.length === 0 && input.ledgerPayments.length === 0;
+  return input.payments.length === 0 && input.ledgerPayments.length === 0 && broughtOverCents(input) === 0;
 }
-/** Sum of the subcollection rows, for the panel's own footer. */
+/** #2470: the brought-over amount the ledger reports, or 0 on an older response. */
+export function broughtOverCents(input: { broughtOverPaidCents?: number }): number {
+  const v = input.broughtOverPaidCents;
+  return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0;
+}
+/** #2470: the line the payments table shows for it. */
+export const BROUGHT_OVER_LINE = 'Paid in the old system';
+/**
+ * Sum of the subcollection rows, for the panel's own footer. #2470: plus what
+ * was paid before the invoice was brought over, when the caller passes it, so
+ * the footer agrees with the ledger's `paidCents`.
+ */
 export function paymentsTotalCents(
   payments: readonly Pick<GetInvoiceLedgerResultPayment, 'amountCents'>[],
+  broughtOverPaidCents = 0,
 ): number {
-  return payments.reduce((sum, p) => sum + p.amountCents, 0);
+  return payments.reduce((sum, p) => sum + p.amountCents, 0) + broughtOverCents({ broughtOverPaidCents });
 }

@@ -365,6 +365,8 @@ test('the invoice ledger tables span their panel at 390px, and only Payment Hist
         },
       ],
       paidCents: 6000,
+      // #2470: not brought over from the old system.
+      broughtOverPaidCents: 0,
       totalCents: 24000,
       amountDueCents: 18000,
       // #2090: nothing written off on this invoice.

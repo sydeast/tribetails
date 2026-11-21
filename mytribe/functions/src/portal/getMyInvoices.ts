@@ -13,7 +13,7 @@ import { INVOICE_STATES, type InvoiceState, type InvoiceEditScope } from '../lib
 import { validateResponse } from '../lib/callableResponse';
 import { hiddenFromHousehold, quoteDecisionOf } from '../lib/quoteDecision';
 import { amountDueCentsOf } from '../lib/amountDueRule';
-import { centsToDollars, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
+import { appliedCentsOf, centsToDollars, paidCentsFromPayments, type PaymentAmount } from '../lib/invoiceMath';
 import { cardCheckoutRefusal, cardCheckoutRefusalSentence } from '../lib/cardPaymentApply';
 import type { InvoiceDoc } from '../admin/markInvoicePaid';
 import { payMethodSettingsFrom, resolvePayMethods, settingsForInvoice } from '../lib/paymentMethods';
@@ -170,6 +170,10 @@ export const InvoiceDtoSchema = z
      * report the entire total as collected on exactly the invoices that are
      * wrong. 0 on an invoice that predates the field, which is honest rather than
      * flattering: the portal does not claim a payment it has no record of.
+     *
+     * #2470: plus what was paid before the invoice was brought over from the
+     * old system (`broughtOverPaidCents` on the doc), which is a record of
+     * payment with no row here.
      */
     paidCents: CentsSchema,
     /**
@@ -517,7 +521,7 @@ export async function getMyInvoicesHandler(
     // larger of the two is read, the same as `payInvoice` charges by. A
     // stated balance above the total less this is stale, and the rule reads
     // it as the payments leave it.
-    const paidCents = appliedCentsOf(data, payRows ?? null);
+    const paidCents = recordedPaidCentsOf(data, payRows ?? null);
     // THE CENTS SEAM, deliberately (issue #409). `resolvePayMethods` reads
     // CENTS; this collection's `amountDue` is a legacy DOLLARS float. The rule
     // reads the integer field the settlement pass writes first and falls back to
@@ -543,7 +547,11 @@ export async function getMyInvoicesHandler(
     // web and Android screens keep reading the number they are handed.
     const amountDueCents = amountDueCentsOf(data, paidCents);
     const amountDue = centsToDollars(amountDueCents);
-    const partiallyPaid = !isCredit && !isPaid && paidCents > 0 && amountDue > 0;
+    // #2470: what the household is shown as paid counts what was paid before
+    // the invoice was brought over, so $40 brought over at $25 reads $15 of $40
+    // paid. The rule above reads that amount off the doc itself.
+    const appliedCents = appliedCentsOf(data, paidCents);
+    const partiallyPaid = !isCredit && !isPaid && appliedCents > 0 && amountDue > 0;
     const payRefusal =
       payRows === undefined
         ? null
@@ -560,7 +568,7 @@ export async function getMyInvoicesHandler(
       isPaid,
       status,
       editScope: editScopeFrom(data['editScope']),
-      paidCents,
+      paidCents: appliedCents,
       partiallyPaid,
       date: stringOrNull(data['date']),
       dueDate: stringOrNull(data['dueDate']),
@@ -759,7 +767,7 @@ export function openBalanceCentsOf(
   /**
    * #2435: the applied cents from each invoice's payment rows, by position, or
    * null where they were not read. The larger of this and the stored
-   * `paidCents` is read, as `appliedCentsOf` does.
+   * `paidCents` is read, as `recordedPaidCentsOf` does.
    */
   rowsPaidCents: ReadonlyArray<number | null> = [],
 ): number {
@@ -774,11 +782,15 @@ export function openBalanceCentsOf(
   return sum;
 }
 /**
- * #2435: what has been applied to an invoice, in cents, for the portal's
+ * #2435: what has been recorded against an invoice, in cents, for the portal's
  * balance: the larger of its stored `paidCents` and its payment rows' sum
  * (when the caller read them). `payInvoice` charges by the same figure.
+ *
+ * #2470: ROWS ONLY, which is what `amountDueCentsOf` takes. What was brought
+ * over paid is added by the shared `invoiceMath.ts#appliedCentsOf`, which the
+ * rule calls itself.
  */
-export function appliedCentsOf(data: Record<string, unknown>, rows: readonly PaymentAmount[] | null): number {
+export function recordedPaidCentsOf(data: Record<string, unknown>, rows: readonly PaymentAmount[] | null): number {
   return Math.max(integerCentsFrom(data['paidCents']), rows === null ? 0 : paidCentsFromPayments(rows));
 }
 /**

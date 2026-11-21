@@ -996,6 +996,12 @@ internal fun InvoicePaymentsPanel(
                     color = c.textDim,
                 )
             }
+            // #2470: paid before the invoice was brought over. It has no row,
+            // and it counts toward what has been paid.
+            val broughtOver = invoiceBroughtOverCentsOf(invoice)
+            if (broughtOver > 0L) {
+                DetailRow(BROUGHT_OVER_LINE, formatEditCents(broughtOver), valueMono = true)
+            }
 
             when {
                 paymentsState is FirestoreResult.Loading ->
@@ -1036,7 +1042,7 @@ internal fun InvoicePaymentsPanel(
                         LedgerCaveatBanner(clientPayments)
                     }
                 }
-                invoice.paymentsHistory.isBlank() ->
+                invoice.paymentsHistory.isBlank() && broughtOver == 0L ->
                     EmptyHint(invoicePaymentsEmptyCopy(actions))
             }
         }

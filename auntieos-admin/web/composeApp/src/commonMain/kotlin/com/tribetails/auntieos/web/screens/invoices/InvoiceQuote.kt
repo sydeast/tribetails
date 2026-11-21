@@ -91,7 +91,8 @@ const val WITHDRAW_PAID_REASON: String = "A payment is recorded on this quote, s
  * reads the payment rows again and refuses on its own.
  */
 fun quoteWithdrawHeldReason(invoice: Invoice): String? =
-    if ((invoicePaidCentsOf(invoice) ?: 0L) > 0L) WITHDRAW_PAID_REASON else null
+    // #2470: what was paid before it was brought over holds it too.
+    if ((invoiceAppliedCentsOf(invoice) ?: 0L) > 0L) WITHDRAW_PAID_REASON else null
 const val QUOTE_CONVERTED_TEXT: String =
     "Quote turned into a draft invoice. Send it with Review and send when it is ready."
 

@@ -46,7 +46,7 @@ import {
   type InvoicePaymentStanding,
   type InvoiceStateDoc,
 } from './invoiceEditPolicy';
-import { invoiceTotalCentsOf } from './invoiceMath';
+import { appliedCentsOf, invoiceTotalCentsOf } from './invoiceMath';
 
 /** The sentence every refusal carries, so the web and Android portals print one message. */
 export const PAID_INVOICE_REFUSAL = 'This invoice is already paid, so it cannot take another payment.';
@@ -112,13 +112,17 @@ export function paidByCardFallback(doc: Record<string, unknown> | undefined | nu
  * of terms brought back money the household was never shown. So the stamp
  * (`invoiceStateStampOf`), `updateInvoice` and the session linker all read the
  * standing here, and a fallback invoice is settled for all three.
+ *
+ * `paidCents` is the rows' sum. #2470: what was brought over paid is added
+ * here from the doc, so an invoice brought over in full reads settled and one
+ * brought over part paid reads part paid, as if those payments were rows.
  */
 export function paymentStandingOfInvoice(
   doc: Record<string, unknown> & { total?: unknown; totalCents?: unknown },
   paidCents: number,
 ): InvoicePaymentStanding {
   if (paidByCardFallback(doc)) return 'settled';
-  return paymentStandingOf(invoiceTotalCentsOf(doc), paidCents);
+  return paymentStandingOf(invoiceTotalCentsOf(doc), appliedCentsOf(doc, paidCents));
 }
 
 /** `HttpsError` `details.code` when the household tries to pay a cancelled invoice. */

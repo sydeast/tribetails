@@ -8,6 +8,8 @@ import {
   ledgerRowTowardBillCents,
   paymentDayLabel,
   paymentMethodLabel,
+  BROUGHT_OVER_LINE,
+  broughtOverCents,
   paymentsPanelIsEmpty,
   paymentsTotalCents,
   sessionDayLabel,
@@ -118,6 +120,25 @@ describe('paymentsTotalCents', () => {
 
   it('is 0 for no payments, which is a real answer and not a missing one', () => {
     expect(paymentsTotalCents([])).toBe(0);
+  });
+  it('#2470 adds what was paid before the invoice was brought over', () => {
+    expect(paymentsTotalCents([{ amountCents: 1000 }], 1500)).toBe(2500);
+    expect(paymentsTotalCents([], 1500)).toBe(1500);
+  });
+});
+describe('#2470 the brought-over line', () => {
+  it('reads only a positive whole number of cents', () => {
+    expect(broughtOverCents({ broughtOverPaidCents: 1500 })).toBe(1500);
+    expect(broughtOverCents({})).toBe(0);
+    expect(broughtOverCents({ broughtOverPaidCents: -1 })).toBe(0);
+    expect(broughtOverCents({ broughtOverPaidCents: 1.5 })).toBe(0);
+  });
+  it('keeps the panel from reading empty', () => {
+    expect(paymentsPanelIsEmpty({ payments: [], ledgerPayments: [], broughtOverPaidCents: 1500 })).toBe(false);
+    expect(paymentsPanelIsEmpty({ payments: [], ledgerPayments: [], broughtOverPaidCents: 0 })).toBe(true);
+  });
+  it('is named in plain words', () => {
+    expect(BROUGHT_OVER_LINE).toBe('Paid in the old system');
   });
 });
 

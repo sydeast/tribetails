@@ -1215,7 +1215,7 @@ prints any refusal. `lib/checkoutBeingRecorded.ts` has the rule.
 
 ### getInvoiceLedger
 - req `{ invoiceId: string /* 1..200 */ }` (`.strict()`)
-- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null, sourcePaymentId: string|null /* the ROOT payments row an apply came in on */ }>, paidCents: number, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number /* gross tip INCLUDED */, amountResolved: boolean /* false = the units could not be read; the 0 is a floor, not a figure */, tipCents: number /* GROSS when tipBasis says so */, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean /* false = a migrated row whose fee was dropped */, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, appliedInvoiceId: string, appliedInvoiceNumber: string /* the "Applied to #n" column */, method: string, reference: string, date: string /* FREE TEXT */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, unlinkedKinfolkPayments: Array<{ /* same row shape as ledgerPayments */ }>, unresolvedAmountCount: number /* rows with amountResolved: false, across BOTH root lists */, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
+- res `{ invoiceId: string, payments: Array<{ paymentId: string, amountCents: number, method: string|null, reference: string|null, paidAt: string|null /* ISO */, recordedBy: string|null, sourcePaymentId: string|null /* the ROOT payments row an apply came in on */ }>, paidCents: number /* rows + broughtOverPaidCents */, broughtOverPaidCents: number /* #2470, 0 unless brought over part paid */, totalCents: number, amountDueCents: number, ledgerPayments: Array<{ paymentId: string, amountCents: number /* gross tip INCLUDED */, amountResolved: boolean /* false = the units could not be read; the 0 is a floor, not a figure */, tipCents: number /* GROSS when tipBasis says so */, feeCents: number, tipBasis: 'gross'|'net'|'unknown', reconciles: boolean /* false = a migrated row whose fee was dropped */, appliedCents: number, unappliedCents: number /* SIGNED */, proceedsCents: number, autoApply: boolean, appliedInvoiceId: string, appliedInvoiceNumber: string /* the "Applied to #n" column */, method: string, reference: string, date: string /* FREE TEXT */, notes: string /* STAFF ONLY */, recordedBy: string|null }>, unlinkedKinfolkPayments: Array<{ /* same row shape as ledgerPayments */ }>, unresolvedAmountCount: number /* rows with amountResolved: false, across BOTH root lists */, sessions: Array<{ sessionId: string, serviceType: string, status: string, startTime: string /* ISO */, completedAt: string|null, durationMinutes: number|null, linkedBack: boolean }>, missingSessionIds: string[], orphanSessionIds: string[], truncated: boolean }`
 - Read only. Writes nothing, stamps no classifier state, repairs nothing. No `ok`
   field, same as `listUninvoicedSessions`: a pure read answers with data or
   throws, and has no partial success to report.
@@ -1232,8 +1232,10 @@ prints any refusal. `lib/checkoutBeingRecorded.ts` has the rule.
   - `payments` is the `invoices/{id}/payments` SUBCOLLECTION, THE AUTHORITY.
     `paidCents` is their sum, computed with `invoiceMath.ts#paidCentsFromPayments`
     (stored `amountCents` first, the legacy float `amount` rounded once when a
-    pre-2026-07-25 row carries only dollars), and `amountDueCents` is
-    `settleInvoice` over it, clamped at 0.
+    pre-2026-07-25 row carries only dollars), plus `broughtOverPaidCents`
+    (#2470: what was paid before the invoice was brought over from the old
+    system, which has no row), and `amountDueCents` is `settleInvoiceDoc` over
+    it, clamped at 0.
   - `ledgerPayments` is ROOT `payments` rows whose `invoiceId` names this
     invoice: the DISPLAY ledger written by `recordPayment`, `stripeWebhook.ts`
     and the historical `match_payments_to_invoices.py`. Counted in NOTHING here.

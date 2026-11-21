@@ -57,11 +57,11 @@ import {
 } from '../admin/markInvoicePaid';
 import {
   paidCentsFromPayments,
-  invoiceTotalCentsOf,
-  settleInvoice,
+  settleInvoiceDoc,
   centsToDollars,
   formatUsdCents,
   type PaymentAmount,
+  type InvoiceDocSettlement,
   type InvoiceSettlementState,
 } from './invoiceMath';
 import { invoiceStateStampOf } from './invoiceStateStamp';
@@ -79,6 +79,7 @@ export interface ApplyOutcome {
   /** Where the invoice stands AFTER the apply, from every recorded payment. */
   state: InvoiceSettlementState;
   totalCents: number;
+  /** What has been applied: the rows plus anything brought over (#2470). */
   paidCents: number;
   amountDueCents: number;
   overpaidCents: number;
@@ -105,8 +106,9 @@ export interface ApplyStep {
   invoiceNumber: string;
   doc: InvoiceDoc;
   appliedCents: number;
-  before: ReturnType<typeof settleInvoice>;
-  after: ReturnType<typeof settleInvoice>;
+  /** #2470: settled on the rows plus the brought-over amount. */
+  before: InvoiceDocSettlement;
+  after: InvoiceDocSettlement;
 }
 
 /** An invoice as read from Firestore, paired with its own payment subcollection. */
@@ -208,8 +210,9 @@ export function planApply(input: {
   }
 
   const existingPaidCents = paidCentsFromPayments(invoice.existingPayments);
-  const totalCents = invoiceTotalCentsOf(doc);
-  const before = settleInvoice(totalCents, existingPaidCents);
+  // #2470: the rows and the brought-over amount, so a $10 payment on a $40
+  // invoice brought over at $25 leaves $15, not $30.
+  const before = settleInvoiceDoc(doc, existingPaidCents);
 
   const settled = alreadySettledRefusal(doc, invoice.existingPayments.length, before.state);
   if (settled !== null) return { ok: false, refusal: settled };
@@ -227,7 +230,7 @@ export function planApply(input: {
       doc,
       appliedCents,
       before,
-      after: settleInvoice(totalCents, existingPaidCents + appliedCents),
+      after: settleInvoiceDoc(doc, existingPaidCents + appliedCents),
     },
   };
 }
@@ -281,7 +284,7 @@ export function balanceToSettle(
   }
   const lifecycle = refusedLifecycle(doc);
   if (lifecycle !== null) return { ok: false, refusal: { code: 'apply_invoice_not_payable', message: lifecycle } };
-  const before = settleInvoice(invoiceTotalCentsOf(doc), paidCentsFromPayments(invoice.existingPayments));
+  const before = settleInvoiceDoc(doc, paidCentsFromPayments(invoice.existingPayments));
   const settled = alreadySettledRefusal(doc, invoice.existingPayments.length, before.state);
   if (settled !== null) return { ok: false, refusal: { ...settled, amountDueCents: 0 } };
   if (before.amountDueCents <= 0) {
@@ -429,7 +432,8 @@ export function stageApply(
     status: settling ? 'paid' : 'open',
     paymentStatus: settling ? 'PAID' : 'PARTIAL',
     totalCents: step.after.totalCents,
-    paidCents: step.after.paidCents,
+    // #2470: the rows only. The brought-over amount stays in its own field.
+    paidCents: step.after.rowsPaidCents,
     amountDueCents: step.after.amountDueCents,
     overpaidCents: step.after.overpaidCents,
     amountDue: centsToDollars(step.after.amountDueCents),
@@ -459,7 +463,7 @@ export function stageApply(
     invRef,
     {
       ...invoiceUpdate,
-      ...invoiceStateStampOf({ ...step.doc, ...invoiceUpdate }, step.after.paidCents),
+      ...invoiceStateStampOf({ ...step.doc, ...invoiceUpdate }, step.after.rowsPaidCents),
       // After the stamp: the classifier reads none of these.
       ...(input.invoiceExtras ?? {}),
     },

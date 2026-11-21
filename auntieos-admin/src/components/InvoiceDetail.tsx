@@ -19,6 +19,7 @@ import {
 import {
   formatUsd,
   invoiceActionsOffered,
+  invoiceAppliedCents,
   invoicePartialPayment,
   invoiceStateInfo,
   isInvoiceOverdue,
@@ -790,7 +791,9 @@ export const WITHDRAW_PAID_REASON = 'A payment is recorded on this quote, so it 
  * offering what it would refuse.
  */
 export function quoteWithdrawHeldReason(invoice: InvoiceEntry, ledgerPaidCents: number | null): string | null {
-  const stored = typeof invoice.paidCents === 'number' && Number.isFinite(invoice.paidCents) ? invoice.paidCents : 0;
+  // #2470: the stored figure counts what was paid before it was brought over;
+  // the ledger's `paidCents` already does.
+  const stored = invoiceAppliedCents(invoice);
   const paid = ledgerPaidCents !== null && Number.isFinite(ledgerPaidCents) ? Math.max(ledgerPaidCents, stored) : stored;
   return paid > 0 ? WITHDRAW_PAID_REASON : null;
 }
@@ -1877,10 +1880,10 @@ export function InvoiceDetail({ invoice, initialAction, onClose }: InvoiceDetail
               <dd>{formatUsd(partial.paidCents / 100)}</dd>
             </div>
           )}
-          {writtenOffCents !== null && typeof invoice.paidCents === 'number' && invoice.paidCents > 0 && (
+          {writtenOffCents !== null && invoiceAppliedCents(invoice) > 0 && (
             <div className="invoice-detail__fact">
               <dt>Paid</dt>
-              <dd>{formatCentsUsd(invoice.paidCents)}</dd>
+              <dd>{formatCentsUsd(invoiceAppliedCents(invoice))}</dd>
             </div>
           )}
           {writtenOffCents !== null && (

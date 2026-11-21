@@ -4754,6 +4754,14 @@ data class Invoice(
      */
     val paidCents: JsonElement? = null,
     /**
+     * #2470: what was paid before this invoice was brought over from the old
+     * system, in integer cents. Stamped once by the data reload, never a
+     * payment row and never inside [paidCents]. Read through
+     * `screens.invoices.invoiceAppliedCentsOf`. Raw for the same reason as
+     * [paidCents]. Absent on every other invoice.
+     */
+    val broughtOverPaidCents: JsonElement? = null,
+    /**
      * #1239: the exact integer total the invoice callables write beside the
      * dollar [total]. Read through `screens.invoices.invoiceTotalDisagreementOf`,
      * which prefers it over [total]. Raw for the same reason as [paidCents].

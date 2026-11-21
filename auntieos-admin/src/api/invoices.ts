@@ -113,6 +113,13 @@ export interface InvoiceEntry {
    * exactly the invoices that are wrong.
    */
   paidCents?: number;
+  /**
+   * #2470: what was paid before this invoice was brought over from the old
+   * system, in integer cents. Stamped once by the data reload, never a payment
+   * row and never inside `paidCents`. Counted as applied with it
+   * (`invoiceAppliedCents`). Absent on every other invoice.
+   */
+  broughtOverPaidCents?: number;
   /** Collected beyond the total, in integer cents. Present only after an overpayment. */
   overpaidCents?: number;
   /**

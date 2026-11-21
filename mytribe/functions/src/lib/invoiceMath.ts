@@ -158,6 +158,77 @@ export function paidCentsFromPayments(payments: readonly PaymentAmount[]): numbe
 }
 
 /**
+ * #2470: THE FIELD AN INVOICE BROUGHT OVER PART PAID CARRIES.
+ *
+ * The data reload copies the old system's invoices with their total and their
+ * stated balance, and their earlier payments are not rows in
+ * `invoices/{id}/payments` (the importer puts them in the root `payments`
+ * collection with no invoice reference). So the reload stamps what had been
+ * paid, total minus stated balance taken once at import, on the invoice in
+ * this field, and it counts as applied everywhere a balance is worked out.
+ *
+ * NEVER FOLDED INTO `paidCents`. Every payment path rewrites the stored
+ * `paidCents` as the sum of the rows, so a figure kept there would be wiped by
+ * the first payment recorded. The stored `paidCents` stays what the rows sum
+ * to, and this field is added to it by `appliedCentsOf` and nowhere else.
+ */
+export const BROUGHT_OVER_PAID_FIELD = 'broughtOverPaidCents';
+
+/**
+ * The brought-over paid amount, in cents. 0 when the field is absent, not a
+ * whole number, or not positive: a broken write is no evidence of payment.
+ */
+export function broughtOverPaidCentsOf(doc: object | null | undefined): number {
+  // `object`, not `{ broughtOverPaidCents?: unknown }`: every invoice shape in
+  // this codebase is accepted, including the narrow ones that never name it.
+  const v = (doc as { broughtOverPaidCents?: unknown } | null | undefined)?.broughtOverPaidCents;
+  return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0;
+}
+
+/**
+ * #2470: WHAT HAS BEEN APPLIED TO AN INVOICE, in cents. THE ONE HELPER.
+ *
+ * `rowsPaidCents` is what the invoice's payment rows sum to
+ * (`paidCentsFromPayments`), or the stored `paidCents` when that is all the
+ * caller holds, which every payment path writes as the same sum. The
+ * brought-over amount is added here. Every balance (ruling #2435: total minus
+ * payments minus credits) is the total less this figure.
+ */
+export function appliedCentsOf(doc: object | null | undefined, rowsPaidCents: number): number {
+  return Math.round(finite(rowsPaidCents)) + broughtOverPaidCentsOf(doc);
+}
+
+/** `settleInvoice` for an invoice doc, with what it settles against spelled out. */
+export interface InvoiceDocSettlement extends InvoiceSettlement {
+  /**
+   * What the payment rows sum to. THE FIGURE STORED AS `paidCents` and passed
+   * to the state stamp. `paidCents` above is the applied figure (rows plus the
+   * brought-over amount), which is what the balance and the state come from.
+   */
+  rowsPaidCents: number;
+  /** #2470: the brought-over amount inside `paidCents`. Never a row. */
+  broughtOverPaidCents: number;
+}
+
+/**
+ * Where an invoice doc stands once its payment rows (`rowsPaidCents`) and its
+ * brought-over amount are both counted. Every payment path settles with this
+ * and stores `rowsPaidCents`, never `paidCents`, as the invoice's `paidCents`.
+ */
+export function settleInvoiceDoc(
+  doc: { totalCents?: unknown; total?: unknown },
+  rowsPaidCents: number,
+): InvoiceDocSettlement {
+  const rows = Math.round(finite(rowsPaidCents));
+  const broughtOver = broughtOverPaidCentsOf(doc);
+  return {
+    ...settleInvoice(invoiceTotalCentsOf(doc), rows + broughtOver),
+    rowsPaidCents: rows,
+    broughtOverPaidCents: broughtOver,
+  };
+}
+
+/**
  * What an invoice is worth, in cents, from a raw doc.
  *
  * Two sources, in this order and for this reason:

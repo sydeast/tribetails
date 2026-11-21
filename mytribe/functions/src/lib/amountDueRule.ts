@@ -37,9 +37,17 @@
  * stated: there is nothing left to measure it against, and
  * `cardCheckoutRefusal` refuses both by name (#2410).
  *
- * A STATED BALANCE BELOW WHAT THE ROWS LEAVE STANDS. That is an invoice brought
- * over part paid, whose earlier payments were never written as rows here, and
- * its stated figure is the correct owed amount. In the same way `amountDue: 0` on a
+ * #2470: WHAT IS APPLIED IS THE ROWS PLUS THE BROUGHT-OVER AMOUNT. An invoice
+ * brought over part paid carries what was paid before the reload in
+ * `broughtOverPaidCents` (`invoiceMath.ts#appliedCentsOf`), so total $40,
+ * stated $25, no rows owes $25 by the subtraction, and after a $10 row it owes
+ * $15. The rule reads that field itself: callers pass the rows' sum (or the
+ * stored `paidCents`, which is the same sum) and never add it.
+ *
+ * A STATED BALANCE BELOW WHAT THE TOTAL LESS APPLIED LEAVES STANDS. That
+ * covers an invoice brought over before the field existed, until the backfill
+ * stamps it (`mytribe/scripts/backfillBroughtOverPaid.ts`): its stated figure
+ * is the correct owed amount. In the same way `amountDue: 0` on a
  * bill whose payments fall short is the pre-2026-07-25 partial-payment
  * corruption, and it is `lib/invoicePaymentRepair.ts`'s to fix from the payment
  * rows, deliberately and under an operator's eye. Re-deriving it here would
@@ -75,14 +83,15 @@
  * account-balance matter for the operator (there are no refunds), and
  * `reportLegacyAmountDue.ts` counts those documents so they can be looked at.
  *
- * ZERO IMPORTS BUT ONE. `invoiceMath.ts` imports nothing at all, and this module
- * takes only its `invoiceTotalCentsOf`, because "what is this invoice worth" is
- * already answered once there and asking it twice is how the two readings above
- * happened. Everything else here is arithmetic on its result, so this module
- * stays safe to import from the pure classifier, the triggers, the callables,
- * the scripts and the tests alike.
+ * ONE IMPORT. `invoiceMath.ts` imports nothing at all, and this module takes
+ * only its `invoiceTotalCentsOf` and `appliedCentsOf`, because "what is this
+ * invoice worth" and "what has been applied to it" are already answered once
+ * there and asking either twice is how the two readings above happened.
+ * Everything else here is arithmetic on their results, so this module stays
+ * safe to import from the pure classifier, the triggers, the callables, the
+ * scripts and the tests alike.
  */
-import { invoiceTotalCentsOf } from './invoiceMath';
+import { appliedCentsOf, invoiceTotalCentsOf } from './invoiceMath';
 
 /** The fields the rule reads. All unknown: real documents are missing keys. */
 export interface AmountDueDoc {
@@ -91,6 +100,8 @@ export interface AmountDueDoc {
   total?: unknown;
   totalCents?: unknown;
   status?: unknown;
+  /** #2470: paid before the reload, never a row. Read by `appliedCentsOf`. */
+  broughtOverPaidCents?: unknown;
 }
 
 /**
@@ -146,7 +157,8 @@ export function statesNoBalance(doc: AmountDueDoc): boolean {
  *
  * `paidCents` is the sum of the invoice's `payments` SUBCOLLECTION
  * (`invoiceMath.ts#paidCentsFromPayments`) when the caller holds it, and `null`
- * when the caller is a pure reader that cannot fetch it. Those two are the same
+ * when the caller is a pure reader that cannot fetch it. It is ROWS ONLY: the
+ * brought-over amount (#2470) is added here from the doc. Those two are the same
  * branch whenever nothing has been collected; see the header.
  *
  * A stated balance is returned as stated, negative included, unless it asks
@@ -155,12 +167,16 @@ export function statesNoBalance(doc: AmountDueDoc): boolean {
  */
 export function amountDueCentsOf(doc: AmountDueDoc, paidCents: number | null): number {
   const totalCents = invoiceTotalCentsOf(doc);
-  const paid = typeof paidCents === 'number' && Number.isFinite(paidCents) ? Math.round(paidCents) : 0;
+  const rows = typeof paidCents === 'number' && Number.isFinite(paidCents) ? Math.round(paidCents) : 0;
+  // #2470: the brought-over amount is read off the doc here, so no caller
+  // adds it and none can add it twice. A pure reader passing `null` gets it too.
+  const paid = appliedCentsOf(doc, rows);
   const stated = statedAmountDueCents(doc);
   if (stated !== null) {
     // #2435: a stated balance never asks for more than the total less what
     // has been applied. A credit (negative) and a doc with no total pass as
-    // stated; a lower stated figure (brought over part paid) stands.
+    // stated; a lower stated figure stands (an invoice brought over part
+    // paid before #2470's field was stamped on it).
     // Rows that already cover the total leave the stated figure too: that
     // shape is #2410's, refused at checkout by `cardCheckoutRefusal` and left
     // for the office, never read here as settled.
@@ -199,7 +215,7 @@ export function amountDueDollarsOf(doc: AmountDueDoc, paidCents: number | null):
  */
 export function legacyOverpaidCentsOf(doc: AmountDueDoc, paidCents: number | null): number {
   if (statedAmountDueCents(doc) !== null) return 0;
-  const paid = typeof paidCents === 'number' && Number.isFinite(paidCents) ? Math.round(paidCents) : 0;
+  const paid = appliedCentsOf(doc, typeof paidCents === 'number' && Number.isFinite(paidCents) ? Math.round(paidCents) : 0);
   if (paid <= 0) return 0;
   return Math.max(0, paid - invoiceTotalCentsOf(doc));
 }
