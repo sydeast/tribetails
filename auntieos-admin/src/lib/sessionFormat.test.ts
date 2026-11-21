@@ -167,6 +167,13 @@ describe('sessionState (positive enumeration, AO-12-style: never by negation)', 
     expect(sessionState('CANCELLED')).toBe('cancelled');
   });
 
+  it('#2268: reads all three stored spellings of a called-off visit as cancelled', () => {
+    expect(sessionState('CANCELLED')).toBe('cancelled');
+    expect(sessionState('cancelled')).toBe('cancelled');
+    expect(sessionState('CANCELED')).toBe('cancelled');
+    expect(sessionState(' canceled ')).toBe('cancelled');
+  });
+
   it('an unrecognized or blank status is honestly "unknown", never silently assumed scheduled', () => {
     expect(sessionState('')).toBe('unknown');
     expect(sessionState('some_future_code')).toBe('unknown');
@@ -297,6 +304,17 @@ describe('groupSessionsByPhase: Active / Overdue / Upcoming / Recent, and nothin
   it('dates a cancellation by its start time, since a cancelled visit has no completedAt', () => {
     const rows: Row[] = [{ id: 'called-off', startTime: dayOffset(-1), status: 'CANCELLED' }];
     expect(idsByPhase(rows).recent).toEqual(['called-off']);
+  });
+  it('#2268: files a one-L CANCELED visit under Recent, never Upcoming or Overdue', () => {
+    const rows: Row[] = [
+      { id: 'one-l-yesterday', startTime: dayOffset(-1), status: 'CANCELED' },
+      { id: 'one-l-tomorrow', startTime: dayOffset(1), status: 'CANCELED' },
+      { id: 'one-l-old', startTime: dayOffset(-10), status: 'canceled' },
+    ];
+    const phases = idsByPhase(rows);
+    expect(phases.recent).toEqual(['one-l-yesterday']);
+    expect(phases.upcoming).toEqual([]);
+    expect(phases.overdue).toEqual([]);
   });
   it('shows a scheduled visit yesterday that never got clocked, rather than dropping it', () => {
     // The archive kept SCHEDULED visible from yesterday for exactly this reason:
