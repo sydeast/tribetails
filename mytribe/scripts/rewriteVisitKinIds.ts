@@ -162,7 +162,7 @@ function report(summary: Summary, plans: HouseholdKinIdPlan[], mode: Mode): void
     for (const r of plan.refusals) {
       const why =
         r.reason === 'crossed-link'
-          ? 'card record may be another Kin (shared with another card, or archived): run repair:crossed-kin-links first'
+          ? 'card record may be another Kin (shared with another card, or archived while the card is live): heal the pair with repair:crossed-kin-links'
           : r.reason === 'two-ids-one-record'
             ? 'two ids on it would become one record (may be two Kin)'
             : 'card id also named outside kinIds';
