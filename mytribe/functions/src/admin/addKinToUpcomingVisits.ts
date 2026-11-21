@@ -425,9 +425,13 @@ export async function addKinToUpcomingVisitsHandler(
     }
   }
   // A visit whose only gap was its envelope counts once its envelope is put
-  // right, so the retry after a failed envelope answers what it fixed.
-  for (const v of envelopeOnly) {
-    if (v.envelope !== null && envelopesWritten.has(v.envelope.path)) changed.add(v);
+  // right, but only on a pure repair (no visit lacked the Kin), so the retry
+  // after a failed envelope answers what it fixed and an ordinary apply never
+  // says more visits than its confirm named.
+  if (missing.length === 0) {
+    for (const v of envelopeOnly) {
+      if (v.envelope !== null && envelopesWritten.has(v.envelope.path)) changed.add(v);
+    }
   }
   // ONE notice per recipient for the whole change, sent before a failure is
   // reported so the visits this call did change are told about (see the header).

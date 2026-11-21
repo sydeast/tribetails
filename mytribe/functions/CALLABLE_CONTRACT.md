@@ -2649,7 +2649,7 @@ console; not in the contracts registry.
 - Every apply also puts right the envelope of an upcoming visit that already
   carries the Kin while its envelope does not (an envelope write that failed
   on an earlier call); such a visit is not counted in `upcoming`, and counts in
-  `added` once its envelope is written.
+  `added` only on an apply where no visit lacked the Kin (the retry).
 - Notices: ONE per recipient for the whole change (#532/#536 shape), never one
   per visit. Each household copy written carries a fresh `kinAddedStamp`, and
   `onBookingsWrite` sends neither `kincare.changed` nor `assignment.changed`

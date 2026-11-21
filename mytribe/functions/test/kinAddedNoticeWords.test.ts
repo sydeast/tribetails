@@ -48,7 +48,7 @@ const oneVisit = {
 describe('#1822: one message names every visit a Kin was added to', () => {
   it('the household email lists all six days', () => {
     const out = email('kincare.changed', kinAdded);
-    for (const v of visits) expect(out.text).toContain(`- ${v.weekday}, ${v.date} at 9:00 AM`);
+    for (const v of visits) expect(out.text).toContain(`${v.weekday}, ${v.date} at 9:00 AM`);
     expect(out.html).toContain('Pepper is now on these visits too');
     expect(out.html).not.toContain('has been updated');
   });
@@ -63,7 +63,7 @@ describe('#1822: one message names every visit a Kin was added to', () => {
   it("the Auntie's email lists her days, and her SMS and push give the count", () => {
     const hers = { ...kinAdded, visits: visits.slice(0, 4), visitCount: 4, portalUrl: 'https://auntie.tribetails.com' };
     const out = email('assignment.changed', hers);
-    for (const v of visits.slice(0, 4)) expect(out.text).toContain(`- ${v.weekday}, ${v.date} at 9:00 AM`);
+    for (const v of visits.slice(0, 4)) expect(out.text).toContain(`${v.weekday}, ${v.date} at 9:00 AM`);
     expect(out.text).not.toContain('Fri, Mar 5');
     expect(line(seed('assignment.changed').smsTxt, hers)).toBe(
       'TribeTails: Pepper is now on 4 of your visits, first Mon Mar 1. Every date: https://auntie.tribetails.com',
@@ -83,5 +83,14 @@ describe('#1822: one message names every visit a Kin was added to', () => {
       'TribeTails: your Drop-in for Biscuit on Mon, Mar 1 changed or was canceled.',
     );
     expect(email('assignment.changed', oneVisit).html).toContain('was changed, reassigned, or canceled');
+  });
+
+  it('a one-visit change carries no empty list and no gap where the days would be', () => {
+    for (const key of ['kincare.changed', 'assignment.changed']) {
+      const out = email(key, oneVisit);
+      expect(out.html).not.toContain('<ul');
+      expect(out.html).not.toMatch(/<p>\s*<\/p>/);
+      expect(out.text).not.toMatch(/\n\n\n/);
+    }
   });
 });

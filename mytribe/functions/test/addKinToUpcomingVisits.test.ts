@@ -652,6 +652,27 @@ describe('addKinToUpcomingVisits: a call that fails part way', () => {
     // The visits were told about by the first call; repairing the envelope tells nobody again.
     expect(mocks.enqueue).not.toHaveBeenCalled();
   });
+  it('an ordinary apply repairs a stale envelope too, but counts only the visits its confirm named', async () => {
+    const docs = household();
+    visit(docs, 'a1', { batch: 'old' });
+    visit(docs, 'a2', { batch: 'old' });
+    visit(docs, 'a3', { batch: 'old' });
+    for (const id of ['c1', 'c2']) {
+      visit(docs, id, {
+        batch: 'stale',
+        session: { kinIds: ['biscuit', 'mochi', 'pepper'] },
+        copy: { kinIds: ['biscuit', 'mochi', 'pepper'], kinNames: ['Biscuit', 'Mochi', 'Pepper'] },
+      });
+    }
+    mockFrom(docs);
+    const preview = await addKinToUpcomingVisitsHandler(req({ kinfolkId: 'fam1', kinId: 'pepper' }));
+    expect(preview.upcoming).toBe(3);
+    const res = await addKinToUpcomingVisitsHandler(req({ kinfolkId: 'fam1', kinId: 'pepper', apply: true }));
+    expect(res.added).toBe(3);
+    expect((writeAuditEntry as any).mock.calls[0][0]).toMatchObject({ description: 'Added Pepper to 3 upcoming visits' });
+    expect(docs['families/fam1/bookings/stale']!['kinIds']).toEqual(['biscuit', 'mochi', 'pepper']);
+  });
+
   it('tells about the visits it did change, then reports the failure; the retry tells about the rest, once', async () => {
     const docs = household();
     for (let i = 0; i < 12; i++) visit(docs, `v${String(i).padStart(2, '0')}`, { batch: 'b1' });
