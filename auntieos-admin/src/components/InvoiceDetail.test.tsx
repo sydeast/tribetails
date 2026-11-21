@@ -1619,6 +1619,46 @@ describe('the payments panel', () => {
       await screen.findByText(/The ledger shows money this balance does not/i),
     ).toBeInTheDocument();
   });
+  it('#2467: a part payment recorded properly raises no ledger warning', async () => {
+    // $100.00 invoice, $60.00 recorded and applied: $40.00 owed beside a $60.00 row.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 10000,
+        paidCents: 6000,
+        amountDueCents: 4000,
+        payments: [subPayment({ amountCents: 6000 })],
+        ledgerPayments: [
+          ledgerPayment({
+            amountCents: 6000,
+            appliedCents: 6000,
+            unappliedCents: 0,
+            appliedInvoiceId: 'inv1',
+            appliedInvoiceNumber: '1042',
+          }),
+        ],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry({ total: 100, amountDue: 40 })} onClose={vi.fn()} />);
+    expect(await screen.findByRole('table', { name: 'Payment history' })).toBeInTheDocument();
+    expect(screen.queryByText(/The ledger shows money this balance does not/i)).not.toBeInTheDocument();
+  });
+  it('#2467: a row with account credit beside what it applied raises no ledger warning', async () => {
+    // $100.00 applied and $500.00 left as credit; $117.00 still owed.
+    getInvoiceLedger.mockResolvedValue(
+      ledgerResult({
+        totalCents: 21700,
+        paidCents: 10000,
+        amountDueCents: 11700,
+        payments: [subPayment({ amountCents: 10000 })],
+        ledgerPayments: [
+          ledgerPayment({ amountCents: 60000, appliedCents: 10000, unappliedCents: 50000, appliedInvoiceId: 'inv1' }),
+        ],
+      }),
+    );
+    render(<InvoiceDetail invoice={entry({ total: 217, amountDue: 117 })} onClose={vi.fn()} />);
+    expect(await screen.findByRole('table', { name: 'Payment history' })).toBeInTheDocument();
+    expect(screen.queryByText(/The ledger shows money this balance does not/i)).not.toBeInTheDocument();
+  });
   it('#1568: says nothing about "no payment" when the payment exists only in history (invoice #1018)', async () => {
     // $10.29 card payment in the root ledger, nothing in the settlement rows.
     getInvoiceLedger.mockResolvedValue(

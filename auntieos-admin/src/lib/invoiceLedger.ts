@@ -222,12 +222,31 @@ export function sessionsWithBrokenBacklink(
  */
 export function ledgerCoversBalance(input: {
   amountDueCents: number;
-  ledgerPayments: readonly Pick<GetInvoiceLedgerResultLedgerPayment, 'amountCents' | 'tipCents'>[];
+  ledgerPayments: readonly (Pick<GetInvoiceLedgerResultLedgerPayment, 'amountCents' | 'tipCents'> &
+    Partial<Pick<GetInvoiceLedgerResultLedgerPayment, 'appliedCents'>>)[];
 }): boolean {
   if (input.amountDueCents <= 0) return false;
-  if (input.ledgerPayments.length === 0) return false;
-  const towardBill = input.ledgerPayments.reduce((sum, r) => sum + ledgerRowTowardBillCents(r), 0);
+  // #2467: only money no balance has seen. A row that applied money already
+  // came off a balance (this invoice's, or the one it names), and what was left
+  // of it was decided then: tip, or the credit the admin entered. Counting it
+  // raised the warning on a properly recorded part payment ($60 of $100 left
+  // $40 owed beside a $60 row). The ledger's `amountDueCents` already counts
+  // what was paid before the invoice was brought over (#2486).
+  const unseen = input.ledgerPayments.filter((r) => !ledgerRowCameOffABalance(r));
+  if (unseen.length === 0) return false;
+  const towardBill = unseen.reduce((sum, r) => sum + ledgerRowTowardBillCents(r), 0);
   return towardBill >= input.amountDueCents;
+}
+/**
+ * #2467: did this history row already come off a balance? It did when it
+ * applied money. Since #1971 the ledger names the invoice on every such row,
+ * including the older two-step ones. A card payment written to the history
+ * only applied nothing, and is exactly the row the warning is for.
+ */
+export function ledgerRowCameOffABalance(
+  row: Partial<Pick<GetInvoiceLedgerResultLedgerPayment, 'appliedCents'>>,
+): boolean {
+  return typeof row.appliedCents === 'number' && row.appliedCents > 0;
 }
 /**
  * #2413: the part of a payment row that can go toward a bill: its gross amount

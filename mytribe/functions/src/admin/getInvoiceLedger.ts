@@ -17,6 +17,7 @@ import { WRITE_OFFS_SUBCOLLECTION } from '../lib/invoiceArchive';
 import { CentsSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import {
   TIP_BASES,
+  ledgerAppliedInvoiceOf,
   paymentMoneyOf,
   paymentReconciles,
   readTipBasis,
@@ -506,8 +507,9 @@ export async function getInvoiceLedgerHandler(
       unappliedCents: money.unappliedCents,
       proceedsCents: money.proceedsCents,
       autoApply: raw['autoApply'] === true,
-      appliedInvoiceId: str(raw['appliedInvoiceId']),
-      appliedInvoiceNumber: str(raw['appliedInvoiceNumber']),
+      // #1971: a row that paid its invoice reads as applied to it, even when
+      // it was written with a blank `appliedInvoiceId`.
+      ...ledgerAppliedInvoiceOf(raw, money.appliedCents),
       method: str(raw['paymentMethod']),
       reference: str(raw['referenceNumber']),
       date: str(raw['date']),
