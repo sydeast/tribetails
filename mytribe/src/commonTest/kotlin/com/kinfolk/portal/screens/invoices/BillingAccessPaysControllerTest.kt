@@ -94,7 +94,8 @@ class BillingAccessPaysControllerTest {
         val c = InvoicesController("kin-1", PortalApi(fake), this) { }
         c.startPay(invoice())
         advanceUntilIdle()
-        assertEquals(refusal, c.error)
+        assertEquals(refusal, c.payErrorFor("inv-1"))
+        assertEquals(null, c.error)
     }
 
     @Test

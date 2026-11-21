@@ -428,6 +428,18 @@ const appCheckoutReturnRoute = createRoute({
   component: lazyRouteComponent(() => import('./screens/AppCheckoutReturn'), 'AppCheckoutReturn'),
 });
 
+/**
+ * #2427: where Stripe sends a household who saved a card from the MyTribe app,
+ * when the browser keeps the page (see screens/AppCardSetupReturn.tsx). NO
+ * GUARD, for the reason the card payment's return above has none. The page
+ * reads nothing and says nothing about the card.
+ */
+const appCardSetupReturnRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/app/account',
+  staticData: { title: 'Card on file' },
+  component: lazyRouteComponent(() => import('./screens/AppCardSetupReturn'), 'AppCardSetupReturn'),
+});
 const tribeHubRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/tribe',
@@ -518,6 +530,7 @@ const routeTree = rootRoute.addChildren([
   invoicesRoute,
   invoiceDetailRoute,
   appCheckoutReturnRoute,
+  appCardSetupReturnRoute,
   tribeHubRoute,
   galleryRoute,
   tribeEditRoute,
