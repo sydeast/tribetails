@@ -124,12 +124,13 @@ fun unresolvedWarning(keys: List<String>): String? = when (keys.size) {
 }
 
 /**
- * Sample bindings for the twelve tokens the notification enricher can hydrate.
+ * Sample bindings for the tokens every notification send fills: the twelve the
+ * enricher hydrates, and `{{link}}`, the link to the notice's item (#2487).
  *
  * SOURCE: `ENRICHABLE` in mytribe/functions/src/notifications/enrichTemplateData.ts,
  * and identical to the React twin's `ENRICHABLE_SAMPLE`. That set is the honest
  * boundary of "the pipeline will fill this in": the enricher hydrates those
- * twelve from the entities a notification names, and everything else (`link`,
+ * twelve from the entities a notification names, and everything else (
  * `score`, `count`, `incidentId`, the Stripe dispute fields) has to be handed in
  * by whichever emitter raised the notification. A token outside this map is not
  * necessarily a bug, but it IS a promise somebody else has to keep, and the
@@ -151,4 +152,7 @@ val ENRICHABLE_SAMPLE: Map<String, String> = mapOf(
     "kinfolkEmail" to "sandy@example.com",
     "displayName" to "Sandy Wren",
     "notes" to "Back door key is with the neighbour.",
+    // #2487: the link to the notice's item, filled per copy at send
+    // (mytribe/functions/src/notifications/noticeLink.ts).
+    "link" to "https://kinfolk.tribetails.com/schedule",
 )

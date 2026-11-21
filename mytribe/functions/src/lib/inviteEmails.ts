@@ -131,7 +131,8 @@ export async function sendPrimaryInviteEmails(args: SendPrimaryInviteEmailsArgs)
   const { INVITE_GREETING_FALLBACK, inviteNamesFor } = await import('./inviteNames.js');
   const tribeName = (await inviteNamesFor(args.tribeName, { caller: 'sendPrimaryInviteEmails' })).tribeName;
   await sendFromTemplate('invite.secondary', args.invitedEmail, {
-    primaryDisplayName: args.authorName ?? 'Your Kin Parent',
+    // #2487: a person is Kinfolk, never Kin; with no name on the token, the household.
+    primaryDisplayName: args.authorName ?? 'Your household',
     secondaryDisplayName: INVITE_GREETING_FALLBACK,
     secondaryLabel: args.secondaryLabel,
     tribeName,
@@ -140,7 +141,7 @@ export async function sendPrimaryInviteEmails(args: SendPrimaryInviteEmailsArgs)
   }, frame);
   if (args.auntieNotify) {
     await sendFromTemplate('invite.auntie-notify', args.auntieNotify.email, {
-      primaryDisplayName: args.authorName ?? 'Kin Parent',
+      primaryDisplayName: args.authorName ?? 'The household',
       invitedEmail: args.invitedEmail,
       secondaryLabel: args.secondaryLabel,
       tribeName,

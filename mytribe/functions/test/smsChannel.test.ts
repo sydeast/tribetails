@@ -323,3 +323,53 @@ describe('sendSmsChannel', () => {
     });
   });
 });
+
+describe('#2487: a text message links to the item the notice is about', () => {
+  const P = 'https://kinfolk.tribetails.com';
+  const longNote = 'Please leave the side gate unlatched. '.repeat(14).trim();
+  const send = async (
+    text: string,
+    data: Record<string, unknown>,
+    stream: 'kinfolk' | 'business' | 'staff',
+    open?: Parameters<typeof sendSmsChannel>[0]['open'],
+  ) => {
+    const ctx = buildDbMock({ docs: { 'smsTemplates/t.k': { text }, 'clients/u1': { phone: '+15555551111' } } });
+    mocks.dbFn.mockReturnValue(ctx.db);
+    mocks.messagesCreate.mockReset();
+    mocks.messagesCreate.mockResolvedValue({ sid: 'SM_i' });
+    await sendSmsChannel({ def: def(), recipientUid: 'u1', data, stream, ...(open ? { open } : {}) });
+    return mocks.messagesCreate.mock.calls[0]![0].body as string;
+  };
+  const visit = { route: '/schedule/v1', data: {}, readInList: { route: '/notifications?entry=n1', entryId: 'n1' } };
+
+  it("a household's short message links to its visit", async () => {
+    expect(await send('Your Auntie arrived.', {}, 'kinfolk', visit)).toBe(`Your Auntie arrived. More in MyTribe: ${P}/schedule/v1`);
+  });
+  it('a cut message links to its entry instead, where the whole message is', async () => {
+    const body = await send('{{note}}', { note: longNote }, 'kinfolk', visit);
+    expect(body.endsWith(`... More in MyTribe: ${P}/notifications?entry=n1`)).toBe(true);
+  });
+  it("a message with the office's note links to its entry, where the note is", async () => {
+    expect(await send('Your visit is confirmed.', {}, 'kinfolk', { ...visit, officeNote: true })).toBe(
+      `Your visit is confirmed. More in MyTribe: ${P}/notifications?entry=n1`,
+    );
+  });
+  it('a template that prints the item link keeps it, once', async () => {
+    expect(await send('All set. Every date: {{link}}', { link: `${P}/schedule` }, 'kinfolk', visit)).toBe(
+      `All set. Every date: ${P}/schedule`,
+    );
+  });
+  it("an office text gets the item's AuntieOS link after it", async () => {
+    expect(await send('A household asked to cancel.', { link: 'https://auntie.tribetails.com/bookings?bookingId=vis_v1' }, 'business')).toBe(
+      'A household asked to cancel. Open in AuntieOS: https://auntie.tribetails.com/bookings?bookingId=vis_v1',
+    );
+  });
+  it('an Auntie text that already carries an AuntieOS link is sent as written', async () => {
+    expect(
+      await send('Your visits: {{link}}', { link: 'https://auntie.tribetails.com/bookings?requestId=b1&requestKinfolkId=f1' }, 'staff'),
+    ).toBe('Your visits: https://auntie.tribetails.com/bookings?requestId=b1&requestKinfolkId=f1');
+  });
+  it('an office text with no link in its data is sent as written', async () => {
+    expect(await send('Daily digest.', {}, 'business')).toBe('Daily digest.');
+  });
+});

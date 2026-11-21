@@ -97,6 +97,7 @@ describe('ENRICHABLE_SAMPLE', () => {
       'kinName',
       'kinfolkEmail',
       'kinfolkName',
+      'link',
       'notes',
       'serviceType',
     ]);
@@ -108,9 +109,11 @@ describe('ENRICHABLE_SAMPLE', () => {
     }
   });
 
-  it('leaves an emitter-supplied token such as link unbound', () => {
-    // `link`, `score`, `incidentId` and friends come from the emitter, not the
+  it('leaves an emitter-supplied token such as score unbound', () => {
+    // `score`, `incidentId` and friends come from the emitter, not the
     // enricher. The preview must warn about them: that is the whole point.
-    expect(ENRICHABLE_SAMPLE['link']).toBeUndefined();
+    // #2487: `link` is filled for every notice at send, so it is bound.
+    expect(ENRICHABLE_SAMPLE['score']).toBeUndefined();
+    expect(ENRICHABLE_SAMPLE['link']).toMatch(/^https:\/\//);
   });
 });

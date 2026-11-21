@@ -32,7 +32,7 @@ export interface InviteNames {
 /** What a greeting reads when no name is on file: "Hello there,". */
 export const INVITE_GREETING_FALLBACK = 'there';
 /** What the household is called when it has no name on file. */
-export const INVITE_TRIBE_FALLBACK = 'your household';
+export const INVITE_TRIBE_FALLBACK = 'the household';
 
 function text(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';

@@ -4,8 +4,11 @@ import { describeProviderFailure } from '../../lib/providerFailure';
 import { redactRecipient } from '../../lib/suppressions';
 import { HOUSEHOLD_NOTICE_ROUTE, householdSms, kinForStoredTemplate, renderPlainText } from '../templateParsers';
 import { keepWholeMessage } from './pushChannel';
-import { PORTAL_URL } from '../visitDates';
+import { AUNTIE_SCHEDULE_URL as ADMIN_URL, PORTAL_URL } from '../visitDates';
 import type { ChannelSendArgs, ChannelSendResult } from './index';
+
+/** What comes before the AuntieOS link on an office or Auntie text (#2487). */
+export const OFFICE_SMS_LINK_LABEL = 'Open in AuntieOS:';
 
 /**
  * SMS channel sender (Twilio). Looks up `smsTemplates/{key}` for a `text`
@@ -85,15 +88,29 @@ export async function sendSmsChannel(args: ChannelSendArgs): Promise<ChannelSend
     notificationKey: def.key,
   });
   // #2280: a household's text message is short and links into MyTribe, where
-  // the whole message is. Staff and business copies are sent as written.
+  // the whole message is.
   // #2371: the link opens this notice's entry, and a cut message is written
   // onto it first, so the rest is there when the link is followed.
+  // #2487: the link goes to the item the notice is about (that visit, that
+  // KinTale, that invoice), the way a tap on its push does. Only a message that
+  // was cut, or that carries the office's note, links to its entry on the
+  // notifications list instead, because the whole message is there.
   let body = rendered;
   if (stream === 'kinfolk') {
     const entry = open?.readInList;
-    const sms = householdSms(rendered, PORTAL_URL, entry?.route ?? HOUSEHOLD_NOTICE_ROUTE);
+    const entryRoute = entry?.route ?? HOUSEHOLD_NOTICE_ROUTE;
+    let sms = householdSms(rendered, PORTAL_URL, open?.officeNote === true ? entryRoute : (open?.route ?? entryRoute));
+    if (sms.cut && open?.route && open.route !== entryRoute) sms = householdSms(rendered, PORTAL_URL, entryRoute);
     if (sms.cut && entry?.entryId) await keepWholeMessage('sms', entry.entryId, rendered, def.key);
     body = sms.text;
+  } else if (stream === 'business' || stream === 'staff') {
+    // #2487: an office or Auntie text says where the item is in AuntieOS. A
+    // text that already carries an AuntieOS link (`{{link}}`, or an older
+    // stored template's schedule link) is sent as written, never with two.
+    const link = typeof data['link'] === 'string' ? data['link'].trim() : '';
+    if (link !== '' && rendered.trim() !== '' && !rendered.includes(ADMIN_URL)) {
+      body = `${rendered.trim()} ${OFFICE_SMS_LINK_LABEL} ${link}`;
+    }
   }
   const twilio = await getTwilio();
   let message: { sid: string };
