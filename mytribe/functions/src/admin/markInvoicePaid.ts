@@ -17,6 +17,7 @@ import {
   type InvoiceSettlementState,
 } from '../lib/invoiceMath';
 import { invoiceStateStampOf } from '../lib/invoiceStateStamp';
+import { invoiceStateOf } from '../lib/invoiceEditPolicy';
 import { INVOICE_WRITTEN_OFF_CODE, WRITTEN_OFF_PAYMENT_REFUSAL, isWrittenOff } from '../lib/invoiceArchive';
 import { invoiceCancelled, paidByCardFallback, type InvoicePaidDoc } from '../lib/invoicePaidGate';
 import {
@@ -273,9 +274,17 @@ export function overBalanceRefusal(
   };
 }
 
+/**
+ * #2517: a draft or a quote by the state classifier, which reads `status` and
+ * falls back to the older `invoiceStatus` only when `status` is absent (#2471).
+ * Reading `status` alone let a draft or quote marked only in the older field
+ * take a recorded payment, a Mark paid or a held payment, on a bill the
+ * household was never sent. `status` wins when both are stored: the two are
+ * never OR-ed.
+ */
 export function isDraftOrQuote(d: InvoiceDoc): boolean {
-  const s = normalizedStatus(d);
-  return s === 'draft' || s === 'quote';
+  const state = invoiceStateOf(d);
+  return state === 'draft' || state === 'quote';
 }
 
 /**

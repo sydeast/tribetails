@@ -65,6 +65,7 @@ import com.tribetails.auntieos.web.data.GpsTracker
 import com.tribetails.auntieos.web.data.Kin
 import com.tribetails.auntieos.web.data.Kinfolk
 import com.tribetails.auntieos.web.data.KinCareSession
+import com.tribetails.auntieos.web.data.visitStatusCode
 import com.tribetails.auntieos.web.data.HouseholdVisitTime
 import com.tribetails.auntieos.web.data.WriteResult
 import com.tribetails.auntieos.web.data.createGpsTracker
@@ -887,7 +888,7 @@ private fun ActionRow(
         }
     }
 
-    when (session.status.uppercase()) {
+    when (visitStatusCode(session.status)) {
         "SCHEDULED" -> Row(
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1016,8 +1017,7 @@ private fun KebabMenu(
     onWrite: (id: String, write: KinCareWrite, successMsg: String) -> Unit,
 ) {
     val c = AuntieTheme.colors
-    val terminal = session.status.equals("COMPLETED",  ignoreCase = true) ||
-                   session.status.equals("CANCELLED",  ignoreCase = true)
+    val terminal = visitStatusCode(session.status) in setOf("COMPLETED", "CANCELLED")
     if (terminal) return
 
     var open by remember { mutableStateOf(false) }
@@ -1332,7 +1332,7 @@ internal fun isVisibleOnAuntieTime(
     today: String,
     zone: TimeZone = NewBookingMath.businessTimeZone(null),
 ): Boolean {
-    val status    = session.status.uppercase()
+    val status    = visitStatusCode(session.status)
     // #2036: the BUSINESS day the visit starts on, not the stored text's UTC day.
     val date      = businessDayOf(session.startTime, zone)
     val yesterday = dateSubDays(today, 1)
@@ -1353,7 +1353,7 @@ internal fun isOverdueScheduled(
     today: String,
     zone: TimeZone = NewBookingMath.businessTimeZone(null),
 ): Boolean {
-    if (session.status.uppercase() != "SCHEDULED") return false
+    if (visitStatusCode(session.status) != "SCHEDULED") return false
     val date = businessDayOf(session.startTime, zone)
     if (date.length < 10) return false
     return date < dateSubDays(today, 1)
@@ -1370,7 +1370,7 @@ internal fun overdueOnAuntieTime(
 // ---------- Status mapping ----------
 
 /** Maps a session status to the Den status tone (color signature). */
-private fun statusTone(status: String): AuntieStatusTone = when (status.uppercase()) {
+private fun statusTone(status: String): AuntieStatusTone = when (visitStatusCode(status)) {
     "ON_MY_WAY"          -> AuntieStatusTone.Orange
     "ARRIVED"            -> AuntieStatusTone.Teal
     "DEPARTED"           -> AuntieStatusTone.Purple
@@ -1381,10 +1381,10 @@ private fun statusTone(status: String): AuntieStatusTone = when (status.uppercas
 
 /** Title-case pill label from the SCREAMING_SNAKE status code. */
 private fun statusLabel(status: String): String =
-    status.lowercase().replace('_', ' ')
+    visitStatusCode(status).lowercase().replace('_', ' ')
 
 /** Leading glyph for the icon tile (non-photo cards). */
-private fun statusGlyph(status: String) = when (status.uppercase()) {
+private fun statusGlyph(status: String) = when (visitStatusCode(status)) {
     "ON_MY_WAY"           -> Lucide.Footprints
     "ARRIVED", "DEPARTED" -> Lucide.Radio
     "COMPLETED"           -> Lucide.CircleCheckBig
@@ -1394,8 +1394,8 @@ private fun statusGlyph(status: String) = when (status.uppercase()) {
 
 private fun phaseFor(s: KinCareSession, today: String, zone: TimeZone): AuntieTimePhase = when {
     kinTaleOwed(s)                                                  -> AuntieTimePhase.KinTalesToSend
-    s.status.uppercase() in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> AuntieTimePhase.Active
-    s.status.uppercase() == "SCHEDULED"                             ->
+    visitStatusCode(s.status) in setOf("ON_MY_WAY", "ARRIVED", "DEPARTED") -> AuntieTimePhase.Active
+    visitStatusCode(s.status) == "SCHEDULED"                             ->
         if (isOverdueScheduled(s, today, zone)) AuntieTimePhase.Overdue else AuntieTimePhase.Upcoming
     else                                                            -> AuntieTimePhase.CompletedToday
 }

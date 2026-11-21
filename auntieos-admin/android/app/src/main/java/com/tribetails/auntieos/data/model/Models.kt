@@ -1053,7 +1053,32 @@ enum class VisitStatus {
     ARRIVED,
     DEPARTED,
     COMPLETED,
-    CANCELLED
+    CANCELLED;
+
+    companion object {
+        /**
+         * #2268: the [VisitStatus] a stored status names, or null for a code no
+         * writer produces. Reads the stored text through [visitStatusCode], so a
+         * lower-case or one-L `CANCELED` row is a cancelled visit.
+         */
+        fun fromStored(raw: String?): VisitStatus? {
+            val code = visitStatusCode(raw)
+            return entries.firstOrNull { it.name == code }
+        }
+    }
+}
+
+/**
+ * #2268: a stored `kin_care_sessions.status` as the upper-case code every
+ * screen compares against. A called-off visit is stored three ways
+ * (`CANCELLED`, `cancelled`, and the one-L `CANCELED` older and imported rows
+ * carry), and the server reads all three as cancelled
+ * (`normalizeBookingStatus`). Every other code is only trimmed and
+ * upper-cased, so an unknown one keeps its own text.
+ */
+fun visitStatusCode(raw: String?): String {
+    val code = raw?.trim()?.uppercase().orEmpty()
+    return if (code == "CANCELED") VisitStatus.CANCELLED.name else code
 }
 
 /**
