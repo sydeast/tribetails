@@ -11,7 +11,10 @@ import {
   TEMPLATE_ID_MAX_LENGTH,
   TEMPLATE_ID_PATTERN,
   TEMPLATE_ID_RULE,
+  TEMPLATE_MARKUP_REFUSAL,
+  emailMarkupErrors,
   noTripleStash,
+  type TemplateMarkupRefusalDetails,
   noUnquotedAttributeMerge,
   tripleStashMessage,
   unquotedAttributeMessage,
@@ -45,6 +48,9 @@ function isAlreadyExists(err: unknown): boolean {
   const code = (err as { code?: unknown } | null)?.code;
   return code === 6 || code === 'already-exists' || code === 'ALREADY_EXISTS';
 }
+
+/** #2084: the refusal for a section row saved without a title. */
+export const SECTION_TITLE_REQUIRED = 'Every section needs a title. Give the untitled section a title, or remove it.';
 
 // Exported for the recursive callable-contract freeze (nested/effects shape).
 export const Args = z.object({
@@ -82,7 +88,13 @@ export const Args = z.object({
   sectionDefinitions: z
     .array(
       z.object({
-        title: z.string().min(1).max(200),
+        // #2084: a section with no title is refused in words, never dropped:
+        // its description is text the operator typed. Blank or spaces only.
+        title: z
+          .string()
+          .min(1, { message: SECTION_TITLE_REQUIRED })
+          .max(200)
+          .refine((t) => t.trim() !== '', { message: SECTION_TITLE_REQUIRED }),
         description: z.string().max(1000),
       }),
     )
@@ -137,7 +149,8 @@ export async function saveTemplateHandler(
   if (!uid) throw new HttpsError('unauthenticated', 'Sign-in required.');
   const parsed = SaveTemplateInput.safeParse(req.data);
   if (!parsed.success) {
-    throw new HttpsError('invalid-argument', parsed.error.issues.map((i) => i.message).join(' '));
+    // Deduplicated: an empty section title fails two checks with one sentence (#2084).
+    throw new HttpsError('invalid-argument', [...new Set(parsed.error.issues.map((i) => i.message))].join(' '));
   }
   const args = parsed.data;
 
@@ -162,6 +175,18 @@ export async function saveTemplateHandler(
     const blocking = r.issues.filter((i) => !i.startsWith('Removed an image'));
     if (blocking.length) throw new HttpsError('invalid-argument', blocking.join(' '));
     content = r.content;
+  }
+
+  // #2251: a field the sender cannot fill in is refused here, beside its box,
+  // rather than stored to fail every send of the notice later. Checked on what
+  // would be stored (the sanitized content), with the same scan the importer
+  // and the text and push door run.
+  const fieldErrors = visual
+    ? emailMarkupErrors({ subject: args.subject, headline: args.headline, content })
+    : emailMarkupErrors({ subject: args.subject, body: args.body, html: args.html });
+  if (Object.keys(fieldErrors).length > 0) {
+    const details: TemplateMarkupRefusalDetails = { reason: TEMPLATE_MARKUP_REFUSAL, fieldErrors };
+    throw new HttpsError('invalid-argument', Object.values(fieldErrors).join(' '), details);
   }
 
   const ref = db().doc(`emailTemplates/${args.templateId}`);
