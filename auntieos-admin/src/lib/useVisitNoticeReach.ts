@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { previewVisitNotification } from '../api/visitNoticePreview';
+import { previewVisitNotification, type VisitNoticeStep } from '../api/visitNoticePreview';
 import { type VisitNoticeReach } from './visitNotice';
 
 /**
@@ -15,7 +15,17 @@ import { type VisitNoticeReach } from './visitNotice';
  *        cannot be routed to a household at all).
  * @returns `checking` until the answer lands, `unknown` when the call failed.
  */
-export function useVisitNoticeReach(familyId: string | null): VisitNoticeReach {
+export function useVisitNoticeReach(
+  familyId: string | null,
+  /**
+   * #2339: the visit and step, for an Arrived or Departed confirm, so a step the
+   * household already heard about before an undo is named as such. Null for
+   * every other confirm.
+   */
+  about: { sessionId: string; step: VisitNoticeStep } | null = null,
+): VisitNoticeReach {
+  const sessionId = about?.sessionId ?? '';
+  const step = about?.step ?? null;
   const [reach, setReach] = useState<VisitNoticeReach>({ status: 'checking' });
 
   useEffect(() => {
@@ -26,7 +36,11 @@ export function useVisitNoticeReach(familyId: string | null): VisitNoticeReach {
     }
     let live = true;
     setReach({ status: 'checking' });
-    previewVisitNotification(familyId).then(
+    // The household question alone, exactly as before, for every other confirm.
+    (step !== null && sessionId !== ''
+      ? previewVisitNotification(familyId, { sessionId, step })
+      : previewVisitNotification(familyId)
+    ).then(
       (answer) => {
         if (live) setReach({ status: 'ready', willNotify: answer.willNotify, reason: answer.reason });
       },
@@ -38,7 +52,7 @@ export function useVisitNoticeReach(familyId: string | null): VisitNoticeReach {
     return () => {
       live = false;
     };
-  }, [familyId]);
+  }, [familyId, sessionId, step]);
 
   return familyId === null ? { status: 'checking' } : reach;
 }

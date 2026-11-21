@@ -474,6 +474,7 @@ internal fun AuntieTimeListScreen(
                                 arrivalRule = arrivalRule,
                                 onRefused = { msg -> showToast("Couldn't complete: $msg", ToastKind.Error) },
                                 breadcrumbsFor = { client.breadcrumbsStream(it) },
+                                lastPingFor = { client.lastBreadcrumbStream(it) },
                                 timeBlockLabelFor = timeBlockLabelFor,
                                 onOpenDetail = onOpenDetail,
                                 onWriteKinTale = onWriteKinTale,
@@ -525,6 +526,7 @@ internal fun AuntieTimeListScreen(
                                     arrivalRule = arrivalRule,
                                     onRefused = { msg -> showToast("Couldn't complete: $msg", ToastKind.Error) },
                                     breadcrumbsFor = { client.breadcrumbsStream(it) },
+                                    lastPingFor = { client.lastBreadcrumbStream(it) },
                                     timeBlockLabelFor = timeBlockLabelFor,
                                     onOpenDetail = onOpenDetail,
                                     onWriteKinTale = onWriteKinTale,
@@ -587,6 +589,8 @@ private fun PhaseGroup(
     arrivalRule: Boolean?,
     onRefused: (String) -> Unit,
     breadcrumbsFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
+    /** #2386: the visit's newest breadcrumb (0 or 1), for the Arrived card's GPS line. */
+    lastPingFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
     timeBlockLabelFor: (KinCareSession) -> String?,
     onOpenDetail: (String) -> Unit,
     onWriteKinTale: (String) -> Unit,
@@ -619,6 +623,7 @@ private fun PhaseGroup(
                     arrivalRule = arrivalRule,
                     onRefused   = onRefused,
                     breadcrumbsFor = breadcrumbsFor,
+                    lastPingFor = lastPingFor,
                     timeBlockLabel = timeBlockLabelFor(session),
                     onOpenDetail = { onOpenDetail(session._id) },
                     onWriteKinTale = { onWriteKinTale(session._id) },
@@ -630,6 +635,7 @@ private fun PhaseGroup(
     }
 }
 
+@OptIn(ExperimentalTime::class)
 @Composable
 private fun KinCareCard(
     session: KinCareSession,
@@ -639,6 +645,8 @@ private fun KinCareCard(
     arrivalRule: Boolean?,
     onRefused: (String) -> Unit,
     breadcrumbsFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
+    /** #2386: the visit's newest breadcrumb (0 or 1), for the Arrived card's GPS line. */
+    lastPingFor: (String) -> Flow<FirestoreResult<List<Breadcrumb>>>,
     timeBlockLabel: String?,
     onOpenDetail: () -> Unit,
     onWriteKinTale: () -> Unit,
@@ -746,17 +754,44 @@ private fun KinCareCard(
                 KebabMenu(session = session, arrivalRule = arrivalRule, onRefused = onRefused, onWrite = onWrite)
             }
 
-            // ---- Live GPS indicator (only while ARRIVED + tracking) ----
+            // The session's breadcrumbs, for the GPS line and the route map.
+            val crumbsState = if (isInFlight) {
+                val r by remember(session._id) { breadcrumbsFor(session._id) }
+                    .collectAsState(initial = FirestoreResult.Loading)
+                r
+            } else {
+                null
+            }
+
+            // ---- GPS line while ARRIVED (#2338, #2386). The console never tracks a
+            // visit itself: live while the route has a recent ping, else the last ping. ----
             if (isArrived) {
-                GpsLiveRow()
+                // The clock, read again on a tick so "live" ages out when pings stop.
+                var nowMs by remember { mutableStateOf(Clock.System.now().toEpochMilliseconds()) }
+                androidx.compose.runtime.LaunchedEffect(session._id) {
+                    while (true) {
+                        kotlinx.coroutines.delay(GPS_LINE_TICK_MS)
+                        nowMs = Clock.System.now().toEpochMilliseconds()
+                    }
+                }
+                // The newest ping only (#2386): the console reads it by itself, one
+                // document per poll, rather than the whole route.
+                val lastPing by remember(session._id) { lastPingFor(session._id) }
+                    .collectAsState(initial = FirestoreResult.Loading)
+                GpsLiveRow(
+                    gpsLineFor(
+                        trackingHere = false,
+                        crumbs = (lastPing as? FirestoreResult.Data)?.value,
+                        zone = LocalAuntieTimeZone.current,
+                        nowMs = nowMs,
+                    ),
+                )
             }
 
             // ---- Today's-route map (§A.10): render the live/replay RouteMap inline for
             // in-flight visits, fed by the session's breadcrumb subcollection. Only shown
             // once at least one crumb exists (no empty canvas / fake route). ----
             if (isInFlight) {
-                val crumbsState by remember(session._id) { breadcrumbsFor(session._id) }
-                    .collectAsState(initial = FirestoreResult.Loading)
                 val crumbs = (crumbsState as? FirestoreResult.Data)?.value.orEmpty()
                 if (crumbs.isNotEmpty()) {
                     RouteMap(breadcrumbs = crumbs, live = isArrived)
@@ -1026,21 +1061,25 @@ private fun KebabMenu(
 // ---------- Live GPS row (mockup .gpslive: pulsing teal dot + label) ----------
 
 @Composable
-private fun GpsLiveRow() {
+private fun GpsLiveRow(line: GpsLine?) {
+    if (line == null) return
     val c = AuntieTheme.colors
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Reuse the Den status LED in glow mode for the pulsing "live" dot.
-        AuntieStatusPill(
-            label   = "",
-            tone    = AuntieStatusTone.Teal,
-            dotOnly = true,
-            glow    = true,
-        )
+        // Reuse the Den status LED in glow mode for the pulsing "live" dot,
+        // only on the live line (`GpsLine.kt` says when that is).
+        if (line.live) {
+            AuntieStatusPill(
+                label   = "",
+                tone    = AuntieStatusTone.Teal,
+                dotOnly = true,
+                glow    = true,
+            )
+        }
         Text(
-            text  = "GPS tracking · live route",
+            text  = line.text,
             style = AuntieTheme.typography.mono,
             color = c.accent,
         )

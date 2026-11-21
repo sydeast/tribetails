@@ -1,10 +1,16 @@
 import type { HouseholdNoticeKey } from '../lib/householdNoticeWords';
 import { call } from '../lib/fns';
 
+/** The clock steps whose repeat after an undo the server can name (#2339). */
+export type VisitNoticeStep = 'arrived' | 'departed';
+
 /** What `previewVisitNotification` answers for one household. */
 export interface VisitNoticePreviewAnswer {
   willNotify: boolean;
-  /** `household_has_no_portal_account`, `household_notices_off`, or null when a notice can go out. */
+  /**
+   * `household_has_no_portal_account`, `household_notices_off`,
+   * `already_notified` (#2339, asked with a step), or null when a notice can go out.
+   */
   reason: string | null;
 }
 
@@ -17,11 +23,23 @@ export interface VisitNoticePreviewAnswer {
  * before this callable existed answers not-found). The confirm then says
  * nothing about the household, which is true, instead of a guess.
  */
-export async function previewVisitNotification(familyId: string): Promise<VisitNoticePreviewAnswer> {
-  const res = await call<{ familyId: string }, { willNotify?: unknown; reason?: unknown }>(
-    'previewVisitNotification',
-    { familyId },
-  );
+export async function previewVisitNotification(
+  familyId: string,
+  /**
+   * #2339: the visit and clock step an Arrived or Departed confirm is about.
+   * With it the server also answers `already_notified` for a step the
+   * household already heard about before an undo. A server that predates it
+   * ignores the two fields and answers as before.
+   */
+  about?: { sessionId: string; step: VisitNoticeStep },
+): Promise<VisitNoticePreviewAnswer> {
+  const res = await call<
+    { familyId: string; sessionId?: string; step?: VisitNoticeStep },
+    { willNotify?: unknown; reason?: unknown }
+  >('previewVisitNotification', {
+    familyId,
+    ...(about !== undefined && about.sessionId.trim() !== '' ? { sessionId: about.sessionId, step: about.step } : {}),
+  });
   if (typeof res?.willNotify !== 'boolean') throw new Error('previewVisitNotification: no answer');
   const reason = typeof res.reason === 'string' && res.reason.trim() !== '' ? res.reason : null;
   return { willNotify: res.willNotify, reason };

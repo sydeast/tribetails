@@ -270,3 +270,81 @@ describe('previewVisitNotification: what the confirm may say (#1840)', () => {
     await expect(preview({})).rejects.toThrow();
   });
 });
+describe('previewVisitNotification: an Arrived or Departed after an undone one (#2339)', () => {
+  const MEMBER = { 'kinfolk/fam1': { uid: 'uid_kinfolk' }, 'families/fam1/members/uid_kinfolk': ACTIVE_PRIMARY };
+  const SESSION = { 'kin_care_sessions/s1': { kinfolkId: 'fam1', status: 'ARRIVED' } };
+  /** The first departure's own send: its record and the row it left on the household's list. */
+  function toldOnce(recordedAtMs: number, event: 'arrived' | 'departed' = 'departed') {
+    return {
+      'visit_step_notices/first': {
+        sessionId: 's1',
+        event,
+        atMs: NOW - 120_000,
+        notified: true,
+        dispatchIds: ['n1'],
+        recordedAtMs,
+      },
+      'notifications/n1': { key: event === 'departed' ? 'kincare.auntie.departed' : 'kincare.auntie.arrived' },
+    };
+  }
+  it('HAPPY: the same day, the household already heard she left, so the confirm says so', async () => {
+    seed({ ...MEMBER, ...SESSION, ...toldOnce(NOW - 60_000) });
+    expect(await preview({ familyId: 'fam1', sessionId: 's1', step: 'departed' })).toEqual({
+      ok: true,
+      willNotify: false,
+      reason: 'already_notified',
+    });
+  });
+  it('the same for an Arrived after Undo arrival', async () => {
+    seed({ ...MEMBER, ...SESSION, ...toldOnce(NOW - 60_000, 'arrived') });
+    expect(await preview({ familyId: 'fam1', sessionId: 's1', step: 'arrived' })).toMatchObject({
+      reason: 'already_notified',
+    });
+    // An arrival's notice says nothing about the departure.
+    expect(await preview({ familyId: 'fam1', sessionId: 's1', step: 'departed' })).toMatchObject({ willNotify: true });
+  });
+  it('it wins over the switch, as the send does: they were told, which is the true line', async () => {
+    seed({
+      ...MEMBER,
+      ...SESSION,
+      ...toldOnce(NOW - 60_000),
+      [HOUSEHOLD_GATE_SETTINGS_PATH]: { householdNotificationsLive: false },
+    });
+    expect(await preview({ familyId: 'fam1', sessionId: 's1', step: 'departed' })).toMatchObject({
+      reason: 'already_notified',
+    });
+  });
+  it('SAD: told on an earlier business day, this is a later visit and is announced', async () => {
+    seed({ ...MEMBER, ...SESSION, ...toldOnce(NOW - 2 * 86_400_000) });
+    expect(await preview({ familyId: 'fam1', sessionId: 's1', step: 'departed' })).toEqual({
+      ok: true,
+      willNotify: true,
+      reason: null,
+    });
+  });
+  it('never undone: nothing earlier reached them, so the ordinary answer', async () => {
+    seed({ ...MEMBER, ...SESSION });
+    expect(await preview({ familyId: 'fam1', sessionId: 's1', step: 'departed' })).toEqual({
+      ok: true,
+      willNotify: true,
+      reason: null,
+    });
+  });
+  it('NEGATIVE: a visit of another household is not read as this one', async () => {
+    seed({ ...MEMBER, 'kin_care_sessions/s1': { kinfolkId: 'fam2' }, ...toldOnce(NOW - 60_000) });
+    expect(await preview({ familyId: 'fam1', sessionId: 's1', step: 'departed' })).toMatchObject({ willNotify: true });
+  });
+  it('without a step, an installed client is answered exactly as before', async () => {
+    seed({ ...MEMBER, ...SESSION, ...toldOnce(NOW - 60_000) });
+    expect(await preview({ familyId: 'fam1', sessionId: 's1' })).toEqual({ ok: true, willNotify: true, reason: null });
+  });
+  it('writes nothing: the row stays with the earlier step until the real tap', async () => {
+    seed({ ...MEMBER, ...SESSION, ...toldOnce(NOW - 60_000) });
+    await preview({ familyId: 'fam1', sessionId: 's1', step: 'departed' });
+    expect(ctx.writes).toHaveLength(0);
+  });
+  it('ERROR: a step this callable has no words for is refused', async () => {
+    seed({ ...MEMBER, ...SESSION });
+    await expect(preview({ familyId: 'fam1', sessionId: 's1', step: 'on_my_way' })).rejects.toThrow();
+  });
+});
