@@ -80,6 +80,22 @@ describe('myNotifications api', () => {
       expect(entry.audiences.has(STREAM_STAFF)).toBe(false);
     });
 
+    // #2382: the server marks the five locked confirmations; a server older than
+    // the field sends nothing, which reads as locked for no stream.
+    it('decodes lockedOnStreams, and its absence as no lock', async () => {
+      call.mockResolvedValue({
+        catalog: [
+          { key: 'invoice.new', audiences: { business: true, kinfolk: true }, lockedOnStreams: { kinfolk: true } },
+          { key: 'kincare.booking.cancel', audiences: { business: true, kinfolk: true } },
+        ],
+        overrides: {},
+        updatedAtMs: null,
+      });
+      const matrix = await getNotificationMatrix();
+      expect([...(matrix.catalog[0]!.lockedOnStreams ?? [])]).toEqual(['kinfolk']);
+      expect(matrix.catalog[1]!.lockedOnStreams?.size).toBe(0);
+    });
+
     it('defaults every field so a sparse catalog entry never throws', async () => {
       call.mockResolvedValue({ catalog: [{}], overrides: {}, updatedAtMs: null });
       const matrix = await getNotificationMatrix();

@@ -184,6 +184,57 @@ describe('householdSendGate: the dispatcher chokepoint', () => {
     expect(summary.extra.key).toBe('kincare.booking.confirm');
   });
 
+  /**
+   * #2382 (2026-11-20) locks payment, invoice, KinTale and booking
+   * confirmations on in every setting. It does NOT lift this gate: the prod
+   * re-upload fires these triggers for every historical record, so until launch
+   * the household copy of each still waits here.
+   */
+  for (const key of [
+    'invoice.new',
+    'invoice.receipt',
+    'invoice.payment.applied',
+    'kincare.booking.confirm',
+    'kintale.published',
+  ]) {
+    it(`GATE OFF: the locked confirmation ${key} still waits for launch (#2382)`, async () => {
+      const ctx = buildDbMock({
+        docs: { [SETTINGS_PATH]: settings(false), 'businessSettings/admins': { uids: ['op1'] } },
+      });
+      mocks.dbFn.mockReturnValue(ctx.db);
+
+      const outcome = await enqueueNotificationDetailed({
+        key,
+        recipientUid: 'kinUid',
+        data: { kinfolkId: 'kf1', invoiceId: 'inv1', bookingId: 'b1', kintaleId: 'kt1' },
+      });
+
+      expect(outcome.suppressed).toEqual([{ recipientUid: 'kinUid', reason: 'gate', gateState: 'off' }]);
+    });
+  }
+
+  it('GATE ON: a stored operator off does not stop a locked confirmation (#2382)', async () => {
+    const ctx = buildDbMock({
+      docs: {
+        [SETTINGS_PATH]: settings(true),
+        'businessSettings/notifications': {
+          byKey: { 'kintale.published': { enabled: false, channels: { email: false } } },
+        },
+      },
+    });
+    mocks.dbFn.mockReturnValue(ctx.db);
+
+    const outcome = await enqueueNotificationDetailed({
+      key: 'kintale.published',
+      recipientUid: 'kinUid',
+      data: { kinfolkId: 'kf1', kintaleId: 'kt1' },
+    });
+
+    expect(outcome.suppressed).toEqual([]);
+    expect(outcome.written).toHaveLength(1);
+    expect(outcome.channelsByRecipient?.kinUid).toContain('email');
+  });
+
   it('GATE ON: the household notification sends normally', async () => {
     const ctx = buildDbMock({ docs: { [SETTINGS_PATH]: settings(true) } });
     mocks.dbFn.mockReturnValue(ctx.db);

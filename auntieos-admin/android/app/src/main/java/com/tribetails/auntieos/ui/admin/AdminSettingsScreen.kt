@@ -159,6 +159,8 @@ import com.tribetails.auntieos.data.model.withStreamChannel
 import com.tribetails.auntieos.data.model.withStreamChannelLock
 import com.tribetails.auntieos.data.model.withStreamEnabled
 import com.tribetails.auntieos.data.model.withStreamLockedEnabled
+import com.tribetails.auntieos.data.model.keptLockedOn
+import com.tribetails.auntieos.data.model.NOTIF_REQUIRED_FOR_KINFOLK
 import com.tribetails.auntieos.data.model.NotificationMatrix
 import com.tribetails.auntieos.data.model.NotificationDeliveryEvidence
 import com.tribetails.auntieos.data.model.NotifBadgeTone
@@ -1288,8 +1290,11 @@ private fun NotificationMatrixPanel() {
 
     var selectedTab by remember { mutableStateOf(NotifAudience.Business) }
 
-    fun persist(entry: NotificationCatalogEntry, override: NotificationOverride) {
+    fun persist(entry: NotificationCatalogEntry, edited: NotificationOverride) {
         val m = matrix ?: return
+        // #2382: a locked confirmation's Kinfolk copy and email are saved on, so an
+        // off stored before the ruling cannot make every later edit on the row fail.
+        val override = edited.keptLockedOn(entry)
         matrix = m.copy(overrides = m.overrides + (entry.key to override)) // optimistic
         scope.launch {
             repo.saveBusinessNotificationOverride(entry.key, override)
@@ -1529,7 +1534,10 @@ private fun NotifMatrixRow(
 ) {
     val c = AuntieTheme.colors
     val stream = audience.streamKey
-    val enabled = matrix.streamEffectiveEnabled(entry.key, stream)
+    // #2382: a confirmation locked on for this audience is drawn on and fixed,
+    // whatever an older stored override says, because the send ignores that off.
+    val lockedOn = entry.lockedOnFor(stream)
+    val enabled = lockedOn || matrix.streamEffectiveEnabled(entry.key, stream)
     var showDetail by remember(entry.key) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -1562,6 +1570,7 @@ private fun NotifMatrixRow(
             NotifCell(
                 on = enabled,
                 locked = matrix.streamEffectiveLockedEnabled(entry.key, stream),
+                fixed = lockedOn,
                 onToggle = { onToggleEnabled(!enabled) },
                 onToggleLock = onToggleEnabledLock,
             )
@@ -1569,9 +1578,11 @@ private fun NotifMatrixRow(
             // no hidden or N/A cells. A channel greys out (but stays visible) when the
             // On/Off master is off.
             NOTIF_CHANNEL_COLS.forEach { channel ->
+                val channelFixed = entry.lockedOnChannel(stream, channel)
                 NotifCell(
-                    on = matrix.streamEffectiveChannel(entry.key, stream, channel),
+                    on = channelFixed || matrix.streamEffectiveChannel(entry.key, stream, channel),
                     locked = matrix.streamEffectiveChannelLocked(entry.key, stream, channel),
+                    fixed = channelFixed,
                     enabledToggle = enabled,
                     onToggle = { onToggleChannel(channel, !matrix.streamEffectiveChannel(entry.key, stream, channel)) },
                     onToggleLock = { onToggleChannelLock(channel) },
@@ -1833,7 +1844,7 @@ private fun NotifLockReasonLine(
 ) {
     val c = AuntieTheme.colors
     val stream = audience.streamKey
-    val anyLockActive = entry.alwaysEnabledFor(stream) ||
+    val anyLockActive = entry.alwaysEnabledFor(stream) || entry.lockedOnFor(stream) ||
         matrix.streamEffectiveLockedEnabled(entry.key, stream) ||
         NOTIF_CHANNEL_COLS.any { matrix.streamEffectiveChannelLocked(entry.key, stream, it) }
     if (!anyLockActive) return
@@ -1902,8 +1913,29 @@ private fun NotifCell(
     onToggle: () -> Unit,
     onToggleLock: () -> Unit,
     enabledToggle: Boolean = true,
+    /**
+     * #2382: locked on by ruling, not by the operator. The toggle is drawn on
+     * and disabled, and the lock is drawn closed with nothing to tap.
+     */
+    fixed: Boolean = false,
 ) {
     val c = AuntieTheme.colors
+    if (fixed) {
+        Column(
+            modifier = Modifier.width(NOTIF_CELL_WIDTH),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            AuntieToggle(checked = true, enabled = false, onCheckedChange = {})
+            Icon(
+                imageVector = Lucide.Lock,
+                contentDescription = NOTIF_REQUIRED_FOR_KINFOLK,
+                tint = c.kinfolkOrange,
+                modifier = Modifier.padding(3.dp).size(14.dp),
+            )
+        }
+        return
+    }
     Column(
         modifier = Modifier.width(NOTIF_CELL_WIDTH),
         horizontalAlignment = Alignment.CenterHorizontally,

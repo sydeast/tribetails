@@ -1,6 +1,6 @@
 import { onCall, CallableRequest, HttpsError } from 'firebase-functions/v2/https';
 import { NOTIFICATION_CATALOG } from './catalog';
-import { overrideForStream } from './prefs';
+import { gateViewFor } from './prefs';
 import type {
   Channel,
   MarketingCategory,
@@ -28,6 +28,10 @@ import { fillBusinessPlaceholders, loadBusinessName } from '../lib/businessName'
  *     which point the filter below drops it from this payload entirely (#451).
  *   - gate reads use the KINFOLK stream-effective override view; a key whose
  *     kinfolk stream the operator disabled (or gated to zero channels) hides.
+ *   - except a confirmation locked on for the kinfolk stream (`lockedOnStreams`,
+ *     ruling on #2382, 2026-11-20): `gateViewFor` drops a stored off for the
+ *     row and its email, so it always shows with email locked on, exactly as
+ *     `resolveChannels` will send it. Text and push stay the household's.
  *
  * Projected shape mirrors `KINFOLK_CATEGORIES` + `NotificationKey` in the
  * client so the consumer can swap the static const for a dynamic fetch
@@ -239,8 +243,10 @@ export async function getNotificationCatalogHandler(
     // kinfolk stream (was kinfolkFacing); alwaysEnabled keys are no longer
     // skipped, they render fully locked via lockedChannelsFor below.
     if (!def.audiences.kinfolk) continue;
-    // All gate reads use the KINFOLK stream-effective override view.
-    const ov = overrideForStream(byKey[def.key] ?? null, 'kinfolk');
+    // All gate reads use the KINFOLK stream-effective override view, with the
+    // confirmation lock applied (#2382): a locked confirmation is never hidden
+    // and never loses email here, because the send ignores that stored off too.
+    const ov = gateViewFor(def, byKey[def.key] ?? null, 'kinfolk');
     if (ov && ov.enabled === false) continue; // admin disabled this type for the kinfolk stream
     const required: Channel[] = (Object.keys(def.required) as Channel[]).filter(
       (c) => def.required[c] === true,

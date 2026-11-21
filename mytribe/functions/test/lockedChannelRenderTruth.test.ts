@@ -5,6 +5,8 @@ import {
 } from '../src/notifications/getNotificationCatalog';
 import { getNotificationDef } from '../src/notifications/catalog';
 import {
+  gateViewFor,
+  notificationDisabledFor,
   overrideForStream,
   resolveChannels,
   withAliasedChoicesResolved,
@@ -165,7 +167,15 @@ describe('what a client renders equals what resolveChannels sends (#491)', () =>
  * the prefs the callables now return (`withAliasedChoicesResolved`), resolve
  * reads what is actually in Firestore. Render must still equal resolve.
  */
-const ALIASED = getNotificationDef('kintale.published');
+// `kintale.published` became a locked confirmation with required email on
+// 2026-11-20 (#2382), which makes every email case below agree trivially. The
+// alias walk is what this block tests, so it runs on the same row with the lock
+// and the requirement taken off; the real row is pinned in the #2382 block.
+const ALIASED: NotificationDef = {
+  ...getNotificationDef('kintale.published'),
+  required: {},
+  lockedOnStreams: undefined,
+};
 const RETIRED_KEY = 'kincare.report.sent';
 const RETIRED_CATEGORY = 'visit';
 const ALIAS_HOUSEHOLDS: { name: string; prefs: UserNotificationPrefs }[] = [
@@ -246,5 +256,91 @@ describe('a choice under a retired key renders the way it is sent (#501)', () =>
     const prefs: UserNotificationPrefs = { byKey: { [ALIASED.key]: { email: false } } };
     expect(withAliasedChoicesResolved(prefs)).toBe(prefs);
     expect(withAliasedChoicesResolved({})).toEqual({});
+  });
+});
+
+/**
+ * THE SAME INVARIANT, FOR THE FIVE LOCKED CONFIRMATIONS (#2382).
+ *
+ * Ruling on #2382 (2026-11-20): payment, invoice, KinTale and booking
+ * confirmations are required on and cannot be disabled. The save refuses a new
+ * off, but a settings doc written before the ruling can still hold one, flat or
+ * on the kinfolk stream. Whatever is stored, the household's screen must show
+ * the row with email locked on, and the send must agree: email resolves on, the
+ * notification is not disabled, and text and push are whatever the operator and
+ * household chose.
+ */
+const LOCKED_KEYS = [
+  'invoice.new',
+  'invoice.receipt',
+  'invoice.payment.applied',
+  'kincare.booking.confirm',
+  'kintale.published',
+];
+const STORED_OFFS: { name: string; raw: BusinessNotificationOverride | null }[] = [
+  { name: 'nothing stored', raw: null },
+  { name: 'flat off', raw: { enabled: false, channels: {} } },
+  { name: 'flat email off', raw: { enabled: true, channels: { email: false } } },
+  { name: 'kinfolk stream off', raw: { enabled: true, channels: {}, streams: { kinfolk: { enabled: false } } } },
+  {
+    name: 'kinfolk stream email off',
+    raw: { enabled: true, channels: {}, streams: { kinfolk: { channels: { email: false } } } },
+  },
+  { name: 'pinned with email off', raw: { enabled: true, channels: { email: false }, lockedEnabled: true } },
+  { name: 'text and push switched off', raw: { enabled: true, channels: { sms: false, push: false } } },
+];
+describe('a locked confirmation renders the way it is sent, whatever is stored (#2382)', () => {
+  for (const key of LOCKED_KEYS) {
+    const def = getNotificationDef(key);
+    const households: { name: string; prefs: UserNotificationPrefs }[] = [
+      { name: 'no preference at all', prefs: {} },
+      { name: 'asked for every channel', prefs: { byKey: { [key]: { email: true, sms: true, push: true } } } },
+      { name: 'asked for nothing', prefs: { byKey: { [key]: { email: false, sms: false, push: false } } } },
+      { name: 'turned the category email off', prefs: { byCategory: { [def.category]: { email: false } } } },
+    ];
+    for (const stored of STORED_OFFS) {
+      it(`${key}: ${stored.name}`, () => {
+        const view = gateViewFor(def, stored.raw, 'kinfolk');
+        // The household catalog hides a row whose view is off; a locked one never is.
+        expect(view?.enabled === false).toBe(false);
+        const shown = surviving(def, view);
+        expect(shown).toContain('email');
+        expect(lockedChannelsFor(def, view, shown)).toContain('email');
+        for (const household of households) {
+          expect(notificationDisabledFor(def, household.prefs, stored.raw, 'kinfolk')).toBeNull();
+          const resolved = resolveChannels(def, household.prefs, stored.raw, 'kinfolk');
+          expect(resolved.email, `email sent for a household that ${household.name}`).toBe(true);
+          for (const ch of shown) {
+            expect(
+              rendered(def, view, ch, household.prefs),
+              `${ch} rendered vs resolved for a household that ${household.name}`,
+            ).toBe(resolved[ch]);
+          }
+          // A channel the operator switched off is neither shown nor sent.
+          for (const ch of CHANNELS.filter((c) => !shown.includes(c))) {
+            expect(resolved[ch]).toBe(false);
+          }
+        }
+      });
+    }
+  }
+  it("leaves the owner's own copy and the other always-on rows switchable", () => {
+    const confirm = getNotificationDef('kincare.booking.confirm');
+    const offForOwner: BusinessNotificationOverride = {
+      enabled: true,
+      channels: {},
+      streams: { business: { enabled: false } },
+    };
+    expect(notificationDisabledFor(confirm, {}, offForOwner, 'business')).toBe('operator');
+    const cancel = getNotificationDef('kincare.booking.cancel');
+    const off: BusinessNotificationOverride = { enabled: false, channels: {} };
+    expect(notificationDisabledFor(cancel, {}, off, 'kinfolk')).toBe('operator');
+    expect(resolveChannels(cancel, {}, { enabled: true, channels: { email: false } }, 'kinfolk').email).toBe(false);
+  });
+  it('the real KinTale row keeps email on for every retired-key household', () => {
+    const real = getNotificationDef('kintale.published');
+    for (const household of ALIAS_HOUSEHOLDS) {
+      expect(resolveChannels(real, household.prefs, null, 'kinfolk').email, household.name).toBe(true);
+    }
   });
 });

@@ -76,7 +76,8 @@ export interface NotificationDef {
    * Channels forced ON over a RECIPIENT's own prefs (e.g. legal/security). Not
    * over the operator's: an explicit business-gate `channels.{ch} = false`
    * still wins (resolveChannels step 2 beats step 3), so UI must not caption
-   * this "Always on". See #451 for the settled vocabulary.
+   * this "Always on". See #451 for the settled vocabulary. Exception: on a
+   * stream in `lockedOnStreams` an operator email-off is ignored (#2382).
    */
   required: Partial<Record<Channel, true>>;
   /**
@@ -85,6 +86,7 @@ export interface NotificationDef {
    * warn-but-allow-off) removed enforcement and `resolveChannels` has no
    * alwaysEnabled check, so the operator can silence any of these rows. UI
    * renders it as a risk marker ("Meant to stay on"), never a lock (#451).
+   * The enforced lock is `lockedOnStreams` below (#2382), on five rows only.
    */
   alwaysEnabled: boolean;
   /**
@@ -95,6 +97,19 @@ export interface NotificationDef {
    * and only meaningful when `alwaysEnabled` is true.
    */
   alwaysEnabledStreams?: { kinfolk?: true; business?: true; staff?: true };
+  /**
+   * ENFORCED, unlike `alwaysEnabled`. Operator ruling on #2382 (2026-11-20):
+   * payment, invoice, KinTale and booking confirmations are required on and
+   * cannot be disabled. For a listed stream the operator cannot switch the
+   * notification or its email off: `saveBusinessNotificationOverride` refuses
+   * it, and `withConfirmationLock` (prefs.ts) drops a stored off before
+   * `notificationDisabledFor`, `resolveChannels` and `getNotificationCatalog`
+   * read the override. Text and push stay the operator's and the recipient's to
+   * choose. A row that sets this also sets `required.email`, so the recipient's
+   * own email pref cannot turn it off either. The household launch switch
+   * (`householdNotificationsLive`) still holds these until launch.
+   */
+  lockedOnStreams?: { kinfolk?: true; business?: true; staff?: true };
   /** When false, hidden from kinfolk prefs UI (system-mandatory or business-only). */
   kinfolkFacing: boolean;
   /** Delivery routing. */

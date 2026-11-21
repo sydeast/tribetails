@@ -300,6 +300,44 @@ describe('per-key expansion', () => {
 });
 
 /**
+ * Ruling on #2382 (2026-11-20): payment, invoice, KinTale and booking
+ * confirmations are required on. The catalog now sends the KinTale and payment
+ * notices with email required and locked on (the other three already were), so
+ * the household cannot switch that email off, even if they had before. Text and
+ * push stay theirs. This is the payload getNotificationCatalog sends for them.
+ */
+describe('#2382: a required confirmation', () => {
+  const KINTALE = key({
+    key: 'kintale.published',
+    title: 'Your KinTale is ready',
+    description: 'When your Auntie posts the KinTale from a KinCare visit.',
+    allowedChannels: ['email', 'sms', 'push'],
+    required: ['email'],
+    lockedChannels: ['email'],
+    lockedChannelValues: { email: true },
+  });
+  it('draws email on and read-only over an email-off the household saved before, and leaves text and push free', async () => {
+    mocks.getNotificationCatalog.mockResolvedValue({
+      categories: [{ id: 'kintale', title: 'KinTales', description: 'Stories from your Auntie.', keys: [KINTALE] }],
+      schemaVersion: 1,
+    } satisfies GetNotificationCatalogResult);
+    mocks.getMyNotificationPrefs.mockResolvedValue({
+      prefs: { ...BASE_PREFS, byKey: { 'kintale.published': { email: false } } },
+      updatedAtMs: null,
+    });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Your KinTale is ready')).toBeTruthy());
+    const email = screen.getByRole('checkbox', { name: 'Email for Your KinTale is ready' }) as HTMLInputElement;
+    expect(email.disabled).toBe(true);
+    expect(email.checked).toBe(true);
+    for (const channel of ['SMS', 'Push']) {
+      const box = screen.getByRole('checkbox', { name: `${channel} for Your KinTale is ready` }) as HTMLInputElement;
+      expect(box.disabled, channel).toBe(false);
+    }
+  });
+});
+
+/**
  * #451. The category channel row used to read "Always on. Required by Tribe
  * Tails." whenever no key in the category could toggle that channel. That is a
  * promise this screen has no standing to make: the catalog's `alwaysEnabled`

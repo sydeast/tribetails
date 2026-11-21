@@ -67,6 +67,13 @@ data class NotificationCatalogEntry(
      * serves (the pre-streams behavior); see [alwaysEnabledFor].
      */
     val alwaysEnabledStreams: Set<String> = emptySet(),
+    /**
+     * Streams this row is LOCKED ON for (ruling on #2382, 2026-11-20): payment,
+     * invoice, KinTale and booking confirmations, kinfolk stream only. Unlike
+     * [alwaysEnabled] this is enforced: the server refuses turning the row or its
+     * email off there and ignores a stored off. Empty = none; see [lockedOnFor].
+     */
+    val lockedOnStreams: Set<String> = emptySet(),
     val kinfolkFacing: Boolean = false,
     val deliveryMode: String = "",
     val description: String = "",
@@ -263,6 +270,69 @@ fun NotificationCatalogEntry.channelLocked(channel: String): Boolean = required[
 fun NotificationCatalogEntry.alwaysEnabledFor(stream: String): Boolean =
     alwaysEnabled && (alwaysEnabledStreams.isEmpty() || stream in alwaysEnabledStreams)
 
+/**
+ * Is this row locked on for [stream]'s copy (#2382)? Enforced, so the gate draws
+ * the On/Off toggle and the email toggle on and fixed for that stream. Text and
+ * push stay editable. Mirrors `lockedOnFor` on admin web and Android.
+ */
+fun NotificationCatalogEntry.lockedOnFor(stream: String): Boolean = stream in lockedOnStreams
+
+/** On a locked-on row, whether [channel] is the one the lock pins on (#2382). */
+fun NotificationCatalogEntry.lockedOnChannel(stream: String, channel: String): Boolean =
+    channel == "email" && lockedOnFor(stream)
+
+/**
+ * The caption under a gate row's title for [stream], or null for none.
+ *
+ * This line used to read "Always on" for every `alwaysEnabled` row, and that was
+ * not true: the flag is advisory (ruling #7, warn-but-allow-off) and the
+ * operator can switch those rows off. Admin web and Android say "Meant to stay
+ * on" for it (#451). The five confirmations locked by the ruling on #2382
+ * (2026-11-20) ARE enforced, and say so in the one wording all three admin
+ * surfaces share.
+ */
+fun NotificationCatalogEntry.gateRowCaption(stream: String): String? = when {
+    lockedOnFor(stream) -> NOTIF_REQUIRED_FOR_KINFOLK
+    alwaysEnabledFor(stream) -> NOTIF_MEANT_TO_STAY_ON
+    else -> null
+}
+
+/** The advisory flag's words, the same as admin web and Android (#451). */
+const val NOTIF_MEANT_TO_STAY_ON = "Meant to stay on"
+
+/**
+ * THE ONE WORDING FOR THE ENFORCED LOCK (#2382). Same strings as admin web
+ * (REQUIRED_FOR_KINFOLK) and Android (NOTIF_REQUIRED_FOR_KINFOLK); the detail is
+ * the server's refusal sentence word for word. It says the setting cannot be
+ * turned off, never that the message always arrives: the household launch
+ * switch still holds household notices until launch.
+ */
+const val NOTIF_REQUIRED_FOR_KINFOLK = "Required for Kinfolk"
+const val NOTIF_REQUIRED_FOR_KINFOLK_DETAIL =
+    "Payment, invoice, KinTale and booking confirmations cannot be turned off for Kinfolk, " +
+        "and neither can their email. Text and push can still be changed."
+
+/**
+ * The override to save for a locked-on row (#2382): this one with every locked
+ * stream's copy and its email kept on. A settings doc written before the ruling
+ * can still hold an off (often a flat one the kinfolk stream inherits), and the
+ * server refuses any save whose kinfolk view is off, so without this every text
+ * or push edit on such a row would be refused. The send already ignores that
+ * stored off, so this changes what is stored, never what is sent.
+ */
+fun NotificationOverride.keptLockedOn(entry: NotificationCatalogEntry): NotificationOverride {
+    var next = this
+    for (stream in entry.lockedOnStreams) {
+        if ((next.streams[stream]?.enabled ?: next.enabled) == false) {
+            next = next.withStreamGate(stream) { it.copy(enabled = true) }
+        }
+        if ((next.streams[stream]?.channels?.get("email") ?: next.channels["email"]) == false) {
+            next = next.withStreamGate(stream) { it.copy(channels = it.channels + ("email" to true)) }
+        }
+    }
+    return next
+}
+
 /** The row title shown in the gate matrix and My Notifications: label, else description, else key. */
 fun NotificationCatalogEntry.displayTitle(): String =
     label.ifBlank { description.ifBlank { humanizeKey(key).ifEmpty { "Notification" } } }
@@ -417,6 +487,10 @@ class CloudNotificationOverridesRepository(
             alwaysEnabled = o["alwaysEnabled"]?.jsonPrimitive?.booleanOrNull ?: false,
             // Missing object = empty set = alwaysEnabled covers every served stream.
             alwaysEnabledStreams = (o["alwaysEnabledStreams"] as? JsonObject)?.entries
+                ?.filter { (_, v) -> v.jsonPrimitive.booleanOrNull == true }
+                ?.map { it.key }?.toSet() ?: emptySet(),
+            // #2382: missing object (an older server) = locked on for no stream.
+            lockedOnStreams = (o["lockedOnStreams"] as? JsonObject)?.entries
                 ?.filter { (_, v) -> v.jsonPrimitive.booleanOrNull == true }
                 ?.map { it.key }?.toSet() ?: emptySet(),
             kinfolkFacing = o["kinfolkFacing"]?.jsonPrimitive?.booleanOrNull ?: false,

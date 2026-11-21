@@ -8,6 +8,8 @@ import type { BusinessAdminRoster } from '../api/businessAdmins';
 import {
   MEANT_TO_STAY_ON,
   OFF_AND_MEANT_TO_STAY_ON,
+  REQUIRED_FOR_KINFOLK,
+  REQUIRED_FOR_KINFOLK_DETAIL,
   alwaysOnBadge,
   businessAdminLines,
   businessEmailLine,
@@ -383,5 +385,39 @@ describe('deliveryPhrase never promises a delivery it cannot prove', () => {
 
   it('treats pending as waiting, not as a failure', () => {
     expect(deliveryPhrase('pending', null, null).tone).toBe('neutral');
+  });
+});
+
+// Ruling on #2382 (2026-11-20): payment, invoice, KinTale and booking
+// confirmations are required on for Kinfolk. That lock IS enforced, so its
+// badge says so, and must never carry the advisory "you can switch it off".
+describe('#2382: the enforced lock has its own words', () => {
+  const locked = entry({
+    alwaysEnabled: true,
+    alwaysEnabledStreams: new Set([STREAM_KINFOLK]),
+    required: { email: true },
+    lockedOnStreams: new Set([STREAM_KINFOLK]),
+  });
+
+  it('reads "Required for Kinfolk" on the Kinfolk tab, on or off in storage', () => {
+    for (const enabled of [true, false]) {
+      const badge = alwaysOnBadge(locked, STREAM_KINFOLK, enabled)!;
+      expect(badge.label).toBe(REQUIRED_FOR_KINFOLK);
+      expect(badge.detail).toBe(REQUIRED_FOR_KINFOLK_DETAIL);
+      expect(badge.detail.toLowerCase()).not.toContain('you can switch it off');
+      expect(rowBadges(locked, STREAM_KINFOLK, enabled).map((b) => b.label)).toEqual([REQUIRED_FOR_KINFOLK]);
+    }
+  });
+
+  it("leaves the owner's copy of the same row without that badge", () => {
+    expect(alwaysOnBadge(locked, STREAM_BUSINESS, true)).toBeNull();
+  });
+
+  it('does not promise delivery, since the launch switch still holds household notices', () => {
+    const words = `${REQUIRED_FOR_KINFOLK} ${REQUIRED_FOR_KINFOLK_DETAIL}`.toLowerCase();
+    expect(words).not.toContain('always on');
+    expect(words).not.toContain('always sent');
+    expect(words).toContain('cannot be turned off');
+    expect(words).not.toMatch(/\u2014/);
   });
 });
