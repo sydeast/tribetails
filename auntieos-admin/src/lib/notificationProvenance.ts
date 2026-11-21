@@ -365,6 +365,7 @@ const SKIP_REASON_WORDS: Readonly<Record<string, string>> = {
   recipient_hard_bounced: 'an earlier email to this address bounced, so it is not mailed again',
   template_missing: 'there is no text message template for it',
   template_text_empty: 'its text message template is empty',
+  template_broken: 'its text message wording cannot be filled in, so fix it in Templates',
   unknown: 'the sender gave no reason',
 };
 export function skipReasonWords(code: string): string {

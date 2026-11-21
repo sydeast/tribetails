@@ -198,6 +198,8 @@ private fun SignedInApp(
     var composeQuoteForKinfolkId by remember { mutableStateOf<String?>(null) }
     // #2028: the visit request a notification opened Bookings for (household/request id).
     var bookingsFocusRequest by remember { mutableStateOf<String?>(null) }
+    // #2121: the Kin removal request a notice opened Bookings for, until Bookings takes it.
+    var bookingsFocusKinRemoval by remember { mutableStateOf<String?>(null) }
     // #1199: the visit an invoice's bound line opened in Auntie Time; dropped on leaving it.
     // #2099: a visit notification's Open sets it too.
     var visitToOpenId by remember { mutableStateOf<String?>(null) }
@@ -474,6 +476,8 @@ private fun SignedInApp(
             Destination.Bookings    -> BookingScreen(
                 focusRequestKey = bookingsFocusRequest,
                 onFocusRequestConsumed = { bookingsFocusRequest = null },
+                focusKinRemovalId = bookingsFocusKinRemoval,
+                onKinRemovalFocusConsumed = { bookingsFocusKinRemoval = null },
             )
             Destination.Sessions    -> KinCareSessionsScreen(initialKinCareId = visitToOpenId)
             Destination.Schedule    -> ScheduleScreen()
@@ -586,6 +590,17 @@ private fun SignedInApp(
                     directoryKinId = null
                     directoryDecidePaymentId = null
                     bookingsFocusRequest = com.tribetails.auntieos.web.screens.notifications.visitRequestKey(kinfolkId, batchId)
+                    current = Destination.Bookings
+                },
+                onOpenKinRemoval = { requestId ->
+                    // #2121: the waiting removal requests on Bookings, this one marked,
+                    // not the household profile (which cannot answer it).
+                    selectedInvoiceId = null
+                    reportSessionId = null
+                    directoryKinfolkId = null
+                    directoryKinId = null
+                    directoryDecidePaymentId = null
+                    bookingsFocusKinRemoval = requestId
                     current = Destination.Bookings
                 },
                 onOpenUnappliedPayment = { kinfolkId, paymentId ->

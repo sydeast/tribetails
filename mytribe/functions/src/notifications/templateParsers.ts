@@ -64,6 +64,34 @@ export function stripUnresolvedTokens(rendered: string): string {
 export function renderPlainText(template: string, data: Record<string, unknown>): string {
   return stripUnresolvedTokens(Handlebars.compile(template, { noEscape: true })(data));
 }
+
+/**
+ * #2251: why a stored template cannot be filled in, or null when every one of
+ * [templates] renders with [data]. The senders ask before they send, so a
+ * template saved or imported with an unclosed `{{#if}}` (before the save and
+ * the importer refused one) is caught here and swapped for the disclosed
+ * fallback, instead of throwing on every send while the household hears
+ * nothing. The first line of the renderer's own message, for the log.
+ *
+ * Here rather than in `lib/email.ts` for the same cold-start reason as
+ * `renderPlainText`, and because many tests replace that module wholesale.
+ */
+export function templateRenderFailure(
+  templates: ReadonlyArray<string | null | undefined>,
+  data: Record<string, unknown>,
+): string | null {
+  for (const template of templates) {
+    if (!template) continue;
+    try {
+      Handlebars.compile(template, { noEscape: true })(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return message.split('\n')[0] || 'the template could not be filled in';
+    }
+  }
+  return null;
+}
+
 export interface PushTxtParsed {
   title: string;
   body: string;
