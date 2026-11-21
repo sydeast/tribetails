@@ -367,8 +367,9 @@ export function applicableNotificationActions(
 
   // #2200 / #2201: an owner-only screen (Invoices, for these rows) sends an
   // Auntie Home, so for her a button into one is dropped rather than drawn as
-  // a dead end. `bookingId` is untouched: Approve / Deny is hers, and the
-  // "Needs a decision" count is derived from it.
+  // a dead end. `bookingId` is untouched, because the "Needs a decision"
+  // count is derived from it; the row's Approve / Deny pair is left out for
+  // her where it is drawn (`NotificationQuickActions`, #2313).
   const forViewer = (route: NotificationRoute | null): NotificationRoute | null =>
     route !== null && isAuntie && isOwnerOnlyPath(route.to) ? null : route;
 

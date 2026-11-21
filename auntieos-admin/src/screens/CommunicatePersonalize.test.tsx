@@ -935,3 +935,198 @@ describe('reopening a held Push draft (#2293)', () => {
   });
 });
 
+
+/**
+ * #2444: an Auntie could start an email, text or push draft here and never
+ * finish one. Generate is refused (`/api/generate` reads the dossier), Approve
+ * is a `generated_drafts` write the rules give the owner alone, and the sends
+ * behind it are the owner's too. What she can finish is a stored KinTale
+ * draft, sent through `publishGeneratedDraft`. So she is drawn that and
+ * nothing else; the owner's screen is unchanged.
+ */
+describe('#2444 an Auntie sends a stored KinTale draft and nothing else', () => {
+  const KINTALE = {
+    _id: 'gd1',
+    status: 'generated',
+    communication_type: 'visit_report',
+    kinfolk_id: 'kf1',
+    kinfolk_name: 'Dana Halbrook',
+    generated_copy: 'Biscuit chased every leaf in the yard.',
+    generated_title: 'Leaf patrol',
+  };
+
+  function stored(row: Record<string, unknown> | null) {
+    useDocById.mockImplementation((path: string, id: string | null) =>
+      path === 'generated_drafts' && id === 'gd1' ? { status: 'ready', data: row } : { status: 'ready', data: null },
+    );
+  }
+
+  it('draws her no generator form: no message types, no Generate, no household context', () => {
+    setup();
+    render(<CommunicatePersonalize isAuntie />);
+    expect(screen.queryByRole('radio')).toBeNull();
+    for (const type of ['Email', 'SMS', 'Push', 'KinTale']) {
+      expect(screen.queryByRole('radio', { name: type })).toBeNull();
+    }
+    expect(screen.queryByRole('button', { name: 'Generate draft' })).toBeNull();
+    expect(screen.queryByLabelText(/^notes$/i)).toBeNull();
+    expect(screen.queryByTestId('context-stub')).toBeNull();
+  });
+
+  it('with no draft open, points her at KinTales and opens it', async () => {
+    const user = setup();
+    const onOpenKinTales = vi.fn();
+    render(<CommunicatePersonalize isAuntie onOpenKinTales={onOpenKinTales} />);
+    expect(screen.getByText('No draft is open.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Open KinTales' }));
+    expect(onOpenKinTales).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens a stored KinTale draft, lets her edit the title and the words, and sends it', async () => {
+    const user = setup();
+    stored(KINTALE);
+    render(<CommunicatePersonalize draftId="gd1" isAuntie />);
+    const box = await screen.findByLabelText(/edit before approving/i);
+    expect(box).toHaveValue('Biscuit chased every leaf in the yard.');
+    const title = screen.getByLabelText('Title');
+    expect(title).toHaveValue('Leaf patrol');
+    await user.clear(title);
+    await user.type(title, 'Leaf duty');
+    await user.clear(box);
+    await user.type(box, 'Biscuit chased every leaf.');
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    await waitFor(() => expect(publishGeneratedDraft).toHaveBeenCalledTimes(1));
+    expect(publishGeneratedDraft.mock.calls[0]?.[0]).toEqual({
+      draftId: 'gd1',
+      bodyCopy: 'Biscuit chased every leaf.',
+      title: 'Leaf duty',
+    });
+    expect(await screen.findByText(/Sent to Dana Halbrook/)).toBeInTheDocument();
+    // The owner's paths were never touched.
+    expect(approveGeneratedDraft).not.toHaveBeenCalled();
+    expect(sendExternalMessage).not.toHaveBeenCalled();
+    expect(sendHouseholdPush).not.toHaveBeenCalled();
+    expect(generateDraft).not.toHaveBeenCalled();
+  });
+
+  it('gives her no Delete draft and no Regenerate on the open draft', async () => {
+    setup();
+    stored(KINTALE);
+    render(<CommunicatePersonalize draftId="gd1" isAuntie />);
+    await screen.findByLabelText(/edit before approving/i);
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Regenerate' })).toBeNull();
+    expect(screen.queryByText('No draft is open.')).toBeNull();
+    expect(deleteGeneratedDraft).not.toHaveBeenCalled();
+  });
+
+  for (const type of ['email', 'sms', 'push', 'general']) {
+    it(`gives her no Approve on a stored ${type} draft`, async () => {
+      setup();
+      stored({ ...KINTALE, communication_type: type });
+      render(<CommunicatePersonalize draftId="gd1" isAuntie />);
+      await screen.findByLabelText(/edit before approving/i);
+      expect(screen.queryByRole('button', { name: /^Approve/ })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+      expect(screen.queryByLabelText('Title')).toBeNull();
+    });
+  }
+
+  it('shows a refused send to her, and leaves the draft on screen', async () => {
+    const user = setup();
+    publishGeneratedDraft.mockRejectedValue(new Error('This draft could not be sent.'));
+    stored(KINTALE);
+    render(<CommunicatePersonalize draftId="gd1" isAuntie />);
+    await user.click(await screen.findByRole('button', { name: 'Approve and send' }));
+    await user.click(screen.getByRole('button', { name: 'Send now' }));
+    expect(await screen.findByText('This draft could not be sent.')).toBeInTheDocument();
+    expect(screen.getByLabelText(/edit before approving/i)).toHaveValue('Biscuit chased every leaf in the yard.');
+  });
+
+  it('leaves the owner the whole form, Delete included', async () => {
+    setup();
+    stored(KINTALE);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await screen.findByLabelText(/edit before approving/i);
+    for (const type of ['Email', 'SMS', 'Push', 'KinTale']) {
+      expect(screen.getByRole('radio', { name: type })).toBeInTheDocument();
+    }
+    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete draft' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve and send' })).toBeInTheDocument();
+    expect(screen.getByTestId('context-stub')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Title')).toBeNull();
+  });
+});
+
+/**
+ * #2444: the Auntie's screen has no recipient picker, so the owner's "Choose
+ * one before sending" must never be what stops her. The server sends a KinTale
+ * to the household the draft names, so that is what her send is checked
+ * against.
+ */
+describe('#2444 an Auntie is never told to choose a household she cannot choose', () => {
+  const DRAFT = {
+    _id: 'gd1',
+    status: 'generated',
+    communication_type: 'visit_report',
+    kinfolk_id: 'kf-not-on-her-roster',
+    kinfolk_name: 'The Okafors',
+    generated_copy: 'Biscuit chased every leaf in the yard.',
+    generated_title: 'Leaf patrol',
+  };
+
+  function stored(row: Record<string, unknown>) {
+    useDocById.mockImplementation((path: string, id: string | null) =>
+      path === 'generated_drafts' && id === 'gd1' ? { status: 'ready', data: row } : { status: 'ready', data: null },
+    );
+  }
+
+  it('sends a draft whose household is missing from her roster, and names that household in the confirm', async () => {
+    const user = setup();
+    stored(DRAFT);
+    render(<CommunicatePersonalize draftId="gd1" isAuntie />);
+    await user.click(await screen.findByRole('button', { name: 'Approve and send' }));
+    const dialog = screen.getByRole('dialog', { name: 'Send this message?' });
+    expect(within(dialog).getByText('The Okafors')).toBeInTheDocument();
+    expect(within(dialog).queryByText('nobody')).toBeNull();
+    await user.click(within(dialog).getByRole('button', { name: 'Send now' }));
+    await waitFor(() => expect(publishGeneratedDraft).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/Choose one before sending/)).toBeNull();
+  });
+
+  it('says a draft that names no household cannot be sent, and sends nothing', async () => {
+    const user = setup();
+    stored({ ...DRAFT, kinfolk_id: '', kinfolk_name: '' });
+    render(<CommunicatePersonalize draftId="gd1" isAuntie />);
+    await user.click(await screen.findByRole('button', { name: 'Approve and send' }));
+    expect(
+      await screen.findByText('This draft names no household, so it cannot be sent. The owner can address it.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText(/Choose one before sending/)).toBeNull();
+    expect(publishGeneratedDraft).not.toHaveBeenCalled();
+  });
+
+  it('refuses an emptied draft before the confirm', async () => {
+    const user = setup();
+    stored(DRAFT);
+    render(<CommunicatePersonalize draftId="gd1" isAuntie />);
+    await user.clear(await screen.findByLabelText(/edit before approving/i));
+    await user.click(screen.getByRole('button', { name: 'Approve and send' }));
+    expect(await screen.findByText('The KinTale is empty. Write something before sending it.')).toBeInTheDocument();
+    expect(publishGeneratedDraft).not.toHaveBeenCalled();
+  });
+
+  it('still tells the owner to choose a household, since the owner has the picker', async () => {
+    const user = setup();
+    stored(DRAFT);
+    render(<CommunicatePersonalize draftId="gd1" />);
+    await user.click(await screen.findByRole('button', { name: 'Approve and send' }));
+    expect(
+      await screen.findByText('This KinTale is not addressed to a household. Choose one before sending.'),
+    ).toBeInTheDocument();
+    expect(publishGeneratedDraft).not.toHaveBeenCalled();
+  });
+});

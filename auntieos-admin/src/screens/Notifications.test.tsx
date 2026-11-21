@@ -1082,8 +1082,9 @@ describe('Notifications quick actions (issue #20)', () => {
   });
 
   // #2200 / #2201: Invoices sends an Auntie Home, so her rows offer neither a
-  // Create quote nor an Open that lands there. Approve / Deny stays hers.
-  it('offers an Auntie no Create quote and no Open into Invoices', () => {
+  // Create quote nor an Open that lands there. #2313: nor Approve and Deny,
+  // which the server refuses her.
+  it('offers an Auntie no Create quote, no Open into Invoices, and no Approve or Deny', () => {
     mockStreams({
       status: 'ready',
       data: [
@@ -1093,7 +1094,8 @@ describe('Notifications quick actions (issue #20)', () => {
     });
     render(<Notifications onNavigate={vi.fn()} isAuntie />);
     expect(screen.queryByRole('button', { name: 'Create quote' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
     // The waiting request still opens its booking; the quote row opens nothing.
     expect(screen.getAllByRole('button', { name: 'Open' })).toHaveLength(1);
   });

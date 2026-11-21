@@ -114,6 +114,12 @@ interface ScheduleWeekGridProps {
   onSelectDay: (day: string) => void;
   onOpenSession: (sessionId: string) => void;
   onDrop: (drop: ScheduleDrop) => void;
+  /**
+   * False for an Auntie: moving a visit is the owner's (`rescheduleBooking`
+   * refuses her), so a block does not lift under her pointer. A press still
+   * opens the visit.
+   */
+  canMove?: boolean;
 }
 
 /**
@@ -167,6 +173,7 @@ export function ScheduleWeekGrid({
   onSelectDay,
   onOpenSession,
   onDrop,
+  canMove = true,
 }: ScheduleWeekGridProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -264,6 +271,8 @@ export function ScheduleWeekGrid({
   }
 
   function onBlockPointerMove(e: ReactPointerEvent<HTMLButtonElement>) {
+    // Never `moved`, so the release is a click and opens the visit.
+    if (!canMove) return;
     setDrag((prev) => {
       if (prev === null || prev.pointerId !== e.pointerId) return prev;
       const dx = e.clientX - prev.startClientX;

@@ -43,6 +43,13 @@ interface HouseholdDataProps {
    * no list to return to leaves it out and the trail drops that step.
    */
   onKinfolkList?: (() => void) | undefined;
+  /**
+   * An Auntie is signed in. The household record is hers to read and edit.
+   * The "From the dossier" card is not: the dossier is the owner's alone and
+   * the rules refuse her the read, so the card drew her a failed load. Its
+   * read is never started for her.
+   */
+  isAuntie?: boolean;
 }
 
 /**
@@ -76,7 +83,7 @@ interface HouseholdDataProps {
  *  fields, so the gaps ARE the content. `KinfolkProfile`'s convention of hiding
  *  blank facts is the right call there and the wrong one here.
  */
-export function HouseholdData({ kinfolkId, kinfolkName, onBack, onKinfolkList }: HouseholdDataProps) {
+export function HouseholdData({ kinfolkId, kinfolkName, onBack, onKinfolkList, isAuntie = false }: HouseholdDataProps) {
   const household = kinfolkName.trim() === '' ? kinfolkId : kinfolkName;
 
   // The mock's trail: Directory / Kinfolk / <Name> / Household. Directory is
@@ -132,7 +139,7 @@ export function HouseholdData({ kinfolkId, kinfolkName, onBack, onKinfolkList }:
           </p>
         </Banner>
       ) : (
-        <HouseholdRecordView kinfolkId={kinfolkId} household={household} />
+        <HouseholdRecordView kinfolkId={kinfolkId} household={household} isAuntie={isAuntie} />
       )}
     </div>
   );
@@ -145,15 +152,21 @@ export function HouseholdData({ kinfolkId, kinfolkName, onBack, onKinfolkList }:
 function HouseholdRecordView({
   kinfolkId,
   household,
+  isAuntie,
 }: {
   kinfolkId: string;
   household: string;
-  /** Back to the household profile, where the vet is actually picked. */
+  /** An Auntie is signed in: the dossier notes are never read. */
+  isAuntie: boolean;
 }) {
   const { showToast } = useToast();
 
   const loaded = useOneShot(() => getHouseholdData(kinfolkId), 'getHouseholdData');
-  const notes = useOneShot(() => getDossierHouseholdNotes(kinfolkId), 'getDossierHouseholdNotes');
+  // Blank for an Auntie, which is the "nothing to migrate" state: no card.
+  const notes = useOneShot(
+    () => (isAuntie ? Promise.resolve('') : getDossierHouseholdNotes(kinfolkId)),
+    'getDossierHouseholdNotes',
+  );
 
   // The shared clinic catalog. The record stores a clinic id; everything shown
   // for the vet resolves through this listener, so there is one copy to correct.

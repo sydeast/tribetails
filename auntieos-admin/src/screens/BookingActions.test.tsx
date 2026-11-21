@@ -287,15 +287,16 @@ describe('BookingActions: #1838, the cancel says who the household told', () => 
     );
   });
 
-  it('NEGATIVE: an Auntie is not sent to Settings', async () => {
-    seat.caretaker = true;
-    try {
-      previewHouseholdNotice.mockResolvedValue({ willNotify: false, reason: 'household_notices_off', name: 'Dre East', channels: [] });
-      await openCancel();
-      expect(await screen.findByText('Nobody will be told: the owner has notices to households turned off.')).toBeInTheDocument();
-    } finally {
-      seat.caretaker = false;
-    }
+  // #2313: cancelling is the owner's (`transitionBookingStatus` refuses an
+  // Auntie), so she is drawn no Cancel and no Reschedule, and the cancel
+  // question is never asked of the server on her behalf.
+  it('NEGATIVE: an Auntie is drawn no Cancel and no Reschedule', async () => {
+    render(<BookingActions entry={entry({ _id: 'ses-2', status: 'SCHEDULED' })} onClose={vi.fn()} isAuntie />);
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reschedule' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Mark Completed' })).toHaveAttribute('aria-disabled', 'true');
+    expect(cancelBooking).not.toHaveBeenCalled();
   });
 
   it('ERROR: an older server returns no notice: the toast claims nothing about the household', async () => {
@@ -667,12 +668,12 @@ describe('BookingStatusActions (the panel composed into the detail sheet)', () =
       expect(markBookingCompleted).not.toHaveBeenCalled();
     });
 
-    it('Cancel beside it is left as it was (#2313 is its own ruling)', async () => {
+    // #2313: the server refuses her Cancel too, so it is not drawn beside
+    // the held Mark Completed.
+    it('Cancel beside it is not drawn for her', async () => {
       render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} />);
       await held();
-      const cancel = screen.getByRole('button', { name: 'Cancel' });
-      expect(cancel).not.toHaveAttribute('aria-disabled');
-      expect(cancel).toBeEnabled();
+      expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
     });
 
     it('the dialog form of these actions holds it the same way', async () => {
@@ -910,5 +911,52 @@ describe('BookingStatusActions: Approve anyway (#1145)', () => {
     await pressApprove();
     expect(await screen.findByText(/Could not approve: permission-denied/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Approve anyway' })).toBeNull();
+  });
+});
+
+/**
+ * #2313: `transitionBookingStatus` refuses an Auntie every transition, so
+ * Approve, Reject and Cancel were buttons that ended in a refusal. She is
+ * drawn none. Mark Completed stays, held (#2199). The owner keeps all four.
+ */
+describe('#2313 the status actions an Auntie is drawn', () => {
+  it.each(['PENDING', 'DRAFT'])('a %s request draws her no Actions panel at all', (status) => {
+    render(<BookingStatusActions entry={entry({ status })} onDone={vi.fn()} isAuntie />);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Actions' })).toBeNull();
+    expect(screen.queryByText(/final state/)).toBeNull();
+    expect(document.querySelector('.den-panel')).toBeNull();
+  });
+
+  it('an Approve asked for on mount is never posed to her', () => {
+    render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} initialAction="approve" isAuntie />);
+    expect(screen.queryByText('Approve this booking?')).toBeNull();
+    expect(screen.queryByRole('button', { name: /yes, approve it/i })).toBeNull();
+    expect(approveBooking).not.toHaveBeenCalled();
+  });
+
+  it('a Cancel asked for on mount is never posed to her, and the cancel preview is never asked for', () => {
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} initialAction="cancel" isAuntie />);
+    expect(screen.queryByText('Cancel this scheduled visit?')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Mark Completed' })).toHaveAttribute('aria-disabled', 'true');
+    expect(previewHouseholdNotice).not.toHaveBeenCalled();
+    expect(cancelBooking).not.toHaveBeenCalled();
+  });
+
+  it('a finished visit still reads as finished for her', () => {
+    render(<BookingStatusActions entry={entry({ status: 'COMPLETED' })} onDone={vi.fn()} isAuntie />);
+    expect(screen.getByText('This booking has reached a final state. No further actions apply.')).toBeInTheDocument();
+  });
+
+  it('the owner keeps Approve and Reject on a request, and Cancel on a visit', () => {
+    const { unmount } = render(<BookingStatusActions entry={entry({ status: 'PENDING' })} onDone={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
+    unmount();
+    render(<BookingStatusActions entry={entry({ status: 'SCHEDULED' })} onDone={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Mark Completed' })).toBeEnabled();
   });
 });

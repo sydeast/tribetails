@@ -18,6 +18,7 @@ import {
   filterRecipients,
   generateBlocker,
   approveBlocker,
+  auntieKinTaleBlocker,
   buildGeneratePayload,
   draftSubtitle,
   type PersonalizeFormState,
@@ -115,6 +116,15 @@ export interface CommunicatePersonalizeProps {
   draftId?: string | undefined;
   /** Opens the sent KinTale. Omitted, the success banner offers no link. */
   onOpenKinTale?: ((reportId: string) => void) | undefined;
+  /**
+   * #2444: an Auntie is signed in. She sends a stored KinTale draft and
+   * nothing else, so the generator form, the household context panel, Delete
+   * and every send that is not a KinTale are not drawn. The reasons, one per
+   * control, are in `Communicate.tsx`.
+   */
+  isAuntie?: boolean;
+  /** Opens the KinTales list, where her drafts are. */
+  onOpenKinTales?: (() => void) | undefined;
 }
 /** The composer chip a stored draft's `communication_type` selects. Blank or unknown reads as a KinTale, Home's own fallback. */
 function messageTypeOfDraft(draft: GeneratedDraftRow): GenerateCommunicationType {
@@ -123,7 +133,12 @@ function messageTypeOfDraft(draft: GeneratedDraftRow): GenerateCommunicationType
     ? (raw as GenerateCommunicationType)
     : 'visit_report';
 }
-export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: CommunicatePersonalizeProps = {}) {
+export function CommunicatePersonalize({
+  draftId: openDraftId,
+  onOpenKinTale,
+  isAuntie = false,
+  onOpenKinTales,
+}: CommunicatePersonalizeProps = {}) {
   const kinfolkState = useKinfolkRoster();
   // A by-id read, not a search of Home's 50-row drafts stream: a draft from
   // May can sit outside that window and still be the one the operator clicked.
@@ -176,6 +191,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
   const lengthLegendId = useId();
   const searchId = useId();
   const subjectId = useId();
+  const auntieTitleId = useId();
   const notesId = useId();
   const draftId = useId();
 
@@ -428,7 +444,12 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
   }
   function handleApproveClick(kf: Kinfolk | undefined) {
     if (busy) return;
-    const blocker = approveBlocker(form, kf, draft?.draft_id ?? null, draftText);
+    // #2444: an Auntie has no recipient picker, so her send is checked
+    // against the household the draft itself names.
+    const blocker =
+      isAuntie && def.deliverable === 'kintale'
+        ? auntieKinTaleBlocker(draft?.kinfolk_id ?? null, draftText)
+        : approveBlocker(form, kf, draft?.draft_id ?? null, draftText);
     if (blocker !== null) {
       setApproveError(blocker);
       return;
@@ -465,6 +486,10 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
           approved: approved !== null,
           pushResult,
         });
+        // #2444: the one send an Auntie can finish. Her rules read only
+        // KinTale drafts, so any other type on her screen is a draft the server
+        // will not let her act on, and it gets no button.
+        const auntieMaySend = isAuntie && def.deliverable === 'kintale';
 
         // `.communicate__main` is the left column of the two-column grid
         // `Communicate` draws (the mock's `.cols`); the confirm Dialog is
@@ -486,6 +511,19 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
               </Banner>
             )}
             {deleted && <Banner tone="success">Draft deleted.</Banner>}
+            {/* #2444: an Auntie with no draft open has nothing to act on here,
+                so she is pointed at the list her drafts are in. */}
+            {isAuntie && draft === null && stored.status !== 'loading' && (
+              <DenPanel title="KinTale drafts">
+                <EmptyHint>No draft is open.</EmptyHint>
+                {onOpenKinTales && (
+                  <div className="personalize__actions">
+                    <GhostButton label="Open KinTales" onClick={onOpenKinTales} />
+                  </div>
+                )}
+              </DenPanel>
+            )}
+            {!isAuntie && (
             <DenPanel
               title="Personalize"
               subtitle="A one-to-one note that uses the recipient's dossier and kin context."
@@ -675,12 +713,13 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                 </div>
               </div>
             </DenPanel>
+            )}
 
             {/* The context Auntie reads before drafting. Rendered for the types
                 that address a household; a Blog post has no recipient, so there
                 is no dossier to show and the panel would be a permanent empty
                 state taking up the screen. */}
-            {def.needsRecipient && <RecipientContextPanel kinfolkId={form.recipientId} />}
+            {def.needsRecipient && !isAuntie && <RecipientContextPanel kinfolkId={form.recipientId} />}
             {draft !== null && (
               // The mock's `.draft` card: purple rim and wash, "Auntie AI
               // draft" with the "needs approval" capsule on the header rule.
@@ -701,6 +740,26 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                     </Banner>
                   )}
 
+                  {/* #2444: the owner's Subject box is in the generator
+                      form, which an Auntie does not get. Her KinTale's title
+                      is edited here, beside the words it heads. */}
+                  {isAuntie && def.deliverable === 'kintale' && (
+                    <label className="personalize__field" htmlFor={auntieTitleId}>
+                      <span className="personalize__field-label">Title</span>
+                      <input
+                        id={auntieTitleId}
+                        type="text"
+                        className="personalize__text-input"
+                        value={form.subject}
+                        disabled={busy || settled}
+                        maxLength={SUBJECT_MAX}
+                        onChange={(e) => {
+                          patch({ subject: e.target.value });
+                          setSubjectTouched(true);
+                        }}
+                      />
+                    </label>
+                  )}
                   <label className="personalize__field" htmlFor={draftId}>
                     <span className="personalize__field-label">Edit before approving</span>
                     <textarea
@@ -800,9 +859,9 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       {deleteError}
                     </Banner>
                   )}
-                  {(actions.approve || actions.remove) && (
+                  {(auntieMaySend ? actions.approve : !isAuntie && (actions.approve || actions.remove)) && (
                     <div className="personalize__actions">
-                      {actions.approve && (
+                      {actions.approve && (!isAuntie || auntieMaySend) && (
                         <PrimaryButton
                           label={approveLabel}
                           busy={approving}
@@ -810,7 +869,7 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                           onClick={() => handleApproveClick(kf)}
                         />
                       )}
-                      {actions.remove && draft.draft_id !== null && draft.draft_id !== '' && (
+                      {actions.remove && !isAuntie && draft.draft_id !== null && draft.draft_id !== '' && (
                         <GhostButton
                           label="Delete draft"
                           disabled={busy}
@@ -822,10 +881,12 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                       )}
                     </div>
                   )}
-                  <p className="personalize__note">
-                    Approving saves this draft and records it in the activity log. Nothing goes out until that save
-                    succeeds.
-                  </p>
+                  {!isAuntie && (
+                    <p className="personalize__note">
+                      Approving saves this draft and records it in the activity log. Nothing goes out until that save
+                      succeeds.
+                    </p>
+                  )}
                 </div>
               </DenPanel>
             )}
@@ -861,7 +922,9 @@ export function CommunicatePersonalize({ draftId: openDraftId, onOpenKinTale }: 
                 ) : def.deliverable === 'kintale' ? (
                   <>
                     <p className="personalize__confirm-line">
-                      <strong>To:</strong> {kf ? kinfolkDisplayName(kf) : 'nobody'}
+                      {/* The draft's own household when the roster does not
+                          hold it: that is who the server sends it to. */}
+                      <strong>To:</strong> {household}
                     </p>
                     <p className="personalize__confirm-line">
                       <strong>Channel:</strong> KinTale, on their portal

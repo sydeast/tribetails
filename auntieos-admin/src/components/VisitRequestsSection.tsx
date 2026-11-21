@@ -149,6 +149,21 @@ async function loadQueues(): Promise<QueueLoad> {
   };
 }
 
+/**
+ * An Auntie's queue (#2313). `listPendingBookingRequests` is on her list, so
+ * she sees what households have asked for. The reschedule and cancellation
+ * queues refuse her, so they are not asked for and never read as a failed
+ * load.
+ */
+async function loadNewBookingQueue(): Promise<QueueLoad> {
+  try {
+    const res = await listPendingBookingRequests();
+    return { requests: mergeQueues([], [], res.requests), failures: [] };
+  } catch (err) {
+    return { requests: [], failures: [`New booking requests: ${reasonOf(err)}`] };
+  }
+}
+
 function reasonOf(err: unknown): string {
   return err instanceof Error ? err.message : 'the read did not land';
 }
@@ -171,7 +186,14 @@ export function VisitRequestsSection({
   refreshKey = 0,
   focusRequest,
   onFocusNotWaiting,
+  isAuntie = false,
 }: {
+  /**
+   * An Auntie is signed in (#2313). She reads the new booking requests and
+   * answers none: Accept and Decline go through `manageBookingSeries`, which
+   * refuses her, so neither is drawn, on the card or in its detail.
+   */
+  isAuntie?: boolean;
   refreshKey?: number;
   focusRequest?: FocusRequest;
   /**
@@ -192,7 +214,7 @@ export function VisitRequestsSection({
   const tick = usePollTick(VISIT_REQUESTS_REFRESH_MS);
   const signal = useVisitRequestSignal(ALL_QUEUES);
   const loaded = useRefreshingLoad(
-    loadQueues,
+    isAuntie ? loadNewBookingQueue : loadQueues,
     'visit requests',
     `${String(refreshKey)}:${String(tick)}:${String(signal)}`,
   );
@@ -365,16 +387,18 @@ export function VisitRequestsSection({
                     <span className="visit-requests__row-reason">{reasonOfRow(row)}</span>
                   )}
                 </button>
-                <div className="visit-requests__row-actions">
-                  <PrimaryButton
-                    label="Accept"
-                    onClick={() => setActiveSheet({ row, decision: 'accept' })}
-                  />
-                  <GhostButton
-                    label="Decline"
-                    onClick={() => setActiveSheet({ row, decision: 'decline' })}
-                  />
-                </div>
+                {!isAuntie && (
+                  <div className="visit-requests__row-actions">
+                    <PrimaryButton
+                      label="Accept"
+                      onClick={() => setActiveSheet({ row, decision: 'accept' })}
+                    />
+                    <GhostButton
+                      label="Decline"
+                      onClick={() => setActiveSheet({ row, decision: 'decline' })}
+                    />
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -386,10 +410,14 @@ export function VisitRequestsSection({
         <RequestDetailDialog
           row={detailRow}
           onClose={() => setDetailRow(null)}
-          onDecide={(decision) => {
-            setDetailRow(null);
-            setActiveSheet({ row: detailRow, decision });
-          }}
+          onDecide={
+            isAuntie
+              ? null
+              : (decision) => {
+                  setDetailRow(null);
+                  setActiveSheet({ row: detailRow, decision });
+                }
+          }
         />
       )}
       {activeSheet && (
@@ -571,7 +599,8 @@ export function requestVisitLines(
 interface RequestDetailDialogProps {
   row: VisitRequest;
   onClose: () => void;
-  onDecide: (decision: 'accept' | 'decline') => void;
+  /** Null for an Auntie (#2313): the request is read, with no Accept or Decline. */
+  onDecide: ((decision: 'accept' | 'decline') => void) | null;
 }
 /**
  * #1577: the request opened from its card. Everything the office needs to
@@ -590,8 +619,12 @@ export function RequestDetailDialog({ row, onClose, onDecide }: RequestDetailDia
       footer={
         <>
           <GhostButton label="Close" onClick={onClose} />
-          <GhostButton label="Decline" onClick={() => onDecide('decline')} />
-          <PrimaryButton label="Accept" onClick={() => onDecide('accept')} />
+          {onDecide !== null && (
+            <>
+              <GhostButton label="Decline" onClick={() => onDecide('decline')} />
+              <PrimaryButton label="Accept" onClick={() => onDecide('accept')} />
+            </>
+          )}
         </>
       }
     >

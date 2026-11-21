@@ -852,3 +852,38 @@ describe('Gallery screen, glass sweep (#755)', () => {
     expect(container.querySelector('.gallery__hint')).toBeNull();
   });
 });
+
+/**
+ * #2438: deleting a file is the owner's. `deleteMediaFile` is not on the
+ * Auntie's callable list and the rules refuse every client delete, so a
+ * Delete on her tile ended in a refusal. She gets no delete control; opening,
+ * uploading and tagging stay hers. The owner's grid is unchanged.
+ */
+describe('Gallery screen, an Auntie gets no Delete (#2438)', () => {
+  const rows = () => [media({ _id: 'a', description: 'One' }), media({ _id: 'b', description: 'Two' })];
+
+  it('draws no delete control on any tile for an Auntie', () => {
+    mediaAsync = { status: 'ready', data: rows() };
+    render(<Gallery isAuntie />);
+    expect(screen.getByRole('button', { name: 'Open One' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Delete / })).toBeNull();
+    expect(document.querySelector('.gallery__tile-actions')).toBeNull();
+  });
+
+  it('keeps Upload and the viewer for her, and never calls the delete', async () => {
+    mediaAsync = { status: 'ready', data: rows() };
+    render(<Gallery isAuntie />);
+    expect(screen.getByRole('button', { name: 'Upload media' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Open One' }));
+    const viewer = screen.getByRole('dialog');
+    expect(within(viewer).queryByRole('button', { name: /delete/i })).toBeNull();
+    expect(deleteMediaFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps the delete control on every tile for the owner', () => {
+    mediaAsync = { status: 'ready', data: rows() };
+    render(<Gallery isAuntie={false} />);
+    expect(screen.getByRole('button', { name: 'Delete One' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete Two' })).toBeInTheDocument();
+  });
+});

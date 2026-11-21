@@ -635,7 +635,11 @@ export function Schedule({ onSelect, isAuntie = false }: ScheduleProps) {
               </DenPanel>
 
               {legend.length > 0 && (
-                <ScheduleLegend serviceTypes={legend} dragHint={view === 'week' ? dragHint(snapMinutes) : null} />
+                <ScheduleLegend
+                  serviceTypes={legend}
+                  // An Auntie cannot move a visit, so the legend does not tell her to drag one.
+                  dragHint={view === 'week' && !isAuntie ? dragHint(snapMinutes) : null}
+                />
               )}
 
               {busyState.status === 'error' && (
@@ -675,6 +679,7 @@ export function Schedule({ onSelect, isAuntie = false }: ScheduleProps) {
                   onSelectDay={setSelected}
                   onOpenSession={onSelect ?? setOpenSessionId}
                   onDrop={handleDrop}
+                  canMove={!isAuntie}
                 />
               )}
 
@@ -698,6 +703,7 @@ export function Schedule({ onSelect, isAuntie = false }: ScheduleProps) {
                   entry={openSession}
                   businessZone={businessZone}
                   catalog={serviceCatalog}
+                  isAuntie={isAuntie}
                   onClose={() => setOpenSessionId(null)}
                   // #1576: the same Actions panel Bookings composes into this
                   // sheet (Mark Completed / Cancel on a scheduled visit,

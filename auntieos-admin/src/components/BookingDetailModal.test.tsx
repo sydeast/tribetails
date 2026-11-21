@@ -570,3 +570,32 @@ describe('BookingDetailModal on a non-envelope (legacy flat) visit', () => {
     await waitFor(() => expect(rescheduleBooking).toHaveBeenCalled());
   });
 });
+
+/**
+ * #2313: moving a visit (`rescheduleBooking`) and choosing who runs it
+ * (`assignAuntie`) are the owner's and refuse an Auntie. Her sheet draws no
+ * Reschedule panel and no Staffing buttons; she still reads who is assigned.
+ */
+describe('BookingDetailModal for an Auntie (#2313)', () => {
+  it('draws no Reschedule panel and no way to change the assigned Auntie', async () => {
+    getVisitAssignment.mockResolvedValue({ assignedAuntieUid: 'u1', auntieDisplayName: 'Auntie Ruth' });
+    open({}, { isAuntie: true });
+    await waitFor(() => expect(factValue('Assigned Auntie')).toHaveTextContent('Auntie Ruth'));
+    expect(screen.queryByRole('heading', { name: 'Reschedule' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reschedule visit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Choose an Auntie' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Unassign' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Staffing' })).toBeInTheDocument();
+    expect(rescheduleBooking).not.toHaveBeenCalled();
+    expect(assignAuntie).not.toHaveBeenCalled();
+    expect(listStaff).not.toHaveBeenCalled();
+  });
+
+  it('keeps both for the owner', async () => {
+    open();
+    await waitFor(() => expect(getVisitAssignment).toHaveBeenCalled());
+    expect(screen.getByRole('heading', { name: 'Reschedule' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Choose an Auntie' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unassign' })).toBeInTheDocument();
+  });
+});

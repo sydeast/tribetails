@@ -337,6 +337,7 @@ export function KinfolkProfile({
       <HouseholdData
         kinfolkId={kinfolkId}
         kinfolkName={kinfolkName}
+        isAuntie={isAuntie}
         onBack={() => setView('profile')}
         // The trail's Kinfolk step is this profile's own Back: the list's
         // kinfolk tab.
@@ -461,7 +462,10 @@ export function KinfolkProfile({
             </Link>
             {/* #1603: the admin's portal invite lives here, on the profile
                 (operator ruling: no button on the Invites screen). */}
-            {loaded !== null && (
+            {/* An invite grants a person portal access, which is the owner's
+                to give: `inviteKinfolkToPortal` refuses an Auntie, so the
+                button is not drawn for her. */}
+            {loaded !== null && !isAuntie && (
               <PortalInviteButton kinfolkId={kinfolkId} householdName={heroName} email={loaded.email} />
             )}
             <GhostButton label="Edit" onClick={() => setView('edit')} />
@@ -596,7 +600,11 @@ export function KinfolkProfile({
                     column now that household tags moved to the hero (#681).
                     Admin-only, and only ever on an admin surface: see the
                     panel's own note. */}
-                <AuntieNotesPanel kinfolkId={kinfolkId} />
+                {/* The dossier is the owner's alone: the rules refuse an
+                    Auntie the read, so the panel drew her a failed load with a
+                    Retry that could not work. Not mounted for her, so the read
+                    is never started. */}
+                {!isAuntie && <AuntieNotesPanel kinfolkId={kinfolkId} />}
               </>
             )}
           </AsyncRegion>

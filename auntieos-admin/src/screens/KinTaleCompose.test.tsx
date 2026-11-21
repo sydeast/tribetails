@@ -1759,3 +1759,43 @@ describe('Ask Auntie: the notes she typed are saved with the draft she took', ()
     expect(written).toEqual(expect.objectContaining({ bodyCopy: TAKEN, keptNotes: '', keptNotesDraft: '' }));
   });
 });
+
+/**
+ * Two controls on the composer ended in a refusal for an Auntie. "Ask Auntie"
+ * posts to `/api/generate`, which refuses a caretaker because it reads the
+ * household dossier. Delete draft calls `deleteKinTaleReportDraft`, which is
+ * the owner's. She is drawn neither; writing, saving and sending stay hers.
+ */
+describe('KinTaleCompose: an Auntie gets no Ask Auntie and no Delete draft', () => {
+  beforeEach(() => {
+    generateDraft.mockReset();
+    deleteKinTaleReportDraft.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('draws her neither control on a saved draft, and keeps Save draft and Send', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report()] } });
+    render(<KinTaleCompose kinTaleId="tale1" isAuntie onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    expect(screen.queryByRole('button', { name: /Ask Auntie/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull();
+    expect(document.querySelector('.kintale-compose__ask')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+    expect(screen.getByPlaceholderText(/tell the tale/i)).toBeEnabled();
+    expect(generateDraft).not.toHaveBeenCalled();
+    expect(deleteKinTaleReportDraft).not.toHaveBeenCalled();
+  });
+
+  it('draws her no Ask Auntie on a new draft from a visit', async () => {
+    mockStreams({ sessions: { status: 'ready', data: [session({})] } });
+    render(<KinTaleCompose sessionId="sess1" isAuntie onClose={vi.fn()} />);
+    await screen.findByLabelText(/headline/i);
+    expect(screen.queryByRole('button', { name: /Ask Auntie/ })).toBeNull();
+  });
+
+  it('keeps both for the owner', async () => {
+    mockStreams({ reports: { status: 'ready', data: [report()] } });
+    render(<KinTaleCompose kinTaleId="tale1" onClose={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: 'Ask Auntie' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete draft' })).toBeInTheDocument();
+  });
+});

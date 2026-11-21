@@ -954,3 +954,66 @@ describe('KinfolkProfile: the mock', () => {
     expect(screen.queryByRole('heading', { name: 'Payments needing a decision' })).toBeNull();
   });
 });
+
+/**
+ * An invite grants a person portal access, which is the owner's to give:
+ * `inviteKinfolkToPortal` refuses an Auntie. The profile draws her no Invite
+ * to portal; Members and invites, Household data and Edit stay.
+ */
+describe('KinfolkProfile, an Auntie gets no Invite to portal', () => {
+  it('draws her no invite button and keeps the rest of the hero', async () => {
+    useRouteContext.mockReturnValue({ access: { status: 'caretaker' } });
+    getKinfolkProfile.mockResolvedValue(profile());
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Recent KinTales' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /STUB Invite to portal/ })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Members and invites' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Household data' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+  });
+
+  for (const access of [{ status: 'admin' }, { status: 'testAdmin', testTribeId: 'tribe-sandbox' }, null]) {
+    const who = access === null ? 'the offline session' : access.status === 'admin' ? 'the owner' : 'the test admin';
+    it(`keeps Invite to portal for ${who}`, async () => {
+      useRouteContext.mockReturnValue({ access });
+      getKinfolkProfile.mockResolvedValue(profile());
+      render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+      expect(await screen.findByRole('button', { name: /STUB Invite to portal/ })).toBeInTheDocument();
+    });
+  }
+});
+
+/**
+ * The dossier is the owner's alone and the rules refuse an Auntie the read, so
+ * "Auntie's notes" drew her a failed load. The panel is not mounted for her
+ * and the dossier is never asked for.
+ */
+describe('KinfolkProfile, an Auntie gets no dossier panel', () => {
+  const DOSSIER = {
+    tldr: 'Text when on the way.',
+    rawSummary: '',
+    communicationStyle: 'Short and warm.',
+    householdNotes: 'Treats in the blue tin.',
+    relationshipWithAuntie: '',
+  };
+
+  it('draws her no Auntie’s notes and never reads the dossier', async () => {
+    useRouteContext.mockReturnValue({ access: { status: 'caretaker' } });
+    getKinfolkProfile.mockResolvedValue(profile());
+    getDossier.mockRejectedValue(new Error('Missing or insufficient permissions.'));
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'Recent KinTales' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /Auntie’s notes/ })).toBeNull();
+    expect(screen.queryByText(/insufficient permissions/)).toBeNull();
+    expect(getDossier).not.toHaveBeenCalled();
+  });
+
+  it('keeps the panel for the owner', async () => {
+    useRouteContext.mockReturnValue({ access: { status: 'admin' } });
+    getKinfolkProfile.mockResolvedValue(profile());
+    getDossier.mockResolvedValue(DOSSIER);
+    render(<KinfolkProfile kinfolkId="k1" kinfolkName="Jamie" kin={[]} onBack={vi.fn()} />);
+    expect(await screen.findByText('Text when on the way.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Auntie’s notes/ })).toBeInTheDocument();
+  });
+});

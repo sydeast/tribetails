@@ -774,3 +774,24 @@ describe('Directory screen, tag filter', () => {
     expect(screen.getByText('Amy Adams')).toBeInTheDocument();
   });
 });
+
+/**
+ * Adding a household is the owner's: `createKinfolk` is not on the Auntie's
+ * callable list, so her Add kinfolk dialog could be filled in and then
+ * refused. She gets no button. Add kin stays, because the rules let her
+ * create a Kin.
+ */
+describe('Directory screen, an Auntie gets no Add kinfolk', () => {
+  it('draws her Add kin and no Add kinfolk', () => {
+    render(<Directory isAuntie />);
+    expect(screen.queryByRole('button', { name: 'Add kinfolk' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add kin' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('keeps both for the owner', () => {
+    render(<Directory />);
+    expect(screen.getByRole('button', { name: 'Add kinfolk' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add kin' })).toBeInTheDocument();
+  });
+});

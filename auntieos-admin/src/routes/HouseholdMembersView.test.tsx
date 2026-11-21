@@ -5,12 +5,14 @@ import type { Kinfolk } from '../api/directory';
 
 const h = vi.hoisted(() => ({
   doc: { current: { status: 'loading' } as unknown },
+  access: { current: { status: 'admin' } as { status: string } | null },
   props: vi.fn(),
 }));
 
 vi.mock('@tanstack/react-router', () => ({
   useParams: () => ({ kinfolkId: 'W8S3qdqZOzXOVtGGSDVK' }),
   useNavigate: () => vi.fn(),
+  useRouteContext: () => ({ access: h.access.current }),
 }));
 vi.mock('../lib/firestore', () => ({ useDocById: () => h.doc.current }));
 vi.mock('../screens/HouseholdMembers', () => ({

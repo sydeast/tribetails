@@ -1623,8 +1623,8 @@ describe('#2187 New booking is the owner\'s alone', () => {
     await screen.findByText(/Long walk/);
     expect(screen.queryByRole('button', { name: /new booking/i })).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
-    // The rest of her list toolbar is untouched.
-    expect(selectToggle()).toBeInTheDocument();
+    // #2313: every bulk action is refused for her, so Select is gone too.
+    expect(screen.queryByRole('button', { name: 'Select' })).toBeNull();
   });
   it('keeps the button for the owner, and it opens the New booking request form', async () => {
     useCollection.mockReturnValue({ status: 'ready', data: [entry({})] });
@@ -1680,5 +1680,41 @@ describe('#2164 Bookings under an Auntie sign-in', () => {
     call.mockRejectedValue(new Error('unavailable'));
     render(<Bookings />);
     expect(await screen.findByText(WORK_SETTINGS_FAILED)).toBeInTheDocument();
+  });
+});
+
+/**
+ * #2313: on Bookings an Auntie saw Approve, Reject and Cancel on a card and a
+ * Select toggle for bulk actions, and the server refuses her every one. Her
+ * cards carry no transition button and her toolbar no Select. The card still
+ * opens the visit. The owner's list is unchanged.
+ */
+describe('#2313 Bookings draws an Auntie no transition she is refused', () => {
+  const rowsOf = () => [
+    entry({ _id: 'b-pending', kinfolkName: 'The Wrens', status: 'PENDING' }),
+    entry({ _id: 'b-scheduled', kinfolkName: 'The Devlins', status: 'SCHEDULED' }),
+  ];
+
+  it('draws her cards with no Approve, Reject or Cancel, and no Select', async () => {
+    currentSessionSeat.mockResolvedValue(AUNTIE_SEAT);
+    useCollection.mockReturnValue({ status: 'ready', data: rowsOf() });
+    render(<Bookings isAuntie />);
+    expect(await screen.findByText('The Wrens')).toBeInTheDocument();
+    expect(screen.getByText('The Devlins')).toBeInTheDocument();
+    for (const name of ['Approve', 'Reject', 'Cancel', 'Select']) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+    expect(batchUpdateBookings).not.toHaveBeenCalled();
+  });
+
+  it('keeps them for the owner', async () => {
+    useCollection.mockReturnValue({ status: 'ready', data: rowsOf() });
+    render(<Bookings />);
+    const wren = (await screen.findByText('The Wrens')).closest('.bookings__row') as HTMLElement;
+    const devlin = screen.getByText('The Devlins').closest('.bookings__row') as HTMLElement;
+    expect(within(wren).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(within(wren).getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+    expect(within(devlin).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(selectToggle()).toBeInTheDocument();
   });
 });

@@ -131,11 +131,14 @@ describe('rail composition', () => {
 
   // #2163, then #2200 / #2201: an Auntie's rail drops exactly Settings and
   // Templates, and Packages, Invoices, Marketing blasts and Activity Log.
-  // Tribal Intel is the owner's notes screen and is off it too. Nothing else.
+  // Tribal Intel is the owner's notes screen and is off it too. Invites, Form
+  // Schemas and Feature Flags could only refuse her, so they are off it as
+  // well. Nothing else.
   it('leaves exactly the owner screens off an Auntie rail', () => {
     const owner = railEntries().map((e) => e.slug);
     const auntie = railEntries(true).map((e) => e.slug);
     expect(owner.filter((s) => !auntie.includes(s))).toEqual([
+      'invites',
       'packages',
       'invoices',
       'marketing-blasts',
@@ -143,6 +146,8 @@ describe('rail composition', () => {
       'settings',
       'tribal-intel',
       'templates',
+      'form-schemas',
+      'feature-flags',
     ]);
     expect(auntie).toContain('kintale-templates');
     expect(railGroup('more', true).map((e) => e.slug)).not.toContain('settings');
