@@ -17,8 +17,10 @@ import {
   CREDIT_LEDGER_COLLECTION,
   MAX_CREDIT_LEDGER_EVENTS,
   creditHistoryOf,
+  earlierCreditOf,
   readCreditLedgerEvent,
   type CreditLedgerEvent,
+  type EarlierCredit,
 } from '../lib/creditLedger';
 
 /**
@@ -89,6 +91,18 @@ const CreditUseSchema = z
   })
   .strict();
 
+/**
+ * #1939, #1969: credit in the balance that no listed credit accounts for
+ * (`earlierCreditOf`). Listed credits plus this, less every use, is the balance.
+ */
+const EarlierCreditSchema = z
+  .object({
+    amountCents: CentsSchema,
+    /** What is still unspent of it. */
+    remainingCents: CentsSchema,
+  })
+  .strict();
+
 export const Result = z
   .object({
     ok: OkSchema,
@@ -99,6 +113,12 @@ export const Result = z
     credits: z.array(GivenCreditSchema),
     /** Every time credit was spent on an invoice, newest first. */
     uses: z.array(CreditUseSchema),
+    /**
+     * Credit the list above does not itemise, or null when there is none (or
+     * when the figures cannot describe it, which is logged). A client that
+     * finds the key absent is talking to an older server and shows no row.
+     */
+    earlierCredit: EarlierCreditSchema.nullable(),
   })
   .strict();
 
@@ -177,7 +197,8 @@ export async function getAccountCreditHistoryHandler(
     const ev = readCreditLedgerEvent(d.id, (d.data() ?? {}) as Record<string, unknown>);
     if (ev !== null) events.push(ev);
   }
-  if (eventsSnap.docs.length >= MAX_CREDIT_LEDGER_EVENTS) {
+  const truncated = eventsSnap.docs.length >= MAX_CREDIT_LEDGER_EVENTS;
+  if (truncated) {
     logEvent({
       severity: 'warn',
       function: 'getAccountCreditHistory',
@@ -188,11 +209,27 @@ export async function getAccountCreditHistoryHandler(
   }
 
   const history = creditHistoryOf(events);
+  const accountBalanceCents = readAccountBalanceCents((famSnap.data() ?? {})[ACCOUNT_BALANCE_FIELD]);
+  // A cut log cannot say what it left out, so it itemises nothing extra.
+  const earlier: EarlierCredit = truncated ? { kind: 'none' } : earlierCreditOf(history, accountBalanceCents);
+  if (earlier.kind === 'mismatch') {
+    logEvent({
+      severity: 'warn',
+      function: 'getAccountCreditHistory',
+      event: 'portal.credit.history.unreconciled',
+      familyId: kinfolkId,
+      extra: {
+        accountBalanceCents,
+        earlierCents: earlier.amountCents,
+        earlierRemainingCents: earlier.remainingCents,
+      },
+    });
+  }
 
   return validateResponse('getAccountCreditHistory', Result, {
     ok: true,
     kinfolkId,
-    accountBalanceCents: readAccountBalanceCents((famSnap.data() ?? {})[ACCOUNT_BALANCE_FIELD]),
+    accountBalanceCents,
     credits: history.credits.map((c) => ({
       creditId: c.id,
       amountCents: c.amountCents,
@@ -214,6 +251,8 @@ export async function getAccountCreditHistoryHandler(
       invoiceId: u.invoiceId,
       invoiceNumber: u.invoiceNumber,
     })),
+    earlierCredit:
+      earlier.kind === 'pool' ? { amountCents: earlier.amountCents, remainingCents: earlier.remainingCents } : null,
   });
 }
 

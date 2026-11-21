@@ -148,8 +148,31 @@ export async function sendFromTemplate(
   if (!tpl) throw new Error(`email template missing: resolved from ${key}`);
   const resolvedFrame = frame ?? (await loadEmailFrame('sendFromTemplate'));
   const parts = sendPartsFor(tpl, resolvedFrame);
-  return sendTemplatedEmail({ to, data: await withBusinessName(data, parts), templateKey: key, ...parts });
+  return sendTemplatedEmail({ to, data: withLink(await withBusinessName(data, parts), parts), templateKey: key, ...parts });
 }
+
+/**
+ * #2487: `{{link}}` on a direct send. The editor offers `{{link}}` on every
+ * template, and the catalog's channel trigger fills it, but a direct send
+ * never runs that trigger, so an invite written with it sent an empty button.
+ * It is the send's own link: the invite or recovery claim, the address to
+ * confirm, or the office's review link. A caller's own `link` wins.
+ */
+function withLink(
+  data: Record<string, unknown>,
+  parts: { subjectTemplate: string; bodyTemplate: string; htmlTemplate?: string | undefined },
+): Record<string, unknown> {
+  const uses = [parts.subjectTemplate, parts.bodyTemplate, parts.htmlTemplate ?? ''].some((t) =>
+    /\{\{\s*link\s*\}\}/.test(t),
+  );
+  const filled = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
+  if (!uses || filled(data.link)) return data;
+  // The address to confirm comes first: the confirm email also carries the
+  // claim link, and its one action is confirming.
+  const own = [data.verifyUrl, data.claimUrl, data.auntieReviewUrl].find(filled);
+  return own ? { ...data, link: own } : data;
+}
+
 /**
  * #2487: `{{business}}` / `{{Business}}` on a direct send. The template editor
  * offers the business name to every template, and the catalog's senders fill it

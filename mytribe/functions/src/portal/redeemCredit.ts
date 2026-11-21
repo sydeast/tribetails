@@ -13,6 +13,8 @@ import { validateResponse } from '../lib/callableResponse';
 import { invoiceIsPaid, PAID_INVOICE_REFUSAL, PAID_INVOICE_REFUSAL_CODE } from '../lib/invoicePaidGate';
 import { CentsSchema, OkSchema, SignedCentsSchema } from '../lib/invoiceResponseSchema';
 import { hiddenFromHousehold } from '../lib/quoteDecision';
+import { stageCreditInEvent } from '../lib/creditLedger';
+import { invoiceNumberText } from '../lib/invoiceNaming';
 
 export const Args = z.object({
   invoiceId: z.string().min(1),
@@ -161,6 +163,18 @@ export async function redeemCreditHandler(req: CallableRequest<unknown>): Promis
     // read could not change the stamp and would only widen the transaction.
     tx.set(invoiceRef, { ...update, ...invoiceStateStampOf({ ...txInv, ...update }, 0) }, { merge: true });
     tx.set(familyRef, { accountBalanceCents: newAccountBalanceCents }, { merge: true });
+    // #1969: the credit's line in the household's credit history, in the same
+    // transaction, so the history adds up to the balance it just raised.
+    stageCreditInEvent(firestore, tx, {
+      kinfolkId: invKinfolkId,
+      source: 'creditInvoice',
+      sourceId: args.invoiceId,
+      invoiceId: args.invoiceId,
+      invoiceNumber: invoiceNumberText(txInv['invoiceNumber']),
+      amountCents,
+      actorUid: uid,
+      atMs: Date.now(),
+    });
 
     return { amountCents, newAccountBalanceCents };
   });

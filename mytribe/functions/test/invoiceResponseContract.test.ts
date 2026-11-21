@@ -109,6 +109,9 @@ function invoiceDto(over: Record<string, unknown> = {}): Record<string, unknown>
     creditTarget: null,
     creditRedeemedAtMs: null,
     writtenOffCents: null,
+    // #1974: null on an invoice with no stored lines.
+    subtotalCents: null,
+    invoiceDiscountCents: null,
     // Issue #409: how this bill can be paid, resolved off the options it was
     // issued with. A believable invoice carries at least the card, because
     // the card needs nothing configured.
@@ -741,7 +744,7 @@ const CASES: Array<{
           open: [
             invoiceDto({
               lineItems: [
-                { lineId: 'stored:0', source: 'stored', sessionId: '', label: 'Dog walking', dateIso: null, amountCents: 4000, qty: 2, unitCents: 2000 },
+                { lineId: 'stored:0', source: 'stored', sessionId: '', label: 'Dog walking', dateIso: null, amountCents: 4000, qty: 2, unitCents: 2000, discountCents: 0 },
               ],
             }),
           ],
@@ -753,7 +756,7 @@ const CASES: Array<{
           open: [
             invoiceDto({
               lineItems: [
-                { lineId: 'session:s1', source: 'session', sessionId: 's1', label: 'Overnight', dateIso: '2026-07-01T22:00:00.000Z', amountCents: null, qty: null, unitCents: null },
+                { lineId: 'session:s1', source: 'session', sessionId: 's1', label: 'Overnight', dateIso: '2026-07-01T22:00:00.000Z', amountCents: null, qty: null, unitCents: null, discountCents: null },
               ],
             }),
           ],
@@ -791,6 +794,14 @@ const CASES: Array<{
         emptyBuckets({ credits: [invoiceDto({ status: 'credit', creditTarget: 'originalPaymentMethod' })] }),
       ],
       [
+        '#1974: a NEGATIVE invoice discount, which would add to the bill',
+        emptyBuckets({ open: [invoiceDto({ subtotalCents: 4000, invoiceDiscountCents: -100 })] }),
+      ],
+      [
+        '#1974: an ABSENT subtotalCents instead of an explicit null',
+        emptyBuckets({ open: [(({ subtotalCents: _drop, ...rest }) => rest)(invoiceDto())] }),
+      ],
+      [
         'a fourth bucket',
         emptyBuckets({ cancelled: [] }),
       ],
@@ -800,7 +811,7 @@ const CASES: Array<{
           open: [
             invoiceDto({
               lineItems: [
-                { lineId: 'stored:0', source: 'stored', sessionId: '', label: 'x', dateIso: null, amountCents: 1, qty: 1, unitCents: 1, taxCents: 0 },
+                { lineId: 'stored:0', source: 'stored', sessionId: '', label: 'x', dateIso: null, amountCents: 1, qty: 1, unitCents: 1, discountCents: 0, taxCents: 0 },
               ],
             }),
           ],

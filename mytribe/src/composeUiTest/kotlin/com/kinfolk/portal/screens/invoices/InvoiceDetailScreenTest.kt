@@ -7,6 +7,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
@@ -229,6 +231,55 @@ class InvoiceDetailScreenTest {
         onNodeWithText("\$45.00").assertIsDisplayed()
         onNodeWithText("Overnight Stay").assertIsDisplayed()
         onNodeWithText("\$150.00").assertIsDisplayed()
+    }
+
+    /** #1974: the walk invoice. Lines $25.00, $9.00 and 2 x $600.00 with $50.00 off; $10.00 off the invoice. */
+    private fun discountedInvoice() = openInvoice().copy(
+        total = 1174.0,
+        amountDue = 1174.0,
+        discount = "Thanks for the referral",
+        subtotalCents = 118_400L,
+        invoiceDiscountCents = 1000L,
+        lineItems = listOf(
+            InvoiceLineItem("", "Drop in", null, 2500L, 1.0, 2500L, 0L),
+            InvoiceLineItem("", "Supplies", null, 900L, 1.0, 900L, 0L),
+            InvoiceLineItem("", "Overnight", null, 115_000L, 2.0, 60_000L, 5000L),
+        ),
+    )
+
+    @Test
+    fun discounts_showAsAmountsThatAddUpToTheTotal() = runComposeUiTest {
+        setThemedContent { InvoiceDetailScreen("The Foster", discountedInvoice(), onBack = {}) }
+        waitForIdle()
+        onNodeWithText("includes \$50.00 off").assertExists()
+        onNodeWithText("2 x \$600.00").assertExists()
+        onNodeWithText("\$1,150.00").assertExists()
+        onNodeWithTag(INVOICE_SUBTOTAL_TAG, useUnmergedTree = true).assertExists()
+        onNodeWithText("\$1,184.00").assertExists()
+        onNodeWithTag(INVOICE_DISCOUNT_TAG, useUnmergedTree = true).assertExists()
+        onNodeWithText("(10.00)").assertExists()
+        // The note sits under the amount, never as a row of its own with no figure.
+        onNodeWithText("Thanks for the referral").assertExists()
+        assertEquals(1, onAllNodesWithText("Discount").fetchSemanticsNodes().size)
+    }
+
+    @Test
+    fun noInvoiceDiscount_showsSubtotalAndNoDiscountRow() = runComposeUiTest {
+        val inv = discountedInvoice().copy(invoiceDiscountCents = 0L, discount = null)
+        setThemedContent { InvoiceDetailScreen("The Foster", inv, onBack = {}) }
+        waitForIdle()
+        onNodeWithTag(INVOICE_SUBTOTAL_TAG, useUnmergedTree = true).assertExists()
+        onNodeWithTag(INVOICE_DISCOUNT_TAG, useUnmergedTree = true).assertDoesNotExist()
+        onNodeWithText("Discount").assertDoesNotExist()
+    }
+
+    @Test
+    fun olderServer_orNoStoredLines_keepsTheFreeTextDiscountRow() = runComposeUiTest {
+        val inv = openInvoice().copy(discount = "10% loyalty")
+        setThemedContent { InvoiceDetailScreen("The Foster", inv, onBack = {}) }
+        waitForIdle()
+        onNodeWithText("10% loyalty").assertExists()
+        onNodeWithTag(INVOICE_SUBTOTAL_TAG, useUnmergedTree = true).assertDoesNotExist()
     }
     /**
      * #408: a line drawn from a visit carries that visit's day, as an ISO

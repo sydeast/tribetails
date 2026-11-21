@@ -696,16 +696,26 @@ private fun MarkdownToolbar(onWrap: (String, String) -> Unit, onInsert: (String)
 }
 
 /**
+ * #2487: the merge fields the chips insert. Each is one a notification send fills:
+ * a token the server's enricher hydrates (`ENRICHABLE` in
+ * mytribe/functions/src/notifications/enrichTemplateData.ts), or `{{link}}`, which
+ * the channel trigger fills with the notice's item. The chips used to insert
+ * `{{kinfolk_name}}`, `{{date}}` and the like, which nothing fills, so a template
+ * written with them sent blanks.
+ */
+internal val MERGE_FIELD_CHIP_TOKENS: List<String> = listOf(
+    "{{kinfolkName}}", "{{kinName}}", "{{bookingDate}}", "{{bookingTime}}",
+    "{{serviceType}}", "{{invoiceNumber}}", "{{amount}}", "{{link}}",
+)
+
+/**
  * #15: named merge-field chips (mock auntieos-email-creation). Click drops the specific
  * {{token}} at the cursor; the tokens resolve per-recipient at send via Handlebars.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MergeFieldChips(onInsert: (String) -> Unit) {
-    val tokens = listOf(
-        "{{kinfolk_name}}", "{{kin_names}}", "{{date}}", "{{time}}",
-        "{{service}}", "{{invoice_no}}", "{{amount}}", "{{link}}",
-    )
+    val tokens = MERGE_FIELD_CHIP_TOKENS
     Column {
         AuntieFieldLabel(text = "Insert merge field")
         Spacer(Modifier.height(6.dp))

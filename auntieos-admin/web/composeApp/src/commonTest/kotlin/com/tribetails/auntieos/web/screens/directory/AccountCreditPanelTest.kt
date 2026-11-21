@@ -2,6 +2,7 @@ package com.tribetails.auntieos.web.screens.directory
 
 import com.tribetails.auntieos.web.data.CreditApplicationDto
 import com.tribetails.auntieos.web.data.CreditUseDto
+import com.tribetails.auntieos.web.data.EarlierCreditDto
 import com.tribetails.auntieos.web.data.GiveCreditEntry
 import com.tribetails.auntieos.web.data.GivenCreditDto
 import com.tribetails.auntieos.web.data.decodeAccountCreditHistory
@@ -14,6 +15,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** Q6: the desktop Give credit form rules and the history text, pure. */
@@ -133,6 +135,28 @@ class AccountCreditPanelTest {
         assertFailsWith<IllegalArgumentException> { decodeGiveCreditOutcome("""{"ok":true}""") }
         val empty = decodeAccountCreditHistory("""{"ok":true,"kinfolkId":"kf1","accountBalanceCents":0}""")
         assertTrue(empty.credits.isEmpty() && empty.uses.isEmpty())
+    }
+
+    @Test
+    fun earlierCreditDecodesAndAnOlderServerReadsNone() {
+        // #1939: the walk household, $957.00 held, three uses, no listed credit.
+        val h = decodeAccountCreditHistory(
+            """{"ok":true,"kinfolkId":"kf1","accountBalanceCents":95700,"credits":[],""" +
+                """"uses":[{"useId":"d1","usedAtMs":1,"amountCents":105000,"invoiceId":"i","invoiceNumber":"1020"}],""" +
+                """"earlierCredit":{"amountCents":201500,"remainingCents":95700}}""",
+        )
+        assertEquals(EarlierCreditDto(201_500L, 95_700L), h.earlierCredit)
+        assertNull(decodeAccountCreditHistory("""{"ok":true,"kinfolkId":"kf1","accountBalanceCents":0}""").earlierCredit)
+        assertNull(decodeAccountCreditHistory("""{"ok":true,"earlierCredit":null}""").earlierCredit)
+        assertNull(decodeAccountCreditHistory("""{"ok":true,"earlierCredit":{"amountCents":5}}""").earlierCredit)
+    }
+
+    @Test
+    fun earlierCreditLinesSayHowMuchIsApplied() {
+        assertEquals("\$2,015.00 · Earlier credit", earlierCreditHeadLine(EarlierCreditDto(201_500L, 95_700L)))
+        assertEquals("Not used yet", earlierCreditStatusLine(EarlierCreditDto(4200L, 4200L)))
+        assertEquals("\$1,058.00 of \$2,015.00 applied", earlierCreditStatusLine(EarlierCreditDto(201_500L, 95_700L)))
+        assertEquals("All applied", earlierCreditStatusLine(EarlierCreditDto(4200L, 0L)))
     }
 
     @Test

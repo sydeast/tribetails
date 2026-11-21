@@ -9,11 +9,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kinfolk.portal.components.GlassCard
 import com.kinfolk.portal.portal.CreditHistoryResult
 import com.kinfolk.portal.portal.CreditUse
+import com.kinfolk.portal.portal.EarlierCredit
 import com.kinfolk.portal.portal.GivenCredit
 import com.kinfolk.portal.screens.gallery.isPermissionDenied
 import com.kinfolk.portal.theme.KinfolkBrand
@@ -33,6 +35,7 @@ import kotlinx.datetime.toLocalDateTime
 
 const val CREDIT_HISTORY_TITLE = "Account credit history"
 const val CREDIT_HISTORY_LOAD_ERROR = "Could not load account credit history."
+const val EARLIER_CREDIT_ROW_TAG = "credit-history-earlier"
 
 /** What the section shows. [Hidden] covers both "no billing access" and "nothing to show". */
 sealed interface CreditHistoryState {
@@ -55,7 +58,11 @@ internal fun isCreditHistoryRefusal(t: Throwable): Boolean {
 internal fun creditHistoryStateOf(result: Result<CreditHistoryResult>): CreditHistoryState =
     result.fold(
         onSuccess = { h ->
-            if (h.credits.isEmpty() && h.uses.isEmpty()) CreditHistoryState.Hidden else CreditHistoryState.Ready(h)
+            if (h.credits.isEmpty() && h.uses.isEmpty() && h.earlierCredit == null) {
+                CreditHistoryState.Hidden
+            } else {
+                CreditHistoryState.Ready(h)
+            }
         },
         onFailure = { t -> if (isCreditHistoryRefusal(t)) CreditHistoryState.Hidden else CreditHistoryState.Failed },
     )
@@ -84,6 +91,20 @@ fun creditUseLine(u: CreditUse, timeZone: TimeZone = TimeZone.currentSystemDefau
     return "${usd(u.amountCents)} on $target, ${creditDateLabel(u.usedAtMs, timeZone)}"
 }
 
+/**
+ * #1969: credit in the balance that no listed credit accounts for, so the
+ * credits listed, less the credit used, are the balance. Same words as the web
+ * portal and the admin clients.
+ */
+const val EARLIER_CREDIT_LABEL = "Earlier credit"
+
+/** "Not used yet", "$1,058.00 of $2,015.00 applied", or "All applied". */
+fun earlierCreditStatusLine(e: EarlierCredit): String {
+    if (e.remainingCents <= 0L) return "All applied"
+    val used = e.amountCents - e.remainingCents
+    return if (used > 0L) "${usd(used)} of ${usd(e.amountCents)} applied" else "Not used yet"
+}
+
 @Composable
 internal fun CreditHistorySection(state: CreditHistoryState) {
     if (state is CreditHistoryState.Hidden || state is CreditHistoryState.Loading) return
@@ -96,7 +117,8 @@ internal fun CreditHistorySection(state: CreditHistoryState) {
                     Text(CREDIT_HISTORY_LOAD_ERROR, style = type.sansMeta.copy(color = KinfolkBrand.SnuggleCoral))
                 is CreditHistoryState.Ready -> {
                     val h = state.history
-                    if (h.credits.isNotEmpty()) {
+                    val earlier = h.earlierCredit
+                    if (h.credits.isNotEmpty() || earlier != null) {
                         Text("Credits given", style = type.sansLabel.copy(fontWeight = FontWeight.SemiBold))
                         h.credits.forEach { c ->
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -110,6 +132,25 @@ internal fun CreditHistorySection(state: CreditHistoryState) {
                                 }
                                 if (c.reason.isNotBlank()) Text(c.reason, style = type.sansBody)
                                 Text(creditStatusLine(c), style = type.sansMeta.copy(color = KinfolkBrand.KinTeal))
+                            }
+                        }
+                        if (earlier != null) {
+                            Column(
+                                modifier = Modifier.testTag(EARLIER_CREDIT_ROW_TAG),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(usd(earlier.amountCents), style = type.sansBody.copy(fontWeight = FontWeight.SemiBold))
+                                    Text(EARLIER_CREDIT_LABEL, style = type.sansMeta)
+                                }
+                                Text(
+                                    earlierCreditStatusLine(earlier),
+                                    style = type.sansMeta.copy(color = KinfolkBrand.KinTeal),
+                                )
                             }
                         }
                     }

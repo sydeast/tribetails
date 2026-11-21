@@ -620,6 +620,14 @@ private fun InvoiceDetailBody(
                     style = AuntieTheme.typography.bodySmall,
                     color = AuntieTheme.colors.textDim,
                 )
+                // #2258: the payment terms the invoice will carry.
+                if (action == "convert") {
+                    Text(
+                        convertQuoteTermsLine(invoice),
+                        style = AuntieTheme.typography.bodySmall,
+                        color = AuntieTheme.colors.textDim,
+                    )
+                }
             }
         }
 

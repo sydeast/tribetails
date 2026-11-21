@@ -36,6 +36,8 @@ const kinAdded = {
   visitCount: 6,
   nextVisit: visits[0],
   portalUrl: 'https://kinfolk.tribetails.com',
+  // #2487: the seeds print the item's own address, which the channel trigger fills.
+  link: 'https://kinfolk.tribetails.com/schedule',
 };
 const oneVisit = {
   Business: 'TribeTails',
@@ -55,18 +57,18 @@ describe('#1822: one message names every visit a Kin was added to', () => {
 
   it('the household SMS and push give the count, the first day and the link', () => {
     const sms = line(seed('kincare.changed').smsTxt, kinAdded);
-    expect(sms).toBe("It's Auntie. Pepper is now on 6 of your visits, first up Mon Mar 1. Every date: https://kinfolk.tribetails.com");
+    expect(sms).toBe("It's Auntie. Pepper is now on 6 of your visits, first up Mon Mar 1. Every date: https://kinfolk.tribetails.com/schedule");
     const push = line(seed('kincare.changed').pushTxt, kinAdded);
     expect(push).toBe('Visit details updated. Pepper is now on 6 of your visits, starting Mon Mar 1. Tap for every date.');
   });
 
   it("the Auntie's email lists her days, and her SMS and push give the count", () => {
-    const hers = { ...kinAdded, visits: visits.slice(0, 4), visitCount: 4, portalUrl: 'https://auntie.tribetails.com' };
+    const hers = { ...kinAdded, visits: visits.slice(0, 4), visitCount: 4, portalUrl: 'https://auntie.tribetails.com', link: 'https://auntie.tribetails.com/directory/fam1' };
     const out = email('assignment.changed', hers);
     for (const v of visits.slice(0, 4)) expect(out.text).toContain(`${v.weekday}, ${v.date} at 9:00 AM`);
     expect(out.text).not.toContain('Fri, Mar 5');
     expect(line(seed('assignment.changed').smsTxt, hers)).toBe(
-      'TribeTails: Pepper is now on 4 of your visits, first Mon Mar 1. Every date: https://auntie.tribetails.com',
+      'TribeTails: Pepper is now on 4 of your visits, first Mon Mar 1. Every date: https://auntie.tribetails.com/directory/fam1',
     );
     expect(line(seed('assignment.changed').pushTxt, hers)).toBe(
       'Assignment changed. Pepper is now on 4 of your visits, starting Mon Mar 1. Tap for every date.',

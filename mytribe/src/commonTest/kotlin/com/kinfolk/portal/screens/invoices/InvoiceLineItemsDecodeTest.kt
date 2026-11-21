@@ -101,4 +101,48 @@ class InvoiceLineItemsDecodeTest {
         })
         assertNull(PortalApi(fake).getMyInvoices("3").open.single().lineItems)
     }
+
+    @Test
+    fun discountFigures_decode_andAnOlderServerReadsNull() = runTest {
+        // #1974: the line discount, the subtotal and the invoice discount.
+        val fake = FakeFunctionsClient()
+        fake.stub("getMyInvoices", buildJsonObject {
+            put("accountBalanceCents", 0L)
+            put("open", buildJsonArray {
+                add(buildJsonObject {
+                    put("id", "1"); put("kinfolkId", "3"); put("amountDue", 1174.0); put("total", 1174.0)
+                    put("isPaid", false); put("status", "open")
+                    put("subtotalCents", 118_400L); put("invoiceDiscountCents", 1000L)
+                    put("lineItems", buildJsonArray {
+                        add(buildJsonObject {
+                            put("label", "Overnight"); put("amountCents", 115_000L); put("qty", 2.0)
+                            put("unitCents", 60_000L); put("discountCents", 5000L)
+                        })
+                    })
+                })
+            })
+            put("paid", buildJsonArray {})
+            put("credits", buildJsonArray {})
+        })
+        val inv = PortalApi(fake).getMyInvoices("3").open.single()
+        assertEquals(118_400L, inv.subtotalCents)
+        assertEquals(1000L, inv.invoiceDiscountCents)
+        assertEquals(5000L, inv.lineItems?.single()?.discountCents)
+
+        val older = FakeFunctionsClient()
+        stubInvoices(older, withLineItems = true)
+        val old = PortalApi(older).getMyInvoices("3").open.single()
+        assertNull(old.subtotalCents)
+        assertNull(old.invoiceDiscountCents)
+        assertNull(old.lineItems?.first()?.discountCents)
+    }
+
+    @Test
+    fun discountLines_readAsTheAdminAndPdfWordThem() {
+        assertEquals("includes \$50.00 off", com.kinfolk.portal.util.invoiceLineDiscount(5000L))
+        assertEquals("", com.kinfolk.portal.util.invoiceLineDiscount(0L))
+        assertEquals("", com.kinfolk.portal.util.invoiceLineDiscount(null))
+        assertEquals("(10.00)", com.kinfolk.portal.util.invoiceDiscountAmount(1000L))
+        assertEquals("(1,234.56)", com.kinfolk.portal.util.invoiceDiscountAmount(123_456L))
+    }
 }
