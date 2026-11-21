@@ -320,7 +320,15 @@ fun NotificationSettingsScreen(
             )
         }
 
-        MarketingOptInBlock(marketingOptIn = marketingOptIn, saving = saving, onPatch = savePatch)
+        MarketingOptInBlock(
+            marketingOptIn = marketingOptIn,
+            saving = saving,
+            // #1904: the opt-in sits above the cards and is no card's tap, so no card shows its result.
+            onPatch = { patch ->
+                if (!saving && prefsLoaded) savedCard = null
+                savePatch(patch)
+            },
+        )
 
         effectiveCategories.forEach { cat ->
             // D12: present the "schedule" category with the Schedule Reminders
